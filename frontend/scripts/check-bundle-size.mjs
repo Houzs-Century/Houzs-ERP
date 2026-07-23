@@ -84,6 +84,20 @@
 //   2026-07-21: total on main reached ~1770.0 and docs-only PR #873 failed at
 //   1770.1. Four false failures in eight days, four bumps, zero of them the
 //   cause. The fifth bump is not the fix — the comparison is.
+//
+//   2026-07-23 (initial-bundle diet):
+//     initial JS gzip ~143.3 KB  (index 58.0 + react-vendor 75.1 + lucide-initial 9.7)
+//   Main sat AT the 165.0 ceiling and every entry-touching PR tripped the gate.
+//   Three cuts, no behaviour change: (1) the unauthenticated screens code-split
+//   behind auth/AuthGate.tsx — a signed-in session never fetches the login/
+//   bootstrap/invite UI (~19 KB raw); (2) auth/salesAccess.ts imports
+//   COSTING_DISPLAY_ENABLED from its concrete module instead of the
+//   @2990s/shared barrel, which had been dragging sofa-build + mfg-pricing +
+//   phone + friends (~24 KB raw) into the entry for one boolean; (3) lucide
+//   split into lucide-initial ($initial-tagged shell icons, ~27 KB raw) +
+//   lucide (route-only icons, now lazy) — the old single group was the union
+//   of every icon ANY route uses (~52 KB raw), all eagerly preloaded. Total
+//   JS 1753.5 -> 1767.8 (gzip-dictionary cost of the splits, all lazy bytes).
 
 import { readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { gzipSync } from "node:zlib";
