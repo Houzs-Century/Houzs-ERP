@@ -37,7 +37,7 @@ import {
 } from '../lib/companyScope';
 import { canonicalizeMyState } from '../lib/canonical-state';
 import { enrichVariantKeyRowsWithFabricSupplierCode } from '../lib/fabric-supplier-code';
-import { computeVariantKey, type VariantAttrs } from '../shared';
+import { computeVariantKey, effectiveDelivery, type VariantAttrs } from '../shared';
 import type { Env, Variables } from '../env';
 
 export const inventory = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -408,6 +408,11 @@ inventory.get('/products', async (c) => {
   const sb = c.get('supabase');
   const search = c.req.query('search');
   const category = c.req.query('category');
+  // Ask A (owner 2026-07-24) — optional single-warehouse scope. When set, Stock,
+  // Value, Committed / Unscheduled demand and Incoming all narrow to THIS
+  // warehouse (SO lines carry warehouse_id since mig 0118; PO lines fall back to
+  // the PO header's purchase_location_id). Omitted → company-wide totals as before.
+  const warehouseId = c.req.query('warehouseId') || null;
 
   // PostgREST's default 1000-row cap silently truncates product totals — page
   // through with .range() so the full catalogue comes back. Any ?search/?category
@@ -427,41 +432,76 @@ inventory.get('/products', async (c) => {
     return c.json({ error: 'load_failed', reason: error.message }, 500);
   }
 
-  /* Commander 2026-05-29 — enrich each SKU with the live stock picture:
-       reserve 7d/14d  = open Sales-Order demand due within 7 / 14 days
-       reserved_total  = all open SO demand (committed to customers)
-       available_qty   = stock − reserved_total (what's free to sell)
-       incoming_qty    = outstanding PO supply (qty − received) coming in
-       oldest_lot_at   = the oldest open FIFO lot → "age" of the stock
-     Computed by SKU code across all variants (the list is one row per SKU). */
+  /* Owner 2026-07-24 six-column planning model (supersedes the reserve-7d/14d
+     picture). Each SKU row (one per product_code, across variants) carries:
+       stock             = on-hand now (warehouse-scoped when warehouseId set)
+       incoming_qty      = outstanding PO qty ARRIVING WITHIN ~30 DAYS (effective ETA)
+       incoming_pos      = the covering PO(s) + ETA for that incoming qty (drill)
+       committed_scheduled = open SO demand that HAS a delivery date (ships soon)
+       unscheduled_qty   = open SO demand with NO delivery date (future/uncertain)
+       available_qty     = stock + incoming_qty − committed_scheduled
+       surplus_qty       = available_qty − unscheduled_qty  (dead-stock signal)
+       oldest_lot_at     = oldest open FIFO lot → "age" of the stock
+     committed_scheduled + unscheduled_qty == the whole open, net-of-delivered SO
+     demand (reserved_total) — this is a pure re-bucketing of the SAME demand set,
+     so the DELIVERED-exclusion logic (deliveredReturnedBySoItem, below) is
+     unchanged. */
   const products = (data ?? []) as Array<Record<string, unknown>>;
   const codes = products.map((p) => String(p.product_code));
   const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED']);
+  const PO_LIVE = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED']);
   const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
   const plus = (n: number): string => {
     const d = new Date(`${todayMY}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + n);
     return d.toISOString().slice(0, 10);
   };
-  const d7 = plus(7), d14 = plus(14);
+  const d30 = plus(30);
 
-  const reserve7 = new Map<string, number>();
-  const reserve14 = new Map<string, number>();
-  const reservedTotal = new Map<string, number>();
-  const incoming = new Map<string, number>();
+  const committedScheduled = new Map<string, number>(); // demand WITH a delivery date
+  const unscheduled = new Map<string, number>();         // demand with NO delivery date
+  const incoming = new Map<string, number>();            // PO qty arriving within 30d
+  type IncPo = { po_number: string; eta: string | null; qty: number };
+  const incomingPos = new Map<string, IncPo[]>();
   const oldestLot = new Map<string, string>();
+  // Warehouse-scoped Stock / Value overrides (ask A) — only populated when a
+  // warehouse is chosen; otherwise the company-wide totals view figures stand.
+  const whStock = new Map<string, number>();
+  const whValue = new Map<string, number>();
 
   if (codes.length > 0) {
+    // Warehouse-scoped Stock + Value: the totals view is a cross-warehouse
+    // rollup, so a per-warehouse view must recompute on-hand qty (balances) and
+    // valuation (v_inventory_value) for the chosen warehouse only.
+    if (warehouseId) {
+      const { data: bal } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
+        .from('inventory_balances').select('product_code, qty'), c)
+        .eq('warehouse_id', warehouseId).in('product_code', batch).range(from, to));
+      for (const r of (bal ?? []) as Array<{ product_code: string; qty: number }>) {
+        whStock.set(r.product_code, (whStock.get(r.product_code) ?? 0) + Number(r.qty ?? 0));
+      }
+      const { data: val } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
+        .from('v_inventory_value').select('product_code, value_sen'), c)
+        .eq('warehouse_id', warehouseId).in('product_code', batch).range(from, to));
+      for (const r of (val ?? []) as Array<{ product_code: string; value_sen: number }>) {
+        whValue.set(r.product_code, (whValue.get(r.product_code) ?? 0) + Number(r.value_sen ?? 0));
+      }
+    }
+
     // chunkIn — codes can now exceed 1000 (un-truncated catalogue), so batch the
     // .in() lists and page each batch (PostgREST default cap is 1000 rows).
     // Scope demand to the active company — the stock figure (v_inventory_product_totals)
     // and the open-lots query below are already company-scoped, so leaving demand
     // un-scoped would subtract OTHER companies' claims on a shared SKU from THIS
     // company's stock (mfg_sales_order_items carries company_id, mig 0083).
-    const { data: demand } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
-      .from('mfg_sales_order_items')
-      .select('id, item_code, qty, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date)'), c)
-      .in('item_code', batch).eq('cancelled', false).range(from, to));
+    const { data: demand } = await chunkIn(codes, (batch, from, to) => {
+      let dq = scopeToCompany(sb
+        .from('mfg_sales_order_items')
+        .select('id, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date)'), c)
+        .in('item_code', batch).eq('cancelled', false);
+      if (warehouseId) dq = dq.eq('warehouse_id', warehouseId); // ask A — scope demand to this warehouse (mig 0118)
+      return dq.range(from, to);
+    });
     const demandRows = ((demand ?? []) as Array<{ id: string; item_code: string; qty: number; line_delivery_date: string | null; so: { status: string; customer_delivery_date: string | null } | Array<{ status: string; customer_delivery_date: string | null }> | null }>)
       .map((r) => ({ id: r.id, item_code: r.item_code, qty: Number(r.qty ?? 0), line_delivery_date: r.line_delivery_date, so: Array.isArray(r.so) ? r.so[0] : r.so }))
       .filter((r) => r.so != null && !SO_DONE.has(r.so.status) && r.qty > 0);
@@ -469,7 +509,8 @@ inventory.get('/products', async (c) => {
     // Net-of-delivered per line — mirror so-stock-allocation: an open SO line's
     // live claim is qty − Σ delivered + Σ returned, floored at 0. Summing gross
     // qty double-counts the shipped units of a partially-delivered SO and drives
-    // available_qty wrongly negative.
+    // available_qty wrongly negative. (Delivered lines net out here — this is the
+    // logic the PART 3 committed/delivered verification traces.)
     const { deliveredBySoItem, returnedBySoItem } = await deliveredReturnedBySoItem(sb, demandRows.map((r) => r.id));
 
     for (const r of demandRows) {
@@ -477,29 +518,56 @@ inventory.get('/products', async (c) => {
       const net = Math.max(0, r.qty - (deliveredBySoItem.get(r.id) ?? 0) + (returnedBySoItem.get(r.id) ?? 0));
       if (net <= 0) continue;
       const code = r.item_code;
-      reservedTotal.set(code, (reservedTotal.get(code) ?? 0) + net);
+      // Owner split: a line with a delivery date (its own, else the SO's) is a
+      // scheduled commitment; a line with neither is future/uncertain demand.
       const dd = (r.line_delivery_date ?? so.customer_delivery_date)?.slice(0, 10);
-      if (dd) {
-        if (dd <= d7) reserve7.set(code, (reserve7.get(code) ?? 0) + net);
-        if (dd <= d14) reserve14.set(code, (reserve14.get(code) ?? 0) + net);
-      }
+      if (dd) committedScheduled.set(code, (committedScheduled.get(code) ?? 0) + net);
+      else    unscheduled.set(code, (unscheduled.get(code) ?? 0) + net);
     }
 
-    const { data: poItems } = await chunkIn(codes, (batch, from, to) => sb
+    // Incoming — open PO lines whose EFFECTIVE ETA (line revised date, else PO
+    // header revised date; mig 0180) lands within ~30 days. Company-scoped now
+    // (purchase_order_items carries company_id, mig 0083) — the previous
+    // unscoped read summed BOTH companies' POs into one SKU's incoming, a
+    // cross-company leak. Undated / >30-day PO lines are intentionally excluded
+    // from the near-term figure (the owner framed Incoming as "arriving within
+    // ~30 days").
+    const { data: poItems } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
       .from('purchase_order_items')
-      .select('material_code, qty, received_qty, po:purchase_orders!inner(status)')
+      .select('material_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c)
       .in('material_code', batch).range(from, to));
-    for (const r of (poItems ?? []) as Array<{ material_code: string; qty: number; received_qty: number | null; po: { status: string } | Array<{ status: string }> | null }>) {
+    for (const r of (poItems ?? []) as Array<{ material_code: string; qty: number; received_qty: number | null; delivery_date: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; warehouse_id: string | null; po: { po_number: string; status: string; expected_at: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; purchase_location_id: string | null } | Array<{ po_number: string; status: string; expected_at: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; purchase_location_id: string | null }> | null }>) {
       const po = Array.isArray(r.po) ? r.po[0] : r.po;
-      if (!po || (po.status !== 'SUBMITTED' && po.status !== 'PARTIALLY_RECEIVED')) continue;
+      if (!po || !PO_LIVE.has(po.status)) continue;
       const left = Number(r.qty ?? 0) - Number(r.received_qty ?? 0);
-      if (left > 0) incoming.set(r.material_code, (incoming.get(r.material_code) ?? 0) + left);
+      if (left <= 0) continue;
+      const poWh = r.warehouse_id ?? po.purchase_location_id ?? null;
+      if (warehouseId && poWh !== warehouseId) continue; // ask A — scope incoming to this warehouse
+      const rawEta = effectiveDelivery(r.delivery_date, r.supplier_delivery_date_2, r.supplier_delivery_date_3, r.supplier_delivery_date_4)
+        ?? effectiveDelivery(po.expected_at, po.supplier_delivery_date_2, po.supplier_delivery_date_3, po.supplier_delivery_date_4)
+        ?? null;
+      const eta = rawEta ? rawEta.slice(0, 10) : null;
+      if (!eta || eta > d30) continue; // near-term window only
+      incoming.set(r.material_code, (incoming.get(r.material_code) ?? 0) + left);
+      const arr = incomingPos.get(r.material_code) ?? [];
+      const existing = arr.find((x) => x.po_number === po.po_number);
+      if (existing) {
+        existing.qty += left;
+        if (eta && (!existing.eta || eta < existing.eta)) existing.eta = eta;
+      } else {
+        arr.push({ po_number: po.po_number, eta, qty: left });
+      }
+      incomingPos.set(r.material_code, arr);
     }
 
-    const { data: lots } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
-      .from('v_inventory_lots_open')
-      .select('product_code, received_at'), c) // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
-      .in('product_code', batch).range(from, to));
+    const { data: lots } = await chunkIn(codes, (batch, from, to) => {
+      let lq = scopeToCompany(sb
+        .from('v_inventory_lots_open')
+        .select('product_code, received_at'), c) // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
+        .in('product_code', batch);
+      if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
+      return lq.range(from, to);
+    });
     for (const r of (lots ?? []) as Array<{ product_code: string; received_at: string | null }>) {
       if (!r.received_at) continue;
       const cur = oldestLot.get(r.product_code);
@@ -509,19 +577,45 @@ inventory.get('/products', async (c) => {
 
   const enriched = products.map((p) => {
     const code = String(p.product_code);
-    const rt = reservedTotal.get(code) ?? 0;
+    const stock = warehouseId ? (whStock.get(code) ?? 0) : Number(p.total_qty ?? 0);
+    const value = warehouseId ? (whValue.get(code) ?? 0) : Number(p.total_value_sen ?? 0);
+    const committed = committedScheduled.get(code) ?? 0;
+    const unsched = unscheduled.get(code) ?? 0;
+    const inc = incoming.get(code) ?? 0;
+    const available = stock + inc - committed;
+    const pos = (incomingPos.get(code) ?? []).slice().sort((a, b) => byDateAsc(a.eta, b.eta));
     return {
       ...p,
-      reserve_7d:     reserve7.get(code) ?? 0,
-      reserve_14d:    reserve14.get(code) ?? 0,
-      reserved_total: rt,
-      available_qty:  Number(p.total_qty ?? 0) - rt,
-      incoming_qty:   incoming.get(code) ?? 0,
-      oldest_lot_at:  oldestLot.get(code) ?? null,
+      // Stock / Value reflect the warehouse scope when one is chosen.
+      total_qty:           stock,
+      total_value_sen:     value,
+      committed_scheduled: committed,
+      unscheduled_qty:     unsched,
+      reserved_total:      committed + unsched, // whole open demand (continuity)
+      available_qty:       available,
+      surplus_qty:         available - unsched,
+      incoming_qty:        inc,
+      incoming_pos:        pos,
+      oldest_lot_at:       oldestLot.get(code) ?? null,
     };
   });
-  return c.json({ products: enriched });
+  // In a single-warehouse view, drop SKUs with no presence there (no stock, no
+  // incoming, no demand) so the list reflects that warehouse instead of the
+  // whole catalogue at qty 0.
+  const out = warehouseId
+    ? enriched.filter((r) => (r.total_qty as number) !== 0 || r.incoming_qty > 0 || r.reserved_total > 0)
+    : enriched;
+  return c.json({ products: out });
 });
+
+/* Earliest-first date comparator (NULLs last) — used to order a SKU's incoming
+   PO list by ETA in the balances enrichment above. */
+function byDateAsc(a: string | null, b: string | null): number {
+  if (a === b) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return a < b ? -1 : 1;
+}
 
 /* ── Per (warehouse × variant) breakdown for one product (drilldown drawer) ─
    Migration 0095. One row per warehouse + attribute composition, with qty

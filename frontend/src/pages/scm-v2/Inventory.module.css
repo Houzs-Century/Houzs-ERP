@@ -130,6 +130,98 @@
   line-height: 1.25;
 }
 
+/* ── Warehouse filter — compact searchable single-select (ask A) ─────── */
+.whFilter {
+  position: relative;
+  flex-shrink: 0;
+}
+.whFilterButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 12px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: #11140f;
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.whFilterButton:hover { border-color: #c2c6bd; background: #f4f6f3; }
+.whFilterButton[data-active='true'] { border-color: #16695f; color: #0c3f39; }
+.whFilterLabel {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.whFilterBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.whFilterPanel {
+  position: absolute;
+  z-index: 41;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 300px;
+  max-width: 80vw;
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(17, 20, 15, 0.14);
+  overflow: hidden;
+}
+.whFilterSearch {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  border: none;
+  border-bottom: 1px solid #d6d9d2;
+  padding: var(--space-2) var(--space-3);
+  color: #11140f;
+  outline: none;
+}
+.whFilterList {
+  max-height: 320px;
+  overflow-y: auto;
+}
+.whFilterOption {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: #11140f;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.whFilterOption:hover { background: #f4f6f3; }
+.whFilterOption[data-active='true'] { background: #e1efed; color: #0c3f39; }
+.whFilterOptionCode { font-weight: 700; }
+.whFilterOptionSub {
+  font-size: var(--fs-11);
+  font-weight: 500;
+  color: #767b6e;
+}
+.whFilterEmpty {
+  padding: var(--space-3);
+  font-size: var(--fs-12);
+  color: #767b6e;
+  text-align: center;
+}
+
 /* ── Tables ────────────────────────────────────────────────────────── */
 .tableCard {
   background: #fff;

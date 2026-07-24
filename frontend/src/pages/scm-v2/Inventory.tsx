@@ -44,6 +44,7 @@ import {
   useUpdateWarehouse,
   type CogsEntry,
   type InventoryBatch,
+  type InventoryIncomingPo,
   type InventoryMovement,
   type InventoryProductTotal,
   type InventoryReservation,
@@ -108,6 +109,21 @@ const fmtAgeDays = (iso: string | null): string => {
   return d === 0 ? 'today' : `${d}d`;
 };
 
+/* ETA display for an incoming PO line (date only). */
+const fmtEta = (iso: string | null): string => {
+  if (!iso) return 'no ETA';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return fmtDate(d);
+};
+
+/* One-per-line "PO-2606-001 · ETA 21/06/2026 · +6" summary, for the Incoming
+   cell tooltip. The same list renders as the row drill (IncomingPoPanel). */
+const incomingPoSummary = (pos: InventoryIncomingPo[]): string =>
+  pos.length === 0
+    ? '—'
+    : pos.map((p) => `${p.po_number} · ETA ${fmtEta(p.eta)} · +${fmtQty(p.qty)}`).join('\n');
+
 export const Inventory = () => {
   const [tab, setTab] = useState<Tab>('balances');
   const [warehouseId, setWarehouseId] = useState<string | null>(null);
@@ -122,6 +138,10 @@ export const Inventory = () => {
       <PageHeader
         eyebrow="Stock"
         title="Inventory"
+        /* Owner 2026-07-24 (ask B) — the default brochure h1 (28px) read too big
+           and, with the tab rail in the actions slot, pushed the header into
+           overflow. `sm` is the owner-approved 17px document title. */
+        titleSize="sm"
         actions={
           /* Tab rail — reskinned to the reference FilterPills slab. Rides in
              the header's actions slot, the same seat the bespoke .tabRow had
@@ -167,6 +187,14 @@ export const Inventory = () => {
       {tab === 'balances' && (
         <>
           <div className={styles.filterRow}>
+            {/* ask A (2026-07-24) — compact SEARCHABLE warehouse filter (was a
+                big-card / chip rail). Scopes Stock / Incoming / Committed /
+                Unscheduled to one warehouse. */}
+            <WarehouseFilter
+              warehouses={warehouses.data ?? []}
+              value={warehouseId}
+              onChange={setWarehouseId}
+            />
             <div className={styles.searchBox} style={{ width: '100%' }}>
               <Search {...ICON} className={styles.searchIcon} />
               <input
@@ -178,7 +206,7 @@ export const Inventory = () => {
               />
             </div>
           </div>
-          <BalancesTab category={category} search={search}
+          <BalancesTab category={category} search={search} warehouseId={warehouseId}
             onDrilldown={(code, name) => setBreakdownFor({ code, name })} />
         </>
       )}
@@ -213,6 +241,64 @@ export const Inventory = () => {
           name={breakdownFor.name}
           onClose={() => setBreakdownFor(null)}
         />
+      )}
+    </div>
+  );
+};
+
+/* ════════════════════════════════════════════════════════════════════════
+   WarehouseFilter — compact SEARCHABLE single-select for the Balances view
+   (ask A, owner 2026-07-24 "compact searchable dropdown, not big cards").
+   Shows the warehouse SHORT code-name (`code`, e.g. "KL WAREHOUSE") as the
+   label; the long `name` rides along as a muted sub-line inside the picker
+   only. Click to open, type to filter in place, pick or "All warehouses".
+   ════════════════════════════════════════════════════════════════════════ */
+const WarehouseFilter = ({
+  warehouses, value, onChange,
+}: {
+  warehouses: Warehouse[];
+  value: string | null;
+  onChange: (id: string | null) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const selected = warehouses.find((w) => w.id === value) ?? null;
+  const ql = q.trim().toLowerCase();
+  const filtered = ql
+    ? warehouses.filter((w) => w.code.toLowerCase().includes(ql) || (w.name ?? '').toLowerCase().includes(ql))
+    : warehouses;
+  const close = () => { setOpen(false); setQ(''); };
+  return (
+    <div className={styles.whFilter}>
+      <button type="button" className={styles.whFilterButton} data-active={value !== null}
+        onClick={() => setOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={open}>
+        <WarehouseIcon {...ICON} />
+        <span className={styles.whFilterLabel}>{selected ? selected.code : 'All warehouses'}</span>
+        <ChevronDown size={14} strokeWidth={1.75} />
+      </button>
+      {open && (
+        <>
+          <div className={styles.whFilterBackdrop} onClick={close} />
+          <div className={styles.whFilterPanel} role="listbox">
+            <input autoFocus className={styles.whFilterSearch} placeholder="Search warehouse…"
+              value={q} onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') close(); }} />
+            <div className={styles.whFilterList}>
+              <button type="button" className={styles.whFilterOption} data-active={value === null}
+                onClick={() => { onChange(null); close(); }}>
+                All warehouses
+              </button>
+              {filtered.map((w) => (
+                <button key={w.id} type="button" className={styles.whFilterOption} data-active={value === w.id}
+                  onClick={() => { onChange(w.id); close(); }}>
+                  <span className={styles.whFilterOptionCode}>{w.code}</span>
+                  {w.name && w.name !== w.code && <span className={styles.whFilterOptionSub}>{w.name}</span>}
+                </button>
+              ))}
+              {filtered.length === 0 && <div className={styles.whFilterEmpty}>No warehouse matches.</div>}
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -342,16 +428,18 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
    Double-click row → per-warehouse breakdown drawer
    ════════════════════════════════════════════════════════════════════════ */
 const BalancesTab = ({
-  category, search, onDrilldown,
+  category, search, warehouseId, onDrilldown,
 }: {
   category: Category;
   search: string;
+  warehouseId: string | null;
   onDrilldown: (code: string, name: string) => void;
 }) => {
   const { requestTerm } = useDebouncedSearchTerm(search);
   const { data, isLoading, isFetching, isPlaceholderData, error } = useInventoryProductTotals({
     search: requestTerm.trim() || undefined,
     category: category === 'all' ? undefined : category,
+    warehouseId: warehouseId ?? undefined,
   });
   const rows: InventoryProductTotal[] = useMemo(() => data ?? [], [data]);
   const searchTransition = useSearchResultTransition({
@@ -427,7 +515,12 @@ const BalancesTab = ({
            composition buckets. Lazy: only fetches when expanded. Double-click
            still opens the per-warehouse breakdown drawer. */
         expandable={{
-          renderExpansion: (r) => <SkuVariantPanel code={r.product_code} />,
+          renderExpansion: (r) => (
+            <>
+              <IncomingPoPanel pos={r.incoming_pos} />
+              <SkuVariantPanel code={r.product_code} />
+            </>
+          ),
           rowExpansionKey: (r) => r.product_code,
         }}
       />
@@ -499,10 +592,18 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
   {
     key: 'incoming',
     label: 'Incoming',
-    width: 90,
+    width: 100,
     align: 'right',
+    // Owner 2026-07-24 — PO qty ARRIVING WITHIN ~30 days. The tooltip + the row
+    // drill name WHICH PO(s) and their ETA (incoming_pos); the cell stays a
+    // scannable "+N".
     accessor: (r) => (
-      <span className={`${styles.numCell} ${r.incoming_qty > 0 ? styles.numCellPos : styles.numCellZero}`}>
+      <span
+        className={`${styles.numCell} ${r.incoming_qty > 0 ? styles.numCellPos : styles.numCellZero}`}
+        title={r.incoming_qty > 0
+          ? `Arriving within ~30 days:\n${incomingPoSummary(r.incoming_pos)}`
+          : 'No PO arriving within ~30 days.'}
+      >
         {r.incoming_qty > 0 ? `+${fmtQty(r.incoming_qty)}` : '—'}
       </span>
     ),
@@ -511,60 +612,34 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
     sortFn: (a, b) => a.incoming_qty - b.incoming_qty,
   },
   {
-    key: 'reserve7',
-    label: 'Reserve 7d',
-    width: 90,
-    align: 'right',
-    accessor: (r) => (
-      <span className={`${styles.numCell} ${r.reserve_7d > 0 ? '' : styles.numCellZero}`}>
-        {r.reserve_7d > 0 ? fmtQty(r.reserve_7d) : '—'}
-      </span>
-    ),
-    searchValue: () => '',
-    filterValue: (r) => String(r.reserve_7d),
-    sortFn: (a, b) => a.reserve_7d - b.reserve_7d,
-  },
-  {
-    key: 'reserve14',
-    label: 'Reserve 14d',
-    width: 90,
-    align: 'right',
-    accessor: (r) => (
-      <span className={`${styles.numCell} ${r.reserve_14d > 0 ? '' : styles.numCellZero}`}>
-        {r.reserve_14d > 0 ? fmtQty(r.reserve_14d) : '—'}
-      </span>
-    ),
-    searchValue: () => '',
-    filterValue: (r) => String(r.reserve_14d),
-    sortFn: (a, b) => a.reserve_14d - b.reserve_14d,
-  },
-  {
     key: 'committed',
     label: 'Committed',
-    width: 95,
+    width: 100,
     align: 'right',
+    // Demand from open SO lines that HAVE a delivery date (scheduled to ship).
     accessor: (r) => (
       <span
-        className={`${styles.numCell} ${r.reserved_total > 0 ? styles.numCellNeg : styles.numCellZero}`}
-        title="Committed = open SO demand reserved to customers (all non-done sales orders). This is what Stock is subtracted by to give Available."
+        className={`${styles.numCell} ${r.committed_scheduled > 0 ? styles.numCellNeg : styles.numCellZero}`}
+        title="Committed = open Sales-Order demand that has a delivery date (scheduled to ship). Delivered/cancelled lines are already netted out. This is subtracted from Stock + Incoming to give Available."
       >
-        {r.reserved_total > 0 ? `−${fmtQty(r.reserved_total)}` : '—'}
+        {r.committed_scheduled > 0 ? `−${fmtQty(r.committed_scheduled)}` : '—'}
       </span>
     ),
     searchValue: () => '',
-    filterValue: (r) => String(r.reserved_total),
-    sortFn: (a, b) => a.reserved_total - b.reserved_total,
+    filterValue: (r) => String(r.committed_scheduled),
+    sortFn: (a, b) => a.committed_scheduled - b.committed_scheduled,
   },
   {
     key: 'available',
     label: 'Available',
-    width: 90,
+    width: 100,
     align: 'right',
+    // Available = Stock + Incoming − Committed (owner 2026-07-24 — Incoming is
+    // now INCLUDED; the on-screen equation is spelled out in the tooltip).
     accessor: (r) => (
       <span
         className={`${styles.numCell} ${r.available_qty < 0 ? styles.numCellNeg : r.available_qty > 0 ? styles.numCellPos : styles.numCellZero}`}
-        title={`${fmtQty(r.total_qty)} stock − ${fmtQty(r.reserved_total)} committed = ${fmtQty(r.available_qty)} available` +
-          (r.incoming_qty > 0 ? `  (+${fmtQty(r.incoming_qty)} incoming, not yet in stock)` : '')}
+        title={`${fmtQty(r.total_qty)} stock + ${fmtQty(r.incoming_qty)} incoming − ${fmtQty(r.committed_scheduled)} committed = ${fmtQty(r.available_qty)} available`}
       >
         {fmtQty(r.available_qty)}
       </span>
@@ -572,6 +647,43 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
     searchValue: () => '',
     filterValue: (r) => String(r.available_qty),
     sortFn: (a, b) => a.available_qty - b.available_qty,
+  },
+  {
+    key: 'unscheduled',
+    label: 'Unscheduled',
+    width: 105,
+    align: 'right',
+    // Demand from open SO lines with NO delivery date (future / uncertain).
+    accessor: (r) => (
+      <span
+        className={`${styles.numCell} ${r.unscheduled_qty > 0 ? '' : styles.numCellZero}`}
+        title="Unscheduled = open Sales-Order demand with no delivery date yet (future / uncertain). Not subtracted from Available, but eats into Surplus."
+      >
+        {r.unscheduled_qty > 0 ? fmtQty(r.unscheduled_qty) : '—'}
+      </span>
+    ),
+    searchValue: () => '',
+    filterValue: (r) => String(r.unscheduled_qty),
+    sortFn: (a, b) => a.unscheduled_qty - b.unscheduled_qty,
+  },
+  {
+    key: 'surplus',
+    label: 'Surplus',
+    width: 95,
+    align: 'right',
+    // Surplus = Available − Unscheduled. Negative = even undated demand can't be
+    // met; positive = genuinely spare stock (dead-stock signal).
+    accessor: (r) => (
+      <span
+        className={`${styles.numCell} ${r.surplus_qty < 0 ? styles.numCellNeg : r.surplus_qty > 0 ? styles.numCellPos : styles.numCellZero}`}
+        title={`${fmtQty(r.available_qty)} available − ${fmtQty(r.unscheduled_qty)} unscheduled = ${fmtQty(r.surplus_qty)} surplus`}
+      >
+        {fmtQty(r.surplus_qty)}
+      </span>
+    ),
+    searchValue: () => '',
+    filterValue: (r) => String(r.surplus_qty),
+    sortFn: (a, b) => a.surplus_qty - b.surplus_qty,
   },
   {
     key: 'value',
@@ -618,6 +730,37 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
     sortFn: (a, b) => (a.oldest_lot_at ?? '9999-12-31').localeCompare(b.oldest_lot_at ?? '9999-12-31'),
   },
 ];
+
+/* Incoming PO drill inside a Balances row expansion (owner 2026-07-24 — the
+   Incoming column must name WHICH PO(s) bring the stock + their ETA, not just a
+   count). Rendered above the variant panel; hidden when nothing is inbound. */
+const IncomingPoPanel = ({ pos }: { pos: InventoryIncomingPo[] }) => {
+  if (pos.length === 0) return null;
+  return (
+    <table className={`${styles.table} bg-surface-2`}>
+      <tbody>
+        {pos.map((p) => (
+          <tr key={p.po_number}>
+            <td style={{ paddingLeft: 22, width: 200 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span className={styles.numCellZero}>↳ incoming</span>
+                {/* PO number only (the detail route keys on the PO's UUID, which
+                    this per-SKU roll-up doesn't carry) — shown as a code chip,
+                    not a link, so it never routes to a broken page. */}
+                <span className={styles.codeChip}>{p.po_number}</span>
+              </span>
+            </td>
+            <td className={styles.numCellZero}>ETA {fmtEta(p.eta)}</td>
+            <td className={`${styles.numCell} ${styles.numCellPos}`} style={{ width: 90, textAlign: 'right' }}>
+              +{fmtQty(p.qty)}
+            </td>
+            <td />
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+};
 
 /* Variant breakdown panel inside a row's DataGrid expansion (was inline
    <tr>s pre-DataGrid). Sums each attribute composition (variant_key) across
@@ -1037,7 +1180,7 @@ const ReservationsTab = ({
                     {r.variant_key ? ` · ${formatVariantKey(r.variant_key) || 'Standard'}` : ''}
                   </div>
                 </td>
-                <td>{r.warehouse_name ?? r.warehouse_code ?? '—'}</td>
+                <td>{r.warehouse_code ?? r.warehouse_name ?? '—'}</td>
                 <td className={styles.numCellZero}>{r.batch_no ?? '—'}</td>
                 <td className={`${styles.numCell} ${r.qty_remaining > 0 ? styles.numCellPos : styles.numCellZero}`}>
                   {fmtQty(r.qty_remaining)}
@@ -1078,14 +1221,20 @@ const ProductBreakdownDrawer = ({
   const movements = useInventoryMovements({ productCode: code });
   const cogs = useCogsEntries({ productCode: code });
   const warehouses = useWarehouses();
+  /* Item 4 (owner 2026-07-24) — which Sales Order(s) this SKU's stock is
+     reserved to. Same company-scoped READY-SO ↔ open-lot matching the
+     Reservations tab uses (GET /inventory/reservations), narrowed to this SKU. */
+  const reservations = useInventoryReservations({ productCode: code });
 
   /* Movements + COGS sections are collapsed by default (Commander 2026-05-30).
      Operator opens what they want to see — keeps the drawer scannable. */
   const [movementsOpen, setMovementsOpen] = useState(false);
   const [cogsOpen, setCogsOpen] = useState(false);
+  const [reservedOpen, setReservedOpen] = useState(false);
 
-  /* Warehouse name lookup (UUID → code) so the Movements table can show
-     "SLGR" instead of "41d544bc". */
+  /* Warehouse lookup (UUID → row). The tables below render the SHORT code-name
+     (`code`, "KL WAREHOUSE"), the ONE canonical warehouse label the owner
+     wants — never the long `name` ("BALAKONG WAREHOUSE") or a code+name concat. */
   const whById = useMemo(
     () => new Map((warehouses.data ?? []).map((w) => [w.id, w])),
     [warehouses.data],
@@ -1169,7 +1318,12 @@ const ProductBreakdownDrawer = ({
                 const attrs = formatVariantKey(b.variant_key, b.fabric_supplier_code);
                 return (
                   <tr key={`${b.warehouse_id}|${b.variant_key ?? ''}`}>
-                    <td>{b.warehouse_name ?? b.warehouse_code ?? '—'}</td>
+                    {/* #1214 unified Location to warehouse_name (the LONG form,
+                        "BALAKONG WAREHOUSE") while FIFO + Movements below show
+                        warehouse_code (the SHORT code-name, "KL WAREHOUSE") —
+                        two names for one warehouse. Owner wants the SHORT
+                        code-name EVERYWHERE, so Location is now code-first too. */}
+                    <td>{b.warehouse_code ?? b.warehouse_name ?? '—'}</td>
                     <td>{attrs || <span className={styles.numCellZero}>Standard</span>}</td>
                     <td className={`${styles.numCell} ${b.qty > 0 ? styles.numCellPos : styles.numCellZero}`}>
                       {fmtQty(b.qty)}
@@ -1219,6 +1373,73 @@ const ProductBreakdownDrawer = ({
             </tbody>
           </table>
         </div>
+
+        {/* Reserved-for-SO — item 4. Which Sales Order(s) this SKU's stock is
+            allocated to (so a lot sitting many days reads as spoken-for vs
+            free). Collapsed by default; count in the header. */}
+        <button type="button"
+          onClick={() => setReservedOpen((v) => !v)}
+          style={{
+            marginTop: 'var(--space-4)', cursor: 'pointer', background: 'transparent',
+            border: 'none', padding: 0, display: 'inline-flex', alignItems: 'center', gap: 4,
+          }}>
+          <span className={styles.eyebrow} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            {reservedOpen ? <ChevronDown size={12} strokeWidth={1.75} /> : <ChevronRight size={12} strokeWidth={1.75} />}
+            Reserved for Sales Orders ({(reservations.data ?? []).filter((r) => r.status === 'RESERVED').length}) — which SO holds this stock
+          </span>
+        </button>
+        {reservedOpen && (
+          <div className={styles.tableCard}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Warehouse</th>
+                  <th>Batch</th>
+                  <th style={{ textAlign: 'right' }}>Qty on Shelf</th>
+                  <th>Reserved For (SO)</th>
+                  <th>Reserved Since</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reservations.isLoading && <tr><td colSpan={6} className={styles.emptyRow}>Loading…</td></tr>}
+                {!reservations.isLoading && (reservations.data ?? []).length === 0 && (
+                  <tr><td colSpan={6} className={styles.emptyRow}>No open lots for this SKU.</td></tr>
+                )}
+                {!reservations.isLoading && (reservations.data ?? []).map((r, i) => (
+                  <tr key={`${r.warehouse_id}|${r.variant_key}|${r.batch_no ?? ''}|${i}`}>
+                    <td>
+                      <span className={`${styles.movementPill} ${r.status === 'RESERVED' ? styles.movementOut : styles.movementIn}`}>
+                        {r.status === 'RESERVED' ? 'Reserved' : 'Free'}
+                      </span>
+                    </td>
+                    {/* SHORT code-name, consistent with every other warehouse cell. */}
+                    <td>{r.warehouse_code ?? r.warehouse_name ?? '—'}</td>
+                    <td className={styles.numCellZero}>{r.batch_no ?? '—'}</td>
+                    <td className={`${styles.numCell} ${r.qty_remaining > 0 ? styles.numCellPos : styles.numCellZero}`}>
+                      {fmtQty(r.qty_remaining)}
+                    </td>
+                    <td>
+                      {r.reserved_by.length === 0
+                        ? <span className={styles.numCellZero}>No order</span>
+                        : r.reserved_by.map((x, j) => (
+                            <span key={x.doc_no}>
+                              {j > 0 ? ', ' : ''}
+                              <Link to={`/scm/sales-orders/${encodeURIComponent(x.doc_no)}`} className={styles.docLink}>
+                                {x.doc_no}
+                              </Link>
+                            </span>
+                          ))}
+                    </td>
+                    <td className={styles.numCellZero} title={r.reserved_since ?? undefined}>
+                      {r.reserved_since ? fmtAgeDays(r.reserved_since) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {/* Movements ledger — collapsed by default. Header is a button. */}
         <button type="button"

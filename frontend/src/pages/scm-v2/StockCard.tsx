@@ -126,9 +126,11 @@ export const StockCard = () => {
      small summary views with their own collapse toggle. */
   type MovementRow = InventoryMovement & { runningBalance: number };
   const movementColumns = useMemo<DataGridColumn<MovementRow>[]>(() => {
+    // SHORT code-name only ("KL WAREHOUSE") — the ONE canonical warehouse label
+    // (owner 2026-07-24). Not a code+name concat, not the long `name`.
     const whName = (id: string) => {
       const wh = warehouses.find((w) => w.id === id);
-      return wh ? `${wh.code} · ${wh.name}` : '—';
+      return wh ? wh.code : '—';
     };
     const signedQty = (m: MovementRow) => m.movement_type === 'OUT' ? -m.qty : m.qty;
     return [
@@ -296,7 +298,7 @@ export const StockCard = () => {
               {productName ?? 'No movements yet for this SKU.'}
               {warehouseId && warehouses.length > 0 && (() => {
                 const w = warehouses.find((x) => x.id === warehouseId);
-                return w ? ` · scoped to ${w.code} · ${w.name}` : null;
+                return w ? ` · scoped to ${w.code}` : null;
               })()}
             </p>
           </div>
@@ -354,7 +356,7 @@ export const StockCard = () => {
               setSearchParams(p, { replace: true });
             }}
           >
-            {w.code} · {w.name}
+            {w.code}
           </button>
         ))}
       </div>
