@@ -53,7 +53,12 @@ export function isEntityType(v: unknown): v is EntityType {
    supplier). It is a separate verb rather than an UPDATE because the question it
    answers is different — "who told the supplier, and when" is asked long after
    nobody cares which column changed. */
-export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND'] as const;
+/* AMENDMENT_PO_APPROVED is the one document-revision verb — a Purchase Order
+   amendment was approved and APPLIED (snapshot + line diffs + revision bump),
+   the PO-side mirror of the SO trail's 'AMENDMENT_PO_APPROVED' recordSoAudit
+   action. It answers "who revised this PO, and to which revision", which UPDATE
+   (a field edit) does not. See lib/po-revision.ts applyPoAmendment. */
+export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED'] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /* The Houzs caller, as middleware/auth.ts stashes it. Deliberately structural:
