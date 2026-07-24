@@ -670,6 +670,7 @@ GET,/api/scm/po-amendments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + 
 PATCH,/api/scm/po-amendments/:id/approve,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/po-amendments.ts
 PATCH,/api/scm/po-amendments/:id/reject,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/po-amendments.ts
 PATCH,/api/scm/po-amendments/:id/withdraw,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/po-amendments.ts
+GET,/api/scm/po-so-coverage/:type/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/po-so-coverage.ts
 GET,/api/scm/pos-cart,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/pos-cart.ts
 PUT,/api/scm/pos-cart,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/pos-cart.ts
 GET,/api/scm/pos-pools/bedframe-colours,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/pos-pools.ts
