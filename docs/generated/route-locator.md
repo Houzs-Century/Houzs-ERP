@@ -1029,8 +1029,8 @@ Total: 888 route registrations across 118 files.
 - L164  POST   /statuses
 
 ## backend/src/scm/routes/document-flow.ts  (2)
-- L380  GET    /candidate-pos/:soDocNo
-- L421  GET    /:type/:id
+- L399  GET    /candidate-pos/:soDocNo
+- L440  GET    /:type/:id
 
 ## backend/src/scm/routes/fabric-library.ts  (2)
 - L32  GET    /
@@ -1118,7 +1118,7 @@ Total: 888 route registrations across 118 files.
 - L195  GET    /
 
 ## backend/src/scm/routes/po-so-coverage.ts  (1)
-- L84  GET    /:type/:id
+- L144  GET    /:type/:id
 
 ## backend/src/scm/routes/scan-payment.ts  (1)
 - L412  POST   /extract
