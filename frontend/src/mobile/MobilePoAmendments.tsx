@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useAmendments, type AmendmentRow } from "../vendor/scm/lib/so-amendment-queries";
+import { usePoAmendments, type PoAmendmentRow } from "../vendor/scm/lib/po-amendment-queries";
 import {
   simplifiedAmendmentPill,
   amendmentBucketOf,
@@ -12,32 +12,23 @@ import { useStaffLookup } from "../hooks/useStaffLookup";
 import "./mobile.css";
 
 /* ------------------------------------------------------------------ *
- * Mobile SO-Amendments queue — the phone twin of desktop
- * pages/scm-v2/Amendments.tsx. One inbox of every pending SO revision;
- * status chips filter it and tapping a card opens the SO in MobileSODetail,
- * which ALREADY hosts the amendment diff / supplier-confirm / approve gates
- * (from feat/mobile-so-line-edit-amendment). This screen only lists + routes.
+ * Mobile PO-Amendments queue — the phone twin of desktop
+ * pages/scm-v2/PoAmendments.tsx and the PO sibling of MobileAmendments.
+ * One inbox of every Purchase Order amendment; the SIMPLIFIED status chips
+ * (Requested / Approved / All) filter it and tapping a card opens the PO
+ * amendment job card (MobilePoAmendmentDetail) — the diff + single-approver
+ * gate. This screen only lists + routes.
  *
- * REAL-DATA DISCIPLINE: the list endpoint (GET /so-amendments →
- * { amendments: AmendmentRow[] }) returns id / so_doc_no / amendment_no /
- * status / reason / requested_by / created_at ONLY. It carries no customer
- * name and no per-line change kinds, so the mockup's customer line and
- * QTY/SPEC/ADD/REMOVE change-tags are intentionally dropped rather than
- * paid for with a per-row detail fetch — those live on AmendmentDetail.lines,
- * surfaced on the SO detail's diff view.
+ * REAL-DATA DISCIPLINE: the list endpoint (GET /po-amendments) returns id /
+ * po_number / amendment_no / status / reason / requested_by / created_at only —
+ * no supplier name, no per-line change kinds. Those live on the detail.
  * ------------------------------------------------------------------ */
 
-// SIMPLIFIED status filter (owner 2026-07-24): Requested / Approved / All — same
-// as the desktop queue. The granular backend enum is collapsed via
-// amendmentBucketOf; the closed (REJECTED) rows are reached through "All".
 const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
-// Amendments still awaiting an action — the REQUESTED bucket (open / in-flight);
-// the header "N to action" count.
+// Open = the REQUESTED bucket (awaiting approval) — the "N to action" count.
 const IS_OPEN = (s: string) => amendmentBucketOf(s) === "REQUESTED";
 
-// Simplified status TONE → mobile .b-* badge class (info=Requested,
-// success=Approved, danger=Rejected). Mirrors MobileModuleList's TONE_BADGE_CLASS.
 const TONE_BADGE_CLASS: Record<StatusTone, string> = {
   neutral: "b-grey",
   info: "b-brand",
@@ -52,20 +43,19 @@ function AmendmentBadge({ status }: { status: string }) {
   return <span className={`badge ${TONE_BADGE_CLASS[tone]}`}>{label}</span>;
 }
 
-export function MobileAmendments({
+export function MobilePoAmendments({
   onBack,
   onOpen,
 }: {
   onBack: () => void;
-  onOpen: (docNo: string) => void;
+  onOpen: (amendmentId: string) => void;
 }) {
   const [chip, setChip] = useState<string>("all");
-  const { data, isLoading, error } = useAmendments();
-  // requested_by is a bare scm.staff uuid — same roster resolve as desktop.
+  const { data, isLoading, error } = usePoAmendments();
   const { actorNameOf } = useStaffLookup();
 
-  const allRows = useMemo<AmendmentRow[]>(() => data?.amendments ?? [], [data]);
-  const rows = useMemo<AmendmentRow[]>(
+  const allRows = useMemo<PoAmendmentRow[]>(() => data?.amendments ?? [], [data]);
+  const rows = useMemo<PoAmendmentRow[]>(
     () => (chip === "all" ? allRows : allRows.filter((a) => amendmentBucketOf(a.status) === chip)),
     [allRows, chip],
   );
@@ -78,10 +68,10 @@ export function MobileAmendments({
           <button className="back" onClick={onBack}>
             <span className="chev">‹</span> Menu
           </button>
-          <span className="eyebrow">SO Revision Inbox</span>
+          <span className="eyebrow">PO Revision Inbox</span>
         </div>
         <div className="hdr-row" style={{ marginTop: 2 }}>
-          <div className="scr-title">Amendments</div>
+          <div className="scr-title">PO Amendments</div>
           {openCount > 0 && <span className="badge b-amber">{openCount} to action</span>}
         </div>
 
@@ -110,14 +100,14 @@ export function MobileAmendments({
               const amdNo = a.amendment_no != null && String(a.amendment_no).trim() !== "" ? String(a.amendment_no) : null;
               const reason = (a.reason ?? "").trim();
               return (
-                <button key={a.id} className="amd" onClick={() => onOpen(a.so_doc_no)}>
+                <button key={a.id} className="amd" onClick={() => onOpen(a.id)}>
                   <div className="r1">
-                    <span className="sono tnum">{a.so_doc_no}</span>
+                    <span className="sono tnum">{a.po_number}</span>
                     <AmendmentBadge status={a.status} />
                   </div>
                   {(amdNo || reason) && (
                     <div className="amdno">
-                      {amdNo ? <span className="tnum">Amendment #{amdNo}</span> : null}
+                      {amdNo ? <span className="tnum">{amdNo}</span> : null}
                       {amdNo && reason ? " · " : ""}
                       {reason ? `"${reason}"` : ""}
                     </div>
@@ -134,7 +124,7 @@ export function MobileAmendments({
                 <div className="empty-t">
                   {chip === "all" ? "No amendments yet." : `No ${amendmentBucketLabel(chip).toLowerCase()} amendments.`}
                 </div>
-                <div className="empty-s">Raise one from a processing-locked Sales Order.</div>
+                <div className="empty-s">Raise one from a Purchase Order on desktop.</div>
               </div>
             )}
           </div>
@@ -144,4 +134,4 @@ export function MobileAmendments({
   );
 }
 
-export default MobileAmendments;
+export default MobilePoAmendments;

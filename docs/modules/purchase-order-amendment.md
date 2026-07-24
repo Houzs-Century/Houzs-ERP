@@ -161,17 +161,64 @@ amendment" button) with the simplified Requested / Approved status label. The PO
 side reuses the same generator + `poAmendmentToPdfInput` once the PO amendment
 pages land.
 
-### DEFERRED to a follow-up PR
+### PO amendment UI — SHIPPED (feat/amendment-ui)
 
-- PO amendment desktop pages (list / detail / create) under
-  `frontend/src/pages/scm-v2/` and mobile under `frontend/src/mobile/`, mirroring
-  the SO amendment surfaces (`Amendments.tsx` / `AmendmentDetailV2.tsx` /
-  `MobileAmendments.tsx`), each with the simplified **Requested / Approved / All**
-  filter, and the "Print amendment" button wired to `poAmendmentToPdfInput`.
-- The SO-surface status simplification (hiding the old supplier-pending /
-  PO-approved / sent states from the list + detail while keeping the backend enum
-  values the 2990 mirror depends on).
-- Adding PO amendments to the PO relationship map, analogously to #1229's SO
-  amendment branch. NOTE: `PurchaseOrderDetail` / the relationship-map files are
-  concurrently edited by another agent (branch `feat/relmap-clickable-amendment`,
-  assigned-SO feature) — keep the amendment edits localized and merge carefully.
+Desktop + mobile, mirroring the SO amendment surfaces, built to the SIMPLIFIED
+single-approver model.
+
+**Queries** — `frontend/src/vendor/scm/lib/po-amendment-queries.ts`. TanStack
+hooks against the single `/po-amendments` mount: `usePoAmendments` (list),
+`usePoAmendmentDetail`, `useCreatePoAmendment` (POST `/po-amendments`),
+`useApprovePoAmendment` / `useRejectPoAmendment` / `useWithdrawPoAmendment`. Every
+gate invalidates the amendment list/detail + the PO list/detail keys
+(`mfg-purchase-orders*` / `mfg-purchase-order-detail`) + `po-revisions`.
+
+**Desktop**
+- `pages/scm-v2/PoAmendments.tsx` — the queue (DataGrid), route `/scm/po-amendments`.
+- `pages/scm-v2/PoAmendmentDetailV2.tsx` — the job card, route
+  `/scm/po-amendments/:id`: revision hero (Requested -> Approved), the before ->
+  after diff per line (qty / cost / delivery / spec / add / remove) + the header
+  diffs, the **Print amendment** button (shared `generateAmendmentPdf` +
+  `poAmendmentToPdfInput`), and the single-approver gate (approve / reject /
+  withdraw, gated on `scm.po_amendment.approve` + requester-for-withdraw).
+- `components/scm-v2/PoAmendmentCreateModal.tsx` — the create-request flow: a
+  focused diff editor over the PO's current lines (qty / unit cost / per-line
+  delivery date / remove) + header delivery date + notes + reason. Opened from a
+  localized **Raise amendment** button on `PurchaseOrderDetailV2` (shown on a
+  live, non-cancelled PO to `scm.po_amendment.create` holders). Adding a brand-new
+  line and changing the supplier are backend-supported but deferred in this editor
+  (they need the product / supplier pickers the big PO editor owns).
+
+**Mobile**
+- `mobile/MobilePoAmendments.tsx` — the queue, screen `po-amendments`, menu row
+  under Procurement & MRP.
+- `mobile/MobilePoAmendmentDetail.tsx` — the job card: diff + gate actions +
+  Print. Screen `po-amendment-detail`, reached by tapping a queue row.
+- Mobile CREATE is deferred: the PO has no mobile detail/editor surface to host
+  it, so raising a PO amendment is desktop-only for now (the review/approve inbox
+  is the high-value mobile flow). Deep-linking `/scm/po-amendments/:id` directly on
+  a phone is not wired (in-app tap only).
+
+### Status simplification — SHIPPED
+
+The amendment LIST surfaces (SO + PO, desktop + mobile) collapse to
+**Requested / Approved / All**. Shared helpers in `vendor/scm/lib/status-pill.ts`:
+`amendmentBucketOf` (REQUESTED = open incl. SO's SUPPLIER_PENDING; APPROVED =
+applied incl. SO's SO_APPROVED / PO_APPROVED / SENT; REJECTED = closed),
+`simplifiedAmendmentPill`, `AMENDMENT_LIST_CHIPS`, `amendmentBucketLabel`, plus an
+`AmendmentStatusPill` component. The granular SO enum + the SO detail stepper +
+the backend values are UNCHANGED — only the list display/filter is collapsed, and
+the closed (REJECTED / withdrawn) rows are reached via **All**. A new
+`poAmendment` docType was added to the canonical map (REQUESTED / APPROVED /
+REJECTED).
+
+### Relationship map — SHIPPED (localized; concurrent-edit overlap flagged)
+
+PO amendments now branch off the Purchase Order in the relationship map, the way
+#1229 branched SO amendments off the SO. `document-flow.ts` surfaces a separate
+`poAmendments` array (keyed to the PO nodes in the graph), and `DocumentFlowModal`
+(the PO map) renders them as a clickable chip row -> `/scm/po-amendments/:id`.
+NOTE: `document-flow.ts` / `DocumentFlowModal.tsx` / `PurchaseOrderDetailV2.tsx`
+overlap with the concurrent `feat/relmap-clickable-amendment` work — the edits
+here are additive (an appended query block, a chip row, one button) to keep the
+merge trivial.

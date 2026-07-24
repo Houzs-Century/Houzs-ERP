@@ -36,11 +36,21 @@ export type FlowAmendment = {
   status: string | null;
   createdAt: string | null;
 };
+// PO amendments (mig 0192) branch off the Purchase Order node — the PO-side
+// sibling of FlowAmendment, each clickable to /scm/po-amendments/:id.
+export type PoFlowAmendment = {
+  id: string;
+  poId: string;
+  poNumber: string;
+  amendmentNo: number | string;
+  status: string | null;
+  createdAt: string | null;
+};
 
 export const useDocumentFlow = (type: FlowNodeType | null, id: string | null) =>
   useQuery({
     queryKey: ['document-flow', type, id],
-    queryFn: () => authedFetch<{ nodes: FlowNode[]; edges: FlowEdge[]; rootSos: string[]; amendments?: FlowAmendment[] }>(
+    queryFn: () => authedFetch<{ nodes: FlowNode[]; edges: FlowEdge[]; rootSos: string[]; amendments?: FlowAmendment[]; poAmendments?: PoFlowAmendment[] }>(
       `/document-flow/${type}/${encodeURIComponent(id!)}`,
     ),
     enabled: Boolean(type && id),

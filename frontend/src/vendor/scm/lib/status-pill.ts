@@ -26,7 +26,7 @@ export type StatusDocType =
   | 'po' | 'grn' | 'pi' | 'pr'
   | 'so' | 'do' | 'si' | 'dr'
   | 'stockTransfer' | 'stockTake'
-  | 'soAmendment' | 'pv';
+  | 'soAmendment' | 'poAmendment' | 'pv';
 
 type Entry = { label: string; tone: StatusTone };
 
@@ -120,6 +120,16 @@ const SO_AMENDMENT: Record<string, Entry> = {
   REJECTED:         { label: 'Rejected',           tone: 'danger' },
 };
 
+// PO amendment / revision workflow (Houzs, mig 0192). SIMPLIFIED single-approver
+// state machine: REQUESTED -> APPROVED, with REJECTED the terminal close for both
+// a rejection and a withdrawal. REQUESTED reads as in-flight (info/burnt); APPROVED
+// is the terminal happy path (success/green); REJECTED closes it (danger/red).
+const PO_AMENDMENT: Record<string, Entry> = {
+  REQUESTED: { label: 'Requested', tone: 'info' },
+  APPROVED:  { label: 'Approved',  tone: 'success' },
+  REJECTED:  { label: 'Rejected',  tone: 'danger' },
+};
+
 // Payment Voucher (Phase 1-B). DRAFT reads as pending; POSTED is the terminal
 // happy path (posted to the GL); CANCELLED closes it (danger/red).
 const PV: Record<string, Entry> = {
@@ -132,7 +142,7 @@ const MAPS: Record<StatusDocType, Record<string, Entry>> = {
   po: PO, grn: GRN, pi: PI, pr: PR,
   so: SO, do: DO, si: SI, dr: DR,
   stockTransfer: STOCK_TRANSFER, stockTake: STOCK_TAKE,
-  soAmendment: SO_AMENDMENT, pv: PV,
+  soAmendment: SO_AMENDMENT, poAmendment: PO_AMENDMENT, pv: PV,
 };
 
 const titleCase = (raw: string): string =>
@@ -160,3 +170,42 @@ export function resolveStatusPill(docType: StatusDocType, status: string | null 
 export function statusLabel(docType: StatusDocType, status: string | null | undefined): string {
   return resolveStatusPill(docType, status).label;
 }
+
+// ── Simplified amendment status buckets (owner 2026-07-24) ───────────────────
+// The amendment LIST surfaces (SO + PO queues, desktop + mobile) collapse to just
+// Requested / Approved / All. The SO amendment backend still carries the granular
+// two-gate enum (SUPPLIER_PENDING / SO_APPROVED / PO_APPROVED / SENT) that the
+// 2990 mirror + the SO detail stepper depend on — so this ONLY changes what the
+// list shows, never the stored value. The PO amendment enum already IS the
+// simplified set (REQUESTED / APPROVED / REJECTED), so its buckets are identity.
+//
+//   REQUESTED bucket = still open / in-flight (REQUESTED, SUPPLIER_PENDING)
+//   APPROVED  bucket = applied            (SO_APPROVED, PO_APPROVED, SENT, APPROVED)
+//   REJECTED  bucket = closed w/o applying (REJECTED — reached via the All chip)
+export type AmendmentBucket = 'REQUESTED' | 'APPROVED' | 'REJECTED';
+
+const APPLIED_STATES = ['SO_APPROVED', 'PO_APPROVED', 'SENT', 'APPROVED'];
+
+/** Collapse any SO/PO amendment status to its simplified list bucket. */
+export const amendmentBucketOf = (status: string | null | undefined): AmendmentBucket => {
+  const s = String(status ?? '').toUpperCase();
+  if (s === 'REJECTED') return 'REJECTED';
+  if (APPLIED_STATES.includes(s)) return 'APPROVED';
+  return 'REQUESTED';
+};
+
+const BUCKET_ENTRY: Record<AmendmentBucket, Entry> = {
+  REQUESTED: { label: 'Requested', tone: 'info' },
+  APPROVED:  { label: 'Approved',  tone: 'success' },
+  REJECTED:  { label: 'Rejected',  tone: 'danger' },
+};
+
+/** The simplified {label, tone} an amendment LIST row shows — one of exactly
+ *  Requested / Approved / Rejected, regardless of the granular backend status. */
+export const simplifiedAmendmentPill = (status: string | null | undefined): Entry =>
+  BUCKET_ENTRY[amendmentBucketOf(status)];
+
+/** The simplified filter chips every amendment list uses. */
+export const AMENDMENT_LIST_CHIPS = ['all', 'REQUESTED', 'APPROVED'] as const;
+export const amendmentBucketLabel = (bucket: string): string =>
+  bucket === 'all' ? 'All' : (BUCKET_ENTRY[bucket as AmendmentBucket]?.label ?? bucket);

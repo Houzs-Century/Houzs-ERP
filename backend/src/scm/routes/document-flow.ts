@@ -815,7 +815,33 @@ documentFlow.get('/:type/:id', async (c) => {
     createdAt: a.created_at ?? null,
   }));
 
-  return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments });
+  // ── 11. PO amendments (revision requests) ────────────────────────────────
+  // The PO-side sibling of the SO amendment side list above (mig 0192). A PO
+  // amendment IS its own document now (po_amendments) — not the PO leg of an SO
+  // amendment — so it branches off the Purchase Order node(s), each clickable to
+  // /scm/po-amendments/:id. Keyed by po_id against the PO nodes already in the
+  // graph, which were themselves gathered from company-scoped reads, so this can
+  // only ever reach this company's amendments (same scoping argument as the SO
+  // block). Returned as a SEPARATE `poAmendments` array so the SO amendment
+  // shape is untouched.
+  const poIdsInGraph = [...nodes.values()].filter((n) => n.type === 'po').map((n) => n.id);
+  let poAmendments: Array<{ id: string; poId: string; poNumber: string; amendmentNo: number | string; status: string | null; createdAt: string | null }> = [];
+  if (poIdsInGraph.length > 0) {
+    const { data: poAmendRows } = await sb.from('po_amendments')
+      .select('id, po_id, po_number, amendment_no, status, created_at')
+      .in('po_id', poIdsInGraph)
+      .order('amendment_no', { ascending: true });
+    poAmendments = ((poAmendRows ?? []) as any[]).map((a) => ({
+      id: String(a.id),
+      poId: String(a.po_id),
+      poNumber: a.po_number,
+      amendmentNo: a.amendment_no,
+      status: a.status ?? null,
+      createdAt: a.created_at ?? null,
+    }));
+  }
+
+  return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments, poAmendments });
 });
 
 export default documentFlow;
