@@ -103,6 +103,10 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "components/IosInstallGuide.tsx",
   "components/PwaBanners.tsx",
   "components/pwaDismissal.ts",
+  // Generic resizable slide-over: persists ONLY its chosen width (a DEVICE_PREF
+  // under the panel- family) per caller-supplied storageKey. No identity/company
+  // data — the key is a layout preference, same class as the DataGrid layouts.
+  "components/ResizableDrawer.tsx",
   "components/RouteFallback.tsx",
   // The banner's local-ack memo moved into the shared hook (desktop + mobile
   // pop-ups answer "have I seen this?" the same way); AnnouncementBanner.tsx is

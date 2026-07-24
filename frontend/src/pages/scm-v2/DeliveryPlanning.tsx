@@ -36,7 +36,7 @@
 
 import { useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { MapPinned, Truck, Plus, MessageSquare } from 'lucide-react';
+import { MapPinned, Truck, Plus, MessageSquare, CalendarClock } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { fmtCenti, fmtDateOrDash, fmtDateTime, buildVariantSummary } from '@2990s/shared';
@@ -45,6 +45,7 @@ import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataG
 import { DeliveryFieldsDrawer } from '../../vendor/scm/components/DeliveryFieldsDrawer';
 import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
+import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
 import { SendDeliveryMessageModal } from '../../vendor/scm/components/SendDeliveryMessageModal';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -576,6 +577,11 @@ export const DeliveryPlanning = () => {
   const [sel, setSel] = useState<Set<string>>(new Set());
   const convertSos = useConvertSosToDo();
 
+  /* Phase-2 scheduling drawer (resizable): open from the multiselect bar. It
+     schedules the selected SO orders onto a lorry-day trip via the existing
+     schedule path — no leaving the board. */
+  const [scheduling, setScheduling] = useState(false);
+
   /* Inline-cell + bulk-edit write path (shared). The backend schedule endpoint
      already accepts scheduleDate / deliveryState / driverId / lorryId. */
   const sched = useScheduleDelivery();
@@ -774,6 +780,17 @@ export const DeliveryPlanning = () => {
     () => (activeState === 'ALL' ? allOrders : allOrders.filter((o) => o.delivery_state === activeState)),
     [allOrders, activeState],
   );
+
+  /* The SO order objects behind the current selection — fed to the scheduling
+     drawer as its ordered stop list. Resolved from the region-scoped board (all
+     states) by so_doc_no, so a selection made under one state tab still resolves
+     after a tab switch. */
+  const selectedOrders = useMemo<PlanningOrder[]>(() => {
+    const docs = new Set(selectedSoDocNos());
+    return allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no));
+    // selectedSoDocNos reads `sel`; recompute when either the board or the
+    // selection changes.
+  }, [allOrders, sel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Latest WhatsApp (Seampify) send per SO — drives the "Message" column.
      Doc list from the WHOLE region fetch (not the state tab) so switching tabs
@@ -1374,6 +1391,18 @@ export const DeliveryPlanning = () => {
 
           <span className={styles.bulkSpacer} />
 
+          {/* Schedule — open the resizable scheduling drawer for the selected SO
+              orders (Phase 2). SO-only, like the other bulk actions. */}
+          <Button
+            variant="secondary"
+            disabled={selectedSoDocNos().length === 0}
+            onClick={() => setScheduling(true)}
+            title={selectedSoDocNos().length === 0 ? 'Select one or more sales orders first' : 'Schedule the selected orders onto a trip'}
+          >
+            <CalendarClock size={14} strokeWidth={1.75} />
+            <span>Schedule ({selectedSoDocNos().length})</span>
+          </Button>
+
           {canConvertToDo && (
             <Button variant="secondary" disabled={convertSos.isPending} onClick={() => void convertSelected()}>
               <Truck size={14} strokeWidth={1.75} />
@@ -1444,6 +1473,14 @@ export const DeliveryPlanning = () => {
 
       {schedulingDp && (
         <ScheduleDpOrderDrawer dpRow={schedulingDp} onClose={() => setSchedulingDp(null)} />
+      )}
+
+      {scheduling && (
+        <ScheduleTripDrawer
+          orders={selectedOrders}
+          onClose={() => setScheduling(false)}
+          onOpenTrips={() => navigate('/scm/trips')}
+        />
       )}
 
       {sendingRows && sendingRows.length > 0 && (
