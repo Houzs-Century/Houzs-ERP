@@ -523,7 +523,7 @@ export const PurchaseConsignmentReceiveNew = () => {
               >
                 <option value="">{warehousesQ.isLoading ? 'Loading warehouses…' : '— Pick a warehouse —'}</option>
                 {sortByText(warehousesQ.data ?? []).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                  <option key={w.id} value={w.id}>{w.code}</option>
                 ))}
               </select>
               <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>

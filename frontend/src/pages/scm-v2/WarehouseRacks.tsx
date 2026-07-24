@@ -139,7 +139,7 @@ function RackScopeField({
           {others.map((w) => (
             <label key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
               <input type="checkbox" checked={chosen.includes(w.id)} onChange={() => toggle(w.id)} />
-              <span>{w.code} — {w.name}</span>
+              <span>{w.code}</span>
             </label>
           ))}
         </div>
@@ -233,7 +233,7 @@ export const WarehouseRacks = () => {
               onChange={(e) => selectWarehouse(e.target.value)}
             >
               {(warehouses.data ?? []).map((w) => (
-                <option key={w.id} value={w.id}>{w.code} — {w.name}</option>
+                <option key={w.id} value={w.id}>{w.code}</option>
               ))}
             </select>
             <ChevronDown className={styles.selectChevron} size={14} strokeWidth={1.75} />

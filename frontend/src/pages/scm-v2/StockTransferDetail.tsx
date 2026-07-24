@@ -169,7 +169,7 @@ export const StockTransferDetail = () => {
               <select value={fromWarehouseId} className={styles.fieldSelect} disabled>
                 <option value="">—</option>
                 {sortByText(warehouses.data ?? []).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                  <option key={w.id} value={w.id}>{w.code}</option>
                 ))}
               </select>
             </label>
@@ -182,7 +182,7 @@ export const StockTransferDetail = () => {
               <select value={toWarehouseId} className={styles.fieldSelect} disabled>
                 <option value="">—</option>
                 {sortByText(warehouses.data ?? []).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                  <option key={w.id} value={w.id}>{w.code}</option>
                 ))}
               </select>
             </label>

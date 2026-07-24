@@ -693,7 +693,7 @@ const SupplierCard = ({
             <InfoCell label="Receive Into"
               value={(() => {
                 const wh = warehouses.find((w) => w.id === grn.warehouse_id);
-                return wh ? `${wh.code} · ${wh.name}` : null;
+                return wh ? wh.code : null;
               })()} />
             <div style={{ gridColumn: 'span 2' }}>
               <InfoCell label="Notes" value={grn.notes || null} />
@@ -745,7 +745,7 @@ const SupplierCard = ({
                 onChange={(e) => onField('warehouseId', e.target.value)}>
                 <option value="">— No warehouse —</option>
                 {sortByText(warehouses.filter((w) => w.is_active)).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                  <option key={w.id} value={w.id}>{w.code}</option>
                 ))}
               </select>
               <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />

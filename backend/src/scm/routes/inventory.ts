@@ -39,6 +39,7 @@ import { canonicalizeMyState } from '../lib/canonical-state';
 import { enrichVariantKeyRowsWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { isConsignmentLotSource } from '../lib/inventory-movements';
 import { computeVariantKey, effectiveDelivery, type VariantAttrs } from '../shared';
+import { warehouseLabel } from '../lib/warehouse-label';
 import type { Env, Variables } from '../env';
 
 export const inventory = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -750,10 +751,13 @@ inventory.get('/batches', async (c) => {
   };
   const rows = (lots ?? []) as Lot[];
 
-  // Warehouse names (small table).
-  const { data: whs } = await sb.from('warehouses').select('id, name');
+  // Warehouse labels (small table) — canonical short CODE, name-first fallback.
+  const { data: whs } = await sb.from('warehouses').select('id, code, name');
   const whName = new Map<string, string>();
-  for (const w of (whs ?? []) as Array<{ id: string; name: string }>) whName.set(w.id, w.name);
+  for (const w of (whs ?? []) as Array<{ id: string; code: string | null; name: string | null }>) {
+    const label = warehouseLabel(w);
+    if (label) whName.set(w.id, label);
+  }
 
   // batch_no = PO number → resolve supplier for display.
   const batchNos = [...new Set(rows.map((r) => r.batch_no))];

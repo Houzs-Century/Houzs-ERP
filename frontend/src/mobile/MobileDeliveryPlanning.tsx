@@ -1605,7 +1605,7 @@ function StopDetail({
           )}
           {pdRow(
             "Location",
-            order.customer_state || order.region || order.warehouse_name || EM,
+            order.customer_state || order.region || order.warehouse_code || order.warehouse_name || EM,
             false,
           )}
           {pdRow("Driver", order.crew?.driver || EM, true)}
