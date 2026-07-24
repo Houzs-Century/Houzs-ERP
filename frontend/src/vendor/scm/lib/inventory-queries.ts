@@ -375,8 +375,13 @@ export type InventoryReservationClaim = {
   doc_no: string;
   so_created_at: string | null;
   qty_ready: number;
+  // Owner Q4 — the reserving SO's EFFECTIVE delivery date
+  // (amended_delivery_date ?? customer_delivery_date). May be absent on older
+  // payloads; always guard.
+  delivery_date?: string | null;
 };
 export type InventoryReservation = {
+  id?: string;
   warehouse_id: string;
   warehouse_code: string | null;
   warehouse_name: string | null;
@@ -387,10 +392,57 @@ export type InventoryReservation = {
   qty_remaining: number;
   unit_cost_sen: number;
   received_at: string | null;
+  // Source of the lot (GRN / PCR / …). is_consignment is derived server-side
+  // from the SOURCE (a Purchase Consignment Receive fed this lot), NOT the
+  // warehouse flag — so PCR stock mis-posted into a normal warehouse is still
+  // excluded from owned value (BUG-HISTORY 2026-07-25).
+  source_doc_type?: string | null;
+  source_doc_no?: string | null;
+  is_consignment?: boolean;
+  fabric_supplier_code?: string;
   status: 'RESERVED' | 'FREE';
   reserved_by: InventoryReservationClaim[];
   reserved_since: string | null;
 };
+
+/* ── Shared stock-breakdown transform — ONE logic layer for both surfaces ──
+   The desktop drawer (Inventory.tsx ProductBreakdownDrawer) and the mobile Stock
+   Card (mobile/MobileStockCard.tsx) both render the merged per-lot stock view
+   from this. Splits the open-lot feed into OWNED vs CONSIGNMENT by each lot's
+   source-derived is_consignment flag, and computes the OWNED value/quantity
+   totals with consignment excluded from value (owner rule: show consignment
+   quantity, keep it out of inventory value). FIFO order (oldest received first)
+   is preserved as the backend returns it. Null-safe throughout. */
+export type StockBreakdown = {
+  ownedLots: InventoryReservation[];
+  consignmentLots: InventoryReservation[];
+  ownedQty: number;
+  ownedValueSen: number;
+  consignmentQty: number;
+  totalQty: number;
+};
+
+export function buildStockBreakdown(
+  rows: InventoryReservation[] | null | undefined,
+): StockBreakdown {
+  const list = rows ?? [];
+  const ownedLots = list.filter((l) => !l.is_consignment);
+  const consignmentLots = list.filter((l) => l.is_consignment);
+  const ownedQty = ownedLots.reduce((s, l) => s + (l.qty_remaining ?? 0), 0);
+  const ownedValueSen = ownedLots.reduce(
+    (s, l) => s + (l.qty_remaining ?? 0) * (l.unit_cost_sen ?? 0),
+    0,
+  );
+  const consignmentQty = consignmentLots.reduce((s, l) => s + (l.qty_remaining ?? 0), 0);
+  return {
+    ownedLots,
+    consignmentLots,
+    ownedQty,
+    ownedValueSen: Math.round(ownedValueSen),
+    consignmentQty,
+    totalQty: ownedQty + consignmentQty,
+  };
+}
 
 export function useInventoryReservations(opts?: { warehouseId?: string; productCode?: string }) {
   return useQuery({
