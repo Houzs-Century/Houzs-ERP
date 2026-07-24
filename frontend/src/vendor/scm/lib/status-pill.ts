@@ -142,7 +142,7 @@ const MAPS: Record<StatusDocType, Record<string, Entry>> = {
   po: PO, grn: GRN, pi: PI, pr: PR,
   so: SO, do: DO, si: SI, dr: DR,
   stockTransfer: STOCK_TRANSFER, stockTake: STOCK_TAKE,
-  soAmendment: SO_AMENDMENT, pv: PV,
+  soAmendment: SO_AMENDMENT, poAmendment: PO_AMENDMENT, pv: PV,
 };
 
 const titleCase = (raw: string): string =>
