@@ -188,7 +188,7 @@ export const Inventory = () => {
         <>
           <div className={styles.filterRow}>
             {/* ask A (2026-07-24) — compact SEARCHABLE warehouse filter (was a
-                big-card / chip rail). Scopes Stock / Incoming / Committed /
+                big-card / chip rail). Scopes Stock / Incoming / Scheduled /
                 Unscheduled to one warehouse. */}
             <WarehouseFilter
               warehouses={warehouses.data ?? []}
@@ -613,14 +613,15 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
   },
   {
     key: 'committed',
-    label: 'Committed',
+    label: 'Scheduled',
     width: 100,
     align: 'right',
     // Demand from open SO lines that HAVE a delivery date (scheduled to ship).
+    // Backend field stays `committed_scheduled`; the on-screen label is "Scheduled".
     accessor: (r) => (
       <span
         className={`${styles.numCell} ${r.committed_scheduled > 0 ? styles.numCellNeg : styles.numCellZero}`}
-        title="Committed = open Sales-Order demand that has a delivery date (scheduled to ship). Delivered/cancelled lines are already netted out. This is subtracted from Stock + Incoming to give Available."
+        title="Scheduled = open Sales-Order demand that has a delivery date (scheduled to ship). Delivered/cancelled lines are already netted out. This is subtracted from Stock + Incoming to give Available."
       >
         {r.committed_scheduled > 0 ? `−${fmtQty(r.committed_scheduled)}` : '—'}
       </span>
@@ -634,12 +635,12 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
     label: 'Available',
     width: 100,
     align: 'right',
-    // Available = Stock + Incoming − Committed (owner 2026-07-24 — Incoming is
+    // Available = Stock + Incoming − Scheduled (owner 2026-07-24 — Incoming is
     // now INCLUDED; the on-screen equation is spelled out in the tooltip).
     accessor: (r) => (
       <span
         className={`${styles.numCell} ${r.available_qty < 0 ? styles.numCellNeg : r.available_qty > 0 ? styles.numCellPos : styles.numCellZero}`}
-        title={`${fmtQty(r.total_qty)} stock + ${fmtQty(r.incoming_qty)} incoming − ${fmtQty(r.committed_scheduled)} committed = ${fmtQty(r.available_qty)} available`}
+        title={`${fmtQty(r.total_qty)} stock + ${fmtQty(r.incoming_qty)} incoming − ${fmtQty(r.committed_scheduled)} scheduled = ${fmtQty(r.available_qty)} available`}
       >
         {fmtQty(r.available_qty)}
       </span>
@@ -657,7 +658,7 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
     accessor: (r) => (
       <span
         className={`${styles.numCell} ${r.unscheduled_qty > 0 ? '' : styles.numCellZero}`}
-        title="Unscheduled = open Sales-Order demand with no delivery date yet (future / uncertain). Not subtracted from Available, but eats into Surplus."
+        title="Unscheduled = open Sales-Order demand with no delivery date yet (future / uncertain). Not subtracted from Available, but eats into Spare."
       >
         {r.unscheduled_qty > 0 ? fmtQty(r.unscheduled_qty) : '—'}
       </span>
@@ -668,15 +669,16 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
   },
   {
     key: 'surplus',
-    label: 'Surplus',
+    label: 'Spare',
     width: 95,
     align: 'right',
-    // Surplus = Available − Unscheduled. Negative = even undated demand can't be
-    // met; positive = genuinely spare stock (dead-stock signal).
+    // Spare = Available − Unscheduled. Negative = even undated demand can't be
+    // met (reads as short); positive = genuinely spare / idle stock (dead-stock
+    // signal). Backend field stays `surplus_qty`; the on-screen label is "Spare".
     accessor: (r) => (
       <span
         className={`${styles.numCell} ${r.surplus_qty < 0 ? styles.numCellNeg : r.surplus_qty > 0 ? styles.numCellPos : styles.numCellZero}`}
-        title={`${fmtQty(r.available_qty)} available − ${fmtQty(r.unscheduled_qty)} unscheduled = ${fmtQty(r.surplus_qty)} surplus`}
+        title={`${fmtQty(r.available_qty)} available − ${fmtQty(r.unscheduled_qty)} unscheduled = ${fmtQty(r.surplus_qty)} spare`}
       >
         {fmtQty(r.surplus_qty)}
       </span>
