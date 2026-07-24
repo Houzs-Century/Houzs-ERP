@@ -60,11 +60,10 @@ import { useRacks } from "../../vendor/scm/lib/warehouse-queries";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
-import { useCustomerPoNotice } from "./so-relationship-map";
+import { useDoRelationshipMap } from "./sales-doc-relationship-map";
 import {
   DocumentRelationshipMapModal,
   ModalOverlay,
-  type ChainNode,
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, orderLineIdentity } from "@2990s/shared";
@@ -762,8 +761,8 @@ export function DeliveryOrderDetailV2() {
   const updateStatus = useUpdateMfgDeliveryOrderStatus();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
-  const showCustomerPo = useCustomerPoNotice();
   const { user, can, pageAccess } = useAuth();
+  // showCustomerPo + node click handling now live inside useDoRelationshipMap.
   // Mutation gate — a salesperson opens this DO read-only via the sales inherit
   // hatch (allowSales; backend readInheritsFrom scm.sales.orders) and cannot
   // edit/cancel/convert it. Hide those controls (owner off-not-hide rule); Print
@@ -805,48 +804,28 @@ export function DeliveryOrderDetailV2() {
     [deliveryOrder?.note, deliveryOrder?.notes]
   );
 
-  // Chain nodes for the shared Relationship Map modal — PO → SO → DO (current)
-  // → GRN → SI. Downstream nodes stay Pending until they're stamped on the
-  // header (lifecycle_state = 'invoiced' flips SI to done).
-  const chainNodes: ChainNode[] = useMemo(() => {
-    if (!deliveryOrder) return [];
-    const poRef = deliveryOrder.po_doc_no || deliveryOrder.customer_so_no || "";
-    return [
-      {
-        type: "Customer PO",
-        doc: poRef || "Not linked",
-        meta: poRef ? fmtDate(deliveryOrder.do_date) : "—",
-        state: poRef ? "done" : "pending",
-      },
-      {
-        type: "Sales Order",
-        doc: deliveryOrder.so_doc_no || "Not linked",
-        meta: deliveryOrder.so_doc_no ? fmtDate(deliveryOrder.do_date) : "—",
-        state: deliveryOrder.so_doc_no ? "done" : "pending",
-      },
-      {
-        type: "Delivery Order",
-        doc: deliveryOrder.do_number,
-        meta: "This document",
-        state: "current",
-      },
-      {
-        type: "GRN",
-        doc: "Not created",
-        meta: "After delivery",
-        state: "pending",
-      },
-      {
-        type: "Sales Invoice",
-        doc: deliveryOrder.lifecycle_state === "invoiced" ? "Issued" : "Not created",
-        meta:
-          deliveryOrder.lifecycle_state === "invoiced"
-            ? fmtDate(deliveryOrder.do_date)
-            : "On completion",
-        state: deliveryOrder.lifecycle_state === "invoiced" ? "done" : "pending",
-      },
-    ];
-  }, [deliveryOrder]);
+  // Chain nodes for the shared Relationship Map modal, read from the LIVE
+  // `/document-flow` graph (the SO map's source) instead of a hand-built chain.
+  // This is what fixes the DO's old hard-coded GRN "Not created" — the graph
+  // resolves the real GRN(s) the DO's source SO was received on — and makes the
+  // Sales Invoice + Sales Order nodes reflect the actual downstream/upstream
+  // documents. Display-only: NONE of the DO status / delivery-planning state is
+  // read here (audit R8; see sales-doc-relationship-map.ts).
+  const relMapHeader = useMemo(
+    () =>
+      deliveryOrder
+        ? {
+            id: deliveryOrder.id,
+            do_number: deliveryOrder.do_number,
+            so_doc_no: deliveryOrder.so_doc_no,
+            po_doc_no: deliveryOrder.po_doc_no,
+            customer_so_no: deliveryOrder.customer_so_no,
+          }
+        : null,
+    [deliveryOrder],
+  );
+  const { nodes: chainNodes, onNodeClick: onChainNodeClick } =
+    useDoRelationshipMap(relMapHeader);
 
   // Back always returns to the Delivery Orders list (owner 2026-07-24: every
   // details page's back button goes to its relevant list, not wherever
@@ -1531,24 +1510,9 @@ export function DeliveryOrderDetailV2() {
         onClose={closeModal}
         nodes={chainNodes}
         onNodeClick={(n) => {
-          if (n.type === "Sales Order" && deliveryOrder.so_doc_no) {
-            navigate(`/scm/sales-orders/${deliveryOrder.so_doc_no}`);
-            closeModal();
-          } else if (
-            n.type === "Sales Invoice" &&
-            deliveryOrder.lifecycle_state === "invoiced"
-          ) {
-            // No direct SI id on the DO payload — punt to the SI listing
-            // scoped to this DO doc no.
-            navigate(
-              `/scm/sales-invoices?q=${encodeURIComponent(deliveryOrder.do_number)}`
-            );
-            closeModal();
-          } else if (n.type === "Customer PO" && n.state === "done") {
-            // Paints as Linked, so it must answer when clicked (owner
-            // 2026-07-16). Reference string, no file behind it — say so.
-            showCustomerPo(n.doc);
-          }
+          // The hook returns TRUE when the click navigated away, so the map
+          // closes; an in-app notice keeps it open (renders over the map).
+          if (onChainNodeClick(n)) closeModal();
         }}
       />
       <PrintPdfModal

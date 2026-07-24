@@ -73,6 +73,9 @@ type SiRow = {
   invoice_number: string;
   so_doc_no: string | null;
   delivery_order_id: string | null;
+  /** Convert-from relation (display-only, audit R8): the readable DO number the
+   *  SI was created from, server-resolved from delivery_order_id. */
+  do_number?: string | null;
   invoice_date: string;
   due_date: string | null;
   /** SI's own snapshot of the customer delivery date (may be null on rows
@@ -151,7 +154,9 @@ const refOf = (r: SiRow): string =>
   r.po_doc_no || r.customer_so_no || r.ref || "—";
 
 const soOf = (r: SiRow): string => r.so_doc_no || "—";
-const doOf = (r: SiRow): string => r.delivery_order_id || "—";
+// Prefer the readable DO number (server-resolved); the raw UUID is not useful
+// to show, so fall back to a dash rather than a uuid.
+const doOf = (r: SiRow): string => r.do_number || "—";
 
 const brandOf = (r: SiRow): string => r.branding || "—";
 const brandTone = (b: string): "success" | "neutral" | "warning" => {
@@ -1097,6 +1102,19 @@ export function SalesInvoicesListV2() {
       getValue: (r) => r.so_doc_no ?? "",
       render: (r) => (
         <span className="font-mono text-[12px] text-ink-secondary">{soOf(r)}</span>
+      ),
+    },
+    {
+      /* Convert-from relation (audit R8): the Delivery Order this SI was created
+         from. Previously only the raw delivery_order_id UUID was on the row, so
+         the list could not show a readable source DO. */
+      key: "do_number",
+      label: "From DO",
+      width: "128px",
+      disableSort: true,
+      getValue: (r) => r.do_number ?? "",
+      render: (r) => (
+        <span className="font-mono text-[12px] text-ink-secondary">{doOf(r)}</span>
       ),
     },
     {
