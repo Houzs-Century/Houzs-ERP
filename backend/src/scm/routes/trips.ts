@@ -32,6 +32,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { scopeToAllowedCompanies, companyCodeMap, withCompanyCode, activeCompanyId } from '../lib/companyScope';
 import { optimizeRoute } from '../lib/maps';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
+import { reconcileStopsToBoard, reconcileFieldsFor, type ReconcileStop } from '../lib/tripReconcile';
 
 export const trips = new Hono<{ Bindings: Env; Variables: Variables }>();
 trips.use('*', supabaseAuth);
@@ -93,6 +94,29 @@ function toNumericOrNull(v: unknown): number | null {
   if (v === undefined || v === null || v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/* Read the DELIVERY stops of a trip as ReconcileStops. Only DELIVERY stops carry
+   the SO/DO delivery the reverse sync owns — the same stop_type scheduleOntoTrip
+   stamps and the stale-stop sweep filters on, kept symmetric so forward and
+   reverse cannot drift. A read failure yields [] (best-effort): the reconcile
+   then reports NOT_REQUESTED rather than throwing on the primary trip action. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function deliveryStopsOfTrip(sb: any, tripId: string): Promise<ReconcileStop[]> {
+  const { data } = await sb.from('trip_stops')
+    .select('do_id, so_id, stop_type').eq('trip_id', tripId).eq('stop_type', 'DELIVERY');
+  return ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+    doId: (r.doId ?? r.do_id ?? null) as string | null,
+    soId: (r.soId ?? r.so_id ?? null) as string | null,
+    stopType: (r.stopType ?? r.stop_type ?? null) as string | null,
+  }));
+}
+
+/* The actor for a reconcile audit row (best-effort, may be null). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function actorOf(c: any): { actorId: string | null; actorName: string | null } {
+  const user = c.get('user') as { id?: string; user_metadata?: { name?: string } } | null;
+  return { actorId: user?.id ?? null, actorName: user?.user_metadata?.name ?? null };
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -301,6 +325,19 @@ trips.patch('/:id/status', async (c) => {
 
   const { data, error } = await sb.from('trips').update(updates).eq('id', id).select(TRIP_COLS).single();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+
+  /* REVERSE SYNC: cancelling a trip strands its scheduled orders. Return each to
+     the board by clearing its scheduled-looking delivery_state override — the
+     board's live derivation then falls a ready-to-ship order back to
+     PENDING_SCHEDULE. lorry-capacity already drops a CANCELLED trip and its stops
+     (lorry-capacity.ts neq status CANCELLED), so no double-count; this closes the
+     OTHER half — the stale board override. Best-effort + REPORTED. Other statuses
+     leave the schedule intact. */
+  if (status === 'CANCELLED') {
+    const stops = await deliveryStopsOfTrip(sb, id);
+    const reconcile = await reconcileStopsToBoard(sb, { stops, ...actorOf(c) });
+    return c.json({ trip: data, ...reconcileFieldsFor(reconcile) });
+  }
   return c.json({ trip: data });
 });
 
@@ -399,8 +436,27 @@ trips.delete('/:id/stops/:stopId', async (c) => {
   const tripId = c.req.param('id');
   const stopId = c.req.param('stopId');
   const sb = c.get('supabase');
+  /* Snapshot the stop's source keys BEFORE the delete — once it is gone there is
+     nothing left to map back to a header. */
+  const { data: stopRow } = await sb.from('trip_stops')
+    .select('do_id, so_id, stop_type').eq('id', stopId).eq('trip_id', tripId).maybeSingle();
   const { error } = await sb.from('trip_stops').delete().eq('id', stopId).eq('trip_id', tripId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
+
+  /* REVERSE SYNC: a removed DELIVERY stop means that order is no longer on this
+     trip — return it to the board by clearing its scheduled-looking override.
+     Non-DELIVERY stops (a PICKUP / SERVICE raised for the same order) are a
+     different job and are left alone, same stop_type discipline as the forward
+     sweep. */
+  const r = (stopRow ?? null) as Record<string, unknown> | null;
+  const stopType = r ? ((r.stopType ?? r.stop_type ?? null) as string | null) : null;
+  if (r && stopType === 'DELIVERY') {
+    const reconcile = await reconcileStopsToBoard(sb, {
+      stops: [{ doId: (r.doId ?? r.do_id ?? null) as string | null, soId: (r.soId ?? r.so_id ?? null) as string | null, stopType }],
+      ...actorOf(c),
+    });
+    return c.json({ ok: true, ...reconcileFieldsFor(reconcile) });
+  }
   return c.json({ ok: true });
 });
 
@@ -414,10 +470,17 @@ trips.delete('/:id', async (c) => {
   const hard = c.req.query('hard') === 'true';
   const sb = c.get('supabase');
 
+  /* Snapshot the scheduled orders BEFORE mutating: a hard delete CASCADEs the
+     stops away (trip_stops.trip_id ON DELETE CASCADE, mig 0053), and even a soft
+     cancel drops the trip out of lorry-capacity — either way the orders must be
+     returned to the board. Read once, up front, for both paths. */
+  const stops = await deliveryStopsOfTrip(sb, id);
+
   if (hard) {
     const { error } = await sb.from('trips').delete().eq('id', id);
     if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
-    return c.json({ ok: true, deleted: true });
+    const reconcile = await reconcileStopsToBoard(sb, { stops, ...actorOf(c) });
+    return c.json({ ok: true, deleted: true, ...reconcileFieldsFor(reconcile) });
   }
 
   const { data, error } = await sb.from('trips')
@@ -425,7 +488,10 @@ trips.delete('/:id', async (c) => {
     .eq('id', id).select(TRIP_COLS).maybeSingle();
   if (error) return c.json({ error: 'cancel_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
-  return c.json({ trip: data, cancelled: true });
+  /* REVERSE SYNC — return each stranded order to the board (clear its
+     scheduled-looking override). Best-effort + REPORTED. */
+  const reconcile = await reconcileStopsToBoard(sb, { stops, ...actorOf(c) });
+  return c.json({ trip: data, cancelled: true, ...reconcileFieldsFor(reconcile) });
 });
 
 /* ──────────────────────────────────────────────────────────────────────────
