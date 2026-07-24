@@ -234,27 +234,27 @@ Total: 888 route registrations across 118 files.
 - L1214  GET    /${base}/brief
 
 ## backend/src/routes/mail-center.ts  (21)
-- L858  GET    /threads
-- L998  GET    /threads/:id
-- L1070  GET    /attachments/:id
-- L1127  GET    /addresses
-- L1185  GET    /outbox
-- L1255  GET    /outbox/:id
-- L1325  GET    /labels
-- L1335  POST   /labels
-- L1391  PATCH  /labels/:id
-- L1453  DELETE /labels/:id
-- L1511  POST   /test-inject
-- L1548  POST   /addresses
-- L1624  PATCH  /addresses/:id
-- L1698  GET    /access
-- L1716  POST   /access
-- L1755  DELETE /access
-- L1784  GET    /scope-levels
-- L1801  PUT    /scope-level
-- L1869  POST   /threads/:id/reply
-- L2006  POST   /compose
-- L2138  PATCH  /threads/:id
+- L860  GET    /threads
+- L1000  GET    /threads/:id
+- L1072  GET    /attachments/:id
+- L1129  GET    /addresses
+- L1187  GET    /outbox
+- L1257  GET    /outbox/:id
+- L1327  GET    /labels
+- L1337  POST   /labels
+- L1393  PATCH  /labels/:id
+- L1455  DELETE /labels/:id
+- L1513  POST   /test-inject
+- L1550  POST   /addresses
+- L1636  PATCH  /addresses/:id
+- L1710  GET    /access
+- L1728  POST   /access
+- L1767  DELETE /access
+- L1796  GET    /scope-levels
+- L1813  PUT    /scope-level
+- L1881  POST   /threads/:id/reply
+- L2022  POST   /compose
+- L2156  PATCH  /threads/:id
 
 ## backend/src/routes/users.ts  (21)
 - L452  GET    /
@@ -342,22 +342,22 @@ Total: 888 route registrations across 118 files.
 - L3390  DELETE /:id
 
 ## backend/src/scm/routes/inventory.ts  (16)
-- L47  GET    /warehouses
-- L60  POST   /warehouses
-- L240  PATCH  /warehouses/:id
-- L254  DELETE /warehouses/:id
-- L333  GET    /
-- L407  GET    /products
-- L624  GET    /breakdown/:productCode
-- L675  GET    /movements
-- L701  GET    /lots/:productCode
-- L731  GET    /batches
-- L830  GET    /cogs
-- L853  GET    /value
-- L874  GET    /analytics
-- L1008  GET    /reconcile
-- L1027  GET    /buckets/:productCode
-- L1080  GET    /reservations
+- L48  GET    /warehouses
+- L61  POST   /warehouses
+- L241  PATCH  /warehouses/:id
+- L255  DELETE /warehouses/:id
+- L334  GET    /
+- L408  GET    /products
+- L625  GET    /breakdown/:productCode
+- L676  GET    /movements
+- L702  GET    /lots/:productCode
+- L732  GET    /batches
+- L831  GET    /cogs
+- L854  GET    /value
+- L875  GET    /analytics
+- L1009  GET    /reconcile
+- L1028  GET    /buckets/:productCode
+- L1081  GET    /reservations
 
 ## backend/src/scm/routes/product-models.ts  (16)
 - L88  GET    /:id/photo/:key
@@ -854,11 +854,11 @@ Total: 888 route registrations across 118 files.
 - L433  PATCH  /by-user/:userId/showroom
 
 ## backend/src/scm/routes/stock-transfers.ts  (5)
-- L51  GET    /
-- L111  GET    /:id
-- L292  POST   /
-- L431  PATCH  /:id/cancel
-- L504  PATCH  /:id/post
+- L55  GET    /
+- L115  GET    /:id
+- L236  POST   /
+- L375  PATCH  /:id/cancel
+- L448  PATCH  /:id/post
 
 ## backend/src/routes/assrFormIntake.ts  (4)
 - L71  POST   /
