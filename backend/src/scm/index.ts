@@ -32,6 +32,7 @@ import { paymentAuditLog } from "./routes/payment-audit-log";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { soAmendments } from "./routes/so-amendments";
+import { poAmendments } from "./routes/po-amendments";
 import { stateWarehouseMappings } from "./routes/state-warehouse-mappings";
 import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
 import { salesInvoices } from "./routes/sales-invoices";
@@ -237,6 +238,11 @@ scm.route("/suppliers", suppliers);
 // ── Purchase Orders / GRN / PI (scm.procurement.*) ──────────────────────────
 scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po"));
 scm.route("/mfg-purchase-orders", mfgPurchaseOrders);
+// PO amendment / revision workflow — PO-centric, so it rides the same L2 area
+// guard as Purchase Orders (GET=view, PATCH=edit); the finer scm.po_amendment.*
+// gates layer on inside the handlers (mig 0192).
+scm.use("/po-amendments/*", scmAreaGuard("scm.procurement.po"));
+scm.route("/po-amendments", poAmendments);
 scm.use("/grns/*", scmAreaGuard("scm.procurement.grn"));
 scm.route("/grns", grns);
 scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
