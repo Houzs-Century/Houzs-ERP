@@ -36,47 +36,53 @@ conflicting "assigned to" SOs.
 
 ## 2. What shipped (cleanly derivable)
 
-### 2.1 PO / GRN / PI traceability strip — uses linkage **B** AND linkage **A**
-`frontend/src/components/DocumentTraceability.tsx`, rendered above the per-line
-`DocumentLinesExpansion` in each of `PurchaseOrdersListV2` / `GoodsReceivedListV2`
-/ `PurchaseInvoicesListV2` (the `Xxx LinesExpansion` wrappers). The mobile twin
-is `PoSoCoverageMobile` in `frontend/src/mobile/MobileModuleDetail.tsx`, injected
-under Line items on the PO / GRN / PI document detail (display-only).
+### 2.1 PO / GRN / PI "Assigned SO" — REAL stored origin, two inline line columns — linkage **B**
+`feat/po-real-origin-so` (2026-07-25) — supersedes the earlier advisory strip.
+The owner's complaint: a PO RAISED from an SO showed "Floating stock — not yet
+assigned to a Sales Order" (see `BUG-HISTORY.md` 2026-07-25). It did, because the
+section rendered the FLOATING recompute (linkage A, §2.4), which reports "not
+assigned" whenever its greedy pool does not currently land on that PO — never the
+PO's actual origin.
 
-The strip now shows TWO clearly-labelled reads side by side:
+Now the assignment is the STORED origin (linkage **B**), shown as TWO INLINE
+per-line columns inside the existing `DocumentLinesExpansion` table (added
+`Assigned SO` + `SO Delivery Date`, styled like the SO detail's Stock /
+Incoming-PO columns), in each of `PurchaseOrdersListV2` / `GoodsReceivedListV2` /
+`PurchaseInvoicesListV2`. The `Assigned SO` chip is clickable on desktop (→
+`/scm/sales-orders/:docNo`, via `onOpenSo`); the mobile twin rides each
+`LineItem` in `frontend/src/mobile/MobileModuleDetail.tsx` (display-only). A line
+with no origin renders **"—"** — there is NO floating banner and NO advisory
+section anymore. The old `frontend/src/components/DocumentTraceability.tsx` strip
+and the `PoSoCoverageMobile` card are deleted.
 
-- **Assigned Sales Order · advisory (floating MRP coverage)** — linkage **A**,
-  the REVERSE of `computeMrp` (see §2.4). Per SKU, the outstanding SO line(s)
-  this document's supply is pooled against + that SO line's delivery date. SO
-  chips are clickable on desktop (→ `/scm/sales-orders/:docNo`). This is what
-  replaced the frustrating "Not yet linked to a Sales Order" empty state for a
-  floating PO.
-- **Document relationship** — linkage **B**, the resolved
-  **Sales Order / Delivery Order / Sales Invoice** the anchor descends from via
-  `useDocumentFlow(type, id)` → `GET /api/scm/document-flow/:type/:id` (anchor
-  node excluded; empty stages omitted). Read-only + company-scoped server-side.
-- Honesty: B is the DOCUMENT RELATIONSHIP (stored FKs), NOT a physical-unit
-  claim; A is a live pool that shifts and evaporates on delivery. When only B
-  exists it shows alone; when neither exists the strip now reads
-  **"Floating stock — not yet assigned to a Sales Order."**, never a blank.
+Backend: `GET /po-so-coverage/:type/:id` now returns `{ poNumber, poId, origins }`
+where `origins: [{ itemCode, assignments: [{ soDocNo, deliveryDate }] }]`, matched
+by SKU (`material_code`). The full document relationship graph (SO/DO/SI + returns)
+is still available via the Relationship Map modal (`useDocumentFlow` /
+`/document-flow/:type/:id`) on each detail — unchanged.
 
-### 2.4 PO "assigned SO + delivery date" as a FLOATING view — uses linkage **A**
-Shipped (was deferred in §3.1). `backend/src/scm/routes/po-so-coverage.ts`
-(`GET /po-so-coverage/:type/:id`, `type ∈ po|grn|pi`), mounted on the coarse SCM
-read gate beside `/document-flow` (same sensitivity class — SO doc no, delivery
-date, customer name, qty, warehouse; **no cost, no margin**). It reuses the ONE
-allocation via a new `mrpReverseCoverage(result)` in `mrp.ts` (sibling of
-`mrpLineCoverage`, grouped by covering PO number), so this view, the MRP page and
-the SO drill-down can never disagree. The route resolves GRN→PO and PI→GRN→PO,
-reads the PO's own line SKUs so an un-covered SKU still shows (as "not yet
-assigned"), and calls `computeMrp` with `includeUndated: true`, `companyId =
-activeCompanyId(c)`.
+### 2.4 PO "assigned SO" origin resolution — linkage **B** (stored), not **A** (floating)
+`backend/src/scm/routes/po-so-coverage.ts` (`GET /po-so-coverage/:type/:id`,
+`type ∈ po|grn|pi`), mounted on the coarse SCM read gate beside `/document-flow`
+(same sensitivity class — SO doc no + delivery date; **no cost, no margin**).
+Resolution, all set-based and company-scoped:
+1. Resolve the anchor to its PO (GRN→PO, PI→GRN→PO).
+2. Origin SO doc numbers = the PO lines' `so_item_id` → `mfg_sales_order_items.doc_no`
+   (the 2026-07-09+ raise-link) **∪** the PO's "From SOs: …" note, extracted by the
+   shared `parseFromSosNote` in `document-flow.ts` (co-located with
+   `noteMentionsToken` — one home for the note FORMAT).
+3. Validate candidates against real, company-owned `mfg_sales_orders` (this is both
+   the company gate AND the whole-token check: a token equals a `doc_no` or it is
+   dropped — a split token "SO-1" can only equal "SO-1", never "SO-10").
+4. Pure `buildSkuOrigins(poSkus, soHeaders, soLines)` matches the PO's SKUs to those
+   SOs' lines by `item_code` and attaches each SO's effective delivery date
+   (`amended_delivery_date ?? customer_delivery_date`).
 
-STATED LIMITATIONS (advisory, by design): coverage exists for OUTSTANDING demand
-only, so a fully-received GRN/PI often has an empty A-view and falls back to the
-B relationship; and `MrpLine`/`SofaSet` record only the FIRST (earliest-ETA)
-covering PO of a split line, so a multi-PO line is under-attributed (never
-mis-attributed). Labelled ADVISORY throughout — it is NOT a hard PO↔SO binding.
+`computeMrp` / `mrpReverseCoverage` are NO LONGER called on this read (the floating
+recompute was the bug). They remain in `mrp.ts` for the MRP page and the SO
+drill-down; a PO's origin is now an immutable stored fact, presented as the real
+assignment — not advisory. A genuine stock PO (no `so_item_id`, no note origin)
+simply yields no assignments and every line shows "—".
 
 ### 2.2 SO-side Q2 — SERVICE lines read READY
 Read path, `mfg-sales-orders.ts` `GET /:docNo` and `/:docNo/items`: a service
@@ -156,9 +162,24 @@ the line SHIPS; the gap is only the received-but-not-yet-shipped window.
 ---
 
 ## 4. Files changed
-- `frontend/src/components/DocumentTraceability.tsx` (new).
+Real-origin rework (`feat/po-real-origin-so`, 2026-07-25 — supersedes the strip):
+- `backend/src/scm/routes/document-flow.ts` — new exported `parseFromSosNote` (note extractor).
+- `backend/src/scm/routes/po-so-coverage.ts` — returns stored origin per SKU
+  (`{ poNumber, poId, origins }`); new pure `buildSkuOrigins`; no longer calls `computeMrp`.
+- `frontend/src/vendor/scm/lib/flow-queries.ts` — `usePoSoCoverage` new shape + `originsByCode`.
+- `frontend/src/components/DocumentLinesExpansion.tsx` — `Assigned SO` + `SO Delivery Date`
+  columns (`showAssignment` / `onOpenSo`, per-line `assignedSos`).
+- `frontend/src/pages/scm-v2/{PurchaseOrdersListV2,GoodsReceivedListV2,PurchaseInvoicesListV2}.tsx`
+  — feed the columns from `usePoSoCoverage`; the old `DocumentTraceability` strip removed.
+- `frontend/src/mobile/MobileModuleDetail.tsx` — assignment rides each `LineItem`;
+  `PoSoCoverageMobile` card removed.
+- `frontend/src/components/DocumentTraceability.tsx` — DELETED.
+- `backend/tests/poSoOrigin.test.ts` — new.
+
+Original strip (`feat/doc-traceability-display`, 2026-07-24 — now superseded):
+- `frontend/src/components/DocumentTraceability.tsx` (new, since deleted).
 - `frontend/src/pages/scm-v2/PurchaseOrdersListV2.tsx`, `GoodsReceivedListV2.tsx`,
-  `PurchaseInvoicesListV2.tsx` — render the strip in the row-expansion wrappers.
+  `PurchaseInvoicesListV2.tsx` — rendered the strip in the row-expansion wrappers.
 - `frontend/src/pages/scm-v2/MfgSalesOrdersListV2.tsx` — `drillStock` service → READY.
 - `backend/src/scm/routes/mfg-sales-orders.ts` — service line `stock_state='stock'`
   (both SO read callsites).

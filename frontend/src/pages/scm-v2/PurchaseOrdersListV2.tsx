@@ -34,7 +34,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
-import { DocumentTraceability } from "../../components/DocumentTraceability";
+import { usePoSoCoverage, originsByCode } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -569,7 +569,10 @@ const SORT_COL_MAP: Record<string, string> = {
 // with no MRP coverage on its lines, so the SO/DO-only Stock + Incoming PO
 // columns are correctly absent.
 function PoLinesExpansion({ id }: { id: string }) {
+  const navigate = useNavigate();
   const detailQ = usePurchaseOrderDetail(id);
+  const covQ = usePoSoCoverage("po", id);
+  const byCode = originsByCode(covQ.data);
   const items =
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => ({
@@ -580,16 +583,18 @@ function PoLinesExpansion({ id }: { id: string }) {
     variants: l.variants ?? null,
     qty: Number(l.qty ?? 0),
     amountCenti: l.line_total_centi ?? 0,
+    assignedSos: byCode.get((l.material_code ?? "").trim()) ?? [],
   }));
   return (
     <div className="flex flex-col gap-2">
-      <DocumentTraceability type="po" id={id} />
       <DocumentLinesExpansion
         isLoading={detailQ.isLoading}
         isError={Boolean(detailQ.error)}
         errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
         lines={lines}
         emptyLabel="No lines on this purchase order."
+        showAssignment
+        onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
       />
     </div>
   );

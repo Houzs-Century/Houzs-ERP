@@ -5,7 +5,7 @@ import { lineIdentity, orderLineIdentity } from "@2990s/shared";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "@2990s/shared/phone";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
-import { usePoSoCoverage } from "../vendor/scm/lib/flow-queries";
+import { usePoSoCoverage, originsByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -174,8 +174,13 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, qty, unitCenti, amountCenti }: {
+function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned }: {
   name: string; sub?: string; qty: unknown; unitCenti: unknown; amountCenti: unknown;
+  // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
+  // Sales Order(s) this line was raised from + that SO's effective delivery
+  // date, matched by SKU. Empty array → dash, mirroring the desktop columns.
+  // Display-only on mobile (the phone shell doesn't route to the SO).
+  assigned?: OriginAssignment[];
 }) {
   const q = Number(qty);
   const qtyLabel = Number.isFinite(q) ? q : 0;
@@ -189,6 +194,16 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti }: {
         {sub ? <span style={{ marginRight: 8 }}>{sub}</span> : null}
         <span>@ {money(unitCenti)}</span>
       </div>
+      {assigned && (
+        <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 4 }}>
+          <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093" }}>Assigned SO</span>
+          {assigned.length ? assigned.map((a) => (
+            <span key={a.soDocNo} style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#0c3f39", background: "#eef3f1", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px" }}>
+              {a.soDocNo}{a.deliveryDate ? ` · ${dmy(a.deliveryDate)}` : ""}
+            </span>
+          )) : <span style={{ fontSize: 11, color: "#9aa093" }}>—</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -1244,54 +1259,25 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
   );
 }
 
-/* Advisory floating "assigned Sales Order" for a purchase document, mobile twin
-   of the desktop DocumentTraceability strip. Same backend read
-   (/po-so-coverage/:type/:id), same one-logic-layer answer: which outstanding SO
-   line(s) this PO/GRN/PI's supply is currently pooled against (matched by SKU) +
-   that SO line's delivery date. ADVISORY — a read-time MRP pool, not a hard PO↔SO
-   binding (the owner buys against the PO, not the SO). Display-only on mobile
-   (the phone shell is a screen machine, not a router) — the desktop strip is the
-   clickable surface; the information shown is identical. */
+/* Purchase docs (PO / GRN / PI) show the REAL origin Sales Order per line,
+   matched by SKU — see PoSoCoverageMobile's replacement: the assignment now
+   rides each line row (LineItem `assigned`), fed from the same
+   /po-so-coverage/:type/:id read. Display-only on mobile (the phone shell is a
+   screen machine, not a router). */
 const COVERAGE_TYPE: Record<string, "po" | "grn" | "pi"> = {
   "mfg-purchase-orders": "po",
   grns: "grn",
   "purchase-invoices": "pi",
 };
-function PoSoCoverageMobile({ moduleKey, id }: { moduleKey: string; id: string }) {
-  const type = COVERAGE_TYPE[moduleKey] ?? null;
-  const covQ = usePoSoCoverage(type, type ? id : null);
-  if (!type) return null;
-  const covered = (covQ.data?.skus ?? []).filter((sk) => sk.assignments.length > 0);
-  // Fail-soft: while loading, on error, or with nothing to show, render nothing
-  // (the document-relationship graph is a desktop-only surface on this screen).
-  if (covQ.isLoading || covQ.isError || covered.length === 0) return null;
-  return (
-    <>
-      <Eyebrow>Assigned Sales Order · advisory</Eyebrow>
-      <div style={cardStyle}>
-        <div style={{ fontSize: 10, color: "#9aa093", padding: "7px 0 3px" }}>
-          Floating MRP coverage — matched by SKU, not a hard PO link.
-        </div>
-        {covered.map((sk) => (
-          <div key={sk.itemCode} style={{ padding: "7px 0", borderTop: "1px solid #f0f1ec" }}>
-            <div style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#5c6152", marginBottom: 4 }}>{sk.itemCode}</div>
-            {sk.assignments.map((a) => (
-              <div key={a.soItemId} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, padding: "2px 0" }}>
-                <span style={{ fontWeight: 600, color: "#2c3327" }}>{a.soDocNo}</span>
-                <span style={{ color: "#767b6e", fontFamily: "monospace" }}>{a.deliveryDate ? dmy(a.deliveryDate) : "no date"}</span>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
 
 function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: DocMap; row: any; moduleKey: string; onBack: () => void; onEdit?: () => void; onPOD?: () => void }) {
   const id = docId(row);
   const qc = useQueryClient();
   const detailNotify = useNotify();
+  // Purchase docs only: the real per-SKU origin SO(s) for each line.
+  const coverageType = COVERAGE_TYPE[moduleKey] ?? null;
+  const covQ = usePoSoCoverage(coverageType, coverageType && id ? id : null);
+  const originByCode = originsByCode(covQ.data);
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-module-detail", map.path, id],
     queryFn: () => authedFetch<Record<string, unknown>>(`${map.path}/${encodeURIComponent(id)}`),
@@ -1388,11 +1374,11 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
               {!!error && !isLoading && <div style={{ fontSize: 11.5, color: "#b23a3a", padding: "9px 0" }}>Couldn't load line items. Please try again.</div>}
               {!isLoading && !error && (items.length ? items.map((it, i) => {
                 const l = map.line(it);
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} />;
+                const code = String(((it?.material_code ?? it?.item_code) ?? "")).trim();
+                const assigned = coverageType ? (originByCode.get(code) ?? []) : undefined;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
-
-            <PoSoCoverageMobile moduleKey={moduleKey} id={id} />
           </div>
         )}
       </div>

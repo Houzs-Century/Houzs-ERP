@@ -48,23 +48,15 @@ export const useDocumentFlow = (type: FlowNodeType | null, id: string | null) =>
     retry: retryUnlessClientError,
   });
 
-/* ── Advisory floating "assigned Sales Order" for a purchase document ──────
-   The REVERSE of the SO→PO MRP coverage: which outstanding Sales-Order line(s)
-   a PO / GRN / PI's supply is currently floating-assigned to (+ that SO line's
-   delivery date), matched BY SKU. ADVISORY, NOT A BINDING — a pooled, read-time
-   allocation that shifts and evaporates on delivery (the owner raises POs
-   against the PO, not the SO). Backend: GET /po-so-coverage/:type/:id. */
-export type PoCoverageAssignment = {
-  soItemId: string;
-  soDocNo: string;
-  deliveryDate: string | null;
-  debtorName: string | null;
-  warehouseName: string | null;
-  qty: number;
-  variantLabel: string | null;
-};
-export type PoSkuCoverage = { itemCode: string; variantLabel: string | null; assignments: PoCoverageAssignment[] };
-export type PoSoCoverageResp = { advisory: boolean; poNumber: string | null; poId: string | null; skus: PoSkuCoverage[] };
+/* ── Real "assigned Sales Order" for a purchase document, PER SKU ──────────
+   The STORED origin: which Sales Order each PO / GRN / PI line was RAISED from
+   (purchase_order_items.so_item_id ∪ the PO's "From SOs: …" note), matched BY
+   SKU, plus that SO's effective delivery date (amended ?? customer). A REAL
+   document link, not an advisory pool — a line with no origin returns no
+   assignment and the UI renders a dash. Backend: GET /po-so-coverage/:type/:id. */
+export type OriginAssignment = { soDocNo: string; deliveryDate: string | null };
+export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[] };
+export type PoSoCoverageResp = { poNumber: string | null; poId: string | null; origins: SkuOrigin[] };
 
 export const usePoSoCoverage = (type: 'po' | 'grn' | 'pi' | null, id: string | null) =>
   useQuery({
@@ -76,6 +68,16 @@ export const usePoSoCoverage = (type: 'po' | 'grn' | 'pi' | null, id: string | n
     staleTime: 30_000,
     retry: retryUnlessClientError,
   });
+
+/* Build a per-SKU lookup (material_code → assignments) from the response, so a
+   line table can resolve each row's Assigned SO by its code. Null-safe. */
+export const originsByCode = (resp: PoSoCoverageResp | undefined): Map<string, OriginAssignment[]> => {
+  const m = new Map<string, OriginAssignment[]>();
+  for (const o of resp?.origins ?? []) {
+    if (o.itemCode) m.set(o.itemCode, o.assignments ?? []);
+  }
+  return m;
+};
 
 /* Advisory candidate POs for an SO with NO linked purchase leg (pre-MRP orders,
    see the backend route). Read-only: matched by material_code, never a stored
