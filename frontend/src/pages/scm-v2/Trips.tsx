@@ -23,10 +23,18 @@ import {
   useOptimizeTripRoute,
   type OptimizeResult,
 } from '../../vendor/scm/lib/trips-queries';
+import {
+  useDeliveryPlanning,
+  type PlanningOrder,
+} from '../../vendor/scm/lib/delivery-planning-queries';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 
-const STATUSES = ['ALL', 'PLANNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'] as const;
+// Owner ordering: IN_PROGRESS reads before PLANNED (dispatchers watch running
+// trips first). The default-selected tab stays PLANNED (see useState below) —
+// the working queue a dispatcher plans from, not the trips already rolling.
+const STATUSES = ['ALL', 'IN_PROGRESS', 'PLANNED', 'COMPLETED', 'CANCELLED'] as const;
 
 const mins = (s: number | null | undefined): string =>
   s == null ? '—' : `${Math.round(s / 60)} min`;
@@ -50,6 +58,16 @@ export function Trips() {
   const optimize = useOptimizeTripRoute();
   const notify = useNotify();
   const askConfirm = useConfirm();
+
+  // "To schedule" queue: ready-to-ship orders not yet on a trip. Reuses the
+  // delivery board's own endpoint (GET /delivery-planning?state=PENDING_SCHEDULE)
+  // and its PENDING_SCHEDULE derivation — no new query, no new state logic.
+  // READ-ONLY for now; multiselect + scheduling actions are the next slice.
+  const pending = useDeliveryPlanning({ region: 'ALL', state: 'PENDING_SCHEDULE' });
+  const pendingOrders = useMemo<PlanningOrder[]>(
+    () => pending.data?.orders ?? [],
+    [pending.data],
+  );
 
   const trips = useMemo(() => list.data?.trips ?? [], [list.data]);
   const stops = detail.data?.stops ?? [];
@@ -211,6 +229,64 @@ export function Trips() {
             </>
           )}
         </div>
+      </div>
+
+      {/* ── To schedule: ready-to-ship orders not yet on a trip ──────────────
+          Pulled straight from the delivery board (PENDING_SCHEDULE), read-only.
+          Making them visible in Trips is this slice; multiselect + Date/Time
+          scheduling actions are the next phase. */}
+      <div className="rounded-md border border-border bg-surface">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
+          <span className="text-[13px] font-semibold text-ink">To schedule</span>
+          <Badge tone="neutral" caseless>{pendingOrders.length} ready to ship</Badge>
+          <span className="flex-1" />
+          <span className="text-[11.5px] text-ink-muted">Read-only — scheduling actions coming next</span>
+        </div>
+
+        {pending.isLoading && (
+          <p className="p-5 text-[13px] text-ink-muted">Loading pending orders…</p>
+        )}
+        {!pending.isLoading && pendingOrders.length === 0 && (
+          <p className="p-5 text-[13px] text-ink-muted">No orders waiting to be scheduled.</p>
+        )}
+        {!pending.isLoading && pendingOrders.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[12.5px]">
+              <thead>
+                <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-muted">
+                  <th className="px-5 py-2 font-semibold">SO / Ref</th>
+                  <th className="px-3 py-2 font-semibold">Customer</th>
+                  <th className="px-3 py-2 font-semibold">Region</th>
+                  <th className="px-3 py-2 font-semibold">Stock</th>
+                  <th className="px-3 py-2 text-right font-semibold">Qty</th>
+                  <th className="px-5 py-2 font-semibold">Delivery Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {pendingOrders.map((o) => (
+                  <tr key={`${o.row_type}:${o.so_doc_no}`} className="hover:bg-surface-raised">
+                    <td className="px-5 py-2.5 font-mono font-semibold text-ink">
+                      {o.so_doc_no || o.ref || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-ink-secondary">
+                      {o.debtor_name ?? o.debtor_code ?? '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-ink-secondary">{o.region || '—'}</td>
+                    <td className="px-3 py-2.5 text-ink-muted">
+                      {o.stock_remark || o.stock_status || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-ink-secondary">
+                      {o.remaining_qty == null ? '—' : Math.round(o.remaining_qty)}
+                    </td>
+                    <td className="px-5 py-2.5 tabular-nums text-ink-secondary">
+                      {fmtDateOrDash(o.effective_delivery_date ?? o.customer_delivery_date)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -21,7 +21,7 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Surface | File | Notes |
 |---------|------|-------|
 | Desktop board | `frontend/src/pages/scm-v2/DeliveryPlanning.tsx` | 1,377 lines. Component at `:517`. The 4 state tabs + region chips + inline Driver / Lorry cells. |
-| Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx:43` | A trip = one lorry-day with an ordered stop list. |
+| Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx:43` | A trip = one lorry-day with an ordered stop list. Status tabs order `IN_PROGRESS` before `PLANNED` (default tab still `PLANNED`). Carries a read-only **"To schedule"** panel — see below. |
 | Desktop fleet masters | `frontend/src/pages/scm-v2/Fleet.tsx:78` | `DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`; `LorryDetail.tsx:71` mounts as a drawer from `Fleet.tsx:613`. |
 | Desktop regions | `frontend/src/pages/scm-v2/DeliveryPlanningRegions.tsx:40` | Region master + per-state mapping editor. |
 | Desktop capacity | `frontend/src/pages/scm-v2/LorryCapacity.tsx:140` | |
@@ -34,6 +34,27 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 the `/scm/drivers` route was retired on 2026-07-17 in favour of the Drivers
 section of `/scm/fleet` (`App.tsx:593-599`, `Sidebar.tsx:518-523`). Do not
 re-add it.
+
+### Trips "To schedule" panel — read-only pending-orders queue
+
+The Trips page carries a full-width **"To schedule"** panel below the trip
+list / stop sheet grid. It surfaces the `PENDING_SCHEDULE` orders (ready to
+ship, not yet on a trip) so a dispatcher sees the incoming work inside Trips,
+not only on the Delivery Planning board. It **reuses the board's own data
+path** — `useDeliveryPlanning({ region: 'ALL', state: 'PENDING_SCHEDULE' })`
+(`vendor/scm/lib/delivery-planning-queries.ts:150`) → `GET
+/delivery-planning?state=PENDING_SCHEDULE` — so it shares `derivePlanningState`
+and cannot drift from the board. No new endpoint, no new state derivation.
+
+Columns are read-only: SO / Ref (`so_doc_no`), Customer (`debtor_name`),
+Region (`region` bucket), Stock (`stock_remark`), Qty (`remaining_qty`,
+rounded), Delivery Date (`effective_delivery_date ?? customer_delivery_date`).
+Order array is null-guarded (`?? []`) before `.length` / `.map`.
+
+**Deliberately deferred** (next slice): multiselect, the Date/Time scheduling
+actions, and any write-back from Trips onto the board. Scheduling an order
+still happens only on the board (`PATCH /delivery-planning/:type/:id/schedule`
+→ `scheduleOntoTrip`); this panel is display-only.
 
 ### The four state tabs
 
