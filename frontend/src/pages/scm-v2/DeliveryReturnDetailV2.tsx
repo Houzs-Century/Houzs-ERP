@@ -67,10 +67,9 @@ import {
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
-import { useCustomerPoNotice } from "./so-relationship-map";
+import { useDrRelationshipMap } from "./sales-doc-relationship-map";
 import {
   DocumentRelationshipMapModal,
-  type ChainNode,
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
@@ -487,7 +486,6 @@ export function DeliveryReturnDetailV2() {
   const updateStatus = useUpdateDeliveryReturnStatus();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
-  const showCustomerPo = useCustomerPoNotice();
 
   const deliveryReturn =
     (detail.data as { deliveryReturn?: DrHeader } | undefined)?.deliveryReturn ??
@@ -589,46 +587,25 @@ export function DeliveryReturnDetailV2() {
       );
   };
 
-  // Chain nodes for the shared Relationship Map modal — PO → SO → DO → SI →
-  // DR (CURRENT). Return branches OFF the DO, so DO is the immediate parent;
-  // SI + upstream nodes are done when the DR header references them.
-  const chainNodes: ChainNode[] = useMemo(() => {
-    if (!deliveryReturn) return [];
-    const doRef = deliveryReturn.do_doc_no || deliveryReturn.delivery_order_id || "";
-    const soRef = deliveryReturn.customer_so_no || "";
-    return [
-      {
-        type: "Customer PO",
-        doc: soRef || "Not linked",
-        meta: soRef ? "Customer's own doc" : "—",
-        state: soRef ? "done" : "pending",
-      },
-      {
-        type: "Sales Order",
-        doc: "Upstream of DO",
-        meta: doRef ? "Linked via DO" : "—",
-        state: doRef ? "done" : "pending",
-      },
-      {
-        type: "Delivery Order",
-        doc: doRef || "Not linked",
-        meta: doRef ? fmtDate(deliveryReturn.return_date) : "—",
-        state: doRef ? "done" : "pending",
-      },
-      {
-        type: "Sales Invoice",
-        doc: "Upstream doc",
-        meta: "Prior to return",
-        state: "pending",
-      },
-      {
-        type: "Delivery Return",
-        doc: deliveryReturn.return_number,
-        meta: "This document",
-        state: "current",
-      },
-    ];
-  }, [deliveryReturn]);
+  // Chain nodes for the shared Relationship Map modal, read from the LIVE
+  // `/document-flow` graph (the SO map's source) instead of a hand-built chain.
+  // The old chain hard-coded "Upstream of DO" / "Upstream doc" for the Sales
+  // Order + Sales Invoice — neither showed the real number nor was clickable.
+  // The graph resolves them off this return's DO (audit R8).
+  const relMapHeader = useMemo(
+    () =>
+      deliveryReturn
+        ? {
+            id: deliveryReturn.id,
+            return_number: deliveryReturn.return_number,
+            do_doc_no: deliveryReturn.do_doc_no,
+            customer_so_no: deliveryReturn.customer_so_no,
+          }
+        : null,
+    [deliveryReturn],
+  );
+  const { nodes: chainNodes, onNodeClick: onChainNodeClick } =
+    useDrRelationshipMap(relMapHeader);
 
   const doMarkInspected = () => {
     if (!deliveryReturn) return;
@@ -1271,25 +1248,15 @@ export function DeliveryReturnDetailV2() {
         </div>
       </div>
 
-      {/* Relationship map modal — shared 5-node graph */}
+      {/* Relationship map modal — shared 5-node graph, live `/document-flow` */}
       <DocumentRelationshipMapModal
         open={relMapOpen}
         onClose={() => setRelMapOpen(false)}
         nodes={chainNodes}
         onNodeClick={(n) => {
-          if (
-            n.type === "Delivery Order" &&
-            deliveryReturn.delivery_order_id
-          ) {
-            navigate(
-              `/scm/delivery-orders/${deliveryReturn.delivery_order_id}`
-            );
-            setRelMapOpen(false);
-          } else if (n.type === "Customer PO" && n.state === "done") {
-            // Paints as Linked, so it must answer when clicked (owner
-            // 2026-07-16). Reference string, no file behind it — say so.
-            showCustomerPo(n.doc);
-          }
+          // TRUE = the click navigated away, so close the map; a notice keeps it
+          // open (renders over the map).
+          if (onChainNodeClick(n)) setRelMapOpen(false);
         }}
       />
     </div>

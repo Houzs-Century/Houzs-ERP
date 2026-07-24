@@ -193,6 +193,55 @@ Amendments-on-map + clickability (`feat/relmap-clickable-amendment`, §2.3):
   `AmendmentChip` type, `actionable` flag + clickable-logic fix.
 - `frontend/src/pages/scm-v2/SalesOrderDetailV2.tsx`, `SalesOrderDetail.tsx` — pass amendments.
 
-## 5. Out of scope (do not touch)
-Delivery-Order surfaces and DO/delivery status logic are owned by a concurrent
-session. This work is read-only and never touches DO files.
+## 5. Sales-side Relationship Maps read the live graph (SO/DO/SI/DR) — audit R8
+
+Distinct surface from the strip above: the bespoke 5/7-node **Relationship Map**
+modal (`components/scm-v2/DocumentRelationshipMapModal.tsx`) that the sales
+document DETAIL pages open. The Sales Order map was taught to read
+`/document-flow` in #600 (`so-relationship-map.ts`); the Delivery Order, Sales
+Invoice and Delivery Return maps kept a HAND-BUILT `chainNodes` literal and so
+lied about exactly the nodes an operator needs:
+
+- **DO** hard-coded its GRN node to "Not created" forever (the procurement leg
+  the family carries was invisible).
+- **SI** dropped its AR **payment** nodes for a dead "Sales side · no GRN" tile.
+- **DR** hard-coded its Sales Order + Sales Invoice nodes to "Upstream …" text —
+  neither showed a real number nor was clickable.
+
+**Shipped (`feat/r8-docflow-do-si-dr`, display-only):**
+`frontend/src/pages/scm-v2/sales-doc-relationship-map.ts` — the ONE builder for
+all three, mirroring `so-relationship-map.ts`. Each hook
+(`useDoRelationshipMap` / `useSiRelationshipMap` / `useDrRelationshipMap`) reads
+`useDocumentFlow(type, id)` — linkage **B**, the same company-scoped graph the
+SO map, the vendor `DocumentFlowModal` and the purchase-side maps use — and a
+pure `build*ChainNodes(...)` fn maps the resolved family nodes to the 5-node
+canvas (unit-tested in `sales-doc-relationship-map.test.ts`). GRN opens are
+procurement-gated (same OR-shape as the SO map, so a sales-hatch reader is never
+handed a `<Forbidden>` node); the SI **Payments** node lists payments in an
+in-app notice (they live on that page) rather than navigating.
+
+**CRITICAL — status untouched.** Only the DO/SI/DR *traceability* node source
+changed. The DO status strip, `computeDoLifecycle`, and delivery-planning state
+are NOT read by these hooks. Consignment documents already read the live graph
+via `RelationshipMapButton` (`cso/cdo/cdr/pco/pcr/pcrn`) and were not changed.
+
+**List columns (transfer-to / convert-from), mirroring the SO list's
+`converted_po_nos`:**
+- DO list — **"Invoiced to"**: the SI number(s) each DO was invoiced into (+ DR
+  numbers returned), from the SAME batched `sales_invoices` / `delivery_returns`
+  read that already stamps `has_children` (`delivery-orders-mfg.ts` list handler,
+  new `invoiced_si_nos` / `return_nos` — additive, no status touch).
+- SI list — **"From DO"**: `stampDoNumber` resolves `delivery_order_id → do_number`
+  (the SI header has no `do_doc_no` column; only the UUID), on both list paths.
+- DR list — **"From SO"**: the Sales Order behind the return's DO, resolved
+  `delivery_order_id → delivery_orders.so_doc_no` (best-effort, never 500s).
+
+The Relationship Map + these columns are DESKTOP-ONLY surfaces, matching the
+existing precedent (the mobile detail explicitly omits the relationship graph,
+`MobileModuleDetail.tsx`; mobile lists don't render `converted_po_nos` either).
+
+## 6. Out of scope (do not touch)
+The DO/delivery STATUS derivation and delivery-planning state logic remain
+owned separately and are sensitive — the R8 relationship work above is
+read-only and never touches status. Confirm the DO status strip live before
+merging any change near these files.

@@ -73,6 +73,9 @@ type DrRow = {
   return_number: string;
   do_doc_no: string | null;
   delivery_order_id: string | null;
+  /** Convert-from relation (display-only, audit R8): the Sales Order behind this
+   *  return's DO, server-resolved via delivery_order_id → delivery_orders. */
+  so_doc_no?: string | null;
   return_date: string;
   debtor_name: string;
   debtor_code: string | null;
@@ -1081,6 +1084,18 @@ export function DeliveryReturnsListV2() {
       getValue: (r) => r.do_doc_no ?? "",
       render: (r) => (
         <span className="font-mono text-[12px] text-ink-secondary">{doOf(r)}</span>
+      ),
+    },
+    {
+      /* Convert-from relation (audit R8): the Sales Order behind this return's
+         DO. Server-resolved (so_doc_no); mirrors the DO/SI lists' "From SO". */
+      key: "so_doc_no",
+      label: "From SO",
+      width: "128px",
+      disableSort: true,
+      getValue: (r) => r.so_doc_no ?? "",
+      render: (r) => (
+        <span className="font-mono text-[12px] text-ink-secondary">{r.so_doc_no || "—"}</span>
       ),
     },
     {
