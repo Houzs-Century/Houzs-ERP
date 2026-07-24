@@ -305,6 +305,73 @@ Consequences worth knowing before you touch this:
   so the ASSR branch checks the case **exists and is open** up front; a closed,
   archived or unknown case is a 404 and never mints a trip or a DP number.
 
+### The sync is bidirectional — Trips → Board reconciliation
+
+The forward direction (above) is Board → Trips: scheduling writes a `scm.trips`
+row + a `trip_stops` DELIVERY row keyed on `do_id`. The **reverse** direction —
+Trips → Board — runs when a trip/stop changes on the Trips side, and closes the
+stale-board gap: a cancelled trip or a removed stop used to leave the source
+order still LOOKING scheduled on the board, because the persisted
+`delivery_state` override that hid it from **Pending Schedule** was never
+cleared.
+
+`backend/src/scm/lib/tripReconcile.ts` (`reconcileStopsToBoard`) is wired into
+the three trip write endpoints in `trips.ts`:
+
+| Endpoint | When it reconciles |
+|---|---|
+| `DELETE /trips/:id/stops/:stopId` | the removed stop's source order — the stop's `do_id` is snapshotted **before** the delete |
+| `DELETE /trips/:id` (soft cancel → `CANCELLED`, and `?hard=true`) | every `DELIVERY` stop on the trip. Hard-delete CASCADEs the stops away (`trip_stops.trip_id ON DELETE CASCADE`), so they are read first |
+| `PATCH /trips/:id/status` → `CANCELLED` | same — every `DELIVERY` stop. Other statuses leave the schedule intact |
+
+What it does, and its guardrails:
+
+- It **clears** the `delivery_state` override cache (sets it NULL) on the source
+  header(s) — `scm.delivery_orders` (via `do_id`) and the parent
+  `scm.mfg_sales_orders` (via the DO's `so_doc_no`). It **never** touches
+  `derivePlanningState`: clearing the override the derivation already respects
+  returns a ready-to-ship order to its derived `PENDING_SCHEDULE`, and a
+  genuinely delivered order still derives `DELIVERED`. It writes **no**
+  `customer_delivery_date` and adds **no** column to any shared SO-LIST select
+  (the VIEW-TRAP).
+- The SO override is cleared through the **canonical generation writer**
+  (`advanceSoGeneration`), not a raw update, so a human holding the SO's edit
+  lease is not clobbered — the reconcile stands down and **reports** a lease /
+  version conflict rather than overwriting. Only headers that actually carry an
+  override are written, so a routine stop removal churns no version and spams no
+  audit.
+- **Keyed on `do_id`**, the same column `scheduleOntoTrip` writes and
+  `staleStopSweepFor` sweeps — forward and reverse stay symmetric. The pure
+  `stopReconcileKeyFor` **refuses** a stop with no `do_id` (a `so_id`-only stop —
+  which never occurs, an SO has no uuid; an ASSR leg keyed on `assr_case_id`; a
+  manual DP job with all three NULL), so the reconcile only ever acts on an SO/DO
+  delivery it owns.
+- **REPORT, don't REPAIR.** The trip/stop change has already committed, so a
+  partial reconcile failure is surfaced as `reconcile: { failed, reason }` on the
+  response (present ONLY on failure, `reconcileFieldsFor`, the same convention as
+  the forward `tripWiring`) — a stale override that could not be cleared is
+  named, never hidden behind `ok: true`.
+
+**Deliberately deferred** (documented, not guessed):
+
+- **ASSR-leg reverse sync.** Cancelling a trip does not clear a scheduled
+  service case's driving date on `public.assr_cases`. That is a different key
+  (`assr_case_id`) writing to a `public` table via `c.env.DB`, and ASSR rows
+  always land as `PENDING_DELIVERY` on the board regardless — a separate, safer
+  slice.
+- **`amended_delivery_date` is left in place** on unschedule. It cannot be
+  distinguished from a customer-requested amendment
+  (`amend_date_from_customer`) without more logic, and clearing it blindly would
+  risk a legitimate customer date. It does not affect the `PENDING_SCHEDULE`
+  derivation, so leaving it is harmless.
+- **No Trips-side UI triggers these endpoints yet** — the Trips page has no
+  cancel / remove-stop action, so the reconcile is reached only via the API
+  today. When such a UI is added it should invalidate `['delivery-planning']`;
+  the backend reconcile is already in place.
+- **`dp_no` on a cancelled (not deleted) trip's stop** still shows on the board
+  (the board reads all `trip_stops.dp_no` regardless of trip status). It is a
+  label, not the schedule-queue state, so it is out of this slice.
+
 **How a person becomes a driver or helper — two disconnected mechanisms.**
 (1) Manual master CRUD (`POST /drivers`, `POST /helpers`), which creates a
 fleet row with no link to `public.users`. (2) A `user_id` link on
