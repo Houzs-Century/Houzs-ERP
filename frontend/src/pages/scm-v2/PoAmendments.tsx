@@ -1,20 +1,18 @@
 // ----------------------------------------------------------------------------
-// Amendments — the SO-amendment / revision inbox (Phase 1-C). A DataGrid queue
-// of every amendment across all Sales Orders, newest first. HOUZS VENDOR port
-// of 2990's apps/backend/src/pages/Amendments.tsx.
+// PoAmendments — the PO-amendment / revision inbox. A DataGrid queue of every
+// Purchase Order amendment, newest first. The PO-side sibling of
+// pages/scm-v2/Amendments.tsx (the SO amendment queue), built to the owner's
+// SIMPLIFIED model: the status filter is just Requested / Approved / All.
 //
-// Row-click routing (Houzs 2026-07-15): a double-click now opens the amendment
-// job card (AmendmentDetailV2, /scm/amendments/:id) — the before/after diff +
-// revision-status hero + gate actions. That detail page hands off into the SO
-// editor (/scm/sales-orders/:docNo?edit=1, which hosts the pending banner + the
-// legacy line editor) or the bound-PO editor for the later gates, so the queue
-// no longer needs to resolve the bound PO itself.
+// Double-clicking a row opens the amendment job card (PoAmendmentDetailV2,
+// /scm/po-amendments/:id) — the before/after diff + revision-status hero + the
+// single-approver gate actions (approve / reject / withdraw).
 // ----------------------------------------------------------------------------
 
 import { useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fmtDateTime } from '@2990s/shared';
-import { useAmendments, type AmendmentRow } from '../../vendor/scm/lib/so-amendment-queries';
+import { usePoAmendments, type PoAmendmentRow } from '../../vendor/scm/lib/po-amendment-queries';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import { AmendmentStatusPill } from '../../vendor/scm/components/StatusPill';
 import {
@@ -28,38 +26,35 @@ import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { cn } from '../../lib/utils';
 
 // SIMPLIFIED status filter (owner 2026-07-24): Requested / Approved / All only.
-// The backend so_amendment_status enum still carries the granular two-gate values
-// (SUPPLIER_PENDING / SO_APPROVED / PO_APPROVED / SENT) the 2990 mirror + the SO
-// detail stepper depend on — the queue just collapses them into the two buckets
-// via amendmentBucketOf, and reaches the closed (REJECTED) rows through "All".
+// The backend enum still carries REJECTED (a rejected/withdrawn amendment), but
+// the queue is about what is open vs applied, so the closed rows are reached via
+// "All" rather than their own chip — mirrors the SO amendment simplification.
 const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
 /* New unique storage key — NEVER reuse another list's key. */
-const AMENDMENT_LIST_STORAGE_KEY = 'so-amendment-list.layout.v1';
+const PO_AMENDMENT_LIST_STORAGE_KEY = 'po-amendment-list.layout.v1';
 
-/* `requested_by` is a bare scm.staff uuid (so_amendments.requested_by, FK ->
+/* `requested_by` is a bare scm.staff uuid (po_amendments.requested_by, FK ->
    scm.staff.id) — the list endpoint sends no name with it. Resolve through the
-   shared staff roster exactly as the SO / DO / SI lists resolve salesperson_id;
-   search / group / sort all key off the RESOLVED name so the column behaves as
-   the person column it presents itself to be. */
-const buildAmendmentColumns = (
+   shared staff roster exactly as the SO amendment / PO lists resolve their
+   people columns; search / group / sort all key off the RESOLVED name. */
+const buildColumns = (
   actorNameOf: (id: string | null | undefined, empty?: string) => string,
-): DataGridColumn<AmendmentRow>[] => [
+): DataGridColumn<PoAmendmentRow>[] => [
   {
-    key: 'so_doc_no', label: 'SO No.', width: 140, sortable: true, groupable: true,
-    accessor: (a) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{a.so_doc_no}</span>,
-    searchValue: (a) => a.so_doc_no,
-    // accessor is JSX → export the raw SO-no string so the column isn't blank.
-    exportValue: (a) => a.so_doc_no,
-    groupValue: (a) => a.so_doc_no,
-    sortFn: (a, b) => a.so_doc_no.localeCompare(b.so_doc_no),
+    key: 'po_number', label: 'PO No.', width: 150, sortable: true, groupable: true,
+    accessor: (a) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{a.po_number}</span>,
+    searchValue: (a) => a.po_number ?? '',
+    exportValue: (a) => a.po_number ?? '',
+    groupValue: (a) => a.po_number ?? '',
+    sortFn: (a, b) => String(a.po_number ?? '').localeCompare(String(b.po_number ?? '')),
   },
   {
-    key: 'amendment_no', label: 'Amendment No.', width: 140, sortable: true,
+    key: 'amendment_no', label: 'Amendment No.', width: 150, sortable: true,
     accessor: (a) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{a.amendment_no ?? '—'}</span>,
     searchValue: (a) => String(a.amendment_no ?? ''),
     exportValue: (a) => String(a.amendment_no ?? '—'),
-    sortFn: (a, b) => Number(a.amendment_no ?? 0) - Number(b.amendment_no ?? 0),
+    sortFn: (a, b) => String(a.amendment_no ?? '').localeCompare(String(b.amendment_no ?? '')),
   },
   {
     key: 'requested_by', label: 'Requested by', width: 200, sortable: true, groupable: true,
@@ -77,7 +72,6 @@ const buildAmendmentColumns = (
   },
   {
     key: 'status', label: 'Status', width: 150, sortable: true, groupable: true,
-    // SIMPLIFIED list pill — Requested / Approved / Rejected (see simplifiedAmendmentPill).
     accessor: (a) => <AmendmentStatusPill status={a.status} />,
     searchValue: (a) => simplifiedAmendmentPill(a.status).label,
     groupValue: (a) => simplifiedAmendmentPill(a.status).label,
@@ -93,7 +87,7 @@ const buildAmendmentColumns = (
   },
 ];
 
-export const Amendments = () => {
+export const PoAmendments = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const statusChip = searchParams.get('status') ?? 'all';
@@ -103,34 +97,29 @@ export const Amendments = () => {
     setSearchParams(next, { replace: true });
   };
 
-  const { data, isLoading, error } = useAmendments();
+  const { data, isLoading, error } = usePoAmendments();
   const { actorNameOf } = useStaffLookup();
 
-  const allRows = useMemo<AmendmentRow[]>(() => (data?.amendments ?? []) as AmendmentRow[], [data]);
-  const rows = useMemo<AmendmentRow[]>(
+  const allRows = useMemo<PoAmendmentRow[]>(() => (data?.amendments ?? []) as PoAmendmentRow[], [data]);
+  const rows = useMemo<PoAmendmentRow[]>(
     () => (statusChip === 'all' ? allRows : allRows.filter((a) => amendmentBucketOf(a.status) === statusChip)),
     [allRows, statusChip],
   );
-  // actorNameOf identity changes when the staff roster lands — rebuild so the
-  // column re-renders with real names instead of staying on the loading dash.
-  const columns = useMemo(() => buildAmendmentColumns(actorNameOf), [actorNameOf]);
+  const columns = useMemo(() => buildColumns(actorNameOf), [actorNameOf]);
 
-  /* Row-click routing (2026-07-15) — open the amendment job card. The detail
-     page owns the diff + revision-status hero + gate actions, and hands off
-     into the SO / bound-PO editor for the deeper line edits. */
-  const openRow = (a: AmendmentRow) => {
-    navigate(`/scm/amendments/${a.id}`);
+  const openRow = (a: PoAmendmentRow) => {
+    navigate(`/scm/po-amendments/${a.id}`);
   };
 
   return (
     <div>
       <PageHeader
         eyebrow="Revision inbox"
-        title="Amendments"
+        title="PO Amendments"
         description={
           isLoading
             ? 'Loading amendments…'
-            : `${rows.length} sales order amendment${rows.length === 1 ? '' : 's'}`
+            : `${rows.length} purchase order amendment${rows.length === 1 ? '' : 's'}`
         }
       />
 
@@ -138,13 +127,11 @@ export const Amendments = () => {
         {error && !isLoading && (
           <div className="rounded-lg border border-err/40 bg-err/10 px-4 py-2.5 text-[12.5px] text-err">
             <strong className="font-semibold">Failed to load amendments.</strong>{' '}
-            {/* authedFetch already ran this through humanApiError, so `message`
-                is a plain sentence; the fallback covers a non-Error throw. */}
             {error instanceof Error ? error.message : 'Something went wrong.'}
           </div>
         )}
 
-        {/* Status chips — matches the GRN / DR / SI list filter style. */}
+        {/* Status chips — SIMPLIFIED Requested / Approved / All. */}
         <div className="flex flex-wrap gap-1.5">
           {STATUS_CHIPS.map((s) => {
             const active = statusChip === s;
@@ -166,30 +153,27 @@ export const Amendments = () => {
           })}
         </div>
 
-        <DataGrid<AmendmentRow>
-        rows={rows}
-        columns={columns}
-        storageKey={AMENDMENT_LIST_STORAGE_KEY}
-        exportName="Amendments"
-        rowKey={(a) => a.id}
-        searchPlaceholder="Search amendments…"
-        loadedSearchLimit={500}
-        groupBanner={false}
-        /* Open on DOUBLE-click (mirrors the GRN / PO list). */
-        onRowDoubleClick={(a) => openRow(a)}
-        /* Closed amendments (rejected / withdrawn) grey out so they read as dead
-           (mirrors the GRN list's cancelled/closed treatment). Under the
-           simplified buckets only REJECTED is dead — an applied (SENT) revision
-           now reads as Approved, not closed. */
-        rowStyle={(a) => amendmentBucketOf(a.status) === 'REJECTED'
-          ? { opacity: 0.6, filter: 'grayscale(0.4)' }
-          : undefined}
-        isLoading={isLoading}
-        emptyMessage="No amendments yet — raise one from a processing-locked Sales Order."
+        <DataGrid<PoAmendmentRow>
+          rows={rows}
+          columns={columns}
+          storageKey={PO_AMENDMENT_LIST_STORAGE_KEY}
+          exportName="PO Amendments"
+          rowKey={(a) => a.id}
+          searchPlaceholder="Search amendments…"
+          loadedSearchLimit={500}
+          groupBanner={false}
+          onRowDoubleClick={(a) => openRow(a)}
+          /* Closed amendments (REJECTED / withdrawn) grey out so they read as
+             dead — mirrors the SO amendment queue + the GRN cancelled treatment. */
+          rowStyle={(a) => amendmentBucketOf(a.status) === 'REJECTED'
+            ? { opacity: 0.6, filter: 'grayscale(0.4)' }
+            : undefined}
+          isLoading={isLoading}
+          emptyMessage="No amendments yet — raise one from a Purchase Order."
         />
       </div>
     </div>
   );
 };
 
-export default Amendments;
+export default PoAmendments;

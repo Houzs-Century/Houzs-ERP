@@ -28,6 +28,7 @@ import {
   Send,
   RotateCcw,
   Package,
+  FilePenLine,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -55,6 +56,12 @@ import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
+// PO amendment create flow (feat/amendment-ui). Localized entry point — the
+// "Raise amendment" button + its modal. NOTE: this file is also edited by the
+// concurrent relmap-clickable-amendment work; this addition is confined to the
+// import + one button + modal state to keep the merge trivial.
+import { PoAmendmentCreateModal } from "../../components/scm-v2/PoAmendmentCreateModal";
 import { cn } from "../../lib/utils";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -377,8 +384,11 @@ function PurchaseOrderDetailV2ReadOnly() {
   const reopenPo = useReopenPurchaseOrder();
   const notify = useNotify();
   const confirm = useConfirm();
+  const { can } = useHouzsAuth();
   // In-flight guard for the supplier send — see doSendToSupplier.
   const [sendingToSupplier, setSendingToSupplier] = useState(false);
+  // PO amendment create modal (feat/amendment-ui) — localized state.
+  const [showAmendModal, setShowAmendModal] = useState(false);
 
   /* Nick 2026-07-09 — Ship-to warehouse cell was rendering the raw
      `purchase_location_id` UUID because the field only carries the id;
@@ -893,12 +903,29 @@ function PurchaseOrderDetailV2ReadOnly() {
                 Convert to GRN
               </Button>
             )}
+            {/* Raise amendment — a live (confirmed, non-cancelled) PO can be
+                revised through the single-approver amendment flow. The backend
+                one-open guard 409s a second request; the modal surfaces that. */}
+            {purchaseOrder.status !== "DRAFT" && purchaseOrder.status !== "CANCELLED" && can("scm.po_amendment.create") && (
+              <Button variant="secondary" icon={<FilePenLine size={14} />} onClick={() => setShowAmendModal(true)}>
+                Raise amendment
+              </Button>
+            )}
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>
               Edit
             </Button>
           </div>
         </div>
       </div>
+
+      {showAmendModal && (
+        <PoAmendmentCreateModal
+          poId={purchaseOrder.id}
+          poNumber={purchaseOrder.po_number}
+          onClose={() => setShowAmendModal(false)}
+          onCreated={(amendmentId) => navigate(`/scm/po-amendments/${amendmentId}`)}
+        />
+      )}
 
       {/* Detail body */}
       <div className="py-5">

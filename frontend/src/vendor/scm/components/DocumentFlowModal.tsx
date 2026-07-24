@@ -14,7 +14,7 @@ import {
   type FlowNodeType,
   type FlowEdgeKind,
 } from '../lib/flow-queries';
-import { statusLabel, humaniseStatusKey, type StatusDocType } from '../lib/status-pill';
+import { statusLabel, humaniseStatusKey, simplifiedAmendmentPill, STATUS_TONES, type StatusDocType } from '../lib/status-pill';
 
 type Props = { type: FlowNodeType; id: string; open: boolean; onClose: () => void };
 
@@ -90,6 +90,15 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
 
   const nodes = data?.nodes ?? [];
   const edges = data?.edges ?? [];
+  // PO amendments (mig 0192) branch off the Purchase Order — rendered as a
+  // clickable chip row below the map, the same idiom #1229 used for SO
+  // amendments on the SO map. Each opens /scm/po-amendments/:id.
+  const poAmendments = data?.poAmendments ?? [];
+
+  const goPoAmendment = (amendmentId: string) => {
+    onClose();
+    navigate(`/scm/po-amendments/${amendmentId}`);
+  };
 
   // ── Layout: assign every node an (x, y) ─────────────────────────────────
   const pos = new Map<string, { x: number; y: number }>();
@@ -225,6 +234,39 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
             </div>
           )}
         </div>
+
+        {!isLoading && !isError && poAmendments.length > 0 && (
+          <div style={{ padding: '12px 22px', borderTop: '1px solid var(--c-line)' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--c-burnt)', marginBottom: 8 }}>
+              Amendments off the Purchase Order
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {poAmendments.map((a) => {
+                const { label, tone } = simplifiedAmendmentPill(a.status);
+                const { bg, fg } = STATUS_TONES[tone];
+                return (
+                  <button
+                    key={a.id}
+                    onClick={() => goPoAmendment(a.id)}
+                    title="Open PO amendment"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                      border: '1px solid var(--c-line)', borderRadius: 8, padding: '6px 10px',
+                      background: 'white', fontFamily: 'inherit',
+                    }}
+                  >
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--c-ink)' }}>
+                      {a.amendmentNo != null && String(a.amendmentNo).trim() !== '' ? String(a.amendmentNo) : `Amendment ${a.poNumber}`}
+                    </span>
+                    <span style={{ fontSize: 10.5, fontWeight: 600, borderRadius: 999, padding: '2px 8px', background: bg, color: fg }}>
+                      {label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 18, alignItems: 'center', padding: '12px 22px', borderTop: '1px solid var(--c-line)', flexWrap: 'wrap' }}>
           {LEGEND.map((l) => (

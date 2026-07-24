@@ -30,6 +30,8 @@ import type { MobileScanPrefill } from "./MobileScan";
 import type { ConvertTarget } from "./MobileConvertWizard";
 const MobileSalesOrders = lazy(() => import("./MobileSalesOrders").then((m) => ({ default: m.MobileSalesOrders })));
 const MobileAmendments = lazy(() => import("./MobileAmendments").then((m) => ({ default: m.MobileAmendments })));
+const MobilePoAmendments = lazy(() => import("./MobilePoAmendments").then((m) => ({ default: m.MobilePoAmendments })));
+const MobilePoAmendmentDetail = lazy(() => import("./MobilePoAmendmentDetail").then((m) => ({ default: m.MobilePoAmendmentDetail })));
 const MobileSODetail = lazy(() => import("./MobileSODetail").then((m) => ({ default: m.MobileSODetail })));
 const MobileNewSO = lazy(() => import("./MobileNewSO").then((m) => ({ default: m.MobileNewSO })));
 const MobileCalendar = lazy(() => import("./MobileCalendar").then((m) => ({ default: m.MobileCalendar })));
@@ -70,6 +72,8 @@ type Screen =
   | { t: "search" }
   | { t: "so-detail"; docNo: string }
   | { t: "amendments" }
+  | { t: "po-amendments" }
+  | { t: "po-amendment-detail"; id: string }
   | { t: "so-maintenance" }
   | { t: "fair-report" }
   | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill }
@@ -108,6 +112,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/scm/sales-orders/maintenance") return { t: "so-maintenance" };
   if (path === "/reports/fair-report") return { t: "fair-report" };
   if (path === "/scm/amendments") return { t: "amendments" };
+  if (path === "/scm/po-amendments") return { t: "po-amendments" };
   if (path === "/assr") return { t: "service" };
   if (path === "/projects") return { t: "pms" };
   if (path === "/mail-center") return { t: "mail" };
@@ -276,6 +281,7 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
   { group: "Procurement & MRP", items: [
     { to: "/scm/mrp", label: "MRP · Stock Status" },
     { to: "/scm/purchase-orders", label: "Purchase Orders" },
+    { to: "/scm/po-amendments", label: "PO Amendments" },
     { to: "/scm/grns", label: "Goods Receipt" },
     { to: "/scm/purchase-invoices", label: "Purchase Invoices" },
     { to: "/scm/purchase-returns", label: "Purchase Returns" },
@@ -623,6 +629,8 @@ function MobileAppInner() {
   if (screen.t === "search") overlay = <MobileSearch onBack={back} onNavigate={onSearchNavigate} />;
   else if (screen.t === "so-detail") overlay = <MobileSODetail docNo={screen.docNo} onBack={back} onEdit={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d })} />;
   else if (screen.t === "amendments") overlay = <MobileAmendments onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} />;
+  else if (screen.t === "po-amendments") overlay = <MobilePoAmendments onBack={back} onOpen={(id) => setScreen({ t: "po-amendment-detail", id })} />;
+  else if (screen.t === "po-amendment-detail") overlay = <MobilePoAmendmentDetail amendmentId={screen.id} onBack={() => setScreen({ t: "po-amendments" })} />;
   else if (screen.t === "so-maintenance") {
     // Defence-in-depth on the SAME server-decided answer the menu row uses, so
     // the row and the mount cannot disagree: don't mount the maintenance page
