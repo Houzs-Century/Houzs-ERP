@@ -390,7 +390,7 @@ function PurchaseOrderDetailV2ReadOnly() {
   const warehouseNameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const w of warehousesQ.data ?? []) {
-      m.set(w.id, `${w.code} · ${w.name}`);
+      m.set(w.id, w.code);
     }
     return m;
   }, [warehousesQ.data]);

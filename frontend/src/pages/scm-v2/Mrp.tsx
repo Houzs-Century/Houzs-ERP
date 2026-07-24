@@ -115,7 +115,7 @@ function LeadTimesDialog({ onClose, warehouses }: { onClose: () => void; warehou
           >
             <option value={GLOBAL_LEAD_KEY}>Global Defaults</option>
             {warehouses.map((w) => (
-              <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+              <option key={w.id} value={w.id}>{w.code}</option>
             ))}
           </select>
         </label>
@@ -985,7 +985,7 @@ export const Mrp = () => {
           <select className={styles.filterSelect} value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
             <option value="all">All warehouses</option>
             {sortByText(data?.warehouses ?? []).map((w) => (
-              <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+              <option key={w.id} value={w.id}>{w.code}</option>
             ))}
           </select>
         </label>

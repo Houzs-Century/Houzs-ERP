@@ -174,7 +174,7 @@ export const StockTakeNew = () => {
               >
                 <option value="">— Pick warehouse —</option>
                 {sortByText(warehouses.data ?? []).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                  <option key={w.id} value={w.id}>{w.code}</option>
                 ))}
               </select>
             </label>

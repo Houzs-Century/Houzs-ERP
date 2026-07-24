@@ -271,23 +271,23 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       const stateName = LOCATION_STATE[locCode] ?? null;
       if (stateName) {
         const row = await c.env.DB.prepare(
-          `SELECT w.name AS name
+          `SELECT w.code AS code
              FROM scm.state_warehouse_mappings m
              JOIN scm.warehouses w ON w.id = m.warehouse_id
             WHERE m.state = ? AND m.company_id = ?
             LIMIT 1`
         )
           .bind(stateName, Number((cs as any).company_id ?? 1))
-          .first<{ name: string }>();
-        warehouseLabel = row?.name ?? null;
+          .first<{ code: string }>();
+        warehouseLabel = row?.code ?? null;
       }
       if (!warehouseLabel) {
         const row = await c.env.DB.prepare(
-          `SELECT name FROM warehouses WHERE code = ? LIMIT 1`
+          `SELECT code FROM warehouses WHERE code = ? LIMIT 1`
         )
           .bind(locCode)
-          .first<{ name: string }>();
-        warehouseLabel = row?.name ?? null;
+          .first<{ code: string }>();
+        warehouseLabel = row?.code ?? null;
       }
     } catch {
       warehouseLabel = null;

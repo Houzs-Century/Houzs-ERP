@@ -314,7 +314,7 @@ export const StockTransferNew = () => {
               >
                 <option value="">— Pick source —</option>
                 {sortByText(warehouses.data ?? []).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                  <option key={w.id} value={w.id}>{w.code}</option>
                 ))}
               </select>
             </label>
@@ -332,7 +332,7 @@ export const StockTransferNew = () => {
                 <option value="">— Pick destination —</option>
                 {sortByText(warehouses.data ?? []).map((w) => (
                   <option key={w.id} value={w.id} disabled={w.id === fromWarehouseId}>
-                    {w.code} · {w.name}{w.id === fromWarehouseId ? ' (source)' : ''}
+                    {w.code}{w.id === fromWarehouseId ? ' (source)' : ''}
                   </option>
                 ))}
               </select>

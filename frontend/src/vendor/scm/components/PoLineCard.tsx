@@ -567,7 +567,7 @@ export const PoLineCard = ({
           >
             <option value="">— Inherit Purchase Location —</option>
             {sortByText(warehouses).map((w) => (
-              <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+              <option key={w.id} value={w.id}>{w.code}</option>
             ))}
           </select>
         </label>
