@@ -140,14 +140,38 @@ amendment table in 0080.
 
 ## 6. Frontend
 
-Desktop pages under `frontend/src/pages/scm-v2/` and mobile under
-`frontend/src/mobile/`, mirroring the SO amendment surfaces (`Amendments.tsx` /
-`AmendmentDetailV2.tsx` / `MobileAmendments.tsx`). Simplified status filter:
-**Requested / Approved / All**. Printable amendment document (client-side
-PDF/print, same mechanism as `purchase-order-pdf.ts`): change table with
-before=red-tint / after=green-tint, reference block, approval block (requested by
-/ approved by / timestamps / revision), "supersedes revision N" footer. **No
-emoji anywhere** (owner rule).
+### Printable amendment document — SHIPPED (both SO and PO)
 
-PO amendments are added to the PO relationship map analogously to #1229's SO
-amendment branch.
+`frontend/src/vendor/scm/lib/amendment-pdf.ts` — ONE client-side jsPDF template
+shared by the SO and PO amendment (`generateAmendmentPdf(input)`), same mechanism
+as `purchase-order-pdf.ts`. Layout: HOUZS letterhead + title ("Sales order
+amendment" / "Purchase order amendment") + amendment no + issue date + status;
+reference block (original doc no, customer / supplier, revision old → new); the
+CHANGE TABLE (per changed field: item, field, **BEFORE in red tint, AFTER in
+green tint**; ADD = muted dash before, REMOVE = "Removed" after); reason;
+approval block (requested by + approved by + timestamps + revision); "Supersedes
+revision N" footer. **No emoji anywhere** (owner rule).
+
+`amendment-pdf-map.ts` — pure mappers (`soAmendmentToPdfInput` /
+`poAmendmentToPdfInput`) that fold each detail-API shape into the template input,
+one change-table row per changed field. Unit-tested in `amendment-pdf-map.test.ts`.
+
+Wired into the SO amendment detail page (`AmendmentDetailV2.tsx`, "Print
+amendment" button) with the simplified Requested / Approved status label. The PO
+side reuses the same generator + `poAmendmentToPdfInput` once the PO amendment
+pages land.
+
+### DEFERRED to a follow-up PR
+
+- PO amendment desktop pages (list / detail / create) under
+  `frontend/src/pages/scm-v2/` and mobile under `frontend/src/mobile/`, mirroring
+  the SO amendment surfaces (`Amendments.tsx` / `AmendmentDetailV2.tsx` /
+  `MobileAmendments.tsx`), each with the simplified **Requested / Approved / All**
+  filter, and the "Print amendment" button wired to `poAmendmentToPdfInput`.
+- The SO-surface status simplification (hiding the old supplier-pending /
+  PO-approved / sent states from the list + detail while keeping the backend enum
+  values the 2990 mirror depends on).
+- Adding PO amendments to the PO relationship map, analogously to #1229's SO
+  amendment branch. NOTE: `PurchaseOrderDetail` / the relationship-map files are
+  concurrently edited by another agent (branch `feat/relmap-clickable-amendment`,
+  assigned-SO feature) — keep the amendment edits localized and merge carefully.
