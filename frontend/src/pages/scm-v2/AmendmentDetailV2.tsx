@@ -29,9 +29,12 @@ import {
   CheckCircle2,
   ExternalLink,
   GitBranch,
+  Printer,
   Undo2,
   XCircle,
 } from "lucide-react";
+import { generateAmendmentPdf } from "../../vendor/scm/lib/amendment-pdf";
+import { soAmendmentToPdfInput } from "../../vendor/scm/lib/amendment-pdf-map";
 import { fmtDateTime, fmtMoneyCenti } from "@2990s/shared";
 import { Button } from "../../components/Button";
 import {
@@ -616,6 +619,33 @@ export function AmendmentDetailV2() {
     }));
   }, [auditEntries, amendment]);
 
+  /* Printable amendment document (owner-approved layout). Same client-side
+     mechanism as the SO/PO PDFs — the operator downloads / prints / WhatsApps it.
+     Status label is the SIMPLIFIED Requested / Approved the owner asked for
+     (the multi-step backend states collapse to those two on the document). */
+  const soApplied = ["SO_APPROVED", "PO_APPROVED", "SENT", "APPROVED"].includes(status);
+  const handlePrintAmendment = () => {
+    if (!amendment) return;
+    const input = soAmendmentToPdfInput({
+      amendment: {
+        amendment_no: amendmentNo,
+        status,
+        reason,
+        created_at: asStr(amendment.created_at) || null,
+        requested_by_name: actorNameOf(asStr(amendment.requested_by)),
+        so_approved_by_name: amendment.so_approved_by ? actorNameOf(asStr(amendment.so_approved_by)) : null,
+        so_approved_at: asStr(amendment.so_approved_at) || null,
+      },
+      lines: (data?.lines ?? []) as never,
+      salesOrder: salesOrder as never,
+      customerName: (salesOrder as { customer_name?: string | null } | null)?.customer_name ?? null,
+      statusLabel: soApplied ? "Approved" : "Requested",
+    });
+    Promise.resolve(generateAmendmentPdf(input)).catch((e: unknown) =>
+      notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
+    );
+  };
+
   const canSupplierConfirm = can("scm.amendment.supplier_confirm");
   const canApproveSo = can("scm.amendment.approve_so");
   /* Reject rides the same purchasing gate the backend enforces
@@ -940,6 +970,17 @@ export function AmendmentDetailV2() {
                   </div>
                 )}
               </div>
+            </AsideCard>
+
+            <AsideCard title="Document">
+              <Button
+                variant="secondary"
+                className="w-full"
+                icon={<Printer size={14} />}
+                onClick={handlePrintAmendment}
+              >
+                Print amendment
+              </Button>
             </AsideCard>
 
             {/* Gate actions — supplier-confirm / approve-so are wired directly
