@@ -429,9 +429,21 @@ export type ScheduleDeliveryVars = {
   lorryPlateOptimistic?: string | null;
 };
 
+/* The schedule endpoint's wire shape. `trip` is WIRED (the trip the order landed
+   on) or null (NOT_REQUESTED — no lorry given — or FAILED). `tripWiring` is
+   present ONLY on a FAILED wiring: the header date IS stored (still 200), but the
+   find-or-create-a-trip step blew up, so a caller must be able to tell that apart
+   from a clean "no trip asked for". REPORT, don't REPAIR — mirrors the backend's
+   `tripFieldsFor` (delivery-planning.ts:1940). */
+export type ScheduleDeliveryResult = {
+  ok: true;
+  trip?: { id: string; trip_no: string } | null;
+  tripWiring?: { failed: true; reason: string };
+};
+
 export function useScheduleDelivery() {
   const qc = useQueryClient();
-  return useMutation<{ ok: true }, Error, ScheduleDeliveryVars, { snapshots: Array<[readonly unknown[], PlanningResponse]> }>({
+  return useMutation<ScheduleDeliveryResult, Error, ScheduleDeliveryVars, { snapshots: Array<[readonly unknown[], PlanningResponse]> }>({
     mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, jobKind }) => {
       /* Only include keys the caller actually set, so an unrelated field is never
          nulled out by an inline single-field edit. */
@@ -441,7 +453,7 @@ export function useScheduleDelivery() {
       if (driverId !== undefined) body.driverId = driverId;
       if (lorryId !== undefined) body.lorryId = lorryId;
       if (jobKind !== undefined) body.jobKind = jobKind;
-      return authedFetch<{ ok: true }>(`/delivery-planning/${type}/${id}/schedule`, {
+      return authedFetch<ScheduleDeliveryResult>(`/delivery-planning/${type}/${id}/schedule`, {
         method: 'PATCH', body: JSON.stringify(body),
       });
     },

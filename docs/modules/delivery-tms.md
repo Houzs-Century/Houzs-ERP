@@ -28,7 +28,8 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Mobile run-sheet | `frontend/src/mobile/MobileDeliveryPlanning.tsx:277` | 2,408 lines. Driver job-card run sheet. |
 | Mobile POD | `frontend/src/mobile/MobilePOD.tsx:71` | Photo / signature capture. |
 | Mobile masters | `frontend/src/mobile/MobileModuleList.tsx` | Generic list configs: `drivers` `:1327`, `helpers` `:1357`, `fleet` (lorries) `:1857`, `delivery-planning-regions` `:1957`. |
-| Board drawers | `frontend/src/vendor/scm/components/DeliveryFieldsDrawer.tsx:46`, `NewDpOrderDrawer.tsx:45`, `ScheduleDpOrderDrawer.tsx:40` | HC field editing, manual DP-order create, DP scheduling. |
+| Board drawers | `frontend/src/vendor/scm/components/DeliveryFieldsDrawer.tsx:46`, `NewDpOrderDrawer.tsx:45`, `ScheduleDpOrderDrawer.tsx:40`, `ScheduleTripDrawer.tsx` | HC field editing, manual DP-order create, DP scheduling, and the Phase-2 **multiselect scheduling drawer** (resizable). |
+| Resizable drawer chrome | `frontend/src/components/ResizableDrawer.tsx` | Generic right slide-over with a drag-to-resize left edge; width persisted to localStorage (`panel-*` DEVICE_PREF). The FIXED-width `DetailDrawer` (`max-w-[520px]`) is its non-resizable sibling. |
 
 `frontend/src/pages/scm-v2/Drivers.tsx:22` is on disk with **no importer** —
 the `/scm/drivers` route was retired on 2026-07-17 in favour of the Drivers
@@ -55,6 +56,46 @@ Order array is null-guarded (`?? []`) before `.length` / `.map`.
 actions, and any write-back from Trips onto the board. Scheduling an order
 still happens only on the board (`PATCH /delivery-planning/:type/:id/schedule`
 → `scheduleOntoTrip`); this panel is display-only.
+
+### Scheduling drawer — multiselect → schedule → Apply, on the board (Phase 2)
+
+The board's multiselect bar (the "N selected" bar) carries a **Schedule (N)**
+action next to "Convert to DO". It opens `ScheduleTripDrawer` — a right-side
+drawer built on the reusable `ResizableDrawer` (drag the left edge; width
+persisted to localStorage under `panel-dp-schedule-drawer.v1`, clamped
+420–1040px). The owner schedules the selected orders onto a lorry-day trip
+**without leaving the board**.
+
+Inside the drawer:
+
+- **Ordered stop list** — each selected SO as a numbered stop: customer, region
+  chip, address, and a per-stop delivery-date input. Selection resolves to the
+  order objects from the region-scoped board (`allOrders`, all states), so a
+  selection made under one state tab still resolves after a tab switch.
+- **Trip assignment** — one Trip date + Driver + Lorry, applied to every stop.
+  Setting the Trip date fills every per-stop date (the "one lorry-day trip"
+  case); a lorry is what puts the orders on a trip.
+- **Propose dates** — a first-cut, DISPLAY-ONLY suggestion: fills each stop with
+  its own effective delivery date (`effective_delivery_date ?? amended_delivery_date
+  ?? customer_delivery_date`), blank where absent for the dispatcher. Nothing is
+  written until Apply. Heuristic is intentionally simple; refine per owner.
+- **Propose times + route** — rendered DISABLED with a "Phase 3" affordance. The
+  map, geocoding, travel-time and residence-type rules are Phase 3, not built.
+- **Open in Trips** — a header control navigating to `/scm/trips` (the full-page
+  wide view), mirroring the SO detail drawer's "Open full page".
+- **Apply** — fans out one `useScheduleDelivery` call per selected SO (capped
+  concurrency 4), REUSING `PATCH /delivery-planning/so/:id/schedule` →
+  `scheduleOntoTrip` (find-or-create the trip + a DELIVERY stop). It writes
+  `amended_delivery_date` (via `scheduleDate`), never `customer_delivery_date`.
+  Per-stop result is surfaced honestly — **WIRED / NOT_REQUESTED / FAILED** —
+  read from the endpoint's `trip` / `tripWiring` fields (the hook's return type
+  was widened to `ScheduleDeliveryResult`). REPORT, don't REPAIR: a wiring
+  failure is named per stop, never hidden. No new schedule path, no double-count
+  (the existing one-job-one-stop sweep still owns dedupe).
+
+**Deferred to Phase 3** (documented, not guessed): the Google Map, geocoding,
+travel-time / smart time proposals, residence-type rules, and the "Propose times
++ route" logic. This drawer is scheduling only.
 
 ### The four state tabs
 
