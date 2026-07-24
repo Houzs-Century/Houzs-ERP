@@ -37,6 +37,7 @@ import {
 } from '../lib/companyScope';
 import { canonicalizeMyState } from '../lib/canonical-state';
 import { enrichVariantKeyRowsWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { isConsignmentLotSource } from '../lib/inventory-movements';
 import { computeVariantKey, effectiveDelivery, type VariantAttrs } from '../shared';
 import type { Env, Variables } from '../env';
 
@@ -1083,13 +1084,18 @@ inventory.get('/reservations', async (c) => {
   const productCode = c.req.query('productCode');
 
   // 1. Open lots (company-scoped) — the stock actually sitting on the shelf.
+  //    source_doc_type / source_doc_no ride along so each lot can be classified
+  //    OWNED vs CONSIGNMENT by its SOURCE (isConsignmentLotSource) — never by the
+  //    warehouse flag, which leaks PCR stock mis-posted into a normal warehouse
+  //    into owned value (BUG-HISTORY 2026-07-25). `id` lets the client key a lot.
   const { data: lotRows, error: lotErr } = await paginateAll<{
-    product_code: string; product_name: string | null; variant_key: string | null;
+    id: string; product_code: string; product_name: string | null; variant_key: string | null;
     warehouse_id: string; batch_no: string | null; qty_remaining: number | null;
     unit_cost_sen: number | null; received_at: string | null;
+    source_doc_type: string | null; source_doc_no: string | null;
   }>((from, to) => {
     let q = sb.from('v_inventory_lots_open')
-      .select('product_code, product_name, variant_key, warehouse_id, batch_no, qty_remaining, unit_cost_sen, received_at')
+      .select('id, product_code, product_name, variant_key, warehouse_id, batch_no, qty_remaining, unit_cost_sen, received_at, source_doc_type, source_doc_no')
       .gt('qty_remaining', 0);
     q = scopeToCompany(q, c); // open lots are per-company (view exposes company_id, mig 0106)
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
@@ -1103,14 +1109,22 @@ inventory.get('/reservations', async (c) => {
   //    READY because stock exists for them. allocated_batch_no is forward-compat
   //    (mig 0121): fall back to a batch-less select if the column is absent.
   const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'SHIPPED']);
+  type SoJoin = {
+    created_at: string | null; status: string | null;
+    customer_delivery_date?: string | null; amended_delivery_date?: string | null;
+  };
   type ReadyLine = {
     id: string; doc_no: string; item_code: string; item_group: string | null;
     variants: VariantAttrs | null; warehouse_id: string | null;
     stock_qty_ready: number | null; allocated_batch_no?: string | null;
-    so: { created_at: string | null; status: string | null } | Array<{ created_at: string | null; status: string | null }> | null;
+    so: SoJoin | SoJoin[] | null;
   };
-  const READY_SELECT = 'id, doc_no, item_code, item_group, variants, warehouse_id, stock_qty_ready, allocated_batch_no, so:mfg_sales_orders!inner(created_at, status)';
-  const READY_SELECT_NOBATCH = 'id, doc_no, item_code, item_group, variants, warehouse_id, stock_qty_ready, so:mfg_sales_orders!inner(created_at, status)';
+  // The reserving SO's delivery date (owner Q4): join the header dates and use the
+  // EFFECTIVE date amended_delivery_date ?? customer_delivery_date — the same
+  // convention delivery-planning uses (the original customer date is never
+  // overwritten; a reschedule writes amended_delivery_date, which then wins).
+  const READY_SELECT = 'id, doc_no, item_code, item_group, variants, warehouse_id, stock_qty_ready, allocated_batch_no, so:mfg_sales_orders!inner(created_at, status, customer_delivery_date, amended_delivery_date)';
+  const READY_SELECT_NOBATCH = 'id, doc_no, item_code, item_group, variants, warehouse_id, stock_qty_ready, so:mfg_sales_orders!inner(created_at, status, customer_delivery_date, amended_delivery_date)';
   let readyRows: ReadyLine[] = [];
   {
     const pull = (select: string) => paginateAll<ReadyLine>((from, to) => scopeToCompany(sb
@@ -1131,12 +1145,13 @@ inventory.get('/reservations', async (c) => {
   }
 
   // 3. Index READY demand two ways to mirror the allocator's two match paths.
-  type Claim = { docNo: string; soCreatedAt: string | null; qtyReady: number };
+  type Claim = { docNo: string; soCreatedAt: string | null; qtyReady: number; deliveryDate: string | null };
   const byBatch = new Map<string, Claim[]>();   // key: `${batch_no}|${item_code}`
   const byBucket = new Map<string, Claim[]>();  // key: `${warehouse_id}|${item_code}|${variant_key}`
   for (const r of readyRows) {
     const so = Array.isArray(r.so) ? r.so[0] : r.so;
-    const claim: Claim = { docNo: r.doc_no, soCreatedAt: so?.created_at ?? null, qtyReady: Number(r.stock_qty_ready ?? 0) };
+    const deliveryDate = (so?.amended_delivery_date ?? so?.customer_delivery_date) ?? null;
+    const claim: Claim = { docNo: r.doc_no, soCreatedAt: so?.created_at ?? null, qtyReady: Number(r.stock_qty_ready ?? 0), deliveryDate };
     const bn = r.allocated_batch_no ?? null;
     if (bn) {
       const k = `${bn}|${r.item_code}`;
@@ -1167,6 +1182,7 @@ inventory.get('/reservations', async (c) => {
     const reservedSince = reservedBy.length > 0 ? reservedBy[0].soCreatedAt : null;
     const w = whMap.get(l.warehouse_id);
     return {
+      id: l.id,
       warehouse_id: l.warehouse_id,
       warehouse_code: w?.code ?? null,
       warehouse_name: w?.name ?? null,
@@ -1177,11 +1193,22 @@ inventory.get('/reservations', async (c) => {
       qty_remaining: Number(l.qty_remaining ?? 0),
       unit_cost_sen: Number(l.unit_cost_sen ?? 0),
       received_at: l.received_at,
+      source_doc_type: l.source_doc_type ?? null,
+      source_doc_no: l.source_doc_no ?? null,
+      // Source-based consignment classification — the drawer separates these
+      // lots and drops them from OWNED value (never the warehouse flag).
+      is_consignment: isConsignmentLotSource(l.source_doc_type, l.source_doc_no),
       status: reservedBy.length > 0 ? 'RESERVED' : 'FREE',
-      reserved_by: reservedBy.map((x) => ({ doc_no: x.docNo, so_created_at: x.soCreatedAt, qty_ready: x.qtyReady })),
+      reserved_by: reservedBy.map((x) => ({
+        doc_no: x.docNo, so_created_at: x.soCreatedAt, qty_ready: x.qtyReady, delivery_date: x.deliveryDate,
+      })),
       reserved_since: reservedSince,
     };
   });
+
+  // Stamp fabric_supplier_code per lot so the merged drawer table renders the
+  // shared final fabric format — "EZ-002 (KN390-2) / SEAT 28". Batched; fail-soft.
+  await enrichVariantKeyRowsWithFabricSupplierCode(sb, c, reservations);
 
   return c.json({ reservations });
 });
