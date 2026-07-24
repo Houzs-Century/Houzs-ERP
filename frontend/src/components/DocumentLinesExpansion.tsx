@@ -14,7 +14,8 @@
 
 import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
 import { ItemGroupPill } from "../vendor/scm/lib/category-badges";
-import { cn } from "../lib/utils";
+import type { OriginAssignment } from "../vendor/scm/lib/flow-queries";
+import { cn, formatDate } from "../lib/utils";
 
 // A single normalised drill line. Callers resolve `code` (e.g. material_code ||
 // item_code), `qty` (ordered / received / returned as the document means) and
@@ -28,6 +29,10 @@ export type DocumentDrillLine = {
   variants: Record<string, unknown> | null;
   qty: number;
   amountCenti: number;
+  // The REAL origin Sales Order(s) this line was raised from, matched by SKU
+  // (purchase docs only). Empty / absent → the Assigned SO + delivery cells show
+  // a dash, exactly like the SO detail's Stock / Incoming PO columns.
+  assignedSos?: OriginAssignment[];
 };
 
 // Permissive superset of the per-line fields the six document detail hooks
@@ -60,6 +65,10 @@ const fmtRm = (centi: number): string => fmtCenti(centi);
 
 const GRID =
   "grid grid-cols-[92px_minmax(220px,1fr)_64px_110px] items-start gap-2";
+// With the two purchase-doc origin columns (Assigned SO + SO Delivery Date),
+// mirroring the SO detail's Group…Stock…Incoming-PO grid.
+const GRID_ASSIGN =
+  "grid grid-cols-[92px_minmax(200px,1fr)_56px_104px_minmax(150px,190px)_120px] items-start gap-2";
 
 export function DocumentLinesExpansion({
   isLoading,
@@ -67,13 +76,22 @@ export function DocumentLinesExpansion({
   errorMessage,
   lines,
   emptyLabel = "No lines on this document.",
+  showAssignment = false,
+  onOpenSo,
 }: {
   isLoading: boolean;
   isError?: boolean;
   errorMessage?: string | null;
   lines: DocumentDrillLine[];
   emptyLabel?: string;
+  // Purchase docs (PO / GRN / PI): render the Assigned SO + SO Delivery Date
+  // columns from each line's `assignedSos`. onOpenSo makes the SO chip clickable
+  // (desktop deep-link); omit it for a display-only surface.
+  showAssignment?: boolean;
+  onOpenSo?: (soDocNo: string) => void;
 }) {
+  const grid = showAssignment ? GRID_ASSIGN : GRID;
+  const minW = showAssignment ? "min-w-[840px]" : "min-w-[540px]";
   if (isLoading) {
     return (
       <div className="py-4 text-center text-[12px] text-ink-muted">
@@ -98,10 +116,10 @@ export function DocumentLinesExpansion({
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-      <div className="min-w-[540px]">
+      <div className={minW}>
         <div
           className={cn(
-            GRID,
+            grid,
             "border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted"
           )}
         >
@@ -109,6 +127,8 @@ export function DocumentLinesExpansion({
           <span>Item</span>
           <span className="text-right">Qty</span>
           <span className="text-right">Amount</span>
+          {showAssignment && <span>Assigned SO</span>}
+          {showAssignment && <span>SO Delivery Date</span>}
         </div>
         {lines.map((l, i) => {
           // Item CODE first, then the variant subtitle; live variant summary
@@ -122,11 +142,12 @@ export function DocumentLinesExpansion({
               buildVariantSummary(l.itemGroup ?? "others", l.variants ?? null) ||
               (l.description2 ?? ""),
           });
+          const assigned = l.assignedSos ?? [];
           return (
             <div
               key={i}
               className={cn(
-                GRID,
+                grid,
                 "border-b border-border-subtle px-4 py-2.5 last:border-b-0"
               )}
             >
@@ -149,6 +170,49 @@ export function DocumentLinesExpansion({
               <span className="text-right font-money text-[12px] font-semibold text-ink">
                 {fmtRm(l.amountCenti)}
               </span>
+              {showAssignment && (
+                <span className="flex min-w-0 flex-wrap gap-1">
+                  {assigned.length > 0 ? (
+                    assigned.map((a) =>
+                      onOpenSo ? (
+                        <button
+                          type="button"
+                          key={a.soDocNo}
+                          onClick={() => onOpenSo(a.soDocNo)}
+                          className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
+                        >
+                          {a.soDocNo}
+                        </button>
+                      ) : (
+                        <span
+                          key={a.soDocNo}
+                          className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink"
+                        >
+                          {a.soDocNo}
+                        </span>
+                      )
+                    )
+                  ) : (
+                    <span className="text-[11px] text-ink-muted">—</span>
+                  )}
+                </span>
+              )}
+              {showAssignment && (
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  {assigned.length > 0 ? (
+                    assigned.map((a) => (
+                      <span
+                        key={a.soDocNo}
+                        className="whitespace-nowrap font-mono text-[11px] text-ink-secondary"
+                      >
+                        {a.deliveryDate ? formatDate(a.deliveryDate) : "—"}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[11px] text-ink-muted">—</span>
+                  )}
+                </span>
+              )}
             </div>
           );
         })}

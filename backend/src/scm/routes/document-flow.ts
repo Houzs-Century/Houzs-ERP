@@ -80,6 +80,25 @@ const stripCompanyPrefix = (docNo: string): string => docNo.replace(/^\d+-/, '')
    escaped; the match is case-insensitive to mirror how numbers are written. */
 const DOC_TOKEN_CHAR = /[A-Za-z0-9-]/;
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/* EXTRACT the SO doc numbers a PO's "From SOs: …" note records — the reverse of
+   noteMentionsToken (membership) for callers that need the tokens themselves
+   (e.g. resolving a single PO's origin SO(s) without scanning every company SO).
+   Co-located here so the note FORMAT lives in exactly one place: the writer is
+   `From SOs: ${docNos.join(', ')}` (mfg-purchase-orders.ts), so we match that
+   leading label (case-insensitive, optional plural) and split the list on
+   commas. Tokens are the doc numbers verbatim (company prefix already stripped
+   by the writer); the caller VALIDATES them against real SOs by an equality
+   lookup, which is what enforces whole-token matching — a split token "SO-1"
+   can only ever equal the SO "SO-1", never "SO-10". Returns [] for a note with
+   no "From SOs:" label (a plain free-text note). */
+export const parseFromSosNote = (note: string | null | undefined): string[] => {
+  if (!note) return [];
+  const m = /^\s*From SOs?:\s*(.+)$/im.exec(String(note).trim());
+  if (!m) return [];
+  return [...new Set(m[1].split(',').map((s) => s.trim()).filter(Boolean))];
+};
+
 export const noteMentionsToken = (note: string, token: string): boolean => {
   if (!note || !token) return false;
   // (?<![A-Za-z0-9-]) TOKEN (?![A-Za-z0-9-]) — TOKEN not adjacent to another

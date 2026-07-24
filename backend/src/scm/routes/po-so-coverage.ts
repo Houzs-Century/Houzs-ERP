@@ -1,32 +1,33 @@
 // ----------------------------------------------------------------------------
-// /po-so-coverage/:type/:id — ADVISORY floating "assigned Sales Order" view for
-// a purchase document (PO / GRN / PI).
+// /po-so-coverage/:type/:id — the REAL "assigned Sales Order" for a purchase
+// document (PO / GRN / PI), per line, matched BY SKU.
 //
-// Owner ask (2026-07-24 live testing): on every Purchase Order, GRN and Purchase
-// Invoice, show which Sales Order each line is floating-assigned to — matched BY
-// SKU — and that SO line's delivery date. Today a PO expansion just says "Not
-// yet linked to a Sales Order", which is misleading for a floating PO: the PO
-// carries no stored SO link, but the MRP engine IS currently pooling its stock
-// against outstanding SO lines.
+// Owner complaint (2026-07-24 → refined 2026-07-25): on a PO raised FROM a Sales
+// Order, the detail wrongly showed "Floating stock — not yet assigned to a Sales
+// Order". That old view (#1237) recomputed a floating MRP pool and reported "not
+// assigned" whenever its greedy allocation didn't currently land on this PO —
+// instead of the PO's ACTUAL origin. The owner already assigned the SO ("我上次
+// 都已经 assign 那个 SO 了，会有 SO 的 delivery date") and expects to see it.
 //
-// This is the REVERSE of the forward SO→PO coverage in mrp.ts (computeMrp →
-// mrpLineCoverage). It reuses that ONE allocation via mrpReverseCoverage — it
-// does NOT re-implement coverage — so this view, the MRP page and the SO
-// drill-down can never disagree.
+// This route now returns the STORED origin: which Sales-Order line each PO SKU
+// was RAISED from, plus that SO line's effective delivery date. It is a REAL
+// document link, not an advisory pool — two sources, both stored FKs / records:
+//   (a) purchase_order_items.so_item_id — the MRP-linked raise flow (2026-07-09+)
+//   (b) the PO's "From SOs: …" note — how a bulk / shared buy records its source
+//       SO(s) (parsed via document-flow's parseFromSosNote, one source of truth)
+// The union is validated against real, company-owned SOs; only SKUs with a
+// matching origin SO line are returned, so a genuine stock PO (no origin) simply
+// yields no assignments and the UI renders a dash — never "floating coverage".
 //
-// ADVISORY, NOT A BINDING (the whole reason it lives apart from document-flow's
-// stored-FK graph). The coverage is linkage A: a pooled, read-time allocation
-// that shifts as demand/supply move and evaporates the moment a line ships. The
-// owner raises POs against the PO, not the SO ("我拿货是根据PO而不是看SO"), so
-// the UI must label this as advisory, never as a hard PO↔SO link. The stable
-// document RELATIONSHIP (so_item_id / GRN→PO→SO FKs) is what /document-flow
-// shows; the two are surfaced side by side.
+// Delivery date = the origin SO's effective delivery date
+// (amended_delivery_date ?? customer_delivery_date), the same effective date the
+// SO detail surfaces.
 //
 // Read-only + company-scoped: every doc read is scopeToCompany'd (a foreign id
-// resolves to nothing), and computeMrp is called with the active company id, so
-// a caller in company A never sees company B's demand. Mounted on the coarse SCM
-// read gate alongside /document-flow — same sensitivity class (it already
-// exposes the SO doc numbers a purchase doc descends from).
+// resolves to nothing), and the origin SOs are re-validated by
+// scopeToCompany on mfg_sales_orders, so a caller in company A never sees
+// company B's SOs. Mounted on the coarse SCM read gate alongside /document-flow
+// (same sensitivity class — SO doc no + delivery date; no cost, no margin).
 //
 //   GET /po-so-coverage/po/:id
 //   GET /po-so-coverage/grn/:id   (resolves grns.purchase_order_id → PO)
@@ -36,10 +37,8 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
-import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
-import { buildVariantSummary } from '../shared';
-import { computeMrp, mrpReverseCoverage, type PoCoverageAssignment } from './mrp';
-import { loadLeadBuffers } from '../../services/agents/procurement-learning';
+import { scopeToCompany } from '../lib/companyScope';
+import { parseFromSosNote } from './document-flow';
 import type { Env, Variables } from '../env';
 
 export const poSoCoverage = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -49,7 +48,7 @@ const TYPES = new Set(['po', 'grn', 'pi']);
 
 /* Resolve any of the three purchase-doc types down to its Purchase Order
    (id + number). Company-scoped throughout: a foreign / unknown id returns null,
-   which the handler turns into an empty (but honest) coverage response. */
+   which the handler turns into an empty (but honest) origin response. */
 async function resolvePo(
   sb: any,
   c: Context<any>,
@@ -75,11 +74,72 @@ async function resolvePo(
   return data?.grn_id ? resolvePo(sb, c, 'grn', data.grn_id) : null;
 }
 
-type SkuCoverage = {
-  itemCode: string;
-  variantLabel: string | null;
-  assignments: Array<Omit<PoCoverageAssignment, 'itemCode' | 'variantLabel'> & { variantLabel: string | null }>;
+/* One real origin assignment for a PO SKU: the Sales Order it was raised from
+   and that SO's effective delivery date. Clickable to the SO on the frontend. */
+export type OriginAssignment = { soDocNo: string; deliveryDate: string | null };
+/* Per-SKU origin: the covering PO line's material_code and every origin SO that
+   carries that SKU. Only SKUs WITH an origin appear (a stock PO SKU is absent,
+   and the UI shows a dash for it). */
+export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[] };
+
+type SoHeaderRow = {
+  doc_no: string | null;
+  customer_delivery_date: string | null;
+  amended_delivery_date: string | null;
 };
+type SoLineRow = { doc_no: string | null; item_code: string | null };
+
+/* Effective SO delivery date — the amended date wins over the customer's
+   original, mirroring what the SO detail surfaces (mfg-sales-orders.ts). */
+const effectiveDeliveryDate = (h: SoHeaderRow): string | null =>
+  h.amended_delivery_date ?? h.customer_delivery_date ?? null;
+
+/* PURE core: match the PO's SKUs to the origin SOs' lines by item_code and
+   attach each origin SO's effective delivery date. No DB — unit-tested directly.
+   - poSkus: the PO's material_codes (may repeat / be blank).
+   - soHeaders: the validated, company-owned origin SO headers.
+   - soLines: those SOs' item lines (doc_no + item_code).
+   An origin SO appears under a SKU only when it actually has a line with that
+   item_code, so the assignment is never a guess. Assignments are de-duped per
+   SKU and ordered earliest delivery date first (undated last), then by SO no. */
+export function buildSkuOrigins(
+  poSkus: Array<string | null | undefined>,
+  soHeaders: SoHeaderRow[],
+  soLines: SoLineRow[],
+): SkuOrigin[] {
+  const ddByDoc = new Map<string, string | null>();
+  for (const h of soHeaders ?? []) {
+    if (h.doc_no) ddByDoc.set(h.doc_no, effectiveDeliveryDate(h));
+  }
+  // item_code → set of origin SO doc_nos that carry it (only validated SOs).
+  const docsByCode = new Map<string, Set<string>>();
+  for (const l of soLines ?? []) {
+    const code = (l.item_code ?? '').trim();
+    if (!code || !l.doc_no || !ddByDoc.has(l.doc_no)) continue;
+    const set = docsByCode.get(code) ?? new Set<string>();
+    set.add(l.doc_no);
+    docsByCode.set(code, set);
+  }
+
+  const wantedSkus = new Set(
+    (poSkus ?? []).map((s) => (s ?? '').trim()).filter(Boolean),
+  );
+  const out: SkuOrigin[] = [];
+  for (const code of wantedSkus) {
+    const docs = docsByCode.get(code);
+    if (!docs || docs.size === 0) continue;
+    const assignments: OriginAssignment[] = [...docs]
+      .map((soDocNo) => ({ soDocNo, deliveryDate: ddByDoc.get(soDocNo) ?? null }))
+      .sort((a, b) => {
+        if (a.deliveryDate === b.deliveryDate) return a.soDocNo.localeCompare(b.soDocNo);
+        if (!a.deliveryDate) return 1;
+        if (!b.deliveryDate) return -1;
+        return a.deliveryDate < b.deliveryDate ? -1 : 1;
+      });
+    out.push({ itemCode: code, assignments });
+  }
+  return out.sort((a, b) => a.itemCode.localeCompare(b.itemCode));
+}
 
 poSoCoverage.get('/:type/:id', async (c) => {
   const type = c.req.param('type');
@@ -90,73 +150,77 @@ poSoCoverage.get('/:type/:id', async (c) => {
   try {
     const po = await resolvePo(sb, c, type, id);
     // No PO behind this doc (manual PI, unresolved id, foreign company): honest
-    // empty — the UI shows "Floating stock — not yet assigned to a Sales Order".
+    // empty — every line renders a dash in the Assigned SO / delivery columns.
     if (!po) {
-      return c.json({ advisory: true as const, poNumber: null, poId: null, skus: [] as SkuCoverage[] });
+      return c.json({ poNumber: null, poId: null, origins: [] as SkuOrigin[] });
     }
 
-    // The covering PO's own lines — so a SKU with NO floating assignment still
-    // appears (as "not yet assigned"), rather than silently vanishing.
+    // The covering PO's own lines: SKUs (matched by material_code) + the exact
+    // raise-link (so_item_id) where present.
     const { data: poLines } = await scopeToCompany(
-      sb.from('purchase_order_items').select('material_code, item_group, variants'), c,
+      sb.from('purchase_order_items').select('material_code, so_item_id'), c,
     ).eq('purchase_order_id', po.poId);
+    const poSkus = ((poLines ?? []) as Array<{ material_code: string | null }>)
+      .map((l) => l.material_code);
+    const soItemIds = [
+      ...new Set(
+        ((poLines ?? []) as Array<{ so_item_id: string | null }>)
+          .map((l) => l.so_item_id)
+          .filter((x): x is string => !!x),
+      ),
+    ];
 
-    // The single shared allocation, company-scoped. includeUndated so a PO
-    // covering an as-yet-undated SO line still shows its assignment.
-    const result = await computeMrp(sb, {
-      catFilter: null,
-      whFilter: null,
-      includeUndated: true,
-      companyId: activeCompanyId(c),
-      leadBuffers: await loadLeadBuffers(c.env.DB),
-    });
-    const forPo = mrpReverseCoverage(result).get(po.poNumber) ?? [];
-
-    // Group the PO's SKUs, attach the floating assignments matched by SKU.
-    const bySku = new Map<string, SkuCoverage>();
-    for (const l of (poLines ?? []) as Array<{ material_code: string | null; item_group: string | null; variants: Record<string, unknown> | null }>) {
-      const code = l.material_code ?? '';
-      if (!code) continue;
-      if (!bySku.has(code)) {
-        bySku.set(code, {
-          itemCode: code,
-          variantLabel: buildVariantSummary(l.item_group, l.variants) || null,
-          assignments: [],
-        });
-      }
-    }
-    for (const a of forPo) {
-      const entry = bySku.get(a.itemCode)
-        ?? { itemCode: a.itemCode, variantLabel: a.variantLabel, assignments: [] };
-      entry.assignments.push({
-        soItemId: a.soItemId,
-        soDocNo: a.soDocNo,
-        deliveryDate: a.deliveryDate,
-        debtorName: a.debtorName,
-        warehouseName: a.warehouseName,
-        qty: a.qty,
-        variantLabel: a.variantLabel,
-      });
-      bySku.set(a.itemCode, entry);
+    // (a) exact raise-link SO doc_nos (2026-07-09+ MRP-linked flow).
+    let exactDocs: string[] = [];
+    if (soItemIds.length) {
+      const { data: rows } = await scopeToCompany(
+        sb.from('mfg_sales_order_items').select('doc_no'), c,
+      ).in('id', soItemIds);
+      exactDocs = [
+        ...new Set(((rows ?? []) as Array<{ doc_no: string | null }>)
+          .map((r) => r.doc_no).filter((x): x is string => !!x)),
+      ];
     }
 
-    // Earliest delivery date first within a SKU; assigned SKUs before bare ones.
-    const skus = [...bySku.values()].map((s) => ({
-      ...s,
-      assignments: s.assignments.sort((x, y) => {
-        if (x.deliveryDate === y.deliveryDate) return x.soDocNo.localeCompare(y.soDocNo);
-        if (!x.deliveryDate) return 1;
-        if (!y.deliveryDate) return -1;
-        return x.deliveryDate < y.deliveryDate ? -1 : 1;
-      }),
-    })).sort((a, b) => {
-      if ((b.assignments.length > 0 ? 1 : 0) !== (a.assignments.length > 0 ? 1 : 0)) {
-        return (b.assignments.length > 0 ? 1 : 0) - (a.assignments.length > 0 ? 1 : 0);
-      }
-      return a.itemCode.localeCompare(b.itemCode);
-    });
+    // (b) the PO's "From SOs: …" note (bulk / shared buys), via the ONE shared
+    // note extractor. Tokens are validated below by the company-scoped SO
+    // lookup — a bogus token simply resolves to no SO.
+    const { data: poHdr } = await scopeToCompany(
+      sb.from('purchase_orders').select('notes'), c,
+    ).eq('id', po.poId).maybeSingle();
+    const noteTokens = parseFromSosNote((poHdr as { notes?: string | null } | null)?.notes);
 
-    return c.json({ advisory: true as const, poNumber: po.poNumber, poId: po.poId, skus });
+    const candidateDocs = [...new Set([...exactDocs, ...noteTokens])];
+    if (candidateDocs.length === 0) {
+      return c.json({ poNumber: po.poNumber, poId: po.poId, origins: [] as SkuOrigin[] });
+    }
+
+    // Validate the candidates against REAL, company-owned SOs (this is the
+    // company gate AND the whole-token check: a token equals a doc_no or it is
+    // dropped). Pull the effective-delivery-date inputs in the same read.
+    const { data: soHeaders } = await scopeToCompany(
+      sb.from('mfg_sales_orders')
+        .select('doc_no, customer_delivery_date, amended_delivery_date'), c,
+    ).in('doc_no', candidateDocs);
+    const validDocs = [
+      ...new Set(((soHeaders ?? []) as SoHeaderRow[])
+        .map((h) => h.doc_no).filter((x): x is string => !!x)),
+    ];
+    if (validDocs.length === 0) {
+      return c.json({ poNumber: po.poNumber, poId: po.poId, origins: [] as SkuOrigin[] });
+    }
+
+    // Those SOs' lines (item_code) — the SKU-match input. doc_no is already
+    // company-validated above, so this read stays inside the active company.
+    const { data: soLines } = await sb.from('mfg_sales_order_items')
+      .select('doc_no, item_code').in('doc_no', validDocs);
+
+    const origins = buildSkuOrigins(
+      poSkus,
+      (soHeaders ?? []) as SoHeaderRow[],
+      (soLines ?? []) as SoLineRow[],
+    );
+    return c.json({ poNumber: po.poNumber, poId: po.poId, origins });
   } catch (e) {
     return c.json({ error: 'load_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
   }
