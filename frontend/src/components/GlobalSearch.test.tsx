@@ -91,6 +91,45 @@ describe("GlobalSearch", () => {
     expect(screen.getByTestId("location").textContent).toBe("/projects/1");
   });
 
+  it("renders the SCM document sources and navigates each to its detail route by id", async () => {
+    apiGet.mockResolvedValue({
+      hits: [
+        { type: "purchase_order", id: "po-1", title: "PO-0001", subtitle: "Acme Supplier", link: "/scm/purchase-orders/po-1" },
+        { type: "grn", id: "grn-1", title: "GRN-0001", subtitle: "Acme Supplier · PO PO-0001", link: "/scm/grns/grn-1" },
+        { type: "delivery_order", id: "do-1", title: "DO-0001", subtitle: "Beta Buyer", link: "/scm/delivery-orders/do-1" },
+        { type: "sales_invoice", id: "si-1", title: "INV-0001", subtitle: "Beta Buyer", link: "/scm/sales-invoices/si-1" },
+        { type: "purchase_invoice", id: "pi-1", title: "PINV-0001", subtitle: "Acme Supplier", link: "/scm/purchase-invoices/pi-1" },
+      ],
+    });
+    renderSearch();
+    fireEvent.click(screen.getByRole("button", { name: "Open global search" }));
+    const input = screen.getByRole("combobox", { name: /search orders/i });
+    fireEvent.change(input, { target: { value: "0001" } });
+    await finishDebounce();
+
+    const listbox = screen.getByRole("listbox", { name: "Search results" });
+    // All five doc types render, in the group order defined by groupHits.
+    expect(within(listbox).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "PO-0001Acme Supplier",
+      "GRN-0001Acme Supplier · PO PO-0001",
+      "DO-0001Beta Buyer",
+      "INV-0001Beta Buyer",
+      "PINV-0001Acme Supplier",
+    ]);
+
+    // Group headers carry the ERP labels.
+    expect(screen.getByRole("group", { name: "Purchase Orders" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "GRNs" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Delivery Orders" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Sales Invoices" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Purchase Invoices" })).toBeTruthy();
+
+    // A GRN hit opens its detail route by id (UUID param, not doc number).
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByTestId("location").textContent).toBe("/scm/grns/grn-1");
+  });
+
   it("makes an older term impossible to see or open while the next term is pending", async () => {
     apiGet
       .mockResolvedValueOnce({
