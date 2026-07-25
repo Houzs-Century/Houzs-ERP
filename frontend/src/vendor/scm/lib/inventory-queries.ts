@@ -102,6 +102,9 @@ export type InventoryProductTotal = {
   branding: string | null;
   total_qty: number;
   total_value_sen: number;
+  /* OWNED qty (consignment excluded) — divisor for avg unit cost so the average
+     isn't diluted by consignment units counted in total_qty. */
+  owned_qty?: number;
   last_movement_at: string | null;
   main_supplier_code: string | null;
   main_supplier_name: string | null;
