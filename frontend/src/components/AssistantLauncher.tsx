@@ -31,10 +31,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { canUseAssistant } from "../auth/assistantAccess";
 import { cn } from "../lib/utils";
+import { useAssistantPanel } from "./AssistantPanelContext";
 import {
   DISC_SIZE_PX,
   DRAG_THRESHOLD_PX,
@@ -46,7 +47,7 @@ import {
 
 export function AssistantLauncher() {
   const { user } = useAuth();
-  const navigate = useNavigate();
+  const { toggle } = useAssistantPanel();
   const location = useLocation();
 
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -163,8 +164,8 @@ export function AssistantLauncher() {
       suppressClick.current = false;
       return;
     }
-    navigate("/assistant");
-  }, [navigate]);
+    toggle();
+  }, [toggle]);
 
   // Gate: hidden entirely for positions the Assistant denies (Driver/Helper/
   // Storekeeper) — mirrors the sidebar nav + the backend 403, so no one sees a

@@ -14,7 +14,7 @@ import {
   CONFIG_PROPOSAL_RULES,
   activeInstructions,
   createConfigProposal,
-  isAutoApproveOn,
+  effectiveStage,
 } from "../agent-console";
 import { autoApproveReorderProposals } from "./procurement-execute";
 import { askAgentBrain, type AgentBrainUsageSink } from "../agent-brain";
@@ -304,8 +304,9 @@ registerAgent({
        sweep that produced the proposals, and they survive as PENDING for a
        human either way. */
     let autoNote = '';
-    if (await isAutoApproveOn(env.DB, "PROCUREMENT")) {
-      const auto = await autoApproveReorderProposals(env, "AGENT_AUTO").catch(
+    const procStage = await effectiveStage(env.DB, "PROCUREMENT");
+    if (procStage >= 2) {
+      const auto = await autoApproveReorderProposals(env, "AGENT_AUTO", procStage).catch(
         (e): { approved: number; notes: string[]; errors: string[] } => ({
           approved: 0,
           notes: [],

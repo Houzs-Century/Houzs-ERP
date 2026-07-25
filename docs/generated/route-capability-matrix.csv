@@ -59,6 +59,9 @@ PUT,/api/announcements/:id/attachments/upload-thumb,AUTHENTICATED_MIDDLEWARE,COM
 POST,/api/announcements/:id/remind,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,YES,DECLARED_GATE,backend/src/routes/announcements.ts
 GET,/api/announcements/banner,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/announcements.ts
 POST,/api/assistant/chat,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assistant.ts
+GET,/api/assistant/conversations,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/assistant.ts
+DELETE,/api/assistant/conversations/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assistant.ts
+GET,/api/assistant/conversations/:id/messages,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/assistant.ts
 GET,/api/assr,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,NO,INHERITED_ONLY,backend/src/routes/assr.ts
 POST,/api/assr,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requireServiceCaseAccess([ ""service_cases.create"", ""service_cases.write"", ""service_cases.manage"", ])",,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assr.ts
 POST,/api/assr-form-intake,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assrFormIntake.ts

@@ -205,3 +205,19 @@ export function subtractCalendarDays(dateStr: string | null | undefined, days: n
   if (Number.isNaN(ms)) return dateStr;
   return new Date(ms - days * 86_400_000).toISOString().slice(0, 10);
 }
+
+/**
+ * Push an ISO date FORWARD by whole calendar days — the exact inverse of
+ * subtractCalendarDays. subtract answers "order by when, to hit a delivery date"
+ * (deliveryDate - lead); add answers "if I order now, ready when" (orderDate +
+ * lead), which is the Procurement Agent's estimateReadyDate A2A fact. Same
+ * calendar-day model (weekends/holidays not modelled anywhere in this system).
+ * Returns the input unchanged for days <= 0, and null for no date; never throws.
+ */
+export function addCalendarDays(dateStr: string | null | undefined, days: number): string | null {
+  if (!dateStr) return null;
+  if (!Number.isFinite(days) || days <= 0) return dateStr;
+  const ms = Date.parse(`${String(dateStr).slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(ms)) return dateStr;
+  return new Date(ms + days * 86_400_000).toISOString().slice(0, 10);
+}

@@ -156,6 +156,32 @@ export function canUseAssistant(
 }
 
 /**
+ * May this user TEACH agents standing rules in chat (teach-in-chat)?
+ *
+ * Owner decision 2026-07-26: OPEN to every staff member who may use the Assistant
+ * at all ("先让我的员工都可以 train，暂时之后我们才调整特定的员工"). So v1 is
+ * exactly canUseAssistant — if you can open the chat, you can teach.
+ *
+ * This function is THE SEAM for that "adjust to specific employees later": to
+ * narrow who may teach, change ONLY this function (gate on a future `agents.teach`
+ * permission, or a position allowlist) and nothing else moves. It is kept separate
+ * from canUseAssistant precisely so USING and TEACHING can diverge without hunting
+ * the callsite. Every teach is audited (who taught what), so the owner can review
+ * who has been steering an agent before deciding whom to keep.
+ *
+ * NOTE this is a stronger action than asking a question: a taught rule steers the
+ * agent for EVERYONE on its next run. The safety net that makes opening it safe is
+ * unchanged — the owner can retire any instruction in the Agent Console, and the
+ * governance matrix + per-agent stage ceilings still gate what an agent may ACT on
+ * autonomously; a taught rule biases JUDGMENT, it does not lift a hard gate.
+ */
+export function canTeachAgents(
+  user: { permissions?: unknown; position_name?: string | null } | null | undefined,
+): boolean {
+  return canUseAssistant(user);
+}
+
+/**
  * Derive a caller's scope from the ONE policy, never from a fresh rule.
  *
  * Three cases, and the third is the one that needs stating:

@@ -168,6 +168,8 @@ app.get("/status", async (c) => {
       live: famRegs.length > 0,
       paused: ctl?.paused === true,
       autoApprove: ctl?.autoApprove === true,
+      stage: ctl?.stage ?? 1,
+      maxStage: ctl?.maxStage ?? 2,
       tasks: famRegs.map((r) => ({
         agent: r.task,
         nextRun: "self-scheduled (30-min heartbeat) · on demand",
@@ -450,7 +452,7 @@ app.post("/kill-all", async (c) => {
 // whitelisted config proposals (decided_by='AGENT_AUTO') on each run.
 
 app.post("/gate", async (c) => {
-  let body: { agent?: string; autoApprove?: boolean } = {};
+  let body: { agent?: string; autoApprove?: boolean; stage?: number } = {};
   try {
     body = (await c.req.json()) as typeof body;
   } catch {
@@ -460,16 +462,25 @@ app.post("/gate", async (c) => {
   if (!AGENT_FAMILIES.includes(agent)) {
     return c.json({ success: false, error: "unknown agent" }, 400);
   }
-  const autoApprove = body.autoApprove === true;
-  await setAgentControl(c.env.DB, agent, { autoApprove });
+  /* The dial is `stage` (1 propose / 2 auto-tune / 3 full-auto); `autoApprove` is
+     the legacy on/off (maps to 2/1). setAgentControl clamps to the family's
+     migration-set ceiling, so a request above it is quietly capped, never raised. */
+  let patch: { stage: 1 | 2 | 3 } | { autoApprove: boolean };
+  if (body.stage != null) {
+    const s = Math.round(Number(body.stage));
+    patch = { stage: (Number.isFinite(s) ? Math.min(Math.max(1, s), 3) : 1) as 1 | 2 | 3 };
+  } else {
+    patch = { autoApprove: body.autoApprove === true };
+  }
+  await setAgentControl(c.env.DB, agent, patch);
   await audit(c, {
     action: "agents.gate",
     entityType: "agent",
     entityId: agent,
-    summary: `${agent} auto-approve ${autoApprove ? "ON" : "OFF"}`,
-    meta: { autoApprove },
+    summary: "stage" in patch ? `${agent} autonomy stage -> ${patch.stage}` : `${agent} auto-approve ${patch.autoApprove ? "ON" : "OFF"}`,
+    meta: patch,
   });
-  return c.json({ success: true, data: { agent, autoApprove } });
+  return c.json({ success: true, data: { agent, ...patch } });
 });
 
 // ── Config proposals (learning loop → owner approval → app_settings) ─────────

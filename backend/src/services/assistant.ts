@@ -25,13 +25,23 @@
 // ---------------------------------------------------------------------------
 
 import type { Env } from '../types';
-import { askAgentBrain, type AgentBrainUsageSink } from './agent-brain';
+import { askAgentBrain, askAgentBrainWithTools, type AgentBrainUsageSink } from './agent-brain';
 import {
   allowedCapabilityKeys,
   redactFacts,
   scopeNote,
   type AssistantScope,
 } from './assistant-scope';
+import { AGENT_FAMILIES, type AgentFamily } from './agent-console';
+import { agentLabel, parseRouterDecision } from './assistant-teach';
+import type { ContentBlock } from './vision-blocks';
+import {
+  buildAssistantTools,
+  dispatchAssistantTool,
+  ASSISTANT_TOOLS_GUIDANCE,
+  type AssistantToolCtx,
+} from './assistant-tools';
+import type { CompanyScopeCtx } from '../scm/lib/companyScope';
 
 /** One specialist the router can consult. `briefTable`/`itemsTable` are module
  *  constants — never user input — so they are safe to interpolate. */
@@ -90,13 +100,21 @@ const CAPABILITIES: Capability[] = [
 
 const byKey = new Map(CAPABILITIES.map((c) => [c.key, c]));
 
+const TEACHABLE_LIST = AGENT_FAMILIES.map((f) => `${f} (${agentLabel(f)})`).join(', ');
+const ASK_KEYS_LIST = CAPABILITIES.map((c) => c.key).join(', ');
+
+/* The router now also spots TEACHING — the owner giving an agent a standing rule
+   in the same chat — and returns a teach/ask OBJECT (parseRouterDecision reads
+   it, and still accepts the old bare array for safety). Teaching is a PROPOSAL
+   here; the route performs the owner-gated write, so this file never writes. */
 const ROUTER_SYSTEM = [
-  'You are the router of an ERP assistant. You are given a user question and a list',
-  'of specialist agents with what each can answer. Reply with ONLY a JSON array of',
-  'the agent keys that hold the answer — e.g. ["order_fulfilment","receivables"].',
-  'Pick every agent whose data is needed; a question about why an order is late',
-  'usually needs several. Pick NONE (an empty array) if no agent covers it.',
-  'No prose, no markdown — just the JSON array.',
+  'You are the router of an ERP assistant. Decide whether the user is TEACHING an agent a standing rule or ASKING a question, then reply with ONE JSON object only — no prose, no markdown.',
+  'TEACH = the user gives a STANDING RULE for an agent to remember and apply from now on (imperative: "from now on...", "always...", "never...", "以后...", "记住...", "不要..."). A one-off question is NOT teaching.',
+  'If TEACH: {"teach":{"agent":"<FAMILY>","instruction":"<the rule as one clear standing instruction>"}}.',
+  'If ASK: {"ask":["<key>", ...]} — every specialist key whose data is needed (a late-order question usually needs several); [] if none covers it.',
+  `Valid TEACH families: ${TEACHABLE_LIST}.`,
+  `Valid ASK keys: ${ASK_KEYS_LIST}.`,
+  'When unsure whether it is teach or ask, choose ask.',
 ].join(' ');
 
 const ANSWER_SYSTEM = [
@@ -110,6 +128,16 @@ const ANSWER_SYSTEM = [
   'convert to RM when you state them.',
   'You cannot change anything: if the user asks you to create, approve, send or edit,',
   'explain what you found and tell them which screen does it — never claim you did it.',
+].join(' ');
+
+const FILE_ANSWER_SYSTEM = [
+  'You are the ERP assistant for Houzs, a Malaysian furniture retailer. The user has',
+  'attached a file (an image or a PDF). Read it and answer their question about it in',
+  'plain English, no markdown, no emoji. Report ONLY what the file actually shows —',
+  'never invent a figure, name or date that is not visible in it. If the file does not',
+  'contain what they asked, say so plainly. You cannot change anything in the ERP: if',
+  'they ask you to save, create or send, explain what the file shows and tell them which',
+  'screen does it.',
 ].join(' ');
 
 async function latestBrief(env: Env, cap: Capability): Promise<unknown> {
@@ -157,6 +185,10 @@ export interface AssistantAnswer {
   agents: Array<{ key: string; label: string }>;
   /** True when the LLM was unavailable and this is the deterministic fallback. */
   degraded: boolean;
+  /** Set when the router read the message as TEACHING an agent a standing rule.
+   *  A PROPOSAL only — this file never writes; the route performs the owner-gated
+   *  write to the teaching notebook and composes the final confirmation. */
+  teach?: { family: AgentFamily; label: string; instruction: string };
 }
 
 /**
@@ -173,25 +205,62 @@ export async function askAssistant(
      owner-only — the two were documented as having to change together, and this
      is that change.) */
   scope: AssistantScope = { canSeeMargin: false, canSeeCommission: false, orderScope: 'own' },
+  /* Image / PDF blocks from an upload. When present, the assistant READS the file
+     directly (no routing, no agent gather) — it is the user's OWN upload, not
+     agent data, so the money-redaction path does not apply to it. */
+  contentBlocks?: ContentBlock[],
+  /* The request's company context (Hono's `c`). When present, the answer path
+     runs the TOOL-LOOP — the model can call search_erp to locate a specific record
+     the briefs don't cover — scoped to exactly this caller's companies. Absent (a
+     headless caller, or tests) → the proven single-shot path, unchanged. */
+  companyCtx?: CompanyScopeCtx,
 ): Promise<AssistantAnswer> {
   const apiKey = env.ANTHROPIC_API_KEY;
   const text = (message ?? '').trim();
-  if (!text) return { answer: 'Ask me something about your orders, deliveries, payments, stock or sales.', agents: [], degraded: false };
+  const hasFiles = !!(contentBlocks && contentBlocks.length);
+  if (!text && !hasFiles) {
+    return { answer: 'Ask me something about your orders, deliveries, payments, stock or sales.', agents: [], degraded: false };
+  }
 
-  // 1. ROUTE — the LLM picks the specialists; keywords are the fallback.
+  // FILE path — the user attached an image / PDF. Answer strictly from the file
+  // (plus their question). No specialist routing; no business data joins in.
+  if (hasFiles) {
+    if (!apiKey) {
+      return { answer: 'The assistant needs an AI key to read a file. Please try again later.', agents: [], degraded: true };
+    }
+    const worded = await askAgentBrain(apiKey, {
+      system: FILE_ANSWER_SYSTEM,
+      payload: { question: text || 'Read the attached file and summarise what matters for our operations.' },
+      maxTokens: 700,
+      usageSink,
+      contentBlocks: contentBlocks as Array<Record<string, unknown>>,
+    });
+    return { answer: worded?.trim() || 'I could not read that file just now. Please try again.', agents: [], degraded: !worded };
+  }
+
+  // 1. ROUTE — the LLM decides teach-vs-ask and, for ask, picks the specialists;
+  //    keywords are the ask fallback. A teach decision returns here as a PROPOSAL:
+  //    the owner-gated write is the route's job, so this function stays read-only.
   let keys: string[] = [];
   if (apiKey) {
     const routed = await askAgentBrain(apiKey, {
       system: ROUTER_SYSTEM,
       payload: { question: text, agents: CAPABILITIES.map((c) => ({ key: c.key, answers: c.answers })) },
-      maxTokens: 120,
+      maxTokens: 200,
       usageSink,
     });
     if (routed) {
-      try {
-        const arr = JSON.parse(routed.slice(routed.indexOf('['), routed.lastIndexOf(']') + 1));
-        if (Array.isArray(arr)) keys = arr.filter((k): k is string => typeof k === 'string' && byKey.has(k));
-      } catch { /* fall through to keywords */ }
+      const decision = parseRouterDecision(routed, AGENT_FAMILIES, CAPABILITIES.map((c) => c.key));
+      if (decision?.kind === 'teach') {
+        const label = agentLabel(decision.family);
+        return {
+          answer: `That reads as a standing rule for ${label}: "${decision.instruction}".`,
+          agents: [],
+          degraded: false,
+          teach: { family: decision.family, label, instruction: decision.instruction },
+        };
+      }
+      if (decision?.kind === 'ask') keys = decision.keys;
     }
   }
   if (keys.length === 0) keys = keywordRoute(text);
@@ -219,13 +288,46 @@ export async function askAssistant(
     };
   }
   /* Redact BEFORE the model call, not in the instructions to it. A figure inside
-     the context window is disclosed no matter what the system prompt asks. */
+     the context window is disclosed no matter what the system prompt asks. This one
+     redacted payload feeds BOTH answer paths below. */
   const note = scopeNote(scope);
-  const worded = await askAgentBrain(apiKey, {
-    system: note ? `${ANSWER_SYSTEM}
+  const baseSystem = note ? `${ANSWER_SYSTEM}
 
-${note}` : ANSWER_SYSTEM,
-    payload: { question: text, agentData: redactFacts(facts, scope) },
+${note}` : ANSWER_SYSTEM;
+  const payload = { question: text, agentData: redactFacts(facts, scope) };
+
+  /* TOOL-LOOP path — when the request carries a company context, the model may call
+     search_erp to locate a specific record the briefs do not cover. The dispatcher
+     company-scopes at source and redacts every result (assistant-tools.ts), so this
+     path can disclose nothing the single-shot path would not. On any failure it
+     returns null and we fall through to the proven single-shot answer below. */
+  if (companyCtx) {
+    const toolCtx: AssistantToolCtx = { env, scope, companyCtx, consulted: [] };
+    const worded = await askAgentBrainWithTools(apiKey, {
+      system: `${baseSystem}
+
+${ASSISTANT_TOOLS_GUIDANCE}`,
+      payload,
+      tools: buildAssistantTools(scope),
+      dispatch: (name, input) => dispatchAssistantTool(toolCtx, name, input),
+      maxTokens: 600,
+      maxTurns: 5,
+      usageSink,
+    });
+    if (worded) {
+      const merged = [...agents];
+      for (const a of toolCtx.consulted) {
+        if (!merged.some((x) => x.key === a.key)) merged.push(a);
+      }
+      return { answer: worded.trim(), agents: merged, degraded: false };
+    }
+  }
+
+  /* SINGLE-SHOT fallback — the original path: no company context (a headless caller
+     or a test), or the tool-loop could not reach the model. */
+  const worded = await askAgentBrain(apiKey, {
+    system: baseSystem,
+    payload,
     maxTokens: 500,
     usageSink,
   });

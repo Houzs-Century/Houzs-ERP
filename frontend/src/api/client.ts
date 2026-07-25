@@ -616,6 +616,27 @@ export const api = {
     return this.uploadFiles<T>(path, [file], fieldName);
   },
 
+  /** Multipart POST of a caller-built FormData (mixed text fields + files, e.g.
+   *  the Assistant chat sending a message plus an image/PDF). Same auth as
+   *  uploadFiles; no Content-Type so the browser sets the boundary. */
+  async postForm<T>(path: string, form: FormData): Promise<T> {
+    const token = tokenStore.get();
+    const res = await binaryFetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      body: form,
+    }, UPLOAD_TIMEOUT_MS);
+    if (!res.ok) {
+      let txt = "";
+      try {
+        txt = await res.text();
+      } catch {}
+      throw new HttpError(res.status, txt || res.statusText, requestIdFromResponse(res));
+    }
+    if (res.status === 204) return undefined as T;
+    return consumeCorrelated(res, () => res.json() as Promise<T>);
+  },
+
   /**
    * Fetches a protected asset (e.g. R2-backed POD photo) as a blob URL,
    * because <img src> can't pass the Authorization header.

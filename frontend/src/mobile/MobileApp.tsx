@@ -66,6 +66,7 @@ const MobileFairReport = lazy(() => import("./MobileFairReport").then((m) => ({ 
 const ScmSalesOrderMaintenance = lazy(() => import("../pages/scm-v2/SalesOrderMaintenance").then((m) => ({ default: m.SalesOrderMaintenance })));
 const Scm2990Shell = lazy(() => import("../pages/scm-v2/Scm2990Shell"));
 import "./mobile.css";
+import { MobileAssistant } from "./MobileAssistant";
 
 type Tab = "orders" | "service" | "calendar" | "profile";
 type Screen =
@@ -446,6 +447,7 @@ export function MobileApp() {
             <IosInstallGuide />
             <AndroidInstallGuide />
             <MobileAppInner />
+            <MobileAssistant />
           </ChoiceProvider>
         </PromptProvider>
       </ConfirmProvider>
