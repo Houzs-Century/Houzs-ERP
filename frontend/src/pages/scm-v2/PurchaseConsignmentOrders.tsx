@@ -73,7 +73,7 @@ const buildColumns = (): DataGridColumn<PoHeaderRow>[] => [
     // Backend (purchase-consignment-orders list) returns pc_number, not the
     // PO's po_number — the PoHeaderRow type is shared with real POs, so read
     // pc_number with a po_number fallback.
-    accessor: (po) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{pcNo(po)}</span>,
+    accessor: (po) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{pcNo(po)}</span>,
     searchValue: (po) => pcNo(po),
     /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (po) => pcNo(po),
@@ -146,7 +146,7 @@ const buildColumns = (): DataGridColumn<PoHeaderRow>[] => [
   {
     key: 'total_centi', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (po) => (
-      <span style={{ fontFamily: 'var(--font-mark)', color: 'var(--c-burnt)', fontWeight: 800 }}>
+      <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
         {fmtMoney(po.total_centi, po.currency)}
       </span>
     ),
@@ -216,15 +216,22 @@ export const PurchaseConsignmentOrders = () => {
             key={c.value}
             type="button"
             onClick={() => setStatus(c.value)}
+            /* SO FilterPills spec, MEASURED (owner 2026-07-25: "outstanding
+               那里没有符合主题"): active = petrol on white text, 4px radius,
+               29px, 11px/600 UPPERCASE; idle = transparent + ink-secondary +
+               hairline border. Was an ink-filled pill. */
             style={{
               fontFamily: 'var(--font-button)',
-              fontSize: 'var(--fs-13)',
+              fontSize: 11,
               fontWeight: 600,
-              padding: 'var(--space-2) var(--space-4)',
-              borderRadius: 'var(--radius-pill)',
-              border: status === c.value ? '1px solid var(--c-ink)' : '1px solid var(--line)',
-              background: status === c.value ? 'var(--c-ink)' : 'var(--c-paper)',
-              color: status === c.value ? 'var(--c-cream)' : 'var(--c-ink)',
+              letterSpacing: '0.05em',
+              textTransform: 'uppercase',
+              height: 29,
+              padding: '0 12px',
+              borderRadius: 4,
+              border: '1px solid #e5e7eb',
+              background: status === c.value ? '#16695f' : 'transparent',
+              color: status === c.value ? '#ffffff' : '#414539',
               cursor: 'pointer',
             }}
           >
@@ -296,7 +303,7 @@ const buildDrilldownColumns = (
   },
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{it.material_code}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.material_code}</span>,
     searchValue: (it) => it.material_code,
     sortFn: (a, b) => (a.material_code ?? '').localeCompare(b.material_code ?? ''),
   },
@@ -349,7 +356,7 @@ const buildDrilldownColumns = (
   },
   {
     key: 'line_total', label: 'Line Total', width: 110, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{fmtMoney(Number(it.line_total_centi ?? 0), currency)}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_total_centi ?? 0), currency)}</span>,
     searchValue: (it) => String(it.line_total_centi ?? 0),
     sortFn: (a, b) => Number(a.line_total_centi ?? 0) - Number(b.line_total_centi ?? 0),
   },
@@ -408,7 +415,7 @@ const ExpandedLines = ({ po }: { po: PoHeaderRow }) => {
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: 'var(--c-burnt)' }}>{fmtMoney(subtotal, po.currency)}</strong></span>
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtMoney(subtotal, po.currency)}</strong></span>
       </div>
     </div>
   );

@@ -167,7 +167,7 @@ const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[
   },
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{it.item_code ?? '—'}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code ?? '—'}</span>,
     searchValue: (it) => it.item_code ?? '',
     sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
   },
@@ -210,7 +210,7 @@ const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[
   },
   {
     key: 'total', label: 'Total', width: 100, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{fmtRm(crnLineTotalOf(it))}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtRm(crnLineTotalOf(it))}</span>,
     searchValue: (it) => String(crnLineTotalOf(it)),
     sortFn: (a, b) => crnLineTotalOf(a) - crnLineTotalOf(b),
   },
@@ -288,7 +288,7 @@ const ExpandedCrnLines = ({ id, canFinance }: { id: string; canFinance: boolean 
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: 'var(--c-burnt)' }}>{fmtRm(totalCenti)}</strong></span>
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtRm(totalCenti)}</strong></span>
         {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtRm(costCenti)}</strong></span>}
         {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtRm(marginCenti)}</strong></span>}
       </div>
@@ -407,7 +407,7 @@ export const ConsignmentReturns = () => {
       <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-muted)' }}>{label}</div>
       <div style={{
         fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-14)', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-        color: accent === 'good' ? 'var(--c-secondary-a, #2F5D4F)' : accent === 'bad' ? 'var(--c-festive-b, #B8331F)' : accent === 'burnt' ? 'var(--c-burnt)' : 'var(--c-ink)',
+        color: accent === 'good' ? 'var(--c-secondary-a, #2F5D4F)' : accent === 'bad' ? 'var(--c-festive-b, #B8331F)' : accent === 'burnt' ? '#16695f' : 'var(--c-ink)',
       }}>{value}</div>
     </div>
   );
@@ -446,17 +446,19 @@ export const ConsignmentReturns = () => {
 
       {/* Status chips + page-level search. Both drive the SERVER query (the
           DataGrid's own search is hidden via `hideSearch` so it can't silently
-          filter just the loaded page). */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', justifyContent: 'space-between' }}>
+          filter just the loaded page). SO composition (owner 2026-07-25):
+          chips on their own row, the search on the NEXT row at the LEFT -
+          not squeezed to the right of the chips. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {STATUS_CHIPS.map((s) => (
             <button key={s} type="button" onClick={() => setStatusChip(s)}
               style={{
-                height: 28, padding: '0 12px', borderRadius: 999, cursor: 'pointer',
-                fontSize: 11, fontWeight: 600,
-                border: '1px solid ' + (statusChip === s ? 'var(--c-burnt)' : '#DDE5E5'),
-                background: statusChip === s ? 'rgba(232, 107, 58, 0.10)' : '#FFFFFF',
-                color: statusChip === s ? 'var(--c-burnt)' : 'var(--fg-muted)',
+                height: 29, padding: '0 12px', borderRadius: 4, cursor: 'pointer',
+                fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase',
+                border: '1px solid #e5e7eb',
+                background: statusChip === s ? '#16695f' : 'transparent',
+                color: statusChip === s ? '#ffffff' : '#414539',
               }}>
               {s === 'all' ? 'All' : STATUS_LABEL[s] ?? s}
             </button>
@@ -470,9 +472,9 @@ export const ConsignmentReturns = () => {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search return no / customer…"
             style={{
-              height: 30, padding: '0 12px 0 30px', minWidth: 220,
-              borderRadius: 999, border: '1px solid var(--line)',
-              background: 'var(--c-paper)', color: 'var(--c-ink)', fontSize: 12,
+              height: 32, padding: '0 12px 0 30px', width: 288,
+              borderRadius: 6, border: '1px solid #d6d9d2',
+              background: '#ffffff', color: 'var(--c-ink)', fontSize: 12,
             }}
           />
           <SearchProgress active={searchTransition.isSearching} className="ml-2" />
@@ -548,7 +550,7 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
   {
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
     accessor: (r) => (
-      <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{r.return_number}</span>
+      <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.return_number}</span>
     ),
     searchValue: (r) => `${r.return_number} ${r.status ?? ''}`,
     filterValue: (r) => r.return_number,

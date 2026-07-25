@@ -64,7 +64,7 @@ type PrRow = Record<string, unknown> & {
 const buildColumns = (): DataGridColumn<PrRow>[] => [
   {
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
-    accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{r.return_number}</span>,
+    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.return_number}</span>,
     searchValue: (r) => r.return_number,
     /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (r) => r.return_number,
@@ -91,7 +91,7 @@ const buildColumns = (): DataGridColumn<PrRow>[] => [
   },
   {
     key: 'receive_number', label: 'Transfer From (Receive)', width: 170, sortable: true, groupable: true,
-    accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{r.pc_receive?.receive_number ?? '—'}</span>,
+    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.pc_receive?.receive_number ?? '—'}</span>,
     searchValue: (r) => r.pc_receive?.receive_number ?? '',
     /* Accessor is JSX → export the source receive doc-no string. */
     exportValue: (r) => r.pc_receive?.receive_number ?? '',
@@ -107,7 +107,7 @@ const buildColumns = (): DataGridColumn<PrRow>[] => [
   {
     key: 'refund_centi', label: 'Refund', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (r) => (
-      <span style={{ fontFamily: 'var(--font-mark)', color: 'var(--c-burnt)', fontWeight: 800 }}>
+      <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
         {fmtMoney(Number(r.refund_centi ?? 0))}
       </span>
     ),
@@ -147,7 +147,7 @@ type PrItem = Record<string, unknown> & {
 const buildDrilldownColumns = (): DataGridColumn<PrItem>[] => [
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{it.material_code ?? '—'}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.material_code ?? '—'}</span>,
     searchValue: (it) => it.material_code ?? '',
     sortFn: (a, b) => (a.material_code ?? '').localeCompare(b.material_code ?? ''),
   },
@@ -178,7 +178,7 @@ const buildDrilldownColumns = (): DataGridColumn<PrItem>[] => [
   },
   {
     key: 'line_total', label: 'Line Total', width: 120, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{fmtMoney(Number(it.line_refund_centi ?? 0))}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_refund_centi ?? 0))}</span>,
     searchValue: (it) => String(it.line_refund_centi ?? 0),
     sortFn: (a, b) => Number(a.line_refund_centi ?? 0) - Number(b.line_refund_centi ?? 0),
   },
@@ -225,7 +225,7 @@ const ExpandedLines = ({ pr }: { pr: PrRow }) => {
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: 'var(--c-burnt)' }}>{fmtMoney(subtotal)}</strong></span>
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtMoney(subtotal)}</strong></span>
       </div>
     </div>
   );
@@ -295,11 +295,11 @@ export const PurchaseConsignmentReturns = () => {
         {STATUS_CHIPS.map((s) => (
           <button key={s} type="button" onClick={() => setStatusChip(s)}
             style={{
-              height: 28, padding: '0 12px', borderRadius: 999, cursor: 'pointer',
-              fontSize: 11, fontWeight: 600,
-              border: '1px solid ' + (statusChip === s ? 'var(--c-burnt)' : '#DDE5E5'),
-              background: statusChip === s ? 'rgba(232, 107, 58, 0.10)' : '#FFFFFF',
-              color: statusChip === s ? 'var(--c-burnt)' : 'var(--fg-muted)',
+              height: 29, padding: '0 12px', borderRadius: 4, cursor: 'pointer',
+              fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase',
+              border: '1px solid #e5e7eb',
+              background: statusChip === s ? '#16695f' : 'transparent',
+              color: statusChip === s ? '#ffffff' : '#414539',
             }}>
             {s === 'all' ? 'All' : STATUS_LABEL[s] ?? s}
           </button>
