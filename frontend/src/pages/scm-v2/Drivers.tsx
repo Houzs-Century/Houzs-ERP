@@ -143,7 +143,7 @@ export const Drivers = () => {
         columns={columns}
         storageKey={DATA_GRID_LAYOUT_KEYS.driversStandalone}
         rowKey={(d) => d.id}
-        searchPlaceholder="Search drivers…"
+        searchPlaceholder="Search code, name, phone, IC, vehicle…"
         groupBanner={false}
         isLoading={drivers.isLoading}
         emptyMessage="No drivers yet."

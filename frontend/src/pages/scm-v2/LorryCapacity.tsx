@@ -28,6 +28,7 @@ import { useSearchParams } from 'react-router-dom';
 import { fmtCenti, fmtDate } from '@2990s/shared';
 import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
+import { DataTable, type Column } from '../../components/DataTable';
 import { cn } from '../../lib/utils';
 import {
   useLorryCapacity,
@@ -180,6 +181,89 @@ export const LorryCapacity = () => {
   const totals = data?.totals;
   const workingDays = data?.workingDays ?? 0;
 
+  /* Sample-parity search (owner 2026-07-25: every table = the SO table):
+     client-side over the loaded fleet — plate or type. */
+  const [search, setSearch] = useState('');
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (l) => l.plate.toLowerCase().includes(q) || (l.type ?? '').toLowerCase().includes(q),
+    );
+  }, [rows, search]);
+
+  /* The 16 metric columns, DataTable-shaped: getValue powers sort / funnel
+     filter / CSV export on every column (#1200 contract); the two INTERACTIVE
+     cells (In-house toggle, Repair Days editor) keep their exact mutation
+     semantics inside render. The old hand-rolled <tfoot> "Fleet total" row is
+     gone on purpose — every one of its values already sits in the StatCard
+     strip above, and DataTable has no footer concept. */
+  const columns = useMemo<Column<LorryCapacityRow>[]>(() => [
+    {
+      key: 'plate', label: 'Lorry', width: '140px',
+      getValue: (l) => l.plate,
+      render: (l) => (
+        <span className="inline-flex items-center gap-1.5">
+          <span className={styles.plate}>{l.plate}</span>
+          {l.type && l.type !== 'OTHER' && (
+            <span className={styles.lorryType}>
+              {l.type.replace(/^LORRY_/, '').replace(/FT$/, 'ft')}
+            </span>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: 'is_internal', label: 'In-house', width: '90px', align: 'center',
+      getValue: (l) => l.is_internal,
+      render: (l) => (
+        <label className={styles.checkCell} onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={l.is_internal}
+            onChange={(e) => toggleInHouse.mutate({ id: l.lorry_id, isInternal: e.target.checked })}
+          />
+        </label>
+      ),
+    },
+    { key: 'work_days', label: 'Work Days', align: 'right', getValue: (l) => l.work_days, render: (l) => numOrDash(l.work_days) },
+    {
+      key: 'repair_days', label: 'Repair Days', width: '104px', align: 'right',
+      getValue: (l) => l.repair_days,
+      render: (l) => (
+        <RepairDaysCell
+          lorry={l}
+          onSetRepair={(days) =>
+            setRepair.mutate(
+              { id: l.lorry_id, from, to, days },
+              { onError: (e) => notify({ title: "Couldn't save repair days.", body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }) },
+            )}
+        />
+      ),
+    },
+    { key: 'available_days', label: 'Available Days', align: 'right', getValue: (l) => l.available_days, render: (l) => numOrDash(l.available_days) },
+    {
+      key: 'utilisation', label: 'Utilisation', align: 'right',
+      getValue: (l) => l.utilisation ?? null,
+      render: (l) => (
+        <span className={`${styles.utilPill} ${utilClass(l.utilisation)}`}>
+          {pctOrDash(l.utilisation)}
+        </span>
+      ),
+    },
+    { key: 'total_trips', label: 'Total Trips', align: 'right', getValue: (l) => l.total_trips, render: (l) => numOrDash(l.total_trips) },
+    { key: 'delivery_days', label: 'Delivery Days', align: 'right', getValue: (l) => l.delivery_days, render: (l) => numOrDash(l.delivery_days) },
+    { key: 'deliveries', label: 'Deliveries', align: 'right', getValue: (l) => l.deliveries, render: (l) => numOrDash(l.deliveries) },
+    { key: 'orders_per_trip', label: 'Orders/Trip', align: 'right', getValue: (l) => l.orders_per_trip ?? null, render: (l) => numOrDash(l.orders_per_trip, 2) },
+    { key: 'setup_dismantle', label: 'Setup/Dismantle', align: 'right', getValue: (l) => l.setup_dismantle, render: (l) => numOrDash(l.setup_dismantle) },
+    { key: 'pickups', label: 'Pickups', align: 'right', getValue: (l) => l.pickups, render: (l) => numOrDash(l.pickups) },
+    { key: 'services', label: 'Services', align: 'right', getValue: (l) => l.services, render: (l) => numOrDash(l.services) },
+    { key: 'delivery_revenue', label: 'Delivery Revenue', align: 'right', getValue: (l) => l.delivery_revenue_centi ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.delivery_revenue_centi)}</span> },
+    { key: 'revenue_per_order', label: 'Revenue/Order', align: 'right', getValue: (l) => l.revenue_per_order_centi ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_order_centi)}</span> },
+    { key: 'revenue_per_trip', label: 'Revenue/Trip', align: 'right', getValue: (l) => l.revenue_per_trip_centi ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_trip_centi)}</span> },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [toggleInHouse, setRepair, from, to, notify]);
+
   return (
     <div>
       {/* ── Header — shared PageHeader (full-bleed, design-system) ─── */}
@@ -240,85 +324,36 @@ export const LorryCapacity = () => {
         <StatCard label="Revenue/Trip" value={centiOrDash(totals?.revenue_per_trip_centi)} />
       </div>
 
-      {/* Per-lorry metric table */}
-      <section className="overflow-x-auto rounded-lg border border-border bg-surface shadow-stone">
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th className={styles.left}>Lorry</th>
-              <th className={styles.center}>In-house</th>
-              <th>Work Days</th>
-              <th>Repair Days</th>
-              <th>Available Days</th>
-              <th>Utilisation</th>
-              <th>Total Trips</th>
-              <th>Delivery Days</th>
-              <th>Deliveries</th>
-              <th>Orders/Trip</th>
-              <th>Setup/Dismantle</th>
-              <th>Pickups</th>
-              <th>Services</th>
-              <th>Delivery Revenue</th>
-              <th>Revenue/Order</th>
-              <th>Revenue/Trip</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && (
-              <tr><td className={styles.emptyState} colSpan={16}>Loading…</td></tr>
-            )}
-            {!isLoading && rows.length === 0 && (
-              <tr><td className={styles.emptyState} colSpan={16}>No lorries in this fleet view.</td></tr>
-            )}
-            {!isLoading && rows.map((l) => (
-              <LorryRow
-                key={l.lorry_id}
-                lorry={l}
-                onToggleInHouse={(isInternal) =>
-                  toggleInHouse.mutate({ id: l.lorry_id, isInternal })}
-                onSetRepair={(days) =>
-                  setRepair.mutate(
-                    { id: l.lorry_id, from, to, days },
-                    { onError: (e) => notify({ title: "Couldn't save repair days.", body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }) },
-                  )}
-              />
-            ))}
-          </tbody>
-          {!isLoading && rows.length > 0 && totals && (
-            <tfoot>
-              <tr>
-                <td className={styles.left}>Fleet total</td>
-                <td className={styles.center}>{dash}</td>
-                <td>{dash}</td>
-                <td>{dash}</td>
-                <td>{numOrDash(totals.available_days)}</td>
-                <td>{pctOrDash(totals.utilisation)}</td>
-                <td>{numOrDash(totals.total_trips)}</td>
-                <td>{dash}</td>
-                <td>{dash}</td>
-                <td>{numOrDash(totals.orders_per_delivery_trip, 2)}</td>
-                <td>{dash}</td>
-                <td>{dash}</td>
-                <td>{dash}</td>
-                <td>{centiOrDash(totals.delivery_revenue_centi)}</td>
-                <td>{centiOrDash(totals.revenue_per_order_centi)}</td>
-                <td>{centiOrDash(totals.revenue_per_trip_centi)}</td>
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </section>
+      {/* Per-lorry metric table — the shared DataTable (owner 2026-07-25:
+          every table = the SO sample). Sort / funnel filters / Columns drawer /
+          CSV export / frozen header all come from the component. */}
+      <DataTable<LorryCapacityRow>
+        tableId="lorry-capacity"
+        exportName="lorry-capacity"
+        columns={columns}
+        rows={filteredRows}
+        loading={isLoading}
+        error={error instanceof Error ? error.message : error ? String(error) : null}
+        emptyLabel="No lorries in this fleet view."
+        getRowKey={(l) => l.lorry_id}
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: 'Search plate or type…',
+          totalRecords: filteredRows.length,
+        }}
+      />
     </div>
   );
 };
 
-/* One lorry row. The Repair Days input is locally controlled so typing doesn't
-   thrash the query; it commits on blur / Enter only when the value changed. */
-const LorryRow = ({
-  lorry, onToggleInHouse, onSetRepair,
+/* Repair Days cell — locally controlled so typing doesn't thrash the query;
+   commits on blur / Enter only when the value changed (same contract as the
+   old hand-rolled row). */
+const RepairDaysCell = ({
+  lorry, onSetRepair,
 }: {
   lorry: LorryCapacityRow;
-  onToggleInHouse: (isInternal: boolean) => void;
   onSetRepair: (days: number) => void;
 }) => {
   const [repair, setRepair] = useState(String(lorry.repair_days));
@@ -332,49 +367,14 @@ const LorryRow = ({
   };
 
   return (
-    <tr>
-      <td className={styles.left}>
-        <span className={styles.plate}>{lorry.plate}</span>
-        {lorry.type && lorry.type !== 'OTHER' && (
-          <span className={styles.lorryType}>{lorry.type.replace(/^LORRY_/, '').replace(/FT$/, 'ft')}</span>
-        )}
-      </td>
-      <td className={styles.center}>
-        <label className={styles.checkCell} onClick={(e) => e.stopPropagation()}>
-          <input
-            type="checkbox"
-            checked={lorry.is_internal}
-            onChange={(e) => onToggleInHouse(e.target.checked)}
-          />
-        </label>
-      </td>
-      <td>{numOrDash(lorry.work_days)}</td>
-      <td>
-        <input
-          className={styles.repairInput}
-          type="number" min={0} step={1}
-          value={repair}
-          onChange={(e) => setRepair(e.target.value)}
-          onBlur={commitRepair}
-          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-        />
-      </td>
-      <td>{numOrDash(lorry.available_days)}</td>
-      <td>
-        <span className={`${styles.utilPill} ${utilClass(lorry.utilisation)}`}>
-          {pctOrDash(lorry.utilisation)}
-        </span>
-      </td>
-      <td>{numOrDash(lorry.total_trips)}</td>
-      <td>{numOrDash(lorry.delivery_days)}</td>
-      <td>{numOrDash(lorry.deliveries)}</td>
-      <td>{numOrDash(lorry.orders_per_trip, 2)}</td>
-      <td>{numOrDash(lorry.setup_dismantle)}</td>
-      <td>{numOrDash(lorry.pickups)}</td>
-      <td>{numOrDash(lorry.services)}</td>
-      <td className={styles.money}>{centiOrDash(lorry.delivery_revenue_centi)}</td>
-      <td className={styles.money}>{centiOrDash(lorry.revenue_per_order_centi)}</td>
-      <td className={styles.money}>{centiOrDash(lorry.revenue_per_trip_centi)}</td>
-    </tr>
+    <input
+      className={styles.repairInput}
+      type="number" min={0} step={1}
+      value={repair}
+      onChange={(e) => setRepair(e.target.value)}
+      onBlur={commitRepair}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+      onClick={(e) => e.stopPropagation()}
+    />
   );
 };

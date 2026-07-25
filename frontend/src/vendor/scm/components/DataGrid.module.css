@@ -61,11 +61,15 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: var(--c-paper);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: 4px 8px;
-  min-width: 240px;
+  /* Byte-for-byte the Sales Orders sample's search input (owner 2026-07-25:
+     "search button像这样"), MEASURED off the live SO page: 32px tall, 288px
+     wide, 6px radius, 1px #d6d9d2 border, white, 12px text. */
+  background: #ffffff;
+  border: 1px solid #d6d9d2;
+  border-radius: 6px;
+  height: 32px;
+  padding: 0 12px;
+  width: 288px;
 }
 .searchScope {
   padding: 0 4px;
@@ -154,7 +158,7 @@
   font-family: var(--font-button);
   font-size: var(--fs-11);
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--c-ink);
 }
@@ -360,12 +364,12 @@
    are written out for the same reason DeliveryPlanning.module.css documents:
    several --c-* tokens resolve to DIFFERENT fallbacks (or nothing) in this
    app's cascade. Mapping: primary #16695f · row-hover #3f6b53 at 25% ·
-   header/dim band #f4f6f3 (the Tailwind bg-surface-dim). */
+   header/dim band #e3e6e0 (the Tailwind bg-surface-dim, MEASURED off the live SO header - not guessed). */
 .thead {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #f4f6f3;
+  background: #e3e6e0;
 }
 /* Embedded (drill-down) mode — the grid flows with the page, so there is
    no inner scroll container for a sticky header to anchor to. Make the
@@ -377,13 +381,13 @@
   font-family: var(--font-button);
   font-size: var(--fs-10, 10px);
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--c-ink);
   text-align: left;
   padding: 8px 12px;
   border-bottom: 2px solid var(--line);
-  background: #f4f6f3;
+  background: #e3e6e0;
   position: relative;
   user-select: none;
   white-space: nowrap;
@@ -564,7 +568,7 @@
   background: var(--c-cream);
   font-family: var(--font-button);
   font-size: var(--fs-10, 10px);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--fg-muted);
   min-height: 22px;
