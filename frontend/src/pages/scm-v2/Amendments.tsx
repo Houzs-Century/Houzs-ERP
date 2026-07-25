@@ -24,6 +24,7 @@ import {
   amendmentBucketLabel,
 } from '../../vendor/scm/lib/status-pill';
 import { PageHeader } from '../../components/Layout';
+import { FilterPills } from '../../components/FilterPills';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { cn } from '../../lib/utils';
 
@@ -144,36 +145,24 @@ export const Amendments = () => {
           </div>
         )}
 
-        {/* Status chips — the SO status strip verbatim (owner 2026-07-26:
-            "amendment要和sales order红色标记那样"): counted labels
-            (ALL · 73 style) + the measured FilterPills spec — active petrol
-            on white text, 4px radius, uppercase; idle transparent on
-            ink-secondary. Counts come off the loaded set (this list filters
-            client-side, so allRows is the whole population). */}
-        <div className="flex flex-wrap gap-1.5">
-          {STATUS_CHIPS.map((s) => {
-            const active = statusChip === s;
-            const count = s === 'all'
-              ? allRows.length
-              : allRows.filter((a) => amendmentBucketOf(a.status) === s).length;
-            return (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatusChip(s)}
-                className={cn(
-                  'h-[29px] rounded border px-3 text-[11px] font-semibold uppercase tracking-[0.05em] transition-colors',
-                  active
-                    ? 'border-transparent bg-primary text-white'
-                    : 'border-[#e5e7eb] bg-transparent text-ink-secondary hover:border-primary/40 hover:text-primary',
-                )}
-              >
-                {amendmentBucketLabel(s)}
-                <span className={cn('ml-1', active ? 'text-white/80' : 'text-ink-muted')}>· {count}</span>
-              </button>
-            );
-          })}
-        </div>
+        {/* Status strip — the SO page's OWN FilterPills component (owner
+            2026-07-26, red box on the SO ALL·73 strip: "amendment要和sales
+            order红色标记那样"): the white slab with borderless pills, active
+            petrol. Counted labels off the loaded set — this list filters
+            client-side, so allRows is the whole population. Using the shared
+            component (not a spec copy) so the two strips can never drift. */}
+        <FilterPills
+          options={STATUS_CHIPS.map((s) => ({
+            value: s,
+            label: `${amendmentBucketLabel(s)} · ${
+              s === 'all'
+                ? allRows.length
+                : allRows.filter((a) => amendmentBucketOf(a.status) === s).length
+            }`,
+          }))}
+          value={statusChip}
+          onChange={(v) => setStatusChip(v)}
+        />
 
         <DataGrid<AmendmentRow>
         rows={rows}
