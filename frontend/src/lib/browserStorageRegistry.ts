@@ -67,6 +67,10 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "identity-preferences", classification: "IDENTITY_PREF", storage: ["localStorage"], keyFamily: "<approved preference base>:u<user>:c<company>", matches: identityPreference },
   { id: "pwa-dismissals", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "pwa:<surface>:dismissed-at", matches: prefix("pwa:") },
   { id: "mobile-language", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs.mobile.lang", matches: exact("houzs.mobile.lang") },
+  // Floating Assistant panel size — a per-device layout preference (width/height
+  // of the draggable chat card), no identity/company data, same class as the
+  // ResizableDrawer panel widths.
+  { id: "assistant-panel-size", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs:assistant-panel-w | houzs:assistant-panel-h", matches: (key) => key === "houzs:assistant-panel-w" || key === "houzs:assistant-panel-h" },
   { id: "data-table-layout", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dt:<part>:<table family>", matches: prefix("dt:") },
   {
     id: "grid-and-panel-layout",
@@ -98,6 +102,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "components/AndroidInstallGuide.tsx",
   "components/announcementLocalAcks.ts",
   "components/AssistantLauncher.tsx",
+  // Floating Assistant panel: persists ONLY its own width/height (DEVICE_PREF,
+  // assistant-panel-size family) — a layout preference, no identity/company data.
+  "components/AssistantPanel.tsx",
   "components/assistantLauncherPosition.ts",
   "components/DataTable.tsx",
   "components/IosInstallGuide.tsx",
