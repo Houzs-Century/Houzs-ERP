@@ -32,6 +32,7 @@ import {
 } from '../../vendor/scm/lib/inventory-queries';
 import { adjustmentReasonLabel, fmtCenti, fmtDate as fmtDateShared, fmtQty } from '@2990s/shared';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataTable, type Column } from '../../components/DataTable';
 import styles from './Inventory.module.css';
 import chrome from './SalesOrderDetail.module.css';
 
@@ -361,47 +362,54 @@ export const StockCard = () => {
         ))}
       </div>
 
-      {/* ── Per-Warehouse Balance card (only in All mode) ──────────────── */}
+      {/* ── Per-Warehouse Balance (only in All mode) — shared DataTable,
+          batch 2 of the SO-sample table unification (owner 2026-07-26). The
+          section keeps its title line; the DataTable brings the SO card box,
+          header theme, sort/filter/export for free. */}
       {!warehouseId && (
-        <section className={chrome.card}>
+        <section>
           <header className={chrome.cardHeader}>
             <h2 className={chrome.cardTitle}>Per-Warehouse Balance</h2>
           </header>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Warehouse Code</th>
-                <th>Warehouse Name</th>
-                <th style={{ textAlign: 'right' }}>Qty On Hand</th>
-                <th style={{ textAlign: 'right' }}>Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {breakdownQ.isLoading && (
-                <tr><td colSpan={4} className={styles.emptyRow}>Loading…</td></tr>
-              )}
-              {!breakdownQ.isLoading && breakdownAll.length === 0 && (
-                <tr><td colSpan={4} className={styles.emptyRow}>No warehouse balances for this SKU.</td></tr>
-              )}
-              {!breakdownQ.isLoading && breakdownAll.map((b) => {
-                const qtyClass = b.qty > 0 ? styles.numCellPos
-                  : b.qty < 0 ? styles.numCellNeg
-                  : styles.numCellZero;
-                return (
-                  <tr key={b.warehouse_id}>
-                    <td><span className={styles.codeChip}>{b.warehouse_code ?? '—'}</span></td>
-                    <td>{b.warehouse_name ?? '—'}</td>
-                    <td className={`${styles.numCell} ${qtyClass}`}>
-                      {fmtQty(b.qty)}
-                    </td>
-                    <td className={`${styles.numCell} ${styles.numCellZero}`}>
-                      {b.value_sen && b.value_sen > 0 ? fmtRm(b.value_sen) : '—'}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <DataTable<(typeof breakdownAll)[number]>
+            tableId="stock-card-warehouse-balance"
+            layoutFamily="stock-card-warehouse-balance"
+            exportName="warehouse-balance"
+            rows={breakdownQ.isLoading ? null : breakdownAll}
+            loading={breakdownQ.isLoading}
+            emptyLabel="No warehouse balances for this SKU."
+            getRowKey={(b) => b.warehouse_id}
+            columns={[
+              {
+                key: 'warehouse_code', label: 'Warehouse Code', width: '140px',
+                getValue: (b) => b.warehouse_code ?? '',
+                render: (b) => <span className={styles.codeChip}>{b.warehouse_code ?? '—'}</span>,
+              },
+              {
+                key: 'warehouse_name', label: 'Warehouse Name',
+                getValue: (b) => b.warehouse_name ?? '',
+                render: (b) => b.warehouse_name ?? '—',
+              },
+              {
+                key: 'qty', label: 'Qty On Hand', align: 'right', width: '120px',
+                getValue: (b) => b.qty,
+                render: (b) => (
+                  <span className={`${styles.numCell} ${b.qty > 0 ? styles.numCellPos : b.qty < 0 ? styles.numCellNeg : styles.numCellZero}`}>
+                    {fmtQty(b.qty)}
+                  </span>
+                ),
+              },
+              {
+                key: 'value', label: 'Value', align: 'right', width: '130px',
+                getValue: (b) => (b.value_sen ?? 0) / 100,
+                render: (b) => (
+                  <span className={`${styles.numCell} ${styles.numCellZero}`}>
+                    {b.value_sen && b.value_sen > 0 ? fmtRm(b.value_sen) : '—'}
+                  </span>
+                ),
+              },
+            ] satisfies Column<(typeof breakdownAll)[number]>[]}
+          />
         </section>
       )}
 
@@ -461,61 +469,72 @@ export const StockCard = () => {
           </label>
         </header>
         {lotsOpen && (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Received At</th>
-                <th>Source Doc</th>
-                <th>Warehouse</th>
-                <th style={{ textAlign: 'right' }}>Qty Received</th>
-                <th style={{ textAlign: 'right' }}>Qty Remaining</th>
-                <th style={{ textAlign: 'right' }}>Unit Cost</th>
-                <th style={{ textAlign: 'right' }}>Remaining Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lotsQ.isLoading && (
-                <tr><td colSpan={7} className={styles.emptyRow}>Loading lots…</td></tr>
-              )}
-              {!lotsQ.isLoading && lots.length === 0 && (
-                <tr><td colSpan={7} className={styles.emptyRow}>
-                  {includeClosed ? 'No lots ever recorded for this SKU.' : 'No open lots — toggle "Show closed lots" to see consumed ones.'}
-                </td></tr>
-              )}
-              {!lotsQ.isLoading && lots.map((l) => {
-                const closed = l.qty_remaining === 0;
-                const remainingValue =
-                  l.remaining_value_sen ?? l.qty_remaining * l.unit_cost_sen;
-                return (
-                  <tr key={l.id} style={closed ? { opacity: 0.55 } : undefined}>
-                    <td className={styles.numCellZero}>{fmtDateTime(l.received_at)}</td>
-                    <td>
-                      {l.source_doc_no
-                        ? <span className={styles.docLink}>{l.source_doc_no}</span>
-                        : <span className={styles.numCellZero}>—</span>}
-                    </td>
-                    <td>{l.warehouse_code ?? '—'}</td>
-                    <td className={`${styles.numCell} ${styles.numCellZero}`}>
-                      {fmtQty(l.qty_received)}
-                    </td>
-                    <td className={`${styles.numCell} ${closed ? styles.numCellZero : styles.numCellPos}`}>
+          <DataTable<InventoryLot>
+            tableId="stock-card-fifo-lots"
+            layoutFamily="stock-card-fifo-lots"
+            exportName="fifo-lots"
+            rows={lotsQ.isLoading ? null : lots}
+            loading={lotsQ.isLoading}
+            emptyLabel={includeClosed ? 'No lots ever recorded for this SKU.' : 'No open lots — toggle "Show closed lots" to see consumed ones.'}
+            getRowKey={(l) => l.id}
+            getRowClassName={(l) => (l.qty_remaining === 0 ? 'opacity-50' : undefined)}
+            columns={[
+              {
+                key: 'received_at', label: 'Received At', width: '160px',
+                getValue: (l) => l.received_at,
+                render: (l) => <span className={styles.numCellZero}>{fmtDateTime(l.received_at)}</span>,
+              },
+              {
+                key: 'source_doc', label: 'Source Doc', width: '150px',
+                getValue: (l) => l.source_doc_no ?? '',
+                render: (l) => l.source_doc_no
+                  ? <span className={styles.docLink}>{l.source_doc_no}</span>
+                  : <span className={styles.numCellZero}>—</span>,
+              },
+              {
+                key: 'warehouse', label: 'Warehouse', width: '110px',
+                getValue: (l) => l.warehouse_code ?? '',
+                render: (l) => l.warehouse_code ?? '—',
+              },
+              {
+                key: 'qty_received', label: 'Qty Received', align: 'right', width: '110px',
+                getValue: (l) => l.qty_received,
+                render: (l) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{fmtQty(l.qty_received)}</span>,
+              },
+              {
+                key: 'qty_remaining', label: 'Qty Remaining', align: 'right', width: '130px',
+                getValue: (l) => l.qty_remaining,
+                render: (l) => {
+                  const closed = l.qty_remaining === 0;
+                  return (
+                    <span className={`${styles.numCell} ${closed ? styles.numCellZero : styles.numCellPos}`}>
                       {fmtQty(l.qty_remaining)}
                       {closed && (
-                        <span style={{
-                          marginLeft: 6, fontSize: 'var(--fs-11)',
-                          color: 'var(--fg-muted)', fontWeight: 500,
-                        }}>closed</span>
+                        <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', fontWeight: 500 }}>closed</span>
                       )}
-                    </td>
-                    <td className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(l.unit_cost_sen)}</td>
-                    <td className={`${styles.numCell}`} style={{ fontWeight: 700 }}>
+                    </span>
+                  );
+                },
+              },
+              {
+                key: 'unit_cost', label: 'Unit Cost', align: 'right', width: '110px',
+                getValue: (l) => l.unit_cost_sen / 100,
+                render: (l) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(l.unit_cost_sen)}</span>,
+              },
+              {
+                key: 'remaining_value', label: 'Remaining Value', align: 'right', width: '140px',
+                getValue: (l) => (l.remaining_value_sen ?? l.qty_remaining * l.unit_cost_sen) / 100,
+                render: (l) => {
+                  const remainingValue = l.remaining_value_sen ?? l.qty_remaining * l.unit_cost_sen;
+                  return (
+                    <span className={styles.numCell} style={{ fontWeight: 700 }}>
                       {remainingValue > 0 ? fmtRm(remainingValue) : '—'}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    </span>
+                  );
+                },
+              },
+            ] satisfies Column<InventoryLot>[]}
+          />
         )}
       </section>
     </div>
