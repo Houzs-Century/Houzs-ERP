@@ -57,11 +57,11 @@ try {
       (SELECT count(*) FROM email_messages m
          JOIN email_threads t ON t.id = m.thread_id
         WHERE lower(t.mailbox_address) = lower(${BOX})
-          AND m.direction = 'in')                                          AS inbound_msgs,
+          AND m.direction = 'inbound')                                     AS inbound_msgs,
       (SELECT count(*) FROM email_messages m
          JOIN email_threads t ON t.id = m.thread_id
         WHERE lower(t.mailbox_address) = lower(${BOX})
-          AND m.direction = 'out')                                         AS outbound_msgs,
+          AND m.direction = 'outbound')                                    AS outbound_msgs,
       (SELECT max(m.created_at) FROM email_messages m
          JOIN email_threads t ON t.id = m.thread_id
         WHERE lower(t.mailbox_address) = lower(${BOX}))                    AS latest_message_at,

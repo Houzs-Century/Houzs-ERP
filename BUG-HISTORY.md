@@ -1,5 +1,12 @@
 ## 2026-07-25
 
+### [LOW] 2990 mail go-live check reported 0 messages while 7 threads existed — counted `direction = 'in'/'out'` but the Mail Center writes `'inbound'/'outbound'`
+- **Symptom.** First production run of `check-2990-mail.mjs` (#1273) printed `threads: 7 (tagged 2990: 7)` but `messages in/out: 0 / 0` — impossible together, since every thread is created with its first message.
+- **Root cause (traced).** The check's SQL guessed the `email_messages.direction` literals as `'in'`/`'out'`. The Mail Center writes `'inbound'`/`'outbound'` everywhere (`mail-center.ts` — inbound insert, Sent-folder filter `m.direction = 'outbound'`, `last_direction` stamps). The script was written from the 0039 schema (which types `direction text` without values) instead of from the code that writes the column.
+- **Fix.** Count `'inbound'`/`'outbound'`. Re-run then showed `messages in/out: 7 / 0`, consistent with the threads.
+- **The class, for next time.** A status/enum column in this schema documents no values — the writer code is the only source of truth. When a diagnostic reads a column it does not write, grep for the INSERT/UPDATE that stamps it and copy the literal from there; and treat "counts disagree with an invariant" (threads without messages) as the check being wrong before the data.
+- **Ref:** #1274. 2026-07-25.
+
 ### [MEDIUM] Stock Breakdown drawer showed a blanket "FREE / No order" — reflected only HARD reservations, not the MRP allocation, so make-to-order dead stock looked assignable and MRP-covered stock looked idle
 - **Symptom.** Owner (2026-07-25): the Stock Breakdown drawer + Reservations tab tagged a lot RESERVED only when a READY sales-order line hard-claimed it, else "FREE / No order". For a SKU with 10 on hand where MRP allocates 3 to open SOs, all 10 read "FREE" — so genuinely-assigned stock looked idle, and un-assigned make-to-order stock (SOFA/BEDFRAME — a dead-stock signal for a build-to-order business) wasn't distinguished from normal make-to-stock (MATTRESS) free stock. Owner's model: "assigned" must follow the SAME floating MRP engine the SO↔PO "Assigned SO" feature uses; only genuinely-unallocated stock is FREE = dead.
 - **Root cause (traced, not guessed).** `/inventory/reservations` derived `status` purely from `mfg_sales_order_items.stock_status='READY'` + `allocated_batch_no` (the HARD reservation the allocator writes), never from `computeMrp`'s stock→SO allocation. The hard reservation is a narrower truth than the floating MRP coverage the SO detail (`mrpLineCoverage`) and PO detail (`mrpReverseCoverage`) already read — so the drawer disagreed with those two surfaces: stock MRP would allocate showed "FREE". `computeMrp` tracked per-line `fromStock` internally but discarded it, so there was no stock-side inverse of `mrpReverseCoverage`.
@@ -107,7 +114,6 @@
 - **Test.** `scm/lib/consignment-lot-source.test.ts` (11 cases): PC_RECEIVE/PC_RETURN/PURCHASE_CONSIGNMENT_NOTE flagged; a STOCK_TRANSFER delta top-up with a PCR number flagged; bare (HOUZS) `PCR-…` flagged; a GRN and a genuine non-PCR STOCK_TRANSFER NOT flagged; `PCO-`/`PCT-` siblings NOT matched; null-safe. Plus the BOOQIT-CNR case in miniature — owned value = RM 1,000.00 (the GRN lot only), NOT RM 2,564.19; consignment qty (2) surfaced separately; total qty still 3.
 - **The class, for next time.** Ownership is a property of the SOURCE that created the stock, not of where it currently sits. When a flag can be set by mis-posting (a warehouse's is_consignment), it cannot gate MONEY — trace the value to the fact that is invariant (the lot came from a PC Receive) and classify there.
 - **Ref:** #<PR>. `feat/inventory-drawer-redesign` 2026-07-25. Merged the drawer's three tables into one per-lot table + added the reserving SO's delivery date in the same PR.
-
 ## 2026-07-24
 
 ### [MEDIUM] Mail Center mailbox creation validated against the HOUZS domain regardless of the active company — a 2990 mailbox was impossible to create
