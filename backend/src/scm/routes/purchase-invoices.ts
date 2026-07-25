@@ -12,6 +12,7 @@ import {
 import { postPiAccounting, reversePiAccounting, resyncPiAccounting } from './accounting';
 import { recostForPi, recostFromGrn } from '../lib/recost';
 import { normalizeCurrency, normalizeExchangeRate, masterRateForCurrency } from '../lib/fx';
+import { assertForeignRatePostable } from '../lib/fx-guard';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
@@ -867,6 +868,16 @@ purchaseInvoices.post('/', async (c) => {
     ? body.exchangeRate
     : await masterRateForCurrency(sb, piCurrency);
   const piExchangeRate = normalizeExchangeRate(piRateRaw, piCurrency);
+  /* R2 money-path guard (audit inventory-costing-integrity R2) — refuse a foreign
+     PI whose currency has no positive master rate and no operator-entered rate,
+     rather than posting the AP GL entry at a 1:1 fallback. Applies to drafts too:
+     the create boundary is the only point where an unset-master 1 can still be
+     told apart from a deliberately-entered 1. The from-grn / from-grn-items paths
+     inherit an exchange_rate already gated at GRN create, so they need no guard. */
+  {
+    const rateGuard = await assertForeignRatePostable(sb, { currency: piCurrency, operatorRate: body.exchangeRate, docLabel: 'purchase invoice' });
+    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+  }
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string }>(
     () => nextNum(sb, 'PI', c),
     (invoiceNumber) => sb.from('purchase_invoices').insert({
