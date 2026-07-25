@@ -91,7 +91,9 @@ import { Layout, PageHeader, Panel, StatStrip, StatCard, Button, DataTable } fro
 ```
 
 For amounts use `font-money` on the cell or wrap with `<span className="font-money">$1,234.56</span>`.
-For status, prefer `<Badge tone="success|warning|err">…</Badge>` over a raw chip.
+For status, prefer `<Badge tone="success|warning|error">…</Badge>` over a raw chip
+(tone enum: `neutral|accent|success|warning|error` — the CSS classes are the
+`err`-flavoured ones, but the prop value is spelled `error`).
 
 ## Where the truth lives
 
