@@ -401,6 +401,10 @@ export type InventoryReservation = {
   // excluded from owned value (BUG-HISTORY 2026-07-25).
   source_doc_type?: string | null;
   source_doc_no?: string | null;
+  // For a GRN-sourced lot, the ORIGINATING purchase order (display trace only),
+  // resolved server-side by grn_number -> purchase_order_id -> po_number. Null
+  // for non-GRN sources and for a GRN with no resolvable PO.
+  source_po_no?: string | null;
   is_consignment?: boolean;
   fabric_supplier_code?: string;
   status: 'RESERVED' | 'FREE';
