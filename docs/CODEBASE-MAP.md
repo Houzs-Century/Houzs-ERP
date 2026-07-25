@@ -231,6 +231,20 @@ pre-auth, secret-guarded receivers called by the 2990 database itself. They are
 mounted at the top level, outside `/api/scm`, and are separate routes on purpose so
 one mirror stalling cannot wedge the others.
 
+**Fleet Maintenance & Compliance (Phase 1).** A NATIVE module (NOT SCM), route
+`/api/fleet-maintenance`, page `frontend/src/pages/FleetHealth.tsx` at
+`/fleet-health`, gated by the flat `fleet.read` / `fleet.write` permissions. Own
+tables in `public` (mig 0200): `fleet_vehicles` (lorry master) +
+`fleet_compliance_documents` (the compliance vault — renewals are APPENDED, never
+overwritten). Vehicle status is DERIVED, never stored — the state machine +
+expiry-reminder ladder are pure functions in `backend/src/services/fleet-status.ts`
+(tests: `backend/tests/fleetStatus.test.ts`), run server-side so the frontend never
+re-derives them. Deliberately SEPARATE from the SCM lorry master (`scm.lorries` +
+`scm.lorry_service_records`); reconciling the two is a deferred owner decision —
+see `docs/modules/fleet-maintenance.md`. There are now THREE lorry representations
+(`public.fleet_vehicles`, `scm.lorries`, and the minimal `public.lorries` Drizzle
+table trips read) — check which you are in before copying a pattern.
+
 ## 7. Desktop and mobile are two surfaces over one logic layer
 
 The phone does not render the desktop tree. `useIsMobile()` in
