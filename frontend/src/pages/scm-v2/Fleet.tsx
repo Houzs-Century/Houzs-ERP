@@ -47,8 +47,11 @@ import {
   useUpdateLorry,
   LORRY_TYPES,
   LORRY_TYPE_LABEL,
+  CAPACITY_LAYERS,
+  CAPACITY_LAYER_LABEL,
   type LorryRow,
   type LorryType,
+  type CapacityLayer,
   type FleetFilter,
 } from '../../vendor/scm/lib/lorries-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
@@ -623,15 +626,19 @@ const CreateLorryDrawer = ({ onClose }: { onClose: () => void }) => {
   const notify = useNotify();
   const [form, setForm] = useState({
     plate: '', capacityM3: '', capacityKg: '', notes: '', warehouseId: '',
+    maxSets: '', maxRevenueRm: '',
   });
   const [type, setType] = useState<LorryType>('LORRY_17FT');
   const [isInternal, setIsInternal] = useState(true);
+  const [capacityLayer, setCapacityLayer] = useState<CapacityLayer>('SETS');
   const set = <K extends keyof typeof form>(k: K, v: string) => setForm((s) => ({ ...s, [k]: v }));
 
   const submit = () => {
     if (!form.plate.trim()) { notify({ title: 'Plate required.', tone: 'error' }); return; }
     const m3 = form.capacityM3.trim() ? Number(form.capacityM3) : null;
     const kg = form.capacityKg.trim() ? Number(form.capacityKg) : null;
+    const sets = form.maxSets.trim() ? Number(form.maxSets) : null;
+    const revRm = form.maxRevenueRm.trim() ? Number(form.maxRevenueRm) : null;
     create.mutate({
       plate: form.plate.trim(),
       type,
@@ -639,6 +646,9 @@ const CreateLorryDrawer = ({ onClose }: { onClose: () => void }) => {
       warehouseId: form.warehouseId || null,
       capacityM3: m3 !== null && Number.isFinite(m3) ? m3 : null,
       capacityKg: kg !== null && Number.isFinite(kg) ? kg : null,
+      maxSets: sets !== null && Number.isInteger(sets) && sets >= 0 ? sets : null,
+      maxRevenueCenti: revRm !== null && Number.isFinite(revRm) && revRm >= 0 ? Math.round(revRm * 100) : null,
+      capacityLayer,
       notes: form.notes.trim() || undefined,
       active: true,
     }, { onSuccess: onClose });
@@ -674,6 +684,14 @@ const CreateLorryDrawer = ({ onClose }: { onClose: () => void }) => {
             </label>
             <Field label="Capacity (m³)" value={form.capacityM3} onChange={(v) => set('capacityM3', v)} placeholder="e.g. 14.5" />
             <Field label="Capacity (kg)" value={form.capacityKg} onChange={(v) => set('capacityKg', v)} placeholder="e.g. 3000" />
+            <Field label="Max sets / trip" value={form.maxSets} onChange={(v) => set('maxSets', v)} placeholder="e.g. 10" />
+            <Field label="Max revenue / trip (RM)" value={form.maxRevenueRm} onChange={(v) => set('maxRevenueRm', v)} placeholder="e.g. 30000" />
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Capacity layer</span>
+              <select className={styles.fieldInput} value={capacityLayer} onChange={(e) => setCapacityLayer(e.target.value as CapacityLayer)}>
+                {CAPACITY_LAYERS.map((l) => (<option key={l} value={l}>{CAPACITY_LAYER_LABEL[l]}</option>))}
+              </select>
+            </label>
             <Field label="Notes" value={form.notes} onChange={(v) => set('notes', v)} />
             <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
               <input type="checkbox" checked={isInternal} onChange={(e) => setIsInternal(e.target.checked)} />

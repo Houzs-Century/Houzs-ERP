@@ -34,7 +34,22 @@ const COLS = [
   'model', 'purchase_date', 'purchase_price_centi',
   'purchase_invoice_key', 'purchase_invoice_name', 'purchase_invoice_mime', 'purchase_invoice_size',
   'road_tax_expiry', 'insurance_expiry', 'puspakom_expiry',
+  // Fleet A1 (mig 0205) — per-lorry delivery capacity ceilings the auto-propose
+  // packer reads. NULL max_* => the packer uses its config default (10 sets /
+  // RM30k). capacity_layer picks which ceiling(s) bind: SETS | REVENUE | BOTH.
+  'max_sets', 'max_revenue_centi', 'capacity_layer',
 ].join(', ');
+
+const CAPACITY_LAYERS = new Set(['SETS', 'REVENUE', 'BOTH']);
+
+/** An integer >= 0 or null (a capacity ceiling). Rejects a negative for a clean
+ *  field-named 400 rather than a raw constraint 500. */
+function toCapacityOrNull(v: unknown): { ok: true; value: number | null } | { ok: false } {
+  if (v === null || v === undefined || v === '') return { ok: true, value: null };
+  const n = Number(v);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) return { ok: false };
+  return { ok: true, value: n };
+}
 
 // Mirrors the lorry_type enum in migration 0053. Reject anything else so a bad
 // client can't write a value Postgres would 22P02 on.
@@ -114,6 +129,14 @@ lorries.post('/', async (c) => {
   const price = toIntOrNull(body.purchasePriceCenti);
   if (!price.ok) return c.json({ error: 'invalid_amount', reason: 'purchasePriceCenti must be a non-negative integer (cents)' }, 400);
 
+  const maxSets = toCapacityOrNull(body.maxSets);
+  if (!maxSets.ok) return c.json({ error: 'invalid_capacity', reason: 'maxSets must be a non-negative integer or blank' }, 400);
+  const maxRevenue = toCapacityOrNull(body.maxRevenueCenti);
+  if (!maxRevenue.ok) return c.json({ error: 'invalid_capacity', reason: 'maxRevenueCenti must be a non-negative integer (cents) or blank' }, 400);
+  const layerRaw = body.capacityLayer === undefined || body.capacityLayer === null || body.capacityLayer === ''
+    ? 'SETS' : String(body.capacityLayer).toUpperCase();
+  if (!CAPACITY_LAYERS.has(layerRaw)) return c.json({ error: 'invalid_layer', reason: 'capacityLayer must be SETS, REVENUE or BOTH' }, 400);
+
   const sb = c.get('supabase');
   const { data, error } = await sb.from('lorries').insert({
     company_id: activeCompanyId(c),
@@ -127,6 +150,9 @@ lorries.post('/', async (c) => {
     active: body.active === false ? false : true,
     model: (body.model as string) || null,
     purchase_price_centi: price.value,
+    max_sets: maxSets.value,
+    max_revenue_centi: maxRevenue.value,
+    capacity_layer: layerRaw,
     ...dates,
     // The purchase invoice is NOT settable here — it arrives as a file via
     // PUT /lorries/:id/purchase-invoice, so the R2 key is server-minted and a
@@ -173,6 +199,21 @@ lorries.patch('/:id', async (c) => {
     const price = toIntOrNull(body.purchasePriceCenti);
     if (!price.ok) return c.json({ error: 'invalid_amount', reason: 'purchasePriceCenti must be a non-negative integer (cents)' }, 400);
     updates.purchase_price_centi = price.value;
+  }
+  if (body.maxSets !== undefined) {
+    const m = toCapacityOrNull(body.maxSets);
+    if (!m.ok) return c.json({ error: 'invalid_capacity', reason: 'maxSets must be a non-negative integer or blank' }, 400);
+    updates.max_sets = m.value;
+  }
+  if (body.maxRevenueCenti !== undefined) {
+    const m = toCapacityOrNull(body.maxRevenueCenti);
+    if (!m.ok) return c.json({ error: 'invalid_capacity', reason: 'maxRevenueCenti must be a non-negative integer (cents) or blank' }, 400);
+    updates.max_revenue_centi = m.value;
+  }
+  if (body.capacityLayer !== undefined) {
+    const layer = String(body.capacityLayer ?? 'SETS').toUpperCase();
+    if (!CAPACITY_LAYERS.has(layer)) return c.json({ error: 'invalid_layer', reason: 'capacityLayer must be SETS, REVENUE or BOTH' }, 400);
+    updates.capacity_layer = layer;
   }
   // purchase_invoice_* are server-owned (minted by the upload route). NOT in
   // this map on purpose — a client-writable R2 key would let any caller point a

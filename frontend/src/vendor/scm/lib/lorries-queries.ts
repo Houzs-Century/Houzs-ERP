@@ -76,6 +76,20 @@ export type LorryRow = {
   insurance_expiry?: string | null;
   /** YYYY-MM-DD. Commercial goods vehicles: every 6 months. */
   puspakom_expiry?: string | null;
+  // ── Fleet A1 (mig 0205): per-lorry delivery capacity ceilings ─────────────
+  // NULL max_* => the auto-propose packer uses its config default (10 sets /
+  // RM30k). capacity_layer picks which ceiling(s) bind on a lorry-day.
+  max_sets?: number | null;
+  max_revenue_centi?: number | null;
+  capacity_layer?: CapacityLayer | null;
+};
+
+export const CAPACITY_LAYERS = ['SETS', 'REVENUE', 'BOTH'] as const;
+export type CapacityLayer = (typeof CAPACITY_LAYERS)[number];
+export const CAPACITY_LAYER_LABEL: Record<CapacityLayer, string> = {
+  SETS: 'Sets only',
+  REVENUE: 'Revenue only',
+  BOTH: 'Sets + Revenue',
 };
 
 export type NewLorry = {
@@ -93,6 +107,9 @@ export type NewLorry = {
   roadTaxExpiry?: string | null;
   insuranceExpiry?: string | null;
   puspakomExpiry?: string | null;
+  maxSets?: number | null;
+  maxRevenueCenti?: number | null;
+  capacityLayer?: CapacityLayer;
 };
 
 export type FleetFilter = 'all' | 'internal' | 'outsourced';
