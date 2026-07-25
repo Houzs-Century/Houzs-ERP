@@ -1,0 +1,84 @@
+name: Backfill FIFO ledger divergence (repair)
+
+# HISTORICAL DATA REPAIR for the movement-vs-FIFO ledger divergence (owner report
+# 2026-07-25, MAKOTO RC(S)-FVI BRONZE). The go-forward engine fix (migration 0195)
+# stops NEW OUTs diverging; this repairs the rows that ALREADY diverged, across
+# EVERY affected SKU, by driving the audited scm.fn_reconcile_uncosted_out (0154)
+# over the full divergent set. See backend/scripts/backfill-fifo-divergence.mjs and
+# docs/inventory-ledger-divergence-coe.md.
+#
+# !! WRITES to the money-critical FIFO ledger — STAGING-FIRST, owner-run only. !!
+#   * DEFAULT is DRY-RUN: every bucket's repair runs inside a transaction and is
+#     ROLLED BACK, so the run REPORTS the exact change set (qty retro-costed, RM
+#     booked, lots decremented, drift closed) and writes NOTHING.
+#   * To actually write, set apply = "APPLY" AND confirm = "I HAVE REVIEWED THE
+#     DRY-RUN". Both are required — a single toggle cannot commit by accident.
+#   * The reconcile is idempotent, so a second APPLY run is a no-op.
+#
+# The SEQUENCE the owner follows (nothing auto-applies):
+#   1. Merge + deploy the go-forward fix (migration 0195).
+#   2. Actions -> "Inventory integrity check (read-only)" -> size the divergence.
+#   3. This workflow, DEFAULT (dry-run) -> review the per-SKU plan.
+#   4. Point DATABASE_URL at STAGING, run with apply=APPLY -> verify with the check.
+#   5. Only then, with owner go, run against prod.
+#
+# Manual trigger only, own concurrency group — never queues behind or displaces a
+# release, never scheduled.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Set to APPLY to COMMIT writes. Anything else = DRY-RUN (rolled back, nothing written).'
+        required: false
+        default: 'DRY-RUN'
+        type: choice
+        options:
+          - 'DRY-RUN'
+          - 'APPLY'
+      confirm:
+        description: 'Required for APPLY: type exactly  I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ''
+      before_ts:
+        description: 'Optional ISO cutoff (only OUTs created before it are repaired). Blank = now.'
+        required: false
+        default: ''
+
+concurrency:
+  group: backfill-fifo-divergence
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # Guard: APPLY requires the exact confirmation phrase. Otherwise force dry-run.
+      - name: Resolve mode
+        id: mode
+        run: |
+          if [ "${{ github.event.inputs.apply }}" = "APPLY" ] && [ "${{ github.event.inputs.confirm }}" = "I HAVE REVIEWED THE DRY-RUN" ]; then
+            echo "apply=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::APPLY confirmed — writes will be COMMITTED. Ensure DATABASE_URL points at the intended (staging-first) database."
+          else
+            echo "apply=false" >> "$GITHUB_OUTPUT"
+            if [ "${{ github.event.inputs.apply }}" = "APPLY" ]; then
+              echo "::warning::APPLY requested but confirmation phrase missing/incorrect — running DRY-RUN instead (nothing written)."
+            fi
+          fi
+      - run: node scripts/backfill-fifo-divergence.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ steps.mode.outputs.apply }}
+          BEFORE_TS: ${{ github.event.inputs.before_ts }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
