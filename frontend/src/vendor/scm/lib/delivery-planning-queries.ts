@@ -424,6 +424,20 @@ export type ScheduleDeliveryVars = {
   /* ASSR-only: forwarded so the backend knows which job (pickup vs delivery) is
      being scheduled. Ignored for 'so' | 'do'. */
   jobKind?: AssrJobKind | null;
+  /* Trip wiring: the origin warehouse for a find-or-created trip, or an explicit
+     trip to append to. warehouseId lets the Phase 3 drawer pin the trip origin to
+     the routed depot; both were already accepted by the backend schedule schema. */
+  warehouseId?: string | null;
+  tripId?: string | null;
+  tripDate?: string | null;
+  /* Phase 3 "Propose times + route" apply: the stop's 1-based position in the
+     proposed sequence + its ETA (seconds from the trip's depart) + leg metrics,
+     so the stop lands in order with its computed times. Optional — a normal
+     schedule omits them and behaves exactly as before. */
+  stopNo?: number;
+  etaOffsetS?: number | null;
+  legDistanceM?: number | null;
+  legDurationS?: number | null;
   /* Display-only, for optimistic UI (never posted). */
   driverNameOptimistic?: string | null;
   lorryPlateOptimistic?: string | null;
@@ -444,7 +458,7 @@ export type ScheduleDeliveryResult = {
 export function useScheduleDelivery() {
   const qc = useQueryClient();
   return useMutation<ScheduleDeliveryResult, Error, ScheduleDeliveryVars, { snapshots: Array<[readonly unknown[], PlanningResponse]> }>({
-    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, jobKind }) => {
+    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS }) => {
       /* Only include keys the caller actually set, so an unrelated field is never
          nulled out by an inline single-field edit. */
       const body: Record<string, unknown> = {};
@@ -453,6 +467,13 @@ export function useScheduleDelivery() {
       if (driverId !== undefined) body.driverId = driverId;
       if (lorryId !== undefined) body.lorryId = lorryId;
       if (jobKind !== undefined) body.jobKind = jobKind;
+      if (warehouseId !== undefined) body.warehouseId = warehouseId;
+      if (tripId !== undefined) body.tripId = tripId;
+      if (tripDate !== undefined) body.tripDate = tripDate;
+      if (stopNo !== undefined) body.stopNo = stopNo;
+      if (etaOffsetS !== undefined) body.etaOffsetS = etaOffsetS;
+      if (legDistanceM !== undefined) body.legDistanceM = legDistanceM;
+      if (legDurationS !== undefined) body.legDurationS = legDurationS;
       return authedFetch<ScheduleDeliveryResult>(`/delivery-planning/${type}/${id}/schedule`, {
         method: 'PATCH', body: JSON.stringify(body),
       });

@@ -1708,6 +1708,17 @@ const scheduleSchema = z.object({
   driverId: z.string().uuid().nullable().optional(),
   tripDate: z.string().nullable().optional(),       // trip date if creating (defaults to scheduleDate)
   warehouseId: z.string().uuid().nullable().optional(),  // trip origin region (defaults from the DO warehouse)
+  // ── Phase 3 "Propose times + route" apply ────────────────────────────────
+  // When the dispatcher applies a PROPOSED sequence, the drawer sends each
+  // stop's 1-based position and its ETA offset (drive seconds from depart) so
+  // the stops land in the proposed ORDER with their computed times, instead of
+  // the plain max+1 append. Purely optional — a normal schedule omits them and
+  // behaves exactly as before. eta_offset_s is an OFFSET from the trip's depart,
+  // never a wall clock (the trip start can move), matching mig 0134 / optimize-route.
+  stopNo: z.number().int().min(1).max(999).optional(),
+  etaOffsetS: z.number().int().min(0).nullable().optional(),
+  legDistanceM: z.number().int().min(0).nullable().optional(),
+  legDurationS: z.number().int().min(0).nullable().optional(),
 });
 
 /* is_outsourced derives from the lorry's is_internal (NOT is_internal). */
@@ -2112,10 +2123,27 @@ async function scheduleOntoTrip(
       ? stopFilter.eq('do_id', doId)
       : stopFilter.eq('so_id', soId));
     const already = ((existingStops ?? []) as Array<{ id: string }>)[0];
+
+    /* Phase 3 apply: the proposed ORDER + ETA the dispatcher committed to. When
+       a stop already exists (re-apply of a proposed route), refresh its position
+       and route metrics so the sequence reflects the latest proposal. Omitted on
+       a normal schedule -> untouched (behaviour unchanged). */
+    if (already && p.stopNo != null) {
+      const routeUpdate: Record<string, unknown> = { stop_no: p.stopNo };
+      if (p.etaOffsetS !== undefined) routeUpdate.eta_offset_s = p.etaOffsetS;
+      if (p.legDistanceM !== undefined) routeUpdate.leg_distance_m = p.legDistanceM;
+      if (p.legDurationS !== undefined) routeUpdate.leg_duration_s = p.legDurationS;
+      if (p.etaOffsetS != null) routeUpdate.route_optimised_at = new Date().toISOString();
+      await sb.from('trip_stops').update(routeUpdate).eq('id', already.id);
+    }
+
     if (!already && (doId || soId)) {
       const { data: cntRows } = await sb.from('trip_stops').select('stop_no').eq('trip_id', tripIdStr);
-      const nextStopNo = ((cntRows ?? []) as Array<{ stop_no?: number; stopNo?: number }>)
+      const appendStopNo = ((cntRows ?? []) as Array<{ stop_no?: number; stopNo?: number }>)
         .reduce((m, r) => Math.max(m, Number(r.stopNo ?? r.stop_no ?? 0)), 0) + 1;
+      /* Use the PROPOSED position when the dispatcher applied a route; else the
+         plain max+1 append. */
+      const nextStopNo = p.stopNo ?? appendStopNo;
 
       /* MINT THE DP NUMBER. Until now only the manual path (dp-orders) numbered a
          job, so the owner's DP-YYMMDD-<plate><NN> rule covered the MINORITY of
@@ -2146,6 +2174,13 @@ async function scheduleOntoTrip(
         address,
         revenue_centi: revenueCenti,
         dp_no:         dpNo,
+        /* Phase 3 apply — persist the proposed ETA + leg metrics (mig 0134
+           columns) so the route survives the round-trip without re-billing
+           Google. NULL when this is a plain (non-proposed) schedule. */
+        eta_offset_s:       p.etaOffsetS ?? null,
+        leg_distance_m:     p.legDistanceM ?? null,
+        leg_duration_s:     p.legDurationS ?? null,
+        route_optimised_at: p.stopNo != null && p.etaOffsetS != null ? new Date().toISOString() : null,
       });
     }
 

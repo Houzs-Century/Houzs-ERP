@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 
 const DIRECTIONS_BASE = 'https://maps.googleapis.com/maps/api/directions/json';
+const DISTANCE_MATRIX_BASE = 'https://maps.googleapis.com/maps/api/distancematrix/json';
 
 export interface RouteStop {
   /** Opaque id the caller uses to match the result back (a trip_stop id). */
@@ -148,6 +149,114 @@ export function parseOptimizedRoute(
 
   return { configured: true, ok: true, stops: optimized,
     totalDistanceMetres: totalDistance, totalDurationSeconds: totalDuration };
+}
+
+// ===========================================================================
+// Distance Matrix — the travel-time / distance MATRIX between every point, for
+// the Phase 3 "Propose times + route" scheduler. Directions optimises ONE tour;
+// the scheduler needs the full point-to-point matrix so it can sequence stops
+// under time-window constraints (residence rules) and re-cost a drag-reorder
+// WITHOUT another Google call. ONE Distance Matrix request answers all of it.
+// GATED behind GOOGLE_MAPS_API_KEY exactly like optimizeRoute.
+// ===========================================================================
+
+export interface LatLngPoint {
+  lat: number;
+  lng: number;
+}
+
+export interface MatrixResult {
+  /** False = no API key; the caller must fall back. */
+  configured: boolean;
+  /** True only when a full, finite matrix came back. */
+  ok: boolean;
+  reason?: string;
+  /** durationSeconds[i][j] = drive seconds from point i to point j. */
+  durationSeconds: number[][];
+  /** distanceMetres[i][j] = drive metres from point i to point j. */
+  distanceMetres: number[][];
+}
+
+const NOT_CONFIGURED_MATRIX: MatrixResult = {
+  configured: false, ok: false,
+  reason: 'GOOGLE_MAPS_API_KEY not set — travel matrix disabled',
+  durationSeconds: [], distanceMetres: [],
+};
+
+/** Build the Distance Matrix URL. PURE. Every point is both an origin and a
+ *  destination, so one call yields the full NxN matrix. */
+export function buildDistanceMatrixUrl(points: LatLngPoint[], apiKey: string): string {
+  const coords = points.map((p) => `${p.lat},${p.lng}`).join('|');
+  const enc = encodeURIComponent(coords);
+  return `${DISTANCE_MATRIX_BASE}?origins=${enc}&destinations=${enc}&region=my&key=${apiKey}`;
+}
+
+interface DistanceMatrixBody {
+  status?: string;
+  rows?: Array<{
+    elements?: Array<{
+      status?: string;
+      distance?: { value?: number };
+      duration?: { value?: number };
+    }>;
+  }>;
+}
+
+/**
+ * Parse a Distance Matrix response into duration/distance matrices. PURE. A
+ * per-element non-OK status (NOT_FOUND / ZERO_RESULTS) becomes a 0 rather than a
+ * throw — the sequencer treats a 0 leg as "unknown, effectively adjacent", which
+ * degrades that leg's ETA but never crashes the proposal. The diagonal is 0.
+ */
+export function parseDistanceMatrix(body: DistanceMatrixBody, n: number): MatrixResult {
+  if (body.status !== 'OK' || !body.rows?.length) {
+    return { configured: true, ok: false, reason: `Distance Matrix status ${body.status ?? 'unknown'}`,
+      durationSeconds: [], distanceMetres: [] };
+  }
+  const durationSeconds: number[][] = [];
+  const distanceMetres: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const els = body.rows[i]?.elements ?? [];
+    const durRow: number[] = [];
+    const distRow: number[] = [];
+    for (let j = 0; j < n; j++) {
+      const el = els[j];
+      const okEl = el?.status === 'OK';
+      durRow.push(i === j ? 0 : (okEl ? Number(el?.duration?.value ?? 0) : 0));
+      distRow.push(i === j ? 0 : (okEl ? Number(el?.distance?.value ?? 0) : 0));
+    }
+    durationSeconds.push(durRow);
+    distanceMetres.push(distRow);
+  }
+  return { configured: true, ok: true, durationSeconds, distanceMetres };
+}
+
+/**
+ * Fetch the travel matrix for a set of points. The fetch wrapper: gated off
+ * without a key, and never throws — a failure returns ok:false and the caller
+ * falls back to the input order with no ETAs.
+ */
+export async function travelTimeMatrix(
+  env: { GOOGLE_MAPS_API_KEY?: string },
+  points: LatLngPoint[],
+): Promise<MatrixResult> {
+  const apiKey = env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) return NOT_CONFIGURED_MATRIX;
+  if (points.length < 2) {
+    return { configured: true, ok: false, reason: 'need at least a depot + one stop',
+      durationSeconds: [], distanceMetres: [] };
+  }
+  try {
+    const resp = await fetch(buildDistanceMatrixUrl(points, apiKey), { signal: AbortSignal.timeout(10_000) });
+    if (!resp.ok) {
+      return { configured: true, ok: false, reason: `Distance Matrix HTTP ${resp.status}`,
+        durationSeconds: [], distanceMetres: [] };
+    }
+    return parseDistanceMatrix((await resp.json()) as DistanceMatrixBody, points.length);
+  } catch (e) {
+    return { configured: true, ok: false, reason: `matrix failed: ${String((e as Error)?.message ?? e).slice(0, 120)}`,
+      durationSeconds: [], distanceMetres: [] };
+  }
 }
 
 /**
