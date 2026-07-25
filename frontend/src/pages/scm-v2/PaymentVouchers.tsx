@@ -27,6 +27,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { fmtDateOrDash, fmtMoneyCenti } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { FilterPills } from '../../components/FilterPills';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -147,20 +148,12 @@ export const PaymentVouchers = () => {
         </div>
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {STATUS_CHIPS.map((s) => (
-          <button key={s} type="button" onClick={() => setStatusChip(s)}
-            style={{
-              height: 29, padding: '0 12px', borderRadius: 4, cursor: 'pointer',
-              fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase',
-              border: '1px solid #e5e7eb',
-              background: statusChip === s ? '#16695f' : 'transparent',
-              color: statusChip === s ? '#ffffff' : '#414539',
-            }}>
-            {s === 'all' ? 'All' : statusLabel('pv', s)}
-          </button>
-        ))}
-      </div>
+      {/* The SO strip's own FilterPills slab (owner 2026-07-26). */}
+      <FilterPills
+        options={STATUS_CHIPS.map((s) => ({ value: s as string, label: s === 'all' ? 'All' : statusLabel('pv', s) }))}
+        value={statusChip}
+        onChange={(v) => setStatusChip(v)}
+      />
 
       <DataGrid<PaymentVoucherRow>
         rows={rows}
