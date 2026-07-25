@@ -107,6 +107,10 @@ export const PRODUCTION_STORAGE_CALLERS = [
   // under the panel- family) per caller-supplied storageKey. No identity/company
   // data — the key is a layout preference, same class as the DataGrid layouts.
   "components/ResizableDrawer.tsx",
+  // Shared CHROME for the SCM record detail drawers (SO/PO/GRN/PI/DO/DR/PR/SI):
+  // persists ONLY the one shared drawer width under panel-scm-detail-drawer.v1,
+  // same DEVICE_PREF layout class as ResizableDrawer above.
+  "components/ResizableDetailDrawer.tsx",
   "components/RouteFallback.tsx",
   // The banner's local-ack memo moved into the shared hook (desktop + mobile
   // pop-ups answer "have I seen this?" the same way); AnnouncementBanner.tsx is
