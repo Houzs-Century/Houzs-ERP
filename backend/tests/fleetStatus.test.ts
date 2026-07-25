@@ -9,8 +9,15 @@ import {
   isServiceDue,
   deriveVehicleStatus,
   canDispatch,
+  addMonths,
+  planNextDueKm,
+  planNextDueDate,
+  derivePlanDue,
+  anyPlanDue,
+  assessMileageReading,
   type ComplianceDocInput,
   type StatusInput,
+  type MaintenancePlanInput,
 } from "../src/services/fleet-status";
 
 const TODAY = "2026-07-25";
@@ -190,6 +197,161 @@ describe("deriveVehicleStatus — precedence", () => {
     expect(
       deriveVehicleStatus({ today: TODAY, currentDocs: [{ docType: "ROAD_TAX", expiryDate: "2026-07-01" }], breakdownActive: true }),
     ).toBe("COMPLIANCE_BLOCKED");
+  });
+});
+
+// ── Phase 2: preventive-maintenance plans ────────────────────────────────────
+
+describe("addMonths — day-clamped month arithmetic", () => {
+  test("adds whole months", () => {
+    expect(addMonths("2026-01-15", 6)).toBe("2026-07-15");
+    expect(addMonths("2026-07-15", 12)).toBe("2027-07-15");
+  });
+  test("clamps to the shorter target month (Jan 31 + 1mo => Feb 28)", () => {
+    expect(addMonths("2026-01-31", 1)).toBe("2026-02-28");
+    expect(addMonths("2028-01-31", 1)).toBe("2028-02-29"); // leap year
+  });
+  test("null for a blank/bad date or a non-positive month count", () => {
+    expect(addMonths(null, 6)).toBeNull();
+    expect(addMonths("2026-01-15", 0)).toBeNull();
+    expect(addMonths("2026-01-15", null)).toBeNull();
+    expect(addMonths("not-a-date", 6)).toBeNull();
+  });
+});
+
+describe("planNextDueKm / planNextDueDate", () => {
+  test("next-due km is last-done km + interval km", () => {
+    expect(planNextDueKm({ component: "ENGINE_OIL", intervalKm: 10_000, lastDoneKm: 90_000 })).toBe(100_000);
+  });
+  test("null when no km interval or no last-done odometer", () => {
+    expect(planNextDueKm({ component: "ENGINE_OIL", intervalKm: null, lastDoneKm: 90_000 })).toBeNull();
+    expect(planNextDueKm({ component: "ENGINE_OIL", intervalKm: 10_000, lastDoneKm: null })).toBeNull();
+  });
+  test("next-due date is last-done date + interval months", () => {
+    expect(planNextDueDate({ component: "ENGINE_OIL", intervalMonths: 6, lastDoneDate: "2026-01-15" })).toBe("2026-07-15");
+  });
+  test("null when no month interval or no last-done date", () => {
+    expect(planNextDueDate({ component: "ENGINE_OIL", intervalMonths: null, lastDoneDate: "2026-01-15" })).toBeNull();
+    expect(planNextDueDate({ component: "ENGINE_OIL", intervalMonths: 6, lastDoneDate: null })).toBeNull();
+  });
+});
+
+describe("derivePlanDue — whichever comes first (km OR months)", () => {
+  test("due soon on KM alone while the date is comfortably far out", () => {
+    const plan: MaintenancePlanInput = { component: "ENGINE_OIL", intervalKm: 10_000, intervalMonths: 12, lastDoneKm: 90_000, lastDoneDate: "2026-07-01" };
+    const due = derivePlanDue(plan, 99_500, TODAY); // 500km left (<=1000), ~11mo left
+    expect(due.dueSoon).toBe(true);
+    expect(due.overdue).toBe(false);
+    expect(due.kmRemaining).toBe(500);
+    expect(due.tone).toBe("warn");
+  });
+  test("due soon on MONTHS alone while the km is comfortably far out", () => {
+    const plan: MaintenancePlanInput = { component: "PUSPAKOM_PREP", intervalMonths: 6, intervalKm: 50_000, lastDoneDate: "2026-01-20", lastDoneKm: 10_000 };
+    // next-due date 2026-07-20 => 25d out? TODAY=2026-07-25 so it is overdue by 5d
+    const due = derivePlanDue(plan, 12_000, TODAY);
+    expect(due.dueSoon).toBe(true);
+    expect(due.overdue).toBe(true); // date passed
+    expect(due.tone).toBe("crit");
+  });
+  test("overdue on KM (odometer already past next-due) is crit", () => {
+    const plan: MaintenancePlanInput = { component: "ENGINE_OIL", intervalKm: 10_000, lastDoneKm: 90_000 };
+    const due = derivePlanDue(plan, 101_000, TODAY);
+    expect(due.overdue).toBe(true);
+    expect(due.dueSoon).toBe(true);
+    expect(due.kmRemaining).toBe(-1_000);
+  });
+  test("not due when both axes are far out", () => {
+    const plan: MaintenancePlanInput = { component: "GEARBOX_OIL", intervalKm: 40_000, intervalMonths: 24, lastDoneKm: 90_000, lastDoneDate: "2026-07-01" };
+    const due = derivePlanDue(plan, 92_000, TODAY);
+    expect(due.dueSoon).toBe(false);
+    expect(due.overdue).toBe(false);
+    expect(due.tone).toBe("ok");
+  });
+  test("a plan never serviced (no last-done) has no due picture", () => {
+    const plan: MaintenancePlanInput = { component: "TYRES", intervalKm: 60_000, intervalMonths: 36 };
+    const due = derivePlanDue(plan, 50_000, TODAY);
+    expect(due.nextDueKm).toBeNull();
+    expect(due.nextDueDate).toBeNull();
+    expect(due.dueSoon).toBe(false);
+  });
+});
+
+describe("anyPlanDue + deriveVehicleStatus consumes plans", () => {
+  const okDocs: ComplianceDocInput[] = [{ docType: "ROAD_TAX", expiryDate: "2026-12-01" }];
+  test("anyPlanDue skips inactive plans", () => {
+    const plans: MaintenancePlanInput[] = [
+      { component: "ENGINE_OIL", intervalKm: 10_000, lastDoneKm: 90_000, active: false }, // would be due but inactive
+    ];
+    expect(anyPlanDue(plans, 99_800, TODAY)).toBe(false);
+  });
+  test("an active due plan makes the vehicle SERVICE_DUE", () => {
+    const status = deriveVehicleStatus({
+      today: TODAY,
+      currentDocs: okDocs,
+      currentMileageKm: 99_500,
+      plans: [{ component: "ENGINE_OIL", intervalKm: 10_000, lastDoneKm: 90_000 }],
+    });
+    expect(status).toBe("SERVICE_DUE");
+  });
+  test("compliance block still outranks a due plan", () => {
+    const status = deriveVehicleStatus({
+      today: TODAY,
+      currentDocs: [{ docType: "ROAD_TAX", expiryDate: "2026-07-01" }],
+      currentMileageKm: 99_500,
+      plans: [{ component: "ENGINE_OIL", intervalKm: 10_000, lastDoneKm: 90_000 }],
+    });
+    expect(status).toBe("COMPLIANCE_BLOCKED");
+  });
+  test("plans far from due leave the vehicle AVAILABLE", () => {
+    const status = deriveVehicleStatus({
+      today: TODAY,
+      currentDocs: okDocs,
+      currentMileageKm: 92_000,
+      plans: [{ component: "GEARBOX_OIL", intervalKm: 40_000, lastDoneKm: 90_000 }],
+    });
+    expect(status).toBe("AVAILABLE");
+  });
+});
+
+// ── Phase 2: daily mileage capture guards ────────────────────────────────────
+
+describe("assessMileageReading — no-rollback + abnormal-jump guards", () => {
+  test("first-ever reading is accepted (no previous to compare)", () => {
+    const a = assessMileageReading({ previousKm: null, newKm: 100_000, newDate: "2026-07-25" });
+    expect(a.verdict).toBe("OK");
+    expect(a.accepted).toBe(true);
+    expect(a.flagged).toBe(false);
+    expect(a.deltaKm).toBeNull();
+  });
+  test("a reading BELOW the previous odometer is a rollback — rejected", () => {
+    const a = assessMileageReading({ previousKm: 100_000, previousDate: "2026-07-24", newKm: 99_000, newDate: "2026-07-25" });
+    expect(a.verdict).toBe("ROLLBACK");
+    expect(a.accepted).toBe(false);
+    expect(a.flagged).toBe(true);
+    expect(a.deltaKm).toBe(-1_000);
+  });
+  test("a normal daily delta is accepted, unflagged", () => {
+    const a = assessMileageReading({ previousKm: 100_000, previousDate: "2026-07-24", newKm: 100_350, newDate: "2026-07-25" });
+    expect(a.verdict).toBe("OK");
+    expect(a.flagged).toBe(false);
+    expect(a.deltaKm).toBe(350);
+  });
+  test("an abnormal one-day jump is accepted but FLAGGED for review", () => {
+    const a = assessMileageReading({ previousKm: 100_000, previousDate: "2026-07-24", newKm: 105_000, newDate: "2026-07-25" });
+    expect(a.verdict).toBe("ABNORMAL_JUMP");
+    expect(a.accepted).toBe(true);
+    expect(a.flagged).toBe(true);
+    expect(a.deltaKm).toBe(5_000);
+  });
+  test("the abnormal-jump allowance scales with the day gap", () => {
+    // 3000km over 3 days = 1000/day, under the 1500/day allowance => OK.
+    const a = assessMileageReading({ previousKm: 100_000, previousDate: "2026-07-22", newKm: 103_000, newDate: "2026-07-25" });
+    expect(a.verdict).toBe("OK");
+    expect(a.days).toBe(3);
+  });
+  test("a custom per-day threshold is honoured", () => {
+    const a = assessMileageReading({ previousKm: 100_000, previousDate: "2026-07-24", newKm: 100_600, newDate: "2026-07-25", abnormalJumpKmPerDay: 500 });
+    expect(a.verdict).toBe("ABNORMAL_JUMP");
   });
 });
 

@@ -52,6 +52,7 @@ const MobileDeliveryPlanning = lazy(() => import("./MobileDeliveryPlanning").the
 const MobileScan = lazy(() => import("./MobileScan").then((m) => ({ default: m.MobileScan })));
 const MobileConvertWizard = lazy(() => import("./MobileConvertWizard").then((m) => ({ default: m.MobileConvertWizard })));
 const MobilePOD = lazy(() => import("./MobilePOD").then((m) => ({ default: m.MobilePOD })));
+const MobileMileageCapture = lazy(() => import("./MobileMileageCapture").then((m) => ({ default: m.MobileMileageCapture })));
 const MobileProfile = lazy(() => import("./MobileProfile").then((m) => ({ default: m.MobileProfile })));
 const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ default: m.MobileStockCard })));
 const MobileStockTransferNew = lazy(() => import("./MobileStockTransferNew").then((m) => ({ default: m.MobileStockTransferNew })));
@@ -85,6 +86,10 @@ type Screen =
   | { t: "module-form"; key: string; mode: "new" | "edit"; row?: any }
   | { t: "convert"; key: string; title: string; target: ConvertTarget; initialSourceId?: string }
   | { t: "pod"; docNo: string }
+  /* Fleet Maintenance Phase 2 — the driver's day-complete odometer capture.
+     Mobile mounts this for /fleet-health; desktop mounts the full Fleet Health
+     admin dashboard at the same URL (one product, two presentations). */
+  | { t: "mileage-capture" }
   | { t: "service"; startNew?: boolean }
   | { t: "delivery-planning" }
   | { t: "pms"; projectId?: number }
@@ -120,6 +125,9 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/announcements") return { t: "announcements" };
   if (path === "/activity-inbox") return { t: "inbox" };
   if (path === "/scm/delivery-planning") return { t: "delivery-planning" };
+  // Fleet Health on a phone IS the driver's mileage capture; the desktop Fleet
+  // Health dashboard (plans admin + board) is the same URL's desktop surface.
+  if (path === "/fleet-health") return { t: "mileage-capture" };
   if (path === "/team") {
     const tab = new URLSearchParams((to.split("?")[1] || "")).get("tab");
     // Positions is owner-managed through backend/tooling only. Keep it out of
@@ -335,6 +343,12 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
        "scm.transportation.drivers"), so the two agree. */
     { to: "/scm/helpers", label: "Helpers", gateVia: "/scm/fleet" },
     { to: "/scm/delivery-planning-regions", label: "Regions" },
+    /* Fleet Mileage — the Phase-2 driver action (mark day complete + odometer +
+       photo). Points at /fleet-health, which on a phone mounts the mileage
+       capture screen (destinationScreen), and gates on that path's own NAV_TABS
+       entry (perm fleet.read) — so the same positions that see the desktop Fleet
+       Health page get the mobile capture, and no one else. */
+    { to: "/fleet-health", label: "Fleet Mileage" },
   ]},
   { group: "Warehouse", items: [
     { to: "/scm/warehouses", label: "Warehouse" },
@@ -737,6 +751,7 @@ function MobileAppInner() {
     );
   }
   else if (screen.t === "pod") overlay = <MobilePOD docNo={screen.docNo} onBack={back} onDone={back} />;
+  else if (screen.t === "mileage-capture") overlay = <MobileMileageCapture onBack={back} />;
   else if (screen.t === "service") overlay = <MobileServiceCase onBack={back} startNew={screen.startNew} />;
   else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} />;
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
