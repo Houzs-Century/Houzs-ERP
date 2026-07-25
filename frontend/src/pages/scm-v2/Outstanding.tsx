@@ -88,11 +88,15 @@ export const Outstanding = () => {
           return (
             <button key={m.value} type="button"
               onClick={() => setActiveModule(m.value)}
+              /* Theme C selected-tile (owner 2026-07-25): like the SO page's
+                 active StatCard - white with a petrol border - instead of the
+                 2990 ink-filled block. */
               style={{
                 padding: 'var(--space-3) var(--space-4)',
-                background: active ? 'var(--c-ink)' : 'var(--c-paper)',
-                color: active ? 'var(--c-cream)' : 'var(--c-ink)',
-                border: `1px solid ${active ? 'var(--c-ink)' : 'var(--c-line, rgba(34,31,32,0.12))'}`,
+                background: '#ffffff',
+                color: 'var(--c-ink)',
+                border: `1px solid ${active ? '#16695f' : 'var(--c-line, rgba(34,31,32,0.12))'}`,
+                boxShadow: active ? 'inset 0 0 0 1px #16695f' : 'none',
                 borderRadius: 'var(--radius-md)',
                 cursor: 'pointer',
                 textAlign: 'left',
