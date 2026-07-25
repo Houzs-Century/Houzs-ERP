@@ -20,6 +20,7 @@ import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
+import { findOverDeliveredSoItems } from '../lib/do-over-delivery';
 import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
@@ -4291,6 +4292,33 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      an existing POD. */
   if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
   if (typeof body.podKey === 'string' && body.podKey) ts.pod_r2_key = body.podKey;
+
+  /* Over-delivery guard on FIRST ship (pre-ship -> shipped). The create path
+     caps this (Audit gap #3, the asDraft-gated recheck) but a DRAFT DO SKIPS
+     that cap and can land its full qty; the DRAFT->shipped confirm below is the
+     single point where a draft's stock actually leaves, so the SAME cap is
+     re-checked HERE, before the flip and the OUT. Reject 409 if any linked SO
+     line would ship past its live remaining. Ad-hoc (unlinked) lines stay
+     uncapped, exactly as at create. Read-only: no flip, no stock moved yet. */
+  if (SHIPPED_STATES.includes(body.status) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
+    const { data: shipLines } = await sb.from('delivery_order_items')
+      .select('so_item_id, qty').eq('delivery_order_id', id);
+    const linkedQty = new Map<string, number>();
+    for (const l of (shipLines ?? []) as Array<{ so_item_id: string | null; qty: number }>) {
+      if (l.so_item_id) linkedQty.set(l.so_item_id, (linkedQty.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
+    }
+    if (linkedQty.size > 0) {
+      const remaining = await soRemainingByItemId(sb, [...linkedQty.keys()]);
+      const over = findOverDeliveredSoItems(linkedQty, remaining);
+      if (over.length > 0) {
+        return c.json({
+          error: 'over_delivery',
+          message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.',
+          conflicts: over,
+        }, 409);
+      }
+    }
+  }
 
   /* Bug #3/#11 — ATOMIC cancel guard. The read-then-write above has a TOCTOU
      window: two concurrent cancels can both read a non-cancelled status and both
