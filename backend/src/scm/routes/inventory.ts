@@ -37,9 +37,13 @@ import {
 } from '../lib/companyScope';
 import { canonicalizeMyState } from '../lib/canonical-state';
 import { enrichVariantKeyRowsWithFabricSupplierCode } from '../lib/fabric-supplier-code';
-import { isConsignmentLotSource } from '../lib/inventory-movements';
+import {
+  isConsignmentLotSource, isMakeToOrderCategory, distributeAssignedToLots,
+} from '../lib/inventory-movements';
 import { computeVariantKey, effectiveDelivery, type VariantAttrs } from '../shared';
 import { warehouseLabel } from '../lib/warehouse-label';
+import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
+import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import type { Env, Variables } from '../env';
 
 export const inventory = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -1106,6 +1110,15 @@ inventory.get('/buckets/:productCode', async (c) => {
    WHICH SO reserved it vs which stock is free (no order). Read-only; no
    schema change.
 
+   Owner 2026-07-25 (dead-stock view): the hard READY reservation is only ONE
+   signal. The response ALSO carries the FLOATING MRP allocation (assigned_qty /
+   free_qty / mrp_assigned_to per lot, derived from the SAME computeMrp engine —
+   see block 3c below): a lot is ASSIGNED iff MRP allocates on-hand stock to an
+   SO, so genuinely-unallocated stock is FREE = a dead-stock candidate
+   (is_dead_stock, emphasised for make-to-order SOFA/BEDFRAME). The drawer +
+   Reservations tab render the MRP split; the hard status/reserved_by stay for
+   continuity.
+
    Matching mirrors the allocator (so-stock-allocation.ts):
      • BATCHED lot (batch_no present, e.g. sofa) — a READY line claims it only
        when its allocated_batch_no equals the lot's batch_no and the item_code
@@ -1250,6 +1263,75 @@ inventory.get('/reservations', async (c) => {
   const { data: whs } = await sb.from('warehouses').select('id, code, name');
   const whMap = new Map((whs ?? []).map((w: { id: string; code: string; name: string }) => [w.id, w]));
 
+  // 3b. SKU category per product_code (set-based) — drives the make-to-order
+  //     dead-stock emphasis (SOFA/BEDFRAME free stock is abnormal; MATTRESS free
+  //     stock is normal). Null-safe: a lot for an uncatalogued code stays neutral.
+  const lotCodes = [...new Set(lots.map((l) => l.product_code).filter(Boolean))];
+  const categoryByCode = new Map<string, string | null>();
+  if (lotCodes.length > 0) {
+    const { data: prods } = await chunkIn(lotCodes, (batch, from, to) => scopeToCompany(sb
+      .from('mfg_products').select('code, category'), c)
+      .in('code', batch).range(from, to));
+    for (const p of (prods ?? []) as Array<{ code: string; category: string | null }>) {
+      categoryByCode.set(p.code, p.category ?? null);
+    }
+  }
+
+  // 3c. MRP-derived ASSIGNED vs FREE (owner 2026-07-25, dead-stock view) ──────
+  //     The hard READY reservations above answer "which lot is HARD-reserved".
+  //     The owner's dead-stock model needs the FLOATING truth instead: a lot is
+  //     ASSIGNED iff the ONE MRP engine allocates ON-HAND stock to an SO's demand
+  //     (MrpLine/SofaSet.stockQty), so only genuinely-unallocated stock is FREE =
+  //     a dead-stock candidate. Right now the drawer reflects only HARD
+  //     reservations, so stock MRP would allocate wrongly shows as "FREE".
+  //
+  //     computeMrp runs ONCE per request (never per-SKU in a loop — the LIST
+  //     crash guard; this is the same single-call cost /po-so-coverage already
+  //     pays), inverted to the stock side by mrpStockAssignment, then each
+  //     bucket's assigned qty is spread across its open lots FIFO (oldest first —
+  //     the order the next DO consumes them). Fail-soft: if MRP throws, every lot
+  //     degrades to assigned=0 / free=all, never a 500.
+  const assignedByLotId = new Map<string, {
+    assigned: number; free: number;
+    claims: Array<{ doc_no: string; delivery_date: string | null; qty: number }>;
+  }>();
+  try {
+    const mrp = await computeMrp(sb, {
+      catFilter: null,
+      whFilter: warehouseId ?? null,
+      includeUndated: true,
+      companyId: activeCompanyId(c),
+      leadBuffers: await loadLeadBuffers(c.env.DB),
+    });
+    const stockAsg = mrpStockAssignment(mrp);
+    // Group the FIFO-ordered lots by their MRP bucket key (warehouse|code|variant).
+    const lotsByBucket = new Map<string, typeof lots>();
+    for (const l of lots) {
+      const k = stockAssignmentKey(l.warehouse_id, l.product_code, l.variant_key ?? '');
+      (lotsByBucket.get(k) ?? lotsByBucket.set(k, []).get(k)!).push(l);
+    }
+    for (const [k, bucketLots] of lotsByBucket.entries()) {
+      const asg = stockAsg.get(k);
+      const splits = distributeAssignedToLots(
+        bucketLots.map((l) => Number(l.qty_remaining ?? 0)),
+        asg?.assigned ?? 0,
+        (asg?.claims ?? []).map((cl) => ({ soDocNo: cl.soDocNo, deliveryDate: cl.deliveryDate, qty: cl.qty })),
+      );
+      bucketLots.forEach((l, i) => {
+        const s = splits[i];
+        if (!s) return;
+        assignedByLotId.set(l.id, {
+          assigned: s.assignedQty,
+          free: s.freeQty,
+          claims: s.assignedTo.map((a) => ({ doc_no: a.soDocNo, delivery_date: a.deliveryDate, qty: a.qty })),
+        });
+      });
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[inventory] reservations MRP assignment failed (degraded to all-free):', e instanceof Error ? e.message : e);
+  }
+
   // 4. One row per open lot, tagged RESERVED (claimed by ≥1 READY SO) or FREE.
   const reservations = lots.map((l) => {
     const vk = l.variant_key ?? '';
@@ -1266,6 +1348,14 @@ inventory.get('/reservations', async (c) => {
     const reservedBy = [...byDoc.values()].sort((a, b) => (a.soCreatedAt ?? '').localeCompare(b.soCreatedAt ?? ''));
     const reservedSince = reservedBy.length > 0 ? reservedBy[0].soCreatedAt : null;
     const w = whMap.get(l.warehouse_id);
+    // MRP-derived assigned/free for THIS lot (FIFO-spread from its bucket). Absent
+    // (MRP degraded / bucket not in demand) → all on-hand units are free.
+    const isConsignment = isConsignmentLotSource(l.source_doc_type, l.source_doc_no);
+    const qtyRemaining = Number(l.qty_remaining ?? 0);
+    const mrpAsg = assignedByLotId.get(l.id);
+    const assignedQty = mrpAsg?.assigned ?? 0;
+    const freeQty = mrpAsg ? mrpAsg.free : qtyRemaining;
+    const category = categoryByCode.get(l.product_code) ?? null;
     return {
       id: l.id,
       warehouse_id: l.warehouse_id,
@@ -1288,12 +1378,24 @@ inventory.get('/reservations', async (c) => {
         : null,
       // Source-based consignment classification — the drawer separates these
       // lots and drops them from OWNED value (never the warehouse flag).
-      is_consignment: isConsignmentLotSource(l.source_doc_type, l.source_doc_no),
+      is_consignment: isConsignment,
       status: reservedBy.length > 0 ? 'RESERVED' : 'FREE',
       reserved_by: reservedBy.map((x) => ({
         doc_no: x.docNo, so_created_at: x.soCreatedAt, qty_ready: x.qtyReady, delivery_date: x.deliveryDate,
       })),
       reserved_since: reservedSince,
+      // ── MRP-derived assigned-vs-free split (owner 2026-07-25, dead-stock view).
+      //    assigned_qty + free_qty == qty_remaining. mrp_assigned_to names the
+      //    SO(s) this lot's assigned units belong to (FIFO-spread from the
+      //    bucket's MRP allocation). category / make_to_order drive the
+      //    dead-stock emphasis. is_dead_stock: this lot carries FREE (un-assigned)
+      //    OWNED units — consignment is held-not-owned, so never flagged.
+      category,
+      make_to_order: isMakeToOrderCategory(category),
+      assigned_qty: assignedQty,
+      free_qty: freeQty,
+      mrp_assigned_to: mrpAsg?.claims ?? [],
+      is_dead_stock: !isConsignment && freeQty > 0,
     };
   });
 

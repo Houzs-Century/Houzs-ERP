@@ -410,6 +410,20 @@ export type InventoryReservation = {
   status: 'RESERVED' | 'FREE';
   reserved_by: InventoryReservationClaim[];
   reserved_since: string | null;
+  // ── MRP-derived assigned-vs-free split (owner 2026-07-25, dead-stock view) ──
+  // A lot is ASSIGNED iff the ONE MRP engine allocates on-hand stock to an SO's
+  // demand (the SAME floating coverage the SO↔PO "Assigned SO" feature uses) —
+  // NOT just the hard READY reservation. assigned_qty + free_qty == qty_remaining.
+  // mrp_assigned_to names the SO(s) this lot's assigned units belong to (FIFO).
+  // is_dead_stock: this lot carries FREE (un-assigned) OWNED units — emphasised
+  // for make_to_order (SOFA/BEDFRAME) where free stock is abnormal. All fields
+  // are optional: an older/degraded payload omits them → treat as all-free.
+  category?: string | null;
+  make_to_order?: boolean;
+  assigned_qty?: number;
+  free_qty?: number;
+  mrp_assigned_to?: Array<{ doc_no: string; delivery_date: string | null; qty: number }>;
+  is_dead_stock?: boolean;
 };
 
 /* ── Shared stock-breakdown transform — ONE logic layer for both surfaces ──
@@ -427,7 +441,22 @@ export type StockBreakdown = {
   ownedValueSen: number;
   consignmentQty: number;
   totalQty: number;
+  // MRP-derived assigned-vs-free totals over OWNED lots (owner 2026-07-25). These
+  // reconcile with the header "N assigned / M free": ownedAssignedQty +
+  // ownedFreeQty == ownedQty. ownedFreeQty is the SKU's on-hand dead-stock slice.
+  ownedAssignedQty: number;
+  ownedFreeQty: number;
 };
+
+/* Per-lot on-hand split, null-safe: a lot with no MRP fields (older/degraded
+   payload) is treated as fully FREE (assigned 0), matching the endpoint. */
+export function lotAssignedQty(l: InventoryReservation): number {
+  return Math.max(0, Math.round(l.assigned_qty ?? 0));
+}
+export function lotFreeQty(l: InventoryReservation): number {
+  const qty = l.qty_remaining ?? 0;
+  return l.free_qty != null ? Math.max(0, Math.round(l.free_qty)) : qty;
+}
 
 export function buildStockBreakdown(
   rows: InventoryReservation[] | null | undefined,
@@ -441,6 +470,8 @@ export function buildStockBreakdown(
     0,
   );
   const consignmentQty = consignmentLots.reduce((s, l) => s + (l.qty_remaining ?? 0), 0);
+  const ownedAssignedQty = ownedLots.reduce((s, l) => s + lotAssignedQty(l), 0);
+  const ownedFreeQty = ownedLots.reduce((s, l) => s + lotFreeQty(l), 0);
   return {
     ownedLots,
     consignmentLots,
@@ -448,7 +479,18 @@ export function buildStockBreakdown(
     ownedValueSen: Math.round(ownedValueSen),
     consignmentQty,
     totalQty: ownedQty + consignmentQty,
+    ownedAssignedQty,
+    ownedFreeQty,
   };
+}
+
+/* Owner 2026-07-25 (dead-stock view) — is this SKU category make-to-order?
+   SOFA/BEDFRAME are built against a customer SO, so FREE stock is abnormal (a
+   strong dead-stock signal); MATTRESS is make-to-stock (free is normal, soft).
+   Mirrors the backend isMakeToOrderCategory — ONE rule, both sides. */
+export function isMakeToOrderCategory(category: string | null | undefined): boolean {
+  const c = (category ?? '').toUpperCase();
+  return c.includes('SOFA') || c.includes('BEDFRAME');
 }
 
 export function useInventoryReservations(opts?: { warehouseId?: string; productCode?: string }) {
