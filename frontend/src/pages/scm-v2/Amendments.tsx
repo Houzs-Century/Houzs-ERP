@@ -144,23 +144,32 @@ export const Amendments = () => {
           </div>
         )}
 
-        {/* Status chips — matches the GRN / DR / SI list filter style. */}
+        {/* Status chips — the SO status strip verbatim (owner 2026-07-26:
+            "amendment要和sales order红色标记那样"): counted labels
+            (ALL · 73 style) + the measured FilterPills spec — active petrol
+            on white text, 4px radius, uppercase; idle transparent on
+            ink-secondary. Counts come off the loaded set (this list filters
+            client-side, so allRows is the whole population). */}
         <div className="flex flex-wrap gap-1.5">
           {STATUS_CHIPS.map((s) => {
             const active = statusChip === s;
+            const count = s === 'all'
+              ? allRows.length
+              : allRows.filter((a) => amendmentBucketOf(a.status) === s).length;
             return (
               <button
                 key={s}
                 type="button"
                 onClick={() => setStatusChip(s)}
                 className={cn(
-                  'h-7 rounded-full border px-3 text-[11px] font-semibold transition-colors',
+                  'h-[29px] rounded border px-3 text-[11px] font-semibold uppercase tracking-[0.05em] transition-colors',
                   active
-                    ? 'border-primary bg-primary-soft text-primary'
-                    : 'border-border bg-surface text-ink-secondary hover:border-primary/40 hover:text-primary',
+                    ? 'border-transparent bg-primary text-white'
+                    : 'border-[#e5e7eb] bg-transparent text-ink-secondary hover:border-primary/40 hover:text-primary',
                 )}
               >
                 {amendmentBucketLabel(s)}
+                <span className={cn('ml-1', active ? 'text-white/80' : 'text-ink-muted')}>· {count}</span>
               </button>
             );
           })}
