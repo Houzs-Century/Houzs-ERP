@@ -28,7 +28,7 @@ Houzs's agent framework was ported FROM Hookka (see `services/agent-console.ts` 
 | #31 autonomy dial | **DONE, verified** | migration 0201 (stage + max_stage) + `effectiveStage` + callers + `/gate` stage + `Agents.tsx` S1/S2/S3; 47 governance/teach tests pass |
 | #32 assistant tool-loop | **DONE, verified** | `search_erp` tool + reusable `askAgentBrainWithTools` engine; 16 new unit tests, `agentGovernance`/`teach` 62 pass, typecheck clean; entity-read + owner-write tools deferred (§#32 below) |
 | #33 PO agent (framework) | **DONE, verified** | mature engine + phases (via #31 dial) + lead-time delivery dates + buffer learning ALREADY existed; added `estimateReadyDate` A2A fact (9 tests, typecheck clean). Grouping/phase RULES are owner-trained via teach-in-chat (#27), not hardcoded (§#33 below) |
-| #34 orchestrator / GCOA + A2A | queued | `operating-spec §2/§9.3`; wire `estimateReadyDate` as the first A2A tool |
+| #34 orchestrator / GCOA + A2A | **v1 DONE (fact layer)** | typed A2A fact registry `agent-facts.ts` + `callAgentFact` governed dispatch + `estimateReadyDate` registered + `estimate_ready_date` assistant tool (first LIVE A2A consumer); 81 tests pass. GCOA orchestrator + DECISION/approval path deferred (§#34 below) |
 
 ### #27 teach-in-chat — DONE (files)
 - NEW `backend/src/services/assistant-teach.ts` — `parseRouterDecision` (pure, tested), `recordTeaching`, `agentLabel`, `AGENT_LABELS`.
@@ -95,6 +95,20 @@ The codebase's FIRST Anthropic tool-use integration. **What shipped** on `feat/p
 **What #33 ADDED — the one genuine gap:** `estimateReadyDate`, the first typed **A2A fact** (owner: "CS ... ask procurement agent when the items can be ready" — CS must not read ETA from the DB itself). `services/agents/procurement-ready-date.ts`: pure `estimateReadyDate(base, buffers, asOf, items)` (inverse of MRP's order-by hint, reuses `resolveLeadDays`) + `estimateReadyDateForCompany(env, {items, asOfDate})` (company-scoped loader, refuses on unresolved company). `scm/lib/lead-time.ts` gained `addCalendarDays`. Deterministic, read-only, 9 tests. V1 = order-from-scratch lead date; netting on-hand stock / in-flight POs is a documented seam for #34.
 
 **What is DELIBERATELY NOT built (owner-trained, not hardcoded):** the specific GROUPING and phase RULES — "split mattress onto its own PO", "combine sofa+bedframe per SO", per-agent phase tuning. The owner's standing direction is "你做完了 我才 prompt 每个 agent 的逻辑" — I build the framework, staff train the rules. The mechanism is live: teach-in-chat (#27) records a PROCUREMENT standing rule → `activeInstructions` injects it into the agent's brain. Hardcoding rules now would preempt exactly what they intend to train.
+
+### #34 — Orchestrator / GCOA + typed A2A hand-offs — v1 DONE (the FACT layer)
+The owner's A2A rule: an agent must NOT read another module's data itself — it ASKS the agent that owns that judgment, through a TYPED hand-off ("CS ask procurement agent when the items can be ready"). A2A has two halves; v1 ships the first.
+
+**Shipped:**
+- `services/agents/agent-facts.ts` — the typed **A2A FACT registry**. `AgentFact<I,O>` contract (name, owning `AgentFamily`, summary, deterministic read-only handler) + `listAgentFacts`/`getAgentFact` + `runAgentFact`/`callAgentFact` (the ONE governed entry point every hand-off and the orchestrator route through — never throws; unknown fact / handler error → typed error). `procurement.estimateReadyDate` registered as the first fact.
+- **First LIVE consumer:** `estimate_ready_date` assistant tool (`assistant-tools.ts`) — the assistant DEFERS to the procurement agent via `callAgentFact('procurement.estimateReadyDate', ...)` rather than reading lead times itself. So an owner can ask "if I order 20 queen mattresses from SUP-A, when ready?" and the answer comes from the procurement agent's own model. Proves the pattern end-to-end (two agents, one typed hand-off), not shelfware.
+- Tests: `agent-facts.test.ts` (registry + dispatch + error paths) + the tool in `assistant-tools.test.ts` (normalizer + empty-item short-circuit). 81 tests pass across the affected suites.
+
+**Deliberately DEFERRED (the heavier half + the top layer):**
+- **A2A DECISION / ACTION path** — "please expedite / rush / re-slot" is NOT a fact; it is an A2A REQUEST through an APPROVAL GATE (owner's design: facts are deterministic tool calls, decisions need a human/allowed-autonomy gate). Folding it in before the fact layer is proven would couple the safe path to the gated one.
+- **GCOA orchestrator** (operating-spec §9.3) — the top-level Group Chief Operating Agent that routes cross-agent questions. It routes THROUGH `callAgentFact`; the registry is its substrate.
+- **Sibling-agent consumers** — the CS/delivery agents calling `procurement.estimateReadyDate` inside their own cron logic (vs the assistant calling it now).
+- **`estimateReadyDate` netting** — v1 is the order-from-scratch lead date; netting on-hand stock / in-flight POs is the documented seam.
 
 ## Verification done
 - #27: `backend` — `vitest run` (14 pass) + `tsc --noEmit` clean.

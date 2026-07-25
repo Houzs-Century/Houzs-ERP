@@ -24,6 +24,8 @@ import type { AgentToolDef } from "./agent-brain";
 import { redactFacts, type AssistantScope } from "./assistant-scope";
 import type { CompanyScopeCtx } from "../scm/lib/companyScope";
 import { runGlobalSearch } from "../routes/search";
+import { callAgentFact } from "./agents/agent-facts";
+import type { ReadyDateItem, ReadyDateEstimate } from "./agents/procurement-ready-date";
 
 /** What the dispatcher needs to run a governed read. `companyCtx` is the request's
  *  company context (Hono's `c` satisfies it structurally — companyScope helpers
@@ -66,16 +68,65 @@ export const SEARCH_TOOL: AgentToolDef = {
   },
 };
 
+/** How many items one ready-date question may ask about — a sane bound so one
+ *  tool call cannot fan out into hundreds of lead-time resolutions. */
+const READY_DATE_MAX_ITEMS = 30;
+
+export const ESTIMATE_READY_DATE_TOOL: AgentToolDef = {
+  name: "estimate_ready_date",
+  description:
+    "Ask the Procurement agent when items could be ready if ordered now. A deterministic " +
+    "LEAD-TIME estimate (the owner's base lead table + learned supplier-punctuality and " +
+    "season buffers) — NOT a stock check: it assumes a fresh order and does NOT net " +
+    "on-hand stock or open POs. Use it when the user asks how long something takes to " +
+    "get, or when a ready / lead-time date would answer them. One entry per distinct item.",
+  input_schema: {
+    type: "object",
+    properties: {
+      items: {
+        type: "array",
+        description: "One entry per distinct item to make ready.",
+        items: {
+          type: "object",
+          properties: {
+            category: {
+              type: "string",
+              enum: ["sofa", "bedframe", "mattress", "accessory", "service"],
+              description: "The item's lead-time category.",
+            },
+            supplierCode: {
+              type: "string",
+              description:
+                "The supplier's code, if known — sharpens the estimate with that supplier's learned punctuality buffer.",
+            },
+            deliveryDate: {
+              type: "string",
+              description: "The customer delivery date (YYYY-MM-DD), if known — adds the season buffer for that month.",
+            },
+            key: { type: "string", description: "Any label to identify this item in the answer (e.g. a product code)." },
+          },
+          required: ["category"],
+        },
+      },
+      asOfDate: { type: "string", description: "The date the order would be placed (YYYY-MM-DD). Defaults to today." },
+    },
+    required: ["items"],
+  },
+};
+
 /** Guidance appended to the answer system prompt when the tool-loop path runs. */
-export const SEARCH_TOOL_GUIDANCE = [
-  "You also have a search_erp tool. The payload already contains the specialist",
-  "agents' latest briefs and open items — answer from those whenever they cover the",
-  "question. ONLY when the user names a SPECIFIC record the briefs do not contain (a",
-  "particular order, product, purchase order, invoice, delivery order, customer or",
-  "person) call search_erp to locate it. It returns match metadata only (document",
-  "number, title, date, link), scoped to this user's company — never record contents",
-  "or money — so use it to point the user to the right record, not to quote figures.",
-  "If it returns no match, say so plainly rather than guessing.",
+export const ASSISTANT_TOOLS_GUIDANCE = [
+  "You have two tools. The payload already contains the specialist agents' latest briefs",
+  "and open items — answer from those whenever they cover the question.",
+  "1) search_erp — ONLY when the user names a SPECIFIC record the briefs do not contain (a",
+  "particular order, product, purchase order, invoice, delivery order, customer or person):",
+  "call it to locate the record. It returns match metadata only (document number, title,",
+  "date, link), scoped to this user's company — never record contents or money — so use it",
+  "to point the user to the right record, not to quote figures.",
+  "2) estimate_ready_date — when the user asks how long items take to get, or when a ready /",
+  "lead-time date would answer them: ask the Procurement agent. It is a lead-time estimate",
+  "assuming a FRESH order, NOT a stock check, so say so when it matters.",
+  "If a tool returns no result or an error, say so plainly rather than guessing.",
 ].join(" ");
 
 /**
@@ -84,11 +135,12 @@ export const SEARCH_TOOL_GUIDANCE = [
  * `scope.canSeeMargin`-style check, so an ungated tool is never in the array a
  * caller without the entitlement receives.
  *
- * search_erp needs NO gate: it is company-scoped at source and metadata-only, so
- * every user who may open the Assistant at all may search.
+ * Neither tool needs a scope gate: search_erp is company-scoped + metadata-only,
+ * and estimate_ready_date returns lead-time DAYS + a date (no money, no per-record
+ * data) from the Procurement agent's own deterministic model.
  */
 export function buildAssistantTools(_scope: AssistantScope): AgentToolDef[] {
-  return [SEARCH_TOOL];
+  return [SEARCH_TOOL, ESTIMATE_READY_DATE_TOOL];
 }
 
 function recordConsulted(ctx: AssistantToolCtx, key: string, label: string): void {
@@ -120,6 +172,31 @@ export function shapeSearchResult(
   return { query, count: hits.length, hits: redactFacts(hits, ctx.scope) };
 }
 
+/** Map the model's ready-date items to the fact's input shape. Pure + exported so
+ *  the validation (drop item-less / category-less rows, cap the count, null the
+ *  warehouse the model cannot know) is testable without the Workers-pool DB. */
+export function normalizeReadyDateItems(input: Record<string, unknown>): ReadyDateItem[] {
+  const raw = Array.isArray(input.items) ? input.items : [];
+  const out: ReadyDateItem[] = [];
+  for (const it of raw.slice(0, READY_DATE_MAX_ITEMS)) {
+    if (!it || typeof it !== "object") continue;
+    const o = it as Record<string, unknown>;
+    const category = typeof o.category === "string" ? o.category.trim().toLowerCase() : "";
+    if (!category) continue;
+    const key = typeof o.key === "string" ? o.key : typeof o.itemCode === "string" ? o.itemCode : undefined;
+    out.push({
+      key,
+      category,
+      // The model does not know internal warehouse UUIDs; null falls back to the
+      // owner's global-category lead bucket, which is the right default here.
+      warehouseId: null,
+      supplierCode: typeof o.supplierCode === "string" && o.supplierCode.trim() ? o.supplierCode.trim() : null,
+      deliveryDate: typeof o.deliveryDate === "string" && o.deliveryDate.trim() ? o.deliveryDate.slice(0, 10) : null,
+    });
+  }
+  return out;
+}
+
 /**
  * Run ONE tool call and return its result. NEVER throws (a throw here would abort
  * the whole answer); an unknown tool or a failed read returns a small object the
@@ -142,5 +219,21 @@ export async function dispatchAssistantTool(
     }
     return shapeSearchResult(ctx, raw, hits);
   }
+
+  if (name === "estimate_ready_date") {
+    const items = normalizeReadyDateItems(input);
+    if (items.length === 0) {
+      return { note: "no items given — name at least one item category (sofa, bedframe, mattress, accessory, service)" };
+    }
+    const asOfDate = typeof input.asOfDate === "string" && input.asOfDate.trim() ? input.asOfDate.slice(0, 10) : undefined;
+    // A2A: the assistant DEFERS to the Procurement agent's fact through the
+    // registry, rather than reading lead times itself. callAgentFact never throws.
+    const res = await callAgentFact<ReadyDateEstimate>(ctx.env, "procurement.estimateReadyDate", { items, asOfDate });
+    recordConsulted(ctx, "procurement", "Procurement");
+    if (!res.ok) return { error: res.error };
+    // No money in the estimate, but redact defensively like every other result.
+    return redactFacts(res.result, ctx.scope);
+  }
+
   return { error: `unknown tool: ${name}` };
 }

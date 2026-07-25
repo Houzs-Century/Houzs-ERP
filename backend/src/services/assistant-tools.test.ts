@@ -6,6 +6,7 @@ import {
   buildAssistantTools,
   dispatchAssistantTool,
   normalizeSearchQuery,
+  normalizeReadyDateItems,
   shapeSearchResult,
   SEARCH_TOOL,
   type AssistantToolCtx,
@@ -25,13 +26,41 @@ function ctxFor(scope: AssistantScope): AssistantToolCtx {
 }
 
 describe('buildAssistantTools', () => {
-  it('offers the search tool to every caller', () => {
-    expect(buildAssistantTools(REP).map((t) => t.name)).toContain('search_erp');
-    expect(buildAssistantTools(OWNER).map((t) => t.name)).toContain('search_erp');
+  it('offers both tools to every caller', () => {
+    for (const scope of [REP, OWNER]) {
+      const names = buildAssistantTools(scope).map((t) => t.name);
+      expect(names).toContain('search_erp');
+      expect(names).toContain('estimate_ready_date');
+    }
   });
 
   it('the search tool declares a required string q', () => {
     expect(SEARCH_TOOL.input_schema).toMatchObject({ required: ['q'] });
+  });
+});
+
+describe('normalizeReadyDateItems', () => {
+  it('maps categories (lowercased), nulls the warehouse, keeps supplier + delivery date', () => {
+    const items = normalizeReadyDateItems({
+      items: [{ category: 'Mattress', supplierCode: ' SUP1 ', deliveryDate: '2026-12-20T00:00:00Z', key: 'MAT-Q' }],
+    });
+    expect(items).toEqual([
+      { key: 'MAT-Q', category: 'mattress', warehouseId: null, supplierCode: 'SUP1', deliveryDate: '2026-12-20' },
+    ]);
+  });
+
+  it('drops rows without a category', () => {
+    expect(normalizeReadyDateItems({ items: [{ supplierCode: 'X' }, { category: 'sofa' }] })).toHaveLength(1);
+  });
+
+  it('caps the examined set at 30 items', () => {
+    const many = Array.from({ length: 50 }, () => ({ category: 'sofa' }));
+    expect(normalizeReadyDateItems({ items: many })).toHaveLength(30);
+  });
+
+  it('is empty for a missing / non-array items field', () => {
+    expect(normalizeReadyDateItems({})).toEqual([]);
+    expect(normalizeReadyDateItems({ items: 'nope' })).toEqual([]);
   });
 });
 
@@ -79,6 +108,11 @@ describe('dispatchAssistantTool', () => {
     expect(res.count).toBe(0);
     expect(res.note).toBe('empty query');
     expect(ctx.consulted).toHaveLength(0);
+  });
+
+  it('short-circuits an item-less ready-date request to a note (never reaches the agent)', async () => {
+    const res = (await dispatchAssistantTool(ctxFor(REP), 'estimate_ready_date', { items: [] })) as { note?: string };
+    expect(res.note).toMatch(/no items/i);
   });
 
   it('returns an error object for an unknown tool rather than throwing', async () => {

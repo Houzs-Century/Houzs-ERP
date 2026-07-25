@@ -38,7 +38,7 @@ import type { ContentBlock } from './vision-blocks';
 import {
   buildAssistantTools,
   dispatchAssistantTool,
-  SEARCH_TOOL_GUIDANCE,
+  ASSISTANT_TOOLS_GUIDANCE,
   type AssistantToolCtx,
 } from './assistant-tools';
 import type { CompanyScopeCtx } from '../scm/lib/companyScope';
@@ -306,7 +306,7 @@ ${note}` : ANSWER_SYSTEM;
     const worded = await askAgentBrainWithTools(apiKey, {
       system: `${baseSystem}
 
-${SEARCH_TOOL_GUIDANCE}`,
+${ASSISTANT_TOOLS_GUIDANCE}`,
       payload,
       tools: buildAssistantTools(scope),
       dispatch: (name, input) => dispatchAssistantTool(toolCtx, name, input),
