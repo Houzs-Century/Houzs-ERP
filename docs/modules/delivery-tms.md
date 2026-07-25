@@ -29,6 +29,8 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Desktop regions | `frontend/src/pages/scm-v2/DeliveryPlanningRegions.tsx:40` | Region master + per-state mapping editor. |
 | Desktop residence rules | `frontend/src/pages/scm-v2/DeliveryResidenceRules.tsx` | Per residence / building-type CONFIG the Phase-3 scheduler will read: service duration (shown in hours, stored as minutes), optional no-delivery time windows, lift-booking / registration flags. Owner-editable master, mirrors the Regions page (DataGrid + inline edit buffers + create drawer). Route `/scm/delivery-residence-rules`, nav "Residence Rules" under Transportation. NOT wired to any scheduler yet. |
 | Desktop capacity | `frontend/src/pages/scm-v2/LorryCapacity.tsx:140` | |
+| Desktop delivery zones (A1) | `frontend/src/pages/scm-v2/DeliveryZones.tsx` | Route `/scm/delivery-zones`, nav "Delivery Zones" under Transportation. Owner-editable postcode-prefix -> area-zone map (`scm.delivery_zone_postcodes`, mig 0205). Each row maps a first-two-digit postcode RANGE to one of the 14 zones; the classifier picks the NARROWEST matching range so a fine rule overrides a broad one. Ships with a "using the built-in default" banner + one-click "load the default map". Mirrors the Residence Rules master (DataGrid + inline edit + create drawer). |
+| Desktop auto-schedule (A1) | `frontend/src/pages/scm-v2/AutoSchedule.tsx` | Route `/scm/auto-schedule`, nav "Auto-Schedule" under Transportation. Pick a depot + start date -> the backend derives each PENDING_SCHEDULE order's zone (postcode) + set count (SO lines) and PACKS them into lorry-days under each lorry's capacity ceiling. Renders the REVERSIBLE proposal grouped day -> group -> lorry (fill vs ceiling, partial / over-ceiling badges), an "attention" list for unzoned orders, per-day LOCK/unlock, and "Apply proposed dates" (fans out `useScheduleDelivery` -> `amended_delivery_date`, no lorry assignment). Reads the SAME board (`useDeliveryPlanning` state=PENDING_SCHEDULE) — no parallel queue. |
 | Mobile run-sheet | `frontend/src/mobile/MobileDeliveryPlanning.tsx:277` | 2,408 lines. Driver job-card run sheet. Carries the Phase-4 `MobileTrackingBanner` in its header. |
 | Mobile POD | `frontend/src/mobile/MobilePOD.tsx:71` | Photo / signature capture. |
 | Mobile GPS capture | `frontend/src/mobile/MobileTrackingBanner.tsx` | Phase-4 driver-capture banner. Self-gating: finds the driver's active trip + runs `useTripLocationCapture`; renders + captures only when a trip is IN_PROGRESS and the page is open. |
@@ -298,7 +300,10 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | GET/POST/PATCH/DELETE | `/delivery-residence-rules`, `/…/:id` | `delivery-residence-rules.ts` | Per-building-type CONFIG (mig 0196): service duration + access windows + lift/registration flags. Per-company scoped (scopeToCompany read / scopeToCompanyId write). The Phase-3 scheduler READS this; no scheduler is wired here. NOT openRead — unlike the region master this is not a cross-page picklist. |
 | GET/POST/PATCH | `/drivers` | `drivers.ts:26,40,71` | Driver master |
 | GET/POST/PATCH | `/helpers` | `helpers.ts:23,35,64` | Helper master |
-| GET/POST/PATCH | `/lorries` | `lorries.ts:85,100,143` | Lorry master |
+| GET/POST/PATCH | `/lorries` | `lorries.ts:85,100,143` | Lorry master. **A1 (mig 0205):** POST/PATCH also accept `maxSets`, `maxRevenueCenti`, `capacityLayer` (SETS\|REVENUE\|BOTH) — the per-lorry delivery capacity ceilings the auto-propose packer reads. NULL max_* => the packer uses its config default (10 sets / RM30k) |
+| GET/POST/PATCH/DELETE | `/delivery-zones`, `/…/:id` | `delivery-zones.ts` | **A1.** The postcode-prefix -> zone map CRUD (mig 0205). GET returns `{ zones, usingDefault, defaultMap, knownZones }`; writes validate `zone` against the 14 canonical zones. Company-scoped |
+| POST | `/delivery-zones/propose` | `delivery-zones.ts` | **A1 auto-propose.** Body `{ soDocNos[], depotWarehouseId?, startDate?, defaultMaxSets?, defaultMaxRevenueCenti? }`. Loads the SOs + their lines, derives each order's zone (postcode) + set count (frame/mattress/sofa), loads the depot's active in-house lorries, and PACKS via the pure `capacity-pack.ts`. Returns a DISPLAY-ONLY proposal (`days[] · proposals[] · unassigned[]`). Writes NOTHING |
+| GET/POST/DELETE | `/delivery-zones/locks`, `/…/locks/:id` | `delivery-zones.ts` | **A1.** Reversible day locks (`scm.delivery_day_locks`, mig 0205). POST is idempotent (upsert on `(company, warehouse, date)`); DELETE unlocks |
 | GET | `/lorry-service-records` | `lorry-service-records.ts` | Service history (mig 0121) |
 | GET/POST/PATCH/DELETE | `/trips`, `/trips/:id`, `/trips/:id/stops`, `/trips/:id/status` | `trips.ts:101,141,175,234,277,325,398,412` | Trip (lorry-day) CRUD + stop ordering |
 | GET | `/trips/day` | `trips.ts` (before `/:id`) | **Fleet A4 day-view.** `?date=YYYY-MM-DD&warehouseId=<id>` → `{ date, configured, warehouses, trips[] }`: every non-cancelled trip that day with its ordered stops enriched (customer / phone / house type / window / ETA / revenue) and geocoded (cache-first, gated on `GOOGLE_MAPS_API_KEY`). READ-only; enriches phone + house type by resolving each stop's `do_id → delivery_orders.so_doc_no → mfg_sales_orders`, and the window from `scm.delivery_residence_rules`. Per-assignee row scope like the trip list. Shaping is the pure `scm/lib/fleet-day-view.ts` (`assembleDayView`). |
@@ -596,6 +601,9 @@ request (§3).
 | `scm.delivery_residence_rules` | `0196`. Per residence / building-type delivery CONFIG the Phase-3 scheduler will read. `building_type` (keyed on the SO's `building_type` UDF values), `service_duration_minutes` (default 90; Landed seeded 60), `earliest_delivery_time` / `latest_delivery_time` (nullable), `requires_lift_booking`, `requires_registration`, `notes`, `is_active`, audit cols + `company_id`. Per-company UNIQUE `(company_id, building_type)`. Seeded for every active company (Condo / Landed / Apartment / Office / Shop / Other) — canonical config, editable in the Residence Rules admin page. |
 | `scm.geocode_cache` | `0197`. Phase 3 GEOCODE CACHE: `normalized_address` (UNIQUE) → `lat`/`lng` (+ `formatted_address`, `location_type`). NOT company-scoped (an address is one point on Earth). `geocodeAddressCached` reads it before any Google call, so a given address geocodes once ever |
 | `scm.trip_locations` | `0199`. Phase 4 LIVE GPS ping log — APPEND-ONLY (one row per report, never updated). `company_id` (scoped like the rest of scm), `trip_id` FK ON DELETE CASCADE, `driver_id` (the trip's driver snapshot, nullable), `user_id` (BIGINT — the public.users id of the posting phone), `lat`/`lng`, `accuracy_m`, `recorded_at` (DEVICE clock), `received_at` (SERVER clock — "last seen" is measured from here). Index `(trip_id, recorded_at DESC)` answers "latest ping for this trip" in one seek; `(company_id, recorded_at DESC)` serves the board-level read. `RE-CHECK NUMBER AT MERGE` — 0199 was the next free number above 0198 at branch time |
+| `scm.delivery_zone_postcodes` | `0205` (Fleet A1). Company-editable postcode-prefix -> area-zone map. `zone` (TEXT, one of the 14 zones), `prefix_start`/`prefix_end` (SMALLINT 0-99, the first two digits of a postcode), `label`, `is_active`, audit + `company_id`. UNIQUE `(company_id, zone, prefix_start, prefix_end)`. Ships EMPTY — the DEFAULT Malaysian map is data in `backend/src/scm/lib/zone-classify.ts` (`DEFAULT_ZONE_PREFIX_MAP`), installed by `backend/scripts/seed-delivery-zones.mjs` (idempotent, DRY-RUN default); `zoneForAddress` falls back to that default until the owner customises |
+| `scm.lorries` capacity cols | `0205` (Fleet A1). `max_sets` INT NULL, `max_revenue_centi` BIGINT NULL, `capacity_layer` TEXT NOT NULL DEFAULT 'SETS' CHECK (SETS\|REVENUE\|BOTH). NULL max_* => packer uses the config default; no backfill needed |
+| `scm.delivery_day_locks` | `0205` (Fleet A1). A REVERSIBLE freeze on a `(company_id, warehouse_id, delivery_date)`. Presence = locked; unlock = DELETE. UNIQUE `(company_id, warehouse_id, delivery_date)` |
 | `scm.delivery_legs` | `0053:123`. The removed multi-hop feature; table still present, unused |
 
 Enums (`0053:27-33`): `delivery_state`, `lorry_type`, `delivery_leg_kind`,
@@ -780,6 +788,36 @@ the **planning board** (4 states, region chips, assignment). One backend, one
 state machine, two presentations.
 
 ---
+
+## Fleet Module A1 — postcode->zone, per-lorry capacity, auto-propose + lock
+
+The daily manual dispatch fitting, automated. Three PURE, unit-tested libs do
+the reasoning; the route + pages orchestrate.
+
+- **`backend/src/scm/lib/zone-classify.ts`** — `zoneForAddress` / `zoneForPostcode`
+  over the company map (or the in-code `DEFAULT_ZONE_PREFIX_MAP`). Deterministic:
+  the first two postcode digits pin the zone; the NARROWEST matching prefix range
+  wins (so a fine rule overrides a broad one without deleting it). 14 zones;
+  `KLANG_VALLEY_ZONES` mix freely, the rest run dedicated trips. Tests:
+  `zone-classify.test.ts`.
+- **`backend/src/scm/lib/set-count.ts`** — `deriveSetCount(lines)` = `max(frames,
+  mattresses) + sofas`; `hasFurniture=false` (accessory/service only) => the
+  packer falls back to revenue. Tests: `set-count.test.ts`.
+- **`backend/src/scm/lib/capacity-pack.ts`** — `packProposals` fills lorry-days
+  first-ceiling-wins (SETS / REVENUE / BOTH), Klang Valley in one pool, far zones
+  dedicated + a below-ceiling far lorry flagged `partial`. A single order over the
+  ceiling ships alone (`overCeiling`). Deterministic, days advance from a start
+  date. Tests: `capacity-pack.test.ts`.
+
+Route `delivery-zones.ts` glues them: `/propose` loads the picked
+PENDING_SCHEDULE SOs + lines + the depot's in-house lorries + the company zone
+map, and returns a REVERSIBLE, display-only proposal. **Guardrails honoured:**
+`derivePlanningState` untouched; no `delivery_state` added to any SO-list select;
+Apply writes **`amended_delivery_date`** only (via the existing schedule path),
+never `customer_delivery_date`; no lorry ASSIGNMENT here (that is A2 — Apply
+writes the date only). Seams for A2/A3: the packer already emits per-lorry
+groupings; A2 turns the proposed lorry-day into a real trip + nearest-neighbour
+sequence (reuse `propose-route.ts`), A3 layers driver/constraint rules.
 
 ## Related
 
