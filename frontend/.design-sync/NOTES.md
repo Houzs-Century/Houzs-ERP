@@ -67,13 +67,21 @@ node -e "const fs=require('fs'); const c=fs.readFileSync('ds-bundle/_ds_bundle.c
 (`resync.mjs` driver workflow needs the same step — add it to a wrapper script
 when the re-sync flow stabilizes.)
 
+Re-checked 2026-07-26 with skill 2.1.219: the converter STILL doesn't hoist —
+the manual step stays, after every driver/package-build run, before upload.
+The hoist regex now matches exactly 1 import (the comment trap below is gone).
+Captures/grades taken pre-hoist render in fallback fonts — hoist BEFORE
+grading typography-sensitive cards.
+
 ## Preview-authoring campaign (2026-07-09) — 57/70 authored
-All A/B-class components now carry authored previews graded good; the 13
-remaining floor cards are DELIBERATE (no static UI): AuthProvider,
-GlobalSearchProvider, PullToRefreshGuardProvider, BrowserPushSink,
-ChunkReloadBoundary, NewVersionBanner, PwaBanners, IosInstallGuide,
-MediaLightbox, PullToRefresh, ProjectChat, ProjectGantt (+ the LookupManager
-non-card export). Key mechanics a re-sync must know:
+All A/B-class components now carry authored previews graded good. As of
+2026-07-26 the DELIBERATE floor cards are 11 (no static UI): AuthProvider,
+BrowserPushSink, ChunkReloadBoundary, MediaLightbox, NewVersionBanner,
+ProjectChat, ProjectGantt, PullToRefresh, PullToRefreshGuardProvider,
+PwaBanners, ResetFiltersButton (+ the LookupManager non-card export).
+PresenceIndicator was DELETED from the app (#1128 top-chrome 2b) and removed
+from entry.tsx/config/previews on 2026-07-26. Key mechanics a re-sync must
+know:
 - entry.tsx exports context helpers for previews: AuthProvider,
   NotificationsProvider, BreadcrumbsProvider, ToastProvider, NotifyProvider
   (scm), MemoryRouter, QueryClient(+Provider) + the app queryClient. NEVER
@@ -129,7 +137,18 @@ Triaged 2026-07-09:
   re-run cfg.buildCmd — run it manually after touching tailwind-src.css,
   tokens.css, tailwind.config.js, or any preview file.
 - `cardMode: column` pinned for PageHeader / HeaderButton / TableSkeleton
-  (wide stories crop in the grid otherwise).
+  (wide stories crop in the grid otherwise). 2026-07-26 additions:
+  ListPager / ListErrorPanel / SearchPendingPanel / DocumentLinesExpansion /
+  WorkspaceTabs = column; ResizableDrawer / ResizableDetailDrawer /
+  PoAmendmentCreateModal = single + viewport (fixed overlays).
+- `[RENDER_THIN]` ResizableDetailDrawer (2026-07-26): fixed-position drawer
+  content doesn't contribute to the measured root height → 0px, but the
+  sheet shows the full drawer. Same benign class as AnnouncementBanner.
+- `[TOKENS_MISSING]` --fs-11 / --bg-subtle / --fs-10 / --fs-17 (2026-07-26):
+  newer vendor scm CSS references tokens the vendored 2990 tokens.css
+  predates; --fs-10 carries a fallback, the rest silently inherit. Same gap
+  exists in the production app (pre-existing, NOT a sync regression) — fix
+  tracked as its own task; when tokens.css gains them, this warn clears.
 - `[RENDER_THIN]` AnnouncementBanner `maxHeight: 0` (2026-07-14): the
   redesigned banner (4-category colour split + floating card) renders its
   visible card out of flow, so the measured root height is 0 while the
@@ -151,6 +170,31 @@ The source added `useDialog()` calls that transitively reach `Layout` and
 If a NEW context provider ever gets added to the Layout/TopNavbar tree, its
 previews will fail the same way. The fix is always: add re-export in
 entry.tsx, wrap the preview Chrome, re-run cfg.buildCmd, re-run the driver.
+
+Same class, 2026-07-26: PageHeader grew an opt-in `back` prop that calls
+useNavigate() unconditionally — its preview went [RENDER] root-empty until
+every story was wrapped in the bundle's MemoryRouter. Any component that
+gains a router/navigate hook joins this set.
+
+## Card-capture % height collapse (fixed overlays) — 2026-07-26
+The capture wrapper puts stories inside a transformed ancestor, so a fixed
+drawer's `h-full` (percentage) resolves to auto and collapses; a `flex-1
+overflow-y-auto` body then clamps children to 0 (min-height:auto → 0) no
+matter how tall the CONTENT is. Two working fixes, by shape:
+- Drawer renders children directly (ResizableDetailDrawer): give the preview
+  content an explicit height (`h-[560px]`) — aside auto-sizes around it.
+- Drawer wraps children in its own flex-1 overflow body (ResizableDrawer):
+  content height can't escape the clamp; pin the aside itself with a scoped
+  style in the preview: `<style>{`aside[aria-label="…"]{height:600px}`}</style>`.
+`inset-0` overlays (PoAmendmentCreateModal scrim) are immune — offsets define
+the box without % height. In-app renders are unaffected (h-full = viewport).
+
+## WorkspaceTabs preview store seeding — 2026-07-26
+entry.tsx re-exports `markWorkspaceOpenIntent` + `recordWorkspaceVisit`
+(src/lib/workspaceTabs) for the WorkspaceTabs preview: clear
+sessionStorage["houzs.workspaceTabs.v1"], then intent+visit per tab (a visit
+WITHOUT the intent flag re-points the active tab instead of spawning). Labels
+derive from the route via workspaceTabLabel.
 
 ## Conventions-header vocabulary (2026-07-14)
 `bg-err-bg` / `bg-synced-bg` / `font-body` are enumerated in
