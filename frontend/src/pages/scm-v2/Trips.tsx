@@ -12,7 +12,8 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { Route as RouteIcon, MapPin } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Route as RouteIcon, MapPin, CalendarClock } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
@@ -25,9 +26,17 @@ import {
 } from '../../vendor/scm/lib/trips-queries';
 import {
   useDeliveryPlanning,
+  useScheduleDelivery,
   type PlanningOrder,
 } from '../../vendor/scm/lib/delivery-planning-queries';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
+import { useLorries } from '../../vendor/scm/lib/lorries-queries';
+import {
+  DeliveryPlanningBoard,
+  regionTabsFrom,
+  soDocNosFromSelection,
+} from '../../vendor/scm/components/DeliveryPlanningBoard';
+import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 
@@ -49,6 +58,7 @@ const etaLabel = (s: number | null | undefined): string => {
 };
 
 export function Trips() {
+  const navigate = useNavigate();
   const [status, setStatus] = useState<string>('PLANNED');
   const [selected, setSelected] = useState<string | null>(null);
   const [preview, setPreview] = useState<OptimizeResult | null>(null);
@@ -59,15 +69,35 @@ export function Trips() {
   const notify = useNotify();
   const askConfirm = useConfirm();
 
-  // "To schedule" queue: ready-to-ship orders not yet on a trip. Reuses the
-  // delivery board's own endpoint (GET /delivery-planning?state=PENDING_SCHEDULE)
-  // and its PENDING_SCHEDULE derivation — no new query, no new state logic.
-  // READ-ONLY for now; multiselect + scheduling actions are the next slice.
-  const pending = useDeliveryPlanning({ region: 'ALL', state: 'PENDING_SCHEDULE' });
+  // "To schedule" queue: ready-to-ship orders not yet on a trip. It is the EXACT
+  // Delivery Planning board (shared <DeliveryPlanningBoard>) LOCKED to
+  // state=PENDING_SCHEDULE — same columns, region chips, expandable line-item
+  // detail and multiselect — scoped to the region chip. Reuses the board's own
+  // endpoint (GET /delivery-planning?region=<r>&state=PENDING_SCHEDULE) and its
+  // PENDING_SCHEDULE derivation: no new query, no new state logic.
+  const [pendingRegion, setPendingRegion] = useState<string>('ALL');
+  const pending = useDeliveryPlanning({ region: pendingRegion, state: 'PENDING_SCHEDULE' });
   const pendingOrders = useMemo<PlanningOrder[]>(
     () => pending.data?.orders ?? [],
     [pending.data],
   );
+  const pendingRegionTabs = useMemo(() => regionTabsFrom(pending.data?.regions), [pending.data?.regions]);
+
+  // Shared write path + option lists for the board's inline cells + bulk bar.
+  const sched = useScheduleDelivery();
+  const { data: drivers = [] } = useDrivers();
+  const { data: lorries = [] } = useLorries();
+
+  // Multiselect on the "To schedule" board → the Phase-2 ScheduleTripDrawer.
+  const [pendingSel, setPendingSel] = useState<Set<string>>(new Set());
+  const [scheduling, setScheduling] = useState(false);
+  const pendingSelDocNos = (): string[] => soDocNosFromSelection(pendingSel);
+  // The SO order objects behind the selection — fed to the drawer as its stop
+  // list (SO-only, like every board bulk action).
+  const pendingSelectedOrders = useMemo<PlanningOrder[]>(() => {
+    const docs = new Set(pendingSelDocNos());
+    return pendingOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no));
+  }, [pendingOrders, pendingSel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const trips = useMemo(() => list.data?.trips ?? [], [list.data]);
   const stops = detail.data?.stops ?? [];
@@ -232,62 +262,72 @@ export function Trips() {
       </div>
 
       {/* ── To schedule: ready-to-ship orders not yet on a trip ──────────────
-          Pulled straight from the delivery board (PENDING_SCHEDULE), read-only.
-          Making them visible in Trips is this slice; multiselect + Date/Time
-          scheduling actions are the next phase. */}
-      <div className="rounded-md border border-border bg-surface">
-        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
+          The EXACT Delivery Planning board, LOCKED to PENDING_SCHEDULE (no
+          state-tab row). Same columns, region chips, expandable line-item detail
+          and multiselect. Ticking orders and clicking "Schedule (N)" opens the
+          Phase-2 ScheduleTripDrawer → Apply via the existing schedule mutation,
+          so the whole select → schedule → apply flow runs from inside Trips. */}
+      <div className="rounded-md border border-border bg-surface p-4">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
           <span className="text-[13px] font-semibold text-ink">To schedule</span>
           <Badge tone="neutral" caseless>{pendingOrders.length} ready to ship</Badge>
           <span className="flex-1" />
-          <span className="text-[11.5px] text-ink-muted">Read-only — scheduling actions coming next</span>
+          <span className="text-[11.5px] text-ink-muted">Tick orders, then Schedule to put them on a trip</span>
         </div>
 
-        {pending.isLoading && (
-          <p className="p-5 text-[13px] text-ink-muted">Loading pending orders…</p>
-        )}
-        {!pending.isLoading && pendingOrders.length === 0 && (
-          <p className="p-5 text-[13px] text-ink-muted">No orders waiting to be scheduled.</p>
-        )}
-        {!pending.isLoading && pendingOrders.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[12.5px]">
-              <thead>
-                <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-muted">
-                  <th className="px-5 py-2 font-semibold">SO / Ref</th>
-                  <th className="px-3 py-2 font-semibold">Customer</th>
-                  <th className="px-3 py-2 font-semibold">Region</th>
-                  <th className="px-3 py-2 font-semibold">Stock</th>
-                  <th className="px-3 py-2 text-right font-semibold">Qty</th>
-                  <th className="px-5 py-2 font-semibold">Delivery Date</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {pendingOrders.map((o) => (
-                  <tr key={`${o.row_type}:${o.so_doc_no}`} className="hover:bg-surface-raised">
-                    <td className="px-5 py-2.5 font-mono font-semibold text-ink">
-                      {o.so_doc_no || o.ref || '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-ink-secondary">
-                      {o.debtor_name ?? o.debtor_code ?? '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-ink-secondary">{o.region || '—'}</td>
-                    <td className="px-3 py-2.5 text-ink-muted">
-                      {o.stock_remark || o.stock_status || '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-ink-secondary">
-                      {o.remaining_qty == null ? '—' : Math.round(o.remaining_qty)}
-                    </td>
-                    <td className="px-5 py-2.5 tabular-nums text-ink-secondary">
-                      {fmtDateOrDash(o.effective_delivery_date ?? o.customer_delivery_date)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <DeliveryPlanningBoard
+          orders={pendingOrders}
+          counts={pending.data?.counts ?? {}}
+          regionTabs={pendingRegionTabs}
+          activeRegion={pendingRegion}
+          onRegionChange={setPendingRegion}
+          isLoading={pending.isLoading}
+          error={pending.error}
+          /* No stateTabs → the board is locked to the PENDING_SCHEDULE fetch. */
+          selectedKeys={pendingSel}
+          onToggle={(k) => setPendingSel((p) => {
+            const n = new Set(p);
+            if (n.has(k)) n.delete(k); else n.add(k);
+            return n;
+          })}
+          onToggleAll={(keys, allSel) => setPendingSel((p) => {
+            const n = new Set(p);
+            if (allSel) { for (const k of keys) n.delete(k); }
+            else { for (const k of keys) n.add(k); }
+            return n;
+          })}
+          onClearSelection={() => setPendingSel(new Set())}
+          sched={sched}
+          drivers={drivers}
+          lorries={lorries}
+          storageKey="dg-trips-to-schedule"
+          exportName="TripsToSchedule"
+          emptyMessage="No orders waiting to be scheduled."
+          onRowDoubleClick={(o) => { if (o.row_type === 'so') navigate('/scm/sales-orders/' + o.so_doc_no); }}
+          bulkExtras={
+            <Button
+              variant="secondary"
+              disabled={pendingSelDocNos().length === 0}
+              onClick={() => setScheduling(true)}
+              title={pendingSelDocNos().length === 0 ? 'Select one or more sales orders first' : 'Schedule the selected orders onto a trip'}
+            >
+              <CalendarClock size={14} strokeWidth={1.75} />
+              <span>Schedule ({pendingSelDocNos().length})</span>
+            </Button>
+          }
+          contextMenu={(row) => (row.row_type === 'so'
+            ? [{ label: 'Open Sales Order', onClick: () => navigate('/scm/sales-orders/' + row.so_doc_no) }]
+            : [])}
+        />
       </div>
+
+      {scheduling && (
+        <ScheduleTripDrawer
+          orders={pendingSelectedOrders}
+          onClose={() => setScheduling(false)}
+          onOpenTrips={() => setScheduling(false)}
+        />
+      )}
     </div>
   );
 }
