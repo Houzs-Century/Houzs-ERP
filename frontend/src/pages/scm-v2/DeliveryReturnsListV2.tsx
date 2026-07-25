@@ -1480,7 +1480,7 @@ export function DeliveryReturnsListV2() {
       </div>
 
       {/* Desktop sticky page chrome — matches SO/DO/SI listing pattern. */}
-      <div className="sticky top-0 z-20 -mx-4 hidden bg-bg/95 pb-3 backdrop-blur-sm sm:-mx-6 md:block">
+      <div className="-mx-4 hidden pb-3 sm:-mx-6 md:block">
         <div className="px-4 sm:px-6">
           <PageHeader
             eyebrow="Supply Chain"
