@@ -29,7 +29,9 @@ import {
   computeVariantKey,
   adjustmentIncreaseErrors,
   buildVariantSummary,
+  resolveForcedUnitCostSen,
   type VariantAttrs,
+  type LotCostRow,
 } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
@@ -70,6 +72,12 @@ inventoryAdjustments.post('/', async (c) => {
   //   • DECREASE targets an EXISTING bucket the operator picked, so it arrives
   //     with an explicit variantKey + batchNo; we only verify enough is on hand
   //     (no orphan / negative bucket).
+  // Cost the movement will carry. For a DECREASE (OUT) it is irrelevant — the FIFO
+  // trigger consumes open lots and stamps the OUT from THEIR cost — so the
+  // operator's value (or 0) is left untouched. For an INCREASE it MUST be a real
+  // cost, resolved below (audit R3), so the trigger never opens a RM0 lot.
+  let unitCostSen = Number(body.unitCostSen ?? 0);
+
   let variantKey: string;
   if (qtyDelta > 0) {
     const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo);
@@ -77,6 +85,31 @@ inventoryAdjustments.post('/', async (c) => {
     variantKey = body.variantKey != null
       ? String(body.variantKey)
       : computeVariantKey(itemGroup, (variants as VariantAttrs | null) ?? null);
+
+    // R3 write-path guard: force the found stock to carry the SKU's best-known
+    // unit cost (operator's if typed > 0, else the weighted avg of its other
+    // priced open lots, else its last-known priced cost) instead of 0. If NO
+    // cost basis exists anywhere the SKU has never been priced, so we refuse
+    // rather than open a permanent cost-less lot; the operator must enter a cost.
+    const { data: bucketLots } = await scopeToCompany(
+      sb.from('inventory_lots')
+        .select('unit_cost_sen, qty_remaining, source_doc_type, received_at')
+        .eq('warehouse_id', warehouseId)
+        .eq('product_code', productCode)
+        .eq('variant_key', variantKey),
+      c,
+    );
+    const forced = resolveForcedUnitCostSen({
+      operatorCostSen: Number(body.unitCostSen ?? 0),
+      lots: ((bucketLots ?? []) as LotCostRow[]),
+    });
+    if (!forced.ok) {
+      return c.json({
+        error: 'cost_required',
+        message: 'This item has no known cost yet. Enter the unit cost for the found stock so it is not added at RM0.',
+      }, 422);
+    }
+    unitCostSen = forced.unitCostSen;
   } else {
     variantKey = String(body.variantKey ?? '');
     let avQ = sb.from('v_inventory_lots_open')
@@ -122,7 +155,7 @@ inventoryAdjustments.post('/', async (c) => {
     batch_no: batchNo,
     product_name: (body.productName as string) ?? null,
     qty: qtyDelta,
-    unit_cost_sen: Number(body.unitCostSen ?? 0),
+    unit_cost_sen: unitCostSen,
     source_doc_type: 'ADJUSTMENT',
     reason_code: reasonCode,
     notes: (body.notes as string) ?? null,
@@ -148,7 +181,7 @@ inventoryAdjustments.post('/', async (c) => {
       fieldChange('batchNo', null, batchNo),
       fieldChange('qtyDelta', null, qtyDelta),
       fieldChange('reasonCode', null, reasonCode),
-      fieldChange('unitCostSen', null, Number(body.unitCostSen ?? 0)),
+      fieldChange('unitCostSen', null, unitCostSen),
       fieldChange('notes', null, (body.notes as string | undefined) ?? null),
     ]),
   });

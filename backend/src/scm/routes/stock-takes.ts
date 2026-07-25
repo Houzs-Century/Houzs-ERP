@@ -33,6 +33,7 @@ import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { recordEntityAudit, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody, type FieldChange } from '../lib/entity-audit';
+import { resolveForcedUnitCostSen, type LotCostRow } from '../shared';
 
 export const stockTakes = new Hono<{ Bindings: Env; Variables: Variables }>();
 stockTakes.use('*', supabaseAuth);
@@ -709,29 +710,87 @@ export const postStockTakeHandler = async (c: any) => {
   }
 
   const movementErrors: string[] = [];
+
+  // Every line whose count differs from live on-hand, with its SIGNED variance.
+  const pending = counted
+    .map((ln) => {
+      const variantKey = ln.variant_key ?? '';
+      const live = liveByKey.get(`${ln.product_code} ${variantKey}`) ?? 0;
+      return { ln, variantKey, adjustment: ln.counted_qty! - live };
+    })
+    .filter((p) => p.adjustment !== 0);
+
+  // R3 write-path guard: a POSITIVE variance opens a new lot, so it MUST carry a
+  // real unit cost — the FIFO trigger otherwise floors a cost-less lot to RM0 that
+  // no path ever re-costs (permanent RM0 COGS when it sells). Fetch every
+  // (product, variant) bucket's lots ONCE (open + consumed), scoped to company,
+  // and resolve each positive line's cost from the SKU's own priced lots. A
+  // negative variance is an OUT: the trigger consumes open lots FIFO and stamps
+  // the OUT from THEIR cost, so its unit_cost_sen stays 0 (unused).
+  const lotsByKey = new Map<string, LotCostRow[]>();
+  const upCodes = [...new Set(pending.filter((p) => p.adjustment > 0).map((p) => p.ln.product_code))];
+  for (let i = 0; i < upCodes.length; i += 200) {
+    const chunk = upCodes.slice(i, i + 200);
+    if (chunk.length === 0) break;
+    const { data: lots } = await scopeToCompany(
+      sb.from('inventory_lots')
+        .select('product_code, variant_key, unit_cost_sen, qty_remaining, source_doc_type, received_at')
+        .eq('warehouse_id', header.warehouse_id)
+        .in('product_code', chunk),
+      c,
+    );
+    for (const l of (lots as Array<{ product_code: string; variant_key: string | null } & LotCostRow>) ?? []) {
+      const key = `${l.product_code} ${l.variant_key ?? ''}`;
+      (lotsByKey.get(key) ?? lotsByKey.set(key, []).get(key)!).push(l);
+    }
+  }
+
   const adjustmentRows: Array<Record<string, unknown>> = [];
-
-  for (const ln of counted) {
-    const variantKey = ln.variant_key ?? '';
-    const live = liveByKey.get(`${ln.product_code} ${variantKey}`) ?? 0;
-    const adjustment = ln.counted_qty! - live;
-    if (adjustment === 0) continue;
-
+  const costlessSkus: string[] = [];
+  for (const p of pending) {
+    let unitCostSen = 0;
+    if (p.adjustment > 0) {
+      const forced = resolveForcedUnitCostSen({
+        lots: lotsByKey.get(`${p.ln.product_code} ${p.variantKey}`) ?? [],
+      });
+      if (!forced.ok) { costlessSkus.push(p.ln.product_code); continue; }
+      unitCostSen = forced.unitCostSen;
+    }
     adjustmentRows.push({
       movement_type:   'ADJUSTMENT',
       warehouse_id:    header.warehouse_id,
-      product_code:    ln.product_code,
-      product_name:    ln.product_name,
-      variant_key:     variantKey,                     // #15 — land in the counted bucket
-      qty:             adjustment,                     // SIGNED — see /inventory/adjustments
-      unit_cost_sen:   0,
+      product_code:    p.ln.product_code,
+      product_name:    p.ln.product_name,
+      variant_key:     p.variantKey,                   // #15 — land in the counted bucket
+      qty:             p.adjustment,                   // SIGNED — see /inventory/adjustments
+      unit_cost_sen:   unitCostSen,                    // R3 — real cost on the +variance lot
       source_doc_type: 'STOCK_TAKE',
       source_doc_id:   header.id,
       source_doc_no:   header.take_no,
       reason_code:     'COUNT',                          // count correction
-      notes:           `Stock take variance${ln.notes ? ` · ${ln.notes}` : ''}`,
+      notes:           `Stock take variance${p.ln.notes ? ` · ${p.ln.notes}` : ''}`,
       performed_by:    user.id,
     });
+  }
+
+  // R3: a positive variance on a SKU with NO cost basis anywhere (first-ever
+  // stock, never priced) cannot be posted at a real cost — writing it at RM0 is
+  // the exact defect. Refuse the POST rather than open a permanent cost-less lot,
+  // and REVERT the status flip so the take stays editable (nothing was written
+  // yet). The operator seeds an initial cost (a costed adjustment or a GRN) for
+  // the named SKU(s), then re-posts. Symmetric with the manual-adjustment 422.
+  if (costlessSkus.length > 0) {
+    const { error: revErr } = await scopeToCompanyId(
+      sb.from('stock_takes').update({ status: 'OPEN', posted_at: null }).eq('id', id),
+      co.companyId,
+    ).eq('status', 'POSTED');
+    const skus = [...new Set(costlessSkus)];
+    return c.json({
+      error: 'cost_required',
+      message: `These items have no known cost yet, so they can't be added at RM0: ${skus.join(', ')}. Enter an initial unit cost (a costed stock adjustment or a GRN) for them, then post the count again.`,
+      productCodes: skus,
+      postReverted: !revErr,
+    }, 422);
   }
 
   if (adjustmentRows.length > 0) {
