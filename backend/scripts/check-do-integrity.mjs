@@ -73,7 +73,7 @@ try {
       FROM scm.delivery_order_items doi
       JOIN scm.delivery_orders d ON d.id = doi.delivery_order_id
       WHERE doi.so_item_id IS NOT NULL
-        AND upper(coalesce(d.status, '')) NOT IN ('CANCELLED', 'DRAFT')
+        AND upper(coalesce(d.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
       GROUP BY doi.so_item_id
     ),
     returned AS (
@@ -83,8 +83,8 @@ try {
       JOIN scm.delivery_returns dr    ON dr.id  = dri.delivery_return_id
       JOIN scm.delivery_order_items doi ON doi.id = dri.do_item_id
       JOIN scm.delivery_orders d      ON d.id  = doi.delivery_order_id
-      WHERE upper(coalesce(dr.status, '')) <> 'CANCELLED'
-        AND upper(coalesce(d.status, ''))  NOT IN ('CANCELLED', 'DRAFT')
+      WHERE upper(coalesce(dr.status::text, '')) <> 'CANCELLED'
+        AND upper(coalesce(d.status::text, ''))  NOT IN ('CANCELLED', 'DRAFT')
       GROUP BY doi.so_item_id
     )
     SELECT soi.doc_no,
@@ -131,7 +131,7 @@ try {
     JOIN scm.delivery_order_items doi ON doi.so_item_id = soi.id
     JOIN scm.delivery_orders d        ON d.id = doi.delivery_order_id
     WHERE soi.cancelled = false
-      AND upper(coalesce(d.status, '')) NOT IN ('CANCELLED', 'DRAFT')
+      AND upper(coalesce(d.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
       AND upper(coalesce(soi.stock_status, '')) <> 'READY'
     GROUP BY soi.doc_no, soi.item_code, soi.qty, soi.stock_status
     ORDER BY soi.doc_no`;
@@ -152,7 +152,7 @@ try {
       FROM scm.delivery_order_items doi
       JOIN scm.delivery_orders d ON d.id = doi.delivery_order_id
       WHERE doi.so_item_id IS NOT NULL
-        AND upper(coalesce(d.status, '')) NOT IN ('CANCELLED', 'DRAFT')
+        AND upper(coalesce(d.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
       GROUP BY doi.so_item_id
     ),
     returned AS (
@@ -161,8 +161,8 @@ try {
       JOIN scm.delivery_returns dr      ON dr.id  = dri.delivery_return_id
       JOIN scm.delivery_order_items doi ON doi.id = dri.do_item_id
       JOIN scm.delivery_orders d        ON d.id  = doi.delivery_order_id
-      WHERE upper(coalesce(dr.status, '')) <> 'CANCELLED'
-        AND upper(coalesce(d.status, ''))  NOT IN ('CANCELLED', 'DRAFT')
+      WHERE upper(coalesce(dr.status::text, '')) <> 'CANCELLED'
+        AND upper(coalesce(d.status::text, ''))  NOT IN ('CANCELLED', 'DRAFT')
       GROUP BY doi.so_item_id
     ),
     over_lines AS (
