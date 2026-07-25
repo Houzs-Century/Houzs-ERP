@@ -16,6 +16,7 @@ import { fmtCenti } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders } from "../auth/salesAccess";
+import { MobileTrackingBanner } from "./MobileTrackingBanner";
 import "./mobile.css";
 
 /* ------------------------------------------------------------------ *
@@ -514,6 +515,10 @@ export function MobileDeliveryPlanning({
             </div>
           </div>
         )}
+
+        {/* Phase 4 — live location capture. Self-gating: renders + captures only
+            when the driver has an in-progress trip and this page is open. */}
+        <MobileTrackingBanner />
 
         <div
           style={{

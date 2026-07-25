@@ -37,6 +37,8 @@ import {
   soDocNosFromSelection,
 } from '../../vendor/scm/components/DeliveryPlanningBoard';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
+import { LiveTripMap, type LiveMarker } from '../../vendor/scm/components/LiveTripMap';
+import { useTripLatestLocations } from '../../vendor/scm/lib/trip-locations-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 
@@ -44,6 +46,10 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 // trips first). The default-selected tab stays PLANNED (see useState below) —
 // the working queue a dispatcher plans from, not the trips already rolling.
 const STATUSES = ['ALL', 'IN_PROGRESS', 'PLANNED', 'COMPLETED', 'CANCELLED'] as const;
+
+/** Resolve a driver uuid to its display name off the loaded master list. */
+const driverNameFor = (drivers: Array<{ id: string; name: string }>, id: string | null): string | null =>
+  id ? (drivers.find((d) => d.id === id)?.name ?? null) : null;
 
 const mins = (s: number | null | undefined): string =>
   s == null ? '—' : `${Math.round(s / 60)} min`;
@@ -102,6 +108,22 @@ export function Trips() {
   const trips = useMemo(() => list.data?.trips ?? [], [list.data]);
   const stops = detail.data?.stops ?? [];
   const trip = detail.data?.trip ?? null;
+
+  // ── Live driver tracking (Phase 4) ─────────────────────────────────────────
+  // A trip only reports position while IN_PROGRESS. Poll the latest position per
+  // driver ONLY for a live selected trip (a closed / planned trip bills nothing).
+  const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
+  const isLive = trip ? String(trip.status).toUpperCase() === 'IN_PROGRESS' : false;
+  const liveLocs = useTripLatestLocations(selected, isLive);
+  const STALE_MS = 90_000; // ~3 missed posts (25s cadence) = "last seen" goes amber
+  const liveMarkers = useMemo<LiveMarker[]>(() => {
+    const locs = liveLocs.data?.locations ?? [];
+    return locs.map((loc) => ({
+      location: loc,
+      label: driverNameFor(drivers, loc.driverId) ?? (trip?.trip_no ?? 'Driver'),
+      stale: loc.receivedAt ? Date.now() - Date.parse(loc.receivedAt) > STALE_MS : false,
+    }));
+  }, [liveLocs.data, drivers, trip]);
 
   const runOptimise = async (apply: boolean) => {
     if (!selected) return;
@@ -228,6 +250,35 @@ export function Trips() {
                 <div className="border-b border-border bg-accent/5 px-5 py-2.5 text-[12.5px] text-ink-secondary">
                   Proposed: {km(preview.totalDistanceMetres)} · {mins(preview.totalDurationSeconds)} driving
                   {!preview.applied && ' — not saved yet.'}
+                </div>
+              )}
+
+              {/* ── Live driver location (Phase 4) — only while the trip is
+                  IN_PROGRESS. Polls the latest ping per driver; the marker goes
+                  amber when the last fix is stale. */}
+              {isLive && (
+                <div className="border-b border-border px-5 py-3">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="text-[12.5px] font-semibold text-ink">Live location</span>
+                    {(() => {
+                      const loc = liveLocs.data?.locations?.[0];
+                      if (!loc) return <span className="text-[11.5px] text-ink-muted">No location yet — the driver&apos;s page starts tracking when they open it.</span>;
+                      const secs = loc.receivedAt ? Math.round((Date.now() - Date.parse(loc.receivedAt)) / 1000) : null;
+                      return (
+                        <span className="text-[11.5px] text-ink-secondary">
+                          Last seen {secs == null ? '—' : secs < 60 ? `${secs}s ago` : `${Math.round(secs / 60)} min ago`}
+                          {secs != null && secs > 90 && ' · stale'}
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  {mapsKey ? (
+                    <LiveTripMap apiKey={mapsKey} markers={liveMarkers} />
+                  ) : (
+                    <div className="flex h-[120px] items-center justify-center rounded-lg border border-dashed border-border bg-surface-dim px-4 text-center text-[12px] text-ink-muted">
+                      Set VITE_GOOGLE_MAPS_API_KEY to show the live driver map. The last-seen time above still updates.
+                    </div>
+                  )}
                 </div>
               )}
 
