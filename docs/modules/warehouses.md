@@ -110,6 +110,16 @@ you want "everything selectable", filter `is_active=true` and skip type.
 - **Do not delete a warehouse with movement history.** FK from
   `inventory_movements` will refuse (409 `in_use`). Deactivate (`is_active=false`)
   instead — the master row stays, historical rows keep pointing at it.
+- **A positive stock ADJUSTMENT / STOCK_TAKE variance must carry a real unit cost
+  (audit R3, 2026-07-25).** A found-stock increase opens a FIFO lot; the trigger
+  floors an un-costed lot to RM0 and never re-costs it (permanent RM0 COGS). So
+  `POST /inventory/adjustments` (increase) and stock-take `PATCH /:id/post` now
+  resolve the SKU's best-known cost (operator's if typed, else the weighted avg of
+  its other priced open lots — consignment excluded — else its last-known priced
+  cost). If NO basis exists anywhere they reject with **422 `cost_required`**
+  (adjustment: the operator enters a cost; stock-take: the POSTED flip is reverted
+  to OPEN and the SKU(s) named). Pure decision in
+  `backend/src/scm/shared/adjustment-cost.ts`; never writes 0.
 
 ---
 
