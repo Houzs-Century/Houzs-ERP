@@ -155,9 +155,8 @@ export function WorkspaceTabs() {
                   activateWorkspaceTab(tab.id);
                 }
               }}
-              {/* Middle-click close lives on the wrapper div now (whole-tab
-                  hit area); a second handler here would double-fire via
-                  bubbling. */}
+              // Middle-click close lives on the wrapper div (whole-tab hit
+              // area); a handler here too would double-fire via bubbling.
               className={cn(
                 "flex max-w-[13rem] items-center self-center truncate py-2 pl-[15px] pr-0.5 text-[13px] leading-none",
                 isActive ? "font-semibold" : "font-medium",
