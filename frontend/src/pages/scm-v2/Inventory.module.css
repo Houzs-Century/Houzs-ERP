@@ -284,6 +284,16 @@
 .numCellNeg { color: #b23a3a; }
 .numCellZero { color: #9aa093; }
 
+/* "from PO" trace under a GRN-sourced lot's SOURCE cell (display-only). Compact
+   muted secondary line, matching the drawer polish (#1255). */
+.sourcePo {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  color: #9aa093;
+  white-space: nowrap;
+}
+
 /* Free-text Notes column — clamp so a long adjustment note can't balloon the
    table (or, inside the 720px breakdown drawer, push it into overflow). Full
    text stays reachable via the cell's title tooltip. */

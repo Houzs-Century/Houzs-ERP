@@ -89,6 +89,8 @@ function LotCard({ l, consignment, first }: { l: InventoryReservation; consignme
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10.5, color: "var(--mut)" }}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {l.source_doc_no || "—"}
+          {/* GRN-sourced lot also traces to its originating PO (display only). */}
+          {l.source_po_no ? ` · from ${l.source_po_no}` : ""}
           {l.received_at ? ` · ${formatDate(l.received_at)}` : ""}
         </span>
         <span className="tnum" style={{ flex: "none" }}>

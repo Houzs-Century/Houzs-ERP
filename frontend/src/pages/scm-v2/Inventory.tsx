@@ -1370,7 +1370,12 @@ const ProductBreakdownDrawer = ({
                     <td className={`${styles.numCell} ${r.qty_remaining > 0 ? styles.numCellPos : styles.numCellZero}`}>{fmtQty(r.qty_remaining)}</td>
                     <td className={`${styles.numCell} ${styles.numCellZero}`}>{r.unit_cost_sen > 0 ? fmtRm(r.unit_cost_sen) : '—'}</td>
                     <td className={styles.numCell} style={{ fontWeight: 700 }}>{value > 0 ? fmtRm(value) : '—'}</td>
-                    <td className={styles.numCellZero}>{r.source_doc_no ?? '—'}</td>
+                    {/* SOURCE — the GRN (or PCR/adjustment) that fed this lot. A
+                        GRN-sourced lot also traces to its originating PO. */}
+                    <td className={styles.numCellZero}>
+                      {r.source_doc_no ?? '—'}
+                      {r.source_po_no && <span className={styles.sourcePo}>from {r.source_po_no}</span>}
+                    </td>
                     <td className={styles.numCellZero}>{r.received_at ? fmtDate(r.received_at) : '—'}</td>
                     <td>{renderReservedFor(r)}</td>
                     <td>
@@ -1415,7 +1420,10 @@ const ProductBreakdownDrawer = ({
                     <td className={`${styles.numCell} ${r.qty_remaining > 0 ? styles.numCellPos : styles.numCellZero}`}>{fmtQty(r.qty_remaining)}</td>
                     <td className={`${styles.numCell} ${styles.numCellZero}`}>{r.unit_cost_sen > 0 ? fmtRm(r.unit_cost_sen) : '—'}</td>
                     <td className={`${styles.numCell} ${styles.numCellZero}`} title="Consignment stock is excluded from inventory value.">—</td>
-                    <td className={styles.numCellZero}>{r.source_doc_no ?? '—'}</td>
+                    <td className={styles.numCellZero}>
+                      {r.source_doc_no ?? '—'}
+                      {r.source_po_no && <span className={styles.sourcePo}>from {r.source_po_no}</span>}
+                    </td>
                     <td className={styles.numCellZero}>{r.received_at ? fmtDate(r.received_at) : '—'}</td>
                     <td>{renderReservedFor(r)}</td>
                     <td>

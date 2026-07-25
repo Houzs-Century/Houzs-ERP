@@ -1145,6 +1145,51 @@ inventory.get('/reservations', async (c) => {
   if (lotErr) return c.json({ error: 'load_failed', reason: lotErr.message }, 500);
   const lots = lotRows ?? [];
 
+  // 1b. Trace each GRN-sourced lot back to its ORIGINATING PURCHASE ORDER, for a
+  //     display-only "from PO" hint in the drawer's SOURCE cell. A GRN is created
+  //     from a PO; its header carries purchase_order_id (a batch-converted GRN
+  //     stamps the PRIMARY PO). Set-based, no N+1: collect the distinct GRN
+  //     doc-nos, resolve grn_number -> purchase_order_id, then id -> po_number.
+  //     Company-scoped (same gate as the lots above) and fully null-safe — a lot
+  //     from a non-GRN source, or a GRN with no resolvable PO, keeps its bare
+  //     source with no PO hint.
+  const grnNos = [...new Set(
+    lots
+      .filter((l) => (l.source_doc_type ?? '').toUpperCase() === 'GRN')
+      .map((l) => l.source_doc_no)
+      .filter((n): n is string => !!n),
+  )];
+  const grnToPoNo = new Map<string, string>(); // grn_number -> po_number
+  if (grnNos.length > 0) {
+    const { data: grnRows } = await chunkIn<{ grn_number: string; purchase_order_id: string | null }>(
+      grnNos,
+      (batch, from, to) => scopeToCompany(sb
+        .from('grns').select('grn_number, purchase_order_id'), c)
+        .in('grn_number', batch).range(from, to),
+    );
+    const poIds = [...new Set(
+      (grnRows ?? [])
+        .map((g) => g.purchase_order_id)
+        .filter((x): x is string => !!x),
+    )];
+    const poNoById = new Map<string, string>(); // purchase_order id -> po_number
+    if (poIds.length > 0) {
+      const { data: poRows } = await chunkIn<{ id: string; po_number: string | null }>(
+        poIds,
+        (batch, from, to) => scopeToCompany(sb
+          .from('purchase_orders').select('id, po_number'), c)
+          .in('id', batch).range(from, to),
+      );
+      for (const p of poRows ?? []) {
+        if (p.po_number) poNoById.set(p.id, p.po_number);
+      }
+    }
+    for (const g of grnRows ?? []) {
+      const po = g.purchase_order_id ? poNoById.get(g.purchase_order_id) : undefined;
+      if (po) grnToPoNo.set(g.grn_number, po);
+    }
+  }
+
   // 2. READY SO demand (company-scoped) — the lines the allocator flipped to
   //    READY because stock exists for them. allocated_batch_no is forward-compat
   //    (mig 0121): fall back to a batch-less select if the column is absent.
@@ -1235,6 +1280,12 @@ inventory.get('/reservations', async (c) => {
       received_at: l.received_at,
       source_doc_type: l.source_doc_type ?? null,
       source_doc_no: l.source_doc_no ?? null,
+      // Display-only trace of a GRN-sourced lot back to its originating PO. Null
+      // for non-GRN sources (PCR / adjustment / transfer) and for a GRN with no
+      // resolvable PO — the drawer then shows just the GRN, as before.
+      source_po_no: (l.source_doc_type ?? '').toUpperCase() === 'GRN' && l.source_doc_no
+        ? (grnToPoNo.get(l.source_doc_no) ?? null)
+        : null,
       // Source-based consignment classification — the drawer separates these
       // lots and drops them from OWNED value (never the warehouse flag).
       is_consignment: isConsignmentLotSource(l.source_doc_type, l.source_doc_no),
