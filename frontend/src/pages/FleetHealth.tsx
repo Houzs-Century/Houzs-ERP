@@ -51,6 +51,48 @@ type DocView = {
   tone: Tone;
 };
 
+type NextPlanView = {
+  component: string;
+  componentLabel: string;
+  nextDueKm: number | null;
+  nextDueDate: string | null;
+  kmRemaining: number | null;
+  daysRemaining: number | null;
+  tone: Tone;
+  overdue: boolean;
+};
+
+type PlanView = {
+  id: string;
+  component: string;
+  componentLabel: string;
+  intervalKm: number | null;
+  intervalMonths: number | null;
+  lastDoneDate: string | null;
+  lastDoneKm: number | null;
+  workshop: string | null;
+  estCostCenti: number | null;
+  notes: string | null;
+  active: boolean;
+  nextDueKm: number | null;
+  nextDueDate: string | null;
+  kmRemaining: number | null;
+  daysRemaining: number | null;
+  dueSoon: boolean;
+  overdue: boolean;
+  tone: Tone;
+};
+
+type MileageView = {
+  id: string;
+  readingDate: string | null;
+  odometerKm: number | null;
+  source: string | null;
+  photoRef: string | null;
+  flagged: boolean;
+  note: string | null;
+};
+
 type VehicleRow = {
   id: string;
   plate: string;
@@ -59,6 +101,9 @@ type VehicleRow = {
   vehicleType: string | null;
   model: string | null;
   mileageKm: number | null;
+  mileageDate: string | null;
+  mileageSource: "reading" | "service" | null;
+  mileageFlagged: boolean;
   nextServiceKm: number | null;
   nextServiceDate: string | null;
   outOfService: boolean;
@@ -68,6 +113,10 @@ type VehicleRow = {
   statusLabel: string;
   canDispatch: boolean;
   compliance: Partial<Record<DocType, DocView>>;
+  planCount: number;
+  plansOverdue: number;
+  plansDueSoon: number;
+  nextPlan: NextPlanView | null;
 };
 
 type VehicleStatus =
@@ -87,6 +136,7 @@ type DashboardPayload = {
     expiring60: number;
     expiring90: number;
     serviceDue: number;
+    serviceOverdue: number;
     activeBreakdowns: number;
     complianceBlocked: number;
     cantDispatch: number;
@@ -102,6 +152,8 @@ type DashboardPayload = {
 type VehicleDetailPayload = {
   vehicle: VehicleRow & { lastServiceWorkshop?: string | null };
   compliance: Record<DocType, { currentId: string | null; flatExpiry: string | null; history: DocView[] }>;
+  plans: PlanView[];
+  mileage: MileageView[];
   maintenanceWindows: Array<{ from: string | null; to: string | null; reason: string | null }>;
 };
 
@@ -159,7 +211,36 @@ function ExpiryCell({ doc }: { doc: DocView | undefined }) {
   );
 }
 
-/** What is wrong right now, in words — derived from Phase-1 facts. */
+/** The days/km remaining for the most-urgent plan, in words. */
+function fmtPlanRemaining(p: { kmRemaining: number | null; daysRemaining: number | null; overdue: boolean }): string {
+  const parts: string[] = [];
+  if (p.kmRemaining !== null) parts.push(p.kmRemaining < 0 ? `${(-p.kmRemaining).toLocaleString()} km over` : `${p.kmRemaining.toLocaleString()} km`);
+  if (p.daysRemaining !== null) parts.push(p.daysRemaining < 0 ? `${-p.daysRemaining}d over` : `${p.daysRemaining}d`);
+  return parts.join(" · ") || "—";
+}
+
+/** The board's "Next service" cell: the single most-urgent plan (per-component),
+ *  falling back to the legacy next-service target when no plans exist yet. */
+function NextServiceCell({ v }: { v: VehicleRow }) {
+  if (v.nextPlan) {
+    const np = v.nextPlan;
+    const toneText = np.tone === "crit" ? "text-err" : np.tone === "warn" ? "text-warning-text" : "text-ink-muted";
+    return (
+      <div className="text-[12px]">
+        <div className="text-ink">{np.componentLabel}</div>
+        <div className={cn("text-[10.5px]", toneText)}>
+          {np.overdue ? "OVERDUE · " : ""}
+          {fmtPlanRemaining(np)}
+        </div>
+      </div>
+    );
+  }
+  if (v.nextServiceKm != null) return <span className="text-[12px] text-ink-secondary">{v.nextServiceKm.toLocaleString()} km</span>;
+  if (v.nextServiceDate) return <span className="text-[12px] text-ink-secondary">{v.nextServiceDate}</span>;
+  return <span className="text-[12px] text-ink-muted">No plan</span>;
+}
+
+/** What is wrong right now, in words — derived facts. */
 function openProblem(v: VehicleRow): string | null {
   if (v.status === "OUT_OF_SERVICE") return v.outOfServiceReason || "Out of service";
   if (v.status === "COMPLIANCE_BLOCKED") {
@@ -168,7 +249,11 @@ function openProblem(v: VehicleRow): string | null {
       .map((d) => (d.result === "FAIL" ? `${DOC_LABEL[d.docType]} failed` : `${DOC_LABEL[d.docType]} expired`));
     return failed.join(", ") || "Compliance blocked";
   }
-  if (v.status === "SERVICE_DUE") return "Service due";
+  if (v.status === "SERVICE_DUE") {
+    if (v.plansOverdue > 0 && v.nextPlan) return `${v.nextPlan.componentLabel} overdue`;
+    if (v.nextPlan) return `${v.nextPlan.componentLabel} due`;
+    return "Service due";
+  }
   return null;
 }
 
@@ -268,7 +353,7 @@ export function FleetHealth() {
         <StatCard label="Expired documents" value={kpis?.expiredDocs ?? 0} tone="error" rail="bg-err" pending={dash.loading} onClick={() => setParam("status", "COMPLIANCE_BLOCKED")} active={statusFilter === "COMPLIANCE_BLOCKED"} />
         <StatCard label="Expiring ≤ 30 days" value={kpis?.expiring30 ?? 0} tone="warning" rail="bg-warning-text" pending={dash.loading} />
         <StatCard label="Cannot dispatch" value={kpis?.cantDispatch ?? 0} subtitle={`of ${kpis?.fleetSize ?? 0} lorries`} tone="error" rail="bg-err" pending={dash.loading} />
-        <StatCard label="Service due" value={kpis?.serviceDue ?? 0} tone="warning" rail="bg-warning-text" pending={dash.loading} onClick={() => setParam("status", "SERVICE_DUE")} active={statusFilter === "SERVICE_DUE"} />
+        <StatCard label="Service due" value={kpis?.serviceDue ?? 0} subtitle={kpis?.serviceOverdue ? `${kpis.serviceOverdue} overdue` : "on plan"} tone="warning" rail="bg-warning-text" pending={dash.loading} onClick={() => setParam("status", "SERVICE_DUE")} active={statusFilter === "SERVICE_DUE"} />
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatCard label="Expiring ≤ 60 days" value={kpis?.expiring60 ?? 0} pending={dash.loading} />
@@ -383,9 +468,10 @@ export function FleetHealth() {
                       <td className="px-3.5 py-3 tabular-nums text-ink">
                         {v.mileageKm != null ? v.mileageKm.toLocaleString() : "—"}
                         <span className="ml-1 text-[10.5px] text-ink-muted">km</span>
+                        {v.mileageFlagged && <span className="ml-1.5 text-[10px] text-warning-text" title="Abnormal jump — review">flagged</span>}
                       </td>
-                      <td className="px-3.5 py-3 text-[12px] text-ink-secondary">
-                        {v.nextServiceKm != null ? `${v.nextServiceKm.toLocaleString()} km` : v.nextServiceDate ?? "—"}
+                      <td className="px-3.5 py-3">
+                        <NextServiceCell v={v} />
                       </td>
                       <td className="px-3.5 py-3">
                         <ExpiryCell doc={v.compliance.PUSPAKOM} />
@@ -490,7 +576,25 @@ function VehicleDrawer({ id, onClose }: { id: string | null; onClose: () => void
               </p>
             )}
 
+            {/* Preventive maintenance — per-component plans with due-bars */}
             <div className="mb-2 flex items-center gap-2">
+              <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Preventive maintenance</h3>
+              <span className="text-[10.5px] text-ink-muted">per component · due on whichever comes first (km or months)</span>
+            </div>
+            <PlansSection plans={detail.data?.plans ?? []} currentKm={v.mileageKm} />
+
+            {/* Mileage — daily odometer readings (day-complete capture) */}
+            <div className="mb-2 mt-6 flex items-center gap-2">
+              <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Mileage</h3>
+              <span className="text-[10.5px] text-ink-muted">
+                {v.mileageKm != null ? `${v.mileageKm.toLocaleString()} km` : "no reading"}
+                {v.mileageDate ? ` · ${v.mileageDate}` : ""}
+                {v.mileageSource === "service" ? " · from service record" : ""}
+              </span>
+            </div>
+            <MileageSection readings={detail.data?.mileage ?? []} />
+
+            <div className="mb-2 mt-6 flex items-center gap-2">
               <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Compliance vault</h3>
               <span className="text-[10.5px] text-ink-muted">current document + renewal history (append-only)</span>
             </div>
@@ -551,12 +655,110 @@ function VehicleDrawer({ id, onClose }: { id: string | null; onClose: () => void
             </div>
 
             <p className="mt-5 text-[11px] text-ink-muted">
-              Preventive-maintenance plans, work orders and breakdown history arrive in a later phase. Renew a document by adding a new
-              row via the API (never overwrite) — the history above is the audit trail.
+              Work orders and breakdown history arrive in a later phase. Renew a compliance document by adding a new row via the API
+              (never overwrite) — the history above is the audit trail. Mileage is captured daily by the driver on day-complete.
             </p>
           </>
         )}
       </div>
     </ResizableDetailDrawer>
+  );
+}
+
+/** Per-component preventive-maintenance plans, each with a due-bar showing how
+ *  far through its interval it is (km OR months — whichever is more consumed). */
+function PlansSection({ plans, currentKm }: { plans: PlanView[]; currentKm: number | null }) {
+  if (plans.length === 0) {
+    return (
+      <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">
+        No preventive-maintenance plans on this lorry yet. Seed the default set (backend/scripts/seed-fleet-plans.mjs) or add plans via the API.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {plans.map((p) => (
+        <PlanRow key={p.id} p={p} currentKm={currentKm} />
+      ))}
+    </div>
+  );
+}
+
+/** Fraction of a plan's interval consumed, 0..1, on whichever axis is furthest
+ *  along (closest to due). Used only for the visual bar. */
+function planProgress(p: PlanView, currentKm: number | null): number {
+  const fracs: number[] = [];
+  if (p.intervalKm && p.lastDoneKm != null && currentKm != null) {
+    fracs.push((currentKm - p.lastDoneKm) / p.intervalKm);
+  } else if (p.intervalKm && p.kmRemaining != null) {
+    fracs.push((p.intervalKm - p.kmRemaining) / p.intervalKm);
+  }
+  if (p.intervalMonths && p.daysRemaining != null) {
+    const totalDays = p.intervalMonths * 30.44;
+    fracs.push((totalDays - p.daysRemaining) / totalDays);
+  }
+  if (fracs.length === 0) return 0;
+  return Math.max(0, Math.min(1, Math.max(...fracs)));
+}
+
+function PlanRow({ p, currentKm }: { p: PlanView; currentKm: number | null }) {
+  const pct = Math.round(planProgress(p, currentKm) * 100);
+  const barColor = p.tone === "crit" ? "bg-err" : p.tone === "warn" ? "bg-warning-text" : "bg-synced";
+  const interval = [p.intervalKm ? `${p.intervalKm.toLocaleString()} km` : null, p.intervalMonths ? `${p.intervalMonths} mo` : null].filter(Boolean).join(" / ");
+  const due = [
+    p.nextDueKm != null ? `${p.nextDueKm.toLocaleString()} km` : null,
+    p.nextDueDate ?? null,
+  ].filter(Boolean).join(" · ");
+  return (
+    <div className={cn("rounded-lg border p-3", p.active ? "border-border bg-surface-2/40" : "border-transparent bg-transparent opacity-60")}>
+      <div className="mb-1.5 flex items-center justify-between gap-3">
+        <span className="text-[12.5px] font-semibold text-ink">
+          {p.componentLabel}
+          {!p.active && <span className="ml-2 text-[10px] font-normal text-ink-muted">inactive</span>}
+        </span>
+        <Pill tone={p.tone}>{p.overdue ? "Overdue" : p.dueSoon ? "Due soon" : "OK"}</Pill>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/60">
+        <div className={cn("h-full rounded-full", barColor)} style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[10.5px] text-ink-muted">
+        <span>
+          {interval ? `every ${interval}` : "no interval"}
+          {due ? ` · next ${due}` : (p.lastDoneKm == null && p.lastDoneDate == null ? " · never done" : "")}
+        </span>
+        <span className={cn(p.tone === "crit" ? "text-err" : p.tone === "warn" ? "text-warning-text" : "text-ink-muted")}>
+          {p.overdue ? "OVERDUE · " : ""}
+          {fmtPlanRemaining(p)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Recent daily mileage readings — day-complete captures, with flags. */
+function MileageSection({ readings }: { readings: MileageView[] }) {
+  if (readings.length === 0) {
+    return (
+      <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">
+        No mileage readings yet. The driver captures the odometer on day-complete from the mobile app.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      {readings.slice(0, 8).map((r) => (
+        <div key={r.id} className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-2.5 py-1.5 text-[12px]">
+          <span className="flex items-center gap-2.5">
+            <span className="tabular-nums font-semibold text-ink">{r.odometerKm != null ? r.odometerKm.toLocaleString() : "—"} km</span>
+            <span className="text-[10.5px] text-ink-muted">{r.readingDate ?? "—"}</span>
+            <span className="text-[10px] uppercase tracking-brand text-ink-muted">{r.source ?? ""}</span>
+          </span>
+          <span className="flex items-center gap-2">
+            {r.flagged && <Pill tone="warn">Review</Pill>}
+            {r.photoRef && <span className="text-[10.5px] text-ink-muted">photo</span>}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }

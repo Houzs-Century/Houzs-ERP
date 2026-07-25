@@ -91,11 +91,11 @@ describe("executable route contract", () => {
 
 describe("mobile route drift gate", () => {
   it("pins the complete runtime destination inventory", () => {
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(33);
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(34);
     expect(PROFILE_ORG_ITEMS).toHaveLength(5);
-    expect(allMobile).toHaveLength(38);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(38);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(37);
+    expect(allMobile).toHaveLength(39);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(39);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(38);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {
