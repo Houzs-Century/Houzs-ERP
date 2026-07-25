@@ -22,11 +22,16 @@ import { isDirectorUser, isSalesUser } from "../services/pmsAccess";
  * with type chips and bold the matched keyword.
  *
  * Sources:
- *   - project      (public.projects)              — env.DB
- *   - assr_case    (public.assr_cases)            — env.DB
- *   - user         (public.users)                 — env.DB
- *   - sales_order  (scm.mfg_sales_orders)         — Supabase (scm schema)
- *   - product      (scm.mfg_products)             — Supabase (scm schema)
+ *   - project          (public.projects)              — env.DB
+ *   - assr_case        (public.assr_cases)            — env.DB
+ *   - user             (public.users)                 — env.DB
+ *   - sales_order      (scm.mfg_sales_orders)         — Supabase (scm schema)
+ *   - product          (scm.mfg_products)             — Supabase (scm schema)
+ *   - purchase_order   (scm.purchase_orders)          — Supabase (scm schema)
+ *   - grn              (scm.grns)                      — Supabase (scm schema)
+ *   - delivery_order   (scm.delivery_orders)          — Supabase (scm schema)
+ *   - sales_invoice    (scm.sales_invoices)           — Supabase (scm schema)
+ *   - purchase_invoice (scm.purchase_invoices)        — Supabase (scm schema)
  *
  * The public-schema sources use LIKE (rewritten to ILIKE + Postgres `$n`
  * by the d1-compat shim). The scm-schema sources talk to the SAME
@@ -50,7 +55,17 @@ const app = new Hono<{ Bindings: Env }>();
 const PER_SOURCE_LIMIT = 6;
 
 interface Hit {
-  type: "project" | "assr_case" | "user" | "sales_order" | "product";
+  type:
+    | "project"
+    | "assr_case"
+    | "user"
+    | "sales_order"
+    | "product"
+    | "purchase_order"
+    | "grn"
+    | "delivery_order"
+    | "sales_invoice"
+    | "purchase_invoice";
   id: string | number;       // primary key for deep-link
   title: string;             // headline
   subtitle?: string | null;  // contextual line
@@ -214,11 +229,21 @@ app.get("/", async (c) => {
 });
 
 /**
- * Append Sales Order + Product hits from the scm schema. Never throws — a
- * missing Supabase config or a PostgREST error just yields zero SCM hits so
- * the public-schema search still returns. The `.or(...)` free-text is passed
- * through escapeForOr() so a term with PostgREST grammar chars (`,(){}`) can't
- * corrupt the filter.
+ * Append the scm-schema hits: Sales Order, Product, and the five
+ * procurement/fulfilment DOCUMENTS a real ERP expects Cmd+K to reach directly —
+ * Purchase Order, GRN, Delivery Order, Sales Invoice, Purchase Invoice.
+ *
+ * Never throws — a missing Supabase config or a PostgREST error just yields zero
+ * SCM hits so the public-schema search still returns. Each `.or(...)` free-text
+ * is passed through escapeForOr() (via searchPattern) so a term with PostgREST
+ * grammar chars (`,(){}`) can't corrupt the filter.
+ *
+ * Every doc source matches ONLY its base-table text columns — supplier name and
+ * the PO/GRN source refs are embedded FK resources (not base columns) and so are
+ * ilike-safe to SELECT for display but not to filter, exactly as each list route
+ * documents. All five are per-company documents, scoped through the SAME
+ * scopeToCompany helper as Sales Orders / Products, and deep-link to their detail
+ * route by primary-key id (the routes are /scm/<doc>/:id).
  */
 async function appendScmHits(
   c: CompanyScopeCtx,
@@ -255,12 +280,67 @@ async function appendScmHits(
     .eq("status", "ACTIVE")
     .or(`code.ilike.${wildcard},name.ilike.${wildcard},description.ilike.${wildcard}`);
 
-  const [soRes, prodRes] = await Promise.allSettled([
+  // ── Procurement / fulfilment documents ──────────────────────
+  // Each matches the SAME base-table text columns its own list route searches
+  // (supplier name / PO / GRN refs are embedded FK resources — SELECTed for
+  // display, not filtered). supplier(name) rides the SELECT for the subtitle.
+  const poQuery = sb
+    .from("purchase_orders")
+    .select("id, po_number, po_date, notes, supplier:suppliers(name)")
+    .or(`po_number.ilike.${wildcard},notes.ilike.${wildcard}`);
+  const grnQuery = sb
+    .from("grns")
+    .select(
+      "id, grn_number, received_at, delivery_note_ref, " +
+        "supplier:suppliers(name), purchase_order:purchase_orders(po_number)"
+    )
+    .or(
+      `grn_number.ilike.${wildcard},delivery_note_ref.ilike.${wildcard},` +
+        `notes.ilike.${wildcard}`
+    );
+  const doQuery = sb
+    .from("delivery_orders")
+    .select("id, do_number, do_date, debtor_name, so_doc_no, ref")
+    .or(
+      `do_number.ilike.${wildcard},so_doc_no.ilike.${wildcard},` +
+        `debtor_name.ilike.${wildcard},ref.ilike.${wildcard}`
+    );
+  const siQuery = sb
+    .from("sales_invoices")
+    .select("id, invoice_number, invoice_date, debtor_name, so_doc_no, ref")
+    .or(
+      `invoice_number.ilike.${wildcard},so_doc_no.ilike.${wildcard},` +
+        `debtor_name.ilike.${wildcard},ref.ilike.${wildcard}`
+    );
+  const piQuery = sb
+    .from("purchase_invoices")
+    .select("id, invoice_number, invoice_date, supplier_invoice_ref, supplier:suppliers(name)")
+    .or(
+      `invoice_number.ilike.${wildcard},supplier_invoice_ref.ilike.${wildcard},` +
+        `notes.ilike.${wildcard}`
+    );
+
+  const [soRes, prodRes, poRes, grnRes, doRes, siRes, piRes] = await Promise.allSettled([
     scopeToCompany(soQuery, c)
       .order("so_date", { ascending: false })
       .limit(PER_SOURCE_LIMIT),
     scopeToCompany(prodQuery, c)
       .order("code", { ascending: true })
+      .limit(PER_SOURCE_LIMIT),
+    scopeToCompany(poQuery, c)
+      .order("po_date", { ascending: false })
+      .limit(PER_SOURCE_LIMIT),
+    scopeToCompany(grnQuery, c)
+      .order("received_at", { ascending: false })
+      .limit(PER_SOURCE_LIMIT),
+    scopeToCompany(doQuery, c)
+      .order("do_date", { ascending: false })
+      .limit(PER_SOURCE_LIMIT),
+    scopeToCompany(siQuery, c)
+      .order("invoice_date", { ascending: false })
+      .limit(PER_SOURCE_LIMIT),
+    scopeToCompany(piQuery, c)
+      .order("invoice_date", { ascending: false })
       .limit(PER_SOURCE_LIMIT),
   ]);
 
@@ -298,6 +378,111 @@ async function appendScmHits(
       });
     }
   }
+
+  // Purchase Orders — supplier(name) embed drives the subtitle.
+  if (poRes.status === "fulfilled" && !poRes.value.error) {
+    for (const r of (poRes.value.data ?? []) as unknown as Array<Record<string, unknown>>) {
+      const id = str(r.id);
+      const docNo = str(r.po_number);
+      if (!id || !docNo) continue;
+      hits.push({
+        type: "purchase_order",
+        id,
+        title: docNo,
+        subtitle: [embedField(r.supplier, "name"), str(r.notes)].filter(Boolean).join(" · "),
+        date: str(r.po_date),
+        link: `/scm/purchase-orders/${encodeURIComponent(id)}`,
+      });
+    }
+  }
+
+  // GRNs — supplier + source PO number make the subtitle.
+  if (grnRes.status === "fulfilled" && !grnRes.value.error) {
+    for (const r of (grnRes.value.data ?? []) as unknown as Array<Record<string, unknown>>) {
+      const id = str(r.id);
+      const docNo = str(r.grn_number);
+      if (!id || !docNo) continue;
+      const poNo = embedField(r.purchase_order, "po_number");
+      hits.push({
+        type: "grn",
+        id,
+        title: docNo,
+        subtitle:
+          [embedField(r.supplier, "name"), poNo ? `PO ${poNo}` : null, str(r.delivery_note_ref)]
+            .filter(Boolean)
+            .join(" · "),
+        date: str(r.received_at),
+        link: `/scm/grns/${encodeURIComponent(id)}`,
+      });
+    }
+  }
+
+  // Delivery Orders — customer + source SO ref.
+  if (doRes.status === "fulfilled" && !doRes.value.error) {
+    for (const r of (doRes.value.data ?? []) as Array<Record<string, unknown>>) {
+      const id = str(r.id);
+      const docNo = str(r.do_number);
+      if (!id || !docNo) continue;
+      const soNo = str(r.so_doc_no);
+      hits.push({
+        type: "delivery_order",
+        id,
+        title: docNo,
+        subtitle:
+          [str(r.debtor_name), soNo ? `SO ${soNo}` : null, str(r.ref)].filter(Boolean).join(" · "),
+        date: str(r.do_date),
+        link: `/scm/delivery-orders/${encodeURIComponent(id)}`,
+      });
+    }
+  }
+
+  // Sales Invoices — customer + source SO ref.
+  if (siRes.status === "fulfilled" && !siRes.value.error) {
+    for (const r of (siRes.value.data ?? []) as Array<Record<string, unknown>>) {
+      const id = str(r.id);
+      const docNo = str(r.invoice_number);
+      if (!id || !docNo) continue;
+      const soNo = str(r.so_doc_no);
+      hits.push({
+        type: "sales_invoice",
+        id,
+        title: docNo,
+        subtitle:
+          [str(r.debtor_name), soNo ? `SO ${soNo}` : null, str(r.ref)].filter(Boolean).join(" · "),
+        date: str(r.invoice_date),
+        link: `/scm/sales-invoices/${encodeURIComponent(id)}`,
+      });
+    }
+  }
+
+  // Purchase Invoices — supplier + the supplier's own invoice ref.
+  if (piRes.status === "fulfilled" && !piRes.value.error) {
+    for (const r of (piRes.value.data ?? []) as unknown as Array<Record<string, unknown>>) {
+      const id = str(r.id);
+      const docNo = str(r.invoice_number);
+      if (!id || !docNo) continue;
+      hits.push({
+        type: "purchase_invoice",
+        id,
+        title: docNo,
+        subtitle:
+          [embedField(r.supplier, "name"), str(r.supplier_invoice_ref)]
+            .filter(Boolean)
+            .join(" · "),
+        date: str(r.invoice_date),
+        link: `/scm/purchase-invoices/${encodeURIComponent(id)}`,
+      });
+    }
+  }
+}
+
+// A to-one FK embed arrives as an object OR (Supabase typegen) a single-element
+// array; pull one string field out of whichever shape, null-safe throughout.
+function embedField(v: unknown, field: string): string | null {
+  if (v == null) return null;
+  const row = Array.isArray(v) ? v[0] : v;
+  if (row == null || typeof row !== "object") return null;
+  return str((row as Record<string, unknown>)[field]);
 }
 
 // pg driver camelCases result columns; dual-read camelCase ?? snake_case so a

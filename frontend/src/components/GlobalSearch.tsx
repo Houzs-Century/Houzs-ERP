@@ -21,6 +21,11 @@ import {
   ArrowDown,
   FileText,
   Package,
+  ShoppingCart,
+  PackageCheck,
+  Truck,
+  ReceiptText,
+  Receipt,
 } from "lucide-react";
 import { cn, formatDate } from "../lib/utils";
 import { HighlightedText } from "../lib/highlight";
@@ -410,6 +415,10 @@ function EmptyHelp() {
           Sales orders by SO no, customer, phone, PO, or ref
         </li>
         <li className="flex items-center gap-2">
+          <Truck size={12} className="text-primary/70" />
+          Purchase orders, GRNs, Delivery orders, Invoices by doc no, party, or ref
+        </li>
+        <li className="flex items-center gap-2">
           <Layers size={12} className="text-primary/70" />
           Projects by code, name, venue, organizer, or brand
         </li>
@@ -437,6 +446,11 @@ function groupHits(hits: SearchHit[]): Array<{
 }> {
   const order: SearchHitType[] = [
     "sales_order",
+    "purchase_order",
+    "grn",
+    "delivery_order",
+    "sales_invoice",
+    "purchase_invoice",
     "project",
     "assr_case",
     "product",
@@ -479,6 +493,31 @@ const TYPE_META: Record<
     label: "Sales Orders",
     icon: <FileText size={13} />,
     tile: "bg-primary/[.12] text-primary",
+  },
+  purchase_order: {
+    label: "Purchase Orders",
+    icon: <ShoppingCart size={13} />,
+    tile: "bg-[#B76B00]/[.14] text-[#B76B00]",
+  },
+  grn: {
+    label: "GRNs",
+    icon: <PackageCheck size={13} />,
+    tile: "bg-[#2F5D4F]/[.14] text-[#2F5D4F]",
+  },
+  delivery_order: {
+    label: "Delivery Orders",
+    icon: <Truck size={13} />,
+    tile: "bg-primary/[.12] text-primary",
+  },
+  sales_invoice: {
+    label: "Sales Invoices",
+    icon: <ReceiptText size={13} />,
+    tile: "bg-primary/[.12] text-primary",
+  },
+  purchase_invoice: {
+    label: "Purchase Invoices",
+    icon: <Receipt size={13} />,
+    tile: "bg-[#B76B00]/[.14] text-[#B76B00]",
   },
   project: {
     label: "Projects",
