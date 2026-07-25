@@ -30,7 +30,7 @@ import {
   type AgentFamily,
   autoApplyConfigProposals,
   isAgentPaused,
-  isAutoApproveOn,
+  effectiveStage,
   isKillSwitchOn,
   llmKeyIfBudgetAllows,
   mytDate,
@@ -293,7 +293,8 @@ export async function executeAgentTask(
       llmKey,
       addTokens: (i, o) => run.addTokens(i, o),
     });
-    if (await isAutoApproveOn(db, reg.family)) {
+    const cfgStage = await effectiveStage(db, reg.family);
+    if (cfgStage >= 2) {
       /* Owner decision "B" (2026-07-18): every family's config self-approval goes
          through governance. auto_approve on = Stage 2; data-quality is asserted
          GREEN here (a real G/A/R signal per family is a later step, as on the
@@ -303,7 +304,7 @@ export async function executeAgentTask(
       /* The REAL data-quality signal now (was hard-coded GREEN, which made the
          §10.2 gate inert). Computed from this family's own run history. */
       const dq = await familyDataQuality(db, reg.task, reg.cadence.minGapHours);
-      const gate = canSelfTuneConfig({ stage: 2, dataQuality: dq.status });
+      const gate = canSelfTuneConfig({ stage: cfgStage, dataQuality: dq.status });
       if (gate.ok) {
         const params = await autoApplyConfigProposals(db, reg.family, "AGENT_AUTO").catch(
           () => 0,

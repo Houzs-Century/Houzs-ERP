@@ -51,6 +51,9 @@ interface AgentCard {
   live: boolean;
   paused: boolean;
   autoApprove: boolean;
+  /** Stored autonomy dial 1/2/3, and the per-agent ceiling it can't exceed. */
+  stage: number;
+  maxStage: number;
   tasks: { agent: string; nextRun: string; lastRun: RunRow | null }[];
   today: { runs: number };
   month: { runs: number; tokensIn: number; tokensOut: number; estCostMyr: number };
@@ -319,11 +322,11 @@ export function Agents() {
                       paused ? `${f.label} paused` : `${f.label} resumed`,
                     )
                   }
-                  onGate={(autoApprove) =>
+                  onGate={(stage) =>
                     act(
                       `gate:${f.id}`,
-                      () => api.post("/api/agents/gate", { agent: f.id, autoApprove }),
-                      `${f.label} auto-approve ${autoApprove ? "on" : "off"}`,
+                      () => api.post("/api/agents/gate", { agent: f.id, stage }),
+                      `${f.label} autonomy stage ${stage}`,
                     )
                   }
                   onRun={() =>
@@ -395,12 +398,13 @@ function FamilyTile({
   busy: string | null;
   onSelect: () => void;
   onPause: (paused: boolean) => void;
-  onGate: (autoApprove: boolean) => void;
+  onGate: (stage: number) => void;
   onRun: () => void;
 }) {
   const Icon = meta.icon;
   const paused = card?.paused === true;
-  const auto = card?.autoApprove === true;
+  const stage = card?.stage ?? 1;
+  const maxStage = card?.maxStage ?? 2;
   const dot = paused ? "bg-warning-text" : card?.live ? "bg-synced" : "bg-ink-muted";
   const last = card?.tasks?.[0]?.lastRun ?? null;
   const pct = Math.min(100, Math.round(usage?.pctOfBudget ?? 0));
@@ -425,9 +429,9 @@ function FamilyTile({
         <span className={cn("inline-block h-2 w-2 rounded-full", dot)} />
         <Icon size={16} className="text-ink-secondary" />
         <span className="text-[13px] font-semibold text-ink">{meta.label}</span>
-        {auto && (
+        {stage >= 2 && (
           <Badge tone="accent" caseless className="ml-auto">
-            Auto
+            {stage >= 3 ? "Full-auto" : "Auto-tune"}
           </Badge>
         )}
       </div>
@@ -459,13 +463,37 @@ function FamilyTile({
           onClick={() => onPause(!paused)}
           disabled={busy === `pause:${meta.id}`}
         />
-        <MiniBtn
-          label="Auto"
-          icon={<Sparkles size={13} />}
-          active={auto}
-          onClick={() => onGate(!auto)}
-          disabled={busy === `gate:${meta.id}`}
-        />
+        <div className="inline-flex overflow-hidden rounded-md border border-border" role="group" aria-label="Autonomy stage">
+          {[1, 2, 3].map((s) => {
+            const over = s > maxStage;
+            const on = stage === s;
+            return (
+              <button
+                key={s}
+                type="button"
+                onClick={() => !over && onGate(s)}
+                disabled={over || busy === `gate:${meta.id}`}
+                title={
+                  over
+                    ? "Above this agent's ceiling"
+                    : s === 1
+                      ? "Propose only — a human approves"
+                      : s === 2
+                        ? "Auto-tune config + self-approve reversible actions within policy"
+                        : "Full auto (closed-loop)"
+                }
+                className={cn(
+                  "px-2 py-1 text-[11px] font-medium",
+                  on ? "bg-primary text-white" : "bg-surface text-ink-secondary hover:bg-surface-dim",
+                  over ? "cursor-not-allowed opacity-35" : "",
+                  s > 1 ? "border-l border-border" : "",
+                )}
+              >
+                {`S${s}`}
+              </button>
+            );
+          })}
+        </div>
         <MiniBtn
           label="Run now"
           icon={<Play size={13} />}

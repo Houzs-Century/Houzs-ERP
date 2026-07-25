@@ -226,6 +226,9 @@ export async function executeReorderProposal(
 export async function autoApproveReorderProposals(
   env: Env,
   decidedBy: string,
+  // The stored autonomy stage (clamped upstream to PROCUREMENT's ceiling of 2).
+  // Threaded into canSelfApprove instead of a hardcoded 2 so the dial governs it.
+  reqStage = 2,
 ): Promise<{ approved: number; notes: string[]; errors: string[] }> {
   const db = env.DB;
   const out = { approved: 0, notes: [] as string[], errors: [] as string[] };
@@ -278,7 +281,7 @@ export async function autoApproveReorderProposals(
     const gate = canSelfApprove({
       agent: 'HZS-REP-004',
       decisionClass: 'EXTERNAL_PO',
-      stage: 2,
+      stage: reqStage as 1 | 2 | 3,
       dataQuality: dq.status,
       valueProxy: reorderUnits(row.payload),
       limit: unitLimit,

@@ -263,12 +263,22 @@ interface ControlRow {
   agent: string;
   paused: number | string | null;
   auto_approve?: number | string | null;
+  stage?: number | string | null;
+  max_stage?: number | string | null;
   updated_at?: string | null;
   // Defensive dual-key (HOOKKA read-gotcha; harmless when the driver returns
   // snake_case as-is, which Houzs's pg.ts does).
   autoApprove?: number | string | null;
+  maxStage?: number | string | null;
   updatedAt?: string | null;
 }
+
+/** The stored autonomy dial position (mig 0199): 1 propose-only / 2 auto-tune +
+ *  self-approve reversible actions within policy / 3 full-auto. Same values as
+ *  governance's AutonomyStage. */
+type Stage = 1 | 2 | 3;
+const clampStage = (n: number, dflt: Stage): Stage =>
+  Number.isFinite(n) && n >= 1 && n <= 3 ? (Math.round(n) as Stage) : dflt;
 
 /**
  * True when the agent family OR the global 'ALL' row is paused. Fails OPEN
@@ -303,19 +313,30 @@ export async function isAutoApproveOn(
   db: D1Database,
   family: AgentFamily,
 ): Promise<boolean> {
+  // Back-compat shim over the stored stage: auto-approve == stage >= 2, after the
+  // pause short-circuit. Callers (agent-scheduler, agents/index) are unchanged.
+  if (await isAgentPaused(db, family)) return false;
+  return (await effectiveStage(db, family)) >= 2;
+}
+
+/**
+ * The stored autonomy stage for a family, clamped to its per-family ceiling
+ * (max_stage). Fails CLOSED to Stage 1 (propose-only) on any error or missing
+ * row — autonomy must never rise by accident (same posture as isAutoApproveOn).
+ * The ceiling is written only by migration, so the dial can never exceed it.
+ */
+export async function effectiveStage(db: D1Database, family: AgentFamily): Promise<Stage> {
   try {
-    const res = await db
-      .prepare(
-        "SELECT agent, paused, auto_approve FROM agent_controls WHERE agent IN ('ALL', ?)",
-      )
+    const r = await db
+      .prepare("SELECT stage, max_stage FROM agent_controls WHERE agent = ?")
       .bind(family)
-      .all<ControlRow>();
-    const rows = res.results ?? [];
-    if (rows.some((r) => Number(r.paused) === 1)) return false;
-    const fam = rows.find((r) => r.agent === family);
-    return Number(fam?.autoApprove ?? fam?.auto_approve) === 1;
+      .first<ControlRow>();
+    if (!r) return 1;
+    const ceil = clampStage(Number(r.max_stage ?? r.maxStage), 2);
+    const stage = clampStage(Number(r.stage), 1);
+    return Math.min(stage, ceil) as Stage;
   } catch {
-    return false;
+    return 1;
   }
 }
 
@@ -335,6 +356,10 @@ export interface AgentControlState {
   agent: string;
   paused: boolean;
   autoApprove: boolean;
+  /** Stored autonomy dial 1/2/3 (mig 0199). */
+  stage: number;
+  /** Per-family ceiling — the dial cannot exceed it (migration-set only). */
+  maxStage: number;
   updatedAt: string | null;
 }
 
@@ -346,15 +371,20 @@ export async function listAgentControls(
     agent: r.agent,
     paused: Number(r.paused) === 1,
     autoApprove: Number(r.autoApprove ?? r.auto_approve) === 1,
+    stage: clampStage(Number(r.stage), 1),
+    maxStage: clampStage(Number(r.max_stage ?? r.maxStage), 2),
     updatedAt: (r.updatedAt ?? r.updated_at) ?? null,
   }));
 }
 
-/** Upsert one control row (only the provided flags change). */
+/** Upsert one control row (only the provided flags change). The autonomy dial is
+ *  `stage` (1/2/3); `autoApprove` is the legacy flag, kept in lockstep with
+ *  stage>=2. The per-family ceiling (max_stage) is migration-set only and is
+ *  never raised here — a requested stage above it is clamped down. */
 export async function setAgentControl(
   db: D1Database,
   agent: AgentFamily | "ALL",
-  patch: { paused?: boolean; autoApprove?: boolean },
+  patch: { paused?: boolean; autoApprove?: boolean; stage?: Stage },
 ): Promise<void> {
   const nowIso = new Date().toISOString();
   const existing = await db
@@ -363,21 +393,27 @@ export async function setAgentControl(
     .first<ControlRow>();
   const paused =
     patch.paused ?? (existing ? Number(existing.paused) === 1 : false);
-  const autoApprove =
-    patch.autoApprove ??
-    (existing
-      ? Number(existing.autoApprove ?? existing.auto_approve) === 1
-      : false);
+  const ceil = clampStage(Number(existing?.max_stage ?? existing?.maxStage), 2);
+  // Resolve the target stage: an explicit stage wins; else legacy autoApprove
+  // maps (on->2, off->1); else keep the stored stage. Then clamp to the ceiling.
+  const prevStage = existing ? clampStage(Number(existing.stage), 1) : 1;
+  let stage: number;
+  if (patch.stage != null) stage = patch.stage;
+  else if (patch.autoApprove != null) stage = patch.autoApprove ? 2 : 1;
+  else stage = prevStage;
+  stage = Math.min(Math.max(1, stage), ceil);
+  const autoApprove = stage >= 2;
   await db
     .prepare(
-      `INSERT INTO agent_controls (agent, paused, auto_approve, updated_at)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO agent_controls (agent, paused, auto_approve, stage, updated_at)
+       VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(agent) DO UPDATE SET
          paused = excluded.paused,
          auto_approve = excluded.auto_approve,
+         stage = excluded.stage,
          updated_at = excluded.updated_at`,
     )
-    .bind(agent, paused ? 1 : 0, autoApprove ? 1 : 0, nowIso)
+    .bind(agent, paused ? 1 : 0, autoApprove ? 1 : 0, stage, nowIso)
     .run();
 }
 

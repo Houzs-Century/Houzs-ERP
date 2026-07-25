@@ -23,9 +23,9 @@ Houzs's agent framework was ported FROM Hookka (see `services/agent-console.ts` 
 |---|---|---|
 | #27 teach-in-chat backend | **DONE, verified** | 14 unit tests + backend typecheck clean; `operating-spec §2.1` added |
 | #28 floating chat widget | **DONE, verified (desktop + mobile)** | frontend typecheck + `npm run build` clean |
-| #29 chat history | **backend + session-threading DONE, verified**; browsable history-list UI pending | migration 0198 + `assistant-history.ts` + 3 endpoints + hook threading; typecheck (be+fe) clean |
-| #30 file upload (img/PDF) | spec ready | below |
-| #31 autonomy dial | spec ready | below |
+| #29 chat history | **DONE, verified** (backend + history-list UI, desktop + mobile) | migration 0198 + `assistant-history.ts` + 3 endpoints + hook threading + list UI |
+| #30 file upload (img/PDF) | **DONE, verified** | `vision-blocks.ts` + agent-brain contentBlocks + assistant file path + `/chat` multipart + attach UI both surfaces; video rejected |
+| #31 autonomy dial | **DONE, verified** | migration 0199 (stage + max_stage) + `effectiveStage` + callers + `/gate` stage + `Agents.tsx` S1/S2/S3; 47 governance/teach tests pass |
 | #32 assistant tool-loop | design agent running | add spec when it returns |
 | #33 PO agent 4 phases | queued | extend `services/agents/procurement-agent.ts` |
 | #34 orchestrator / GCOA + A2A | queued | `operating-spec §2/§9.3` |
