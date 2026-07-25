@@ -20,6 +20,7 @@ import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
+import { findOverDeliveredSoItems } from '../lib/do-over-delivery';
 import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
@@ -2305,22 +2306,43 @@ deliveryOrdersMfg.get('/', async (c) => {
      that are downstream-locked (mirrors computeGrnFlags in routes/grns.ts). */
   const rows = (data ?? []) as unknown as Array<{ id: string } & Record<string, unknown>>;
   const childIds = new Set<string>();
+  /* DISPLAY-ONLY transfer-to columns (audit R8): the SI number(s) each DO was
+     invoiced into and the DR number(s) returned against it. Derived from the
+     SAME batched child reads that already stamp has_children — one added column
+     in each select, no extra round-trip, and never touches DO status/lifecycle
+     (which stays computeDoLifecycle below). */
+  const invoicedSiByDo = new Map<string, Set<string>>();
+  const returnedDrByDo = new Map<string, Set<string>>();
   let lifecycleByDo = new Map<string, DoLifecycle>();
   if (rows.length > 0) {
     const ids = rows.map((r) => r.id);
     const [drRes, siRes, lc] = await Promise.all([
-      sb.from('delivery_returns').select('delivery_order_id').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
-      sb.from('sales_invoices').select('delivery_order_id').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
+      sb.from('delivery_returns').select('delivery_order_id, return_number').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
+      sb.from('sales_invoices').select('delivery_order_id, invoice_number').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
       computeDoLifecycle(sb, ids),
     ]);
     lifecycleByDo = lc;
-    for (const d of ((drRes.data ?? []) as Array<{ delivery_order_id: string | null }>)) {
-      if (d.delivery_order_id) childIds.add(d.delivery_order_id);
+    for (const d of ((drRes.data ?? []) as Array<{ delivery_order_id: string | null; return_number: string | null }>)) {
+      if (!d.delivery_order_id) continue;
+      childIds.add(d.delivery_order_id);
+      if (d.return_number) {
+        const set = returnedDrByDo.get(d.delivery_order_id) ?? new Set<string>();
+        set.add(d.return_number);
+        returnedDrByDo.set(d.delivery_order_id, set);
+      }
     }
-    for (const s of ((siRes.data ?? []) as Array<{ delivery_order_id: string | null }>)) {
-      if (s.delivery_order_id) childIds.add(s.delivery_order_id);
+    for (const s of ((siRes.data ?? []) as Array<{ delivery_order_id: string | null; invoice_number: string | null }>)) {
+      if (!s.delivery_order_id) continue;
+      childIds.add(s.delivery_order_id);
+      if (s.invoice_number) {
+        const set = invoicedSiByDo.get(s.delivery_order_id) ?? new Set<string>();
+        set.add(s.invoice_number);
+        invoicedSiByDo.set(s.delivery_order_id, set);
+      }
     }
   }
+  const sortedNos = (set: Set<string> | undefined): string[] =>
+    set ? [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
   /* Linked-SO Processing date (mfg_sales_orders.internal_expected_dd — the one
      true user date since the legacy processing_date column was dropped, mig
      0189). The DO quick-view drawer shows it next to the DO's own delivery
@@ -2346,6 +2368,9 @@ deliveryOrdersMfg.get('/', async (c) => {
       has_children: childIds.has(r.id),
       lifecycle_state: lifecycleByDo.get(r.id) ?? 'shipped',
       so_internal_expected_dd: soProcByDoc.get((r.so_doc_no as string | null) ?? '') ?? null,
+      // Transfer-to (display-only, audit R8): SI(s) invoiced / DR(s) returned.
+      invoiced_si_nos: sortedNos(invoicedSiByDo.get(r.id)),
+      return_nos: sortedNos(returnedDrByDo.get(r.id)),
     };
     if (!showFinance) for (const k of DO_FINANCE_KEYS) delete row[k];
     return row;
@@ -4267,6 +4292,33 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      an existing POD. */
   if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
   if (typeof body.podKey === 'string' && body.podKey) ts.pod_r2_key = body.podKey;
+
+  /* Over-delivery guard on FIRST ship (pre-ship -> shipped). The create path
+     caps this (Audit gap #3, the asDraft-gated recheck) but a DRAFT DO SKIPS
+     that cap and can land its full qty; the DRAFT->shipped confirm below is the
+     single point where a draft's stock actually leaves, so the SAME cap is
+     re-checked HERE, before the flip and the OUT. Reject 409 if any linked SO
+     line would ship past its live remaining. Ad-hoc (unlinked) lines stay
+     uncapped, exactly as at create. Read-only: no flip, no stock moved yet. */
+  if (SHIPPED_STATES.includes(body.status) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
+    const { data: shipLines } = await sb.from('delivery_order_items')
+      .select('so_item_id, qty').eq('delivery_order_id', id);
+    const linkedQty = new Map<string, number>();
+    for (const l of (shipLines ?? []) as Array<{ so_item_id: string | null; qty: number }>) {
+      if (l.so_item_id) linkedQty.set(l.so_item_id, (linkedQty.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
+    }
+    if (linkedQty.size > 0) {
+      const remaining = await soRemainingByItemId(sb, [...linkedQty.keys()]);
+      const over = findOverDeliveredSoItems(linkedQty, remaining);
+      if (over.length > 0) {
+        return c.json({
+          error: 'over_delivery',
+          message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.',
+          conflicts: over,
+        }, 409);
+      }
+    }
+  }
 
   /* Bug #3/#11 — ATOMIC cancel guard. The read-then-write above has a TOCTOU
      window: two concurrent cancels can both read a non-cancelled status and both

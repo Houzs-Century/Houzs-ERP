@@ -1,6 +1,12 @@
 import { useMemo, useState } from "react";
 import { useAmendments, type AmendmentRow } from "../vendor/scm/lib/so-amendment-queries";
-import { resolveStatusPill, statusLabel, type StatusTone } from "../vendor/scm/lib/status-pill";
+import {
+  simplifiedAmendmentPill,
+  amendmentBucketOf,
+  AMENDMENT_LIST_CHIPS,
+  amendmentBucketLabel,
+  type StatusTone,
+} from "../vendor/scm/lib/status-pill";
 import { formatDate } from "../lib/utils";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 import "./mobile.css";
@@ -21,17 +27,17 @@ import "./mobile.css";
  * surfaced on the SO detail's diff view.
  * ------------------------------------------------------------------ */
 
-// so_amendment_status values + chip order mirror desktop STATUS_CHIPS verbatim.
-const STATUS_CHIPS = ["all", "REQUESTED", "SUPPLIER_PENDING", "SO_APPROVED", "PO_APPROVED", "SENT", "REJECTED"] as const;
+// SIMPLIFIED status filter (owner 2026-07-24): Requested / Approved / All — same
+// as the desktop queue. The granular backend enum is collapsed via
+// amendmentBucketOf; the closed (REJECTED) rows are reached through "All".
+const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
-// Amendments still awaiting an action (everything but the terminal states) —
-// the header "N to action" count, matching the approved mockup.
-const IS_OPEN = (s: string) => s !== "SENT" && s !== "REJECTED";
+// Amendments still awaiting an action — the REQUESTED bucket (open / in-flight);
+// the header "N to action" count.
+const IS_OPEN = (s: string) => amendmentBucketOf(s) === "REQUESTED";
 
-// Canonical status TONE (vendor/scm/lib/status-pill.ts) → mobile .b-* badge
-// class, so the pill colour is driven by the same tone the desktop scm-v2 pill
-// uses (info=Requested, pending=Supplier Pending, progress=SO/PO Approved,
-// success=Sent, danger=Rejected). Mirrors MobileModuleList's TONE_BADGE_CLASS.
+// Simplified status TONE → mobile .b-* badge class (info=Requested,
+// success=Approved, danger=Rejected). Mirrors MobileModuleList's TONE_BADGE_CLASS.
 const TONE_BADGE_CLASS: Record<StatusTone, string> = {
   neutral: "b-grey",
   info: "b-brand",
@@ -42,7 +48,7 @@ const TONE_BADGE_CLASS: Record<StatusTone, string> = {
 };
 
 function AmendmentBadge({ status }: { status: string }) {
-  const { label, tone } = resolveStatusPill("soAmendment", status);
+  const { label, tone } = simplifiedAmendmentPill(status);
   return <span className={`badge ${TONE_BADGE_CLASS[tone]}`}>{label}</span>;
 }
 
@@ -60,7 +66,7 @@ export function MobileAmendments({
 
   const allRows = useMemo<AmendmentRow[]>(() => data?.amendments ?? [], [data]);
   const rows = useMemo<AmendmentRow[]>(
-    () => (chip === "all" ? allRows : allRows.filter((a) => a.status === chip)),
+    () => (chip === "all" ? allRows : allRows.filter((a) => amendmentBucketOf(a.status) === chip)),
     [allRows, chip],
   );
   const openCount = useMemo(() => allRows.filter((a) => IS_OPEN(a.status)).length, [allRows]);
@@ -82,7 +88,7 @@ export function MobileAmendments({
         <div className="chips" style={{ marginTop: 11 }}>
           {STATUS_CHIPS.map((s) => (
             <button key={s} onClick={() => setChip(s)} className={chip === s ? "chip on" : "chip"}>
-              {s === "all" ? "All" : statusLabel("soAmendment", s)}
+              {amendmentBucketLabel(s)}
             </button>
           ))}
         </div>
@@ -126,7 +132,7 @@ export function MobileAmendments({
             {rows.length === 0 && (
               <div className="empty">
                 <div className="empty-t">
-                  {chip === "all" ? "No amendments yet." : `No ${statusLabel("soAmendment", chip).toLowerCase()} amendments.`}
+                  {chip === "all" ? "No amendments yet." : `No ${amendmentBucketLabel(chip).toLowerCase()} amendments.`}
                 </div>
                 <div className="empty-s">Raise one from a processing-locked Sales Order.</div>
               </div>

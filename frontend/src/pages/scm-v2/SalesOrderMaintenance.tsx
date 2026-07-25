@@ -702,7 +702,7 @@ const MaintenanceBody = ({ canEdit }: { canEdit: boolean }) => {
                                 return next;
                               });
                               const wh = (warehouses.data ?? []).find((w) => w.id === warehouseId);
-                              const wlabel = wh ? `${wh.code} · ${wh.name}` : 'Unassigned';
+                              const wlabel = wh ? wh.code : 'Unassigned';
                               upsert.mutate(
                                 { state: s.state, warehouseId, notes: current?.notes ?? null },
                                 {
@@ -721,7 +721,7 @@ const MaintenanceBody = ({ canEdit }: { canEdit: boolean }) => {
                           >
                             <option value="">— Unassigned —</option>
                             {sortByText((warehouses.data ?? []).filter((w) => w.is_active)).map((w) => (
-                              <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                              <option key={w.id} value={w.id}>{w.code}</option>
                             ))}
                           </select>
                         </td>
@@ -808,7 +808,7 @@ const MaintenanceBody = ({ canEdit }: { canEdit: boolean }) => {
             >
               <option value="">— Default warehouse (optional) —</option>
               {sortByText((warehouses.data ?? []).filter((w) => w.is_active)).map((w) => (
-                <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                <option key={w.id} value={w.id}>{w.code}</option>
               ))}
             </select>
             <Button
@@ -899,7 +899,7 @@ const MaintenanceBody = ({ canEdit }: { canEdit: boolean }) => {
                                     "— follow state (...)" decoration. */}
                                 <option value="">{stateWhLabel}</option>
                                 {sortByText((warehouses.data ?? []).filter((w) => w.is_active)).map((w) => (
-                                  <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                                  <option key={w.id} value={w.id}>{w.code}</option>
                                 ))}
                               </select>
                               {/* "Inherits:" hint dropped — commander

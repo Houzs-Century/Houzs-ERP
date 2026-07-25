@@ -49,6 +49,13 @@ const dm = (d: string | null | undefined): string => {
   return s === "—" ? "" : s;
 };
 
+// The phone surface intentionally lists only the record types it has a screen
+// for. The procurement/fulfilment documents (purchase_order / grn /
+// delivery_order / sales_invoice / purchase_invoice) are desktop Cmd+K sources —
+// the mobile shell has no detail screen to route them to yet, so they are left
+// out of TYPE_ORDER (and never rendered) rather than shown as dead taps. The
+// label/colour maps stay total over SearchHitType so the shared type can grow
+// without breaking this file.
 const TYPE_ORDER: SearchHitType[] = [
   "sales_order",
   "project",
@@ -58,6 +65,11 @@ const TYPE_ORDER: SearchHitType[] = [
 ];
 const TYPE_LABEL: Record<SearchHitType, string> = {
   sales_order: "Sales Orders",
+  purchase_order: "Purchase Orders",
+  grn: "GRNs",
+  delivery_order: "Delivery Orders",
+  sales_invoice: "Sales Invoices",
+  purchase_invoice: "Purchase Invoices",
   project: "Projects",
   assr_case: "Service Cases",
   product: "Products",
@@ -65,13 +77,18 @@ const TYPE_LABEL: Record<SearchHitType, string> = {
 };
 const TYPE_COLOR: Record<SearchHitType, string> = {
   sales_order: "#16695f",
+  purchase_order: "#b76b00",
+  grn: "#2f5d4f",
+  delivery_order: "#16695f",
+  sales_invoice: "#16695f",
+  purchase_invoice: "#b76b00",
   project: "#2f8a5b",
   assr_case: "#a16a2e",
   product: "#4b6b86",
   user: "#7a5c86",
 };
 
-function navFor(hit: SearchHit): SearchNav {
+function navFor(hit: SearchHit): SearchNav | null {
   switch (hit.type) {
     case "sales_order":
       return { kind: "sales_order", docNo: String(hit.id) };
@@ -85,6 +102,14 @@ function navFor(hit: SearchHit): SearchNav {
       return { kind: "product", id: String(hit.id) };
     case "user":
       return { kind: "user", id: String(hit.id) };
+    // SCM documents have no mobile screen yet (and are excluded from TYPE_ORDER,
+    // so they never render here) — no navigation intent to emit.
+    case "purchase_order":
+    case "grn":
+    case "delivery_order":
+    case "sales_invoice":
+    case "purchase_invoice":
+      return null;
   }
 }
 
@@ -181,7 +206,10 @@ export function MobileSearch({
                 <button
                   key={`${hit.type}-${hit.id}`}
                   className="card"
-                  onClick={() => onNavigate(navFor(hit))}
+                  onClick={() => {
+                    const nav = navFor(hit);
+                    if (nav) onNavigate(nav);
+                  }}
                   style={{ textAlign: "left", padding: "11px 13px", borderLeft: `4px solid ${TYPE_COLOR[hit.type]}`, cursor: "pointer", fontFamily: "inherit" }}
                 >
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>

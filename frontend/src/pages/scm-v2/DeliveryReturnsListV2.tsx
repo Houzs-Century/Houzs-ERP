@@ -61,6 +61,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -73,6 +74,9 @@ type DrRow = {
   return_number: string;
   do_doc_no: string | null;
   delivery_order_id: string | null;
+  /** Convert-from relation (display-only, audit R8): the Sales Order behind this
+   *  return's DO, server-resolved via delivery_order_id → delivery_orders. */
+  so_doc_no?: string | null;
   return_date: string;
   debtor_name: string;
   debtor_code: string | null;
@@ -404,27 +408,11 @@ function DetailDrawer({
   const totalCenti = row?.local_total_centi ?? 0;
 
   return (
-    <>
-      {/* Scrim — mobile only. On desktop the outer wrapper reflows via
-          md:pr-[540px] so the underlying content stays fully visible next
-          to the drawer; no need to dim it. */}
-      <div
-        onClick={onClose}
-        aria-hidden
-        className={cn(
-          "fixed inset-0 z-[90] bg-ink/40 backdrop-blur-[1px] transition-opacity duration-200 md:hidden",
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        )}
-      />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label={row ? `Delivery return ${row.return_number}` : "Delivery return details"}
-        className={cn(
-          "fixed right-0 top-0 z-[91] flex h-full w-full max-w-[520px] flex-col border-l border-border bg-surface shadow-slab transition-transform duration-200",
-          open ? "translate-x-0" : "translate-x-full"
-        )}
-      >
+    <ResizableDetailDrawer
+      open={open}
+      onClose={onClose}
+      ariaLabel={row ? `Delivery return ${row.return_number}` : "Delivery return details"}
+    >
         {row && st && (
           <>
             <div className="flex h-[60px] shrink-0 items-center gap-3 bg-sidebar px-5 text-sidebar-ink">
@@ -640,8 +628,7 @@ function DetailDrawer({
             </div>
           </>
         )}
-      </aside>
-    </>
+    </ResizableDetailDrawer>
   );
 }
 
@@ -1081,6 +1068,18 @@ export function DeliveryReturnsListV2() {
       getValue: (r) => r.do_doc_no ?? "",
       render: (r) => (
         <span className="font-mono text-[12px] text-ink-secondary">{doOf(r)}</span>
+      ),
+    },
+    {
+      /* Convert-from relation (audit R8): the Sales Order behind this return's
+         DO. Server-resolved (so_doc_no); mirrors the DO/SI lists' "From SO". */
+      key: "so_doc_no",
+      label: "From SO",
+      width: "128px",
+      disableSort: true,
+      getValue: (r) => r.so_doc_no ?? "",
+      render: (r) => (
+        <span className="font-mono text-[12px] text-ink-secondary">{r.so_doc_no || "—"}</span>
       ),
     },
     {

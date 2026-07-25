@@ -1,0 +1,40 @@
+name: DO integrity check (read-only)
+
+# Answers "is the same Sales Order delivered on two DOs, and is that why stock
+# is wrong?" without anyone opening a SQL console or handling the production
+# DSN. Actions already holds secrets.DATABASE_URL for the deploy, so the check
+# runs here. See backend/scripts/check-do-integrity.mjs for what it reports.
+#
+# Manual trigger only — it is a diagnostic question, not a gate, and must never
+# run on a schedule that would make a production DB read part of routine CI.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: do-integrity-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-do-integrity.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; mirror the soak-gate and
+          # deploy workflows so an IPv4-only pooler host resolves.
+          NODE_OPTIONS: --dns-result-order=ipv4first

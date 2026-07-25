@@ -16,16 +16,23 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fmtDateTime } from '@2990s/shared';
 import { useAmendments, type AmendmentRow } from '../../vendor/scm/lib/so-amendment-queries';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
-import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { statusLabel } from '../../vendor/scm/lib/status-pill';
+import { AmendmentStatusPill } from '../../vendor/scm/components/StatusPill';
+import {
+  simplifiedAmendmentPill,
+  amendmentBucketOf,
+  AMENDMENT_LIST_CHIPS,
+  amendmentBucketLabel,
+} from '../../vendor/scm/lib/status-pill';
 import { PageHeader } from '../../components/Layout';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { cn } from '../../lib/utils';
 
-// so_amendment_status values: REQUESTED / SUPPLIER_PENDING / SO_APPROVED /
-// PO_APPROVED / SENT / REJECTED. Colours + labels come from the canonical
-// lib/status-pill 'soAmendment' map via <StatusPill>.
-const STATUS_CHIPS = ['all', 'REQUESTED', 'SUPPLIER_PENDING', 'SO_APPROVED', 'PO_APPROVED', 'SENT', 'REJECTED'] as const;
+// SIMPLIFIED status filter (owner 2026-07-24): Requested / Approved / All only.
+// The backend so_amendment_status enum still carries the granular two-gate values
+// (SUPPLIER_PENDING / SO_APPROVED / PO_APPROVED / SENT) the 2990 mirror + the SO
+// detail stepper depend on — the queue just collapses them into the two buckets
+// via amendmentBucketOf, and reaches the closed (REJECTED) rows through "All".
+const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
 /* New unique storage key — NEVER reuse another list's key. */
 const AMENDMENT_LIST_STORAGE_KEY = 'so-amendment-list.layout.v1';
@@ -70,12 +77,12 @@ const buildAmendmentColumns = (
   },
   {
     key: 'status', label: 'Status', width: 150, sortable: true, groupable: true,
-    accessor: (a) => <StatusPill docType="soAmendment" status={a.status} />,
-    searchValue: (a) => statusLabel('soAmendment', a.status),
-    groupValue: (a) => statusLabel('soAmendment', a.status),
-    // accessor is a <StatusPill> JSX → export the plain status label text.
-    exportValue: (a) => statusLabel('soAmendment', a.status),
-    sortFn: (a, b) => a.status.localeCompare(b.status),
+    // SIMPLIFIED list pill — Requested / Approved / Rejected (see simplifiedAmendmentPill).
+    accessor: (a) => <AmendmentStatusPill status={a.status} />,
+    searchValue: (a) => simplifiedAmendmentPill(a.status).label,
+    groupValue: (a) => simplifiedAmendmentPill(a.status).label,
+    exportValue: (a) => simplifiedAmendmentPill(a.status).label,
+    sortFn: (a, b) => amendmentBucketOf(a.status).localeCompare(amendmentBucketOf(b.status)),
   },
   {
     key: 'created_at', label: 'Created', width: 160, sortable: true,
@@ -101,7 +108,7 @@ export const Amendments = () => {
 
   const allRows = useMemo<AmendmentRow[]>(() => (data?.amendments ?? []) as AmendmentRow[], [data]);
   const rows = useMemo<AmendmentRow[]>(
-    () => (statusChip === 'all' ? allRows : allRows.filter((a) => a.status === statusChip)),
+    () => (statusChip === 'all' ? allRows : allRows.filter((a) => amendmentBucketOf(a.status) === statusChip)),
     [allRows, statusChip],
   );
   // actorNameOf identity changes when the staff roster lands — rebuild so the
@@ -153,7 +160,7 @@ export const Amendments = () => {
                     : 'border-border bg-surface text-ink-secondary hover:border-primary/40 hover:text-primary',
                 )}
               >
-                {s === 'all' ? 'All' : statusLabel('soAmendment', s)}
+                {amendmentBucketLabel(s)}
               </button>
             );
           })}
@@ -170,9 +177,11 @@ export const Amendments = () => {
         groupBanner={false}
         /* Open on DOUBLE-click (mirrors the GRN / PO list). */
         onRowDoubleClick={(a) => openRow(a)}
-        /* Closed amendments (SENT / REJECTED) grey out so they read as dead
-           (mirrors the GRN list's cancelled/closed treatment). */
-        rowStyle={(a) => (a.status === 'REJECTED' || a.status === 'SENT')
+        /* Closed amendments (rejected / withdrawn) grey out so they read as dead
+           (mirrors the GRN list's cancelled/closed treatment). Under the
+           simplified buckets only REJECTED is dead — an applied (SENT) revision
+           now reads as Approved, not closed. */
+        rowStyle={(a) => amendmentBucketOf(a.status) === 'REJECTED'
           ? { opacity: 0.6, filter: 'grayscale(0.4)' }
           : undefined}
         isLoading={isLoading}

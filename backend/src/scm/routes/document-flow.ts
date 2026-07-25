@@ -80,6 +80,25 @@ const stripCompanyPrefix = (docNo: string): string => docNo.replace(/^\d+-/, '')
    escaped; the match is case-insensitive to mirror how numbers are written. */
 const DOC_TOKEN_CHAR = /[A-Za-z0-9-]/;
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/* EXTRACT the SO doc numbers a PO's "From SOs: …" note records — the reverse of
+   noteMentionsToken (membership) for callers that need the tokens themselves
+   (e.g. resolving a single PO's origin SO(s) without scanning every company SO).
+   Co-located here so the note FORMAT lives in exactly one place: the writer is
+   `From SOs: ${docNos.join(', ')}` (mfg-purchase-orders.ts), so we match that
+   leading label (case-insensitive, optional plural) and split the list on
+   commas. Tokens are the doc numbers verbatim (company prefix already stripped
+   by the writer); the caller VALIDATES them against real SOs by an equality
+   lookup, which is what enforces whole-token matching — a split token "SO-1"
+   can only ever equal the SO "SO-1", never "SO-10". Returns [] for a note with
+   no "From SOs:" label (a plain free-text note). */
+export const parseFromSosNote = (note: string | null | undefined): string[] => {
+  if (!note) return [];
+  const m = /^\s*From SOs?:\s*(.+)$/im.exec(String(note).trim());
+  if (!m) return [];
+  return [...new Set(m[1].split(',').map((s) => s.trim()).filter(Boolean))];
+};
+
 export const noteMentionsToken = (note: string, token: string): boolean => {
   if (!note || !token) return false;
   // (?<![A-Za-z0-9-]) TOKEN (?![A-Za-z0-9-]) — TOKEN not adjacent to another
@@ -796,7 +815,33 @@ documentFlow.get('/:type/:id', async (c) => {
     createdAt: a.created_at ?? null,
   }));
 
-  return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments });
+  // ── 11. PO amendments (revision requests) ────────────────────────────────
+  // The PO-side sibling of the SO amendment side list above (mig 0192). A PO
+  // amendment IS its own document now (po_amendments) — not the PO leg of an SO
+  // amendment — so it branches off the Purchase Order node(s), each clickable to
+  // /scm/po-amendments/:id. Keyed by po_id against the PO nodes already in the
+  // graph, which were themselves gathered from company-scoped reads, so this can
+  // only ever reach this company's amendments (same scoping argument as the SO
+  // block). Returned as a SEPARATE `poAmendments` array so the SO amendment
+  // shape is untouched.
+  const poIdsInGraph = [...nodes.values()].filter((n) => n.type === 'po').map((n) => n.id);
+  let poAmendments: Array<{ id: string; poId: string; poNumber: string; amendmentNo: number | string; status: string | null; createdAt: string | null }> = [];
+  if (poIdsInGraph.length > 0) {
+    const { data: poAmendRows } = await sb.from('po_amendments')
+      .select('id, po_id, po_number, amendment_no, status, created_at')
+      .in('po_id', poIdsInGraph)
+      .order('amendment_no', { ascending: true });
+    poAmendments = ((poAmendRows ?? []) as any[]).map((a) => ({
+      id: String(a.id),
+      poId: String(a.po_id),
+      poNumber: a.po_number,
+      amendmentNo: a.amendment_no,
+      status: a.status ?? null,
+      createdAt: a.created_at ?? null,
+    }));
+  }
+
+  return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments, poAmendments });
 });
 
 export default documentFlow;

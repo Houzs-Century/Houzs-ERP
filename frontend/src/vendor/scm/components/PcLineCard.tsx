@@ -396,7 +396,7 @@ export const PcLineCard = ({
           >
             <option value="">— Inherit Purchase Location —</option>
             {warehouses.map((w) => (
-              <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+              <option key={w.id} value={w.id}>{w.code}</option>
             ))}
           </select>
         </label>

@@ -1332,7 +1332,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     endpoint: "/inventory?showAll=true",
     listKey: "balances",
     primary: (r) => lineIdentity({ code: r.product_code, description: r.product_name }).primary,
-    secondary: (r) => join(r.product_code, r.category, r.warehouse_name),
+    secondary: (r) => join(r.product_code, r.category, r.warehouse_code ?? r.warehouse_name),
     right: (r) => (r.qty == null ? "" : `${r.qty}`),
     search: (r) => join(r.product_name, r.product_code, r.category, r.warehouse_name),
     pill: (r) => stockLevel(pick(r, "qty")),

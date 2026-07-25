@@ -36,11 +36,21 @@ export type FlowAmendment = {
   status: string | null;
   createdAt: string | null;
 };
+// PO amendments (mig 0192) branch off the Purchase Order node — the PO-side
+// sibling of FlowAmendment, each clickable to /scm/po-amendments/:id.
+export type PoFlowAmendment = {
+  id: string;
+  poId: string;
+  poNumber: string;
+  amendmentNo: number | string;
+  status: string | null;
+  createdAt: string | null;
+};
 
 export const useDocumentFlow = (type: FlowNodeType | null, id: string | null) =>
   useQuery({
     queryKey: ['document-flow', type, id],
-    queryFn: () => authedFetch<{ nodes: FlowNode[]; edges: FlowEdge[]; rootSos: string[]; amendments?: FlowAmendment[] }>(
+    queryFn: () => authedFetch<{ nodes: FlowNode[]; edges: FlowEdge[]; rootSos: string[]; amendments?: FlowAmendment[]; poAmendments?: PoFlowAmendment[] }>(
       `/document-flow/${type}/${encodeURIComponent(id!)}`,
     ),
     enabled: Boolean(type && id),
@@ -48,23 +58,19 @@ export const useDocumentFlow = (type: FlowNodeType | null, id: string | null) =>
     retry: retryUnlessClientError,
   });
 
-/* ── Advisory floating "assigned Sales Order" for a purchase document ──────
-   The REVERSE of the SO→PO MRP coverage: which outstanding Sales-Order line(s)
-   a PO / GRN / PI's supply is currently floating-assigned to (+ that SO line's
-   delivery date), matched BY SKU. ADVISORY, NOT A BINDING — a pooled, read-time
-   allocation that shifts and evaporates on delivery (the owner raises POs
-   against the PO, not the SO). Backend: GET /po-so-coverage/:type/:id. */
-export type PoCoverageAssignment = {
-  soItemId: string;
-  soDocNo: string;
-  deliveryDate: string | null;
-  debtorName: string | null;
-  warehouseName: string | null;
-  qty: number;
-  variantLabel: string | null;
-};
-export type PoSkuCoverage = { itemCode: string; variantLabel: string | null; assignments: PoCoverageAssignment[] };
-export type PoSoCoverageResp = { advisory: boolean; poNumber: string | null; poId: string | null; skus: PoSkuCoverage[] };
+/* ── "Assigned Sales Order" for a purchase document, PER SKU ───────────────
+   Resolved by PRECEDENCE on the backend (one MRP engine, symmetric with the SO
+   detail's Assigned-PO): (a) DELIVERED → DO-locked SO (static) > (b) the STORED
+   origin the PO was RAISED from — so_item_id ∪ "From SOs: …" note (static) >
+   (c) live MRP FLOATING coverage matched by SKU (floating) > (d) none → dash.
+   Each assignment carries that SO's effective delivery date (amended ?? customer)
+   and `locked`: true = STATIC (delivered or a stored raise-link), false = the
+   FLOATING MRP coverage (shifts as demand moves, evaporates on delivery). This
+   is the exact reverse of the SO detail's covering-PO, so SO→PO and PO→SO can
+   never disagree. Backend: GET /po-so-coverage/:type/:id. */
+export type OriginAssignment = { soDocNo: string; deliveryDate: string | null; locked?: boolean };
+export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[] };
+export type PoSoCoverageResp = { poNumber: string | null; poId: string | null; origins: SkuOrigin[] };
 
 export const usePoSoCoverage = (type: 'po' | 'grn' | 'pi' | null, id: string | null) =>
   useQuery({
@@ -76,6 +82,16 @@ export const usePoSoCoverage = (type: 'po' | 'grn' | 'pi' | null, id: string | n
     staleTime: 30_000,
     retry: retryUnlessClientError,
   });
+
+/* Build a per-SKU lookup (material_code → assignments) from the response, so a
+   line table can resolve each row's Assigned SO by its code. Null-safe. */
+export const originsByCode = (resp: PoSoCoverageResp | undefined): Map<string, OriginAssignment[]> => {
+  const m = new Map<string, OriginAssignment[]>();
+  for (const o of resp?.origins ?? []) {
+    if (o.itemCode) m.set(o.itemCode, o.assignments ?? []);
+  }
+  return m;
+};
 
 /* Advisory candidate POs for an SO with NO linked purchase leg (pre-MRP orders,
    see the backend route). Read-only: matched by material_code, never a stored

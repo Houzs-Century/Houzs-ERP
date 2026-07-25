@@ -33,7 +33,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
-import { DocumentTraceability } from "../../components/DocumentTraceability";
+import { usePoSoCoverage, originsByCode } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -53,6 +53,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
 type GrnRow = {
   id: string;
@@ -239,24 +240,11 @@ function DetailDrawer({
   const total = row ? totalOf(row) : 0;
 
   return (
-    <>
-      <div
-        onClick={onClose}
-        aria-hidden
-        className={cn(
-          "fixed inset-0 z-[90] bg-ink/40 backdrop-blur-[1px] transition-opacity duration-200 md:hidden",
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        )}
-      />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label={row ? `GRN ${row.grn_number}` : "GRN details"}
-        className={cn(
-          "fixed right-0 top-0 z-[91] flex h-full w-full max-w-[520px] flex-col border-l border-border bg-surface shadow-slab transition-transform duration-200",
-          open ? "translate-x-0" : "translate-x-full"
-        )}
-      >
+    <ResizableDetailDrawer
+      open={open}
+      onClose={onClose}
+      ariaLabel={row ? `GRN ${row.grn_number}` : "GRN details"}
+    >
         {row && st && (
           <>
             <div className="flex h-[60px] shrink-0 items-center gap-3 bg-sidebar px-5 text-sidebar-ink">
@@ -390,8 +378,7 @@ function DetailDrawer({
             </div>
           </>
         )}
-      </aside>
-    </>
+    </ResizableDetailDrawer>
   );
 }
 
@@ -440,7 +427,10 @@ const SORT_COL_MAP: Record<string, string> = {
 // DocumentLinesExpansion. A GRN is a warehouse-receipt doc with no MRP coverage
 // on its lines, so the SO/DO-only Stock + Incoming PO columns are absent.
 function GrnLinesExpansion({ id }: { id: string }) {
+  const navigate = useNavigate();
   const detailQ = useGrnDetail(id);
+  const covQ = usePoSoCoverage("grn", id);
+  const byCode = originsByCode(covQ.data);
   const items =
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => ({
@@ -451,16 +441,18 @@ function GrnLinesExpansion({ id }: { id: string }) {
     variants: l.variants ?? null,
     qty: Number(l.received_qty ?? l.qty ?? 0),
     amountCenti: l.line_total_centi ?? 0,
+    assignedSos: byCode.get((l.material_code || l.item_code || "").trim()) ?? [],
   }));
   return (
     <div className="flex flex-col gap-2">
-      <DocumentTraceability type="grn" id={id} />
       <DocumentLinesExpansion
         isLoading={detailQ.isLoading}
         isError={Boolean(detailQ.error)}
         errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
         lines={lines}
         emptyLabel="No lines on this goods receipt."
+        showAssignment
+        onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
       />
     </div>
   );

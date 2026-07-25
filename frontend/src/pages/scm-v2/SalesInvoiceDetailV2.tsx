@@ -69,7 +69,7 @@ import {
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
-import { useCustomerPoNotice } from "./so-relationship-map";
+import { useSiRelationshipMap } from "./sales-doc-relationship-map";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import {
   PaymentsTable,
@@ -80,7 +80,6 @@ import {
 import { useAuth } from "../../auth/AuthContext";
 import {
   DocumentRelationshipMapModal,
-  type ChainNode,
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
@@ -551,7 +550,6 @@ export function SalesInvoiceDetailV2() {
   const updateStatus = useUpdateSalesInvoiceStatus();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
-  const showCustomerPo = useCustomerPoNotice();
   const askConfirm = useConfirm();
   const { pageAccess } = useAuth();
   // Mutation gate — a salesperson opens this invoice read-only via the sales
@@ -737,49 +735,26 @@ export function SalesInvoiceDetailV2() {
       );
   };
 
-  // Chain nodes for the shared Relationship Map modal — PO → SO → DO → GRN →
-  // SI (CURRENT). The SI is downstream of every other doc so all upstream
-  // nodes are 'done' when the doc references them (via so_doc_no /
-  // delivery_order_id / do_doc_no on the SI header).
-  const chainNodes: ChainNode[] = useMemo(() => {
-    if (!salesInvoice) return [];
-    const soRef = salesInvoice.customer_so_no || salesInvoice.po_doc_no || "";
-    const doRef = salesInvoice.do_doc_no || salesInvoice.delivery_order_id || "";
-    return [
-      {
-        type: "Customer PO",
-        doc: soRef || "Not linked",
-        meta: soRef ? "Customer's own doc" : "—",
-        state: soRef ? "done" : "pending",
-      },
-      {
-        type: "Sales Order",
-        doc: salesInvoice.so_doc_no || "Not linked",
-        meta: salesInvoice.so_doc_no
-          ? fmtDate(salesInvoice.invoice_date)
-          : "—",
-        state: salesInvoice.so_doc_no ? "done" : "pending",
-      },
-      {
-        type: "Delivery Order",
-        doc: doRef || "Not linked",
-        meta: doRef ? "Source doc" : "—",
-        state: doRef ? "done" : "pending",
-      },
-      {
-        type: "GRN",
-        doc: "Not created",
-        meta: "Sales side · no GRN",
-        state: "pending",
-      },
-      {
-        type: "Sales Invoice",
-        doc: salesInvoice.invoice_number,
-        meta: "This document",
-        state: "current",
-      },
-    ];
-  }, [salesInvoice]);
+  // Chain nodes for the shared Relationship Map modal, read from the LIVE
+  // `/document-flow` graph (the SO map's source) instead of a hand-built chain.
+  // The 5-node shape's downstream slot is now the AR Payments the graph carries
+  // off this invoice — the old chain dropped them for a dead "no GRN" tile
+  // (audit R8). Upstream SO / DO nodes reflect the real family documents.
+  const relMapHeader = useMemo(
+    () =>
+      salesInvoice
+        ? {
+            id: salesInvoice.id,
+            invoice_number: salesInvoice.invoice_number,
+            so_doc_no: salesInvoice.so_doc_no,
+            customer_so_no: salesInvoice.customer_so_no,
+            po_doc_no: salesInvoice.po_doc_no,
+          }
+        : null,
+    [salesInvoice],
+  );
+  const { nodes: chainNodes, onNodeClick: onChainNodeClick } =
+    useSiRelationshipMap(relMapHeader);
 
   // Open the in-place payments editor (seeded from persisted rows) and scroll it
   // into view. Replaces the old dead `?tab=payments&record=1` navigation —
@@ -1689,29 +1664,15 @@ export function SalesInvoiceDetailV2() {
         </div>
       </div>
 
-      {/* Relationship map modal — shared 5-node graph */}
+      {/* Relationship map modal — shared 5-node graph, live `/document-flow` */}
       <DocumentRelationshipMapModal
         open={relMapOpen}
         onClose={() => setRelMapOpen(false)}
         nodes={chainNodes}
         onNodeClick={(n) => {
-          if (n.type === "Sales Order" && salesInvoice.so_doc_no) {
-            navigate(`/scm/sales-orders/${salesInvoice.so_doc_no}`);
-            setRelMapOpen(false);
-          } else if (
-            n.type === "Delivery Order" &&
-            salesInvoice.delivery_order_id
-          ) {
-            navigate(
-              `/scm/delivery-orders/${salesInvoice.delivery_order_id}`
-            );
-            setRelMapOpen(false);
-          } else if (n.type === "Customer PO" && n.state === "done") {
-            // Paints as Linked, so it must answer when clicked (owner
-            // 2026-07-16). It is a reference string with no file behind it —
-            // say so rather than sit dead. Shared wording with the SO map.
-            showCustomerPo(n.doc);
-          }
+          // TRUE = the click navigated away, so close the map; a notice keeps it
+          // open (renders over the map).
+          if (onChainNodeClick(n)) setRelMapOpen(false);
         }}
       />
     </div>

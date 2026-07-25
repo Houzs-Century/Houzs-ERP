@@ -102,6 +102,9 @@ export type InventoryProductTotal = {
   branding: string | null;
   total_qty: number;
   total_value_sen: number;
+  /* OWNED qty (consignment excluded) — divisor for avg unit cost so the average
+     isn't diluted by consignment units counted in total_qty. */
+  owned_qty?: number;
   last_movement_at: string | null;
   main_supplier_code: string | null;
   main_supplier_name: string | null;
@@ -375,8 +378,13 @@ export type InventoryReservationClaim = {
   doc_no: string;
   so_created_at: string | null;
   qty_ready: number;
+  // Owner Q4 — the reserving SO's EFFECTIVE delivery date
+  // (amended_delivery_date ?? customer_delivery_date). May be absent on older
+  // payloads; always guard.
+  delivery_date?: string | null;
 };
 export type InventoryReservation = {
+  id?: string;
   warehouse_id: string;
   warehouse_code: string | null;
   warehouse_name: string | null;
@@ -387,10 +395,103 @@ export type InventoryReservation = {
   qty_remaining: number;
   unit_cost_sen: number;
   received_at: string | null;
+  // Source of the lot (GRN / PCR / …). is_consignment is derived server-side
+  // from the SOURCE (a Purchase Consignment Receive fed this lot), NOT the
+  // warehouse flag — so PCR stock mis-posted into a normal warehouse is still
+  // excluded from owned value (BUG-HISTORY 2026-07-25).
+  source_doc_type?: string | null;
+  source_doc_no?: string | null;
+  // For a GRN-sourced lot, the ORIGINATING purchase order (display trace only),
+  // resolved server-side by grn_number -> purchase_order_id -> po_number. Null
+  // for non-GRN sources and for a GRN with no resolvable PO.
+  source_po_no?: string | null;
+  is_consignment?: boolean;
+  fabric_supplier_code?: string;
   status: 'RESERVED' | 'FREE';
   reserved_by: InventoryReservationClaim[];
   reserved_since: string | null;
+  // ── MRP-derived assigned-vs-free split (owner 2026-07-25, dead-stock view) ──
+  // A lot is ASSIGNED iff the ONE MRP engine allocates on-hand stock to an SO's
+  // demand (the SAME floating coverage the SO↔PO "Assigned SO" feature uses) —
+  // NOT just the hard READY reservation. assigned_qty + free_qty == qty_remaining.
+  // mrp_assigned_to names the SO(s) this lot's assigned units belong to (FIFO).
+  // is_dead_stock: this lot carries FREE (un-assigned) OWNED units — emphasised
+  // for make_to_order (SOFA/BEDFRAME) where free stock is abnormal. All fields
+  // are optional: an older/degraded payload omits them → treat as all-free.
+  category?: string | null;
+  make_to_order?: boolean;
+  assigned_qty?: number;
+  free_qty?: number;
+  mrp_assigned_to?: Array<{ doc_no: string; delivery_date: string | null; qty: number }>;
+  is_dead_stock?: boolean;
 };
+
+/* ── Shared stock-breakdown transform — ONE logic layer for both surfaces ──
+   The desktop drawer (Inventory.tsx ProductBreakdownDrawer) and the mobile Stock
+   Card (mobile/MobileStockCard.tsx) both render the merged per-lot stock view
+   from this. Splits the open-lot feed into OWNED vs CONSIGNMENT by each lot's
+   source-derived is_consignment flag, and computes the OWNED value/quantity
+   totals with consignment excluded from value (owner rule: show consignment
+   quantity, keep it out of inventory value). FIFO order (oldest received first)
+   is preserved as the backend returns it. Null-safe throughout. */
+export type StockBreakdown = {
+  ownedLots: InventoryReservation[];
+  consignmentLots: InventoryReservation[];
+  ownedQty: number;
+  ownedValueSen: number;
+  consignmentQty: number;
+  totalQty: number;
+  // MRP-derived assigned-vs-free totals over OWNED lots (owner 2026-07-25). These
+  // reconcile with the header "N assigned / M free": ownedAssignedQty +
+  // ownedFreeQty == ownedQty. ownedFreeQty is the SKU's on-hand dead-stock slice.
+  ownedAssignedQty: number;
+  ownedFreeQty: number;
+};
+
+/* Per-lot on-hand split, null-safe: a lot with no MRP fields (older/degraded
+   payload) is treated as fully FREE (assigned 0), matching the endpoint. */
+export function lotAssignedQty(l: InventoryReservation): number {
+  return Math.max(0, Math.round(l.assigned_qty ?? 0));
+}
+export function lotFreeQty(l: InventoryReservation): number {
+  const qty = l.qty_remaining ?? 0;
+  return l.free_qty != null ? Math.max(0, Math.round(l.free_qty)) : qty;
+}
+
+export function buildStockBreakdown(
+  rows: InventoryReservation[] | null | undefined,
+): StockBreakdown {
+  const list = rows ?? [];
+  const ownedLots = list.filter((l) => !l.is_consignment);
+  const consignmentLots = list.filter((l) => l.is_consignment);
+  const ownedQty = ownedLots.reduce((s, l) => s + (l.qty_remaining ?? 0), 0);
+  const ownedValueSen = ownedLots.reduce(
+    (s, l) => s + (l.qty_remaining ?? 0) * (l.unit_cost_sen ?? 0),
+    0,
+  );
+  const consignmentQty = consignmentLots.reduce((s, l) => s + (l.qty_remaining ?? 0), 0);
+  const ownedAssignedQty = ownedLots.reduce((s, l) => s + lotAssignedQty(l), 0);
+  const ownedFreeQty = ownedLots.reduce((s, l) => s + lotFreeQty(l), 0);
+  return {
+    ownedLots,
+    consignmentLots,
+    ownedQty,
+    ownedValueSen: Math.round(ownedValueSen),
+    consignmentQty,
+    totalQty: ownedQty + consignmentQty,
+    ownedAssignedQty,
+    ownedFreeQty,
+  };
+}
+
+/* Owner 2026-07-25 (dead-stock view) — is this SKU category make-to-order?
+   SOFA/BEDFRAME are built against a customer SO, so FREE stock is abnormal (a
+   strong dead-stock signal); MATTRESS is make-to-stock (free is normal, soft).
+   Mirrors the backend isMakeToOrderCategory — ONE rule, both sides. */
+export function isMakeToOrderCategory(category: string | null | undefined): boolean {
+  const c = (category ?? '').toUpperCase();
+  return c.includes('SOFA') || c.includes('BEDFRAME');
+}
 
 export function useInventoryReservations(opts?: { warehouseId?: string; productCode?: string }) {
   return useQuery({

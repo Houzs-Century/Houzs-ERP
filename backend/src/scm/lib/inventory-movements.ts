@@ -62,6 +62,110 @@ type MovementInput = {
 };
 
 /**
+ * Is this FIFO lot / movement CONSIGNMENT-sourced? — the ONE place that answers
+ * it, so every stock surface agrees.
+ *
+ * Consignment is identified by the lot's SOURCE (it was fed by a Purchase
+ * Consignment Receive), NOT by the warehouse's `is_consignment` flag: a PCR can
+ * be mis-posted into a normal warehouse, so the warehouse flag is unreliable and
+ * leaks consignment stock into owned VALUE (BUG-HISTORY 2026-07-25, HIGH).
+ *
+ * Two source signals, both carried directly on the lot (v_inventory_lots_open):
+ *   1. `source_doc_type` — the FIRST receive into a bucket stamps `PC_RECEIVE`
+ *      (give-backs `PC_RETURN`; the sales-side note is `PURCHASE_CONSIGNMENT_NOTE`).
+ *   2. `source_doc_no` — a PC Receive's later delta top-ups are written as
+ *      `STOCK_TRANSFER` movements but KEEP the receive number as source_doc_no
+ *      (purchase-consignment-receives.ts resyncReceiveInventory). Receive numbers
+ *      are `<CODE>-PCR-YYMM-NNN` or bare `PCR-YYMM-NNN`, so the `PCR-` doc-type
+ *      token — matched with a boundary so it can't hit `PCO-`/`PCT-` or a
+ *      substring — catches those top-up lots the type check alone would miss.
+ *
+ * A genuine inter-warehouse `STOCK_TRANSFER` mints its own non-PCR number, so it
+ * is NOT matched. Pure classification — no costing/AP/FIFO path is touched.
+ */
+export function isConsignmentLotSource(
+  sourceDocType: string | null | undefined,
+  sourceDocNo: string | null | undefined,
+): boolean {
+  const t = (sourceDocType ?? '').toUpperCase();
+  if (t === 'PC_RECEIVE' || t === 'PC_RETURN' || t === 'PURCHASE_CONSIGNMENT_NOTE') return true;
+  return /(?:^|-)PCR-/i.test(sourceDocNo ?? '');
+}
+
+/**
+ * Owner 2026-07-25 (dead-stock view) — is this SKU category MAKE-TO-ORDER?
+ *
+ * The owner's business is largely make-to-order: SOFA and BEDFRAME are built
+ * against a customer Sales Order, so on-hand stock that NO SO claims (FREE) is an
+ * ABNORMAL, strong dead-stock signal. MATTRESS is make-to-STOCK (kept on the
+ * shelf to sell), so free stock there is NORMAL — a softer signal. Everything
+ * else (ACCESSORY / SERVICE / unknown) is treated as make-to-stock (soft).
+ *
+ * ONE classifier so the drawer, the list badge and mobile agree. Case-insensitive
+ * and null-safe; matches on a substring so `2990 SOFA`, `BEDFRAME-KING`, etc. all
+ * resolve (same tolerance as mrp.ts catFromGroup).
+ */
+export function isMakeToOrderCategory(category: string | null | undefined): boolean {
+  const c = (category ?? '').toUpperCase();
+  return c.includes('SOFA') || c.includes('BEDFRAME');
+}
+
+/**
+ * Owner 2026-07-25 (dead-stock view) — spread a bucket's MRP-ASSIGNED on-hand
+ * quantity across its OPEN LOTS in FIFO order (oldest first, the order the next
+ * DO consumes them), and attach WHICH SO(s) each lot's assigned units belong to.
+ *
+ * MRP allocates stock at the (warehouse, item_code, variant_key) BUCKET level,
+ * not per lot; lots inside a bucket are FIFO. So the oldest lots are "assigned"
+ * until the bucket's assigned quantity is exhausted, and the remainder is FREE
+ * (a dead-stock candidate). This mirrors real consumption and lets each lot row
+ * show its own assigned/free split + the claiming SO(s).
+ *
+ * PURE + null-safe: `lotQtys` is the per-lot remaining quantity in FIFO order;
+ * `assigned` is the bucket total from mrpStockAssignment; `claims` is that
+ * bucket's per-SO assigned quantities (earliest-delivery first). Returns one
+ * entry per input lot. `assigned`/claims over the lot sum are capped, never
+ * negative (a genuinely-unallocated bucket → every lot fully free).
+ */
+export type LotAssignmentSplit = {
+  assignedQty: number;
+  freeQty: number;
+  assignedTo: Array<{ soDocNo: string; deliveryDate: string | null; qty: number }>;
+};
+export function distributeAssignedToLots(
+  lotQtys: Array<number | null | undefined>,
+  assigned: number,
+  claims: Array<{ soDocNo: string; deliveryDate: string | null; qty: number }> | null | undefined,
+): LotAssignmentSplit[] {
+  let remainingAssigned = Math.max(0, Math.round(assigned || 0));
+  // Mutable claim queue (copy qtys so the caller's array is untouched).
+  const queue = (claims ?? [])
+    .map((cl) => ({ soDocNo: cl.soDocNo, deliveryDate: cl.deliveryDate ?? null, qty: Math.max(0, Math.round(cl.qty || 0)) }))
+    .filter((cl) => cl.qty > 0);
+  let qi = 0;
+  return (lotQtys ?? []).map((raw) => {
+    const cap = Math.max(0, Math.round(Number(raw ?? 0)));
+    const assignedQty = Math.min(remainingAssigned, cap);
+    remainingAssigned -= assignedQty;
+    const assignedTo: LotAssignmentSplit['assignedTo'] = [];
+    let toFill = assignedQty;
+    while (toFill > 0 && qi < queue.length) {
+      const cl = queue[qi]!;
+      const take = Math.min(cl.qty, toFill);
+      if (take > 0) {
+        const prev = assignedTo.find((a) => a.soDocNo === cl.soDocNo);
+        if (prev) prev.qty += take;
+        else assignedTo.push({ soDocNo: cl.soDocNo, deliveryDate: cl.deliveryDate, qty: take });
+      }
+      cl.qty -= take;
+      toFill -= take;
+      if (cl.qty <= 0) qi += 1;
+    }
+    return { assignedQty, freeQty: Math.max(0, cap - assignedQty), assignedTo };
+  });
+}
+
+/**
  * Insert N movement rows in one go. Used after a document is posted to
  * record the stock impact. Never throws — returns true/false so callers
  * can log without rolling back the post.

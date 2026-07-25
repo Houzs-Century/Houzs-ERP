@@ -20,20 +20,159 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 ### Screens
 | Surface | File | Notes |
 |---------|------|-------|
-| Desktop board | `frontend/src/pages/scm-v2/DeliveryPlanning.tsx` | 1,377 lines. Component at `:517`. The 4 state tabs + region chips + inline Driver / Lorry cells. |
-| Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx:43` | A trip = one lorry-day with an ordered stop list. |
+| Desktop board | `frontend/src/pages/scm-v2/DeliveryPlanning.tsx` | Thin host: PageHeader + data fetch (region server-side) + selection + drawers, rendering the shared **`DeliveryPlanningBoard`**. The 4 state tabs + region chips + inline Driver / Lorry cells + expand + multiselect all live in the shared component now. |
+| Shared board grid | `frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx` | The board itself, extracted so it is reused UNCHANGED by both DeliveryPlanning and the Trips "To schedule" panel: the CONFIG-DRIVEN region chip row, the optional 4 state-tab rail, the compact bulk-edit bar (multiselect), the inline Excel-style cell editors, the SO line-item drill-down and the full HC column set. Props: `stateTabs?` (present → tab row + client state-filter; omitted → locked to the passed single-state fetch), `selectedKeys`/`onToggle`/`onToggleAll`/`onClearSelection`, `bulkExtras` (page-injected Convert / Schedule buttons), `contextMenu`, `onRowDoubleClick`. The page owns the `useDeliveryPlanning` fetch so `region` stays a server-side filter. |
+| Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx:51` | A trip = one lorry-day with an ordered stop list. Status tabs order `IN_PROGRESS` before `PLANNED` (default tab still `PLANNED`). Carries the **"To schedule"** panel — now the EXACT board scoped to PENDING_SCHEDULE — see below. |
 | Desktop fleet masters | `frontend/src/pages/scm-v2/Fleet.tsx:78` | `DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`; `LorryDetail.tsx:71` mounts as a drawer from `Fleet.tsx:613`. |
 | Desktop regions | `frontend/src/pages/scm-v2/DeliveryPlanningRegions.tsx:40` | Region master + per-state mapping editor. |
+| Desktop residence rules | `frontend/src/pages/scm-v2/DeliveryResidenceRules.tsx` | Per residence / building-type CONFIG the Phase-3 scheduler will read: service duration (shown in hours, stored as minutes), optional no-delivery time windows, lift-booking / registration flags. Owner-editable master, mirrors the Regions page (DataGrid + inline edit buffers + create drawer). Route `/scm/delivery-residence-rules`, nav "Residence Rules" under Transportation. NOT wired to any scheduler yet. |
 | Desktop capacity | `frontend/src/pages/scm-v2/LorryCapacity.tsx:140` | |
 | Mobile run-sheet | `frontend/src/mobile/MobileDeliveryPlanning.tsx:277` | 2,408 lines. Driver job-card run sheet. |
 | Mobile POD | `frontend/src/mobile/MobilePOD.tsx:71` | Photo / signature capture. |
 | Mobile masters | `frontend/src/mobile/MobileModuleList.tsx` | Generic list configs: `drivers` `:1327`, `helpers` `:1357`, `fleet` (lorries) `:1857`, `delivery-planning-regions` `:1957`. |
-| Board drawers | `frontend/src/vendor/scm/components/DeliveryFieldsDrawer.tsx:46`, `NewDpOrderDrawer.tsx:45`, `ScheduleDpOrderDrawer.tsx:40` | HC field editing, manual DP-order create, DP scheduling. |
+| Board drawers | `frontend/src/vendor/scm/components/DeliveryFieldsDrawer.tsx:46`, `NewDpOrderDrawer.tsx:45`, `ScheduleDpOrderDrawer.tsx:40`, `ScheduleTripDrawer.tsx` | HC field editing, manual DP-order create, DP scheduling, and the Phase-2 **multiselect scheduling drawer** (resizable). |
+| Resizable drawer chrome | `frontend/src/components/ResizableDrawer.tsx` | Generic right slide-over with a drag-to-resize left edge; width persisted to localStorage (`panel-*` DEVICE_PREF). The FIXED-width `DetailDrawer` (`max-w-[520px]`) is its non-resizable sibling. |
 
 `frontend/src/pages/scm-v2/Drivers.tsx:22` is on disk with **no importer** —
 the `/scm/drivers` route was retired on 2026-07-17 in favour of the Drivers
 section of `/scm/fleet` (`App.tsx:593-599`, `Sidebar.tsx:518-523`). Do not
 re-add it.
+
+### Trips "To schedule" panel — the FULL board, scoped to PENDING_SCHEDULE
+
+The Trips page carries a **"To schedule"** panel below the trip list / stop
+sheet grid. It is the **EXACT Delivery Planning board** — the shared
+`DeliveryPlanningBoard` component — LOCKED to `state=PENDING_SCHEDULE` (owner
+2026-07-25: "把我的 Delivery Planning 一模一样做进去 Trips,可是你只需要看到的是
+pending schedule 的"). Same full HC column set, same CONFIG-DRIVEN region chips,
+same expandable per-row line-item detail (the caret → `useDeliveryPlanningLines`
+→ `GET /delivery-planning/:docNo/lines`), same multiselect and inline cell
+editors. It is NOT a reduced custom table; the earlier read-only 6-column table
+was replaced.
+
+It reuses the board's own data path — `useDeliveryPlanning({ region:
+<activeRegion>, state: 'PENDING_SCHEDULE' })`
+(`vendor/scm/lib/delivery-planning-queries.ts:150`) → `GET
+/delivery-planning?region=<r>&state=PENDING_SCHEDULE` — so it shares
+`derivePlanningState` and cannot drift from the board. No new endpoint, no new
+state derivation. The region chips filter the pending-schedule list by region
+server-side, exactly as on the board (the region is the query key). There is
+**no state-tab row** here (the panel is always PENDING_SCHEDULE): the board
+component is passed no `stateTabs` prop, so the tab rail is omitted and the
+passed single-state orders render as-is.
+
+**Multiselect → schedule → Apply, from inside Trips.** Ticking orders and
+clicking **"Schedule (N)"** in the bulk bar opens the Phase-2
+`ScheduleTripDrawer` (`vendor/scm/components/ScheduleTripDrawer.tsx`, #1251) with
+the selected SO orders as its ordered stop list; Apply fans out one
+`useScheduleDelivery` call per SO, REUSING `PATCH /delivery-planning/so/:id/schedule`
+→ `scheduleOntoTrip` (find-or-create the trip + a DELIVERY stop). So the full
+select → schedule → apply workflow runs without leaving Trips. The board's own
+bulk field editor (Status / Delivery date / Driver / Lorry) and the inline cell
+editors are present here too — it is the same component — but the primary Trips
+action is Schedule.
+
+### Scheduling drawer — multiselect → schedule → Apply, on the board (Phase 2)
+
+The board's multiselect bar (the "N selected" bar) carries a **Schedule (N)**
+action next to "Convert to DO". It opens `ScheduleTripDrawer` — a right-side
+drawer built on the reusable `ResizableDrawer` (drag the left edge; width
+persisted to localStorage under `panel-dp-schedule-drawer.v1`, clamped
+420–1040px). The owner schedules the selected orders onto a lorry-day trip
+**without leaving the board**.
+
+Inside the drawer:
+
+- **Ordered stop list** — each selected SO as a numbered stop: customer, region
+  chip, address, and a per-stop delivery-date input. Selection resolves to the
+  order objects from the region-scoped board (`allOrders`, all states), so a
+  selection made under one state tab still resolves after a tab switch.
+- **Trip assignment** — one Trip date + Driver + Lorry, applied to every stop.
+  Setting the Trip date fills every per-stop date (the "one lorry-day trip"
+  case); a lorry is what puts the orders on a trip.
+- **Propose dates** — a first-cut, DISPLAY-ONLY suggestion: fills each stop with
+  its own effective delivery date (`effective_delivery_date ?? amended_delivery_date
+  ?? customer_delivery_date`), blank where absent for the dispatcher. Nothing is
+  written until Apply. Heuristic is intentionally simple; refine per owner.
+- **Propose times + route** — the SMART proposal (Phase 3, WIRED). Calls `POST
+  /trips/propose-schedule` with the selected SO doc numbers + a depot warehouse +
+  a depart time; the backend geocodes each stop (cache-first), reads each stop's
+  service duration + delivery window from `scm.delivery_residence_rules` (by the
+  SO's `building_type`), makes ONE Google Distance Matrix call, and returns a
+  sequenced route with per-stop arrival / start / finish times + totals. The
+  drawer then renders an interactive Google Map (depot + numbered pins + route
+  line) and a DRAG-to-reorder sequence list; reordering recomputes the times
+  LOCALLY from the returned matrix (no extra Google call). See "The smart route"
+  below.
+- **Open in Trips** — a header control navigating to `/scm/trips` (the full-page
+  wide view), mirroring the SO detail drawer's "Open full page".
+- **Apply** — fans out one `useScheduleDelivery` call per selected SO (capped
+  concurrency 4), REUSING `PATCH /delivery-planning/so/:id/schedule` →
+  `scheduleOntoTrip` (find-or-create the trip + a DELIVERY stop). It writes
+  `amended_delivery_date` (via `scheduleDate`), never `customer_delivery_date`.
+  Per-stop result is surfaced honestly — **WIRED / NOT_REQUESTED / FAILED** —
+  read from the endpoint's `trip` / `tripWiring` fields (the hook's return type
+  was widened to `ScheduleDeliveryResult`). REPORT, don't REPAIR: a wiring
+  failure is named per stop, never hidden. No new schedule path, no double-count
+  (the existing one-job-one-stop sweep still owns dedupe).
+
+### The smart route — "Propose times + route" (Phase 3)
+
+The smart proposal turns the plain stop list into a sequenced route with clock
+times. It is the only place that calls Google's Distance Matrix, and it runs
+ONLY on the "Propose times + route" click — never on render (the cost note).
+
+**Backend** — `POST /trips/propose-schedule` (`trips.ts`). Body:
+`{ soDocNos[], depotWarehouseId?, departTime? }` (departTime defaults `09:00`).
+
+1. Loads the selected SOs (address parts + `building_type`), scoped to the
+   caller's allowed companies.
+2. Reads `scm.delivery_residence_rules` for the company → per `building_type`:
+   `service_duration_minutes`, `earliest_delivery_time`, `latest_delivery_time`.
+   Unknown type → 90-minute default, no window.
+3. Geocodes the depot warehouse + each stop through `geocodeAddressCached`
+   (`backend/src/scm/lib/geocode.ts`) — CACHE-FIRST against `scm.geocode_cache`
+   (mig 0197), so a given normalized address geocodes ONCE ever. A stop that
+   can't be geocoded is reported in `ungeocoded[]`, never silently dropped.
+4. ONE `travelTimeMatrix` call (`maps.ts` Distance Matrix) over `[depot,
+   ...stops]`.
+5. `proposeRoute` (`backend/src/scm/lib/propose-route.ts`, PURE + unit-tested)
+   sequences the stops: a greedy earliest-deadline-first / nearest-neighbour walk
+   where **earliest is a HARD constraint** (the lorry WAITS, never services
+   before the window opens), service durations are summed into the clock
+   (`finish = start + service`, next leg departs at `finish`), and a stop that
+   cannot meet its `latest` is emitted with `windowViolated: true` rather than
+   hidden. Returns the sequence + per-stop arrival/start/finish + totals incl.
+   the return-to-depot leg.
+
+Gated exactly like `optimize-route`: no `GOOGLE_MAPS_API_KEY` → `{configured:
+false}`, no Google call, drawer keeps its plain list. No depot geocode / no stop
+geocoded / matrix failure → `{configured:true, ok:false, reason}`, reported
+honestly. NOTHING is written here — the proposal is display-only until Apply.
+
+**Frontend** — the drawer (`ScheduleTripDrawer.tsx`) calls `useProposeSchedule`,
+renders `ScheduleRouteMap.tsx` (the Maps JavaScript API via
+`@vis.gl/react-google-maps`, markers + polyline drawn imperatively through
+`useMap()` so no cloud `mapId` is needed), and a drag-to-reorder sequence list.
+The map's browser key is `import.meta.env.VITE_GOOGLE_MAPS_API_KEY` — UNSET →
+the map degrades to a "map key not configured" note (the sequence + times still
+render); a runtime load failure degrades in-place. A drag reorders the sequence
+and recomputes the times via `recomputeSequenceTimes` (PURE, reuses the returned
+matrix — NO extra Google call).
+
+**Apply** persists the proposed ORDER + ETA onto the trip stops through the SAME
+schedule path — `PATCH /delivery-planning/so/:id/schedule` now accepts optional
+`stopNo` / `etaOffsetS` / `legDistanceM` / `legDurationS`, and `scheduleOntoTrip`
+writes them onto `trip_stops` (stop lands in the proposed position with its ETA,
+mig 0134 columns). Omitted on a plain schedule → behaviour unchanged. No new
+schedule endpoint, no new trip logic.
+
+> **COST pattern.** Geocodes are cache-first (bill once per address, ever);
+> Distance Matrix is called ONCE per "Propose times + route" click and never on
+> render or on a drag-reorder (the matrix is reused). Both the geocode helper and
+> the matrix are hard-gated on `GOOGLE_MAPS_API_KEY`, so nothing bills until the
+> owner sets it. The Maps JS render needs a SEPARATE browser key
+> (`VITE_GOOGLE_MAPS_API_KEY`, referrer-restricted).
 
 ### The four state tabs
 
@@ -101,12 +240,14 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | PATCH | `/delivery-planning/:type/:id/fields` | `:1493` | HC delivery fields (time range, shipout date, sub-status…) |
 | PATCH | `/delivery-planning/:type/:id/schedule` | `:1705` | Schedule date + **driver / lorry assignment**; `type` = `so \| do \| assr` |
 | GET/POST/PATCH/DELETE | `/delivery-planning-regions`, `/…/states/:stateKey` | `delivery-planning-regions.ts:65,89,120,150,196,228,261` | Region master + the state→region map |
+| GET/POST/PATCH/DELETE | `/delivery-residence-rules`, `/…/:id` | `delivery-residence-rules.ts` | Per-building-type CONFIG (mig 0196): service duration + access windows + lift/registration flags. Per-company scoped (scopeToCompany read / scopeToCompanyId write). The Phase-3 scheduler READS this; no scheduler is wired here. NOT openRead — unlike the region master this is not a cross-page picklist. |
 | GET/POST/PATCH | `/drivers` | `drivers.ts:26,40,71` | Driver master |
 | GET/POST/PATCH | `/helpers` | `helpers.ts:23,35,64` | Helper master |
 | GET/POST/PATCH | `/lorries` | `lorries.ts:85,100,143` | Lorry master |
 | GET | `/lorry-service-records` | `lorry-service-records.ts` | Service history (mig 0121) |
 | GET/POST/PATCH/DELETE | `/trips`, `/trips/:id`, `/trips/:id/stops`, `/trips/:id/status` | `trips.ts:101,141,175,234,277,325,398,412` | Trip (lorry-day) CRUD + stop ordering |
 | POST | `/trips/:id/optimize-route` | `trips.ts:438` | Google route optimisation; returns `{configured:false}` when `GOOGLE_MAPS_API_KEY` is unset |
+| POST | `/trips/propose-schedule` | `trips.ts` | **Phase 3 smart scheduler.** Selected SO stops + depot → geocode (cached) + residence-rule service/windows + ONE Distance Matrix call → sequenced route + per-stop arrival/start/finish times. `{configured:false}` with no key; nothing written |
 | GET/PATCH/PUT | `/lorry-capacity`, `/lorry-capacity/lorries/:id/*` | `lorry-capacity.ts:132,354,389` | Capacity dashboard, in-house flag, repair days |
 | POST/GET/PATCH | `/dp-orders`, `/dp-orders/:id/cancel`, `/:id/schedule` | `dp-orders.ts:190,234,281,313,348` | Manual DP jobs with no source document |
 | PUT | `/delivery-orders-mfg/:id/crew` | `delivery-orders-mfg.ts:3314` | The only writer of `scm.delivery_order_crew` (driver 1/2 + helper 1/2 + lorry). **No frontend caller exists** — grep `frontend/src` for `/crew` returns nothing. |
@@ -284,6 +425,73 @@ Consequences worth knowing before you touch this:
   so the ASSR branch checks the case **exists and is open** up front; a closed,
   archived or unknown case is a 404 and never mints a trip or a DP number.
 
+### The sync is bidirectional — Trips → Board reconciliation
+
+The forward direction (above) is Board → Trips: scheduling writes a `scm.trips`
+row + a `trip_stops` DELIVERY row keyed on `do_id`. The **reverse** direction —
+Trips → Board — runs when a trip/stop changes on the Trips side, and closes the
+stale-board gap: a cancelled trip or a removed stop used to leave the source
+order still LOOKING scheduled on the board, because the persisted
+`delivery_state` override that hid it from **Pending Schedule** was never
+cleared.
+
+`backend/src/scm/lib/tripReconcile.ts` (`reconcileStopsToBoard`) is wired into
+the three trip write endpoints in `trips.ts`:
+
+| Endpoint | When it reconciles |
+|---|---|
+| `DELETE /trips/:id/stops/:stopId` | the removed stop's source order — the stop's `do_id` is snapshotted **before** the delete |
+| `DELETE /trips/:id` (soft cancel → `CANCELLED`, and `?hard=true`) | every `DELIVERY` stop on the trip. Hard-delete CASCADEs the stops away (`trip_stops.trip_id ON DELETE CASCADE`), so they are read first |
+| `PATCH /trips/:id/status` → `CANCELLED` | same — every `DELIVERY` stop. Other statuses leave the schedule intact |
+
+What it does, and its guardrails:
+
+- It **clears** the `delivery_state` override cache (sets it NULL) on the source
+  header(s) — `scm.delivery_orders` (via `do_id`) and the parent
+  `scm.mfg_sales_orders` (via the DO's `so_doc_no`). It **never** touches
+  `derivePlanningState`: clearing the override the derivation already respects
+  returns a ready-to-ship order to its derived `PENDING_SCHEDULE`, and a
+  genuinely delivered order still derives `DELIVERED`. It writes **no**
+  `customer_delivery_date` and adds **no** column to any shared SO-LIST select
+  (the VIEW-TRAP).
+- The SO override is cleared through the **canonical generation writer**
+  (`advanceSoGeneration`), not a raw update, so a human holding the SO's edit
+  lease is not clobbered — the reconcile stands down and **reports** a lease /
+  version conflict rather than overwriting. Only headers that actually carry an
+  override are written, so a routine stop removal churns no version and spams no
+  audit.
+- **Keyed on `do_id`**, the same column `scheduleOntoTrip` writes and
+  `staleStopSweepFor` sweeps — forward and reverse stay symmetric. The pure
+  `stopReconcileKeyFor` **refuses** a stop with no `do_id` (a `so_id`-only stop —
+  which never occurs, an SO has no uuid; an ASSR leg keyed on `assr_case_id`; a
+  manual DP job with all three NULL), so the reconcile only ever acts on an SO/DO
+  delivery it owns.
+- **REPORT, don't REPAIR.** The trip/stop change has already committed, so a
+  partial reconcile failure is surfaced as `reconcile: { failed, reason }` on the
+  response (present ONLY on failure, `reconcileFieldsFor`, the same convention as
+  the forward `tripWiring`) — a stale override that could not be cleared is
+  named, never hidden behind `ok: true`.
+
+**Deliberately deferred** (documented, not guessed):
+
+- **ASSR-leg reverse sync.** Cancelling a trip does not clear a scheduled
+  service case's driving date on `public.assr_cases`. That is a different key
+  (`assr_case_id`) writing to a `public` table via `c.env.DB`, and ASSR rows
+  always land as `PENDING_DELIVERY` on the board regardless — a separate, safer
+  slice.
+- **`amended_delivery_date` is left in place** on unschedule. It cannot be
+  distinguished from a customer-requested amendment
+  (`amend_date_from_customer`) without more logic, and clearing it blindly would
+  risk a legitimate customer date. It does not affect the `PENDING_SCHEDULE`
+  derivation, so leaving it is harmless.
+- **No Trips-side UI triggers these endpoints yet** — the Trips page has no
+  cancel / remove-stop action, so the reconcile is reached only via the API
+  today. When such a UI is added it should invalidate `['delivery-planning']`;
+  the backend reconcile is already in place.
+- **`dp_no` on a cancelled (not deleted) trip's stop** still shows on the board
+  (the board reads all `trip_stops.dp_no` regardless of trip status). It is a
+  label, not the schedule-queue state, so it is out of this slice.
+
 **How a person becomes a driver or helper — two disconnected mechanisms.**
 (1) Manual master CRUD (`POST /drivers`, `POST /helpers`), which creates a
 fleet row with no link to `public.users`. (2) A `user_id` link on
@@ -326,6 +534,8 @@ request (§3).
 | `scm.lorry_maintenance`, `scm.lorry_service_records` | `0053:110-120`, `0121:99` |
 | `scm.dp_orders` | `0129:30-63`. `dp_no`, `job_type` (`scm.trip_stop_type`), `party_type`, address + `postcode` + `state`, `requested_date`, `trip_id`, `status` |
 | `scm.delivery_planning_regions` / `scm.state_delivery_regions` | `0053:198` / `0053:208`. The region master and the state→region map keyed on a state **name** (`state_key`) |
+| `scm.delivery_residence_rules` | `0196`. Per residence / building-type delivery CONFIG the Phase-3 scheduler will read. `building_type` (keyed on the SO's `building_type` UDF values), `service_duration_minutes` (default 90; Landed seeded 60), `earliest_delivery_time` / `latest_delivery_time` (nullable), `requires_lift_booking`, `requires_registration`, `notes`, `is_active`, audit cols + `company_id`. Per-company UNIQUE `(company_id, building_type)`. Seeded for every active company (Condo / Landed / Apartment / Office / Shop / Other) — canonical config, editable in the Residence Rules admin page. |
+| `scm.geocode_cache` | `0197`. Phase 3 GEOCODE CACHE: `normalized_address` (UNIQUE) → `lat`/`lng` (+ `formatted_address`, `location_type`). NOT company-scoped (an address is one point on Earth). `geocodeAddressCached` reads it before any Google call, so a given address geocodes once ever |
 | `scm.delivery_legs` | `0053:123`. The removed multi-hop feature; table still present, unused |
 
 Enums (`0053:27-33`): `delivery_state`, `lorry_type`, `delivery_leg_kind`,
@@ -495,11 +705,11 @@ service-case / sales / projects family.
 
 | Change | Desktop | Mobile | Shared / authority |
 |---|---|---|---|
-| The 4 states, their labels, their meaning | `pages/scm-v2/DeliveryPlanning.tsx` (`STATE_TABS` `:192`, tab row `:1148`) | `mobile/MobileDeliveryPlanning.tsx` (`Bucket` `:64`, pills) | `vendor/scm/lib/delivery-planning-queries.ts:19-29` for the constants; `derivePlanningState` (`backend/.../delivery-planning.ts:283-308`) for the RULE |
-| Board row shape / new column | `DeliveryPlanning.tsx` columns | `MobileDeliveryPlanning.tsx` `BoardRow` `:79` and the job card | `PlanningOrder` type in `delivery-planning-queries.ts:47` — add the field there first |
+| The 4 states, their labels, their meaning | `vendor/scm/components/DeliveryPlanningBoard.tsx` (`STATE_TABS`, tab row) — the tabs are rendered only when the host passes `stateTabs` | `mobile/MobileDeliveryPlanning.tsx` (`Bucket` `:64`, pills) | `vendor/scm/lib/delivery-planning-queries.ts:19-29` for the constants; `derivePlanningState` (`backend/.../delivery-planning.ts:283-308`) for the RULE |
+| Board row shape / new column | `vendor/scm/components/DeliveryPlanningBoard.tsx` columns (the shared grid — a new column changes BOTH DeliveryPlanning and the Trips "To schedule" panel at once) | `MobileDeliveryPlanning.tsx` `BoardRow` `:79` and the job card | `PlanningOrder` type in `delivery-planning-queries.ts:47` — add the field there first |
 | Region model | `DeliveryPlanningRegions.tsx` | `MobileModuleList.tsx:1957` (`delivery-planning-regions`) | `stateToRegionsFromConfig` + the two config tables |
 | Driver / Helper / Lorry masters | `Fleet.tsx` (`DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`) | `MobileModuleList.tsx:1327` / `:1357` / `:1857` | `drivers-queries.ts` / `helpers-queries.ts` / `lorries-queries.ts` |
-| Assignment + scheduling | `DriverEditCell` `:305`, `LorryEditCell` `:340`, bulk `:660-665` | read-only rows `MobileDeliveryPlanning.tsx:1612-1613` | `useScheduleDelivery` (`delivery-planning-queries.ts:397`) → `PATCH …/schedule` |
+| Assignment + scheduling | `DeliveryPlanningBoard.tsx` `DriverEditCell` / `LorryEditCell` / the bulk-bar `applyBulk` (shared grid) | read-only rows `MobileDeliveryPlanning.tsx:1612-1613` | `useScheduleDelivery` (`delivery-planning-queries.ts:397`) → `PATCH …/schedule` |
 | Status writes / POD | board row actions | `MobileDeliveryPlanning.tsx` (`PATCH /delivery-orders-mfg/:id/status`), `MobilePOD.tsx` | the DO status machine in `delivery-orders-mfg.ts` |
 | Access gating | `App.tsx:601-605` + `Sidebar.tsx:515-524` | `MobileApp.tsx:114,157-184` | `scmAreaGuard('scm.transportation.drivers')` |
 

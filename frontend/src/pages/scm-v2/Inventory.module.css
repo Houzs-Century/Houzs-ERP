@@ -284,6 +284,16 @@
 .numCellNeg { color: #b23a3a; }
 .numCellZero { color: #9aa093; }
 
+/* "from PO" trace under a GRN-sourced lot's SOURCE cell (display-only). Compact
+   muted secondary line, matching the drawer polish (#1255). */
+.sourcePo {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  color: #9aa093;
+  white-space: nowrap;
+}
+
 /* Free-text Notes column — clamp so a long adjustment note can't balloon the
    table (or, inside the 720px breakdown drawer, push it into overflow). Full
    text stays reachable via the cell's title tooltip. */
@@ -310,6 +320,14 @@
 .movementOut { background: rgba(178, 58, 58, 0.10); color: #b23a3a; }
 .movementAdj { background: #e1efed;                 color: #0c3f39; }
 
+/* Assigned-vs-free split (owner 2026-07-25, dead-stock view). ASSIGNED = MRP
+   allocated on-hand stock to an SO (green, like a covered position). FREE =
+   un-assigned; a soft amber for make-to-STOCK (MATTRESS — normal) and a strong
+   red for make-to-ORDER (SOFA/BEDFRAME — abnormal, dead-stock candidate). */
+.pillAssigned  { background: rgba(47, 138, 91, 0.12);  color: #2f8a5b; }
+.pillFreeSoft  { background: rgba(160, 106, 0, 0.12);  color: #a06a00; }
+.pillDeadStock { background: rgba(178, 58, 58, 0.12);  color: #b23a3a; }
+
 .docLink {
   font-family: var(--font-mono);
   font-size: var(--fs-12);
@@ -322,6 +340,45 @@
   text-align: center;
   color: #767b6e;
   padding: var(--space-6);
+}
+
+/* ── Stock Breakdown drawer — compact, refined tables ────────────────
+   The shared page .table is airy by design. Inside the drawer the owner
+   wants a dense reference view ("做小一点，字体小一点，UI 美一点"). This
+   modifier layers ON TOP of .table and only tightens density + type —
+   colours, borders and hover stay inherited, so no new palette is
+   introduced — with shorter rows, 12px body / 11px head (both at or above
+   the 11px design-system floor) and nowrap cells. Placed after .table so
+   the equal-specificity size rules win by source order. */
+.compactTable thead th {
+  font-size: var(--fs-11);
+  letter-spacing: 0.1em;
+  padding: var(--space-1) var(--space-2);
+  white-space: nowrap;
+}
+.compactTable tbody td {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.compactTable .numCell,
+.compactTable .docLink,
+.compactTable .codeChip {
+  font-size: var(--fs-12);
+}
+
+/* Like the PO/SO line tables: keep the lot table's natural column widths
+   and let it scroll sideways inside its own card instead of squashing the
+   nine columns to fit. The wrapper is the ONLY horizontal-scroll surface —
+   the drawer body never scrolls sideways. */
+.drawerScroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+.lotTable {
+  min-width: 1000px;
 }
 
 /* Phone (Houzs 2026-06-24) — element-level overflow clamp: stack filters,

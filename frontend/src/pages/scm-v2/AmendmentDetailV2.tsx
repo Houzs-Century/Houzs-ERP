@@ -29,9 +29,12 @@ import {
   CheckCircle2,
   ExternalLink,
   GitBranch,
+  Printer,
   Undo2,
   XCircle,
 } from "lucide-react";
+import { generateAmendmentPdf } from "../../vendor/scm/lib/amendment-pdf";
+import { soAmendmentToPdfInput } from "../../vendor/scm/lib/amendment-pdf-map";
 import { fmtDateTime, fmtMoneyCenti } from "@2990s/shared";
 import { Button } from "../../components/Button";
 import {
@@ -66,15 +69,23 @@ import {
 } from "../../vendor/scm/lib/so-amendment-history";
 import {
   amendmentHeaderDiffRows,
+  soHeaderFieldKind,
   type SoAmendmentHeaderChanges,
 } from "../../vendor/scm/lib/so-amendment-header";
 import {
   amendmentLineChangedFields,
+  amendmentLineFieldKinds,
   amendmentOldSnapshot,
   amendmentUnrenderedAxes,
   amendmentVariantSummaries,
   visibleAmendmentLines,
 } from "../../vendor/scm/lib/so-amendment-line-diff";
+import {
+  RowRoutingChips,
+  AmendmentTypeBadges,
+  AmendmentRoutingBlock,
+} from "../../vendor/scm/components/AmendmentRouting";
+import type { AmendmentFieldKind } from "../../vendor/scm/lib/amendment-routing";
 import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 /* The 2990 bridge's staff row — the vocabulary so_amendments.requested_by is
    written in (a scm.staff uuid), so this is what "did I raise this?" compares. */
@@ -309,8 +320,11 @@ function DiffCard({ line }: { line: AmendmentLine }) {
 
   return (
     <div className="overflow-hidden rounded-md border border-border">
-      <div className="border-b border-border-subtle bg-surface-2 px-3 py-1.5 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-secondary">
-        {changeTypeLabel(line.change_type)}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-surface-2 px-3 py-1.5">
+        <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-secondary">
+          {changeTypeLabel(line.change_type)}
+        </span>
+        <RowRoutingChips kinds={amendmentLineFieldKinds(line)} />
       </div>
       <div className="grid grid-cols-2 divide-x divide-border-subtle">
         {/* Before */}
@@ -589,6 +603,15 @@ export function AmendmentDetailV2() {
   );
 
   const changeCount = headerDiffs.length + lines.length;
+
+  /* Every routable atom this amendment moves — lines + header — for the type
+     badge(s) and the department-routing block. */
+  const allFieldKinds = useMemo<AmendmentFieldKind[]>(() => {
+    const fromLines = lines.flatMap((l) => amendmentLineFieldKinds(l));
+    const fromHeader = headerDiffs.map((d) => soHeaderFieldKind(d.key) as AmendmentFieldKind);
+    return [...fromLines, ...fromHeader];
+  }, [lines, headerDiffs]);
+
   const status = String(amendment?.status ?? "");
   const soDocNo = String(amendment?.so_doc_no ?? "");
   const amendmentNo =
@@ -615,6 +638,33 @@ export function AmendmentDetailV2() {
       isReject: isRejectDecision(d.action),
     }));
   }, [auditEntries, amendment]);
+
+  /* Printable amendment document (owner-approved layout). Same client-side
+     mechanism as the SO/PO PDFs — the operator downloads / prints / WhatsApps it.
+     Status label is the SIMPLIFIED Requested / Approved the owner asked for
+     (the multi-step backend states collapse to those two on the document). */
+  const soApplied = ["SO_APPROVED", "PO_APPROVED", "SENT", "APPROVED"].includes(status);
+  const handlePrintAmendment = () => {
+    if (!amendment) return;
+    const input = soAmendmentToPdfInput({
+      amendment: {
+        amendment_no: amendmentNo,
+        status,
+        reason,
+        created_at: asStr(amendment.created_at) || null,
+        requested_by_name: actorNameOf(asStr(amendment.requested_by)),
+        so_approved_by_name: amendment.so_approved_by ? actorNameOf(asStr(amendment.so_approved_by)) : null,
+        so_approved_at: asStr(amendment.so_approved_at) || null,
+      },
+      lines: (data?.lines ?? []) as never,
+      salesOrder: salesOrder as never,
+      customerName: (salesOrder as { customer_name?: string | null } | null)?.customer_name ?? null,
+      statusLabel: soApplied ? "Approved" : "Requested",
+    });
+    Promise.resolve(generateAmendmentPdf(input)).catch((e: unknown) =>
+      notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
+    );
+  };
 
   const canSupplierConfirm = can("scm.amendment.supplier_confirm");
   const canApproveSo = can("scm.amendment.approve_so");
@@ -821,6 +871,7 @@ export function AmendmentDetailV2() {
                   </>
                 )}
               </div>
+              <AmendmentTypeBadges kinds={allFieldKinds} className="mt-2" />
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -940,6 +991,28 @@ export function AmendmentDetailV2() {
                   </div>
                 )}
               </div>
+            </AsideCard>
+
+            {allFieldKinds.length > 0 && (
+              <AsideCard title="Department routing">
+                <AmendmentRoutingBlock kinds={allFieldKinds} />
+                <p className="mt-3 border-t border-border-subtle pt-2 text-[11px] leading-relaxed text-ink-muted">
+                  Advisory routing — it shows who is responsible for what. Any authorized
+                  approver applies the whole amendment in one signature; who approved and when
+                  is recorded on the Sales Order history.
+                </p>
+              </AsideCard>
+            )}
+
+            <AsideCard title="Document">
+              <Button
+                variant="secondary"
+                className="w-full"
+                icon={<Printer size={14} />}
+                onClick={handlePrintAmendment}
+              >
+                Print amendment
+              </Button>
             </AsideCard>
 
             {/* Gate actions — supplier-confirm / approve-so are wired directly

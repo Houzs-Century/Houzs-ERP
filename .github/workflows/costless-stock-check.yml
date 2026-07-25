@@ -1,0 +1,55 @@
+name: Cost-less stock check (read-only)
+
+# Finds OPEN FIFO lots that carry a non-positive unit_cost_sen while still holding
+# qty_remaining — owned stock on the books with NO cost basis, which books RM0 COGS
+# when a later FIFO sale consumes it. Costing-integrity audit 2026-07-25 (class 4,
+# "cost-less stock"): the FIFO trigger's positive-ADJUSTMENT branch floors an
+# un-priced lot's cost at 0 when the SKU has no open lots to average, and the two
+# callers that hit that floor — stock-take POST (always unit_cost_sen = 0) and a
+# manual stock adjustment with the cost field left blank — produce a lot that
+# recostFromGrn (GRN-keyed) will NEVER heal. Unlike a GRN "Pending price" lot the
+# RM0 basis is permanent.
+#
+# This job SIZES that exposure across ALL SKUs / warehouses / companies, split by
+# the lot's source: (1) PERMANENT (ADJUSTMENT / STOCK_TAKE) — the defect;
+# (2) PENDING (GRN) — self-heals when the PI lands; (3) OTHER. Root cause + the
+# DEFERRED fix are in docs/inventory-costing-integrity-audit.md.
+#
+# The answer lives only in production, so this runs here rather than putting the
+# production DSN in front of a human for a SELECT (repo rule: build the check,
+# never ask the owner to run a query). Strictly read-only — SELECT only, no writes,
+# NO change to any costing logic. See backend/scripts/check-costless-stock.mjs.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read must
+# never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Own concurrency group — touches nothing, must never queue behind or displace a
+# release (and must not share the deploy's group).
+concurrency:
+  group: costless-stock-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-costless-stock.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks (inventory-integrity-check.yml, uncosted-cogs-check.yml).
+          NODE_OPTIONS: --dns-result-order=ipv4first

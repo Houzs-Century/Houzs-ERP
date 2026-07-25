@@ -44,7 +44,7 @@ const allMobile: MobileDestination[] = [
 
 describe("executable route contract", () => {
   it("matches every canonical staff page mounted by App.tsx, with no extras", () => {
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(123);
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(126);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -64,7 +64,7 @@ describe("executable route contract", () => {
       .filter((path) => path !== "*");
     expect([...new Set(["/survey/:token", ...mountedPublic])].sort())
       .toEqual([...PUBLIC_ROUTE_PATTERNS].sort());
-    expect(ROUTE_CONTRACT).toHaveLength(131);
+    expect(ROUTE_CONTRACT).toHaveLength(134);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
@@ -91,11 +91,11 @@ describe("executable route contract", () => {
 
 describe("mobile route drift gate", () => {
   it("pins the complete runtime destination inventory", () => {
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(32);
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(33);
     expect(PROFILE_ORG_ITEMS).toHaveLength(5);
-    expect(allMobile).toHaveLength(37);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(37);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(36);
+    expect(allMobile).toHaveLength(38);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(38);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(37);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

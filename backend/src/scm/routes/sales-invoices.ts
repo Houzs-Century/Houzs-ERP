@@ -675,6 +675,27 @@ async function stampSoDates(sb: any, rows: unknown): Promise<void> {
   }
 }
 
+/* Convert-from column (display-only, audit R8): the SI header stores the source
+   Delivery Order only as a UUID (delivery_order_id) — there is no do_doc_no
+   column — so the list can't show a readable "From DO" without this resolve.
+   One batched read keyed by the ids, mutates rows in place, same style as
+   stampSoDates. Called on BOTH list paths. */
+async function stampDoNumber(sb: any, rows: unknown): Promise<void> {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const list = rows as Array<Record<string, unknown>>;
+  const doIds = [...new Set(list.map((r) => r.delivery_order_id as string | null).filter((d): d is string => !!d))];
+  const byId = new Map<string, string>();
+  if (doIds.length > 0) {
+    const { data } = await sb.from('delivery_orders').select('id, do_number').in('id', doIds);
+    for (const d of ((data ?? []) as Array<{ id: string | null; do_number: string | null }>)) {
+      if (d.id && d.do_number) byId.set(d.id, d.do_number);
+    }
+  }
+  for (const r of list) {
+    r.do_number = byId.get((r.delivery_order_id as string | null) ?? '') ?? null;
+  }
+}
+
 salesInvoices.get('/', async (c) => {
   const sb = c.get('supabase');
   // Row-level "own / downline chain" scope (scm.staff uuids) — see lib/salesScope.ts.
@@ -698,6 +719,7 @@ salesInvoices.get('/', async (c) => {
     const { data, error } = await q;
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     await stampSoDates(sb, data);
+    await stampDoNumber(sb, data);
     gateSiFinance(data, canViewScmFinance(c));
     return c.json({ salesInvoices: data ?? [] });
   }
@@ -769,6 +791,7 @@ salesInvoices.get('/', async (c) => {
   };
 
   await stampSoDates(sb, data);
+  await stampDoNumber(sb, data);
   gateSiFinance(data, canViewScmFinance(c));
   return c.json({ salesInvoices: data ?? [], total, page, pageSize, statusCounts });
 });

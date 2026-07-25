@@ -32,6 +32,7 @@ import { paymentAuditLog } from "./routes/payment-audit-log";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { soAmendments } from "./routes/so-amendments";
+import { poAmendments } from "./routes/po-amendments";
 import { stateWarehouseMappings } from "./routes/state-warehouse-mappings";
 import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
 import { salesInvoices } from "./routes/sales-invoices";
@@ -68,6 +69,7 @@ import { scanPayment } from "./routes/scan-payment";
 import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
+import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
 import { trips } from "./routes/trips";
 import { dpOrders } from "./routes/dp-orders";
 import { deliveryMessages } from "./routes/delivery-messages";
@@ -237,6 +239,11 @@ scm.route("/suppliers", suppliers);
 // ── Purchase Orders / GRN / PI (scm.procurement.*) ──────────────────────────
 scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po"));
 scm.route("/mfg-purchase-orders", mfgPurchaseOrders);
+// PO amendment / revision workflow — PO-centric, so it rides the same L2 area
+// guard as Purchase Orders (GET=view, PATCH=edit); the finer scm.po_amendment.*
+// gates layer on inside the handlers (mig 0192).
+scm.use("/po-amendments/*", scmAreaGuard("scm.procurement.po"));
+scm.route("/po-amendments", poAmendments);
 scm.use("/grns/*", scmAreaGuard("scm.procurement.grn"));
 scm.route("/grns", grns);
 scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
@@ -458,6 +465,12 @@ scm.route("/delivery-planning", deliveryPlanning);
 // own, they are just not secret.
 scm.use("/delivery-planning-regions/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
 scm.route("/delivery-planning-regions", deliveryPlanningRegions);
+// Residence delivery rules (mig 0195) — per-building-type service duration +
+// access windows the Phase 3 scheduler will read. Same Transportation area gate
+// as the rest of TMS: read the rules = view, edit them = edit. Not openRead —
+// unlike the region master, this is not a picklist other pages need.
+scm.use("/delivery-residence-rules/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/delivery-residence-rules", deliveryResidenceRules);
 scm.use("/trips/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/trips", trips);
 scm.use("/dp-orders/*", scmAreaGuard("scm.transportation.drivers"));

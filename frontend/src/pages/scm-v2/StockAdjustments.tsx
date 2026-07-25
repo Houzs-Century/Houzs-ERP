@@ -155,7 +155,7 @@ export function StockAdjustments() {
       label: "Warehouse",
       getValue: (m) => {
         const w = wmap.get(m.warehouse_id);
-        return w ? `${w.code} · ${w.name}` : "—";
+        return w ? w.code : "—";
       },
       render: (m) => {
         const w = wmap.get(m.warehouse_id);
@@ -167,7 +167,7 @@ export function StockAdjustments() {
               className="inline-block h-2 w-2 shrink-0 rounded-full"
               style={{ background: TONE_HEX[tone] }}
             />
-            {w.code} · {w.name}
+            {w.code}
           </span>
         );
       },

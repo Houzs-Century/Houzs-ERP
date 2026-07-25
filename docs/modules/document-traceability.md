@@ -36,47 +36,75 @@ conflicting "assigned to" SOs.
 
 ## 2. What shipped (cleanly derivable)
 
-### 2.1 PO / GRN / PI traceability strip — uses linkage **B** AND linkage **A**
-`frontend/src/components/DocumentTraceability.tsx`, rendered above the per-line
-`DocumentLinesExpansion` in each of `PurchaseOrdersListV2` / `GoodsReceivedListV2`
-/ `PurchaseInvoicesListV2` (the `Xxx LinesExpansion` wrappers). The mobile twin
-is `PoSoCoverageMobile` in `frontend/src/mobile/MobileModuleDetail.tsx`, injected
-under Line items on the PO / GRN / PI document detail (display-only).
+### 2.1 PO / GRN / PI "Assigned SO" — PRECEDENCE (delivered DO-lock > stored origin > MRP floating), two inline line columns
+`feat/po-mrp-assigned-so` (2026-07-25) — supersedes the stored-origin-only build.
+The arc: #1237 showed FLOATING only (wrong for a raised PO); #1246
+(`feat/po-real-origin-so`) showed STORED origin only and so rendered "—" for
+every PO NOT converted-from-SO, even when MRP was actively covering it (see
+`BUG-HISTORY.md` 2026-07-25). The owner's model resolves the two: an SO knows its
+covering PO (via MRP), so the REVERSE must hold and be CONSISTENT — the PO shows
+its assigned SO(s) — FLOATING until the goods ship, then STATIC once a DO locks
+them, and PO↔SO must invert ONE engine so they can never disagree.
 
-The strip now shows TWO clearly-labelled reads side by side:
+Now the Assigned SO is resolved by **precedence per SKU**, combining all three
+linkages:
 
-- **Assigned Sales Order · advisory (floating MRP coverage)** — linkage **A**,
-  the REVERSE of `computeMrp` (see §2.4). Per SKU, the outstanding SO line(s)
-  this document's supply is pooled against + that SO line's delivery date. SO
-  chips are clickable on desktop (→ `/scm/sales-orders/:docNo`). This is what
-  replaced the frustrating "Not yet linked to a Sales Order" empty state for a
-  floating PO.
-- **Document relationship** — linkage **B**, the resolved
-  **Sales Order / Delivery Order / Sales Invoice** the anchor descends from via
-  `useDocumentFlow(type, id)` → `GET /api/scm/document-flow/:type/:id` (anchor
-  node excluded; empty stages omitted). Read-only + company-scoped server-side.
-- Honesty: B is the DOCUMENT RELATIONSHIP (stored FKs), NOT a physical-unit
-  claim; A is a live pool that shifts and evaporates on delivery. When only B
-  exists it shows alone; when neither exists the strip now reads
-  **"Floating stock — not yet assigned to a Sales Order."**, never a blank.
+| # | Precedence | Linkage | State |
+|---|-----------|---------|-------|
+| a | **DELIVERED → DO-locked** | **C** (reverse of `soLineShippedSourcePos`: `batch_no` = this PO number consumed by a DO → that DO's `so_item_id` / `so_doc_no`) | **STATIC** (`locked:true`) |
+| b | **STORED ORIGIN** | **B** (`so_item_id` ∪ "From SOs:" note) | **STATIC** (`locked:true`) |
+| c | **MRP FLOATING coverage** | **A** (`computeMrp` → `mrpReverseCoverage`, matched by SKU) | **FLOATING** (`locked:false`) |
+| d | none | — | dash |
 
-### 2.4 PO "assigned SO + delivery date" as a FLOATING view — uses linkage **A**
-Shipped (was deferred in §3.1). `backend/src/scm/routes/po-so-coverage.ts`
-(`GET /po-so-coverage/:type/:id`, `type ∈ po|grn|pi`), mounted on the coarse SCM
-read gate beside `/document-flow` (same sensitivity class — SO doc no, delivery
-date, customer name, qty, warehouse; **no cost, no margin**). It reuses the ONE
-allocation via a new `mrpReverseCoverage(result)` in `mrp.ts` (sibling of
-`mrpLineCoverage`, grouped by covering PO number), so this view, the MRP page and
-the SO drill-down can never disagree. The route resolves GRN→PO and PI→GRN→PO,
-reads the PO's own line SKUs so an un-covered SKU still shows (as "not yet
-assigned"), and calls `computeMrp` with `includeUndated: true`, `companyId =
-activeCompanyId(c)`.
+Shown as TWO INLINE per-line columns inside the existing `DocumentLinesExpansion`
+table (`Assigned SO` + `SO Delivery Date`, styled like the SO detail's Stock /
+Incoming-PO columns) in each of `PurchaseOrdersListV2` / `GoodsReceivedListV2` /
+`PurchaseInvoicesListV2`. The chip is clickable on desktop (→ `/scm/sales-orders/:docNo`,
+via `onOpenSo`); the mobile twin rides each `LineItem` in
+`MobileModuleDetail.tsx` (display-only). **Floating** assignments render a dashed
+chip + trailing "~" (title "Floating — live MRP coverage"); **static** (delivered
+/ raised-from-SO) render a solid chip (title "Locked …"). A line with no
+assignment at any layer renders **"—"**.
 
-STATED LIMITATIONS (advisory, by design): coverage exists for OUTSTANDING demand
-only, so a fully-received GRN/PI often has an empty A-view and falls back to the
-B relationship; and `MrpLine`/`SofaSet` record only the FIRST (earliest-ETA)
-covering PO of a split line, so a multi-PO line is under-attributed (never
-mis-attributed). Labelled ADVISORY throughout — it is NOT a hard PO↔SO binding.
+Backend: `GET /po-so-coverage/:type/:id` returns `{ poNumber, poId, origins }`
+where `origins: [{ itemCode, assignments: [{ soDocNo, deliveryDate, locked }] }]`,
+matched by SKU (`material_code`). The full relationship graph (SO/DO/SI + returns)
+stays on the Relationship Map modal (`/document-flow/:type/:id`) — unchanged.
+
+### 2.4 PO "Assigned SO" resolution — precedence over linkages **C → B → A**
+`backend/src/scm/routes/po-so-coverage.ts` (`GET /po-so-coverage/:type/:id`,
+`type ∈ po|grn|pi`), mounted on the coarse SCM read gate beside `/document-flow`
+(same sensitivity class — SO doc no + delivery date; **no cost, no margin**).
+Resolution, all set-based and company-scoped:
+1. Resolve the anchor to its PO (GRN→PO, PI→GRN→PO).
+2. **(c) MRP floating (A):** call `computeMrp` ONCE with the active company id +
+   `includeUndated`, then `mrpReverseCoverage(result).get(po.poNumber)` — the exact
+   reverse of the `mrpLineCoverage` the SO detail reads (§ linkage A). Group by SKU,
+   `locked:false`. This is called ONCE per request, NOT per-SKU in a loop.
+3. **(b) stored origin (B):** origin SO doc_nos = the PO lines' `so_item_id` →
+   `mfg_sales_order_items.doc_no` **∪** the PO's "From SOs: …" note (shared
+   `parseFromSosNote`), validated against company-owned `mfg_sales_orders` (the
+   company gate + whole-token check). Pure `buildStoredOrigins(...)` matches by
+   `item_code`, effective date `amended_delivery_date ?? customer_delivery_date`,
+   `locked:true`.
+4. **(a) delivered DO-lock (C):** `resolveDeliveredSoLock(po.poNumber)` finds the
+   `(do, code, variant)` buckets whose goods shipped from THIS PO (OUT movements
+   with `batch_no` = PO number ∪ FIFO lot consumptions of this PO's lots), resolves
+   each to its SO via `delivery_order_items.so_item_id` (preferred) or
+   `delivery_orders.so_doc_no` (fallback), re-validated + dated against company SOs.
+   Pure `buildDeliveredSoLock(...)`, `locked:true`. Best-effort — an absent
+   table/column or un-shipped PO yields nothing and falls through to (b)/(c).
+5. Pure `mergeAssignments(poSkus, doLock, storedOrigin, floating)` applies
+   a > b > c > dash per SKU.
+
+**SO↔PO symmetry** is guaranteed because the floating layer inverts the SAME
+single `computeMrp` allocation the SO detail reads: `mrpLineCoverage` (SO→PO) and
+`mrpReverseCoverage` (PO→SO) are two directions of one map (unit-proven in
+`poSoOrigin.test.ts`). No second coverage engine was introduced.
+
+**Do NOT touch** DO status derivation / delivery-planning state — the DO-lock only
+READS `delivery_order_items` / `delivery_orders` / inventory lots + movements,
+never writes.
 
 ### 2.2 SO-side Q2 — SERVICE lines read READY
 Read path, `mfg-sales-orders.ts` `GET /:docNo` and `/:docNo/items`: a service
@@ -107,11 +135,12 @@ PO. The SI / DO / DR maps do not pass amendments and are unchanged.
 ## 3. What was STOP-and-reported (not built — would require fabricating a linkage or new persistence)
 
 ### 3.1 PO "assigned to SO + that SO line's delivery date" as a FLOATING view
-**SHIPPED 2026-07-24 — see §2.4.** The owner confirmed the floating semantics are
-what he wants, LABELLED advisory. The original deferral reasoning is kept below
-for the record; it was resolved by (a) showing A and B side by side, each
-labelled, rather than collapsing them into one "assigned to", and (b) accepting
-the multi-PO under-attribution as a stated advisory limitation.
+**SHIPPED 2026-07-25 — see §2.1 / §2.4.** Now the FLOATING layer (c) in the
+precedence: `computeMrp` → `mrpReverseCoverage` matched by SKU, marked
+`locked:false`, used when there is no delivered DO-lock (a) and no stored origin
+(b). The multi-PO under-attribution below remains a stated limitation (a split
+line records only its first covering PO). The original deferral reasoning is kept
+below for the record.
 
 The floating coverage (A) is derivable-by-inversion of `computeMrp`'s existing
 output (group `MrpLine.poNumber` → SO lines; no re-implementation of allocation),
@@ -132,13 +161,15 @@ pending the owner choosing which semantics to display, because A and B disagree
 by design.
 
 ### 3.2 "DO# / SI# the item ended up in" as a PHYSICAL trail on the PO
-- Via linkage B (shipped): the DO/SI in the relationship graph — honest as a
-  document relationship, not a physical-unit trace.
-- Via linkage C (physical): a PO → DO reverse of `soLineShippedSourcePos`
-  (`batch_no = po_number`) IS technically derivable for BATCHED lots, but is
-  best-effort and **incomplete for plain-FIFO un-batched stock** — there is no
-  stored trail from a plain-FIFO PO's received units to the specific DO/SI that
-  shipped them without new persistence. Not built; reported.
+**PARTIALLY SHIPPED 2026-07-25 — see §2.1 / §2.4 (a).** The linkage-C reverse of
+`soLineShippedSourcePos` (`batch_no = po_number`) is now built as
+`resolveDeliveredSoLock` and used as the STATIC DO-lock: a delivered PO line
+resolves to its DO's SO. As predicted below it is best-effort — the FIFO-lot-
+consumption path recovers plain-FIFO (bed frame / mattress / accessory) lines
+too, but an un-batched lot with no `batch_no` carries no trail, so a PO whose
+goods shipped from un-batched stock falls through to (b)/(c). We surface the
+locked SO, not the DO/SI number itself (the DO/SI numbers remain on the
+Relationship Map graph, linkage B).
 
 ### 3.3 SO-side Q1 — retain the covering PO after a line goes READY
 When a covering PO is received (GRN), the line flips to READY-by-STOCK; the
@@ -156,9 +187,31 @@ the line SHIPS; the gap is only the received-but-not-yet-shipped window.
 ---
 
 ## 4. Files changed
-- `frontend/src/components/DocumentTraceability.tsx` (new).
+Precedence rework (`feat/po-mrp-assigned-so`, 2026-07-25 — DO-lock + floating restored):
+- `backend/src/scm/routes/po-so-coverage.ts` — precedence resolver: pure
+  `buildStoredOrigins` (B) / `buildDeliveredSoLock` (C) / `mergeAssignments`, async
+  `resolveDeliveredSoLock` (DO-lock), floating via `computeMrp` + `mrpReverseCoverage` (A).
+  Response `origins: [{ itemCode, assignments: [{ soDocNo, deliveryDate, locked }] }]`.
+- `backend/src/scm/routes/mrp.ts` — export `MrpSku` / `MrpLine` types (for the symmetry test).
+- `frontend/src/vendor/scm/lib/flow-queries.ts` — `OriginAssignment` gains `locked?`.
+- `frontend/src/components/DocumentLinesExpansion.tsx` — floating (dashed + "~") vs static (solid) chip.
+- `frontend/src/mobile/MobileModuleDetail.tsx` — same floating/static indicator on each `LineItem`.
+- `backend/tests/poSoOrigin.test.ts` — extended to 18 cases (DO-lock, precedence, SO↔PO symmetry).
+
+Stored-origin build (`feat/po-real-origin-so`, 2026-07-25 — superseded by the above):
+- `backend/src/scm/routes/document-flow.ts` — new exported `parseFromSosNote` (note extractor, kept).
+- `backend/src/scm/routes/po-so-coverage.ts` — stored origin per SKU (now the (b) layer).
+- `frontend/src/vendor/scm/lib/flow-queries.ts` — `usePoSoCoverage` shape + `originsByCode`.
+- `frontend/src/components/DocumentLinesExpansion.tsx` — `Assigned SO` + `SO Delivery Date` columns.
+- `frontend/src/pages/scm-v2/{PurchaseOrdersListV2,GoodsReceivedListV2,PurchaseInvoicesListV2}.tsx`
+  — feed the columns from `usePoSoCoverage`; the old `DocumentTraceability` strip removed.
+- `frontend/src/mobile/MobileModuleDetail.tsx` — assignment rides each `LineItem`.
+- `frontend/src/components/DocumentTraceability.tsx` — DELETED.
+
+Original strip (`feat/doc-traceability-display`, 2026-07-24 — now superseded):
+- `frontend/src/components/DocumentTraceability.tsx` (new, since deleted).
 - `frontend/src/pages/scm-v2/PurchaseOrdersListV2.tsx`, `GoodsReceivedListV2.tsx`,
-  `PurchaseInvoicesListV2.tsx` — render the strip in the row-expansion wrappers.
+  `PurchaseInvoicesListV2.tsx` — rendered the strip in the row-expansion wrappers.
 - `frontend/src/pages/scm-v2/MfgSalesOrdersListV2.tsx` — `drillStock` service → READY.
 - `backend/src/scm/routes/mfg-sales-orders.ts` — service line `stock_state='stock'`
   (both SO read callsites).
@@ -172,6 +225,55 @@ Amendments-on-map + clickability (`feat/relmap-clickable-amendment`, §2.3):
   `AmendmentChip` type, `actionable` flag + clickable-logic fix.
 - `frontend/src/pages/scm-v2/SalesOrderDetailV2.tsx`, `SalesOrderDetail.tsx` — pass amendments.
 
-## 5. Out of scope (do not touch)
-Delivery-Order surfaces and DO/delivery status logic are owned by a concurrent
-session. This work is read-only and never touches DO files.
+## 5. Sales-side Relationship Maps read the live graph (SO/DO/SI/DR) — audit R8
+
+Distinct surface from the strip above: the bespoke 5/7-node **Relationship Map**
+modal (`components/scm-v2/DocumentRelationshipMapModal.tsx`) that the sales
+document DETAIL pages open. The Sales Order map was taught to read
+`/document-flow` in #600 (`so-relationship-map.ts`); the Delivery Order, Sales
+Invoice and Delivery Return maps kept a HAND-BUILT `chainNodes` literal and so
+lied about exactly the nodes an operator needs:
+
+- **DO** hard-coded its GRN node to "Not created" forever (the procurement leg
+  the family carries was invisible).
+- **SI** dropped its AR **payment** nodes for a dead "Sales side · no GRN" tile.
+- **DR** hard-coded its Sales Order + Sales Invoice nodes to "Upstream …" text —
+  neither showed a real number nor was clickable.
+
+**Shipped (`feat/r8-docflow-do-si-dr`, display-only):**
+`frontend/src/pages/scm-v2/sales-doc-relationship-map.ts` — the ONE builder for
+all three, mirroring `so-relationship-map.ts`. Each hook
+(`useDoRelationshipMap` / `useSiRelationshipMap` / `useDrRelationshipMap`) reads
+`useDocumentFlow(type, id)` — linkage **B**, the same company-scoped graph the
+SO map, the vendor `DocumentFlowModal` and the purchase-side maps use — and a
+pure `build*ChainNodes(...)` fn maps the resolved family nodes to the 5-node
+canvas (unit-tested in `sales-doc-relationship-map.test.ts`). GRN opens are
+procurement-gated (same OR-shape as the SO map, so a sales-hatch reader is never
+handed a `<Forbidden>` node); the SI **Payments** node lists payments in an
+in-app notice (they live on that page) rather than navigating.
+
+**CRITICAL — status untouched.** Only the DO/SI/DR *traceability* node source
+changed. The DO status strip, `computeDoLifecycle`, and delivery-planning state
+are NOT read by these hooks. Consignment documents already read the live graph
+via `RelationshipMapButton` (`cso/cdo/cdr/pco/pcr/pcrn`) and were not changed.
+
+**List columns (transfer-to / convert-from), mirroring the SO list's
+`converted_po_nos`:**
+- DO list — **"Invoiced to"**: the SI number(s) each DO was invoiced into (+ DR
+  numbers returned), from the SAME batched `sales_invoices` / `delivery_returns`
+  read that already stamps `has_children` (`delivery-orders-mfg.ts` list handler,
+  new `invoiced_si_nos` / `return_nos` — additive, no status touch).
+- SI list — **"From DO"**: `stampDoNumber` resolves `delivery_order_id → do_number`
+  (the SI header has no `do_doc_no` column; only the UUID), on both list paths.
+- DR list — **"From SO"**: the Sales Order behind the return's DO, resolved
+  `delivery_order_id → delivery_orders.so_doc_no` (best-effort, never 500s).
+
+The Relationship Map + these columns are DESKTOP-ONLY surfaces, matching the
+existing precedent (the mobile detail explicitly omits the relationship graph,
+`MobileModuleDetail.tsx`; mobile lists don't render `converted_po_nos` either).
+
+## 6. Out of scope (do not touch)
+The DO/delivery STATUS derivation and delivery-planning state logic remain
+owned separately and are sensitive — the R8 relationship work above is
+read-only and never touches status. Confirm the DO status strip live before
+merging any change near these files.

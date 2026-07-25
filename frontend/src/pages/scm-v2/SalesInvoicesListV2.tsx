@@ -61,6 +61,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
 import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
@@ -73,6 +74,9 @@ type SiRow = {
   invoice_number: string;
   so_doc_no: string | null;
   delivery_order_id: string | null;
+  /** Convert-from relation (display-only, audit R8): the readable DO number the
+   *  SI was created from, server-resolved from delivery_order_id. */
+  do_number?: string | null;
   invoice_date: string;
   due_date: string | null;
   /** SI's own snapshot of the customer delivery date (may be null on rows
@@ -151,7 +155,9 @@ const refOf = (r: SiRow): string =>
   r.po_doc_no || r.customer_so_no || r.ref || "—";
 
 const soOf = (r: SiRow): string => r.so_doc_no || "—";
-const doOf = (r: SiRow): string => r.delivery_order_id || "—";
+// Prefer the readable DO number (server-resolved); the raw UUID is not useful
+// to show, so fall back to a dash rather than a uuid.
+const doOf = (r: SiRow): string => r.do_number || "—";
 
 const brandOf = (r: SiRow): string => r.branding || "—";
 const brandTone = (b: string): "success" | "neutral" | "warning" => {
@@ -427,27 +433,11 @@ function DetailDrawer({
   const outstanding = Math.max(0, totalCenti - paidCenti);
 
   return (
-    <>
-      {/* Scrim — mobile only. On desktop the outer wrapper reflows via
-          md:pr-[540px] so the underlying content stays fully visible next
-          to the drawer; no need to dim it. */}
-      <div
-        onClick={onClose}
-        aria-hidden
-        className={cn(
-          "fixed inset-0 z-[90] bg-ink/40 backdrop-blur-[1px] transition-opacity duration-200 md:hidden",
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        )}
-      />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label={row ? `Sales invoice ${row.invoice_number}` : "Sales invoice details"}
-        className={cn(
-          "fixed right-0 top-0 z-[91] flex h-full w-full max-w-[520px] flex-col border-l border-border bg-surface shadow-slab transition-transform duration-200",
-          open ? "translate-x-0" : "translate-x-full"
-        )}
-      >
+    <ResizableDetailDrawer
+      open={open}
+      onClose={onClose}
+      ariaLabel={row ? `Sales invoice ${row.invoice_number}` : "Sales invoice details"}
+    >
         {row && st && (
           <>
             <div className="flex h-[60px] shrink-0 items-center gap-3 bg-sidebar px-5 text-sidebar-ink">
@@ -663,8 +653,7 @@ function DetailDrawer({
             </div>
           </>
         )}
-      </aside>
-    </>
+    </ResizableDetailDrawer>
   );
 }
 
@@ -1097,6 +1086,19 @@ export function SalesInvoicesListV2() {
       getValue: (r) => r.so_doc_no ?? "",
       render: (r) => (
         <span className="font-mono text-[12px] text-ink-secondary">{soOf(r)}</span>
+      ),
+    },
+    {
+      /* Convert-from relation (audit R8): the Delivery Order this SI was created
+         from. Previously only the raw delivery_order_id UUID was on the row, so
+         the list could not show a readable source DO. */
+      key: "do_number",
+      label: "From DO",
+      width: "128px",
+      disableSort: true,
+      getValue: (r) => r.do_number ?? "",
+      render: (r) => (
+        <span className="font-mono text-[12px] text-ink-secondary">{doOf(r)}</span>
       ),
     },
     {

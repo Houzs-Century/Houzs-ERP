@@ -225,7 +225,7 @@ export const GrnFromPo = () => {
   const lockedWarehouseLabel = useMemo(() => {
     if (!lockedWarehouse) return null;
     const row = items.find((r) => r.warehouseLocationId === lockedWarehouse);
-    return row?.warehouseLocationName ?? row?.warehouseLocationCode ?? lockedWarehouse;
+    return row?.warehouseLocationCode ?? row?.warehouseLocationName ?? lockedWarehouse;
   }, [lockedWarehouse, items]);
 
   // A row is LOCKED when a different warehouse is already picked. Grey these out
@@ -317,13 +317,11 @@ export const GrnFromPo = () => {
       key: 'warehouse', label: 'Warehouse', width: 150, sortable: true, groupable: true,
       accessor: (r) => (
         <span className={styles.muted}>
-          {r.warehouseLocationCode
-            ? `${r.warehouseLocationCode}${r.warehouseLocationName ? ` · ${r.warehouseLocationName}` : ''}`
-            : '—'}
+          {r.warehouseLocationCode ?? r.warehouseLocationName ?? '—'}
         </span>
       ),
       searchValue: (r) => `${r.warehouseLocationCode ?? ''} ${r.warehouseLocationName ?? ''}`.trim(),
-      groupValue: (r) => r.warehouseLocationName ?? r.warehouseLocationCode ?? '(no warehouse)',
+      groupValue: (r) => r.warehouseLocationCode ?? r.warehouseLocationName ?? '(no warehouse)',
       sortFn: (a, b) => (a.warehouseLocationCode ?? '').localeCompare(b.warehouseLocationCode ?? ''),
     },
     {

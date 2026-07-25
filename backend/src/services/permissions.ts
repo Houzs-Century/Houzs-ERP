@@ -68,6 +68,15 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.amendment.supplier_confirm", resource: "Supply Chain", verb: "manage", label: "Confirm SO amendment (supplier)", description: "Record the supplier's confirmation of a requested SO amendment (REQUESTED -> SUPPLIER_PENDING)" },
   { key: "scm.amendment.approve_so",       resource: "Supply Chain", verb: "manage", label: "Approve SO revision",         description: "Approve the Sales Order revision of an amendment — applies the line diffs, re-runs pricing, snapshots the prior version (SUPPLIER_PENDING -> SO_APPROVED)" },
   { key: "scm.amendment.approve_po",       resource: "Supply Chain", verb: "manage", label: "Approve/send/reject PO revision", description: "Approve the bound Purchase Order revision, mark it sent, or reject an amendment (SO_APPROVED -> PO_APPROVED -> SENT, or -> REJECTED)" },
+  // PO amendment / revision workflow (Houzs, mig 0192). A standalone amendment
+  // that revises a Purchase Order directly (line qty / cost / spec / delivery,
+  // add or remove a line, or the header supplier / delivery / notes) through a
+  // SIMPLIFIED single-approver gate: REQUESTED -> APPROVED (approve APPLIES the
+  // change), or REQUESTED -> REJECTED (reject / withdraw). No supplier-confirm,
+  // no two-gate, no send. Owner + IT Admin cover all via "*"; grant purchasing
+  // positions via the Team > Positions matrix. po_amendment.approve also gates reject.
+  { key: "scm.po_amendment.create",  resource: "Supply Chain", verb: "manage", label: "Raise PO amendment",   description: "Raise an amendment request against a Purchase Order (opens the single-approver PO revision flow)" },
+  { key: "scm.po_amendment.approve", resource: "Supply Chain", verb: "manage", label: "Approve/reject PO amendment", description: "Approve a Purchase Order amendment — snapshots the prior version, applies the line + header diffs, bumps the PO revision (REQUESTED -> APPROVED) — or reject it (-> REJECTED)" },
 
   // Payment Vouchers — standalone AP cash-out document (port of 2990 0189/0202,
   // Phase 1-B MYR). A PV pays a vendor that is NOT a goods invoice (freight

@@ -55,6 +55,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
 import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
@@ -96,6 +97,10 @@ type DoRow = {
   local_total_centi: number;
   line_count?: number;
   lifecycle_state?: "shipped" | "invoiced" | "returned";
+  /** Transfer-to relations (display-only, audit R8): the SI number(s) this DO
+   *  was invoiced into, and the DR number(s) returned against it. */
+  invoiced_si_nos?: string[] | null;
+  return_nos?: string[] | null;
   is_dropship?: boolean;
   isDropship?: boolean;
   // ── Phase 2: NON-finance fields already on the DO list payload (HEADER).
@@ -409,27 +414,11 @@ function DetailDrawer({
   const totalCenti = row?.local_total_centi ?? 0;
 
   return (
-    <>
-      {/* Scrim — mobile only. On desktop the outer wrapper reflows via
-          md:pr-[540px] so the underlying content stays fully visible next
-          to the drawer; no need to dim it. */}
-      <div
-        onClick={onClose}
-        aria-hidden
-        className={cn(
-          "fixed inset-0 z-[90] bg-ink/40 backdrop-blur-[1px] transition-opacity duration-200 md:hidden",
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        )}
-      />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label={row ? `Delivery order ${row.do_number}` : "Delivery order details"}
-        className={cn(
-          "fixed right-0 top-0 z-[91] flex h-full w-full max-w-[520px] flex-col border-l border-border bg-surface shadow-slab transition-transform duration-200",
-          open ? "translate-x-0" : "translate-x-full"
-        )}
-      >
+    <ResizableDetailDrawer
+      open={open}
+      onClose={onClose}
+      ariaLabel={row ? `Delivery order ${row.do_number}` : "Delivery order details"}
+    >
         {row && st && (
           <>
             <div className="flex h-[60px] shrink-0 items-center gap-3 bg-sidebar px-5 text-sidebar-ink">
@@ -632,8 +621,7 @@ function DetailDrawer({
             </div>
           </>
         )}
-      </aside>
-    </>
+    </ResizableDetailDrawer>
   );
 }
 
@@ -1088,6 +1076,43 @@ export function MfgDeliveryOrdersListV2() {
       render: (r) => (
         <span className="font-mono text-[12px] text-ink-secondary">{soOf(r)}</span>
       ),
+    },
+    {
+      /* Transfer-to (audit R8): the SI(s) this DO was invoiced into, mirroring
+         the SO list's "PO No." (converted_po_nos) convert-to column. Server-
+         derived (invoiced_si_nos); DR returns share the tooltip via return_nos. */
+      key: "invoiced_si_nos",
+      label: "Invoiced to",
+      width: "150px",
+      disableSort: true,
+      getValue: (r) => (r.invoiced_si_nos ?? []).join(", "),
+      render: (r) => {
+        const sis = r.invoiced_si_nos ?? [];
+        const returns = r.return_nos ?? [];
+        if (sis.length === 0 && returns.length === 0)
+          return <span className="text-ink-muted">—</span>;
+        return (
+          <div className="flex flex-wrap gap-1">
+            {sis.map((n) => (
+              <span
+                key={n}
+                className="rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] font-semibold text-primary-ink"
+              >
+                {n}
+              </span>
+            ))}
+            {returns.map((n) => (
+              <span
+                key={n}
+                className="rounded bg-warning-bg px-1.5 py-0.5 font-mono text-[11px] font-semibold text-warning-text"
+                title="Delivery return"
+              >
+                {n}
+              </span>
+            ))}
+          </div>
+        );
+      },
     },
     {
       key: "debtor_name",

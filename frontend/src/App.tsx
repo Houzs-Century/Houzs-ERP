@@ -105,6 +105,7 @@ const ScmSupplierDetailV2 = lazy(() => import("./pages/scm-v2/SupplierDetail").t
 const ScmDeliveryPlanningV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanning").then((m) => ({ default: m.DeliveryPlanning })));
 const ScmTrips = lazy(() => import("./pages/scm-v2/Trips").then((m) => ({ default: m.Trips })));
 const ScmDeliveryPlanningRegionsV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanningRegions").then((m) => ({ default: m.DeliveryPlanningRegions })));
+const ScmDeliveryResidenceRulesV2 = lazy(() => import("./pages/scm-v2/DeliveryResidenceRules").then((m) => ({ default: m.DeliveryResidenceRules })));
 const ScmFleetV2 = lazy(() => import("./pages/scm-v2/Fleet").then((m) => ({ default: m.Fleet })));
 const ScmLorryCapacityV2 = lazy(() => import("./pages/scm-v2/LorryCapacity").then((m) => ({ default: m.LorryCapacity })));
 // Sales Order READ side (vendored 2990 list + detail + maintenance). New-SO
@@ -126,6 +127,8 @@ const ScmSoFromProductsV2 = lazy(() => import("./pages/scm-v2/SoFromProducts").t
 const ScmSalesOrderDetailV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetailV2").then((m) => ({ default: m.SalesOrderDetailV2 })));
 const ScmAmendmentsV2 = lazy(() => import("./pages/scm-v2/Amendments").then((m) => ({ default: m.Amendments })));
 const ScmAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/AmendmentDetailV2").then((m) => ({ default: m.AmendmentDetailV2 })));
+const ScmPoAmendmentsV2 = lazy(() => import("./pages/scm-v2/PoAmendments").then((m) => ({ default: m.PoAmendments })));
+const ScmPoAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/PoAmendmentDetailV2").then((m) => ({ default: m.PoAmendmentDetailV2 })));
 const ScmSoDetailListingV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetailListing").then((m) => ({ default: m.SalesOrderDetailListing })));
 const ScmDoDetailListingV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderDetailListing").then((m) => ({ default: m.DeliveryOrderDetailListing })));
 const ScmSiDetailListingV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceDetailListing").then((m) => ({ default: m.SalesInvoiceDetailListing })));
@@ -518,6 +521,13 @@ export default function App() {
         <Route path="/scm/purchase-orders/new" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/from-so" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderFromSoV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/:id" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderDetailV2 /></Scm2990Shell></ScmGuard>} />
+        {/* PO amendment / revision queue + job card (Houzs, mig 0192). Same
+            Procurement-PO area guard as the Purchase Orders list; the finer
+            scm.po_amendment.* gates layer on inside the pages + backend. The
+            literal /po-amendments segments precede the PO /:id route above only
+            in the sidebar sense — routes are matched exactly, so order is safe. */}
+        <Route path="/scm/po-amendments" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPoAmendmentsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/po-amendments/:id" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPoAmendmentDetailV2 /></Scm2990Shell></ScmGuard>} />
         {/* Vendored 2990's MRP + read/list pages. Each wrapped in <Scm2990Shell>.
             product-models list precedes /:id so the literal segment matches first. */}
         <Route path="/scm/mrp" element={<ScmGuard area="scm.procurement.mrp"><Scm2990Shell><ScmMrpV2 /></Scm2990Shell></ScmGuard>} />
@@ -602,6 +612,7 @@ export default function App() {
         <Route path="/scm/delivery-planning"         element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/trips"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmTrips /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-planning-regions" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningRegionsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/delivery-residence-rules"  element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryResidenceRulesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/lorry-capacity"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLorryCapacityV2 /></Scm2990Shell></ScmGuard>} />
         {/* Supply Chain Hub — section landing page (main app layout, NOT the 2990 shell). */}

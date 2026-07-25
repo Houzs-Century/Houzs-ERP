@@ -4,22 +4,26 @@ import { fmtCenti } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import {
   useInventoryMovements,
-  useInventoryProductBreakdown,
-  useInventoryLots,
+  useInventoryReservations,
   useWarehouses,
+  buildStockBreakdown,
+  lotAssignedQty,
+  lotFreeQty,
+  isMakeToOrderCategory,
   type InventoryMovement,
-  type InventoryLot,
+  type InventoryReservation,
 } from "../vendor/scm/lib/inventory-queries";
 
 /* ------------------------------------------------------------------ *
- * Mobile Stock Card — per-SKU on-hand, per-(warehouse × variant) split,
- * the movement ledger (each row carries its warehouse + unit cost and a
- * client-computed running balance) and the FIFO lots + value. Phone twin
- * of desktop pages/scm-v2/StockCard.tsx; reuses the SAME shared hooks
- * (useInventoryProductBreakdown / useInventoryMovements / useInventoryLots /
- * useWarehouses). A warehouse filter (pills) scopes the whole card, exactly
- * as the desktop ?warehouseId param does. No backend. Opened from the
- * Inventory list (MobileApp routes an inventory row here).
+ * Mobile Stock Card — per-SKU on-hand, the merged per-lot stock view
+ * (each open lot with its warehouse, attributes, qty, unit cost, SOURCE
+ * doc, received date, reservation + reserving SO's delivery date), and the
+ * movement ledger. Phone twin of desktop pages/scm-v2/Inventory.tsx's Stock
+ * Breakdown drawer; reuses the SAME shared feed + transform
+ * (useInventoryReservations + buildStockBreakdown) so owned vs CONSIGNMENT is
+ * split by the lot's SOURCE (never the warehouse flag) and consignment stays
+ * OUT of value — one logic layer, two presentations. A warehouse filter (pills)
+ * scopes the whole card. No backend. Opened from the Inventory list.
  * ------------------------------------------------------------------ */
 
 type MovementRow = InventoryMovement & { runningBalance: number };
@@ -35,6 +39,100 @@ const TYPE_PILL: Record<InventoryMovement["movement_type"], { cls: string; label
   ADJUSTMENT: { cls: "adj", label: () => "ADJ" },
   TRANSFER: { cls: "tr", label: () => "TRANSFER" },
 };
+
+/* One lot's card — warehouse + attributes + qty/cost, its SOURCE doc, received
+   date, reservation status and (when reserved) the reserving SO(s) + delivery
+   date. Owned shows the lot value; consignment shows a badge and no value. */
+function LotCard({ l, consignment, first }: { l: InventoryReservation; consignment: boolean; first: boolean }) {
+  const attrs = formatVariantKey(l.variant_key, l.fabric_supplier_code);
+  const value = (l.qty_remaining ?? 0) * (l.unit_cost_sen ?? 0);
+  // MRP-derived assigned/free split (owner 2026-07-25) — a lot is ASSIGNED iff MRP
+  // allocates on-hand stock to an SO; free (un-assigned) OWNED stock is a dead-
+  // stock candidate, abnormal for make-to-order (SOFA/BEDFRAME). Null-safe.
+  const assigned = lotAssignedQty(l);
+  const free = lotFreeQty(l);
+  const claims = l.mrp_assigned_to ?? [];
+  const mto = l.make_to_order ?? isMakeToOrderCategory(l.category);
+  const deadStock = !consignment && free > 0;
+  const statusLabel = assigned > 0 && free > 0
+    ? `${assigned} assigned · ${free} free`
+    : assigned > 0
+      ? `${assigned} assigned`
+      : `${free} free`;
+  const statusColor = assigned > 0 && free === 0
+    ? "var(--green, #2b8a3e)"
+    : deadStock && mto
+      ? "var(--red, #c0392b)"
+      : "var(--amber, #a06a00)";
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        padding: "8px 2px",
+        borderTop: first ? "none" : "1px solid var(--line2)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {l.warehouse_code || l.warehouse_name || "—"}
+          {consignment && (
+            <span
+              style={{
+                marginLeft: 6,
+                fontSize: 9,
+                fontWeight: 800,
+                letterSpacing: 0.3,
+                color: "var(--amber, #a06a00)",
+                background: "var(--amber-bg, rgba(255,176,32,.16))",
+                borderRadius: 4,
+                padding: "1px 5px",
+                verticalAlign: "middle",
+              }}
+            >
+              CONSIGNMENT
+            </span>
+          )}
+        </span>
+        <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)", flex: "none" }}>
+          {consignment ? "—" : value > 0 ? fmtCenti(value) : "—"}
+        </span>
+      </div>
+
+      {attrs && (
+        <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--mut)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {attrs}
+        </span>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10.5, color: "var(--mut)" }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {l.source_doc_no || "—"}
+          {/* GRN-sourced lot also traces to its originating PO (display only). */}
+          {l.source_po_no ? ` · from ${l.source_po_no}` : ""}
+          {l.received_at ? ` · ${formatDate(l.received_at)}` : ""}
+        </span>
+        <span className="tnum" style={{ flex: "none" }}>
+          {l.qty_remaining} · {fmtCenti(l.unit_cost_sen)}
+        </span>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10.5 }}>
+        <span style={{ fontWeight: 800, color: statusColor, flex: "none" }}>
+          {statusLabel}{deadStock && mto ? " · dead" : ""}
+        </span>
+        <span style={{ color: "var(--mut)", textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+          {claims.length === 0
+            ? "no order"
+            : claims
+                .map((x) => `${x.doc_no} ·${x.qty}${x.delivery_date ? ` (${formatDate(x.delivery_date)})` : ""}`)
+                .join(", ")}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export function MobileStockCard({
   productCode,
@@ -52,44 +150,25 @@ export function MobileStockCard({
   // A warehouse filter scopes the whole card. Desktop keeps it in ?warehouseId;
   // the mobile screen has no route params, so it lives in local state.
   const [warehouseId, setWarehouseId] = useState<string | undefined>(undefined);
-  const [includeClosed, setIncludeClosed] = useState(false);
 
   const warehousesQ = useWarehouses();
-  const breakdownQ = useInventoryProductBreakdown(productCode);
+  // ONE per-lot feed drives both the stat header and the merged lot list — the
+  // SAME endpoint + transform the desktop drawer uses.
+  const reservationsQ = useInventoryReservations({ productCode, warehouseId });
   const movementsQ = useInventoryMovements({ productCode, warehouseId });
-  const lotsQ = useInventoryLots(productCode, { warehouseId, includeClosed });
 
   const warehouses = warehousesQ.data ?? [];
   // Movements carry only warehouse_id; map it to the SHORT code-name ("KL
-  // WAREHOUSE") the desktop Warehouse column now shows — the ONE canonical
-  // warehouse label (owner 2026-07-24), not a code+name concat.
+  // WAREHOUSE") the desktop Warehouse column shows — the ONE canonical label.
   const whName = (id: string) => {
     const w = warehouses.find((x) => x.id === id);
     return w ? w.code : "—";
   };
   const selectedWh = warehouseId ? warehouses.find((w) => w.id === warehouseId) ?? null : null;
 
-  const balances = useMemo(
-    () => (breakdownQ.data?.balances ?? []).filter((b) => b.product_code === productCode),
-    [breakdownQ.data, productCode],
-  );
-  // On-hand reflects the active warehouse filter (all warehouses when none).
-  const onHand = useMemo(
-    () =>
-      balances
-        .filter((b) => !warehouseId || b.warehouse_id === warehouseId)
-        .reduce((s, b) => s + (b.qty ?? 0), 0),
-    [balances, warehouseId],
-  );
-
-  // FIFO value = every open lot's remaining qty × unit cost, over the active
-  // warehouse scope (the lots query already applies warehouseId). Mirrors the
-  // desktop StockCard stat so a SKU's money is visible on the phone too.
-  const lots: InventoryLot[] = lotsQ.data ?? [];
-  const fifoValue = useMemo(
-    () => lots.reduce((s, l) => s + l.qty_remaining * l.unit_cost_sen, 0),
-    [lots],
-  );
+  // Owned vs consignment split + owned value/qty totals (consignment excluded
+  // from value). Null-safe shared transform.
+  const bd = useMemo(() => buildStockBreakdown(reservationsQ.data), [reservationsQ.data]);
 
   // API returns DESC; reverse to ASC to accumulate the running balance, then
   // render DESC (newest first) with the balance AFTER each movement.
@@ -121,8 +200,18 @@ export function MobileStockCard({
 
       <div className="hz-scroll" style={{ flex: 1, overflowY: "auto", padding: 14, paddingBottom: 40, display: "flex", flexDirection: "column", gap: 12 }}>
         <div className="sc-hero">
-          <div className="l">On hand · {selectedWh ? selectedWh.code : "all warehouses"}</div>
-          <div className="v tnum">{onHand} <span className="u">units</span></div>
+          <div className="l">On hand (owned) · {selectedWh ? selectedWh.code : "all warehouses"}</div>
+          <div className="v tnum">{bd.ownedQty} <span className="u">units</span></div>
+          {/* Owner 2026-07-25 — assigned/free split from the ONE MRP engine. Free
+              (un-assigned) owned stock is the dead-stock slice. */}
+          <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, opacity: 0.9 }}>
+            <span className="tnum">{bd.ownedAssignedQty}</span> assigned · <span className="tnum">{bd.ownedFreeQty}</span> free
+          </div>
+          {bd.consignmentQty > 0 && (
+            <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, opacity: 0.85 }}>
+              Consignment (not owned) · <span className="tnum">{bd.consignmentQty}</span> units
+            </div>
+          )}
           <div
             style={{
               marginTop: 7,
@@ -133,7 +222,7 @@ export function MobileStockCard({
               opacity: 0.85,
             }}
           >
-            FIFO value · <span className="tnum">{fmtCenti(fifoValue)}</span>
+            Owned value · <span className="tnum">{fmtCenti(bd.ownedValueSen)}</span>
           </div>
         </div>
 
@@ -159,50 +248,34 @@ export function MobileStockCard({
           </div>
         )}
 
-        {/* Per-(warehouse × variant) split — one cell per real stock bucket
-            (migration 0095). Keying by warehouse_id ALONE collided two variants
-            of one warehouse onto a duplicate React key and two identical rows;
-            the composite key + Attributes label keeps them distinct. Shown in
-            All mode only, like the desktop per-warehouse card. */}
-        {!warehouseId && balances.length > 0 && (
+        {/* Merged stock lots — oldest first (FIFO). Owned lots, then consignment
+            lots (badged, no value). Same feed + split as the desktop drawer. */}
+        <div className="sc-sl"><span className="t">Stock lots · oldest first</span><span className="ln" /></div>
+        {reservationsQ.isLoading ? (
+          <div style={{ textAlign: "center", color: "var(--mut2)", fontSize: 12, padding: "20px 0" }}>Loading…</div>
+        ) : reservationsQ.error ? (
+          <div style={{ textAlign: "center", color: "var(--red)", fontSize: 12, padding: "20px 0" }}>Couldn't load stock lots.</div>
+        ) : bd.ownedLots.length === 0 && bd.consignmentLots.length === 0 ? (
+          <div className="empty"><div className="empty-t">No open lots for this SKU.</div></div>
+        ) : (
           <>
-            <div className="sc-sl"><span className="t">Per warehouse</span><span className="ln" /></div>
-            <div className="sc-whgrid">
-              {balances.map((b) => {
-                const attrs = formatVariantKey(b.variant_key, b.fabric_supplier_code);
-                return (
-                  <div key={`${b.warehouse_id}|${b.variant_key ?? ""}`}>
-                    <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
-                      <span className="wn" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {b.warehouse_code || b.warehouse_name || "—"}
-                      </span>
-                      {attrs && (
-                        <span
-                          style={{
-                            fontSize: 9.5,
-                            fontWeight: 600,
-                            color: "var(--mut)",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {attrs}
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1, flex: "none" }}>
-                      <span className="wq tnum">{b.qty ?? 0}</span>
-                      {b.value_sen != null && b.value_sen > 0 && (
-                        <span className="tnum" style={{ fontSize: 10, fontWeight: 700, color: "var(--mut)" }}>
-                          {fmtCenti(b.value_sen)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            {bd.ownedLots.length > 0 && (
+              <div className="card" style={{ padding: "3px 12px" }}>
+                {bd.ownedLots.map((l, i) => (
+                  <LotCard key={l.id ?? `own|${l.warehouse_id}|${l.variant_key}|${l.batch_no ?? ""}|${i}`} l={l} consignment={false} first={i === 0} />
+                ))}
+              </div>
+            )}
+            {bd.consignmentLots.length > 0 && (
+              <>
+                <div className="sc-sl"><span className="t">Consignment · not owned, excluded from value</span><span className="ln" /></div>
+                <div className="card" style={{ padding: "3px 12px" }}>
+                  {bd.consignmentLots.map((l, i) => (
+                    <LotCard key={l.id ?? `con|${l.warehouse_id}|${l.variant_key}|${l.batch_no ?? ""}|${i}`} l={l} consignment first={i === 0} />
+                  ))}
+                </div>
+              </>
+            )}
           </>
         )}
 
@@ -242,78 +315,6 @@ export function MobileStockCard({
                   </div>
                   <span className={`sc-mq tnum${sq < 0 ? " neg" : ""}`}>{sq > 0 ? `+${sq}` : sq}</span>
                   <span className="sc-mb tnum">{m.runningBalance}</span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* FIFO Lots — the open lots (oldest first) that the next OUT consumes,
-            with each lot's remaining value. "Show closed" reveals fully-consumed
-            lots so the whole FIFO consumption order is visible. Mirrors desktop. */}
-        <div className="sc-sl">
-          <span className="t">FIFO Lots</span>
-          <span className="ln" />
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              fontSize: 10,
-              fontWeight: 700,
-              color: "var(--mut2)",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <input type="checkbox" checked={includeClosed} onChange={(e) => setIncludeClosed(e.target.checked)} />
-            Show closed
-          </label>
-        </div>
-        {lotsQ.isLoading ? (
-          <div style={{ textAlign: "center", color: "var(--mut2)", fontSize: 12, padding: "20px 0" }}>Loading…</div>
-        ) : lotsQ.error ? (
-          <div style={{ textAlign: "center", color: "var(--red)", fontSize: 12, padding: "20px 0" }}>Couldn't load lots.</div>
-        ) : lots.length === 0 ? (
-          <div className="empty">
-            <div className="empty-t">
-              {includeClosed ? "No lots recorded for this SKU." : "No open lots — turn on Show closed to see consumed ones."}
-            </div>
-          </div>
-        ) : (
-          <div className="card" style={{ padding: "4px 13px" }}>
-            {lots.map((l, i) => {
-              const closed = l.qty_remaining === 0;
-              // Prefer the server's remaining value; fall back to qty × cost
-              // exactly as desktop StockCard does (never a fake 0).
-              const remainingValue = l.remaining_value_sen ?? l.qty_remaining * l.unit_cost_sen;
-              return (
-                <div
-                  key={l.id}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 2,
-                    padding: "9px 2px",
-                    borderTop: i === 0 ? "none" : "1px solid var(--line2)",
-                    opacity: closed ? 0.55 : 1,
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-                    <span className="tnum" style={{ fontSize: 11.5, fontWeight: 800, color: "var(--ink)" }}>
-                      {formatDate(l.received_at)}
-                    </span>
-                    <span className="tnum" style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink)" }}>
-                      {remainingValue > 0 ? fmtCenti(remainingValue) : "—"}
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10, color: "var(--mut)" }}>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {l.source_doc_no || "—"}{l.warehouse_code ? ` · ${l.warehouse_code}` : ""}
-                    </span>
-                    <span className="tnum" style={{ flex: "none" }}>
-                      {l.qty_remaining} of {l.qty_received} · {fmtCenti(l.unit_cost_sen)}{closed ? " · closed" : ""}
-                    </span>
-                  </div>
                 </div>
               );
             })}

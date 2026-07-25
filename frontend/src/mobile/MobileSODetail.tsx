@@ -31,15 +31,24 @@ import {
 } from "../vendor/scm/lib/so-detail-gates";
 import {
   amendmentHeaderDiffRows,
+  soHeaderFieldKind,
   type SoAmendmentHeaderChanges,
 } from "../vendor/scm/lib/so-amendment-header";
 import {
   amendmentLineChangedFields,
+  amendmentLineFieldKinds,
   amendmentOldSnapshot,
   amendmentUnrenderedAxes,
   amendmentVariantSummaries,
   visibleAmendmentLines,
 } from "../vendor/scm/lib/so-amendment-line-diff";
+import {
+  routeField,
+  summariseRouting,
+  FIELD_KIND_LABEL,
+  TYPE_LABEL,
+  type AmendmentFieldKind,
+} from "../vendor/scm/lib/amendment-routing";
 import {
   useAmendmentDetail,
   useSupplierConfirm,
@@ -1641,6 +1650,50 @@ const mStrikeIf = (changed: boolean): CSSProperties =>
 const mEmphIf = (changed: boolean): CSSProperties =>
   changed ? { fontWeight: 800, color: "var(--ink)" } : {};
 
+/* Per-row department routing chips (mobile idiom). Advisory accountability — it
+   never gates the single-signature apply. Mirror of the desktop RowRoutingChips. */
+function AmRoutingChips({ kinds }: { kinds: AmendmentFieldKind[] }) {
+  if (kinds.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: "6px 11px 0" }}>
+      {kinds.map((k) => (
+        <span
+          key={k}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10,
+            padding: "1px 5px", borderRadius: 4, border: "1px solid var(--line2, #e3e6e0)",
+            background: "#f4f6f3", color: "var(--mut)",
+          }}
+        >
+          <span style={{ color: "var(--ink)", fontWeight: 600 }}>{FIELD_KIND_LABEL[k]}</span>
+          <span aria-hidden>&rarr;</span>
+          <span style={{ fontWeight: 700, color: "var(--brand, #2b6a4a)" }}>{routeField(k).department}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* Amendment TYPE badge(s) — Processing vs Delivery / Commercial, Mixed when both. */
+function AmTypeBadges({ kinds }: { kinds: AmendmentFieldKind[] }) {
+  const { types, isMixed } = summariseRouting(kinds);
+  if (types.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+      {isMixed && (
+        <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", padding: "1px 6px", borderRadius: 4, background: "var(--line2, #e3e6e0)", color: "var(--mut)" }}>
+          Mixed
+        </span>
+      )}
+      {types.map((t) => (
+        <span key={t} style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", padding: "1px 6px", borderRadius: 4, background: "#e7efe9", color: "var(--brand, #2b6a4a)" }}>
+          {TYPE_LABEL[t]}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onClose: () => void }) {
   const { data, isLoading, error } = useAmendmentDetail(amendmentId);
   /* Approve / reject decision trail (owner 2026-07-18) — read the SO audit log
@@ -1672,6 +1725,13 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
     dl,
   );
 
+  /* Every routable atom this amendment moves — lines + header — for the type
+     badge(s). Mirror of the desktop job card. */
+  const allFieldKinds: AmendmentFieldKind[] = [
+    ...lines.flatMap((l) => amendmentLineFieldKinds(l)),
+    ...headerDiffs.map((d) => soHeaderFieldKind(d.key) as AmendmentFieldKind),
+  ];
+
   return (
     <div className="hz-m sheet-bd" onClick={onClose}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
@@ -1680,6 +1740,7 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
           <div>
             <div className="card-t" style={{ fontSize: 15 }}>Requested changes{amNo ? ` — ${amNo}` : ""}</div>
             <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 2 }}>Was → requesting</div>
+            <AmTypeBadges kinds={allFieldKinds} />
           </div>
           <button type="button" className="sheet-x" onClick={onClose} aria-label="Close">{"✕"}</button>
         </div>
@@ -1703,6 +1764,7 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
               {headerDiffs.map((d) => (
                 <div key={d.key} style={{ border: "1px solid var(--line2, #e3e6e0)", borderRadius: 11, overflow: "hidden" }}>
                   <div style={{ padding: "7px 11px", background: "#f4f6f3", fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: "#5c6156" }}>{d.label}</div>
+                  <AmRoutingChips kinds={[soHeaderFieldKind(d.key) as AmendmentFieldKind]} />
                   <div style={{ display: "flex", gap: 0 }}>
                     <div style={{ flex: 1, minWidth: 0, padding: "9px 11px", borderRight: "1px solid var(--line2, #e3e6e0)" }}>
                       <div className="fld-l" style={{ marginBottom: 3 }}>Was</div>
@@ -1731,6 +1793,7 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                 return (
                   <div key={l.id} style={{ border: "1px solid var(--line2, #e3e6e0)", borderRadius: 11, overflow: "hidden" }}>
                     <div style={{ padding: "7px 11px", background: "#f4f6f3", fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: "#5c6156" }}>{amendmentChangeLabel(l.change_type)}</div>
+                    <AmRoutingChips kinds={amendmentLineFieldKinds(l)} />
                     <div style={{ display: "flex", gap: 0 }}>
                       {/* Before */}
                       <div style={{ flex: 1, minWidth: 0, padding: "9px 11px", borderRight: "1px solid var(--line2, #e3e6e0)" }}>

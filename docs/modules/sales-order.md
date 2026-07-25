@@ -168,3 +168,33 @@ PO / DO / SI / GRN follow the same shape (list hook → `/api/scm/<doc>` handler
 list does (audited — DO already parallel; GRN has a genuine item→downstream chain;
 PO/SI make ≤1), and each doc's stock direction. See `docs/perf-optimization-plan.md`
 for the cross-module audit.
+
+---
+
+## SO amendment — type classification + department routing
+
+The SO amendment (revise a processing-locked SO + its bound PO) now classifies
+each changed field into a TYPE (Processing vs Delivery / Commercial) and tags it
+with a responsible DEPARTMENT, for display + accountability. **The apply gate is
+unchanged** — approval stays single-signature; this is advisory routing only, no
+new endpoint / permission / status / migration. The classifier and the shared PDF
+are documented in full in **`docs/modules/purchase-order-amendment.md` §7**
+(one `amendment-routing.ts` table drives both SO and PO).
+
+SO-specific wiring:
+- **Line atoms** come from `amendmentLineFieldKinds(line)` in
+  `so-amendment-line-diff.ts` (SPEC / VARIANT / QTY / PRICE, or LINE for
+  add/remove) — the SAME shared diff logic the desktop job card, the desktop diff
+  modal and the mobile diff sheet already use, so all three label a row
+  identically. **Header** atoms come from `soHeaderFieldKind(key)` in
+  `so-amendment-header.ts`; every amendable SO header key (delivery / processing
+  date, state, postcode, city) is a scheduling / delivery-address change ->
+  `DELIVERY` (Logistics).
+- **Surfaces (change together):** `AmendmentDetailV2.tsx` (type badges + per-row
+  chips + Department-routing aside), the `AmendmentDiffModal` in
+  `SalesOrderDetail.tsx` (a **Dept** column), and `MobileSODetail.tsx`'s
+  `AmendmentDiffSheet` (type badges + per-row chips). Colour / fabric now also
+  renders as its own change row on the SO PDF.
+- **Audit:** `lib/so-revision.ts` stamps a `routing` field-change + a `routing …`
+  note on the `AMENDMENT_SO_APPROVED` row recording which departments the single
+  approval covered.

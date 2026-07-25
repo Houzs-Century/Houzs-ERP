@@ -63,6 +63,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { ItemGroupPill } from "../../vendor/scm/lib/category-badges";
 import { resolveSoLocation } from "../../lib/soLocation";
 import { useAuth } from "../../auth/AuthContext";
@@ -499,28 +500,11 @@ function DetailDrawer({
   const outstandingCenti = totalCenti - paidCenti;
 
   return (
-    <>
-      {/* scrim — mobile only. On desktop the outer wrapper reflows via
-          md:pr-[540px] so the underlying content stays fully visible next
-          to the drawer; no need to dim it. */}
-      <div
-        onClick={onClose}
-        aria-hidden
-        className={cn(
-          "fixed inset-0 z-[90] bg-ink/40 backdrop-blur-[1px] transition-opacity duration-200 md:hidden",
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        )}
-      />
-      {/* slide-over */}
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label={row ? `Sales order ${row.doc_no}` : "Sales order details"}
-        className={cn(
-          "fixed right-0 top-0 z-[91] flex h-full w-full max-w-[520px] flex-col border-l border-border bg-surface shadow-slab transition-transform duration-200",
-          open ? "translate-x-0" : "translate-x-full"
-        )}
-      >
+    <ResizableDetailDrawer
+      open={open}
+      onClose={onClose}
+      ariaLabel={row ? `Sales order ${row.doc_no}` : "Sales order details"}
+    >
         {row && st && (
           <>
             {/* dark header */}
@@ -745,8 +729,7 @@ function DetailDrawer({
             </div>
           </>
         )}
-      </aside>
-    </>
+    </ResizableDetailDrawer>
   );
 }
 

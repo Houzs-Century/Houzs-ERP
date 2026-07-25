@@ -66,6 +66,7 @@ import {
   hasAmendmentHeaderChanges,
   withFrozenHeaderFieldsReverted,
   amendmentHeaderDiffRows,
+  soHeaderFieldKind,
   type SoAmendmentHeaderChanges,
 } from '../../vendor/scm/lib/so-amendment-header';
 import { diffHeaderPayload } from '../../vendor/scm/lib/so-header-diff';
@@ -97,10 +98,12 @@ import {
 } from '../../vendor/scm/lib/so-amendment-queries';
 import {
   amendmentLineChangedFields,
+  amendmentLineFieldKinds,
   amendmentOldSnapshot,
   amendmentVariantSummaries,
   visibleAmendmentLines,
 } from '../../vendor/scm/lib/so-amendment-line-diff';
+import { routeField, type AmendmentFieldKind } from '../../vendor/scm/lib/amendment-routing';
 import { fetchSoSlipUrl, fetchScanSlipImageBlobUrl } from '../../vendor/scm/lib/slip';
 import {
   useLocalities,
@@ -3595,6 +3598,17 @@ const strikeIf = (changed: boolean): CSSProperties | undefined =>
 const emphasiseIf = (changed: boolean): CSSProperties | undefined =>
   changed ? { fontWeight: 700, color: '#0c3f39' } : undefined;
 
+/* The responsible department(s) for a row's changed atoms — de-duplicated, for
+   the amendment diff modal's Dept column (accountability routing). */
+const deptOf = (kinds: AmendmentFieldKind[]): string => {
+  const seen: string[] = [];
+  for (const k of kinds) {
+    const d = routeField(k).department;
+    if (!seen.includes(d)) seen.push(d);
+  }
+  return seen.join(', ') || '—';
+};
+
 const AmendmentDiffModal = ({
   amendmentId,
   currency,
@@ -3659,6 +3673,7 @@ const AmendmentDiffModal = ({
                   <th>Change</th>
                   <th>Before</th>
                   <th>After</th>
+                  <th>Dept</th>
                 </tr>
               </thead>
               <tbody>
@@ -3668,6 +3683,7 @@ const AmendmentDiffModal = ({
                     <td><strong>{d.label}</strong></td>
                     <td><span className={styles.muted}>{d.from}</span></td>
                     <td>{d.to}</td>
+                    <td><span className={styles.muted}>{deptOf([soHeaderFieldKind(d.key) as AmendmentFieldKind])}</span></td>
                   </tr>
                 ))}
                 {lines.map((l) => {
@@ -3713,6 +3729,7 @@ const AmendmentDiffModal = ({
                           </div>
                         )}
                       </td>
+                      <td><span className={styles.muted}>{deptOf(amendmentLineFieldKinds(l))}</span></td>
                     </tr>
                   );
                 })}

@@ -192,7 +192,7 @@ export function MobileStockTransferNew({
             <span className="st-fl">From</span>
             <select className="cal-sel" value={fromWarehouseId} onChange={(e) => setFromWarehouseId(e.target.value)}>
               <option value="">Select…</option>
-              {whList.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              {whList.map((w) => <option key={w.id} value={w.id}>{w.code}</option>)}
             </select>
           </div>
           <div className="st-arrow">→</div>
@@ -200,7 +200,7 @@ export function MobileStockTransferNew({
             <span className="st-fl">To</span>
             <select className="cal-sel" value={toWarehouseId} onChange={(e) => setToWarehouseId(e.target.value)}>
               <option value="">Select…</option>
-              {whList.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              {whList.map((w) => <option key={w.id} value={w.id}>{w.code}</option>)}
             </select>
           </div>
         </div>

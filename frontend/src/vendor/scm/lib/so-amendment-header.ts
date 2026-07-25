@@ -58,6 +58,13 @@ export const AMENDABLE_HEADER_KEYS = [
 
 export type AmendableHeaderKey = (typeof AMENDABLE_HEADER_KEYS)[number];
 
+/** Route an SO amendment HEADER key to its routing atom (amendment-routing.ts).
+    All amendable header keys are scheduling / delivery-address changes — WHEN and
+    WHERE it ships — so they classify as delivery/commercial, owned by Logistics. */
+export const soHeaderFieldKind = (
+  _key: AmendableHeaderKey,
+): 'DELIVERY' => 'DELIVERY';
+
 /** Only the CHANGED keys are present; a value of null clears the column. */
 export type SoAmendmentHeaderChanges = Partial<Record<AmendableHeaderKey, string | null>>;
 

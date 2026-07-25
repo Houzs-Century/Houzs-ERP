@@ -14,8 +14,9 @@
 // through a minimal fake PostgREST client — same shape as so-converted-po.test.ts,
 // extended with the operators this engine chains (eq / in / order / limit / range).
 import { describe, expect, test } from 'vitest';
-import { computeMrp } from './mrp';
+import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
 import { NO_BUFFERS } from '../lib/lead-time';
+import { distributeAssignedToLots, isMakeToOrderCategory } from '../lib/inventory-movements';
 
 type Row = Record<string, unknown>;
 
@@ -127,5 +128,107 @@ describe('computeMrp — legacy-variant double-count (audit R4)', () => {
     expect(row.lines).toHaveLength(1);
     expect(row.lines[0]!.source).toBe('po');
     expect(row.lines[0]!.poNumber).toBe('PO-LEGACY');
+  });
+});
+
+// A stock balance row for BF-100 → W1 with the RED variant key.
+const stockRed = (qty: number): Row => ({
+  product_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty,
+});
+
+describe('mrpStockAssignment — assigned-vs-free split (owner 2026-07-25, dead-stock view)', () => {
+  test('10 on hand, 3 allocated to an SO → 3 assigned / 7 free', async () => {
+    // Demand 3 of RED, 10 RED in stock, no PO. MRP allocates 3 on-hand units to
+    // SO-1; the other 7 are un-assigned (FREE = dead-stock candidate).
+    const sb = fakeSb({
+      mfg_sales_order_items: [demandRed(3)],
+      purchase_order_items: [],
+      inventory_balances: [stockRed(10)],
+      mfg_products: [{ code: 'BF-100', name: 'Baron Bedframe', category: 'BEDFRAME' }],
+      warehouses: [{ id: 'W1', code: 'KL', name: 'KL WAREHOUSE', is_active: true }],
+      supplier_material_bindings: [],
+      suppliers: [],
+      mrp_category_lead_times: [],
+      fabric_trackings: [],
+      delivery_order_items: [],
+      delivery_return_items: [],
+    });
+
+    const res = await computeMrp(sb as any, opts);
+    const row = res.skus[0]!;
+    expect(row.stock).toBe(10);
+    expect(row.lines[0]!.source).toBe('stock');
+    expect(row.lines[0]!.stockQty).toBe(3); // 3 on-hand units consumed by SO-1
+
+    const asg = mrpStockAssignment(res);
+    const key = stockAssignmentKey('W1', 'BF-100', 'fabriccode=red');
+    const bucket = asg.get(key)!;
+    expect(bucket.assigned).toBe(3);
+    expect(bucket.claims).toHaveLength(1);
+    expect(bucket.claims[0]).toMatchObject({ soDocNo: 'SO-1', qty: 3 });
+
+    // Spread the assignment across the SKU's ONE open lot of 10 → 3 assigned / 7 free.
+    const [lot] = distributeAssignedToLots([10], bucket.assigned, bucket.claims);
+    expect(lot!.assignedQty).toBe(3);
+    expect(lot!.freeQty).toBe(7);
+    expect(lot!.assignedTo).toEqual([{ soDocNo: 'SO-1', deliveryDate: '2026-12-01', qty: 3 }]);
+  });
+
+  test('a make-to-order SKU with stock but NO SO demand → all free = dead stock', async () => {
+    // 6 RED bedframes on hand, zero open SO demand. MRP builds no bucket for it,
+    // so nothing is assigned — every unit is free, and BEDFRAME is make-to-order
+    // (abnormal), so the whole lot is a dead-stock candidate.
+    const sb = fakeSb({
+      mfg_sales_order_items: [],
+      purchase_order_items: [],
+      inventory_balances: [stockRed(6)],
+      mfg_products: [{ code: 'BF-100', name: 'Baron Bedframe', category: 'BEDFRAME' }],
+      warehouses: [{ id: 'W1', code: 'KL', name: 'KL WAREHOUSE', is_active: true }],
+      supplier_material_bindings: [],
+      suppliers: [],
+      mrp_category_lead_times: [],
+      fabric_trackings: [],
+      delivery_order_items: [],
+      delivery_return_items: [],
+    });
+
+    const res = await computeMrp(sb as any, opts);
+    const asg = mrpStockAssignment(res);
+    const key = stockAssignmentKey('W1', 'BF-100', 'fabriccode=red');
+    expect(asg.get(key)).toBeUndefined(); // no demand → no assignment
+
+    // Endpoint behaviour: absent assignment → all on-hand units free.
+    const [lot] = distributeAssignedToLots([6], asg.get(key)?.assigned ?? 0, asg.get(key)?.claims ?? []);
+    expect(lot!.assignedQty).toBe(0);
+    expect(lot!.freeQty).toBe(6);
+    expect(isMakeToOrderCategory('BEDFRAME')).toBe(true); // free stock here is abnormal
+    expect(isMakeToOrderCategory('MATTRESS')).toBe(false); // make-to-stock, free is normal
+  });
+});
+
+describe('distributeAssignedToLots — FIFO spread across multiple lots', () => {
+  test('assigns oldest lots first, splitting the boundary lot', () => {
+    // Bucket assigned 4 across three FIFO lots [2,3,5]. Oldest 2 fully assigned,
+    // 2 more from the second lot (1 free there), the third fully free.
+    const claims = [
+      { soDocNo: 'SO-A', deliveryDate: '2026-10-01', qty: 3 },
+      { soDocNo: 'SO-B', deliveryDate: '2026-11-01', qty: 1 },
+    ];
+    const out = distributeAssignedToLots([2, 3, 5], 4, claims);
+    expect(out[0]).toMatchObject({ assignedQty: 2, freeQty: 0 });
+    expect(out[1]).toMatchObject({ assignedQty: 2, freeQty: 1 });
+    expect(out[2]).toMatchObject({ assignedQty: 0, freeQty: 5 });
+    // Lot 0 → SO-A(2); lot 1 → SO-A(1)+SO-B(1).
+    expect(out[0]!.assignedTo).toEqual([{ soDocNo: 'SO-A', deliveryDate: '2026-10-01', qty: 2 }]);
+    expect(out[1]!.assignedTo).toEqual([
+      { soDocNo: 'SO-A', deliveryDate: '2026-10-01', qty: 1 },
+      { soDocNo: 'SO-B', deliveryDate: '2026-11-01', qty: 1 },
+    ]);
+  });
+
+  test('null-safe: empty lots / over-assignment are capped, never negative', () => {
+    expect(distributeAssignedToLots([], 5, [])).toEqual([]);
+    const [lot] = distributeAssignedToLots([3], 99, [{ soDocNo: 'SO-X', deliveryDate: null, qty: 99 }]);
+    expect(lot).toMatchObject({ assignedQty: 3, freeQty: 0 });
   });
 });

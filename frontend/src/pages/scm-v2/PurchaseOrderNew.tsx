@@ -845,7 +845,7 @@ export const PurchaseOrderNew = () => {
               >
                 <option value="">— Pick a warehouse —</option>
                 {sortByText(warehouses.data ?? []).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                  <option key={w.id} value={w.id}>{w.code}</option>
                 ))}
               </select>
               <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
@@ -1354,7 +1354,7 @@ export const PurchaseOrderNew = () => {
                     >
                       <option value="">— Inherit Purchase Location —</option>
                       {sortByText(warehouses.data ?? []).map((w) => (
-                        <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                        <option key={w.id} value={w.id}>{w.code}</option>
                       ))}
                     </select>
                   </label>

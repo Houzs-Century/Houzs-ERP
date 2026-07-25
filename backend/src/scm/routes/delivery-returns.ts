@@ -727,6 +727,29 @@ deliveryReturns.get('/', async (c) => {
   q = scopeToCompany(q, c); // multi-company: isolate to the active company
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  /* Convert-from column (display-only, audit R8): the DR list already shows its
+     source DO (do_doc_no); resolve the Sales Order behind that DO so the list
+     can also show "From SO", matching the SO/DO/SI lists. One batched read
+     keyed by delivery_order_id → delivery_orders.so_doc_no; best-effort, never
+     throws (the SO number is ancillary, must not 500 the list). */
+  if (Array.isArray(data) && data.length > 0) {
+    const drRows = data as unknown as Array<Record<string, unknown>>;
+    const doIds = [...new Set(
+      drRows
+        .map((r) => r.delivery_order_id as string | null)
+        .filter((d): d is string => !!d),
+    )];
+    const soByDoId = new Map<string, string>();
+    if (doIds.length > 0) {
+      const { data: doRows } = await sb.from('delivery_orders').select('id, so_doc_no').in('id', doIds);
+      for (const d of ((doRows ?? []) as Array<{ id: string | null; so_doc_no: string | null }>)) {
+        if (d.id && d.so_doc_no) soByDoId.set(d.id, d.so_doc_no);
+      }
+    }
+    for (const r of drRows) {
+      r.so_doc_no = soByDoId.get((r.delivery_order_id as string | null) ?? '') ?? null;
+    }
+  }
   /* Finance gate — cost / margin / per-category subtotals reach ONLY a
      finance-viewer; stripped from every row otherwise. */
   if (!canViewScmFinance(c) && Array.isArray(data)) {
