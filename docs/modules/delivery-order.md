@@ -226,19 +226,31 @@ into one OUT row (`:881-905`).
 (3) the global default. A line that resolves to none is **skipped**, never
 guessed. Stock never crosses warehouses.
 
-**Reversal:** cancelling a DO writes a FIFO-neutral positive **ADJUSTMENT**, not
-an IN — `reverseInventoryForDo` (`:1328`, called at `:4330`). The comment at
-`:4322-4328` explains why `reverseMovements` cannot be used: its balancing IN
-reuses the DO source key that the partial unique index rejects, so the insert
-would silently fail and the shipped stock would stay permanently deducted.
-Rack stock is returned separately by `returnDoRacksOnCancel` (`:1073`, called
-`:4336`).
+**Reversal:** cancelling a DO restores its ORIGINAL lots at their ORIGINAL
+per-lot cost and DELETES the DO's `inventory_lot_consumptions` rows —
+`reverseInventoryForDo` (`:1328`, called at `:4330`) calls the SQL function
+`scm.fn_reverse_do_out(p_do_id, p_performed_by, p_batched_only := FALSE)`
+(migration 0198, audit R4), which per bucket restores the consumed lots, zeroes
+the OUT cost stamps, and writes a balance-only **ADJUSTMENT** (`+net_out`) whose
+own trigger-minted lot is immediately closed. So qty nets to 0 (movement ledger
+via the ADJUSTMENT; lot ledger via the restored originals) AND the cancelled
+sale's COGS leaves the ledger. Before 0198 the non-drop-ship path instead wrote a
+positive average-cost ADJUSTMENT / batch-restoring IN and left the consumptions
+stranded (R4). If the SQL fn is absent (pre-0198) or errors, the route FALLS BACK
+to that legacy average-cost add-back (`buildDoReversalRows`, `lib/do-reversal.ts`)
+so a cancel is never lost — the fallback still uses `source_doc_type='ADJUSTMENT'`
+because a balancing IN would reuse the DO source key that the partial unique index
+(`:4322-4328`) rejects. Rack stock is returned separately by
+`returnDoRacksOnCancel` (`:1073`, called `:4336`).
 
 **Drop-ship:** a DO flagged `is_dropship` ships against the expected PO batch
 BEFORE any receipt, so its OUT consumes no lot. The GRN's
 `reconcileDropshipBatches` settles that later (`grns.ts:460`). This is why
 cancelling the PO is blocked while such an OUT is outstanding
-(`mfg-purchase-orders.ts:252-283`).
+(`mfg-purchase-orders.ts:252-283`). Its cancel reversal goes through
+`fn_reverse_dropship_do_out` (batched buckets only), which since 0198 delegates
+to `fn_reverse_do_out(..., p_batched_only := TRUE)` — the same audited body the
+non-drop-ship path uses, so both share one implementation.
 
 The IN counterpart of a DO is the **Delivery Return** (`/delivery-returns`),
 a separate module.
