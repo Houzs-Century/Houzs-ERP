@@ -222,3 +222,67 @@ NOTE: `document-flow.ts` / `DocumentFlowModal.tsx` / `PurchaseOrderDetailV2.tsx`
 overlap with the concurrent `feat/relmap-clickable-amendment` work — the edits
 here are additive (an appended query block, a chip row, one button) to keep the
 merge trivial.
+
+---
+
+## 7. Amendment TYPE classification + department ROUTING — SHIPPED (feat/amendment-type-routing)
+
+Layered on top of the existing amendment (backend + UI + PDF). It classifies every
+changed field into a TYPE and tags it with a responsible DEPARTMENT, for display
+and accountability. **It does NOT change the apply gate** — approval stays
+single-signature (any `scm.po_amendment.approve` holder applies the WHOLE
+amendment, mixed or not). No new endpoint, permission, status, or migration:
+classification is a PURE FUNCTION of which field moved, so it is derived on read
+and cannot drift from the row.
+
+**The classifier — `amendment-routing.ts` (mirrored: `frontend/src/vendor/scm/lib/`
++ `backend/src/scm/shared/`).** One `FIELD_ROUTING` table maps each field atom to
+`{type, department}`; keep the two copies in sync (each has its own unit test).
+
+| Field atom | Source field | Type | Responsible dept |
+|---|---|---|---|
+| `SPEC` | material code / name | Processing | Production / Design |
+| `VARIANT` | colour / fabric / variants | Processing | Production / Design |
+| `QTY` | quantity | Processing | Production / Design |
+| `LINE` | add / remove a line | Processing | Production / Design |
+| `PRICE` | unit cost (`unit_price_centi`) | Delivery / Commercial | Finance |
+| `DELIVERY` | delivery date (line or header `expected_at`) | Delivery / Commercial | Logistics |
+| `SUPPLIER` | header `supplier_id` | Delivery / Commercial | Purchasing |
+
+A single amendment carrying atoms of BOTH types is **mixed** and shows both type
+badges. (Owner's `production/design` and `purchasing/logistics/finance` groupings
+are honoured: processing is one combined-owner group; delivery/commercial splits
+per field. Whether `qty`/`price` should instead route to Purchasing is the one
+open call left for the owner at review — one table row to flip.)
+
+**Line/header extractors.** `poLineFieldKinds(line)` + `poHeaderFieldKind(key)`
+(in `po-amendment-queries.ts`) turn a PO amendment line / header change into the
+atoms above — shared by the PO desktop detail and the mobile detail so both label
+a row identically.
+
+**Display — desktop + mobile (change together).**
+- `PoAmendmentDetailV2.tsx` (desktop) — a **type badge row** in the header
+  (`AmendmentTypeBadges`), **per-row department chips** on each diff card
+  (`RowRoutingChips`), and a **Department routing** aside card
+  (`AmendmentRoutingBlock`) grouping dept -> fields with the single-signature note.
+  Shared chips live in `vendor/scm/components/AmendmentRouting.tsx`.
+- `MobilePoAmendmentDetail.tsx` (mobile) — the same three, in the mobile inline
+  idiom (local `TypeBadges` / `RoutingChips` + a Department-routing card).
+
+**PDF — `amendment-pdf.ts` + `amendment-pdf-map.ts`.** The previously-deferred
+additions now ship: an **AMENDMENT TYPE** badge line (Processing / Delivery
+Commercial / Mixed), a **Dept** column on the change table (each changed field
+against its department), a **DEPARTMENT ROUTING** block (dept -> fields), and a
+single-signature accountability line in the approval block. The mapper
+(`attachRouting`) tags each row's `department` from its field label and folds the
+`AmendmentPdfRouting` summary.
+
+**Audit — `lib/po-revision.ts`.** The `AMENDMENT_PO_APPROVED` row now carries a
+`routing` field-change + a `Routing — ...` note (`routingNote`, from the shared
+classifier) recording which type/departments the single approval covered.
+Accountability is the record, not a per-department block.
+
+**Tests.** `amendment-routing.test.ts` (both copies) proves colour -> processing
+(Production / Design), delivery date -> delivery/commercial (Logistics), and a
+mixed amendment tags both. `amendment-pdf-map.test.ts` proves the per-row
+`department` + the `routing` summary (incl. a delivery-date -> Logistics case).

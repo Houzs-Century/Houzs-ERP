@@ -19,6 +19,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
+import type { AmendmentFieldKind } from './amendment-routing';
 
 /* ── Row + detail shapes (mirror the API response verbatim) ─────────────────
    List rows are loosely typed (accessors read by name), matching the SO
@@ -61,9 +62,29 @@ export type PoAmendmentLine = {
   old_snapshot: unknown;
 };
 
+/* The field ATOMS a PO amendment line moves — the input to amendment-routing's
+   classifier (shared by the PO desktop detail + the mobile detail so both label a
+   changed row with the SAME responsible department). ADD / REMOVE is a whole-line
+   change (LINE); otherwise one atom per new_* field that differs from the snapshot. */
+export const poLineFieldKinds = (l: PoAmendmentLine): AmendmentFieldKind[] => {
+  if (l.change_type === 'ADD' || l.change_type === 'REMOVE') return ['LINE'];
+  const old = (l.old_snapshot as { material_code?: string | null; qty?: number | null; unit_price_centi?: number | null; delivery_date?: string | null } | null) ?? {};
+  const kinds: AmendmentFieldKind[] = [];
+  if (l.new_material_code != null && l.new_material_code !== (old.material_code ?? null)) kinds.push('SPEC');
+  if (l.new_qty != null && l.new_qty !== (old.qty ?? null)) kinds.push('QTY');
+  if (l.new_unit_price_centi != null && l.new_unit_price_centi !== (old.unit_price_centi ?? null)) kinds.push('PRICE');
+  if (l.new_delivery_date != null && l.new_delivery_date !== (old.delivery_date ?? null)) kinds.push('DELIVERY');
+  return kinds;
+};
+
 /* Header change half — the trust boundary AMENDABLE_HEADER in the backend
    (supplier_id / expected_at / notes) paired with the values it replaces. */
 export type PoAmendmentHeaderChanges = Record<string, string | null>;
+
+/** Route a PO header change key to its field atom (supplier -> SUPPLIER, delivery
+    date -> DELIVERY). `notes` is not routable. */
+export const poHeaderFieldKind = (key: string): AmendmentFieldKind | null =>
+  key === 'supplier_id' ? 'SUPPLIER' : key === 'expected_at' ? 'DELIVERY' : null;
 
 export type PoAmendmentDetail = {
   amendment: PoAmendmentRow & Record<string, unknown> & {

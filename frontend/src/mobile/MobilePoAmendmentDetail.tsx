@@ -17,8 +17,17 @@ import {
   useApprovePoAmendment,
   useRejectPoAmendment,
   useWithdrawPoAmendment,
+  poLineFieldKinds,
+  poHeaderFieldKind,
   type PoAmendmentLine,
 } from "../vendor/scm/lib/po-amendment-queries";
+import {
+  routeField,
+  summariseRouting,
+  FIELD_KIND_LABEL,
+  TYPE_LABEL,
+  type AmendmentFieldKind,
+} from "../vendor/scm/lib/amendment-routing";
 import { humanApiError } from "../vendor/scm/lib/authed-fetch";
 import { generateAmendmentPdf } from "../vendor/scm/lib/amendment-pdf";
 import { poAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
@@ -57,6 +66,50 @@ const plainError = (e: unknown): string => {
   return err?.message ?? "Something went wrong. Please try again.";
 };
 
+/* Per-row department routing chips (mobile idiom). Advisory accountability — it
+   never gates the single-signature apply. */
+function RoutingChips({ kinds }: { kinds: AmendmentFieldKind[] }) {
+  if (kinds.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+      {kinds.map((k) => (
+        <span
+          key={k}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10,
+            padding: "1px 5px", borderRadius: 4, border: "1px solid var(--line2)",
+            background: "var(--card2, var(--card))", color: "var(--mut)",
+          }}
+        >
+          <span style={{ color: "var(--ink)", fontWeight: 600 }}>{FIELD_KIND_LABEL[k]}</span>
+          <span aria-hidden>&rarr;</span>
+          <span style={{ fontWeight: 700, color: "var(--brand)" }}>{routeField(k).department}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* The amendment TYPE badge(s) — Processing vs Delivery / Commercial, Mixed when both. */
+function TypeBadges({ kinds }: { kinds: AmendmentFieldKind[] }) {
+  const { types, isMixed } = summariseRouting(kinds);
+  if (types.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+      {isMixed && (
+        <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", padding: "1px 6px", borderRadius: 4, background: "var(--line2)", color: "var(--mut)" }}>
+          Mixed
+        </span>
+      )}
+      {types.map((t) => (
+        <span key={t} style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", padding: "1px 6px", borderRadius: 4, background: "var(--brand-tint, var(--line2))", color: "var(--brand)" }}>
+          {TYPE_LABEL[t]}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function DiffRow({ line }: { line: PoAmendmentLine }) {
   const old = oldOf(line);
   const isAdd = line.change_type === "ADD";
@@ -64,9 +117,12 @@ function DiffRow({ line }: { line: PoAmendmentLine }) {
   const newCode = line.new_material_code ?? old.material_code ?? null;
   return (
     <div style={{ padding: "9px 0", borderTop: "1px solid var(--line2)" }}>
-      <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--mut2)" }}>
-        {line.change_type}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--mut2)" }}>
+          {line.change_type}
+        </div>
       </div>
+      <RoutingChips kinds={poLineFieldKinds(line)} />
       {isRemove ? (
         <div style={{ marginTop: 3, fontSize: 12.5 }}>
           <span style={{ textDecoration: "line-through", color: "var(--mut)" }}>
@@ -137,6 +193,14 @@ export function MobilePoAmendmentDetail({
       to: (changes[k] ?? "—") || "—",
     }));
   }, [amendment]);
+
+  const allFieldKinds = useMemo<AmendmentFieldKind[]>(() => {
+    const fromLines = lines.flatMap((l) => poLineFieldKinds(l));
+    const fromHeader = headerDiffs
+      .map((d) => poHeaderFieldKind(d.key))
+      .filter((k): k is AmendmentFieldKind => k != null);
+    return [...fromLines, ...fromHeader];
+  }, [lines, headerDiffs]);
 
   const status = String(amendment?.status ?? "");
   const poId = String(amendment?.po_id ?? purchaseOrder?.id ?? "");
@@ -237,6 +301,7 @@ export function MobilePoAmendmentDetail({
           <span className="tnum" style={{ fontWeight: 700 }}>{poNumber}</span>
           {typeof purchaseOrder?.revision === "number" ? ` · r${purchaseOrder.revision}` : ""}
         </div>
+        <TypeBadges kinds={allFieldKinds} />
       </header>
 
       <div className="hz-scroll" style={{ flex: 1, overflowY: "auto", padding: 14, paddingBottom: 40 }}>
@@ -285,6 +350,25 @@ export function MobilePoAmendmentDetail({
                 )}
               </div>
             </div>
+
+            {allFieldKinds.length > 0 && (
+              <div className="card">
+                <div className="card-h"><span className="card-t">Department routing</span></div>
+                <div className="card-b" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {summariseRouting(allFieldKinds).departments.map((d) => (
+                    <div key={d.department} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12 }}>
+                      <span style={{ fontWeight: 700 }}>{d.department}</span>
+                      <span style={{ color: "var(--mut)", textAlign: "right" }}>
+                        {d.kinds.map((k) => FIELD_KIND_LABEL[k]).join(", ")}
+                      </span>
+                    </div>
+                  ))}
+                  <div style={{ marginTop: 2, paddingTop: 6, borderTop: "1px solid var(--line2)", fontSize: 11, color: "var(--mut2)", lineHeight: 1.4 }}>
+                    Advisory — any authorized approver applies the whole amendment in one signature; the approval is recorded on the PO history.
+                  </div>
+                </div>
+              </div>
+            )}
 
             {reason && (
               <div className="card">
