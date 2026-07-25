@@ -47,6 +47,10 @@
   --bg-warm:        var(--c-beige);
   --bg-deep:        var(--c-burnt);
   --bg-ink:         var(--c-ink);
+  /* Pressed / inset — one step under --c-paper, same green-grey cast.
+     Referenced by ListingPickerDialog's trigger :active but was never
+     defined, so the press state silently no-op'd. */
+  --bg-subtle:      #eceeea;
 
   --fg:             var(--c-ink);
   --fg-muted:       #767b6e;       /* was #5C5455 — Theme C ink-muted  */
@@ -198,13 +202,21 @@
   --fs-base: 16px;
 
   /* Type scale — modular, tuned for warmth */
+  /* Sub-12 steps + 17/22: referenced ~360× across SCM/audit surfaces
+     (var(--fs-11) alone ×249) but never defined — every one silently
+     inherited its parent's size. Defined 2026-07-26 at face value. */
+  --fs-9: 9px;       --lh-9: 1.35;
+  --fs-10: 10px;     --lh-10: 1.35;
+  --fs-11: 11px;     --lh-11: 1.4;
   --fs-12: 12px;     --lh-12: 1.4;
   --fs-13: 13px;     --lh-13: 1.45;
   --fs-14: 14px;     --lh-14: 1.5;
   --fs-15: 15px;     --lh-15: 1.55;
   --fs-16: 16px;     --lh-16: 1.6;
+  --fs-17: 17px;     --lh-17: 1.55;
   --fs-18: 18px;     --lh-18: 1.55;
   --fs-20: 20px;     --lh-20: 1.5;
+  --fs-22: 22px;     --lh-22: 1.45;
   --fs-24: 24px;     --lh-24: 1.4;
   --fs-32: 32px;     --lh-32: 1.2;
   --fs-40: 40px;     --lh-40: 1.15;
@@ -241,7 +253,11 @@
     --fs-16: 13px;
     --fs-18: 14.5px;
     --fs-20: 16px;
+    --fs-22: 17px;
     --fs-24: 18px;
+    /* 17 follows the 16→13 / 18→14.5 ramp; sub-12 sizes are NOT remapped —
+       they're already at the "keep inputs readable (~11px)" floor. */
+    --fs-17: 13.5px;
   }
 }
 

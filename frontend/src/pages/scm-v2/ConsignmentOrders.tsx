@@ -54,6 +54,7 @@ import { soStatusDisplay, type DeliveryState, type SoLifecycle } from '../../ven
 import { useAuth } from '../../auth/AuthContext';
 import styles from './MfgSalesOrdersList.module.css';
 import { PageHeader } from '../../components/Layout';
+import { StatCard } from '../../components/StatCard';
 import soDetailStyles from './SalesOrderDetail.module.css';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
 
@@ -900,39 +901,8 @@ export const ConsignmentOrders = () => {
   // Customer Name = debtor_name (Commander PR #46 rename in flight).
   // Customer SO Ref + Delivery Date inserted into the AutoCount layout.
 
-  /* Houzs chrome — KPI tile + filter-control styling kept inline so the
-     module CSS doesn't grow another 60 lines for one-off use. Compact
-     AutoCount card: uppercase 10px label + 14px semi-bold value. */
-  const kpiTile = (label: string, value: string, accent?: 'good' | 'bad' | 'burnt'): JSX.Element => (
-    <div key={label} style={{
-      background: 'var(--c-paper)',
-      border: '1px solid var(--line)',
-      borderRadius: 'var(--radius-md)',
-      padding: '8px 12px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 2,
-    }}>
-      <div style={{
-        fontFamily: 'var(--font-button)',
-        fontSize: 'var(--fs-10)',
-        fontWeight: 700,
-        letterSpacing: '0.06em',
-        textTransform: 'uppercase',
-        color: 'var(--fg-muted)',
-      }}>{label}</div>
-      <div style={{
-        fontFamily: 'var(--font-sans)',
-        fontSize: 'var(--fs-14)',
-        fontWeight: 700,
-        fontVariantNumeric: 'tabular-nums',
-        color: accent === 'good'  ? 'var(--c-secondary-a, #2F5D4F)'
-             : accent === 'bad'   ? 'var(--c-festive-b, #B8331F)'
-             : accent === 'burnt' ? '#16695f'
-             : 'var(--c-ink)',
-      }}>{value}</div>
-    </div>
-  );
+  /* KPI tiles are the shared <StatCard/> now (owner 2026-07-26) — the old
+     inline kpiTile helper is gone with them. */
 
   return (
     <div className="space-y-4">
@@ -979,16 +949,43 @@ export const ConsignmentOrders = () => {
         </div>
       )}
 
-      {/* ── 4 KPI tiles (Houzs flat layout, scoped to current filters) ── */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-        gap: 'var(--space-2)',
-      }}>
-        {kpiTile('Total Orders', fmtQty(total))}
-        {kpiTile('Revenue (RM)', fmtRm(kpis.revenue))}
-        {kpiTile('Outstanding (RM)', fmtRm(kpis.outstanding), kpis.outstanding > 0 ? 'bad' : undefined)}
-        {kpiTile('Paid (RM)', fmtRm(kpis.paid), kpis.paid > 0 ? 'good' : undefined)}
+      {/* ── 4 KPI cards — the SO page's StatCard family (owner 2026-07-26,
+          red-box comparison: the flat paper tiles must become the sample's
+          white cards with colour rails + toned values). Same mapping as the
+          SO strip: Total(primary rail, active) · Revenue(accent) ·
+          Outstanding(err, error tone when due) · Paid(synced, success). */}
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard
+          pending={isLoading}
+          label="Total Orders"
+          value={fmtQty(total)}
+          subtitle="All matching orders"
+          rail="bg-primary"
+          active
+        />
+        <StatCard
+          pending={isLoading}
+          label="Revenue"
+          value={`RM ${fmtRm(kpis.revenue)}`}
+          subtitle="All matching orders"
+          rail="bg-accent"
+        />
+        <StatCard
+          pending={isLoading}
+          label="Outstanding"
+          value={`RM ${fmtRm(kpis.outstanding)}`}
+          subtitle="Balance due"
+          tone={kpis.outstanding > 0 ? 'error' : 'default'}
+          rail={kpis.outstanding > 0 ? 'bg-err' : 'bg-border-strong'}
+        />
+        <StatCard
+          pending={isLoading}
+          label="Paid"
+          value={`RM ${fmtRm(kpis.paid)}`}
+          subtitle="Receipts to date"
+          tone={kpis.paid > 0 ? 'success' : 'default'}
+          rail="bg-synced"
+        />
       </div>
 
       {/* Page-level search — drives the SERVER query (the DataGrid's own search

@@ -35,6 +35,8 @@ import { BrandingPill, badgeFor } from '../../vendor/scm/lib/category-badges';
 import styles from './MfgSalesOrdersList.module.css';
 import soDetailStyles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { StatCard } from '../../components/StatCard';
+import { FilterPills } from '../../components/FilterPills';
 
 /* ── Row shape (CN header — mirrors the DO header) ─────────────────────── */
 type CnRow = {
@@ -403,18 +405,7 @@ export const ConsignmentNotes = () => {
       { onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }) });
   };
 
-  const kpiTile = (label: string, value: string, accent?: 'good' | 'bad' | 'burnt'): JSX.Element => (
-    <div key={label} style={{
-      background: 'var(--c-paper)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)',
-      padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 2,
-    }}>
-      <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-muted)' }}>{label}</div>
-      <div style={{
-        fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-14)', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-        color: accent === 'good' ? 'var(--c-secondary-a, #2F5D4F)' : accent === 'bad' ? 'var(--c-festive-b, #B8331F)' : accent === 'burnt' ? '#16695f' : 'var(--c-ink)',
-      }}>{value}</div>
-    </div>
-  );
+  /* KPI tiles are the shared <StatCard/> now (owner 2026-07-26). */
 
   return (
     <div className="space-y-4">
@@ -438,14 +429,25 @@ export const ConsignmentNotes = () => {
         </div>
       )}
 
-      {/* Cost / Margin tiles are CUT for a non-finance viewer (off, not hidden —
-          no tile, no RM 0.00). The server also omits costCenti / marginCenti
-          from `aggregates` for such a caller, so they could only read zero. */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-2)' }}>
-        {kpiTile('Total Notes', fmtQty(total))}
-        {kpiTile('Revenue (RM)', fmtRm(kpis.revenue))}
-        {canFinance && kpiTile('Cost (RM)', fmtRm(kpis.cost))}
-        {canFinance && kpiTile('Margin (RM)', fmtRm(kpis.margin), kpis.margin > 0 ? 'good' : kpis.margin < 0 ? 'bad' : undefined)}
+      {/* SO StatCard family (owner 2026-07-26). Cost / Margin cards stay CUT
+          for a non-finance viewer (off, not hidden — no card, no RM 0.00);
+          the server also omits costCenti / marginCenti for such a caller. */}
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard pending={isLoading} label="Total Notes" value={fmtQty(total)} subtitle="All matching notes" rail="bg-primary" active />
+        <StatCard pending={isLoading} label="Revenue" value={`RM ${fmtRm(kpis.revenue)}`} subtitle="All matching notes" rail="bg-accent" />
+        {canFinance && (
+          <StatCard pending={isLoading} label="Cost" value={`RM ${fmtRm(kpis.cost)}`} subtitle="Cost of goods" rail="bg-accent-bright" />
+        )}
+        {canFinance && (
+          <StatCard
+            pending={isLoading}
+            label="Margin"
+            value={`RM ${fmtRm(kpis.margin)}`}
+            subtitle="Revenue − cost"
+            tone={kpis.margin > 0 ? 'success' : kpis.margin < 0 ? 'error' : 'default'}
+            rail={kpis.margin > 0 ? 'bg-synced' : kpis.margin < 0 ? 'bg-err' : 'bg-border-strong'}
+          />
+        )}
       </div>
 
       {/* Status chips + page-level search. Both drive the SERVER query (the
@@ -454,20 +456,12 @@ export const ConsignmentNotes = () => {
           chips on their own row, the search on the NEXT row at the LEFT -
           not squeezed to the right of the chips. */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {STATUS_CHIPS.map((s) => (
-            <button key={s} type="button" onClick={() => setStatusChip(s)}
-              style={{
-                height: 29, padding: '0 12px', borderRadius: 4, cursor: 'pointer',
-                fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase',
-                border: '1px solid #e5e7eb',
-                background: statusChip === s ? '#16695f' : 'transparent',
-                color: statusChip === s ? '#ffffff' : '#414539',
-              }}>
-              {s === 'all' ? 'All' : STATUS_LABEL[s] ?? s}
-            </button>
-          ))}
-        </div>
+        {/* The SO strip's own FilterPills slab (owner 2026-07-26). */}
+        <FilterPills
+          options={STATUS_CHIPS.map((s) => ({ value: s as string, label: s === 'all' ? 'All' : STATUS_LABEL[s] ?? s }))}
+          value={statusChip}
+          onChange={(v) => setStatusChip(v)}
+        />
         <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
           <Search size={14} strokeWidth={1.75} style={{ position: 'absolute', left: 10, color: 'var(--fg-muted)' }} />
           <input

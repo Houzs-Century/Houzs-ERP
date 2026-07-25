@@ -38,6 +38,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { FilterPills } from '../../components/FilterPills';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -210,35 +211,13 @@ export const PurchaseConsignmentOrders = () => {
         }
       />
 
-      <div className={styles.statusChips}>
-        {STATUS_CHIPS.map((c) => (
-          <button
-            key={c.value}
-            type="button"
-            onClick={() => setStatus(c.value)}
-            /* SO FilterPills spec, MEASURED (owner 2026-07-25: "outstanding
-               那里没有符合主题"): active = petrol on white text, 4px radius,
-               29px, 11px/600 UPPERCASE; idle = transparent + ink-secondary +
-               hairline border. Was an ink-filled pill. */
-            style={{
-              fontFamily: 'var(--font-button)',
-              fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: '0.05em',
-              textTransform: 'uppercase',
-              height: 29,
-              padding: '0 12px',
-              borderRadius: 4,
-              border: '1px solid #e5e7eb',
-              background: status === c.value ? '#16695f' : 'transparent',
-              color: status === c.value ? '#ffffff' : '#414539',
-              cursor: 'pointer',
-            }}
-          >
-            {c.label}
-          </button>
-        ))}
-      </div>
+      {/* The SO strip's own FilterPills slab (owner 2026-07-26, red box on
+          the Outstanding/All strip) — the shared component, not a spec copy. */}
+      <FilterPills
+        options={STATUS_CHIPS.map((c) => ({ value: c.value as string, label: c.label }))}
+        value={status}
+        onChange={(v) => setStatus(v as StatusFilter)}
+      />
 
       <p className={styles.eyebrow}>
         {isLoading ? 'Loading…' : `${rows.length} purchase consignment orders`}

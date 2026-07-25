@@ -22,6 +22,7 @@ import {
   amendmentBucketLabel,
 } from '../../vendor/scm/lib/status-pill';
 import { PageHeader } from '../../components/Layout';
+import { FilterPills } from '../../components/FilterPills';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { cn } from '../../lib/utils';
 
@@ -131,33 +132,21 @@ export const PoAmendments = () => {
           </div>
         )}
 
-        {/* Status chips — SIMPLIFIED Requested / Approved / All, in the SO
-            status-strip clothes (owner 2026-07-26, same ruling as the SO
-            Amendments page): counted labels + measured FilterPills spec. */}
-        <div className="flex flex-wrap gap-1.5">
-          {STATUS_CHIPS.map((s) => {
-            const active = statusChip === s;
-            const count = s === 'all'
-              ? allRows.length
-              : allRows.filter((a) => amendmentBucketOf(a.status) === s).length;
-            return (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatusChip(s)}
-                className={cn(
-                  'h-[29px] rounded border px-3 text-[11px] font-semibold uppercase tracking-[0.05em] transition-colors',
-                  active
-                    ? 'border-transparent bg-primary text-white'
-                    : 'border-[#e5e7eb] bg-transparent text-ink-secondary hover:border-primary/40 hover:text-primary',
-                )}
-              >
-                {amendmentBucketLabel(s)}
-                <span className={cn('ml-1', active ? 'text-white/80' : 'text-ink-muted')}>· {count}</span>
-              </button>
-            );
-          })}
-        </div>
+        {/* Status strip — the SO page's OWN FilterPills component with
+            counted labels (owner 2026-07-26, same ruling as the SO
+            Amendments page). Shared component, so the strips never drift. */}
+        <FilterPills
+          options={STATUS_CHIPS.map((s) => ({
+            value: s,
+            label: `${amendmentBucketLabel(s)} · ${
+              s === 'all'
+                ? allRows.length
+                : allRows.filter((a) => amendmentBucketOf(a.status) === s).length
+            }`,
+          }))}
+          value={statusChip}
+          onChange={(v) => setStatusChip(v)}
+        />
 
         <DataGrid<PoAmendmentRow>
           rows={rows}
