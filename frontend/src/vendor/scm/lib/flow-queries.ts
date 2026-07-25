@@ -58,13 +58,17 @@ export const useDocumentFlow = (type: FlowNodeType | null, id: string | null) =>
     retry: retryUnlessClientError,
   });
 
-/* ── Real "assigned Sales Order" for a purchase document, PER SKU ──────────
-   The STORED origin: which Sales Order each PO / GRN / PI line was RAISED from
-   (purchase_order_items.so_item_id ∪ the PO's "From SOs: …" note), matched BY
-   SKU, plus that SO's effective delivery date (amended ?? customer). A REAL
-   document link, not an advisory pool — a line with no origin returns no
-   assignment and the UI renders a dash. Backend: GET /po-so-coverage/:type/:id. */
-export type OriginAssignment = { soDocNo: string; deliveryDate: string | null };
+/* ── "Assigned Sales Order" for a purchase document, PER SKU ───────────────
+   Resolved by PRECEDENCE on the backend (one MRP engine, symmetric with the SO
+   detail's Assigned-PO): (a) DELIVERED → DO-locked SO (static) > (b) the STORED
+   origin the PO was RAISED from — so_item_id ∪ "From SOs: …" note (static) >
+   (c) live MRP FLOATING coverage matched by SKU (floating) > (d) none → dash.
+   Each assignment carries that SO's effective delivery date (amended ?? customer)
+   and `locked`: true = STATIC (delivered or a stored raise-link), false = the
+   FLOATING MRP coverage (shifts as demand moves, evaporates on delivery). This
+   is the exact reverse of the SO detail's covering-PO, so SO→PO and PO→SO can
+   never disagree. Backend: GET /po-so-coverage/:type/:id. */
+export type OriginAssignment = { soDocNo: string; deliveryDate: string | null; locked?: boolean };
 export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[] };
 export type PoSoCoverageResp = { poNumber: string | null; poId: string | null; origins: SkuOrigin[] };
 
