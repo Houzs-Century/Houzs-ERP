@@ -33,7 +33,7 @@ Houzs's agent framework was ported FROM Hookka (see `services/agent-console.ts` 
 ### #27 teach-in-chat — DONE (files)
 - NEW `backend/src/services/assistant-teach.ts` — `parseRouterDecision` (pure, tested), `recordTeaching`, `agentLabel`, `AGENT_LABELS`.
 - `backend/src/services/assistant.ts` — router now classifies teach-vs-ask, returns a teach PROPOSAL (stays read-only).
-- `backend/src/routes/assistant.ts` — owner-only (`scope.wildcard`) write via `recordTeaching` + `audit('agents.feedback_add')`; non-owner teach refused.
+- `backend/src/routes/assistant.ts` — teach write via `recordTeaching` + `audit('agents.feedback_add')`, gated by `canTeachAgents` (owner 2026-07-26: OPEN to all Assistant staff; `assistant-scope.ts` is the seam to narrow later). Originally owner-only (`scope.wildcard`).
 - Store+inject already existed: `addAgentFeedback` / `activeInstructions` (`agent-console.ts:840/909`), injected via `maybeAiFocus` (`agents/index.ts`).
 - Test `backend/src/services/assistant-teach.test.ts` (14 cases). Families: `DELIVERY DOCUMENT CS COLLECTION PROCUREMENT PMS OF SI` (`agent-console.ts:21-40`); teach stores UPPERCASE family.
 

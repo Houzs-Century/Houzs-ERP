@@ -22,9 +22,10 @@
 //
 // READ-ONLY for business data: this route never writes a business row. Two writes
 // it DOES perform, both here (never in services/assistant.ts, which stays read-
-// only): (1) a TEACHING — when the router reads the message as a standing rule,
-// the OWNER (wildcard) and only the owner records it to the agent teaching
-// notebook, audited; everyone else's teach is refused. (2) per-user chat HISTORY
+// only): (1) a TEACHING — when the router reads the message as a standing rule, a
+// staff member allowed by canTeachAgents records it to the agent teaching
+// notebook, audited (open to all Assistant staff for now — owner 2026-07-26; the
+// gate is one function, narrow it later). (2) per-user chat HISTORY
 // (assistant_conversations/_messages) — a best-effort append that must never
 // break the chat. History is scoped by user_id; a conversation that is missing,
 // unowned, or deleted returns 404, never 403.
@@ -33,7 +34,7 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { askAssistant } from "../services/assistant";
-import { canUseAssistant, scopeForUser } from "../services/assistant-scope";
+import { canTeachAgents, canUseAssistant, scopeForUser } from "../services/assistant-scope";
 import { recordTeaching } from "../services/assistant-teach";
 import {
   appendExchange,
@@ -134,13 +135,15 @@ app.post("/chat", async (c) => {
   const res = await askAssistant(c.env, message, undefined, scope, contentBlocks, c);
 
   /* Build the turn's final answer. The router may read the message as teaching an
-     agent a standing rule — that steers the agent for everyone, so only the owner
-     (wildcard) may record it, and the write happens HERE. */
+     agent a standing rule — that steers the agent for EVERYONE on its next run, so
+     who may record it is gated by canTeachAgents (open to all Assistant staff for
+     now — owner 2026-07-26; narrow to specific staff by editing that one function).
+     The write happens HERE, audited with the actor. */
   let data: AnswerData;
   if (res.teach) {
-    if (!scope.wildcard) {
+    if (!canTeachAgents(user)) {
       data = {
-        answer: `Only the owner can set an agent's standing rules, so I did not record that. Ask the owner to teach ${res.teach.label} if it should apply.`,
+        answer: `You do not have permission to set an agent's standing rules, so I did not record that. Ask a manager or the owner to teach ${res.teach.label} if it should apply.`,
         agents: [],
         degraded: false,
       };
