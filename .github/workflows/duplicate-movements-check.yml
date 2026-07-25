@@ -1,0 +1,62 @@
+name: Duplicate movements check (read-only)
+
+# Detects DOUBLE-POSTED stock movements and OUT movements that skipped the FIFO
+# consume, across EVERY inventory-affecting document. Owner ask 2026-07-25 after
+# the MAKOTO ledger divergence (docs/inventory-ledger-divergence-coe.md): "会不会
+# GR 两次、DO 两次?" — can a GRN / DO / Sales Invoice / etc. post its stock
+# movements TWICE, or record a movement that bypasses the FIFO consume?
+#
+# The job reads three things, all SELECT-only:
+#   (0) IDEMPOTENCY BACKSTOPS — the partial UNIQUE indexes that actually exist on
+#       inventory_movements now (from pg_indexes), so the owner sees which
+#       source_doc_types have a DB-level double-post net (DO / DR / CS_DO / CS_DR)
+#       and which rely on application guards only (GRN / PURCHASE_RETURN /
+#       STOCK_TRANSFER / STOCK_TAKE / ADJUSTMENT / PC_*).
+#   (A) DOUBLE-POSTED buckets — more than one movement row per (doc, warehouse,
+#       product, variant, batch, type). Single-post types (GRN / PURCHASE_RETURN /
+#       STOCK_TRANSFER / STOCK_TAKE) with count > 1 are a HARD double post; resync
+#       types (DO / DR / CS_* / PC_*) are surfaced for context only (delta rows
+#       from shipped-doc edits are legitimate there).
+#   (B) WRITE-WITHOUT-CONSUME — outgoing movements whose consumed qty is less than
+#       the movement qty (the discarded qty_short — the MAKOTO mechanism at the
+#       per-movement grain).
+#
+# The answer lives only in production, so this runs here rather than putting the
+# production DSN in front of a human for a SELECT (repo rule: build the check,
+# never ask the owner to run a query). Strictly read-only — SELECT only, no
+# writes, NO change to any costing logic. See backend/scripts/check-duplicate-movements.mjs
+# and the findings in docs/inventory-idempotency-audit.md.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Own concurrency group — touches nothing, must never queue behind or displace a
+# release (and must not share the deploy's group).
+concurrency:
+  group: duplicate-movements-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-duplicate-movements.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks (soak-gate-check.yml, inventory-integrity-check.yml).
+          NODE_OPTIONS: --dns-result-order=ipv4first
