@@ -73,6 +73,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/delivery-planning",
   "/scm/trips",
   "/scm/delivery-planning-regions",
+  "/scm/delivery-residence-rules",
   "/scm/fleet",
   "/scm/lorry-capacity",
   "/scm",
