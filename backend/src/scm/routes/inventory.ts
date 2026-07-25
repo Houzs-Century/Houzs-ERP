@@ -466,27 +466,27 @@ inventory.get('/products', async (c) => {
   type IncPo = { po_number: string; eta: string | null; qty: number };
   const incomingPos = new Map<string, IncPo[]>();
   const oldestLot = new Map<string, string>();
-  // Warehouse-scoped Stock / Value overrides (ask A) — only populated when a
-  // warehouse is chosen; otherwise the company-wide totals view figures stand.
+  // Warehouse-scoped Stock override (ask A) — only populated when a warehouse is
+  // chosen; otherwise the company-wide totals view figure stands.
   const whStock = new Map<string, number>();
-  const whValue = new Map<string, number>();
+  // OWNED value per product_code, summed from the open FIFO lots below (excluding
+  // consignment-sourced lots). This OVERRIDES the value column in BOTH the
+  // company-wide and warehouse-scoped cases so the list value never counts
+  // consignment stock — matching the Stock Breakdown drawer's owned subtotal and
+  // the Analytics figures (owner rule, BUG-HISTORY 2026-07-25).
+  const ownedValueSen = new Map<string, number>();
 
   if (codes.length > 0) {
-    // Warehouse-scoped Stock + Value: the totals view is a cross-warehouse
-    // rollup, so a per-warehouse view must recompute on-hand qty (balances) and
-    // valuation (v_inventory_value) for the chosen warehouse only.
+    // Warehouse-scoped Stock: the totals view is a cross-warehouse rollup, so a
+    // per-warehouse view must recompute on-hand qty (balances) for the chosen
+    // warehouse only. Value is (re)computed from the open lots below for BOTH
+    // scopes, so it no longer reads v_inventory_value (which counts consignment).
     if (warehouseId) {
       const { data: bal } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
         .from('inventory_balances').select('product_code, qty'), c)
         .eq('warehouse_id', warehouseId).in('product_code', batch).range(from, to));
       for (const r of (bal ?? []) as Array<{ product_code: string; qty: number }>) {
         whStock.set(r.product_code, (whStock.get(r.product_code) ?? 0) + Number(r.qty ?? 0));
-      }
-      const { data: val } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
-        .from('v_inventory_value').select('product_code, value_sen'), c)
-        .eq('warehouse_id', warehouseId).in('product_code', batch).range(from, to));
-      for (const r of (val ?? []) as Array<{ product_code: string; value_sen: number }>) {
-        whValue.set(r.product_code, (whValue.get(r.product_code) ?? 0) + Number(r.value_sen ?? 0));
       }
     }
 
@@ -565,12 +565,22 @@ inventory.get('/products', async (c) => {
     const { data: lots } = await chunkIn(codes, (batch, from, to) => {
       let lq = scopeToCompany(sb
         .from('v_inventory_lots_open')
-        .select('product_code, received_at'), c) // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
+        // source_doc_type/no classify each lot OWNED vs CONSIGNMENT; remaining_value_sen
+        // (= qty_remaining * unit_cost_sen) is the per-lot owned-value basis, identical
+        // to the drawer's buildStockBreakdown formula.
+        .select('product_code, received_at, remaining_value_sen, source_doc_type, source_doc_no'), c) // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
         .in('product_code', batch);
       if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
       return lq.range(from, to);
     });
-    for (const r of (lots ?? []) as Array<{ product_code: string; received_at: string | null }>) {
+    for (const r of (lots ?? []) as Array<{ product_code: string; received_at: string | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
+      // Owner rule (BUG-HISTORY 2026-07-25): consignment stock shows QUANTITY but
+      // is EXCLUDED from inventory VALUE. Classify by the lot SOURCE (never the
+      // warehouse flag) and sum OWNED value only, so the list value column matches
+      // the Stock Breakdown drawer's owned subtotal and the Analytics figures.
+      if (!isConsignmentLotSource(r.source_doc_type, r.source_doc_no)) {
+        ownedValueSen.set(r.product_code, (ownedValueSen.get(r.product_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
+      }
       if (!r.received_at) continue;
       const cur = oldestLot.get(r.product_code);
       if (!cur || r.received_at < cur) oldestLot.set(r.product_code, r.received_at);
@@ -580,7 +590,10 @@ inventory.get('/products', async (c) => {
   const enriched = products.map((p) => {
     const code = String(p.product_code);
     const stock = warehouseId ? (whStock.get(code) ?? 0) : Number(p.total_qty ?? 0);
-    const value = warehouseId ? (whValue.get(code) ?? 0) : Number(p.total_value_sen ?? 0);
+    // OWNED value from the open lots (consignment excluded), for BOTH scopes —
+    // replaces the totals-view / v_inventory_value figures, which both counted
+    // consignment. Rounded once, mirroring the drawer's buildStockBreakdown.
+    const value = Math.round(ownedValueSen.get(code) ?? 0);
     const committed = committedScheduled.get(code) ?? 0;
     const unsched = unscheduled.get(code) ?? 0;
     const inc = incoming.get(code) ?? 0;
@@ -637,20 +650,27 @@ inventory.get('/breakdown/:productCode', async (c) => {
     }
     return c.json({ error: 'load_failed', reason: balErr.message }, 500);
   }
-  const { data: val } = await scopeToCompany(sb.from('v_inventory_value')
-    .select('warehouse_id, variant_key, value_sen')
-    .eq('product_code', productCode), c); // multi-company: isolate valuation to the active company (view exposes company_id, mig 0106)
-  // is_consignment rides along so the drawer can separate CONSIGNMENT stock
-  // (not owned) from owned stock and drop it from the value total (owner
-  // 2026-07-24, R6 — "show quantity but exclude from inventory value"). Pure
-  // display flag; no AP/costing path is touched here.
+  // OWNED value per (warehouse, variant) from the OPEN LOTS, excluding consignment-
+  // sourced lots (owner rule, BUG-HISTORY 2026-07-25) — NOT the raw v_inventory_value,
+  // which sums every lot including consignment. This keeps a variant row's value in
+  // the list expansion / Stock Card consistent with the SKU-row total and the drawer:
+  // the ONE classifier isConsignmentLotSource + the ONE basis remaining_value_sen
+  // (= qty_remaining * unit_cost_sen). Bounded — single product, one query.
+  const { data: lots } = await scopeToCompany(sb.from('v_inventory_lots_open')
+    .select('warehouse_id, variant_key, remaining_value_sen, source_doc_type, source_doc_no')
+    .eq('product_code', productCode), c); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
+  // The warehouse is_consignment flag still rides along for display grouping, but it
+  // NEVER gates value — value is owned-only by lot SOURCE (a PCR mis-posted into a
+  // normal warehouse would otherwise leak into owned value; BUG-HISTORY 2026-07-25).
   const { data: whs } = await sb.from('warehouses').select('id, code, name, is_consignment');
 
   const whMap = new Map((whs ?? []).map((w: { id: string; code: string; name: string; is_consignment: boolean | null }) => [w.id, w]));
-  const valMap = new Map(
-    ((val ?? []) as Array<{ warehouse_id: string; variant_key: string; value_sen: number }>)
-      .map((v) => [`${v.warehouse_id}|${v.variant_key}`, Number(v.value_sen ?? 0)]),
-  );
+  const valMap = new Map<string, number>();
+  for (const l of (lots ?? []) as Array<{ warehouse_id: string; variant_key: string | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
+    if (isConsignmentLotSource(l.source_doc_type, l.source_doc_no)) continue;
+    const k = `${l.warehouse_id}|${l.variant_key ?? ''}`;
+    valMap.set(k, (valMap.get(k) ?? 0) + Number(l.remaining_value_sen ?? 0));
+  }
   const balances = ((bal ?? []) as Array<{ warehouse_id: string; variant_key: string | null; qty: number; last_movement_at: string | null }>)
     .map((b) => {
       const vk = b.variant_key ?? '';
@@ -889,7 +909,10 @@ inventory.get('/analytics', async (c) => {
   // aging. The optional warehouse filter stays inside the page query.
   const { data: lots, error: lotsErr } = await paginateAll((from, to) => {
     let lotsQ = sb.from('v_inventory_lots_open')
-      .select('product_code, product_name, qty_remaining, remaining_value_sen, received_at, warehouse_id');
+      // source_doc_type/no ride along so consignment-sourced lots can be excluded
+      // from every VALUE figure below (owner rule, BUG-HISTORY 2026-07-25) — the
+      // same classification the list value column and the Stock Breakdown drawer use.
+      .select('product_code, product_name, qty_remaining, remaining_value_sen, received_at, warehouse_id, source_doc_type, source_doc_no');
     lotsQ = scopeToCompany(lotsQ, c); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
     if (warehouseId) lotsQ = lotsQ.eq('warehouse_id', warehouseId);
     return lotsQ.range(from, to);
@@ -924,6 +947,11 @@ inventory.get('/analytics', async (c) => {
   const prod = new Map<string, { name: string; qty: number; valueSen: number }>();
   let totalValueSen = 0;
   for (const l of lotRows) {
+    // Consignment stock is held, not owned — it shows QUANTITY on the drawer/list
+    // but must not sit in any inventory VALUE figure (total value, aging value,
+    // dead-stock value, ABC on-hand value). Classify by the lot SOURCE, never the
+    // warehouse flag (owner rule, BUG-HISTORY 2026-07-25).
+    if (isConsignmentLotSource(l.source_doc_type as string | null, l.source_doc_no as string | null)) continue;
     const ageDays = (nowMs - new Date(l.received_at as string).getTime()) / 86_400_000;
     const idx = BUCKETS.findIndex((b) => ageDays <= b.max);
     const bucket = aging[idx < 0 ? aging.length - 1 : idx];
