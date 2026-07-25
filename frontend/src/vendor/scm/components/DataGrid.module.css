@@ -9,7 +9,10 @@
      definition. Reads like a standard enterprise data grid. */
   display: flex;
   flex-direction: column;
-  background: var(--c-paper);
+  /* Transparent root (owner 2026-07-25, follows the toolbar de-banding): the
+     toolbar zone sits directly on the page canvas like the DataTable's; the
+     table body keeps its own paper via .tbody, the header its dim band. */
+  background: transparent;
   /* Outer frame fully removed (Wei Siang 2026-06-04, round 2): no border, no
      radius — the grid is a flat full-bleed panel that flows with the page
      instead of sitting in a "框框". The toolbar's cream bar + the header rule
@@ -36,13 +39,16 @@
 }
 
 /* ── Toolbar ─────────────────────────────────────────────────────── */
+/* Toolbar floats on the PAGE background like the DataTable's (owner
+   2026-07-25: "表头上面有一排,为什么是白色背景 - 先弄掉") — no cream band,
+   no full-width rule; the header's own dim band + 2px rule carry the
+   structure. The search pill / buttons keep their own bordered surfaces. */
 .toolbar {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--line);
-  background: var(--c-cream);
+  background: transparent;
   flex-wrap: wrap;
 }
 .toolbarSpacer { flex: 1; }
@@ -165,7 +171,7 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--c-burnt);
+  color: #16695f;
 }
 .columnsMenuReset:hover { text-decoration: underline; }
 .columnsMenuBody {
@@ -188,7 +194,7 @@
   width: 14px;
   height: 14px;
   margin: 0;
-  accent-color: var(--c-burnt);
+  accent-color: #16695f;
   cursor: pointer;
 }
 .columnsMenuHeaderBtns {
@@ -228,7 +234,7 @@
 .columnsMenuItemDragging { opacity: 0.45; }
 .columnsMenuItemDrop {
   background: var(--c-cream);
-  box-shadow: inset 0 2px 0 var(--c-burnt, #b0592f);
+  box-shadow: inset 0 2px 0 #16695f;
 }
 
 .tbarBtn {
@@ -265,8 +271,8 @@
   min-height: 28px;
 }
 .groupZoneActive {
-  background: rgba(232, 107, 58, 0.08);
-  color: var(--c-burnt);
+  background: rgba(22, 105, 95, 0.08);
+  color: #16695f;
 }
 .groupChip {
   display: inline-flex;
@@ -333,7 +339,7 @@
   border: 2px solid var(--c-cream);
 }
 .scroll::-webkit-scrollbar-thumb:hover {
-  background: var(--c-burnt);
+  background: #16695f;
 }
 .scroll {
   /* Firefox */
@@ -347,11 +353,19 @@
   font-size: var(--fs-12);
   font-variant-numeric: tabular-nums;
 }
+/* Header theme = the shared DataTable's (owner 2026-07-25: the Delivery
+   Planning grid "没有跟其他 service cases / sales order 的一样"): dim header
+   band, ink-black bold labels, a 2px bottom rule, NO vertical gridlines, and
+   the app's petrol/green accents instead of the 2990-era burnt orange. Hexes
+   are written out for the same reason DeliveryPlanning.module.css documents:
+   several --c-* tokens resolve to DIFFERENT fallbacks (or nothing) in this
+   app's cascade. Mapping: primary #16695f · row-hover #3f6b53 at 25% ·
+   header/dim band #f4f6f3 (the Tailwind bg-surface-dim). */
 .thead {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: var(--c-cream);
+  background: #f4f6f3;
 }
 /* Embedded (drill-down) mode — the grid flows with the page, so there is
    no inner scroll container for a sticky header to anchor to. Make the
@@ -365,12 +379,11 @@
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--fg-muted);
+  color: var(--c-ink);
   text-align: left;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--line);
-  border-right: 1px solid var(--line);
-  background: var(--c-cream);
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--line);
+  background: #f4f6f3;
   position: relative;
   user-select: none;
   white-space: nowrap;
@@ -380,9 +393,8 @@
   text-overflow: ellipsis;
   cursor: grab;
 }
-.th:last-child { border-right: 0; }
 .thAlignRight { text-align: right; }
-.thDragOver { background: rgba(232, 107, 58, 0.12); }
+.thDragOver { background: rgba(22, 105, 95, 0.12); }
 .thInner {
   display: inline-flex;
   align-items: center;
@@ -397,7 +409,7 @@
   font: inherit;
   letter-spacing: inherit;
 }
-.sortArrow { font-size: 10px; color: var(--c-burnt); margin-left: 2px; }
+.sortArrow { font-size: 10px; color: #16695f; margin-left: 2px; }
 .resizeHandle {
   position: absolute;
   top: 0;
@@ -410,7 +422,7 @@
   user-select: none;
   z-index: 3;
 }
-.resizeHandle:hover { background: var(--c-orange); opacity: 0.4; }
+.resizeHandle:hover { background: #16695f; opacity: 0.4; }
 
 .tbody { background: var(--c-paper); }
 
@@ -418,13 +430,14 @@
   border-bottom: 1px solid var(--line);
   cursor: pointer;
 }
-.tr:hover { background: var(--c-cream); }
-.trSelected { background: rgba(232, 107, 58, 0.10) !important; font-weight: 600; }
+/* Row hover + selection wear the app accents, not 2990's burnt orange —
+   same tint family the shared DataTable rows use. */
+.tr:hover { background: rgba(63, 107, 83, 0.25); }
+.trSelected { background: rgba(22, 105, 95, 0.10) !important; font-weight: 600; }
 .tr:last-child { border-bottom: 0; }
 
 .td {
-  padding: 4px 8px;
-  border-right: 1px solid rgba(34, 31, 32, 0.04);
+  padding: 4px 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -432,7 +445,6 @@
   height: 28px;
   vertical-align: middle;
 }
-.td:last-child { border-right: 0; }
 /* Figures = one font system-wide (owner 2026-06-18: Mono). --font-mono is the
    readable system stack + the table already sets tabular-nums, so numeric
    columns line up regardless of which page renders them. */
@@ -457,7 +469,7 @@
 .groupCaret {
   display: inline-block;
   width: 12px;
-  color: var(--c-burnt);
+  color: #16695f;
 }
 .groupCount {
   margin-left: 8px;
