@@ -70,6 +70,7 @@ import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
 import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
+import { deliveryZones } from "./routes/delivery-zones";
 import { trips } from "./routes/trips";
 import { dpOrders } from "./routes/dp-orders";
 import { deliveryMessages } from "./routes/delivery-messages";
@@ -471,6 +472,12 @@ scm.route("/delivery-planning-regions", deliveryPlanningRegions);
 // unlike the region master, this is not a picklist other pages need.
 scm.use("/delivery-residence-rules/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/delivery-residence-rules", deliveryResidenceRules);
+// Fleet A1 (mig 0205) — postcode -> zone map, the auto-propose delivery-date
+// action, and reversible day locks. Same Transportation area gate as the rest of
+// TMS: read the map / propose = view is enough for GET, but propose is a POST so
+// it needs edit; editing the map + locking a day = edit.
+scm.use("/delivery-zones/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/delivery-zones", deliveryZones);
 scm.use("/trips/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/trips", trips);
 scm.use("/dp-orders/*", scmAreaGuard("scm.transportation.drivers"));
