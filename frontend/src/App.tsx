@@ -111,6 +111,9 @@ const ScmDeliveryPlanningRegionsV2 = lazy(() => import("./pages/scm-v2/DeliveryP
 const ScmDeliveryResidenceRulesV2 = lazy(() => import("./pages/scm-v2/DeliveryResidenceRules").then((m) => ({ default: m.DeliveryResidenceRules })));
 const ScmFleetV2 = lazy(() => import("./pages/scm-v2/Fleet").then((m) => ({ default: m.Fleet })));
 const ScmLorryCapacityV2 = lazy(() => import("./pages/scm-v2/LorryCapacity").then((m) => ({ default: m.LorryCapacity })));
+// Fleet Module A4 — day-view map + printable driver run-sheet (read/render over trips).
+const ScmFleetDayV2 = lazy(() => import("./pages/scm-v2/FleetDay").then((m) => ({ default: m.FleetDay })));
+const ScmFleetRunSheetV2 = lazy(() => import("./pages/scm-v2/FleetRunSheet").then((m) => ({ default: m.FleetRunSheet })));
 // Sales Order READ side (vendored 2990 list + detail + maintenance). New-SO
 // configurator + SoFromProducts come in a later wave. NOTE: 2990 uses :docNo
 // (not :id) for SO detail, and the literal /maintenance route MUST precede
@@ -625,6 +628,8 @@ export default function App() {
         <Route path="/scm/delivery-residence-rules"  element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryResidenceRulesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/lorry-capacity"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLorryCapacityV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/fleet-day"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetDayV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/fleet-run-sheet"           element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetRunSheetV2 /></Scm2990Shell></ScmGuard>} />
         {/* Supply Chain Hub — section landing page (main app layout, NOT the 2990 shell). */}
         <Route path="/scm" element={<ScmGuard area="scm" allowDirector><ScmHub /></ScmGuard>} />
         {/* Nick 2026-07-09 — Level 2 sub-group hubs (mirror /projects?view=hub).
