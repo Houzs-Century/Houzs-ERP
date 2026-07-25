@@ -324,6 +324,45 @@
   padding: var(--space-6);
 }
 
+/* ── Stock Breakdown drawer — compact, refined tables ────────────────
+   The shared page .table is airy by design. Inside the drawer the owner
+   wants a dense reference view ("做小一点，字体小一点，UI 美一点"). This
+   modifier layers ON TOP of .table and only tightens density + type —
+   colours, borders and hover stay inherited, so no new palette is
+   introduced — with shorter rows, 12px body / 11px head (both at or above
+   the 11px design-system floor) and nowrap cells. Placed after .table so
+   the equal-specificity size rules win by source order. */
+.compactTable thead th {
+  font-size: var(--fs-11);
+  letter-spacing: 0.1em;
+  padding: var(--space-1) var(--space-2);
+  white-space: nowrap;
+}
+.compactTable tbody td {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.compactTable .numCell,
+.compactTable .docLink,
+.compactTable .codeChip {
+  font-size: var(--fs-12);
+}
+
+/* Like the PO/SO line tables: keep the lot table's natural column widths
+   and let it scroll sideways inside its own card instead of squashing the
+   nine columns to fit. The wrapper is the ONLY horizontal-scroll surface —
+   the drawer body never scrolls sideways. */
+.drawerScroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+.lotTable {
+  min-width: 1000px;
+}
+
 /* Phone (Houzs 2026-06-24) — element-level overflow clamp: stack filters,
    contain wide tables in their own scroll box. (The .page padding, .tabRow
    and .statGrid/.statCard rules that used to live here went away with those
