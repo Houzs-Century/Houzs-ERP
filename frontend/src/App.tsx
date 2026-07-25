@@ -16,6 +16,8 @@ import { AnnouncementBanner } from "./components/AnnouncementBanner";
 import { QuickActionsFAB } from "./components/QuickActionsFAB";
 import { BackToTopFAB } from "./components/BackToTopFAB";
 import { AssistantLauncher } from "./components/AssistantLauncher";
+import { AssistantPanel } from "./components/AssistantPanel";
+import { AssistantPanelProvider } from "./components/AssistantPanelContext";
 import { BreadcrumbsProvider } from "./hooks/useBreadcrumbs";
 import { PageSkeleton, RouteCrashBoundary } from "./components/RouteFallback";
 import { NewVersionBanner } from "./components/NewVersionBanner";
@@ -357,7 +359,10 @@ export default function App() {
       <AnnouncementBanner />
       <QuickActionsFAB />
       <BackToTopFAB />
-      <AssistantLauncher />
+      <AssistantPanelProvider>
+        <AssistantLauncher />
+        <AssistantPanel />
+      </AssistantPanelProvider>
       <NewVersionBanner />
       <IosInstallGuide />
       <AndroidInstallGuide />

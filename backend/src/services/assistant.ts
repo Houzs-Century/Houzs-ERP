@@ -32,6 +32,8 @@ import {
   scopeNote,
   type AssistantScope,
 } from './assistant-scope';
+import { AGENT_FAMILIES, type AgentFamily } from './agent-console';
+import { agentLabel, parseRouterDecision } from './assistant-teach';
 
 /** One specialist the router can consult. `briefTable`/`itemsTable` are module
  *  constants — never user input — so they are safe to interpolate. */
@@ -90,13 +92,21 @@ const CAPABILITIES: Capability[] = [
 
 const byKey = new Map(CAPABILITIES.map((c) => [c.key, c]));
 
+const TEACHABLE_LIST = AGENT_FAMILIES.map((f) => `${f} (${agentLabel(f)})`).join(', ');
+const ASK_KEYS_LIST = CAPABILITIES.map((c) => c.key).join(', ');
+
+/* The router now also spots TEACHING — the owner giving an agent a standing rule
+   in the same chat — and returns a teach/ask OBJECT (parseRouterDecision reads
+   it, and still accepts the old bare array for safety). Teaching is a PROPOSAL
+   here; the route performs the owner-gated write, so this file never writes. */
 const ROUTER_SYSTEM = [
-  'You are the router of an ERP assistant. You are given a user question and a list',
-  'of specialist agents with what each can answer. Reply with ONLY a JSON array of',
-  'the agent keys that hold the answer — e.g. ["order_fulfilment","receivables"].',
-  'Pick every agent whose data is needed; a question about why an order is late',
-  'usually needs several. Pick NONE (an empty array) if no agent covers it.',
-  'No prose, no markdown — just the JSON array.',
+  'You are the router of an ERP assistant. Decide whether the user is TEACHING an agent a standing rule or ASKING a question, then reply with ONE JSON object only — no prose, no markdown.',
+  'TEACH = the user gives a STANDING RULE for an agent to remember and apply from now on (imperative: "from now on...", "always...", "never...", "以后...", "记住...", "不要..."). A one-off question is NOT teaching.',
+  'If TEACH: {"teach":{"agent":"<FAMILY>","instruction":"<the rule as one clear standing instruction>"}}.',
+  'If ASK: {"ask":["<key>", ...]} — every specialist key whose data is needed (a late-order question usually needs several); [] if none covers it.',
+  `Valid TEACH families: ${TEACHABLE_LIST}.`,
+  `Valid ASK keys: ${ASK_KEYS_LIST}.`,
+  'When unsure whether it is teach or ask, choose ask.',
 ].join(' ');
 
 const ANSWER_SYSTEM = [
@@ -157,6 +167,10 @@ export interface AssistantAnswer {
   agents: Array<{ key: string; label: string }>;
   /** True when the LLM was unavailable and this is the deterministic fallback. */
   degraded: boolean;
+  /** Set when the router read the message as TEACHING an agent a standing rule.
+   *  A PROPOSAL only — this file never writes; the route performs the owner-gated
+   *  write to the teaching notebook and composes the final confirmation. */
+  teach?: { family: AgentFamily; label: string; instruction: string };
 }
 
 /**
@@ -178,20 +192,29 @@ export async function askAssistant(
   const text = (message ?? '').trim();
   if (!text) return { answer: 'Ask me something about your orders, deliveries, payments, stock or sales.', agents: [], degraded: false };
 
-  // 1. ROUTE — the LLM picks the specialists; keywords are the fallback.
+  // 1. ROUTE — the LLM decides teach-vs-ask and, for ask, picks the specialists;
+  //    keywords are the ask fallback. A teach decision returns here as a PROPOSAL:
+  //    the owner-gated write is the route's job, so this function stays read-only.
   let keys: string[] = [];
   if (apiKey) {
     const routed = await askAgentBrain(apiKey, {
       system: ROUTER_SYSTEM,
       payload: { question: text, agents: CAPABILITIES.map((c) => ({ key: c.key, answers: c.answers })) },
-      maxTokens: 120,
+      maxTokens: 200,
       usageSink,
     });
     if (routed) {
-      try {
-        const arr = JSON.parse(routed.slice(routed.indexOf('['), routed.lastIndexOf(']') + 1));
-        if (Array.isArray(arr)) keys = arr.filter((k): k is string => typeof k === 'string' && byKey.has(k));
-      } catch { /* fall through to keywords */ }
+      const decision = parseRouterDecision(routed, AGENT_FAMILIES, CAPABILITIES.map((c) => c.key));
+      if (decision?.kind === 'teach') {
+        const label = agentLabel(decision.family);
+        return {
+          answer: `That reads as a standing rule for ${label}: "${decision.instruction}".`,
+          agents: [],
+          degraded: false,
+          teach: { family: decision.family, label, instruction: decision.instruction },
+        };
+      }
+      if (decision?.kind === 'ask') keys = decision.keys;
     }
   }
   if (keys.length === 0) keys = keywordRoute(text);

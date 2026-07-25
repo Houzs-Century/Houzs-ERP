@@ -57,6 +57,22 @@ Governance
 Guardian / policy / audit layer
 Enforces permissions, approvals, logging and kill switch.
 
+### 2.1 Teaching an agent from the Assistant
+Besides routing questions, the Assistant recognises the OWNER teaching an agent a
+STANDING RULE in the same chat ("from now on...", "always...", "never...", "以后...")
+and records it to that agent's feedback notebook (`agent_feedback`), which is
+injected into the agent's brain on its next run (`activeInstructions`). This
+teaches the JUDGMENT layer, not the MATH — numeric corrections still go through
+config proposals so the deterministic engines stay deterministic.
+
+Guardrails: owner-only (wildcard scope), audited exactly like the Agent Console
+teach form (`agents.feedback_add`). The Assistant answerer never writes — the
+router only PROPOSES a teaching; the `POST /assistant/chat` route performs the
+owner-gated write, and a non-owner's teaching is refused, never stored. Retire a
+rule in the Agent Console under that agent. Implemented in
+`services/assistant-teach.ts` + `services/assistant.ts` (router) +
+`routes/assistant.ts` (write).
+
 ## 3. Houzs Order Fulfilment Agent
 Owns the customer-order journey from clean order to ready-to-deliver status.
 Field
