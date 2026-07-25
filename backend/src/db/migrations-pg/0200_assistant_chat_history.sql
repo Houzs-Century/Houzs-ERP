@@ -1,4 +1,4 @@
--- 0198_assistant_chat_history.sql — per-user ASSISTANT CHAT HISTORY so the chat
+-- 0200_assistant_chat_history.sql — per-user ASSISTANT CHAT HISTORY so the chat
 -- widget can list a user's past conversations and reopen one.
 --
 -- WHY. POST /api/assistant/chat (routes/assistant.ts) is stateless today. These

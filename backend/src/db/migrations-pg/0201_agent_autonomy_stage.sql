@@ -1,4 +1,4 @@
--- 0199_agent_autonomy_stage.sql — stored 3-position autonomy dial + per-agent
+-- 0201_agent_autonomy_stage.sql — stored 3-position autonomy dial + per-agent
 -- ceiling on agent_controls. Supersedes the binary auto_approve (0091): a stored
 -- stage (1 propose / 2 auto-tune + self-approve reversible actions within policy /
 -- 3 full-auto) is clamped by a per-family max_stage the dial can NEVER raise.

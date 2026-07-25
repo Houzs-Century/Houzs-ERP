@@ -23,9 +23,9 @@ Houzs's agent framework was ported FROM Hookka (see `services/agent-console.ts` 
 |---|---|---|
 | #27 teach-in-chat backend | **DONE, verified** | 14 unit tests + backend typecheck clean; `operating-spec §2.1` added |
 | #28 floating chat widget | **DONE, verified (desktop + mobile)** | frontend typecheck + `npm run build` clean |
-| #29 chat history | **DONE, verified** (backend + history-list UI, desktop + mobile) | migration 0198 + `assistant-history.ts` + 3 endpoints + hook threading + list UI |
+| #29 chat history | **DONE, verified** (backend + history-list UI, desktop + mobile) | migration 0200 + `assistant-history.ts` + 3 endpoints + hook threading + list UI |
 | #30 file upload (img/PDF) | **DONE, verified** | `vision-blocks.ts` + agent-brain contentBlocks + assistant file path + `/chat` multipart + attach UI both surfaces; video rejected |
-| #31 autonomy dial | **DONE, verified** | migration 0199 (stage + max_stage) + `effectiveStage` + callers + `/gate` stage + `Agents.tsx` S1/S2/S3; 47 governance/teach tests pass |
+| #31 autonomy dial | **DONE, verified** | migration 0201 (stage + max_stage) + `effectiveStage` + callers + `/gate` stage + `Agents.tsx` S1/S2/S3; 47 governance/teach tests pass |
 | #32 assistant tool-loop | **DONE, verified** | `search_erp` tool + reusable `askAgentBrainWithTools` engine; 16 new unit tests, `agentGovernance`/`teach` 62 pass, typecheck clean; entity-read + owner-write tools deferred (§#32 below) |
 | #33 PO agent (framework) | **DONE, verified** | mature engine + phases (via #31 dial) + lead-time delivery dates + buffer learning ALREADY existed; added `estimateReadyDate` A2A fact (9 tests, typecheck clean). Grouping/phase RULES are owner-trained via teach-in-chat (#27), not hardcoded (§#33 below) |
 | #34 orchestrator / GCOA + A2A | queued | `operating-spec §2/§9.3`; wire `estimateReadyDate` as the first A2A tool |
@@ -100,5 +100,7 @@ The codebase's FIRST Anthropic tool-use integration. **What shipped** on `feat/p
 - #27: `backend` — `vitest run` (14 pass) + `tsc --noEmit` clean.
 - #28 desktop: `frontend` — `tsc --noEmit` clean + `npm run build` clean (8.4s). Live click-test needs a logged-in session (owner's) — the app shell only mounts post-auth.
 
-## Not yet committed
-All #27 + #28-desktop changes are in the worktree, unpushed. Owner to OK the commit/PR. Migrations for #29/#31: take the number at MERGE time (re-list `migrations-pg`), never reserve — `pg-migrate` breaks on duplicate numbers.
+## Merge readiness (all of #27-#33 are on PR #1288)
+Everything is committed + pushed to `feat/production-po-agent` (PR #1288), backend typecheck clean, 113 procurement/lead-time/governance tests + 62 assistant/governance tests pass.
+
+**Migration collision found + fixed (2026-07-25):** #29/#31 were first written as `0198`/`0199`, but `origin/main` has since advanced to `0198_scm_reverse_do_out_generalize` + `0199_scm_trip_locations` (the trips-TMS phase). Both of ours were duplicate numbers — exactly the class that broke the deploy on 2026-07-22. Renumbered to **`0200_assistant_chat_history.sql`** + **`0201_agent_autonomy_stage.sql`** (safe: never applied — feature branch only). **STILL re-list `migrations-pg` immediately before the actual merge** — main can advance past 0201 again; take the number at merge time. And re-check CI green + backend job `success` (not `skipped`) right before merging: `main` has no branch protection, so this PR is the gate.
