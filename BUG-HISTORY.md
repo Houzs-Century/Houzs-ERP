@@ -1,3 +1,12 @@
+## 2026-07-25
+
+### [LOW] 2990 mail go-live check reported 0 messages while 7 threads existed — counted `direction = 'in'/'out'` but the Mail Center writes `'inbound'/'outbound'`
+- **Symptom.** First production run of `check-2990-mail.mjs` (#1273) printed `threads: 7 (tagged 2990: 7)` but `messages in/out: 0 / 0` — impossible together, since every thread is created with its first message.
+- **Root cause (traced).** The check's SQL guessed the `email_messages.direction` literals as `'in'`/`'out'`. The Mail Center writes `'inbound'`/`'outbound'` everywhere (`mail-center.ts` — inbound insert, Sent-folder filter `m.direction = 'outbound'`, `last_direction` stamps). The script was written from the 0039 schema (which types `direction text` without values) instead of from the code that writes the column.
+- **Fix.** Count `'inbound'`/`'outbound'`. Re-run then showed `messages in/out: 7 / 0`, consistent with the threads.
+- **The class, for next time.** A status/enum column in this schema documents no values — the writer code is the only source of truth. When a diagnostic reads a column it does not write, grep for the INSERT/UPDATE that stamps it and copy the literal from there; and treat "counts disagree with an invariant" (threads without messages) as the check being wrong before the data.
+- **Ref:** #1274. 2026-07-25.
+
 ## 2026-07-24
 
 ### [MEDIUM] Mail Center mailbox creation validated against the HOUZS domain regardless of the active company — a 2990 mailbox was impossible to create
