@@ -1,0 +1,52 @@
+name: Cancelled-DO COGS check (read-only)
+
+# Finds inventory_lot_consumptions rows still attributed to a CANCELLED Delivery
+# Order — a cancelled sale's COGS the cancel-reversal left in the consumption
+# stream. reverseInventoryForDo restores qty via a positive ADJUSTMENT but does NOT
+# delete the original consumptions for a NON-dropship DO (only the dropship path,
+# fn_reverse_dropship_do_out, deletes them). So a COGS report summed from
+# consumptions counts cancelled deliveries. Costing-integrity audit 2026-07-25
+# (risk R4).
+#
+# This job SIZES that exposure, split by is_dropship: non-dropship = the R4
+# finding; dropship = an anomaly (should be zero — the delete fn failed/absent).
+# Root cause + the DEFERRED decision are in docs/inventory-costing-integrity-audit.md.
+#
+# The answer lives only in production, so this runs here rather than putting the
+# production DSN in front of a human for a SELECT (repo rule: build the check,
+# never ask the owner to run a query). Strictly read-only — SELECT only, no writes,
+# NO change to any cancel/costing logic. See backend/scripts/check-cancelled-do-cogs.mjs.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read must
+# never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Own concurrency group — touches nothing, must never queue behind or displace a
+# release (and must not share the deploy's group).
+concurrency:
+  group: cancelled-do-cogs-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-cancelled-do-cogs.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks (inventory-integrity-check.yml, uncosted-cogs-check.yml).
+          NODE_OPTIONS: --dns-result-order=ipv4first
