@@ -94,8 +94,16 @@ Inside the drawer:
   its own effective delivery date (`effective_delivery_date ?? amended_delivery_date
   ?? customer_delivery_date`), blank where absent for the dispatcher. Nothing is
   written until Apply. Heuristic is intentionally simple; refine per owner.
-- **Propose times + route** — rendered DISABLED with a "Phase 3" affordance. The
-  map, geocoding, travel-time and residence-type rules are Phase 3, not built.
+- **Propose times + route** — the SMART proposal (Phase 3, WIRED). Calls `POST
+  /trips/propose-schedule` with the selected SO doc numbers + a depot warehouse +
+  a depart time; the backend geocodes each stop (cache-first), reads each stop's
+  service duration + delivery window from `scm.delivery_residence_rules` (by the
+  SO's `building_type`), makes ONE Google Distance Matrix call, and returns a
+  sequenced route with per-stop arrival / start / finish times + totals. The
+  drawer then renders an interactive Google Map (depot + numbered pins + route
+  line) and a DRAG-to-reorder sequence list; reordering recomputes the times
+  LOCALLY from the returned matrix (no extra Google call). See "The smart route"
+  below.
 - **Open in Trips** — a header control navigating to `/scm/trips` (the full-page
   wide view), mirroring the SO detail drawer's "Open full page".
 - **Apply** — fans out one `useScheduleDelivery` call per selected SO (capped
@@ -108,15 +116,63 @@ Inside the drawer:
   failure is named per stop, never hidden. No new schedule path, no double-count
   (the existing one-job-one-stop sweep still owns dedupe).
 
-**Deferred to Phase 3** (documented, not guessed): the Google Map, geocoding,
-travel-time / smart time proposals, residence-type rules, and the "Propose times
-+ route" logic. This drawer is scheduling only.
+### The smart route — "Propose times + route" (Phase 3)
 
-> Residence-type rules now have their DATA FOUNDATION in place, ahead of the
-> scheduler: `scm.delivery_residence_rules` (mig 0196) + the `/scm/delivery-residence-rules`
-> admin page let the owner set a per-building-type service duration and access
-> windows today. The Phase-3 scheduler will READ that table for its service-time
-> and time-window logic. It is config only — nothing here consumes it yet.
+The smart proposal turns the plain stop list into a sequenced route with clock
+times. It is the only place that calls Google's Distance Matrix, and it runs
+ONLY on the "Propose times + route" click — never on render (the cost note).
+
+**Backend** — `POST /trips/propose-schedule` (`trips.ts`). Body:
+`{ soDocNos[], depotWarehouseId?, departTime? }` (departTime defaults `09:00`).
+
+1. Loads the selected SOs (address parts + `building_type`), scoped to the
+   caller's allowed companies.
+2. Reads `scm.delivery_residence_rules` for the company → per `building_type`:
+   `service_duration_minutes`, `earliest_delivery_time`, `latest_delivery_time`.
+   Unknown type → 90-minute default, no window.
+3. Geocodes the depot warehouse + each stop through `geocodeAddressCached`
+   (`backend/src/scm/lib/geocode.ts`) — CACHE-FIRST against `scm.geocode_cache`
+   (mig 0197), so a given normalized address geocodes ONCE ever. A stop that
+   can't be geocoded is reported in `ungeocoded[]`, never silently dropped.
+4. ONE `travelTimeMatrix` call (`maps.ts` Distance Matrix) over `[depot,
+   ...stops]`.
+5. `proposeRoute` (`backend/src/scm/lib/propose-route.ts`, PURE + unit-tested)
+   sequences the stops: a greedy earliest-deadline-first / nearest-neighbour walk
+   where **earliest is a HARD constraint** (the lorry WAITS, never services
+   before the window opens), service durations are summed into the clock
+   (`finish = start + service`, next leg departs at `finish`), and a stop that
+   cannot meet its `latest` is emitted with `windowViolated: true` rather than
+   hidden. Returns the sequence + per-stop arrival/start/finish + totals incl.
+   the return-to-depot leg.
+
+Gated exactly like `optimize-route`: no `GOOGLE_MAPS_API_KEY` → `{configured:
+false}`, no Google call, drawer keeps its plain list. No depot geocode / no stop
+geocoded / matrix failure → `{configured:true, ok:false, reason}`, reported
+honestly. NOTHING is written here — the proposal is display-only until Apply.
+
+**Frontend** — the drawer (`ScheduleTripDrawer.tsx`) calls `useProposeSchedule`,
+renders `ScheduleRouteMap.tsx` (the Maps JavaScript API via
+`@vis.gl/react-google-maps`, markers + polyline drawn imperatively through
+`useMap()` so no cloud `mapId` is needed), and a drag-to-reorder sequence list.
+The map's browser key is `import.meta.env.VITE_GOOGLE_MAPS_API_KEY` — UNSET →
+the map degrades to a "map key not configured" note (the sequence + times still
+render); a runtime load failure degrades in-place. A drag reorders the sequence
+and recomputes the times via `recomputeSequenceTimes` (PURE, reuses the returned
+matrix — NO extra Google call).
+
+**Apply** persists the proposed ORDER + ETA onto the trip stops through the SAME
+schedule path — `PATCH /delivery-planning/so/:id/schedule` now accepts optional
+`stopNo` / `etaOffsetS` / `legDistanceM` / `legDurationS`, and `scheduleOntoTrip`
+writes them onto `trip_stops` (stop lands in the proposed position with its ETA,
+mig 0134 columns). Omitted on a plain schedule → behaviour unchanged. No new
+schedule endpoint, no new trip logic.
+
+> **COST pattern.** Geocodes are cache-first (bill once per address, ever);
+> Distance Matrix is called ONCE per "Propose times + route" click and never on
+> render or on a drag-reorder (the matrix is reused). Both the geocode helper and
+> the matrix are hard-gated on `GOOGLE_MAPS_API_KEY`, so nothing bills until the
+> owner sets it. The Maps JS render needs a SEPARATE browser key
+> (`VITE_GOOGLE_MAPS_API_KEY`, referrer-restricted).
 
 ### The four state tabs
 
@@ -191,6 +247,7 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | GET | `/lorry-service-records` | `lorry-service-records.ts` | Service history (mig 0121) |
 | GET/POST/PATCH/DELETE | `/trips`, `/trips/:id`, `/trips/:id/stops`, `/trips/:id/status` | `trips.ts:101,141,175,234,277,325,398,412` | Trip (lorry-day) CRUD + stop ordering |
 | POST | `/trips/:id/optimize-route` | `trips.ts:438` | Google route optimisation; returns `{configured:false}` when `GOOGLE_MAPS_API_KEY` is unset |
+| POST | `/trips/propose-schedule` | `trips.ts` | **Phase 3 smart scheduler.** Selected SO stops + depot → geocode (cached) + residence-rule service/windows + ONE Distance Matrix call → sequenced route + per-stop arrival/start/finish times. `{configured:false}` with no key; nothing written |
 | GET/PATCH/PUT | `/lorry-capacity`, `/lorry-capacity/lorries/:id/*` | `lorry-capacity.ts:132,354,389` | Capacity dashboard, in-house flag, repair days |
 | POST/GET/PATCH | `/dp-orders`, `/dp-orders/:id/cancel`, `/:id/schedule` | `dp-orders.ts:190,234,281,313,348` | Manual DP jobs with no source document |
 | PUT | `/delivery-orders-mfg/:id/crew` | `delivery-orders-mfg.ts:3314` | The only writer of `scm.delivery_order_crew` (driver 1/2 + helper 1/2 + lorry). **No frontend caller exists** — grep `frontend/src` for `/crew` returns nothing. |
@@ -478,6 +535,7 @@ request (§3).
 | `scm.dp_orders` | `0129:30-63`. `dp_no`, `job_type` (`scm.trip_stop_type`), `party_type`, address + `postcode` + `state`, `requested_date`, `trip_id`, `status` |
 | `scm.delivery_planning_regions` / `scm.state_delivery_regions` | `0053:198` / `0053:208`. The region master and the state→region map keyed on a state **name** (`state_key`) |
 | `scm.delivery_residence_rules` | `0196`. Per residence / building-type delivery CONFIG the Phase-3 scheduler will read. `building_type` (keyed on the SO's `building_type` UDF values), `service_duration_minutes` (default 90; Landed seeded 60), `earliest_delivery_time` / `latest_delivery_time` (nullable), `requires_lift_booking`, `requires_registration`, `notes`, `is_active`, audit cols + `company_id`. Per-company UNIQUE `(company_id, building_type)`. Seeded for every active company (Condo / Landed / Apartment / Office / Shop / Other) — canonical config, editable in the Residence Rules admin page. |
+| `scm.geocode_cache` | `0197`. Phase 3 GEOCODE CACHE: `normalized_address` (UNIQUE) → `lat`/`lng` (+ `formatted_address`, `location_type`). NOT company-scoped (an address is one point on Earth). `geocodeAddressCached` reads it before any Google call, so a given address geocodes once ever |
 | `scm.delivery_legs` | `0053:123`. The removed multi-hop feature; table still present, unused |
 
 Enums (`0053:27-33`): `delivery_state`, `lorry_type`, `delivery_leg_kind`,
