@@ -216,15 +216,22 @@ export const PurchaseConsignmentOrders = () => {
             key={c.value}
             type="button"
             onClick={() => setStatus(c.value)}
+            /* SO FilterPills spec, MEASURED (owner 2026-07-25: "outstanding
+               那里没有符合主题"): active = petrol on white text, 4px radius,
+               29px, 11px/600 UPPERCASE; idle = transparent + ink-secondary +
+               hairline border. Was an ink-filled pill. */
             style={{
               fontFamily: 'var(--font-button)',
-              fontSize: 'var(--fs-13)',
+              fontSize: 11,
               fontWeight: 600,
-              padding: 'var(--space-2) var(--space-4)',
-              borderRadius: 'var(--radius-pill)',
-              border: status === c.value ? '1px solid var(--c-ink)' : '1px solid var(--line)',
-              background: status === c.value ? 'var(--c-ink)' : 'var(--c-paper)',
-              color: status === c.value ? 'var(--c-cream)' : 'var(--c-ink)',
+              letterSpacing: '0.05em',
+              textTransform: 'uppercase',
+              height: 29,
+              padding: '0 12px',
+              borderRadius: 4,
+              border: '1px solid #e5e7eb',
+              background: status === c.value ? '#16695f' : 'transparent',
+              color: status === c.value ? '#ffffff' : '#414539',
               cursor: 'pointer',
             }}
           >

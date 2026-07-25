@@ -454,11 +454,11 @@ export const ConsignmentReturns = () => {
           {STATUS_CHIPS.map((s) => (
             <button key={s} type="button" onClick={() => setStatusChip(s)}
               style={{
-                height: 28, padding: '0 12px', borderRadius: 999, cursor: 'pointer',
-                fontSize: 11, fontWeight: 600,
-                border: '1px solid ' + (statusChip === s ? '#16695f' : '#DDE5E5'),
-                background: statusChip === s ? 'rgba(22, 105, 95, 0.10)' : '#FFFFFF',
-                color: statusChip === s ? '#16695f' : 'var(--fg-muted)',
+                height: 29, padding: '0 12px', borderRadius: 4, cursor: 'pointer',
+                fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase',
+                border: '1px solid #e5e7eb',
+                background: statusChip === s ? '#16695f' : 'transparent',
+                color: statusChip === s ? '#ffffff' : '#414539',
               }}>
               {s === 'all' ? 'All' : STATUS_LABEL[s] ?? s}
             </button>
