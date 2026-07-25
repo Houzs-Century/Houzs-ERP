@@ -712,14 +712,14 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
     align: 'right',
     accessor: (r) => (
       <span className={`${styles.numCell} ${styles.numCellZero}`}>
-        {r.total_qty > 0 && r.total_value_sen > 0 ? fmtRm(Math.round(r.total_value_sen / r.total_qty)) : '—'}
+        {(r.owned_qty ?? r.total_qty) > 0 && r.total_value_sen > 0 ? fmtRm(Math.round(r.total_value_sen / (r.owned_qty ?? r.total_qty))) : '—'}
       </span>
     ),
     searchValue: () => '',
-    filterValue: (r) => r.total_qty > 0 && r.total_value_sen > 0 ? fmtRm(Math.round(r.total_value_sen / r.total_qty)) : '—',
+    filterValue: (r) => (r.owned_qty ?? r.total_qty) > 0 && r.total_value_sen > 0 ? fmtRm(Math.round(r.total_value_sen / (r.owned_qty ?? r.total_qty))) : '—',
     sortFn: (a, b) => {
-      const ua = a.total_qty > 0 && a.total_value_sen > 0 ? a.total_value_sen / a.total_qty : 0;
-      const ub = b.total_qty > 0 && b.total_value_sen > 0 ? b.total_value_sen / b.total_qty : 0;
+      const ua = (a.owned_qty ?? a.total_qty) > 0 && a.total_value_sen > 0 ? a.total_value_sen / (a.owned_qty ?? a.total_qty) : 0;
+      const ub = (b.owned_qty ?? b.total_qty) > 0 && b.total_value_sen > 0 ? b.total_value_sen / (b.owned_qty ?? b.total_qty) : 0;
       return ua - ub;
     },
   },

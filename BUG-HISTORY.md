@@ -1,5 +1,11 @@
 ## 2026-07-25
 
+### [MEDIUM] List avg Unit Cost was diluted for consignment-holding SKUs — divided owned value by TOTAL qty (incl. consignment)
+- **Symptom.** Owner (2026-07-25): after #1256 made the list value owned-only, the "Unit Cost" (avg) column stayed `total_value_sen / total_qty` — but total_qty still counts consignment units, so an SKU holding consignment showed an artificially LOW average cost.
+- **Root cause.** The avg-cost derivation used the total quantity (owned + consignment) as the divisor while the numerator (value) had become owned-only — a mismatched pair.
+- **Fix.** Backend `/inventory/products` now returns `owned_qty` (Σ qty_remaining of non-consignment open lots, same `isConsignmentLotSource` classification as the value). Frontend avg cost divides `total_value_sen / (owned_qty ?? total_qty)`. `inventory.ts` + `Inventory.tsx` + `inventory-queries.ts`.
+- **Ref:** #<PR>. Follow-up to #1256, owner 2026-07-25.
+
 ### [HIGH] Schedule drawer "Apply" failed every stop with "Cannot read properties of undefined (reading 'map')" — optimistic patch didn't guard prev.orders
 - **Symptom.** Owner (live): in the Delivery Planning schedule drawer (#1251), clicking Apply popped "Schedule not saved · Cannot read properties of undefined (reading 'map')" and every stop showed FAILED — nothing was scheduled.
 - **Root cause (traced).** `useScheduleDelivery` `onMutate` optimistically patches EVERY cached `['delivery-planning']` query. The Trips "To schedule" panel (#1244) registers its own `['delivery-planning', 'ALL', 'PENDING_SCHEDULE']` cache entry whose shape can carry an undefined `orders` (partial/early-state cache). The loop guarded `if (!prev) continue` but then called `prev.orders.map(...)` — so a truthy-but-orders-less entry threw, react-query surfaced it as the mutation error, and the per-stop catch marked all FAILED.

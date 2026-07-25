@@ -475,6 +475,10 @@ inventory.get('/products', async (c) => {
   // consignment stock — matching the Stock Breakdown drawer's owned subtotal and
   // the Analytics figures (owner rule, BUG-HISTORY 2026-07-25).
   const ownedValueSen = new Map<string, number>();
+  // OWNED qty per product_code (consignment lots excluded), so the list's avg
+  // unit cost divides owned value by OWNED qty — not total_qty (which still
+  // counts consignment units and would dilute the average) (owner 2026-07-25).
+  const ownedQty = new Map<string, number>();
 
   if (codes.length > 0) {
     // Warehouse-scoped Stock: the totals view is a cross-warehouse rollup, so a
@@ -568,18 +572,19 @@ inventory.get('/products', async (c) => {
         // source_doc_type/no classify each lot OWNED vs CONSIGNMENT; remaining_value_sen
         // (= qty_remaining * unit_cost_sen) is the per-lot owned-value basis, identical
         // to the drawer's buildStockBreakdown formula.
-        .select('product_code, received_at, remaining_value_sen, source_doc_type, source_doc_no'), c) // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
+        .select('product_code, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c) // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
         .in('product_code', batch);
       if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
       return lq.range(from, to);
     });
-    for (const r of (lots ?? []) as Array<{ product_code: string; received_at: string | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
+    for (const r of (lots ?? []) as Array<{ product_code: string; received_at: string | null; qty_remaining: number | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
       // Owner rule (BUG-HISTORY 2026-07-25): consignment stock shows QUANTITY but
       // is EXCLUDED from inventory VALUE. Classify by the lot SOURCE (never the
       // warehouse flag) and sum OWNED value only, so the list value column matches
       // the Stock Breakdown drawer's owned subtotal and the Analytics figures.
       if (!isConsignmentLotSource(r.source_doc_type, r.source_doc_no)) {
         ownedValueSen.set(r.product_code, (ownedValueSen.get(r.product_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
+        ownedQty.set(r.product_code, (ownedQty.get(r.product_code) ?? 0) + Number(r.qty_remaining ?? 0));
       }
       if (!r.received_at) continue;
       const cur = oldestLot.get(r.product_code);
@@ -604,6 +609,9 @@ inventory.get('/products', async (c) => {
       // Stock / Value reflect the warehouse scope when one is chosen.
       total_qty:           stock,
       total_value_sen:     value,
+      // OWNED qty (consignment excluded) — the divisor for avg unit cost so the
+      // average isn't diluted by consignment units carried in total_qty.
+      owned_qty:           Math.round(ownedQty.get(code) ?? 0),
       committed_scheduled: committed,
       unscheduled_qty:     unsched,
       reserved_total:      committed + unsched, // whole open demand (continuity)
