@@ -197,11 +197,20 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned }: {
       {assigned && (
         <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 4 }}>
           <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093" }}>Assigned SO</span>
-          {assigned.length ? assigned.map((a) => (
-            <span key={a.soDocNo} style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#0c3f39", background: "#eef3f1", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px" }}>
-              {a.soDocNo}{a.deliveryDate ? ` · ${dmy(a.deliveryDate)}` : ""}
-            </span>
-          )) : <span style={{ fontSize: 11, color: "#9aa093" }}>—</span>}
+          {assigned.length ? assigned.map((a) => {
+            // Floating (live MRP coverage) → dashed chip + trailing "~"; static
+            // (delivered→DO-locked or raised-from-SO) → solid chip.
+            const floating = a.locked === false;
+            return (
+              <span
+                key={a.soDocNo}
+                title={floating ? "Floating — live MRP coverage (updates until delivered)" : "Locked — delivered or raised from this Sales Order"}
+                style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#0c3f39", background: floating ? "transparent" : "#eef3f1", border: floating ? "1px dashed #b6c6c0" : "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px" }}
+              >
+                {a.soDocNo}{a.deliveryDate ? ` · ${dmy(a.deliveryDate)}` : ""}{floating ? " ~" : ""}
+              </span>
+            );
+          }) : <span style={{ fontSize: 11, color: "#9aa093" }}>—</span>}
         </div>
       )}
     </div>

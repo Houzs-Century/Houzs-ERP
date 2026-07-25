@@ -173,25 +173,37 @@ export function DocumentLinesExpansion({
               {showAssignment && (
                 <span className="flex min-w-0 flex-wrap gap-1">
                   {assigned.length > 0 ? (
-                    assigned.map((a) =>
-                      onOpenSo ? (
+                    assigned.map((a) => {
+                      // Floating (live MRP coverage) reads as a dashed chip with a
+                      // trailing "~"; static (delivered→DO-locked or raised-from-SO)
+                      // reads as a solid chip. Owner distinguishes the two.
+                      const floating = a.locked === false;
+                      const title = floating
+                        ? "Floating — live MRP coverage (updates until delivered)"
+                        : "Locked — delivered or raised from this Sales Order";
+                      const base =
+                        "rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink";
+                      const border = floating
+                        ? "border border-dashed border-border"
+                        : "border border-border-subtle bg-surface-2";
+                      return onOpenSo ? (
                         <button
                           type="button"
                           key={a.soDocNo}
+                          title={title}
                           onClick={() => onOpenSo(a.soDocNo)}
-                          className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
+                          className={cn(base, border, "hover:border-accent hover:text-accent")}
                         >
                           {a.soDocNo}
+                          {floating && <span className="text-ink-muted">{" ~"}</span>}
                         </button>
                       ) : (
-                        <span
-                          key={a.soDocNo}
-                          className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink"
-                        >
+                        <span key={a.soDocNo} title={title} className={cn(base, border)}>
                           {a.soDocNo}
+                          {floating && <span className="text-ink-muted">{" ~"}</span>}
                         </span>
-                      )
-                    )
+                      );
+                    })
                   ) : (
                     <span className="text-[11px] text-ink-muted">—</span>
                   )}

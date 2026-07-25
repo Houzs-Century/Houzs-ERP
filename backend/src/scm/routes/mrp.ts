@@ -137,7 +137,7 @@ const WH_NONE = 'NOWH';
 const composite = (whId: string | null, code: string, vkey: string): string =>
   `${whId ?? WH_NONE}|${code}|${vkey}`;
 
-type MrpLine = {
+export type MrpLine = {
   soItemId: string;    // mfg_sales_order_items.id — lets the UI one-click PO this line
   soDocNo: string;
   debtorName: string | null;
@@ -160,7 +160,7 @@ type MrpLine = {
   poSupplierName: string | null;
 };
 
-type MrpSku = {
+export type MrpSku = {
   /* Commander 2026-05-31 — each row is scoped to ONE warehouse (per-WH MRP). The
      same SKU+variant in two warehouses produces two rows; the UI groups by
      warehouse. NULL when the demand line has no warehouse bound yet. */
