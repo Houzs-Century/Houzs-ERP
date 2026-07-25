@@ -36,6 +36,14 @@ import {
   canDispatch,
   VEHICLE_STATUS_LABELS,
   type ComplianceDocInput,
+  PLAN_COMPONENTS,
+  PLAN_COMPONENT_LABELS,
+  type PlanComponent,
+  type MaintenancePlanInput,
+  derivePlanDue,
+  MILEAGE_SOURCES,
+  type MileageSource,
+  assessMileageReading,
 } from "../../services/fleet-status";
 
 export const fleetMaintenance = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -43,6 +51,8 @@ fleetMaintenance.use("*", supabaseAuth);
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const DOC_TYPE_SET = new Set<string>(COMPLIANCE_DOC_TYPES);
+const PLAN_COMPONENT_SET = new Set<string>(PLAN_COMPONENTS);
+const MILEAGE_SOURCE_SET = new Set<string>(MILEAGE_SOURCES);
 // doc_type -> the denormalized "current" flat column on scm.lorries (mig 0121).
 // APAD / CROSS_BORDER are vault-only (no flat column).
 const FLAT_COL: Partial<Record<ComplianceDocType, "road_tax_expiry" | "insurance_expiry" | "puspakom_expiry">> = {
@@ -181,21 +191,93 @@ function currentByType(lorry: Lorry, vaultRows: VaultRow[], today: string) {
   return { compliance: out, statusDocs };
 }
 
+type PlanRow = {
+  id: string;
+  lorry_id: string;
+  component: string;
+  interval_km: number | null;
+  interval_months: number | null;
+  last_done_date: string | null;
+  last_done_km: number | null;
+  workshop: string | null;
+  est_cost_centi: number | null;
+  notes: string | null;
+  active: boolean | null;
+};
+
+type MileageRow = {
+  id: string;
+  lorry_id: string;
+  reading_date: string | null;
+  odometer_km: number | null;
+  source: string | null;
+  photo_ref: string | null;
+  flagged: boolean | null;
+  note: string | null;
+};
+
+/** A plan as the wire needs it: raw fields + the derived due picture. */
+function shapePlan(row: PlanRow, currentKm: number | null, today: string) {
+  const plan: MaintenancePlanInput = {
+    component: row.component,
+    intervalKm: row.interval_km,
+    intervalMonths: row.interval_months,
+    lastDoneDate: iso(row.last_done_date),
+    lastDoneKm: row.last_done_km,
+    active: row.active ?? true,
+  };
+  const due = derivePlanDue(plan, currentKm, today);
+  return {
+    id: row.id,
+    component: row.component as PlanComponent,
+    componentLabel: PLAN_COMPONENT_LABELS[row.component as PlanComponent] ?? row.component,
+    intervalKm: row.interval_km,
+    intervalMonths: row.interval_months,
+    lastDoneDate: iso(row.last_done_date),
+    lastDoneKm: row.last_done_km,
+    workshop: row.workshop,
+    estCostCenti: row.est_cost_centi,
+    notes: row.notes,
+    active: row.active ?? true,
+    nextDueKm: due.nextDueKm,
+    nextDueDate: due.nextDueDate,
+    kmRemaining: due.kmRemaining,
+    daysRemaining: due.daysRemaining,
+    dueSoon: due.dueSoon,
+    overdue: due.overdue,
+    tone: due.tone,
+  };
+}
+
+/** The plan-status inputs the state machine needs (active plans only). */
+function planInputs(rows: PlanRow[]): MaintenancePlanInput[] {
+  return rows.map((r) => ({
+    component: r.component,
+    intervalKm: r.interval_km,
+    intervalMonths: r.interval_months,
+    lastDoneDate: iso(r.last_done_date),
+    lastDoneKm: r.last_done_km,
+    active: r.active ?? true,
+  }));
+}
+
 // ── GET /dashboard ──────────────────────────────────────────────────────────
 fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => {
   const sb = c.get("supabase");
   const today = todayMyt();
   const monthStart = today.slice(0, 8) + "01";
 
-  const [lorriesR, whR, driversR, vaultR, maintR, svcR] = await Promise.all([
+  const [lorriesR, whR, driversR, vaultR, maintR, svcR, plansR, mileageR] = await Promise.all([
     sb.from("lorries").select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes").eq("active", true).order("plate"),
     sb.from("warehouses").select("id, code, name"),
     sb.from("drivers").select("vehicle, name").eq("active", true),
     sb.from("lorry_compliance_documents").select("*"),
     sb.from("lorry_maintenance").select("lorry_id, unavailable_from, unavailable_to, reason").lte("unavailable_from", today).gte("unavailable_to", today),
     sb.from("lorry_service_records").select("lorry_id, service_date, odometer_km, next_service_km, next_service_date, cost_centi").order("service_date", { ascending: false }),
+    sb.from("lorry_maintenance_plans").select("*").eq("active", true),
+    sb.from("lorry_mileage_readings").select("lorry_id, reading_date, odometer_km, source, flagged").order("reading_date", { ascending: false }).order("created_at", { ascending: false }),
   ]);
-  const firstErr = lorriesR.error || whR.error || driversR.error || vaultR.error || maintR.error || svcR.error;
+  const firstErr = lorriesR.error || whR.error || driversR.error || vaultR.error || maintR.error || svcR.error || plansR.error || mileageR.error;
   if (firstErr) return c.json({ error: "load_failed", reason: firstErr.message }, 500);
 
   const lorries = (lorriesR.data ?? []) as Lorry[];
@@ -222,24 +304,49 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     if (!latestSvc.has(lid)) latestSvc.set(lid, { odometer_km: s.odometer_km as number | null, next_service_km: s.next_service_km as number | null, next_service_date: iso(s.next_service_date) });
     if (iso(s.service_date) && iso(s.service_date)! >= monthStart) monthSpend.set(lid, (monthSpend.get(lid) ?? 0) + Number(s.cost_centi ?? 0));
   }
+  // Active preventive-maintenance plans per lorry.
+  const plansByLorry = new Map<string, PlanRow[]>();
+  for (const p of (plansR.data ?? []) as PlanRow[]) {
+    const list = plansByLorry.get(p.lorry_id) ?? [];
+    list.push(p);
+    plansByLorry.set(p.lorry_id, list);
+  }
+  // Latest odometer reading per lorry (rows already newest-first).
+  const latestMileage = new Map<string, { odometer_km: number | null; reading_date: string | null; flagged: boolean }>();
+  for (const m of (mileageR.data ?? []) as MileageRow[]) {
+    if (!latestMileage.has(m.lorry_id)) latestMileage.set(m.lorry_id, { odometer_km: m.odometer_km, reading_date: iso(m.reading_date), flagged: !!m.flagged });
+  }
 
   let expiredDocs = 0, expiring30 = 0, expiring60 = 0, expiring90 = 0;
-  let serviceDueCount = 0, breakdowns = 0, complianceBlocked = 0, cantDispatch = 0;
+  let serviceDueCount = 0, serviceOverdueCount = 0, breakdowns = 0, complianceBlocked = 0, cantDispatch = 0;
   const statusCounts: Record<string, number> = {};
 
   const rows = lorries.map((l) => {
     const { compliance, statusDocs } = currentByType(l, vaultByLorry.get(l.id) ?? [], today);
     const svc = latestSvc.get(l.id);
+    // The odometer the plans measure against: latest MILEAGE reading first (the
+    // Phase-2 primary), else the latest service record's odometer.
+    const mileage = latestMileage.get(l.id);
+    const currentMileageKm = mileage?.odometer_km ?? svc?.odometer_km ?? null;
+    const planRows = plansByLorry.get(l.id) ?? [];
+    const plans = planInputs(planRows);
+    const shapedPlans = planRows.map((p) => shapePlan(p, currentMileageKm, today)).sort((a, b) => (a.daysRemaining ?? 1e9) - (b.daysRemaining ?? 1e9));
+    const plansOverdue = shapedPlans.filter((p) => p.overdue).length;
+    const plansDueSoon = shapedPlans.filter((p) => p.dueSoon && !p.overdue).length;
+    // The single most-urgent plan drives the board's "next service" cell.
+    const nextPlan = shapedPlans.find((p) => p.nextDueKm !== null || p.nextDueDate !== null) ?? null;
     const status = deriveVehicleStatus({
       today,
       outOfService: oosByLorry.has(l.id),
       currentDocs: statusDocs,
-      currentMileageKm: svc?.odometer_km ?? null,
+      currentMileageKm,
       nextServiceKm: svc?.next_service_km ?? null,
       nextServiceDate: svc?.next_service_date ?? null,
+      plans,
     });
     statusCounts[status] = (statusCounts[status] ?? 0) + 1;
     if (status === "SERVICE_DUE") serviceDueCount++;
+    if (plansOverdue > 0) serviceOverdueCount++;
     if (status === "BREAKDOWN") breakdowns++;
     if (status === "COMPLIANCE_BLOCKED") complianceBlocked++;
     if (!canDispatch(status)) cantDispatch++;
@@ -258,7 +365,10 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
       driverName: driverByPlate.get(normPlate(l.plate)) ?? null,
       vehicleType: l.type,
       model: l.model,
-      mileageKm: svc?.odometer_km ?? null,
+      mileageKm: currentMileageKm,
+      mileageDate: mileage?.reading_date ?? null,
+      mileageSource: mileage ? "reading" : svc?.odometer_km != null ? "service" : null,
+      mileageFlagged: mileage?.flagged ?? false,
       nextServiceKm: svc?.next_service_km ?? null,
       nextServiceDate: svc?.next_service_date ?? null,
       outOfService: oosByLorry.has(l.id),
@@ -268,6 +378,21 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
       statusLabel: VEHICLE_STATUS_LABELS[status],
       canDispatch: canDispatch(status),
       compliance,
+      planCount: shapedPlans.length,
+      plansOverdue,
+      plansDueSoon,
+      nextPlan: nextPlan
+        ? {
+            component: nextPlan.component,
+            componentLabel: nextPlan.componentLabel,
+            nextDueKm: nextPlan.nextDueKm,
+            nextDueDate: nextPlan.nextDueDate,
+            kmRemaining: nextPlan.kmRemaining,
+            daysRemaining: nextPlan.daysRemaining,
+            tone: nextPlan.tone,
+            overdue: nextPlan.overdue,
+          }
+        : null,
     };
   });
 
@@ -282,7 +407,8 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     today,
     kpis: {
       expiredDocs, expiring30, expiring60, expiring90,
-      serviceDue: serviceDueCount, activeBreakdowns: breakdowns, complianceBlocked, cantDispatch,
+      serviceDue: serviceDueCount, serviceOverdue: serviceOverdueCount,
+      activeBreakdowns: breakdowns, complianceBlocked, cantDispatch,
       fleetSize: rows.length,
       repairSpendThisMonthCenti: monthSpend.size ? repairSpendThisMonthCenti : null,
       costliestVehicle,
@@ -308,12 +434,14 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
   if (!l) return c.json({ error: "vehicle_not_found" }, 404);
   const lorry = l as Lorry;
 
-  const [whR, driversR, vaultR, maintR, svcR] = await Promise.all([
+  const [whR, driversR, vaultR, maintR, svcR, plansR, mileageR] = await Promise.all([
     lorry.warehouse_id ? sb.from("warehouses").select("code, name").eq("id", lorry.warehouse_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
     sb.from("drivers").select("vehicle, name").eq("active", true),
     sb.from("lorry_compliance_documents").select("*").eq("lorry_id", id).order("issue_date", { ascending: false }).order("expiry_date", { ascending: false }),
     sb.from("lorry_maintenance").select("unavailable_from, unavailable_to, reason").eq("lorry_id", id).order("unavailable_from", { ascending: false }),
     sb.from("lorry_service_records").select("service_date, odometer_km, next_service_km, next_service_date, cost_centi, workshop, description").eq("lorry_id", id).order("service_date", { ascending: false }).limit(1),
+    sb.from("lorry_maintenance_plans").select("*").eq("lorry_id", id),
+    sb.from("lorry_mileage_readings").select("id, lorry_id, reading_date, odometer_km, source, photo_ref, flagged, note").eq("lorry_id", id).order("reading_date", { ascending: false }).order("created_at", { ascending: false }).limit(30),
   ]);
 
   const vaultRows = (vaultR.data ?? []) as VaultRow[];
@@ -334,14 +462,23 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
   }
 
   const svc = (svcR.data ?? [])[0] as { odometer_km: number | null; next_service_km: number | null; next_service_date: string | null; workshop: string | null; description: string | null } | undefined;
+  const mileageRows = (mileageR.data ?? []) as MileageRow[];
+  const latestReading = mileageRows[0];
+  const currentMileageKm = latestReading?.odometer_km ?? svc?.odometer_km ?? null;
+  const planRows = (plansR.data ?? []) as PlanRow[];
+  const plans = planInputs(planRows.filter((p) => p.active ?? true));
+  const shapedPlans = planRows
+    .map((p) => shapePlan(p, currentMileageKm, today))
+    .sort((a, b) => Number(b.active) - Number(a.active) || (a.daysRemaining ?? 1e9) - (b.daysRemaining ?? 1e9));
   const oosNow = (maintR.data ?? []).some((m) => iso(m.unavailable_from)! <= today && iso(m.unavailable_to)! >= today);
   const status = deriveVehicleStatus({
     today,
     outOfService: oosNow,
     currentDocs: statusDocs,
-    currentMileageKm: svc?.odometer_km ?? null,
+    currentMileageKm,
     nextServiceKm: svc?.next_service_km ?? null,
     nextServiceDate: iso(svc?.next_service_date),
+    plans,
   });
 
   const wh = (whR as { data: { code?: string; name?: string } | null }).data;
@@ -353,7 +490,10 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
       driverName: (driversR.data ?? []).find((d) => normPlate(d.vehicle as string) === normPlate(lorry.plate))?.name ?? null,
       vehicleType: lorry.type,
       model: lorry.model,
-      mileageKm: svc?.odometer_km ?? null,
+      mileageKm: currentMileageKm,
+      mileageDate: iso(latestReading?.reading_date) ?? null,
+      mileageSource: latestReading ? "reading" : svc?.odometer_km != null ? "service" : null,
+      mileageFlagged: !!latestReading?.flagged,
       nextServiceKm: svc?.next_service_km ?? null,
       nextServiceDate: iso(svc?.next_service_date),
       lastServiceWorkshop: svc?.workshop ?? null,
@@ -365,6 +505,16 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
       canDispatch: canDispatch(status),
     },
     compliance: byType,
+    plans: shapedPlans,
+    mileage: mileageRows.map((m) => ({
+      id: m.id,
+      readingDate: iso(m.reading_date),
+      odometerKm: m.odometer_km,
+      source: m.source,
+      photoRef: m.photo_ref,
+      flagged: !!m.flagged,
+      note: m.note,
+    })),
     maintenanceWindows: (maintR.data ?? []).map((m) => ({ from: iso(m.unavailable_from), to: iso(m.unavailable_to), reason: m.reason ?? null })),
   });
 });
@@ -466,6 +616,188 @@ fleetMaintenance.post("/vehicles/:id/compliance", requireHouzsPerm("fleet.write"
   }
 
   return c.json({ id: inserted?.id }, 201);
+});
+
+// ── POST /vehicles/:id/plans — create OR update the plan for one component ───
+// One plan per (lorry, component) — the unique index enforces it, and this route
+// UPSERTs on that pair so re-submitting the same component edits rather than
+// duplicates. next_due_* is never written (it is derived); only the raw interval
+// + last-done facts are stored.
+fleetMaintenance.post("/vehicles/:id/plans", requireHouzsPerm("fleet.write"), async (c) => {
+  const lorryId = c.req.param("id");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+
+  const component = String(body.component ?? "").trim().toUpperCase();
+  if (!PLAN_COMPONENT_SET.has(component)) return c.json({ error: "invalid_component" }, 400);
+  const intervalKm = intOrNull(body.intervalKm);
+  if (!intervalKm.ok || (intervalKm.value !== null && intervalKm.value <= 0)) return c.json({ error: "invalid_interval_km" }, 400);
+  const intervalMonths = intOrNull(body.intervalMonths);
+  if (!intervalMonths.ok || (intervalMonths.value !== null && intervalMonths.value <= 0)) return c.json({ error: "invalid_interval_months" }, 400);
+  if (intervalKm.value === null && intervalMonths.value === null) return c.json({ error: "interval_required" }, 400);
+  const lastDoneDate = dateOrNull(body.lastDoneDate);
+  if (!lastDoneDate.ok) return c.json({ error: "invalid_last_done_date" }, 400);
+  const lastDoneKm = intOrNull(body.lastDoneKm);
+  if (!lastDoneKm.ok) return c.json({ error: "invalid_last_done_km" }, 400);
+  const estCost = intOrNull(body.estCostCenti);
+  if (!estCost.ok) return c.json({ error: "invalid_est_cost" }, 400);
+  const active = body.active === undefined ? true : Boolean(body.active);
+
+  const { data: lorry, error: lorryErr } = await sb.from("lorries").select("id").eq("id", lorryId).maybeSingle();
+  if (lorryErr) return c.json({ error: "load_failed", reason: lorryErr.message }, 500);
+  if (!lorry) return c.json({ error: "vehicle_not_found" }, 404);
+
+  const payload = {
+    company_id: activeCompanyId(c) ?? null,
+    lorry_id: lorryId,
+    component,
+    interval_km: intervalKm.value,
+    interval_months: intervalMonths.value,
+    last_done_date: lastDoneDate.value,
+    last_done_km: lastDoneKm.value,
+    workshop: (body.workshop as string)?.trim() || null,
+    est_cost_centi: estCost.value,
+    notes: (body.notes as string)?.trim() || null,
+    active,
+    updated_at: new Date().toISOString(),
+    created_by: c.get("houzsUser")?.id ?? null,
+  };
+  const { data: up, error } = await sb
+    .from("lorry_maintenance_plans")
+    .upsert(payload, { onConflict: "lorry_id,component" })
+    .select("id")
+    .single();
+  if (error) {
+    if (error.code === "23503") return c.json({ error: "vehicle_not_found" }, 404);
+    return c.json({ error: "upsert_failed", reason: error.message }, 500);
+  }
+  return c.json({ id: up?.id }, 201);
+});
+
+// ── PATCH /plans/:planId — edit an existing plan (partial) ────────────────────
+fleetMaintenance.patch("/plans/:planId", requireHouzsPerm("fleet.write"), async (c) => {
+  const planId = c.req.param("planId");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if ("intervalKm" in body) {
+    const v = intOrNull(body.intervalKm);
+    if (!v.ok || (v.value !== null && v.value <= 0)) return c.json({ error: "invalid_interval_km" }, 400);
+    patch.interval_km = v.value;
+  }
+  if ("intervalMonths" in body) {
+    const v = intOrNull(body.intervalMonths);
+    if (!v.ok || (v.value !== null && v.value <= 0)) return c.json({ error: "invalid_interval_months" }, 400);
+    patch.interval_months = v.value;
+  }
+  if ("lastDoneDate" in body) {
+    const v = dateOrNull(body.lastDoneDate);
+    if (!v.ok) return c.json({ error: "invalid_last_done_date" }, 400);
+    patch.last_done_date = v.value;
+  }
+  if ("lastDoneKm" in body) {
+    const v = intOrNull(body.lastDoneKm);
+    if (!v.ok) return c.json({ error: "invalid_last_done_km" }, 400);
+    patch.last_done_km = v.value;
+  }
+  if ("estCostCenti" in body) {
+    const v = intOrNull(body.estCostCenti);
+    if (!v.ok) return c.json({ error: "invalid_est_cost" }, 400);
+    patch.est_cost_centi = v.value;
+  }
+  if ("workshop" in body) patch.workshop = (body.workshop as string)?.trim() || null;
+  if ("notes" in body) patch.notes = (body.notes as string)?.trim() || null;
+  if ("active" in body) patch.active = Boolean(body.active);
+
+  const { data: updated, error } = await sb
+    .from("lorry_maintenance_plans")
+    .update(patch)
+    .eq("id", planId)
+    .select("id")
+    .maybeSingle();
+  if (error) return c.json({ error: "update_failed", reason: error.message }, 500);
+  if (!updated) return c.json({ error: "plan_not_found" }, 404);
+  return c.json({ id: updated.id });
+});
+
+// ── POST /vehicles/:id/mileage — capture a daily odometer reading ────────────
+// The primary flow is the driver marking the day "fully complete" and entering
+// the odometer + a dashboard photo (source = DAY_COMPLETE). Guards (pure, in
+// services/fleet-status.ts): a reading BELOW the latest is a rollback and is
+// REJECTED; an abnormal one-day jump is ACCEPTED but flagged for review. GPS
+// distance is never written as the odometer.
+fleetMaintenance.post("/vehicles/:id/mileage", requireHouzsPerm("fleet.write"), async (c) => {
+  const lorryId = c.req.param("id");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+
+  const odo = intOrNull(body.odometerKm);
+  if (!odo.ok || odo.value === null) return c.json({ error: "invalid_odometer" }, 400);
+  const readingDateInput = dateOrNull(body.readingDate);
+  if (!readingDateInput.ok) return c.json({ error: "invalid_reading_date" }, 400);
+  const readingDate = readingDateInput.value ?? todayMyt();
+  const sourceRaw = body.source === undefined || body.source === "" ? "DAY_COMPLETE" : String(body.source).toUpperCase();
+  if (!MILEAGE_SOURCE_SET.has(sourceRaw)) return c.json({ error: "invalid_source" }, 400);
+  const source = sourceRaw as MileageSource;
+  const photoRef = (body.photoRef as string)?.trim() || null;
+  const note = (body.note as string)?.trim() || null;
+
+  const { data: lorry, error: lorryErr } = await sb.from("lorries").select("id").eq("id", lorryId).maybeSingle();
+  if (lorryErr) return c.json({ error: "load_failed", reason: lorryErr.message }, 500);
+  if (!lorry) return c.json({ error: "vehicle_not_found" }, 404);
+
+  // Latest existing reading is the previous odometer the guards compare against.
+  const { data: prevRows, error: prevErr } = await sb
+    .from("lorry_mileage_readings")
+    .select("odometer_km, reading_date")
+    .eq("lorry_id", lorryId)
+    .order("reading_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (prevErr) return c.json({ error: "load_failed", reason: prevErr.message }, 500);
+  const prev = (prevRows ?? [])[0] as { odometer_km: number | null; reading_date: string | null } | undefined;
+
+  const assessment = assessMileageReading({
+    previousKm: prev?.odometer_km ?? null,
+    previousDate: iso(prev?.reading_date),
+    newKm: odo.value,
+    newDate: readingDate,
+  });
+  // A rollback is rejected — the client can resubmit a corrected value. The GPS
+  // cross-check the client may show is advisory only and never lands here.
+  if (assessment.verdict === "ROLLBACK") {
+    return c.json({ error: "odometer_rollback", previousKm: prev?.odometer_km ?? null, deltaKm: assessment.deltaKm }, 409);
+  }
+
+  const { data: inserted, error } = await sb
+    .from("lorry_mileage_readings")
+    .insert({
+      company_id: activeCompanyId(c) ?? null,
+      lorry_id: lorryId,
+      reading_date: readingDate,
+      odometer_km: odo.value,
+      source,
+      photo_ref: photoRef,
+      flagged: assessment.flagged,
+      note,
+      entered_by: c.get("houzsUser")?.id ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) {
+    // The one-DAY_COMPLETE-per-day unique index: a second day-complete entry.
+    if (error.code === "23505") return c.json({ error: "already_captured_today" }, 409);
+    if (error.code === "23503") return c.json({ error: "vehicle_not_found" }, 404);
+    return c.json({ error: "insert_failed", reason: error.message }, 500);
+  }
+  return c.json({ id: inserted?.id, verdict: assessment.verdict, flagged: assessment.flagged, deltaKm: assessment.deltaKm }, 201);
 });
 
 export default fleetMaintenance;
