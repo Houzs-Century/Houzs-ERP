@@ -220,6 +220,11 @@ jobs:
           # baked into client-side JS anyway. See plan file for
           # rationale.
           VITE_API_URL: ${{ vars.VITE_API_URL }}
+          # Referrer-restricted browser Maps key (Maps JavaScript API) for the
+          # Trips/TMS interactive route map. Public by design — it ships in the
+          # client JS — so it is a VARIABLE, not a secret, same as VITE_API_URL.
+          # Absent -> the map degrades gracefully (ScheduleRouteMap fallback).
+          VITE_GOOGLE_MAPS_API_KEY: ${{ vars.VITE_GOOGLE_MAPS_API_KEY }}
       # NOT `npm run check:bundle`. Since #918 that gate's verdict is a DELTA
       # against the merge base, and a push to main has no merge base to measure
       # — the script falls back to enforcing the absolute ceiling and exits 1.
