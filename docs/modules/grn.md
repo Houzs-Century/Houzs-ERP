@@ -142,6 +142,14 @@ Called by the confirm handler (`:1733`), by `POST /` on the non-draft path
 4. **FX** (`:393-400`). Line prices are in the GRN's own currency; the FIFO lot
    must carry MYR, so `unit_cost_sen = toMyrSen(unit_price_centi, exchange_rate)`.
    For an MYR GRN the rate is 1 and this is a byte-for-byte no-op.
+   **R2 rate guard (audit `docs/inventory-costing-integrity-audit.md`).** Create
+   now REJECTS a non-MYR GRN whose currency has no positive master rate and no
+   operator-entered rate, rather than storing `exchange_rate = 1` and capitalising
+   the raw foreign figure at 1:1 — `422 foreign_rate_unset` ("Set the &lt;CUR&gt;
+   exchange rate before posting this GRN"). Fires at `POST /`, `/from-pos`, and
+   `/from-po-items` (`assertForeignRatePostable`, `scm/lib/fx-guard.ts`). A
+   deliberately-entered operator rate of 1 still posts; only an UNSET master that
+   defaults to 1 is refused. MYR is never affected.
 5. **Landed-charge allocation** (`:401-411`). A `service` line (freight — no
    supplier, just description + amount) creates **no** inventory movement; its
    amount is pooled and spread across the goods lines by QTY / VALUE / CBM per the
@@ -288,7 +296,7 @@ Everything is integer sen. The GRN is where a purchase's cost becomes the
 | Column | Where | Frozen or live |
 |--------|-------|----------------|
 | `currency` | header | Copied from the source PO. |
-| **`exchange_rate`** | header | MYR per 1 unit of the GRN currency; 1 for MYR. Set at create (`resolveGrnFx`, `:241`), editable on the header PATCH — and changing it triggers `recostFromGrn` (`:2356`). **The PO carries no rate; the GRN is where FX enters the money chain.** |
+| **`exchange_rate`** | header | MYR per 1 unit of the GRN currency; 1 for MYR. Set at create (`resolveGrnFx`, `:241`), editable on the header PATCH — and changing it triggers `recostFromGrn` (`:2356`). **The PO carries no rate; the GRN is where FX enters the money chain.** A foreign GRN with no positive master rate and no operator rate is now REFUSED at create (`422 foreign_rate_unset`, R2 guard) rather than stored at 1. |
 | `allocation_method` | header | QTY / VALUE / CBM basis for spreading freight. `normalizeAllocationMethod` (`:408`). |
 | `unit_price_centi` | line | In the **GRN's own currency**, not MYR. Live while the GRN is editable. |
 | `discount_centi`, `line_total_centi` | line | Live; `recomputeGrnTotals` (`:566`) sums `line_total_centi` into `subtotal_centi` = `total_centi` (a GRN carries no tax). |
