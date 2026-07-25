@@ -153,6 +153,13 @@ export type MrpLine = {
   poNumber: string | null;
   poEta: string | null;
   shortageQty: number; // units still uncovered on this line (orange highlight)
+  /* Owner 2026-07-25 (dead-stock view) — units of THIS line filled from ON-HAND
+     stock by the greedy allocation (fromStock). This is the "assigned stock"
+     signal: a lot is ASSIGNED to an SO iff MRP allocated on-hand stock to that
+     SO's demand. A line can be part stock + part PO; `source` collapses to one
+     tag, but stockQty carries the exact on-hand slice so the drawer's
+     assigned-vs-free split reads off the SAME engine (not hard reservations). */
+  stockQty: number;
   /* Commander 2026-05-31 — when this line is covered by a PO (source==='po'),
      the covering PO's supplier so the UI can show it READ-ONLY (a raised PO's
      supplier can't change). NULL for stock / shortage lines. */
@@ -206,12 +213,16 @@ type SofaSet = {
   processingDate: string | null;
   orderByDate: string | null; // delivery date − category lead days
   itemCode: string;
+  variantKey: string;  // shared inventory identity (computeVariantKey) — the bucket key
   description: string | null;
   variantLabel: string | null; // spec line e.g. "BF-15 / SEAT 24 / LEG 6\""
   modules: string[];   // e.g. ['2A','LL','2A'] from variants.cells
   colour: string | null; // fabricCode + colorCode
   qty: number;
   orderedQty: number;  // units covered by pooled stock+PO supply
+  /* Owner 2026-07-25 (dead-stock view) — the on-hand-stock slice of orderedQty
+     (fromStock), mirroring MrpLine.stockQty for the sofa path. */
+  stockQty: number;
   shortageQty: number; // qty - orderedQty (still to order)
   poNumber: string | null; // pooled PO that covers this set (earliest ETA), if any
   poEta: string | null;    // earliest PO-line delivery date (when goods arrive)
@@ -663,6 +674,7 @@ export async function computeMrp(
         poNumber,
         poEta,
         shortageQty: need,
+        stockQty: fromStock, // on-hand units this line consumed (assigned-stock signal)
         // Only covered-by-PO lines carry a read-only supplier; stock/shortage = null.
         poSupplierId: source === 'po' ? poSupplierId : null,
         poSupplierName: source === 'po' && poSupplierId ? (supplierNameById.get(poSupplierId) ?? null) : null,
@@ -785,6 +797,7 @@ export async function computeMrp(
       const ordered = eff - need;                     // covered by pooled stock+PO
 
       sofaSets.push({
+        variantKey: variantKeyOf(d.item_group, v),
         warehouseId: whId,
         warehouseCode: wh?.code ?? null,
         warehouseName: wh?.name ?? null,
@@ -805,6 +818,7 @@ export async function computeMrp(
         colour: colour || null,
         qty: eff,
         orderedQty: ordered,
+        stockQty: fromStock, // on-hand units this set consumed (assigned-stock signal)
         shortageQty: need,
         poNumber,
         poEta,
@@ -861,6 +875,85 @@ export function mrpLineCoverage(result: MrpResult): Map<string, SoLineCoverage> 
       : s.poNumber ? 'po'
       : 'stock';
     map.set(s.soItemId, { source, po: s.poNumber, eta: s.poEta });
+  }
+  return map;
+}
+
+/* Owner 2026-07-25 (dead-stock view) — the STOCK side of the SAME floating
+   allocation: for each (warehouse, item_code, variant_key) bucket, how many
+   ON-HAND units MRP assigned to Sales-Order demand, and to WHICH SO(s). This is
+   the source of truth for "assigned vs free" in the Stock Breakdown drawer:
+   a lot is ASSIGNED iff MRP allocated on-hand stock to an SO; genuinely
+   unallocated stock is FREE = a dead-stock candidate. Reuses computeMrp's single
+   allocation (MrpLine.stockQty / SofaSet.stockQty) — NOT a second coverage calc
+   and NOT the hard READY reservations the drawer used to reflect.
+
+   `free` is NOT computed here: the drawer/endpoint derives it from the bucket's
+   actual open-lot sum minus `assigned` (so the lot feed it displays and the free
+   figure can never disagree). `claims` is per-SO, earliest-delivery first. */
+export type MrpStockClaim = { soDocNo: string; deliveryDate: string | null; qty: number };
+export type MrpStockAssignment = {
+  warehouseId: string | null;
+  itemCode: string;
+  variantKey: string;
+  assigned: number;            // on-hand units MRP allocated to SO demand in this bucket
+  claims: MrpStockClaim[];     // which SO(s) the assigned units belong to
+};
+
+/* Key a stock-assignment bucket the SAME way the reservations endpoint keys a
+   lot: `${warehouse}|${item_code}|${variant_key}` (WH_NONE for a null warehouse,
+   matching composite() above). */
+export function stockAssignmentKey(
+  warehouseId: string | null,
+  itemCode: string,
+  variantKey: string,
+): string {
+  return `${warehouseId ?? WH_NONE}|${itemCode}|${variantKey}`;
+}
+
+export function mrpStockAssignment(result: MrpResult): Map<string, MrpStockAssignment> {
+  const map = new Map<string, MrpStockAssignment>();
+  const add = (
+    warehouseId: string | null,
+    itemCode: string,
+    variantKey: string,
+    stockQty: number,
+    soDocNo: string,
+    deliveryDate: string | null,
+  ): void => {
+    if (!(stockQty > 0) || !itemCode || !soDocNo) return;
+    const key = stockAssignmentKey(warehouseId, itemCode, variantKey);
+    const bucket = map.get(key)
+      ?? { warehouseId, itemCode, variantKey, assigned: 0, claims: [] as MrpStockClaim[] };
+    bucket.assigned += stockQty;
+    // Collapse repeat SO docs (a split line) into one claim.
+    const existing = bucket.claims.find((cl) => cl.soDocNo === soDocNo);
+    if (existing) {
+      existing.qty += stockQty;
+      if (deliveryDate && (!existing.deliveryDate || deliveryDate < existing.deliveryDate)) {
+        existing.deliveryDate = deliveryDate;
+      }
+    } else {
+      bucket.claims.push({ soDocNo, deliveryDate, qty: stockQty });
+    }
+    map.set(key, bucket);
+  };
+  for (const sku of result.skus) {
+    for (const l of sku.lines) {
+      add(sku.warehouseId, sku.itemCode, sku.variantKey, l.stockQty, l.soDocNo, l.deliveryDate);
+    }
+  }
+  // Sofa SETS aren't in skus[].lines — their stockQty is the assigned-stock slice.
+  for (const s of result.sofaSets) {
+    add(s.warehouseId, s.itemCode, s.variantKey, s.stockQty, s.soDocNo, s.deliveryDate);
+  }
+  for (const bucket of map.values()) {
+    bucket.claims.sort((a, b) => {
+      if (a.deliveryDate === b.deliveryDate) return a.soDocNo.localeCompare(b.soDocNo);
+      if (!a.deliveryDate) return 1;
+      if (!b.deliveryDate) return -1;
+      return a.deliveryDate < b.deliveryDate ? -1 : 1;
+    });
   }
   return map;
 }

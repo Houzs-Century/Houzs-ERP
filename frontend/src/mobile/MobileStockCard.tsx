@@ -7,6 +7,9 @@ import {
   useInventoryReservations,
   useWarehouses,
   buildStockBreakdown,
+  lotAssignedQty,
+  lotFreeQty,
+  isMakeToOrderCategory,
   type InventoryMovement,
   type InventoryReservation,
 } from "../vendor/scm/lib/inventory-queries";
@@ -43,7 +46,24 @@ const TYPE_PILL: Record<InventoryMovement["movement_type"], { cls: string; label
 function LotCard({ l, consignment, first }: { l: InventoryReservation; consignment: boolean; first: boolean }) {
   const attrs = formatVariantKey(l.variant_key, l.fabric_supplier_code);
   const value = (l.qty_remaining ?? 0) * (l.unit_cost_sen ?? 0);
-  const claims = l.reserved_by ?? [];
+  // MRP-derived assigned/free split (owner 2026-07-25) — a lot is ASSIGNED iff MRP
+  // allocates on-hand stock to an SO; free (un-assigned) OWNED stock is a dead-
+  // stock candidate, abnormal for make-to-order (SOFA/BEDFRAME). Null-safe.
+  const assigned = lotAssignedQty(l);
+  const free = lotFreeQty(l);
+  const claims = l.mrp_assigned_to ?? [];
+  const mto = l.make_to_order ?? isMakeToOrderCategory(l.category);
+  const deadStock = !consignment && free > 0;
+  const statusLabel = assigned > 0 && free > 0
+    ? `${assigned} assigned · ${free} free`
+    : assigned > 0
+      ? `${assigned} assigned`
+      : `${free} free`;
+  const statusColor = assigned > 0 && free === 0
+    ? "var(--green, #2b8a3e)"
+    : deadStock && mto
+      ? "var(--red, #c0392b)"
+      : "var(--amber, #a06a00)";
   return (
     <div
       style={{
@@ -99,19 +119,14 @@ function LotCard({ l, consignment, first }: { l: InventoryReservation; consignme
       </div>
 
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10.5 }}>
-        <span
-          style={{
-            fontWeight: 800,
-            color: l.status === "RESERVED" ? "var(--red, #c0392b)" : "var(--green, #2b8a3e)",
-          }}
-        >
-          {l.status === "RESERVED" ? "Reserved" : "Free"}
+        <span style={{ fontWeight: 800, color: statusColor, flex: "none" }}>
+          {statusLabel}{deadStock && mto ? " · dead" : ""}
         </span>
         <span style={{ color: "var(--mut)", textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
           {claims.length === 0
-            ? "—"
+            ? "no order"
             : claims
-                .map((x) => `${x.doc_no}${x.delivery_date ? ` (${formatDate(x.delivery_date)})` : ""}`)
+                .map((x) => `${x.doc_no} ·${x.qty}${x.delivery_date ? ` (${formatDate(x.delivery_date)})` : ""}`)
                 .join(", ")}
         </span>
       </div>
@@ -187,6 +202,11 @@ export function MobileStockCard({
         <div className="sc-hero">
           <div className="l">On hand (owned) · {selectedWh ? selectedWh.code : "all warehouses"}</div>
           <div className="v tnum">{bd.ownedQty} <span className="u">units</span></div>
+          {/* Owner 2026-07-25 — assigned/free split from the ONE MRP engine. Free
+              (un-assigned) owned stock is the dead-stock slice. */}
+          <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, opacity: 0.9 }}>
+            <span className="tnum">{bd.ownedAssignedQty}</span> assigned · <span className="tnum">{bd.ownedFreeQty}</span> free
+          </div>
           {bd.consignmentQty > 0 && (
             <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, opacity: 0.85 }}>
               Consignment (not owned) · <span className="tnum">{bd.consignmentQty}</span> units

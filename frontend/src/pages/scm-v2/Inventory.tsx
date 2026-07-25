@@ -42,6 +42,9 @@ import {
   useCreateWarehouse,
   useUpdateWarehouse,
   buildStockBreakdown,
+  lotAssignedQty,
+  lotFreeQty,
+  isMakeToOrderCategory,
   type CogsEntry,
   type InventoryBatch,
   type InventoryIncomingPo,
@@ -459,7 +462,12 @@ const BalancesTab = ({
   // even when the search term itself did not change.
   const resultsAreStale = searchTransition.resultsAreStale || isPlaceholderData;
   const searching = searchTransition.isSearching || (isPlaceholderData && !error);
-  const visibleRows = resultsAreStale ? [] : rows;
+  // Owner 2026-07-25 — a "Dead stock only" view over the SAME set-based rows:
+  // SKUs with Spare (surplus_qty) > 0, i.e. on-hand stock beyond all demand.
+  // Client-side (no extra query); the badge column emphasises make-to-order.
+  const [deadOnly, setDeadOnly] = useState(false);
+  const baseRows = resultsAreStale ? [] : rows;
+  const visibleRows = deadOnly ? baseRows.filter((r) => (r.surplus_qty ?? 0) > 0) : baseRows;
 
   const stats = useMemo(() => ({
     totalQty: visibleRows.reduce((s, r) => s + (r.total_qty ?? 0), 0),
@@ -480,6 +488,20 @@ const BalancesTab = ({
         <StatCard label="Total Qty" value={fmtQty(stats.totalQty)} pending={statsPending} />
         <StatCard label="Distinct SKUs" value={stats.distinctSku} pending={statsPending} />
         <StatCard label="Inventory Value" value={fmtRm(stats.totalValue)} pending={statsPending} />
+      </div>
+
+      {/* Dead-stock view — SKUs with Spare (surplus) stock beyond all demand.
+          Make-to-order (SOFA/BEDFRAME) rows are the abnormal ones (red badge). */}
+      <div className={styles.warehouseChips} style={{ marginTop: 'var(--space-3)' }}>
+        <button type="button" className={styles.chip}
+          data-active={!deadOnly} onClick={() => setDeadOnly(false)}>
+          All SKUs
+        </button>
+        <button type="button" className={styles.chip}
+          data-active={deadOnly} onClick={() => setDeadOnly(true)}
+          title="Show only SKUs with spare stock (Spare > 0) — the dead-stock candidates.">
+          Dead stock only
+        </button>
       </div>
 
       <p className={styles.eyebrow}>
@@ -689,6 +711,34 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
     ),
     searchValue: () => '',
     filterValue: (r) => String(r.surplus_qty),
+    sortFn: (a, b) => a.surplus_qty - b.surplus_qty,
+  },
+  {
+    // Owner 2026-07-25 — per-SKU dead-stock indicator. Reconciles with the Spare
+    // column (surplus_qty > 0 = idle stock, the owner's dead-stock signal): make-
+    // to-order (SOFA/BEDFRAME) idle stock is ABNORMAL (built against an SO), shown
+    // red; make-to-stock (MATTRESS) idle stock is expected, shown soft. Derived
+    // from the SAME set-based Scheduled/Unscheduled aggregates — NO per-SKU MRP on
+    // list load (the crash guard). The drawer gives the exact per-lot split.
+    key: 'deadstock',
+    label: 'Dead stock',
+    width: 110,
+    accessor: (r) => {
+      if (r.surplus_qty <= 0) return <span className={styles.numCellZero}>—</span>;
+      const mto = isMakeToOrderCategory(r.category);
+      return (
+        <span
+          className={`${styles.movementPill} ${mto ? styles.pillDeadStock : styles.pillFreeSoft}`}
+          title={mto
+            ? `Make-to-order (${r.category}): ${fmtQty(r.surplus_qty)} spare on hand with no Sales Order — dead-stock candidate. Open the drawer for the exact assigned/free lots.`
+            : `Make-to-stock (${r.category}): ${fmtQty(r.surplus_qty)} spare is expected for a shelf item. Softer signal.`}
+        >
+          {mto ? 'Dead' : 'Spare'} {fmtQty(r.surplus_qty)}
+        </span>
+      );
+    },
+    searchValue: () => '',
+    filterValue: (r) => (r.surplus_qty > 0 ? (isMakeToOrderCategory(r.category) ? 'dead' : 'spare') : ''),
     sortFn: (a, b) => a.surplus_qty - b.surplus_qty,
   },
   {
@@ -1057,6 +1107,59 @@ const BatchComponentsPanel = ({ batch }: { batch: InventoryBatch }) => (
    is free (no order). "Reserved since" is the reserving SO's created_at (no
    allocation timestamp exists — an honest proxy for the age of the claim).
    ════════════════════════════════════════════════════════════════════════ */
+/* Assigned-SO cell — the SO(s) this lot's ON-HAND units are allocated to by the
+   ONE MRP engine (mrp_assigned_to), each with its qty + DELIVERY DATE. This is
+   the owner's "which 3 of the 10 are assigned, to which SO" — NOT the hard READY
+   reservation. Null-safe: absent fields (older/degraded payload) → free (no
+   order). Shared by the drawer's owned/consignment rows + the Reservations tab. */
+const renderAssignedFor = (r: InventoryReservation) => {
+  const claims = r.mrp_assigned_to ?? [];
+  if (claims.length === 0) return <span className={styles.numCellZero}>No order (free)</span>;
+  return claims.map((x) => (
+    <div key={x.doc_no} style={{ whiteSpace: 'nowrap' }}>
+      <Link to={`/scm/sales-orders/${encodeURIComponent(x.doc_no)}`} className={styles.docLink}>
+        {x.doc_no}
+      </Link>
+      <span className={styles.numCellZero}> · {fmtQty(x.qty)}</span>
+      {x.delivery_date
+        ? <span className={styles.numCellZero}> · {fmtDate(x.delivery_date)}</span>
+        : <span className={styles.numCellZero}> · no date</span>}
+    </div>
+  ));
+};
+
+/* Status cell — the MRP-derived assigned/free split for one lot. A lot may be
+   part assigned, part free; show both counts. FREE units are a dead-stock
+   candidate, emphasised (red) for make-to-order SOFA/BEDFRAME where free stock is
+   abnormal, soft (amber) for make-to-stock (MATTRESS) where it is normal.
+   Consignment lots (held, not owned) never read as dead stock. */
+const renderAssignedFreeStatus = (r: InventoryReservation) => {
+  const assigned = lotAssignedQty(r);
+  const free = lotFreeQty(r);
+  const mto = r.make_to_order ?? isMakeToOrderCategory(r.category);
+  const deadStock = !r.is_consignment && free > 0;
+  return (
+    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+      {assigned > 0 && (
+        <span className={`${styles.movementPill} ${styles.pillAssigned}`}>{fmtQty(assigned)} assigned</span>
+      )}
+      {free > 0 && (
+        <span
+          className={`${styles.movementPill} ${deadStock && mto ? styles.pillDeadStock : styles.pillFreeSoft}`}
+          title={deadStock
+            ? (mto
+                ? 'Make-to-order (SOFA/BEDFRAME): free stock is abnormal — dead-stock candidate.'
+                : 'Make-to-stock: free stock is expected. Softer dead-stock signal.')
+            : undefined}
+        >
+          {fmtQty(free)} free{deadStock && mto ? ' · dead' : ''}
+        </span>
+      )}
+      {assigned === 0 && free === 0 && <span className={styles.numCellZero}>—</span>}
+    </span>
+  );
+};
+
 const ReservationsTab = ({
   warehouseId, setWarehouseId, warehouses, search, setSearch,
 }: {
@@ -1066,7 +1169,9 @@ const ReservationsTab = ({
   search: string;
   setSearch: (s: string) => void;
 }) => {
-  const [statusFilter, setStatusFilter] = useState<'all' | 'RESERVED' | 'FREE'>('all');
+  // Owner 2026-07-25 — filter on the MRP-derived split (assigned / free) and a
+  // Dead-stock view (free un-assigned OWNED stock), not the hard reservation.
+  const [statusFilter, setStatusFilter] = useState<'all' | 'ASSIGNED' | 'FREE' | 'DEAD'>('all');
   const { data, isLoading, error } = useInventoryReservations({
     warehouseId: warehouseId ?? undefined,
   });
@@ -1074,18 +1179,22 @@ const ReservationsTab = ({
 
   const q = search.trim().toLowerCase();
   const rows = useMemo(() => all.filter((r) => {
-    if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+    if (statusFilter === 'ASSIGNED' && lotAssignedQty(r) <= 0) return false;
+    if (statusFilter === 'FREE' && lotFreeQty(r) <= 0) return false;
+    if (statusFilter === 'DEAD' && !(r.is_dead_stock ?? (!r.is_consignment && lotFreeQty(r) > 0))) return false;
     if (!q) return true;
     return r.product_code.toLowerCase().includes(q) ||
       (r.product_name ?? '').toLowerCase().includes(q) ||
       (r.batch_no ?? '').toLowerCase().includes(q) ||
+      (r.mrp_assigned_to ?? []).some((x) => x.doc_no.toLowerCase().includes(q)) ||
       (r.reserved_by ?? []).some((x) => x.doc_no.toLowerCase().includes(q));
   }), [all, q, statusFilter]);
 
   const stats = useMemo(() => ({
-    reservedQty: rows.filter((r) => r.status === 'RESERVED').reduce((s, r) => s + r.qty_remaining, 0),
-    freeQty: rows.filter((r) => r.status === 'FREE').reduce((s, r) => s + r.qty_remaining, 0),
-    lotCount: rows.length,
+    assignedQty: rows.reduce((s, r) => s + lotAssignedQty(r), 0),
+    freeQty: rows.reduce((s, r) => s + lotFreeQty(r), 0),
+    // Dead stock = free un-assigned units on OWNED lots (consignment excluded).
+    deadQty: rows.reduce((s, r) => s + ((r.is_dead_stock ?? (!r.is_consignment && lotFreeQty(r) > 0)) ? lotFreeQty(r) : 0), 0),
   }), [rows]);
 
   return (
@@ -1105,16 +1214,17 @@ const ReservationsTab = ({
       </div>
 
       <div className={STAT_GRID_3}>
-        <StatCard label="Reserved (on shelf, claimed)" value={fmtQty(stats.reservedQty)} pending={isLoading} />
+        <StatCard label="Assigned to SO (MRP)" value={fmtQty(stats.assignedQty)} pending={isLoading} />
         <StatCard label="Free (no order)" value={fmtQty(stats.freeQty)} pending={isLoading} />
-        <StatCard label="Open lots" value={stats.lotCount} pending={isLoading} />
+        <StatCard label="Dead-stock candidate" value={fmtQty(stats.deadQty)} pending={isLoading} />
       </div>
 
       <div className={styles.warehouseChips} style={{ marginTop: 'var(--space-3)' }}>
         {([
           { value: 'all' as const, label: 'All' },
-          { value: 'RESERVED' as const, label: 'Reserved' },
+          { value: 'ASSIGNED' as const, label: 'Assigned' },
           { value: 'FREE' as const, label: 'Free (no order)' },
+          { value: 'DEAD' as const, label: 'Dead stock' },
         ]).map((f) => (
           <button key={f.value} type="button" className={styles.chip}
             data-active={statusFilter === f.value} onClick={() => setStatusFilter(f.value)}>
@@ -1137,7 +1247,7 @@ const ReservationsTab = ({
       </div>
 
       <p className={styles.eyebrow}>
-        {isLoading ? 'Loading…' : `${rows.length} open lot${rows.length === 1 ? '' : 's'} · a RESERVED lot is claimed by a READY sales order; FREE stock has no order yet`}
+        {isLoading ? 'Loading…' : `${rows.length} open lot${rows.length === 1 ? '' : 's'} · ASSIGNED = MRP allocates on-hand stock to a Sales Order; FREE (un-assigned) stock is a dead-stock candidate, abnormal for make-to-order (SOFA/BEDFRAME)`}
       </p>
 
       {error && !isLoading && (
@@ -1151,12 +1261,12 @@ const ReservationsTab = ({
         <table className={styles.table}>
           <thead>
             <tr>
-              <th>Status</th>
+              <th>Assigned / Free</th>
               <th>Product</th>
               <th>Warehouse</th>
               <th>Batch</th>
               <th style={{ textAlign: 'right' }}>Qty on Shelf</th>
-              <th>Reserved For (SO)</th>
+              <th>Assigned SO &middot; Qty &middot; Delivery</th>
               <th>Reserved Since</th>
             </tr>
           </thead>
@@ -1167,11 +1277,7 @@ const ReservationsTab = ({
             )}
             {!isLoading && rows.map((r, i) => (
               <tr key={`${r.warehouse_id}|${r.product_code}|${r.variant_key}|${r.batch_no ?? ''}|${i}`}>
-                <td>
-                  <span className={`${styles.movementPill} ${r.status === 'RESERVED' ? styles.movementOut : styles.movementIn}`}>
-                    {r.status === 'RESERVED' ? 'Reserved' : 'Free'}
-                  </span>
-                </td>
+                <td>{renderAssignedFreeStatus(r)}</td>
                 <td>
                   <div>
                     <Link
@@ -1192,18 +1298,7 @@ const ReservationsTab = ({
                 <td className={`${styles.numCell} ${r.qty_remaining > 0 ? styles.numCellPos : styles.numCellZero}`}>
                   {fmtQty(r.qty_remaining)}
                 </td>
-                <td>
-                  {(r.reserved_by ?? []).length === 0
-                    ? <span className={styles.numCellZero}>No order</span>
-                    : (r.reserved_by ?? []).map((x, j) => (
-                        <span key={x.doc_no}>
-                          {j > 0 ? ', ' : ''}
-                          <Link to={`/scm/sales-orders/${encodeURIComponent(x.doc_no)}`} className={styles.docLink}>
-                            {x.doc_no}
-                          </Link>
-                        </span>
-                      ))}
-                </td>
+                <td>{renderAssignedFor(r)}</td>
                 <td className={styles.numCellZero} title={r.reserved_since ?? undefined}>
                   {r.reserved_since ? fmtAgeDays(r.reserved_since) : '—'}
                 </td>
@@ -1272,24 +1367,6 @@ const ProductBreakdownDrawer = ({
   const bd = useMemo(() => buildStockBreakdown(lotRows), [lotRows]);
   const breakdownPending = reservations.data === undefined || Boolean(reservations.error);
 
-  /* Reserved-for-SO cell — the SO(s) this lot is allocated to (clickable) with
-     each SO's DELIVERY DATE (owner Q4). Null-safe: any array/field may be
-     missing. Shared by the owned + consignment rows below. */
-  const renderReservedFor = (r: InventoryReservation) => {
-    const claims = r.reserved_by ?? [];
-    if (claims.length === 0) return <span className={styles.numCellZero}>No order</span>;
-    return claims.map((x) => (
-      <div key={x.doc_no} style={{ whiteSpace: 'nowrap' }}>
-        <Link to={`/scm/sales-orders/${encodeURIComponent(x.doc_no)}`} className={styles.docLink}>
-          {x.doc_no}
-        </Link>
-        {x.delivery_date
-          ? <span className={styles.numCellZero}> · {fmtDate(x.delivery_date)}</span>
-          : <span className={styles.numCellZero}> · no date</span>}
-      </div>
-    ));
-  };
-
   return (
     <div
       onClick={onClose}
@@ -1312,17 +1389,34 @@ const ProductBreakdownDrawer = ({
           </button>
         </div>
 
-        <div className={`mt-4 grid gap-2.5 ${bd.consignmentQty !== 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+        <div className={`mt-4 grid gap-2.5 ${bd.consignmentQty !== 0 ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'}`}>
           {/* The totals reduce over the lot feed, which is [] until it resolves —
               so a confident "RM 0.00" before load would be a lie the operator can
               act on. Unknown until it is known. */}
           <StatCard label="Total Qty (owned)" value={fmtQty(bd.ownedQty)} pending={breakdownPending} />
+          {/* Owner 2026-07-25 — the assigned/free split from the ONE MRP engine.
+              Free (un-assigned) OWNED stock is the dead-stock slice; for a
+              make-to-order SKU it is abnormal (emphasised in the lot rows). */}
+          <StatCard
+            label="Assigned / Free (owned)"
+            value={`${fmtQty(bd.ownedAssignedQty)} / ${fmtQty(bd.ownedFreeQty)}`}
+            pending={breakdownPending}
+          />
           {bd.consignmentQty !== 0 && (
             <StatCard label="Consignment Qty (not owned)" value={fmtQty(bd.consignmentQty)} pending={breakdownPending} />
           )}
           {/* Value is OWNED stock only — consignment is excluded by SOURCE. */}
           <StatCard label="Total Value (owned)" value={fmtRm(bd.ownedValueSen)} pending={breakdownPending} />
         </div>
+        {/* Dead-stock banner: free make-to-order (SOFA/BEDFRAME) on-hand stock is
+            abnormal (built against an SO), so surface it prominently. Soft/absent
+            for make-to-stock. */}
+        {!breakdownPending && bd.ownedFreeQty > 0 && bd.ownedLots.some((l) => (l.make_to_order ?? isMakeToOrderCategory(l.category)) && lotFreeQty(l) > 0) && (
+          <div className="mt-3 rounded-lg border border-err/40 bg-err/10 px-4 py-2.5 text-[13px] text-err">
+            <strong className="font-semibold">Dead-stock candidate.</strong>{' '}
+            {fmtQty(bd.ownedFreeQty)} free (un-assigned) unit{bd.ownedFreeQty === 1 ? '' : 's'} on hand — this is a make-to-order SKU, so free stock has no Sales Order claiming it.
+          </div>
+        )}
 
         {/* ── ONE merged per-lot table (owner request). The old "Stock by
             Warehouse", "FIFO Lots" and "Reserved for Sales Orders" tables shared
@@ -1348,8 +1442,8 @@ const ProductBreakdownDrawer = ({
                 <th style={{ textAlign: 'right' }}>Value</th>
                 <th>Source</th>
                 <th>Received</th>
-                <th>Reserved For (SO) &middot; Delivery</th>
-                <th>Status</th>
+                <th>Assigned SO &middot; Qty &middot; Delivery</th>
+                <th>Assigned / Free</th>
               </tr>
             </thead>
             <tbody>
@@ -1377,12 +1471,8 @@ const ProductBreakdownDrawer = ({
                       {r.source_po_no && <span className={styles.sourcePo}>from {r.source_po_no}</span>}
                     </td>
                     <td className={styles.numCellZero}>{r.received_at ? fmtDate(r.received_at) : '—'}</td>
-                    <td>{renderReservedFor(r)}</td>
-                    <td>
-                      <span className={`${styles.movementPill} ${r.status === 'RESERVED' ? styles.movementOut : styles.movementIn}`}>
-                        {r.status === 'RESERVED' ? 'Reserved' : 'Free'}
-                      </span>
-                    </td>
+                    <td>{renderAssignedFor(r)}</td>
+                    <td>{renderAssignedFreeStatus(r)}</td>
                   </tr>
                 );
               })}
@@ -1425,12 +1515,8 @@ const ProductBreakdownDrawer = ({
                       {r.source_po_no && <span className={styles.sourcePo}>from {r.source_po_no}</span>}
                     </td>
                     <td className={styles.numCellZero}>{r.received_at ? fmtDate(r.received_at) : '—'}</td>
-                    <td>{renderReservedFor(r)}</td>
-                    <td>
-                      <span className={`${styles.movementPill} ${r.status === 'RESERVED' ? styles.movementOut : styles.movementIn}`}>
-                        {r.status === 'RESERVED' ? 'Reserved' : 'Free'}
-                      </span>
-                    </td>
+                    <td>{renderAssignedFor(r)}</td>
+                    <td>{renderAssignedFreeStatus(r)}</td>
                   </tr>
                 );
               })}
