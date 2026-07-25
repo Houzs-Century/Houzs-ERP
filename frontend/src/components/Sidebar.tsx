@@ -684,6 +684,18 @@ export const NAV_TABS: NavTab[] = [
     icon: Megaphone,
   },
 
+  // ── Fleet Health — Fleet Maintenance & Compliance (Phase 1). Distinct from
+  // the SCM Transportation "Fleet" (driver/lorry master): this is the
+  // compliance + service-readiness ops board. Gated on the flat fleet.read
+  // permission (Owner/IT Admin via "*"); fleet.write covers the mutations.
+  {
+    section: "operations",
+    to: "/fleet-health",
+    label: "Fleet Health",
+    icon: Wrench,
+    perm: "fleet.read",
+  },
+
   // ══ SYSTEM ═══════════════════════════════════════════════════
   // ── Team — header links to the Team Hub; chevron expands the sub-pages
   // (which are tabs on the Team page). Mirrors the Supply Chain pattern.

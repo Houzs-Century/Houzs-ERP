@@ -22,6 +22,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/system-health",
   "/team",
   "/announcements",
+  "/fleet-health",
   "/mail-center",
   "/mail-center/:id",
   "/scm/suppliers",
