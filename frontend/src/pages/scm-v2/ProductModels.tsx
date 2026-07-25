@@ -412,7 +412,7 @@ export const ProductModels = () => {
         storageKey={PM_GRID_KEY}
         exportName="Product Models"
         rowKey={(m) => m.id}
-        searchPlaceholder="Filter visible models…"
+        searchPlaceholder="Search code, name, category…"
         loadedSearchLimit={1000}
         onRowDoubleClick={(m) => setOpenModelId(m.id)}
         isLoading={isLoading}

@@ -484,6 +484,7 @@ export const ConsignmentReturns = () => {
         columns={COLUMNS}
         storageKey={STORAGE_KEY}
         exportName="Consignment Returns"
+        searchPlaceholder="Search return no, customer, reference…"
         rowKey={(r) => r.id}
         selectable={{
           selectedKeys: sel,

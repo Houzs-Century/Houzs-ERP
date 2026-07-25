@@ -325,7 +325,7 @@ export const PurchaseConsignmentReceives = () => {
         storageKey={PCR_LIST_STORAGE_KEY}
         exportName="Purchase Consignment Receives"
         rowKey={(g) => g.id}
-        searchPlaceholder="Search receives…"
+        searchPlaceholder="Search receive no, supplier, DN ref…"
         loadedSearchLimit={1000}
         groupBanner={false}
         onRowDoubleClick={(g) => navigate(`/scm/purchase-consignment-receives/${g.id}`)}

@@ -129,7 +129,7 @@ export const Currencies = () => {
         storageKey="dg-currencies"
         exportName="Currencies"
         rowKey={(r) => r.code}
-        searchPlaceholder="Search currencies…"
+        searchPlaceholder="Search code, name, symbol…"
         groupBanner={false}
         isLoading={currencies.isLoading}
         emptyMessage="No currencies yet."

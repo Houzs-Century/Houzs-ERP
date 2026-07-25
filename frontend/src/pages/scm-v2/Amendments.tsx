@@ -172,7 +172,7 @@ export const Amendments = () => {
         storageKey={AMENDMENT_LIST_STORAGE_KEY}
         exportName="Amendments"
         rowKey={(a) => a.id}
-        searchPlaceholder="Search amendments…"
+        searchPlaceholder="Search SO no, amendment no, requested by…"
         loadedSearchLimit={500}
         groupBanner={false}
         /* Open on DOUBLE-click (mirrors the GRN / PO list). */

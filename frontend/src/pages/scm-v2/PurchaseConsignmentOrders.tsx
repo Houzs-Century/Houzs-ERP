@@ -250,7 +250,7 @@ export const PurchaseConsignmentOrders = () => {
         storageKey={PC_ORDER_LIST_STORAGE_KEY}
         exportName="Purchase Consignment Orders"
         rowKey={(po) => po.id}
-        searchPlaceholder="Search orders…"
+        searchPlaceholder="Search P/CO no, supplier, code…"
         loadedSearchLimit={1000}
         groupBanner={false}
         onRowDoubleClick={(po) => navigate(`/scm/purchase-consignment-orders/${po.id}`)}

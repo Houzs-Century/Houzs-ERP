@@ -222,7 +222,7 @@ const DriversSection = () => {
         storageKey={DATA_GRID_LAYOUT_KEYS.fleetDrivers}
         exportName="Drivers"
         rowKey={(d) => d.id}
-        searchPlaceholder="Search drivers…"
+        searchPlaceholder="Search code, name, phone, IC…"
         groupBanner={false}
         isLoading={drivers.isLoading}
         emptyMessage="No drivers yet."
@@ -392,7 +392,7 @@ const HelpersSection = () => {
         storageKey="dg-helpers"
         exportName="Helpers"
         rowKey={(h) => h.id}
-        searchPlaceholder="Search helpers…"
+        searchPlaceholder="Search code, name, contact, IC…"
         groupBanner={false}
         isLoading={helpers.isLoading}
         emptyMessage="No helpers yet."
@@ -604,7 +604,7 @@ const LorriesSection = () => {
         storageKey="dg-lorries"
         exportName="Lorries"
         rowKey={(l) => l.id}
-        searchPlaceholder="Search lorries…"
+        searchPlaceholder="Search plate, type, fleet…"
         groupBanner={false}
         isLoading={lorries.isLoading}
         emptyMessage="No lorries yet."

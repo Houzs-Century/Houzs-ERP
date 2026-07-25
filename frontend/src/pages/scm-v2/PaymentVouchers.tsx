@@ -168,7 +168,7 @@ export const PaymentVouchers = () => {
         storageKey={PV_LIST_STORAGE_KEY}
         exportName="Payment Vouchers"
         rowKey={(r) => r.id}
-        searchPlaceholder="Search vouchers…"
+        searchPlaceholder="Search voucher no, payee…"
         loadedSearchLimit={500}
         groupBanner={false}
         onRowDoubleClick={(r) => navigate(`/scm/payment-vouchers/${r.id}`)}

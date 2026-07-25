@@ -1163,8 +1163,9 @@ function DataGridInner<T>({
           column show/hide as a visible pill button. The right-click header
           menu is preserved (backwards compat — both write to layout.hidden). */}
       <div className={styles.toolbar}>
-        {toolbar}
-        <div className={styles.toolbarSpacer} />
+        {/* Search sits on the LEFT like the Sales Orders sample (owner
+            2026-07-25: "search 要在左边白底"); caller actions follow, the
+            spacer pushes clear-filters / Export / Columns to the right. */}
         {!embedded && !hideSearch && (
           <div className={styles.searchGroup}>
             <div className={styles.searchWrap}>
@@ -1185,6 +1186,8 @@ function DataGridInner<T>({
             </div>
           </div>
         )}
+        {toolbar}
+        <div className={styles.toolbarSpacer} />
         {/* Clear-all-filters — appears only when ≥1 column filter is active.
             Per-column funnels already highlight orange; this is the one-click
             reset for the whole grid. Wei Siang 2026-06-04. */}

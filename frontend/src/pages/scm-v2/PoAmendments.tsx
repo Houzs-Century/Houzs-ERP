@@ -159,7 +159,7 @@ export const PoAmendments = () => {
           storageKey={PO_AMENDMENT_LIST_STORAGE_KEY}
           exportName="PO Amendments"
           rowKey={(a) => a.id}
-          searchPlaceholder="Search amendments…"
+          searchPlaceholder="Search PO no, amendment no, requested by…"
           loadedSearchLimit={500}
           groupBanner={false}
           onRowDoubleClick={(a) => openRow(a)}

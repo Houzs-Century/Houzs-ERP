@@ -488,6 +488,7 @@ export const ConsignmentNotes = () => {
         columns={COLUMNS}
         storageKey={STORAGE_KEY}
         exportName="Consignment Notes"
+        searchPlaceholder="Search note no, customer, reference…"
         rowKey={(r) => r.id}
         selectable={{
           selectedKeys: sel,

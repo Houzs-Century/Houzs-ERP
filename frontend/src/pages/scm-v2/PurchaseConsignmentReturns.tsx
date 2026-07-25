@@ -312,7 +312,7 @@ export const PurchaseConsignmentReturns = () => {
         storageKey={PCT_LIST_STORAGE_KEY}
         exportName="Purchase Consignment Returns"
         rowKey={(r) => r.id}
-        searchPlaceholder="Search returns…"
+        searchPlaceholder="Search return no, supplier…"
         loadedSearchLimit={300}
         groupBanner={false}
         onRowDoubleClick={(r) => navigate(`/scm/purchase-consignment-returns/${r.id}`)}
