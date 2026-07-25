@@ -527,6 +527,7 @@ export const NAV_TABS: NavTab[] = [
              duplication invisible. The area key is unchanged and still gates every
              row in this group, so no permission moves. Do not re-add. */
           { to: "/scm/delivery-planning-regions", label: "Regions", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/delivery-residence-rules", label: "Residence Rules", icon: Building2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
         ],
       },
       {
