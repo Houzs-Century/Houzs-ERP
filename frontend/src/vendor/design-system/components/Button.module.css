@@ -2,7 +2,11 @@
   font-family: var(--font-button);
   font-weight: var(--w-semibold);
   letter-spacing: 0.02em;
-  border-radius: var(--radius-pill);
+  /* Theme C alignment (owner 2026-07-25: "右上角的 button 是黑色,没有贴合
+     主题"): shape + palette follow the Houzs Button the SO page uses,
+     MEASURED live - 6px radius, primary #16695f, white text; hovers deepen
+     to the primary-ink #0c3f39 instead of 2990's burnt orange. */
+  border-radius: 6px;
   border: 1px solid transparent;
   cursor: pointer;
   transition: background-color 120ms ease-out, color 120ms ease-out,
@@ -16,7 +20,7 @@
   -webkit-tap-highlight-color: transparent;
 }
 .button:focus-visible {
-  outline: 2px solid var(--c-orange);
+  outline: 2px solid #16695f;
   outline-offset: 2px;
 }
 .button:active:not(:disabled) {
@@ -29,11 +33,11 @@
 
 /* Variants */
 .variant-primary {
-  background: var(--c-ink);
-  color: var(--fg-on-ink);
+  background: #16695f;
+  color: #ffffff;
 }
 .variant-primary:hover:not(:disabled) {
-  background: var(--c-burnt);
+  background: #0c3f39;
 }
 
 .variant-secondary {
@@ -42,8 +46,8 @@
   border-color: var(--line);
 }
 .variant-secondary:hover:not(:disabled) {
-  border-color: var(--c-burnt);
-  color: var(--c-burnt);
+  border-color: #16695f;
+  color: #16695f;
 }
 
 .variant-ghost {
