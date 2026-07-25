@@ -147,12 +147,23 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ── Movement trigger fn — final IN/OUT/ADJUSTMENT version, port of 0126 ─────
+-- Ledger-divergence fix (migration 0195, 2026-07-25): the OUT + negative-
+-- ADJUSTMENT branches now FALL BACK from the exact-batch consume to plain
+-- product+variant fn_consume_fifo for whatever the batch consume shorted, so a
+-- sofa OUT whose batch_no drifts from its open lots' batch (the MAKOTO false
+-- short) can no longer ship uncosted + un-decremented. Kept in lockstep with
+-- backend/src/db/migrations-pg/0195_scm_fifo_out_short_batch_fallback.sql — the
+-- two MUST define this function identically. A genuine short (no stock at all)
+-- still returns qty_short and stays on the 0154 retro-cost path, unchanged.
 CREATE OR REPLACE FUNCTION fn_inventory_movement_fifo() RETURNS TRIGGER
 SET search_path = scm, pg_temp
 AS $$
 DECLARE
   v_result    RECORD;
+  v_fallback  RECORD;
   v_abs_qty   INTEGER;
+  v_cost      INTEGER;
+  v_short     INTEGER;
   v_avg_cost  INTEGER;
   v_unit_cost INTEGER;
 BEGIN
@@ -176,12 +187,30 @@ BEGIN
   ELSIF NEW.movement_type = 'OUT' THEN
     v_abs_qty := ABS(NEW.qty);
     IF NEW.batch_no IS NOT NULL THEN
+      -- Exact dye-lot batch consume first (sofa set stays colour-matched).
       SELECT * INTO v_result
         FROM fn_consume_fifo_batch(
           NEW.warehouse_id, NEW.product_code, NEW.variant_key, v_abs_qty, NEW.batch_no,
           NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
           NEW.id, NEW.performed_by
         );
+      v_cost  := v_result.total_cost_sen;
+      v_short := v_result.qty_short;
+      -- Ledger-divergence fix (0195): the exact batch matched no (or too few)
+      -- open lots. Rather than DISCARD the short (leaving the OUT uncosted + the
+      -- lots un-decremented forever — the MAKOTO false-short), fall back to plain
+      -- product+variant FIFO (any batch) for the residual so present stock of the
+      -- same SKU is consumed + costed.
+      IF v_short > 0 THEN
+        SELECT * INTO v_fallback
+          FROM fn_consume_fifo(
+            NEW.warehouse_id, NEW.product_code, NEW.variant_key, v_short,
+            NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
+            NEW.id, NEW.performed_by
+          );
+        v_cost  := v_cost + v_fallback.total_cost_sen;
+        v_short := v_fallback.qty_short;
+      END IF;
     ELSE
       SELECT * INTO v_result
         FROM fn_consume_fifo(
@@ -189,11 +218,13 @@ BEGIN
           NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
           NEW.id, NEW.performed_by
         );
+      v_cost  := v_result.total_cost_sen;
+      v_short := v_result.qty_short;
     END IF;
     UPDATE inventory_movements
-       SET total_cost_sen = v_result.total_cost_sen,
+       SET total_cost_sen = v_cost,
            unit_cost_sen  = CASE WHEN v_abs_qty > 0
-                                 THEN v_result.total_cost_sen / v_abs_qty
+                                 THEN v_cost / v_abs_qty
                                  ELSE 0 END
      WHERE id = NEW.id;
 
@@ -240,6 +271,21 @@ BEGIN
             NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
             NEW.id, NEW.performed_by
           );
+        v_cost  := v_result.total_cost_sen;
+        v_short := v_result.qty_short;
+        -- Same batch-drift fallback as the OUT branch (0195): a batched write-off
+        -- that matches no exact-batch lot consumes present same-SKU stock plain-
+        -- FIFO instead of silently stranding the units.
+        IF v_short > 0 THEN
+          SELECT * INTO v_fallback
+            FROM fn_consume_fifo(
+              NEW.warehouse_id, NEW.product_code, NEW.variant_key, v_short,
+              NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
+              NEW.id, NEW.performed_by
+            );
+          v_cost  := v_cost + v_fallback.total_cost_sen;
+          v_short := v_fallback.qty_short;
+        END IF;
       ELSE
         SELECT * INTO v_result
           FROM fn_consume_fifo(
@@ -247,11 +293,13 @@ BEGIN
             NEW.source_doc_type, NEW.source_doc_id, NEW.source_doc_no,
             NEW.id, NEW.performed_by
           );
+        v_cost  := v_result.total_cost_sen;
+        v_short := v_result.qty_short;
       END IF;
       UPDATE inventory_movements
-         SET total_cost_sen = v_result.total_cost_sen,
+         SET total_cost_sen = v_cost,
              unit_cost_sen  = CASE WHEN v_abs_qty > 0
-                                   THEN v_result.total_cost_sen / v_abs_qty
+                                   THEN v_cost / v_abs_qty
                                    ELSE 0 END
        WHERE id = NEW.id;
     END IF;
