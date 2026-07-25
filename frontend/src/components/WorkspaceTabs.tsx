@@ -119,6 +119,21 @@ export function WorkspaceTabs() {
               // so the browser doesn't navigate/open anything.
               if (draggingRef.current !== null) e.preventDefault();
             }}
+            /* Middle-click closes, Chrome-tab style (owner 2026-07-26) — on
+               the WHOLE tab, not just the <Link> label: the padding and the
+               close-button gutter are part of "the tab" to a mouse, and the
+               old Link-only handler made middle-clicks there do nothing.
+               mousedown preventDefault kills Windows Chrome's middle-button
+               autoscroll before it starts; auxclick then closes. */
+            onMouseDown={(e) => {
+              if (e.button === 1) e.preventDefault();
+            }}
+            onAuxClick={(e) => {
+              if (e.button === 1) {
+                e.preventDefault();
+                close(tab.id);
+              }
+            }}
             className={cn(
               "group relative flex shrink-0 items-center transition-colors",
               isActive ? "text-primary-ink" : "text-ink-secondary hover:text-ink",
@@ -140,14 +155,8 @@ export function WorkspaceTabs() {
                   activateWorkspaceTab(tab.id);
                 }
               }}
-              onAuxClick={(e) => {
-                // Middle-click closes, like a browser tab. preventDefault
-                // stops the browser's own middle-click-opens-window default.
-                if (e.button === 1) {
-                  e.preventDefault();
-                  close(tab.id);
-                }
-              }}
+              // Middle-click close lives on the wrapper div (whole-tab hit
+              // area); a handler here too would double-fire via bubbling.
               className={cn(
                 "flex max-w-[13rem] items-center self-center truncate py-2 pl-[15px] pr-0.5 text-[13px] leading-none",
                 isActive ? "font-semibold" : "font-medium",
