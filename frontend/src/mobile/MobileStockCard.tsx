@@ -49,8 +49,8 @@ function LotCard({ l, consignment, first }: { l: InventoryReservation; consignme
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: 3,
-        padding: "10px 2px",
+        gap: 2,
+        padding: "8px 2px",
         borderTop: first ? "none" : "1px solid var(--line2)",
       }}
     >
@@ -238,7 +238,7 @@ export function MobileStockCard({
         ) : (
           <>
             {bd.ownedLots.length > 0 && (
-              <div className="card" style={{ padding: "4px 13px" }}>
+              <div className="card" style={{ padding: "3px 12px" }}>
                 {bd.ownedLots.map((l, i) => (
                   <LotCard key={l.id ?? `own|${l.warehouse_id}|${l.variant_key}|${l.batch_no ?? ""}|${i}`} l={l} consignment={false} first={i === 0} />
                 ))}
@@ -247,7 +247,7 @@ export function MobileStockCard({
             {bd.consignmentLots.length > 0 && (
               <>
                 <div className="sc-sl"><span className="t">Consignment · not owned, excluded from value</span><span className="ln" /></div>
-                <div className="card" style={{ padding: "4px 13px" }}>
+                <div className="card" style={{ padding: "3px 12px" }}>
                   {bd.consignmentLots.map((l, i) => (
                     <LotCard key={l.id ?? `con|${l.warehouse_id}|${l.variant_key}|${l.batch_no ?? ""}|${i}`} l={l} consignment first={i === 0} />
                   ))}

@@ -1298,11 +1298,11 @@ const ProductBreakdownDrawer = ({
         display: 'flex', justifyContent: 'flex-end',
       }}>
       <div onClick={(e) => e.stopPropagation()}
-        className="w-[980px] max-w-[96vw] overflow-auto bg-bg p-6">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-4">
+        className="w-[920px] max-w-[96vw] overflow-auto bg-bg p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
           <div>
-            <h2 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">Stock Breakdown</h2>
-            <p className="mt-1.5 text-[13px] text-ink-secondary">
+            <h2 className="font-display text-[18px] font-extrabold leading-tight tracking-tight text-ink">Stock Breakdown</h2>
+            <p className="mt-1 text-[13px] text-ink-secondary">
               <span className={styles.codeChip}>{code}</span> {name}
             </p>
           </div>
@@ -1312,7 +1312,7 @@ const ProductBreakdownDrawer = ({
           </button>
         </div>
 
-        <div className={`mt-5 grid gap-3 ${bd.consignmentQty !== 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+        <div className={`mt-4 grid gap-2.5 ${bd.consignmentQty !== 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
           {/* The totals reduce over the lot feed, which is [] until it resolves —
               so a confident "RM 0.00" before load would be a lie the operator can
               act on. Unknown until it is known. */}
@@ -1334,11 +1334,11 @@ const ProductBreakdownDrawer = ({
             is excluded from the owned value subtotal. The drawer body is the ONE
             scroll container (no nested-scroll jank); the wide table scrolls
             sideways inside its own card for long lists. */}
-        <p className={styles.eyebrow} style={{ marginTop: 'var(--space-5)' }}>
+        <p className={styles.eyebrow} style={{ marginTop: 'var(--space-4)' }}>
           Stock Lots (oldest first — consumed first on the next DO)
         </p>
-        <div className={styles.tableCard} style={{ overflowX: 'auto' }}>
-          <table className={styles.table}>
+        <div className={`${styles.tableCard} ${styles.drawerScroll}`}>
+          <table className={`${styles.table} ${styles.compactTable} ${styles.lotTable}`}>
             <thead>
               <tr>
                 <th>Warehouse</th>
@@ -1443,8 +1443,8 @@ const ProductBreakdownDrawer = ({
           </span>
         </button>
         {movementsOpen && (
-          <div className={styles.tableCard}>
-            <table className={styles.table}>
+          <div className={`${styles.tableCard} ${styles.drawerScroll}`}>
+            <table className={`${styles.table} ${styles.compactTable}`}>
               <thead>
                 <tr>
                   <th>When</th>
@@ -1513,8 +1513,8 @@ const ProductBreakdownDrawer = ({
           </span>
         </button>
         {cogsOpen && (
-          <div className={styles.tableCard}>
-            <table className={styles.table}>
+          <div className={`${styles.tableCard} ${styles.drawerScroll}`}>
+            <table className={`${styles.table} ${styles.compactTable}`}>
               <thead>
                 <tr>
                   <th>Consumed at</th>
