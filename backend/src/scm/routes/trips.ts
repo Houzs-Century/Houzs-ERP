@@ -35,6 +35,7 @@ import { geocodeAddressCached, composeAddress } from '../lib/geocode';
 import { proposeRoute, timeToMinutes, minutesToTime, type ProposeStopInput } from '../lib/propose-route';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
 import { reconcileStopsToBoard, reconcileFieldsFor, type ReconcileStop } from '../lib/tripReconcile';
+import { validatePing, shouldAcceptPing, latestPerDriver, PING_ACCEPTED_STATUSES } from '../lib/tripLocation';
 
 export const trips = new Hono<{ Bindings: Env; Variables: Variables }>();
 trips.use('*', supabaseAuth);
@@ -732,6 +733,142 @@ trips.post('/propose-schedule', async (c) => {
     travelSeconds: matrix.durationSeconds, distanceMetres: matrix.distanceMetres,
     proposed,
   });
+});
+
+/* ──────────────────────────────────────────────────────────────────────────
+   LIVE GPS TRACKING (Phase 4). The driver keeps the delivery page open; the
+   browser posts coordinates every ~20-30s WHILE the trip is IN_PROGRESS; the
+   dispatcher map POLLS the latest position per driver (no websockets — polling
+   is this repo's realtime mechanism). Append-only ping log in scm.trip_locations
+   (mig 0199). Capture is scoped to an ACTIVE trip only (privacy) — see below.
+   ─────────────────────────────────────────────────────────────────────────*/
+
+const LOCATION_COLS = 'trip_id, driver_id, lat, lng, accuracy_m, recorded_at, received_at';
+
+/* POST /trips/:id/location — a driver on an ACTIVE trip posts one GPS ping
+   { lat, lng, accuracy?, recorded_at? }. Range-validated, rate-capped
+   server-side (pings <10s apart are ignored), and accepted ONLY for a trip in
+   an IN_PROGRESS state. A bad ping is REJECTED cleanly (4xx), never a 500 — a
+   phone on a bad connection must not be able to crash the endpoint. */
+trips.post('/:id/location', async (c) => {
+  const tripId = c.req.param('id');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  // Range + timestamp validation up front (pure, never throws).
+  const v = validatePing(body);
+  if (!v.ok) return c.json({ error: 'invalid_ping', reason: v.error }, 400);
+
+  const sb = c.get('supabase');
+  // The trip must exist, be visible to this caller, and be IN_PROGRESS. A
+  // Driver/Helper is row-scoped to their OWN trips (same self-scope as the rest
+  // of the trips router), so they can only ping a trip they are crewed on.
+  const { data: trip } = await sb.from('trips')
+    .select('id, status, company_id, driver_id, helper_1_id, helper_2_id')
+    .eq('id', tripId).maybeSingle();
+  if (!trip) return c.json({ error: 'trip_not_found' }, 404);
+  const t = trip as Record<string, unknown>;
+
+  const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(t))) {
+    return c.json({ error: 'not_your_trip' }, 403);
+  }
+
+  const status = String(dual(t, 'status') ?? '').toUpperCase();
+  if (!PING_ACCEPTED_STATUSES.has(status)) {
+    // Not live — the driver's page should stop tracking. Reported, not 500'd.
+    return c.json({ ok: false, accepted: false, reason: 'trip_not_in_progress', status }, 409);
+  }
+
+  const driverId = (dual<string | null>(t, 'driver_id') ?? null);
+
+  // Rate cap: read the newest stored ping for this trip+driver and drop the new
+  // one if it is closer than the minimum gap (a flaky watchPosition can fire far
+  // faster than the ~20-30s cadence). Best-effort — a read miss accepts.
+  {
+    let lastQ = sb.from('trip_locations')
+      .select('recorded_at').eq('trip_id', tripId)
+      .order('recorded_at', { ascending: false }).limit(1);
+    lastQ = driverId ? lastQ.eq('driver_id', driverId) : lastQ.is('driver_id', null);
+    const { data: last } = await lastQ.maybeSingle();
+    const lastMs = last ? Date.parse(String(dual(last as Record<string, unknown>, 'recorded_at') ?? '')) : null;
+    if (!shouldAcceptPing(Number.isFinite(lastMs as number) ? (lastMs as number) : null, Date.parse(v.ping.recordedAt))) {
+      return c.json({ ok: true, accepted: false, reason: 'rate_capped' });
+    }
+  }
+
+  const { error } = await sb.from('trip_locations').insert({
+    company_id:  dual<number | null>(t, 'company_id') ?? activeCompanyId(c),
+    trip_id:     tripId,
+    driver_id:   driverId,
+    user_id:     c.get('houzsUser')?.id ?? null,
+    lat:         v.ping.lat,
+    lng:         v.ping.lng,
+    accuracy_m:  v.ping.accuracyM,
+    recorded_at: v.ping.recordedAt,
+  });
+  if (error) {
+    if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
+    // Any other insert failure is reported, not thrown — the driver's page keeps
+    // trying on the next tick.
+    return c.json({ error: 'insert_failed', reason: error.message }, 500);
+  }
+  return c.json({ ok: true, accepted: true });
+});
+
+/* GET /trips/:id/locations/latest — the latest position per driver on ONE trip,
+   for the dispatcher's live map. Read-only. Row-scoped like the rest of the
+   router. Returns [] when the trip has no pings yet (a fresh trip). */
+trips.get('/:id/locations/latest', async (c) => {
+  const tripId = c.req.param('id');
+  const sb = c.get('supabase');
+
+  const { data: trip } = await sb.from('trips')
+    .select('id, driver_id, helper_1_id, helper_2_id').eq('id', tripId).maybeSingle();
+  if (!trip) return c.json({ error: 'trip_not_found' }, 404);
+  const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(trip as Record<string, unknown>))) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  // A bounded newest-first window (uses idx_trip_locations_trip_recorded); one
+  // trip has at most a handful of driver phones, so 200 rows is ample headroom
+  // for latestPerDriver to find the newest of each.
+  const { data, error } = await sb.from('trip_locations')
+    .select(LOCATION_COLS).eq('trip_id', tripId)
+    .order('recorded_at', { ascending: false }).limit(200);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({ locations: latestPerDriver((data ?? []) as Array<Record<string, unknown>>) });
+});
+
+/* GET /trips/active/locations — board-level: the latest position per driver
+   across every IN_PROGRESS trip, for the Delivery-Planning / Trips overview map.
+   Read-only, scoped to the caller's allowed companies (cross-company like the
+   trip list) and to their own trips when self-scoped. */
+trips.get('/active/locations', async (c) => {
+  const sb = c.get('supabase');
+
+  // The set of live trips the caller may see (cross-company; self-scoped when a
+  // Driver/Helper). Empty → no pings.
+  let tripQ = sb.from('trips')
+    .select('id, driver_id, helper_1_id, helper_2_id').eq('status', 'IN_PROGRESS');
+  tripQ = scopeToAllowedCompanies(tripQ, c);
+  const { data: activeTrips, error: tErr } = await tripQ;
+  if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
+
+  const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  const visible = (activeTrips ?? []).filter((r) =>
+    scope.mode === 'all' || scopeMatchesAssignment(scope, tripAssignment(r as Record<string, unknown>)));
+  const tripIds = visible.map((r) => dual<string>(r as Record<string, unknown>, 'id')).filter(Boolean);
+  if (tripIds.length === 0) return c.json({ locations: [] });
+
+  // Newest-first window over just those trips; latestPerDriver collapses it to
+  // one row per (trip, driver).
+  const { data, error } = await sb.from('trip_locations')
+    .select(LOCATION_COLS).in('trip_id', tripIds)
+    .order('recorded_at', { ascending: false }).limit(1000);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({ locations: latestPerDriver((data ?? []) as Array<Record<string, unknown>>) });
 });
 
 export default trips;
