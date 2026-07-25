@@ -1,4 +1,4 @@
-# Module: Fleet Maintenance & Compliance (Phase 1 + Phase 2)
+# Module: Fleet Maintenance & Compliance (Phase 1 + Phase 2 + Phase 3)
 
 The lorry compliance + service-readiness system. It **builds ON the existing SCM
 fleet foundation** — `scm.lorries` is THE vehicle master. Status is *derived*,
@@ -12,8 +12,14 @@ never typed.
 > (`scm.lorry_maintenance_plans`) and daily **mileage capture**
 > (`scm.lorry_mileage_readings`). Plans feed `deriveVehicleStatus()` →
 > `SERVICE_DUE`; the latest mileage reading is the odometer the plans measure
-> against. Work orders, breakdown cases and tyre/component SERIAL lifecycle are
-> Phase 3 — their seams are in §6, not built.
+> against.
+>
+> **Phase 3 scope (§10).** **Breakdown cases** (`scm.lorry_breakdown_cases`),
+> **maintenance work orders** (`scm.lorry_work_orders` + `_work_order_parts`) with
+> a state machine, and the **tyre/component SERIAL lifecycle**
+> (`scm.lorry_components` + `_component_events`). These FEED the two status seams
+> Phase 1 carried (`breakdownActive` + `openWorkOrder`) for real, and feed the
+> real repair-spend / active-breakdown / downtime KPIs.
 
 ## 1. What it reuses (does NOT duplicate)
 
@@ -104,18 +110,20 @@ breakdown cases) are not supplied yet (§6).
 - **Unified fleet.** `scm.lorries` and the vault are NOT company-scoped on read
   (a lorry's compliance is visible wherever the lorry is).
 
-## 6. Later-phase seams (documented, not built)
+## 6. Status seams (Phase 3 now feeds them)
 
-`deriveVehicleStatus()` already accepts `openWorkOrder` + `breakdownActive`; the
-tables that will feed them are NOT created (no empty prod surface nobody writes):
+`deriveVehicleStatus()` accepts `openWorkOrder` + `breakdownActive`. As of Phase 3
+(§10) these are supplied for real:
 
-- `fleet work orders` → `PLANNED_MAINTENANCE` / `WAITING_PARTS`, and the "Open
-  problem" / "Downtime" board columns.
-- `fleet breakdown cases` → `BREAKDOWN` + downtime.
-- Preventive-maintenance plans, tyre/component tracking, mileage trip-capture.
+- `scm.lorry_work_orders` (open, `IN_REPAIR`/`WAITING_PARTS`) → `PLANNED_MAINTENANCE`
+  / `WAITING_PARTS`, plus the "Open problem" / "Downtime" board columns.
+- `scm.lorry_breakdown_cases` (CRITICAL, non-resolved) → `BREAKDOWN` + downtime.
+- Preventive-maintenance plans (Phase 2) → `SERVICE_DUE`; mileage trip-capture GPS
+  cross-check is Phase 4.
 - **Notifications**: `GET /reminders` is the computation a future scheduled job
-  rides onto the app's existing announcement/notification mechanism. Phase 1
-  surfaces reminders on the dashboard only (no new push channel).
+  rides onto the app's existing announcement/notification mechanism; a critical
+  breakdown ALSO posts a private announcement to the reporter's reporting line
+  (`postPersonalNotice`, `source='fleet_breakdown'`). No new push channel.
 
 ## 7. Frontend (`frontend/src/pages/FleetHealth.tsx`, `/fleet-health`)
 
@@ -207,6 +215,103 @@ derived due) + `mileage[]` (recent readings).
   Mileage" in the Logistics group, gated on the `/fleet-health` nav entry
   (`fleet.read`). Uploads the photo to R2 (shared slip pipeline) then POSTs the
   reading. Plans admin stays desktop-only.
+
+## 10. Phase 3 — breakdown cases, work orders, tyre/component lifecycle
+
+### 10.1 New tables (migration `0204_scm_lorry_workorders_breakdowns_components.sql`)
+
+> ⚠️ Migration number is a **placeholder** — header carries `RE-CHECK NUMBER AT
+> MERGE`. At branch time main was at 0203; re-list the tree at merge and renumber
+> to highest-on-main + 1 if 0204 was taken. All five tables are children of
+> `scm.lorries` ON DELETE CASCADE, company-stamped-not-scoped like the Phase-1/2
+> siblings. Money is BIGINT `*_centi`.
+
+**`scm.lorry_breakdown_cases`** — a breakdown / roadside-incident log. Columns:
+`occurred_at`, `gps_lat`/`gps_lng`, `fault_type`, `severity`
+(`MINOR`|`MAJOR`|`CRITICAL`), `still_drivable`, `media_refs` (JSONB R2 keys),
+`driver_description`, `towing_company`, `towing_cost_centi`, `workshop`,
+`breakdown_start`, `recovery_time`, `affected_trip_id` (nullable FK
+`scm.trips` ON DELETE SET NULL), `status` (`OPEN`|`TOWING`|`IN_WORKSHOP`|
+`RESOLVED`). **A CRITICAL, non-RESOLVED case grounds the lorry** — it feeds
+`breakdownActive` → `deriveVehicleStatus()` returns `BREAKDOWN` →
+`canDispatch()` is false. This reuses the **established derived-status seam**; it
+does NOT write a parallel `scm.lorry_maintenance` window and does NOT add a
+status column (`BREAKDOWN` is more specific than `OUT_OF_SERVICE`, so the case
+must NOT also open an OOS window or the machine would report `OUT_OF_SERVICE`).
+
+**`scm.lorry_work_orders`** — the maintenance work order. State machine
+(`status` CHECK): `REPORTED → DIAGNOSED → APPROVED → IN_REPAIR → WAITING_PARTS →
+COMPLETED → VERIFIED`, with the `IN_REPAIR ⇄ WAITING_PARTS` loop and
+`WAITING_PARTS → COMPLETED`. An OPEN WO in `IN_REPAIR` feeds
+`PLANNED_MAINTENANCE`; in `WAITING_PARTS` feeds `WAITING_PARTS` (COMPLETED /
+VERIFIED are closed and feed nothing). Money legs `labour_centi`,
+`outside_service_centi`, `towing_centi`, `tax_centi`; **`total` is DERIVED**
+(legs + parts, `workOrderTotalCenti()`), never stored. Other fields: `problem`,
+`diagnosis`, `workshop`, `warranty_until`, `invoice_refs`/`quote_refs`/
+`photo_refs` (JSONB), `reported_at`/`est_complete`/`actual_complete`,
+`approved_by`/`verified_by`, `breakdown_case_id` (nullable FK — a WO may be
+spawned from a breakdown), `component_id` (nullable FK — a WO may install/replace
+a component). **`scm.lorry_work_order_parts`**: `name`, `part_no`, `qty`,
+`unit_price_centi`, `serial`.
+
+**`scm.lorry_components`** — tyre/battery/brake/etc. SERIAL lifecycle.
+`component_type` (`TYRE`|`BATTERY`|`BRAKE_PADS`|`ALTERNATOR`|`STARTER`|`GEARBOX`|
+`AIR_COMPRESSOR`|`OTHER`), `position` (`FRONT_L`|`FRONT_R`|`REAR_L`|`REAR_R`|
+`NA`), `brand`/`model`/`size`/`serial`, `fitted_date`/`fitted_km`,
+`purchase_price_centi`, `tread_depth` (nullable), `removed_date`/`removed_km`,
+`warranty_until`, `status` (`ACTIVE`|`REMOVED`). A partial UNIQUE index on
+`(lorry_id, position) WHERE status='ACTIVE' AND position<>'NA'` stops two active
+tyres in one slot. **`km_used` and `cost_per_km` are DERIVED**
+(`deriveComponentLife()`): `km_used = (removed_km | current odometer) −
+fitted_km`; `cost_per_km = purchase_price_centi / km_used` (never divide by 0).
+**`scm.lorry_component_events`**: `event_type` (`ROTATION`|`PUNCTURE`|`REPAIR`|
+`INSPECTION`|`OTHER`), `event_date`, `odometer_km`, `to_position`, `cost_centi`,
+`note` — answers "why repeated brakes in three months".
+
+### 10.2 Pure logic (`services/fleet-status.ts`, unit-tested)
+
+- `isCaseGrounding()` / `isBreakdownActive()` — a CRITICAL non-RESOLVED case
+  grounds; MINOR/MAJOR are logged only. `breakdownDowntimeHours()` for the board.
+- `WORK_ORDER_STATES` / `WORK_ORDER_TRANSITIONS` / `canTransitionWorkOrder()` —
+  the state machine (illegal jump like `REPORTED → VERIFIED` is rejected).
+  `isWorkOrderOpen()`, `workOrderSeam()` (WAITING_PARTS wins over PLANNED),
+  `workOrderTotalCenti()`.
+- `deriveComponentLife()` — `km_used` / `cost_per_km` / `under_warranty`.
+
+### 10.3 New routes (`/api/fleet-maintenance`, all gated as shown)
+
+| Route | Gate | What |
+|---|---|---|
+| `POST /vehicles/:id/breakdowns` | `fleet.write` | Log a case. If CRITICAL: find affected trips, suggest replacement lorries, notify the reporter's reporting line via `postPersonalNotice` (`source='fleet_breakdown'`). |
+| `PATCH /breakdowns/:caseId` | `fleet.write` | Update / advance status / resolve (sets `recovery_time`). |
+| `POST /vehicles/:id/work-orders` | `fleet.write` | Open a WO (starts `REPORTED`). |
+| `PATCH /work-orders/:woId` | `fleet.write` | Edit fields (NOT status). |
+| `POST /work-orders/:woId/transition` | `fleet.write` | The ONLY status path — validates against the state machine (`409 illegal_transition`). |
+| `POST /work-orders/:woId/parts` | `fleet.write` | Add a part line. |
+| `DELETE /work-orders/:woId/parts/:partId` | `fleet.write` | Remove a part line. |
+| `POST /vehicles/:id/components` | `fleet.write` | Fit a component (`409 position_occupied`). |
+| `PATCH /components/:componentId` | `fleet.write` | Update / remove a component. |
+| `POST /components/:componentId/events` | `fleet.write` | Log rotation/puncture/repair/inspection. |
+
+`GET /dashboard` now feeds the two seams per lorry, counts real active
+breakdowns + open work orders, combines WO totals with service records for the
+this-month repair-spend + costliest-vehicle KPIs, and returns per-vehicle
+`downtimeHours` + `openProblem`. `GET /vehicles/:id` returns `breakdowns[]`,
+`workOrders[]` (with parts + `nextStates`), and `components[]` (with events +
+derived life).
+
+### 10.4 Frontend touch points
+
+- **Desktop** `frontend/src/pages/FleetHealth.tsx` — the board gains a
+  **Downtime** column and a real Open-problem cell; the "Active breakdowns" KPI
+  is clickable + shows open-WO count. The detail drawer gains **Breakdown &
+  incidents** (report + status/resolve), **Work orders** (state-machine stepper +
+  parts table + total), and **Tyres & components** (serial cards with km-used /
+  cost-per-km, fit / remove / event-log).
+- **Mobile** `frontend/src/mobile/MobileMileageCapture.tsx` — the driver's fleet
+  screen gains a **Report breakdown** mode (fault, severity, still-drivable,
+  description, best-effort GPS + scene photo) alongside the day-complete mileage
+  capture. No new menu row (the existing Fleet Mileage surface is extended).
 
 ## 8. See also
 - `backend/src/services/fleet-status.ts` + `backend/tests/fleetStatus.test.ts`
