@@ -25,7 +25,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Env } from '../types';
-import { askAgentBrain, type AgentBrainUsageSink } from './agent-brain';
+import { askAgentBrain, askAgentBrainWithTools, type AgentBrainUsageSink } from './agent-brain';
 import {
   allowedCapabilityKeys,
   redactFacts,
@@ -35,6 +35,13 @@ import {
 import { AGENT_FAMILIES, type AgentFamily } from './agent-console';
 import { agentLabel, parseRouterDecision } from './assistant-teach';
 import type { ContentBlock } from './vision-blocks';
+import {
+  buildAssistantTools,
+  dispatchAssistantTool,
+  SEARCH_TOOL_GUIDANCE,
+  type AssistantToolCtx,
+} from './assistant-tools';
+import type { CompanyScopeCtx } from '../scm/lib/companyScope';
 
 /** One specialist the router can consult. `briefTable`/`itemsTable` are module
  *  constants — never user input — so they are safe to interpolate. */
@@ -202,6 +209,11 @@ export async function askAssistant(
      directly (no routing, no agent gather) — it is the user's OWN upload, not
      agent data, so the money-redaction path does not apply to it. */
   contentBlocks?: ContentBlock[],
+  /* The request's company context (Hono's `c`). When present, the answer path
+     runs the TOOL-LOOP — the model can call search_erp to locate a specific record
+     the briefs don't cover — scoped to exactly this caller's companies. Absent (a
+     headless caller, or tests) → the proven single-shot path, unchanged. */
+  companyCtx?: CompanyScopeCtx,
 ): Promise<AssistantAnswer> {
   const apiKey = env.ANTHROPIC_API_KEY;
   const text = (message ?? '').trim();
@@ -276,13 +288,46 @@ export async function askAssistant(
     };
   }
   /* Redact BEFORE the model call, not in the instructions to it. A figure inside
-     the context window is disclosed no matter what the system prompt asks. */
+     the context window is disclosed no matter what the system prompt asks. This one
+     redacted payload feeds BOTH answer paths below. */
   const note = scopeNote(scope);
-  const worded = await askAgentBrain(apiKey, {
-    system: note ? `${ANSWER_SYSTEM}
+  const baseSystem = note ? `${ANSWER_SYSTEM}
 
-${note}` : ANSWER_SYSTEM,
-    payload: { question: text, agentData: redactFacts(facts, scope) },
+${note}` : ANSWER_SYSTEM;
+  const payload = { question: text, agentData: redactFacts(facts, scope) };
+
+  /* TOOL-LOOP path — when the request carries a company context, the model may call
+     search_erp to locate a specific record the briefs do not cover. The dispatcher
+     company-scopes at source and redacts every result (assistant-tools.ts), so this
+     path can disclose nothing the single-shot path would not. On any failure it
+     returns null and we fall through to the proven single-shot answer below. */
+  if (companyCtx) {
+    const toolCtx: AssistantToolCtx = { env, scope, companyCtx, consulted: [] };
+    const worded = await askAgentBrainWithTools(apiKey, {
+      system: `${baseSystem}
+
+${SEARCH_TOOL_GUIDANCE}`,
+      payload,
+      tools: buildAssistantTools(scope),
+      dispatch: (name, input) => dispatchAssistantTool(toolCtx, name, input),
+      maxTokens: 600,
+      maxTurns: 5,
+      usageSink,
+    });
+    if (worded) {
+      const merged = [...agents];
+      for (const a of toolCtx.consulted) {
+        if (!merged.some((x) => x.key === a.key)) merged.push(a);
+      }
+      return { answer: worded.trim(), agents: merged, degraded: false };
+    }
+  }
+
+  /* SINGLE-SHOT fallback — the original path: no company context (a headless caller
+     or a test), or the tool-loop could not reach the model. */
+  const worded = await askAgentBrain(apiKey, {
+    system: baseSystem,
+    payload,
     maxTokens: 500,
     usageSink,
   });

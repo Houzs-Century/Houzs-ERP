@@ -128,7 +128,10 @@ app.post("/chat", async (c) => {
     convId = conv?.id ?? null;
   }
 
-  const res = await askAssistant(c.env, message, undefined, scope, contentBlocks);
+  /* Pass the request context so the answer path can run the tool-loop (search_erp),
+     company-scoped to this caller. `c` satisfies CompanyScopeCtx structurally — the
+     same handle every companyScope helper already takes. */
+  const res = await askAssistant(c.env, message, undefined, scope, contentBlocks, c);
 
   /* Build the turn's final answer. The router may read the message as teaching an
      agent a standing rule — that steers the agent for everyone, so only the owner

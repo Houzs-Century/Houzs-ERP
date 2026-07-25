@@ -98,14 +98,24 @@ function assrCompanySql(c: CompanyScopeCtx): string {
   return pinsToHouzs ? houzsCompanySql(c) : allowedCompaniesSql(c);
 }
 
-app.get("/", async (c) => {
-  const raw = (c.req.query("q") || "").trim();
+/**
+ * The search itself, callable WITHOUT the HTTP layer. The route below is a thin
+ * wrapper; the ERP Assistant's `search_erp` tool calls this SAME function, so it
+ * gets IDENTICAL company scoping. companyScope.ts blesses exactly this: its
+ * helpers take a bare `{ get }` precisely so a headless caller (a background job,
+ * an agent) scopes through ONE implementation instead of re-deriving the
+ * predicate — the cross-company leak a local copy would invite. Returns match
+ * METADATA only (no record contents, no money); every source is company-scoped;
+ * never throws on the SCM side.
+ */
+export async function runGlobalSearch(
+  c: CompanyScopeCtx,
+  env: Env,
+  raw: string,
+): Promise<Hit[]> {
   const pat = searchPattern(raw);
-  if (!pat) {
-    return c.json({ q: raw, hits: [] as Hit[] });
-  }
+  if (!pat) return [];
 
-  const env = c.env;
   const hits: Hit[] = [];
 
   // Multi-company scoping. Each fragment is "" ONLY when the company context is
@@ -225,6 +235,12 @@ app.get("/", async (c) => {
   // Guarded: any failure here degrades gracefully to the public hits above.
   await appendScmHits(c, env, raw, hits);
 
+  return hits;
+}
+
+app.get("/", async (c) => {
+  const raw = (c.req.query("q") || "").trim();
+  const hits = await runGlobalSearch(c, c.env, raw);
   return c.json({ q: raw, hits });
 });
 
