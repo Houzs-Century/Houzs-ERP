@@ -27,8 +27,10 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Desktop regions | `frontend/src/pages/scm-v2/DeliveryPlanningRegions.tsx:40` | Region master + per-state mapping editor. |
 | Desktop residence rules | `frontend/src/pages/scm-v2/DeliveryResidenceRules.tsx` | Per residence / building-type CONFIG the Phase-3 scheduler will read: service duration (shown in hours, stored as minutes), optional no-delivery time windows, lift-booking / registration flags. Owner-editable master, mirrors the Regions page (DataGrid + inline edit buffers + create drawer). Route `/scm/delivery-residence-rules`, nav "Residence Rules" under Transportation. NOT wired to any scheduler yet. |
 | Desktop capacity | `frontend/src/pages/scm-v2/LorryCapacity.tsx:140` | |
-| Mobile run-sheet | `frontend/src/mobile/MobileDeliveryPlanning.tsx:277` | 2,408 lines. Driver job-card run sheet. |
+| Mobile run-sheet | `frontend/src/mobile/MobileDeliveryPlanning.tsx:277` | 2,408 lines. Driver job-card run sheet. Carries the Phase-4 `MobileTrackingBanner` in its header. |
 | Mobile POD | `frontend/src/mobile/MobilePOD.tsx:71` | Photo / signature capture. |
+| Mobile GPS capture | `frontend/src/mobile/MobileTrackingBanner.tsx` | Phase-4 driver-capture banner. Self-gating: finds the driver's active trip + runs `useTripLocationCapture`; renders + captures only when a trip is IN_PROGRESS and the page is open. |
+| Desktop live map | `frontend/src/vendor/scm/components/LiveTripMap.tsx` | Phase-4 dispatcher live driver markers (same maps layer as `ScheduleRouteMap`). Shown in `Trips.tsx` under a selected IN_PROGRESS trip. |
 | Mobile masters | `frontend/src/mobile/MobileModuleList.tsx` | Generic list configs: `drivers` `:1327`, `helpers` `:1357`, `fleet` (lorries) `:1857`, `delivery-planning-regions` `:1957`. |
 | Board drawers | `frontend/src/vendor/scm/components/DeliveryFieldsDrawer.tsx:46`, `NewDpOrderDrawer.tsx:45`, `ScheduleDpOrderDrawer.tsx:40`, `ScheduleTripDrawer.tsx` | HC field editing, manual DP-order create, DP scheduling, and the Phase-2 **multiselect scheduling drawer** (resizable). |
 | Resizable drawer chrome | `frontend/src/components/ResizableDrawer.tsx` | Generic right slide-over with a drag-to-resize left edge; width persisted to localStorage (`panel-*` DEVICE_PREF). The FIXED-width `DetailDrawer` (`max-w-[520px]`) is its non-resizable sibling. |
@@ -174,6 +176,57 @@ schedule endpoint, no new trip logic.
 > owner sets it. The Maps JS render needs a SEPARATE browser key
 > (`VITE_GOOGLE_MAPS_API_KEY`, referrer-restricted).
 
+### Live driver tracking — "Live location" (Phase 4)
+
+The dispatcher watches the driver move in real time, with **no websockets** —
+polling is this repo's realtime mechanism. The approach is PWA geolocation: the
+driver keeps the delivery page open on their phone, the browser reports
+coordinates every ~25s (inside the 20-30s window) via the Geolocation API, the
+backend stores each report, and the dispatcher map POLLS the latest position per
+driver every 15s.
+
+**One shared logic layer** (repo rule: desktop and mobile are one product):
+`frontend/src/vendor/scm/lib/trip-locations-queries.ts` holds everything —
+`useTripLocationCapture` (the driver-capture engine), `useMyActiveTrip`,
+`usePostTripLocation`, and the dispatcher reads `useTripLatestLocations` /
+`useActiveTripLocations`. Cadence constants live there too: `DRIVER_POST_MS`
+(25s) and `DISPATCH_POLL_MS` (15s).
+
+**Driver capture (MOBILE)** — `frontend/src/mobile/MobileTrackingBanner.tsx`,
+mounted on the mobile Delivery Planning run-sheet. It finds the driver's own
+ACTIVE (IN_PROGRESS) trip via `useMyActiveTrip` (the trips list is already
+backend row-scoped to a Driver/Helper's own trips) and runs
+`useTripLocationCapture`, which uses `navigator.geolocation.watchPosition` +
+a `DRIVER_POST_MS` heartbeat to POST each fix. It STOPS when the trip completes,
+capture is disabled, or the page is backgrounded (Page Visibility) — so there is
+no background or persistent tracking. Permission is asked properly; a denial
+degrades to a clear "location off" row (never a crash), no-API shows
+"unavailable". The banner renders NOTHING when there is no active trip.
+
+**Dispatcher view (DESKTOP)** — `frontend/src/vendor/scm/components/LiveTripMap.tsx`
+(the same maps layer as `ScheduleRouteMap` — `@vis.gl/react-google-maps`,
+imperative markers via `useMap()`, no cloud `mapId`), wired into
+`Trips.tsx` under the selected trip. It shows a "Live location" panel ONLY while
+the selected trip is IN_PROGRESS, polling `GET /trips/:id/locations/latest` every
+15s. Each driver is a numbered marker with an accuracy halo; the marker + the
+"last seen" caption go AMBER when the newest fix is older than 90s (~3 missed
+posts). Falls back gracefully: `VITE_GOOGLE_MAPS_API_KEY` unset → the last-seen
+time still updates without the map; a trip with no pings yet → an empty map with
+a "waiting for the driver's first location" caption.
+
+> **PRIVACY.** Capture happens ONLY during an active (IN_PROGRESS) trip, ONLY on
+> the driver's own trip, ONLY while the delivery page is open and foregrounded;
+> it stops on completion / backgrounding. The log is append-only and
+> company-scoped, and cascades away with its trip. No background or persistent
+> tracking. The location endpoints have NO Google dependency (they only
+> store/read coordinates) — only the dispatcher's map RENDER needs the browser
+> `VITE_GOOGLE_MAPS_API_KEY`.
+
+> **Backend pure parts** live in `backend/src/scm/lib/tripLocation.ts`
+> (`validatePing`, `shouldAcceptPing`, `latestPerDriver`), unit-tested in
+> `tripLocation.test.ts`. The rate cap and the "IN_PROGRESS only" gate are
+> enforced there; `PING_ACCEPTED_STATUSES = {IN_PROGRESS}`.
+
 ### The four state tabs
 
 `DELIVERY_STATES` (`frontend/src/vendor/scm/lib/delivery-planning-queries.ts:19-21`)
@@ -248,6 +301,9 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | GET/POST/PATCH/DELETE | `/trips`, `/trips/:id`, `/trips/:id/stops`, `/trips/:id/status` | `trips.ts:101,141,175,234,277,325,398,412` | Trip (lorry-day) CRUD + stop ordering |
 | POST | `/trips/:id/optimize-route` | `trips.ts:438` | Google route optimisation; returns `{configured:false}` when `GOOGLE_MAPS_API_KEY` is unset |
 | POST | `/trips/propose-schedule` | `trips.ts` | **Phase 3 smart scheduler.** Selected SO stops + depot → geocode (cached) + residence-rule service/windows + ONE Distance Matrix call → sequenced route + per-stop arrival/start/finish times. `{configured:false}` with no key; nothing written |
+| POST | `/trips/:id/location` | `trips.ts` | **Phase 4 live GPS.** A driver on an IN_PROGRESS trip posts one ping `{lat,lng,accuracy?,recorded_at?}`. Range-validated + server-side rate-capped (pings <10s apart ignored); accepted ONLY for an IN_PROGRESS trip; row-scoped to the caller's own trip. A bad ping is rejected cleanly (never a 500). No Google dependency |
+| GET | `/trips/:id/locations/latest` | `trips.ts` | **Phase 4.** Latest position per driver on ONE trip, for the dispatcher map. Read-only, row-scoped. `[]` when no pings yet |
+| GET | `/trips/active/locations` | `trips.ts` | **Phase 4.** Latest position per driver across EVERY IN_PROGRESS trip (board-level overview). Read-only, scoped to allowed companies + own trips |
 | GET/PATCH/PUT | `/lorry-capacity`, `/lorry-capacity/lorries/:id/*` | `lorry-capacity.ts:132,354,389` | Capacity dashboard, in-house flag, repair days |
 | POST/GET/PATCH | `/dp-orders`, `/dp-orders/:id/cancel`, `/:id/schedule` | `dp-orders.ts:190,234,281,313,348` | Manual DP jobs with no source document |
 | PUT | `/delivery-orders-mfg/:id/crew` | `delivery-orders-mfg.ts:3314` | The only writer of `scm.delivery_order_crew` (driver 1/2 + helper 1/2 + lorry). **No frontend caller exists** — grep `frontend/src` for `/crew` returns nothing. |
@@ -536,6 +592,7 @@ request (§3).
 | `scm.delivery_planning_regions` / `scm.state_delivery_regions` | `0053:198` / `0053:208`. The region master and the state→region map keyed on a state **name** (`state_key`) |
 | `scm.delivery_residence_rules` | `0196`. Per residence / building-type delivery CONFIG the Phase-3 scheduler will read. `building_type` (keyed on the SO's `building_type` UDF values), `service_duration_minutes` (default 90; Landed seeded 60), `earliest_delivery_time` / `latest_delivery_time` (nullable), `requires_lift_booking`, `requires_registration`, `notes`, `is_active`, audit cols + `company_id`. Per-company UNIQUE `(company_id, building_type)`. Seeded for every active company (Condo / Landed / Apartment / Office / Shop / Other) — canonical config, editable in the Residence Rules admin page. |
 | `scm.geocode_cache` | `0197`. Phase 3 GEOCODE CACHE: `normalized_address` (UNIQUE) → `lat`/`lng` (+ `formatted_address`, `location_type`). NOT company-scoped (an address is one point on Earth). `geocodeAddressCached` reads it before any Google call, so a given address geocodes once ever |
+| `scm.trip_locations` | `0199`. Phase 4 LIVE GPS ping log — APPEND-ONLY (one row per report, never updated). `company_id` (scoped like the rest of scm), `trip_id` FK ON DELETE CASCADE, `driver_id` (the trip's driver snapshot, nullable), `user_id` (BIGINT — the public.users id of the posting phone), `lat`/`lng`, `accuracy_m`, `recorded_at` (DEVICE clock), `received_at` (SERVER clock — "last seen" is measured from here). Index `(trip_id, recorded_at DESC)` answers "latest ping for this trip" in one seek; `(company_id, recorded_at DESC)` serves the board-level read. `RE-CHECK NUMBER AT MERGE` — 0199 was the next free number above 0198 at branch time |
 | `scm.delivery_legs` | `0053:123`. The removed multi-hop feature; table still present, unused |
 
 Enums (`0053:27-33`): `delivery_state`, `lorry_type`, `delivery_leg_kind`,
@@ -711,6 +768,7 @@ service-case / sales / projects family.
 | Driver / Helper / Lorry masters | `Fleet.tsx` (`DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`) | `MobileModuleList.tsx:1327` / `:1357` / `:1857` | `drivers-queries.ts` / `helpers-queries.ts` / `lorries-queries.ts` |
 | Assignment + scheduling | `DeliveryPlanningBoard.tsx` `DriverEditCell` / `LorryEditCell` / the bulk-bar `applyBulk` (shared grid) | read-only rows `MobileDeliveryPlanning.tsx:1612-1613` | `useScheduleDelivery` (`delivery-planning-queries.ts:397`) → `PATCH …/schedule` |
 | Status writes / POD | board row actions | `MobileDeliveryPlanning.tsx` (`PATCH /delivery-orders-mfg/:id/status`), `MobilePOD.tsx` | the DO status machine in `delivery-orders-mfg.ts` |
+| Live GPS (Phase 4) | dispatcher READ: `LiveTripMap.tsx` in `Trips.tsx` (poll `latest`) | driver CAPTURE: `MobileTrackingBanner.tsx` (watchPosition → POST) | `vendor/scm/lib/trip-locations-queries.ts` (the ONE shared logic layer: capture engine + reads + cadence) and `backend/src/scm/lib/tripLocation.ts` (validation / rate cap / shaping) |
 | Access gating | `App.tsx:601-605` + `Sidebar.tsx:515-524` | `MobileApp.tsx:114,157-184` | `scmAreaGuard('scm.transportation.drivers')` |
 
 Note the asymmetry that is intentional and must be preserved: mobile is a

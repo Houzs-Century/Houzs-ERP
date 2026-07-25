@@ -13,6 +13,7 @@ import {
 } from '../shared/so-line-display';
 import { recostFromGrn } from '../lib/recost';
 import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurrency } from '../lib/fx';
+import { assertForeignRatePostable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
@@ -1379,6 +1380,15 @@ grns.post('/', async (c) => {
   /* Migration 0082 — GRN currency + rate inherit from the source PO (MYR default);
      allocation_method for landed-freight "平摊" (default QTY). MYR ⇒ rate 1, no-op. */
   const grnFx = await resolveGrnFx(sb, (body.purchaseOrderId as string | undefined) ?? null, body.currency, body.exchangeRate);
+  /* R2 money-path guard (audit inventory-costing-integrity R2) — refuse a foreign
+     GRN whose currency has no positive master rate and no operator-entered rate,
+     rather than capitalising the raw foreign figure into the lot at 1:1. Applies
+     to drafts too: a draft stored at the fallback 1 cannot be told apart from a
+     deliberate 1 once written, so the create boundary is the only safe gate. */
+  {
+    const rateGuard = await assertForeignRatePostable(sb, { currency: grnFx.currency, operatorRate: body.exchangeRate, docLabel: 'GRN' });
+    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+  }
   /* Doc-no collision retry (2026-07-14): two warehouse staff posting a GRN in
      the same company + YYMM both mint the same grn_number; without a retry the
      loser hits the UNIQUE grn_number (23505) and the receipt 500s. Lines key off
@@ -1578,6 +1588,13 @@ grns.post('/from-pos', async (c) => {
      assume one currency; take the primary PO's). Rate auto-fills from the master;
      allocation_method defaults QTY. MYR ⇒ rate 1, no-op. */
   const batchFx = await resolveGrnFx(sb, poList[0]!.id, poList[0]!.currency ?? undefined, undefined);
+  /* R2 money-path guard — the batch-from-POs GRN inherits the PO currency with no
+     operator rate; refuse it if that currency has no positive master rate (would
+     capitalise the raw foreign figure at 1:1). Checked before the single insert. */
+  {
+    const rateGuard = await assertForeignRatePostable(sb, { currency: batchFx.currency, operatorRate: undefined, docLabel: 'GRN' });
+    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+  }
   /* Doc-no collision retry (2026-07-14): a concurrent GRN create in the same
      company + YYMM can mint the same grn_number; without a retry the loser hits
      the UNIQUE grn_number (23505) and the batch-convert 500s. Lines key off the
@@ -1880,6 +1897,14 @@ grns.post('/from-po-items', async (c) => {
   // Track any bucket rolled back by the post-insert over-receipt verification so
   // we can surface a 409 with the same error shape the add-line path uses.
   let overReceipt: { poItemId: string; requested: number; remaining: number } | null = null;
+
+  /* R2 money-path guard — validate EVERY bucket's currency up front, before any
+     GRN is inserted, so an un-rated foreign PO can't leave a partially-committed
+     batch. Each bucket inherits its primary PO currency with no operator rate. */
+  for (const bucket of buckets.values()) {
+    const rateGuard = await assertForeignRatePostable(sb, { currency: bucket.currency ?? undefined, operatorRate: undefined, docLabel: 'GRN' });
+    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+  }
 
   for (const bucket of buckets.values()) {
     counter += 1;

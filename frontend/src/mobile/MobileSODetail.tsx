@@ -59,6 +59,13 @@ import {
   useWithdrawAmendment,
   type AmendmentLine,
 } from "../vendor/scm/lib/so-amendment-queries";
+/* Printable amendment document — the SAME shared client-side jsPDF template the
+   desktop AmendmentDetailV2 and the PO mobile detail use (one logic layer). Gives
+   the mobile SO-amendment surface the "Print amendment" the desktop already had,
+   closing the desktop/mobile parity gap. */
+import { generateAmendmentPdf } from "../vendor/scm/lib/amendment-pdf";
+import { soAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
+import { useStaffLookup } from "../hooks/useStaffLookup";
 /* The 2990 bridge's staff row — the vocabulary so_amendments.requested_by is
    written in (a scm.staff uuid). Desktop AmendmentDetailV2 compares it to decide
    "did I raise this?"; mirrored here so the mobile withdraw gate matches exactly
@@ -1732,6 +1739,37 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
     ...headerDiffs.map((d) => soHeaderFieldKind(d.key) as AmendmentFieldKind),
   ];
 
+  /* Print amendment — reuse the shared jsPDF template + soAmendmentToPdfInput,
+     EXACTLY as desktop AmendmentDetailV2 and MobilePoAmendmentDetail. Status
+     label collapses the multi-gate backend states to the SIMPLIFIED
+     Requested / Approved on the document (SO revision is live from SO_APPROVED
+     on). All lines are handed to the mapper (it filters no-op rows itself). */
+  const notify = useNotify();
+  const { actorNameOf } = useStaffLookup();
+  const amd = data?.amendment as Record<string, unknown> | undefined;
+  const amdStatus = String(amd?.status ?? "");
+  const soApplied = ["SO_APPROVED", "PO_APPROVED", "SENT", "APPROVED"].includes(amdStatus);
+  const handlePrintAmendment = () => {
+    if (!amd) return;
+    const input = soAmendmentToPdfInput({
+      amendment: {
+        amendment_no: amNo || null,
+        status: amdStatus,
+        reason: reason || null,
+        created_at: typeof amd.created_at === "string" ? amd.created_at : null,
+        requested_by_name: actorNameOf(typeof amd.requested_by === "string" ? amd.requested_by : null),
+        so_approved_by_name: amd.so_approved_by ? actorNameOf(String(amd.so_approved_by)) : null,
+        so_approved_at: typeof amd.so_approved_at === "string" ? amd.so_approved_at : null,
+      },
+      lines: (data?.lines ?? []) as never,
+      salesOrder: (data?.salesOrder ?? null) as never,
+      customerName: (data?.salesOrder as { customer_name?: string | null } | null)?.customer_name ?? null,
+      statusLabel: soApplied ? "Approved" : "Requested",
+    });
+    Promise.resolve(generateAmendmentPdf(input)).catch((e: unknown) =>
+      void notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }));
+  };
+
   return (
     <div className="hz-m sheet-bd" onClick={onClose}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
@@ -1883,6 +1921,7 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
           </div>
         </div>
         <div className="sheet-foot">
+          <button type="button" className="btn" style={{ flex: 1 }} onClick={handlePrintAmendment} disabled={isLoading || !amd}>Print amendment</button>
           <button type="button" className="btn" style={{ flex: 1 }} onClick={onClose}>Close</button>
         </div>
       </div>

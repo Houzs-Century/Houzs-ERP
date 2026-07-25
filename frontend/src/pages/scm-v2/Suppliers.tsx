@@ -17,6 +17,7 @@ import { useNavigate } from 'react-router';
 import { Search, Plus, X } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
+import { FilterPills } from '../../components/FilterPills';
 import { cn } from '../../lib/utils';
 import { formatPhone } from '@2990s/shared/phone';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
@@ -254,17 +255,12 @@ export const Suppliers = () => {
 
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-1.5">
-            {STATUS_CHIPS.map((c) => (
-              <StatusChip
-                key={c.value}
-                active={status === c.value}
-                onClick={() => setStatus(c.value)}
-              >
-                {c.label}
-              </StatusChip>
-            ))}
-          </div>
+          {/* The SO strip's own FilterPills slab (owner 2026-07-26). */}
+          <FilterPills
+            options={STATUS_CHIPS.map((c) => ({ value: c.value as string, label: c.label }))}
+            value={status}
+            onChange={(v) => setStatus(v as typeof STATUS_CHIPS[number]['value'])}
+          />
 
           <div className="relative min-w-[240px] flex-1">
             <Search
@@ -286,20 +282,14 @@ export const Suppliers = () => {
           </div>
         </div>
 
-        {/* Supply Category filter chips — rendered from the maintained pool +
-            "Mixed / Other". Client-side filter on the in-memory list (small
-            dataset). Hides nothing when "All supply categories" is on. */}
-        <div className="flex flex-wrap gap-1.5">
-          {categoryChips.map((c) => (
-            <StatusChip
-              key={c.value}
-              active={category === c.value}
-              onClick={() => setCategory(c.value)}
-            >
-              {c.label}
-            </StatusChip>
-          ))}
-        </div>
+        {/* Supply Category filter — same FilterPills slab, rendered from the
+            maintained pool + "Mixed / Other". Client-side filter on the
+            in-memory list (small dataset). Hides nothing on "All". */}
+        <FilterPills
+          options={categoryChips.map((c) => ({ value: c.value as string, label: c.label }))}
+          value={category}
+          onChange={(v) => setCategory(v)}
+        />
 
         {error && !isLoading && (
           <div className="rounded-lg border border-err/40 bg-err/10 px-4 py-2.5 text-[12.5px] text-err">

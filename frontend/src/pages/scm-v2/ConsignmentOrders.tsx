@@ -54,6 +54,7 @@ import { soStatusDisplay, type DeliveryState, type SoLifecycle } from '../../ven
 import { useAuth } from '../../auth/AuthContext';
 import styles from './MfgSalesOrdersList.module.css';
 import { PageHeader } from '../../components/Layout';
+import { StatCard } from '../../components/StatCard';
 import soDetailStyles from './SalesOrderDetail.module.css';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
 
@@ -443,7 +444,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
   },
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{it.item_code ?? '—'}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code ?? '—'}</span>,
     searchValue: (it) => it.item_code ?? '',
     sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
   },
@@ -487,7 +488,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
       return (
         <div>
           {it.deliveries!.map((d, di) => (
-            <div key={di} style={{ fontWeight: 600, color: 'var(--c-burnt)', whiteSpace: 'nowrap' }}>
+            <div key={di} style={{ fontWeight: 600, color: '#16695f', whiteSpace: 'nowrap' }}>
               {d.doNumber} <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}>×{d.qty}</span>
             </div>
           ))}
@@ -512,7 +513,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
   },
   {
     key: 'total', label: 'Total', width: 100, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{fmtRm(Number(it.total_centi ?? 0))}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtRm(Number(it.total_centi ?? 0))}</span>,
     searchValue: (it) => String(it.total_centi ?? 0),
     sortFn: (a, b) => Number(a.total_centi ?? 0) - Number(b.total_centi ?? 0),
   },
@@ -569,7 +570,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
     accessor: (it) => {
       if (!it.coverage_po) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
       return (
-        <span style={{ fontSize: 'var(--fs-10)', fontWeight: 600, color: 'var(--c-burnt)', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 'var(--fs-10)', fontWeight: 600, color: '#16695f', whiteSpace: 'nowrap' }}>
           {it.coverage_po}{it.coverage_eta ? ` · ETA ${fmtDateOrDash(it.coverage_eta)}` : ''}
         </span>
       );
@@ -680,7 +681,7 @@ const ExpandedSoLines = ({ docNo, canFinance }: { docNo: string; canFinance: boo
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: 'var(--c-burnt)' }}>{fmtRm(totalCenti)}</strong></span>
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtRm(totalCenti)}</strong></span>
         {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtRm(costCenti)}</strong></span>}
         {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtRm(marginCenti)}</strong></span>}
       </div>
@@ -900,39 +901,8 @@ export const ConsignmentOrders = () => {
   // Customer Name = debtor_name (Commander PR #46 rename in flight).
   // Customer SO Ref + Delivery Date inserted into the AutoCount layout.
 
-  /* Houzs chrome — KPI tile + filter-control styling kept inline so the
-     module CSS doesn't grow another 60 lines for one-off use. Compact
-     AutoCount card: uppercase 10px label + 14px semi-bold value. */
-  const kpiTile = (label: string, value: string, accent?: 'good' | 'bad' | 'burnt'): JSX.Element => (
-    <div key={label} style={{
-      background: 'var(--c-paper)',
-      border: '1px solid var(--line)',
-      borderRadius: 'var(--radius-md)',
-      padding: '8px 12px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 2,
-    }}>
-      <div style={{
-        fontFamily: 'var(--font-button)',
-        fontSize: 'var(--fs-10)',
-        fontWeight: 700,
-        letterSpacing: '0.06em',
-        textTransform: 'uppercase',
-        color: 'var(--fg-muted)',
-      }}>{label}</div>
-      <div style={{
-        fontFamily: 'var(--font-sans)',
-        fontSize: 'var(--fs-14)',
-        fontWeight: 700,
-        fontVariantNumeric: 'tabular-nums',
-        color: accent === 'good'  ? 'var(--c-secondary-a, #2F5D4F)'
-             : accent === 'bad'   ? 'var(--c-festive-b, #B8331F)'
-             : accent === 'burnt' ? 'var(--c-burnt)'
-             : 'var(--c-ink)',
-      }}>{value}</div>
-    </div>
-  );
+  /* KPI tiles are the shared <StatCard/> now (owner 2026-07-26) — the old
+     inline kpiTile helper is gone with them. */
 
   return (
     <div className="space-y-4">
@@ -953,10 +923,10 @@ export const ConsignmentOrders = () => {
         <div style={{
           display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)',
           padding: 'var(--space-1) var(--space-3)',
-          background: 'rgba(232, 107, 58, 0.10)',
-          border: '1px solid var(--c-burnt)',
+          background: 'rgba(22, 105, 95, 0.10)',
+          border: '1px solid #16695f',
           borderRadius: 'var(--radius-pill)',
-          color: 'var(--c-burnt)',
+          color: '#16695f',
           fontFamily: 'var(--font-button)',
           fontSize: 'var(--fs-12)',
           fontWeight: 600,
@@ -966,7 +936,7 @@ export const ConsignmentOrders = () => {
           <button type="button" onClick={clearOutstanding} aria-label="Clear outstanding filter"
             style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               width: 18, height: 18, padding: 0, background: 'transparent', border: 'none',
-              color: 'var(--c-burnt)', cursor: 'pointer', borderRadius: '50%' }}>
+              color: '#16695f', cursor: 'pointer', borderRadius: '50%' }}>
             <X size={14} strokeWidth={1.75} />
           </button>
         </div>
@@ -979,16 +949,43 @@ export const ConsignmentOrders = () => {
         </div>
       )}
 
-      {/* ── 4 KPI tiles (Houzs flat layout, scoped to current filters) ── */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-        gap: 'var(--space-2)',
-      }}>
-        {kpiTile('Total Orders', fmtQty(total))}
-        {kpiTile('Revenue (RM)', fmtRm(kpis.revenue))}
-        {kpiTile('Outstanding (RM)', fmtRm(kpis.outstanding), kpis.outstanding > 0 ? 'bad' : undefined)}
-        {kpiTile('Paid (RM)', fmtRm(kpis.paid), kpis.paid > 0 ? 'good' : undefined)}
+      {/* ── 4 KPI cards — the SO page's StatCard family (owner 2026-07-26,
+          red-box comparison: the flat paper tiles must become the sample's
+          white cards with colour rails + toned values). Same mapping as the
+          SO strip: Total(primary rail, active) · Revenue(accent) ·
+          Outstanding(err, error tone when due) · Paid(synced, success). */}
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard
+          pending={isLoading}
+          label="Total Orders"
+          value={fmtQty(total)}
+          subtitle="All matching orders"
+          rail="bg-primary"
+          active
+        />
+        <StatCard
+          pending={isLoading}
+          label="Revenue"
+          value={`RM ${fmtRm(kpis.revenue)}`}
+          subtitle="All matching orders"
+          rail="bg-accent"
+        />
+        <StatCard
+          pending={isLoading}
+          label="Outstanding"
+          value={`RM ${fmtRm(kpis.outstanding)}`}
+          subtitle="Balance due"
+          tone={kpis.outstanding > 0 ? 'error' : 'default'}
+          rail={kpis.outstanding > 0 ? 'bg-err' : 'bg-border-strong'}
+        />
+        <StatCard
+          pending={isLoading}
+          label="Paid"
+          value={`RM ${fmtRm(kpis.paid)}`}
+          subtitle="Receipts to date"
+          tone={kpis.paid > 0 ? 'success' : 'default'}
+          rail="bg-synced"
+        />
       </div>
 
       {/* Page-level search — drives the SERVER query (the DataGrid's own search
@@ -1002,9 +999,9 @@ export const ConsignmentOrders = () => {
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search CO no / customer…"
           style={{
-            height: 30, padding: '0 12px 0 30px', minWidth: 260,
-            borderRadius: 999, border: '1px solid var(--line)',
-            background: 'var(--c-paper)', color: 'var(--c-ink)', fontSize: 12,
+            height: 32, padding: '0 12px 0 30px', width: 288,
+            borderRadius: 6, border: '1px solid #d6d9d2',
+            background: '#ffffff', color: 'var(--c-ink)', fontSize: 12,
           }}
         />
         <SearchProgress active={searchTransition.isSearching} className="ml-2" />
@@ -1179,7 +1176,7 @@ const buildAllColumns = (
        duplicate it next to the doc number (Wei Siang 2026-05-30). */
     accessor: (r) => (
       <span style={{
-        fontWeight: 700, color: 'var(--c-burnt)',
+        fontWeight: 700, color: '#16695f',
         fontVariantNumeric: 'tabular-nums',
       }}>{r.doc_no}</span>
     ),
@@ -1192,7 +1189,7 @@ const buildAllColumns = (
        SO's own number when nothing downstream exists yet. */
     key: 'current_doc_no', label: 'Current', width: 150, sortable: true, groupable: true,
     accessor: (r) => (
-      <span style={{ fontWeight: 600, color: 'var(--c-burnt)', whiteSpace: 'nowrap' }}>
+      <span style={{ fontWeight: 600, color: '#16695f', whiteSpace: 'nowrap' }}>
         {r.current_doc_no ?? r.doc_no}
       </span>
     ),
@@ -1298,8 +1295,11 @@ const buildAllColumns = (
       const bg = isFull    ? 'var(--c-mint, #d4edda)'
               : isPartial ? 'rgba(232, 107, 58, 0.15)'
               : 'var(--c-cream)';
+      /* PARTIAL keeps the amber WARNING pair - that hue is the app's
+         intentional warning slot, not a 2990 brand remnant (the interactive
+         burnt-orange accents elsewhere were swept to primary). */
       const fg = isFull    ? 'var(--c-green, #1a7a3a)'
-              : isPartial ? 'var(--c-burnt)'
+              : isPartial ? '#b0592f'
               : 'var(--c-ink)';
       const weight = (isFull || isPartial) ? 700 : 600;
       return (
@@ -1573,7 +1573,7 @@ const buildAllColumns = (
       const pct = (r.margin_pct_basis ?? 0) / 100;
       const color = pct >= 50 ? 'var(--c-secondary-a, #2F5D4F)'
         : pct >= 30 ? 'var(--c-festive-a, #C77F3E)'
-        : pct > 0   ? 'var(--c-burnt)'
+        : pct > 0   ? '#16695f'
         : 'var(--c-festive-b, #B8331F)';
       return <span style={{
         color, fontWeight: 700, fontVariantNumeric: 'tabular-nums',

@@ -114,7 +114,7 @@ function gateFromArgs(args, source) {
 }
 
 function hasCapabilityGate(text) {
-  return /(requirePermission|requireAnyPermission|requirePageAccess|requireScmAccess|scmAreaGuard|permissionOr|owner|director)/i.test(text);
+  return /(requirePermission|requireAnyPermission|requirePageAccess|requireScmAccess|requireHouzsPerm|scmAreaGuard|permissionOr|owner|director)/i.test(text);
 }
 
 function handlerGuard(handler, source) {

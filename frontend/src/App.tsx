@@ -44,6 +44,7 @@ const Announcements = lazy(() => import("./pages/Announcements").then((m) => ({ 
 const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
+const FleetHealth = lazy(() => import("./pages/FleetHealth").then((m) => ({ default: m.FleetHealth })));
 const Agents = lazy(() => import("./pages/Agents").then((m) => ({ default: m.Agents })));
 const Assistant = lazy(() => import("./pages/Assistant").then((m) => ({ default: m.Assistant })));
 // Mail Center — in-ERP shared inbox (ported from Hookka). Inbox + thread detail;
@@ -488,6 +489,10 @@ export default function App() {
             keys off `canWrite` = announcements.write / Sales Director, which the
             backend re-checks. ── */}
         <Route path="/announcements" element={<Announcements />} />
+        {/* Fleet Health — Fleet Maintenance & Compliance Phase 1 dashboard.
+            Gated on the flat fleet.read permission; fleet.write covers the
+            mutations (backend re-checks). Desktop ops screen. */}
+        <Route path="/fleet-health" element={<Guard perm="fleet.read"><FleetHealth /></Guard>} />
         {/* ── Mail Center — shared inbox. Permission-gated on mail_center.read
             (the per-user mailbox scope is enforced server-side; reads/replies
             aren't gated by a permission key, only by mailbox ownership). The

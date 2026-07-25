@@ -23,6 +23,13 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "service_cases.manage", resource: "Service Cases", verb: "manage", label: "Manage service cases", description: "Triage, assign, schedule logistics for ASSR cases" },
   { key: "logs.read",     resource: "Activity Log", verb: "read", label: "View activity log", description: "See the system execution log" },
 
+  // Fleet Maintenance & Compliance (Phase 1) — the lorry master, compliance
+  // vault and Fleet Health dashboard (/api/fleet-maintenance). Read is the
+  // dashboard + reminders; write covers adding/editing vehicles and appending
+  // compliance-document renewals. Owner + IT Admin cover both via "*".
+  { key: "fleet.read",  resource: "Fleet Maintenance", verb: "read",  label: "View Fleet Health",   description: "See the Fleet Health dashboard, lorry compliance vault and expiry reminders" },
+  { key: "fleet.write", resource: "Fleet Maintenance", verb: "write", label: "Manage fleet vehicles", description: "Add and edit lorries, set out-of-service, and append compliance-document renewals" },
+
   // Projects (exhibitions, solo events)
   { key: "projects.read",    resource: "Projects", verb: "read",   label: "View projects",     description: "See the Projects tab and open project detail pages" },
   { key: "projects.chat",    resource: "Projects", verb: "write",  label: "Post project chat", description: "Post messages and mark notifications read on projects you can see, without editing project config" },

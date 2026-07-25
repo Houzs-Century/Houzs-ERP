@@ -1587,7 +1587,7 @@ export function MfgDeliveryOrdersListV2() {
 
       {/* Desktop sticky page chrome — pinned PageHeader + KPIs + FilterPills
           + ViewToggle. Matches SO listing V2 pattern. */}
-      <div className="sticky top-0 z-20 -mx-4 hidden bg-bg/95 pb-3 backdrop-blur-sm sm:-mx-6 md:block">
+      <div className="-mx-4 hidden pb-3 sm:-mx-6 md:block">
         <div className="px-4 sm:px-6">
           <PageHeader
             eyebrow="Supply Chain"

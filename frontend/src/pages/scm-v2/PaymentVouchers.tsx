@@ -27,6 +27,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { fmtDateOrDash, fmtMoneyCenti } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { FilterPills } from '../../components/FilterPills';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -40,7 +41,7 @@ const PV_LIST_STORAGE_KEY = 'pv-list.layout.v1';
 const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
   {
     key: 'pv_number', label: 'Voucher No.', width: 150, sortable: true,
-    accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{r.pv_number}</span>,
+    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.pv_number}</span>,
     searchValue: (r) => r.pv_number,
     exportValue: (r) => r.pv_number,
     sortFn: (a, b) => a.pv_number.localeCompare(b.pv_number),
@@ -68,7 +69,7 @@ const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
   {
     key: 'total_centi', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (r) => (
-      <span style={{ fontFamily: 'var(--font-mark)', color: 'var(--c-burnt)', fontWeight: 800 }}>
+      <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
         {fmtMoney(Number(r.total_centi ?? 0), r.currency)}
       </span>
     ),
@@ -147,20 +148,12 @@ export const PaymentVouchers = () => {
         </div>
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {STATUS_CHIPS.map((s) => (
-          <button key={s} type="button" onClick={() => setStatusChip(s)}
-            style={{
-              height: 28, padding: '0 12px', borderRadius: 999, cursor: 'pointer',
-              fontSize: 11, fontWeight: 600,
-              border: '1px solid ' + (statusChip === s ? 'var(--c-burnt)' : '#DDE5E5'),
-              background: statusChip === s ? 'rgba(232, 107, 58, 0.10)' : '#FFFFFF',
-              color: statusChip === s ? 'var(--c-burnt)' : 'var(--fg-muted)',
-            }}>
-            {s === 'all' ? 'All' : statusLabel('pv', s)}
-          </button>
-        ))}
-      </div>
+      {/* The SO strip's own FilterPills slab (owner 2026-07-26). */}
+      <FilterPills
+        options={STATUS_CHIPS.map((s) => ({ value: s as string, label: s === 'all' ? 'All' : statusLabel('pv', s) }))}
+        value={statusChip}
+        onChange={(v) => setStatusChip(v)}
+      />
 
       <DataGrid<PaymentVoucherRow>
         rows={rows}

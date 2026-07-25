@@ -41,6 +41,7 @@ import { checkStockAvailability, shortStockResponse } from '../lib/check-stock-a
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from '../lib/dropship-batch';
 import { loadSofaBatchStock, sofaStockKey } from '../lib/sofa-set-coverage';
+import { buildDoReversalRows } from '../lib/do-reversal';
 import { currentDocNoByKey, type CurrentEvent } from '../lib/current-doc';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
@@ -1389,6 +1390,36 @@ async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performed
     }
   }
 
+  /* ── NON-drop-ship DO cancel (audit R4, migration 0198) ────────────────────
+     A cancelled NORMAL DO must restore its ORIGINAL lots at their ORIGINAL
+     per-lot cost and DELETE its inventory_lot_consumptions rows, exactly as the
+     drop-ship path does — otherwise a cancelled sale's COGS stays in the ledger
+     and the stock re-enters as an average-cost lot at the BACK of the FIFO queue.
+     fn_reverse_do_out(..., p_batched_only := FALSE) does this for ALL buckets
+     (plain AND sofa). On success the route writes NO add-back rows below (the fn
+     handled every bucket). If the fn is missing (pre-0198) or errors, we fall
+     back to the legacy average-cost ADJUSTMENT / batch-restoring IN so a cancel
+     NEVER leaves stock permanently deducted. */
+  let nonDropshipHandled = false;
+  if (!isDropship) {
+    try {
+      const { error: rvErr } = await sb.rpc('fn_reverse_do_out', {
+        p_do_id: deliveryOrderId,
+        p_performed_by: performedBy ?? null,
+        p_batched_only: false,
+      });
+      if (!rvErr) {
+        nonDropshipHandled = true;
+      } else if (!(rvErr.message ?? '').includes('fn_reverse_do_out')) {
+        /* eslint-disable-next-line no-console */
+        console.error('[do-cancel] reversal fn failed (falling back to ADJUSTMENT):', rvErr.message);
+      }
+    } catch (e) {
+      /* eslint-disable-next-line no-console */
+      console.error('[do-cancel] reversal fn exception (falling back to ADJUSTMENT):', e);
+    }
+  }
+
   // Net OUT per (warehouse, product_code, variant_key, batch_no) bucket from THIS
   // DO's own IN/OUT movements. batch_no is read from the OUT rows themselves (the
   // ship stamped it), so a sofa reversal restores the EXACT dye-lot batch it drew
@@ -1403,61 +1434,23 @@ async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performed
       .eq('source_doc_type', 'DO').eq('source_doc_id', deliveryOrderId);
   }
   const movs = movsRes.data;
-  type Agg = {
-    warehouse_id: string; product_code: string; variant_key: string; batch_no: string | null;
-    product_name: string | null; net_out: number; out_total_cost: number; out_qty: number;
-  };
-  const byBucket = new Map<string, Agg>();
-  for (const m of (movs ?? []) as Array<{
-    movement_type: string; warehouse_id: string; product_code: string; variant_key: string | null;
-    batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null;
-  }>) {
-    if (m.movement_type !== 'IN' && m.movement_type !== 'OUT') continue;
-    const variant_key = m.variant_key ?? '';
-    const batch_no = m.batch_no ?? null;
-    const k = `${m.warehouse_id}::${m.product_code}::${variant_key}::${batch_no ?? ''}`;
-    let agg = byBucket.get(k);
-    if (!agg) {
-      agg = { warehouse_id: m.warehouse_id, product_code: m.product_code, variant_key, batch_no, product_name: m.product_name, net_out: 0, out_total_cost: 0, out_qty: 0 };
-      byBucket.set(k, agg);
-    }
-    const q = Number(m.qty ?? 0);
-    if (m.movement_type === 'OUT') { agg.net_out += q; agg.out_total_cost += Number(m.total_cost_sen ?? 0); agg.out_qty += q; }
-    else { agg.net_out -= q; }
-    if (!agg.product_name) agg.product_name = m.product_name;
-  }
 
-  /* Build the add-back rows. For a BATCHED (sofa) bucket we write a reversing IN
-     (carrying batch_no) so the FIFO trigger re-OPENS a lot tagged with that exact
-     batch — restoring inventory_lots, not just the aggregate balance. For a plain
-     bucket we keep the FIFO-neutral ADJUSTMENT (no lot re-open, no spurious COGS).
-     Both use source_doc_type='ADJUSTMENT' so neither collides with the DO source
-     index (ix_inv_mov_do_source is scoped WHERE source_doc_type='DO'). */
-  const movements = [...byBucket.values()]
-    .filter((b) => b.net_out > 0)
-    /* Batched buckets of a drop-ship DO were already reversed inside
-       fn_reverse_dropship_do_out (consumption restore + balance-only add-back,
-       audit C2 + H4) — only the plain (unbatched) buckets still need rows. */
-    .filter((b) => !(dropshipBatchedHandled && b.batch_no))
-    .map((b) => {
-      const unit_cost_sen = b.out_qty > 0 ? Math.round(b.out_total_cost / b.out_qty) : 0;
-      const base = {
-        warehouse_id: b.warehouse_id,
-        product_code: b.product_code,
-        variant_key: b.variant_key,
-        product_name: b.product_name,
-        qty: b.net_out, // positive — adds back the stock the DO shipped out
-        unit_cost_sen,
-        source_doc_type: 'ADJUSTMENT' as const,
-        source_doc_id: deliveryOrderId,
-        source_doc_no: doNo,
-        performed_by: performedBy,
-        notes: `Delivery order ${doNo} cancelled — reversing shipment (stock returned to shelf)`,
-      };
-      return b.batch_no
-        ? { ...base, movement_type: 'IN' as const, batch_no: b.batch_no }
-        : { ...base, movement_type: 'ADJUSTMENT' as const };
-    });
+  /* Build the LEGACY route-side add-back rows (used only when the SQL reversal
+     fn did not run — see buildDoReversalRows). For a BATCHED (sofa) bucket a
+     reversing IN (carrying batch_no) re-OPENS a lot tagged with that exact batch;
+     for a plain bucket a FIFO-neutral ADJUSTMENT. Both use
+     source_doc_type='ADJUSTMENT' so neither collides with the DO source index
+     (ix_inv_mov_do_source is scoped WHERE source_doc_type='DO'). When
+     nonDropshipHandled (fn_reverse_do_out reversed every bucket) or, for a
+     drop-ship DO, dropshipBatchedHandled (batched buckets reversed inside
+     fn_reverse_dropship_do_out), those buckets are skipped and this returns []. */
+  const movements = buildDoReversalRows(movs ?? [], {
+    deliveryOrderId,
+    doNo,
+    performedBy,
+    dropshipBatchedHandled,
+    nonDropshipHandled,
+  });
   // Multi-company: reversal movements inherit the DO's company.
   if (movements.length > 0) await writeMovements(sb, movements, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
 }

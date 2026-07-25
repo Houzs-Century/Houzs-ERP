@@ -36,7 +36,6 @@
     "Gate": { "cardMode": "column" },
     "HubGrid": { "cardMode": "column" },
     "NotificationBell": { "cardMode": "column" },
-    "PresenceIndicator": { "cardMode": "column" },
     "SearchInput": { "cardMode": "column" },
     "Section": { "cardMode": "column" },
     "TabStrip": { "cardMode": "column" },
@@ -52,7 +51,15 @@
     "ColumnsPanel": { "cardMode": "single", "primaryStory": "SalesOrderColumns" },
     "DetailListingShell": { "cardMode": "single", "primaryStory": "DeliveryOrderListing" },
     "HeroImageEditor": { "cardMode": "single", "primaryStory": "SavedCover" },
-    "PhotoGallery": { "cardMode": "single", "primaryStory": "Gallery" }
+    "PhotoGallery": { "cardMode": "single", "primaryStory": "Gallery" },
+    "ListPager": { "cardMode": "column" },
+    "ListErrorPanel": { "cardMode": "column" },
+    "SearchPendingPanel": { "cardMode": "column" },
+    "DocumentLinesExpansion": { "cardMode": "column" },
+    "WorkspaceTabs": { "cardMode": "column" },
+    "ResizableDrawer": { "cardMode": "single", "primaryStory": "ScheduleTrip", "viewport": "1100x640" },
+    "ResizableDetailDrawer": { "cardMode": "single", "primaryStory": "Open", "viewport": "1100x640" },
+    "PoAmendmentCreateModal": { "cardMode": "single", "primaryStory": "AmendLines", "viewport": "1200x760" }
   },
   "componentSrcMap": {
     "AndroidInstallGuide": "src/components/AndroidInstallGuide.tsx",
@@ -77,6 +84,7 @@
     "DetailLayout": "src/components/DetailLayout.tsx",
     "DetailListingShell": "src/components/scm-v2/DetailListingShell.tsx",
     "DetailMain": "src/components/DetailLayout.tsx",
+    "DocumentLinesExpansion": "src/components/DocumentLinesExpansion.tsx",
     "EmptyState": "src/components/EmptyState.tsx",
     "ExpandableText": "src/components/ExpandableText.tsx",
     "FieldRow": "src/components/Panel.tsx",
@@ -91,6 +99,8 @@
     "InlineEdit": "src/components/InlineEdit.tsx",
     "IosInstallGuide": "src/components/IosInstallGuide.tsx",
     "Layout": "src/components/Layout.tsx",
+    "ListErrorPanel": "src/components/SearchProgress.tsx",
+    "ListPager": "src/components/ListPager.tsx",
     "ListSkeleton": "src/components/Skeleton.tsx",
     "LookupManager": "src/components/LookupManager.tsx",
     "MediaLightbox": "src/components/MediaLightbox.tsx",
@@ -106,7 +116,7 @@
     "PasswordStrengthMeter": "src/components/PasswordStrengthMeter.tsx",
     "PhotoGallery": "src/components/scm-v2/PhotoGallery.tsx",
     "PnlCalendar": "src/components/PnlCalendar.tsx",
-    "PresenceIndicator": "src/components/PresenceIndicator.tsx",
+    "PoAmendmentCreateModal": "src/components/scm-v2/PoAmendmentCreateModal.tsx",
     "PresencePanel": "src/components/PresencePanel.tsx",
     "ProjectChat": "src/components/ProjectChat.tsx",
     "ProjectGantt": "src/components/ProjectGantt.tsx",
@@ -115,8 +125,13 @@
     "PwaBanners": "src/components/PwaBanners.tsx",
     "QuickActionsFAB": "src/components/QuickActionsFAB.tsx",
     "ResetFiltersButton": "src/components/ResetFiltersButton.tsx",
+    "ResizableDetailDrawer": "src/components/ResizableDetailDrawer.tsx",
+    "ResizableDrawer": "src/components/ResizableDrawer.tsx",
     "RowActionsMenu": "src/components/RowActionsMenu.tsx",
     "SearchInput": "src/components/Button.tsx",
+    "SearchPendingPanel": "src/components/SearchProgress.tsx",
+    "SearchProgress": "src/components/SearchProgress.tsx",
+    "SearchScopeHint": "src/components/SearchScopeHint.tsx",
     "Section": "src/components/DetailLayout.tsx",
     "Sidebar": "src/components/Sidebar.tsx",
     "Skeleton": "src/components/Skeleton.tsx",
@@ -126,6 +141,7 @@
     "TabStrip": "src/components/TabStrip.tsx",
     "TableSkeleton": "src/components/Skeleton.tsx",
     "TopNavbar": "src/components/TopNavbar.tsx",
-    "UdfCell": "src/components/UdfCell.tsx"
+    "UdfCell": "src/components/UdfCell.tsx",
+    "WorkspaceTabs": "src/components/WorkspaceTabs.tsx"
   }
 }

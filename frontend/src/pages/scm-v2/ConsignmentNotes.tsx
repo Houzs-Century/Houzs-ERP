@@ -35,6 +35,8 @@ import { BrandingPill, badgeFor } from '../../vendor/scm/lib/category-badges';
 import styles from './MfgSalesOrdersList.module.css';
 import soDetailStyles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { StatCard } from '../../components/StatCard';
+import { FilterPills } from '../../components/FilterPills';
 
 /* ── Row shape (CN header — mirrors the DO header) ─────────────────────── */
 type CnRow = {
@@ -171,7 +173,7 @@ const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] 
   },
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{it.item_code ?? '—'}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code ?? '—'}</span>,
     searchValue: (it) => it.item_code ?? '',
     sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
   },
@@ -212,7 +214,7 @@ const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] 
   },
   {
     key: 'total', label: 'Total', width: 100, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{fmtRm(cnLineTotalOf(it))}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtRm(cnLineTotalOf(it))}</span>,
     searchValue: (it) => String(cnLineTotalOf(it)),
     sortFn: (a, b) => cnLineTotalOf(a) - cnLineTotalOf(b),
   },
@@ -290,7 +292,7 @@ const ExpandedCnLines = ({ id, canFinance }: { id: string; canFinance: boolean }
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: 'var(--c-burnt)' }}>{fmtRm(totalCenti)}</strong></span>
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtRm(totalCenti)}</strong></span>
         {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtRm(costCenti)}</strong></span>}
         {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtRm(marginCenti)}</strong></span>}
       </div>
@@ -403,18 +405,7 @@ export const ConsignmentNotes = () => {
       { onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }) });
   };
 
-  const kpiTile = (label: string, value: string, accent?: 'good' | 'bad' | 'burnt'): JSX.Element => (
-    <div key={label} style={{
-      background: 'var(--c-paper)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)',
-      padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 2,
-    }}>
-      <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-muted)' }}>{label}</div>
-      <div style={{
-        fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-14)', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-        color: accent === 'good' ? 'var(--c-secondary-a, #2F5D4F)' : accent === 'bad' ? 'var(--c-festive-b, #B8331F)' : accent === 'burnt' ? 'var(--c-burnt)' : 'var(--c-ink)',
-      }}>{value}</div>
-    </div>
-  );
+  /* KPI tiles are the shared <StatCard/> now (owner 2026-07-26). */
 
   return (
     <div className="space-y-4">
@@ -438,34 +429,39 @@ export const ConsignmentNotes = () => {
         </div>
       )}
 
-      {/* Cost / Margin tiles are CUT for a non-finance viewer (off, not hidden —
-          no tile, no RM 0.00). The server also omits costCenti / marginCenti
-          from `aggregates` for such a caller, so they could only read zero. */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-2)' }}>
-        {kpiTile('Total Notes', fmtQty(total))}
-        {kpiTile('Revenue (RM)', fmtRm(kpis.revenue))}
-        {canFinance && kpiTile('Cost (RM)', fmtRm(kpis.cost))}
-        {canFinance && kpiTile('Margin (RM)', fmtRm(kpis.margin), kpis.margin > 0 ? 'good' : kpis.margin < 0 ? 'bad' : undefined)}
+      {/* SO StatCard family (owner 2026-07-26). Cost / Margin cards stay CUT
+          for a non-finance viewer (off, not hidden — no card, no RM 0.00);
+          the server also omits costCenti / marginCenti for such a caller. */}
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard pending={isLoading} label="Total Notes" value={fmtQty(total)} subtitle="All matching notes" rail="bg-primary" active />
+        <StatCard pending={isLoading} label="Revenue" value={`RM ${fmtRm(kpis.revenue)}`} subtitle="All matching notes" rail="bg-accent" />
+        {canFinance && (
+          <StatCard pending={isLoading} label="Cost" value={`RM ${fmtRm(kpis.cost)}`} subtitle="Cost of goods" rail="bg-accent-bright" />
+        )}
+        {canFinance && (
+          <StatCard
+            pending={isLoading}
+            label="Margin"
+            value={`RM ${fmtRm(kpis.margin)}`}
+            subtitle="Revenue − cost"
+            tone={kpis.margin > 0 ? 'success' : kpis.margin < 0 ? 'error' : 'default'}
+            rail={kpis.margin > 0 ? 'bg-synced' : kpis.margin < 0 ? 'bg-err' : 'bg-border-strong'}
+          />
+        )}
       </div>
 
       {/* Status chips + page-level search. Both drive the SERVER query (the
           DataGrid's own search is hidden via `hideSearch` so it can't silently
-          filter just the loaded page). */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {STATUS_CHIPS.map((s) => (
-            <button key={s} type="button" onClick={() => setStatusChip(s)}
-              style={{
-                height: 28, padding: '0 12px', borderRadius: 999, cursor: 'pointer',
-                fontSize: 11, fontWeight: 600,
-                border: '1px solid ' + (statusChip === s ? 'var(--c-burnt)' : '#DDE5E5'),
-                background: statusChip === s ? 'rgba(232, 107, 58, 0.10)' : '#FFFFFF',
-                color: statusChip === s ? 'var(--c-burnt)' : 'var(--fg-muted)',
-              }}>
-              {s === 'all' ? 'All' : STATUS_LABEL[s] ?? s}
-            </button>
-          ))}
-        </div>
+          filter just the loaded page). SO composition (owner 2026-07-25):
+          chips on their own row, the search on the NEXT row at the LEFT -
+          not squeezed to the right of the chips. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
+        {/* The SO strip's own FilterPills slab (owner 2026-07-26). */}
+        <FilterPills
+          options={STATUS_CHIPS.map((s) => ({ value: s as string, label: s === 'all' ? 'All' : STATUS_LABEL[s] ?? s }))}
+          value={statusChip}
+          onChange={(v) => setStatusChip(v)}
+        />
         <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
           <Search size={14} strokeWidth={1.75} style={{ position: 'absolute', left: 10, color: 'var(--fg-muted)' }} />
           <input
@@ -474,9 +470,9 @@ export const ConsignmentNotes = () => {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search note no / customer…"
             style={{
-              height: 30, padding: '0 12px 0 30px', minWidth: 220,
-              borderRadius: 999, border: '1px solid var(--line)',
-              background: 'var(--c-paper)', color: 'var(--c-ink)', fontSize: 12,
+              height: 32, padding: '0 12px 0 30px', width: 288,
+              borderRadius: 6, border: '1px solid #d6d9d2',
+              background: '#ffffff', color: 'var(--c-ink)', fontSize: 12,
             }}
           />
           <SearchProgress active={searchTransition.isSearching} className="ml-2" />
@@ -552,7 +548,7 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
   {
     key: 'do_number', label: 'Note No.', width: 150, sortable: true,
     accessor: (r) => (
-      <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{r.do_number}</span>
+      <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.do_number}</span>
     ),
     searchValue: (r) => `${r.do_number} ${r.status ?? ''}`,
     filterValue: (r) => r.do_number,

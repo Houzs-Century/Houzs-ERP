@@ -23,6 +23,10 @@ export { ToastProvider } from '../src/hooks/useToast';
 // TopNavbar (and anything Layout renders) calls useDialog() and throws
 // without this wrapper. Same single-instance rule as the others.
 export { DialogProvider } from '../src/hooks/useDialog';
+// Workspace-tab store helpers — previews seed the strip through the REAL
+// store (sidebar-intent + visit = spawn a tab); same single-instance rule
+// as the providers above (a second bundled copy would be a separate store).
+export { markWorkspaceOpenIntent, recordWorkspaceVisit } from '../src/lib/workspaceTabs';
 export * from '../src/components/AndroidInstallGuide';
 export * from '../src/components/Avatar';
 export * from '../src/components/Badge';
@@ -34,6 +38,7 @@ export * from '../src/components/ColumnsPanel';
 export * from '../src/components/Dashboard';
 export * from '../src/components/DataTable';
 export * from '../src/components/DetailLayout';
+export * from '../src/components/DocumentLinesExpansion';
 export * from '../src/components/EmptyState';
 export * from '../src/components/ExpandableText';
 export * from '../src/components/FilterPills';
@@ -43,6 +48,7 @@ export * from '../src/components/HubGrid';
 export * from '../src/components/InlineEdit';
 export * from '../src/components/IosInstallGuide';
 export * from '../src/components/Layout';
+export * from '../src/components/ListPager';
 export * from '../src/components/LookupManager';
 export * from '../src/components/MediaLightbox';
 export * from '../src/components/MobileTabBar';
@@ -52,7 +58,6 @@ export * from '../src/components/Pagination';
 export * from '../src/components/Panel';
 export * from '../src/components/PasswordStrengthMeter';
 export * from '../src/components/PnlCalendar';
-export * from '../src/components/PresenceIndicator';
 export * from '../src/components/PresencePanel';
 export * from '../src/components/ProjectChat';
 export * from '../src/components/ProjectGantt';
@@ -60,8 +65,12 @@ export * from '../src/components/PullToRefresh';
 export * from '../src/components/PwaBanners';
 export * from '../src/components/QuickActionsFAB';
 export * from '../src/components/ResetFiltersButton';
+export * from '../src/components/ResizableDetailDrawer';
+export * from '../src/components/ResizableDrawer';
 export * from '../src/components/RouteFallback';
 export * from '../src/components/RowActionsMenu';
+export * from '../src/components/SearchProgress';
+export * from '../src/components/SearchScopeHint';
 export * from '../src/components/Sidebar';
 export * from '../src/components/Skeleton';
 export * from '../src/components/StatCard';
@@ -69,6 +78,8 @@ export * from '../src/components/StatusDot';
 export * from '../src/components/TabStrip';
 export * from '../src/components/TopNavbar';
 export * from '../src/components/UdfCell';
+export * from '../src/components/WorkspaceTabs';
 export * from '../src/components/scm-v2/DetailListingShell';
 export * from '../src/components/scm-v2/HeroImageEditor';
 export * from '../src/components/scm-v2/PhotoGallery';
+export * from '../src/components/scm-v2/PoAmendmentCreateModal';
