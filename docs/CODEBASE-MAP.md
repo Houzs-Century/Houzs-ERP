@@ -231,6 +231,25 @@ pre-auth, secret-guarded receivers called by the 2990 database itself. They are
 mounted at the top level, outside `/api/scm`, and are separate routes on purpose so
 one mirror stalling cannot wedge the others.
 
+**Fleet Maintenance & Compliance (Phase 1).** Route `/api/fleet-maintenance`
+(`backend/src/scm/routes/fleet-maintenance.ts`), page
+`frontend/src/pages/FleetHealth.tsx` at `/fleet-health`, gated by the flat
+`fleet.read` / `fleet.write` permissions (via `requireHouzsPerm`). It BUILDS ON
+the existing SCM fleet master — `scm.lorries` IS the vehicle master; it reuses
+`scm.lorry_maintenance` (out-of-service windows), `scm.lorry_service_records`
+(mileage / next service / repair cost), `scm.drivers` (`drivers.vehicle` = plate)
+and `scm.warehouses` (region). The ONE new table is `scm.lorry_compliance_documents`
+(mig 0202): the compliance vault with append-only renewal history + the doc types
+the flat columns can't hold (APAD, cross-border, PUSPAKOM result). It syncs the
+existing flat `road_tax_expiry`/`insurance_expiry`/`puspakom_expiry` columns on
+`scm.lorries` as the denormalized "current" value so the old Fleet strip keeps
+working. Mounted OUTSIDE `/api/scm` (top-level) with `supabaseAuth`, so the gate is
+`fleet.read/write` alone, not `scm.access`. Vehicle status is DERIVED, never stored
+— the state machine + expiry-reminder ladder are pure functions in
+`backend/src/services/fleet-status.ts` (tests: `backend/tests/fleetStatus.test.ts`),
+run server-side so the frontend never re-derives them. `mig 0055` already dropped a
+duplicate `public.lorries` once; this module does NOT repeat that.
+
 ## 7. Desktop and mobile are two surfaces over one logic layer
 
 The phone does not render the desktop tree. `useIsMobile()` in
