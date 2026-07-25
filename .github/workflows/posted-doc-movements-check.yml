@@ -1,0 +1,53 @@
+name: Posted-doc vs movement check (read-only)
+
+# Finds POSTED / SHIPPED documents (GRN, DO, DR, STOCK_TRANSFER, STOCK_TAKE) that
+# have ZERO rows in inventory_movements for their (source_doc_type, source_doc_id)
+# — a document the system considers posted whose stock movement silently failed to
+# land. writeMovements is best-effort ("a failed movement insert does NOT roll back
+# the document post", inventory-movements.ts:11), so a GRN can read POSTED with no
+# lot and a DO SHIPPED with no OUT / no COGS, invisible to the ledger-vs-ledger
+# detectors. Costing-integrity audit 2026-07-25 (risk R1).
+#
+# This job SIZES that exposure, grouped by doc type with counts, and annotates the
+# known-legitimate zero-movement cases (zero-variance stock takes; service-only /
+# zero-qty docs). Root cause + why the audit-DLQ posture is deliberate are in
+# docs/inventory-costing-integrity-audit.md.
+#
+# The answer lives only in production, so this runs here rather than putting the
+# production DSN in front of a human for a SELECT (repo rule: build the check,
+# never ask the owner to run a query). Strictly read-only — SELECT only, no writes,
+# NO change to any post/movement logic. See backend/scripts/check-posted-doc-movements.mjs.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read must
+# never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Own concurrency group — touches nothing, must never queue behind or displace a
+# release (and must not share the deploy's group).
+concurrency:
+  group: posted-doc-movements-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-posted-doc-movements.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks (inventory-integrity-check.yml, uncosted-cogs-check.yml).
+          NODE_OPTIONS: --dns-result-order=ipv4first

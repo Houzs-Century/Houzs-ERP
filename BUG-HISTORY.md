@@ -1,5 +1,10 @@
 ## 2026-07-25
 
+### [DETECTORS] Read-only sizing detectors shipped for costing-integrity audit R1 / R2 / R4
+- **What.** Shipped the three read-only detectors the inventory-costing-integrity audit recommended (`docs/inventory-costing-integrity-audit.md`), matching the R3 detector's shape: `check-posted-doc-movements.mjs` (R1 — posted/shipped GRN/DO/DR/STOCK_TRANSFER/STOCK_TAKE with zero movements, i.e. a best-effort `writeMovements` that failed while the post stood), `check-foreign-rate-one.mjs` (R2 — GRNs/PIs with `currency <> 'MYR'` AND effective `exchange_rate = 1`, joined to the lots they created/recost, sizing the raw-foreign figure folded into MYR lots), and `check-cancelled-do-cogs.mjs` (R4 — `inventory_lot_consumptions` still attributed to CANCELLED DOs, split dropship vs non-dropship). Each has a matching `workflow_dispatch`-only workflow with its own concurrency group and `secrets.DATABASE_URL`.
+- **Scope.** SIZING ONLY — every one is SELECT-only, company-scoped, identifiers discovered from `information_schema`, exit 0 for every legitimate answer, `::notice::` output. They change NO costing / FIFO / document-post / cancel-reversal code and NO data. The write-path fixes for R1/R2/R4 remain DEFERRED and owner-gated (staging-first) per the audit.
+- **Ref:** #<PR>. `chore/costing-detectors-r124` 2026-07-25. Detection only; owner is the merge gate for any write-path change.
+
 ### [MEDIUM] List avg Unit Cost was diluted for consignment-holding SKUs — divided owned value by TOTAL qty (incl. consignment)
 - **Symptom.** Owner (2026-07-25): after #1256 made the list value owned-only, the "Unit Cost" (avg) column stayed `total_value_sen / total_qty` — but total_qty still counts consignment units, so an SKU holding consignment showed an artificially LOW average cost.
 - **Root cause.** The avg-cost derivation used the total quantity (owned + consignment) as the divisor while the numerator (value) had become owned-only — a mismatched pair.
