@@ -1,0 +1,52 @@
+name: Foreign-currency doc at rate 1 check (read-only)
+
+# Finds GRNs and Purchase Invoices whose currency <> MYR but exchange_rate is 1
+# (or NULL) — an un-rated foreign receipt that folded the raw RMB/USD figure into
+# the FIFO lot as if it were ringgit (toMyrSen(x,1)===x). safeRate degrades a
+# missing rate to 1 and a new currency defaults to 1 until the owner sets it
+# (fx.ts:47-84), and recost re-applies the stored 1, so the mis-cost is sticky.
+# Costing-integrity audit 2026-07-25 (risk R2).
+#
+# This job SIZES that exposure: offending GRNs joined to the lots they opened, and
+# offending PIs joined (via grn_id) to the lots their recost would fold, with the
+# lot value at risk. Root cause + the (owner-gated) write-path guard are in
+# docs/inventory-costing-integrity-audit.md.
+#
+# The answer lives only in production, so this runs here rather than putting the
+# production DSN in front of a human for a SELECT (repo rule: build the check,
+# never ask the owner to run a query). Strictly read-only — SELECT only, no writes,
+# NO change to any FX/costing logic. See backend/scripts/check-foreign-rate-one.mjs.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read must
+# never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Own concurrency group — touches nothing, must never queue behind or displace a
+# release (and must not share the deploy's group).
+concurrency:
+  group: foreign-rate-one-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-foreign-rate-one.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks (inventory-integrity-check.yml, uncosted-cogs-check.yml).
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -12,7 +12,12 @@ export type SearchHitType =
   | "assr_case"
   | "user"
   | "sales_order"
-  | "product";
+  | "product"
+  | "purchase_order"
+  | "grn"
+  | "delivery_order"
+  | "sales_invoice"
+  | "purchase_invoice";
 
 export interface SearchHit {
   type: SearchHitType;

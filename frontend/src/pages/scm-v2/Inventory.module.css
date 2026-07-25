@@ -320,6 +320,14 @@
 .movementOut { background: rgba(178, 58, 58, 0.10); color: #b23a3a; }
 .movementAdj { background: #e1efed;                 color: #0c3f39; }
 
+/* Assigned-vs-free split (owner 2026-07-25, dead-stock view). ASSIGNED = MRP
+   allocated on-hand stock to an SO (green, like a covered position). FREE =
+   un-assigned; a soft amber for make-to-STOCK (MATTRESS — normal) and a strong
+   red for make-to-ORDER (SOFA/BEDFRAME — abnormal, dead-stock candidate). */
+.pillAssigned  { background: rgba(47, 138, 91, 0.12);  color: #2f8a5b; }
+.pillFreeSoft  { background: rgba(160, 106, 0, 0.12);  color: #a06a00; }
+.pillDeadStock { background: rgba(178, 58, 58, 0.12);  color: #b23a3a; }
+
 .docLink {
   font-family: var(--font-mono);
   font-size: var(--fs-12);
