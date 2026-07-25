@@ -20,8 +20,9 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 ### Screens
 | Surface | File | Notes |
 |---------|------|-------|
-| Desktop board | `frontend/src/pages/scm-v2/DeliveryPlanning.tsx` | 1,377 lines. Component at `:517`. The 4 state tabs + region chips + inline Driver / Lorry cells. |
-| Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx:43` | A trip = one lorry-day with an ordered stop list. Status tabs order `IN_PROGRESS` before `PLANNED` (default tab still `PLANNED`). Carries a read-only **"To schedule"** panel — see below. |
+| Desktop board | `frontend/src/pages/scm-v2/DeliveryPlanning.tsx` | Thin host: PageHeader + data fetch (region server-side) + selection + drawers, rendering the shared **`DeliveryPlanningBoard`**. The 4 state tabs + region chips + inline Driver / Lorry cells + expand + multiselect all live in the shared component now. |
+| Shared board grid | `frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx` | The board itself, extracted so it is reused UNCHANGED by both DeliveryPlanning and the Trips "To schedule" panel: the CONFIG-DRIVEN region chip row, the optional 4 state-tab rail, the compact bulk-edit bar (multiselect), the inline Excel-style cell editors, the SO line-item drill-down and the full HC column set. Props: `stateTabs?` (present → tab row + client state-filter; omitted → locked to the passed single-state fetch), `selectedKeys`/`onToggle`/`onToggleAll`/`onClearSelection`, `bulkExtras` (page-injected Convert / Schedule buttons), `contextMenu`, `onRowDoubleClick`. The page owns the `useDeliveryPlanning` fetch so `region` stays a server-side filter. |
+| Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx:51` | A trip = one lorry-day with an ordered stop list. Status tabs order `IN_PROGRESS` before `PLANNED` (default tab still `PLANNED`). Carries the **"To schedule"** panel — now the EXACT board scoped to PENDING_SCHEDULE — see below. |
 | Desktop fleet masters | `frontend/src/pages/scm-v2/Fleet.tsx:78` | `DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`; `LorryDetail.tsx:71` mounts as a drawer from `Fleet.tsx:613`. |
 | Desktop regions | `frontend/src/pages/scm-v2/DeliveryPlanningRegions.tsx:40` | Region master + per-state mapping editor. |
 | Desktop capacity | `frontend/src/pages/scm-v2/LorryCapacity.tsx:140` | |
@@ -36,26 +37,39 @@ the `/scm/drivers` route was retired on 2026-07-17 in favour of the Drivers
 section of `/scm/fleet` (`App.tsx:593-599`, `Sidebar.tsx:518-523`). Do not
 re-add it.
 
-### Trips "To schedule" panel — read-only pending-orders queue
+### Trips "To schedule" panel — the FULL board, scoped to PENDING_SCHEDULE
 
-The Trips page carries a full-width **"To schedule"** panel below the trip
-list / stop sheet grid. It surfaces the `PENDING_SCHEDULE` orders (ready to
-ship, not yet on a trip) so a dispatcher sees the incoming work inside Trips,
-not only on the Delivery Planning board. It **reuses the board's own data
-path** — `useDeliveryPlanning({ region: 'ALL', state: 'PENDING_SCHEDULE' })`
+The Trips page carries a **"To schedule"** panel below the trip list / stop
+sheet grid. It is the **EXACT Delivery Planning board** — the shared
+`DeliveryPlanningBoard` component — LOCKED to `state=PENDING_SCHEDULE` (owner
+2026-07-25: "把我的 Delivery Planning 一模一样做进去 Trips,可是你只需要看到的是
+pending schedule 的"). Same full HC column set, same CONFIG-DRIVEN region chips,
+same expandable per-row line-item detail (the caret → `useDeliveryPlanningLines`
+→ `GET /delivery-planning/:docNo/lines`), same multiselect and inline cell
+editors. It is NOT a reduced custom table; the earlier read-only 6-column table
+was replaced.
+
+It reuses the board's own data path — `useDeliveryPlanning({ region:
+<activeRegion>, state: 'PENDING_SCHEDULE' })`
 (`vendor/scm/lib/delivery-planning-queries.ts:150`) → `GET
-/delivery-planning?state=PENDING_SCHEDULE` — so it shares `derivePlanningState`
-and cannot drift from the board. No new endpoint, no new state derivation.
+/delivery-planning?region=<r>&state=PENDING_SCHEDULE` — so it shares
+`derivePlanningState` and cannot drift from the board. No new endpoint, no new
+state derivation. The region chips filter the pending-schedule list by region
+server-side, exactly as on the board (the region is the query key). There is
+**no state-tab row** here (the panel is always PENDING_SCHEDULE): the board
+component is passed no `stateTabs` prop, so the tab rail is omitted and the
+passed single-state orders render as-is.
 
-Columns are read-only: SO / Ref (`so_doc_no`), Customer (`debtor_name`),
-Region (`region` bucket), Stock (`stock_remark`), Qty (`remaining_qty`,
-rounded), Delivery Date (`effective_delivery_date ?? customer_delivery_date`).
-Order array is null-guarded (`?? []`) before `.length` / `.map`.
-
-**Deliberately deferred** (next slice): multiselect, the Date/Time scheduling
-actions, and any write-back from Trips onto the board. Scheduling an order
-still happens only on the board (`PATCH /delivery-planning/:type/:id/schedule`
-→ `scheduleOntoTrip`); this panel is display-only.
+**Multiselect → schedule → Apply, from inside Trips.** Ticking orders and
+clicking **"Schedule (N)"** in the bulk bar opens the Phase-2
+`ScheduleTripDrawer` (`vendor/scm/components/ScheduleTripDrawer.tsx`, #1251) with
+the selected SO orders as its ordered stop list; Apply fans out one
+`useScheduleDelivery` call per SO, REUSING `PATCH /delivery-planning/so/:id/schedule`
+→ `scheduleOntoTrip` (find-or-create the trip + a DELIVERY stop). So the full
+select → schedule → apply workflow runs without leaving Trips. The board's own
+bulk field editor (Status / Delivery date / Driver / Lorry) and the inline cell
+editors are present here too — it is the same component — but the primary Trips
+action is Schedule.
 
 ### Scheduling drawer — multiselect → schedule → Apply, on the board (Phase 2)
 
@@ -624,11 +638,11 @@ service-case / sales / projects family.
 
 | Change | Desktop | Mobile | Shared / authority |
 |---|---|---|---|
-| The 4 states, their labels, their meaning | `pages/scm-v2/DeliveryPlanning.tsx` (`STATE_TABS` `:192`, tab row `:1148`) | `mobile/MobileDeliveryPlanning.tsx` (`Bucket` `:64`, pills) | `vendor/scm/lib/delivery-planning-queries.ts:19-29` for the constants; `derivePlanningState` (`backend/.../delivery-planning.ts:283-308`) for the RULE |
-| Board row shape / new column | `DeliveryPlanning.tsx` columns | `MobileDeliveryPlanning.tsx` `BoardRow` `:79` and the job card | `PlanningOrder` type in `delivery-planning-queries.ts:47` — add the field there first |
+| The 4 states, their labels, their meaning | `vendor/scm/components/DeliveryPlanningBoard.tsx` (`STATE_TABS`, tab row) — the tabs are rendered only when the host passes `stateTabs` | `mobile/MobileDeliveryPlanning.tsx` (`Bucket` `:64`, pills) | `vendor/scm/lib/delivery-planning-queries.ts:19-29` for the constants; `derivePlanningState` (`backend/.../delivery-planning.ts:283-308`) for the RULE |
+| Board row shape / new column | `vendor/scm/components/DeliveryPlanningBoard.tsx` columns (the shared grid — a new column changes BOTH DeliveryPlanning and the Trips "To schedule" panel at once) | `MobileDeliveryPlanning.tsx` `BoardRow` `:79` and the job card | `PlanningOrder` type in `delivery-planning-queries.ts:47` — add the field there first |
 | Region model | `DeliveryPlanningRegions.tsx` | `MobileModuleList.tsx:1957` (`delivery-planning-regions`) | `stateToRegionsFromConfig` + the two config tables |
 | Driver / Helper / Lorry masters | `Fleet.tsx` (`DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`) | `MobileModuleList.tsx:1327` / `:1357` / `:1857` | `drivers-queries.ts` / `helpers-queries.ts` / `lorries-queries.ts` |
-| Assignment + scheduling | `DriverEditCell` `:305`, `LorryEditCell` `:340`, bulk `:660-665` | read-only rows `MobileDeliveryPlanning.tsx:1612-1613` | `useScheduleDelivery` (`delivery-planning-queries.ts:397`) → `PATCH …/schedule` |
+| Assignment + scheduling | `DeliveryPlanningBoard.tsx` `DriverEditCell` / `LorryEditCell` / the bulk-bar `applyBulk` (shared grid) | read-only rows `MobileDeliveryPlanning.tsx:1612-1613` | `useScheduleDelivery` (`delivery-planning-queries.ts:397`) → `PATCH …/schedule` |
 | Status writes / POD | board row actions | `MobileDeliveryPlanning.tsx` (`PATCH /delivery-orders-mfg/:id/status`), `MobilePOD.tsx` | the DO status machine in `delivery-orders-mfg.ts` |
 | Access gating | `App.tsx:601-605` + `Sidebar.tsx:515-524` | `MobileApp.tsx:114,157-184` | `scmAreaGuard('scm.transportation.drivers')` |
 
