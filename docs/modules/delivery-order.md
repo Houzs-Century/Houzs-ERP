@@ -201,9 +201,19 @@ points to that same deduction:
 
 - **Non-draft create** (`:2842-2843`) — the DO is born DISPATCHED, so
   `deductInventoryForDo` runs right after the item insert.
-- **Status PATCH** (`:4284-4285`) — `if (SHIPPED_STATES.includes(body.status))`.
+- **Status PATCH** — `if (SHIPPED_STATES.includes(body.status))`.
   A DRAFT confirm is exactly DRAFT→DISPATCHED, so the deduction skipped at
-  draft-create fires here (`:4277-4283`).
+  draft-create fires here.
+
+**Over-delivery cap at the confirm chokepoint (2026-07-25).** BEFORE that
+first-ship deduction, the Status PATCH now re-derives `soRemainingByItemId` for
+the DO's linked SO lines and returns **409 `over_delivery`** if any line's
+about-to-ship qty exceeds its live remaining. This closes the DRAFT door: the
+create-path cap is gated `if (body.asDraft !== true)`, so a DRAFT DO lands its
+full qty uncapped — without this recheck, confirming it (or a second full draft)
+shipped the SO line twice (BUG-HISTORY 2026-07-25). Pure invariant in
+`lib/do-over-delivery.ts` (`findOverDeliveredSoItems`); ad-hoc/unlinked lines
+stay uncapped, exactly as at create.
 
 `deductInventoryForDo` (`:831`) is idempotent by two mechanisms: a pre-insert
 existence check on `(source_doc_type='DO', source_doc_id, movement_type='OUT')`
