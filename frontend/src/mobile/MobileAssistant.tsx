@@ -17,10 +17,36 @@ import { useAuth } from "../auth/AuthContext";
 import { canUseAssistant } from "../auth/assistantAccess";
 import { useAssistantChat, ASSISTANT_SUGGESTIONS } from "../components/useAssistantChat";
 
+const PETROL = "#1e8071";
+
+function shortWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+}
+
 export function MobileAssistant() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
-  const { msgs, draft, setDraft, busy, send, endRef } = useAssistantChat();
+  const {
+    msgs,
+    draft,
+    setDraft,
+    busy,
+    send,
+    endRef,
+    newChat,
+    historyView,
+    conversations,
+    loadingHistory,
+    openHistory,
+    closeHistory,
+    openConversation,
+    deleteConversation,
+  } = useAssistantChat();
 
   useEffect(() => {
     if (!open) return;
@@ -34,6 +60,16 @@ export function MobileAssistant() {
   // Denied positions (field crew + sales) see no disc — mirrors the backend 403.
   if (!user || !canUseAssistant(user)) return null;
   if (typeof document === "undefined") return null;
+
+  const headBtn = (onClick: () => void, label: string, path: string) => (
+    <button className="sheet-x" onClick={onClick} aria-label={label} title={label}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {path.split("|").map((d, i) => (
+          <path key={i} d={d} />
+        ))}
+      </svg>
+    </button>
+  );
 
   const launcher = (
     <button
@@ -72,113 +108,146 @@ export function MobileAssistant() {
         <div className="grab" />
         <div className="sheet-head">
           <div>
-            <div className="ey" style={{ color: "#1e8071" }}>Assistant</div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#11140f", marginTop: 2 }}>Ask about your ops</div>
+            <div className="ey" style={{ color: PETROL }}>Assistant</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#11140f", marginTop: 2 }}>
+              {historyView ? "Past chats" : "Ask about your ops"}
+            </div>
           </div>
-          <button className="sheet-x" onClick={() => setOpen(false)} aria-label="Close assistant">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-              <path d="M6 6l12 12M18 6 6 18" />
-            </svg>
-          </button>
+          <div style={{ display: "flex", gap: 6 }}>
+            {headBtn(newChat, "New chat", "M12 5v14|M5 12h14")}
+            {historyView
+              ? headBtn(closeHistory, "Back to chat", "M19 12H5|M12 19l-7-7 7-7")
+              : headBtn(openHistory, "History", "M12 8v4l3 2|M3 12a9 9 0 1 0 9-9 9 9 0 0 0-7 3.3M3 4v4h4")}
+            {headBtn(() => setOpen(false), "Close assistant", "M6 6l12 12|M18 6 6 18")}
+          </div>
         </div>
 
-        <div className="sheet-scroll" style={{ flex: 1 }}>
-          {msgs.length === 0 && (
-            <div style={{ textAlign: "center", color: "#9aa093", fontSize: 13, padding: "16px 6px", display: "flex", flexDirection: "column", gap: 10 }}>
-              <div>Ask a question — it routes to the right agent.</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
-                {ASSISTANT_SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => void send(s)}
-                    style={{ border: "1px solid #d6d9d2", borderRadius: 999, padding: "6px 11px", fontSize: 12, color: "#4a4f45", background: "#fff" }}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {msgs.map((m, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+        {historyView ? (
+          <div className="sheet-scroll" style={{ flex: 1 }}>
+            {loadingHistory && <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "20px 0" }}>Loading…</div>}
+            {!loadingHistory && conversations.length === 0 && (
+              <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "20px 0" }}>No past conversations yet.</div>
+            )}
+            {conversations.map((c) => (
               <div
-                style={{
-                  maxWidth: "86%",
-                  borderRadius: 14,
-                  padding: "9px 12px",
-                  fontSize: 13.5,
-                  lineHeight: 1.5,
-                  whiteSpace: "pre-wrap",
-                  background: m.role === "user" ? "#1e8071" : "#f2f4ef",
-                  color: m.role === "user" ? "#fff" : "#11140f",
-                  border: m.role === "user" ? "none" : "1px solid #e3e6e0",
-                }}
+                key={c.id}
+                style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid #e3e6e0", borderRadius: 12, padding: "10px 12px", background: "#fff" }}
               >
-                {m.role === "bot" && m.agents && m.agents.length > 0 && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center", borderBottom: "1px solid #e3e6e0", paddingBottom: 6, marginBottom: 6 }}>
-                    <span style={{ fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", color: "#9aa093" }}>Asked</span>
-                    {m.agents.map((a) => (
-                      <span key={a.key} style={{ fontSize: 10.5, background: "#fff", border: "1px solid #d6d9d2", borderRadius: 6, padding: "1px 6px", color: "#4a4f45" }}>
-                        {a.label}
-                      </span>
-                    ))}
+                <button type="button" onClick={() => openConversation(c.id)} style={{ minWidth: 0, flex: 1, textAlign: "left", background: "none", border: "none", padding: 0 }}>
+                  <div style={{ fontSize: 13.5, color: "#11140f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.title || "Untitled chat"}</div>
+                  <div style={{ fontSize: 11, color: "#9aa093", marginTop: 1 }}>
+                    {c.message_count} message{c.message_count === 1 ? "" : "s"} · {shortWhen(c.updated_at)}
                   </div>
-                )}
-                {m.text}
-                {m.degraded && <div style={{ marginTop: 5, fontSize: 11, color: "#9aa093" }}>Answered without the AI service.</div>}
+                </button>
+                <button type="button" onClick={() => deleteConversation(c.id)} aria-label="Delete conversation" style={{ flex: "none", background: "none", border: "none", color: "#b0b5aa", padding: 4 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" />
+                  </svg>
+                </button>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+        ) : (
+          <div className="sheet-scroll" style={{ flex: 1 }}>
+            {msgs.length === 0 && (
+              <div style={{ textAlign: "center", color: "#9aa093", fontSize: 13, padding: "16px 6px", display: "flex", flexDirection: "column", gap: 10 }}>
+                <div>Ask a question — it routes to the right agent.</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                  {ASSISTANT_SUGGESTIONS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => void send(s)}
+                      style={{ border: "1px solid #d6d9d2", borderRadius: 999, padding: "6px 11px", fontSize: 12, color: "#4a4f45", background: "#fff" }}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
-          {busy && (
-            <div style={{ display: "flex", justifyContent: "flex-start" }}>
-              <div style={{ background: "#f2f4ef", border: "1px solid #e3e6e0", borderRadius: 14, padding: "9px 12px", fontSize: 13, color: "#9aa093" }}>Asking the agents…</div>
-            </div>
-          )}
-          <div ref={endRef} />
-        </div>
+            {msgs.map((m, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+                <div
+                  style={{
+                    maxWidth: "86%",
+                    borderRadius: 14,
+                    padding: "9px 12px",
+                    fontSize: 13.5,
+                    lineHeight: 1.5,
+                    whiteSpace: "pre-wrap",
+                    background: m.role === "user" ? PETROL : "#f2f4ef",
+                    color: m.role === "user" ? "#fff" : "#11140f",
+                    border: m.role === "user" ? "none" : "1px solid #e3e6e0",
+                  }}
+                >
+                  {m.role === "bot" && m.agents && m.agents.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center", borderBottom: "1px solid #e3e6e0", paddingBottom: 6, marginBottom: 6 }}>
+                      <span style={{ fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", color: "#9aa093" }}>Asked</span>
+                      {m.agents.map((a) => (
+                        <span key={a.key} style={{ fontSize: 10.5, background: "#fff", border: "1px solid #d6d9d2", borderRadius: 6, padding: "1px 6px", color: "#4a4f45" }}>
+                          {a.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {m.text}
+                  {m.degraded && <div style={{ marginTop: 5, fontSize: 11, color: "#9aa093" }}>Answered without the AI service.</div>}
+                </div>
+              </div>
+            ))}
 
-        <div className="sheet-foot">
-          <input
-            style={{ flex: 1, border: "1px solid #d6d9d2", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#11140f", outline: "none", background: "#fff" }}
-            placeholder="Ask something…"
-            value={draft}
-            disabled={busy}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send(draft);
-              }
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => void send(draft)}
-            disabled={busy || !draft.trim()}
-            aria-label="Send"
-            style={{
-              width: 38,
-              height: 38,
-              flex: "none",
-              borderRadius: 10,
-              border: "none",
-              background: "#1e8071",
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              opacity: busy || !draft.trim() ? 0.4 : 1,
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m22 2-7 20-4-9-9-4Z" />
-              <path d="M22 2 11 13" />
-            </svg>
-          </button>
-        </div>
+            {busy && (
+              <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                <div style={{ background: "#f2f4ef", border: "1px solid #e3e6e0", borderRadius: 14, padding: "9px 12px", fontSize: 13, color: "#9aa093" }}>Asking the agents…</div>
+              </div>
+            )}
+            <div ref={endRef} />
+          </div>
+        )}
+
+        {!historyView && (
+          <div className="sheet-foot">
+            <input
+              style={{ flex: 1, border: "1px solid #d6d9d2", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#11140f", outline: "none", background: "#fff" }}
+              placeholder="Ask something…"
+              value={draft}
+              disabled={busy}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void send(draft);
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => void send(draft)}
+              disabled={busy || !draft.trim()}
+              aria-label="Send"
+              style={{
+                width: 38,
+                height: 38,
+                flex: "none",
+                borderRadius: 10,
+                border: "none",
+                background: PETROL,
+                color: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: busy || !draft.trim() ? 0.4 : 1,
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m22 2-7 20-4-9-9-4Z" />
+                <path d="M22 2 11 13" />
+              </svg>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   ) : null;

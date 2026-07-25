@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
 // useAssistantChat — the ONE Assistant chat logic layer behind every surface:
 // the desktop page, the desktop floating panel, and the mobile bottom sheet.
-// One send() path and one message model, so a rule fixed on one surface can
-// never be missed on another (owner rule: desktop and mobile are one product,
-// one shared logic layer — the surfaces differ only in presentation). This hook
-// is chrome-free; each host renders the msgs/composer in its own idiom.
+// One send() path, one message model, one history browser, so a rule fixed on
+// one surface can never be missed on another (owner rule: desktop and mobile are
+// one product, one shared logic layer — the surfaces differ only in
+// presentation). This hook is chrome-free; each host renders the msgs / composer
+// / history list in its own idiom.
 // ---------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from "react";
@@ -19,6 +20,12 @@ export interface Msg {
   text: string;
   agents?: AgentRef[];
   degraded?: boolean;
+}
+export interface ConversationSummary {
+  id: string;
+  title: string | null;
+  message_count: number;
+  updated_at: string;
 }
 
 /** Starter prompts shown on the empty state — shared so both surfaces suggest
@@ -41,8 +48,15 @@ export interface AssistantChatController {
   conversationId: string | null;
   /** Clear the stream and start a fresh thread. */
   newChat: () => void;
-  /** Hydrate the stream from a stored conversation (the history list opens one). */
-  loadConversation: (id: string, messages: Msg[]) => void;
+  // ── history browsing ──
+  /** Whether the host is showing the past-conversations list. */
+  historyView: boolean;
+  conversations: ConversationSummary[];
+  loadingHistory: boolean;
+  openHistory: () => void;
+  closeHistory: () => void;
+  openConversation: (id: string) => void;
+  deleteConversation: (id: string) => void;
 }
 
 export function useAssistantChat(): AssistantChatController {
@@ -50,11 +64,14 @@ export function useAssistantChat(): AssistantChatController {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [historyView, setHistoryView] = useState(false);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [msgs, busy]);
+    if (!historyView) endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [msgs, busy, historyView]);
 
   async function send(text: string) {
     const q = text.trim();
@@ -89,13 +106,77 @@ export function useAssistantChat(): AssistantChatController {
     setMsgs([]);
     setConversationId(null);
     setDraft("");
+    setHistoryView(false);
   }
 
-  function loadConversation(id: string, messages: Msg[]) {
-    setConversationId(id);
-    setMsgs(messages);
-    setDraft("");
+  async function refreshHistory() {
+    setLoadingHistory(true);
+    try {
+      const res = await api.get<{ success: boolean; data: { conversations: ConversationSummary[] } }>(
+        "/api/assistant/conversations",
+      );
+      setConversations(res.data.conversations ?? []);
+    } catch {
+      // A history read failing must not break the chat — show an empty list.
+      setConversations([]);
+    } finally {
+      setLoadingHistory(false);
+    }
   }
 
-  return { msgs, draft, setDraft, busy, send, endRef, conversationId, newChat, loadConversation };
+  function openHistory() {
+    setHistoryView(true);
+    void refreshHistory();
+  }
+  function closeHistory() {
+    setHistoryView(false);
+  }
+
+  async function openConversation(id: string) {
+    setLoadingHistory(true);
+    try {
+      const res = await api.get<{
+        success: boolean;
+        data: { conversation: { id: string; title: string | null }; messages: Msg[] };
+      }>(`/api/assistant/conversations/${id}/messages`);
+      setConversationId(id);
+      setMsgs((res.data.messages ?? []).map((m) => ({ role: m.role, text: m.text, agents: m.agents, degraded: m.degraded })));
+      setHistoryView(false);
+    } catch {
+      // leave the current view untouched on a failed open
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
+
+  async function deleteConversation(id: string) {
+    setConversations((cs) => cs.filter((c) => c.id !== id));
+    if (conversationId === id) {
+      setMsgs([]);
+      setConversationId(null);
+    }
+    try {
+      await api.del(`/api/assistant/conversations/${id}`);
+    } catch {
+      // best-effort; the row reappears on the next refresh if the delete failed
+    }
+  }
+
+  return {
+    msgs,
+    draft,
+    setDraft,
+    busy,
+    send,
+    endRef,
+    conversationId,
+    newChat,
+    historyView,
+    conversations,
+    loadingHistory,
+    openHistory,
+    closeHistory,
+    openConversation,
+    deleteConversation,
+  };
 }
