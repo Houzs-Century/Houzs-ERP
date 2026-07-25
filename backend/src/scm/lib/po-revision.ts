@@ -31,6 +31,31 @@ import type { Context } from 'hono';
 import { snapshotPo, ReceivedFloorError } from './so-revision';
 import { recordEntityAudit } from './entity-audit';
 import { poReceivedFloorViolation } from '../shared/po-amendment';
+import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
+
+/* The routable field atoms a PO amendment moves — lines + header. Mirrors the
+   frontend poLineFieldKinds / poHeaderFieldKind so the audit routing note matches
+   what the detail page and PDF show. */
+function poAmendmentFieldKinds(
+  lines: Array<{ change_type: string; new_material_code: string | null; new_qty: number | null; new_unit_price_centi: number | null; new_delivery_date: string | null; old_snapshot: Record<string, unknown> | null }>,
+  headerChanges: Record<string, unknown> | null,
+): AmendmentFieldKind[] {
+  const kinds: AmendmentFieldKind[] = [];
+  for (const l of lines) {
+    const change = String(l.change_type ?? '').toUpperCase();
+    if (change === 'ADD' || change === 'REMOVE') { kinds.push('LINE'); continue; }
+    const old = l.old_snapshot ?? {};
+    if (l.new_material_code != null && String(l.new_material_code) !== String(old.material_code ?? '')) kinds.push('SPEC');
+    if (l.new_qty != null && Number(l.new_qty) !== Number(old.qty ?? NaN)) kinds.push('QTY');
+    if (l.new_unit_price_centi != null && Number(l.new_unit_price_centi) !== Number(old.unit_price_centi ?? NaN)) kinds.push('PRICE');
+    if (l.new_delivery_date != null && String(l.new_delivery_date) !== String(old.delivery_date ?? '')) kinds.push('DELIVERY');
+  }
+  if (headerChanges) {
+    if (headerChanges.supplier_id !== undefined) kinds.push('SUPPLIER');
+    if (headerChanges.expected_at !== undefined) kinds.push('DELIVERY');
+  }
+  return kinds;
+}
 
 // The same structural client shape so-revision.ts + the fake-sb test use.
 type Sb = { from: (t: string) => any };
@@ -285,6 +310,7 @@ export async function applyPoAmendment(
   // (7) Audit — one AMENDMENT_PO_APPROVED row on the entity audit log (the
   //     sanctioned home for every non-SO document, mig 0139). Best-effort +
   //     non-throwing by design; the route runs the pre-flight before mutating.
+  const routingSummary = routingNote(poAmendmentFieldKinds(amendmentLines, headerChanges));
   await recordEntityAudit(sb as any, {
     entityType:  'PURCHASE_ORDER',
     entityId:    poId,
@@ -300,10 +326,15 @@ export async function applyPoAmendment(
       { field: 'lines_removed', to: linesRemoved },
       ...headerFieldChanges,
       ...lineFieldChanges,
+      /* Accountability: the type/department routing this single approval covers.
+         The apply stays single-signature — this records WHICH routed fields the
+         approver signed for, it does not split the gate. */
+      ...(routingSummary ? [{ field: 'routing', to: routingSummary }] : []),
       ...(warnings.length ? [{ field: 'needs_attention', to: warnings.join(' | ') }] : []),
     ],
     note: `PO ${poNumber} revised to rev ${nextRevision} by amendment `
-      + `(${linesUpdated} changed, ${linesAdded} added, ${linesRemoved} removed).`,
+      + `(${linesUpdated} changed, ${linesAdded} added, ${linesRemoved} removed).`
+      + (routingSummary ? ` Routing — ${routingSummary}.` : ''),
   });
 
   return { poId, poNumber, revision: nextRevision, linesUpdated, linesAdded, linesRemoved, warnings };

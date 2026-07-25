@@ -11,7 +11,15 @@
 // shows. ADD / REMOVE are one row each.
 // ----------------------------------------------------------------------------
 
-import type { AmendmentChangeRow, AmendmentPdfInput } from './amendment-pdf';
+import type { AmendmentChangeRow, AmendmentPdfInput, AmendmentPdfRouting } from './amendment-pdf';
+import {
+  fieldKindFromLabel,
+  routeField,
+  summariseRouting,
+  TYPE_LABEL,
+  FIELD_KIND_LABEL,
+} from './amendment-routing';
+import { amendmentLineChangedFields, amendmentVariantSummaries } from './so-amendment-line-diff';
 
 const money = (centi: number | null | undefined): string =>
   centi == null ? '—' : `RM ${(Number(centi) / 100).toFixed(2)}`;
@@ -40,6 +48,7 @@ export type SoAmendmentDetail = {
     new_item_code?: string | null;
     new_qty?: number | null;
     new_unit_price_sen?: number | null;
+    new_variants?: unknown;
     old_snapshot?: Record<string, unknown> | null;
   }>;
   salesOrder: { doc_no?: string | null; revision?: number | null } | null;
@@ -100,9 +109,22 @@ function buildSoRows(lines: SoAmendmentDetail['lines']): AmendmentChangeRow[] {
       rows.push({ item, field: 'Line', before: '—', after: `Qty ${str(l.new_qty)} @ ${money(l.new_unit_price_sen)}`, kind: 'ADD' });
       continue;
     }
-    // SPEC / QTY — emit a row per changed field.
+    // SPEC / VARIANT / QTY / PRICE — emit a row per changed field.
     if (change === 'SPEC' && l.new_item_code && String(l.new_item_code) !== String(snap.item_code ?? snap.itemCode ?? '')) {
       rows.push({ item, field: 'Spec', before: str(snap.item_code ?? snap.itemCode), after: str(l.new_item_code), kind: 'CHANGE' });
+    }
+    // Colour / fabric (variant) — routed to Production / Design like the spec. Use
+    // the shared alias-aware diff so a canonicalised-but-identical blob is not a
+    // false change (the same guard the on-screen diff uses).
+    const chg = amendmentLineChangedFields({
+      change_type: change, new_item_code: l.new_item_code, new_qty: l.new_qty,
+      new_unit_price_sen: l.new_unit_price_sen, new_variants: l.new_variants, old_snapshot: l.old_snapshot,
+    });
+    if (chg.variants) {
+      const vs = amendmentVariantSummaries({
+        change_type: change, new_variants: l.new_variants, old_snapshot: l.old_snapshot,
+      });
+      rows.push({ item, field: 'Colour / fabric', before: str(vs.from), after: str(vs.to), kind: 'CHANGE' });
     }
     if (l.new_qty != null && String(l.new_qty) !== String(snap.qty ?? '')) {
       rows.push({ item, field: 'Quantity', before: str(snap.qty), after: str(l.new_qty), kind: 'CHANGE' });
@@ -148,11 +170,32 @@ function buildPoRows(lines: PoAmendmentDetail['lines']): AmendmentChangeRow[] {
 const isApplied = (status: string | null | undefined, appliedStates: string[]): boolean =>
   appliedStates.includes(String(status ?? '').toUpperCase());
 
+/* Tag each change row with its responsible department (from its field label) and
+   fold the whole set into the type badges + department-routing block the PDF
+   prints. Rows whose field is not routable keep a null department. */
+function attachRouting(rows: AmendmentChangeRow[]): { rows: AmendmentChangeRow[]; routing: AmendmentPdfRouting } {
+  const tagged = rows.map((r) => {
+    const kind = fieldKindFromLabel(r.field);
+    return { ...r, department: kind ? routeField(kind).department : null };
+  });
+  const summary = summariseRouting(tagged.map((r) => fieldKindFromLabel(r.field)));
+  const routing: AmendmentPdfRouting = {
+    typeLabels: summary.types.map((t) => TYPE_LABEL[t]),
+    isMixed: summary.isMixed,
+    departments: summary.departments.map((d) => ({
+      department: d.department,
+      fields: d.kinds.map((k) => FIELD_KIND_LABEL[k]),
+    })),
+  };
+  return { rows: tagged, routing };
+}
+
 export function soAmendmentToPdfInput(d: SoAmendmentDetail): AmendmentPdfInput {
   // The SO revision is bumped at the Approve-SO gate; treat SO_APPROVED and
   // beyond as "applied" for the old -> new display.
   const applied = isApplied(d.amendment.status, ['SO_APPROVED', 'PO_APPROVED', 'SENT', 'APPROVED']);
   const rev = revisionPair(d.salesOrder?.revision, applied);
+  const { rows, routing } = attachRouting(buildSoRows(d.lines));
   return {
     kind: 'SO',
     amendmentNo: str(d.amendment.amendment_no),
@@ -163,7 +206,8 @@ export function soAmendmentToPdfInput(d: SoAmendmentDetail): AmendmentPdfInput {
     partyName: d.customerName ?? null,
     revisionFrom: rev.from,
     revisionTo: rev.to,
-    changes: buildSoRows(d.lines),
+    changes: rows,
+    routing,
     reason: d.amendment.reason ?? null,
     requestedBy: d.amendment.requested_by_name ?? null,
     requestedAt: d.amendment.created_at ?? null,
@@ -175,6 +219,7 @@ export function soAmendmentToPdfInput(d: SoAmendmentDetail): AmendmentPdfInput {
 export function poAmendmentToPdfInput(d: PoAmendmentDetail): AmendmentPdfInput {
   const applied = isApplied(d.amendment.status, ['APPROVED']);
   const rev = revisionPair(d.purchaseOrder?.revision, applied);
+  const { rows, routing } = attachRouting(buildPoRows(d.lines));
   return {
     kind: 'PO',
     amendmentNo: str(d.amendment.amendment_no),
@@ -185,7 +230,8 @@ export function poAmendmentToPdfInput(d: PoAmendmentDetail): AmendmentPdfInput {
     partyName: d.supplierName ?? null,
     revisionFrom: rev.from,
     revisionTo: rev.to,
-    changes: buildPoRows(d.lines),
+    changes: rows,
+    routing,
     reason: d.amendment.reason ?? null,
     requestedBy: d.amendment.requested_by_name ?? null,
     requestedAt: d.amendment.created_at ?? null,

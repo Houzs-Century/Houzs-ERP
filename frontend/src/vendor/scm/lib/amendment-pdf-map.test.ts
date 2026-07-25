@@ -33,6 +33,28 @@ describe('poAmendmentToPdfInput', () => {
     const cost = out.changes.find((r) => r.field === 'Unit cost')!;
     expect(cost.before).toBe('RM 10.00');
     expect(cost.after).toBe('RM 12.00');
+    // Routing: qty -> Production / Design (processing); cost -> Finance (delivery/commercial).
+    expect(qty.department).toContain('Production');
+    expect(cost.department).toBe('Finance');
+    expect(out.routing?.isMixed).toBe(true);
+    expect(out.routing?.typeLabels).toContain('Processing');
+    expect(out.routing?.typeLabels).toContain('Delivery / Commercial');
+  });
+
+  it('routes a delivery-date change to Logistics and marks it delivery/commercial', () => {
+    const out = poAmendmentToPdfInput({
+      amendment: { amendment_no: 'PO-2/A1', status: 'REQUESTED', created_at: '2026-07-24' },
+      lines: [{
+        change_type: 'DELIVERY', new_material_code: 'BF-3', new_delivery_date: '2026-08-10',
+        old_snapshot: { material_code: 'BF-3', qty: 1, delivery_date: '2026-08-01' },
+      }],
+      purchaseOrder: { po_number: 'PO-2', revision: 1 },
+    });
+    const del = out.changes.find((r) => r.field === 'Delivery date')!;
+    expect(del.department).toBe('Logistics');
+    expect(out.routing?.isMixed).toBe(false);
+    expect(out.routing?.typeLabels).toEqual(['Delivery / Commercial']);
+    expect(out.routing?.departments).toEqual([{ department: 'Logistics', fields: ['Delivery date'] }]);
   });
 
   it('maps ADD and REMOVE lines to single tinted rows', () => {
@@ -75,5 +97,9 @@ describe('soAmendmentToPdfInput', () => {
     expect(spec.before).toBe('SF-100');
     expect(spec.after).toBe('SF-200');
     expect(out.approvedBy).toBe('Boss');
+    // A SKU/spec swap is a processing change owned by Production / Design.
+    expect(spec.department).toBe('Production / Design');
+    expect(out.routing?.typeLabels).toEqual(['Processing']);
+    expect(out.routing?.isMixed).toBe(false);
   });
 });

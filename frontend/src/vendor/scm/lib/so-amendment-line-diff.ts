@@ -34,6 +34,7 @@
 // ----------------------------------------------------------------------------
 
 import { buildVariantSummary } from '@2990s/shared';
+import { routeField, type AmendmentFieldKind, type FieldRouting } from './amendment-routing';
 
 /** The old_snapshot blob both builders record. */
 export type AmendmentOldSnapshot = {
@@ -251,6 +252,26 @@ export const amendmentLineIsChange = (l: DiffableAmendmentLine): boolean => {
   const f = amendmentLineChangedFields(l);
   return f.itemCode || f.qty || f.unitPrice || f.variants;
 };
+
+/** The field ATOMS an SO amendment line moves — the input to amendment-routing's
+    classifier. ADD / REMOVE is a whole-line change (LINE); otherwise one atom per
+    field that actually moved. Empty for a delta-free row. Shared by the SO
+    amendment detail, the desktop diff modal and the mobile diff sheet so all
+    three label a changed row with the SAME responsible department. */
+export const amendmentLineFieldKinds = (l: DiffableAmendmentLine): AmendmentFieldKind[] => {
+  if (l.change_type === 'ADD' || l.change_type === 'REMOVE') return ['LINE'];
+  const f = amendmentLineChangedFields(l);
+  const kinds: AmendmentFieldKind[] = [];
+  if (f.itemCode) kinds.push('SPEC');
+  if (f.variants) kinds.push('VARIANT');
+  if (f.qty) kinds.push('QTY');
+  if (f.unitPrice) kinds.push('PRICE');
+  return kinds;
+};
+
+/** The full {type, department} routing for each atom this line moves. */
+export const amendmentLineRouting = (l: DiffableAmendmentLine): FieldRouting[] =>
+  amendmentLineFieldKinds(l).map(routeField);
 
 /** The lines worth SHOWING — and worth COUNTING. A delta-free row is dropped:
     it is not a change, so it must not render as one or inflate the "N changes"

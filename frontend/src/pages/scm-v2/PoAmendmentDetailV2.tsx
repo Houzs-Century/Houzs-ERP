@@ -51,8 +51,16 @@ import {
   useApprovePoAmendment,
   useRejectPoAmendment,
   useWithdrawPoAmendment,
+  poLineFieldKinds,
+  poHeaderFieldKind,
   type PoAmendmentLine,
 } from "../../vendor/scm/lib/po-amendment-queries";
+import {
+  RowRoutingChips,
+  AmendmentTypeBadges,
+  AmendmentRoutingBlock,
+} from "../../vendor/scm/components/AmendmentRouting";
+import type { AmendmentFieldKind } from "../../vendor/scm/lib/amendment-routing";
 import { humanApiError } from "../../vendor/scm/lib/authed-fetch";
 import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 /* The 2990 bridge's staff row — the vocabulary po_amendments.requested_by is
@@ -281,8 +289,11 @@ function DiffCard({ line }: { line: PoAmendmentLine }) {
 
   return (
     <div className="overflow-hidden rounded-md border border-border">
-      <div className="border-b border-border-subtle bg-surface-2 px-3 py-1.5 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-secondary">
-        {changeTypeLabel(line.change_type)}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-surface-2 px-3 py-1.5">
+        <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-secondary">
+          {changeTypeLabel(line.change_type)}
+        </span>
+        <RowRoutingChips kinds={poLineFieldKinds(line)} />
       </div>
       <div className="grid grid-cols-2 divide-x divide-border-subtle">
         {/* Before */}
@@ -396,6 +407,17 @@ export function PoAmendmentDetailV2() {
   }, [amendment]);
 
   const changeCount = headerDiffs.length + lines.length;
+
+  /* Every routable atom this amendment moves — lines + header — for the type
+     badge(s) and the department-routing block. */
+  const allFieldKinds = useMemo<AmendmentFieldKind[]>(() => {
+    const fromLines = lines.flatMap((l) => poLineFieldKinds(l));
+    const fromHeader = headerDiffs
+      .map((d) => poHeaderFieldKind(d.key))
+      .filter((k): k is AmendmentFieldKind => k != null);
+    return [...fromLines, ...fromHeader];
+  }, [lines, headerDiffs]);
+
   const status = String(amendment?.status ?? "");
   const poNumber = String(amendment?.po_number ?? "");
   const poId = String(amendment?.po_id ?? purchaseOrder?.id ?? "");
@@ -608,6 +630,7 @@ export function PoAmendmentDetailV2() {
                   </>
                 )}
               </div>
+              <AmendmentTypeBadges kinds={allFieldKinds} className="mt-2" />
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -714,6 +737,17 @@ export function PoAmendmentDetailV2() {
                 )}
               </div>
             </AsideCard>
+
+            {allFieldKinds.length > 0 && (
+              <AsideCard title="Department routing">
+                <AmendmentRoutingBlock kinds={allFieldKinds} />
+                <p className="mt-3 border-t border-border-subtle pt-2 text-[11px] leading-relaxed text-ink-muted">
+                  Advisory routing — it shows who is responsible for what. Any authorized
+                  approver applies the whole amendment in one signature; who approved and when
+                  is recorded on the Purchase Order history.
+                </p>
+              </AsideCard>
+            )}
 
             <AsideCard title="Document">
               <Button

@@ -44,6 +44,36 @@ import {
 } from '../routes/mfg-sales-orders';
 import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope';
 import { todayMyt } from './my-time';
+import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
+
+/* The routable field atoms an SO amendment moves — lines + header — for the audit
+   routing note. Mirrors the frontend amendmentLineFieldKinds / soHeaderFieldKind
+   so the recorded accountability matches what the detail page and PDF show. All
+   amendable SO header keys are scheduling / delivery-address (WHEN / WHERE) →
+   DELIVERY. */
+function soAmendmentFieldKinds(
+  lines: Array<{ change_type: string; new_item_code: string | null; new_variants: Record<string, unknown> | null; new_qty: number | null; new_unit_price_sen: number | null; old_snapshot: Record<string, unknown> | null }>,
+  headerChanges: Record<string, unknown> | null,
+): AmendmentFieldKind[] {
+  const kinds: AmendmentFieldKind[] = [];
+  for (const l of lines) {
+    const change = String(l.change_type ?? '').toUpperCase();
+    if (change === 'ADD' || change === 'REMOVE') { kinds.push('LINE'); continue; }
+    const old = l.old_snapshot ?? {};
+    if (l.new_item_code != null && String(l.new_item_code) !== String(old.item_code ?? old.itemCode ?? '')) kinds.push('SPEC');
+    if (l.new_variants != null && JSON.stringify(l.new_variants) !== JSON.stringify(old.variants ?? null)) kinds.push('VARIANT');
+    if (l.new_qty != null && Number(l.new_qty) !== Number(old.qty ?? NaN)) kinds.push('QTY');
+    if (l.new_unit_price_sen != null && Number(l.new_unit_price_sen) !== Number(old.unit_price_sen ?? old.unitPriceSen ?? NaN)) kinds.push('PRICE');
+  }
+  if (headerChanges) {
+    for (const key of Object.keys(headerChanges)) {
+      // Every amendable SO header key is a delivery/scheduling change -> Logistics.
+      if (key === 'notes') continue;
+      kinds.push('DELIVERY');
+    }
+  }
+  return kinds;
+}
 
 /* The Supabase client threaded through the routes is loosely typed (`any` in
    every sibling helper — see mfg-pricing-recompute.ts / so-audit callers). Keep
@@ -582,6 +612,7 @@ export async function applySoAmendment(
   if (!bumped) throw new Error('applySoAmendment: Sales Order version changed during amendment apply');
 
   // (6) Audit — best-effort, keyed on the SO doc_no like every other SO mutation.
+  const routingSummary = routingNote(soAmendmentFieldKinds(amendmentLines, headerChanges as Record<string, unknown> | null));
   await recordSoAudit(sb, {
     docNo,
     action: 'AMENDMENT_SO_APPROVED',
@@ -592,6 +623,10 @@ export async function applySoAmendment(
       { field: 'revision', from: nextRevision - 1, to: nextRevision },
       { field: 'lines_applied', to: touched.length },
       ...(headerApplied.length > 0 ? [{ field: 'header_applied', to: headerApplied.join(', ') }] : []),
+      /* Accountability: the type/department routing this single approval covers.
+         The apply stays single-signature — this records WHICH routed fields the
+         approver signed for, it does not split the gate. */
+      ...(routingSummary ? [{ field: 'routing', to: routingSummary }] : []),
       /* The per-line from -> to the drawer needs to answer "what did this line
          say before the amendment rewrote it". Appended AFTER the summary rows so
          the existing header of the entry is unchanged for any reader used to it. */
@@ -600,6 +635,7 @@ export async function applySoAmendment(
     note: `Amendment applied: ${[
       touched.map((t) => `${t.change} ${t.itemCode}`).join('; ') || null,
       headerApplied.length > 0 ? `header ${headerApplied.join(', ')}` : null,
+      routingSummary ? `routing ${routingSummary}` : null,
     ].filter(Boolean).join('; ') || 'no diffs'}`,
   });
 
