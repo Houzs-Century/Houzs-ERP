@@ -1,0 +1,32 @@
+name: PO grouping analysis (read-only)
+
+# Reverse-engineers how historical POs were grouped (single-SO vs pooled, pure
+# vs mixed category) so the Production Agent learns the real MATTRESS / ACCESSORY
+# rule instead of a guess. Read-only, manual trigger only. See
+# backend/scripts/check-po-grouping.mjs.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: po-grouping-analysis
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-po-grouping.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
