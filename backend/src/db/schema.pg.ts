@@ -29,6 +29,7 @@ import {
   pgTable,
   pgEnum,
   serial,
+  bigserial,
   integer,
   bigint,
   text,
@@ -351,6 +352,50 @@ export const trip_locations = pgTable("trip_locations", {
   lng: integer("lng").notNull(),
   accuracy: integer("accuracy"),
   recorded_at: text("recorded_at").notNull(),
+});
+
+// ── fleet_vehicles (Fleet Maintenance & Compliance P1, mig 0200) ──
+// The lorry master. Status is DERIVED at read time (services/fleet-status.ts),
+// never stored — out_of_service is the manual INPUT, not the status.
+export const fleet_vehicles = pgTable("fleet_vehicles", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  company_id: bigint("company_id", { mode: "number" }).notNull(),
+  plate: text("plate").notNull(),
+  region: text("region"),
+  driver_name: text("driver_name"),
+  vehicle_type: text("vehicle_type"),
+  model: text("model"),
+  current_mileage_km: integer("current_mileage_km"),
+  next_service_km: integer("next_service_km"),
+  next_service_date: date("next_service_date"),
+  out_of_service: boolean("out_of_service").notNull().default(false),
+  out_of_service_reason: text("out_of_service_reason"),
+  notes: text("notes"),
+  active: boolean("active").notNull().default(true),
+  created_at: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  created_by: bigint("created_by", { mode: "number" }),
+});
+
+// ── fleet_compliance_documents (mig 0200) ──
+// The compliance vault. Renewals are APPENDED as new rows (never overwritten);
+// the current document for a type is the latest-expiring row.
+export const fleet_compliance_documents = pgTable("fleet_compliance_documents", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  company_id: bigint("company_id", { mode: "number" }).notNull(),
+  vehicle_id: bigint("vehicle_id", { mode: "number" }).notNull(),
+  doc_type: text("doc_type").notNull(),
+  document_ref: text("document_ref"),
+  issue_date: date("issue_date"),
+  expiry_date: date("expiry_date"),
+  cost_centi: bigint("cost_centi", { mode: "number" }),
+  owner: text("owner"),
+  result: text("result"),
+  reinspection_deadline: date("reinspection_deadline"),
+  notes: text("notes"),
+  created_at: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  created_by: bigint("created_by", { mode: "number" }),
 });
 
 // ── sales_orders ───────────────────────────────────────────

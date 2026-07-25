@@ -45,6 +45,10 @@ import sales from "./routes/sales";
 import finance from "./routes/finance";
 import stockItems from "./routes/stockItems";
 import fleet from "./routes/fleet";
+// Fleet Maintenance & Compliance (Phase 1) — self-contained lorry master +
+// compliance vault + Fleet Health dashboard (mig 0200). Distinct from
+// routes/fleet.ts (crew picker) and from scm.lorries; gated by fleet.read/write.
+import fleetMaintenance from "./routes/fleet-maintenance";
 // `routes/lorries.ts` removed 2026-06-28 — old Houzs Fleet lorries CRUD retired
 // in favour of scm.lorries (mounted at /api/scm/lorries). public.lorries data
 // was migrated by mig 0055 then the dead table dropped. /api/fleet/staff stays
@@ -327,6 +331,7 @@ app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
 app.route("/api/fleet", fleet);
+app.route("/api/fleet-maintenance", fleetMaintenance);
 app.route("/api/settings", settings);
 app.route("/api/branding", branding);
 app.route("/api/inbox", inbox);
