@@ -1274,30 +1274,50 @@ function DataGridInner<T>({
                     </button>
                   </span>
                 </header>
-                {/* Rows in ON-GRID order (hidden ones in place), each draggable —
-                    dropping writes layout.order, the same order the header drag
-                    writes. Checkbox still toggles visibility. */}
+                {/* Same drawer contract as the DataTable ColumnsPanel (#1235;
+                    owner 2026-07-25: "应用到系统所有的table"): CHECKED columns
+                    float to the TOP in on-grid order — display == storage, so
+                    the key-based drop below still lands a row exactly where it
+                    sits — and stay hand-draggable; the unchecked pool sits
+                    BELOW, ALWAYS A-Z (a findable pick-list, never
+                    hand-ordered), carries no grip and refuses drops. Dropping
+                    writes layout.order, the same order the header drag writes;
+                    the checkbox still toggles visibility. */}
                 <div className={styles.columnsDrawerBody}>
-                  {resolvedOrder.map((key) => {
+                  {(() => {
+                    const shownKeys = resolvedOrder.filter((k) => !effectiveHidden.has(k));
+                    const hiddenKeys = resolvedOrder
+                      .filter((k) => effectiveHidden.has(k))
+                      .sort((a, b) => {
+                        const la = columns.find((col) => col.key === a)?.label || a;
+                        const lb = columns.find((col) => col.key === b)?.label || b;
+                        return la.localeCompare(lb, undefined, { numeric: true, sensitivity: 'base' });
+                      });
+                    return [...shownKeys, ...hiddenKeys];
+                  })().map((key) => {
                     const c = columns.find((col) => col.key === key);
                     if (!c) return null;
                     const isHidden = effectiveHidden.has(c.key);
+                    const rowCanDrag = !isHidden;
                     const dragging = columnsMenuDragKey === c.key;
                     const isDropRow = columnsMenuOverKey === c.key
                       && !!columnsMenuDragKey && columnsMenuDragKey !== c.key;
                     return (
                       <label
                         key={c.key}
-                        draggable
+                        draggable={rowCanDrag}
                         onDragStart={(e) => {
+                          if (!rowCanDrag) return;
                           e.dataTransfer.effectAllowed = 'move';
                           setColumnsMenuDragKey(c.key);
                         }}
                         onDragOver={(e) => {
+                          if (isHidden) return; // A-Z pool accepts no drops
                           e.preventDefault();
                           if (columnsMenuOverKey !== c.key) setColumnsMenuOverKey(c.key);
                         }}
                         onDrop={(e) => {
+                          if (isHidden) return;
                           e.preventDefault();
                           const sourceKey = columnsMenuDragKey;
                           setColumnsMenuDragKey(null);
@@ -1321,9 +1341,15 @@ function DataGridInner<T>({
                           isDropRow ? styles.columnsMenuItemDrop : '',
                         ].filter(Boolean).join(' ')}
                       >
-                        <span className={styles.columnsMenuGrip} title="Drag to reorder">
-                          <GripVertical size={13} strokeWidth={1.75} aria-hidden />
-                        </span>
+                        {/* Grip only where a drag is real; the spacer keeps the
+                            unchecked pool's checkboxes on the same left edge. */}
+                        {rowCanDrag ? (
+                          <span className={styles.columnsMenuGrip} title="Drag to reorder">
+                            <GripVertical size={13} strokeWidth={1.75} aria-hidden />
+                          </span>
+                        ) : (
+                          <span aria-hidden style={{ width: 13, display: 'inline-block' }} />
+                        )}
                         <input
                           type="checkbox"
                           checked={!isHidden}
