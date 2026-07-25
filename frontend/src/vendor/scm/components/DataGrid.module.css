@@ -87,6 +87,14 @@
   width: 100%;
 }
 .searchInput::placeholder { color: var(--fg-muted); }
+/* "N rows · X of Y cols" beside the search - the SO toolbar caption. */
+.rowColCaption {
+  font-size: 11px;
+  color: #767b6e;
+  white-space: nowrap;
+  align-self: center;
+}
+.rowColNum { color: #11140f; font-variant-numeric: tabular-nums; }
 
 /* HOUZS-parity Columns popover button + dropdown
    ────────────────────────────────────────────────
@@ -103,20 +111,26 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* MEASURED off the SO toolbar's EXPORT / Columns buttons (owner 2026-07-25:
+     Consignment Orders 要和 sales order 一样): 32px tall, 11px/600 UPPERCASE
+     0.06em, 6px radius, 1px #d6d9d2 on white, ink-secondary text; hover =
+     the DataTable ghost-button hover (primary-soft wash). */
   font-family: var(--font-button);
-  font-size: var(--fs-12);
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--c-ink);
-  background: var(--c-paper);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm, 6px);
-  padding: 4px 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #414539;
+  background: #ffffff;
+  border: 1px solid #d6d9d2;
+  border-radius: 6px;
+  padding: 0 12px;
   cursor: pointer;
   white-space: nowrap;
-  height: 28px;
+  height: 32px;
+  transition: background-color 120ms, border-color 120ms, color 120ms;
 }
-.toolbarPill:hover { background: var(--c-cream); }
+.toolbarPill:hover { background: #e1efed; border-color: rgba(22, 105, 95, 0.4); color: #16695f; }
 .toolbarPillOn {
   background: var(--c-ink);
   color: var(--c-paper);
@@ -320,6 +334,14 @@
      CONTAINED inside this box (it scrolls internally) instead of pushing the
      page out. */
   max-width: 100%;
+  /* Theme C card (owner 2026-07-25: "需要贴合theme C主题" - every grid wears
+     the Sales Orders card): MEASURED off the live SO table box - 1px #d6d9d2,
+     8px radius, white. The scroll owns the card's top half; .statusLine below
+     closes it (embedded mode strips both via .scrollEmbedded/.rootEmbedded). */
+  background: #ffffff;
+  border: 1px solid #d6d9d2;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
 }
 
 /* Embedded (drill-down) mode — no independent scrollbar, no height cap.
@@ -328,6 +350,10 @@
 .scrollEmbedded {
   overflow: visible;
   max-height: none;
+  /* No card chrome inside a drill-down expansion. */
+  background: transparent;
+  border: none;
+  border-radius: 0;
 }
 .scroll::-webkit-scrollbar {
   height: 12px;
@@ -413,7 +439,7 @@
   font: inherit;
   letter-spacing: inherit;
 }
-.sortArrow { font-size: 10px; color: #16695f; margin-left: 2px; }
+.sortArrow { display: inline-flex; align-items: center; font-size: 10px; color: #16695f; margin-left: 2px; }
 .resizeHandle {
   position: absolute;
   top: 0;
@@ -564,8 +590,10 @@
   justify-content: space-between;
   align-items: center;
   padding: 4px 12px;
-  border-top: 1px solid var(--line);
-  background: var(--c-cream);
+  /* Bottom half of the Theme C card - closes the box .scroll opens. */
+  border: 1px solid #d6d9d2;
+  border-radius: 0 0 8px 8px;
+  background: #ffffff;
   font-family: var(--font-button);
   font-size: var(--fs-10, 10px);
   letter-spacing: 0.18em;

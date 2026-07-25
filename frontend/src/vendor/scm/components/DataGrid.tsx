@@ -35,7 +35,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { Search, Columns3, RotateCcw, Filter, Download, GripVertical, X } from 'lucide-react';
+import { Search, Columns3, RotateCcw, Filter, Download, GripVertical, X, ChevronsUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useDebouncedValue } from '../lib/hooks';
 import { SkeletonRows } from './Skeleton';
@@ -1186,6 +1186,21 @@ function DataGridInner<T>({
             </div>
           </div>
         )}
+        {/* SO-sample row/column caption beside the search (owner 2026-07-25:
+            Consignment Orders 要和 sales order 一样): "N rows · X of Y cols",
+            numbers in ink, labels muted — same composition as the DataTable
+            toolbar's. Data columns only (synthetic __expand__/__select__ are
+            not user-facing columns). */}
+        {!embedded && (
+          <span className={styles.rowColCaption}>
+            <span className={styles.rowColNum}>{filteredRows.length.toLocaleString()}</span>
+            {` ${filteredRows.length === 1 ? 'row' : 'rows'} · `}
+            <span className={styles.rowColNum}>
+              {visibleColumns.filter((c) => !c.key.startsWith('__')).length}
+            </span>
+            {` of ${columns.length} cols`}
+          </span>
+        )}
         {toolbar}
         <div className={styles.toolbarSpacer} />
         {/* Clear-all-filters — appears only when ≥1 column filter is active.
@@ -1441,7 +1456,12 @@ function DataGridInner<T>({
                       {col.sortable !== false ? (
                         <button type="button" className={styles.sortBtn} onClick={(e) => { e.stopPropagation(); toggleSort(col.key); }}>
                           {col.label}
-                          {arrow && <span className={styles.sortArrow}>{arrow === 'A' ? '^' : 'v'}</span>}
+                          {/* SO-sample sort affordance: idle double chevron on
+                              every sortable header, solid arrow when active
+                              (the bare '^'/'v' text glyphs read as noise). */}
+                          <span className={styles.sortArrow} style={arrow ? undefined : { color: '#767b6e' }}>
+                            {arrow === 'A' ? <ArrowUp size={10} /> : arrow === 'V' ? <ArrowDown size={10} /> : <ChevronsUpDown size={10} />}
+                          </span>
                         </button>
                       ) : col.label}
                       {/* Funnel on every DATA column. Synthetic columns
