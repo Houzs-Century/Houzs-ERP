@@ -1,14 +1,19 @@
-# Module: Fleet Maintenance & Compliance (Phase 1)
+# Module: Fleet Maintenance & Compliance (Phase 1 + Phase 2)
 
 The lorry compliance + service-readiness system. It **builds ON the existing SCM
-fleet foundation** — `scm.lorries` is THE vehicle master; the only genuinely-new
-table is the compliance vault with renewal history. Status is *derived*, never
-typed.
+fleet foundation** — `scm.lorries` is THE vehicle master. Status is *derived*,
+never typed.
 
 > **Phase 1 scope.** The compliance vault (with reminders), the Fleet Health
 > dashboard, and the derived-status state machine — all over the lorries that
-> already exist. Work orders, breakdown cases, tyre/component tracking and
-> mileage trip-capture are LATER phases; their seams are in §6, not built.
+> already exist. (§1–§7.)
+>
+> **Phase 2 scope (§9).** Per-component **preventive-maintenance plans**
+> (`scm.lorry_maintenance_plans`) and daily **mileage capture**
+> (`scm.lorry_mileage_readings`). Plans feed `deriveVehicleStatus()` →
+> `SERVICE_DUE`; the latest mileage reading is the odometer the plans measure
+> against. Work orders, breakdown cases and tyre/component SERIAL lifecycle are
+> Phase 3 — their seams are in §6, not built.
 
 ## 1. What it reuses (does NOT duplicate)
 
@@ -121,8 +126,91 @@ Region + status filters are URL state; region options are derived from the
 warehouses actually present. Registered in `routing/routeManifest.ts` so the
 mobile shell resolves it to a desktop-only dead-end (no mobile screen in Phase 1).
 
+## 9. Phase 2 — preventive plans + mileage capture
+
+### 9.1 New tables (migration `0203_scm_lorry_plans_mileage.sql`)
+
+> ⚠️ Migration number is a **placeholder** — re-check and renumber to
+> highest-on-main + 1 at MERGE (header carries `RE-CHECK NUMBER AT MERGE`).
+
+**`scm.lorry_maintenance_plans` — one plan per COMPONENT per lorry.** Child of
+`scm.lorries(id)` ON DELETE CASCADE, company-stamped-not-scoped like the vault.
+Columns: `component` (CHECK against the twelve components — engine oil, oil +
+filter, gearbox oil, brake inspection, brake pads, tyres, battery, alignment,
+air-con, suspension, cooling system, PUSPAKOM prep), `interval_km`,
+`interval_months` (at least one required — CHECK), `last_done_date`,
+`last_done_km`, `workshop`, `est_cost_centi`, `notes`, `active`. A UNIQUE index
+on `(lorry_id, component)` enforces the one-per-component rule; the write route
+UPSERTs on that pair. **`next_due_km` / `next_due_date` are DERIVED, never
+stored** (`last_done_km + interval_km` ; `last_done_date + interval_months`), so
+they cannot drift from the inputs.
+
+**`scm.lorry_mileage_readings` — the daily odometer capture.** Child of
+`scm.lorries(id)`. Columns: `reading_date`, `odometer_km` (CHECK ≥ 0), `source`
+(`DAY_COMPLETE` | `MANUAL` | `SERVICE`), `photo_ref` (R2 key of the dashboard
+photo, nullable), `flagged` (set when the abnormal-jump guard tripped), `note`,
+`entered_by`. A partial UNIQUE index on `(lorry_id, reading_date) WHERE source =
+'DAY_COMPLETE'` enforces **one day-complete reading per lorry per day**;
+MANUAL/SERVICE corrections are unconstrained.
+
+Seed data is NOT in the migration — `backend/scripts/seed-fleet-plans.mjs`
+inserts a sensible DEFAULT plan set per lorry (idempotent: only lorries with
+zero plans; DRY-RUN default, `APPLY=1` writes, `SEED_LAST_DONE=1` seeds demo
+last-done so due-bars show live on a local env).
+
+### 9.2 Due derivation (`services/fleet-status.ts`, unit-tested)
+
+- **`derivePlanDue(plan, currentKm, today)`** — a plan is due on **whichever
+  comes first, km OR months**. `overdue` = past the target on either axis;
+  `dueSoon` = within `SERVICE_DUE_KM_THRESHOLD` (1000 km) or
+  `SERVICE_DUE_DAYS_THRESHOLD` (14 days) on either axis (so it is also true once
+  overdue). `tone` = crit (overdue) / warn (due soon) / ok.
+- **`addMonths()`** clamps to the target month's length (Jan 31 + 1 mo → Feb 28).
+- **`deriveVehicleStatus()`** now takes `plans` and returns `SERVICE_DUE` when
+  `anyPlanDue(...)` is true — alongside the legacy next-service-record path
+  (both still work). Compliance-blocked / out-of-service still outrank it.
+
+### 9.3 Mileage rules (`assessMileageReading()`, unit-tested)
+
+- A reading **below** the latest odometer is a **ROLLBACK — rejected** (the
+  write route returns `409 odometer_rollback`).
+- An **abnormal one-day jump** (> `ABNORMAL_JUMP_KM_PER_DAY` × the day-gap,
+  default 1500/day) is **accepted but `flagged`** for review — never silently
+  taken.
+- GPS distance (`scm.trip_locations`, Phase 4) may be shown as a cross-check but
+  is **NEVER** written as the odometer.
+- The odometer the plans measure against is the **latest mileage reading**,
+  falling back to the latest service record's odometer.
+
+### 9.4 New routes (`/api/fleet-maintenance`)
+
+| Route | Gate | What |
+|---|---|---|
+| `POST /vehicles/:id/plans` | `fleet.write` | Create OR update (UPSERT on lorry+component) one component's plan. |
+| `PATCH /plans/:planId` | `fleet.write` | Partial edit of a plan (intervals, last-done, active, cost…). |
+| `POST /vehicles/:id/mileage` | `fleet.write` | Capture a daily reading. Runs the guards: rollback → 409; abnormal jump → 201 + `flagged`. |
+
+`GET /dashboard` and `GET /vehicles/:id` now also return plan due-pictures +
+latest mileage: the dashboard adds `serviceOverdue` to the KPIs and a `nextPlan`
++ `plansOverdue`/`plansDueSoon` per vehicle; the detail adds `plans[]` (with
+derived due) + `mileage[]` (recent readings).
+
+### 9.5 Frontend touch points
+
+- **Desktop** `frontend/src/pages/FleetHealth.tsx` — the board's "Next service"
+  column is the most-urgent plan (per component); the "Service due" KPI shows an
+  overdue count; the detail drawer gains a **Preventive maintenance** section
+  (per-component due-bars) and a **Mileage** section (recent readings, flagged).
+- **Mobile** `frontend/src/mobile/MobileMileageCapture.tsx` — the driver's
+  **mark day complete + odometer + photo** flow. Mounted for `/fleet-health` on
+  a phone (desktop mounts the admin dashboard at the same URL); menu row "Fleet
+  Mileage" in the Logistics group, gated on the `/fleet-health` nav entry
+  (`fleet.read`). Uploads the photo to R2 (shared slip pipeline) then POSTs the
+  reading. Plans admin stays desktop-only.
+
 ## 8. See also
 - `backend/src/services/fleet-status.ts` + `backend/tests/fleetStatus.test.ts`
-- `backend/scripts/seed-fleet-maintenance.mjs`
+- `backend/scripts/seed-fleet-maintenance.mjs` (Phase 1 vault) · `seed-fleet-plans.mjs` (Phase 2 plans)
 - `backend/src/scm/routes/lorries.ts`, `lorry-service-records.ts` (the sibling master + history)
+- `frontend/src/pages/FleetHealth.tsx` (desktop) · `frontend/src/mobile/MobileMileageCapture.tsx` (mobile driver)
 - `docs/modules/delivery-tms.md`, `docs/modules/warehouses.md`
