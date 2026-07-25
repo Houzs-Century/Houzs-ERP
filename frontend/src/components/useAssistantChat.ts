@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
 // useAssistantChat — the ONE Assistant chat logic layer behind every surface:
 // the desktop page, the desktop floating panel, and the mobile bottom sheet.
-// One send() path, one message model, one history browser, so a rule fixed on
-// one surface can never be missed on another (owner rule: desktop and mobile are
-// one product, one shared logic layer — the surfaces differ only in
-// presentation). This hook is chrome-free; each host renders the msgs / composer
-// / history list in its own idiom.
+// One send() path, one message model, one history browser, one file attach, so a
+// rule fixed on one surface can never be missed on another (owner rule: desktop
+// and mobile are one product, one shared logic layer — the surfaces differ only
+// in presentation). This hook is chrome-free; each host renders the msgs /
+// composer / history list / attach control in its own idiom.
 // ---------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from "react";
@@ -28,6 +28,8 @@ export interface ConversationSummary {
   updated_at: string;
 }
 
+type ChatResponse = { answer: string; agents: AgentRef[]; degraded: boolean; conversationId?: string | null };
+
 /** Starter prompts shown on the empty state — shared so both surfaces suggest
  *  the same things. */
 export const ASSISTANT_SUGGESTIONS = [
@@ -37,6 +39,9 @@ export const ASSISTANT_SUGGESTIONS = [
   "What stock shortages need a purchase order?",
 ];
 
+/** What the file-attach control accepts (image + PDF; video is not supported). */
+export const ASSISTANT_ACCEPT = "image/png,image/jpeg,image/webp,application/pdf";
+
 export interface AssistantChatController {
   msgs: Msg[];
   draft: string;
@@ -44,6 +49,9 @@ export interface AssistantChatController {
   busy: boolean;
   send: (text: string) => void;
   endRef: React.MutableRefObject<HTMLDivElement | null>;
+  /** A pending image/PDF to send with the next message (null = none). */
+  attachment: File | null;
+  setAttachment: (f: File | null) => void;
   /** The thread these messages belong to (null = a brand-new, unsaved chat). */
   conversationId: string | null;
   /** Clear the stream and start a fresh thread. */
@@ -63,6 +71,7 @@ export function useAssistantChat(): AssistantChatController {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [attachment, setAttachment] = useState<File | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [historyView, setHistoryView] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -75,17 +84,29 @@ export function useAssistantChat(): AssistantChatController {
 
   async function send(text: string) {
     const q = text.trim();
-    if (!q || busy) return;
+    const file = attachment;
+    if ((!q && !file) || busy) return;
     setDraft("");
-    setMsgs((m) => [...m, { role: "user", text: q }]);
+    setAttachment(null);
+    setMsgs((m) => [...m, { role: "user", text: q || (file ? file.name : "") }]);
     setBusy(true);
     try {
-      const res = await api.post<{
-        success: boolean;
-        // conversationId threads follow-ups into one stored conversation.
-        data: { answer: string; agents: AgentRef[]; degraded: boolean; conversationId?: string | null };
-      }>("/api/assistant/chat", { message: q, conversationId: conversationId ?? undefined });
-      const d = res.data;
+      let d: ChatResponse;
+      if (file) {
+        // Multipart: the message + the file, so the model can READ it.
+        const form = new FormData();
+        form.append("message", q);
+        if (conversationId) form.append("conversationId", conversationId);
+        form.append("file", file);
+        const res = await api.postForm<{ success: boolean; data: ChatResponse }>("/api/assistant/chat", form);
+        d = res.data;
+      } else {
+        const res = await api.post<{ success: boolean; data: ChatResponse }>("/api/assistant/chat", {
+          message: q,
+          conversationId: conversationId ?? undefined,
+        });
+        d = res.data;
+      }
       if (d.conversationId) setConversationId(d.conversationId);
       setMsgs((m) => [...m, { role: "bot", text: d.answer, agents: d.agents, degraded: d.degraded }]);
     } catch (e) {
@@ -106,6 +127,7 @@ export function useAssistantChat(): AssistantChatController {
     setMsgs([]);
     setConversationId(null);
     setDraft("");
+    setAttachment(null);
     setHistoryView(false);
   }
 
@@ -169,6 +191,8 @@ export function useAssistantChat(): AssistantChatController {
     busy,
     send,
     endRef,
+    attachment,
+    setAttachment,
     conversationId,
     newChat,
     historyView,

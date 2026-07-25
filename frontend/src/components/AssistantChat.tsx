@@ -10,10 +10,11 @@
 // the grounded answer + the routing trace. It never writes a business row.
 // ---------------------------------------------------------------------------
 
-import { ArrowLeft, Bot, History, Plus, Send, Trash2, User } from "lucide-react";
+import { useRef } from "react";
+import { ArrowLeft, Bot, History, Paperclip, Plus, Send, Trash2, User, X } from "lucide-react";
 import { Badge } from "./Badge";
 import { cn } from "../lib/utils";
-import { useAssistantChat, ASSISTANT_SUGGESTIONS } from "./useAssistantChat";
+import { useAssistantChat, ASSISTANT_SUGGESTIONS, ASSISTANT_ACCEPT } from "./useAssistantChat";
 
 export type { AgentRef, Msg } from "./useAssistantChat";
 
@@ -27,6 +28,7 @@ function shortWhen(iso: string): string {
 }
 
 export function AssistantChat({ className }: { className?: string }) {
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const {
     msgs,
     draft,
@@ -34,6 +36,8 @@ export function AssistantChat({ className }: { className?: string }) {
     busy,
     send,
     endRef,
+    attachment,
+    setAttachment,
     newChat,
     historyView,
     conversations,
@@ -180,29 +184,65 @@ export function AssistantChat({ className }: { className?: string }) {
           </div>
 
           {/* composer */}
-          <div className="flex items-center gap-2 border-t border-border bg-surface-dim p-3">
-            <input
-              className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-accent"
-              placeholder="Ask something… (e.g. why is SO-2607-041 not delivered?)"
-              value={draft}
-              disabled={busy}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send(draft);
-                }
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => void send(draft)}
-              disabled={busy || !draft.trim()}
-              aria-label="Send"
-              className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-accent text-white disabled:opacity-40"
-            >
-              <Send size={15} />
-            </button>
+          <div className="flex flex-col gap-2 border-t border-border bg-surface-dim p-3">
+            {attachment && (
+              <div className="flex items-center gap-2 self-start rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-ink-secondary">
+                <Paperclip size={13} />
+                <span className="max-w-[220px] truncate">{attachment.name}</span>
+                <button
+                  type="button"
+                  onClick={() => setAttachment(null)}
+                  aria-label="Remove file"
+                  className="text-ink-muted hover:text-err"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                accept={ASSISTANT_ACCEPT}
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) setAttachment(f);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                aria-label="Attach an image or PDF"
+                title="Attach an image or PDF"
+                className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-border text-ink-secondary hover:bg-surface"
+              >
+                <Paperclip size={15} />
+              </button>
+              <input
+                className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-accent"
+                placeholder="Ask something… (e.g. why is SO-2607-041 not delivered?)"
+                value={draft}
+                disabled={busy}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void send(draft);
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => void send(draft)}
+                disabled={busy || (!draft.trim() && !attachment)}
+                aria-label="Send"
+                className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-accent text-white disabled:opacity-40"
+              >
+                <Send size={15} />
+              </button>
+            </div>
           </div>
         </>
       )}

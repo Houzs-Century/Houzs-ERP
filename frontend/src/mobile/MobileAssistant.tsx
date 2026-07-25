@@ -11,11 +11,11 @@
 // and its state survives tab/overlay navigation. READ-ONLY, like every surface.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "../auth/AuthContext";
 import { canUseAssistant } from "../auth/assistantAccess";
-import { useAssistantChat, ASSISTANT_SUGGESTIONS } from "../components/useAssistantChat";
+import { useAssistantChat, ASSISTANT_SUGGESTIONS, ASSISTANT_ACCEPT } from "../components/useAssistantChat";
 
 const PETROL = "#1e8071";
 
@@ -31,6 +31,7 @@ function shortWhen(iso: string): string {
 export function MobileAssistant() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const {
     msgs,
     draft,
@@ -38,6 +39,8 @@ export function MobileAssistant() {
     busy,
     send,
     endRef,
+    attachment,
+    setAttachment,
     newChat,
     historyView,
     conversations,
@@ -208,44 +211,75 @@ export function MobileAssistant() {
         )}
 
         {!historyView && (
-          <div className="sheet-foot">
-            <input
-              style={{ flex: 1, border: "1px solid #d6d9d2", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#11140f", outline: "none", background: "#fff" }}
-              placeholder="Ask something…"
-              value={draft}
-              disabled={busy}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send(draft);
-                }
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => void send(draft)}
-              disabled={busy || !draft.trim()}
-              aria-label="Send"
-              style={{
-                width: 38,
-                height: 38,
-                flex: "none",
-                borderRadius: 10,
-                border: "none",
-                background: PETROL,
-                color: "#fff",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                opacity: busy || !draft.trim() ? 0.4 : 1,
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="m22 2-7 20-4-9-9-4Z" />
-                <path d="M22 2 11 13" />
-              </svg>
-            </button>
+          <div className="sheet-foot" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+            {attachment && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, alignSelf: "flex-start", border: "1px solid #d6d9d2", borderRadius: 8, padding: "4px 8px", fontSize: 12, color: "#4a4f45", background: "#fff" }}>
+                <span style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{attachment.name}</span>
+                <button type="button" onClick={() => setAttachment(null)} aria-label="Remove file" style={{ background: "none", border: "none", color: "#9aa093", padding: 0, display: "flex" }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                </button>
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                ref={fileRef}
+                type="file"
+                accept={ASSISTANT_ACCEPT}
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) setAttachment(f);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                aria-label="Attach image or PDF"
+                style={{ width: 38, height: 38, flex: "none", borderRadius: 10, border: "1px solid #d6d9d2", background: "#fff", color: "#4a4f45", display: "flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
+              </button>
+              <input
+                style={{ flex: 1, border: "1px solid #d6d9d2", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#11140f", outline: "none", background: "#fff" }}
+                placeholder="Ask something…"
+                value={draft}
+                disabled={busy}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void send(draft);
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => void send(draft)}
+                disabled={busy || (!draft.trim() && !attachment)}
+                aria-label="Send"
+                style={{
+                  width: 38,
+                  height: 38,
+                  flex: "none",
+                  borderRadius: 10,
+                  border: "none",
+                  background: PETROL,
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  opacity: busy || (!draft.trim() && !attachment) ? 0.4 : 1,
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m22 2-7 20-4-9-9-4Z" />
+                  <path d="M22 2 11 13" />
+                </svg>
+              </button>
+            </div>
           </div>
         )}
       </div>

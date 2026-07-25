@@ -42,6 +42,7 @@ import {
   resolveOrCreateConversation,
   softDeleteConversation,
 } from "../services/assistant-history";
+import { buildFileBlocks, parseAssistantForm, type ContentBlock } from "../services/vision-blocks";
 import { resolvePositionPolicy } from "../services/positionPolicy";
 import { audit } from "../services/audit";
 
@@ -61,15 +62,40 @@ function callerId(c: { get: (k: string) => unknown }): string | null {
 }
 
 app.post("/chat", async (c) => {
-  let body: { message?: unknown; conversationId?: unknown } = {};
-  try {
-    body = (await c.req.json()) as typeof body;
-  } catch {
-    body = {};
+  /* Two body shapes: JSON { message, conversationId? } as before, OR
+     multipart/form-data with a `message` field + one-or-more `file` parts (image
+     / PDF the assistant reads). Files are validated + encoded here; a bad type or
+     oversize file is a 400 BEFORE the model call. */
+  const contentType = c.req.header("content-type") || "";
+  let message = "";
+  let conversationId: string | undefined;
+  let contentBlocks: ContentBlock[] | undefined;
+
+  if (contentType.includes("multipart/form-data")) {
+    const form = await c.req.formData().catch(() => null);
+    if (form) {
+      const parsed = await parseAssistantForm(form);
+      message = parsed.message;
+      conversationId = parsed.conversationId;
+      if (parsed.files.length) {
+        const built = await buildFileBlocks(parsed.files);
+        if (built.error) return c.json({ success: false, error: built.error }, 400);
+        contentBlocks = built.blocks;
+      }
+    }
+  } else {
+    let body: { message?: unknown; conversationId?: unknown } = {};
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      body = {};
+    }
+    message = typeof body.message === "string" ? body.message : "";
+    conversationId = typeof body.conversationId === "string" && body.conversationId ? body.conversationId : undefined;
   }
-  const message = typeof body.message === "string" ? body.message : "";
-  const conversationId = typeof body.conversationId === "string" && body.conversationId ? body.conversationId : undefined;
-  if (!message.trim()) {
+
+  const hasFiles = !!(contentBlocks && contentBlocks.length);
+  if (!message.trim() && !hasFiles) {
     return c.json({ success: false, error: "message required" }, 400);
   }
   /* Scope is resolved per REQUEST from the caller's own position — never cached,
@@ -102,7 +128,7 @@ app.post("/chat", async (c) => {
     convId = conv?.id ?? null;
   }
 
-  const res = await askAssistant(c.env, message, undefined, scope);
+  const res = await askAssistant(c.env, message, undefined, scope, contentBlocks);
 
   /* Build the turn's final answer. The router may read the message as teaching an
      agent a standing rule — that steers the agent for everyone, so only the owner
@@ -150,7 +176,7 @@ app.post("/chat", async (c) => {
     await appendExchange(c.env, {
       conversationId: convId,
       userId,
-      userText: message,
+      userText: message || "(sent a file)",
       answer: data.answer,
       agents: data.agents,
       degraded: data.degraded,

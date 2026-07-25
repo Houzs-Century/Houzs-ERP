@@ -39,6 +39,10 @@ export interface AskAgentBrainOptions {
   maxTokens?: number;
   /** Accumulates Anthropic token usage for the Agent Console run log. */
   usageSink?: AgentBrainUsageSink;
+  /** Optional non-text content blocks (image / document) appended AFTER the text
+   *  payload in the user turn — the assistant uses this to let the model READ an
+   *  uploaded image or PDF. Every existing caller omits it and is unchanged. */
+  contentBlocks?: Array<Record<string, unknown>>;
 }
 
 export async function askAgentBrain(
@@ -58,7 +62,15 @@ export async function askAgentBrain(
         model: AGENT_BRAIN_MODEL,
         max_tokens: opts.maxTokens ?? 700,
         system: opts.system,
-        messages: [{ role: "user", content: JSON.stringify(opts.payload) }],
+        messages: [
+          {
+            role: "user",
+            content:
+              opts.contentBlocks && opts.contentBlocks.length
+                ? [{ type: "text", text: JSON.stringify(opts.payload) }, ...opts.contentBlocks]
+                : JSON.stringify(opts.payload),
+          },
+        ],
       }),
     });
     if (!res.ok) {

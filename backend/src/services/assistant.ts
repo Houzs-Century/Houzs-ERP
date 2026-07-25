@@ -34,6 +34,7 @@ import {
 } from './assistant-scope';
 import { AGENT_FAMILIES, type AgentFamily } from './agent-console';
 import { agentLabel, parseRouterDecision } from './assistant-teach';
+import type { ContentBlock } from './vision-blocks';
 
 /** One specialist the router can consult. `briefTable`/`itemsTable` are module
  *  constants — never user input — so they are safe to interpolate. */
@@ -122,6 +123,16 @@ const ANSWER_SYSTEM = [
   'explain what you found and tell them which screen does it — never claim you did it.',
 ].join(' ');
 
+const FILE_ANSWER_SYSTEM = [
+  'You are the ERP assistant for Houzs, a Malaysian furniture retailer. The user has',
+  'attached a file (an image or a PDF). Read it and answer their question about it in',
+  'plain English, no markdown, no emoji. Report ONLY what the file actually shows —',
+  'never invent a figure, name or date that is not visible in it. If the file does not',
+  'contain what they asked, say so plainly. You cannot change anything in the ERP: if',
+  'they ask you to save, create or send, explain what the file shows and tell them which',
+  'screen does it.',
+].join(' ');
+
 async function latestBrief(env: Env, cap: Capability): Promise<unknown> {
   try {
     const r = await env.DB.prepare(
@@ -187,10 +198,33 @@ export async function askAssistant(
      owner-only — the two were documented as having to change together, and this
      is that change.) */
   scope: AssistantScope = { canSeeMargin: false, canSeeCommission: false, orderScope: 'own' },
+  /* Image / PDF blocks from an upload. When present, the assistant READS the file
+     directly (no routing, no agent gather) — it is the user's OWN upload, not
+     agent data, so the money-redaction path does not apply to it. */
+  contentBlocks?: ContentBlock[],
 ): Promise<AssistantAnswer> {
   const apiKey = env.ANTHROPIC_API_KEY;
   const text = (message ?? '').trim();
-  if (!text) return { answer: 'Ask me something about your orders, deliveries, payments, stock or sales.', agents: [], degraded: false };
+  const hasFiles = !!(contentBlocks && contentBlocks.length);
+  if (!text && !hasFiles) {
+    return { answer: 'Ask me something about your orders, deliveries, payments, stock or sales.', agents: [], degraded: false };
+  }
+
+  // FILE path — the user attached an image / PDF. Answer strictly from the file
+  // (plus their question). No specialist routing; no business data joins in.
+  if (hasFiles) {
+    if (!apiKey) {
+      return { answer: 'The assistant needs an AI key to read a file. Please try again later.', agents: [], degraded: true };
+    }
+    const worded = await askAgentBrain(apiKey, {
+      system: FILE_ANSWER_SYSTEM,
+      payload: { question: text || 'Read the attached file and summarise what matters for our operations.' },
+      maxTokens: 700,
+      usageSink,
+      contentBlocks: contentBlocks as Array<Record<string, unknown>>,
+    });
+    return { answer: worded?.trim() || 'I could not read that file just now. Please try again.', agents: [], degraded: !worded };
+  }
 
   // 1. ROUTE — the LLM decides teach-vs-ask and, for ask, picks the specialists;
   //    keywords are the ask fallback. A teach decision returns here as a PROPOSAL:
