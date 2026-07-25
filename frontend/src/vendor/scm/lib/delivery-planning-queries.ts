@@ -464,7 +464,7 @@ export function useScheduleDelivery() {
       const entries = qc.getQueriesData<PlanningResponse>({ queryKey: ['delivery-planning'] });
       const snapshots: Array<[readonly unknown[], PlanningResponse]> = [];
       for (const [key, prev] of entries) {
-        if (!prev) continue;
+        if (!prev || !Array.isArray(prev.orders)) continue;
         snapshots.push([key, prev]);
         qc.setQueryData<PlanningResponse>(key, {
           ...prev,
