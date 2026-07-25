@@ -1,0 +1,36 @@
+name: Check 2990 mail center (read-only)
+
+# Read-only production report on the 2990 Mail Center go-live: mailbox row,
+# access grants, thread/message counts and company tagging. One SELECT, no
+# writes. Manual trigger only — a production DB read must never become
+# scheduled CI noise.
+on:
+  workflow_dispatch:
+
+# Own concurrency group, never the deploy's: this touches nothing and must
+# never queue behind (or displace) a release.
+concurrency:
+  group: check-2990-mail
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-2990-mail.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
