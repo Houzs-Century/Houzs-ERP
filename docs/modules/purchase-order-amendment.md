@@ -157,9 +157,13 @@ revision N" footer. **No emoji anywhere** (owner rule).
 one change-table row per changed field. Unit-tested in `amendment-pdf-map.test.ts`.
 
 Wired into the SO amendment detail page (`AmendmentDetailV2.tsx`, "Print
-amendment" button) with the simplified Requested / Approved status label. The PO
-side reuses the same generator + `poAmendmentToPdfInput` once the PO amendment
-pages land.
+amendment" button) with the simplified Requested / Approved status label, into the
+mobile SO amendment surface (`MobileSODetail.tsx`'s `AmendmentDiffSheet` footer,
+same generator + `soAmendmentToPdfInput` — added to close the desktop/mobile
+parity gap; reachable REQUESTED..PO_APPROVED, i.e. `open_amendment`), and into the
+PO amendment detail on both desktop (`PoAmendmentDetailV2.tsx`) and mobile
+(`MobilePoAmendmentDetail.tsx`) via `poAmendmentToPdfInput`. All four surfaces
+reuse the ONE shared generator.
 
 ### PO amendment UI — SHIPPED (feat/amendment-ui)
 
