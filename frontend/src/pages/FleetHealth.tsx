@@ -36,7 +36,7 @@ const DOC_LABEL: Record<DocType, string> = {
 type Tone = "crit" | "warn" | "ok" | "info" | "neutral";
 
 type DocView = {
-  id: number;
+  id: string | null;
   docType: DocType;
   documentRef: string | null;
   issueDate: string | null;
@@ -52,7 +52,7 @@ type DocView = {
 };
 
 type VehicleRow = {
-  id: number;
+  id: string;
   plate: string;
   region: string | null;
   driverName: string | null;
@@ -93,14 +93,16 @@ type DashboardPayload = {
     fleetSize: number;
     repairSpendThisMonthCenti: number | null;
     costliestVehicle: string | null;
+    costliestVehicleCenti: number | null;
   };
   statusCounts: Record<string, number>;
   vehicles: VehicleRow[];
 };
 
 type VehicleDetailPayload = {
-  vehicle: VehicleRow;
-  compliance: Record<DocType, { current: number | null; history: DocView[] }>;
+  vehicle: VehicleRow & { lastServiceWorkshop?: string | null };
+  compliance: Record<DocType, { currentId: string | null; flatExpiry: string | null; history: DocView[] }>;
+  maintenanceWindows: Array<{ from: string | null; to: string | null; reason: string | null }>;
 };
 
 const STATUS_TONE: Record<VehicleStatus, Tone> = {
@@ -174,9 +176,9 @@ const REGIONS = ["ALL", "KL", "PG"] as const;
 
 export function FleetHealth() {
   const [params, setParams] = useSearchParams();
-  const region = (params.get("region") ?? "ALL").toUpperCase();
+  const region = params.get("region") ?? "ALL";
   const statusFilter = params.get("status") ?? "ALL";
-  const [openId, setOpenId] = useState<number | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const dash = useQuery<DashboardPayload>("/api/fleet-maintenance/dashboard", () => api.get("/api/fleet-maintenance/dashboard"));
 
@@ -188,12 +190,15 @@ export function FleetHealth() {
   };
 
   const all = dash.data?.vehicles ?? [];
-  const regionsPresent = useMemo(() => new Set(all.map((v) => (v.region ?? "").toUpperCase())), [all]);
+  const regionOptions = useMemo(() => {
+    const present = [...new Set(all.map((v) => v.region).filter((r): r is string => !!r))].sort();
+    return ["ALL", ...present];
+  }, [all]);
 
   const visible = useMemo(
     () =>
       all.filter(
-        (v) => (region === "ALL" || (v.region ?? "").toUpperCase() === region) && (statusFilter === "ALL" || v.status === statusFilter),
+        (v) => (region === "ALL" || v.region === region) && (statusFilter === "ALL" || v.status === statusFilter),
       ),
     [all, region, statusFilter],
   );
@@ -203,7 +208,7 @@ export function FleetHealth() {
   // the board. (The /api/fleet-maintenance/reminders endpoint serves the same
   // computation to a future scheduled-notification job.)
   const reminders = useMemo(() => {
-    const scope = region === "ALL" ? all : all.filter((v) => (v.region ?? "").toUpperCase() === region);
+    const scope = region === "ALL" ? all : all.filter((v) => v.region === region);
     const items: Array<{ v: VehicleRow; doc: DocView }> = [];
     for (const v of scope) {
       for (const t of DOC_TYPES) {
@@ -238,25 +243,20 @@ export function FleetHealth() {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-brand text-ink-muted">Warehouse</span>
         <div className="inline-flex overflow-hidden rounded-lg border border-border">
-          {REGIONS.map((r) => {
-            const enabled = r === "ALL" || regionsPresent.has(r);
-            return (
-              <button
-                key={r}
-                type="button"
-                disabled={!enabled}
-                aria-pressed={region === r}
-                onClick={() => setParam("region", r)}
-                className={cn(
-                  "px-3.5 py-1.5 text-[12px] font-semibold transition-colors",
-                  region === r ? "bg-primary-soft text-primary" : "text-ink-secondary hover:bg-surface-2",
-                  !enabled && "cursor-not-allowed opacity-40",
-                )}
-              >
-                {r}
-              </button>
-            );
-          })}
+          {regionOptions.map((r) => (
+            <button
+              key={r}
+              type="button"
+              aria-pressed={region === r}
+              onClick={() => setParam("region", r)}
+              className={cn(
+                "px-3.5 py-1.5 text-[12px] font-semibold transition-colors",
+                region === r ? "bg-primary-soft text-primary" : "text-ink-secondary hover:bg-surface-2",
+              )}
+            >
+              {r}
+            </button>
+          ))}
         </div>
         <span className="ml-auto text-[11px] font-semibold uppercase tracking-brand text-ink-muted">
           {visible.length} {visible.length === 1 ? "lorry" : "lorries"}
@@ -274,7 +274,12 @@ export function FleetHealth() {
         <StatCard label="Expiring ≤ 60 days" value={kpis?.expiring60 ?? 0} pending={dash.loading} />
         <StatCard label="Expiring ≤ 90 days" value={kpis?.expiring90 ?? 0} pending={dash.loading} />
         <StatCard label="Active breakdowns" value={kpis?.activeBreakdowns ?? 0} tone={kpis?.activeBreakdowns ? "error" : "default"} pending={dash.loading} />
-        <StatCard label="This-month repairs" value="—" subtitle="Tracked from Phase 2" pending={dash.loading} />
+        <StatCard
+          label="This-month repairs"
+          value={kpis?.repairSpendThisMonthCenti != null ? money(kpis.repairSpendThisMonthCenti) : "—"}
+          subtitle={kpis?.costliestVehicle ? `Costliest ${kpis.costliestVehicle} ${money(kpis.costliestVehicleCenti ?? 0)}` : "No repairs logged"}
+          pending={dash.loading}
+        />
       </div>
 
       {/* Reminders strip */}
@@ -443,7 +448,7 @@ function statusLabel(status: string): string {
 }
 
 // ── Detail drawer — vehicle header + compliance vault with renewal history ──
-function VehicleDrawer({ id, onClose }: { id: number | null; onClose: () => void }) {
+function VehicleDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
   const detail = useQuery<VehicleDetailPayload>(
     `/api/fleet-maintenance/vehicles/${id}`,
     () => api.get(`/api/fleet-maintenance/vehicles/${id}`),
@@ -494,7 +499,7 @@ function VehicleDrawer({ id, onClose }: { id: number | null; onClose: () => void
               {DOC_TYPES.map((t) => {
                 const group = compliance[t];
                 const history = group?.history ?? [];
-                const currentId = group?.current ?? null;
+                const currentId = group?.currentId ?? null;
                 return (
                   <div key={t} className="rounded-lg border border-border bg-surface-2/40 p-3">
                     <div className="mb-2 flex items-center justify-between">
@@ -505,7 +510,7 @@ function VehicleDrawer({ id, onClose }: { id: number | null; onClose: () => void
                       <div className="space-y-1.5">
                         {history.map((doc) => (
                           <div
-                            key={doc.id}
+                            key={doc.id ?? `${doc.docType}-${doc.expiryDate}`}
                             className={cn(
                               "flex items-center justify-between gap-3 rounded-md border px-2.5 py-1.5 text-[12px]",
                               doc.id === currentId ? "border-border bg-surface" : "border-transparent bg-transparent opacity-70",

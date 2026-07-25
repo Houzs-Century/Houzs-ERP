@@ -45,10 +45,12 @@ import sales from "./routes/sales";
 import finance from "./routes/finance";
 import stockItems from "./routes/stockItems";
 import fleet from "./routes/fleet";
-// Fleet Maintenance & Compliance (Phase 1) — self-contained lorry master +
-// compliance vault + Fleet Health dashboard (mig 0200). Distinct from
-// routes/fleet.ts (crew picker) and from scm.lorries; gated by fleet.read/write.
-import fleetMaintenance from "./routes/fleet-maintenance";
+// Fleet Maintenance & Compliance (Phase 1) — the compliance vault + Fleet Health
+// dashboard BUILT ON the existing scm.lorries master (+ scm.lorry_maintenance /
+// scm.lorry_service_records). Mounted OUTSIDE /api/scm so the gate is the flat
+// fleet.read/fleet.write permission alone; it uses the SCM supabase client via
+// supabaseAuth. Distinct from routes/fleet.ts (the crew picker).
+import fleetMaintenance from "./scm/routes/fleet-maintenance";
 // `routes/lorries.ts` removed 2026-06-28 — old Houzs Fleet lorries CRUD retired
 // in favour of scm.lorries (mounted at /api/scm/lorries). public.lorries data
 // was migrated by mig 0055 then the dead table dropped. /api/fleet/staff stays
