@@ -15,13 +15,19 @@ on:
     inputs:
       assignments:
         description: 'JSON array of {match, pin_hash} — match is a staff name/code fragment or scm.staff uuid'
-        required: true
+        required: false
         type: string
+        default: '[]'
       dry_run:
         description: 'Resolve and report only, write nothing'
         required: false
         type: boolean
         default: true
+      lookup:
+        description: 'Read-only: report staff rows AND Houzs users matching this fragment (link/position/company facts). Ignores assignments.'
+        required: false
+        type: string
+        default: ''
 
 # Own group, never the deploy's: an admin write must not queue behind or
 # displace a release.
@@ -50,5 +56,6 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ASSIGNMENTS: ${{ inputs.assignments }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          LOOKUP: ${{ inputs.lookup }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
           NODE_OPTIONS: --dns-result-order=ipv4first

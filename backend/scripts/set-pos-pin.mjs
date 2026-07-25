@@ -22,6 +22,11 @@
 //     row is a credential that can never log in. Linked-row matches win;
 //     unlinked ones are listed for reference only.
 //   - DRY_RUN=1 resolves and reports but does not write.
+//   - LOOKUP=<fragment> is a pure read: reports every scm.staff row AND every
+//     public.users row matching the fragment, with the three facts that decide
+//     whether that person can PIN-login (user link, position slug, company
+//     membership). Use it to answer "why can't X log in / who is X here"
+//     before assigning a PIN. ASSIGNMENTS is ignored in this mode.
 //
 // Exit 0 for every legitimate answer (including "ambiguous, wrote nothing");
 // non-zero only for an unreachable DB or malformed input.
@@ -46,17 +51,21 @@ if (!url) {
   process.exit(1);
 }
 
-let assignments;
-try {
-  assignments = JSON.parse(process.env.ASSIGNMENTS ?? "[]");
-  if (!Array.isArray(assignments) || assignments.length === 0) throw new Error("empty");
-  for (const a of assignments) {
-    if (typeof a?.match !== "string" || !a.match.trim()) throw new Error("bad match");
-    if (typeof a?.pin_hash !== "string" || !HASH_RE.test(a.pin_hash)) throw new Error("bad pin_hash");
+const lookup = (process.env.LOOKUP ?? "").trim();
+
+let assignments = [];
+if (!lookup) {
+  try {
+    assignments = JSON.parse(process.env.ASSIGNMENTS ?? "[]");
+    if (!Array.isArray(assignments) || assignments.length === 0) throw new Error("empty");
+    for (const a of assignments) {
+      if (typeof a?.match !== "string" || !a.match.trim()) throw new Error("bad match");
+      if (typeof a?.pin_hash !== "string" || !HASH_RE.test(a.pin_hash)) throw new Error("bad pin_hash");
+    }
+  } catch (e) {
+    console.error(`ASSIGNMENTS must be a non-empty JSON array of {match, pin_hash}: ${e.message}`);
+    process.exit(1);
   }
-} catch (e) {
-  console.error(`ASSIGNMENTS must be a non-empty JSON array of {match, pin_hash}: ${e.message}`);
-  process.exit(1);
 }
 
 const dryRun = process.env.DRY_RUN === "1" || process.env.DRY_RUN === "true";
@@ -66,6 +75,38 @@ const notice = (msg) =>
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
 try {
+  if (lookup) {
+    const like = "%" + lookup + "%";
+    const staff = await pg`
+      SELECT s.id, s.staff_code, s.name, s.user_id, s.active,
+             (p.staff_id IS NOT NULL) AS has_pin
+      FROM scm.staff s
+      LEFT JOIN scm.pos_pins p ON p.staff_id = s.id
+      WHERE s.name ILIKE ${like} OR s.staff_code ILIKE ${like}
+      ORDER BY s.name`;
+    const users = await pg`
+      SELECT u.id, u.name, u.email, u.status, pn.slug AS position_slug,
+             COALESCE(string_agg(DISTINCT uc.company_id::text, ','), '-') AS company_ids
+      FROM public.users u
+      LEFT JOIN public.positions pn ON pn.id = u.position_id
+      LEFT JOIN public.user_companies uc ON uc.user_id = u.id
+      WHERE u.name ILIKE ${like} OR u.email ILIKE ${like}
+      GROUP BY u.id, u.name, u.email, u.status, pn.slug
+      ORDER BY u.name`;
+    notice(
+      `staff rows matching '${lookup}': ${staff.length ? "" : "NONE"}` +
+        staff
+          .map((r) => `${r.name} [${r.staff_code}] id=${r.id} user_id=${r.user_id ?? "NONE"} active=${r.active} has_pin=${r.has_pin}`)
+          .join(" | "),
+    );
+    notice(
+      `users matching '${lookup}': ${users.length ? "" : "NONE"}` +
+        users
+          .map((u) => `#${u.id} ${u.name} <${u.email}> status=${u.status} position=${u.position_slug ?? "NONE"} companies=[${u.company_ids}]`)
+          .join(" | "),
+    );
+  }
+
   for (const { match, pin_hash } of assignments) {
     const m = match.trim();
     const rows = UUID_RE.test(m)
