@@ -1,0 +1,58 @@
+name: Inventory integrity check (read-only)
+
+# Reconciles the two inventory ledgers that MUST agree — the MOVEMENT ledger
+# (inventory_movements, the running IN/OUT balance the Stock Breakdown drawer
+# shows) and the FIFO ledger (inventory_lots + inventory_lot_consumptions, the
+# owned lots and the COGS behind each ship). Owner report 2026-07-25: SKU
+# "MAKOTO RC(S)-FVI BRONZE" (KL) showed four movements ending at running balance
+# 3, but the FIFO lots summed to 4 and COGS had only one consumption — two OUT
+# movements on one DO but a single lot-consumption. The two ledgers diverge.
+#
+# The FIFO trigger's OUT branch always runs fn_consume_fifo but DISCARDS the
+# qty_short it returns, so an OUT whose (warehouse, product, variant[, batch])
+# key matches no open lot is recorded as a real movement yet consumes nothing —
+# the movement ledger decrements while the lots + COGS do not. This job SIZES
+# that divergence across ALL SKUs / warehouses / companies with two SELECTs:
+# (1) quantity drift — signed movement sum vs Sigma(inventory_lots.qty_remaining);
+# (2) uncosted OUT — Sigma(OUT qty) vs Sigma(qty_consumed), with an ESTIMATED RM
+# exposure. Root cause + the DEFERRED fix are in
+# docs/inventory-ledger-divergence-coe.md.
+#
+# The answer lives only in production, so this runs here rather than putting the
+# production DSN in front of a human for a SELECT (repo rule: build the check,
+# never ask the owner to run a query). Strictly read-only — SELECT only, no
+# writes, NO change to any costing logic. See backend/scripts/check-inventory-integrity.mjs.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Own concurrency group — touches nothing, must never queue behind or displace a
+# release (and must not share the deploy's group).
+concurrency:
+  group: inventory-integrity-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-inventory-integrity.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks (soak-gate-check.yml, uncosted-cogs-check.yml).
+          NODE_OPTIONS: --dns-result-order=ipv4first
