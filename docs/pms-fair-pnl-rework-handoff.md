@@ -2,6 +2,30 @@
 
 Historical roadshow P&L backfill into the PMS from the owner's Excel (`~/Downloads/FAIR PNL Y'2024/2025/2026 (1).xlsx`). The first seed shipped, then several bugs surfaced (owner-caught). This doc is the single source of truth to finish it cleanly. Scripts live in `backend/scripts/fair-pnl/`; every DB touch runs via an owner-triggered GitHub Actions workflow (dry-run default, `secrets.DATABASE_URL`). **A new workflow must be merged to `main` before it can be dispatched.**
 
+## RECONCILE COMPLETE — 2026-07-27 (scope 2024-01-01 .. 2026-06-30)
+
+The 5-step owner spec + COGS-gap fill are done and committed to prod. All runs were dry-run-reviewed before commit; nothing on/after 2026-07-01 was touched. New scripts + read-only/owner-triggered workflows: `reconcile-cleanup`, `reconcile-dedup`, `reconcile-empty-delete`, `reconcile-fillcats`, `reconcile-tally` (PRs #1324, #1326).
+
+| Step | Script / workflow | Committed |
+|---|---|---|
+| Cleanup (relabel + blank strays) | `reconcile-cleanup` | Relabeled **4** `AKEMI C&C` -> `AKEMI`; deleted **2** blank stray projects (p14 ZANOTTI @ Stadium Bukit Jalil, p17 blank AKEMI @ Setia Spice) that matched only a blank Excel row |
+| Step 5 dedup (same brand+venue+Mon-Sun week) | `reconcile-dedup` | Deleted **15** completely-empty duplicates of a data-carrying twin. **1** ambiguous group left for owner (both carry income) |
+| Step 3 empty-delete (0 lines/photos/docs, no sales match) | `reconcile-empty-delete` | **0** deleted — 28 empties matched a real Excel event (filled below); 13 venue-mismatch shells kept for owner review (a matcher gap, not a phantom) |
+| COGS-gap fill (missing categories on every matched project) | `reconcile-fillcats` | Inserted **372** lines across **98** projects (sales 28, cogs_matt_sofa 95, cogs_bedframe 62, cogs_accessories 63, rental 28, setup 96). No existing line touched; legacy `cogs` + one-event-one-project guards prevented double-count. System COGS **41.2% -> 47.1%** of revenue (Excel in-scope ratio ~47.9%) |
+| Step 6 tally (read-only) | `reconcile-tally` | See below |
+
+**PMS project count (in scope): 487 -> 470** (-17: 2 cleanup + 15 dedup; fillcats added 0 projects, only lines).
+
+**Tally grand total PMS vs Excel** (2024-01..2026-06): COUNT 470 vs 451 (+19); REVENUE 46,984,682 vs 45,719,069 (+2.8%); COGS 22,117,323 vs 21,888,115 (+1.0%); RENTAL 10,161,166 vs 10,230,251 (-0.7%); SETUP 2,544,375 vs 2,526,910 (+0.7%). **2024 matches to the ringgit** on every metric; 47 of ~150 month/metric cells differ.
+
+**Left for owner review (surfaced, never auto-changed):**
+- Dedup ambiguous: **p576 + p567** (AKEMI @ SUNWAY KLUANG MALL, 2025-05-19) both carry income — decide which is the real event.
+- **13 venue-mismatch empty shells** (AEON MALL roadshow, mostly 2025-07/08): same brand + near date but a venue not in the Excel under that name; empty, kept for review.
+- **Data-carrying duplicate pairs** with venue-spelling variants dedup could not merge (e.g. p461 "SUNWAY CARNIVAL MALL" vs p598 "SUNWAY CARNIVAL"; recurring p426 "BOULEVARD SHOPPING MALL MIRI") — these are the main source of the 2025 PMS>Excel overcount.
+- **2026-02: PMS 6 projects vs Excel 2 events** — owner projects (created_by=3) for events the Excel does not list; likely an Excel gap for that month.
+
+Note: the COGS gap existed because the earlier `reconcile-addlines` only filled projects with NO income line; projects that had a sales line but were missing COGS/rental/setup kept dragging the aggregate down. `reconcile-fillcats` fills by MISSING category on every matched project, which is what closed it.
+
 ## Owner rules (hard)
 - Accuracy must match Project Maintenance. Venue/brand/organizer/event_type must MATCH the maintained pickers — **no free text**. State from the 16-state maintained list.
 - Cross-month event = ONE project. Never delete Apr-2026+ owner data.
@@ -28,6 +52,8 @@ Scope 2025 + 2026-Jan-Apr = **393 Excel events**:
 - Owner projects: 379 (212 empty). Seed projects (created_by=0) to remove: 249.
 
 ## The rework — do in a FRESH focused session
+
+> DONE 2026-07-27 — see **RECONCILE COMPLETE** at the top. The steps below are the original plan, kept for provenance. Remaining open items are the owner-review list in that section; 2024 (`build_2024.py`) is still sparse (3 events) and the follow-on features below are unstarted.
 1. **Strengthen the matcher first** (why 238 miss): enhance the audit to print, per no-match event, the nearest owner project (same brand, any date / any venue) → classify date-mismatch vs venue-mismatch vs genuinely-absent. Then match owner EMPTY projects by brand+venue ignoring exact date; use organizer as tiebreaker.
 2. Fix the 1 malformed date in build_seed_data.py; add within-batch dedup (two Excel spellings → one project, e.g. IOI Damansara).
 3. Update `canonVenue` in seed-fair-pnl.mjs for the 统称 renames (it's STALE — returns "KLCC CONVENTION CENTRE" not "KUALA LUMPUR CONVENTION CENTRE"); `reconcile-audit.mjs` already has the RENAME map to copy.
