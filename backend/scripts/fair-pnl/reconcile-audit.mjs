@@ -125,5 +125,92 @@ async function main() {
   show("VENUE mismatch", venueMiss);
   console.log(`\n[ABSENT — sample ${Math.min(12, absent.length)}/${absent.length}]`);
   for (const r of absent.slice(0, 12)) console.log(`   ${r.start} [${r.brand}] ${r.organizer || "SOLO"} @ ${canonVenue(r.venue)} (raw "${r.venue}")`);
+
+  // ===================================================================================
+  // EMPTY-OWNER-CENTRIC FILL MAP (task 2026-07-27). Iterate the owner's EMPTY projects
+  // (created_by<>0 AND zero non-archived finance lines = nlines===0) and find which
+  // in-scope Excel event each should be FILLED from. canonVenue is applied to BOTH sides
+  // here (owner venue too) so abbreviated owner spellings match the canonical Excel venue.
+  // READ-ONLY: no writes, no commit mode. Reports (a) fillable, (b) excel-absent, (c)
+  // empty-with-no-excel-match, at date windows <=4d and <=10d for sensitivity.
+  // ===================================================================================
+  const ymd = (d) => new Date(d).toISOString().slice(0, 10);
+  const keyCanon = (brand, venue) => `${norm(brand)}|${venueNorm(canonVenue(venue))}`;
+  const keyPlain = (brand, venue) => `${norm(brand)}|${venueNorm(venue)}`; // owner venue as-stored (no canon)
+
+  const emptyOwner = ownerProjs.filter((p) => Number(p.nlines) === 0);
+  const emptyByIncome = ownerProjs.filter((p) => Number(p.income) === 0);
+
+  // Excel events indexed by canonical brand+venue (rows already scoped 2024-01..2026-04).
+  const excelIdx = new Map();
+  for (const r of rows) { const k = keyCanon(r.brand, r.venue); (excelIdx.get(k) || excelIdx.set(k, []).get(k)).push(r); }
+  const idxBrandExcel = new Map();
+  for (const r of rows) { const b = norm(r.brand); (idxBrandExcel.get(b) || idxBrandExcel.set(b, []).get(b)).push(r); }
+  // ALL owner projects indexed by canonical brand+venue (for "excel event has no owner project at all").
+  const ownerCanonIdx = new Map();
+  for (const p of ownerProjs) { const k = keyCanon(p.brand, p.venue); (ownerCanonIdx.get(k) || ownerCanonIdx.set(k, []).get(k)).push(p); }
+
+  const closestExcel = (o, cands) => cands.slice().sort((a, b) => days(o.start_date, a.start) - days(o.start_date, b.start))[0];
+
+  // ownerKeyFn lets us A/B the venue normalization: plain owner venue vs canonVenue'd owner venue.
+  function analyze(win, ownerKeyFn) {
+    const fillable = [], emptyNoMatch = [];
+    for (const o of emptyOwner) {
+      const cands = (excelIdx.get(ownerKeyFn(o.brand, o.venue)) || []).filter((r) => days(o.start_date, r.start) <= win);
+      if (cands.length) fillable.push([o, closestExcel(o, cands)]); else emptyNoMatch.push(o);
+    }
+    let absentExcel = 0;
+    for (const r of rows) {
+      const cands = (ownerCanonIdx.get(keyCanon(r.brand, r.venue)) || []).filter((p) => days(p.start_date, r.start) <= win);
+      if (!cands.length) absentExcel++;
+    }
+    return { fillable, emptyNoMatch, absentExcel };
+  }
+
+  console.log(`\n\n=== EMPTY-OWNER FILL MAP (read-only; canonVenue on BOTH sides) ===`);
+  console.log(`owner projects: ${ownerProjs.length}   EMPTY (0 non-archived lines): ${emptyOwner.length}   (empty-by-income for continuity: ${emptyByIncome.length})`);
+  console.log(`in-scope Excel events (2024-01-01..2026-04-30): ${rows.length}`);
+  const emptyFuture = emptyOwner.filter((p) => ymd(p.start_date) >= "2026-05-01").length;
+  console.log(`EMPTY owner projects by start_date:  in-scope (<2026-05-01): ${emptyOwner.length - emptyFuture}   future (>=2026-05-01): ${emptyFuture}`);
+
+  console.log(`\n-- sensitivity matrix --`);
+  console.log(`  window | owner-venue | fillable | empty-no-excel-match | excel-absent(no owner proj)`);
+  for (const win of [4, 10]) {
+    for (const [mode, fn] of [["plain", keyPlain], ["canon", keyCanon]]) {
+      const a = analyze(win, fn);
+      console.log(`  <=${String(win).padEnd(2)}d | ${mode.padEnd(5)}       | ${String(a.fillable.length).padStart(6)} | ${String(a.emptyNoMatch.length).padStart(20)} | ${String(a.absentExcel).padStart(4)}`);
+    }
+  }
+
+  // Detailed mapping using the STRONG matcher (canonVenue both sides).
+  const a4 = analyze(4, keyCanon), a10 = analyze(10, keyCanon);
+  const distinctExcel = (arr) => new Set(arr.map(([, r]) => `${r.start}|${keyCanon(r.brand, r.venue)}`)).size;
+  console.log(`\nfillable empty-owner projects: <=4d ${a4.fillable.length} (distinct Excel events ${distinctExcel(a4.fillable)})   <=10d ${a10.fillable.length} (distinct Excel events ${distinctExcel(a10.fillable)})`);
+
+  const within4Ids = new Set(a4.fillable.map(([o]) => o.id));
+  console.log(`\n[FILLABLE sample — <=10d window; (*)=also within 4d]`);
+  console.log(`   owner_id  owner_date @ owner_venue  <->  excel_date [brand] @ canon_venue  sales=RM  (deltaDays)`);
+  for (const [o, r] of a10.fillable.slice(0, 20)) {
+    const star = within4Ids.has(o.id) ? "*" : " ";
+    console.log(` ${star} p${o.id}  ${ymd(o.start_date)} @ ${o.venue}  <->  ${r.start} [${r.brand}] @ ${canonVenue(r.venue)}  sales=${Math.round(Number(r.sales))}  (${Math.round(days(o.start_date, r.start))}d)`);
+  }
+
+  // EMPTY owner projects with NO Excel match (canon, 10d): future placeholders vs in-scope matcher-gap suspects.
+  const noMatch = a10.emptyNoMatch;
+  const nmFuture = noMatch.filter((p) => ymd(p.start_date) >= "2026-05-01");
+  const nmInScope = noMatch.filter((p) => ymd(p.start_date) < "2026-05-01");
+  console.log(`\n[EMPTY, NO Excel match (canon,10d): ${noMatch.length}]  future(>=2026-05): ${nmFuture.length}   in-scope(<2026-05): ${nmInScope.length}`);
+  console.log(`  -- in-scope no-match (matcher-gap suspects; nearest same-brand Excel, any venue/date) sample --`);
+  for (const p of nmInScope.slice(0, 15)) {
+    const sb = idxBrandExcel.get(norm(p.brand)) || [];
+    let near = null, bd = Infinity;
+    for (const r of sb) { const d = days(p.start_date, r.start); if (d < bd) { bd = d; near = r; } }
+    const diag = near
+      ? `nearest Excel ${near.start} @ ${canonVenue(near.venue)} (${Math.round(bd)}d; vNorm owner="${venueNorm(canonVenue(p.venue))}" excel="${venueNorm(canonVenue(near.venue))}")`
+      : `(no same-brand Excel at all)`;
+    console.log(`   p${p.id} ${ymd(p.start_date)} [${p.brand}] @ ${p.venue}  ${diag}`);
+  }
+  console.log(`  -- future no-match (>=2026-05, expected placeholders) sample --`);
+  for (const p of nmFuture.slice(0, 8)) console.log(`   p${p.id} ${ymd(p.start_date)} [${p.brand}] @ ${p.venue}`);
 }
 main().then(() => sql.end()).catch((e) => { console.error(e); process.exit(1); });
