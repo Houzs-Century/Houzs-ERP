@@ -819,6 +819,90 @@ app.post("/schedule-reconcile/scan", requirePermission("projects.write"), async 
   return c.json({ organizer: org, projectCount: projects.length, rows });
 });
 
+// ── Roadshow PMS Agent — Job E: setup-invoice OCR -> project setup COGS ───────
+// Owner forwards a scanned setup/booth invoice; this OCRs it (Claude vision, the
+// same pattern as Job A), extracts the vendor + grand total + line items, and (on
+// apply) writes a `setup` cost line to the chosen project. The scan also returns a
+// short recent-projects list so the picker needs no extra call. Amounts are whole
+// RM (project_finance_lines is NOT sen).
+app.post("/setup-invoice/scan", requirePermission("projects.write"), async (c) => {
+  const apiKey = (c.env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY;
+  if (!apiKey) return c.json({ error: "anthropic_key_missing", reason: "ANTHROPIC_API_KEY is not set." }, 400);
+  let files: File[] = [];
+  try {
+    const form = await c.req.formData();
+    files = form.getAll("file").filter((f): f is File => f instanceof File);
+  } catch { return c.json({ error: "invalid_form" }, 400); }
+  const { blocks, error: fileErr } = await buildFileBlocks(files);
+  if (fileErr) return c.json({ error: "bad_file", reason: fileErr }, 400);
+  if (blocks.length === 0) return c.json({ error: "no_file", reason: "Attach the invoice image." }, 400);
+
+  const sys = `You read a Malaysian booth / setup / renovation INVOICE or QUOTATION (usually a scanned photo). Extract ONLY JSON of the shape {"vendor": string|null, "currency": string, "totalRM": number, "items": [{"description": string, "amountRM": number}]}. "vendor" is the company that ISSUED the invoice (the supplier / contractor), NOT the recipient. "totalRM" is the GRAND TOTAL in Ringgit. If a value is unclear, use null / []. No commentary, JSON only.`;
+
+  let parsed: { vendor?: string | null; currency?: string; totalRM?: number; items?: { description?: string; amountRM?: number }[] };
+  try {
+    const resp = await fetch(RECONCILE_URL, {
+      method: "POST",
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: RECONCILE_MODEL, max_tokens: 2000, system: sys,
+        messages: [{ role: "user", content: [...blocks, { type: "text", text: "Extract the invoice as JSON." }] }],
+      }),
+    });
+    if (!resp.ok) return c.json({ error: "extract_failed", reason: `vision ${resp.status}` }, 502);
+    const data = (await resp.json()) as { content?: { type: string; text?: string }[] };
+    const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+    const jsonStr = (text.match(/\{[\s\S]*\}/) ?? [text])[0];
+    parsed = JSON.parse(jsonStr);
+  } catch (e) {
+    return c.json({ error: "extract_failed", reason: e instanceof Error ? e.message : "vision failed" }, 502);
+  }
+
+  const projRes = await c.env.DB.prepare(
+    `SELECT id, code, name, start_date FROM projects
+      WHERE archived_at IS NULL${activeCompanySql(c, "company_id")}
+      ORDER BY COALESCE(start_date, created_at) DESC LIMIT 200`
+  ).all<{ id: number; code: string; name: string; start_date: string }>();
+
+  return c.json({
+    vendor: parsed.vendor ?? null,
+    currency: parsed.currency ?? "RM",
+    totalRM: Number(parsed.totalRM) || 0,
+    items: (Array.isArray(parsed.items) ? parsed.items : []).map((it) => ({ description: String(it.description ?? ""), amountRM: Number(it.amountRM) || 0 })),
+    projects: (projRes.results ?? []).map((p) => ({ id: p.id, code: p.code, name: p.name, startDate: p.start_date })),
+  });
+});
+
+// Apply the setup invoice to a project as a `setup` cost line. A project can have
+// several setup invoices, so this always ADDS (no skip-if-present, unlike the fair
+// report). Dated to the project start_date.
+app.post("/:id/setup-invoice/apply", requirePermission("projects.write"), async (c) => {
+  const denied = denyFinance(c); if (denied) return denied;
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const user = c.get("user");
+  const body = (await c.req.json().catch(() => ({}))) as { vendor?: string; amountRM?: number; note?: string };
+  const amount = Number(body.amountRM);
+  if (!Number.isFinite(amount) || amount <= 0) return c.json({ error: "invalid_amount", reason: "amountRM must be a positive number" }, 400);
+
+  const proj = await c.env.DB.prepare(
+    `SELECT start_date FROM projects WHERE id = ?${activeCompanySql(c, "company_id")}`
+  ).bind(id).first<{ start_date: string }>();
+  if (!proj) return c.json({ error: "project not found" }, 404);
+
+  const vendor = String(body.vendor ?? "").trim();
+  try {
+    const r = await createLedgerLine(
+      c.env,
+      { project_id: id, kind: "cost", category: "setup", amount, description: vendor ? `Setup - ${vendor}` : "Setup (invoice)", occurred_at: proj.start_date ?? null, notes: (body.note ?? null), r2_key: null, file_name: null, mime_type: null },
+      user?.id ?? 0
+    );
+    return c.json({ id: r.id, created: 1 });
+  } catch (e: unknown) {
+    return c.json({ error: "apply_failed", reason: e instanceof Error ? e.message : "failed" }, 400);
+  }
+});
+
 // Manual trigger — useful from the project detail page to backfill
 // auto lines on historical projects after the migration lands.
 app.post("/:id/finance/recompute-auto", requirePermission("projects.write"), async (c) => {
