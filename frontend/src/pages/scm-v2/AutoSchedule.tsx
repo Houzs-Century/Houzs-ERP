@@ -32,6 +32,8 @@ import {
   type PackedDay,
   type SequenceAssignResponse,
   type AssignedTrip,
+  type OverflowGroup,
+  type ThreePlCarrier,
 } from '../../vendor/scm/lib/delivery-zones-queries';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
 import { useHelpers } from '../../vendor/scm/lib/helpers-queries';
@@ -65,12 +67,16 @@ export const AutoSchedule = () => {
   const [departTime, setDepartTime] = useState<string>('09:00');
   const [maxSets, setMaxSets] = useState<string>('10');
   const [maxRevenueRm, setMaxRevenueRm] = useState<string>('30000');
+  const [maxTripsPerLorry, setMaxTripsPerLorry] = useState<string>('1');
   const [result, setResult] = useState<ProposeResponse | null>(null);
   const [applying, setApplying] = useState(false);
   const [assign, setAssign] = useState<SequenceAssignResponse | null>(null);
   // Per-trip dispatcher overrides of the auto-assigned lorry / driver / helper.
   const [overrides, setOverrides] = useState<Record<string, { lorryId?: string | null; driverId?: string | null; helperId?: string | null }>>({});
   const [applyingAssign, setApplyingAssign] = useState(false);
+  // A3: per-overflow-group 3PL choice — the carrier lorry + captured cost (RM).
+  const [threePl, setThreePl] = useState<Record<string, { carrierId?: string | null; costRm?: string }>>({});
+  const [assigning3pl, setAssigning3pl] = useState<string | null>(null);
 
   // SO pending-schedule orders, and the depot options derived from them.
   const soOrders = useMemo(
@@ -154,6 +160,7 @@ export const AutoSchedule = () => {
     if (depotDocNos.length === 0) { notify({ title: 'Nothing to assign', body: 'No pending-schedule orders for this depot.', tone: 'error' }); return; }
     const sets = Number(maxSets);
     const revRm = Number(maxRevenueRm);
+    const trips = Number(maxTripsPerLorry);
     seqAssign.mutate({
       soDocNos: depotDocNos,
       depotWarehouseId: depot === ALL_DEPOTS ? null : depot,
@@ -161,11 +168,48 @@ export const AutoSchedule = () => {
       departTime,
       defaultMaxSets: Number.isInteger(sets) && sets > 0 ? sets : undefined,
       defaultMaxRevenueCenti: Number.isFinite(revRm) && revRm > 0 ? Math.round(revRm * 100) : undefined,
+      maxTripsPerLorryPerDay: Number.isInteger(trips) && trips > 0 ? trips : undefined,
     }, {
-      onSuccess: (r) => { setAssign(r); setOverrides({}); },
+      onSuccess: (r) => { setAssign(r); setOverrides({}); setThreePl({}); },
       onError: (err) => notify({ title: 'Sequence & assign failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
     });
   };
+
+  // A3: assign an overflow group to a 3PL carrier. Reuses the SAME schedule
+  // write-path as an own-fleet trip — the carrier is an OUTSOURCE lorry, so the
+  // backend flags the trip is_outsourced and records the captured cost. A 3PL
+  // trip does NOT consume an own-fleet slot.
+  const assignThreePl = async (o: SequenceAssignResponse['overflow'][number]) => {
+    const pick = threePl[o.key] ?? {};
+    if (!pick.carrierId) { notify({ title: 'Pick a 3PL carrier', body: 'Choose a carrier for this overflow trip before assigning.', tone: 'error' }); return; }
+    const costRm = Number(pick.costRm);
+    const costCenti = Number.isFinite(costRm) && costRm > 0 ? Math.round(costRm * 100) : null;
+    setAssigning3pl(o.key);
+    let ok = 0; let failed = 0;
+    for (let i = 0; i < o.orders.length; i += 1) {
+      try {
+        await schedule.mutateAsync({
+          type: 'so', id: o.orders[i],
+          scheduleDate: o.date, tripDate: o.date,
+          lorryId: pick.carrierId,
+          warehouseId: depot === ALL_DEPOTS ? null : depot,
+          stopNo: i + 1,
+          // Capture the cost once (on the trip CREATE — the first stop mints it).
+          threePlCostCenti: i === 0 ? costCenti : undefined,
+        });
+        ok += 1;
+      } catch { failed += 1; }
+    }
+    setAssigning3pl(null);
+    notify({
+      title: failed === 0 ? '3PL assigned' : 'Assigned with some failures',
+      body: `${ok} order(s) routed to the 3PL carrier${failed ? `, ${failed} failed` : ''}.`,
+      tone: failed === 0 ? 'info' : 'error',
+    });
+    board.refetch();
+  };
+  const setThreePlPick = (key: string, patch: { carrierId?: string | null; costRm?: string }) =>
+    setThreePl((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
   // The effective (possibly overridden) crew/lorry for a trip.
   const effectiveTrip = (t: AssignedTrip) => {
@@ -255,6 +299,9 @@ export const AutoSchedule = () => {
         <Ctl label="Default max revenue / lorry (RM)">
           <input type="number" min="1" value={maxRevenueRm} onChange={(e) => setMaxRevenueRm(e.target.value)} style={{ ...selStyle, width: 120 }} />
         </Ctl>
+        <Ctl label="Max trips / lorry / day">
+          <input type="number" min="1" value={maxTripsPerLorry} onChange={(e) => setMaxTripsPerLorry(e.target.value)} style={{ ...selStyle, width: 90 }} />
+        </Ctl>
         <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', flex: '1 1 auto' }}>
           {board.isLoading ? 'Loading pending orders…' : `${depotDocNos.length} pending order(s) for this depot`}
         </div>
@@ -329,6 +376,23 @@ export const AutoSchedule = () => {
             <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-warning, #b45309)' }}>
               Excluded by fleet status: {assign.excludedLorries.map((l) => `${l.plate} (${l.status})`).join(', ')}
             </div>
+          )}
+
+          {assign.excludedDrivers.length > 0 && (
+            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-warning, #b45309)' }}>
+              On leave (not auto-assigned): {assign.excludedDrivers.map((d) => `${d.name ?? d.id} (${d.from}–${d.to}${d.reason ? `, ${d.reason}` : ''})`).join(', ')}
+            </div>
+          )}
+
+          {assign.overflow.length > 0 && (
+            <OverflowSection
+              overflow={assign.overflow}
+              carriers={assign.carriers}
+              pick={threePl}
+              onPick={setThreePlPick}
+              onAssign={assignThreePl}
+              assigningKey={assigning3pl}
+            />
           )}
 
           {assign.trips.map((t) => {
@@ -476,6 +540,66 @@ const AssignTripCard = ({ trip, eff, locked, lorries, drivers, helpers, onOverri
     </div>
   );
 };
+
+// A3 — the day's overflow: groups the own fleet could not cover. The dispatcher
+// picks a region 3PL carrier (an OUTSOURCE lorry) and captures the trip cost (the
+// seam Module C's rate-card will compute against), then assigns it via the same
+// schedule write-path — a 3PL trip does not consume an own-fleet slot.
+const OverflowSection = ({ overflow, carriers, pick, onPick, onAssign, assigningKey }: {
+  overflow: OverflowGroup[];
+  carriers: ThreePlCarrier[];
+  pick: Record<string, { carrierId?: string | null; costRm?: string }>;
+  onPick: (key: string, patch: { carrierId?: string | null; costRm?: string }) => void;
+  onAssign: (o: OverflowGroup) => void;
+  assigningKey: string | null;
+}) => (
+  <div style={{ borderRadius: 10, border: '1px solid rgba(217,119,6,0.4)', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 14px', background: 'rgba(217,119,6,0.08)' }}>
+      <strong style={{ fontSize: 'var(--fs-13)' }}>3PL overflow ({overflow.length})</strong>
+      <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+        Own fleet is full for these — assign a 3PL carrier and capture the cost.
+      </span>
+    </div>
+    {carriers.length === 0 && (
+      <div style={{ padding: '8px 14px', fontSize: 'var(--fs-12)', color: 'var(--c-warning, #b45309)' }}>
+        No 3PL carrier on file for this region. Add an OUTSOURCE lorry (non-internal) in Fleet to assign overflow.
+      </div>
+    )}
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {overflow.map((o) => {
+        const p = pick[o.key] ?? {};
+        const busy = assigningKey === o.key;
+        return (
+          <div key={o.key} style={{ padding: '10px 14px', borderTop: '1px solid var(--border, rgba(0,0,0,0.08))' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <strong style={{ fontSize: 'var(--fs-13)' }}>{o.date}</strong>
+              <span style={{ fontSize: 'var(--fs-11)', padding: '2px 8px', borderRadius: 999, background: 'var(--bg, rgba(0,0,0,0.06))' }}>
+                {o.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : o.group}
+              </span>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                {o.orders.length} order(s) · {o.sets} sets · {fmtRm(o.revenueCenti)}
+              </span>
+            </div>
+            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', margin: '4px 0' }}>{o.orders.join(', ')}</div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <AssignSelect label="3PL carrier" value={p.carrierId ?? null} onChange={(v) => onPick(o.key, { carrierId: v })}
+                options={carriers.map((c) => ({ id: c.id, label: c.plate }))} placeholder="— pick a carrier —" />
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>Captured cost (RM)</span>
+                <input type="number" min="0" value={p.costRm ?? ''} onChange={(e) => onPick(o.key, { costRm: e.target.value })}
+                  placeholder="0" style={{ ...selStyle, width: 120 }} />
+              </label>
+              <Button variant="primary" size="sm" onClick={() => onAssign(o)} disabled={busy || !p.carrierId || carriers.length === 0}>
+                <CalendarCheck {...ICON} />
+                <span>{busy ? 'Assigning…' : 'Assign 3PL'}</span>
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+);
 
 const AssignSelect = ({ label, value, onChange, options, placeholder }: {
   label: string; value: string | null; onChange: (v: string | null) => void;

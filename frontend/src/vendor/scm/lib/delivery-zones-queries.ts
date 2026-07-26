@@ -143,6 +143,8 @@ export type SequenceAssignBody = {
   departTime?: string;
   defaultMaxSets?: number;
   defaultMaxRevenueCenti?: number;
+  /** A3: own-fleet trips per lorry per day before the rest spill to 3PL overflow. */
+  maxTripsPerLorryPerDay?: number;
 };
 
 export type AssignedSequenceStop = {
@@ -203,6 +205,23 @@ export type AssignedTrip = {
   ungeocoded: string[];
 };
 
+/** A3: a group the own fleet could not cover that day — a 3PL-assign candidate. */
+export type OverflowGroup = {
+  key: string;
+  date: string;
+  group: string;
+  orders: string[];
+  sets: number;
+  revenueCenti: number;
+  reason: string;
+};
+
+/** A3: a 3PL carrier the dispatcher can assign overflow to (an OUTSOURCE lorry). */
+export type ThreePlCarrier = { id: string; plate: string; warehouseId: string | null };
+
+/** A3: a driver withheld from the auto-pick because they are on leave. */
+export type ExcludedDriver = { id: string; name: string | null; from: string; to: string; reason: string | null };
+
 export type SequenceAssignResponse = {
   startDate: string;
   departTime: string;
@@ -214,6 +233,10 @@ export type SequenceAssignResponse = {
   dispatchableCount: number;
   trips: AssignedTrip[];
   excludedLorries: { id: string; plate: string; status: string }[];
+  /** A3 fields. */
+  excludedDrivers: ExcludedDriver[];
+  overflow: OverflowGroup[];
+  carriers: ThreePlCarrier[];
   unassigned: { key: string | null; date: string | null; group: string | null; orders: string[]; reason: string }[];
 };
 
@@ -268,5 +291,45 @@ export function useUnlockDay() {
   return useMutation({
     mutationFn: (id: string) => authedFetch<{ ok: true }>(`/delivery-zones/locks/${id}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-day-locks'] }),
+  });
+}
+
+// ── Driver leave (Fleet A3) ────────────────────────────────────────────────────
+// The date-ranged driver absences the A2 auto-assigner reads to skip on-leave
+// drivers. Backed by scm.driver_leave (mig 0206) via /api/scm/driver-leave.
+
+export type DriverLeaveRow = {
+  id: string;
+  driverId: string;
+  startDate: string;
+  endDate: string;
+  reason: string | null;
+  createdAt: string | null;
+};
+
+const DRIVER_LEAVE_KEY = ['driver-leave'] as const;
+
+export function useDriverLeave() {
+  return useQuery({
+    queryKey: DRIVER_LEAVE_KEY,
+    queryFn: () => authedFetch<{ leave: DriverLeaveRow[] }>('/driver-leave').then((r) => r.leave),
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateDriverLeave() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { driverId: string; startDate: string; endDate: string; reason?: string | null }) =>
+      authedFetch<{ leave: DriverLeaveRow }>('/driver-leave', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: DRIVER_LEAVE_KEY }),
+  });
+}
+
+export function useDeleteDriverLeave() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch<{ ok: true }>(`/driver-leave/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: DRIVER_LEAVE_KEY }),
   });
 }

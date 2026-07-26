@@ -62,6 +62,7 @@ import {
   Megaphone,
   History,
   Wand2,
+  CalendarOff,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -533,6 +534,7 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/delivery-planning-regions", label: "Regions", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/delivery-residence-rules", label: "Residence Rules", icon: Building2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/delivery-zones", label: "Delivery Zones", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/driver-leave", label: "Driver Leave", icon: CalendarOff, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
         ],
       },
       {
