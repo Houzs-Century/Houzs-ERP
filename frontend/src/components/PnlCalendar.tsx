@@ -126,6 +126,17 @@ interface Props {
   compact?: boolean;
 }
 
+// Project COGS family (owner's Financial Snapshot model): the legacy `cogs`
+// slug plus the three product sub-categories. Used to split project cost into
+// COGS vs other cost in the drill-down breakdown — mirrors the backend set in
+// routes/projects.ts (/analytics/profitability) and /finance/by-project.
+const PROJECT_COGS_CATEGORIES = new Set([
+  "cogs",
+  "cogs_matt_sofa",
+  "cogs_bedframe",
+  "cogs_accessories",
+]);
+
 export function PnlCalendar({
   scope = "all",
   title,
@@ -180,7 +191,13 @@ export function PnlCalendar({
       <header className="mb-3 flex flex-wrap items-center gap-3">
         <div className="flex-1">
           <div className="text-[10px] font-semibold uppercase tracking-brand text-accent">
-            P&L · Gross Profit · {scope === "all" ? "All sources" : labelForScope(scope)}
+            P&L ·{" "}
+            {showRevenue && showCost
+              ? "Gross Profit"
+              : showCost
+              ? "Cost"
+              : "Revenue"}{" "}
+            · {scope === "all" ? "All sources" : labelForScope(scope)}
           </div>
           <h3 className="font-display text-[15px] font-bold leading-tight tracking-tight text-ink">
             {title ?? "Profit & Loss"}
@@ -306,8 +323,26 @@ export function PnlCalendar({
       <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-50/70 px-3 py-2 text-[11px] text-amber-900">
         <Info size={12} className="mt-0.5 shrink-0" />
         <div>
-          <strong>Gross Profit only.</strong>{" "}
-          Operating expenses (payroll, rent, utilities) are not included.
+          {showRevenue && showCost ? (
+            <>
+              <strong>Cash-basis gross profit.</strong>{" "}
+              Cost already includes COGS (cost of goods sold) alongside every
+              other project cost line, plus service and PO cost. Operating
+              expenses (payroll, rent, utilities) are not included.
+            </>
+          ) : showCost ? (
+            <>
+              <strong>Total cost — COGS included.</strong>{" "}
+              This is every cost line booked to the period: COGS (cost of goods
+              sold) plus all other cost categories. Revenue is booked in Sales,
+              so no gross profit is shown here.
+            </>
+          ) : (
+            <>
+              <strong>Revenue only.</strong>{" "}
+              No cost is applied in this view.
+            </>
+          )}
           {d?.notes?.po_missing_price_count
             ? ` ${d.notes.po_missing_price_count} PO line${d.notes.po_missing_price_count === 1 ? "" : "s"} have no price set — totals may understate cost. Edit on the PO page to fill them in.`
             : ""}
@@ -496,6 +531,13 @@ function BucketDetailPanel({
     (s, r) => s + (r.amount || 0),
     0
   );
+  // Split the project cost into COGS vs everything else so the owner's P&L
+  // model (Revenue − COGS = GP) is legible in the breakdown. project_cost
+  // already INCLUDES the COGS lines — this only partitions the same total.
+  const projectCogsTotal = (d?.project_cost_lines ?? [])
+    .filter((r) => PROJECT_COGS_CATEGORIES.has(r.category))
+    .reduce((s, r) => s + (r.amount || 0), 0);
+  const projectOtherCostTotal = projectCostTotal - projectCogsTotal;
   const serviceCostTotal = (d?.service_cases ?? []).reduce(
     (s, r) => s + (r.po_amount || 0),
     0
@@ -605,8 +647,21 @@ function BucketDetailPanel({
                   </ul>
                 </div>
               )}
-              <div className="mt-2 text-right text-[11px] font-semibold">
-                Subtotal: <span className="font-mono text-err">{formatCurrency(projectCostTotal)}</span>
+              {/* COGS vs other-cost split — makes the owner's model visible:
+                  project cost = COGS + all other project cost lines. */}
+              <div className="mt-2 flex flex-wrap items-center justify-end gap-x-3 gap-y-0.5 text-[11px] font-semibold">
+                <span className="text-ink-muted">
+                  COGS:{" "}
+                  <span className="font-mono text-err">{formatCurrency(projectCogsTotal)}</span>
+                </span>
+                <span className="text-ink-muted">
+                  Other:{" "}
+                  <span className="font-mono text-err">{formatCurrency(projectOtherCostTotal)}</span>
+                </span>
+                <span>
+                  Subtotal:{" "}
+                  <span className="font-mono text-err">{formatCurrency(projectCostTotal)}</span>
+                </span>
               </div>
             </PanelSection>
           )}

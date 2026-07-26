@@ -115,6 +115,7 @@ const ScmDeliveryZonesV2 = lazy(() => import("./pages/scm-v2/DeliveryZones").the
 const ScmDeliveryRateCardsV2 = lazy(() => import("./pages/scm-v2/DeliveryRateCards").then((m) => ({ default: m.DeliveryRateCards })));
 const ScmAutoScheduleV2 = lazy(() => import("./pages/scm-v2/AutoSchedule").then((m) => ({ default: m.AutoSchedule })));
 const ScmDriverLeaveV2 = lazy(() => import("./pages/scm-v2/DriverLeave").then((m) => ({ default: m.DriverLeave })));
+const ScmThreePLCompaniesV2 = lazy(() => import("./pages/scm-v2/ThreePLCompanies").then((m) => ({ default: m.ThreePLCompanies })));
 const ScmFleetV2 = lazy(() => import("./pages/scm-v2/Fleet").then((m) => ({ default: m.Fleet })));
 const ScmLorryCapacityV2 = lazy(() => import("./pages/scm-v2/LorryCapacity").then((m) => ({ default: m.LorryCapacity })));
 // Fleet Module A4 — day-view map + printable driver run-sheet (read/render over trips).
@@ -636,6 +637,7 @@ export default function App() {
         <Route path="/scm/delivery-rate-cards"       element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryRateCardsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/auto-schedule"             element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmAutoScheduleV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/driver-leave"              element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDriverLeaveV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/threepl-companies"         element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmThreePLCompaniesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/lorry-capacity"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLorryCapacityV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet-day"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetDayV2 /></Scm2990Shell></ScmGuard>} />

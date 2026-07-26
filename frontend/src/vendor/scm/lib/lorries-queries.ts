@@ -87,6 +87,10 @@ export type LorryRow = {
   length_ft?: number | string | null;
   width_ft?: number | string | null;
   height_ft?: number | string | null;
+  // ── WS4a (mig 0210): the 3PL carrier company this lorry belongs to (NULL = own
+  // fleet / not attached).
+  threepl_company_id?: string | null;
+  threeplCompanyId?: string | null;
 };
 
 export const CAPACITY_LAYERS = ['SETS', 'REVENUE', 'BOTH'] as const;
@@ -119,6 +123,8 @@ export type NewLorry = {
   lengthFt?: number | null;
   widthFt?: number | null;
   heightFt?: number | null;
+  // WS4a: the 3PL carrier company this lorry belongs to (null = own fleet).
+  threeplCompanyId?: string | null;
 };
 
 export type FleetFilter = 'all' | 'internal' | 'outsourced';

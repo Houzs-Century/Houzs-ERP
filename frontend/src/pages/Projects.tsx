@@ -1957,7 +1957,12 @@ interface ProfitabilityBreakdown {
   key: string;
   count: number;
   income: number;
+  // Owner P&L model: Revenue − COGS = GP; GP − Cost = NP. `cost` is the
+  // NON-COGS cost (rental, setup, transport, commission, merchandise,
+  // others); `cogs` is the goods cost; `profit` is Net Profit.
+  cogs: number;
   cost: number;
+  gp: number;
   profit: number;
   margin: number | null;
 }
@@ -1973,7 +1978,9 @@ interface ProfitabilityResponse {
   totals: {
     projects: number;
     income: number;
+    cogs: number;
     cost: number;
+    gp: number;
     profit: number;
     margin_pct: number | null;
   };
@@ -1990,7 +1997,9 @@ interface ProfitabilityResponse {
     venue: string | null;
     start_date: string | null;
     income: number;
+    cogs: number;
     cost: number;
+    gp: number;
     profit: number;
     margin: number | null;
   }>;
@@ -2014,11 +2023,12 @@ const FINANCE_TAB_HEADER: Record<
   analytics: {
     title: "Profitability",
     description:
-      "Income, cost, and margin per project — sliced by brand, venue, type, and month.",
+      "Revenue, COGS, gross profit, cost and net profit per project — sliced by brand, venue, type, and month.",
   },
   pnl: {
     title: "P&L Calendar",
-    description: "Ledger costs across all projects, grouped by month.",
+    description:
+      "Total project cost (COGS + other cost lines) across all projects, grouped by month.",
   },
 };
 
@@ -2065,7 +2075,7 @@ function ProjectsFinancesView() {
         <PnlCalendar
           scope="projects"
           title="Project Cost — Monthly"
-          subtitle="Ledger costs across all projects, grouped by month."
+          subtitle="Total project cost (COGS + other cost lines) across all projects, grouped by month."
         />
       )}
     </div>
@@ -2197,7 +2207,7 @@ function FinanceListView() {
     api.get("/api/projects/brands")
   );
 
-  const list = useQuery<FinanceByProjectResponse>("/api/projects/finance/by-project:)}",
+  const list = useQuery<FinanceByProjectResponse>("/api/projects/finance/by-project",
     (signal) =>
       api.get(
         `/api/projects/finance/by-project${buildQuery({
@@ -2730,7 +2740,7 @@ function ProjectsAnalyticsView() {
     api.get("/api/projects/organizers")
   );
 
-  const q = useQuery<ProfitabilityResponse>("/api/projects/analytics/profitability:)}",
+  const q = useQuery<ProfitabilityResponse>("/api/projects/analytics/profitability",
     () =>
       api.get(
         `/api/projects/analytics/profitability${buildQuery({
@@ -2746,6 +2756,13 @@ function ProjectsAnalyticsView() {
   );
 
   const d = q.data;
+  // Owner P&L model shares: COGS runs ~48-50% of revenue for this business,
+  // gross margin = GP / Revenue, net margin = NP / Revenue (from the server).
+  const totals = d?.totals;
+  const cogsPctOfRevenue =
+    totals && totals.income > 0 ? (totals.cogs / totals.income) * 100 : null;
+  const grossMarginPct =
+    totals && totals.income > 0 ? (totals.gp / totals.income) * 100 : null;
 
   return (
     <div>
@@ -2754,6 +2771,11 @@ function ProjectsAnalyticsView() {
         <span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-accent">
           Profitability breakdown
         </span>
+        {d && (
+          <span className="ml-auto text-[10px] font-medium text-ink-muted">
+            {d.totals.projects.toLocaleString()} projects in scope
+          </span>
+        )}
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
@@ -2838,31 +2860,47 @@ function ProjectsAnalyticsView() {
 
       {d && (
         <>
-          {/* Headline */}
-          <DashboardGrid cols={4}>
+          {/* Headline — the owner's P&L waterfall:
+              Revenue − COGS = GP;  GP − Cost = NP. */}
+          <DashboardGrid cols={5}>
             <StatCard
-              label="Projects"
-              value={d.totals.projects.toLocaleString()}
-              subtitle="In scope"
+              label="Revenue"
+              value={formatCurrency(d.totals.income, { compact: true })}
+              subtitle="Total sales + other income"
             />
             <StatCard
-              label="Income"
-              value={formatCurrency(d.totals.income, { compact: true })}
-              subtitle="Total sales + refunds"
+              label="COGS"
+              value={formatCurrency(d.totals.cogs, { compact: true })}
+              subtitle={
+                cogsPctOfRevenue != null
+                  ? `${cogsPctOfRevenue.toFixed(0)}% of revenue`
+                  : "Cost of goods sold"
+              }
+              tone="error"
+            />
+            <StatCard
+              label="Gross profit"
+              value={formatCurrency(d.totals.gp, { compact: true })}
+              subtitle={
+                grossMarginPct != null
+                  ? `${grossMarginPct.toFixed(1)}% gross margin`
+                  : "Revenue − COGS"
+              }
+              tone={d.totals.gp >= 0 ? "success" : "error"}
             />
             <StatCard
               label="Cost"
               value={formatCurrency(d.totals.cost, { compact: true })}
-              subtitle="Rental + contractor + misc"
+              subtitle="Rental, setup, transport, commission…"
               tone="error"
             />
             <StatCard
-              label="Profit"
+              label="Net profit"
               value={formatCurrency(d.totals.profit, { compact: true })}
               subtitle={
                 d.totals.margin_pct != null
-                  ? `${d.totals.margin_pct.toFixed(1)}% margin`
-                  : "—"
+                  ? `${d.totals.margin_pct.toFixed(1)}% net margin`
+                  : "GP − Cost"
               }
               tone={d.totals.profit >= 0 ? "success" : "error"}
             />
@@ -2923,15 +2961,20 @@ function BreakdownCard({
       {safeRows.length === 0 ? (
         <div className="px-4 py-6 text-center text-[11px] text-ink-muted">No data.</div>
       ) : (
-        <div className="max-h-[320px] overflow-y-auto">
-          <table className="w-full text-[11px]">
+        <div className="max-h-[320px] overflow-auto">
+          {/* Full P&L model per group: Revenue − COGS = GP; GP − Cost = NP.
+              min-width keeps the seven columns legible; the wrapper scrolls
+              horizontally on a narrow (mobile / half-width) card. */}
+          <table className="w-full min-w-[460px] text-[11px]">
             <thead className="bg-bg/40 text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
               <tr>
-                <th className="px-3 py-1.5 text-left">{monthMode ? "Month" : "Name"}</th>
-                <th className="px-2 py-1.5 text-right">#</th>
-                <th className="px-2 py-1.5 text-right">Income</th>
-                <th className="px-2 py-1.5 text-right">Profit</th>
-                <th className="px-2 py-1.5 text-right">Margin</th>
+                <th className="px-2 py-1.5 text-left">{monthMode ? "Month" : "Name"}</th>
+                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">#</th>
+                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">Revenue</th>
+                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">COGS</th>
+                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">GP</th>
+                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">NP</th>
+                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">Margin</th>
               </tr>
             </thead>
             <tbody>
@@ -2939,11 +2982,11 @@ function BreakdownCard({
                 const barPct = Math.round((Math.abs(r.profit) / maxAbsProfit) * 100);
                 return (
                   <tr key={r.key} className="border-t border-border-subtle">
-                    <td className="px-3 py-1.5">
+                    <td className="px-2 py-1.5">
                       <div className="font-semibold text-ink">
                         {monthMode ? formatMonth(r.key) : r.key}
                       </div>
-                      <div className="mt-0.5 h-[3px] w-full rounded-full bg-bg">
+                      <div className="mt-0.5 h-[3px] w-full min-w-[64px] rounded-full bg-bg">
                         <div
                           className={cn(
                             "h-full rounded-full",
@@ -2953,19 +2996,30 @@ function BreakdownCard({
                         />
                       </div>
                     </td>
-                    <td className="px-2 py-1.5 text-right font-mono">{r.count}</td>
-                    <td className="px-2 py-1.5 text-right font-mono">
+                    <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">{r.count}</td>
+                    <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
                       {formatCurrency(r.income, { compact: true })}
+                    </td>
+                    <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+                      {formatCurrency(r.cogs, { compact: true })}
                     </td>
                     <td
                       className={cn(
-                        "px-2 py-1.5 text-right font-mono font-bold",
+                        "whitespace-nowrap px-1.5 py-1.5 text-right font-mono",
+                        r.gp >= 0 ? "text-ink" : "text-err"
+                      )}
+                    >
+                      {formatCurrency(r.gp, { compact: true })}
+                    </td>
+                    <td
+                      className={cn(
+                        "whitespace-nowrap px-1.5 py-1.5 text-right font-mono font-bold",
                         r.profit >= 0 ? "text-synced" : "text-err"
                       )}
                     >
                       {formatCurrency(r.profit, { compact: true })}
                     </td>
-                    <td className="px-2 py-1.5 text-right font-mono text-ink-secondary">
+                    <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
                       {r.margin != null ? `${r.margin.toFixed(1)}%` : "—"}
                     </td>
                   </tr>
@@ -3029,6 +3083,12 @@ function RankedCard({
                     {r.venue || "—"}
                     {r.start_date && ` · ${formatDate(r.start_date)}`}
                   </div>
+                  {/* Model context: Revenue and GP (COGS = Revenue − GP). */}
+                  <div className="mt-0.5 font-mono text-[10px] text-ink-muted">
+                    Rev {formatCurrency(r.income, { compact: true })}
+                    {" · "}
+                    GP {formatCurrency(r.gp, { compact: true })}
+                  </div>
                 </div>
                 <div className="shrink-0 text-right">
                   <div
@@ -3040,7 +3100,7 @@ function RankedCard({
                     {formatCurrency(r.profit, { compact: true })}
                   </div>
                   <div className="text-[10px] text-ink-muted">
-                    {r.margin != null ? `${r.margin.toFixed(1)}%` : "—"}
+                    {r.margin != null ? `${r.margin.toFixed(1)}% NP` : "—"}
                   </div>
                 </div>
               </button>
