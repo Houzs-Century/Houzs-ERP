@@ -1,0 +1,33 @@
+name: FAIR PNL add-lines (fill missing sales/COGS)
+
+# Owner-triggered ONLY. Dry-run (default, read-only) lists owner projects missing a sales line
+# that match an in-scope Excel event + the lines it would add. "commit" INSERTs only the missing
+# categories; existing owner lines are never touched. Own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit (insert missing lines)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: pms-fair-pnl-addlines
+  cancel-in-progress: false
+
+jobs:
+  addlines:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Add-lines (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/reconcile-addlines.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
