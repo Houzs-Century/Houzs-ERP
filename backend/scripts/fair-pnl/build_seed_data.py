@@ -73,15 +73,35 @@ for e in raw:
 mg=list(mm.values())
 
 # apportion setup + rental by sales across same-booth brands (venue,start,end)
+# APPORTION only for ROADSHOW (SOLO): multiple brands share ONE booth -> split
+# setup+rental by sales share. Exhibition brands have SEPARATE booths -> keep own.
 booth=collections.defaultdict(list)
-for r in mg: booth[(r["venue"].upper(),r["event_type"],r["start"],r["end"])].append(r)  # same venue+type+dates, diff brand = one booth
+for r in mg: booth[(r["venue"].upper(),r["event_type"],r["start"],r["end"])].append(r)
 for grp in booth.values():
+    if grp[0]["event_type"]!="Roadshow": continue
     tot_sales=sum(r["sales"] for r in grp)
     if len(grp)<2 or tot_sales<=0: continue
     for f in ("setup","rental"):
         tot=sum(r[f] for r in grp)
         if tot<=0: continue
         for r in grp: r[f]=round(tot*r["sales"]/tot_sales,2)
+
+# EXHIBITION reference-fill: an empty setup/rental borrows the AVERAGE from other
+# Exhibition records at the SAME venue + SAME organizer (same fair) that have one.
+ref=collections.defaultdict(lambda:{"setup":[],"rental":[]})
+for r in mg:
+    if r["event_type"]!="Exhibition": continue
+    k=(r["venue"].upper(),r["organizer"].upper())
+    if r["setup"]>0: ref[k]["setup"].append(r["setup"])
+    if r["rental"]>0: ref[k]["rental"].append(r["rental"])
+exfill=0
+for r in mg:
+    if r["event_type"]!="Exhibition": continue
+    k=(r["venue"].upper(),r["organizer"].upper())
+    for f in ("setup","rental"):
+        if r[f]==0 and ref[k][f]:
+            r[f]=round(sum(ref[k][f])/len(ref[k][f]),2); r[f"{f}_ref"]=True; exfill+=1
+print(f"[exhibition reference-fill] filled {exfill} empty setup/rental from same venue+organizer")
 
 # drop projects with NO amount at all (owner 2026-07-26: delete if revenue+COGS+rental+setup all 0)
 def anyamt(r): return r["sales"]+r["cogs_m"]+r["cogs_b"]+r["cogs_a"]+r["rental"]+r["setup"]

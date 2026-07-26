@@ -41,6 +41,26 @@ _Owner request 2026-07-26: backfill historical roadshow projects from the two FA
 4. `.github/workflows/seed-fair-pnl.yml` — `workflow_dispatch`, own concurrency group (never the deploy's), `--dry-run` input default true. Owner uploads the two Excel files as inputs OR the JSON is committed. Read-only until the owner flips `--commit`.
 5. Verify against screenshots: Finance Snapshot shows the 10 lines; the project list + analytics fill with real 2025/26 numbers.
 
+## STATUS 2026-07-26 — data DONE + reconciled; inserter is the last build
+
+**Data pipeline complete + owner-verified** (`backend/scripts/fair-pnl/build_seed_data.py`):
+- 556 raw rows (table-1 only — the 2nd/3rd claim tables were the double-count) → **472 projects** (2025: 293, 2026: 179).
+- **2025 SALES RM 31.66M · 2026 SALES RM 15.86M** — 2026 matches the owner's own Finance Lines (~15.45M). ✅
+- COGS split correct (matt/sofa > bedframe > accessories). Event type: **Exhibition 296 / Roadshow 176**.
+- All owner rules baked in: event_type (Roadshow=SOLO incl VINCENT/SYELIN/MR OOI/MALL MGMT/KAIHAO/SUNWAY KLUANG; named=Exhibition); **setup+rental apportioned by sales ONLY for Roadshow (SOLO shared booth); Exhibition keeps each brand's own and reference-fills an empty from the same venue+organizer average**; **drop projects with zero revenue+COGS+rental+setup** (5 dropped); AMAN CENTRAL overlap = keep both (different months, both AKEMI); no-@ venue split by SOLO prefix.
+- Output: `seed_data_final.json` (472 records; regenerate from Excel via build_seed_data.py — Excel is NOT committed).
+
+### Inserter spec (build next — HELD, prod-write, owner-triggered dry-run)
+`createProject(env, input)` (services/projects.ts:215) is the template — reuse or replicate its INSERT:
+- `INSERT INTO projects (code, name, stage, event_type_id, brand, start_date, end_date, venue, state, organizer, pic_id, created_by, company_id)`.
+  - `code` = `deriveProjectCode({year, month, organizer, state, venue, brand})` (projects.ts:28) — needs state; derive state from venue or leave the deriver's fallback.
+  - `event_type_id` = look up `project_event_types` by slug for **Exhibition** / **Roadshow** (resolve-or-create).
+  - `stage` = **'completed'** for historical (createProject hardcodes 'draft' — override in the seed's raw INSERT).
+  - `company_id` = Houzs Century.
+- Finance lines per project: `INSERT INTO project_finance_lines (project_id, kind, category, amount, company_id)` — income/`sales`; cost/`cogs_matt_sofa`,`cogs_bedframe`,`cogs_accessories`,`rental`,`setup`. **amount in SEN (Excel RM ×100)**. Then call `recomputeAutoCostLines` so transport/commission/merchandise auto-compute.
+- **Dedup**: skip any existing project matching (brand, venue, start_date) for the company.
+- **Dry-run default** (`--dry-run`): print per-project INSERT vs SKIP + grand totals; `--commit` writes. Runs from `.github/workflows/seed-fair-pnl.yml` (`workflow_dispatch`, own concurrency group, `secrets.DATABASE_URL`), owner-triggered. Never auto-run.
+
 ## Open questions for the owner
 - **venue vs organizer** parse from `LOCATION` (`ORG @ VENUE`?) — confirm which side is which.
 - Projects with **no sales** (71 rows): seed as RM0 completed, or skip?
