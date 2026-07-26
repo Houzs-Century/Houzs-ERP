@@ -241,6 +241,46 @@ describe('assignFleet — A3 driver-leave exclusion', () => {
   });
 });
 
+describe('assignFleet — WS2 helper-leave exclusion', () => {
+  it('does NOT auto-crew a helper on leave that day — it picks a free helper', () => {
+    const r = assignFleet({
+      groups: [group('A', { date: '2026-08-01' })],
+      lorries: [lorry('l1')],
+      drivers: [driver('d1')],
+      // h1 is first but on leave 08-01 -> h2 takes it.
+      helpers: [helper('h1'), helper('h2')],
+      config: CFG,
+      helperLeave: [{ helperId: 'h1', from: '2026-08-01', to: '2026-08-03', reason: 'MC' }],
+    });
+    expect(r.assignments[0].helperId).toBe('h2');
+  });
+
+  it('leaves the helper empty when the only helper is on leave', () => {
+    const r = assignFleet({
+      groups: [group('A', { date: '2026-08-02' })],
+      lorries: [lorry('l1')],
+      drivers: [driver('d1')],
+      helpers: [helper('h1')],
+      config: CFG,
+      helperLeave: [{ helperId: 'h1', from: '2026-08-02', to: '2026-08-02', reason: 'annual' }],
+    });
+    expect(r.assignments).toHaveLength(1);
+    expect(r.assignments[0].helperId).toBeNull();
+  });
+
+  it('the SAME helper is eligible again on a date OUTSIDE the leave range', () => {
+    const r = assignFleet({
+      groups: [group('A', { date: '2026-08-05' })],
+      lorries: [lorry('l1')],
+      drivers: [driver('d1')],
+      helpers: [helper('h1')],
+      config: CFG,
+      helperLeave: [{ helperId: 'h1', from: '2026-08-01', to: '2026-08-03', reason: 'MC' }],
+    });
+    expect(r.assignments[0].helperId).toBe('h1');
+  });
+});
+
 describe('assignFleet — A3 3PL overflow (own-fleet slots)', () => {
   it('spills the group beyond the fleet slots to overflow (default 1 trip/lorry/day)', () => {
     const r = assignFleet({

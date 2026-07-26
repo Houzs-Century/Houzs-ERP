@@ -510,7 +510,7 @@ deliveryZones.post('/sequence-assign', async (c) => {
   const groupDates = groups.map((g) => g.date).filter((d) => ISO_DATE.test(d));
   const leaveFrom = groupDates.length ? groupDates.reduce((m, d) => (d < m ? d : m), groupDates[0]) : startDate;
   const leaveTo = groupDates.length ? groupDates.reduce((m, d) => (d > m ? d : m), groupDates[0]) : startDate;
-  const { ranges: driverLeave, excludedDrivers } = await loadDriverLeave(sb, { from: leaveFrom, to: leaveTo });
+  const { ranges: driverLeave, excludedDrivers, helperRanges: helperLeave, excludedHelpers } = await loadDriverLeave(sb, { from: leaveFrom, to: leaveTo });
 
   // A3: the region's 3PL carriers — OUTSOURCE / non-internal lorries the
   // dispatcher can assign overflow trips to. Depot-scoped when a depot is picked,
@@ -538,6 +538,7 @@ deliveryZones.post('/sequence-assign', async (c) => {
     helpers,
     config: { defaultMaxSets, defaultMaxRevenueCenti, maxTripsPerLorryPerDay: parsed.data.maxTripsPerLorryPerDay },
     driverLeave,
+    helperLeave,
   });
 
   // 4. Residence rules — building_type -> service duration + window.
@@ -675,10 +676,11 @@ deliveryZones.post('/sequence-assign', async (c) => {
     dispatchableCount: availLorries.filter((l) => l.dispatchable).length,
     trips,
     excludedLorries: assigned.excludedLorries,
-    // A3: drivers withheld from the auto-pick because they are on leave, and the
-    // groups the own fleet could not cover (3PL-assignment candidates) plus the
-    // region's available 3PL carriers.
+    // A3/WS2: drivers and helpers withheld from the auto-pick because they are on
+    // leave, and the groups the own fleet could not cover (3PL-assignment
+    // candidates) plus the region's available 3PL carriers.
     excludedDrivers,
+    excludedHelpers,
     overflow: assigned.overflow,
     carriers,
     unassigned: [
