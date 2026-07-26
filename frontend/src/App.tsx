@@ -111,6 +111,8 @@ const ScmDeliveryPlanningRegionsV2 = lazy(() => import("./pages/scm-v2/DeliveryP
 const ScmDeliveryResidenceRulesV2 = lazy(() => import("./pages/scm-v2/DeliveryResidenceRules").then((m) => ({ default: m.DeliveryResidenceRules })));
 // Fleet Module A1 — postcode->zone map admin + auto-propose delivery-date + lock.
 const ScmDeliveryZonesV2 = lazy(() => import("./pages/scm-v2/DeliveryZones").then((m) => ({ default: m.DeliveryZones })));
+// Fleet Module C — delivery rate-card config + cost calculator + 3PL reconciliation.
+const ScmDeliveryRateCardsV2 = lazy(() => import("./pages/scm-v2/DeliveryRateCards").then((m) => ({ default: m.DeliveryRateCards })));
 const ScmAutoScheduleV2 = lazy(() => import("./pages/scm-v2/AutoSchedule").then((m) => ({ default: m.AutoSchedule })));
 const ScmDriverLeaveV2 = lazy(() => import("./pages/scm-v2/DriverLeave").then((m) => ({ default: m.DriverLeave })));
 const ScmFleetV2 = lazy(() => import("./pages/scm-v2/Fleet").then((m) => ({ default: m.Fleet })));
@@ -631,6 +633,7 @@ export default function App() {
         <Route path="/scm/delivery-planning-regions" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningRegionsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-residence-rules"  element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryResidenceRulesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-zones"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryZonesV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/delivery-rate-cards"       element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryRateCardsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/auto-schedule"             element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmAutoScheduleV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/driver-leave"              element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDriverLeaveV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetV2 /></Scm2990Shell></ScmGuard>} />

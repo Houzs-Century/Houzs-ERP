@@ -7,6 +7,12 @@ the shape).
 
 Verified against `main` @ `8f8427ed`. Line citations are that commit.
 
+> The delivery-COST layer — rate-card config, the pure cost calculator, and the
+> 3PL charge reconciliation + COGS-attribution seam — is Fleet **Module C**,
+> documented separately in [`delivery-rate-card.md`](./delivery-rate-card.md).
+> It reads `scm.trips.three_pl_cost_centi` (captured in A3) but does NOT touch
+> the FIFO money-path.
+
 > Conventions: everything here lives in the **`scm`** schema and is served under
 > `/api/scm/*` via the PostgREST client (`c.get('supabase')`) — with two
 > deliberate exceptions that read `public.*` through the D1 shim
