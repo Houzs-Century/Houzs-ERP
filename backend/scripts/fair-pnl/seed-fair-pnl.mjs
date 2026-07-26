@@ -30,6 +30,10 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const rows = JSON.parse(fs.readFileSync(path.join(HERE, "seed_data_final.json"), "utf8"));
 
 const norm = (s) => String(s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+// Malaysian state / region tokens the FAIR PNL venues tack on the end but the
+// maintained venue list usually omits ("AEON BIG KEPONG KL" -> "AEON BIG KEPONG").
+const STATE_TAIL = /\b(KL|PG|JB|PJ|MLK|NS|SWK|SEL|SELANGOR|PENANG|JOHOR|KEDAH|PERAK|PERLIS|PAHANG|MELAKA|MALACCA|KELANTAN|TERENGGANU|SABAH|SARAWAK|NEGERI\s*SEMBILAN|PUTRAJAYA|IPOH|KUANTAN|SEREMBAN)\b\s*$/i;
+const venueNorm = (s) => { let v = String(s ?? "").trim(); for (let i = 0; i < 3; i++) v = v.replace(STATE_TAIL, "").trim(); return norm(v); };
 const slug = (s) => String(s ?? "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "");
 const sen = (rm) => Math.round(Number(rm || 0) * 100);
 const rm = (n) => `RM ${Number(n).toLocaleString("en-MY", { maximumFractionDigits: 0 })}`;
@@ -46,7 +50,7 @@ async function main() {
   ]);
   const companyId = houzs[0]?.id ?? null;
   const brandMap = new Map(brands.map((b) => [norm(b.name), b.name]));
-  const venueMap = new Map(venues.map((v) => [norm(v.name), v])); // -> {name, state}
+  const venueMap = new Map(venues.map((v) => [venueNorm(v.name), v])); // state-tail-stripped key -> {name, state}
   const orgMap = new Map(organizers.map((o) => [norm(o.name), o.name]));
   const etypeMap = new Map(etypes.map((e) => [norm(e.name), e])); // -> {id, name, slug}
   const existKey = new Set(existing.map((e) => `${norm(e.brand)}|${norm(e.venue)}|${String(e.start_date || "").slice(0, 10)}`));
@@ -57,7 +61,7 @@ async function main() {
   let skip = 0, insSales = 0;
   for (const r of rows) {
     const b = brandMap.get(norm(r.brand));
-    const v = venueMap.get(norm(r.venue));
+    const v = venueMap.get(venueNorm(r.venue));
     const o = orgMap.get(norm(r.organizer));
     const et = etypeMap.get(norm(r.event_type));
     if (!b) un.brand.add(r.brand);
@@ -78,6 +82,12 @@ async function main() {
     console.log(`  ${label}: ${set.size} UNMATCHED — add in Project Maintenance or give a mapping:`);
     [...set].sort().forEach((x) => console.log(`      - ${JSON.stringify(x)}`));
   };
+  console.log(`\n[maintained lists on prod — to build the mapping]`);
+  console.log(`  event_types: ${etypes.map((e) => `${e.name}(${e.slug})`).join(", ")}`);
+  console.log(`  brands (${brands.length}): ${brands.map((b) => b.name).join(", ")}`);
+  console.log(`  organizers (${organizers.length}): ${organizers.map((o) => o.name).join(", ")}`);
+  console.log(`  venues: ${venues.length} maintained; sample: ${venues.slice(0, 30).map((v) => v.name).join(" | ")}`);
+
   console.log(`\n[match vs maintained picker lists]`);
   rep("BRAND", un.brand, brandMap.size);
   rep("VENUE", un.venue, venueMap.size);
