@@ -1404,29 +1404,39 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   }
   const whereSql = where.join(" AND ");
 
-  // Sum income and cost per project via a single query. Keep
-  // project_finance as the rollup source — it's already kept in
-  // sync by the ledger write path, and it's 1:1 with projects so
-  // this joins clean.
+  // Sum income and cost per project in ONE pass. A single LEFT JOIN +
+  // conditional aggregates (GROUP BY the project PK) — NOT correlated
+  // subqueries. #1320 used three subqueries per project, which the Worker
+  // timed out on wide date ranges (hundreds of projects x 3 scans); this
+  // scans project_finance_lines once. Postgres permits selecting p.* /
+  // et.name alongside GROUP BY p.id because id is the primary key (et.name
+  // is added explicitly since it comes from the joined table). The line
+  // predicate (archived filter) lives in the JOIN so projects with no
+  // matching line still return a zero row. rental is a NON-COGS cost line,
+  // so it is a SUBSET of `cost` (broken out for visibility, not removed).
   const rows = await c.env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue,
             p.start_date, p.end_date, p.size_sqm,
             et.name as event_type_name,
-            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
-                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'income'), 0) as income,
-            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
-                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
-                         AND l.category IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')), 0) as cogs,
-            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
-                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
-                         AND l.category NOT IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')), 0) as cost,
+            COALESCE(SUM(CASE WHEN l.kind = 'income' THEN l.amount END), 0) as income,
+            COALESCE(SUM(CASE WHEN l.kind = 'cost'
+                               AND l.category IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')
+                          THEN l.amount END), 0) as cogs,
+            COALESCE(SUM(CASE WHEN l.kind = 'cost' AND l.category = 'rental'
+                          THEN l.amount END), 0) as rental,
+            COALESCE(SUM(CASE WHEN l.kind = 'cost'
+                               AND l.category NOT IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')
+                          THEN l.amount END), 0) as cost,
             CASE WHEN p.end_date IS NOT NULL AND p.start_date IS NOT NULL
                  THEN CAST(julianday(p.end_date) - julianday(p.start_date) + 1 AS INTEGER)
                  ELSE NULL
             END as duration_days
        FROM projects p
        LEFT JOIN project_event_types et ON et.id = p.event_type_id
-      WHERE ${whereSql}${coSql}`
+       LEFT JOIN project_finance_lines l
+              ON l.project_id = p.id AND l.archived_at IS NULL
+      WHERE ${whereSql}${coSql}
+      GROUP BY p.id, et.name`
   )
     .bind(...binds)
     .all<{
@@ -1442,6 +1452,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
       event_type_name: string | null;
       income: number;
       cogs: number;
+      rental: number;
       cost: number;
       duration_days: number | null;
     }>();
@@ -1452,6 +1463,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   const total_projects = projects.length;
   const total_income = projects.reduce((s, r) => s + (r.income || 0), 0);
   const total_cogs = projects.reduce((s, r) => s + (r.cogs || 0), 0);
+  const total_rental = projects.reduce((s, r) => s + (r.rental || 0), 0);
   const total_cost = projects.reduce((s, r) => s + (r.cost || 0), 0);
   const total_gp = total_income - total_cogs;
   const total_profit = total_income - total_cogs - total_cost; // NP = Sales - COGS - other costs
@@ -1460,15 +1472,16 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   // Group helper
   function groupBy<K extends string>(
     keyFn: (r: (typeof projects)[number]) => K | null
-  ): { key: K; count: number; income: number; cogs: number; cost: number; gp: number; profit: number; margin: number | null }[] {
-    const map = new Map<K, { count: number; income: number; cogs: number; cost: number }>();
+  ): { key: K; count: number; income: number; cogs: number; rental: number; cost: number; gp: number; profit: number; margin: number | null }[] {
+    const map = new Map<K, { count: number; income: number; cogs: number; rental: number; cost: number }>();
     for (const r of projects) {
       const k = keyFn(r);
       if (!k) continue;
-      const cur = map.get(k) ?? { count: 0, income: 0, cogs: 0, cost: 0 };
+      const cur = map.get(k) ?? { count: 0, income: 0, cogs: 0, rental: 0, cost: 0 };
       cur.count += 1;
       cur.income += r.income || 0;
       cur.cogs += r.cogs || 0;
+      cur.rental += r.rental || 0;
       cur.cost += r.cost || 0;
       map.set(k, cur);
     }
@@ -1478,6 +1491,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
         count: v.count,
         income: v.income,
         cogs: v.cogs,
+        rental: v.rental,
         cost: v.cost,
         gp: v.income - v.cogs,
         profit: v.income - v.cogs - v.cost, // NP
@@ -1507,6 +1521,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
       start_date: r.start_date,
       income: r.income,
       cogs: r.cogs,
+      rental: r.rental,
       cost: r.cost,
       gp: r.income - r.cogs,
       profit: r.income - r.cogs - r.cost,
@@ -1528,6 +1543,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
       projects: total_projects,
       income: total_income,
       cogs: total_cogs,
+      rental: total_rental,
       cost: total_cost,
       gp: total_gp,
       profit: total_profit,
