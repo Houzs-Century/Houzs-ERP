@@ -72,7 +72,7 @@ const RULE_TYPES: readonly RateRuleType[] = [
 const RULE_TYPE_SET = new Set<string>(RULE_TYPES);
 
 const CARD_COLS =
-  'id, name, carrier_lorry_id, carrier_label, is_own_fleet, basis, aggregation, ' +
+  'id, name, carrier_lorry_id, carrier_company_id, carrier_label, is_own_fleet, basis, aggregation, ' +
   'min_charge_centi, cap_centi, rounding, is_active, notes, created_at, updated_at';
 const RULE_COLS =
   'id, card_id, rule_type, tier_position, bracket_min, bracket_max, zone, amount_centi, params, sort_order';
@@ -90,6 +90,7 @@ function cardOut(r: Row) {
     id: String(r.id),
     name: String(r.name ?? ''),
     carrierLorryId: s(r.carrier_lorry_id),
+    carrierCompanyId: s(r.carrier_company_id),
     carrierLabel: s(r.carrier_label),
     isOwnFleet: r.is_own_fleet === true,
     basis: (String(r.basis ?? 'SET') === 'ITEM' ? 'ITEM' : 'SET') as 'ITEM' | 'SET',
@@ -154,7 +155,13 @@ deliveryRateCards.get('/meta', async (c) => {
     type: s(r.type),
     isInternal: r.is_internal !== false,
   }));
-  return c.json({ carriers, ruleTypes: RULE_TYPES, zones: [...ZONE_SET] });
+  // WS4b: 3PL companies — a card is now priced per company (its lorries inherit).
+  const { data: coData } = await paginateAll<Row>((lo, hi) =>
+    scopeToCompany(sb.from('threepl_companies').select('id, name, is_active'), c)
+      .eq('is_active', true).order('name', { ascending: true }).range(lo, hi),
+  );
+  const companies = (coData ?? []).map((r) => ({ id: String(r.id), name: String(r.name ?? '') }));
+  return c.json({ carriers, companies, ruleTypes: RULE_TYPES, zones: [...ZONE_SET] });
 });
 
 // ── GET / — list the company's rate cards (each with its rule count). ────────
@@ -181,6 +188,7 @@ deliveryRateCards.get('/', async (c) => {
 const cardCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   carrierLorryId: z.string().uuid().nullable().optional(),
+  carrierCompanyId: z.string().uuid().nullable().optional(),
   carrierLabel: z.string().trim().max(120).nullable().optional(),
   isOwnFleet: z.boolean().optional(),
   basis: z.enum(['ITEM', 'SET']).optional(),
@@ -207,6 +215,7 @@ deliveryRateCards.post('/', async (c) => {
     company_id: co.companyId,
     name: p.name,
     carrier_lorry_id: p.carrierLorryId ?? null,
+    carrier_company_id: p.carrierCompanyId ?? null,
     carrier_label: p.carrierLabel ?? null,
     is_own_fleet: p.isOwnFleet ?? false,
     basis: p.basis ?? 'SET',
@@ -242,6 +251,7 @@ deliveryRateCards.patch('/:id', async (c) => {
   const updates: Record<string, unknown> = {};
   if (p.name !== undefined) updates.name = p.name;
   if (p.carrierLorryId !== undefined) updates.carrier_lorry_id = p.carrierLorryId;
+  if (p.carrierCompanyId !== undefined) updates.carrier_company_id = p.carrierCompanyId;
   if (p.carrierLabel !== undefined) updates.carrier_label = p.carrierLabel;
   if (p.isOwnFleet !== undefined) updates.is_own_fleet = p.isOwnFleet;
   if (p.basis !== undefined) updates.basis = p.basis;
@@ -469,6 +479,20 @@ deliveryRateCards.get('/reconcile', async (c) => {
   const cards = (cardRows ?? []).map(cardOut);
   const cardByLorry = new Map<string, ReturnType<typeof cardOut>>();
   for (const cd of cards) if (cd.carrierLorryId) cardByLorry.set(cd.carrierLorryId, cd);
+  // WS4b: a card priced per 3PL COMPANY applies to every lorry under it. Resolve
+  // each trip's lorry -> its threepl_company_id, and match company cards first
+  // (fall back to a per-lorry card for own-fleet / legacy cards).
+  const cardByCompany = new Map<string, ReturnType<typeof cardOut>>();
+  for (const cd of cards) if (cd.carrierCompanyId) cardByCompany.set(cd.carrierCompanyId, cd);
+  const lorryIds = [...new Set(trips.map((t) => s(t.lorry_id)).filter((x): x is string => !!x))];
+  const lorryCompany = new Map<string, string>();
+  if (lorryIds.length) {
+    const { data: lorryRows } = await sb.from('lorries').select('id, threepl_company_id').in('id', lorryIds);
+    for (const lr of (lorryRows ?? []) as Row[]) {
+      const cid = s(lr.threepl_company_id);
+      if (cid) lorryCompany.set(String(lr.id), cid);
+    }
+  }
   const { data: ruleRows } = cards.length
     ? await paginateAll<Row>((lo, hi) => scopeToCompany(rc(sb).from('delivery_rate_rules').select(RULE_COLS), c).in('card_id', cards.map((x) => x.id)).range(lo, hi))
     : { data: [] as Row[] };
@@ -534,7 +558,8 @@ deliveryRateCards.get('/reconcile', async (c) => {
   const rows = trips.map((t) => {
     const tripId = String(t.id);
     const lorryId = s(t.lorry_id);
-    const card = lorryId ? cardByLorry.get(lorryId) ?? null : null;
+    const companyId = lorryId ? lorryCompany.get(lorryId) ?? null : null;
+    const card = (companyId ? cardByCompany.get(companyId) : null) ?? (lorryId ? cardByLorry.get(lorryId) : null) ?? null;
     const billedCenti = Number(t.three_pl_cost_centi ?? 0);
     const soDocs = [...new Set((doIdsByTrip.get(tripId) ?? []).map((d) => soDocByDoId.get(d)).filter((v): v is string => !!v))];
     // Aggregate the trip's sets across its drops; destination zone from the first drop.
