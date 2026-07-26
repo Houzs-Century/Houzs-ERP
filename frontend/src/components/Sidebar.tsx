@@ -58,8 +58,11 @@ import {
   LayoutDashboard,
   BarChart3,
   Map,
+  MapPinned,
   Megaphone,
   History,
+  Wand2,
+  CalendarOff,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -519,6 +522,8 @@ export const NAV_TABS: NavTab[] = [
         children: [
           { to: "/scm/delivery-planning", label: "Delivery Planning", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/trips", label: "Trips", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/auto-schedule", label: "Auto-Schedule", icon: Wand2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/fleet-day", label: "Fleet Map", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/fleet", label: "Fleet", icon: Truck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/lorry-capacity", label: "Lorry Capacity", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           /* "Drivers" (/scm/drivers) retired 2026-07-17 — it duplicated the Drivers
@@ -528,6 +533,9 @@ export const NAV_TABS: NavTab[] = [
              row in this group, so no permission moves. Do not re-add. */
           { to: "/scm/delivery-planning-regions", label: "Regions", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/delivery-residence-rules", label: "Residence Rules", icon: Building2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/delivery-zones", label: "Delivery Zones", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/delivery-rate-cards", label: "Rate Cards", icon: Calculator, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/driver-leave", label: "Driver Leave", icon: CalendarOff, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
         ],
       },
       {

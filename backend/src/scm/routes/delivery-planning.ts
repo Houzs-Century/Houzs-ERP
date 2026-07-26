@@ -1706,6 +1706,12 @@ const scheduleSchema = z.object({
   tripId: z.string().uuid().nullable().optional(),
   lorryId: z.string().uuid().nullable().optional(),
   driverId: z.string().uuid().nullable().optional(),
+  // Fleet A2: the crew the assigner (or the dispatcher's override) paired to this
+  // lorry-day. Set on a trip CREATE only (like driverId) — appending a stop to an
+  // existing trip never rewrites its crew. Existing scm.trips columns; additive,
+  // so a schedule that omits them behaves exactly as before.
+  helper1Id: z.string().uuid().nullable().optional(),
+  helper2Id: z.string().uuid().nullable().optional(),
   tripDate: z.string().nullable().optional(),       // trip date if creating (defaults to scheduleDate)
   warehouseId: z.string().uuid().nullable().optional(),  // trip origin region (defaults from the DO warehouse)
   // ── Phase 3 "Propose times + route" apply ────────────────────────────────
@@ -1719,6 +1725,12 @@ const scheduleSchema = z.object({
   etaOffsetS: z.number().int().min(0).nullable().optional(),
   legDistanceM: z.number().int().min(0).nullable().optional(),
   legDurationS: z.number().int().min(0).nullable().optional(),
+  // ── Fleet A3: 3PL overflow ─────────────────────────────────────────────────
+  // The CAPTURED cost (integer sen) of a trip assigned to a 3PL carrier — an
+  // OUTSOURCE lorry (is_internal=false). Written on a trip CREATE only, alongside
+  // the derived is_outsourced flag. This is the SEAM Module C's rate-card will
+  // compute against. Omitted on an own-fleet schedule -> NULL, behaviour unchanged.
+  threePlCostCenti: z.number().int().min(0).nullable().optional(),
 });
 
 /* is_outsourced derives from the lorry's is_internal (NOT is_internal). */
@@ -2093,10 +2105,16 @@ async function scheduleOntoTrip(
         trip_date:     tripDate,
         lorry_id:      p.lorryId,
         driver_id:     p.driverId ?? null,
+        helper_1_id:   p.helper1Id ?? null,
+        helper_2_id:   p.helper2Id ?? null,
         warehouse_id:  tripWarehouseId,
         trip_type:     'DELIVERY',
         status:        'PLANNED',
         is_outsourced: isOutsourced,
+        /* A3: the captured 3PL cost — only meaningful for an outsourced trip. Kept
+           NULL for an own-fleet trip even if a value slipped through, so the seam
+           column never carries a cost against internal capacity. */
+        three_pl_cost_centi: isOutsourced ? (p.threePlCostCenti ?? null) : null,
         created_by:    user?.id ?? null,
         }).select('id, trip_no').single(),
       );

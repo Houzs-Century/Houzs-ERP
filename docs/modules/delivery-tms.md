@@ -7,6 +7,12 @@ the shape).
 
 Verified against `main` @ `8f8427ed`. Line citations are that commit.
 
+> The delivery-COST layer — rate-card config, the pure cost calculator, and the
+> 3PL charge reconciliation + COGS-attribution seam — is Fleet **Module C**,
+> documented separately in [`delivery-rate-card.md`](./delivery-rate-card.md).
+> It reads `scm.trips.three_pl_cost_centi` (captured in A3) but does NOT touch
+> the FIFO money-path.
+
 > Conventions: everything here lives in the **`scm`** schema and is served under
 > `/api/scm/*` via the PostgREST client (`c.get('supabase')`) — with two
 > deliberate exceptions that read `public.*` through the D1 shim
@@ -23,10 +29,15 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Desktop board | `frontend/src/pages/scm-v2/DeliveryPlanning.tsx` | Thin host: PageHeader + data fetch (region server-side) + selection + drawers, rendering the shared **`DeliveryPlanningBoard`**. The 4 state tabs + region chips + inline Driver / Lorry cells + expand + multiselect all live in the shared component now. |
 | Shared board grid | `frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx` | The board itself, extracted so it is reused UNCHANGED by both DeliveryPlanning and the Trips "To schedule" panel: the CONFIG-DRIVEN region chip row, the optional 4 state-tab rail, the compact bulk-edit bar (multiselect), the inline Excel-style cell editors, the SO line-item drill-down and the full HC column set. Props: `stateTabs?` (present → tab row + client state-filter; omitted → locked to the passed single-state fetch), `selectedKeys`/`onToggle`/`onToggleAll`/`onClearSelection`, `bulkExtras` (page-injected Convert / Schedule buttons), `contextMenu`, `onRowDoubleClick`. The page owns the `useDeliveryPlanning` fetch so `region` stays a server-side filter. |
 | Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx:51` | A trip = one lorry-day with an ordered stop list. Status tabs order `IN_PROGRESS` before `PLANNED` (default tab still `PLANNED`). Carries the **"To schedule"** panel — now the EXACT board scoped to PENDING_SCHEDULE — see below. |
+| Desktop fleet day-map (A4) | `frontend/src/pages/scm-v2/FleetDay.tsx` | Route `/scm/fleet-day`, nav "Fleet Map" under Transportation. Pick a date + depot → every trip that day, each lorry's route on ONE Google map in a distinct colour (numbered stops, depot origin), a side panel of the day's lorries (colour swatch + crew + drops + revenue), and a focused-trip stop list. READ-ONLY view over `GET /trips/day` — reuses the geocode/route infra and `FleetDayMap` (the multi-route sibling of `ScheduleRouteMap`). Creates / reschedules NOTHING. |
+| Desktop driver run-sheet (A4) | `frontend/src/pages/scm-v2/FleetRunSheet.tsx` | Route `/scm/fleet-run-sheet?date=&warehouseId=&trip=`. The printable paper the driver takes: one clean sheet PER lorry (`@media print`, one lorry per page) — trip summary (date, driver, helper, plate, drops, revenue), the lorry's route map, and the ordered stop table (no., customer, full address, phone, house type, time window, ETA, access note). Same `GET /trips/day` data as the day-map. |
 | Desktop fleet masters | `frontend/src/pages/scm-v2/Fleet.tsx:78` | `DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`; `LorryDetail.tsx:71` mounts as a drawer from `Fleet.tsx:613`. |
 | Desktop regions | `frontend/src/pages/scm-v2/DeliveryPlanningRegions.tsx:40` | Region master + per-state mapping editor. |
 | Desktop residence rules | `frontend/src/pages/scm-v2/DeliveryResidenceRules.tsx` | Per residence / building-type CONFIG the Phase-3 scheduler will read: service duration (shown in hours, stored as minutes), optional no-delivery time windows, lift-booking / registration flags. Owner-editable master, mirrors the Regions page (DataGrid + inline edit buffers + create drawer). Route `/scm/delivery-residence-rules`, nav "Residence Rules" under Transportation. NOT wired to any scheduler yet. |
 | Desktop capacity | `frontend/src/pages/scm-v2/LorryCapacity.tsx:140` | |
+| Desktop delivery zones (A1) | `frontend/src/pages/scm-v2/DeliveryZones.tsx` | Route `/scm/delivery-zones`, nav "Delivery Zones" under Transportation. Owner-editable postcode-prefix -> area-zone map (`scm.delivery_zone_postcodes`, mig 0205). Each row maps a first-two-digit postcode RANGE to one of the 14 zones; the classifier picks the NARROWEST matching range so a fine rule overrides a broad one. Ships with a "using the built-in default" banner + one-click "load the default map". Mirrors the Residence Rules master (DataGrid + inline edit + create drawer). |
+| Desktop auto-schedule (A1) | `frontend/src/pages/scm-v2/AutoSchedule.tsx` | Route `/scm/auto-schedule`, nav "Auto-Schedule" under Transportation. Pick a depot + start date -> the backend derives each PENDING_SCHEDULE order's zone (postcode) + set count (SO lines) and PACKS them into lorry-days under each lorry's capacity ceiling. Renders the REVERSIBLE proposal grouped day -> group -> lorry (fill vs ceiling, partial / over-ceiling badges), an "attention" list for unzoned orders, per-day LOCK/unlock, and "Apply proposed dates" (fans out `useScheduleDelivery` -> `amended_delivery_date`, no lorry assignment). Reads the SAME board (`useDeliveryPlanning` state=PENDING_SCHEDULE) — no parallel queue. **A3:** "Sequence & assign" also surfaces on-leave drivers, a "Max trips / lorry / day" control, and a 3PL-overflow section (carrier picker + captured cost). |
+| Desktop driver leave (A3) | `frontend/src/pages/scm-v2/DriverLeave.tsx` | Route `/scm/driver-leave`, nav "Driver Leave" under Transportation. The date-ranged driver-absence master (`scm.driver_leave`, mig 0206) the A2 auto-assigner reads to skip on-leave drivers. Create form (driver + from/to + reason) + table + remove. Mirrors the Residence Rules / Delivery Zones masters. |
 | Mobile run-sheet | `frontend/src/mobile/MobileDeliveryPlanning.tsx:277` | 2,408 lines. Driver job-card run sheet. Carries the Phase-4 `MobileTrackingBanner` in its header. |
 | Mobile POD | `frontend/src/mobile/MobilePOD.tsx:71` | Photo / signature capture. |
 | Mobile GPS capture | `frontend/src/mobile/MobileTrackingBanner.tsx` | Phase-4 driver-capture banner. Self-gating: finds the driver's active trip + runs `useTripLocationCapture`; renders + captures only when a trip is IN_PROGRESS and the page is open. |
@@ -296,9 +307,15 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | GET/POST/PATCH/DELETE | `/delivery-residence-rules`, `/…/:id` | `delivery-residence-rules.ts` | Per-building-type CONFIG (mig 0196): service duration + access windows + lift/registration flags. Per-company scoped (scopeToCompany read / scopeToCompanyId write). The Phase-3 scheduler READS this; no scheduler is wired here. NOT openRead — unlike the region master this is not a cross-page picklist. |
 | GET/POST/PATCH | `/drivers` | `drivers.ts:26,40,71` | Driver master |
 | GET/POST/PATCH | `/helpers` | `helpers.ts:23,35,64` | Helper master |
-| GET/POST/PATCH | `/lorries` | `lorries.ts:85,100,143` | Lorry master |
+| GET/POST/PATCH | `/lorries` | `lorries.ts:85,100,143` | Lorry master. **A1 (mig 0205):** POST/PATCH also accept `maxSets`, `maxRevenueCenti`, `capacityLayer` (SETS\|REVENUE\|BOTH) — the per-lorry delivery capacity ceilings the auto-propose packer reads. NULL max_* => the packer uses its config default (10 sets / RM30k) |
+| GET/POST/PATCH/DELETE | `/delivery-zones`, `/…/:id` | `delivery-zones.ts` | **A1.** The postcode-prefix -> zone map CRUD (mig 0205). GET returns `{ zones, usingDefault, defaultMap, knownZones }`; writes validate `zone` against the 14 canonical zones. Company-scoped |
+| POST | `/delivery-zones/propose` | `delivery-zones.ts` | **A1 auto-propose.** Body `{ soDocNos[], depotWarehouseId?, startDate?, defaultMaxSets?, defaultMaxRevenueCenti? }`. Loads the SOs + their lines, derives each order's zone (postcode) + set count (frame/mattress/sofa), loads the depot's active in-house lorries, and PACKS via the pure `capacity-pack.ts` (shared `loadAndPack` helper). Returns a DISPLAY-ONLY proposal (`days[] · proposals[] · unassigned[]`). Writes NOTHING |
+| POST | `/delivery-zones/sequence-assign` | `delivery-zones.ts` | **A2 sequence + assign / A3 leave + overflow.** Body adds `departTime?` + `maxTripsPerLorryPerDay?`. RE-PACKS (shared `loadAndPack`), crews each group with an AVAILABLE lorry + driver + helper (`fleet-assign.ts`, excluding Module-B non-dispatchable lorries AND on-leave drivers), spilling groups the own fleet can't cover to 3PL `overflow[]`, and sequences each trip (geocode cache-first + ONE Distance Matrix call per trip + `sequence-stops.ts`) with residence-rule windows. Returns DISPLAY-ONLY `{ trips[] · excludedLorries[] · excludedDrivers[] · overflow[] · carriers[] · unassigned[] }`. `GOOGLE_MAPS_API_KEY` unset -> crewed + grouped, no route. Writes NOTHING |
+| GET/POST/DELETE | `/driver-leave` | `driver-leave.ts` | **A3 driver-leave master.** CRUD over `scm.driver_leave` (mig 0206) — the date-ranged absences the A2 assigner reads to skip on-leave drivers. Company-scoped, `scm.transportation.drivers` gate |
+| GET/POST/DELETE | `/delivery-zones/locks`, `/…/locks/:id` | `delivery-zones.ts` | **A1.** Reversible day locks (`scm.delivery_day_locks`, mig 0205). POST is idempotent (upsert on `(company, warehouse, date)`); DELETE unlocks |
 | GET | `/lorry-service-records` | `lorry-service-records.ts` | Service history (mig 0121) |
 | GET/POST/PATCH/DELETE | `/trips`, `/trips/:id`, `/trips/:id/stops`, `/trips/:id/status` | `trips.ts:101,141,175,234,277,325,398,412` | Trip (lorry-day) CRUD + stop ordering |
+| GET | `/trips/day` | `trips.ts` (before `/:id`) | **Fleet A4 day-view.** `?date=YYYY-MM-DD&warehouseId=<id>` → `{ date, configured, warehouses, trips[] }`: every non-cancelled trip that day with its ordered stops enriched (customer / phone / house type / window / ETA / revenue) and geocoded (cache-first, gated on `GOOGLE_MAPS_API_KEY`). READ-only; enriches phone + house type by resolving each stop's `do_id → delivery_orders.so_doc_no → mfg_sales_orders`, and the window from `scm.delivery_residence_rules`. Per-assignee row scope like the trip list. Shaping is the pure `scm/lib/fleet-day-view.ts` (`assembleDayView`). |
 | POST | `/trips/:id/optimize-route` | `trips.ts:438` | Google route optimisation; returns `{configured:false}` when `GOOGLE_MAPS_API_KEY` is unset |
 | POST | `/trips/propose-schedule` | `trips.ts` | **Phase 3 smart scheduler.** Selected SO stops + depot → geocode (cached) + residence-rule service/windows + ONE Distance Matrix call → sequenced route + per-stop arrival/start/finish times. `{configured:false}` with no key; nothing written |
 | POST | `/trips/:id/location` | `trips.ts` | **Phase 4 live GPS.** A driver on an IN_PROGRESS trip posts one ping `{lat,lng,accuracy?,recorded_at?}`. Range-validated + server-side rate-capped (pings <10s apart ignored); accepted ONLY for an IN_PROGRESS trip; row-scoped to the caller's own trip. A bad ping is rejected cleanly (never a 500). No Google dependency |
@@ -593,6 +610,9 @@ request (§3).
 | `scm.delivery_residence_rules` | `0196`. Per residence / building-type delivery CONFIG the Phase-3 scheduler will read. `building_type` (keyed on the SO's `building_type` UDF values), `service_duration_minutes` (default 90; Landed seeded 60), `earliest_delivery_time` / `latest_delivery_time` (nullable), `requires_lift_booking`, `requires_registration`, `notes`, `is_active`, audit cols + `company_id`. Per-company UNIQUE `(company_id, building_type)`. Seeded for every active company (Condo / Landed / Apartment / Office / Shop / Other) — canonical config, editable in the Residence Rules admin page. |
 | `scm.geocode_cache` | `0197`. Phase 3 GEOCODE CACHE: `normalized_address` (UNIQUE) → `lat`/`lng` (+ `formatted_address`, `location_type`). NOT company-scoped (an address is one point on Earth). `geocodeAddressCached` reads it before any Google call, so a given address geocodes once ever |
 | `scm.trip_locations` | `0199`. Phase 4 LIVE GPS ping log — APPEND-ONLY (one row per report, never updated). `company_id` (scoped like the rest of scm), `trip_id` FK ON DELETE CASCADE, `driver_id` (the trip's driver snapshot, nullable), `user_id` (BIGINT — the public.users id of the posting phone), `lat`/`lng`, `accuracy_m`, `recorded_at` (DEVICE clock), `received_at` (SERVER clock — "last seen" is measured from here). Index `(trip_id, recorded_at DESC)` answers "latest ping for this trip" in one seek; `(company_id, recorded_at DESC)` serves the board-level read. `RE-CHECK NUMBER AT MERGE` — 0199 was the next free number above 0198 at branch time |
+| `scm.delivery_zone_postcodes` | `0205` (Fleet A1). Company-editable postcode-prefix -> area-zone map. `zone` (TEXT, one of the 14 zones), `prefix_start`/`prefix_end` (SMALLINT 0-99, the first two digits of a postcode), `label`, `is_active`, audit + `company_id`. UNIQUE `(company_id, zone, prefix_start, prefix_end)`. Ships EMPTY — the DEFAULT Malaysian map is data in `backend/src/scm/lib/zone-classify.ts` (`DEFAULT_ZONE_PREFIX_MAP`), installed by `backend/scripts/seed-delivery-zones.mjs` (idempotent, DRY-RUN default); `zoneForAddress` falls back to that default until the owner customises |
+| `scm.lorries` capacity cols | `0205` (Fleet A1). `max_sets` INT NULL, `max_revenue_centi` BIGINT NULL, `capacity_layer` TEXT NOT NULL DEFAULT 'SETS' CHECK (SETS\|REVENUE\|BOTH). NULL max_* => packer uses the config default; no backfill needed |
+| `scm.delivery_day_locks` | `0205` (Fleet A1). A REVERSIBLE freeze on a `(company_id, warehouse_id, delivery_date)`. Presence = locked; unlock = DELETE. UNIQUE `(company_id, warehouse_id, delivery_date)` |
 | `scm.delivery_legs` | `0053:123`. The removed multi-hop feature; table still present, unused |
 
 Enums (`0053:27-33`): `delivery_state`, `lorry_type`, `delivery_leg_kind`,
@@ -735,7 +755,7 @@ Where it is enforced:
 
 | Surface | Gate | File |
 |---|---|---|
-| `/scm/delivery-planning`, `/scm/trips`, `/scm/delivery-planning-regions`, `/scm/fleet`, `/scm/lorry-capacity` | `<ScmGuard area="scm.transportation.drivers">` | `App.tsx:601-605` |
+| `/scm/delivery-planning`, `/scm/trips`, `/scm/fleet-day`, `/scm/fleet-run-sheet`, `/scm/delivery-planning-regions`, `/scm/fleet`, `/scm/lorry-capacity` | `<ScmGuard area="scm.transportation.drivers">` | `App.tsx:601-605` |
 | `ScmGuard` | delegates to `<Guard perm="scm.access" anyAccess={[area]}>` — an OR of the flat permission and the server's `page_access` map | `App.tsx:240-269`, `Guard` at `:183-222` |
 | Sidebar entries | `anyPerm ["*","scm.access"]`, `anyAccess ["scm.transportation.drivers"]`, `hideForSalesRep: true` | `Sidebar.tsx:515-524` |
 | Mobile screens | resolved through the same nav table (`gateVia`) | `MobileApp.tsx:114`, `:157-184`, `:718` |
@@ -777,6 +797,168 @@ the **planning board** (4 states, region chips, assignment). One backend, one
 state machine, two presentations.
 
 ---
+
+## Fleet Module A1 — postcode->zone, per-lorry capacity, auto-propose + lock
+
+The daily manual dispatch fitting, automated. Three PURE, unit-tested libs do
+the reasoning; the route + pages orchestrate.
+
+- **`backend/src/scm/lib/zone-classify.ts`** — `zoneForAddress` / `zoneForPostcode`
+  over the company map (or the in-code `DEFAULT_ZONE_PREFIX_MAP`). Deterministic:
+  the first two postcode digits pin the zone; the NARROWEST matching prefix range
+  wins (so a fine rule overrides a broad one without deleting it). 14 zones;
+  `KLANG_VALLEY_ZONES` mix freely, the rest run dedicated trips. Tests:
+  `zone-classify.test.ts`.
+- **`backend/src/scm/lib/set-count.ts`** — `deriveSetCount(lines)` = `max(frames,
+  mattresses) + sofas`; `hasFurniture=false` (accessory/service only) => the
+  packer falls back to revenue. Tests: `set-count.test.ts`.
+- **`backend/src/scm/lib/capacity-pack.ts`** — `packProposals` fills lorry-days
+  first-ceiling-wins (SETS / REVENUE / BOTH), Klang Valley in one pool, far zones
+  dedicated + a below-ceiling far lorry flagged `partial`. A single order over the
+  ceiling ships alone (`overCeiling`). Deterministic, days advance from a start
+  date. Tests: `capacity-pack.test.ts`.
+
+Route `delivery-zones.ts` glues them: `/propose` loads the picked
+PENDING_SCHEDULE SOs + lines + the depot's in-house lorries + the company zone
+map, and returns a REVERSIBLE, display-only proposal. **Guardrails honoured:**
+`derivePlanningState` untouched; no `delivery_state` added to any SO-list select;
+Apply writes **`amended_delivery_date`** only (via the existing schedule path),
+never `customer_delivery_date`; no lorry ASSIGNMENT here (that is A2 — Apply
+writes the date only). Seams for A2/A3: the packer already emits per-lorry
+groupings; A2 turns the proposed lorry-day into a real trip + nearest-neighbour
+sequence (reuse `propose-route.ts`), A3 layers driver/constraint rules.
+
+## Fleet Module A2 — stop sequencing + auto-assign lorry/driver/helper + windows
+
+Takes a locked day's zone-packed groups (A1) and turns each into an ordered,
+crewed trip. TWO new PURE, unit-tested libs do the reasoning; the A1 route +
+Auto-Schedule page orchestrate. **No new schema** — assignment persists through
+the existing schedule write-path onto existing `scm.trips` / `scm.trip_stops`
+columns.
+
+- **`backend/src/scm/lib/fleet-assign.ts`** — `assignFleet` greedily crews each
+  packed group with a lorry + driver + helper from the depot's AVAILABLE fleet.
+  A lorry Module B (fleet-status) has grounded — BREAKDOWN / COMPLIANCE_BLOCKED /
+  OUT_OF_SERVICE / a maintenance window — is EXCLUDED (`dispatchable:false`) and
+  surfaced in `excludedLorries`. Capacity fit (`overCeiling` when a group exceeds
+  the chosen ceiling, still ships), per-DAY load balancing (spread across distinct
+  lorries; the A1-preferred lorry gets first refusal), driver paired by plate
+  (`drivers.vehicle`) else least-used, helper least-used, each crew member used at
+  most once per day. A3 extends this same lib with driver-leave exclusion + 3PL
+  overflow (see Module A3 below). Tests: `fleet-assign.test.ts` (16).
+- **`backend/src/scm/lib/sequence-stops.ts`** — `buildSequenceProposal` shapes ONE
+  trip's route by REUSING the Phase-3 nearest-neighbour sequencer
+  (`propose-route.ts`) verbatim — same earliest-is-hard / service-into-clock /
+  `windowViolated` rules — and adds the `eta_offset_s` / leg metrics the schedule
+  path persists. Tests: `sequence-stops.test.ts` (5).
+- **`backend/src/scm/lib/fleet-availability.ts`** — thin DB loader: the depot's
+  active in-house lorries WITH their Module-B `deriveVehicleStatus` / `canDispatch`
+  folded in (reuses the pure `services/fleet-status.ts` core over compliance docs,
+  maintenance windows, service-due, breakdowns) + capacity ceilings + the paired
+  driver. Not unit-tested (I/O); the derivation it relies on is the tested core.
+
+Route `delivery-zones.ts` — new `POST /delivery-zones/sequence-assign` (body
+`{ soDocNos[], depotWarehouseId?, startDate?, departTime?, defaultMaxSets?,
+defaultMaxRevenueCenti? }`). It RE-PACKS through the SAME A1 core (`loadAndPack`,
+extracted so `/propose` and this share one packing path and cannot drift), crews
+each group via `assignFleet`, then sequences each assigned trip (geocode
+cache-first + ONE Distance Matrix call per trip + `buildSequenceProposal`) with
+residence-rule windows. Returns a DISPLAY-ONLY proposal
+`{ trips[], excludedLorries[], unassigned[] }`; writes NOTHING. Google is
+hard-gated on `GOOGLE_MAPS_API_KEY` — unset (or an ungeocoded depot) still returns
+crewed, grouped trips, just without a computed route (the plain order is kept,
+`routeReason` says why). Same area guard as the rest of TMS.
+
+**Frontend** — the Auto-Schedule page (`AutoSchedule.tsx`) gains a "Sequence &
+assign" action next to "Apply proposed dates" (+ a Depart-time control). It calls
+`useSequenceAssign` and renders one card PER TRIP: editable lorry / driver / helper
+selects (the auto-assignment, all overridable), the ordered stop table (ETA /
+finish / delivery window, `!` on a window violation), and per-trip "Apply this
+trip". Apply fans out one `useScheduleDelivery` per stop in sequence order with
+`{ scheduleDate, lorryId, driverId, helper1Id, stopNo, etaOffsetS, legDistanceM,
+legDurationS }`. No new page / route (extends the existing `/scm/auto-schedule`).
+
+**Schedule-path extension (additive).** `scheduleSchema` +  `scheduleOntoTrip`
+(`delivery-planning.ts`) now accept optional `helper1Id` / `helper2Id`, written
+onto `scm.trips.helper_1_id` / `helper_2_id` on a trip CREATE (like `driverId`).
+This is the ONLY change to the schedule path — no parallel scheduler, and a
+schedule that omits them behaves exactly as before. `derivePlanningState`
+untouched; no `delivery_state` in any SO-list select; `amended_delivery_date`
+only, never `customer_delivery_date`.
+
+**Guardrails honoured:** reuses the established schedule path (no parallel
+scheduler); unavailable (Module B) lorries excluded from assignment; everything
+overridable on screen. A3 seams: driver-leave / HR availability and 3PL overflow
+are NOT here — the availability half of A3 (vehicle status) is folded in; the
+driver-leave half and outsourcing stay for A3.
+
+## Fleet Module A3 — driver-leave/HR constraint + 3PL overflow assignment
+
+The final Module-A dispatch piece. Adds the last two constraints to the SAME A2
+assignment flow (`sequence-assign` + the Auto-Schedule review UI): a driver on
+LEAVE is not auto-crewed that day, and when a region's own AVAILABLE fleet cannot
+cover a day's demand the spill is assigned to a 3PL carrier at a captured cost.
+
+**Migration `0206_scm_driver_leave_3pl_cost.sql`** (additive, company-scoped):
+- `scm.driver_leave` (`id, company_id, driver_id → scm.drivers, start_date,
+  end_date, reason, created_by, created_at`, `CHECK start_date <= end_date`). One
+  row per absence — the driver is unavailable on every date in the inclusive
+  range. There is **no structured HR leave/attendance source** in this ERP (the HR
+  area is commission/payout only — migs 0123/0125), so A3 owns this minimal table.
+- `scm.trips.three_pl_cost_centi BIGINT NULL` — the CAPTURED cost of a 3PL trip
+  (integer sen). NULL on an own-fleet trip. **The seam Module C's rate-card will
+  compute against.** A 3PL trip already models as a trip whose `lorry_id` is an
+  OUTSOURCE lorry (`scm.trips.is_outsourced` already derives from
+  `lorries.is_internal` — `deriveTripOutsourced`); the only thing missing was a
+  home for the cost.
+
+**`backend/src/scm/lib/driver-availability.ts`** — the driver-leave half, to
+drivers what `fleet-availability.ts` is to lorries. Pure `isDriverOnLeave(ranges,
+driverId, date)` / `driversOnLeave` core + a `loadDriverLeave(sb, {from,to})` DB
+loader returning the ranges + a name-resolved `excludedDrivers[]`. A missing table
+degrades to "no leave" (safe direction). Tests: `driver-availability.test.ts` (8).
+
+**`fleet-assign.ts` (A2/A3)** — `assignFleet` gains two inputs:
+- `driverLeave[]` — an on-leave driver (per group DATE) is skipped in the crew
+  pick; the plate-paired driver on leave falls through to a free non-leave driver.
+- `config.maxTripsPerLorryPerDay` (default **1** — one full-day run) — each
+  own-fleet lorry runs at most N trips/day; a group with no own-fleet SLOT left
+  (every eligible lorry at cap, OR no eligible lorry at all) SPILLS to a new
+  `overflow[]` bucket instead of being stacked. Overflow is the 3PL-assign
+  candidate list; a 3PL trip does NOT consume an own-fleet slot. Tests updated to
+  16 (was 10) — leave exclusion (3) + 3PL overflow (3) + the zero-fleet case now
+  routes to overflow, not `unassigned`.
+
+**Route `delivery-zones.ts` `sequence-assign`** — body adds
+`maxTripsPerLorryPerDay?`. Loads driver leave over the packed group-date window
+(`loadDriverLeave`) and passes ranges to `assignFleet`; loads the region's 3PL
+carriers (active `scm.lorries` with `is_internal=false`, depot-scoped or
+warehouse-null). Response adds `excludedDrivers[]`, `overflow[]`, `carriers[]`.
+
+**Schedule-path extension (additive).** `scheduleSchema` + `scheduleOntoTrip`
+now accept `threePlCostCenti?`, written to `scm.trips.three_pl_cost_centi` on a
+trip CREATE — and ONLY when the lorry is outsourced (guarded by the derived
+`is_outsourced`, so the seam column never carries a cost against internal
+capacity). Omitted on an own-fleet schedule -> NULL, behaviour unchanged.
+
+**`/driver-leave` route** (`driver-leave.ts`) — GET / POST / DELETE for
+`scm.driver_leave`, company-scoped, same `scm.transportation.drivers` area gate.
+
+**Frontend** — Auto-Schedule (`AutoSchedule.tsx`) gains a "Max trips / lorry /
+day" control, an "On leave (not auto-assigned)" line (from `excludedDrivers`),
+and a **3PL overflow** section: per overflow group a carrier picker (from
+`carriers`) + a captured-cost (RM) input + "Assign 3PL" that fans out
+`useScheduleDelivery` with `{ lorryId: carrier, threePlCostCenti, tripDate }`
+(cost captured once on the trip CREATE). New page **`DriverLeave.tsx`** at
+`/scm/driver-leave` (nav "Driver Leave" under Transportation) — the leave master
+(create form + table + remove). `STAFF_ROUTE_PATTERNS` 131 -> 132, `ROUTE_CONTRACT`
+139 -> 140.
+
+**Guardrails honoured:** reuses the established schedule path (no parallel
+scheduler); reuses OUTSOURCE lorries (no parallel carrier master); everything
+overridable on screen. `derivePlanningState` untouched; no `delivery_state` in any
+SO-list select; `amended_delivery_date` only, never `customer_delivery_date`; not
+the FIFO/costing money-path.
 
 ## Related
 

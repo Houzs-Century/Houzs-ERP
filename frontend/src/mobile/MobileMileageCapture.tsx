@@ -44,6 +44,7 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
 
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [mode, setMode] = useState<"mileage" | "breakdown">("mileage");
   const [odometer, setOdometer] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -51,6 +52,12 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [done, setDone] = useState<{ plate: string; km: number; flagged: boolean } | null>(null);
+  // Breakdown-report state.
+  const [bdFault, setBdFault] = useState("");
+  const [bdSeverity, setBdSeverity] = useState<"MINOR" | "MAJOR" | "CRITICAL">("MAJOR");
+  const [bdDrivable, setBdDrivable] = useState(false);
+  const [bdDesc, setBdDesc] = useState("");
+  const [bdDone, setBdDone] = useState<{ plate: string; grounded: boolean; trips: number } | null>(null);
 
   const vehicles = dashQ.data?.vehicles ?? [];
   const filtered = useMemo(() => {
@@ -89,6 +96,80 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
       setBusy(false);
     }
   };
+
+  // Best-effort GPS: resolves to {lat,lng} or null (never blocks the report).
+  const getGps = () =>
+    new Promise<{ lat: number; lng: number } | null>((resolve) => {
+      if (!("geolocation" in navigator)) return resolve(null);
+      const to = setTimeout(() => resolve(null), 4000);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => { clearTimeout(to); resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }); },
+        () => { clearTimeout(to); resolve(null); },
+        { enableHighAccuracy: true, timeout: 4000 },
+      );
+    });
+
+  const submitBreakdown = async () => {
+    if (busy || !selected) return;
+    setActionError(null);
+    setBusy(true);
+    try {
+      let photoRef: string | null = null;
+      if (photoFile) {
+        const { r2Key } = await uploadSlipFull({ file: photoFile });
+        photoRef = r2Key;
+      }
+      const gps = await getGps();
+      const res = await api.post<{ grounding: boolean; affectedTrips: unknown[] }>(
+        `/api/fleet-maintenance/vehicles/${encodeURIComponent(selected.id)}/breakdowns`,
+        {
+          faultType: bdFault.trim() || undefined,
+          severity: bdSeverity,
+          stillDrivable: bdDrivable,
+          driverDescription: bdDesc.trim() || undefined,
+          breakdownStart: new Date().toISOString(),
+          gpsLat: gps?.lat,
+          gpsLng: gps?.lng,
+          mediaRefs: photoRef ? [photoRef] : undefined,
+        },
+      );
+      setBdDone({ plate: selected.plate, grounded: !!res.grounding, trips: res.affectedTrips?.length ?? 0 });
+    } catch {
+      setActionError("Could not report the breakdown. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (bdDone) {
+    return (
+      <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
+        <header className="hdr">
+          <div className="hdr-row">
+            <button className="back" onClick={onBack}><span className="chev">‹</span> Fleet</button>
+          </div>
+          <div className="scr-title">Breakdown reported</div>
+        </header>
+        <div className="scroll hz-scroll" style={{ padding: "20px 16px" }}>
+          <div className="card" style={{ padding: 18, textAlign: "center" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--ink)", marginBottom: 6 }}>Reported</div>
+            <div style={{ fontSize: 12.5, color: "var(--mut)" }}>{bdDone.plate}</div>
+            {bdDone.grounded && (
+              <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--red)" }}>
+                Marked critical — the lorry is grounded and the office has been notified.
+                {bdDone.trips > 0 ? ` ${bdDone.trips} trip(s) affected.` : ""}
+              </div>
+            )}
+          </div>
+        </div>
+        <footer className="actbar">
+          <button type="button" className="btn" onClick={() => { setBdDone(null); setSelectedId(null); setBdFault(""); setBdDesc(""); setBdSeverity("MAJOR"); setBdDrivable(false); setPhotoFile(null); setMode("mileage"); dashQ.refetch(); }}>
+            Done
+          </button>
+        </footer>
+      </div>
+    );
+  }
 
   if (done) {
     return (
@@ -181,6 +262,27 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
               </div>
             </div>
 
+            {/* Action mode: mark day complete (mileage) OR report a breakdown. */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              {(["mileage", "breakdown"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => { setMode(m); setActionError(null); }}
+                  style={{
+                    flex: 1, padding: "9px 0", borderRadius: 11, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    border: mode === m ? "1.5px solid var(--brand)" : "1px solid var(--line-card)",
+                    background: mode === m ? "var(--brand-soft, rgba(60,110,70,0.1))" : "transparent",
+                    color: mode === m ? "var(--brand)" : "var(--mut)",
+                  }}
+                >
+                  {m === "mileage" ? "Day complete" : "Report breakdown"}
+                </button>
+              ))}
+            </div>
+
+            {mode === "mileage" && (
+              <>
             <div className="fld-l" style={{ marginBottom: 8 }}>Odometer reading (km)</div>
             <input
               className="fld"
@@ -192,9 +294,45 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
             />
             {odometer.trim() !== "" && !odoValid && <div style={{ fontSize: 10.5, color: "var(--red)", marginTop: 6 }}>Enter a whole number of kilometres.</div>}
             {wouldRollback && <div style={{ fontSize: 10.5, color: "var(--red)", marginTop: 6 }}>Lower than the last reading ({selected.mileageKm?.toLocaleString()} km). The odometer cannot go backwards.</div>}
+              </>
+            )}
 
-            {/* Dashboard photo — captured locally, uploaded to R2 on save. */}
-            <div className="fld-l" style={{ margin: "18px 0 8px" }}>Dashboard photo (optional)</div>
+            {mode === "breakdown" && (
+              <>
+                <div className="fld-l" style={{ marginBottom: 8 }}>What broke?</div>
+                <input className="fld" value={bdFault} onChange={(e) => setBdFault(e.target.value)} placeholder="e.g. Tyre burst, engine overheat" />
+                <div className="fld-l" style={{ margin: "16px 0 8px" }}>Severity</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {(["MINOR", "MAJOR", "CRITICAL"] as const).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setBdSeverity(s)}
+                      style={{
+                        flex: 1, padding: "8px 0", borderRadius: 10, fontFamily: "inherit", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                        border: bdSeverity === s ? "1.5px solid var(--red)" : "1px solid var(--line-card)",
+                        background: bdSeverity === s && s === "CRITICAL" ? "rgba(200,50,50,0.1)" : "transparent",
+                        color: bdSeverity === s ? "var(--red)" : "var(--mut)",
+                      }}
+                    >
+                      {s === "MINOR" ? "Minor" : s === "MAJOR" ? "Major" : "Critical"}
+                    </button>
+                  ))}
+                </div>
+                {bdSeverity === "CRITICAL" && (
+                  <div style={{ fontSize: 10.5, color: "var(--red)", marginTop: 6 }}>A critical breakdown grounds the lorry and alerts the office.</div>
+                )}
+                <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "14px 0 0", fontSize: 12, color: "var(--ink)" }}>
+                  <input type="checkbox" checked={bdDrivable} onChange={(e) => setBdDrivable(e.target.checked)} />
+                  The lorry can still be driven
+                </label>
+                <div className="fld-l" style={{ margin: "16px 0 8px" }}>Description</div>
+                <input className="fld" value={bdDesc} onChange={(e) => setBdDesc(e.target.value)} placeholder="What happened" />
+              </>
+            )}
+
+            {/* Photo — dashboard odometer (mileage) or the scene (breakdown). */}
+            <div className="fld-l" style={{ margin: "18px 0 8px" }}>{mode === "breakdown" ? "Photo of the scene (optional)" : "Dashboard photo (optional)"}</div>
             <div style={{ display: "flex", gap: 9 }}>
               <label style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "var(--brand)", border: "none", borderRadius: 13, padding: 14, color: "#fff", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -225,8 +363,12 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
             {photoFile && <div style={{ fontSize: 10.5, color: "var(--mut)", marginTop: 6 }} className="tnum">{photoFile.name}</div>}
             {photoError && <div style={{ fontSize: 10.5, color: "var(--red)", marginTop: 6 }}>{photoError}</div>}
 
-            <div className="fld-l" style={{ margin: "18px 0 8px" }}>Note (optional)</div>
-            <input className="fld" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything to flag" />
+            {mode === "mileage" && (
+              <>
+                <div className="fld-l" style={{ margin: "18px 0 8px" }}>Note (optional)</div>
+                <input className="fld" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything to flag" />
+              </>
+            )}
 
             {actionError && <div style={{ marginTop: 14, fontSize: 11.5, color: "var(--red)", textAlign: "center" }}>{actionError}</div>}
           </>
@@ -235,9 +377,15 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
 
       <footer className="actbar">
         {selected ? (
-          <button type="button" className="btn" disabled={busy || !odoValid || wouldRollback} onClick={submit} style={{ opacity: busy || !odoValid || wouldRollback ? 0.55 : 1, cursor: busy || !odoValid || wouldRollback ? "default" : "pointer" }}>
-            {busy ? "Saving…" : "Mark day complete →"}
-          </button>
+          mode === "mileage" ? (
+            <button type="button" className="btn" disabled={busy || !odoValid || wouldRollback} onClick={submit} style={{ opacity: busy || !odoValid || wouldRollback ? 0.55 : 1, cursor: busy || !odoValid || wouldRollback ? "default" : "pointer" }}>
+              {busy ? "Saving…" : "Mark day complete →"}
+            </button>
+          ) : (
+            <button type="button" className="btn" disabled={busy} onClick={submitBreakdown} style={{ opacity: busy ? 0.55 : 1, cursor: busy ? "default" : "pointer" }}>
+              {busy ? "Reporting…" : "Report breakdown →"}
+            </button>
+          )
         ) : (
           <button type="button" className="btn-ghost" onClick={onBack}>Back</button>
         )}

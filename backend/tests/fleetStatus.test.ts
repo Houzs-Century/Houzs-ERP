@@ -15,9 +15,21 @@ import {
   derivePlanDue,
   anyPlanDue,
   assessMileageReading,
+  // Phase 3
+  isCaseGrounding,
+  isBreakdownActive,
+  breakdownDowntimeHours,
+  canTransitionWorkOrder,
+  isWorkOrderOpen,
+  workOrderSeam,
+  workOrderTotalCenti,
+  WORK_ORDER_STATES,
+  WORK_ORDER_TRANSITIONS,
+  deriveComponentLife,
   type ComplianceDocInput,
   type StatusInput,
   type MaintenancePlanInput,
+  type WorkOrderState,
 } from "../src/services/fleet-status";
 
 const TODAY = "2026-07-25";
@@ -364,5 +376,201 @@ describe("canDispatch", () => {
     expect(canDispatch("BREAKDOWN")).toBe(false);
     expect(canDispatch("WAITING_PARTS")).toBe(false);
     expect(canDispatch("PLANNED_MAINTENANCE")).toBe(false);
+  });
+});
+
+// ── Phase 3: breakdown cases → status effect ─────────────────────────────────
+
+describe("isCaseGrounding / isBreakdownActive", () => {
+  test("a CRITICAL unresolved case grounds the lorry", () => {
+    expect(isCaseGrounding({ severity: "CRITICAL", status: "OPEN" })).toBe(true);
+    expect(isCaseGrounding({ severity: "CRITICAL", status: "TOWING" })).toBe(true);
+    expect(isCaseGrounding({ severity: "CRITICAL", status: "IN_WORKSHOP" })).toBe(true);
+  });
+  test("a resolved critical case no longer grounds", () => {
+    expect(isCaseGrounding({ severity: "CRITICAL", status: "RESOLVED" })).toBe(false);
+  });
+  test("MINOR / MAJOR cases do not, on their own, ground the lorry", () => {
+    expect(isCaseGrounding({ severity: "MINOR", status: "OPEN" })).toBe(false);
+    expect(isCaseGrounding({ severity: "MAJOR", status: "OPEN" })).toBe(false);
+  });
+  test("isBreakdownActive is true when ANY case grounds", () => {
+    expect(isBreakdownActive([{ severity: "MINOR", status: "OPEN" }, { severity: "CRITICAL", status: "OPEN" }])).toBe(true);
+    expect(isBreakdownActive([{ severity: "MAJOR", status: "OPEN" }])).toBe(false);
+    expect(isBreakdownActive([])).toBe(false);
+    expect(isBreakdownActive(undefined)).toBe(false);
+  });
+});
+
+describe("deriveVehicleStatus consumes a critical breakdown", () => {
+  const okDocs: ComplianceDocInput[] = [{ docType: "ROAD_TAX", expiryDate: "2026-12-01" }];
+  test("an active critical breakdown makes the vehicle BREAKDOWN and non-dispatchable", () => {
+    const status = deriveVehicleStatus({
+      today: TODAY,
+      currentDocs: okDocs,
+      breakdownActive: isBreakdownActive([{ severity: "CRITICAL", status: "OPEN" }]),
+    });
+    expect(status).toBe("BREAKDOWN");
+    expect(canDispatch(status)).toBe(false);
+  });
+  test("a resolved critical breakdown leaves the vehicle AVAILABLE", () => {
+    const status = deriveVehicleStatus({
+      today: TODAY,
+      currentDocs: okDocs,
+      breakdownActive: isBreakdownActive([{ severity: "CRITICAL", status: "RESOLVED" }]),
+    });
+    expect(status).toBe("AVAILABLE");
+  });
+  test("compliance block still outranks a breakdown, out-of-service outranks both", () => {
+    const expired: ComplianceDocInput[] = [{ docType: "ROAD_TAX", expiryDate: "2026-07-01" }];
+    expect(deriveVehicleStatus({ today: TODAY, currentDocs: expired, breakdownActive: true })).toBe("COMPLIANCE_BLOCKED");
+    expect(deriveVehicleStatus({ today: TODAY, outOfService: true, currentDocs: expired, breakdownActive: true })).toBe("OUT_OF_SERVICE");
+  });
+  test("a breakdown outranks an open work order and a service-due plan", () => {
+    const status = deriveVehicleStatus({
+      today: TODAY,
+      currentDocs: okDocs,
+      breakdownActive: true,
+      openWorkOrder: "WAITING_PARTS",
+      currentMileageKm: 99_900,
+      nextServiceKm: 100_000,
+    });
+    expect(status).toBe("BREAKDOWN");
+  });
+});
+
+describe("breakdownDowntimeHours", () => {
+  test("recovered case measures start → recovery", () => {
+    const h = breakdownDowntimeHours({ breakdownStart: "2026-07-25T08:00:00Z", recoveryTime: "2026-07-25T14:00:00Z" }, "2026-07-25T20:00:00Z");
+    expect(h).toBe(6);
+  });
+  test("still-down case measures start → now", () => {
+    const h = breakdownDowntimeHours({ occurredAt: "2026-07-25T08:00:00Z", recoveryTime: null }, "2026-07-25T12:00:00Z");
+    expect(h).toBe(4);
+  });
+  test("no start anchor yields null", () => {
+    expect(breakdownDowntimeHours({ breakdownStart: null, occurredAt: null }, "2026-07-25T12:00:00Z")).toBeNull();
+  });
+});
+
+// ── Phase 3: work-order state machine ────────────────────────────────────────
+
+describe("work-order state machine — canTransitionWorkOrder", () => {
+  test("the canonical forward path is legal", () => {
+    expect(canTransitionWorkOrder("REPORTED", "DIAGNOSED")).toBe(true);
+    expect(canTransitionWorkOrder("DIAGNOSED", "APPROVED")).toBe(true);
+    expect(canTransitionWorkOrder("APPROVED", "IN_REPAIR")).toBe(true);
+    expect(canTransitionWorkOrder("IN_REPAIR", "COMPLETED")).toBe(true);
+    expect(canTransitionWorkOrder("COMPLETED", "VERIFIED")).toBe(true);
+  });
+  test("the In Repair ⇄ Waiting Parts loop is legal both ways", () => {
+    expect(canTransitionWorkOrder("IN_REPAIR", "WAITING_PARTS")).toBe(true);
+    expect(canTransitionWorkOrder("WAITING_PARTS", "IN_REPAIR")).toBe(true);
+    expect(canTransitionWorkOrder("WAITING_PARTS", "COMPLETED")).toBe(true);
+  });
+  test("skipping states is illegal (Reported → Verified, Reported → Approved)", () => {
+    expect(canTransitionWorkOrder("REPORTED", "VERIFIED")).toBe(false);
+    expect(canTransitionWorkOrder("REPORTED", "APPROVED")).toBe(false);
+    expect(canTransitionWorkOrder("APPROVED", "COMPLETED")).toBe(false);
+  });
+  test("VERIFIED is terminal and a self-transition is not allowed", () => {
+    expect(WORK_ORDER_TRANSITIONS.VERIFIED).toEqual([]);
+    for (const s of WORK_ORDER_STATES) expect(canTransitionWorkOrder(s, s)).toBe(false);
+  });
+  test("no state can jump backwards past the loop (Completed → In Repair)", () => {
+    expect(canTransitionWorkOrder("COMPLETED", "IN_REPAIR")).toBe(false);
+    expect(canTransitionWorkOrder("VERIFIED", "COMPLETED")).toBe(false);
+  });
+});
+
+describe("isWorkOrderOpen + workOrderSeam", () => {
+  test("open until COMPLETED/VERIFIED", () => {
+    for (const s of ["REPORTED", "DIAGNOSED", "APPROVED", "IN_REPAIR", "WAITING_PARTS"] as WorkOrderState[]) {
+      expect(isWorkOrderOpen(s)).toBe(true);
+    }
+    expect(isWorkOrderOpen("COMPLETED")).toBe(false);
+    expect(isWorkOrderOpen("VERIFIED")).toBe(false);
+  });
+  test("IN_REPAIR feeds PLANNED, WAITING_PARTS feeds WAITING_PARTS", () => {
+    expect(workOrderSeam([{ status: "IN_REPAIR" }])).toBe("PLANNED");
+    expect(workOrderSeam([{ status: "WAITING_PARTS" }])).toBe("WAITING_PARTS");
+  });
+  test("WAITING_PARTS wins over IN_REPAIR across multiple work orders", () => {
+    expect(workOrderSeam([{ status: "IN_REPAIR" }, { status: "WAITING_PARTS" }])).toBe("WAITING_PARTS");
+  });
+  test("not-yet-in-shop states (Reported/Approved) do not move the needle", () => {
+    expect(workOrderSeam([{ status: "REPORTED" }, { status: "APPROVED" }])).toBeNull();
+  });
+  test("closed work orders are ignored", () => {
+    expect(workOrderSeam([{ status: "COMPLETED" }, { status: "VERIFIED" }])).toBeNull();
+  });
+  test("the seam drives deriveVehicleStatus into the maintenance states", () => {
+    const okDocs: ComplianceDocInput[] = [{ docType: "ROAD_TAX", expiryDate: "2026-12-01" }];
+    expect(deriveVehicleStatus({ today: TODAY, currentDocs: okDocs, openWorkOrder: workOrderSeam([{ status: "IN_REPAIR" }]) })).toBe("PLANNED_MAINTENANCE");
+    expect(deriveVehicleStatus({ today: TODAY, currentDocs: okDocs, openWorkOrder: workOrderSeam([{ status: "WAITING_PARTS" }]) })).toBe("WAITING_PARTS");
+  });
+});
+
+describe("workOrderTotalCenti — labour + parts + outside + towing + tax", () => {
+  test("sums all legs and part lines (qty × unit price)", () => {
+    const total = workOrderTotalCenti({
+      labourCenti: 15_000,
+      outsideServiceCenti: 5_000,
+      towingCenti: 8_000,
+      taxCenti: 2_000,
+      parts: [
+        { qty: 2, unitPriceCenti: 3_000 }, // 6000
+        { qty: 1, unitPriceCenti: 4_500 }, // 4500
+      ],
+    });
+    expect(total).toBe(15_000 + 5_000 + 8_000 + 2_000 + 6_000 + 4_500);
+  });
+  test("missing legs default to zero; empty parts is fine", () => {
+    expect(workOrderTotalCenti({ labourCenti: 1_000 })).toBe(1_000);
+    expect(workOrderTotalCenti({})).toBe(0);
+  });
+  test("fractional part quantities round to whole cents", () => {
+    expect(workOrderTotalCenti({ parts: [{ qty: 1.5, unitPriceCenti: 333 }] })).toBe(500); // 499.5 → 500
+  });
+});
+
+// ── Phase 3: component lifecycle ─────────────────────────────────────────────
+
+describe("deriveComponentLife — km_used / cost_per_km / warranty", () => {
+  test("a removed component measures removed_km − fitted_km", () => {
+    const life = deriveComponentLife(
+      { status: "REMOVED", fittedKm: 100_000, removedKm: 160_000, purchasePriceCenti: 60_000, warrantyUntil: "2025-01-01" },
+      null,
+      TODAY,
+    );
+    expect(life.kmUsed).toBe(60_000);
+    expect(life.costPerKmCenti).toBe(1); // 60000 / 60000 = 1 cent/km
+    expect(life.underWarranty).toBe(false); // warranty in the past
+  });
+  test("an active component measures current odometer − fitted_km", () => {
+    const life = deriveComponentLife(
+      { status: "ACTIVE", fittedKm: 100_000, purchasePriceCenti: 90_000, warrantyUntil: "2027-01-01" },
+      130_000,
+      TODAY,
+    );
+    expect(life.kmUsed).toBe(30_000);
+    expect(life.costPerKmCenti).toBe(3); // 90000 / 30000
+    expect(life.underWarranty).toBe(true); // warranty in the future
+  });
+  test("zero / unknown km_used gives no cost-per-km (never divide by zero)", () => {
+    const noKm = deriveComponentLife({ status: "ACTIVE", fittedKm: 100_000, purchasePriceCenti: 90_000 }, 100_000, TODAY);
+    expect(noKm.kmUsed).toBe(0);
+    expect(noKm.costPerKmCenti).toBeNull();
+    const noBasis = deriveComponentLife({ status: "ACTIVE", fittedKm: null, purchasePriceCenti: 90_000 }, 130_000, TODAY);
+    expect(noBasis.kmUsed).toBeNull();
+    expect(noBasis.costPerKmCenti).toBeNull();
+  });
+  test("an odometer below the fitted km (bad data) yields no km_used, not a negative", () => {
+    const life = deriveComponentLife({ status: "ACTIVE", fittedKm: 130_000 }, 100_000, TODAY);
+    expect(life.kmUsed).toBeNull();
+  });
+  test("no warranty date on file is unknown (null), not 'expired'", () => {
+    const life = deriveComponentLife({ status: "ACTIVE", fittedKm: 10, warrantyUntil: null }, 20, TODAY);
+    expect(life.underWarranty).toBeNull();
   });
 });

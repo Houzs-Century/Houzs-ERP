@@ -44,10 +44,42 @@ import {
   MILEAGE_SOURCES,
   type MileageSource,
   assessMileageReading,
+  // Phase 3
+  BREAKDOWN_SEVERITIES,
+  BREAKDOWN_STATUSES,
+  type BreakdownStatus,
+  isBreakdownActive,
+  isCaseGrounding,
+  breakdownDowntimeHours,
+  WORK_ORDER_STATES,
+  WORK_ORDER_STATE_LABELS,
+  type WorkOrderState,
+  canTransitionWorkOrder,
+  isWorkOrderOpen,
+  workOrderSeam,
+  workOrderTotalCenti,
+  COMPONENT_TYPES,
+  type ComponentType,
+  COMPONENT_POSITIONS,
+  type ComponentPosition,
+  COMPONENT_TYPE_LABELS,
+  COMPONENT_POSITION_LABELS,
+  COMPONENT_EVENT_TYPES,
+  type ComponentEventType,
+  deriveComponentLife,
 } from "../../services/fleet-status";
+import { postPersonalNotice } from "../../services/personalNotice";
+import { uplineUserIds } from "../../services/orgScope";
 
 export const fleetMaintenance = new Hono<{ Bindings: Env; Variables: Variables }>();
 fleetMaintenance.use("*", supabaseAuth);
+
+const BREAKDOWN_SEVERITY_SET = new Set<string>(BREAKDOWN_SEVERITIES);
+const BREAKDOWN_STATUS_SET = new Set<string>(BREAKDOWN_STATUSES);
+const WORK_ORDER_STATE_SET = new Set<string>(WORK_ORDER_STATES);
+const COMPONENT_TYPE_SET = new Set<string>(COMPONENT_TYPES);
+const COMPONENT_POSITION_SET = new Set<string>(COMPONENT_POSITIONS);
+const COMPONENT_EVENT_TYPE_SET = new Set<string>(COMPONENT_EVENT_TYPES);
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const DOC_TYPE_SET = new Set<string>(COMPLIANCE_DOC_TYPES);
@@ -83,6 +115,35 @@ function intOrNull(v: unknown): { ok: true; value: number | null } | { ok: false
   const n = Number(v);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) return { ok: false };
   return { ok: true, value: n };
+}
+/** A non-negative money (cents) or number, allowing null/blank. */
+function numOrNull(v: unknown): { ok: true; value: number | null } | { ok: false } {
+  if (v === null || v === undefined || v === "") return { ok: true, value: null };
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return { ok: false };
+  return { ok: true, value: n };
+}
+/** A finite float (e.g. GPS lat/lng) or null; no sign/range constraint. */
+function floatOrNull(v: unknown): { ok: true; value: number | null } | { ok: false } {
+  if (v === null || v === undefined || v === "") return { ok: true, value: null };
+  const n = Number(v);
+  if (!Number.isFinite(n)) return { ok: false };
+  return { ok: true, value: n };
+}
+/** An ISO timestamp string or null/blank. Stored as-is (Postgres parses it). */
+function tsOrNull(v: unknown): { ok: true; value: string | null } | { ok: false } {
+  if (v === null || v === undefined || v === "") return { ok: true, value: null };
+  const s = String(v);
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return { ok: false };
+  return { ok: true, value: s };
+}
+/** A JSON array of R2 keys (strings) or null. Rejects non-arrays. */
+function refsOrNull(v: unknown): { ok: true; value: string[] | null } | { ok: false } {
+  if (v === null || v === undefined || v === "") return { ok: true, value: null };
+  if (!Array.isArray(v)) return { ok: false };
+  const out = v.map((x) => String(x).trim()).filter(Boolean);
+  return { ok: true, value: out.length ? out : null };
 }
 
 type VaultRow = {
@@ -261,13 +322,220 @@ function planInputs(rows: PlanRow[]): MaintenancePlanInput[] {
   }));
 }
 
+// ── Phase 3 row types + shapers ─────────────────────────────────────────────
+type BreakdownRow = {
+  id: string;
+  lorry_id: string;
+  occurred_at: string | null;
+  gps_lat: number | null;
+  gps_lng: number | null;
+  fault_type: string | null;
+  severity: string;
+  still_drivable: boolean | null;
+  media_refs: string[] | null;
+  driver_description: string | null;
+  towing_company: string | null;
+  towing_cost_centi: number | null;
+  workshop: string | null;
+  breakdown_start: string | null;
+  recovery_time: string | null;
+  affected_trip_id: string | null;
+  status: string;
+  notes: string | null;
+};
+
+function shapeBreakdown(row: BreakdownRow, nowIso: string) {
+  return {
+    id: row.id,
+    occurredAt: row.occurred_at,
+    gpsLat: row.gps_lat,
+    gpsLng: row.gps_lng,
+    faultType: row.fault_type,
+    severity: row.severity,
+    stillDrivable: row.still_drivable ?? true,
+    mediaRefs: row.media_refs ?? [],
+    driverDescription: row.driver_description,
+    towingCompany: row.towing_company,
+    towingCostCenti: row.towing_cost_centi,
+    workshop: row.workshop,
+    breakdownStart: row.breakdown_start,
+    recoveryTime: row.recovery_time,
+    affectedTripId: row.affected_trip_id,
+    status: row.status as BreakdownStatus,
+    grounding: isCaseGrounding({ severity: row.severity, status: row.status }),
+    downtimeHours: breakdownDowntimeHours(
+      { breakdownStart: row.breakdown_start, occurredAt: row.occurred_at, recoveryTime: row.recovery_time },
+      nowIso,
+    ),
+    notes: row.notes,
+  };
+}
+
+type WorkOrderRow = {
+  id: string;
+  lorry_id: string;
+  status: string;
+  problem: string | null;
+  diagnosis: string | null;
+  workshop: string | null;
+  labour_centi: number | null;
+  outside_service_centi: number | null;
+  towing_centi: number | null;
+  tax_centi: number | null;
+  warranty_until: string | null;
+  invoice_refs: string[] | null;
+  quote_refs: string[] | null;
+  photo_refs: string[] | null;
+  reported_at: string | null;
+  est_complete: string | null;
+  actual_complete: string | null;
+  approved_by: number | null;
+  verified_by: number | null;
+  breakdown_case_id: string | null;
+  component_id: string | null;
+  notes: string | null;
+};
+
+type WorkOrderPartRow = {
+  id: string;
+  work_order_id: string;
+  name: string;
+  part_no: string | null;
+  qty: number | null;
+  unit_price_centi: number | null;
+  serial: string | null;
+};
+
+function shapeWorkOrder(row: WorkOrderRow, parts: WorkOrderPartRow[]) {
+  const shapedParts = parts.map((p) => ({
+    id: p.id,
+    name: p.name,
+    partNo: p.part_no,
+    qty: p.qty ?? 0,
+    unitPriceCenti: p.unit_price_centi ?? 0,
+    lineCenti: Math.round((p.qty ?? 0) * (p.unit_price_centi ?? 0)),
+    serial: p.serial,
+  }));
+  const state = row.status as WorkOrderState;
+  return {
+    id: row.id,
+    status: state,
+    statusLabel: WORK_ORDER_STATE_LABELS[state] ?? row.status,
+    open: isWorkOrderOpen(state),
+    nextStates: WORK_ORDER_STATES.filter((s) => canTransitionWorkOrder(state, s)),
+    problem: row.problem,
+    diagnosis: row.diagnosis,
+    workshop: row.workshop,
+    labourCenti: row.labour_centi ?? 0,
+    outsideServiceCenti: row.outside_service_centi ?? 0,
+    towingCenti: row.towing_centi ?? 0,
+    taxCenti: row.tax_centi ?? 0,
+    totalCenti: workOrderTotalCenti({
+      labourCenti: row.labour_centi,
+      outsideServiceCenti: row.outside_service_centi,
+      towingCenti: row.towing_centi,
+      taxCenti: row.tax_centi,
+      parts: shapedParts.map((p) => ({ qty: p.qty, unitPriceCenti: p.unitPriceCenti })),
+    }),
+    warrantyUntil: iso(row.warranty_until),
+    invoiceRefs: row.invoice_refs ?? [],
+    quoteRefs: row.quote_refs ?? [],
+    photoRefs: row.photo_refs ?? [],
+    reportedAt: row.reported_at,
+    estComplete: row.est_complete,
+    actualComplete: row.actual_complete,
+    breakdownCaseId: row.breakdown_case_id,
+    componentId: row.component_id,
+    notes: row.notes,
+    parts: shapedParts,
+  };
+}
+
+type ComponentRow = {
+  id: string;
+  lorry_id: string;
+  component_type: string;
+  position: string;
+  brand: string | null;
+  model: string | null;
+  size: string | null;
+  serial: string | null;
+  fitted_date: string | null;
+  fitted_km: number | null;
+  purchase_price_centi: number | null;
+  tread_depth: number | null;
+  removed_date: string | null;
+  removed_km: number | null;
+  warranty_until: string | null;
+  status: string;
+  notes: string | null;
+};
+
+type ComponentEventRow = {
+  id: string;
+  component_id: string;
+  event_type: string;
+  event_date: string | null;
+  odometer_km: number | null;
+  to_position: string | null;
+  cost_centi: number | null;
+  note: string | null;
+};
+
+function shapeComponent(row: ComponentRow, currentKm: number | null, today: string, events: ComponentEventRow[]) {
+  const life = deriveComponentLife(
+    {
+      status: row.status,
+      fittedKm: row.fitted_km,
+      removedKm: row.removed_km,
+      purchasePriceCenti: row.purchase_price_centi,
+      warrantyUntil: iso(row.warranty_until),
+    },
+    currentKm,
+    today,
+  );
+  return {
+    id: row.id,
+    componentType: row.component_type as ComponentType,
+    componentTypeLabel: COMPONENT_TYPE_LABELS[row.component_type as ComponentType] ?? row.component_type,
+    position: row.position as ComponentPosition,
+    positionLabel: COMPONENT_POSITION_LABELS[row.position as ComponentPosition] ?? row.position,
+    brand: row.brand,
+    model: row.model,
+    size: row.size,
+    serial: row.serial,
+    fittedDate: iso(row.fitted_date),
+    fittedKm: row.fitted_km,
+    purchasePriceCenti: row.purchase_price_centi,
+    treadDepth: row.tread_depth,
+    removedDate: iso(row.removed_date),
+    removedKm: row.removed_km,
+    warrantyUntil: iso(row.warranty_until),
+    status: row.status,
+    notes: row.notes,
+    kmUsed: life.kmUsed,
+    costPerKmCenti: life.costPerKmCenti,
+    underWarranty: life.underWarranty,
+    events: events.map((e) => ({
+      id: e.id,
+      eventType: e.event_type as ComponentEventType,
+      eventDate: iso(e.event_date),
+      odometerKm: e.odometer_km,
+      toPosition: e.to_position,
+      costCenti: e.cost_centi,
+      note: e.note,
+    })),
+  };
+}
+
 // ── GET /dashboard ──────────────────────────────────────────────────────────
 fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => {
   const sb = c.get("supabase");
   const today = todayMyt();
   const monthStart = today.slice(0, 8) + "01";
 
-  const [lorriesR, whR, driversR, vaultR, maintR, svcR, plansR, mileageR] = await Promise.all([
+  const nowIso = new Date().toISOString();
+  const [lorriesR, whR, driversR, vaultR, maintR, svcR, plansR, mileageR, breakdownR, woR, woPartsR] = await Promise.all([
     sb.from("lorries").select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes").eq("active", true).order("plate"),
     sb.from("warehouses").select("id, code, name"),
     sb.from("drivers").select("vehicle, name").eq("active", true),
@@ -276,8 +544,13 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     sb.from("lorry_service_records").select("lorry_id, service_date, odometer_km, next_service_km, next_service_date, cost_centi").order("service_date", { ascending: false }),
     sb.from("lorry_maintenance_plans").select("*").eq("active", true),
     sb.from("lorry_mileage_readings").select("lorry_id, reading_date, odometer_km, source, flagged").order("reading_date", { ascending: false }).order("created_at", { ascending: false }),
+    // Phase 3: active (non-resolved) breakdown cases feed the BREAKDOWN seam + downtime.
+    sb.from("lorry_breakdown_cases").select("*").neq("status", "RESOLVED").order("occurred_at", { ascending: false }),
+    // All work orders: open ones feed the WO seam; those completed this month feed spend.
+    sb.from("lorry_work_orders").select("*"),
+    sb.from("lorry_work_order_parts").select("id, work_order_id, name, part_no, qty, unit_price_centi, serial"),
   ]);
-  const firstErr = lorriesR.error || whR.error || driversR.error || vaultR.error || maintR.error || svcR.error || plansR.error || mileageR.error;
+  const firstErr = lorriesR.error || whR.error || driversR.error || vaultR.error || maintR.error || svcR.error || plansR.error || mileageR.error || breakdownR.error || woR.error || woPartsR.error;
   if (firstErr) return c.json({ error: "load_failed", reason: firstErr.message }, 500);
 
   const lorries = (lorriesR.data ?? []) as Lorry[];
@@ -316,9 +589,43 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
   for (const m of (mileageR.data ?? []) as MileageRow[]) {
     if (!latestMileage.has(m.lorry_id)) latestMileage.set(m.lorry_id, { odometer_km: m.odometer_km, reading_date: iso(m.reading_date), flagged: !!m.flagged });
   }
+  // Phase 3: active breakdown cases per lorry (already non-resolved, newest-first).
+  const breakdownByLorry = new Map<string, BreakdownRow[]>();
+  for (const b of (breakdownR.data ?? []) as BreakdownRow[]) {
+    const list = breakdownByLorry.get(b.lorry_id) ?? [];
+    list.push(b);
+    breakdownByLorry.set(b.lorry_id, list);
+  }
+  // Work-order parts grouped by work order (for the derived total).
+  const partsByWo = new Map<string, WorkOrderPartRow[]>();
+  for (const p of (woPartsR.data ?? []) as WorkOrderPartRow[]) {
+    const list = partsByWo.get(p.work_order_id) ?? [];
+    list.push(p);
+    partsByWo.set(p.work_order_id, list);
+  }
+  // Work orders per lorry + this-month WO repair spend (actual_complete in month).
+  const woByLorry = new Map<string, WorkOrderRow[]>();
+  const woMonthSpend = new Map<string, number>();
+  for (const w of (woR.data ?? []) as WorkOrderRow[]) {
+    const list = woByLorry.get(w.lorry_id) ?? [];
+    list.push(w);
+    woByLorry.set(w.lorry_id, list);
+    const done = iso(w.actual_complete);
+    if (done && done >= monthStart) {
+      const total = workOrderTotalCenti({
+        labourCenti: w.labour_centi,
+        outsideServiceCenti: w.outside_service_centi,
+        towingCenti: w.towing_centi,
+        taxCenti: w.tax_centi,
+        parts: (partsByWo.get(w.id) ?? []).map((p) => ({ qty: p.qty, unitPriceCenti: p.unit_price_centi })),
+      });
+      woMonthSpend.set(w.lorry_id, (woMonthSpend.get(w.lorry_id) ?? 0) + total);
+    }
+  }
 
   let expiredDocs = 0, expiring30 = 0, expiring60 = 0, expiring90 = 0;
   let serviceDueCount = 0, serviceOverdueCount = 0, breakdowns = 0, complianceBlocked = 0, cantDispatch = 0;
+  let openWorkOrders = 0;
   const statusCounts: Record<string, number> = {};
 
   const rows = lorries.map((l) => {
@@ -335,6 +642,13 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     const plansDueSoon = shapedPlans.filter((p) => p.dueSoon && !p.overdue).length;
     // The single most-urgent plan drives the board's "next service" cell.
     const nextPlan = shapedPlans.find((p) => p.nextDueKm !== null || p.nextDueDate !== null) ?? null;
+    // Phase 3 seams: an active CRITICAL breakdown grounds the lorry; an open work
+    // order in IN_REPAIR / WAITING_PARTS feeds the maintenance states.
+    const lorryBreakdowns = breakdownByLorry.get(l.id) ?? [];
+    const breakdownActive = isBreakdownActive(lorryBreakdowns.map((b) => ({ severity: b.severity, status: b.status })));
+    const lorryWos = woByLorry.get(l.id) ?? [];
+    const openWos = lorryWos.filter((w) => isWorkOrderOpen(w.status as WorkOrderState));
+    const openWorkOrder = workOrderSeam(lorryWos.map((w) => ({ status: w.status })));
     const status = deriveVehicleStatus({
       today,
       outOfService: oosByLorry.has(l.id),
@@ -343,12 +657,20 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
       nextServiceKm: svc?.next_service_km ?? null,
       nextServiceDate: svc?.next_service_date ?? null,
       plans,
+      breakdownActive,
+      openWorkOrder,
     });
+    // Longest current downtime across active grounding breakdowns.
+    const downtimeHours = lorryBreakdowns
+      .map((b) => breakdownDowntimeHours({ breakdownStart: b.breakdown_start, occurredAt: b.occurred_at, recoveryTime: b.recovery_time }, nowIso))
+      .filter((h): h is number => h !== null)
+      .reduce((max, h) => Math.max(max, h), 0);
     statusCounts[status] = (statusCounts[status] ?? 0) + 1;
     if (status === "SERVICE_DUE") serviceDueCount++;
     if (plansOverdue > 0) serviceOverdueCount++;
-    if (status === "BREAKDOWN") breakdowns++;
+    if (breakdownActive) breakdowns++;
     if (status === "COMPLIANCE_BLOCKED") complianceBlocked++;
+    openWorkOrders += openWos.length;
     if (!canDispatch(status)) cantDispatch++;
     for (const type of COMPLIANCE_DOC_TYPES) {
       const d = compliance[type];
@@ -393,15 +715,24 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
             overdue: nextPlan.overdue,
           }
         : null,
+      // Phase 3 board columns.
+      breakdownActive,
+      openBreakdowns: lorryBreakdowns.length,
+      openWorkOrders: openWos.length,
+      downtimeHours: downtimeHours > 0 ? Math.round(downtimeHours * 10) / 10 : null,
+      openProblem: openProblemFor(status, lorryBreakdowns, openWos),
     };
   });
 
-  // Costliest vehicle this month (from scm.lorry_service_records).
+  // Costliest vehicle this month: combine service records + work-order totals.
+  const combinedSpend = new Map<string, number>();
+  for (const [lid, v] of monthSpend) combinedSpend.set(lid, (combinedSpend.get(lid) ?? 0) + v);
+  for (const [lid, v] of woMonthSpend) combinedSpend.set(lid, (combinedSpend.get(lid) ?? 0) + v);
   let costliestVehicle: string | null = null;
   let costliestCenti = 0;
   const plateById = new Map(lorries.map((l) => [l.id, l.plate]));
-  for (const [lid, spent] of monthSpend) if (spent > costliestCenti) { costliestCenti = spent; costliestVehicle = plateById.get(lid) ?? null; }
-  const repairSpendThisMonthCenti = [...monthSpend.values()].reduce((a, b) => a + b, 0);
+  for (const [lid, spent] of combinedSpend) if (spent > costliestCenti) { costliestCenti = spent; costliestVehicle = plateById.get(lid) ?? null; }
+  const repairSpendThisMonthCenti = [...combinedSpend.values()].reduce((a, b) => a + b, 0);
 
   return c.json({
     today,
@@ -409,8 +740,9 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
       expiredDocs, expiring30, expiring60, expiring90,
       serviceDue: serviceDueCount, serviceOverdue: serviceOverdueCount,
       activeBreakdowns: breakdowns, complianceBlocked, cantDispatch,
+      openWorkOrders,
       fleetSize: rows.length,
-      repairSpendThisMonthCenti: monthSpend.size ? repairSpendThisMonthCenti : null,
+      repairSpendThisMonthCenti: combinedSpend.size ? repairSpendThisMonthCenti : null,
       costliestVehicle,
       costliestVehicleCenti: costliestVehicle ? costliestCenti : null,
     },
@@ -418,6 +750,20 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     vehicles: rows,
   });
 });
+
+/** The one-line "what is wrong right now" summary for the board's Open-problem
+ *  column, derived from status + open breakdowns/work orders. */
+function openProblemFor(status: string, breakdowns: BreakdownRow[], openWos: WorkOrderRow[]): string | null {
+  const grounding = breakdowns.find((b) => isCaseGrounding({ severity: b.severity, status: b.status }));
+  if (grounding) return grounding.fault_type ? `Breakdown: ${grounding.fault_type}` : "Critical breakdown";
+  const waiting = openWos.find((w) => w.status === "WAITING_PARTS");
+  if (waiting) return waiting.problem ? `Waiting parts: ${waiting.problem}` : "Waiting parts";
+  const inRepair = openWos.find((w) => w.status === "IN_REPAIR");
+  if (inRepair) return inRepair.problem ? `In repair: ${inRepair.problem}` : "In repair";
+  if (breakdowns.length > 0) return breakdowns[0].fault_type ? `Incident: ${breakdowns[0].fault_type}` : "Open incident";
+  if (openWos.length > 0) return openWos[0].problem ? `WO: ${openWos[0].problem}` : "Open work order";
+  return null;
+}
 
 // ── GET /vehicles/:id — one lorry + full compliance history + windows ────────
 fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) => {
@@ -434,7 +780,8 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
   if (!l) return c.json({ error: "vehicle_not_found" }, 404);
   const lorry = l as Lorry;
 
-  const [whR, driversR, vaultR, maintR, svcR, plansR, mileageR] = await Promise.all([
+  const nowIso = new Date().toISOString();
+  const [whR, driversR, vaultR, maintR, svcR, plansR, mileageR, breakdownR, woR, woPartsR, componentsR, compEventsR] = await Promise.all([
     lorry.warehouse_id ? sb.from("warehouses").select("code, name").eq("id", lorry.warehouse_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
     sb.from("drivers").select("vehicle, name").eq("active", true),
     sb.from("lorry_compliance_documents").select("*").eq("lorry_id", id).order("issue_date", { ascending: false }).order("expiry_date", { ascending: false }),
@@ -442,6 +789,11 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     sb.from("lorry_service_records").select("service_date, odometer_km, next_service_km, next_service_date, cost_centi, workshop, description").eq("lorry_id", id).order("service_date", { ascending: false }).limit(1),
     sb.from("lorry_maintenance_plans").select("*").eq("lorry_id", id),
     sb.from("lorry_mileage_readings").select("id, lorry_id, reading_date, odometer_km, source, photo_ref, flagged, note").eq("lorry_id", id).order("reading_date", { ascending: false }).order("created_at", { ascending: false }).limit(30),
+    sb.from("lorry_breakdown_cases").select("*").eq("lorry_id", id).order("occurred_at", { ascending: false }).limit(50),
+    sb.from("lorry_work_orders").select("*").eq("lorry_id", id).order("reported_at", { ascending: false }).limit(50),
+    sb.from("lorry_work_order_parts").select("id, work_order_id, name, part_no, qty, unit_price_centi, serial"),
+    sb.from("lorry_components").select("*").eq("lorry_id", id).order("status").order("component_type"),
+    sb.from("lorry_component_events").select("*").order("event_date", { ascending: false }),
   ]);
 
   const vaultRows = (vaultR.data ?? []) as VaultRow[];
@@ -471,6 +823,30 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     .map((p) => shapePlan(p, currentMileageKm, today))
     .sort((a, b) => Number(b.active) - Number(a.active) || (a.daysRemaining ?? 1e9) - (b.daysRemaining ?? 1e9));
   const oosNow = (maintR.data ?? []).some((m) => iso(m.unavailable_from)! <= today && iso(m.unavailable_to)! >= today);
+
+  // Phase 3: breakdowns, work orders (+ parts), components (+ events).
+  const breakdownRows = (breakdownR.data ?? []) as BreakdownRow[];
+  const woRows = (woR.data ?? []) as WorkOrderRow[];
+  const woIds = new Set(woRows.map((w) => w.id));
+  const partsByWo = new Map<string, WorkOrderPartRow[]>();
+  for (const p of (woPartsR.data ?? []) as WorkOrderPartRow[]) {
+    if (!woIds.has(p.work_order_id)) continue;
+    const list = partsByWo.get(p.work_order_id) ?? [];
+    list.push(p);
+    partsByWo.set(p.work_order_id, list);
+  }
+  const componentRows = (componentsR.data ?? []) as ComponentRow[];
+  const compIds = new Set(componentRows.map((cp) => cp.id));
+  const eventsByComp = new Map<string, ComponentEventRow[]>();
+  for (const e of (compEventsR.data ?? []) as ComponentEventRow[]) {
+    if (!compIds.has(e.component_id)) continue;
+    const list = eventsByComp.get(e.component_id) ?? [];
+    list.push(e);
+    eventsByComp.set(e.component_id, list);
+  }
+  const breakdownActive = isBreakdownActive(breakdownRows.map((b) => ({ severity: b.severity, status: b.status })));
+  const openWorkOrder = workOrderSeam(woRows.map((w) => ({ status: w.status })));
+
   const status = deriveVehicleStatus({
     today,
     outOfService: oosNow,
@@ -479,6 +855,8 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     nextServiceKm: svc?.next_service_km ?? null,
     nextServiceDate: iso(svc?.next_service_date),
     plans,
+    breakdownActive,
+    openWorkOrder,
   });
 
   const wh = (whR as { data: { code?: string; name?: string } | null }).data;
@@ -516,6 +894,9 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
       note: m.note,
     })),
     maintenanceWindows: (maintR.data ?? []).map((m) => ({ from: iso(m.unavailable_from), to: iso(m.unavailable_to), reason: m.reason ?? null })),
+    breakdowns: breakdownRows.map((b) => shapeBreakdown(b, nowIso)),
+    workOrders: woRows.map((w) => shapeWorkOrder(w, partsByWo.get(w.id) ?? [])),
+    components: componentRows.map((cp) => shapeComponent(cp, currentMileageKm, today, eventsByComp.get(cp.id) ?? [])),
   });
 });
 
@@ -798,6 +1179,529 @@ fleetMaintenance.post("/vehicles/:id/mileage", requireHouzsPerm("fleet.write"), 
     return c.json({ error: "insert_failed", reason: error.message }, 500);
   }
   return c.json({ id: inserted?.id, verdict: assessment.verdict, flagged: assessment.flagged, deltaKm: assessment.deltaKm }, 201);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase 3 write surface — breakdown cases, work orders (+ state machine + parts),
+// tyre/component lifecycle (+ events). All gated fleet.write.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Confirm the lorry exists (unified fleet — no company scope on the master). */
+async function lorryExists(sb: Variables["supabase"], lorryId: string): Promise<boolean | "error"> {
+  const { data, error } = await sb.from("lorries").select("id").eq("id", lorryId).maybeSingle();
+  if (error) return "error";
+  return !!data;
+}
+
+// ── POST /vehicles/:id/breakdowns — driver/office logs a breakdown ───────────
+// A CRITICAL case grounds the lorry (feeds breakdownActive → BREAKDOWN). We find
+// the affected trip(s), suggest replacement lorries / 3PL, and notify the
+// reporter's reporting line through the EXISTING announcements mechanism.
+fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"), async (c) => {
+  const lorryId = c.req.param("id");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+
+  const severity = String(body.severity ?? "MINOR").trim().toUpperCase();
+  if (!BREAKDOWN_SEVERITY_SET.has(severity)) return c.json({ error: "invalid_severity" }, 400);
+  const statusIn = body.status === undefined || body.status === "" ? "OPEN" : String(body.status).toUpperCase();
+  if (!BREAKDOWN_STATUS_SET.has(statusIn)) return c.json({ error: "invalid_status" }, 400);
+  const occurredAt = tsOrNull(body.occurredAt);
+  if (!occurredAt.ok) return c.json({ error: "invalid_occurred_at" }, 400);
+  const lat = floatOrNull(body.gpsLat);
+  if (!lat.ok) return c.json({ error: "invalid_gps_lat" }, 400);
+  const lng = floatOrNull(body.gpsLng);
+  if (!lng.ok) return c.json({ error: "invalid_gps_lng" }, 400);
+  const towingCost = numOrNull(body.towingCostCenti);
+  if (!towingCost.ok) return c.json({ error: "invalid_towing_cost" }, 400);
+  const breakdownStart = tsOrNull(body.breakdownStart);
+  if (!breakdownStart.ok) return c.json({ error: "invalid_breakdown_start" }, 400);
+  const recoveryTime = tsOrNull(body.recoveryTime);
+  if (!recoveryTime.ok) return c.json({ error: "invalid_recovery_time" }, 400);
+  const media = refsOrNull(body.mediaRefs);
+  if (!media.ok) return c.json({ error: "invalid_media_refs" }, 400);
+  const affectedTripId = (body.affectedTripId as string)?.trim() || null;
+
+  const exists = await lorryExists(sb, lorryId);
+  if (exists === "error") return c.json({ error: "load_failed" }, 500);
+  if (!exists) return c.json({ error: "vehicle_not_found" }, 404);
+
+  const { data: inserted, error } = await sb
+    .from("lorry_breakdown_cases")
+    .insert({
+      company_id: activeCompanyId(c) ?? null,
+      lorry_id: lorryId,
+      occurred_at: occurredAt.value ?? new Date().toISOString(),
+      gps_lat: lat.value,
+      gps_lng: lng.value,
+      fault_type: (body.faultType as string)?.trim() || null,
+      severity,
+      still_drivable: body.stillDrivable === undefined ? true : Boolean(body.stillDrivable),
+      media_refs: media.value,
+      driver_description: (body.driverDescription as string)?.trim() || null,
+      towing_company: (body.towingCompany as string)?.trim() || null,
+      towing_cost_centi: towingCost.value,
+      workshop: (body.workshop as string)?.trim() || null,
+      breakdown_start: breakdownStart.value,
+      recovery_time: recoveryTime.value,
+      affected_trip_id: affectedTripId,
+      status: statusIn,
+      notes: (body.notes as string)?.trim() || null,
+      created_by: c.get("houzsUser")?.id ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) {
+    if (error.code === "23503") return c.json({ error: "vehicle_not_found" }, 404);
+    return c.json({ error: "insert_failed", reason: error.message }, 500);
+  }
+
+  // If this case grounds the lorry, surface the dispatch impact + suggestions.
+  const grounding = isCaseGrounding({ severity, status: statusIn });
+  let affectedTrips: Array<{ id: string; tripNo: string | null; tripDate: string | null; status: string | null }> = [];
+  let replacementSuggestions: Array<{ id: string; plate: string; region: string | null }> = [];
+  if (grounding) {
+    // Trips today+future on this lorry that are not yet finished.
+    const { data: trips } = await sb
+      .from("trips")
+      .select("id, trip_no, trip_date, status, warehouse_id")
+      .eq("lorry_id", lorryId)
+      .gte("trip_date", todayMyt())
+      .neq("status", "COMPLETED")
+      .order("trip_date");
+    affectedTrips = (trips ?? []).map((t) => ({ id: t.id as string, tripNo: (t.trip_no as string) ?? null, tripDate: iso(t.trip_date), status: (t.status as string) ?? null }));
+
+    // Replacement suggestion: available lorries in the same warehouse, minus this one.
+    const sameWh = (trips ?? [])[0]?.warehouse_id ?? null;
+    const { data: cand } = await sb
+      .from("lorries")
+      .select("id, plate, warehouse_id")
+      .eq("active", true)
+      .neq("id", lorryId)
+      .limit(200);
+    replacementSuggestions = (cand ?? [])
+      .filter((x) => (sameWh ? x.warehouse_id === sameWh : true))
+      .slice(0, 6)
+      .map((x) => ({ id: x.id as string, plate: x.plate as string, region: null }));
+
+    // Notify the reporter's reporting line via the existing announcements path.
+    const reporterId = Number(c.get("houzsUser")?.id ?? NaN);
+    if (Number.isFinite(reporterId) && reporterId > 0) {
+      try {
+        const { data: lorryRow } = await sb.from("lorries").select("plate").eq("id", lorryId).maybeSingle();
+        const plate = (lorryRow?.plate as string) ?? "a lorry";
+        const targets = await uplineUserIds(c.env, reporterId);
+        const explicit = Array.isArray(body.notifyUserIds) ? (body.notifyUserIds as unknown[]).map((v) => Number(v)) : [];
+        await postPersonalNotice(c.env, {
+          userIds: [...new Set([...targets, ...explicit])],
+          category: "WARNING",
+          title: `Breakdown: ${plate} grounded`,
+          body: `${plate} has a critical breakdown${body.faultType ? ` (${String(body.faultType).trim()})` : ""} and cannot dispatch. ${affectedTrips.length} trip(s) affected. Assign a replacement lorry or 3PL.`,
+          source: "fleet_breakdown",
+        });
+      } catch (e) {
+        console.error("[fleet-breakdown] notify failed:", (e as Error).message);
+      }
+    }
+  }
+
+  return c.json({ id: inserted?.id, grounding, affectedTrips, replacementSuggestions }, 201);
+});
+
+// ── PATCH /breakdowns/:id — update / resolve a breakdown case ─────────────────
+fleetMaintenance.patch("/breakdowns/:caseId", requireHouzsPerm("fleet.write"), async (c) => {
+  const caseId = c.req.param("caseId");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if ("severity" in body) {
+    const s = String(body.severity).toUpperCase();
+    if (!BREAKDOWN_SEVERITY_SET.has(s)) return c.json({ error: "invalid_severity" }, 400);
+    patch.severity = s;
+  }
+  if ("status" in body) {
+    const s = String(body.status).toUpperCase();
+    if (!BREAKDOWN_STATUS_SET.has(s)) return c.json({ error: "invalid_status" }, 400);
+    patch.status = s;
+  }
+  if ("faultType" in body) patch.fault_type = (body.faultType as string)?.trim() || null;
+  if ("stillDrivable" in body) patch.still_drivable = Boolean(body.stillDrivable);
+  if ("towingCompany" in body) patch.towing_company = (body.towingCompany as string)?.trim() || null;
+  if ("workshop" in body) patch.workshop = (body.workshop as string)?.trim() || null;
+  if ("notes" in body) patch.notes = (body.notes as string)?.trim() || null;
+  if ("driverDescription" in body) patch.driver_description = (body.driverDescription as string)?.trim() || null;
+  if ("towingCostCenti" in body) {
+    const v = numOrNull(body.towingCostCenti);
+    if (!v.ok) return c.json({ error: "invalid_towing_cost" }, 400);
+    patch.towing_cost_centi = v.value;
+  }
+  if ("breakdownStart" in body) {
+    const v = tsOrNull(body.breakdownStart);
+    if (!v.ok) return c.json({ error: "invalid_breakdown_start" }, 400);
+    patch.breakdown_start = v.value;
+  }
+  if ("recoveryTime" in body) {
+    const v = tsOrNull(body.recoveryTime);
+    if (!v.ok) return c.json({ error: "invalid_recovery_time" }, 400);
+    patch.recovery_time = v.value;
+  }
+
+  const { data: updated, error } = await sb.from("lorry_breakdown_cases").update(patch).eq("id", caseId).select("id").maybeSingle();
+  if (error) return c.json({ error: "update_failed", reason: error.message }, 500);
+  if (!updated) return c.json({ error: "case_not_found" }, 404);
+  return c.json({ id: updated.id });
+});
+
+// ── POST /vehicles/:id/work-orders — open a maintenance work order ───────────
+fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write"), async (c) => {
+  const lorryId = c.req.param("id");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+
+  const money: Record<string, number> = {};
+  for (const [k, col] of [["labourCenti", "labour_centi"], ["outsideServiceCenti", "outside_service_centi"], ["towingCenti", "towing_centi"], ["taxCenti", "tax_centi"]] as const) {
+    const v = numOrNull(body[k]);
+    if (!v.ok) return c.json({ error: `invalid_${col}` }, 400);
+    money[col] = v.value ?? 0;
+  }
+  const warranty = dateOrNull(body.warrantyUntil);
+  if (!warranty.ok) return c.json({ error: "invalid_warranty_until" }, 400);
+  const est = tsOrNull(body.estComplete);
+  if (!est.ok) return c.json({ error: "invalid_est_complete" }, 400);
+  const invoiceRefs = refsOrNull(body.invoiceRefs);
+  const quoteRefs = refsOrNull(body.quoteRefs);
+  const photoRefs = refsOrNull(body.photoRefs);
+  if (!invoiceRefs.ok || !quoteRefs.ok || !photoRefs.ok) return c.json({ error: "invalid_refs" }, 400);
+
+  const exists = await lorryExists(sb, lorryId);
+  if (exists === "error") return c.json({ error: "load_failed" }, 500);
+  if (!exists) return c.json({ error: "vehicle_not_found" }, 404);
+
+  const { data: inserted, error } = await sb
+    .from("lorry_work_orders")
+    .insert({
+      company_id: activeCompanyId(c) ?? null,
+      lorry_id: lorryId,
+      status: "REPORTED",
+      problem: (body.problem as string)?.trim() || null,
+      diagnosis: (body.diagnosis as string)?.trim() || null,
+      workshop: (body.workshop as string)?.trim() || null,
+      labour_centi: money.labour_centi,
+      outside_service_centi: money.outside_service_centi,
+      towing_centi: money.towing_centi,
+      tax_centi: money.tax_centi,
+      warranty_until: warranty.value,
+      invoice_refs: invoiceRefs.value,
+      quote_refs: quoteRefs.value,
+      photo_refs: photoRefs.value,
+      est_complete: est.value,
+      breakdown_case_id: (body.breakdownCaseId as string)?.trim() || null,
+      component_id: (body.componentId as string)?.trim() || null,
+      notes: (body.notes as string)?.trim() || null,
+      created_by: c.get("houzsUser")?.id ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) {
+    if (error.code === "23503") return c.json({ error: "vehicle_not_found" }, 404);
+    return c.json({ error: "insert_failed", reason: error.message }, 500);
+  }
+  return c.json({ id: inserted?.id, status: "REPORTED" }, 201);
+});
+
+// ── PATCH /work-orders/:id — edit fields (NOT status — use /transition) ───────
+fleetMaintenance.patch("/work-orders/:woId", requireHouzsPerm("fleet.write"), async (c) => {
+  const woId = c.req.param("woId");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  for (const [k, col] of [["labourCenti", "labour_centi"], ["outsideServiceCenti", "outside_service_centi"], ["towingCenti", "towing_centi"], ["taxCenti", "tax_centi"]] as const) {
+    if (k in body) {
+      const v = numOrNull(body[k]);
+      if (!v.ok) return c.json({ error: `invalid_${col}` }, 400);
+      patch[col] = v.value ?? 0;
+    }
+  }
+  if ("problem" in body) patch.problem = (body.problem as string)?.trim() || null;
+  if ("diagnosis" in body) patch.diagnosis = (body.diagnosis as string)?.trim() || null;
+  if ("workshop" in body) patch.workshop = (body.workshop as string)?.trim() || null;
+  if ("notes" in body) patch.notes = (body.notes as string)?.trim() || null;
+  if ("warrantyUntil" in body) {
+    const v = dateOrNull(body.warrantyUntil);
+    if (!v.ok) return c.json({ error: "invalid_warranty_until" }, 400);
+    patch.warranty_until = v.value;
+  }
+  if ("estComplete" in body) {
+    const v = tsOrNull(body.estComplete);
+    if (!v.ok) return c.json({ error: "invalid_est_complete" }, 400);
+    patch.est_complete = v.value;
+  }
+  for (const [k, col] of [["invoiceRefs", "invoice_refs"], ["quoteRefs", "quote_refs"], ["photoRefs", "photo_refs"]] as const) {
+    if (k in body) {
+      const v = refsOrNull(body[k]);
+      if (!v.ok) return c.json({ error: `invalid_${col}` }, 400);
+      patch[col] = v.value;
+    }
+  }
+  if ("componentId" in body) patch.component_id = (body.componentId as string)?.trim() || null;
+
+  const { data: updated, error } = await sb.from("lorry_work_orders").update(patch).eq("id", woId).select("id").maybeSingle();
+  if (error) return c.json({ error: "update_failed", reason: error.message }, 500);
+  if (!updated) return c.json({ error: "work_order_not_found" }, 404);
+  return c.json({ id: updated.id });
+});
+
+// ── POST /work-orders/:id/transition — advance the state machine ──────────────
+// The ONLY path that changes a work order's status: it validates the transition
+// against WORK_ORDER_TRANSITIONS so an illegal jump (e.g. Reported → Verified)
+// is a 409, never a silent write.
+fleetMaintenance.post("/work-orders/:woId/transition", requireHouzsPerm("fleet.write"), async (c) => {
+  const woId = c.req.param("woId");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+  const to = String(body.to ?? "").trim().toUpperCase();
+  if (!WORK_ORDER_STATE_SET.has(to)) return c.json({ error: "invalid_target_state" }, 400);
+
+  const { data: cur, error: curErr } = await sb.from("lorry_work_orders").select("id, status").eq("id", woId).maybeSingle();
+  if (curErr) return c.json({ error: "load_failed", reason: curErr.message }, 500);
+  if (!cur) return c.json({ error: "work_order_not_found" }, 404);
+  const from = cur.status as WorkOrderState;
+  if (!canTransitionWorkOrder(from, to as WorkOrderState)) {
+    return c.json({ error: "illegal_transition", from, to }, 409);
+  }
+
+  const patch: Record<string, unknown> = { status: to, updated_at: new Date().toISOString() };
+  if (to === "APPROVED") patch.approved_by = c.get("houzsUser")?.id ?? null;
+  if (to === "VERIFIED") patch.verified_by = c.get("houzsUser")?.id ?? null;
+  if (to === "COMPLETED") patch.actual_complete = new Date().toISOString();
+
+  const { data: updated, error } = await sb.from("lorry_work_orders").update(patch).eq("id", woId).select("id").maybeSingle();
+  if (error) return c.json({ error: "update_failed", reason: error.message }, 500);
+  if (!updated) return c.json({ error: "work_order_not_found" }, 404);
+  return c.json({ id: updated.id, status: to });
+});
+
+// ── POST /work-orders/:id/parts — add a part line ────────────────────────────
+fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"), async (c) => {
+  const woId = c.req.param("woId");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+  const name = (body.name as string)?.trim();
+  if (!name) return c.json({ error: "name_required" }, 400);
+  const qty = numOrNull(body.qty);
+  if (!qty.ok || (qty.value !== null && qty.value <= 0)) return c.json({ error: "invalid_qty" }, 400);
+  const unit = numOrNull(body.unitPriceCenti);
+  if (!unit.ok) return c.json({ error: "invalid_unit_price" }, 400);
+
+  const { data: wo, error: woErr } = await sb.from("lorry_work_orders").select("id").eq("id", woId).maybeSingle();
+  if (woErr) return c.json({ error: "load_failed", reason: woErr.message }, 500);
+  if (!wo) return c.json({ error: "work_order_not_found" }, 404);
+
+  const { data: inserted, error } = await sb
+    .from("lorry_work_order_parts")
+    .insert({
+      company_id: activeCompanyId(c) ?? null,
+      work_order_id: woId,
+      name,
+      part_no: (body.partNo as string)?.trim() || null,
+      qty: qty.value ?? 1,
+      unit_price_centi: unit.value ?? 0,
+      serial: (body.serial as string)?.trim() || null,
+      created_by: c.get("houzsUser")?.id ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) {
+    if (error.code === "23503") return c.json({ error: "work_order_not_found" }, 404);
+    return c.json({ error: "insert_failed", reason: error.message }, 500);
+  }
+  return c.json({ id: inserted?.id }, 201);
+});
+
+// ── DELETE /work-orders/:id/parts/:partId — remove a part line ────────────────
+fleetMaintenance.delete("/work-orders/:woId/parts/:partId", requireHouzsPerm("fleet.write"), async (c) => {
+  const sb = c.get("supabase");
+  const { data: deleted, error } = await sb
+    .from("lorry_work_order_parts")
+    .delete()
+    .eq("id", c.req.param("partId"))
+    .eq("work_order_id", c.req.param("woId"))
+    .select("id")
+    .maybeSingle();
+  if (error) return c.json({ error: "delete_failed", reason: error.message }, 500);
+  if (!deleted) return c.json({ error: "part_not_found" }, 404);
+  return c.json({ id: deleted.id });
+});
+
+// ── POST /vehicles/:id/components — fit a component (tyre/battery/…) ──────────
+fleetMaintenance.post("/vehicles/:id/components", requireHouzsPerm("fleet.write"), async (c) => {
+  const lorryId = c.req.param("id");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+  const componentType = String(body.componentType ?? "").trim().toUpperCase();
+  if (!COMPONENT_TYPE_SET.has(componentType)) return c.json({ error: "invalid_component_type" }, 400);
+  const position = body.position === undefined || body.position === "" ? "NA" : String(body.position).toUpperCase();
+  if (!COMPONENT_POSITION_SET.has(position)) return c.json({ error: "invalid_position" }, 400);
+  const fittedDate = dateOrNull(body.fittedDate);
+  if (!fittedDate.ok) return c.json({ error: "invalid_fitted_date" }, 400);
+  const fittedKm = intOrNull(body.fittedKm);
+  if (!fittedKm.ok) return c.json({ error: "invalid_fitted_km" }, 400);
+  const price = numOrNull(body.purchasePriceCenti);
+  if (!price.ok) return c.json({ error: "invalid_purchase_price" }, 400);
+  const tread = numOrNull(body.treadDepth);
+  if (!tread.ok) return c.json({ error: "invalid_tread_depth" }, 400);
+  const warranty = dateOrNull(body.warrantyUntil);
+  if (!warranty.ok) return c.json({ error: "invalid_warranty_until" }, 400);
+
+  const exists = await lorryExists(sb, lorryId);
+  if (exists === "error") return c.json({ error: "load_failed" }, 500);
+  if (!exists) return c.json({ error: "vehicle_not_found" }, 404);
+
+  const { data: inserted, error } = await sb
+    .from("lorry_components")
+    .insert({
+      company_id: activeCompanyId(c) ?? null,
+      lorry_id: lorryId,
+      component_type: componentType,
+      position,
+      brand: (body.brand as string)?.trim() || null,
+      model: (body.model as string)?.trim() || null,
+      size: (body.size as string)?.trim() || null,
+      serial: (body.serial as string)?.trim() || null,
+      fitted_date: fittedDate.value,
+      fitted_km: fittedKm.value,
+      purchase_price_centi: price.value,
+      tread_depth: tread.value,
+      warranty_until: warranty.value,
+      status: "ACTIVE",
+      notes: (body.notes as string)?.trim() || null,
+      created_by: c.get("houzsUser")?.id ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) {
+    if (error.code === "23505") return c.json({ error: "position_occupied" }, 409);
+    if (error.code === "23503") return c.json({ error: "vehicle_not_found" }, 404);
+    return c.json({ error: "insert_failed", reason: error.message }, 500);
+  }
+  return c.json({ id: inserted?.id }, 201);
+});
+
+// ── PATCH /components/:id — update / remove a component ───────────────────────
+fleetMaintenance.patch("/components/:componentId", requireHouzsPerm("fleet.write"), async (c) => {
+  const componentId = c.req.param("componentId");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if ("status" in body) {
+    const s = String(body.status).toUpperCase();
+    if (s !== "ACTIVE" && s !== "REMOVED") return c.json({ error: "invalid_status" }, 400);
+    patch.status = s;
+  }
+  if ("treadDepth" in body) {
+    const v = numOrNull(body.treadDepth);
+    if (!v.ok) return c.json({ error: "invalid_tread_depth" }, 400);
+    patch.tread_depth = v.value;
+  }
+  if ("removedDate" in body) {
+    const v = dateOrNull(body.removedDate);
+    if (!v.ok) return c.json({ error: "invalid_removed_date" }, 400);
+    patch.removed_date = v.value;
+  }
+  if ("removedKm" in body) {
+    const v = intOrNull(body.removedKm);
+    if (!v.ok) return c.json({ error: "invalid_removed_km" }, 400);
+    patch.removed_km = v.value;
+  }
+  if ("position" in body) {
+    const p = String(body.position).toUpperCase();
+    if (!COMPONENT_POSITION_SET.has(p)) return c.json({ error: "invalid_position" }, 400);
+    patch.position = p;
+  }
+  if ("warrantyUntil" in body) {
+    const v = dateOrNull(body.warrantyUntil);
+    if (!v.ok) return c.json({ error: "invalid_warranty_until" }, 400);
+    patch.warranty_until = v.value;
+  }
+  if ("brand" in body) patch.brand = (body.brand as string)?.trim() || null;
+  if ("model" in body) patch.model = (body.model as string)?.trim() || null;
+  if ("size" in body) patch.size = (body.size as string)?.trim() || null;
+  if ("serial" in body) patch.serial = (body.serial as string)?.trim() || null;
+  if ("notes" in body) patch.notes = (body.notes as string)?.trim() || null;
+
+  const { data: updated, error } = await sb.from("lorry_components").update(patch).eq("id", componentId).select("id").maybeSingle();
+  if (error) {
+    if (error.code === "23505") return c.json({ error: "position_occupied" }, 409);
+    return c.json({ error: "update_failed", reason: error.message }, 500);
+  }
+  if (!updated) return c.json({ error: "component_not_found" }, 404);
+  return c.json({ id: updated.id });
+});
+
+// ── POST /components/:id/events — log rotation/puncture/repair/inspection ──────
+fleetMaintenance.post("/components/:componentId/events", requireHouzsPerm("fleet.write"), async (c) => {
+  const componentId = c.req.param("componentId");
+  const sb = c.get("supabase");
+
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+  const eventType = String(body.eventType ?? "").trim().toUpperCase();
+  if (!COMPONENT_EVENT_TYPE_SET.has(eventType)) return c.json({ error: "invalid_event_type" }, 400);
+  const eventDate = dateOrNull(body.eventDate);
+  if (!eventDate.ok) return c.json({ error: "invalid_event_date" }, 400);
+  const odo = intOrNull(body.odometerKm);
+  if (!odo.ok) return c.json({ error: "invalid_odometer" }, 400);
+  const cost = numOrNull(body.costCenti);
+  if (!cost.ok) return c.json({ error: "invalid_cost" }, 400);
+  let toPosition: string | null = null;
+  if (body.toPosition != null && body.toPosition !== "") {
+    toPosition = String(body.toPosition).toUpperCase();
+    if (!COMPONENT_POSITION_SET.has(toPosition)) return c.json({ error: "invalid_to_position" }, 400);
+  }
+
+  const { data: comp, error: compErr } = await sb.from("lorry_components").select("id").eq("id", componentId).maybeSingle();
+  if (compErr) return c.json({ error: "load_failed", reason: compErr.message }, 500);
+  if (!comp) return c.json({ error: "component_not_found" }, 404);
+
+  const { data: inserted, error } = await sb
+    .from("lorry_component_events")
+    .insert({
+      company_id: activeCompanyId(c) ?? null,
+      component_id: componentId,
+      event_type: eventType,
+      event_date: eventDate.value ?? todayMyt(),
+      odometer_km: odo.value,
+      to_position: toPosition,
+      cost_centi: cost.value,
+      note: (body.note as string)?.trim() || null,
+      created_by: c.get("houzsUser")?.id ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) {
+    if (error.code === "23503") return c.json({ error: "component_not_found" }, 404);
+    return c.json({ error: "insert_failed", reason: error.message }, 500);
+  }
+  return c.json({ id: inserted?.id }, 201);
 });
 
 export default fleetMaintenance;

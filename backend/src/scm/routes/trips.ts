@@ -33,6 +33,12 @@ import { scopeToAllowedCompanies, companyCodeMap, withCompanyCode, activeCompany
 import { optimizeRoute, travelTimeMatrix, type LatLngPoint } from '../lib/maps';
 import { geocodeAddressCached, composeAddress } from '../lib/geocode';
 import { proposeRoute, timeToMinutes, minutesToTime, type ProposeStopInput } from '../lib/propose-route';
+import {
+  assembleDayView,
+  type RawTripRow, type RawStopRow, type StopEnrichment,
+  type MasterName as DayMasterName, type MasterLorry as DayMasterLorry,
+  type MasterWarehouse as DayMasterWarehouse, type LatLng as DayLatLng,
+} from '../lib/fleet-day-view';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
 import { reconcileStopsToBoard, reconcileFieldsFor, type ReconcileStop } from '../lib/tripReconcile';
 import { validatePing, shouldAcceptPing, latestPerDriver, PING_ACCEPTED_STATUSES } from '../lib/tripLocation';
@@ -160,6 +166,233 @@ trips.get('/', async (c) => {
   const codes = companyCodeMap(c);
   const trips = scoped.map((r) => withCompanyCode(r, codes));
   return c.json({ trips });
+});
+
+/* ──────────────────────────────────────────────────────────────────────────
+   GET /trips/day?date=YYYY-MM-DD&warehouseId=<id> — the FLEET DAY-VIEW (A4).
+
+   Every trip on ONE date, each with its ordered stops enriched for the map + the
+   printable driver run-sheet: customer / address / revenue come straight off the
+   stop snapshot; phone + house type resolve through the stop's DO to its SO; the
+   delivery time window comes from scm.delivery_residence_rules by house type. A
+   READ layer over already-scheduled trips — it writes NOTHING and creates no trip.
+
+   Geocoding is CACHE-FIRST and gated behind GOOGLE_MAPS_API_KEY: with no key the
+   response still carries every trip + stop (configured:false), the map just has no
+   pins. A cached address never bills; a new one geocodes once then caches forever
+   (scm.geocode_cache, mig 0197) — the SAME cache the propose-schedule scheduler
+   fills, keyed on the same composed address so the two share hits.
+
+   MUST stay registered BEFORE '/:id' — '/day' is a single segment and '/:id'
+   would otherwise swallow it.
+   ─────────────────────────────────────────────────────────────────────────*/
+trips.get('/day', async (c) => {
+  const sb = c.get('supabase');
+  const date = c.req.query('date');
+  const warehouseId = c.req.query('warehouseId');
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json({ error: 'invalid_date', reason: 'date=YYYY-MM-DD is required' }, 400);
+  }
+  const configured = !!c.env.GOOGLE_MAPS_API_KEY;
+
+  // Warehouses master — the depot list for the filter + the per-trip depot label.
+  const { data: whRows } = await sb.from('warehouses').select('id, name, code, location, city, state, postcode');
+  const warehousesById = new Map<string, DayMasterWarehouse>();
+  const warehouseAddrById = new Map<string, string>();
+  for (const w of (whRows ?? []) as Array<Record<string, unknown>>) {
+    const id = String(dual<string>(w, 'id'));
+    warehousesById.set(id, { id, name: String(dual<string>(w, 'name') ?? ''), code: (dual<string | null>(w, 'code') ?? null) });
+    warehouseAddrById.set(id, composeAddress({
+      address1: dual<string | null>(w, 'location'),
+      address2: dual<string | null>(w, 'city'),
+      postcode: dual<string | null>(w, 'postcode'),
+      state: dual<string | null>(w, 'state'),
+    }) || String(dual<string>(w, 'name') ?? ''));
+  }
+  const warehouses = [...warehousesById.values()].sort((a, b) => (a.code ?? a.name).localeCompare(b.code ?? b.name));
+
+  // Trips on the date (cross-company fleet view), optional depot filter.
+  const { data: tripData, error: tripErr } = await paginateAll<Record<string, unknown>>((lo, hi) => {
+    let q = sb.from('trips')
+      .select('company_id, id, trip_no, trip_date, lorry_id, driver_id, helper_1_id, helper_2_id, warehouse_id, trip_type, status, is_outsourced, total_distance_km')
+      .eq('trip_date', date).neq('status', 'CANCELLED').order('trip_no', { ascending: true }).range(lo, hi);
+    if (warehouseId) q = q.eq('warehouse_id', warehouseId);
+    q = scopeToAllowedCompanies(q, c);
+    return q;
+  });
+  if (tripErr) return c.json({ error: 'load_failed', reason: tripErr.message }, 500);
+
+  // PER-ASSIGNEE ROW SCOPE (owner rule): a Driver/Helper sees only their trips.
+  const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  const scopedTrips = (scope.mode === 'all'
+    ? (tripData ?? [])
+    : (tripData ?? []).filter((r) => scopeMatchesAssignment(scope, tripAssignment(r))));
+
+  const rawTrips: RawTripRow[] = scopedTrips.map((r) => ({
+    id: String(dual<string>(r, 'id')),
+    trip_no: dual<string | null>(r, 'trip_no'),
+    trip_date: dual<string | null>(r, 'trip_date'),
+    status: dual<string | null>(r, 'status'),
+    is_outsourced: dual<boolean | null>(r, 'is_outsourced'),
+    lorry_id: dual<string | null>(r, 'lorry_id'),
+    driver_id: dual<string | null>(r, 'driver_id'),
+    helper_1_id: dual<string | null>(r, 'helper_1_id'),
+    helper_2_id: dual<string | null>(r, 'helper_2_id'),
+    warehouse_id: dual<string | null>(r, 'warehouse_id'),
+    total_distance_km: dual<number | string | null>(r, 'total_distance_km'),
+  }));
+
+  if (rawTrips.length === 0) {
+    return c.json({ date, configured, warehouses, trips: [] });
+  }
+
+  // Stops for those trips.
+  const tripIds = rawTrips.map((t) => t.id);
+  const { data: stopData } = await sb.from('trip_stops')
+    .select('id, trip_id, stop_no, stop_type, do_id, so_id, customer_name, address, revenue_centi, eta_offset_s, leg_distance_m')
+    .in('trip_id', tripIds);
+  const rawStops: RawStopRow[] = ((stopData ?? []) as Array<Record<string, unknown>>).map((s) => ({
+    id: String(dual<string>(s, 'id')),
+    trip_id: String(dual<string>(s, 'trip_id')),
+    stop_no: dual<number | null>(s, 'stop_no'),
+    stop_type: dual<string | null>(s, 'stop_type'),
+    do_id: dual<string | null>(s, 'do_id'),
+    so_id: dual<string | null>(s, 'so_id'),
+    customer_name: dual<string | null>(s, 'customer_name'),
+    address: dual<string | null>(s, 'address'),
+    revenue_centi: toNumericOrNull(dual(s, 'revenue_centi')),
+    eta_offset_s: toNumericOrNull(dual(s, 'eta_offset_s')),
+    leg_distance_m: toNumericOrNull(dual(s, 'leg_distance_m')),
+  }));
+
+  // Resolve each stop's source SO through its DO (an SO stop keeps do_id; there is
+  // no trip_stops.so_id for an SO — it has no uuid). do_id -> so_doc_no -> SO.
+  const doIds = [...new Set(rawStops.map((s) => s.do_id).filter((v): v is string => !!v))];
+  const soDocByDoId = new Map<string, string>();
+  if (doIds.length > 0) {
+    const { data: doRows } = await sb.from('delivery_orders').select('id, so_doc_no').in('id', doIds);
+    for (const d of (doRows ?? []) as Array<Record<string, unknown>>) {
+      const id = dual<string | null>(d, 'id');
+      const soDoc = dual<string | null>(d, 'so_doc_no');
+      if (id && soDoc) soDocByDoId.set(String(id), String(soDoc));
+    }
+  }
+  const soDocNos = [...new Set([...soDocByDoId.values()])];
+  const soByDoc = new Map<string, { phone: string | null; buildingType: string | null; address: string }>();
+  if (soDocNos.length > 0) {
+    const { data: soRows } = await scopeToAllowedCompanies(
+      sb.from('mfg_sales_orders')
+        .select('doc_no, phone, building_type, house_type, address1, address2, postcode, customer_state, customer_country')
+        .in('doc_no', soDocNos),
+      c,
+    );
+    for (const r of (soRows ?? []) as Array<Record<string, unknown>>) {
+      const docNo = String(dual<string>(r, 'doc_no'));
+      const buildingType = (dual<string | null>(r, 'building_type') ?? dual<string | null>(r, 'house_type')) ?? null;
+      soByDoc.set(docNo, {
+        phone: dual<string | null>(r, 'phone'),
+        buildingType,
+        address: composeAddress({
+          address1: dual<string | null>(r, 'address1'),
+          address2: dual<string | null>(r, 'address2'),
+          postcode: dual<string | null>(r, 'postcode'),
+          state: dual<string | null>(r, 'customer_state'),
+          country: dual<string | null>(r, 'customer_country'),
+        }),
+      });
+    }
+  }
+
+  // Residence rules — house/building type -> delivery window + access flags.
+  const { data: ruleRows } = await scopeToAllowedCompanies(
+    sb.from('delivery_residence_rules')
+      .select('building_type, earliest_delivery_time, latest_delivery_time, requires_lift_booking, requires_registration, is_active'),
+    c,
+  );
+  const windowByType = new Map<string, { earliest: string | null; latest: string | null; note: string | null }>();
+  for (const r of (ruleRows ?? []) as Array<Record<string, unknown>>) {
+    const type = String((dual<string | null>(r, 'building_type') ?? '')).trim().toLowerCase();
+    if (type === '') continue;
+    if (dual<boolean | null>(r, 'is_active') === false) continue;
+    const notes: string[] = [];
+    if (dual<boolean | null>(r, 'requires_lift_booking') === true) notes.push('Lift booking required');
+    if (dual<boolean | null>(r, 'requires_registration') === true) notes.push('Registration required');
+    windowByType.set(type, {
+      earliest: minutesToTime(timeToMinutes(dual<string | null>(r, 'earliest_delivery_time'))),
+      latest: minutesToTime(timeToMinutes(dual<string | null>(r, 'latest_delivery_time'))),
+      note: notes.length ? notes.join(' · ') : null,
+    });
+  }
+
+  // Per-stop enrichment + the address to geocode (prefer the SO's fuller address,
+  // matching what propose-schedule cached, for cache-key parity; else the snapshot).
+  const enrichByStopId = new Map<string, StopEnrichment>();
+  const geoAddrByStopId = new Map<string, string>();
+  for (const s of rawStops) {
+    const soDoc = s.do_id ? soDocByDoId.get(s.do_id) ?? null : null;
+    const so = soDoc ? soByDoc.get(soDoc) ?? null : null;
+    const houseType = so?.buildingType ?? null;
+    const win = houseType ? windowByType.get(houseType.trim().toLowerCase()) ?? null : null;
+    enrichByStopId.set(s.id, {
+      phone: so?.phone ?? null,
+      houseType,
+      earliestTime: win?.earliest ?? null,
+      latestTime: win?.latest ?? null,
+      accessNote: win?.note ?? null,
+    });
+    const addr = (so?.address && so.address.trim() !== '') ? so.address : (s.address ?? '');
+    if (addr.trim() !== '') geoAddrByStopId.set(s.id, addr);
+  }
+
+  // Geocode (cache-first, gated). Depots first, then each distinct stop address.
+  const depotByWarehouseId = new Map<string, DayLatLng>();
+  const geoByStopId = new Map<string, DayLatLng>();
+  if (configured) {
+    const depotWhIds = [...new Set(rawTrips.map((t) => t.warehouse_id).filter((v): v is string => !!v))];
+    for (const whId of depotWhIds) {
+      const addr = warehouseAddrById.get(whId);
+      if (!addr) continue;
+      const hit = await geocodeAddressCached(sb, c.env, addr);
+      if (hit) depotByWarehouseId.set(whId, { lat: hit.lat, lng: hit.lng });
+    }
+    // Distinct addresses so repeated customers geocode once per request too.
+    const addrToStops = new Map<string, string[]>();
+    for (const [stopId, addr] of geoAddrByStopId) {
+      const arr = addrToStops.get(addr);
+      if (arr) arr.push(stopId); else addrToStops.set(addr, [stopId]);
+    }
+    for (const [addr, stopIds] of addrToStops) {
+      const hit = await geocodeAddressCached(sb, c.env, addr);
+      if (hit) for (const sid of stopIds) geoByStopId.set(sid, { lat: hit.lat, lng: hit.lng });
+    }
+  }
+
+  // Masters (cross-company fleet) — id -> display name / plate.
+  const [drv, hlp, lry] = await Promise.all([
+    sb.from('drivers').select('id, name'),
+    sb.from('helpers').select('id, name'),
+    sb.from('lorries').select('id, plate'),
+  ]);
+  const driversById = new Map<string, DayMasterName>();
+  for (const d of (drv.data ?? []) as Array<Record<string, unknown>>) {
+    const id = String(dual<string>(d, 'id')); driversById.set(id, { id, name: String(dual<string>(d, 'name') ?? '') });
+  }
+  const helpersById = new Map<string, DayMasterName>();
+  for (const h of (hlp.data ?? []) as Array<Record<string, unknown>>) {
+    const id = String(dual<string>(h, 'id')); helpersById.set(id, { id, name: String(dual<string>(h, 'name') ?? '') });
+  }
+  const lorriesById = new Map<string, DayMasterLorry>();
+  for (const l of (lry.data ?? []) as Array<Record<string, unknown>>) {
+    const id = String(dual<string>(l, 'id')); lorriesById.set(id, { id, plate: String(dual<string>(l, 'plate') ?? '') });
+  }
+
+  const { trips: dayTrips } = assembleDayView({
+    trips: rawTrips, stops: rawStops,
+    driversById, helpersById, lorriesById, warehousesById,
+    enrichByStopId, geoByStopId, depotByWarehouseId,
+  });
+
+  return c.json({ date, configured, warehouses, trips: dayTrips });
 });
 
 /* ──────────────────────────────────────────────────────────────────────────

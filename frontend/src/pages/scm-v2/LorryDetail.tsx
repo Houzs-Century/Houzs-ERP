@@ -28,8 +28,11 @@ import {
   useUploadServiceInvoice,
   fetchServiceInvoiceUrl,
   LORRY_TYPE_LABEL,
+  CAPACITY_LAYERS,
+  CAPACITY_LAYER_LABEL,
   type LorryRow,
   type LorryServiceRecord,
+  type CapacityLayer,
 } from '../../vendor/scm/lib/lorries-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -91,6 +94,7 @@ export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () =
 
         <div className={styles.drawerBody}>
           <ComplianceStrip lorry={lorry} next={next} />
+          <CapacitySection lorry={lorry} />
           <PurchaseSection lorry={lorry} />
 
           <section className={styles.section}>
@@ -200,6 +204,76 @@ const Tile = ({
 );
 
 // ── purchase ─────────────────────────────────────────────────────────────────
+
+// Fleet A1 — the per-lorry delivery capacity ceilings the auto-propose packer
+// reads. Blank max_* => the packer uses its config default (10 sets / RM30k).
+const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
+  const update = useUpdateLorry();
+  const notify = useNotify();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    maxSets: lorry.max_sets != null ? String(lorry.max_sets) : '',
+    maxRevenueRm: lorry.max_revenue_centi != null ? String(lorry.max_revenue_centi / 100) : '',
+    layer: (lorry.capacity_layer ?? 'SETS') as CapacityLayer,
+  });
+  const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => setForm((s) => ({ ...s, [k]: v }));
+
+  const save = () => {
+    const setsStr = form.maxSets.trim();
+    const revStr = form.maxRevenueRm.trim();
+    if (setsStr && !(Number.isInteger(Number(setsStr)) && Number(setsStr) >= 0)) { notify({ title: 'Max sets must be a whole number.', tone: 'error' }); return; }
+    if (revStr && !(Number.isFinite(Number(revStr)) && Number(revStr) >= 0)) { notify({ title: 'Max revenue must be a number.', tone: 'error' }); return; }
+    update.mutate({
+      id: lorry.id,
+      maxSets: setsStr ? Math.round(Number(setsStr)) : null,
+      maxRevenueCenti: revStr ? Math.round(Number(revStr) * 100) : null,
+      capacityLayer: form.layer,
+    }, {
+      onSuccess: () => { setEditing(false); notify({ title: 'Capacity updated.' }); },
+      onError: (e: unknown) => notify({ title: (e as Error)?.message ?? 'Save failed.', tone: 'error' }),
+    });
+  };
+
+  if (!editing) {
+    return (
+      <section className={styles.section}>
+        <div className={styles.headerRow}>
+          <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Delivery capacity</h3>
+          <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Edit</Button>
+        </div>
+        <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-3)', margin: 0 }}>
+          <Fact label="Max sets / trip" value={lorry.max_sets != null ? String(lorry.max_sets) : 'default (10)'} />
+          <Fact label="Max revenue / trip" value={lorry.max_revenue_centi != null ? fmtCenti(lorry.max_revenue_centi) : 'default (RM30k)'} />
+          <Fact label="Ceiling layer" value={CAPACITY_LAYER_LABEL[(lorry.capacity_layer ?? 'SETS') as CapacityLayer]} />
+        </dl>
+      </section>
+    );
+  }
+
+  return (
+    <section className={styles.section}>
+      <div className={styles.headerRow}>
+        <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Delivery capacity</h3>
+      </div>
+      <div className={styles.formGrid}>
+        <Field label="Max sets / trip" value={form.maxSets} onChange={(v) => set('maxSets', v)} placeholder="blank = default 10" />
+        <Field label="Max revenue / trip (RM)" value={form.maxRevenueRm} onChange={(v) => set('maxRevenueRm', v)} placeholder="blank = default 30000" />
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Ceiling layer</span>
+          <select className={styles.fieldInput} value={form.layer} onChange={(e) => set('layer', e.target.value as CapacityLayer)}>
+            {CAPACITY_LAYERS.map((l) => (<option key={l} value={l}>{CAPACITY_LAYER_LABEL[l]}</option>))}
+          </select>
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-3)' }}>
+        <Button variant="primary" size="sm" onClick={save} disabled={update.isPending}>
+          {update.isPending ? 'Saving…' : 'Save'}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
+      </div>
+    </section>
+  );
+};
 
 const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
   const update = useUpdateLorry();

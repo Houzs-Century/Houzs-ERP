@@ -494,3 +494,277 @@ export function assessMileageReading(input: MileageGuardInput): MileageAssessmen
   }
   return { verdict: "OK", accepted: true, flagged: false, deltaKm, days };
 }
+
+// ============================================================================
+// Phase 3 — Breakdown cases, maintenance work orders, tyre/component lifecycle.
+//
+// Three more pure, env-free, unit-tested concerns. Two of them finally FEED the
+// status seams deriveVehicleStatus() has carried since Phase 1:
+//
+//   5. isBreakdownActive()      — a CRITICAL, still-unresolved breakdown case
+//      grounds the lorry (feeds breakdownActive → BREAKDOWN status).
+//   6. work-order state machine — canTransitionWorkOrder() + workOrderSeam():
+//      an OPEN work order in IN_REPAIR feeds PLANNED_MAINTENANCE; one in
+//      WAITING_PARTS feeds WAITING_PARTS. workOrderTotalCenti() sums the legs.
+//   7. deriveComponentLife()    — km_used + cost_per_km for a fitted/removed
+//      tyre/battery/etc., plus warranty state.
+//
+// The status machine INPUTS (openWorkOrder + breakdownActive) are unchanged —
+// Phase 3 supplies them for real, it does not add a branch to the machine.
+// ============================================================================
+
+// ── 5. Breakdown cases ──────────────────────────────────────────────────────
+
+export type BreakdownSeverity = "MINOR" | "MAJOR" | "CRITICAL";
+export const BREAKDOWN_SEVERITIES: readonly BreakdownSeverity[] = ["MINOR", "MAJOR", "CRITICAL"] as const;
+
+export type BreakdownStatus = "OPEN" | "TOWING" | "IN_WORKSHOP" | "RESOLVED";
+export const BREAKDOWN_STATUSES: readonly BreakdownStatus[] = ["OPEN", "TOWING", "IN_WORKSHOP", "RESOLVED"] as const;
+
+export const BREAKDOWN_STATUS_LABELS: Record<BreakdownStatus, string> = {
+  OPEN: "Open",
+  TOWING: "Towing",
+  IN_WORKSHOP: "In workshop",
+  RESOLVED: "Resolved",
+};
+
+/** A breakdown case as the grounding rule needs to see it. */
+export interface BreakdownCaseInput {
+  severity: string;
+  status: string;
+}
+
+/** A single case grounds the lorry when it is CRITICAL and not yet resolved.
+ *  MINOR/MAJOR cases are logged (still-drivable incidents) but do not, on their
+ *  own, take the lorry off the road — that stays the derived-status machine's
+ *  precedence, not a per-case flag. */
+export function isCaseGrounding(c: BreakdownCaseInput): boolean {
+  return c.severity === "CRITICAL" && c.status !== "RESOLVED";
+}
+
+/** Does ANY open case ground the lorry? This is what feeds breakdownActive. */
+export function isBreakdownActive(cases: readonly BreakdownCaseInput[] | undefined): boolean {
+  return (cases ?? []).some(isCaseGrounding);
+}
+
+/** Downtime hours for a case: recovery_time − breakdown_start (or occurred_at),
+ *  or now − start while still down. Null when there is no start anchor. */
+export function breakdownDowntimeHours(
+  c: { breakdownStart?: string | null; occurredAt?: string | null; recoveryTime?: string | null },
+  nowIso: string,
+): number | null {
+  const start = c.breakdownStart ?? c.occurredAt ?? null;
+  if (!start) return null;
+  const s = Date.parse(start);
+  if (Number.isNaN(s)) return null;
+  const end = c.recoveryTime ? Date.parse(c.recoveryTime) : Date.parse(nowIso);
+  if (Number.isNaN(end)) return null;
+  return Math.max(0, (end - s) / 3_600_000);
+}
+
+// ── 6. Maintenance work-order state machine ─────────────────────────────────
+
+export type WorkOrderState =
+  | "REPORTED"
+  | "DIAGNOSED"
+  | "APPROVED"
+  | "IN_REPAIR"
+  | "WAITING_PARTS"
+  | "COMPLETED"
+  | "VERIFIED";
+
+export const WORK_ORDER_STATES: readonly WorkOrderState[] = [
+  "REPORTED",
+  "DIAGNOSED",
+  "APPROVED",
+  "IN_REPAIR",
+  "WAITING_PARTS",
+  "COMPLETED",
+  "VERIFIED",
+] as const;
+
+export const WORK_ORDER_STATE_LABELS: Record<WorkOrderState, string> = {
+  REPORTED: "Reported",
+  DIAGNOSED: "Diagnosed",
+  APPROVED: "Approved",
+  IN_REPAIR: "In Repair",
+  WAITING_PARTS: "Waiting Parts",
+  COMPLETED: "Completed",
+  VERIFIED: "Verified",
+};
+
+/**
+ * The allowed transitions. The canonical path is linear
+ * (Reported → Diagnosed → Approved → In Repair → Completed → Verified) with the
+ * one real-world loop: In Repair ⇄ Waiting Parts (the workshop stalls on a part,
+ * then resumes), and Waiting Parts may close straight to Completed once the part
+ * lands and the job is done. VERIFIED is terminal.
+ */
+export const WORK_ORDER_TRANSITIONS: Record<WorkOrderState, readonly WorkOrderState[]> = {
+  REPORTED: ["DIAGNOSED"],
+  DIAGNOSED: ["APPROVED"],
+  APPROVED: ["IN_REPAIR"],
+  IN_REPAIR: ["WAITING_PARTS", "COMPLETED"],
+  WAITING_PARTS: ["IN_REPAIR", "COMPLETED"],
+  COMPLETED: ["VERIFIED"],
+  VERIFIED: [],
+};
+
+/** Is `to` a legal next state from `from`? (A no-op self-transition is NOT.) */
+export function canTransitionWorkOrder(from: WorkOrderState, to: WorkOrderState): boolean {
+  return (WORK_ORDER_TRANSITIONS[from] ?? []).includes(to);
+}
+
+/** The states in which a work order is still OPEN (affects dispatch / shows on
+ *  the board). COMPLETED and VERIFIED are closed. */
+export function isWorkOrderOpen(state: WorkOrderState): boolean {
+  return state !== "COMPLETED" && state !== "VERIFIED";
+}
+
+/**
+ * Reduce a lorry's work orders to the single status seam the machine consumes.
+ * WAITING_PARTS wins over PLANNED (a part stall is the more specific state, and
+ * the machine ranks WAITING_PARTS above PLANNED_MAINTENANCE anyway). Only OPEN
+ * work orders in IN_REPAIR / WAITING_PARTS move the needle — a merely Reported or
+ * Approved job has not yet taken the lorry into the shop, so it does not ground
+ * dispatch. Returns null when nothing applies.
+ */
+export function workOrderSeam(
+  workOrders: readonly { status: string }[] | undefined,
+): "PLANNED" | "WAITING_PARTS" | null {
+  let planned = false;
+  for (const wo of workOrders ?? []) {
+    const s = wo.status as WorkOrderState;
+    if (!isWorkOrderOpen(s)) continue;
+    if (s === "WAITING_PARTS") return "WAITING_PARTS";
+    if (s === "IN_REPAIR") planned = true;
+  }
+  return planned ? "PLANNED" : null;
+}
+
+/** A work order's money legs. Parts are summed separately (qty × unit price). */
+export interface WorkOrderTotalInput {
+  labourCenti?: number | null;
+  outsideServiceCenti?: number | null;
+  towingCenti?: number | null;
+  taxCenti?: number | null;
+  parts?: readonly { qty?: number | null; unitPriceCenti?: number | null }[];
+}
+
+/** The derived work-order total: labour + parts + outside service + towing + tax.
+ *  Never stored (see the migration header) — it cannot drift from the legs. */
+export function workOrderTotalCenti(wo: WorkOrderTotalInput): number {
+  const partsCenti = (wo.parts ?? []).reduce((sum, p) => {
+    const qty = typeof p.qty === "number" && Number.isFinite(p.qty) ? p.qty : 0;
+    const unit = typeof p.unitPriceCenti === "number" && Number.isFinite(p.unitPriceCenti) ? p.unitPriceCenti : 0;
+    return sum + Math.round(qty * unit);
+  }, 0);
+  return (
+    Math.round(wo.labourCenti ?? 0) +
+    partsCenti +
+    Math.round(wo.outsideServiceCenti ?? 0) +
+    Math.round(wo.towingCenti ?? 0) +
+    Math.round(wo.taxCenti ?? 0)
+  );
+}
+
+// ── 7. Tyre / component lifecycle ───────────────────────────────────────────
+
+export type ComponentType =
+  | "TYRE"
+  | "BATTERY"
+  | "BRAKE_PADS"
+  | "ALTERNATOR"
+  | "STARTER"
+  | "GEARBOX"
+  | "AIR_COMPRESSOR"
+  | "OTHER";
+
+export const COMPONENT_TYPES: readonly ComponentType[] = [
+  "TYRE",
+  "BATTERY",
+  "BRAKE_PADS",
+  "ALTERNATOR",
+  "STARTER",
+  "GEARBOX",
+  "AIR_COMPRESSOR",
+  "OTHER",
+] as const;
+
+export const COMPONENT_TYPE_LABELS: Record<ComponentType, string> = {
+  TYRE: "Tyre",
+  BATTERY: "Battery",
+  BRAKE_PADS: "Brake pads",
+  ALTERNATOR: "Alternator",
+  STARTER: "Starter",
+  GEARBOX: "Gearbox",
+  AIR_COMPRESSOR: "Air compressor",
+  OTHER: "Other",
+};
+
+export type ComponentPosition = "FRONT_L" | "FRONT_R" | "REAR_L" | "REAR_R" | "NA";
+export const COMPONENT_POSITIONS: readonly ComponentPosition[] = ["FRONT_L", "FRONT_R", "REAR_L", "REAR_R", "NA"] as const;
+export const COMPONENT_POSITION_LABELS: Record<ComponentPosition, string> = {
+  FRONT_L: "Front left",
+  FRONT_R: "Front right",
+  REAR_L: "Rear left",
+  REAR_R: "Rear right",
+  NA: "N/A",
+};
+
+export type ComponentStatus = "ACTIVE" | "REMOVED";
+
+export type ComponentEventType = "ROTATION" | "PUNCTURE" | "REPAIR" | "INSPECTION" | "OTHER";
+export const COMPONENT_EVENT_TYPES: readonly ComponentEventType[] = ["ROTATION", "PUNCTURE", "REPAIR", "INSPECTION", "OTHER"] as const;
+
+/** A component as the lifecycle derivation needs to see it. */
+export interface ComponentLifeInput {
+  status: string;
+  fittedKm?: number | null;
+  removedKm?: number | null;
+  purchasePriceCenti?: number | null;
+  warrantyUntil?: string | null;
+}
+
+export interface ComponentLife {
+  /** Km run on this component: removed_km − fitted_km once removed, else the
+   *  current odometer − fitted_km while still fitted. Null without the inputs. */
+  kmUsed: number | null;
+  /** purchase_price_centi / km_used, rounded to whole cents. Null when km_used is
+   *  0/absent or there is no purchase price (cannot divide). */
+  costPerKmCenti: number | null;
+  /** Whether the component is under warranty as of `today` (warranty_until in the
+   *  future). Null when no warranty date is on file. */
+  underWarranty: boolean | null;
+}
+
+/**
+ * Derive a component's life. For an ACTIVE component the current odometer drives
+ * km_used; for a REMOVED one the recorded removed_km does. cost_per_km divides
+ * the purchase price by km_used (a component that has run 0 km — or has no
+ * odometer basis — has no cost-per-km, not an infinite one).
+ */
+export function deriveComponentLife(
+  comp: ComponentLifeInput,
+  currentKm: number | null | undefined,
+  today: string,
+): ComponentLife {
+  const fitted = typeof comp.fittedKm === "number" && comp.fittedKm >= 0 ? comp.fittedKm : null;
+  const endKm =
+    comp.status === "REMOVED"
+      ? (typeof comp.removedKm === "number" && comp.removedKm >= 0 ? comp.removedKm : null)
+      : (typeof currentKm === "number" && currentKm >= 0 ? currentKm : null);
+  let kmUsed: number | null = null;
+  if (fitted !== null && endKm !== null && endKm >= fitted) kmUsed = endKm - fitted;
+
+  let costPerKmCenti: number | null = null;
+  if (kmUsed !== null && kmUsed > 0 && typeof comp.purchasePriceCenti === "number" && comp.purchasePriceCenti >= 0) {
+    costPerKmCenti = Math.round(comp.purchasePriceCenti / kmUsed);
+  }
+
+  let underWarranty: boolean | null = null;
+  const d = daysUntil(comp.warrantyUntil ?? null, today);
+  if (d !== null) underWarranty = d >= 0;
+
+  return { kmUsed, costPerKmCenti, underWarranty };
+}
