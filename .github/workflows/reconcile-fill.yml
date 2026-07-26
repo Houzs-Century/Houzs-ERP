@@ -1,0 +1,33 @@
+name: FAIR PNL reconcile-fill (align seed onto owner projects)
+
+# Owner-triggered ONLY. Dry-run (default, read-only) reports transfer/delete-dup/keep counts.
+# "commit" transfers seed lines onto empty owner projects, deletes true duplicates, retitles
+# the rest. Owner data is never deleted. Own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit (execute)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: pms-fair-pnl-reconcile-fill
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Reconcile-fill (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/reconcile-fill.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
