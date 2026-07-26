@@ -59,8 +59,11 @@ const LINES = [
 ];
 
 async function main() {
+  // Scope: all historical events THROUGH June 2026 (owner: Apr/May/Jun 2026 are complete in the
+  // Excel; July+ not started yet so no data). Only events with real sales are filled — blank rows
+  // (stray/duplicate booths, e.g. a plain AKEMI row next to the filled AKEMI (C&C) row) are skipped.
   const events = JSON.parse(fs.readFileSync(path.join(HERE, "seed_data_final.json"), "utf8"))
-    .filter((r) => r.start && r.start >= "2024-01-01" && r.start < "2026-05-01");
+    .filter((r) => r.start && r.start >= "2024-01-01" && r.start < "2026-07-01");
   const houzs = await sql`SELECT id FROM companies WHERE code='HOUZS' LIMIT 1`;
   const companyId = houzs[0]?.id ?? null;
   const projects = await sql`
@@ -75,11 +78,13 @@ async function main() {
   for (const e of events) { const k = `${norm(e.brand)}|${venueNorm(canonVenue(e.venue))}`; (idx.get(k) || idx.set(k, []).get(k)).push(e); }
 
   const plan = []; // {p, e, adds:[{kind,cat,amt}]}
+  const blankSkipped = []; // matched an Excel event with NO sales (blank row) - flag, do not fill
   for (const p of projects) {
     if (p.has_income) continue; // only projects missing their sales line
     const cands = (idx.get(`${norm(p.brand)}|${venueNorm(p.venue)}`) || []).filter((e) => days(e.start, p.start_date) <= 10);
     if (!cands.length) continue;
     const e = cands.sort((a, b) => days(a.start, p.start_date) - days(b.start, p.start_date))[0];
+    if (toRm(e.sales) <= 0) { blankSkipped.push({ p, e }); continue; } // blank Excel row (no sales) - owner review, don't fill
     const have = new Set((p.cats || []).map((c) => String(c)));
     const adds = LINES
       .map(([kind, cat, f]) => ({ kind, cat, amt: toRm(e[f]) }))
@@ -96,6 +101,11 @@ async function main() {
     console.log(`     from Excel ${e.start} (${days(e.start, p.start_date)}d)  add: ${adds.map((a) => `${a.cat}=${a.amt.toLocaleString()}`).join(", ")}`);
   }
   console.log(`\ntotal lines to add: ${totalLines} across ${plan.length} project(s). Existing owner lines untouched.`);
+  if (blankSkipped.length) {
+    console.log(`\n[SKIPPED ${blankSkipped.length} — matched a BLANK Excel event (no sales, e.g. a stray booth row next to the filled brand); NOT filled, needs owner review]`);
+    for (const { p } of blankSkipped.slice(0, 20)) console.log(`   p${p.id} ${p.start_date} [${p.brand}] @ ${p.venue}`);
+  }
+  if (!plan.length && !COMMIT) { console.log(`\nnothing to fill.`); process.exit(0); }
   if (!plan.length) { process.exit(0); }
   if (!COMMIT) { console.log(`\nDRY-RUN OK. --commit will INSERT ${totalLines} finance line(s).`); process.exit(0); }
 
