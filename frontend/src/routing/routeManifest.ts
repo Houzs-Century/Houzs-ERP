@@ -79,6 +79,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/delivery-rate-cards",
   "/scm/auto-schedule",
   "/scm/driver-leave",
+  "/scm/threepl-companies",
   "/scm/fleet",
   "/scm/fleet-day",
   "/scm/fleet-run-sheet",
