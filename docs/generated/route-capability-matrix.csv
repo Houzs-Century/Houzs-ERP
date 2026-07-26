@@ -331,6 +331,7 @@ GET,/api/projects/payment-statuses,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth
 DELETE,/api/projects/phase-photos/:photoId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/projects.ts
 GET,/api/projects/sales-rep-options,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
 DELETE,/api/projects/sales-reports/:reportId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
+POST,/api/projects/schedule-reconcile/scan,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/projects/sections-distinct,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
 DELETE,/api/projects/sections/:sectionId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 PATCH,/api/projects/sections/:sectionId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts

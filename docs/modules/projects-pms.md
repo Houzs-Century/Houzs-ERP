@@ -177,6 +177,20 @@ here, and it is highly regular:**
 | Chat | `requireAnyPermission(["projects.write","projects.chat"])` | `POST /:id/notes` `:1832` |
 | Unguarded by middleware | — | small public lookups (`/states` `:858`, `/payment-statuses` `:859`, `/brands` `:204`, `/event-types` `:104`, `/finance/categories` `:1987`), the attachment stream `:3690`, and the **phase-photo** routes `:2427`, `:2472`, `:2507`, `:2539`, which carry an inline permission-OR-crew check instead |
 
+### Roadshow PMS Agent — Job A: reconcile an organizer's schedule photo
+
+Page `frontend/src/pages/ScheduleReconcile.tsx` (route `/schedule-reconcile`, nav
+"Schedule Reconcile" under Projects, gated `projects`) uploads an organizer's
+latest itinerary photo. `POST /projects/schedule-reconcile/scan` (`projects.write`)
+OCRs it with Claude vision (`claude-sonnet-4-6`, the `vision-blocks.ts` /
+`scan-payment.ts` pattern; requires `ANTHROPIC_API_KEY`), extracts
+`{organizer, events[]}`, loads that organizer's projects (name-scoped), and returns
+the pure **unit-tested `backend/src/services/agents/schedule-reconcile.ts`** diff:
+per row `MATCH | DATE_CHANGED | NEW | MISSING`. Dates normalise DD/MM/YYYY and
+YYYY-MM-DD before comparison. Writes nothing — a moved event's new dates are applied
+via the normal `PATCH /projects/:id {start_date,end_date}`; `MISSING` (a live
+project the schedule dropped) is flagged as a possible postpone/cancel to check.
+
 ### Roadshow PMS Agent — Job B: fill a project's P&L from a FAIR REPORT
 
 The owner's FAIR REPORT is one `.xlsx` worksheet PER EVENT (`<date><BRAND>@<VENUE>`,

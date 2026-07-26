@@ -16,6 +16,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/my-cases/:id",
   "/projects",
   "/fair-report-fill",
+  "/schedule-reconcile",
   "/projects/:id",
   "/settings",
   "/agents",
