@@ -40,6 +40,9 @@ const COLS = [
   'max_sets', 'max_revenue_centi', 'capacity_layer',
   // WS3 (mig 0209) — cargo-box dimensions (ft); capacity_m3 is derived from them.
   'length_ft', 'width_ft', 'height_ft',
+  // WS4a (mig 0210) — the 3PL carrier company this lorry belongs to (NULL = own
+  // fleet / not attached).
+  'threepl_company_id',
 ].join(', ');
 
 const CAPACITY_LAYERS = new Set(['SETS', 'REVENUE', 'BOTH']);
@@ -162,6 +165,7 @@ lorries.post('/', async (c) => {
     type,
     is_internal: body.isInternal === false ? false : true,
     warehouse_id: (body.warehouseId as string) || null,
+    threepl_company_id: (body.threeplCompanyId as string) || null,
     length_ft: lengthFt,
     width_ft: widthFt,
     height_ft: heightFt,
@@ -204,6 +208,7 @@ lorries.patch('/:id', async (c) => {
     updates.type = type;
   }
   if (body.warehouseId !== undefined) updates.warehouse_id = (body.warehouseId as string) || null;
+  if (body.threeplCompanyId !== undefined) updates.threepl_company_id = (body.threeplCompanyId as string) || null;
   if (body.capacityM3 !== undefined) updates.capacity_m3 = toNumericOrNull(body.capacityM3);
   if (body.capacityKg !== undefined) updates.capacity_kg = toNumericOrNull(body.capacityKg);
   // WS3: box dimensions (ft). When the edit carries all three, capacity_m3 is

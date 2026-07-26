@@ -35,6 +35,7 @@ import {
   type CapacityLayer,
 } from '../../vendor/scm/lib/lorries-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
+import { useThreePLCompanies } from '../../vendor/scm/lib/threepl-companies-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtCenti } from '../../vendor/shared/format';
@@ -222,10 +223,12 @@ const Tile = ({
 const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
   const update = useUpdateLorry();
   const warehouses = useWarehouses();
+  const companies = useThreePLCompanies();
   const notify = useNotify();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     warehouseId: lorry.warehouse_id ?? '',
+    threeplCompanyId: lorry.threepl_company_id ?? '',
     maxSets: lorry.max_sets != null ? String(lorry.max_sets) : '',
     maxRevenueRm: lorry.max_revenue_centi != null ? String(lorry.max_revenue_centi / 100) : '',
     layer: (lorry.capacity_layer ?? 'SETS') as CapacityLayer,
@@ -240,6 +243,11 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
     for (const w of warehouses.data ?? []) m.set(w.id, w.code || w.name);
     return m;
   }, [warehouses.data]);
+  const coName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const co of companies.data ?? []) m.set(co.id, co.name);
+    return m;
+  }, [companies.data]);
 
   // Live preview of the derived capacity (edit) / stored value (view).
   const formM3 = boxM3(numOrNull(form.lengthFt), numOrNull(form.widthFt), numOrNull(form.heightFt));
@@ -256,6 +264,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
     update.mutate({
       id: lorry.id,
       warehouseId: form.warehouseId || null,
+      threeplCompanyId: form.threeplCompanyId || null,
       maxSets: setsStr ? Math.round(Number(setsStr)) : null,
       maxRevenueCenti: revStr ? Math.round(Number(revStr) * 100) : null,
       capacityLayer: form.layer,
@@ -281,6 +290,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
           {/* WS3: region gates which trips can pick this lorry. "Any region" =
               warehouse_id NULL, i.e. selectable from any depot until pinned. */}
           <Fact label="Region (home warehouse)" value={lorry.warehouse_id ? (whName.get(lorry.warehouse_id) ?? '—') : 'Any region'} />
+          <Fact label="3PL company" value={lorry.threepl_company_id ? (coName.get(lorry.threepl_company_id) ?? '—') : 'Own fleet'} />
           <Fact label="Box (L x W x H)" value={box} />
           <Fact label="Capacity (m3)" value={viewM3 != null ? `${viewM3} m3` : '—'} />
           <Fact label="Max sets / trip" value={lorry.max_sets != null ? String(lorry.max_sets) : 'default (10)'} />
@@ -302,6 +312,13 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
           <select className={styles.fieldInput} value={form.warehouseId} onChange={(e) => set('warehouseId', e.target.value)}>
             <option value="">Any region (unpinned)</option>
             {(warehouses.data ?? []).map((w) => (<option key={w.id} value={w.id}>{w.code || w.name}</option>))}
+          </select>
+        </label>
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>3PL company</span>
+          <select className={styles.fieldInput} value={form.threeplCompanyId} onChange={(e) => set('threeplCompanyId', e.target.value)}>
+            <option value="">Own fleet (none)</option>
+            {(companies.data ?? []).filter((co) => co.isActive || co.id === form.threeplCompanyId).map((co) => (<option key={co.id} value={co.id}>{co.name}</option>))}
           </select>
         </label>
         <Field label="Length (ft)" value={form.lengthFt} onChange={(v) => set('lengthFt', v)} placeholder="e.g. 17" />
