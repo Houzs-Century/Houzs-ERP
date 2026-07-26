@@ -76,7 +76,9 @@ async function main() {
   // Owner-confirmed aliases (norm-space): seed value -> maintained value.
   const BRAND_ALIAS = { CARRESS: "CARRESMATTRESS" };
   const ORG_ALIAS = { BEDDINGFAIR: "MLE", SIGNATUREHOME: "REX", ERGOTEXMLE: "MLE", HOMEEXPOREX: "REX", MALLMGT: "MALLMGMT",
-    HOMELIVING: "BIGHOME", HOMES: "BIGHOME", HOMETECH: "MYHOME", FHL: "HOMELOVE", HOMEEXPO: "HOMECARNIVAL" };
+    HOMELIVING: "BIGHOME", HOMES: "BIGHOME", HOMETECH: "MYHOME", FHL: "HOMELOVE", HOMEEXPO: "HOMECARNIVAL",
+    // solo-roadshow coordinators -> their maintained parenthetical names
+    KAIHAO: "KAIHAOKLCHEN", SYELIN: "SYELINEVPLANMKTG", VINCENT: "VINCENTVTEAMEVENT", MROOI: "MROOITSMOON", MR001: "MR001TSMOON" };
   const ETYPE_ALIAS = { ROADSHOW: "SOLO" };
   const bAlias = (s) => BRAND_ALIAS[norm(s)] || norm(s);
   const oAlias = (s) => ORG_ALIAS[norm(s)] || norm(s);
@@ -133,10 +135,11 @@ async function main() {
     const b = brandMap.get(bAlias(r.brand));
     let v = venueMap.get(venueNorm(canonVenue(r.venue))) || fuzzyVenue(venueNorm(canonVenue(r.venue)));
     const et = etypeMap.get(etAlias(r.event_type));
-    const isSolo = !!(et && String(et.slug || "").toLowerCase() === "solo");
-    const o = isSolo ? null : orgMap.get(oAlias(r.organizer)); // SOLO events carry no organizer
+    const orgN = norm(r.organizer);
+    const isMarker = orgN === "" || orgN === "SOLO" || orgN === "ROADSHOW"; // Excel "SOLO" = no named coordinator
+    const o = isMarker ? null : orgMap.get(oAlias(r.organizer)); // keep real coordinators (KAI HAO, MALL MGMT) even on Solo
     if (!b) un.brand.add(r.brand);
-    if (!isSolo && !o) un.organizer.add(r.organizer);
+    if (!isMarker && !o) un.organizer.add(r.organizer);
     if (!et) un.event_type.add(r.event_type);
     if (!v) { // genuinely new venue -> queue for creation with a derived state
       const cn = cleanVenueName(canonVenue(r.venue)), vk = venueNorm(cn);
@@ -212,11 +215,10 @@ async function main() {
     const start = String(r.start || "").slice(0, 10);
     const [yy, mm] = start.split("-");
     const state = v.state || null;
-    const isSolo = (et.slug || "").toLowerCase() === "solo" || r.event_type === "Roadshow";
-    const orgSlug = isSolo ? "SOLO" : (slug(o) || "SOLO");
+    const orgSlug = o ? slug(o) : "SOLO"; // pure-solo (no coordinator) -> "SOLO"; else the organizer
     const base = `${yy}-${mm}-${orgSlug}-${slug(state)}-${slug(v.name)}-${slug(b)}`;
     const code = uniqueCode(base);
-    const name = `${state ? state + " " : ""}[${b}] ${o} @ ${v.name}`;
+    const name = `${state ? state + " " : ""}[${b}] ${o || "SOLO"} @ ${v.name}`;
 
     const [proj] = await sql`
       INSERT INTO projects (code, name, stage, event_type_id, brand, start_date, end_date, venue, state, organizer, created_by, company_id)

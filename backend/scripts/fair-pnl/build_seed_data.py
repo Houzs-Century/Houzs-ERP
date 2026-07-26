@@ -88,6 +88,14 @@ for r in mg:
         if ov["venue_has"] in r["venue"].upper() and r["start"]==ov["start"]:
             r.update(ov["set"])
 
+# Owner-stated solo coordinators: the Excel writes only "SOLO", but the owner knows
+# which event planner ran the roadshow. Attribute those here. Owner 2026-07-26.
+SOLO_COORDINATOR=[("SUNWAY KLUANG","KAI HAO")]
+for r in mg:
+    if r["event_type"]=="Roadshow" and r["organizer"].strip().upper() in ("","SOLO","ROADSHOW"):
+        for vk,coord in SOLO_COORDINATOR:
+            if vk in r["venue"].upper(): r["organizer"]=coord
+
 # apportion setup + rental by sales across same-booth brands (venue,start,end)
 # APPORTION only for ROADSHOW (SOLO): multiple brands share ONE booth -> split
 # setup+rental by sales share. Exhibition brands have SEPARATE booths -> keep own.
