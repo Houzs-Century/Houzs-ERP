@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
 import { requirePermission, requireAnyPermission, requirePageAccess } from "../middleware/auth";
+import { parseFairSheet, eventToFinanceLines } from "../services/agents/fair-report-parse";
 import {
   createProject,
   patchProject,
@@ -672,6 +673,88 @@ app.put("/cost-rates/:brand", requirePermission("projects.manage"), async (c) =>
   }
 
   return c.json({ ok: true, recomputed: projects.results?.length ?? 0 });
+});
+
+// ── Roadshow PMS Agent — Job B: fill a project's P&L from a FAIR REPORT ──────
+// The owner's fair report is one worksheet PER EVENT. The frontend reads the
+// .xlsx with SheetJS and POSTs each sheet's raw rows here; parseFairSheet
+// (unit-tested) aggregates revenue + product-COGS + salesperson, and we match
+// candidate projects by brand + venue (sheet names are truncated, so venue is
+// matched by mutual prefix/contains). NOTHING is written here — the human picks
+// the project, then /apply writes. Amounts are whole RM (project_finance_lines
+// is NOT sen). Categories map 1:1 to LEDGER_COST_CATEGORIES.
+app.post("/fair-report/match", requirePermission("projects.read"), async (c) => {
+  const denied = denyFinance(c); if (denied) return denied;
+  const body = (await c.req.json().catch(() => ({}))) as { sheets?: { name?: string; rows?: unknown[][] }[] };
+  const sheets = Array.isArray(body.sheets) ? body.sheets : [];
+  const projRes = await c.env.DB.prepare(
+    `SELECT id, code, name, start_date, end_date, venue, brand
+       FROM projects
+      WHERE archived_at IS NULL${activeCompanySql(c, "company_id")}`
+  ).all<{ id: number; code: string; name: string; start_date: string; end_date: string; venue: string; brand: string }>();
+  const projects = projRes.results ?? [];
+
+  const events = [];
+  for (const s of sheets) {
+    const ev = parseFairSheet(String(s.name ?? ""), (s.rows ?? []) as (string | number | null)[][]);
+    if (!ev) continue;
+    const evVenue = ev.venue.toUpperCase();
+    const evBrand = ev.brand.toUpperCase();
+    const candidates = projects
+      .filter((p) => {
+        const pv = String(p.venue ?? "").toUpperCase();
+        const pb = String(p.brand ?? "").toUpperCase();
+        if (!pb || pb !== evBrand) return false;
+        if (!pv || !evVenue) return false;
+        return pv.startsWith(evVenue) || evVenue.startsWith(pv) || pv.includes(evVenue) || evVenue.includes(pv);
+      })
+      .map((p) => ({ id: p.id, code: p.code, name: p.name, startDate: p.start_date, venue: p.venue }));
+    events.push({ event: ev, financeLines: eventToFinanceLines(ev), candidates });
+  }
+  return c.json({ events, projectCount: projects.length });
+});
+
+// Apply the parsed finance lines to ONE project the human picked. Idempotent-ish:
+// a (kind, category) that already has a non-archived line is SKIPPED (this fills
+// what is missing, never double-counts on a re-apply). Lines are dated to the
+// project start_date so they land in the right P&L period (the occurred_at fix).
+app.post("/:id/fair-report/apply", requirePermission("projects.write"), async (c) => {
+  const denied = denyFinance(c); if (denied) return denied;
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const user = c.get("user");
+  const body = (await c.req.json().catch(() => ({}))) as { lines?: { kind?: string; category?: string; amount?: number }[] };
+  const lines = Array.isArray(body.lines) ? body.lines : [];
+
+  const proj = await c.env.DB.prepare(
+    `SELECT start_date FROM projects WHERE id = ?${activeCompanySql(c, "company_id")}`
+  ).bind(id).first<{ start_date: string }>();
+  if (!proj) return c.json({ error: "project not found" }, 404);
+
+  const existing = await c.env.DB.prepare(
+    `SELECT DISTINCT kind, category FROM project_finance_lines WHERE project_id = ? AND archived_at IS NULL`
+  ).bind(id).all<{ kind: string; category: string }>();
+  const have = new Set((existing.results ?? []).map((r) => `${r.kind}|${r.category}`));
+
+  let created = 0;
+  const skipped: string[] = [];
+  const errors: string[] = [];
+  for (const ln of lines) {
+    const kind = ln.kind === "income" ? "income" : ln.kind === "cost" ? "cost" : null;
+    const category = String(ln.category ?? "").trim();
+    const amount = Number(ln.amount);
+    if (!kind || !category || !Number.isFinite(amount) || amount < 0) { errors.push(`invalid line: ${category || "?"}`); continue; }
+    if (have.has(`${kind}|${category}`)) { skipped.push(category); continue; }
+    try {
+      await createLedgerLine(
+        c.env,
+        { project_id: id, kind, category, amount, description: "Fair report (agent)", occurred_at: proj.start_date ?? null, r2_key: null, file_name: null, mime_type: null, notes: null },
+        user?.id ?? 0
+      );
+      created += 1;
+    } catch (e: unknown) { errors.push(e instanceof Error ? e.message : "failed"); }
+  }
+  return c.json({ created, skipped, errors });
 });
 
 // Manual trigger — useful from the project detail page to backfill

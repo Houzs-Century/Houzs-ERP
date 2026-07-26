@@ -347,6 +347,13 @@ export const NAV_TABS: NavTab[] = [
         requireFinanceViewer: true,
       },
       {
+        to: "/fair-report-fill",
+        label: "Fair Report Fill",
+        icon: DollarSign,
+        pageAccess: "projects.finances",
+        requireFinanceViewer: true,
+      },
+      {
         to: "/projects?view=maintenance",
         label: "Project Maintenance",
         icon: Wrench,
