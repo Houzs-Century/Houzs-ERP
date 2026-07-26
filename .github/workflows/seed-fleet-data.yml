@@ -1,0 +1,59 @@
+name: Seed fleet data (owner-run)
+
+# One-click loader for the Fleet/TMS starter data:
+#   - 13 real lorries (Driver List) + compliance-vault rows   (seed-fleet-maintenance.mjs)
+#   - default per-component preventive plans per lorry          (seed-fleet-plans.mjs)
+#   - default Malaysian postcode -> 14-zone map                 (seed-delivery-zones.mjs)
+#   - the RM560 sample 3PL rate card                            (seed-delivery-rate-cards.mjs)
+#
+# All four seeds are idempotent and DRY-RUN by default. This workflow only WRITES
+# when you type APPLY in the input box; anything else runs a preview (dry-run) so
+# you can see exactly what would be inserted before committing.
+#
+# Manual trigger only. Own concurrency group so it never queues behind / displaces
+# a release. Writes to the same DATABASE_URL the deploy uses (Production env).
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Type APPLY to WRITE to production. Anything else = dry-run preview.'
+        required: true
+        default: 'dry-run'
+
+concurrency:
+  group: seed-fleet-data
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      NODE_OPTIONS: --dns-result-order=ipv4first
+      APPLY: ${{ inputs.mode == 'APPLY' && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Mode banner
+        run: echo "::notice::Fleet seed running in mode=${{ inputs.mode == 'APPLY' && 'APPLY (writing to production)' || 'DRY-RUN (preview only)' }}"
+      - name: 1/4 Lorries + compliance vault
+        # CREATE_MISSING mints the 13 lorries if a plate is not already in scm.lorries.
+        env:
+          CREATE_MISSING: ${{ inputs.mode == 'APPLY' && '1' || '' }}
+        run: node scripts/seed-fleet-maintenance.mjs
+      - name: 2/4 Preventive maintenance plans
+        run: node scripts/seed-fleet-plans.mjs
+      - name: 3/4 Postcode -> zone map
+        run: node scripts/seed-delivery-zones.mjs
+      - name: 4/4 Sample 3PL rate card
+        run: node scripts/seed-delivery-rate-cards.mjs
