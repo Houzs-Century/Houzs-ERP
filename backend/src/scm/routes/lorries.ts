@@ -38,9 +38,20 @@ const COLS = [
   // packer reads. NULL max_* => the packer uses its config default (10 sets /
   // RM30k). capacity_layer picks which ceiling(s) bind: SETS | REVENUE | BOTH.
   'max_sets', 'max_revenue_centi', 'capacity_layer',
+  // WS3 (mig 0209) — cargo-box dimensions (ft); capacity_m3 is derived from them.
+  'length_ft', 'width_ft', 'height_ft',
 ].join(', ');
 
 const CAPACITY_LAYERS = new Set(['SETS', 'REVENUE', 'BOTH']);
+
+// WS3: derive the box capacity in m3 from L x W x H (ft). ft3 -> m3 = 0.0283168.
+// Returns null unless all three dimensions are present, so a partial box never
+// fabricates a capacity. Rounded to 2 dp to match the NUMERIC display.
+const FT3_TO_M3 = 0.0283168;
+export function boxCapacityM3(len: number | null, wid: number | null, hei: number | null): number | null {
+  if (len == null || wid == null || hei == null) return null;
+  return Math.round(len * wid * hei * FT3_TO_M3 * 100) / 100;
+}
 
 /** An integer >= 0 or null (a capacity ceiling). Rejects a negative for a clean
  *  field-named 400 rather than a raw constraint 500. */
@@ -137,6 +148,13 @@ lorries.post('/', async (c) => {
     ? 'SETS' : String(body.capacityLayer).toUpperCase();
   if (!CAPACITY_LAYERS.has(layerRaw)) return c.json({ error: 'invalid_layer', reason: 'capacityLayer must be SETS, REVENUE or BOTH' }, 400);
 
+  // WS3: box dimensions -> derived capacity_m3. When all three dims are given the
+  // derived value wins; otherwise fall back to an explicit capacityM3.
+  const lengthFt = toNumericOrNull(body.lengthFt);
+  const widthFt = toNumericOrNull(body.widthFt);
+  const heightFt = toNumericOrNull(body.heightFt);
+  const derivedM3 = boxCapacityM3(lengthFt, widthFt, heightFt);
+
   const sb = c.get('supabase');
   const { data, error } = await sb.from('lorries').insert({
     company_id: activeCompanyId(c),
@@ -144,7 +162,10 @@ lorries.post('/', async (c) => {
     type,
     is_internal: body.isInternal === false ? false : true,
     warehouse_id: (body.warehouseId as string) || null,
-    capacity_m3: toNumericOrNull(body.capacityM3),
+    length_ft: lengthFt,
+    width_ft: widthFt,
+    height_ft: heightFt,
+    capacity_m3: derivedM3 ?? toNumericOrNull(body.capacityM3),
     capacity_kg: toNumericOrNull(body.capacityKg),
     notes: (body.notes as string) ?? null,
     active: body.active === false ? false : true,
@@ -185,6 +206,17 @@ lorries.patch('/:id', async (c) => {
   if (body.warehouseId !== undefined) updates.warehouse_id = (body.warehouseId as string) || null;
   if (body.capacityM3 !== undefined) updates.capacity_m3 = toNumericOrNull(body.capacityM3);
   if (body.capacityKg !== undefined) updates.capacity_kg = toNumericOrNull(body.capacityKg);
+  // WS3: box dimensions (ft). When the edit carries all three, capacity_m3 is
+  // re-derived from them (the edit form always sends the trio together), so the
+  // stored capacity stays in sync with the box the user typed.
+  if (body.lengthFt !== undefined) updates.length_ft = toNumericOrNull(body.lengthFt);
+  if (body.widthFt !== undefined) updates.width_ft = toNumericOrNull(body.widthFt);
+  if (body.heightFt !== undefined) updates.height_ft = toNumericOrNull(body.heightFt);
+  if (body.lengthFt !== undefined && body.widthFt !== undefined && body.heightFt !== undefined) {
+    updates.capacity_m3 = boxCapacityM3(
+      toNumericOrNull(body.lengthFt), toNumericOrNull(body.widthFt), toNumericOrNull(body.heightFt),
+    );
+  }
   if (body.notes !== undefined) updates.notes = (body.notes as string) || null;
   if (body.isInternal !== undefined) updates.is_internal = Boolean(body.isInternal);
   if (body.active !== undefined) updates.active = Boolean(body.active);

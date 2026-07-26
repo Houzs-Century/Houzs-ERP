@@ -34,6 +34,7 @@ import {
   type LorryServiceRecord,
   type CapacityLayer,
 } from '../../vendor/scm/lib/lorries-queries';
+import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtCenti } from '../../vendor/shared/format';
@@ -53,6 +54,17 @@ import { formatDate } from '../../lib/utils';
 import styles from './Suppliers.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
+
+// WS3: box capacity (m3) from L x W x H (ft). Mirrors the backend derivation
+// (lorries.ts boxCapacityM3) so the live preview matches what gets stored.
+const FT3_TO_M3 = 0.0283168;
+const numOrNull = (v: number | string | null | undefined): number | null => {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+const boxM3 = (l: number | null, w: number | null, h: number | null): number | null =>
+  l != null && w != null && h != null ? Math.round(l * w * h * FT3_TO_M3 * 100) / 100 : null;
 
 /* Tone → the design-system tokens. Kept as a map rather than inline ternaries
    so the four tiles and the history rows can never drift apart on what "red"
@@ -209,25 +221,47 @@ const Tile = ({
 // reads. Blank max_* => the packer uses its config default (10 sets / RM30k).
 const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
   const update = useUpdateLorry();
+  const warehouses = useWarehouses();
   const notify = useNotify();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
+    warehouseId: lorry.warehouse_id ?? '',
     maxSets: lorry.max_sets != null ? String(lorry.max_sets) : '',
     maxRevenueRm: lorry.max_revenue_centi != null ? String(lorry.max_revenue_centi / 100) : '',
     layer: (lorry.capacity_layer ?? 'SETS') as CapacityLayer,
+    lengthFt: lorry.length_ft != null ? String(lorry.length_ft) : '',
+    widthFt: lorry.width_ft != null ? String(lorry.width_ft) : '',
+    heightFt: lorry.height_ft != null ? String(lorry.height_ft) : '',
   });
   const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => setForm((s) => ({ ...s, [k]: v }));
+
+  const whName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const w of warehouses.data ?? []) m.set(w.id, w.code || w.name);
+    return m;
+  }, [warehouses.data]);
+
+  // Live preview of the derived capacity (edit) / stored value (view).
+  const formM3 = boxM3(numOrNull(form.lengthFt), numOrNull(form.widthFt), numOrNull(form.heightFt));
+  const viewM3 = numOrNull(lorry.capacity_m3 ?? null);
 
   const save = () => {
     const setsStr = form.maxSets.trim();
     const revStr = form.maxRevenueRm.trim();
     if (setsStr && !(Number.isInteger(Number(setsStr)) && Number(setsStr) >= 0)) { notify({ title: 'Max sets must be a whole number.', tone: 'error' }); return; }
     if (revStr && !(Number.isFinite(Number(revStr)) && Number(revStr) >= 0)) { notify({ title: 'Max revenue must be a number.', tone: 'error' }); return; }
+    for (const [label, v] of [['Length', form.lengthFt], ['Width', form.widthFt], ['Height', form.heightFt]] as const) {
+      if (v.trim() && !(Number.isFinite(Number(v)) && Number(v) >= 0)) { notify({ title: `${label} must be a non-negative number.`, tone: 'error' }); return; }
+    }
     update.mutate({
       id: lorry.id,
+      warehouseId: form.warehouseId || null,
       maxSets: setsStr ? Math.round(Number(setsStr)) : null,
       maxRevenueCenti: revStr ? Math.round(Number(revStr) * 100) : null,
       capacityLayer: form.layer,
+      lengthFt: numOrNull(form.lengthFt),
+      widthFt: numOrNull(form.widthFt),
+      heightFt: numOrNull(form.heightFt),
     }, {
       onSuccess: () => { setEditing(false); notify({ title: 'Capacity updated.' }); },
       onError: (e: unknown) => notify({ title: (e as Error)?.message ?? 'Save failed.', tone: 'error' }),
@@ -235,6 +269,8 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
   };
 
   if (!editing) {
+    const box = lorry.length_ft != null && lorry.width_ft != null && lorry.height_ft != null
+      ? `${lorry.length_ft} x ${lorry.width_ft} x ${lorry.height_ft} ft` : '—';
     return (
       <section className={styles.section}>
         <div className={styles.headerRow}>
@@ -242,6 +278,11 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
           <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Edit</Button>
         </div>
         <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-3)', margin: 0 }}>
+          {/* WS3: region gates which trips can pick this lorry. "Any region" =
+              warehouse_id NULL, i.e. selectable from any depot until pinned. */}
+          <Fact label="Region (home warehouse)" value={lorry.warehouse_id ? (whName.get(lorry.warehouse_id) ?? '—') : 'Any region'} />
+          <Fact label="Box (L x W x H)" value={box} />
+          <Fact label="Capacity (m3)" value={viewM3 != null ? `${viewM3} m3` : '—'} />
           <Fact label="Max sets / trip" value={lorry.max_sets != null ? String(lorry.max_sets) : 'default (10)'} />
           <Fact label="Max revenue / trip" value={lorry.max_revenue_centi != null ? fmtCenti(lorry.max_revenue_centi) : 'default (RM30k)'} />
           <Fact label="Ceiling layer" value={CAPACITY_LAYER_LABEL[(lorry.capacity_layer ?? 'SETS') as CapacityLayer]} />
@@ -256,6 +297,21 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
         <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Delivery capacity</h3>
       </div>
       <div className={styles.formGrid}>
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Region (home warehouse)</span>
+          <select className={styles.fieldInput} value={form.warehouseId} onChange={(e) => set('warehouseId', e.target.value)}>
+            <option value="">Any region (unpinned)</option>
+            {(warehouses.data ?? []).map((w) => (<option key={w.id} value={w.id}>{w.code || w.name}</option>))}
+          </select>
+        </label>
+        <Field label="Length (ft)" value={form.lengthFt} onChange={(v) => set('lengthFt', v)} placeholder="e.g. 17" />
+        <Field label="Width (ft)" value={form.widthFt} onChange={(v) => set('widthFt', v)} placeholder="e.g. 7" />
+        <Field label="Height (ft)" value={form.heightFt} onChange={(v) => set('heightFt', v)} placeholder="e.g. 6.7" />
+        <div>
+          <span className={styles.fieldLabel}>Capacity (m3)</span>
+          <div style={{ fontSize: 'var(--fs-15)', fontWeight: 700 }}>{formM3 != null ? `${formM3} m3` : '—'}</div>
+          <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Auto-calculated from L x W x H (ft)</span>
+        </div>
         <Field label="Max sets / trip" value={form.maxSets} onChange={(v) => set('maxSets', v)} placeholder="blank = default 10" />
         <Field label="Max revenue / trip (RM)" value={form.maxRevenueRm} onChange={(v) => set('maxRevenueRm', v)} placeholder="blank = default 30000" />
         <label className={styles.field}>
