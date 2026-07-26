@@ -82,6 +82,11 @@ export type LorryRow = {
   max_sets?: number | null;
   max_revenue_centi?: number | null;
   capacity_layer?: CapacityLayer | null;
+  // ── WS3 (mig 0209): cargo-box dimensions (ft). capacity_m3 is derived from
+  // these when all three are set. NUMERIC comes back from PostgREST as a string.
+  length_ft?: number | string | null;
+  width_ft?: number | string | null;
+  height_ft?: number | string | null;
 };
 
 export const CAPACITY_LAYERS = ['SETS', 'REVENUE', 'BOTH'] as const;
@@ -110,6 +115,10 @@ export type NewLorry = {
   maxSets?: number | null;
   maxRevenueCenti?: number | null;
   capacityLayer?: CapacityLayer;
+  // WS3: box dimensions (ft). Sending all three re-derives capacity_m3 server-side.
+  lengthFt?: number | null;
+  widthFt?: number | null;
+  heightFt?: number | null;
 };
 
 export type FleetFilter = 'all' | 'internal' | 'outsourced';

@@ -334,12 +334,16 @@ async function loadAndPack(
   }
 
   // 4. Depot lorries — active, in-house, optionally filtered to the depot.
+  // WS3: region gating is LENIENT — a lorry pinned to this depot OR not pinned to
+  // any region (warehouse_id NULL) is eligible. Gating only bites once a lorry is
+  // given a home warehouse, matching the owner's model and mirroring the 3PL
+  // carrier filter below; a strict .eq would hide every not-yet-configured lorry.
   let lq = sb.from('lorries')
     .select('id, plate, active, is_internal, warehouse_id, max_sets, max_revenue_centi, capacity_layer')
     .eq('active', true)
     .eq('is_internal', true)
     .order('plate');
-  if (depotWarehouseId) lq = lq.eq('warehouse_id', depotWarehouseId);
+  if (depotWarehouseId) lq = lq.or(`warehouse_id.is.null,warehouse_id.eq.${depotWarehouseId}`);
   const { data: lorryRows, error: lorryErr } = await lq;
   if (lorryErr) return { ok: false, status: 500, error: 'load_failed', reason: lorryErr.message };
   const lorries: PackLorry[] = ((lorryRows ?? []) as Array<Record<string, unknown>>).map((l) => {

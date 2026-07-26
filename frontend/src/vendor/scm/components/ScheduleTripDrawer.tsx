@@ -144,6 +144,22 @@ export function ScheduleTripDrawer({
     if (!depotWarehouseId && activeWarehouses.length > 0) setDepotWarehouseId(activeWarehouses[0].id);
   }, [activeWarehouses, depotWarehouseId]);
 
+  // WS3: the lorry picker only offers lorries of the chosen depot's region — a
+  // lorry pinned to this warehouse, OR not pinned to any (warehouse_id NULL), so
+  // gating bites only once a lorry is given a home warehouse. Mirrors the
+  // backend rule in loadAvailableLorries / the 3PL carrier filter.
+  const regionLorries = useMemo(() => {
+    if (!depotWarehouseId) return activeLorries;
+    return activeLorries.filter((l) => {
+      const wid = l.warehouse_id ?? l.warehouseId ?? null;
+      return wid == null || wid === depotWarehouseId;
+    });
+  }, [activeLorries, depotWarehouseId]);
+  // Clear a picked lorry that no longer belongs to the chosen depot's region.
+  useEffect(() => {
+    if (lorryId && !regionLorries.some((l) => l.id === lorryId)) setLorryId("");
+  }, [lorryId, regionLorries]);
+
   const stopByRef = useMemo(() => {
     const m = new Map<string, ProposeStop>();
     for (const s of proposal?.stops ?? []) m.set(s.ref, s);
@@ -410,7 +426,7 @@ export function ScheduleTripDrawer({
                 className="h-9 w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-ink focus:border-primary focus:outline-none"
               >
                 <option value="">Unassigned</option>
-                {activeLorries.map((l) => <option key={l.id} value={l.id}>{l.plate}</option>)}
+                {regionLorries.map((l) => <option key={l.id} value={l.id}>{l.plate}</option>)}
               </select>
             </label>
           </div>
