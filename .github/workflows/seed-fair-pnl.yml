@@ -1,0 +1,34 @@
+name: FAIR PNL seed (PMS backfill)
+
+# Owner-triggered ONLY. Default is dry-run (read-only): loads the maintained
+# picker lists + existing projects, matches every seed value, dedups, and reports
+# would-insert/skip + any UNMATCHED values. Choose "commit" only after a clean
+# dry-run. Own concurrency group so it never queues behind or displaces a deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit (write to prod)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: fair-pnl-seed
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Run FAIR PNL seed (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/seed-fair-pnl.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
