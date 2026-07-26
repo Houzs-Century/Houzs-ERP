@@ -360,6 +360,13 @@ export const NAV_TABS: NavTab[] = [
         pageAccess: "projects",
       },
       {
+        to: "/setup-invoice",
+        label: "Setup Invoice",
+        icon: DollarSign,
+        pageAccess: "projects.finances",
+        requireFinanceViewer: true,
+      },
+      {
         to: "/projects?view=maintenance",
         label: "Project Maintenance",
         icon: Wrench,
