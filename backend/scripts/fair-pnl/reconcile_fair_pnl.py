@@ -57,9 +57,16 @@ for path,year in FILES:
         for row in rows[hi+2:]:
             def cell(k):
                 j=cm.get(k); return row[j] if j is not None and j<len(row) else None
-            brand=norm(cell("brand")).upper(); brand=BRAND_FIX.get(brand,brand)
+            brand=norm(cell("brand")).upper()
             loc=norm(cell("location")); date=norm(cell("date"))
-            if not brand or not loc or brand=="BRAND" or loc.upper()=="LOCATION": continue
+            sales_v=numify(cell("sales"))
+            # END OF TABLE 1. The sheet repeats every event in a commission-claim
+            # table below (its own DATE/BRAND header, preceded by a subtotal row).
+            # Reading past table 1 double-counts every event -> stop here.
+            if (date=="" and brand=="" and sales_v>0) or date.upper()=="DATE" or brand=="BRAND":
+                break
+            brand=BRAND_FIX.get(brand,brand)
+            if not brand or not loc or loc.upper()=="LOCATION": continue
             org,venue=(loc.split("@",1)+[""])[:2] if "@" in loc else (loc,"")
             s,e=parse_dates(date, emonth, year)
             raw.append(dict(year=year,brand=brand,organizer=org.strip(),venue=venue.strip(),
