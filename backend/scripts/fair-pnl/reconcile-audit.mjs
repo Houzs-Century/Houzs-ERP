@@ -1,9 +1,13 @@
-// READ-ONLY reconciliation audit. Owner rework 2026-07-26: the seed should have FILLED the
-// owner's existing projects, not created a parallel set. This matches each Excel event
-// (seed_data_final.json) to an owner project (created_by<>0) by brand + venue + date window,
-// and reports: which owner projects to FILL (empty), which already have data, which events
-// have NO owner match (create new), and which seed projects (created_by=0) to remove.
-// Writes NOTHING. Scope: 2025 + 2026-before-May (2024 pending build_2024.py).
+// READ-ONLY comprehensive reconcile audit (owner polish 2026-07-27). Answers three questions
+// in one run so nothing is deleted on a guess:
+//  (0) SAFETY  — orphaned photos/attachments: rows whose project no longer exists = an earlier
+//      delete removed a project that HAD files. Empty on both = no delete touched any file.
+//  (1) DUPLICATES — one Excel event matched by >1 LIVE PMS project (incl. data-carrying
+//      venue-spelling pairs dedup could not merge). Shows income + photo + attachment counts per
+//      project, and the extra COUNT + extra REVENUE cleaning them would remove.
+//  (2) FILE-SAFETY — every zero-income in-scope project with its photo/attachment counts, so any
+//      future delete is proven to touch no files first.
+// Plus unmatched projects. Writes NOTHING. Scope 2024-01-01 .. 2026-07-01 (through June).
 import postgres from "postgres";
 import fs from "fs";
 import path from "path";
@@ -18,7 +22,6 @@ const STATE_TAIL = /\b(KL|PG|PNG|JB|JHB|PJ|MLK|NS|SWK|SEL|SELANGOR|PENANG|JOHOR|
 const ABBR = [[/\bTMN\b/gi, "TAMAN"], [/\bBKT\b/gi, "BUKIT"], [/\bBUKTI\b/gi, "BUKIT"], [/\bMILLENIUM\b/gi, "MILLENNIUM"]];
 const expandAbbr = (s) => { let v = String(s ?? ""); for (const [re, to] of ABBR) v = v.replace(re, to); return v; };
 const venueNorm = (s) => { let v = expandAbbr(String(s ?? "").trim()); for (let i = 0; i < 3; i++) v = v.replace(STATE_TAIL, "").trim(); return norm(v); };
-// canonVenue (seed keyword rules) -> old maintained name
 function canonVenueOld(raw) {
   const u = norm(raw);
   if (u.includes("SOUTHKEY")) return "MVEC SOUTHKEY";
@@ -42,7 +45,6 @@ function canonVenueOld(raw) {
   if ((u.includes("INDERAMULIA") || u.includes("ENDERAMULIA")) || (u.includes("STADIUM") && u.includes("IPOH"))) return "STADIUM INDERA MULIA IPOH";
   return raw;
 }
-// 统称 renames/merges already applied to prod (old name -> current name)
 const RENAME = {
   MITC: "MELAKA INTERNATIONAL TRADE CENTRE", MITEC: "MALAYSIA INTERNATIONAL TRADE AND EXHIBITION CENTRE",
   "BCCK KUCHING": "BORNEO CONVENTION CENTRE KUCHING", "SCCC SHAH ALAM": "SETIA CITY CONVENTION CENTRE",
@@ -54,9 +56,6 @@ const RENAME = {
   "DATARAN CENTRIO SEREMBAN": "DATARAN CENTRIO", "EAST COAST MALL KUANTAN": "EAST COAST MALL",
   "IOI DAMANSARA": "IOI MALL DAMANSARA", "MCCC KUCHING": "KUCHING METROCITY CONVENTION CENTRE",
 };
-// Keyword renames applied to the RAW string first (catches "MITC MELAKA" -> "MELAKA
-// INTERNATIONAL TRADE CENTRE" that canonVenueOld+RENAME miss because canonVenueOld has no
-// MITC rule and RENAME is keyed on the old exact name).
 const KWRENAME = [
   [/\bMITEC\b/, "MALAYSIA INTERNATIONAL TRADE AND EXHIBITION CENTRE"],
   [/\bMITC\b/, "MELAKA INTERNATIONAL TRADE CENTRE"],
@@ -76,54 +75,70 @@ const canonVenue = (raw) => {
   const old = canonVenueOld(raw);
   return RENAME[old] ?? old;
 };
+const bnorm = (b) => { const n = norm(b); return n === "AKEMICC" ? "AKEMI" : n; }; // AKEMI C&C == AKEMI
 const days = (a, b) => Math.abs((Date.parse(a) - Date.parse(b)) / 86400000);
+const rm = (n) => Number(n || 0).toLocaleString();
 
 async function main() {
-  const rows = JSON.parse(fs.readFileSync(path.join(HERE, "seed_data_final.json"), "utf8"))
-    .filter((r) => r.start && r.start >= "2024-01-01" && r.start < "2026-05-01");
+  // ---- (0) SAFETY: orphaned files (a deleted project that HAD photos / legacy attachments) ----
+  const orphanPhotos = await sql`SELECT project_id, COUNT(*)::int n FROM project_phase_photos WHERE project_id IS NOT NULL AND project_id NOT IN (SELECT id FROM projects) GROUP BY project_id ORDER BY project_id`;
+  const orphanAtt = await sql`SELECT project_id, COUNT(*)::int n FROM project_attachments WHERE project_id IS NOT NULL AND project_id NOT IN (SELECT id FROM projects) GROUP BY project_id ORDER BY project_id`;
+  console.log(`\n=== (0) SAFETY — did any earlier delete remove a project that HAD files? ===`);
+  console.log(`  orphaned project_phase_photos: ${orphanPhotos.length} project(s) -> ${JSON.stringify(orphanPhotos.map((r) => `p${r.project_id}:${r.n}`))}`);
+  console.log(`  orphaned project_attachments : ${orphanAtt.length} project(s) -> ${JSON.stringify(orphanAtt.map((r) => `p${r.project_id}:${r.n}`))}`);
+  console.log(`  VERDICT: ${orphanPhotos.length === 0 && orphanAtt.length === 0 ? "SAFE — no deleted project had any file." : "REVIEW — a deleted project id above still has orphaned files (recoverable from R2)."}`);
+
   const projects = await sql`
-    SELECT p.id, p.brand, p.venue, p.start_date, p.created_by,
+    SELECT p.id, p.brand, p.venue, p.start_date, p.name, p.created_by,
            COUNT(l.id) FILTER (WHERE l.archived_at IS NULL) nlines,
-           COALESCE(SUM(l.amount) FILTER (WHERE l.kind='income' AND l.archived_at IS NULL),0) income
+           COALESCE(SUM(l.amount) FILTER (WHERE l.kind='income' AND l.archived_at IS NULL),0) income,
+           (SELECT COUNT(*)::int FROM project_phase_photos ph WHERE ph.project_id = p.id) nphotos,
+           (SELECT COUNT(*)::int FROM project_attachments a WHERE a.project_id = p.id) nattach
     FROM projects p LEFT JOIN project_finance_lines l ON l.project_id = p.id
-    WHERE p.archived_at IS NULL GROUP BY p.id`;
-  const seedProjs = projects.filter((p) => Number(p.created_by) === 0);
-  const ownerProjs = projects.filter((p) => Number(p.created_by) !== 0);
-  const idx = new Map();
-  for (const p of ownerProjs) { const k = `${norm(p.brand)}|${venueNorm(p.venue)}`; (idx.get(k) || idx.set(k, []).get(k)).push(p); }
+    WHERE p.archived_at IS NULL AND p.start_date >= '2024-01-01' AND p.start_date < '2026-07-01'
+    GROUP BY p.id`;
 
-  const idxBrand = new Map();
-  for (const p of ownerProjs) { const b = norm(p.brand); (idxBrand.get(b) || idxBrand.set(b, []).get(b)).push(p); }
+  // ---- (1) DUPLICATES: one Excel event matched by >1 live PMS project ----
+  const events = JSON.parse(fs.readFileSync(path.join(HERE, "seed_data_final.json"), "utf8"))
+    .filter((r) => r.start && r.start >= "2024-01-01" && r.start < "2026-07-01");
+  const eidx = new Map();
+  for (const e of events) { const k = `${bnorm(e.brand)}|${venueNorm(canonVenue(e.venue))}`; (eidx.get(k) || eidx.set(k, []).get(k)).push(e); }
 
-  let fillEmpty = 0, hasData = 0;
-  const dateMiss = [], venueMiss = [], absent = [];
-  for (const r of rows) {
-    const vk = venueNorm(canonVenue(r.venue));
-    const sameBV = idx.get(`${norm(r.brand)}|${vk}`) || [];
-    const cands = sameBV.filter((p) => days(p.start_date, r.start) <= 10);
-    if (cands.length) { Number(cands[0].income) > 0 ? hasData++ : fillEmpty++; continue; }
-    if (sameBV.length) { dateMiss.push([r, sameBV[0]]); continue; }               // same brand+venue, date > 10d off
-    const near = (idxBrand.get(norm(r.brand)) || []).filter((p) => days(p.start_date, r.start) <= 10);
-    if (near.length) { venueMiss.push([r, near[0]]); continue; }                   // same brand+date, venue differs
-    absent.push(r);                                                                // no owner project at all
+  const evToProj = new Map(); const unmatched = [];
+  for (const p of projects) {
+    const cands = (eidx.get(`${bnorm(p.brand)}|${venueNorm(p.venue)}`) || []).filter((e) => days(e.start, p.start_date) <= 10);
+    if (!cands.length) { unmatched.push(p); continue; }
+    const e = cands.sort((a, b) => days(a.start, p.start_date) - days(b.start, p.start_date))[0];
+    const ek = `${bnorm(e.brand)}|${venueNorm(canonVenue(e.venue))}|${e.start}`;
+    (evToProj.get(ek) || evToProj.set(ek, { e, ps: [] }).get(ek)).ps.push(p);
+  }
+  const dupGroups = [...evToProj.values()].filter((g) => g.ps.length > 1);
+  let extraCount = 0, extraRevenue = 0;
+  for (const g of dupGroups) {
+    extraCount += g.ps.length - 1;
+    const sorted = [...g.ps].sort((a, b) => Number(b.income) - Number(a.income));
+    for (const p of sorted.slice(1)) extraRevenue += Number(p.income); // all but the richest = removable
   }
 
-  console.log(`\n=== FAIR PNL RECONCILE AUDIT (read-only) — scope 2024..2026-04 ===`);
-  console.log(`Excel events in scope: ${rows.length}`);
-  console.log(`  match owner project WITH data (leave):   ${hasData}`);
-  console.log(`  match owner project EMPTY (fill):        ${fillEmpty}`);
-  console.log(`  NO-MATCH -> DATE mismatch (same brand+venue exists, date off):  ${dateMiss.length}`);
-  console.log(`  NO-MATCH -> VENUE mismatch (same brand+date exists, venue differs): ${venueMiss.length}`);
-  console.log(`  NO-MATCH -> ABSENT (no owner project same brand near date):     ${absent.length}`);
-  console.log(`\nowner projects: ${ownerProjs.length}  (empty: ${ownerProjs.filter((p) => Number(p.income) === 0).length})   seed to remove: ${seedProjs.length}`);
+  console.log(`\n=== (1) DUPLICATES — one Excel event, >1 live PMS project ===`);
+  console.log(`PMS in-scope: ${projects.length}   Excel events: ${events.length}   raw gap: ${projects.length - events.length}`);
+  console.log(`duplicate-event groups: ${dupGroups.length}  ->  EXTRA projects: ${extraCount}   EXTRA revenue if trimmed to richest: RM ${rm(extraRevenue)}`);
+  for (const g of dupGroups.sort((a, b) => String(a.e.start).localeCompare(String(b.e.start)))) {
+    console.log(`\n  Excel ${g.e.start} [${g.e.brand}] @ ${canonVenue(g.e.venue)}  (sales=${rm(g.e.sales)})`);
+    for (const p of g.ps.sort((a, b) => Number(b.income) - Number(a.income)))
+      console.log(`     p${p.id} ${p.start_date} by${p.created_by}  inc=${rm(p.income)}  lines=${p.nlines}  photos=${p.nphotos}  attach=${p.nattach}  venue="${p.venue}"`);
+  }
 
-  const show = (label, arr) => {
-    console.log(`\n[${label} — sample ${Math.min(12, arr.length)}/${arr.length}]`);
-    for (const [r, o] of arr.slice(0, 12)) console.log(`   Excel ${r.start} [${r.brand}] @ ${canonVenue(r.venue)}   <->   owner p${o.id} ${o.start_date} @ ${o.venue}`);
-  };
-  show("DATE mismatch", dateMiss);
-  show("VENUE mismatch", venueMiss);
-  console.log(`\n[ABSENT — sample ${Math.min(12, absent.length)}/${absent.length}]`);
-  for (const r of absent.slice(0, 12)) console.log(`   ${r.start} [${r.brand}] ${r.organizer || "SOLO"} @ ${canonVenue(r.venue)} (raw "${r.venue}")`);
+  // ---- (2) FILE-SAFETY: zero-income projects and whether they hold any file ----
+  const empties = projects.filter((p) => Number(p.income) === 0);
+  const emptyWithFiles = empties.filter((p) => p.nphotos > 0 || p.nattach > 0);
+  console.log(`\n=== (2) FILE-SAFETY — zero-income in-scope projects: ${empties.length} (with files: ${emptyWithFiles.length}) ===`);
+  for (const p of empties.sort((a, b) => (b.nphotos + b.nattach) - (a.nphotos + a.nattach) || String(a.start_date).localeCompare(String(b.start_date))))
+    console.log(`   p${p.id} ${p.start_date} [${p.brand}] by${p.created_by}  photos=${p.nphotos}  attach=${p.nattach}  lines=${p.nlines}  @ ${p.venue}`);
+
+  // ---- unmatched (in PMS, no Excel event) ----
+  console.log(`\n=== UNMATCHED — live PMS project with no Excel event (${unmatched.length}) ===`);
+  for (const p of unmatched.sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))))
+    console.log(`   p${p.id} ${p.start_date} [${p.brand}] by${p.created_by} inc=${rm(p.income)} photos=${p.nphotos} attach=${p.nattach}  @ ${p.venue}`);
 }
 main().then(() => sql.end()).catch((e) => { console.error(e); process.exit(1); });
