@@ -29,6 +29,7 @@ function canonVenueOld(raw) {
   if (u.includes("PAVILION") || u.includes("PAVILLION")) return "PAVILION BUKIT JALIL";
   if (u.includes("STADIUM") && u.includes("JALIL")) return "STADIUM BUKIT JALIL";
   if (u.includes("STARLING")) return "THE STARLING MALL";
+  if (u.includes("SUNWAYCARNIVAL")) return "SUNWAY CARNIVAL";
   if (u.includes("SPCC") || u.includes("SUNWAYPYRAMID")) return "SPCC";
   if (u.includes("SSCC") || u.includes("SETIASPICE")) return "SETIA SPICE CONVENTION CENTRE";
   if (u.includes("SPICEARENA") || u.includes("PISA")) return "PISA SPICE ARENA CONVENTION CENTRE";

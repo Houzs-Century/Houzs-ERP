@@ -44,6 +44,7 @@ const CANON_STATE = {
   TERENGGANU: "Terengganu", TRENGGANU: "Terengganu",
 };
 const canonState = (s) => CANON_STATE[norm(s)] ?? (String(s ?? "").trim() || null);
+const BRAND_ALIAS = { CARRESS: "Carres Mattress" }; // Excel brand spelling -> maintained picker brand
 
 // ---- VENUE canonicalization (same rules as reconcile-audit) then match to maintained picker ----
 const STATE_TAIL = /\b(KL|PG|PNG|JB|JHB|PJ|MLK|NS|SWK|SEL|SELANGOR|PENANG|JOHOR|KEDAH|PERAK|PERLIS|PAHANG|MELAKA|MALACCA|KELANTAN|TERENGGANU|SABAH|SARAWAK|NEGERI\s*SEMBILAN|PUTRAJAYA|IPOH|KUANTAN|SEREMBAN)\b\s*$/i;
@@ -57,7 +58,7 @@ function canonVenueOld(raw) {
   if (u.includes("PAVILION") || u.includes("PAVILLION")) return "PAVILION BUKIT JALIL";
   if (u.includes("STADIUM") && u.includes("JALIL")) return "STADIUM BUKIT JALIL";
   if (u.includes("STARLING")) return "THE STARLING MALL";
-  if (u.includes("SUNWAYCARNIVAL")) return "SUNWAY CARNIVAL MALL";
+  if (u.includes("SUNWAYCARNIVAL")) return "SUNWAY CARNIVAL";
   if (u.includes("SPCC") || u.includes("SUNWAYPYRAMID")) return "SPCC";
   if (u.includes("SSCC") || u.includes("SETIASPICE")) return "SETIA SPICE CONVENTION CENTRE";
   if (u.includes("SPICEARENA") || u.includes("PISA")) return "PISA SPICE ARENA CONVENTION CENTRE";
@@ -130,7 +131,7 @@ async function passFields() {
   const changes = []; const venueUnmatched = new Map(); let statusFix = 0, stateFix = 0, venueFix = 0, brandFix = 0, orgFix = 0, nameFix = 0;
   for (const p of projects) {
     const newState = canonState(p.state);
-    const newBrand = brandByNorm.get(norm(p.brand)) ?? (p.brand ? String(p.brand).trim() : p.brand);
+    const newBrand = BRAND_ALIAS[norm(p.brand)] ?? brandByNorm.get(norm(p.brand)) ?? (p.brand ? String(p.brand).trim() : p.brand);
     const newOrg = p.organizer ? (orgByNorm.get(norm(p.organizer)) ?? String(p.organizer).trim()) : p.organizer;
     // venue: canonicalize then require a maintained-picker match; otherwise keep as-is and flag.
     const canon = canonVenue(p.venue);
