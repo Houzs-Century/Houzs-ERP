@@ -134,6 +134,99 @@ export function useProposeDelivery() {
   });
 }
 
+// ── Sequence & assign (Fleet A2) ─────────────────────────────────────────────
+
+export type SequenceAssignBody = {
+  soDocNos: string[];
+  depotWarehouseId?: string | null;
+  startDate?: string;
+  departTime?: string;
+  defaultMaxSets?: number;
+  defaultMaxRevenueCenti?: number;
+};
+
+export type AssignedSequenceStop = {
+  ref: string;
+  order: number;
+  travelMinutes: number;
+  distanceMetres: number;
+  arrivalTime: string | null;
+  waitMinutes: number;
+  startServiceTime: string | null;
+  finishTime: string | null;
+  serviceMinutes: number;
+  earliestTime: string | null;
+  latestTime: string | null;
+  windowViolated: boolean;
+  etaOffsetS: number;
+  legDistanceM: number;
+  legDurationS: number;
+};
+
+export type AssignedTripStop = {
+  ref: string;
+  debtorName: string | null;
+  buildingType: string | null;
+  address: string;
+  serviceMinutes: number;
+  earliestTime: string | null;
+  latestTime: string | null;
+};
+
+export type AssignedTrip = {
+  key: string;
+  date: string;
+  group: string;
+  lorryId: string;
+  plate: string;
+  driverId: string | null;
+  driverName: string | null;
+  helperId: string | null;
+  helperName: string | null;
+  sets: number;
+  revenueCenti: number;
+  ceilingSets: number | null;
+  ceilingRevenueCenti: number | null;
+  overCeiling: boolean;
+  departTime: string;
+  stops: AssignedTripStop[];
+  /** The computed nearest-neighbour route + windows, or null when Google is off. */
+  sequence: {
+    departTime: string | null;
+    sequence: AssignedSequenceStop[];
+    totalTravelMinutes: number;
+    totalDistanceMetres: number;
+    returnTime: string | null;
+    windowViolations: number;
+  } | null;
+  routeReason: string | null;
+  ungeocoded: string[];
+};
+
+export type SequenceAssignResponse = {
+  startDate: string;
+  departTime: string;
+  configured: boolean;
+  usingDefaultZoneMap: boolean;
+  depotWarehouseId: string | null;
+  depot: { warehouseId: string | null; address: string; lat: number; lng: number } | null;
+  lorryCount: number;
+  dispatchableCount: number;
+  trips: AssignedTrip[];
+  excludedLorries: { id: string; plate: string; status: string }[];
+  unassigned: { key: string | null; date: string | null; group: string | null; orders: string[]; reason: string }[];
+};
+
+/** Fire A2 sequence + assign for the picked orders. A mutation (it reads the
+ *  fleet + Module-B status + geocodes + one Distance Matrix call per trip), so
+ *  the dispatcher triggers it explicitly per locked day. */
+export function useSequenceAssign() {
+  return useMutation({
+    mutationFn: (body: SequenceAssignBody) =>
+      authedFetch<SequenceAssignResponse>('/delivery-zones/sequence-assign', { method: 'POST', body: JSON.stringify(body) }),
+  });
+}
+
 // ── Day locks ────────────────────────────────────────────────────────────────
 
 export type DayLock = {

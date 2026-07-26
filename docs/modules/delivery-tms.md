@@ -302,7 +302,8 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | GET/POST/PATCH | `/helpers` | `helpers.ts:23,35,64` | Helper master |
 | GET/POST/PATCH | `/lorries` | `lorries.ts:85,100,143` | Lorry master. **A1 (mig 0205):** POST/PATCH also accept `maxSets`, `maxRevenueCenti`, `capacityLayer` (SETS\|REVENUE\|BOTH) — the per-lorry delivery capacity ceilings the auto-propose packer reads. NULL max_* => the packer uses its config default (10 sets / RM30k) |
 | GET/POST/PATCH/DELETE | `/delivery-zones`, `/…/:id` | `delivery-zones.ts` | **A1.** The postcode-prefix -> zone map CRUD (mig 0205). GET returns `{ zones, usingDefault, defaultMap, knownZones }`; writes validate `zone` against the 14 canonical zones. Company-scoped |
-| POST | `/delivery-zones/propose` | `delivery-zones.ts` | **A1 auto-propose.** Body `{ soDocNos[], depotWarehouseId?, startDate?, defaultMaxSets?, defaultMaxRevenueCenti? }`. Loads the SOs + their lines, derives each order's zone (postcode) + set count (frame/mattress/sofa), loads the depot's active in-house lorries, and PACKS via the pure `capacity-pack.ts`. Returns a DISPLAY-ONLY proposal (`days[] · proposals[] · unassigned[]`). Writes NOTHING |
+| POST | `/delivery-zones/propose` | `delivery-zones.ts` | **A1 auto-propose.** Body `{ soDocNos[], depotWarehouseId?, startDate?, defaultMaxSets?, defaultMaxRevenueCenti? }`. Loads the SOs + their lines, derives each order's zone (postcode) + set count (frame/mattress/sofa), loads the depot's active in-house lorries, and PACKS via the pure `capacity-pack.ts` (shared `loadAndPack` helper). Returns a DISPLAY-ONLY proposal (`days[] · proposals[] · unassigned[]`). Writes NOTHING |
+| POST | `/delivery-zones/sequence-assign` | `delivery-zones.ts` | **A2 sequence + assign.** Body adds `departTime?` to the propose body. RE-PACKS (shared `loadAndPack`), crews each group with an AVAILABLE lorry + driver + helper (`fleet-assign.ts`, excluding Module-B non-dispatchable lorries), and sequences each trip (geocode cache-first + ONE Distance Matrix call per trip + `sequence-stops.ts`) with residence-rule windows. Returns DISPLAY-ONLY `{ trips[] · excludedLorries[] · unassigned[] }`. `GOOGLE_MAPS_API_KEY` unset -> crewed + grouped, no route. Writes NOTHING |
 | GET/POST/DELETE | `/delivery-zones/locks`, `/…/locks/:id` | `delivery-zones.ts` | **A1.** Reversible day locks (`scm.delivery_day_locks`, mig 0205). POST is idempotent (upsert on `(company, warehouse, date)`); DELETE unlocks |
 | GET | `/lorry-service-records` | `lorry-service-records.ts` | Service history (mig 0121) |
 | GET/POST/PATCH/DELETE | `/trips`, `/trips/:id`, `/trips/:id/stops`, `/trips/:id/status` | `trips.ts:101,141,175,234,277,325,398,412` | Trip (lorry-day) CRUD + stop ordering |
@@ -818,6 +819,69 @@ never `customer_delivery_date`; no lorry ASSIGNMENT here (that is A2 — Apply
 writes the date only). Seams for A2/A3: the packer already emits per-lorry
 groupings; A2 turns the proposed lorry-day into a real trip + nearest-neighbour
 sequence (reuse `propose-route.ts`), A3 layers driver/constraint rules.
+
+## Fleet Module A2 — stop sequencing + auto-assign lorry/driver/helper + windows
+
+Takes a locked day's zone-packed groups (A1) and turns each into an ordered,
+crewed trip. TWO new PURE, unit-tested libs do the reasoning; the A1 route +
+Auto-Schedule page orchestrate. **No new schema** — assignment persists through
+the existing schedule write-path onto existing `scm.trips` / `scm.trip_stops`
+columns.
+
+- **`backend/src/scm/lib/fleet-assign.ts`** — `assignFleet` greedily crews each
+  packed group with a lorry + driver + helper from the depot's AVAILABLE fleet.
+  A lorry Module B (fleet-status) has grounded — BREAKDOWN / COMPLIANCE_BLOCKED /
+  OUT_OF_SERVICE / a maintenance window — is EXCLUDED (`dispatchable:false`) and
+  surfaced in `excludedLorries`. Capacity fit (`overCeiling` when a group exceeds
+  the chosen ceiling, still ships), per-DAY load balancing (spread across distinct
+  lorries; the A1-preferred lorry gets first refusal), driver paired by plate
+  (`drivers.vehicle`) else least-used, helper least-used, each crew member used at
+  most once per day. Tests: `fleet-assign.test.ts` (10).
+- **`backend/src/scm/lib/sequence-stops.ts`** — `buildSequenceProposal` shapes ONE
+  trip's route by REUSING the Phase-3 nearest-neighbour sequencer
+  (`propose-route.ts`) verbatim — same earliest-is-hard / service-into-clock /
+  `windowViolated` rules — and adds the `eta_offset_s` / leg metrics the schedule
+  path persists. Tests: `sequence-stops.test.ts` (5).
+- **`backend/src/scm/lib/fleet-availability.ts`** — thin DB loader: the depot's
+  active in-house lorries WITH their Module-B `deriveVehicleStatus` / `canDispatch`
+  folded in (reuses the pure `services/fleet-status.ts` core over compliance docs,
+  maintenance windows, service-due, breakdowns) + capacity ceilings + the paired
+  driver. Not unit-tested (I/O); the derivation it relies on is the tested core.
+
+Route `delivery-zones.ts` — new `POST /delivery-zones/sequence-assign` (body
+`{ soDocNos[], depotWarehouseId?, startDate?, departTime?, defaultMaxSets?,
+defaultMaxRevenueCenti? }`). It RE-PACKS through the SAME A1 core (`loadAndPack`,
+extracted so `/propose` and this share one packing path and cannot drift), crews
+each group via `assignFleet`, then sequences each assigned trip (geocode
+cache-first + ONE Distance Matrix call per trip + `buildSequenceProposal`) with
+residence-rule windows. Returns a DISPLAY-ONLY proposal
+`{ trips[], excludedLorries[], unassigned[] }`; writes NOTHING. Google is
+hard-gated on `GOOGLE_MAPS_API_KEY` — unset (or an ungeocoded depot) still returns
+crewed, grouped trips, just without a computed route (the plain order is kept,
+`routeReason` says why). Same area guard as the rest of TMS.
+
+**Frontend** — the Auto-Schedule page (`AutoSchedule.tsx`) gains a "Sequence &
+assign" action next to "Apply proposed dates" (+ a Depart-time control). It calls
+`useSequenceAssign` and renders one card PER TRIP: editable lorry / driver / helper
+selects (the auto-assignment, all overridable), the ordered stop table (ETA /
+finish / delivery window, `!` on a window violation), and per-trip "Apply this
+trip". Apply fans out one `useScheduleDelivery` per stop in sequence order with
+`{ scheduleDate, lorryId, driverId, helper1Id, stopNo, etaOffsetS, legDistanceM,
+legDurationS }`. No new page / route (extends the existing `/scm/auto-schedule`).
+
+**Schedule-path extension (additive).** `scheduleSchema` +  `scheduleOntoTrip`
+(`delivery-planning.ts`) now accept optional `helper1Id` / `helper2Id`, written
+onto `scm.trips.helper_1_id` / `helper_2_id` on a trip CREATE (like `driverId`).
+This is the ONLY change to the schedule path — no parallel scheduler, and a
+schedule that omits them behaves exactly as before. `derivePlanningState`
+untouched; no `delivery_state` in any SO-list select; `amended_delivery_date`
+only, never `customer_delivery_date`.
+
+**Guardrails honoured:** reuses the established schedule path (no parallel
+scheduler); unavailable (Module B) lorries excluded from assignment; everything
+overridable on screen. A3 seams: driver-leave / HR availability and 3PL overflow
+are NOT here — the availability half of A3 (vehicle status) is folded in; the
+driver-leave half and outsourcing stay for A3.
 
 ## Related
 
