@@ -49,26 +49,63 @@ async function main() {
     sql`SELECT id FROM companies WHERE code = 'HOUZS' LIMIT 1`,
   ]);
   const companyId = houzs[0]?.id ?? null;
+  // Owner-confirmed aliases (norm-space): seed value -> maintained value.
+  const BRAND_ALIAS = { CARRESS: "CARRESMATTRESS" };
+  const ORG_ALIAS = { BEDDINGFAIR: "MLE", SIGNATUREHOME: "REX", ERGOTEXMLE: "MLE", HOMEEXPOREX: "REX", MALLMGT: "MALLMGMT",
+    HOMELIVING: "BIGHOME", HOMES: "BIGHOME", HOMETECH: "MYHOME", FHL: "HOMELOVE" };
+  const ETYPE_ALIAS = { ROADSHOW: "SOLO" };
+  const bAlias = (s) => BRAND_ALIAS[norm(s)] || norm(s);
+  const oAlias = (s) => ORG_ALIAS[norm(s)] || norm(s);
+  const etAlias = (s) => ETYPE_ALIAS[norm(s)] || norm(s);
+  // Venue canonicaliser (owner-confirmed keyword rules) -> a maintained venue name.
+  function canonVenue(raw) {
+    const u = norm(raw);
+    if (u.includes("SOUTHKEY")) return "MVEC SOUTHKEY";
+    if (u.includes("MVEC") || u.includes("MIDVALLEY")) return "MID VALLEY";
+    if (u.includes("PAVILION") || u.includes("PAVILLION")) return "PAVILION BUKIT JALIL";
+    if (u.includes("STADIUM") && u.includes("JALIL")) return "STADIUM BUKIT JALIL";
+    if (u.includes("STARLING")) return "THE STARLING MALL";
+    if (u.includes("SPCC") || u.includes("SUNWAYPYRAMID")) return "SPCC";
+    if (u.includes("SSCC") || u.includes("SETIASPICE")) return "SETIA SPICE CONVENTION CENTRE"; // SSCC = Setia
+    if (u.includes("SPICEARENA") || u.includes("PISA")) return "PISA SPICE ARENA CONVENTION CENTRE"; // Spice Arena = Pisa
+    return raw;
+  }
+
+  // Duplicate check on the maintained lists themselves (owner asked).
+  const dups = (arr, key) => { const m = new Map(); for (const x of arr) { const k = norm(key(x)); m.set(k, (m.get(k) || []).concat(key(x))); } return [...m.values()].filter((a) => a.length > 1); };
+  const vDup = dups(venues, (v) => v.name), oDup = dups(organizers, (o) => o.name), bDup = dups(brands, (b) => b.name);
+
   const brandMap = new Map(brands.map((b) => [norm(b.name), b.name]));
   const venueMap = new Map(venues.map((v) => [venueNorm(v.name), v])); // state-tail-stripped key -> {name, state}
   const orgMap = new Map(organizers.map((o) => [norm(o.name), o.name]));
   const etypeMap = new Map(etypes.map((e) => [norm(e.name), e])); // -> {id, name, slug}
-  const existKey = new Set(existing.map((e) => `${norm(e.brand)}|${norm(e.venue)}|${String(e.start_date || "").slice(0, 10)}`));
+  const existKey = new Set(existing.map((e) => `${norm(e.brand)}|${venueNorm(e.venue)}|${String(e.start_date || "").slice(0, 10)}`));
+  // Fuzzy venue: after canon + state-strip, accept the maintained venue whose
+  // normalized name contains mine or vice versa (catches "BLOOMSVALE MALL" vs
+  // "BLOOMSVALE"). Longest maintained match wins; >=5 chars to avoid junk hits.
+  const venueList = venues.map((x) => [venueNorm(x.name), x]);
+  const fuzzyVenue = (myn) => {
+    if (!myn || myn.length < 5) return undefined;
+    const c = venueList.filter(([mn]) => mn.length >= 5 && (myn.includes(mn) || mn.includes(myn))).sort((a, b) => b[0].length - a[0].length);
+    return c[0] && c[0][1];
+  };
 
   // ── Match + dedup ──────────────────────────────────────────────────────────
   const un = { brand: new Set(), venue: new Set(), organizer: new Set(), event_type: new Set() };
   const toInsert = [];
   let skip = 0, insSales = 0;
   for (const r of rows) {
-    const b = brandMap.get(norm(r.brand));
-    const v = venueMap.get(venueNorm(r.venue));
-    const o = orgMap.get(norm(r.organizer));
-    const et = etypeMap.get(norm(r.event_type));
+    const b = brandMap.get(bAlias(r.brand));
+    const v = venueMap.get(venueNorm(canonVenue(r.venue))) || fuzzyVenue(venueNorm(canonVenue(r.venue)));
+    const et = etypeMap.get(etAlias(r.event_type));
+    const isSolo = !!(et && String(et.slug || "").toLowerCase() === "solo");
+    const o = isSolo ? null : orgMap.get(oAlias(r.organizer)); // SOLO events carry no organizer
     if (!b) un.brand.add(r.brand);
     if (!v) un.venue.add(r.venue);
-    if (!o) un.organizer.add(r.organizer);
+    if (!isSolo && !o) un.organizer.add(r.organizer);
     if (!et) un.event_type.add(r.event_type);
-    if (existKey.has(`${norm(r.brand)}|${norm(r.venue)}|${String(r.start || "").slice(0, 10)}`)) { skip++; continue; }
+    const key = `${norm(b || r.brand)}|${venueNorm(v ? v.name : r.venue)}|${String(r.start || "").slice(0, 10)}`;
+    if (existKey.has(key)) { skip++; continue; }
     toInsert.push({ r, b, v, o, et });
     insSales += Number(r.sales || 0);
   }
@@ -87,6 +124,12 @@ async function main() {
   console.log(`  brands (${brands.length}): ${brands.map((b) => b.name).join(", ")}`);
   console.log(`  organizers (${organizers.length}): ${organizers.map((o) => o.name).join(", ")}`);
   console.log(`  venues: ${venues.length} maintained; sample: ${venues.slice(0, 30).map((v) => v.name).join(" | ")}`);
+  if (vDup.length || oDup.length || bDup.length) {
+    console.log(`\n[DUPLICATE maintained entries — clean in Project Maintenance]`);
+    vDup.forEach((a) => console.log(`  venue dup: ${a.join("  ==  ")}`));
+    oDup.forEach((a) => console.log(`  organizer dup: ${a.join("  ==  ")}`));
+    bDup.forEach((a) => console.log(`  brand dup: ${a.join("  ==  ")}`));
+  }
 
   console.log(`\n[match vs maintained picker lists]`);
   rep("BRAND", un.brand, brandMap.size);
