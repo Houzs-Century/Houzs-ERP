@@ -39,7 +39,7 @@
 // ---------------------------------------------------------------------------
 
 import type { CapacityLayer } from './capacity-pack';
-import { isDriverOnLeave, type DriverLeaveRange } from './driver-availability';
+import { isDriverOnLeave, isHelperOnLeave, type DriverLeaveRange, type HelperLeaveRange } from './driver-availability';
 
 /** A locked-day trip group to be crewed — one packed lorry-trip from A1. */
 export interface AssignGroup {
@@ -182,9 +182,12 @@ export function assignFleet(input: {
   config: AssignConfig;
   /** A3: date-ranged driver leave; an on-leave driver is not auto-crewed that day. */
   driverLeave?: readonly DriverLeaveRange[];
+  /** WS2: date-ranged helper leave; an on-leave helper is not auto-crewed that day. */
+  helperLeave?: readonly HelperLeaveRange[];
 }): AssignResult {
   const { groups, config } = input;
   const driverLeave = input.driverLeave ?? [];
+  const helperLeave = input.helperLeave ?? [];
   // One own-fleet trip per lorry per day by default; a lorry beyond its cap is
   // "full" and the next group for that day spills to 3PL overflow.
   const maxTrips = Math.max(1, Math.floor(config.maxTripsPerLorryPerDay ?? 1));
@@ -283,7 +286,8 @@ export function assignFleet(input: {
 
     let helperId: string | null = null;
     let helperName: string | null = null;
-    const freeHelper = input.helpers.find((h) => !helpersUsedToday.has(h.id));
+    // Least-used available helper who is not on leave this date (WS2).
+    const freeHelper = input.helpers.find((h) => !helpersUsedToday.has(h.id) && !isHelperOnLeave(helperLeave, h.id, g.date));
     if (freeHelper) { helperId = freeHelper.id; helperName = freeHelper.name; helpersUsedToday.add(helperId); }
 
     assignments.push({

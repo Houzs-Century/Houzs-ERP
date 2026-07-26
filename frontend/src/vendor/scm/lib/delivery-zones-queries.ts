@@ -295,12 +295,14 @@ export function useUnlockDay() {
 }
 
 // ── Driver leave (Fleet A3) ────────────────────────────────────────────────────
-// The date-ranged driver absences the A2 auto-assigner reads to skip on-leave
-// drivers. Backed by scm.driver_leave (mig 0206) via /api/scm/driver-leave.
+// The date-ranged CREW absences the A2 auto-assigner reads to skip on-leave
+// drivers AND helpers. Backed by scm.driver_leave (mig 0206 + 0208) via
+// /api/scm/driver-leave. A row is EITHER a driver's or a helper's leave (XOR).
 
 export type DriverLeaveRow = {
   id: string;
-  driverId: string;
+  driverId: string | null;
+  helperId: string | null;
   startDate: string;
   endDate: string;
   reason: string | null;
@@ -317,10 +319,11 @@ export function useDriverLeave() {
   });
 }
 
+// Provide exactly one of driverId / helperId (XOR, enforced by the route).
 export function useCreateDriverLeave() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { driverId: string; startDate: string; endDate: string; reason?: string | null }) =>
+    mutationFn: (body: { driverId?: string; helperId?: string; startDate: string; endDate: string; reason?: string | null }) =>
       authedFetch<{ leave: DriverLeaveRow }>('/driver-leave', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: DRIVER_LEAVE_KEY }),
   });

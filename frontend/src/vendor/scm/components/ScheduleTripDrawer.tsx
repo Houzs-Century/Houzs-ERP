@@ -30,6 +30,7 @@ import { fmtDateOrDash } from "@2990s/shared";
 import { useDrivers } from "../lib/drivers-queries";
 import { useLorries } from "../lib/lorries-queries";
 import { useWarehouses } from "../lib/inventory-queries";
+import { useDriverLeave } from "../lib/delivery-zones-queries";
 import { useScheduleDelivery, type PlanningOrder } from "../lib/delivery-planning-queries";
 import {
   useProposeSchedule,
@@ -94,7 +95,7 @@ export function ScheduleTripDrawer({
   const sched = useScheduleDelivery();
   const propose = useProposeSchedule();
 
-  const activeDrivers = useMemo(() => drivers.filter((d) => d.active), [drivers]);
+  const { data: crewLeave = [] } = useDriverLeave();
   const activeLorries = useMemo(() => lorries.filter((l) => l.active), [lorries]);
   const activeWarehouses = useMemo(() => warehouses.filter((w) => w.is_active), [warehouses]);
 
@@ -105,6 +106,28 @@ export function ScheduleTripDrawer({
   const [tripDate, setTripDate] = useState("");
   const [driverId, setDriverId] = useState("");
   const [lorryId, setLorryId] = useState("");
+
+  // WS2: on the chosen trip date, a driver on leave drops off the picker (the
+  // same rule the auto-assigner applies). Blank tripDate filters nothing. Leave
+  // rows carry EITHER a driverId or a helperId; only driver rows matter here —
+  // this drawer assigns a driver, not a helper.
+  const onLeaveDriverIds = useMemo(() => {
+    const s = new Set<string>();
+    if (!tripDate) return s;
+    for (const r of crewLeave) {
+      if (r.driverId && r.startDate <= tripDate && tripDate <= r.endDate) s.add(r.driverId);
+    }
+    return s;
+  }, [crewLeave, tripDate]);
+  const activeDrivers = useMemo(
+    () => drivers.filter((d) => d.active && !onLeaveDriverIds.has(d.id)),
+    [drivers, onLeaveDriverIds],
+  );
+  // If the picked driver goes on leave for the chosen date, clear it so a
+  // now-hidden option is not silently kept on the trip.
+  useEffect(() => {
+    if (driverId && onLeaveDriverIds.has(driverId)) setDriverId("");
+  }, [driverId, onLeaveDriverIds]);
   const [applying, setApplying] = useState(false);
   const [results, setResults] = useState<Record<string, ApplyResult>>({});
 

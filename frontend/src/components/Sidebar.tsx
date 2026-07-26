@@ -531,7 +531,7 @@ export const NAV_TABS: NavTab[] = [
           // gate; the lorry/driver REGISTRY (/scm/fleet) moved into Maintenance below.
           { to: "/fleet-health", label: "Fleet Health", icon: Wrench, perm: "fleet.read", hideForSalesRep: true },
           { to: "/scm/lorry-capacity", label: "Lorry Capacity", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          { to: "/scm/driver-leave", label: "Driver Leave", icon: CalendarOff, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/driver-leave", label: "Crew Leave", icon: CalendarOff, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           /* "Drivers" (/scm/drivers) retired 2026-07-17 — it duplicated the Drivers
              section of Fleet above, and sat here with the SAME Truck icon and the
              SAME scm.transportation.drivers access key, which is what made the
