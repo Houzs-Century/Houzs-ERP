@@ -74,7 +74,7 @@ mg=list(mm.values())
 
 # apportion setup + rental by sales across same-booth brands (venue,start,end)
 booth=collections.defaultdict(list)
-for r in mg: booth[(r["venue"].upper(),r["start"],r["end"])].append(r)
+for r in mg: booth[(r["venue"].upper(),r["event_type"],r["start"],r["end"])].append(r)  # same venue+type+dates, diff brand = one booth
 for grp in booth.values():
     tot_sales=sum(r["sales"] for r in grp)
     if len(grp)<2 or tot_sales<=0: continue
