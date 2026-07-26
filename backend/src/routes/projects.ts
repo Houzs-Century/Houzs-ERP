@@ -3,6 +3,8 @@ import type { Context } from "hono";
 import type { Env } from "../types";
 import { requirePermission, requireAnyPermission, requirePageAccess } from "../middleware/auth";
 import { parseFairSheet, eventToFinanceLines } from "../services/agents/fair-report-parse";
+import { buildFileBlocks } from "../services/vision-blocks";
+import { reconcileSchedule, type ProjRow } from "../services/agents/schedule-reconcile";
 import {
   createProject,
   patchProject,
@@ -755,6 +757,66 @@ app.post("/:id/fair-report/apply", requirePermission("projects.write"), async (c
     } catch (e: unknown) { errors.push(e instanceof Error ? e.message : "failed"); }
   }
   return c.json({ created, skipped, errors });
+});
+
+// ── Roadshow PMS Agent — Job A: reconcile an organizer's schedule photo ──────
+// The owner forwards an organizer's newest itinerary photo (some venues moved /
+// postponed / cancelled). This OCRs it (Claude vision — same pattern as
+// scan-payment.ts / vision-blocks.ts), extracts {organizer, events[]}, loads the
+// organizer's projects, and returns the pure `reconcileSchedule` diff (MATCH /
+// DATE_CHANGED / NEW / MISSING). Writes NOTHING — the owner applies approved date
+// changes via the normal project PATCH.
+const RECONCILE_MODEL = "claude-sonnet-4-6";
+const RECONCILE_URL = "https://api.anthropic.com/v1/messages";
+app.post("/schedule-reconcile/scan", requirePermission("projects.write"), async (c) => {
+  const apiKey = (c.env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY;
+  if (!apiKey) return c.json({ error: "anthropic_key_missing", reason: "ANTHROPIC_API_KEY is not set." }, 400);
+
+  let files: File[] = [];
+  try {
+    const form = await c.req.formData();
+    files = form.getAll("file").filter((f): f is File => f instanceof File);
+  } catch { return c.json({ error: "invalid_form" }, 400); }
+  const { blocks, error: fileErr } = await buildFileBlocks(files);
+  if (fileErr) return c.json({ error: "bad_file", reason: fileErr }, 400);
+  if (blocks.length === 0) return c.json({ error: "no_file", reason: "Attach the schedule image." }, 400);
+
+  const sys = `You read a Malaysian roadshow / exhibition ORGANIZER's event schedule (a poster or flyer image). Extract the organizer name and EVERY listed event. Return ONLY JSON of the shape {"organizer": string, "events": [{"venue": string, "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD", "status": "active"|"cancelled"|"postponed"|null}]}. A range like "13-15 MAR" means startDate = the 13th and endDate = the 15th; infer the YEAR from the image (e.g. a big "2026"). Use the venue text exactly as shown. If a row is struck out or marked cancelled/postponed, set status accordingly, else "active". No commentary, JSON only.`;
+
+  let extract: { organizer: string; events: { venue: string; startDate: string | null; endDate: string | null; status?: string | null }[] };
+  try {
+    const resp = await fetch(RECONCILE_URL, {
+      method: "POST",
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: RECONCILE_MODEL, max_tokens: 2000, system: sys,
+        messages: [{ role: "user", content: [...blocks, { type: "text", text: "Extract the schedule as JSON." }] }],
+      }),
+    });
+    if (!resp.ok) return c.json({ error: "extract_failed", reason: `vision ${resp.status}` }, 502);
+    const data = (await resp.json()) as { content?: { type: string; text?: string }[] };
+    const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+    const jsonStr = (text.match(/\{[\s\S]*\}/) ?? [text])[0];
+    extract = JSON.parse(jsonStr);
+  } catch (e) {
+    return c.json({ error: "extract_failed", reason: e instanceof Error ? e.message : "vision failed" }, 502);
+  }
+  if (!extract || !Array.isArray(extract.events)) return c.json({ error: "extract_empty" }, 502);
+
+  // Load the organizer's live projects (name-scoped, company-scoped) to diff.
+  const org = String(extract.organizer ?? "").trim();
+  const projRes = await c.env.DB.prepare(
+    `SELECT id, code, name, venue, start_date, end_date, stage
+       FROM projects
+      WHERE archived_at IS NULL${activeCompanySql(c, "company_id")}
+        AND UPPER(COALESCE(organizer,'')) LIKE ?`
+  ).bind(`%${org.toUpperCase()}%`).all<{ id: number; code: string; name: string; venue: string; start_date: string; end_date: string; stage: string }>();
+  const projects: ProjRow[] = (projRes.results ?? []).map((p) => ({
+    id: p.id, code: p.code, name: p.name, venue: p.venue, startDate: p.start_date, endDate: p.end_date, stage: p.stage,
+  }));
+
+  const rows = reconcileSchedule({ organizer: org, events: extract.events }, projects);
+  return c.json({ organizer: org, projectCount: projects.length, rows });
 });
 
 // Manual trigger — useful from the project detail page to backfill

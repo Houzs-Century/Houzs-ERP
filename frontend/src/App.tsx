@@ -36,6 +36,7 @@ const MyCaseDetail = lazy(() => import("./pages/MyCases").then((m) => ({ default
 const Projects = lazy(() => import("./pages/Projects").then((m) => ({ default: m.Projects })));
 const ProjectDetail = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectDetail })));
 const FairReportFill = lazy(() => import("./pages/FairReportFill").then((m) => ({ default: m.FairReportFill })));
+const ScheduleReconcile = lazy(() => import("./pages/ScheduleReconcile").then((m) => ({ default: m.ScheduleReconcile })));
 // Sales Entries — rep-entered sales log + Director approval queue.
 // Restored to the menu 2026-07-06 (stripped in the core-slim pass).
 const Sales = lazy(() => import("./pages/Sales").then((m) => ({ default: m.Sales })));
@@ -457,6 +458,14 @@ export default function App() {
           element={
             <PageGuard page="projects">
               <FairReportFill />
+            </PageGuard>
+          }
+        />
+        <Route
+          path="/schedule-reconcile"
+          element={
+            <PageGuard page="projects">
+              <ScheduleReconcile />
             </PageGuard>
           }
         />
