@@ -106,7 +106,7 @@ async function main() {
 
   const evToProj = new Map(); const unmatched = [];
   for (const p of projects) {
-    const cands = (eidx.get(`${bnorm(p.brand)}|${venueNorm(p.venue)}`) || []).filter((e) => days(e.start, p.start_date) <= 10);
+    const cands = (eidx.get(`${bnorm(p.brand)}|${venueNorm(canonVenue(p.venue))}`) || []).filter((e) => days(e.start, p.start_date) <= 10);
     if (!cands.length) { unmatched.push(p); continue; }
     const e = cands.sort((a, b) => days(a.start, p.start_date) - days(b.start, p.start_date))[0];
     const ek = `${bnorm(e.brand)}|${venueNorm(canonVenue(e.venue))}|${e.start}`;
@@ -136,9 +136,29 @@ async function main() {
   for (const p of empties.sort((a, b) => (b.nphotos + b.nattach) - (a.nphotos + a.nattach) || String(a.start_date).localeCompare(String(b.start_date))))
     console.log(`   p${p.id} ${p.start_date} [${p.brand}] by${p.created_by}  photos=${p.nphotos}  attach=${p.nattach}  lines=${p.nlines}  @ ${p.venue}`);
 
+  // ---- (3) maintained pickers + cost rates + data hygiene ----
+  const rates = await sql`SELECT brand, transport_pct, merchandise_pct, commission_normal_pct, commission_boost_pct, boost_min_gp_pct, boost_min_sales FROM project_cost_rates ORDER BY brand`;
+  const brandRows = await sql`SELECT name FROM project_brands ORDER BY name`;
+  const venueRows = await sql`SELECT name FROM project_venues ORDER BY name`;
+  const brandSet = new Set(brandRows.map((r) => norm(r.name)));
+  const rateSet = new Set(rates.map((r) => norm(r.brand)));
+  const venueSet = new Set(venueRows.map((r) => venueNorm(r.name)));
+  const projBrands = [...new Set(projects.map((p) => p.brand))].sort();
+  console.log(`\n=== (3) PICKERS + COST RATES + hygiene ===`);
+  console.log(`  project_cost_rates (${rates.length}):`);
+  for (const r of rates) console.log(`     ${r.brand}: T${r.transport_pct} M${r.merchandise_pct} C${r.commission_normal_pct}${r.commission_boost_pct != null ? `/boost${r.commission_boost_pct}@gp${r.boost_min_gp_pct ?? "-"}&sales${r.boost_min_sales ?? "-"}` : ""}`);
+  console.log(`  project_brands picker (${brandRows.length}): ${JSON.stringify(brandRows.map((r) => r.name))}`);
+  console.log(`  brands used by projects but NOT in brand picker: ${JSON.stringify(projBrands.filter((b) => !brandSet.has(norm(b))))}`);
+  console.log(`  brands used by projects but NOT in cost_rates:   ${JSON.stringify(projBrands.filter((b) => !rateSet.has(norm(b)) && !rateSet.has(bnorm(b))))}`);
+  const projVenueMiss = [...new Set(projects.filter((p) => !venueSet.has(venueNorm(canonVenue(p.venue)))).map((p) => `${p.venue}  =>  ${canonVenue(p.venue)}`))].sort();
+  console.log(`  project_venues picker: ${venueRows.length} venues. Project venues NOT matching any picker venue (after canon): ${projVenueMiss.length}`);
+  for (const v of projVenueMiss.slice(0, 50)) console.log(`     ${v}`);
+  const badDates = projects.filter((p) => isNaN(Date.parse(p.start_date)) || Number(String(p.start_date).slice(5, 7)) > 12 || Number(String(p.start_date).slice(8, 10)) > 31);
+  console.log(`  CORRUPT start_date: ${badDates.length} -> ${JSON.stringify(badDates.map((p) => `p${p.id}:${p.start_date}`))}`);
+
   // ---- unmatched (in PMS, no Excel event) ----
   console.log(`\n=== UNMATCHED — live PMS project with no Excel event (${unmatched.length}) ===`);
   for (const p of unmatched.sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))))
-    console.log(`   p${p.id} ${p.start_date} [${p.brand}] by${p.created_by} inc=${rm(p.income)} photos=${p.nphotos} attach=${p.nattach}  @ ${p.venue}`);
+    console.log(`   p${p.id} ${p.start_date} [${p.brand}] by${p.created_by} inc=${rm(p.income)} photos=${p.nphotos} attach=${p.nattach}  @ ${p.venue} => ${canonVenue(p.venue)}`);
 }
 main().then(() => sql.end()).catch((e) => { console.error(e); process.exit(1); });

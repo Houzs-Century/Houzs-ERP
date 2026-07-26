@@ -1,0 +1,39 @@
+name: FAIR PNL polish (fields / autocost / dedup)
+
+# Owner-triggered ONLY. One script, three passes; dry-run is the default and is read-only.
+#   fields   - status pending->confirmed, canon state, align venue/brand/organizer, rebuild name (UPDATEs)
+#   autocost - backfill transport_fee/merchandise/commission auto lines from project_cost_rates (INSERT/UPDATE)
+#   dedup    - delete ONLY empty+fileless duplicate projects; data/file dups are reported, never deleted
+on:
+  workflow_dispatch:
+    inputs:
+      pass:
+        description: "which pass to run"
+        type: choice
+        options: [fields, autocost, dedup]
+        default: fields
+      mode:
+        description: "dry-run (report only) or commit (apply)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: pms-fair-pnl-reconcile
+  cancel-in-progress: false
+
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Polish ${{ inputs.pass }} (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/reconcile-polish.mjs --pass=${{ inputs.pass }} ${{ inputs.mode == 'commit' && '--commit' || '' }}
