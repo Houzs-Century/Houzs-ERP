@@ -54,7 +54,28 @@ const RENAME = {
   "DATARAN CENTRIO SEREMBAN": "DATARAN CENTRIO", "EAST COAST MALL KUANTAN": "EAST COAST MALL",
   "IOI DAMANSARA": "IOI MALL DAMANSARA", "MCCC KUCHING": "KUCHING METROCITY CONVENTION CENTRE",
 };
-const canonVenue = (raw) => { const old = canonVenueOld(raw); return RENAME[old] ?? old; };
+// Keyword renames applied to the RAW string first (catches "MITC MELAKA" -> "MELAKA
+// INTERNATIONAL TRADE CENTRE" that canonVenueOld+RENAME miss because canonVenueOld has no
+// MITC rule and RENAME is keyed on the old exact name).
+const KWRENAME = [
+  [/\bMITEC\b/, "MALAYSIA INTERNATIONAL TRADE AND EXHIBITION CENTRE"],
+  [/\bMITC\b/, "MELAKA INTERNATIONAL TRADE CENTRE"],
+  [/\bKLCC\b/, "KUALA LUMPUR CONVENTION CENTRE"],
+  [/\bPWCC\b/, "PENANG WATERFRONT CONVENTION CENTRE"],
+  [/\bSPCC\b|SUNWAY\s*PYRAMID/, "SUNWAY PYRAMID CONVENTION CENTRE"],
+  [/\bSCCC\b|SETIA\s*CITY/, "SETIA CITY CONVENTION CENTRE"],
+  [/\bBCCK\b/, "BORNEO CONVENTION CENTRE KUCHING"],
+  [/\bSICC\b/, "SABAH INTERNATIONAL CONVENTION CENTRE"],
+  [/\bITCC\b/, "INTERNATIONAL TECHNOLOGY AND COMMERCIAL CENTRE"],
+  [/\bAICC\b/, "AUSTIN INTERNATIONAL CONVENTION CENTRE"],
+  [/\bPICCA\b/, "PENANG INTERNATIONAL CONVENTION CULTURAL AND ARTS CENTRE"],
+];
+const canonVenue = (raw) => {
+  const u = " " + String(raw ?? "").toUpperCase() + " ";
+  for (const [re, name] of KWRENAME) if (re.test(u)) return name;
+  const old = canonVenueOld(raw);
+  return RENAME[old] ?? old;
+};
 const days = (a, b) => Math.abs((Date.parse(a) - Date.parse(b)) / 86400000);
 
 async function main() {
