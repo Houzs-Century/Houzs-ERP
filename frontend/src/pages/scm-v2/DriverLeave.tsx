@@ -42,6 +42,17 @@ export const DriverLeave = () => {
   const [endDate, setEndDate] = useState<string>(todayMY());
   const [reason, setReason] = useState<string>('');
 
+  // Leave is an internal-driver concept only — you do not track a 3PL's drivers'
+  // absences. Only in-house drivers are offered in the picker; the backend POST
+  // rejects an external driver too. (Dual-read inHouse ?? in_house; only the
+  // snake half resolves from /drivers, and a missing flag defaults to in-house.)
+  const internalDrivers = useMemo(
+    () => (drivers.data ?? []).filter((d) => (d.inHouse ?? d.in_house) !== false),
+    [drivers.data],
+  );
+
+  // Name map keeps ALL drivers so any historical leave row still resolves a name
+  // in the list below, even for a driver later marked external.
   const driverName = useMemo(() => {
     const m = new Map<string, string>();
     for (const d of drivers.data ?? []) m.set(d.id, d.name);
@@ -80,7 +91,7 @@ export const DriverLeave = () => {
         <Ctl label="Driver">
           <select value={driverId} onChange={(e) => setDriverId(e.target.value)} style={{ ...selStyle, minWidth: 180 }}>
             <option value="">— pick a driver —</option>
-            {(drivers.data ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            {internalDrivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         </Ctl>
         <Ctl label="From">
