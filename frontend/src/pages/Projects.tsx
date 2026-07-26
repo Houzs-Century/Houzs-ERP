@@ -1959,8 +1959,10 @@ interface ProfitabilityBreakdown {
   income: number;
   // Owner P&L model: Revenue − COGS = GP; GP − Cost = NP. `cost` is the
   // NON-COGS cost (rental, setup, transport, commission, merchandise,
-  // others); `cogs` is the goods cost; `profit` is Net Profit.
+  // others); `cogs` is the goods cost; `profit` is Net Profit. `rental` is
+  // the rental cost line broken out for visibility — a SUBSET of `cost`.
   cogs: number;
+  rental: number;
   cost: number;
   gp: number;
   profit: number;
@@ -1979,6 +1981,7 @@ interface ProfitabilityResponse {
     projects: number;
     income: number;
     cogs: number;
+    rental: number;
     cost: number;
     gp: number;
     profit: number;
@@ -1998,6 +2001,7 @@ interface ProfitabilityResponse {
     start_date: string | null;
     income: number;
     cogs: number;
+    rental: number;
     cost: number;
     gp: number;
     profit: number;
@@ -2295,7 +2299,7 @@ function FinanceListView() {
     },
     {
       key: "sales",
-      label: "Sales",
+      label: "Revenue",
       align: "right",
       alwaysVisible: true,
       render: (r) => (
@@ -2307,7 +2311,7 @@ function FinanceListView() {
     },
     {
       key: "sales_per_day",
-      label: "Sales / day",
+      label: "Revenue / day",
       align: "right",
       defaultHidden: true,
       render: (r) =>
@@ -2470,7 +2474,7 @@ function FinanceListView() {
     },
     {
       key: "income",
-      label: "Income (all)",
+      label: "Revenue (all)",
       align: "right",
       defaultHidden: true,
       render: (r) => (
@@ -2482,7 +2486,7 @@ function FinanceListView() {
     },
     {
       key: "net",
-      label: "Net (income−cost)",
+      label: "Net (revenue−cost)",
       align: "right",
       defaultHidden: true,
       render: (r) => (
@@ -2537,7 +2541,7 @@ function FinanceListView() {
       {totals && (
         <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
           <StatCard
-            label="Sales"
+            label="Revenue"
             value={formatCurrency(totals.sales, { compact: true })}
             subtitle="Filtered total"
             tone="success"
@@ -2761,6 +2765,8 @@ function ProjectsAnalyticsView() {
   const totals = d?.totals;
   const cogsPctOfRevenue =
     totals && totals.income > 0 ? (totals.cogs / totals.income) * 100 : null;
+  const rentalPctOfRevenue =
+    totals && totals.income > 0 ? (totals.rental / totals.income) * 100 : null;
   const grossMarginPct =
     totals && totals.income > 0 ? (totals.gp / totals.income) * 100 : null;
 
@@ -2860,23 +2866,14 @@ function ProjectsAnalyticsView() {
 
       {d && (
         <>
-          {/* Headline — the owner's P&L waterfall:
-              Revenue − COGS = GP;  GP − Cost = NP. */}
+          {/* Headline — owner-requested order: Revenue, GP, Rental, COGS, NP.
+              Rental is broken out of Cost for visibility (a subset of cost,
+              still counted in NP). Model: Revenue − COGS = GP; GP − Cost = NP. */}
           <DashboardGrid cols={5}>
             <StatCard
               label="Revenue"
               value={formatCurrency(d.totals.income, { compact: true })}
               subtitle="Total sales + other income"
-            />
-            <StatCard
-              label="COGS"
-              value={formatCurrency(d.totals.cogs, { compact: true })}
-              subtitle={
-                cogsPctOfRevenue != null
-                  ? `${cogsPctOfRevenue.toFixed(0)}% of revenue`
-                  : "Cost of goods sold"
-              }
-              tone="error"
             />
             <StatCard
               label="Gross profit"
@@ -2889,9 +2886,23 @@ function ProjectsAnalyticsView() {
               tone={d.totals.gp >= 0 ? "success" : "error"}
             />
             <StatCard
-              label="Cost"
-              value={formatCurrency(d.totals.cost, { compact: true })}
-              subtitle="Rental, setup, transport, commission…"
+              label="Rental"
+              value={formatCurrency(d.totals.rental, { compact: true })}
+              subtitle={
+                rentalPctOfRevenue != null
+                  ? `${rentalPctOfRevenue.toFixed(0)}% of revenue · in cost`
+                  : "Part of total cost"
+              }
+              tone="error"
+            />
+            <StatCard
+              label="COGS"
+              value={formatCurrency(d.totals.cogs, { compact: true })}
+              subtitle={
+                cogsPctOfRevenue != null
+                  ? `${cogsPctOfRevenue.toFixed(0)}% of revenue`
+                  : "Cost of goods sold"
+              }
               tone="error"
             />
             <StatCard
@@ -2962,17 +2973,19 @@ function BreakdownCard({
         <div className="px-4 py-6 text-center text-[11px] text-ink-muted">No data.</div>
       ) : (
         <div className="max-h-[320px] overflow-auto">
-          {/* Full P&L model per group: Revenue − COGS = GP; GP − Cost = NP.
-              min-width keeps the seven columns legible; the wrapper scrolls
+          {/* Per-group P&L, owner column order: Revenue, GP, Rental, COGS, NP
+              (Rental is a subset of Cost, broken out for visibility/export).
+              min-width keeps the eight columns legible; the wrapper scrolls
               horizontally on a narrow (mobile / half-width) card. */}
-          <table className="w-full min-w-[460px] text-[11px]">
+          <table className="w-full min-w-[540px] text-[11px]">
             <thead className="bg-bg/40 text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
               <tr>
                 <th className="px-2 py-1.5 text-left">{monthMode ? "Month" : "Name"}</th>
                 <th className="whitespace-nowrap px-1.5 py-1.5 text-right">#</th>
                 <th className="whitespace-nowrap px-1.5 py-1.5 text-right">Revenue</th>
-                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">COGS</th>
                 <th className="whitespace-nowrap px-1.5 py-1.5 text-right">GP</th>
+                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">Rental</th>
+                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">COGS</th>
                 <th className="whitespace-nowrap px-1.5 py-1.5 text-right">NP</th>
                 <th className="whitespace-nowrap px-1.5 py-1.5 text-right">Margin</th>
               </tr>
@@ -3000,9 +3013,6 @@ function BreakdownCard({
                     <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
                       {formatCurrency(r.income, { compact: true })}
                     </td>
-                    <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                      {formatCurrency(r.cogs, { compact: true })}
-                    </td>
                     <td
                       className={cn(
                         "whitespace-nowrap px-1.5 py-1.5 text-right font-mono",
@@ -3010,6 +3020,12 @@ function BreakdownCard({
                       )}
                     >
                       {formatCurrency(r.gp, { compact: true })}
+                    </td>
+                    <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+                      {formatCurrency(r.rental, { compact: true })}
+                    </td>
+                    <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+                      {formatCurrency(r.cogs, { compact: true })}
                     </td>
                     <td
                       className={cn(
@@ -3083,11 +3099,16 @@ function RankedCard({
                     {r.venue || "—"}
                     {r.start_date && ` · ${formatDate(r.start_date)}`}
                   </div>
-                  {/* Model context: Revenue and GP (COGS = Revenue − GP). */}
+                  {/* Model context, owner order: Revenue, GP, Rental, COGS
+                      (NP is the headline figure on the right). */}
                   <div className="mt-0.5 font-mono text-[10px] text-ink-muted">
                     Rev {formatCurrency(r.income, { compact: true })}
                     {" · "}
                     GP {formatCurrency(r.gp, { compact: true })}
+                    {" · "}
+                    Rental {formatCurrency(r.rental, { compact: true })}
+                    {" · "}
+                    COGS {formatCurrency(r.cogs, { compact: true })}
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
@@ -11478,14 +11499,14 @@ function FinanceLedgerSection({
             Financial Snapshot
           </h3>
           <p className="mt-0.5 text-[10.5px] text-ink-muted">
-            From Exhibition Report cost model · Sales − COGS = GP · Sales − all costs = Net Profit
+            From Exhibition Report cost model · Revenue − COGS = GP · Revenue − all costs = Net Profit
           </p>
         </div>
 
         {/* 4 KPI tiles */}
         <div className="grid grid-cols-2 divide-x divide-y divide-border-subtle border-b border-border sm:grid-cols-4 sm:divide-y-0">
           <SnapshotKpi
-            label="Total Sales"
+            label="Revenue"
             value={formatCurrency(sales)}
             subtitle={
               salesPerDay != null

@@ -3741,7 +3741,7 @@ function FinancialSnapshot({
       <div className="pbody">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <div style={{ background: "#f4f6f3", borderRadius: 10, padding: 11 }}>
-            <div className="pkv-l">Total sales</div>
+            <div className="pkv-l">Revenue</div>
             <div className="money" style={{ fontSize: 16, fontWeight: 800, color: "#11140f", marginTop: 3 }}>{formatCurrency(sales)}</div>
           </div>
           <div style={{ background: "#f4f6f3", borderRadius: 10, padding: 11 }}>
