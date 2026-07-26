@@ -95,6 +95,8 @@ async function main() {
     if (u.includes("IOICITYMALL")) return "IOI MALL PUTRAJAYA"; // IOI City Mall = maintained "IOI MALL PUTRAJAYA" (owner 2026-07-26)
     if (u.includes("IOIDAMANSARA")) return "IOI MALL DAMANSARA";
     if (u.includes("TERBAU") || u.includes("TEBRAU")) return "AEON TEBRAU CITY"; // "AEON MALL TERBAU" typo -> AEON Tebrau City, JB
+    if (u.includes("PERSADA")) return "PERSADA JOHOR INTERNATIONAL CONVENTION CENTRE"; // convention centre -> full name
+    if (u.includes("VIVACITY")) return "VIVACITY MEGAMALL"; // "VIVACITY, KUCHING" -> proper name
     if (u.includes("BCCK")) return "BCCK KUCHING";
     if (u.includes("SCCC") || u.includes("SETIACITY")) return "SCCC SHAH ALAM";
     if (u.includes("METROCITY") || (u.includes("MCC") && u.includes("KUCHING"))) return "KUCHING METROCITY CONVENTION CENTRE";

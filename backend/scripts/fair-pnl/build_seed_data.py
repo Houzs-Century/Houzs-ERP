@@ -8,6 +8,7 @@ SOLO={'SOLO','VINCENT','SYELIN','MROOI','MALLMGMT','MALLMGT','KAIHAO','ROADSHOW'
 def sq(s): return re.sub(r'[^A-Z0-9]','',s.upper())
 def etype(org):
     k=sq(org)
+    if not k: return 'Roadshow'   # no organizer -> Houzs's own solo roadshow (owner rule 2026-07-26)
     return 'Roadshow' if ('SOLO' in k or k in SOLO) else 'Exhibition'
 def norm(v): return str(v).strip() if v is not None else ""
 def numf(v):
