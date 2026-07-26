@@ -1412,16 +1412,19 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
     `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue,
             p.start_date, p.end_date, p.size_sqm,
             et.name as event_type_name,
-            COALESCE(pf.total_sales, 0) as income,
-            COALESCE(pf.rental, 0) + COALESCE(pf.contractor_cost, 0)
-              + COALESCE(pf.license_fee, 0) + COALESCE(pf.misc_cost, 0)
-              - COALESCE(pf.deposit_refund, 0) as cost,
+            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
+                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'income'), 0) as income,
+            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
+                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
+                         AND l.category IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')), 0) as cogs,
+            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
+                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
+                         AND l.category NOT IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')), 0) as cost,
             CASE WHEN p.end_date IS NOT NULL AND p.start_date IS NOT NULL
                  THEN CAST(julianday(p.end_date) - julianday(p.start_date) + 1 AS INTEGER)
                  ELSE NULL
             END as duration_days
        FROM projects p
-       LEFT JOIN project_finance pf ON pf.project_id = p.id
        LEFT JOIN project_event_types et ON et.id = p.event_type_id
       WHERE ${whereSql}${coSql}`
   )
@@ -1438,6 +1441,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
       size_sqm: number | null;
       event_type_name: string | null;
       income: number;
+      cogs: number;
       cost: number;
       duration_days: number | null;
     }>();
@@ -1447,21 +1451,24 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   // Headline totals
   const total_projects = projects.length;
   const total_income = projects.reduce((s, r) => s + (r.income || 0), 0);
+  const total_cogs = projects.reduce((s, r) => s + (r.cogs || 0), 0);
   const total_cost = projects.reduce((s, r) => s + (r.cost || 0), 0);
-  const total_profit = total_income - total_cost;
+  const total_gp = total_income - total_cogs;
+  const total_profit = total_income - total_cogs - total_cost; // NP = Sales - COGS - other costs
   const overall_margin = total_income > 0 ? (total_profit / total_income) * 100 : null;
 
   // Group helper
   function groupBy<K extends string>(
     keyFn: (r: (typeof projects)[number]) => K | null
-  ): { key: K; count: number; income: number; cost: number; profit: number; margin: number | null }[] {
-    const map = new Map<K, { count: number; income: number; cost: number }>();
+  ): { key: K; count: number; income: number; cogs: number; cost: number; gp: number; profit: number; margin: number | null }[] {
+    const map = new Map<K, { count: number; income: number; cogs: number; cost: number }>();
     for (const r of projects) {
       const k = keyFn(r);
       if (!k) continue;
-      const cur = map.get(k) ?? { count: 0, income: 0, cost: 0 };
+      const cur = map.get(k) ?? { count: 0, income: 0, cogs: 0, cost: 0 };
       cur.count += 1;
       cur.income += r.income || 0;
+      cur.cogs += r.cogs || 0;
       cur.cost += r.cost || 0;
       map.set(k, cur);
     }
@@ -1470,9 +1477,11 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
         key,
         count: v.count,
         income: v.income,
+        cogs: v.cogs,
         cost: v.cost,
-        profit: v.income - v.cost,
-        margin: v.income > 0 ? ((v.income - v.cost) / v.income) * 100 : null,
+        gp: v.income - v.cogs,
+        profit: v.income - v.cogs - v.cost, // NP
+        margin: v.income > 0 ? ((v.income - v.cogs - v.cost) / v.income) * 100 : null,
       }))
       .sort((a, b) => b.profit - a.profit);
   }
@@ -1488,7 +1497,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
 
   // Top / bottom events by profit
   const ranked = [...projects]
-    .filter((r) => (r.income || 0) > 0 || (r.cost || 0) > 0)
+    .filter((r) => (r.income || 0) > 0 || (r.cogs || 0) > 0 || (r.cost || 0) > 0)
     .map((r) => ({
       id: r.id,
       code: r.code,
@@ -1497,9 +1506,11 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
       venue: r.venue,
       start_date: r.start_date,
       income: r.income,
+      cogs: r.cogs,
       cost: r.cost,
-      profit: r.income - r.cost,
-      margin: r.income > 0 ? ((r.income - r.cost) / r.income) * 100 : null,
+      gp: r.income - r.cogs,
+      profit: r.income - r.cogs - r.cost,
+      margin: r.income > 0 ? ((r.income - r.cogs - r.cost) / r.income) * 100 : null,
     }))
     .sort((a, b) => b.profit - a.profit);
   const top = ranked.slice(0, 5);
@@ -1516,7 +1527,9 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
     totals: {
       projects: total_projects,
       income: total_income,
+      cogs: total_cogs,
       cost: total_cost,
+      gp: total_gp,
       profit: total_profit,
       margin_pct: overall_margin,
     },
