@@ -1,0 +1,26 @@
+name: FAIR PNL reconcile audit (read-only)
+
+# Owner-triggered ONLY. READ-ONLY: matches each Excel event to an owner project and reports
+# fill/verify/no-match counts + seed projects to remove. Writes NOTHING (no commit mode).
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: pms-fair-pnl-reconcile
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Reconcile audit
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/reconcile-audit.mjs
