@@ -311,7 +311,7 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | GET/POST/PATCH/DELETE | `/delivery-zones`, `/…/:id` | `delivery-zones.ts` | **A1.** The postcode-prefix -> zone map CRUD (mig 0205). GET returns `{ zones, usingDefault, defaultMap, knownZones }`; writes validate `zone` against the 14 canonical zones. Company-scoped |
 | POST | `/delivery-zones/propose` | `delivery-zones.ts` | **A1 auto-propose.** Body `{ soDocNos[], depotWarehouseId?, startDate?, defaultMaxSets?, defaultMaxRevenueCenti? }`. Loads the SOs + their lines, derives each order's zone (postcode) + set count (frame/mattress/sofa), loads the depot's active in-house lorries, and PACKS via the pure `capacity-pack.ts` (shared `loadAndPack` helper). Returns a DISPLAY-ONLY proposal (`days[] · proposals[] · unassigned[]`). Writes NOTHING |
 | POST | `/delivery-zones/sequence-assign` | `delivery-zones.ts` | **A2 sequence + assign / A3 leave + overflow.** Body adds `departTime?` + `maxTripsPerLorryPerDay?`. RE-PACKS (shared `loadAndPack`), crews each group with an AVAILABLE lorry + driver + helper (`fleet-assign.ts`, excluding Module-B non-dispatchable lorries AND on-leave drivers), spilling groups the own fleet can't cover to 3PL `overflow[]`, and sequences each trip (geocode cache-first + ONE Distance Matrix call per trip + `sequence-stops.ts`) with residence-rule windows. Returns DISPLAY-ONLY `{ trips[] · excludedLorries[] · excludedDrivers[] · overflow[] · carriers[] · unassigned[] }`. `GOOGLE_MAPS_API_KEY` unset -> crewed + grouped, no route. Writes NOTHING |
-| GET/POST/DELETE | `/driver-leave` | `driver-leave.ts` | **A3 driver-leave master.** CRUD over `scm.driver_leave` (mig 0206) — the date-ranged absences the A2 assigner reads to skip on-leave drivers. Company-scoped, `scm.transportation.drivers` gate |
+| GET/POST/DELETE | `/driver-leave` | `driver-leave.ts` | **A3 driver-leave master.** CRUD over `scm.driver_leave` (mig 0206) — the date-ranged absences the A2 assigner reads to skip on-leave drivers. Company-scoped, `scm.transportation.drivers` gate. **INTERNAL drivers only:** POST looks the driver up and rejects an external / 3PL driver (`scm.drivers.in_house = false`) with 422 `external_driver` (unknown driver → 404) via the pure exported `isInHouseDriver` |
 | GET/POST/DELETE | `/delivery-zones/locks`, `/…/locks/:id` | `delivery-zones.ts` | **A1.** Reversible day locks (`scm.delivery_day_locks`, mig 0205). POST is idempotent (upsert on `(company, warehouse, date)`); DELETE unlocks |
 | GET | `/lorry-service-records` | `lorry-service-records.ts` | Service history (mig 0121) |
 | GET/POST/PATCH/DELETE | `/trips`, `/trips/:id`, `/trips/:id/stops`, `/trips/:id/status` | `trips.ts:101,141,175,234,277,325,398,412` | Trip (lorry-day) CRUD + stop ordering |
@@ -943,6 +943,11 @@ capacity). Omitted on an own-fleet schedule -> NULL, behaviour unchanged.
 
 **`/driver-leave` route** (`driver-leave.ts`) — GET / POST / DELETE for
 `scm.driver_leave`, company-scoped, same `scm.transportation.drivers` area gate.
+Leave is an INTERNAL-driver concept only: POST looks the driver up and rejects an
+external / 3PL driver (`scm.drivers.in_house = false`) with 422 `external_driver`
+(unknown driver → 404), and the `DriverLeave.tsx` picker offers only in-house
+drivers. `driver-availability.ts` is unchanged — it never sees external drivers'
+leave once they cannot be recorded.
 
 **Frontend** — Auto-Schedule (`AutoSchedule.tsx`) gains a "Max trips / lorry /
 day" control, an "On leave (not auto-assigned)" line (from `excludedDrivers`),

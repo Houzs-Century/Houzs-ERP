@@ -21,6 +21,15 @@ driverLeave.use('*', supabaseAuth);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const COLS = 'id, driver_id, start_date, end_date, reason, created_at';
 
+// Leave is an INTERNAL-driver concept only: you do not track a 3PL's drivers'
+// absences (scm.drivers.in_house = false). PURE guard over a driver lookup row —
+// only a driver KNOWN to be external (in_house === false) is rejected; a missing
+// flag defaults to in-house, matching the column's NOT NULL DEFAULT true.
+export function isInHouseDriver(row: { in_house?: unknown } | null | undefined): boolean {
+  if (!row) return false;
+  return row.in_house !== false;
+}
+
 function rowOut(r: Record<string, unknown>) {
   return {
     id: String(r.id),
@@ -68,6 +77,21 @@ driverLeave.post('/', async (c) => {
   const user = c.get('user') as { id?: string } | null;
 
   const sb = c.get('supabase');
+
+  // INTERNAL-only guard: leave records only make sense for own-fleet drivers.
+  // Look the driver up (roster is company-unified like the /drivers read) and
+  // reject an external/3PL driver with a clear 422 before writing.
+  const { data: drv, error: drvErr } = await sb.from('drivers')
+    .select('id, in_house').eq('id', p.driverId).maybeSingle();
+  if (drvErr) return c.json({ error: 'driver_lookup_failed', reason: drvErr.message }, 500);
+  if (!drv) return c.json({ error: 'driver_not_found' }, 404);
+  if (!isInHouseDriver(drv as Record<string, unknown>)) {
+    return c.json({
+      error: 'external_driver',
+      message: 'Leave is tracked for internal (in-house) drivers only. This driver is external / 3rd-party.',
+    }, 422);
+  }
+
   const { data, error } = await sb.from('driver_leave').insert({
     company_id: activeCompanyId(c),
     driver_id: p.driverId,
