@@ -1,0 +1,33 @@
+name: Standardize venue menu (PMS)
+
+# Owner-triggered ONLY. Default dry-run (read-only): reports every merge/rename/
+# state-fix + how many projects each touches. Choose "commit" only after a clean
+# dry-run. Own concurrency group so it never queues behind or displaces a deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit (write to prod)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: pms-venue-standardize
+  cancel-in-progress: false
+
+jobs:
+  standardize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Standardize venues (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/standardize-venues.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
