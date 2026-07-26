@@ -525,8 +525,11 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/auto-schedule", label: "Auto-Schedule", icon: Wand2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/trips", label: "Trips", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/fleet-day", label: "Fleet Map", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          // Fleet operations.
-          { to: "/scm/fleet", label: "Fleet", icon: Truck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          // Fleet operations — the fleet-wide health/compliance board (pulled up
+          // from a former top-level item so it sits with the other daily fleet
+          // views) plus capacity and leave. Fleet Health keeps its own fleet.read
+          // gate; the lorry/driver REGISTRY (/scm/fleet) moved into Maintenance below.
+          { to: "/fleet-health", label: "Fleet Health", icon: Wrench, perm: "fleet.read", hideForSalesRep: true },
           { to: "/scm/lorry-capacity", label: "Lorry Capacity", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/driver-leave", label: "Driver Leave", icon: CalendarOff, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           /* "Drivers" (/scm/drivers) retired 2026-07-17 — it duplicated the Drivers
@@ -534,16 +537,19 @@ export const NAV_TABS: NavTab[] = [
              SAME scm.transportation.drivers access key, which is what made the
              duplication invisible. The area key is unchanged and still gates every
              row in this group, so no permission moves. Do not re-add. */
-          // Set-once master-data — tucked into a collapsible "Maintenance" sub-group
-          // (the ERP's own word for reference-data upkeep, cf. SO Maintenance) so the
-          // daily-use rows above stay uncluttered. Pure header (no `to`); the groupId
-          // gives it its own expand/collapse memory.
+          // Set-once master-data + the lorry/driver/helper REGISTRY (/scm/fleet) —
+          // tucked into a collapsible "Maintenance" sub-group (the ERP's own word
+          // for reference-data upkeep, cf. SO Maintenance) so the daily-use rows
+          // above stay uncluttered. Fleet lives here (you record a lorry) while
+          // Fleet Health above is the read-only board (you monitor the fleet).
+          // Pure header (no `to`); the groupId gives it expand/collapse memory.
           {
             label: "Maintenance", icon: SlidersHorizontal, groupId: "scm-transportation-maintenance",
             anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true,
             children: [
               { to: "/scm/delivery-planning-regions", label: "Regions", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
               { to: "/scm/delivery-residence-rules", label: "Residence Rules", icon: Building2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+              { to: "/scm/fleet", label: "Fleet", icon: Truck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
               { to: "/scm/delivery-zones", label: "Delivery Zones", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
               { to: "/scm/delivery-rate-cards", label: "Rate Cards", icon: Calculator, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
             ],
@@ -704,17 +710,10 @@ export const NAV_TABS: NavTab[] = [
     icon: Megaphone,
   },
 
-  // ── Fleet Health — Fleet Maintenance & Compliance (Phase 1). Distinct from
-  // the SCM Transportation "Fleet" (driver/lorry master): this is the
-  // compliance + service-readiness ops board. Gated on the flat fleet.read
-  // permission (Owner/IT Admin via "*"); fleet.write covers the mutations.
-  {
-    section: "operations",
-    to: "/fleet-health",
-    label: "Fleet Health",
-    icon: Wrench,
-    perm: "fleet.read",
-  },
+  // Fleet Health moved into SCM > Transportation (2026-07-26) so the fleet-wide
+  // compliance/health board sits with the other daily fleet views instead of
+  // floating as a top-level operations item. It keeps its fleet.read gate — see
+  // the Transportation children above. The /fleet-health route is unchanged.
 
   // ══ SYSTEM ═══════════════════════════════════════════════════
   // ── Team — header links to the Team Hub; chevron expands the sub-pages
