@@ -100,6 +100,7 @@ async function main() {
     if (u.includes("PERSADA")) return "PERSADA JOHOR INTERNATIONAL CONVENTION CENTRE"; // convention centre -> full name
     if (u.includes("VIVACITY")) return "VIVACITY MEGAMALL"; // "VIVACITY, KUCHING" -> proper name
     if (u.includes("ALMA") && u.includes("MERTAJAM")) return "AEON BUKIT MERTAJAM"; // AEON Alma = AEON Bukit Mertajam (same mall, Alma = neighbourhood)
+    if (u.includes("AEONCHERAS") && !u.includes("SELATAN")) return "AEON TAMAN MALURI"; // "AEON CHERAS MALL" = AEON Taman Maluri, Cheras KL (owner 2026-07-26)
     if (u.includes("BCCK")) return "BCCK KUCHING";
     if (u.includes("SCCC") || u.includes("SETIACITY")) return "SCCC SHAH ALAM";
     if (u.includes("METROCITY") || (u.includes("MCC") && u.includes("KUCHING"))) return "KUCHING METROCITY CONVENTION CENTRE";
