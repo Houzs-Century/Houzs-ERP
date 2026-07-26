@@ -54,7 +54,28 @@ const RENAME = {
   "DATARAN CENTRIO SEREMBAN": "DATARAN CENTRIO", "EAST COAST MALL KUANTAN": "EAST COAST MALL",
   "IOI DAMANSARA": "IOI MALL DAMANSARA", "MCCC KUCHING": "KUCHING METROCITY CONVENTION CENTRE",
 };
-const canonVenue = (raw) => { const old = canonVenueOld(raw); return RENAME[old] ?? old; };
+// Keyword renames applied to the RAW string first (catches "MITC MELAKA" -> "MELAKA
+// INTERNATIONAL TRADE CENTRE" that canonVenueOld+RENAME miss because canonVenueOld has no
+// MITC rule and RENAME is keyed on the old exact name).
+const KWRENAME = [
+  [/\bMITEC\b/, "MALAYSIA INTERNATIONAL TRADE AND EXHIBITION CENTRE"],
+  [/\bMITC\b/, "MELAKA INTERNATIONAL TRADE CENTRE"],
+  [/\bKLCC\b/, "KUALA LUMPUR CONVENTION CENTRE"],
+  [/\bPWCC\b/, "PENANG WATERFRONT CONVENTION CENTRE"],
+  [/\bSPCC\b|SUNWAY\s*PYRAMID/, "SUNWAY PYRAMID CONVENTION CENTRE"],
+  [/\bSCCC\b|SETIA\s*CITY/, "SETIA CITY CONVENTION CENTRE"],
+  [/\bBCCK\b/, "BORNEO CONVENTION CENTRE KUCHING"],
+  [/\bSICC\b/, "SABAH INTERNATIONAL CONVENTION CENTRE"],
+  [/\bITCC\b/, "INTERNATIONAL TECHNOLOGY AND COMMERCIAL CENTRE"],
+  [/\bAICC\b/, "AUSTIN INTERNATIONAL CONVENTION CENTRE"],
+  [/\bPICCA\b/, "PENANG INTERNATIONAL CONVENTION CULTURAL AND ARTS CENTRE"],
+];
+const canonVenue = (raw) => {
+  const u = " " + String(raw ?? "").toUpperCase() + " ";
+  for (const [re, name] of KWRENAME) if (re.test(u)) return name;
+  const old = canonVenueOld(raw);
+  return RENAME[old] ?? old;
+};
 const days = (a, b) => Math.abs((Date.parse(a) - Date.parse(b)) / 86400000);
 
 async function main() {
@@ -71,23 +92,38 @@ async function main() {
   const idx = new Map();
   for (const p of ownerProjs) { const k = `${norm(p.brand)}|${venueNorm(p.venue)}`; (idx.get(k) || idx.set(k, []).get(k)).push(p); }
 
-  let fillEmpty = 0, hasData = 0; const noMatch = [];
+  const idxBrand = new Map();
+  for (const p of ownerProjs) { const b = norm(p.brand); (idxBrand.get(b) || idxBrand.set(b, []).get(b)).push(p); }
+
+  let fillEmpty = 0, hasData = 0;
+  const dateMiss = [], venueMiss = [], absent = [];
   for (const r of rows) {
-    const k = `${norm(r.brand)}|${venueNorm(canonVenue(r.venue))}`;
-    const cands = (idx.get(k) || []).filter((p) => days(p.start_date, r.start) <= 10);
-    if (cands.length) { if (Number(cands[0].income) > 0) hasData++; else fillEmpty++; }
-    else noMatch.push(r);
+    const vk = venueNorm(canonVenue(r.venue));
+    const sameBV = idx.get(`${norm(r.brand)}|${vk}`) || [];
+    const cands = sameBV.filter((p) => days(p.start_date, r.start) <= 10);
+    if (cands.length) { Number(cands[0].income) > 0 ? hasData++ : fillEmpty++; continue; }
+    if (sameBV.length) { dateMiss.push([r, sameBV[0]]); continue; }               // same brand+venue, date > 10d off
+    const near = (idxBrand.get(norm(r.brand)) || []).filter((p) => days(p.start_date, r.start) <= 10);
+    if (near.length) { venueMiss.push([r, near[0]]); continue; }                   // same brand+date, venue differs
+    absent.push(r);                                                                // no owner project at all
   }
 
   console.log(`\n=== FAIR PNL RECONCILE AUDIT (read-only) — scope 2024..2026-04 ===`);
   console.log(`Excel events in scope: ${rows.length}`);
-  console.log(`  -> match an OWNER project WITH data (verify):       ${hasData}`);
-  console.log(`  -> match an OWNER project that is EMPTY (fill):     ${fillEmpty}`);
-  console.log(`  -> NO owner match (create new / correct):           ${noMatch.length}`);
-  console.log(`\nowner projects: ${ownerProjs.length}  (empty: ${ownerProjs.filter((p) => Number(p.income) === 0).length})`);
-  console.log(`seed projects (created_by=0, to remove in rework):   ${seedProjs.length}`);
-  console.log(`\n[sample of NO-MATCH events — need new project or a venue/date fix]`);
-  for (const r of noMatch.slice(0, 25)) console.log(`   ${r.start}  [${r.brand}]  ${r.organizer || "SOLO"} @ ${canonVenue(r.venue)}  (raw "${r.venue}")`);
-  if (noMatch.length > 25) console.log(`   ... +${noMatch.length - 25} more`);
+  console.log(`  match owner project WITH data (leave):   ${hasData}`);
+  console.log(`  match owner project EMPTY (fill):        ${fillEmpty}`);
+  console.log(`  NO-MATCH -> DATE mismatch (same brand+venue exists, date off):  ${dateMiss.length}`);
+  console.log(`  NO-MATCH -> VENUE mismatch (same brand+date exists, venue differs): ${venueMiss.length}`);
+  console.log(`  NO-MATCH -> ABSENT (no owner project same brand near date):     ${absent.length}`);
+  console.log(`\nowner projects: ${ownerProjs.length}  (empty: ${ownerProjs.filter((p) => Number(p.income) === 0).length})   seed to remove: ${seedProjs.length}`);
+
+  const show = (label, arr) => {
+    console.log(`\n[${label} — sample ${Math.min(12, arr.length)}/${arr.length}]`);
+    for (const [r, o] of arr.slice(0, 12)) console.log(`   Excel ${r.start} [${r.brand}] @ ${canonVenue(r.venue)}   <->   owner p${o.id} ${o.start_date} @ ${o.venue}`);
+  };
+  show("DATE mismatch", dateMiss);
+  show("VENUE mismatch", venueMiss);
+  console.log(`\n[ABSENT — sample ${Math.min(12, absent.length)}/${absent.length}]`);
+  for (const r of absent.slice(0, 12)) console.log(`   ${r.start} [${r.brand}] ${r.organizer || "SOLO"} @ ${canonVenue(r.venue)} (raw "${r.venue}")`);
 }
 main().then(() => sql.end()).catch((e) => { console.error(e); process.exit(1); });
