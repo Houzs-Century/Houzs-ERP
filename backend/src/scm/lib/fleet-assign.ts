@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// fleet-assign.ts — Fleet Module A2: greedy assignment of a lorry + driver +
+// fleet-assign.ts — Fleet Module A2/A3: greedy assignment of a lorry + driver +
 // helper to each of a locked day's zone-packed trip groups. PURE, unit-tested.
 //
 // A1's packer (capacity-pack.ts) already grouped a day's orders into lorry-trips
@@ -10,6 +10,10 @@
 //     derives to a non-dispatchable status — BREAKDOWN / COMPLIANCE_BLOCKED /
 //     OUT_OF_SERVICE / (in a maintenance window) — is never assigned. The caller
 //     passes each lorry's `dispatchable` flag (from canDispatch(deriveVehicleStatus)).
+//   - EXCLUDE on-leave drivers (A3). A driver whose leave covers a group's date
+//     is never AUTO-crewed onto it. The caller passes the leave ranges
+//     (driver-availability.ts); the exclusion is per group DATE, so a driver on
+//     leave Monday is still eligible for Tuesday's trips.
 //   - CAPACITY FIT. A group whose sets/revenue exceed the chosen lorry's active
 //     ceiling is still assigned (the load must ship) but flagged overCeiling, the
 //     same "ships anyway, visibly" posture A1 takes.
@@ -17,9 +21,17 @@
 //     lorries rather than stacking several onto one while others idle. Each group
 //     goes to the least-loaded eligible lorry (preferring the lorry A1 packed it
 //     onto when that lorry is still free and dispatchable).
+//   - 3PL OVERFLOW (A3). Each own-fleet lorry runs at most `maxTripsPerLorryPerDay`
+//     trips a day (default 1 — one full-day delivery run). When a group's date
+//     has no own-fleet slot left (every eligible lorry at its cap, or no eligible
+//     lorry at all), the group SPILLS to `overflow[]` instead of being stacked
+//     onto an already-full lorry. The dispatcher assigns each overflow group to a
+//     region 3PL carrier (an OUTSOURCE lorry) at a captured cost — that does NOT
+//     consume an own-fleet slot.
 //   - PAIR THE CREW. A lorry's regular driver (matched by plate) takes it when
-//     free; otherwise the least-used available driver. A helper is the least-used
-//     available helper. Drivers/helpers are assigned at most once per day.
+//     free AND not on leave; otherwise the least-used available driver. A helper
+//     is the least-used available helper. Drivers/helpers are assigned at most
+//     once per day.
 //
 // This is a PROPOSAL. It writes NOTHING. Every assignment is overridable by the
 // dispatcher on screen; the established schedule write-path persists the accepted
@@ -27,6 +39,7 @@
 // ---------------------------------------------------------------------------
 
 import type { CapacityLayer } from './capacity-pack';
+import { isDriverOnLeave, type DriverLeaveRange } from './driver-availability';
 
 /** A locked-day trip group to be crewed — one packed lorry-trip from A1. */
 export interface AssignGroup {
@@ -75,6 +88,9 @@ export interface AssignHelper {
 export interface AssignConfig {
   defaultMaxSets: number;
   defaultMaxRevenueCenti: number;
+  /** A3: max trips one own-fleet lorry runs per day before the rest spill to 3PL
+   *  overflow. Default 1 (one full-day delivery run). Overridable per request. */
+  maxTripsPerLorryPerDay?: number;
 }
 
 export interface AssignedGroup {
@@ -102,10 +118,23 @@ export interface AssignExcludedLorry {
   status: string;
 }
 
+/** A group the own fleet could not take that day — a 3PL-assignment candidate. */
+export interface OverflowGroup {
+  key: string;
+  date: string;
+  group: string;
+  orders: string[];
+  sets: number;
+  revenueCenti: number;
+  reason: string;
+}
+
 export interface AssignResult {
   assignments: AssignedGroup[];
-  /** Groups that could not be crewed (no dispatchable lorry left), with a reason. */
+  /** Groups that could not be crewed (kept for shape; A3 routes fleet shortfall to overflow). */
   unassigned: { key: string; date: string; group: string; orders: string[]; reason: string }[];
+  /** A3: groups the own fleet is full for — the dispatcher assigns a 3PL carrier. */
+  overflow: OverflowGroup[];
   /** Lorries Module B ruled out — surfaced so the dispatcher sees the fleet gap. */
   excludedLorries: AssignExcludedLorry[];
 }
@@ -151,8 +180,14 @@ export function assignFleet(input: {
   drivers: readonly AssignDriver[];
   helpers: readonly AssignHelper[];
   config: AssignConfig;
+  /** A3: date-ranged driver leave; an on-leave driver is not auto-crewed that day. */
+  driverLeave?: readonly DriverLeaveRange[];
 }): AssignResult {
   const { groups, config } = input;
+  const driverLeave = input.driverLeave ?? [];
+  // One own-fleet trip per lorry per day by default; a lorry beyond its cap is
+  // "full" and the next group for that day spills to 3PL overflow.
+  const maxTrips = Math.max(1, Math.floor(config.maxTripsPerLorryPerDay ?? 1));
 
   const eligible = input.lorries.filter((l) => l.dispatchable);
   const excludedLorries: AssignExcludedLorry[] = input.lorries
@@ -161,12 +196,14 @@ export function assignFleet(input: {
 
   const assignments: AssignedGroup[] = [];
   const unassigned: AssignResult['unassigned'] = [];
+  const overflow: OverflowGroup[] = [];
 
   if (eligible.length === 0) {
+    // No own fleet at all -> the whole day is 3PL overflow (A3), not a dead end.
     for (const g of groups) {
-      unassigned.push({ key: g.key, date: g.date, group: g.group, orders: g.orders, reason: 'no dispatchable lorry available for this depot' });
+      overflow.push({ key: g.key, date: g.date, group: g.group, orders: g.orders, sets: g.sets, revenueCenti: g.revenueCenti, reason: 'no dispatchable own-fleet lorry — assign a 3PL carrier' });
     }
-    return { assignments, unassigned, excludedLorries };
+    return { assignments, unassigned, overflow, excludedLorries };
   }
 
   const lorryById = new Map(eligible.map((l) => [l.id, l]));
@@ -193,11 +230,20 @@ export function assignFleet(input: {
   }
 
   for (const g of groups) {
-    // Candidate lorries: the preferred one first (if eligible), then the rest,
-    // each ranked by CURRENT day-load so the least-loaded wins (balance), with a
-    // group of 0 on a fresh lorry beating a lorry already carrying work.
+    // Candidate lorries: only those with a free own-fleet SLOT for this date
+    // (fewer than maxTrips trips already), the preferred one first (if eligible),
+    // then the rest, each ranked by CURRENT day-load so the least-loaded wins
+    // (balance), with a group of 0 on a fresh lorry beating a lorry carrying work.
     const preferred = g.preferredLorryId ? lorryById.get(g.preferredLorryId) ?? null : null;
-    const ranked = [...eligible].sort((a, b) => {
+    const withSlot = eligible.filter((l) => loadOf(g.date, l.id).groups < maxTrips);
+
+    if (withSlot.length === 0) {
+      // Own fleet is full for this date -> spill to 3PL overflow (A3).
+      overflow.push({ key: g.key, date: g.date, group: g.group, orders: g.orders, sets: g.sets, revenueCenti: g.revenueCenti, reason: 'own fleet is full for this day — assign a 3PL carrier' });
+      continue;
+    }
+
+    const ranked = [...withSlot].sort((a, b) => {
       // Preferred lorry gets first refusal.
       if (preferred) {
         if (a.id === preferred.id && b.id !== preferred.id) return -1;
@@ -215,20 +261,22 @@ export function assignFleet(input: {
     const ceil = ceilingsFor(chosen, config);
     const overCeiling = exceeds(g, ceil);
 
-    // Crew the lorry. Its regular driver (by plate) if free today; else the
-    // least-used available driver. Helper = least-used available helper.
+    // Crew the lorry. Its regular driver (by plate) if free today AND not on
+    // leave; else the least-used available driver who is not on leave. Helper =
+    // least-used available helper. On-leave drivers (A3) are skipped per-date.
     const driversUsedToday = daySet(usedDrivers, g.date);
     const helpersUsedToday = daySet(usedHelpers, g.date);
+    const driverFree = (id: string) => !driversUsedToday.has(id) && !isDriverOnLeave(driverLeave, id, g.date);
 
     let driverId: string | null = null;
     let driverName: string | null = null;
     const paired = driverByPlate.get(normPlate(chosen.plate)) ?? null;
-    if (paired && !driversUsedToday.has(paired.id)) {
+    if (paired && driverFree(paired.id)) {
       driverId = paired.id; driverName = paired.name;
-    } else if (chosen.driverId && !driversUsedToday.has(chosen.driverId)) {
+    } else if (chosen.driverId && driverFree(chosen.driverId)) {
       driverId = chosen.driverId; driverName = chosen.driverName;
     } else {
-      const free = input.drivers.find((d) => !driversUsedToday.has(d.id));
+      const free = input.drivers.find((d) => driverFree(d.id));
       if (free) { driverId = free.id; driverName = free.name; }
     }
     if (driverId) driversUsedToday.add(driverId);
@@ -264,5 +312,5 @@ export function assignFleet(input: {
     });
   }
 
-  return { assignments, unassigned, excludedLorries };
+  return { assignments, unassigned, overflow, excludedLorries };
 }
