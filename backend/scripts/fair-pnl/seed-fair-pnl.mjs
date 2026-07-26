@@ -32,16 +32,21 @@ const rows = JSON.parse(fs.readFileSync(path.join(HERE, "seed_data_final.json"),
 const norm = (s) => String(s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 // Malaysian state / region tokens the FAIR PNL venues tack on the end but the
 // maintained venue list usually omits ("AEON BIG KEPONG KL" -> "AEON BIG KEPONG").
-const STATE_TAIL = /\b(KL|PG|JB|PJ|MLK|NS|SWK|SEL|SELANGOR|PENANG|JOHOR|KEDAH|PERAK|PERLIS|PAHANG|MELAKA|MALACCA|KELANTAN|TERENGGANU|SABAH|SARAWAK|NEGERI\s*SEMBILAN|PUTRAJAYA|IPOH|KUANTAN|SEREMBAN)\b\s*$/i;
-const venueNorm = (s) => { let v = String(s ?? "").trim(); for (let i = 0; i < 3; i++) v = v.replace(STATE_TAIL, "").trim(); return norm(v); };
+const STATE_TAIL = /\b(KL|PG|PNG|JB|JHB|PJ|MLK|NS|SWK|SEL|SELANGOR|PENANG|JOHOR|KEDAH|PERAK|PERLIS|PAHANG|MELAKA|MALACCA|KELANTAN|TERENGGANU|SABAH|SARAWAK|NEGERI\s*SEMBILAN|PUTRAJAYA|IPOH|KUANTAN|SEREMBAN)\b\s*$/i;
+// The 16 valid Malaysian states/territories (must match the Project Maintenance picker).
+const VALID_STATES = new Set(["Johor", "Kedah", "Kelantan", "Kuala Lumpur", "Labuan", "Melaka", "Negeri Sembilan", "Pahang", "Perak", "Perlis", "Pulau Pinang", "Putrajaya", "Sabah", "Sarawak", "Selangor", "Terengganu"]);
+// Expand Malaysian venue abbreviations so "AEON TMN EQUINE" == "AEON TAMAN EQUINE".
+const ABBR = [[/\bTMN\b/gi, "TAMAN"], [/\bBKT\b/gi, "BUKIT"], [/\bBUKTI\b/gi, "BUKIT"], [/\bMILLENIUM\b/gi, "MILLENNIUM"]];
+const expandAbbr = (s) => { let v = String(s ?? ""); for (const [re, to] of ABBR) v = v.replace(re, to); return v; };
+const venueNorm = (s) => { let v = expandAbbr(String(s ?? "").trim()); for (let i = 0; i < 3; i++) v = v.replace(STATE_TAIL, "").trim(); return norm(v); };
 // Readable name for a NEW venue: state tail stripped, tidied.
-const cleanVenueName = (s) => { let v = String(s ?? "").trim(); for (let i = 0; i < 3; i++) v = v.replace(STATE_TAIL, "").trim(); return v.replace(/\s+/g, " ").replace(/[,\s]+$/, "").trim(); };
+const cleanVenueName = (s) => { let v = expandAbbr(String(s ?? "").trim()); for (let i = 0; i < 3; i++) v = v.replace(STATE_TAIL, "").trim(); return v.replace(/\s+/g, " ").replace(/[,\s]+$/, "").trim(); };
 // Derive the Malaysian state from a venue string (for auto-created venues).
 const MY_STATES = [
   [/PUTRAJAYA/, "Putrajaya"],
   [/PENANG|PULAU PINANG|\bPG\b|\bPNG\b|BUTTERWORTH|KEPALA BATAS|SEBERANG|BUKIT MERTAJAM|STRAITS QUAY/, "Pulau Pinang"],
   [/JOHOR|\bJB\b|\bJHB\b|TEBRAU|TERBAU|KLUANG|KULAI|\bAUSTIN\b|PERSADA/, "Johor"],
-  [/SELANGOR|SUBANG|SHAH ALAM|\bKLANG\b|RAWANG|BUKIT RAJA|SETIAWANGSA|SETIA CITY|EQUINE|PUCHONG|DAMANSARA/, "Selangor"],
+  [/SELANGOR|SUBANG|SHAH ALAM|\bKLANG\b|RAWANG|BUKIT RAJA|SETIA CITY|EQUINE|PUCHONG|DAMANSARA/, "Selangor"],
   [/PERAK|IPOH|TAIPING|MANJUNG|\bSITIAWAN\b/, "Perak"],
   [/KEDAH|ALOR|SUNGAI PETANI|AMANJAYA|\bALMA\b/, "Kedah"],
   [/KELANTAN|KOTA BHARU|\bKB MALL\b/, "Kelantan"],
@@ -50,7 +55,7 @@ const MY_STATES = [
   [/PAHANG|KUANTAN/, "Pahang"],
   [/SABAH|KOTA KINABALU|CENTRE POINT/, "Sabah"],
   [/SARAWAK|KUCHING|\bSWK\b|BCCK|VIVACITY|\bMIRI\b|METROCITY/, "Sarawak"],
-  [/KUALA LUMPUR|\bKL\b|MONT KIARA|CHERAS|KEPONG|WANGSA|SETAPAK|BUKIT JALIL|MID VALLEY|PAVILION|AVENUE K|GATEWAY|MELAWATI|SENTUL|TITIWANGSA|BANGSAR/, "Kuala Lumpur"],
+  [/KUALA LUMPUR|\bKL\b|MONT KIARA|CHERAS|KEPONG|WANGSA|SETAPAK|BUKIT JALIL|MID VALLEY|PAVILION|AVENUE K|GATEWAY|MELAWATI|SENTUL|TITIWANGSA|BANGSAR|SETIAWANGSA|\bKERAMAT\b|\bAU2\b/, "Kuala Lumpur"],
 ];
 const deriveState = (name) => { const u = String(name).toUpperCase(); for (const [re, st] of MY_STATES) if (re.test(u)) return st; return null; };
 const slug = (s) => String(s ?? "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -87,6 +92,9 @@ async function main() {
     if (u.includes("SPCC") || u.includes("SUNWAYPYRAMID")) return "SPCC";
     if (u.includes("SSCC") || u.includes("SETIASPICE")) return "SETIA SPICE CONVENTION CENTRE"; // SSCC = Setia
     if (u.includes("SPICEARENA") || u.includes("PISA")) return "PISA SPICE ARENA CONVENTION CENTRE"; // Spice Arena = Pisa
+    if (u.includes("IOICITYMALL")) return "IOI MALL PUTRAJAYA"; // IOI City Mall = maintained "IOI MALL PUTRAJAYA" (owner 2026-07-26)
+    if (u.includes("IOIDAMANSARA")) return "IOI MALL DAMANSARA";
+    if (u.includes("TERBAU") || u.includes("TEBRAU")) return "AEON TEBRAU CITY"; // "AEON MALL TERBAU" typo -> AEON Tebrau City, JB
     if (u.includes("BCCK")) return "BCCK KUCHING";
     if (u.includes("SCCC") || u.includes("SETIACITY")) return "SCCC SHAH ALAM";
     if (u.includes("METROCITY") || (u.includes("MCC") && u.includes("KUCHING"))) return "KUCHING METROCITY CONVENTION CENTRE";
@@ -118,6 +126,7 @@ async function main() {
   const toInsert = [];
   let skip = 0, insSales = 0;
   const toCreate = new Map(); // venueNorm -> {name, state} : new venues to add to project_venues
+  let emptyVenue = 0;
   for (const r of rows) {
     const b = brandMap.get(bAlias(r.brand));
     let v = venueMap.get(venueNorm(canonVenue(r.venue))) || fuzzyVenue(venueNorm(canonVenue(r.venue)));
@@ -129,6 +138,7 @@ async function main() {
     if (!et) un.event_type.add(r.event_type);
     if (!v) { // genuinely new venue -> queue for creation with a derived state
       const cn = cleanVenueName(canonVenue(r.venue)), vk = venueNorm(cn);
+      if (!vk) { emptyVenue++; continue; } // empty venue name -> cannot seed
       if (!toCreate.has(vk)) toCreate.set(vk, { name: cn, state: deriveState(r.venue) });
       v = { name: cn, state: toCreate.get(vk).state, _new: true };
     }
@@ -164,10 +174,16 @@ async function main() {
   rep("ORGANIZER", un.organizer, orgMap.size);
   rep("EVENT_TYPE", un.event_type, etypeMap.size);
 
+  console.log(`\n[MAINTAINED venues — ${venues.length} (ground truth; cross-check new ones against these)]`);
+  [...venues].map((v) => `${v.name}${v.state ? `  (${v.state})` : "  (no state)"}`).sort().forEach((s) => console.log(`   . ${s}`));
+
   console.log(`\n[NEW venues to create in project_venues — ${toCreate.size}]`);
   [...toCreate.values()].sort((a, b) => a.name.localeCompare(b.name)).forEach((x) => console.log(`      + ${x.name}  (state: ${x.state || "??? SET MANUALLY"})`));
   const noState = [...toCreate.values()].filter((x) => !x.state);
   if (noState.length) console.log(`  WARNING: ${noState.length} new venue(s) have no derivable state.`);
+  const badState = [...toCreate.values()].filter((x) => x.state && !VALID_STATES.has(x.state));
+  if (badState.length) console.log(`  WARNING: ${badState.length} new venue(s) have a NON-MAINTAINED state -> ${badState.map((x) => `${x.name}=${x.state}`).join(", ")}`);
+  if (emptyVenue) console.log(`  NOTE: skipped ${emptyVenue} row(s) with an empty venue name.`);
 
   const blocking = un.brand.size + un.organizer.size + un.event_type.size;
   if (blocking) {

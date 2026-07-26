@@ -3758,8 +3758,8 @@
  {
   "year": 2025,
   "brand": "AKEMI",
-  "organizer": "SOLO AEON RAWANG KL",
-  "venue": "",
+  "organizer": "SOLO",
+  "venue": "AEON RAWANG KL",
   "event_type": "Roadshow",
   "start": "2025-11-18",
   "end": "2025-11-23",
@@ -6559,9 +6559,9 @@
  {
   "year": 2026,
   "brand": "AKEMI",
-  "organizer": "SUNWAY KLUANG MALL JOHOR",
-  "venue": "",
-  "event_type": "Roadshow",
+  "organizer": "",
+  "venue": "SUNWAY KLUANG MALL JOHOR",
+  "event_type": "Exhibition",
   "start": "2026-06-12",
   "end": "2026-06-21",
   "sales": 91364.0,

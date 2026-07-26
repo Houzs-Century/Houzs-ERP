@@ -56,7 +56,12 @@ for path,year in FILES:
             if (date=="" and brand=="" and sv>0) or date.upper()=="DATE" or brand=="BRAND": break  # end of table 1
             brand=BRAND_FIX.get(brand,brand)
             if not brand or not loc or loc.upper()=="LOCATION": continue
-            org,venue=(loc.split("@",1)+[""])[:2] if "@" in loc else (loc,"")
+            if "@" in loc:
+                org,venue=(loc.split("@",1)+[""])[:2]
+            elif loc.upper().startswith("SOLO"):
+                org,venue="SOLO", loc[4:].strip(" -@")   # "SOLO AEON RAWANG" -> venue "AEON RAWANG"
+            else:
+                org,venue="", loc                          # no organizer; whole = venue
             s,e=parse_dates(date,year)
             raw.append(dict(year=year,brand=brand,organizer=org.strip(),venue=venue.strip(),event_type=etype(org),
                 start=s,end=e,sales=sv,cogs_m=numf(cell("m")),cogs_b=numf(cell("b")),cogs_a=numf(cell("a")),
