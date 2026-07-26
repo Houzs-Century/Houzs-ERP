@@ -1,0 +1,27 @@
+name: FAIR PNL cleanup (relabel AKEMI C&C + delete blank strays)
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+concurrency:
+  group: pms-fair-pnl-cleanup
+  cancel-in-progress: false
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Cleanup (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/reconcile-cleanup.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
