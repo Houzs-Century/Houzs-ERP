@@ -1,0 +1,33 @@
+name: FAIR PNL amount fix (÷100)
+
+# Owner-triggered ONLY. The seed stored finance amounts x100 (as sen; column is whole-RM).
+# Dry-run (default, read-only) prints before/after income+cost totals per year. "commit"
+# divides ONLY the seeded lines by 100. Own concurrency group so it never touches a deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit (divide seeded amounts by 100)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: pms-fair-pnl-amountfix
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Fix FAIR PNL amounts (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/fix-seed-amounts.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
