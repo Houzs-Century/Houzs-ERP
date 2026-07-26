@@ -1,3 +1,11 @@
+## 2026-07-26
+
+### [CRITICAL] FAIR PNL seed stored project_finance_lines.amount x100 (as sen) but the column is whole-RM integer -> RM 2,221M totals + int4-overflow 500s on the Finance Lines page
+- **Symptom.** After the 2025/26 FAIR PNL backfill, the PMS Finance Lines page showed SALES RM 2,221.55M / COGS RM 1,076.98M / RENTAL RM 441.26M for the 2026 filter (real figures ~RM 15.86M / ~half / ~RM 4.36M) — every seeded figure ~100x too large — and `GET /api/projects/finance/lines?page=2` returned 500 because `SUM(amount)` (2,221,550,000) overflows int4 (max 2,147,483,647). Owner caught it: "20 多亿?" / "是不是多了两个 0?".
+- **Root cause (traced, not guessed).** `project_finance_lines.amount` is `integer` (`0000_baseline.sql:352`) holding WHOLE RINGGIT: the app's own `createLedgerLine` (`services/projects.ts:2385-2405`) inserts `input.amount` directly with no x100, and `scm/lib/fair-report.ts:375` states "project_finance_lines.amount unit — NOT centi". The seed (`seed-fair-pnl.mjs`) wrongly assumed sen and inserted `Math.round(rm*100)` (`sen()`, line 62), so all ~2,000+ seeded lines were x100. (`schema.pg.ts:25` lists this column among "stored in sen" candidates — that comment is wrong for this table and is what misled the seed.)
+- **Fix.** (1) `scripts/fair-pnl/fix-seed-amounts.mjs` + workflow — divides ONLY the seeded lines (`description LIKE '%(FAIR PNL seed)'` AND `created_by=0`) by 100, marks them `[rm]` so a re-run is a no-op; owner-entered rows untouched; dry-run prints before/after per-year income+cost totals. (2) `seed-fair-pnl.mjs` now stores whole RM (`toRm = Math.round(v)`, no x100) so the pending 2024 seed cannot repeat it.
+- **Ref:** #1311. `fix/pms-fair-pnl-dedupe`, 2026-07-26.
+
 ## 2026-07-25
 
 ### [MEDIUM] SO amendment PDF ("Print amendment") existed on desktop + PO-mobile but was MISSING on the SO-mobile surface — desktop/mobile parity gap
