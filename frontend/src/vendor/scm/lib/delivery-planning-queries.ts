@@ -443,6 +443,10 @@ export type ScheduleDeliveryVars = {
   etaOffsetS?: number | null;
   legDistanceM?: number | null;
   legDurationS?: number | null;
+  /* Fleet A3: the captured cost (integer sen) when the chosen lorry is a 3PL
+     carrier (OUTSOURCE). Written on a trip CREATE; ignored for an own-fleet
+     lorry. This is the seam Module C's rate-card will compute against. */
+  threePlCostCenti?: number | null;
   /* Display-only, for optimistic UI (never posted). */
   driverNameOptimistic?: string | null;
   lorryPlateOptimistic?: string | null;
@@ -463,7 +467,7 @@ export type ScheduleDeliveryResult = {
 export function useScheduleDelivery() {
   const qc = useQueryClient();
   return useMutation<ScheduleDeliveryResult, Error, ScheduleDeliveryVars, { snapshots: Array<[readonly unknown[], PlanningResponse]> }>({
-    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS }) => {
+    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS, threePlCostCenti }) => {
       /* Only include keys the caller actually set, so an unrelated field is never
          nulled out by an inline single-field edit. */
       const body: Record<string, unknown> = {};
@@ -481,6 +485,7 @@ export function useScheduleDelivery() {
       if (etaOffsetS !== undefined) body.etaOffsetS = etaOffsetS;
       if (legDistanceM !== undefined) body.legDistanceM = legDistanceM;
       if (legDurationS !== undefined) body.legDurationS = legDurationS;
+      if (threePlCostCenti !== undefined) body.threePlCostCenti = threePlCostCenti;
       return authedFetch<ScheduleDeliveryResult>(`/delivery-planning/${type}/${id}/schedule`, {
         method: 'PATCH', body: JSON.stringify(body),
       });

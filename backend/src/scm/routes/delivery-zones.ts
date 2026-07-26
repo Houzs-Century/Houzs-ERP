@@ -50,6 +50,7 @@ import { timeToMinutes, minutesToTime } from '../lib/propose-route';
 import { buildSequenceProposal, type SequenceStopInput } from '../lib/sequence-stops';
 import { loadAvailableLorries } from '../lib/fleet-availability';
 import { assignFleet, type AssignGroup } from '../lib/fleet-assign';
+import { loadDriverLeave } from '../lib/driver-availability';
 
 export const deliveryZones = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryZones.use('*', supabaseAuth);
@@ -450,6 +451,8 @@ const sequenceAssignSchema = z.object({
   departTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'departTime must be HH:MM').optional(),
   defaultMaxSets: z.number().int().min(1).max(1000).optional(),
   defaultMaxRevenueCenti: z.number().int().min(1).optional(),
+  // A3: own-fleet trips per lorry per day before the rest spill to 3PL overflow.
+  maxTripsPerLorryPerDay: z.number().int().min(1).max(20).optional(),
 });
 
 const DEFAULT_SERVICE_MIN = 90;
@@ -502,6 +505,28 @@ deliveryZones.post('/sequence-assign', async (c) => {
     id: String(h.id), name: String(h.name ?? ''),
   }));
 
+  // A3: driver leave over the planning window (the packed group dates), so a
+  // driver on leave is not auto-crewed onto a trip that falls on a leave day.
+  const groupDates = groups.map((g) => g.date).filter((d) => ISO_DATE.test(d));
+  const leaveFrom = groupDates.length ? groupDates.reduce((m, d) => (d < m ? d : m), groupDates[0]) : startDate;
+  const leaveTo = groupDates.length ? groupDates.reduce((m, d) => (d > m ? d : m), groupDates[0]) : startDate;
+  const { ranges: driverLeave, excludedDrivers } = await loadDriverLeave(sb, { from: leaveFrom, to: leaveTo });
+
+  // A3: the region's 3PL carriers — OUTSOURCE / non-internal lorries the
+  // dispatcher can assign overflow trips to. Depot-scoped when a depot is picked,
+  // plus any carrier not pinned to a warehouse (a shared 3PL). Reuses
+  // scm.lorries (type='OUTSOURCE', is_internal=false) — no parallel carrier master.
+  const { data: carrierRows } = await sb.from('lorries')
+    .select('id, plate, warehouse_id, type')
+    .eq('active', true).eq('is_internal', false).order('plate');
+  const carriers = ((carrierRows ?? []) as Array<Record<string, unknown>>)
+    .map((l) => ({
+      id: String(l.id),
+      plate: String(l.plate ?? ''),
+      warehouseId: (l.warehouseId ?? l.warehouse_id ?? null) as string | null,
+    }))
+    .filter((l) => !depotWarehouseId || l.warehouseId == null || l.warehouseId === depotWarehouseId);
+
   const assigned = assignFleet({
     groups,
     lorries: availLorries.map((l) => ({
@@ -511,7 +536,8 @@ deliveryZones.post('/sequence-assign', async (c) => {
     })),
     drivers,
     helpers,
-    config: { defaultMaxSets, defaultMaxRevenueCenti },
+    config: { defaultMaxSets, defaultMaxRevenueCenti, maxTripsPerLorryPerDay: parsed.data.maxTripsPerLorryPerDay },
+    driverLeave,
   });
 
   // 4. Residence rules — building_type -> service duration + window.
@@ -649,6 +675,12 @@ deliveryZones.post('/sequence-assign', async (c) => {
     dispatchableCount: availLorries.filter((l) => l.dispatchable).length,
     trips,
     excludedLorries: assigned.excludedLorries,
+    // A3: drivers withheld from the auto-pick because they are on leave, and the
+    // groups the own fleet could not cover (3PL-assignment candidates) plus the
+    // region's available 3PL carriers.
+    excludedDrivers,
+    overflow: assigned.overflow,
+    carriers,
     unassigned: [
       ...ctx.unzoned.map((u) => ({ key: null as string | null, date: null as string | null, group: null as string | null, orders: [u.ref], reason: u.reason })),
       ...assigned.unassigned,

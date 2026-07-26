@@ -77,6 +77,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/delivery-residence-rules",
   "/scm/delivery-zones",
   "/scm/auto-schedule",
+  "/scm/driver-leave",
   "/scm/fleet",
   "/scm/fleet-day",
   "/scm/fleet-run-sheet",
