@@ -166,9 +166,10 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
             options={[['SET', 'By set (frame+mattress)'], ['ITEM', 'By item']]} />
           <SelectField label="Aggregation" value={card.aggregation} onChange={(v) => patch({ aggregation: v })}
             options={[['DROP', 'Per drop point'], ['CUSTOMER', 'Per customer']]} />
-          <SelectField label="Carrier" value={card.carrierLorryId ?? ''} onChange={(v) => patch({ carrierLorryId: v || null })}
-            options={[['', '—'], ...(meta.data?.carriers ?? []).map((c) => [c.id, `${c.plate}${c.isInternal ? ' (own)' : ' (3PL)'}`] as [string, string])]} />
-          <RMField label="Min charge (RM)" value={centiToRM(card.minChargeCenti)} onCommit={(v) => patch({ minChargeCenti: v === '' ? null : rmToCenti(v) })} />
+          {/* WS4b: a card is priced per 3PL COMPANY (its lorries inherit). "Own
+              fleet / none" leaves it unattached — pair with the own-fleet flag. */}
+          <SelectField label="3PL company (carrier)" value={card.carrierCompanyId ?? ''} onChange={(v) => patch({ carrierCompanyId: v || null })}
+            options={[['', 'Own fleet / none'], ...(meta.data?.companies ?? []).map((c) => [c.id, c.name] as [string, string])]} />
           <RMField label="Cap (RM)" value={centiToRM(card.capCenti)} onCommit={(v) => patch({ capCenti: v === '' ? null : rmToCenti(v) })} />
           <SelectField label="Rounding" value={card.rounding} onChange={(v) => patch({ rounding: v })}
             options={[['NONE', 'None'], ['NEAREST_10C', 'Nearest 10 sen'], ['NEAREST_RM', 'Nearest RM']]} />
@@ -403,13 +404,13 @@ const CreateCardDrawer = ({ onClose, onCreated }: { onClose: () => void; onCreat
   const create = useCreateRateCard();
   const meta = useRateCardMeta();
   const notify = useNotify();
-  const [form, setForm] = useState({ name: '', carrierLorryId: '', basis: 'SET' as 'SET' | 'ITEM', aggregation: 'DROP' as 'DROP' | 'CUSTOMER', isOwnFleet: false });
+  const [form, setForm] = useState({ name: '', carrierCompanyId: '', basis: 'SET' as 'SET' | 'ITEM', aggregation: 'DROP' as 'DROP' | 'CUSTOMER', isOwnFleet: false });
   const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => setForm((s) => ({ ...s, [k]: v }));
 
   const submit = () => {
     if (!form.name.trim()) { notify({ title: 'Name required.', tone: 'error' }); return; }
     create.mutate(
-      { name: form.name.trim(), carrierLorryId: form.carrierLorryId || null, basis: form.basis, aggregation: form.aggregation, isOwnFleet: form.isOwnFleet },
+      { name: form.name.trim(), carrierCompanyId: form.carrierCompanyId || null, basis: form.basis, aggregation: form.aggregation, isOwnFleet: form.isOwnFleet },
       { onSuccess: (r) => onCreated(r.card.id), onError: (e) => notify({ title: 'Create failed', body: e instanceof Error ? e.message : 'Error', tone: 'error' }) },
     );
   };
@@ -428,10 +429,10 @@ const CreateCardDrawer = ({ onClose, onCreated }: { onClose: () => void; onCreat
             <input className={styles.fieldInput} value={form.name} placeholder="e.g. ABC Logistics 3PL" onChange={(e) => set('name', e.target.value)} />
           </label>
           <label className={styles.field}>
-            <span className={styles.fieldLabel}>Carrier (lorry)</span>
-            <select className={styles.fieldInput} value={form.carrierLorryId} onChange={(e) => set('carrierLorryId', e.target.value)}>
-              <option value="">—</option>
-              {(meta.data?.carriers ?? []).map((c) => <option key={c.id} value={c.id}>{c.plate}{c.isInternal ? ' (own)' : ' (3PL)'}</option>)}
+            <span className={styles.fieldLabel}>3PL company (carrier)</span>
+            <select className={styles.fieldInput} value={form.carrierCompanyId} onChange={(e) => set('carrierCompanyId', e.target.value)}>
+              <option value="">Own fleet / none</option>
+              {(meta.data?.companies ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </label>
           <div className={styles.formGrid}>

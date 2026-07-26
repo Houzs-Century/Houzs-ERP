@@ -18,6 +18,7 @@ export type RateCard = {
   id: string;
   name: string;
   carrierLorryId: string | null;
+  carrierCompanyId: string | null;
   carrierLabel: string | null;
   isOwnFleet: boolean;
   basis: RateBasis;
@@ -47,6 +48,7 @@ export type RateRule = {
 
 export type RateCardMeta = {
   carriers: { id: string; plate: string; type: string | null; isInternal: boolean }[];
+  companies: { id: string; name: string }[];
   ruleTypes: RateRuleType[];
   zones: string[];
 };
@@ -125,6 +127,7 @@ export function useRateCardMeta() {
 export type NewRateCard = {
   name: string;
   carrierLorryId?: string | null;
+  carrierCompanyId?: string | null;
   carrierLabel?: string | null;
   isOwnFleet?: boolean;
   basis?: RateBasis;

@@ -33,8 +33,10 @@ Two additive tables, scoped per company.
 | `id` uuid PK | |
 | `company_id` bigint | per-company scope |
 | `name` text | UNIQUE per (company_id, name) |
-| `carrier_lorry_id` uuid null | FK `scm.lorries` — a 3PL OUTSOURCE lorry (`is_internal=false`) or an in-house lorry for the own-fleet card |
+| `carrier_lorry_id` uuid null | FK `scm.lorries` — legacy per-lorry key / own-fleet lorry. Kept for back-compat |
+| **`carrier_company_id` uuid null (mig 0211, WS4b)** | FK `scm.threepl_companies` — the card is now priced PER 3PL COMPANY; every lorry under it inherits. The create/edit "carrier" dropdown lists companies (from `GET /meta`'s `companies[]`). Reconcile resolves `trip.lorry_id -> lorries.threepl_company_id -> carrier_company_id` (falls back to `carrier_lorry_id`) |
 | `carrier_label` text null | free-text carrier when not modelled as a lorry |
+| `min_charge_centi` | still stored, but the **form no longer exposes it** (owner dropped min-charge, WS4b); the calculator honours it if a legacy row has one |
 | `is_own_fleet` bool | the own-fleet cost-structure card |
 | `basis` text | `ITEM` \| `SET` (set = frame+mattress) — what the positional tiers count |
 | `aggregation` text | `DROP` \| `CUSTOMER` |
