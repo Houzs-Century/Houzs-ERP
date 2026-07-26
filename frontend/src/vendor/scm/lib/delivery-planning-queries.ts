@@ -421,6 +421,11 @@ export type ScheduleDeliveryVars = {
   deliveryState?: DeliveryState | null;
   driverId?: string | null;
   lorryId?: string | null;
+  /* Fleet A2: the helper crew the assigner (or a dispatcher override) paired to
+     the trip. Persisted onto scm.trips helper_1_id / helper_2_id on a trip
+     CREATE, via the same schedule path (additive — omitted = unchanged). */
+  helper1Id?: string | null;
+  helper2Id?: string | null;
   /* ASSR-only: forwarded so the backend knows which job (pickup vs delivery) is
      being scheduled. Ignored for 'so' | 'do'. */
   jobKind?: AssrJobKind | null;
@@ -458,7 +463,7 @@ export type ScheduleDeliveryResult = {
 export function useScheduleDelivery() {
   const qc = useQueryClient();
   return useMutation<ScheduleDeliveryResult, Error, ScheduleDeliveryVars, { snapshots: Array<[readonly unknown[], PlanningResponse]> }>({
-    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS }) => {
+    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS }) => {
       /* Only include keys the caller actually set, so an unrelated field is never
          nulled out by an inline single-field edit. */
       const body: Record<string, unknown> = {};
@@ -466,6 +471,8 @@ export function useScheduleDelivery() {
       if (deliveryState !== undefined) body.deliveryState = deliveryState;
       if (driverId !== undefined) body.driverId = driverId;
       if (lorryId !== undefined) body.lorryId = lorryId;
+      if (helper1Id !== undefined) body.helper1Id = helper1Id;
+      if (helper2Id !== undefined) body.helper2Id = helper2Id;
       if (jobKind !== undefined) body.jobKind = jobKind;
       if (warehouseId !== undefined) body.warehouseId = warehouseId;
       if (tripId !== undefined) body.tripId = tripId;

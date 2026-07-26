@@ -44,6 +44,12 @@ import {
 } from '../lib/zone-classify';
 import { deriveSetCount, type SetLineCategory } from '../lib/set-count';
 import { packProposals, type PackOrder, type PackLorry, type CapacityLayer } from '../lib/capacity-pack';
+import { composeAddress, geocodeAddressCached } from '../lib/geocode';
+import { travelTimeMatrix, type LatLngPoint } from '../lib/maps';
+import { timeToMinutes, minutesToTime } from '../lib/propose-route';
+import { buildSequenceProposal, type SequenceStopInput } from '../lib/sequence-stops';
+import { loadAvailableLorries } from '../lib/fleet-availability';
+import { assignFleet, type AssignGroup } from '../lib/fleet-assign';
 
 export const deliveryZones = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryZones.use('*', supabaseAuth);
@@ -248,16 +254,30 @@ function normCategory(raw: string): SetLineCategory {
   return 'OTHERS';
 }
 
-deliveryZones.post('/propose', async (c) => {
+/** The columns the packer + the A2 sequencer both read off an SO header. The
+ *  A1 packer uses postcode + revenue; A2 additionally geocodes (state/country)
+ *  and reads the residence rule by building_type. One superset select serves both. */
+const SO_PACK_COLS = 'doc_no, debtor_name, address1, address2, postcode, customer_state, customer_country, building_type, local_total_centi';
+
+interface PackContext {
+  startDate: string;
+  usingDefault: boolean;
+  lorries: PackLorry[];
+  result: ReturnType<typeof packProposals>;
+  enrich: Map<string, { debtorName: string | null; sets: number; revenueCenti: number; zone: string }>;
+  unzoned: Array<{ ref: string; debtorName: string | null; reason: string }>;
+  soByDoc: Map<string, Record<string, unknown>>;
+}
+
+/** Load + pack — the SHARED core of `/propose` (A1) and `/sequence-assign` (A2),
+ *  so the two can never disagree about which orders group onto which lorry-day. */
+async function loadAndPack(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  c: any,
+  params: { soDocNos: string[]; depotWarehouseId: string | null; startDate: string; defaultMaxSets: number; defaultMaxRevenueCenti: number },
+): Promise<{ ok: true; ctx: PackContext } | { ok: false; status: 500; error: string; reason: string }> {
   const sb = c.get('supabase');
-  let body: unknown;
-  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const parsed = proposeSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
-  const { soDocNos, depotWarehouseId } = parsed.data;
-  const startDate = parsed.data.startDate ?? todayMY();
-  const defaultMaxSets = parsed.data.defaultMaxSets ?? 10;
-  const defaultMaxRevenueCenti = parsed.data.defaultMaxRevenueCenti ?? 3_000_000;
+  const { soDocNos, depotWarehouseId, startDate, defaultMaxSets, defaultMaxRevenueCenti } = params;
 
   // 1. Company zone map (falls back to the in-code default when unset).
   const { data: mapRows } = await paginateAll<MapRow>((from, to) =>
@@ -265,14 +285,12 @@ deliveryZones.post('/propose', async (c) => {
   );
   const { map: zoneMap, usingDefault } = toPrefixMap(mapRows ?? []);
 
-  // 2. Load the selected SOs (address + revenue), scoped to allowed companies.
+  // 2. Load the selected SOs (address + revenue + geocode/window inputs).
   const { data: soRows, error: soErr } = await scopeToAllowedCompanies(
-    sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_name, address1, address2, postcode, local_total_centi')
-      .in('doc_no', soDocNos),
+    sb.from('mfg_sales_orders').select(SO_PACK_COLS).in('doc_no', soDocNos),
     c,
   );
-  if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
+  if (soErr) return { ok: false, status: 500, error: 'load_failed', reason: soErr.message };
   const soByDoc = new Map<string, Record<string, unknown>>();
   for (const r of (soRows ?? []) as Array<Record<string, unknown>>) {
     soByDoc.set(String((r.docNo ?? r.doc_no) as string), r);
@@ -290,8 +308,6 @@ deliveryZones.post('/propose', async (c) => {
       c,
     ).range(from, to),
   );
-  // Catalog category by item_code (mfg_products.category), same source the board
-  // uses; the line's item_group is the fallback.
   const codes = new Set<string>();
   for (const it of (itemRows ?? [])) if (it.item_code) codes.add(it.item_code);
   const productCategory = new Map<string, SetLineCategory>();
@@ -308,14 +324,12 @@ deliveryZones.post('/propose', async (c) => {
   }
   type Line = { category: SetLineCategory; qty: number | null; cancelled: boolean | null };
   const linesByDoc = new Map<string, Line[]>();
-  const whByDoc = new Map<string, string>();
   for (const it of (itemRows ?? [])) {
     const dn = String(it.doc_no);
     const cat = (it.item_code ? productCategory.get(it.item_code) : undefined) ?? normCategory(it.item_group ?? '');
     const arr = linesByDoc.get(dn) ?? [];
     arr.push({ category: cat, qty: it.qty, cancelled: it.cancelled });
     linesByDoc.set(dn, arr);
-    if (it.warehouse_id && !whByDoc.has(dn)) whByDoc.set(dn, it.warehouse_id);
   }
 
   // 4. Depot lorries — active, in-house, optionally filtered to the depot.
@@ -326,9 +340,9 @@ deliveryZones.post('/propose', async (c) => {
     .order('plate');
   if (depotWarehouseId) lq = lq.eq('warehouse_id', depotWarehouseId);
   const { data: lorryRows, error: lorryErr } = await lq;
-  if (lorryErr) return c.json({ error: 'load_failed', reason: lorryErr.message }, 500);
-  const lorries: PackLorry[] = (lorryRows ?? []).map((l) => {
-    const row = l as Record<string, unknown>;
+  if (lorryErr) return { ok: false, status: 500, error: 'load_failed', reason: lorryErr.message };
+  const lorries: PackLorry[] = ((lorryRows ?? []) as Array<Record<string, unknown>>).map((l) => {
+    const row = l;
     const layerRaw = String((row.capacityLayer ?? row.capacity_layer ?? 'SETS')).toUpperCase();
     const layer: CapacityLayer = (CAP_LAYERS.has(layerRaw) ? layerRaw : 'SETS') as CapacityLayer;
     const ms = row.maxSets ?? row.max_sets;
@@ -342,8 +356,7 @@ deliveryZones.post('/propose', async (c) => {
     };
   });
 
-  // 5. Build pack orders; unzoned orders (no postcode / unmapped) are reported
-  //    for the dispatcher, never guessed onto a lorry.
+  // 5. Build pack orders; unzoned orders (no postcode / unmapped) are reported.
   const orders: PackOrder[] = [];
   const unzoned: Array<{ ref: string; debtorName: string | null; reason: string }> = [];
   const enrich = new Map<string, { debtorName: string | null; sets: number; revenueCenti: number; zone: string }>();
@@ -372,31 +385,273 @@ deliveryZones.post('/propose', async (c) => {
   const result = packProposals({
     orders,
     lorries,
-    config: {
-      startDate,
-      klangValleyZones: KLANG_VALLEY_ZONES,
-      defaultMaxSets,
-      defaultMaxRevenueCenti,
-    },
+    config: { startDate, klangValleyZones: KLANG_VALLEY_ZONES, defaultMaxSets, defaultMaxRevenueCenti },
   });
 
-  // Attach display info to each proposal.
-  const proposals = result.proposals.map((p) => ({
+  return { ok: true, ctx: { startDate, usingDefault, lorries, result, enrich, unzoned, soByDoc } };
+}
+
+deliveryZones.post('/propose', async (c) => {
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = proposeSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
+  const { soDocNos, depotWarehouseId } = parsed.data;
+  const startDate = parsed.data.startDate ?? todayMY();
+  const defaultMaxSets = parsed.data.defaultMaxSets ?? 10;
+  const defaultMaxRevenueCenti = parsed.data.defaultMaxRevenueCenti ?? 3_000_000;
+
+  const packed = await loadAndPack(c, { soDocNos, depotWarehouseId: depotWarehouseId ?? null, startDate, defaultMaxSets, defaultMaxRevenueCenti });
+  if (!packed.ok) return c.json({ error: packed.error, reason: packed.reason }, packed.status);
+  const { ctx } = packed;
+
+  const proposals = ctx.result.proposals.map((p) => ({
     ...p,
-    debtorName: enrich.get(p.ref)?.debtorName ?? null,
+    debtorName: ctx.enrich.get(p.ref)?.debtorName ?? null,
   }));
 
   return c.json({
     startDate,
-    usingDefaultZoneMap: usingDefault,
+    usingDefaultZoneMap: ctx.usingDefault,
     depotWarehouseId: depotWarehouseId ?? null,
-    lorryCount: lorries.length,
+    lorryCount: ctx.lorries.length,
     capacityDefaults: { maxSets: defaultMaxSets, maxRevenueCenti: defaultMaxRevenueCenti },
     proposals,
-    days: result.days,
+    days: ctx.result.days,
     unassigned: [
-      ...unzoned.map((u) => ({ ref: u.ref, zone: null as string | null, reason: u.reason })),
-      ...result.unassigned,
+      ...ctx.unzoned.map((u) => ({ ref: u.ref, zone: null as string | null, reason: u.reason })),
+      ...ctx.result.unassigned,
+    ],
+  });
+});
+
+/* ──────────────────────────────────────────────────────────────────────────
+   POST /sequence-assign — Fleet Module A2. Takes a locked day's zone-packed
+   groups (re-derived through the SAME A1 packer) and turns each into an ordered,
+   crewed trip:
+     1. SEQUENCE  — order each group's stops via the Phase-3 nearest-neighbour
+        sequencer (propose-route.ts), depot = the warehouse origin, with per-stop
+        arrival / start / finish times + ETA offsets. Reuses buildSequenceProposal.
+     2. ASSIGN    — greedy lorry + driver + helper from the depot's AVAILABLE
+        fleet (assignFleet). A lorry Module B (fleet-status) has grounded —
+        BREAKDOWN / COMPLIANCE_BLOCKED / OUT_OF_SERVICE / a maintenance window —
+        is EXCLUDED. Capacity fit + day-load balancing folded in.
+     3. WINDOWS   — each stop carries its residence-rule delivery window.
+   DISPLAY-ONLY. Writes NOTHING — everything is overridable on screen, and the
+   established schedule write-path (PATCH /delivery-planning/so/:id/schedule)
+   persists the accepted date + lorry + driver + helper + sequence. Google is
+   hard-gated on GOOGLE_MAPS_API_KEY: unset -> the trips still come back crewed
+   and grouped, just without a computed route (the plain order is kept).
+   ─────────────────────────────────────────────────────────────────────────*/
+const sequenceAssignSchema = z.object({
+  soDocNos: z.array(z.string().trim().min(1)).min(1).max(2000),
+  depotWarehouseId: z.string().uuid().nullable().optional(),
+  startDate: z.string().regex(ISO_DATE).optional(),
+  departTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'departTime must be HH:MM').optional(),
+  defaultMaxSets: z.number().int().min(1).max(1000).optional(),
+  defaultMaxRevenueCenti: z.number().int().min(1).optional(),
+});
+
+const DEFAULT_SERVICE_MIN = 90;
+
+deliveryZones.post('/sequence-assign', async (c) => {
+  const sb = c.get('supabase');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = sequenceAssignSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
+  const { soDocNos, depotWarehouseId } = parsed.data;
+  const startDate = parsed.data.startDate ?? todayMY();
+  const departTime = parsed.data.departTime ?? '09:00';
+  const departMin = timeToMinutes(departTime) ?? 9 * 60;
+  const defaultMaxSets = parsed.data.defaultMaxSets ?? 10;
+  const defaultMaxRevenueCenti = parsed.data.defaultMaxRevenueCenti ?? 3_000_000;
+
+  // 1. Pack (A1) — the SAME grouping the review screen shows.
+  const packed = await loadAndPack(c, { soDocNos, depotWarehouseId: depotWarehouseId ?? null, startDate, defaultMaxSets, defaultMaxRevenueCenti });
+  if (!packed.ok) return c.json({ error: packed.error, reason: packed.reason }, packed.status);
+  const { ctx } = packed;
+
+  // 2. Turn each packed lorry-trip into a crew-able GROUP.
+  const groups: AssignGroup[] = [];
+  for (const day of ctx.result.days) {
+    day.lorries.forEach((l, idx) => {
+      groups.push({
+        key: `${day.date}|${day.group}|${idx}`,
+        date: day.date,
+        group: day.group,
+        orders: l.orders,
+        sets: l.sets,
+        revenueCenti: l.revenueCenti,
+        preferredLorryId: l.lorryId,
+      });
+    });
+  }
+  // Biggest-first, so the fuller trips get first pick of the fleet.
+  groups.sort((a, b) => (b.sets - a.sets) || (b.revenueCenti - a.revenueCenti) || a.key.localeCompare(b.key));
+
+  // 3. Available fleet (Module B) + crew rosters.
+  const today = todayMY();
+  const availLorries = await loadAvailableLorries(sb, { depotWarehouseId: depotWarehouseId ?? null, today });
+  const { data: driverRows } = await sb.from('drivers').select('id, name, vehicle').eq('active', true);
+  const { data: helperRows } = await sb.from('helpers').select('id, name').eq('active', true);
+  const drivers = ((driverRows ?? []) as Array<Record<string, unknown>>).map((d) => ({
+    id: String(d.id), name: String(d.name ?? ''), vehiclePlate: (d.vehicle ?? null) as string | null,
+  }));
+  const helpers = ((helperRows ?? []) as Array<Record<string, unknown>>).map((h) => ({
+    id: String(h.id), name: String(h.name ?? ''),
+  }));
+
+  const assigned = assignFleet({
+    groups,
+    lorries: availLorries.map((l) => ({
+      id: l.id, plate: l.plate, dispatchable: l.dispatchable, status: l.statusLabel,
+      maxSets: l.maxSets, maxRevenueCenti: l.maxRevenueCenti, layer: l.layer,
+      driverId: l.driverId, driverName: l.driverName,
+    })),
+    drivers,
+    helpers,
+    config: { defaultMaxSets, defaultMaxRevenueCenti },
+  });
+
+  // 4. Residence rules — building_type -> service duration + window.
+  const { data: ruleRows } = await scopeToAllowedCompanies(
+    sb.from('delivery_residence_rules')
+      .select('building_type, service_duration_minutes, earliest_delivery_time, latest_delivery_time, is_active'),
+    c,
+  );
+  const ruleByType = new Map<string, { service: number; earliest: number | null; latest: number | null }>();
+  for (const r of (ruleRows ?? []) as Array<Record<string, unknown>>) {
+    const type = String((r.buildingType ?? r.building_type ?? '') as string).trim().toLowerCase();
+    if (type === '') continue;
+    if (((r.isActive ?? r.is_active) as boolean | null) === false) continue;
+    ruleByType.set(type, {
+      service: Number((r.serviceDurationMinutes ?? r.service_duration_minutes) ?? DEFAULT_SERVICE_MIN),
+      earliest: timeToMinutes((r.earliestDeliveryTime ?? r.earliest_delivery_time) as string | null),
+      latest: timeToMinutes((r.latestDeliveryTime ?? r.latest_delivery_time) as string | null),
+    });
+  }
+  const ruleFor = (buildingType: string | null) =>
+    ruleByType.get((buildingType ?? '').trim().toLowerCase()) ?? { service: DEFAULT_SERVICE_MIN, earliest: null, latest: null };
+
+  // 5. Geocode the depot once (cache-first), then sequence each assigned trip.
+  const configured = !!c.env.GOOGLE_MAPS_API_KEY;
+  let depotOut: { warehouseId: string | null; address: string; lat: number; lng: number } | null = null;
+  if (configured && depotWarehouseId) {
+    const { data: wh } = await sb.from('warehouses').select('name, location, city, state, postcode').eq('id', depotWarehouseId).maybeSingle();
+    if (wh) {
+      const w = wh as Record<string, unknown>;
+      const depotAddress = composeAddress({
+        address1: (w.location ?? null) as string | null,
+        address2: (w.city ?? null) as string | null,
+        postcode: (w.postcode ?? null) as string | null,
+        state: (w.state ?? null) as string | null,
+      }) || String((w.name ?? '') as string).trim();
+      const hit = depotAddress ? await geocodeAddressCached(sb, c.env, depotAddress) : null;
+      if (hit) depotOut = { warehouseId: depotWarehouseId, address: depotAddress, lat: hit.lat, lng: hit.lng };
+    }
+  }
+
+  // Build the per-stop window/service info for every referenced order, geocoding
+  // cache-first (only when Google is configured + the depot resolved).
+  const stopInfo = (docNo: string) => {
+    const row = ctx.soByDoc.get(docNo);
+    const debtorName = ((row?.debtorName ?? row?.debtor_name) ?? null) as string | null;
+    const buildingType = ((row?.buildingType ?? row?.building_type) ?? null) as string | null;
+    const rule = ruleFor(buildingType);
+    const address = row ? composeAddress({
+      address1: (row.address1 ?? null) as string | null,
+      address2: (row.address2 ?? null) as string | null,
+      postcode: (row.postcode ?? null) as string | null,
+      state: (row.customerState ?? row.customer_state ?? null) as string | null,
+      country: (row.customerCountry ?? row.customer_country ?? null) as string | null,
+    }) : '';
+    return { debtorName, buildingType, address, rule };
+  };
+
+  const trips = [];
+  for (const a of assigned.assignments) {
+    const stops = a.orders.map((ref) => {
+      const info = stopInfo(ref);
+      return {
+        ref,
+        debtorName: info.debtorName,
+        buildingType: info.buildingType,
+        address: info.address,
+        serviceMinutes: info.rule.service,
+        earliestTime: minutesToTime(info.rule.earliest),
+        latestTime: minutesToTime(info.rule.latest),
+      };
+    });
+
+    let sequence: ReturnType<typeof buildSequenceProposal> | null = null;
+    let routeReason: string | null = null;
+    const ungeocoded: string[] = [];
+
+    if (!configured) {
+      routeReason = 'GOOGLE_MAPS_API_KEY not set — trip is crewed and grouped, no computed route';
+    } else if (!depotOut) {
+      routeReason = 'depot could not be geocoded — set the warehouse address to sequence the route';
+    } else {
+      // Geocode this trip's stops (cache-first), preserving order.
+      const geocoded: Array<{ ref: string; lat: number; lng: number; svc: number; earliest: number | null; latest: number | null }> = [];
+      for (const s of stops) {
+        if (!s.address.trim()) { ungeocoded.push(s.ref); continue; }
+        const hit = await geocodeAddressCached(sb, c.env, s.address);
+        if (!hit) { ungeocoded.push(s.ref); continue; }
+        geocoded.push({ ref: s.ref, lat: hit.lat, lng: hit.lng, svc: s.serviceMinutes, earliest: timeToMinutes(s.earliestTime), latest: timeToMinutes(s.latestTime) });
+      }
+      if (geocoded.length === 0) {
+        routeReason = 'no stop on this trip could be geocoded';
+      } else {
+        const points: LatLngPoint[] = [{ lat: depotOut.lat, lng: depotOut.lng }, ...geocoded.map((g) => ({ lat: g.lat, lng: g.lng }))];
+        const matrix = await travelTimeMatrix(c.env, points);
+        if (!matrix.ok) {
+          routeReason = matrix.reason ?? 'travel matrix unavailable';
+        } else {
+          const seqStops: SequenceStopInput[] = geocoded.map((g) => ({ ref: g.ref, serviceMinutes: g.svc, earliestMin: g.earliest, latestMin: g.latest }));
+          sequence = buildSequenceProposal({ departMin, stops: seqStops, travelSeconds: matrix.durationSeconds, distanceMetres: matrix.distanceMetres });
+        }
+      }
+    }
+
+    trips.push({
+      key: a.key,
+      date: a.date,
+      group: a.group,
+      lorryId: a.lorryId,
+      plate: a.plate,
+      driverId: a.driverId,
+      driverName: a.driverName,
+      helperId: a.helperId,
+      helperName: a.helperName,
+      sets: a.sets,
+      revenueCenti: a.revenueCenti,
+      ceilingSets: a.ceilingSets,
+      ceilingRevenueCenti: a.ceilingRevenueCenti,
+      overCeiling: a.overCeiling,
+      departTime,
+      stops,
+      sequence,
+      routeReason,
+      ungeocoded,
+    });
+  }
+
+  return c.json({
+    startDate,
+    departTime,
+    configured,
+    usingDefaultZoneMap: ctx.usingDefault,
+    depotWarehouseId: depotWarehouseId ?? null,
+    depot: depotOut,
+    lorryCount: availLorries.length,
+    dispatchableCount: availLorries.filter((l) => l.dispatchable).length,
+    trips,
+    excludedLorries: assigned.excludedLorries,
+    unassigned: [
+      ...ctx.unzoned.map((u) => ({ key: null as string | null, date: null as string | null, group: null as string | null, orders: [u.ref], reason: u.reason })),
+      ...assigned.unassigned,
     ],
   });
 });

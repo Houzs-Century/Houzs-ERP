@@ -1706,6 +1706,12 @@ const scheduleSchema = z.object({
   tripId: z.string().uuid().nullable().optional(),
   lorryId: z.string().uuid().nullable().optional(),
   driverId: z.string().uuid().nullable().optional(),
+  // Fleet A2: the crew the assigner (or the dispatcher's override) paired to this
+  // lorry-day. Set on a trip CREATE only (like driverId) — appending a stop to an
+  // existing trip never rewrites its crew. Existing scm.trips columns; additive,
+  // so a schedule that omits them behaves exactly as before.
+  helper1Id: z.string().uuid().nullable().optional(),
+  helper2Id: z.string().uuid().nullable().optional(),
   tripDate: z.string().nullable().optional(),       // trip date if creating (defaults to scheduleDate)
   warehouseId: z.string().uuid().nullable().optional(),  // trip origin region (defaults from the DO warehouse)
   // ── Phase 3 "Propose times + route" apply ────────────────────────────────
@@ -2093,6 +2099,8 @@ async function scheduleOntoTrip(
         trip_date:     tripDate,
         lorry_id:      p.lorryId,
         driver_id:     p.driverId ?? null,
+        helper_1_id:   p.helper1Id ?? null,
+        helper_2_id:   p.helper2Id ?? null,
         warehouse_id:  tripWarehouseId,
         trip_type:     'DELIVERY',
         status:        'PLANNED',
