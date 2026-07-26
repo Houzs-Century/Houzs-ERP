@@ -1,0 +1,34 @@
+name: FAIR PNL dedupe (remove seed-vs-owner duplicates)
+
+# Owner-triggered ONLY. Default dry-run (read-only): lists every group where a seeded
+# project (created_by=0) collides with an owner entry (created_by<>0) for the same
+# brand+venue+organizer+month. "commit" deletes the seeded copies only. Own concurrency
+# group so it never queues behind or displaces a deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit (delete seeded duplicates)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: pms-fair-pnl-dedupe
+  cancel-in-progress: false
+
+jobs:
+  dedupe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Dedupe FAIR PNL (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/dedupe-fair-pnl.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}

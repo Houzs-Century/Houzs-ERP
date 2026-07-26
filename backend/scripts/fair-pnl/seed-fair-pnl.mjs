@@ -59,7 +59,9 @@ const MY_STATES = [
 ];
 const deriveState = (name) => { const u = String(name).toUpperCase(); for (const [re, st] of MY_STATES) if (re.test(u)) return st; return null; };
 const slug = (s) => String(s ?? "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "");
-const sen = (rm) => Math.round(Number(rm || 0) * 100);
+// project_finance_lines.amount is a WHOLE-RM integer (app's createLedgerLine stores
+// input.amount directly; fair-report.ts: "amount unit — NOT centi"). Store RM, not sen.
+const toRm = (v) => Math.round(Number(v || 0));
 const rm = (n) => `RM ${Number(n).toLocaleString("en-MY", { maximumFractionDigits: 0 })}`;
 
 async function main() {
@@ -233,7 +235,7 @@ async function main() {
     ].filter(([, , amt]) => Number(amt) > 0);
     for (const [kind, cat, amt] of lines) {
       await sql`INSERT INTO project_finance_lines (project_id, kind, category, description, amount, company_id)
-                VALUES (${pid}, ${kind}, ${cat}, ${cat + " (FAIR PNL seed)"}, ${sen(amt)}, ${companyId})`;
+                VALUES (${pid}, ${kind}, ${cat}, ${cat + " (FAIR PNL seed)"}, ${toRm(amt)}, ${companyId})`;
     }
     done++;
     if (done % 50 === 0) console.log(`  inserted ${done}/${toInsert.length}...`);
