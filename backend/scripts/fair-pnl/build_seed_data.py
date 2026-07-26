@@ -72,6 +72,16 @@ for e in raw:
     else: mm[key]=dict(e)
 mg=list(mm.values())
 
+# OWNER SPOT-CORRECTIONS to the source Excel (venue substring + start). The FAIR
+# PNL sheet mis-recorded some events' brand. Add one entry per fix.
+OVERRIDES=[
+    {"venue_has":"PEX PAVILION BUKIT JALIL","start":"2026-03-06","set":{"brand":"MY SOFA FACTORY"}},
+]
+for r in mg:
+    for ov in OVERRIDES:
+        if ov["venue_has"] in r["venue"].upper() and r["start"]==ov["start"]:
+            r.update(ov["set"])
+
 # apportion setup + rental by sales across same-booth brands (venue,start,end)
 # APPORTION only for ROADSHOW (SOLO): multiple brands share ONE booth -> split
 # setup+rental by sales share. Exhibition brands have SEPARATE booths -> keep own.
