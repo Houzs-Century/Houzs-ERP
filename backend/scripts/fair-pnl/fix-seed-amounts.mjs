@@ -13,7 +13,9 @@ if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
 const sql = postgres(DSN, { ssl: "require", max: 1, idle_timeout: 20, connect_timeout: 30 });
 const rm = (n) => `RM ${Number(n || 0).toLocaleString("en-MY", { maximumFractionDigits: 0 })}`;
 
-const MATCH = sql`description LIKE '%(FAIR PNL seed)' AND description NOT LIKE '%[rm]%' AND created_by = 0`;
+// The seed left finance-line created_by NULL (it set created_by only on the projects),
+// so the unique description marker is the discriminator — no created_by condition.
+const MATCH = sql`description LIKE '%(FAIR PNL seed)' AND description NOT LIKE '%[rm]%'`;
 
 async function main() {
   const houzs = await sql`SELECT id FROM companies WHERE code='HOUZS' LIMIT 1`;
@@ -29,7 +31,7 @@ async function main() {
     SELECT LEFT(COALESCE(p.start_date,''),4) yr, l.kind,
            COALESCE(SUM(l.amount),0)::bigint cur
     FROM project_finance_lines l JOIN projects p ON p.id = l.project_id
-    WHERE l.description LIKE '%(FAIR PNL seed)' AND l.description NOT LIKE '%[rm]%' AND l.created_by = 0
+    WHERE l.description LIKE '%(FAIR PNL seed)' AND l.description NOT LIKE '%[rm]%'
     GROUP BY 1,2 ORDER BY 1,2`;
   console.log(`\n  year | kind    | current (x100)        -> corrected (÷100)`);
   for (const r of rows) console.log(`  ${r.yr} | ${String(r.kind).padEnd(7)} | ${rm(r.cur).padEnd(20)} -> ${rm(Number(r.cur) / 100)}`);
