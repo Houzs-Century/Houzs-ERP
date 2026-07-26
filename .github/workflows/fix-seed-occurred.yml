@@ -1,0 +1,33 @@
+name: FAIR PNL occurred_at backfill
+
+# Owner-triggered ONLY. The seed left finance-line occurred_at NULL, so the Finance Lines
+# date filter (COALESCE(occurred_at, created_at)) used the seed run date. Dry-run (default,
+# read-only) counts affected lines; "commit" sets occurred_at = project start_date.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit (set occurred_at = start_date)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: pms-fair-pnl-occurred
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Backfill occurred_at (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/fix-seed-occurred.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}

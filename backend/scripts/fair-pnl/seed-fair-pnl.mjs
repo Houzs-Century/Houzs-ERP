@@ -234,8 +234,8 @@ async function main() {
       ["cost", "cogs_accessories", r.cogs_a], ["cost", "rental", r.rental], ["cost", "setup", r.setup],
     ].filter(([, , amt]) => Number(amt) > 0);
     for (const [kind, cat, amt] of lines) {
-      await sql`INSERT INTO project_finance_lines (project_id, kind, category, description, amount, company_id)
-                VALUES (${pid}, ${kind}, ${cat}, ${cat + " (FAIR PNL seed)"}, ${toRm(amt)}, ${companyId})`;
+      await sql`INSERT INTO project_finance_lines (project_id, kind, category, description, amount, occurred_at, company_id)
+                VALUES (${pid}, ${kind}, ${cat}, ${cat + " (FAIR PNL seed)"}, ${toRm(amt)}, ${start}, ${companyId})`;
     }
     done++;
     if (done % 50 === 0) console.log(`  inserted ${done}/${toInsert.length}...`);
