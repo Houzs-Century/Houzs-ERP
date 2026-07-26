@@ -71,6 +71,7 @@ import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
 import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
 import { deliveryZones } from "./routes/delivery-zones";
+import { deliveryRateCards } from "./routes/delivery-rate-cards";
 import { driverLeave } from "./routes/driver-leave";
 import { trips } from "./routes/trips";
 import { dpOrders } from "./routes/dp-orders";
@@ -479,6 +480,13 @@ scm.route("/delivery-residence-rules", deliveryResidenceRules);
 // it needs edit; editing the map + locking a day = edit.
 scm.use("/delivery-zones/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/delivery-zones", deliveryZones);
+// Fleet Module C (mig 0207) — delivery RATE CARDS + cost reconciliation. Card
+// CRUD + the pure cost calculator + the 3PL charge reconciliation view. Same
+// Transportation area gate as the rest of the TMS fleet masters: read = view,
+// build/edit a card = edit. Cost verification + COGS attribution, NOT billing,
+// and it does NOT touch the FIFO money-path.
+scm.use("/delivery-rate-cards/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/delivery-rate-cards", deliveryRateCards);
 // Fleet A3 (mig 0206) — driver-leave admin. The date-ranged absences the A2
 // auto-assigner reads to skip on-leave drivers. Same Transportation area gate as
 // the rest of the TMS fleet masters: read = view, record/delete = edit.
