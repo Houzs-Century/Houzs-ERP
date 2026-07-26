@@ -1459,7 +1459,7 @@
  {
   "year": 2025,
   "brand": "AKEMI",
-  "organizer": "SOLO",
+  "organizer": "KAI HAO",
   "venue": "SUNWAY KLUANG MALL JHB",
   "event_type": "Roadshow",
   "start": "2025-05-19",
@@ -1474,7 +1474,7 @@
  {
   "year": 2025,
   "brand": "ZANOTTI",
-  "organizer": "SOLO",
+  "organizer": "KAI HAO",
   "venue": "SUNWAY KLUANG MALL JHB",
   "event_type": "Roadshow",
   "start": "2025-05-19",
@@ -1594,7 +1594,7 @@
  {
   "year": 2025,
   "brand": "AKEMI",
-  "organizer": "SOLO",
+  "organizer": "KAI HAO",
   "venue": "SUNWAY KLUANG MALL",
   "event_type": "Roadshow",
   "start": "2025-05-19",
@@ -3758,8 +3758,8 @@
  {
   "year": 2025,
   "brand": "AKEMI",
-  "organizer": "SOLO AEON RAWANG KL",
-  "venue": "",
+  "organizer": "SOLO",
+  "venue": "AEON RAWANG KL",
   "event_type": "Roadshow",
   "start": "2025-11-18",
   "end": "2025-11-23",
@@ -3804,7 +3804,7 @@
  {
   "year": 2025,
   "brand": "AKEMI",
-  "organizer": "SOLO",
+  "organizer": "KAI HAO",
   "venue": "SUNWAY KLUANG MALL JB",
   "event_type": "Roadshow",
   "start": "2025-11-21",
@@ -6559,8 +6559,8 @@
  {
   "year": 2026,
   "brand": "AKEMI",
-  "organizer": "SUNWAY KLUANG MALL JOHOR",
-  "venue": "",
+  "organizer": "KAI HAO",
+  "venue": "SUNWAY KLUANG MALL JOHOR",
   "event_type": "Roadshow",
   "start": "2026-06-12",
   "end": "2026-06-21",

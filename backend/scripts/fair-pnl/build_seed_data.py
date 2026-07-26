@@ -8,6 +8,7 @@ SOLO={'SOLO','VINCENT','SYELIN','MROOI','MALLMGMT','MALLMGT','KAIHAO','ROADSHOW'
 def sq(s): return re.sub(r'[^A-Z0-9]','',s.upper())
 def etype(org):
     k=sq(org)
+    if not k: return 'Roadshow'   # no organizer -> Houzs's own solo roadshow (owner rule 2026-07-26)
     return 'Roadshow' if ('SOLO' in k or k in SOLO) else 'Exhibition'
 def norm(v): return str(v).strip() if v is not None else ""
 def numf(v):
@@ -56,7 +57,12 @@ for path,year in FILES:
             if (date=="" and brand=="" and sv>0) or date.upper()=="DATE" or brand=="BRAND": break  # end of table 1
             brand=BRAND_FIX.get(brand,brand)
             if not brand or not loc or loc.upper()=="LOCATION": continue
-            org,venue=(loc.split("@",1)+[""])[:2] if "@" in loc else (loc,"")
+            if "@" in loc:
+                org,venue=(loc.split("@",1)+[""])[:2]
+            elif loc.upper().startswith("SOLO"):
+                org,venue="SOLO", loc[4:].strip(" -@")   # "SOLO AEON RAWANG" -> venue "AEON RAWANG"
+            else:
+                org,venue="", loc                          # no organizer; whole = venue
             s,e=parse_dates(date,year)
             raw.append(dict(year=year,brand=brand,organizer=org.strip(),venue=venue.strip(),event_type=etype(org),
                 start=s,end=e,sales=sv,cogs_m=numf(cell("m")),cogs_b=numf(cell("b")),cogs_a=numf(cell("a")),
@@ -81,6 +87,14 @@ for r in mg:
     for ov in OVERRIDES:
         if ov["venue_has"] in r["venue"].upper() and r["start"]==ov["start"]:
             r.update(ov["set"])
+
+# Owner-stated solo coordinators: the Excel writes only "SOLO", but the owner knows
+# which event planner ran the roadshow. Attribute those here. Owner 2026-07-26.
+SOLO_COORDINATOR=[("SUNWAY KLUANG","KAI HAO")]
+for r in mg:
+    if r["event_type"]=="Roadshow" and r["organizer"].strip().upper() in ("","SOLO","ROADSHOW"):
+        for vk,coord in SOLO_COORDINATOR:
+            if vk in r["venue"].upper(): r["organizer"]=coord
 
 # apportion setup + rental by sales across same-booth brands (venue,start,end)
 # APPORTION only for ROADSHOW (SOLO): multiple brands share ONE booth -> split
