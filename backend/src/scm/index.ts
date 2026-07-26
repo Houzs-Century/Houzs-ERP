@@ -71,6 +71,7 @@ import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
 import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
 import { deliveryZones } from "./routes/delivery-zones";
+import { driverLeave } from "./routes/driver-leave";
 import { trips } from "./routes/trips";
 import { dpOrders } from "./routes/dp-orders";
 import { deliveryMessages } from "./routes/delivery-messages";
@@ -478,6 +479,11 @@ scm.route("/delivery-residence-rules", deliveryResidenceRules);
 // it needs edit; editing the map + locking a day = edit.
 scm.use("/delivery-zones/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/delivery-zones", deliveryZones);
+// Fleet A3 (mig 0206) — driver-leave admin. The date-ranged absences the A2
+// auto-assigner reads to skip on-leave drivers. Same Transportation area gate as
+// the rest of the TMS fleet masters: read = view, record/delete = edit.
+scm.use("/driver-leave/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/driver-leave", driverLeave);
 scm.use("/trips/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/trips", trips);
 scm.use("/dp-orders/*", scmAreaGuard("scm.transportation.drivers"));
