@@ -52,7 +52,8 @@ One row per priced rule; `rule_type` selects the dimension.
 | `POSITIONAL_TIER` | `tier_position` (1,2,3=3rd+) | price of the Nth charging unit at a drop |
 | `OVERAGE` | `tier_position` = cap N | each unit beyond N is a flat surcharge (caps the tier ladder) |
 | `SOFA_BRACKET` | `bracket_min`..`bracket_max` (null=open) | sofa priced by compartment band; one bracket per sofa, additive |
-| `OUTSTATION` | `zone` | destination-zone surcharge (reuse the A1 zone classifier) |
+| `OUTSTATION` | `zone` | destination-zone surcharge, per ORDER / costing unit (priced inside `computeDeliveryCost`) |
+| `OUTSTATION_TRIP` (mig 0212, WS4c) | `zone` | FIXED fee per TRIP by destination zone, applied ONCE per trip regardless of drop count. Priced OUTSIDE `computeDeliveryCost` (it is not per-drop): the reconcile adds `tripOutstationFeeCenti(rules, destinationZone)` once after the per-drop total. The two OUTSTATION rule types are the owner's two outstation layers (per-order + per-trip) and can both sit on one card |
 | `DISPOSE` / `SETUP` / `DISMANTLE` | — | occurrence charge (rate × count) |
 | `SERVICE` / `PICKUP` / `INSPECTION` / `TRANSFER` | — | the owner's order-type charges, own rate each |
 

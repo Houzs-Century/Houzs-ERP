@@ -41,7 +41,8 @@ const RULE_LABEL: Record<RateRuleType, string> = {
   POSITIONAL_TIER: 'Positional tier',
   OVERAGE: 'Cap overage',
   SOFA_BRACKET: 'Sofa bracket',
-  OUTSTATION: 'Outstation zone',
+  OUTSTATION: 'Outstation zone (per order)',
+  OUTSTATION_TRIP: 'Outstation trip (fixed, per trip)',
   DISPOSE: 'Dispose',
   SETUP: 'Setup',
   DISMANTLE: 'Dismantle',
@@ -218,7 +219,7 @@ const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule
       body.bracketMin = lo;
       body.bracketMax = form.bracketMax === '' ? null : Number(form.bracketMax);
     }
-    if (form.ruleType === 'OUTSTATION') body.zone = form.zone;
+    if (form.ruleType === 'OUTSTATION' || form.ruleType === 'OUTSTATION_TRIP') body.zone = form.zone;
     create.mutate(body, { onSuccess: () => set('amountRM', ''), onError: (e) => notify({ title: 'Add failed', body: e instanceof Error ? e.message : 'Error', tone: 'error' }) });
   };
 
@@ -226,7 +227,8 @@ const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule
     if (r.ruleType === 'POSITIONAL_TIER') return `${r.tierPosition === 1 ? '1st' : r.tierPosition === 2 ? '2nd' : r.tierPosition === 3 ? '3rd+' : `${r.tierPosition}th`} unit`;
     if (r.ruleType === 'OVERAGE') return `beyond cap ${r.tierPosition}, each`;
     if (r.ruleType === 'SOFA_BRACKET') return `${r.bracketMin}${r.bracketMax == null ? '+' : `-${r.bracketMax}`} compartments`;
-    if (r.ruleType === 'OUTSTATION') return r.zone ?? '';
+    if (r.ruleType === 'OUTSTATION') return `${r.zone ?? ''} · per order`;
+    if (r.ruleType === 'OUTSTATION_TRIP') return `${r.zone ?? ''} · fixed per trip`;
     return 'each occurrence';
   };
 
@@ -234,7 +236,7 @@ const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule
 
   const needsPosition = form.ruleType === 'POSITIONAL_TIER' || form.ruleType === 'OVERAGE';
   const needsBracket = form.ruleType === 'SOFA_BRACKET';
-  const needsZone = form.ruleType === 'OUTSTATION';
+  const needsZone = form.ruleType === 'OUTSTATION' || form.ruleType === 'OUTSTATION_TRIP';
 
   return (
     <section style={{ border: '1px solid var(--border, rgba(0,0,0,0.1))', borderRadius: 8, padding: 16 }}>

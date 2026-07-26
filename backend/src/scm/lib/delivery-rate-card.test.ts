@@ -178,3 +178,35 @@ describe('empty / defensive', () => {
     expect(computeDeliveryCost(card, { setCount: Number.NaN }).totalCenti).toBe(0);
   });
 });
+
+// ── WS4c: fixed per-trip outstation fee (applied by the reconcile, not per drop) ──
+import { tripOutstationFeeCenti } from './delivery-rate-card';
+
+describe('tripOutstationFeeCenti (WS4c) — fixed per-trip outstation', () => {
+  const rules: RateRuleSpec[] = [
+    tier(1, 120),
+    outstation('MELAKA', 150),                                              // per-ORDER layer
+    { ruleType: 'OUTSTATION_TRIP', zone: 'JOHOR', amountCenti: RM(200) },   // per-TRIP layer
+  ];
+
+  it('returns the fixed fee for a matching destination zone', () => {
+    expect(tripOutstationFeeCenti(rules, 'JOHOR')).toBe(RM(200));
+    expect(tripOutstationFeeCenti(rules, 'johor')).toBe(RM(200)); // case-insensitive
+  });
+
+  it('is 0 for a non-matching zone or a blank zone', () => {
+    expect(tripOutstationFeeCenti(rules, 'MELAKA')).toBe(0); // MELAKA is a per-ORDER rule, not a trip rule
+    expect(tripOutstationFeeCenti(rules, null)).toBe(0);
+    expect(tripOutstationFeeCenti(rules, '')).toBe(0);
+  });
+
+  it('computeDeliveryCost does NOT price OUTSTATION_TRIP (it is per-trip, not per-drop)', () => {
+    const card: RateCardSpec = { basis: 'SET', rules };
+    // JOHOR trip fee must NOT appear in the per-drop breakdown; only the per-order
+    // OUTSTATION would (and only for its own zone). With destinationZone JOHOR,
+    // there is no per-order OUTSTATION for JOHOR, so the only line is the 1st set.
+    const r = computeDeliveryCost(card, { setCount: 1, destinationZone: 'JOHOR' });
+    expect(r.lines.some((l) => l.ruleType === 'OUTSTATION_TRIP')).toBe(false);
+    expect(r.totalCenti).toBe(RM(120));
+  });
+});

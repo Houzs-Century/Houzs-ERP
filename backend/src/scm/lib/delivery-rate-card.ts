@@ -48,6 +48,7 @@ export type RateRuleType =
   | 'OVERAGE'
   | 'SOFA_BRACKET'
   | 'OUTSTATION'
+  | 'OUTSTATION_TRIP'
   | 'DISPOSE'
   | 'SETUP'
   | 'DISMANTLE'
@@ -249,4 +250,23 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts): C
   }
 
   return { totalCenti: total, subtotalCenti, lines };
+}
+
+// ── WS4c: fixed per-TRIP outstation surcharge ────────────────────────────────
+// The owner's outstation charge has two layers: a per-ORDER surcharge (the
+// existing OUTSTATION rule, applied inside computeDeliveryCost per costing unit)
+// AND a FIXED fee per TRIP by destination zone. The trip fee applies ONCE per
+// trip regardless of drop count, so it lives OUTSIDE computeDeliveryCost — the
+// reconcile adds it once after summing the trip's expected cost. This is why
+// computeDeliveryCost never processes OUTSTATION_TRIP. Pure, unit-tested.
+export function tripOutstationFeeCenti(
+  rules: readonly RateRuleSpec[],
+  destinationZone: string | null | undefined,
+): number {
+  if (!destinationZone) return 0;
+  const z = String(destinationZone).toUpperCase();
+  const r = rules.find((x) => x.ruleType === 'OUTSTATION_TRIP' && String(x.zone ?? '').toUpperCase() === z);
+  if (!r) return 0;
+  const amt = Math.round(Number(r.amountCenti) || 0);
+  return amt > 0 ? amt : 0;
 }
