@@ -534,11 +534,12 @@ export const NAV_TABS: NavTab[] = [
              SAME scm.transportation.drivers access key, which is what made the
              duplication invisible. The area key is unchanged and still gates every
              row in this group, so no permission moves. Do not re-add. */
-          // Set-once configuration — tucked into a collapsible "Setup" sub-group so
-          // the daily-use rows above stay uncluttered. Pure header (no `to`); the
-          // groupId gives it its own expand/collapse memory.
+          // Set-once master-data — tucked into a collapsible "Maintenance" sub-group
+          // (the ERP's own word for reference-data upkeep, cf. SO Maintenance) so the
+          // daily-use rows above stay uncluttered. Pure header (no `to`); the groupId
+          // gives it its own expand/collapse memory.
           {
-            label: "Setup", icon: SlidersHorizontal, groupId: "scm-transportation-setup",
+            label: "Maintenance", icon: SlidersHorizontal, groupId: "scm-transportation-maintenance",
             anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true,
             children: [
               { to: "/scm/delivery-planning-regions", label: "Regions", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
