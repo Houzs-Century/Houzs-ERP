@@ -84,6 +84,8 @@ async function main() {
   const projects = await sql`
     SELECT p.id, p.brand, p.venue, p.start_date, p.created_by,
            COUNT(l.id) FILTER (WHERE l.archived_at IS NULL) nlines,
+           COUNT(l.id) FILTER (WHERE l.kind='income' AND l.archived_at IS NULL) n_income,
+           STRING_AGG(DISTINCT l.kind::text, ',') FILTER (WHERE l.archived_at IS NULL) kinds,
            COALESCE(SUM(l.amount) FILTER (WHERE l.kind='income' AND l.archived_at IS NULL),0) income
     FROM projects p LEFT JOIN project_finance_lines l ON l.project_id = p.id
     WHERE p.archived_at IS NULL GROUP BY p.id`;
@@ -212,5 +214,28 @@ async function main() {
   }
   console.log(`  -- future no-match (>=2026-05, expected placeholders) sample --`);
   for (const p of nmFuture.slice(0, 8)) console.log(`   p${p.id} ${ymd(p.start_date)} [${p.brand}] @ ${p.venue}`);
+
+  // ---------------------------------------------------------------------------------
+  // WHY empty-by-income (212) != truly-empty (nlines=0). Split the difference so the
+  // owner sees the real fill workload. A project with COGS/rental but NO income line
+  // shows a wrong P&L (all cost, no sales) and is a DIFFERENT fill case from a blank
+  // project. Cross-ref those to Excel: if the Excel event has sales>0, that project is
+  // missing a real sales line. READ-ONLY (uses the columns already selected above).
+  // ---------------------------------------------------------------------------------
+  const partial = ownerProjs.filter((p) => Number(p.nlines) > 0 && Number(p.n_income) === 0);       // lines, but no income line
+  const zeroSales = ownerProjs.filter((p) => Number(p.n_income) > 0 && Number(p.income) === 0);       // income line(s), but sum 0
+  console.log(`\n=== INCOME-0 BREAKDOWN (explains 212 empty-by-income vs ${emptyOwner.length} truly-empty) ===`);
+  console.log(`empty-by-income ${emptyByIncome.length} = truly-empty(0 lines) ${emptyOwner.length} + has-lines-but-no-income-line ${partial.length} + has-income-line(s)-summing-0 ${zeroSales.length}`);
+  let pMatch = 0, pMatchSalesPos = 0; const pSample = [];
+  for (const o of partial) {
+    const cands = (excelIdx.get(keyCanon(o.brand, o.venue)) || []).filter((r) => days(o.start_date, r.start) <= 10);
+    if (!cands.length) continue;
+    pMatch++;
+    const r = closestExcel(o, cands);
+    if (Number(r.sales) > 0) { pMatchSalesPos++; if (pSample.length < 15) pSample.push([o, r]); }
+  }
+  console.log(`has-lines-but-no-income that MATCH an in-scope Excel event (<=10d): ${pMatch}   of which Excel sales>0 (missing a real sales line -> also fill): ${pMatchSalesPos}`);
+  console.log(`[has-lines-but-no-income, matched, Excel sales>0 — sample]`);
+  for (const [o, r] of pSample) console.log(`   p${o.id} ${ymd(o.start_date)} [${o.brand}] @ ${o.venue}  kinds=[${o.kinds || ""}]  <->  Excel ${r.start} sales=${Math.round(Number(r.sales))} (${Math.round(days(o.start_date, r.start))}d)`);
 }
 main().then(() => sql.end()).catch((e) => { console.error(e); process.exit(1); });
