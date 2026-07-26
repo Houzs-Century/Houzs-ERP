@@ -11,7 +11,7 @@ export type RateBasis = 'ITEM' | 'SET';
 export type RateAggregation = 'DROP' | 'CUSTOMER';
 export type RateRounding = 'NONE' | 'NEAREST_10C' | 'NEAREST_RM';
 export type RateRuleType =
-  | 'POSITIONAL_TIER' | 'OVERAGE' | 'SOFA_BRACKET' | 'OUTSTATION'
+  | 'POSITIONAL_TIER' | 'OVERAGE' | 'SOFA_BRACKET' | 'OUTSTATION' | 'OUTSTATION_TRIP'
   | 'DISPOSE' | 'SETUP' | 'DISMANTLE' | 'SERVICE' | 'PICKUP' | 'INSPECTION' | 'TRANSFER';
 
 export type RateCard = {

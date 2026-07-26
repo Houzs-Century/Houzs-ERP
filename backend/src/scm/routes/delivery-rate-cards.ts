@@ -45,6 +45,7 @@ import {
 } from '../lib/companyScope';
 import {
   computeDeliveryCost,
+  tripOutstationFeeCenti,
   type RateCardSpec,
   type RateRuleSpec,
   type RateRuleType,
@@ -66,7 +67,7 @@ deliveryRateCards.use('*', supabaseAuth);
 const rc = (sb: unknown): any => sb;
 
 const RULE_TYPES: readonly RateRuleType[] = [
-  'POSITIONAL_TIER', 'OVERAGE', 'SOFA_BRACKET', 'OUTSTATION',
+  'POSITIONAL_TIER', 'OVERAGE', 'SOFA_BRACKET', 'OUTSTATION', 'OUTSTATION_TRIP',
   'DISPOSE', 'SETUP', 'DISMANTLE', 'SERVICE', 'PICKUP', 'INSPECTION', 'TRANSFER',
 ];
 const RULE_TYPE_SET = new Set<string>(RULE_TYPES);
@@ -319,7 +320,7 @@ deliveryRateCards.post('/:id/rules', async (c) => {
   const parsed = ruleCreateSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
-  if (p.ruleType === 'OUTSTATION' && p.zone && !ZONE_SET.has(p.zone.toUpperCase())) {
+  if ((p.ruleType === 'OUTSTATION' || p.ruleType === 'OUTSTATION_TRIP') && p.zone && !ZONE_SET.has(p.zone.toUpperCase())) {
     return c.json({ error: 'unknown_zone', reason: 'outstation zone must be one of the area zones', knownZones: [...ZONE_SET] }, 400);
   }
   if (!(await loadCardForWrite(c, id, co.companyId))) return c.json(NOT_THIS_COMPANY, 404);
@@ -331,7 +332,7 @@ deliveryRateCards.post('/:id/rules', async (c) => {
     tier_position: p.tierPosition ?? null,
     bracket_min: p.bracketMin ?? null,
     bracket_max: p.bracketMax ?? null,
-    zone: p.ruleType === 'OUTSTATION' && p.zone ? p.zone.toUpperCase() : (p.zone ?? null),
+    zone: (p.ruleType === 'OUTSTATION' || p.ruleType === 'OUTSTATION_TRIP') && p.zone ? p.zone.toUpperCase() : (p.zone ?? null),
     amount_centi: p.amountCenti,
     params: p.params ?? null,
     sort_order: p.sortOrder ?? 0,
@@ -576,6 +577,17 @@ deliveryRateCards.get('/reconcile', async (c) => {
     if (card) {
       const spec = toCardSpec(card, rulesByCard.get(card.id) ?? []);
       breakdown = computeDeliveryCost(spec, { setCount, destinationZone });
+      // WS4c: the FIXED per-trip outstation fee applies ONCE per trip (not per
+      // drop), so it is added here after the per-drop cost, not inside the pure
+      // per-drop calculator. Reflected as its own line for transparency.
+      const tripFeeCenti = tripOutstationFeeCenti(spec.rules, destinationZone);
+      if (tripFeeCenti > 0) {
+        breakdown = {
+          ...breakdown,
+          lines: [...breakdown.lines, { ruleType: 'OUTSTATION_TRIP', label: `Outstation trip ${String(destinationZone).toUpperCase()}`, amountCenti: tripFeeCenti, detail: { zone: destinationZone, perTrip: true } }],
+          totalCenti: breakdown.totalCenti + tripFeeCenti,
+        };
+      }
       expectedCenti = breakdown.totalCenti;
     }
     const deltaCenti = expectedCenti == null ? null : billedCenti - expectedCenti;
