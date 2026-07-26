@@ -103,10 +103,14 @@ for r in mg:
             r[f]=round(sum(ref[k][f])/len(ref[k][f]),2); r[f"{f}_ref"]=True; exfill+=1
 print(f"[exhibition reference-fill] filled {exfill} empty setup/rental from same venue+organizer")
 
-# drop projects with NO amount at all (owner 2026-07-26: delete if revenue+COGS+rental+setup all 0)
+# drop all-empty projects — but ONLY pre-Apr-2026. Owner 2026-07-26: Apr-2026
+# onward is kept even if empty (data still being filled in; never delete those).
 def anyamt(r): return r["sales"]+r["cogs_m"]+r["cogs_b"]+r["cogs_a"]+r["rental"]+r["setup"]
-before=len(mg); mg=[r for r in mg if anyamt(r)>0]
-print(f"[drop all-empty] removed {before-len(mg)} projects with zero of everything -> {len(mg)} remain")
+def keepable(r): return anyamt(r)>0 or (r["start"] or "9999")>="2026-04-01"
+dropped=[r for r in mg if not keepable(r)]
+mg=[r for r in mg if keepable(r)]
+print(f"[drop] removed {len(dropped)} PRE-Apr-2026 all-empty projects (Apr-2026+ ALWAYS kept):")
+for r in dropped: print(f"    {r['start']} {r['brand']} {r['organizer']} @ {r['venue'][:22]}")
 print("[after apportion+drop, STILL missing]  revenue=0:", len([r for r in mg if not r['sales']]),
       " cogs=0:", len([r for r in mg if not (r['cogs_m']+r['cogs_b']+r['cogs_a'])]),
       " rental=0:", len([r for r in mg if not r['rental']]),
