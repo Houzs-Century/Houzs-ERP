@@ -35,6 +35,7 @@ const MyCases = lazy(() => import("./pages/MyCases").then((m) => ({ default: m.M
 const MyCaseDetail = lazy(() => import("./pages/MyCases").then((m) => ({ default: m.MyCaseDetail })));
 const Projects = lazy(() => import("./pages/Projects").then((m) => ({ default: m.Projects })));
 const ProjectDetail = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectDetail })));
+const FairReportFill = lazy(() => import("./pages/FairReportFill").then((m) => ({ default: m.FairReportFill })));
 // Sales Entries — rep-entered sales log + Director approval queue.
 // Restored to the menu 2026-07-06 (stripped in the core-slim pass).
 const Sales = lazy(() => import("./pages/Sales").then((m) => ({ default: m.Sales })));
@@ -448,6 +449,14 @@ export default function App() {
           element={
             <PageGuard page="projects.list">
               <ProjectDetail />
+            </PageGuard>
+          }
+        />
+        <Route
+          path="/fair-report-fill"
+          element={
+            <PageGuard page="projects">
+              <FairReportFill />
             </PageGuard>
           }
         />

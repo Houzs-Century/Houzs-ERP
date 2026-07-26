@@ -44,7 +44,7 @@ const allMobile: MobileDestination[] = [
 
 describe("executable route contract", () => {
   it("matches every canonical staff page mounted by App.tsx, with no extras", () => {
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(134);
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(135);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -64,7 +64,7 @@ describe("executable route contract", () => {
       .filter((path) => path !== "*");
     expect([...new Set(["/survey/:token", ...mountedPublic])].sort())
       .toEqual([...PUBLIC_ROUTE_PATTERNS].sort());
-    expect(ROUTE_CONTRACT).toHaveLength(142);
+    expect(ROUTE_CONTRACT).toHaveLength(143);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

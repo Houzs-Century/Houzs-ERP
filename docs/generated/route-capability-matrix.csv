@@ -252,6 +252,7 @@ PUT,/api/projects/:id/attachments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,
 POST,/api/projects/:id/checklist,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects/:id/defects,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 PUT,/api/projects/:id/defects/photo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
+POST,/api/projects/:id/fair-report/apply,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 PATCH,/api/projects/:id/finance,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects/:id/finance/lines,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects/:id/finance/recompute-auto,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
@@ -316,6 +317,7 @@ DELETE,/api/projects/event-types/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,au
 PATCH,/api/projects/event-types/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 PUT,/api/projects/event-types/:id/default-template,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 PUT,/api/projects/event-types/reorder,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
+POST,/api/projects/fair-report/match,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.read"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/projects/finance/by-project,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.finances"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/projects/finance/categories,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/projects.ts
 GET,/api/projects/finance/lines,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.finances"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
