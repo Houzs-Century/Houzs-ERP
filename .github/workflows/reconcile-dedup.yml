@@ -1,0 +1,34 @@
+name: FAIR PNL dedup (step 5 - same brand+venue+week duplicates)
+
+# Owner-triggered ONLY. Dry-run (default, read-only) lists same brand+venue+calendar-week groups
+# with more than one project and reports which EMPTY duplicates of a single data-carrier would be
+# deleted, plus AMBIGUOUS groups left for owner review. "commit" deletes only the unambiguous
+# empty duplicates. Own concurrency group; scope 2024-01-01..2026-06-30 (never touches >=2026-07).
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit (delete empty duplicates)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: pms-fair-pnl-dedup
+  cancel-in-progress: false
+
+jobs:
+  dedup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Dedup (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/reconcile-dedup.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}

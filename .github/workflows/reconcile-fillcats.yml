@@ -1,0 +1,36 @@
+name: FAIR PNL fill missing categories (close COGS gap)
+
+# Owner-triggered ONLY. Dry-run (default, read-only) lists, for every in-scope project that
+# matches an Excel event, the finance-line categories it is MISSING (income/sales, COGS
+# sub-categories, rental, setup) and the per-category totals it would add, plus current vs
+# projected COGS % of revenue. "commit" INSERTs only those missing lines; it never touches an
+# existing line, never adds COGS on top of a legacy 'cogs' aggregate, and fills each Excel event
+# into at most one project. Own concurrency group; scope 2024-01-01..2026-06-30.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit (insert missing lines)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: pms-fair-pnl-fillcats
+  cancel-in-progress: false
+
+jobs:
+  fillcats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Fill missing categories (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/reconcile-fillcats.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}

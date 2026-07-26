@@ -1,0 +1,35 @@
+name: FAIR PNL empty-delete (step 3 - completely-empty non-events)
+
+# Owner-triggered ONLY. Dry-run (default, read-only) reports completely-empty in-scope projects
+# (0 finance lines, 0 photos, 0 checklist docs) and classifies each by Excel match: blank-row
+# stray / genuinely absent (deletable) vs date-or-venue mismatch (owner review, kept). "commit"
+# deletes only the blank-row + absent buckets. Own concurrency group; scope 2024-01-01..2026-06-30
+# (projects on/after 2026-07-01 are never considered).
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit (delete empty non-events)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: pms-fair-pnl-empty-delete
+  cancel-in-progress: false
+
+jobs:
+  empty-delete:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Empty-delete (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/reconcile-empty-delete.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
