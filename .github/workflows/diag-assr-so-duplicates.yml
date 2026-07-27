@@ -1,0 +1,49 @@
+name: Diag ASSR SO duplicates
+
+# READ-ONLY one-shot probe: count Service Cases sharing an SO (doc_no) —
+# sizes the duplicate-case problem the create-intake warning addresses.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Destination DB"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - staging
+          - prod
+
+jobs:
+  diag-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/diag-assr-so-duplicates.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  diag-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/diag-assr-so-duplicates.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -2377,8 +2377,21 @@ function CreatePanel({
   // suggestion — used to suppress the dropdown once a selection is
   // committed (re-typing reopens it).
   const [soSuggestions, setSoSuggestions] = useState<
-    { doc_no: string; ref: string | null; debtor_name: string | null; phone: string | null; doc_date: string | null; sales_agent: string | null; company_code?: string | null }[]
+    { doc_no: string; ref: string | null; debtor_name: string | null; phone: string | null; doc_date: string | null; sales_agent: string | null; company_code?: string | null; case_count?: number; open_case_count?: number }[]
   >([]);
+  // Existing-case duplicate warning (owner 2026-07-27: duplicates keep
+  // getting raised because intake can't see an SO's earlier cases).
+  // Fetched whenever an SO is picked or looked up; tagged with the
+  // doc_no it answers so a stale response never labels a different SO.
+  const [existingCases, setExistingCases] = useState<{
+    docNo: string;
+    cases: {
+      id: number; assr_no: string; doc_no: string; stage: string | null;
+      status: string | null; complaint_issue: string | null;
+      complained_date: string | null; created_at: string | null;
+      item_code: string | null; created_by_name: string | null;
+    }[];
+  } | null>(null);
   const [pickedDocNo, setPickedDocNo] = useState<string | null>(null);
   const [searchingSO, setSearchingSO] = useState(false);
   // The dropdown is rendered through a portal because PanelSection
@@ -2481,10 +2494,24 @@ function CreatePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Best-effort — the warning is advisory, so a failed fetch just shows
+  // nothing rather than blocking intake.
+  async function fetchExistingCases(d: string) {
+    try {
+      const res = await api.get<{ cases: NonNullable<typeof existingCases>["cases"] }>(
+        `/api/assr/so-cases/${encodeURIComponent(d)}`
+      );
+      setExistingCases({ docNo: d, cases: res.cases ?? [] });
+    } catch {
+      setExistingCases(null);
+    }
+  }
+
   async function lookup() {
     if (!docNo.trim()) return;
     setLookingUp(true);
     setLookupItems(null);
+    void fetchExistingCases(docNo.trim());
     try {
       const res = await api.get<{ items: { item_code: string; item_description: string | null; qty?: number }[] }>(
         `/api/assr/lookup-items/${encodeURIComponent(docNo.trim())}`
@@ -2553,6 +2580,7 @@ function CreatePanel({
     setDocNo(s.doc_no);
     setPickedDocNo(s.doc_no);
     setSoSuggestions([]);
+    void fetchExistingCases(s.doc_no);
     setCustomerInfo({ name: s.debtor_name ?? undefined, phone: s.phone ?? undefined });
     // Seed Ref No from the SO's own customer reference; stays editable.
     if (s.ref && !refNo.trim()) setRefNo(s.ref);
@@ -2734,6 +2762,11 @@ function CreatePanel({
                     <span className="rounded bg-bg px-1.5 py-0.5 text-[10px] font-semibold text-ink-muted">{s.company_code}</span>
                   )}
                   {s.ref && <span className="rounded bg-bg px-1.5 py-0.5 font-mono text-[10px] text-ink-muted">ref: {s.ref}</span>}
+                  {(s.case_count ?? 0) > 0 && (
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                      {s.case_count} case{(s.case_count ?? 0) > 1 ? "s" : ""}
+                    </span>
+                  )}
                   {s.doc_date && <span className="ml-auto text-[10px] text-ink-muted">{s.doc_date}</span>}
                 </div>
                 {(s.debtor_name || s.phone) && (
@@ -2791,6 +2824,48 @@ function CreatePanel({
                 }
               }}
             />
+          )}
+        {/* Existing-case warning — shown only while the input still holds
+            the doc_no the fetch answered, so retyping self-dismisses it.
+            Cases open in a new tab: the operator is mid-form and likely
+            wants to compare before deciding to abandon this create. */}
+        {existingCases &&
+          existingCases.cases.length > 0 &&
+          docNo.trim().toLowerCase() === existingCases.docNo.toLowerCase() && (
+            <div className="mt-2 rounded-md border border-amber-500/60 bg-amber-50/60 px-3 py-2.5 dark:bg-amber-500/10">
+              <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">
+                <AlertCircle size={13} />
+                This order already has {existingCases.cases.length} service case
+                {existingCases.cases.length > 1 ? "s" : ""}
+              </div>
+              <div className="mt-1.5 space-y-1">
+                {existingCases.cases.map((ec) => (
+                  <button
+                    key={ec.id}
+                    type="button"
+                    onClick={() => window.open(`/assr/${ec.id}`, "_blank", "noopener")}
+                    className="flex w-full flex-col gap-0.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-left text-[11px] transition-colors hover:bg-accent-soft/20"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono font-semibold text-ink">{ec.assr_no}</span>
+                      <StatusDot variant={stageVariant(ec.stage ?? "")} label={caseStageLabel(ec.stage ?? "")} />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-ink-secondary">
+                      <span>{formatDate(ec.complained_date || ec.created_at)}</span>
+                      {ec.created_by_name && <span className="text-ink-muted">by {ec.created_by_name}</span>}
+                      {ec.complaint_issue && (
+                        <span className="truncate text-ink-muted" title={ec.complaint_issue}>
+                          {ec.complaint_issue.length > 70 ? `${ec.complaint_issue.slice(0, 70)}…` : ec.complaint_issue}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="mt-1.5 text-[10.5px] text-ink-muted">
+                Open the existing case and add to it instead of creating a duplicate — only continue if this is a genuinely new issue.
+              </div>
+            </div>
           )}
       </PanelSection>
 
@@ -4405,7 +4480,10 @@ function DetailContent({
                 onSave={(v) => patch({ customer_email: v })}
                 placeholder="customer@example.com"
               />
-              <FieldRow label="Created">{formatDate(c.complained_date)}</FieldRow>
+              <FieldRow label="Created">
+                {formatDate(c.complained_date)}
+                {c.created_by_name ? ` · by ${c.created_by_name}` : ""}
+              </FieldRow>
             </>
             ) : (
             <>
@@ -4468,10 +4546,13 @@ function DetailContent({
                   </span>
                 )}
               </div>
-              {(c.customer_email || c.complained_date) && (
+              {(c.customer_email || c.complained_date || c.created_by_name) && (
                 <div className="space-y-1 border-t border-border-subtle pt-2">
                   {c.customer_email && <FieldRow label="Email">{c.customer_email}</FieldRow>}
-                  <FieldRow label="Created">{formatDate(c.complained_date)}</FieldRow>
+                  <FieldRow label="Created">
+                    {formatDate(c.complained_date)}
+                    {c.created_by_name ? ` · by ${c.created_by_name}` : ""}
+                  </FieldRow>
                 </div>
               )}
             </>

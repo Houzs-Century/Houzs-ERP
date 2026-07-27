@@ -140,6 +140,7 @@ POST,/api/assr/run-escalation,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"re
 GET,/api/assr/search-so,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,NO,INHERITED_ONLY,backend/src/routes/assr.ts
 GET,/api/assr/settings,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.read"")",,NO,DECLARED_GATE,backend/src/routes/assr.ts
 PUT,/api/assr/settings,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.manage"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
+GET,/api/assr/so-cases/:docNo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,NO,INHERITED_ONLY,backend/src/routes/assr.ts
 GET,/api/assr/summary,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.read"")",,NO,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/sync-delivery-orders,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.manage"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 GET,/api/audit,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""settings.manage"")",,NO,DECLARED_GATE,backend/src/routes/audit.ts

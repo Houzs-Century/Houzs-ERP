@@ -1315,7 +1315,70 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
     .sort((a, b) => String(b.doc_date ?? "").localeCompare(String(a.doc_date ?? "")))
     .slice(0, 20);
 
+  // Existing-case annotation (owner 2026-07-27: "create case 的时候显示这个
+  // order 有没有 create 过 Service case") — duplicate cases keep appearing
+  // because intake staff can't see that an SO already has one. Stamp each
+  // candidate with how many non-archived cases it already carries so the
+  // picker can warn BEFORE the operator fills the whole form (the POST
+  // duplicate guard only fires at submit, and only on exact item overlap).
+  // LOWER() both sides: picker-selected doc_nos are exact, but hand-typed
+  // ones (saved on blur) can differ in case. Company scope mirrors the
+  // read rule — a caller never learns about cases outside their companies.
+  if (merged.length) {
+    const keys = merged.map((r) => String(r.doc_no).toLowerCase());
+    const placeholders = keys.map(() => "?").join(",");
+    try {
+      const counts = await c.env.DB.prepare(
+        `SELECT LOWER(doc_no) AS k,
+                COUNT(*) AS case_count,
+                SUM(CASE WHEN stage IS NULL OR stage <> 'completed' THEN 1 ELSE 0 END) AS open_case_count
+           FROM assr_cases
+          WHERE archived_at IS NULL
+            AND LOWER(doc_no) IN (${placeholders})${assrCompanySql(c, "company_id")}
+          GROUP BY LOWER(doc_no)`
+      )
+        .bind(...keys)
+        .all<{ k: string; case_count: number; open_case_count: number }>();
+      const byKey = new Map(
+        (counts.results ?? []).map((r) => [r.k, r] as const)
+      );
+      for (const r of merged) {
+        const hit = byKey.get(String(r.doc_no).toLowerCase());
+        r.case_count = Number(hit?.case_count ?? 0);
+        r.open_case_count = Number(hit?.open_case_count ?? 0);
+      }
+    } catch (e) {
+      console.warn("[assr.search-so] case-count annotation failed:", e);
+    }
+  }
+
   return c.json({ results: merged });
+});
+
+// ── Existing cases for an SO (create-intake duplicate warning) ─
+// Once the operator picks (or types) an SO in the New Case form, the
+// client calls this to show "this order already has N case(s)" with
+// enough detail to recognise — and jump to — the existing case instead
+// of opening a duplicate. Read-scoped like every other ASSR read:
+// non-archived only, company-filtered. Case-insensitive on doc_no for
+// the same hand-typed reason as the search-so annotation above.
+app.get("/so-cases/:docNo", requireServiceCaseAccess(), async (c) => {
+  const docNo = (c.req.param("docNo") ?? "").trim();
+  if (!docNo) return c.json({ cases: [] });
+  const rows = await c.env.DB.prepare(
+    `SELECT c.id, c.assr_no, c.doc_no, c.stage, c.status, c.priority,
+            c.complaint_issue, c.issue_category, c.complained_date,
+            c.created_at, c.item_code, u.name AS created_by_name
+       FROM assr_cases c
+       LEFT JOIN users u ON u.id = c.created_by
+      WHERE LOWER(c.doc_no) = ?
+        AND c.archived_at IS NULL${assrCompanySql(c, "c.company_id")}
+      ORDER BY c.id DESC
+      LIMIT 10`
+  )
+    .bind(docNo.toLowerCase())
+    .all();
+  return c.json({ cases: rows.results ?? [] });
 });
 
 // ── Manual single-SO backfill into the local mirror ───────────

@@ -2014,6 +2014,17 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
   });
   const soItems: Any[] = soItemsData?.items ?? [];
 
+  // Existing-case duplicate warning (owner 2026-07-27) — same source as
+  // desktop CreatePanel: once an SO is chosen, list its non-archived
+  // cases so intake adds to one of those instead of raising a duplicate.
+  const { data: soCasesData } = useQuery({
+    queryKey: ["mobile-assr-so-cases", docNo],
+    enabled: !!docNo,
+    staleTime: 30_000,
+    queryFn: () => api.get<{ cases?: Any[] }>(`/api/assr/so-cases/${encodeURIComponent(docNo)}`),
+  });
+  const existingSoCases: Any[] = soCasesData?.cases ?? [];
+
   const pickSo = (hit: SoHit) => {
     setSoPicked(hit);
     setDocNo(String(get(hit, "docNo", "doc_no") ?? "").trim());
@@ -2183,13 +2194,44 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
               <div className="fld" style={{ position: "relative" }}>
                 <span className="fld-l">SO # / reference / customer *</span>
                 {soPicked ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 9, border: `1px solid ${TEAL}`, borderRadius: 10, padding: "9px 11px", background: FIELD_BG }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="money" style={{ fontSize: 12, fontWeight: 700, color: INK }}>{String(get(soPicked, "docNo", "doc_no"))}</div>
-                      <div style={{ fontSize: 11, color: MUTED, ...cellEllipsis }}>{String(get(soPicked, "debtorName", "debtor_name") ?? "—")}</div>
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 9, border: `1px solid ${TEAL}`, borderRadius: 10, padding: "9px 11px", background: FIELD_BG }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="money" style={{ fontSize: 12, fontWeight: 700, color: INK }}>{String(get(soPicked, "docNo", "doc_no"))}</div>
+                        <div style={{ fontSize: 11, color: MUTED, ...cellEllipsis }}>{String(get(soPicked, "debtorName", "debtor_name") ?? "—")}</div>
+                      </div>
+                      <button onClick={clearSo} aria-label="Change SO" className="tinybtn" style={{ flex: "none", padding: "3px 9px" }}>Change</button>
                     </div>
-                    <button onClick={clearSo} aria-label="Change SO" className="tinybtn" style={{ flex: "none", padding: "3px 9px" }}>Change</button>
-                  </div>
+                    {/* Existing-case warning — tap a row to jump to that case
+                        (closes this sheet) instead of raising a duplicate. */}
+                    {existingSoCases.length > 0 && (
+                      <div style={{ marginTop: 7, border: `1px solid ${WARN}`, background: WARN_BG, borderRadius: 10, padding: "8px 10px" }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: WARN }}>
+                          ⚠ This order already has {existingSoCases.length} service case{existingSoCases.length > 1 ? "s" : ""}
+                        </div>
+                        {existingSoCases.map((ec) => (
+                          <button
+                            key={Number(get(ec, "id"))}
+                            onClick={() => { onClose(); onOpen(Number(get(ec, "id"))); }}
+                            style={{ display: "block", width: "100%", textAlign: "left", border: `1px solid ${DIM}`, borderRadius: 8, background: "#fff", padding: "7px 9px", marginTop: 6, cursor: "pointer" }}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                              <span className="money" style={{ fontSize: 11, fontWeight: 700, color: INK }}>{String(get(ec, "assrNo", "assr_no"))}</span>
+                              <span style={{ flex: "none", fontSize: 10, fontWeight: 600, color: MUTED }}>{prettyStage(String(get(ec, "stage") ?? ""))}</span>
+                            </div>
+                            <div style={{ fontSize: 10.5, color: MUTED, marginTop: 2, ...cellEllipsis }}>
+                              {dm(get(ec, "complainedDate", "complained_date") ?? get(ec, "createdAt", "created_at"))}
+                              {get(ec, "createdByName", "created_by_name") ? ` · by ${String(get(ec, "createdByName", "created_by_name"))}` : ""}
+                              {get(ec, "complaintIssue", "complaint_issue") ? ` · ${String(get(ec, "complaintIssue", "complaint_issue"))}` : ""}
+                            </div>
+                          </button>
+                        ))}
+                        <div style={{ fontSize: 10, color: MUTED, marginTop: 6 }}>
+                          Add to the existing case instead of creating a duplicate — only continue for a genuinely new issue.
+                        </div>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <>
                     <input value={soQuery} onChange={(e) => setSoQuery(e.target.value)} placeholder="SO #, reference, or customer name…" className="fld-i money" />
@@ -2203,7 +2245,14 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
                             onClick={() => pickSo(hit)}
                             style={{ display: "block", width: "100%", textAlign: "left", border: "none", borderTop: i ? "1px solid #eceee9" : "none", background: "#fff", padding: "9px 11px", cursor: "pointer" }}
                           >
-                            <div className="money" style={{ fontSize: 12, fontWeight: 700, color: INK }}>{String(get(hit, "docNo", "doc_no"))}</div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <span className="money" style={{ fontSize: 12, fontWeight: 700, color: INK }}>{String(get(hit, "docNo", "doc_no"))}</span>
+                              {Number(get(hit, "caseCount", "case_count") ?? 0) > 0 && (
+                                <span style={{ flex: "none", fontSize: 10, fontWeight: 700, color: WARN, background: WARN_BG, borderRadius: 6, padding: "1px 6px" }}>
+                                  {Number(get(hit, "caseCount", "case_count"))} case{Number(get(hit, "caseCount", "case_count")) > 1 ? "s" : ""}
+                                </span>
+                              )}
+                            </div>
                             <div style={{ fontSize: 11, color: MUTED, ...cellEllipsis }}>{String(get(hit, "debtorName", "debtor_name") ?? "—")}{get(hit, "phone") ? ` · ${formatPhone(get(hit, "phone"))}` : ""}</div>
                           </button>
                         ))}
