@@ -2827,6 +2827,15 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
        delivery destination, same as Postcode. Without it here a City change on
        an amendment-eligible SO would be silently dropped from the request. */
     city:                 form.city,
+    /* Address lines joined 2026-07-27 (two-lane phase 2): a street/unit change
+       on a locked SO is a Logistics-approved amendment, no longer a direct
+       save. Without these here the request would silently drop the change —
+       the exact City defect this table exists to prevent. The editor form
+       collects TWO address lines (address3/4 are legacy/postcode-mirror
+       columns with no input here); buildAmendmentHeaderChanges skips keys the
+       surface doesn't collect, so omitting them is the correct shape. */
+    address1:             form.address1,
+    address2:             form.address2,
   };
   const lockedHeaderOriginal = {
     internalExpectedDd:   header.internal_expected_dd ?? '',
@@ -2834,6 +2843,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     customerState:        header.customer_state ?? '',
     postcode:             header.postcode ?? header.address4 ?? '',
     city:                 header.city ?? '',
+    address1:             header.address1 ?? '',
+    address2:             header.address2 ?? '',
   };
 
   const trySave = (

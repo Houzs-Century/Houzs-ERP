@@ -54,6 +54,17 @@ export const AMENDABLE_HEADER_KEYS = [
   'customerState',
   'postcode',
   'city',
+  /* Two-lane rework phase 2 (owner 2026-07-27): the delivery-address block +
+     disposal note join the amendable set (DELIVERY lane — Logistics signs;
+     the Processing Date above signs with Purchasing per the same ruling). */
+  'address1',
+  'address2',
+  'address3',
+  'address4',
+  'shipToAddress',
+  'billToAddress',
+  'installToAddress',
+  'replacementDisposal',
 ] as const;
 
 export type AmendableHeaderKey = (typeof AMENDABLE_HEADER_KEYS)[number];
@@ -76,6 +87,14 @@ export const AMENDABLE_HEADER_LABELS: Record<AmendableHeaderKey, string> = {
   customerState:        'State',
   postcode:             'Postcode',
   city:                 'City',
+  address1:             'Address line 1',
+  address2:             'Address line 2',
+  address3:             'Address line 3',
+  address4:             'Address line 4',
+  shipToAddress:        'Ship-to address',
+  billToAddress:        'Bill-to address',
+  installToAddress:     'Install-to address',
+  replacementDisposal:  'Replacement / disposal',
 };
 
 /** Loose equality mirroring the backend's `norm()` — null / undefined / '' all

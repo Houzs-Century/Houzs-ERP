@@ -18,12 +18,11 @@
 // purchasing's to approve on one screen and logistics' on another.
 //
 // LANE OF A HEADER FIELD — keyed by the amendment payloadKey (so-field-policy
-// CONTROLLED rows). The SCHEDULE DATE PAIR (Processing + Delivery Date) is
-// deliberately kept together in DELIVERY: the pair is validated as a unit
-// ("set together, proc ≤ delivery"), so splitting it across lanes would force
-// two signatures for every reschedule and allow a transiently illegal pair
-// while one half waits. Logistics owns scheduling; the owner can move
-// internalExpectedDd to LINES by editing ONE row here.
+// CONTROLLED rows). The schedule dates SPLIT by owner ruling (2026-07-27
+// follow-up): Processing Date signs with PURCHASING (it re-times the
+// supplier), Delivery Date with LOGISTICS. The pair guard ("set together,
+// proc ≤ delivery") validates the COMBINED submission before the split; a
+// both-dates reschedule then becomes two one-signature documents.
 //
 // LANE OF A LINE CHANGE — by the line's ITEM CODE: a SERVICE line (the SVC-
 // family — delivery fees, disposal, lifting) is transport/execution charges
@@ -53,11 +52,27 @@ export const LANE_LABEL: Record<AmendmentLane, string> = {
    lane, and the create route validates keys against soAmendableHeaderFields()
    BEFORE classifying, so a throw here means the two tables drifted. */
 const HEADER_KEY_LANE: Record<string, AmendmentLane> = {
-  internalExpectedDd:   'DELIVERY', // schedule pair — see header note
-  customerDeliveryDate: 'DELIVERY', // schedule pair
+  /* Owner 2026-07-27 (follow-up ruling): the Processing Date is PURCHASING's —
+     it re-times the supplier's production, so it signs on the LINES lane. The
+     Delivery Date stays with Logistics. A submission that moves BOTH dates
+     therefore splits into two documents, one per signer; the pair validation
+     (set together, proc ≤ delivery) runs at SUBMIT on the combined values, and
+     the lanes apply independently after that. */
+  internalExpectedDd:   'LINES',
+  customerDeliveryDate: 'DELIVERY',
   customerState:        'DELIVERY',
   postcode:             'DELIVERY',
   city:                 'DELIVERY',
+  // Phase 2 (owner 2026-07-27): the delivery-address block + disposal note —
+  // category-2 fields by the owner's own list, all Logistics-approved.
+  address1:             'DELIVERY',
+  address2:             'DELIVERY',
+  address3:             'DELIVERY',
+  address4:             'DELIVERY',
+  shipToAddress:        'DELIVERY',
+  billToAddress:        'DELIVERY',
+  installToAddress:     'DELIVERY',
+  replacementDisposal:  'DELIVERY',
 };
 
 export function classifyHeaderKey(payloadKey: string): AmendmentLane {
