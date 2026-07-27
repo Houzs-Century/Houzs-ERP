@@ -31,8 +31,7 @@ describe('recomputeFromSnapshot — trustOperatorSelling (owner ruling 2026-07)'
 
   it('TRUSTED does NOT touch cost (server snapshot stays authoritative)', () => {
     const r = trusted(5000);
-    expect(r.unit_price_sen).toBe(5000);
-    // cost is derived server-side from cost_price_sen, independent of the sell override
-    expect(typeof r.unit_cost_centi === 'number' || r.unit_cost_centi === undefined).toBe(true);
+    expect(r.unit_price_sen).toBe(5000);          // sell = operator override
+    expect(typeof r.unit_cost_sen).toBe('number'); // cost still a server-computed snapshot, independent of the sell
   });
 });
