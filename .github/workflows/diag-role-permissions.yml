@@ -1,0 +1,42 @@
+name: Role permissions diag (read-only)
+
+# Answers "which ROLE holds which flat permission key — and specifically who
+# can work the SO/PO Amendment gates" WITH EVIDENCE, without anyone opening a
+# SQL console. Prompted by owner 2026-07-27: purchasing / logistic admin
+# cannot approve SO amendments. Prints every role's amendment-gate keys, the
+# full key list for purchasing/logistic/ops/desk candidate roles (so a grant
+# migration can match exact names), and which active users each grant would
+# affect. Strictly read-only (SELECT only). Changes NO permission.
+#
+# Manual trigger only — a question, not a gate, and a production DB read must
+# never become routine CI noise. Actions already holds secrets.DATABASE_URL
+# for the deploy, so nobody handles the credential.
+on:
+  workflow_dispatch:
+
+# Own concurrency group — touches nothing, must never queue behind or displace
+# a release.
+concurrency:
+  group: diag-role-permissions
+  cancel-in-progress: true
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/diag-role-permissions.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs.
+          NODE_OPTIONS: --dns-result-order=ipv4first
