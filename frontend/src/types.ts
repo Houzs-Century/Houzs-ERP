@@ -665,13 +665,20 @@ export interface ActiveMember {
   role_id: number;
   role_name: string;
   last_seen_at: string;
+  /** Last SPA pathname the 60s heartbeat reported — deep-link target for the
+   *  who's-online popover. Null until that user's client sends it. */
+  last_path?: string | null;
   is_self: boolean;
 }
 
 export interface PresenceResponse {
   active: ActiveMember[];
+  /** Quiet for 2–15 min (tab hidden/idle). Optional: absent from a backend
+   *  that predates the who's-online popover (deploy skew). */
+  away?: ActiveMember[];
   count: number;
   window_seconds: number;
+  away_window_seconds?: number;
 }
 
 // ──────────────────────────────────────────────────────────
