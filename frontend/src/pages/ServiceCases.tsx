@@ -462,6 +462,10 @@ function CasesView({
     creditor_code: creditorFilter || undefined,
   };
 
+  // Manual AutoCount DO-mirror refresh (backend gates on
+  // service_cases.manage; the daily cron covers routine freshness).
+  const [syncingDo, setSyncingDo] = useState(false);
+
   const list = useQuery<Paginated<AssrCase>>("assr-list",
     (signal) =>
       api.get(
@@ -681,6 +685,19 @@ function CasesView({
       getValue: (r) => r.ref_no,
     },
     {
+      key: "do_numbers",
+      filterable: true,
+      label: "DO No",
+      // Hand-entered DO on the case wins; the server merge fills the rest
+      // ("DO1 · DO2" when the order shipped in parts): Houzs cases from the
+      // AutoCount DO mirror (ref-matched), 2990 from the SCM module. Most
+      // cases never get the manual field.
+      render: (r) => (
+        <span className="font-mono text-xs">{r.delivery_order || r.do_numbers || "—"}</span>
+      ),
+      getValue: (r) => r.delivery_order || r.do_numbers,
+    },
+    {
       key: "customer_name",
       filterable: true,
       label: "Customer",
@@ -693,6 +710,19 @@ function CasesView({
         </span>
       ),
       getValue: (r) => r.customer_name,
+    },
+    {
+      key: "sales_agent",
+      filterable: true,
+      label: "Salesperson",
+      // The SO's sales agent — copied onto the case at intake from the
+      // AutoCount mirror; server search matches it too.
+      render: (r) => (
+        <span className="block max-w-[140px] truncate" title={r.sales_agent || undefined}>
+          {r.sales_agent || "—"}
+        </span>
+      ),
+      getValue: (r) => r.sales_agent,
     },
     {
       key: "priority_dwell",
@@ -797,6 +827,57 @@ function CasesView({
       defaultHidden: true,
       render: (r) => formatDate(r.items_ready_at),
       getValue: (r) => r.items_ready_at,
+    },
+    // The rest of the intake snapshot (already in the list payload) —
+    // hidden by default, togglable from the Columns menu (Nico 2026-07-27:
+    // the list was missing case info like DO / salesperson / contact).
+    {
+      key: "phone",
+      filterable: true,
+      label: "Phone",
+      defaultHidden: true,
+      render: (r) => <span className="font-mono text-xs">{r.phone || "—"}</span>,
+      getValue: (r) => r.phone,
+    },
+    {
+      key: "location",
+      filterable: true,
+      label: "Location",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="block max-w-[160px] truncate" title={r.location || undefined}>
+          {r.location || "—"}
+        </span>
+      ),
+      getValue: (r) => r.location,
+    },
+    {
+      key: "service_category",
+      filterable: true,
+      label: "Service Category",
+      defaultHidden: true,
+      render: (r) => r.service_category || "—",
+      getValue: (r) => r.service_category,
+    },
+    {
+      key: "issue_category",
+      filterable: true,
+      label: "Issue Category",
+      defaultHidden: true,
+      render: (r) => r.issue_category || "—",
+      getValue: (r) => r.issue_category,
+    },
+    {
+      key: "creditor_name",
+      filterable: true,
+      label: "Supplier",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="block max-w-[160px] truncate" title={r.creditor_name || undefined}>
+          {r.creditor_name || "—"}
+        </span>
+      ),
+      getValue: (r) => r.creditor_name,
     },
   ];
 
@@ -910,6 +991,29 @@ function CasesView({
         >
           Export All
         </Button>
+        <Button
+          variant="ghost"
+          icon={<RefreshCw size={14} className={syncingDo ? "animate-spin" : undefined} />}
+          disabled={syncingDo}
+          title="Pull the latest Delivery Orders from AutoCount (runs nightly by itself)"
+          onClick={async () => {
+            setSyncingDo(true);
+            try {
+              const r = await api.post<{ upserted: number; fetched: number }>(
+                "/api/assr/sync-delivery-orders",
+                {}
+              );
+              toast.success(`Delivery orders refreshed — ${r.upserted} of ${r.fetched} synced`);
+              list.reload();
+            } catch (e: any) {
+              toast.error(e?.message || "DO sync failed");
+            } finally {
+              setSyncingDo(false);
+            }
+          }}
+        >
+          {syncingDo ? "Syncing DO…" : "Sync DO"}
+        </Button>
       </div>
 
       {caseView === "board" && (
@@ -991,7 +1095,7 @@ function CasesView({
         search={{
           value: search,
           onChange: (v) => { setPage(1); setSearch(v); },
-          placeholder: "Search ASSR no, SO no, Ref no, customer, phone…",
+          placeholder: "Search ASSR no, SO no, Ref no, customer, salesperson, phone…",
           searching: searchTransition.isSearching,
           countPending: list.loading || list.placeholder || Boolean(list.error) || searchTransition.resultsAreStale,
           scope: "server",

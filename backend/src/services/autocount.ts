@@ -4,6 +4,7 @@ import type {
   ACPurchaseOrder,
   ACPurchaseOrderDoc,
   ACSalesOrderDetail,
+  ACDeliveryOrder,
 } from "../types";
 
 /**
@@ -83,6 +84,36 @@ export class AutoCountClient {
     });
     if (!res.ok) throw new Error(`getDetail HTTP ${res.status}`);
     return (await res.json()) as ACSalesOrderDetail[];
+  }
+
+  /**
+   * Raw Response for the full Delivery Order HEADER dump (~70 MB, ~11k
+   * docs, 181 fields each). The DO-mirror sync stream-parses this body
+   * instead of buffering it — JSON.parse of the whole payload would blow
+   * the Worker's memory ceiling. Fallback path; incremental getSince
+   * below is preferred once the middleware carries it.
+   */
+  async fetchAllDeliveryOrders(): Promise<Response> {
+    const res = await fetch(this.url(`/DeliveryOrder/getAll`), {
+      headers: headers(this.env, this.rid),
+    });
+    if (!res.ok || !res.body) throw new Error(`DeliveryOrder/getAll HTTP ${res.status}`);
+    return res;
+  }
+
+  /**
+   * Incremental DO headers (middleware PR #1): rows modified after the
+   * checkpoint, LastModified-ascending, nine slim columns. Returns null
+   * when the middleware hasn't been upgraded yet (route 404s) so the
+   * caller can fall back to the full dump.
+   */
+  async getDeliveryOrdersSince(checkpoint: string): Promise<ACDeliveryOrder[] | null> {
+    const res = await fetch(this.url(`/DeliveryOrder/getSince/${encodeURIComponent(checkpoint)}`), {
+      headers: headers(this.env, this.rid),
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`DeliveryOrder/getSince HTTP ${res.status}`);
+    return (await res.json()) as ACDeliveryOrder[];
   }
 
   async getOverdue(): Promise<ACSalesOrder[]> {

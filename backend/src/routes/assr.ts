@@ -904,6 +904,22 @@ app.post("/:id/resolve-creditor", requirePermission("service_cases.manage"), asy
   }
 });
 
+// Manual AutoCount DO-mirror refresh. The daily 02:00 cron does this
+// unattended; this path exists for the first backfill right after deploy
+// and for "the DO I just cut isn't showing yet" moments. Incremental via
+// getSince where the middleware supports it; otherwise streams the full
+// ~70 MB dump, so expect a few seconds.
+app.post("/sync-delivery-orders", requirePermission("service_cases.manage"), async (c) => {
+  try {
+    const { runDoMirrorSync } = await import("../services/doMirror");
+    const r = await runDoMirrorSync(c.env, "MANUAL");
+    return c.json(r);
+  } catch {
+    // Plain-language rule: never surface raw exception text to the user.
+    return c.json({ error: "Couldn't reach AutoCount to refresh delivery orders. Try again shortly." }, 502);
+  }
+});
+
 // ── Creditor search / manual assignment ──────────────────────
 // AutoCount's creditor sync is partial and many items carry no
 // MainSupplier, so staff can search the local creditors mirror and
@@ -1160,8 +1176,8 @@ app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
     exclude_stage: c.req.query("exclude_stage") || undefined,
   });
   const headers = [
-    "ASSR No", "SO No", "Stage", "Status", "Priority",
-    "Customer", "Phone", "Location",
+    "ASSR No", "SO No", "Delivery Order", "Stage", "Status", "Priority",
+    "Customer", "Phone", "Location", "Salesperson",
     "Category", "NCR Category", "Resolution",
     "Item", "Issue",
     "Complained Date", "Created", "Deadline",
@@ -1170,8 +1186,8 @@ app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
     "SLA Breached",
   ];
   const fields = [
-    "assr_no", "doc_no", "stage", "status", "priority",
-    "customer_name", "customer_phone", "location",
+    "assr_no", "doc_no", "delivery_order", "stage", "status", "priority",
+    "customer_name", "customer_phone", "location", "sales_agent",
     "service_category", "ncr_category", "resolution_method",
     "item_code", "complaint_issue",
     "complained_date", "created_at", "deadline_at",
@@ -1187,6 +1203,9 @@ app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
   const lines = [headers.join(",")];
   for (const r of rows as any[]) {
     if (csvVisibleIds !== undefined) stripCreditorFields(r);
+    // Hand-entered DO wins; the live SCM merge (do_numbers) fills the rest —
+    // same precedence as the list's DO No column.
+    r.delivery_order = r.delivery_order || r.do_numbers || null;
     lines.push(fields.map((f) => esc(r[f])).join(","));
   }
   const csv = "\uFEFF" + lines.join("\r\n");

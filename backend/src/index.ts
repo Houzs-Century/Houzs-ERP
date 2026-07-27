@@ -117,6 +117,7 @@ import { getBranding } from "./services/branding";
 // env kill switch still halts it. The mirror feeds Finance/P&L revenue and the
 // ASSR SO lookup, which had been frozen since the 2026-06-13 pause.
 import { runPull } from "./services/pull";
+import { runDoMirrorSync } from "./services/doMirror";
 import { isAutoCountSyncDisabled } from "./services/autocount";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -591,6 +592,18 @@ export default {
           .then((r) => console.log(`[cron sla] escalated ${r.escalated} case(s)`))
           .catch((e) => console.error("[cron sla]", e))
       );
+      // AutoCount DO-header mirror refresh (mig 0215) — feeds the ASSR list's
+      // DO No column for Houzs cases. Incremental via DeliveryOrder/getSince
+      // once the middleware upgrade (its PR #1) is deployed; until then each
+      // run streams the ~70 MB full dump — hence the daily batch slot, not
+      // the 5-min SO pull. Same kill-switch + best-effort rules as the SO pull.
+      if (!isAutoCountSyncDisabled(env)) {
+        ctx.waitUntil(
+          runDoMirrorSync(env, "SCHEDULED")
+            .then((r) => console.log(`[cron do-mirror] ${r.message}`))
+            .catch((e) => console.error("[cron do-mirror]", e))
+        );
+      }
       ctx.waitUntil(
         runAssrDailyDigest(env)
           .then((r) => console.log(`[cron assr-digest] sent=${r.recipients} cases=${r.cases}`))
