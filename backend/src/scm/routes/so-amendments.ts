@@ -257,7 +257,53 @@ soAmendments.get('/', async (c) => {
     const allowed = new Set(((soRows ?? []) as Array<{ doc_no: string }>).map((r) => r.doc_no));
     rows = rows.filter((r) => r.so_doc_no != null && allowed.has(r.so_doc_no));
   }
-  return c.json({ amendments: rows });
+
+  /* Bound-PO enrichment (owner 2026-07-27 — "这个应该出现在 PO Amendment"): each
+     row carries the PO(s) its SO's lines were purchased on, the SAME linkage the
+     detail's light bound-PO summary resolves (purchase_order_items.so_item_id →
+     mfg_sales_order_items.id). The PO Amendments inbox merges the SO amendments
+     that revise a bound PO alongside the direct po_amendments, so the purchasing
+     team sees the whole revision queue in one place. Three bounded queries over
+     the ≤500-row page, never per-row. Fail-soft: enrichment errors leave
+     bound_pos empty rather than failing the list. */
+  const boundBySo = new Map<string, Array<{ id: string; po_number: string; status: string }>>();
+  const allDocNos = [...new Set(rows.map((r) => r.so_doc_no).filter((x): x is string => !!x))];
+  if (allDocNos.length > 0) {
+    const { data: soItemRows } = await sb.from('mfg_sales_order_items')
+      .select('id, doc_no').in('doc_no', allDocNos);
+    const soItemToDoc = new Map<string, string>();
+    for (const r of (soItemRows ?? []) as Array<{ id: string; doc_no: string }>) soItemToDoc.set(r.id, r.doc_no);
+    const soItemIds = [...soItemToDoc.keys()];
+    if (soItemIds.length > 0) {
+      const { data: poItemRows } = await sb.from('purchase_order_items')
+        .select('purchase_order_id, so_item_id').in('so_item_id', soItemIds);
+      const poToDocs = new Map<string, Set<string>>();
+      for (const r of (poItemRows ?? []) as Array<{ purchase_order_id: string | null; so_item_id: string | null }>) {
+        const doc = r.so_item_id ? soItemToDoc.get(r.so_item_id) : undefined;
+        if (!r.purchase_order_id || !doc) continue;
+        const set = poToDocs.get(r.purchase_order_id) ?? new Set<string>();
+        set.add(doc);
+        poToDocs.set(r.purchase_order_id, set);
+      }
+      const poIds = [...poToDocs.keys()];
+      if (poIds.length > 0) {
+        const { data: poRows } = await sb.from('purchase_orders')
+          .select('id, po_number, status').in('id', poIds);
+        for (const po of (poRows ?? []) as Array<{ id: string; po_number: string; status: string }>) {
+          for (const doc of poToDocs.get(po.id) ?? []) {
+            const list = boundBySo.get(doc) ?? [];
+            list.push(po);
+            boundBySo.set(doc, list);
+          }
+        }
+      }
+    }
+  }
+  const amendments = rows.map((r) => ({
+    ...r,
+    bound_pos: r.so_doc_no ? (boundBySo.get(r.so_doc_no) ?? []) : [],
+  }));
+  return c.json({ amendments });
 });
 
 /* ── GET /command-diag — the owner's dry-run for the write-back channel ─────

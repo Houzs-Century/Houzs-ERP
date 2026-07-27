@@ -122,6 +122,14 @@
   gap: var(--space-3) var(--space-4);
 }
 
+/* Owner 2026-07-27 — the GRN line identity row grew a third field (Supplier
+   SKU between our code and the description), so a 3-track sibling. */
+.formGrid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3) var(--space-4);
+}
+
 .formGrid4 {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -135,6 +143,7 @@
 }
 @media (max-width: 820px) {
   .formGrid4 { grid-template-columns: repeat(2, 1fr); }
+  .formGrid3 { grid-template-columns: repeat(2, 1fr); }
   .formGrid2 { grid-template-columns: 1fr; }
 }
 /* Phone (Houzs 2026-06-23) — collapse to a SINGLE column so every field sits on
@@ -144,8 +153,10 @@
    Name) so they don't overflow a 1-track grid. */
 @media (max-width: 600px) {
   .formGrid4,
+  .formGrid3,
   .formGrid2 { grid-template-columns: 1fr; }
   .formGrid4 > .field,
+  .formGrid3 > .field,
   .formGrid2 > .field { grid-column: auto !important; }
 
   /* Phone density pass (Houzs 2026-06-23 — owner: "字体太大了, 手机上不漂亮").

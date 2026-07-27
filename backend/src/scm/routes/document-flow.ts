@@ -140,7 +140,17 @@ async function resolveRootSos(sb: any, c: Context<any>, type: NodeType, id: stri
     }
     case 'po': {
       const { data: lines } = await scopeToCompany(sb.from('purchase_order_items').select('so_item_id').eq('purchase_order_id', id), c);
-      return soDocNosFromSoItems(sb, c, uniq((lines ?? []).map((l: any) => l.so_item_id)));
+      const linked = await soDocNosFromSoItems(sb, c, uniq((lines ?? []).map((l: any) => l.so_item_id)));
+      if (linked.length) return linked;
+      /* Pre-MRP fallback (owner 2026-07-27 — PO-map parity with po-so-coverage
+         linkage (b2)): a PO raised before the so_item_id link existed records
+         its source SOs only in its own "From SOs: …" note — an authoritative
+         raise-time record, not a guess. Tokens flow back as candidate roots;
+         the main handler's company-ownership filter (.in('doc_no', …)
+         .eq('company_id', cid)) is the equality validation that keeps only
+         real, owned SOs — the same gate every other root passes through. */
+      const { data: poHdr } = await scopeToCompany(sb.from('purchase_orders').select('notes').eq('id', id), c).maybeSingle();
+      return parseFromSosNote((poHdr as { notes?: string | null } | null)?.notes);
     }
     case 'grn': {
       const { data } = await scopeToCompany(sb.from('grns').select('purchase_order_id').eq('id', id), c).maybeSingle();
@@ -484,7 +494,77 @@ documentFlow.get('/:type/:id', async (c) => {
     // Orphan document with no resolvable SO — still show it alone so the map
     // is never blank. (Rare: an ad-hoc invoice with no SO/DO link.)
     nodes.set(anchorKey, { key: anchorKey, type, id, label: id, status: null, isAnchor: true });
-    return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments: [] });
+
+    /* …except a PURCHASE ORDER (owner 2026-07-27): a stock buy / unlinked PO is
+       still the head of its own receipt chain — grns.purchase_order_id hangs off
+       the PO regardless of any SO, and hiding those painted "Not created" over
+       real receipts (the same lying-node class audit R8 killed on the sales
+       maps). So a PO anchor expands its own downstream (PO ▶ GRN ▶ PI / PR)
+       before returning; every other orphan type keeps the lone-anchor shape.
+       Reads mirror sections 6/7/9 below and are company-scoped on the PO/GRN
+       hops, so a foreign PO id still collapses to the bare anchor. The GRN edge
+       keeps real partial/full coverage; PI/PR edges default 'full' (coverage
+       colouring matters on the receipt hop — billing splits on a stock buy are
+       cosmetic). */
+    let poAmendments: Array<{ id: string; poId: string; poNumber: string; amendmentNo: number | string; status: string | null; createdAt: string | null }> = [];
+    if (type === 'po') {
+      const { data: poHdr } = await scopeToCompany(sb.from('purchase_orders').select('po_number, status').eq('id', id), c).maybeSingle();
+      if (poHdr) {
+        nodes.set(anchorKey, { key: anchorKey, type, id, label: poHdr.po_number ?? id, status: poHdr.status ?? null, isAnchor: true });
+      }
+      const { data: poLines } = await scopeToCompany(sb.from('purchase_order_items').select('id, qty').eq('purchase_order_id', id), c);
+      const poItemQty = new Map<string, number>();
+      for (const l of (poLines ?? []) as any[]) poItemQty.set(l.id, Number(l.qty ?? 0));
+
+      const { data: grnHdrs } = await scopeToCompany(sb.from('grns').select('id, grn_number, status').eq('purchase_order_id', id), c);
+      const grnIds = uniq(((grnHdrs ?? []) as any[]).map((g) => g.id));
+      const grnLines = grnIds.length
+        ? (await sb.from('grn_items').select('grn_id, purchase_order_item_id, qty').in('grn_id', grnIds)).data ?? []
+        : [];
+      const poToGrn = new Map<string, { childQty: number; parentItems: Set<string> }>();
+      for (const l of (grnLines as any[])) {
+        if (!l.purchase_order_item_id || !poItemQty.has(l.purchase_order_item_id)) continue;
+        const agg = poToGrn.get(l.grn_id) ?? { childQty: 0, parentItems: new Set<string>() };
+        agg.childQty += Number(l.qty ?? 0);
+        agg.parentItems.add(l.purchase_order_item_id);
+        poToGrn.set(l.grn_id, agg);
+      }
+      for (const g of (grnHdrs ?? []) as any[]) {
+        const k = keyOf('grn', g.id);
+        nodes.set(k, { key: k, type: 'grn', id: g.id, label: g.grn_number ?? g.id, status: g.status ?? null, isAnchor: false });
+        const agg = poToGrn.get(g.id);
+        const parentQty = agg ? [...agg.parentItems].reduce((s, pi) => s + (poItemQty.get(pi) ?? 0), 0) : 0;
+        addEdge(anchorKey, k, agg ? cover(agg.childQty, parentQty) : 'full');
+      }
+      if (grnIds.length) {
+        const { data: pis } = await sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('grn_id', grnIds);
+        for (const p of (pis ?? []) as any[]) {
+          const k = keyOf('pi', p.id);
+          nodes.set(k, { key: k, type: 'pi', id: p.id, label: p.invoice_number ?? p.id, status: p.status ?? null, isAnchor: false });
+          if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
+        }
+        const { data: prs } = await sb.from('purchase_returns').select('id, return_number, status, grn_id').in('grn_id', grnIds);
+        for (const p of (prs ?? []) as any[]) {
+          const k = keyOf('pr', p.id);
+          nodes.set(k, { key: k, type: 'pr', id: p.id, label: p.return_number ?? p.id, status: p.status ?? null, isAnchor: false });
+          if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
+        }
+      }
+      // PO amendments still branch off an orphan PO (same shape as section 11).
+      const { data: poAmendRows } = await sb.from('po_amendments')
+        .select('id, po_id, po_number, amendment_no, status, created_at')
+        .eq('po_id', id)
+        .order('amendment_no', { ascending: true });
+      poAmendments = ((poAmendRows ?? []) as any[]).map((a) => ({
+        id: String(a.id),
+        poId: String(a.po_id),
+        poNumber: a.po_number,
+        amendmentNo: a.amendment_no,
+        status: a.status ?? null,
+        createdAt: a.created_at ?? null,
+      }));
+    }
+    return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments: [], poAmendments });
   }
 
   // ── 1. SO headers + lines ───────────────────────────────────────────────

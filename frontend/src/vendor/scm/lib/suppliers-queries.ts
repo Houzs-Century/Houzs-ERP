@@ -650,6 +650,10 @@ export type OutstandingPoItem = {
   poId:           string;
   poDocNo:        string;
   itemCode:       string;
+  /* Owner 2026-07-27 — the PO line's supplier-SKU snapshot (#1189), carried so
+     the New-GRN line shows (and saves) the code the supplier's delivery note
+     uses. Null on lines raised before the snapshot column existed. */
+  supplierSku:    string | null;
   description:    string | null;
   itemGroup:      string;
   qty:            number;
