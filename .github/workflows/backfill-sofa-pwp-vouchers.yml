@@ -31,6 +31,11 @@ on:
         required: false
         default: "2026-07-21"
         type: string
+      exclude_docs:
+        description: "Comma-separated doc_no to SKIP (orders the old 2990 system minted for; verify in the 2990 DB first)"
+        required: false
+        default: "2990-SO-2607-019"
+        type: string
 
 # Never queue behind — or displace — a release.
 concurrency:
@@ -58,6 +63,7 @@ jobs:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           APPLY: ${{ inputs.mode == 'apply' && '1' || '0' }}
           SINCE: ${{ inputs.since }}
+          EXCLUDE_DOCS: ${{ inputs.exclude_docs }}
           NODE_OPTIONS: --dns-result-order=ipv4first
 
   backfill-prod:
@@ -80,4 +86,5 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APPLY: ${{ inputs.mode == 'apply' && '1' || '0' }}
           SINCE: ${{ inputs.since }}
+          EXCLUDE_DOCS: ${{ inputs.exclude_docs }}
           NODE_OPTIONS: --dns-result-order=ipv4first
