@@ -40,7 +40,7 @@ async function main() {
       ORDER BY id`;
     console.log(`  ${d.so}  (${d.n} cases, ${d.still_open} open)`);
     for (const r of rows) {
-      console.log(`    ${r.assr_no}  stage=${r.stage}  status=${r.status}  ${r.created_at?.toISOString().slice(0, 10)}  ${r.issue.replace(/\s+/g, " ")}`);
+      console.log(`    ${r.assr_no}  stage=${r.stage}  status=${r.status}  ${String(r.created_at ?? "").slice(0, 10)}  ${r.issue.replace(/\s+/g, " ")}`);
     }
   }
 }
