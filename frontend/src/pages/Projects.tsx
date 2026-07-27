@@ -74,7 +74,7 @@ import {
 import { InlineEdit } from "../components/InlineEdit";
 import { StatCard } from "../components/StatCard";
 import { DashboardGrid } from "../components/Dashboard";
-import { useQuery } from "../hooks/useQuery";
+import { useQuery, type QueryState } from "../hooks/useQuery";
 import { useSearchResultTransition } from "../hooks/useServerSearch";
 import { useToast } from "../hooks/useToast";
 import { useDialog } from "../hooks/useDialog";
@@ -1959,12 +1959,53 @@ interface ProfitabilityBreakdown {
   income: number;
   // Owner P&L model: Revenue − COGS = GP; GP − Cost = NP. `cost` is the
   // NON-COGS cost (rental, setup, transport, commission, merchandise,
-  // others); `cogs` is the goods cost; `profit` is Net Profit.
+  // others); `cogs` is the goods cost; `profit` is Net Profit. `rental` is
+  // the rental slice of `cost`, pulled out so it shows as its own column.
   cogs: number;
   cost: number;
+  rental: number;
   gp: number;
   profit: number;
   margin: number | null;
+}
+
+// The dimension a breakdown groups on — drives the Layer-2 drill query.
+type ProfitabilityGroupBy = "brand" | "event_type" | "organizer" | "venue" | "month";
+
+// Filters currently active on the dashboard, forwarded to the drill query so a
+// group's project list reflects the same scope as the group table.
+interface ProfitabilityFilters {
+  date_from?: string;
+  date_to?: string;
+  brand?: string;
+  organizer?: string;
+  event_type_id?: string;
+}
+
+// Layer 2: one project inside a group. Same P&L columns as the group row,
+// plus identity so the row can navigate to the project page (Layer 3).
+interface ProfitabilityProjectRow {
+  id: number;
+  code: string;
+  name: string;
+  brand: string | null;
+  organizer: string | null;
+  venue: string | null;
+  start_date: string | null;
+  event_type_name: string | null;
+  income: number;
+  cogs: number;
+  cost: number;
+  rental: number;
+  gp: number;
+  profit: number;
+  margin: number | null;
+}
+
+interface ProfitabilityProjectsResponse {
+  group_by: ProfitabilityGroupBy;
+  group: string;
+  projects: ProfitabilityProjectRow[];
 }
 
 interface ProfitabilityResponse {
@@ -1980,6 +2021,7 @@ interface ProfitabilityResponse {
     income: number;
     cogs: number;
     cost: number;
+    rental: number;
     gp: number;
     profit: number;
     margin_pct: number | null;
@@ -1999,6 +2041,7 @@ interface ProfitabilityResponse {
     income: number;
     cogs: number;
     cost: number;
+    rental: number;
     gp: number;
     profit: number;
     margin: number | null;
@@ -2764,6 +2807,16 @@ function ProjectsAnalyticsView() {
   const grossMarginPct =
     totals && totals.income > 0 ? (totals.gp / totals.income) * 100 : null;
 
+  // Active filters forwarded to every drill-down query, so a group's project
+  // list stays inside the same scope the group table was computed under.
+  const drillFilters: ProfitabilityFilters = {
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+    brand: brand || undefined,
+    organizer: organizer || undefined,
+    event_type_id: eventTypeId || undefined,
+  };
+
   return (
     <div>
       <div className="mb-3 flex items-center gap-2">
@@ -2906,13 +2959,46 @@ function ProjectsAnalyticsView() {
             />
           </DashboardGrid>
 
-          {/* Breakdowns — two columns */}
+          {/* Breakdowns — two columns. Each row expands in place (Layer 2) to
+              the projects behind it, and each project navigates to its page
+              (Layer 3). */}
           <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <BreakdownCard title="By Brand" rows={d.by_brand} />
-            <BreakdownCard title="By Event Type" rows={d.by_event_type} />
-            <BreakdownCard title="By Organizer" rows={d.by_organizer} />
-            <BreakdownCard title="By Venue" rows={d.by_venue} />
-            <BreakdownCard title="By Month" rows={d.by_month} monthMode />
+            <BreakdownCard
+              title="By Brand"
+              rows={d.by_brand}
+              groupBy="brand"
+              filters={drillFilters}
+              onOpenProject={(id) => navigate(`/projects/${id}`)}
+            />
+            <BreakdownCard
+              title="By Event Type"
+              rows={d.by_event_type}
+              groupBy="event_type"
+              filters={drillFilters}
+              onOpenProject={(id) => navigate(`/projects/${id}`)}
+            />
+            <BreakdownCard
+              title="By Organizer"
+              rows={d.by_organizer}
+              groupBy="organizer"
+              filters={drillFilters}
+              onOpenProject={(id) => navigate(`/projects/${id}`)}
+            />
+            <BreakdownCard
+              title="By Venue"
+              rows={d.by_venue}
+              groupBy="venue"
+              filters={drillFilters}
+              onOpenProject={(id) => navigate(`/projects/${id}`)}
+            />
+            <BreakdownCard
+              title="By Month"
+              rows={d.by_month}
+              groupBy="month"
+              filters={drillFilters}
+              onOpenProject={(id) => navigate(`/projects/${id}`)}
+              monthMode
+            />
           </div>
 
           {/* Ranked events */}
@@ -2939,16 +3025,65 @@ function ProjectsAnalyticsView() {
 function BreakdownCard({
   title,
   rows,
+  groupBy,
+  filters,
+  onOpenProject,
   monthMode,
 }: {
   title: string;
   rows: ProfitabilityBreakdown[] | undefined;
+  groupBy: ProfitabilityGroupBy;
+  filters: ProfitabilityFilters;
+  onOpenProject: (id: number) => void;
   monthMode?: boolean;
 }) {
   // Defensive: a stale API response (or a cache miss against an older
   // worker version) can leave a breakdown field undefined. Don't crash.
   const safeRows = rows ?? [];
   const maxAbsProfit = Math.max(1, ...safeRows.map((r) => Math.abs(r.profit)));
+
+  // Layer 2 — one group expanded at a time. The drill query is keyed by the
+  // group AND the active filters, so it re-fetches when either changes and a
+  // group's project list always matches the group table's scope.
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const drill = useQuery<ProfitabilityProjectsResponse>(
+    [
+      "profitability-drill",
+      groupBy,
+      expandedKey ?? "",
+      filters.date_from ?? "",
+      filters.date_to ?? "",
+      filters.brand ?? "",
+      filters.organizer ?? "",
+      filters.event_type_id ?? "",
+    ],
+    () =>
+      api.get(
+        `/api/projects/analytics/profitability/projects${buildQuery({
+          group_by: groupBy,
+          group: expandedKey ?? undefined,
+          date_from: filters.date_from,
+          date_to: filters.date_to,
+          brand: filters.brand,
+          organizer: filters.organizer,
+          event_type_id: filters.event_type_id,
+        })}`
+      ),
+    [
+      groupBy,
+      expandedKey,
+      filters.date_from,
+      filters.date_to,
+      filters.brand,
+      filters.organizer,
+      filters.event_type_id,
+    ],
+    { enabled: expandedKey != null }
+  );
+
+  // 8 columns: Name, #, Revenue, COGS, GP, Rental, NP, Margin.
+  const COLSPAN = 8;
+
   return (
     <section className="overflow-hidden rounded-xl border border-border bg-surface shadow-stone">
       <header className="flex items-center justify-between border-b border-border-subtle px-4 py-2.5">
@@ -2962,10 +3097,13 @@ function BreakdownCard({
         <div className="px-4 py-6 text-center text-[11px] text-ink-muted">No data.</div>
       ) : (
         <div className="max-h-[320px] overflow-auto">
-          {/* Full P&L model per group: Revenue − COGS = GP; GP − Cost = NP.
-              min-width keeps the seven columns legible; the wrapper scrolls
-              horizontally on a narrow (mobile / half-width) card. */}
-          <table className="w-full min-w-[460px] text-[11px]">
+          {/* Full P&L model per group: Revenue − COGS = GP; GP − Cost = NP,
+              with Rental (a slice of Cost) pulled out as its own column.
+              min-width keeps the eight columns legible; the wrapper scrolls
+              horizontally on a narrow (mobile / half-width) card. Click a row
+              to expand the projects behind it (Layer 2); click a project to
+              open its page (Layer 3). */}
+          <table className="w-full min-w-[600px] text-[11px]">
             <thead className="bg-bg/40 text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
               <tr>
                 <th className="px-2 py-1.5 text-left">{monthMode ? "Month" : "Name"}</th>
@@ -2973,6 +3111,7 @@ function BreakdownCard({
                 <th className="whitespace-nowrap px-1.5 py-1.5 text-right">Revenue</th>
                 <th className="whitespace-nowrap px-1.5 py-1.5 text-right">COGS</th>
                 <th className="whitespace-nowrap px-1.5 py-1.5 text-right">GP</th>
+                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">Rental</th>
                 <th className="whitespace-nowrap px-1.5 py-1.5 text-right">NP</th>
                 <th className="whitespace-nowrap px-1.5 py-1.5 text-right">Margin</th>
               </tr>
@@ -2980,49 +3119,79 @@ function BreakdownCard({
             <tbody>
               {safeRows.map((r) => {
                 const barPct = Math.round((Math.abs(r.profit) / maxAbsProfit) * 100);
+                const isExpanded = expandedKey === r.key;
                 return (
-                  <tr key={r.key} className="border-t border-border-subtle">
-                    <td className="px-2 py-1.5">
-                      <div className="font-semibold text-ink">
-                        {monthMode ? formatMonth(r.key) : r.key}
-                      </div>
-                      <div className="mt-0.5 h-[3px] w-full min-w-[64px] rounded-full bg-bg">
-                        <div
-                          className={cn(
-                            "h-full rounded-full",
-                            r.profit >= 0 ? "bg-synced" : "bg-err"
+                  <Fragment key={r.key}>
+                    <tr
+                      onClick={() =>
+                        setExpandedKey((cur) => (cur === r.key ? null : r.key))
+                      }
+                      aria-expanded={isExpanded}
+                      className={cn(
+                        "cursor-pointer border-t border-border-subtle hover:bg-accent-soft/30",
+                        isExpanded && "bg-accent-soft/20"
+                      )}
+                    >
+                      <td className="px-2 py-1.5">
+                        <div className="flex items-center gap-1">
+                          {isExpanded ? (
+                            <ChevronDown size={11} className="shrink-0 text-ink-muted" />
+                          ) : (
+                            <ChevronRight size={11} className="shrink-0 text-ink-muted" />
                           )}
-                          style={{ width: `${barPct}%` }}
-                        />
-                      </div>
-                    </td>
-                    <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">{r.count}</td>
-                    <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
-                      {formatCurrency(r.income, { compact: true })}
-                    </td>
-                    <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                      {formatCurrency(r.cogs, { compact: true })}
-                    </td>
-                    <td
-                      className={cn(
-                        "whitespace-nowrap px-1.5 py-1.5 text-right font-mono",
-                        r.gp >= 0 ? "text-ink" : "text-err"
-                      )}
-                    >
-                      {formatCurrency(r.gp, { compact: true })}
-                    </td>
-                    <td
-                      className={cn(
-                        "whitespace-nowrap px-1.5 py-1.5 text-right font-mono font-bold",
-                        r.profit >= 0 ? "text-synced" : "text-err"
-                      )}
-                    >
-                      {formatCurrency(r.profit, { compact: true })}
-                    </td>
-                    <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                      {r.margin != null ? `${r.margin.toFixed(1)}%` : "—"}
-                    </td>
-                  </tr>
+                          <span className="font-semibold text-ink">
+                            {monthMode ? formatMonth(r.key) : r.key}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 h-[3px] w-full min-w-[64px] rounded-full bg-bg">
+                          <div
+                            className={cn(
+                              "h-full rounded-full",
+                              r.profit >= 0 ? "bg-synced" : "bg-err"
+                            )}
+                            style={{ width: `${barPct}%` }}
+                          />
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">{r.count}</td>
+                      <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
+                        {formatCurrency(r.income, { compact: true })}
+                      </td>
+                      <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+                        {formatCurrency(r.cogs, { compact: true })}
+                      </td>
+                      <td
+                        className={cn(
+                          "whitespace-nowrap px-1.5 py-1.5 text-right font-mono",
+                          r.gp >= 0 ? "text-ink" : "text-err"
+                        )}
+                      >
+                        {formatCurrency(r.gp, { compact: true })}
+                      </td>
+                      <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+                        {formatCurrency(r.rental, { compact: true })}
+                      </td>
+                      <td
+                        className={cn(
+                          "whitespace-nowrap px-1.5 py-1.5 text-right font-mono font-bold",
+                          r.profit >= 0 ? "text-synced" : "text-err"
+                        )}
+                      >
+                        {formatCurrency(r.profit, { compact: true })}
+                      </td>
+                      <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+                        {r.margin != null ? `${r.margin.toFixed(1)}%` : "—"}
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <BreakdownDrillRows
+                        drill={drill}
+                        groupKey={r.key}
+                        colSpan={COLSPAN}
+                        onOpenProject={onOpenProject}
+                      />
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -3030,6 +3199,104 @@ function BreakdownCard({
         </div>
       )}
     </section>
+  );
+}
+
+// Layer-2 body: the projects behind one expanded group row. Rendered as sibling
+// <tr>s inside the same table so their P&L columns line up under the group's.
+// Each project row navigates to its detail page (Layer 3).
+function BreakdownDrillRows({
+  drill,
+  groupKey,
+  colSpan,
+  onOpenProject,
+}: {
+  drill: QueryState<ProfitabilityProjectsResponse>;
+  groupKey: string;
+  colSpan: number;
+  onOpenProject: (id: number) => void;
+}) {
+  if (drill.loading) {
+    return (
+      <tr className="border-t border-border-subtle bg-bg/30">
+        <td colSpan={colSpan} className="px-2 py-3 text-center text-[10px] text-ink-muted">
+          Loading projects…
+        </td>
+      </tr>
+    );
+  }
+  if (drill.error) {
+    return (
+      <tr className="border-t border-border-subtle bg-bg/30">
+        <td colSpan={colSpan} className="px-2 py-3 text-center text-[10px] text-err">
+          {drill.error}
+        </td>
+      </tr>
+    );
+  }
+  // Guard on group match so a resolving query never flashes another group's
+  // rows under this one.
+  const projects =
+    drill.data && drill.data.group === groupKey ? drill.data.projects : [];
+  if (projects.length === 0) {
+    return (
+      <tr className="border-t border-border-subtle bg-bg/30">
+        <td colSpan={colSpan} className="px-2 py-3 text-center text-[10px] text-ink-muted">
+          No projects.
+        </td>
+      </tr>
+    );
+  }
+  return (
+    <>
+      {projects.map((p) => (
+        <tr
+          key={p.id}
+          onClick={() => onOpenProject(p.id)}
+          className="cursor-pointer border-t border-border-subtle bg-bg/30 hover:bg-accent-soft/40"
+        >
+          <td className="px-2 py-1.5 pl-6">
+            <div className="flex items-center gap-1">
+              <span className="truncate font-medium text-ink">{p.name}</span>
+              <ExternalLink size={9} className="shrink-0 text-ink-muted" />
+            </div>
+            <div className="text-[9.5px] text-ink-muted">
+              {p.code}
+              {p.start_date ? ` · ${formatDate(p.start_date)}` : ""}
+            </div>
+          </td>
+          <td className="px-1.5 py-1.5" />
+          <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
+            {formatCurrency(p.income, { compact: true })}
+          </td>
+          <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+            {formatCurrency(p.cogs, { compact: true })}
+          </td>
+          <td
+            className={cn(
+              "whitespace-nowrap px-1.5 py-1.5 text-right font-mono",
+              p.gp >= 0 ? "text-ink" : "text-err"
+            )}
+          >
+            {formatCurrency(p.gp, { compact: true })}
+          </td>
+          <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+            {formatCurrency(p.rental, { compact: true })}
+          </td>
+          <td
+            className={cn(
+              "whitespace-nowrap px-1.5 py-1.5 text-right font-mono font-bold",
+              p.profit >= 0 ? "text-synced" : "text-err"
+            )}
+          >
+            {formatCurrency(p.profit, { compact: true })}
+          </td>
+          <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+            {p.margin != null ? `${p.margin.toFixed(1)}%` : "—"}
+          </td>
+        </tr>
+      ))}
+    </>
   );
 }
 

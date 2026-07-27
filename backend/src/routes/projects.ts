@@ -1649,6 +1649,12 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
             COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
                        WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
                          AND l.category NOT IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')), 0) as cost,
+            -- Rental (category='rental') is a SUBSET of cost above — surfaced as
+            -- its own figure so the owner can see it broken out in every group
+            -- table, without changing NP (still income − cogs − cost).
+            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
+                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
+                         AND l.category = 'rental'), 0) as rental,
             CASE WHEN p.end_date IS NOT NULL AND p.start_date IS NOT NULL
                  THEN CAST(julianday(p.end_date) - julianday(p.start_date) + 1 AS INTEGER)
                  ELSE NULL
@@ -1672,6 +1678,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
       income: number;
       cogs: number;
       cost: number;
+      rental: number;
       duration_days: number | null;
     }>();
 
@@ -1682,6 +1689,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   const total_income = projects.reduce((s, r) => s + (r.income || 0), 0);
   const total_cogs = projects.reduce((s, r) => s + (r.cogs || 0), 0);
   const total_cost = projects.reduce((s, r) => s + (r.cost || 0), 0);
+  const total_rental = projects.reduce((s, r) => s + (r.rental || 0), 0);
   const total_gp = total_income - total_cogs;
   const total_profit = total_income - total_cogs - total_cost; // NP = Sales - COGS - other costs
   const overall_margin = total_income > 0 ? (total_profit / total_income) * 100 : null;
@@ -1689,16 +1697,17 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   // Group helper
   function groupBy<K extends string>(
     keyFn: (r: (typeof projects)[number]) => K | null
-  ): { key: K; count: number; income: number; cogs: number; cost: number; gp: number; profit: number; margin: number | null }[] {
-    const map = new Map<K, { count: number; income: number; cogs: number; cost: number }>();
+  ): { key: K; count: number; income: number; cogs: number; cost: number; rental: number; gp: number; profit: number; margin: number | null }[] {
+    const map = new Map<K, { count: number; income: number; cogs: number; cost: number; rental: number }>();
     for (const r of projects) {
       const k = keyFn(r);
       if (!k) continue;
-      const cur = map.get(k) ?? { count: 0, income: 0, cogs: 0, cost: 0 };
+      const cur = map.get(k) ?? { count: 0, income: 0, cogs: 0, cost: 0, rental: 0 };
       cur.count += 1;
       cur.income += r.income || 0;
       cur.cogs += r.cogs || 0;
       cur.cost += r.cost || 0;
+      cur.rental += r.rental || 0;
       map.set(k, cur);
     }
     return [...map.entries()]
@@ -1708,6 +1717,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
         income: v.income,
         cogs: v.cogs,
         cost: v.cost,
+        rental: v.rental,
         gp: v.income - v.cogs,
         profit: v.income - v.cogs - v.cost, // NP
         margin: v.income > 0 ? ((v.income - v.cogs - v.cost) / v.income) * 100 : null,
@@ -1737,6 +1747,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
       income: r.income,
       cogs: r.cogs,
       cost: r.cost,
+      rental: r.rental,
       gp: r.income - r.cogs,
       profit: r.income - r.cogs - r.cost,
       margin: r.income > 0 ? ((r.income - r.cogs - r.cost) / r.income) * 100 : null,
@@ -1758,6 +1769,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
       income: total_income,
       cogs: total_cogs,
       cost: total_cost,
+      rental: total_rental,
       gp: total_gp,
       profit: total_profit,
       margin_pct: overall_margin,
@@ -1770,6 +1782,129 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
     top,
     bottom,
   });
+});
+
+// ── Analytics / profitability drill-down ─────────────────────
+// Layer 2 of the profitability dashboard: the individual projects behind
+// ONE group row (e.g. brand=AKEMI, or organizer=ACME). Shares the exact
+// filter set + category semantics of /analytics/profitability above, then
+// narrows to the clicked group — so a drill always reflects the same scope
+// as the group table it was opened from. Layer 3 (the project page) is a
+// plain client navigation to /projects/:id, no endpoint needed.
+const PROFITABILITY_GROUP_BY = {
+  brand: "p.brand = ?",
+  organizer: "p.organizer = ?",
+  venue: "p.venue = ?",
+  event_type: "et.name = ?",
+  month: "substr(p.start_date, 1, 7) = ?",
+} as const;
+type ProfitabilityGroupBy = keyof typeof PROFITABILITY_GROUP_BY;
+
+app.get("/analytics/profitability/projects", requirePageAccess("projects.finances"), async (c) => {
+  const denied = denyFinance(c); if (denied) return denied;
+  const groupByParam = c.req.query("group_by") ?? "";
+  const group = c.req.query("group");
+  if (!(groupByParam in PROFITABILITY_GROUP_BY)) {
+    return c.json({ error: "Invalid group_by (expected brand|organizer|venue|event_type|month)" }, 400);
+  }
+  if (group == null || group === "") {
+    return c.json({ error: "Missing group" }, 400);
+  }
+  const groupBy = groupByParam as ProfitabilityGroupBy;
+
+  const dateFrom = c.req.query("date_from");
+  const dateTo = c.req.query("date_to");
+  const brand = c.req.query("brand");
+  const eventTypeParam = c.req.query("event_type_id");
+  const organizer = c.req.query("organizer");
+
+  // Same base predicate set as the group endpoint, so the drill respects
+  // whatever filters are active on the dashboard.
+  const where: string[] = ["p.archived_at IS NULL"];
+  const binds: any[] = [];
+  const coSql = activeCompanySql(c, "p.company_id");
+  if (dateFrom) {
+    where.push("substr(p.start_date, 1, 10) >= substr(?, 1, 10)");
+    binds.push(dateFrom);
+  }
+  if (dateTo) {
+    where.push("substr(p.start_date, 1, 10) <= substr(?, 1, 10)");
+    binds.push(dateTo);
+  }
+  if (brand) {
+    where.push("p.brand = ?");
+    binds.push(brand);
+  }
+  if (eventTypeParam) {
+    where.push("p.event_type_id = ?");
+    binds.push(parseInt(eventTypeParam, 10));
+  }
+  if (organizer) {
+    where.push("p.organizer = ?");
+    binds.push(organizer);
+  }
+  // The group constraint — the one row the user clicked.
+  where.push(PROFITABILITY_GROUP_BY[groupBy]);
+  binds.push(group);
+  const whereSql = where.join(" AND ");
+
+  const rows = await c.env.DB.prepare(
+    `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue,
+            p.start_date, p.end_date,
+            et.name as event_type_name,
+            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
+                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'income'), 0) as income,
+            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
+                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
+                         AND l.category IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')), 0) as cogs,
+            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
+                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
+                         AND l.category NOT IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')), 0) as cost,
+            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
+                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
+                         AND l.category = 'rental'), 0) as rental
+       FROM projects p
+       LEFT JOIN project_event_types et ON et.id = p.event_type_id
+      WHERE ${whereSql}${coSql}`
+  )
+    .bind(...binds)
+    .all<{
+      id: number;
+      code: string;
+      name: string;
+      brand: string | null;
+      organizer: string | null;
+      venue: string | null;
+      start_date: string | null;
+      end_date: string | null;
+      event_type_name: string | null;
+      income: number;
+      cogs: number;
+      cost: number;
+      rental: number;
+    }>();
+
+  const projects = (rows.results ?? [])
+    .map((r) => ({
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      brand: r.brand,
+      organizer: r.organizer,
+      venue: r.venue,
+      start_date: r.start_date,
+      event_type_name: r.event_type_name,
+      income: r.income,
+      cogs: r.cogs,
+      cost: r.cost,
+      rental: r.rental,
+      gp: r.income - r.cogs,
+      profit: r.income - r.cogs - r.cost, // NP = income − cogs − cost
+      margin: r.income > 0 ? ((r.income - r.cogs - r.cost) / r.income) * 100 : null,
+    }))
+    .sort((a, b) => b.profit - a.profit);
+
+  return c.json({ group_by: groupBy, group, projects });
 });
 
 // Project-scoped sales-attending picker source — every active sales-team
