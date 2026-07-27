@@ -15,7 +15,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { diffFields, type FieldChange } from './so-audit';
 import { resolveCallerStaffId } from './salesScope';
-import { isMissingRpc } from './rpc-missing';
+import { isMissingRpc, isUnsupportedTransactionRpc } from './rpc-missing';
 
 export { diffFields };
 export type { FieldChange };
@@ -284,12 +284,28 @@ export async function assertAuditWritable(
       return { ok: false, reason: error.message };
     }
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    /* The atomic-transaction client (pg-supabase-transaction) THROWS
+       `Unsupported SCM transaction RPC: …` for any rpc() outside its
+       advisory-lock whitelist — which is exactly what happens when a command
+       wrapped in runScmPgCommand (the PO-amendment approve / the SO-amendment
+       PO follow-up confirm) runs this pre-flight. That is NOT "audit is
+       unwritable", it is "the probe RPC isn't callable in THIS client", so it
+       degrades to the reachability read below (which uses .from(), which the
+       atomic client DOES support) — identical to the missing-RPC path. Every
+       OTHER throw (a genuine socket/transport failure) stays fail-closed: a
+       real outage must block the write, not silently downgrade to a weaker
+       check. */
+    if (!isUnsupportedTransactionRpc(msg)) {
+      // eslint-disable-next-line no-console
+      console.error('[entity-audit] pre-flight probe threw:', args.entityType, e);
+      return { ok: false, reason: msg };
+    }
     // eslint-disable-next-line no-console
-    console.error('[entity-audit] pre-flight probe threw:', args.entityType, e);
-    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    console.error('[entity-audit] probe RPC not callable in this transaction client, using reachability fallback:', args.entityType);
   }
 
-  /* RPC not applied to this database yet — reachability-only fallback. */
+  /* RPC missing or un-invokable here — reachability-only fallback. */
   try {
     const { error } = await sb.from('entity_audit_log').select('id').limit(1);
     if (error) {
