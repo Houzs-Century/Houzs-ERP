@@ -17,9 +17,17 @@
 // SAFETY / SCOPE (deliberately narrow — this WRITES money-bearing rows):
 //   · ONLY by-Model SOFA rules. A by-Combo rule always worked (the ported code
 //     kept that branch), so re-minting for one would DOUBLE-issue.
-//   · ONLY native company-2990 SOs. Mirrored 2990-* docs came from the OLD API,
-//     which minted their codes in the 2990 database — they are reported, never
-//     minted, because whether to re-home those vouchers is an owner ruling.
+//   · ONLY company-2990 SOs. ⚠️ The `2990-` doc-no prefix is NOT a mirror
+//     marker — companyDocPrefix (companyScope.ts) gives EVERY company-2 document
+//     that prefix, natively created ones included ("the repointed POS writes
+//     `2990-` SOs natively"). A first cut of this script read the prefix as
+//     "mirrored from the old system" and skipped all 6 orders in the window,
+//     i.e. exactly the ones that need paying back.
+//     The old 2990 system IS still minting for the handful of orders still
+//     created there (they arrive via so-mirror, vouchers left behind in the 2990
+//     database), and nothing in the Houzs row distinguishes those. So they are
+//     excluded BY NAME through EXCLUDE_DOCS, verified against the 2990 database
+//     before the run, and every exclusion is echoed in the log.
 //   · ONLY non-CANCELLED, non-DRAFT orders.
 //   · A build already carrying codes for that rule is TOPPED UP to the target,
 //     never re-issued from scratch — so the script is idempotent and safe to
@@ -34,6 +42,7 @@
 //
 // APPLY=1 writes; anything else is a DRY-RUN that prints the full plan.
 // SINCE=YYYY-MM-DD overrides the cutover date (default 2026-07-21).
+// EXCLUDE_DOCS=doc,doc skips named SOs (the ones the old system still minted for).
 import { register } from "node:module";
 // Registered before the dynamic imports of the .ts shared modules below.
 register("./_ts-resolve.mjs", import.meta.url);
@@ -47,6 +56,7 @@ const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
 const SINCE = (process.env.SINCE || "2026-07-21").trim();
+const EXCLUDE_DOCS = new Set((process.env.EXCLUDE_DOCS || "").split(",").map((s) => s.trim()).filter(Boolean));
 const dst = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
@@ -101,15 +111,18 @@ async function main() {
       FROM scm.mfg_sales_orders
      WHERE company_id = ${cid} AND so_date >= ${SINCE}::date
      ORDER BY doc_no`;
-  const mirrored = sos.filter((s) => String(s.doc_no).startsWith("2990-"));
-  const skippedStatus = sos.filter((s) => !String(s.doc_no).startsWith("2990-") && ["CANCELLED", "DRAFT"].includes(String(s.status).toUpperCase()));
-  const live = sos.filter((s) => !String(s.doc_no).startsWith("2990-") && !["CANCELLED", "DRAFT"].includes(String(s.status).toUpperCase()));
+  const excluded = sos.filter((s) => EXCLUDE_DOCS.has(String(s.doc_no)));
+  const rest = sos.filter((s) => !EXCLUDE_DOCS.has(String(s.doc_no)));
+  const skippedStatus = rest.filter((s) => ["CANCELLED", "DRAFT"].includes(String(s.status).toUpperCase()));
+  const live = rest.filter((s) => !["CANCELLED", "DRAFT"].includes(String(s.status).toUpperCase()));
   log("");
-  log(`=== SOs since ${SINCE}: ${sos.length} — native live ${live.length}, cancelled/draft ${skippedStatus.length}, mirrored 2990-* ${mirrored.length} (reported only) ===`);
-  if (mirrored.length > 0) {
-    log(`  mirrored (their vouchers live in the 2990 database — owner ruling needed to re-home): ${mirrored.map((s) => s.doc_no).join(", ")}`);
+  log(`=== SOs since ${SINCE}: ${sos.length} — in scope ${live.length}, cancelled/draft ${skippedStatus.length}, excluded by name ${excluded.length} ===`);
+  if (excluded.length > 0) {
+    log(`  EXCLUDE_DOCS (still minted by the old 2990 system — their vouchers live in the 2990 database): ${excluded.map((s) => s.doc_no).join(", ")}`);
   }
-  if (live.length === 0) { log("no native live SOs in the window. Done."); return; }
+  const missingExcludes = [...EXCLUDE_DOCS].filter((d) => !sos.some((s) => String(s.doc_no) === d));
+  if (missingExcludes.length > 0) log(`  ⚠ EXCLUDE_DOCS names not found in the window (typo?): ${missingExcludes.join(", ")}`);
+  if (live.length === 0) { log("no in-scope SOs in the window. Done."); return; }
 
   const docs = live.map((s) => s.doc_no);
   const soByDoc = new Map(live.map((s) => [s.doc_no, s]));
