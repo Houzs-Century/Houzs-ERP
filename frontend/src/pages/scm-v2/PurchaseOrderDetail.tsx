@@ -83,6 +83,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
+import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import {
   useApprovePo,
@@ -1337,26 +1338,32 @@ const SupplierCard = ({
           <label className={styles.field} style={{ gridColumn: 'span 2' }}>
             <span className={styles.fieldLabel}>Supplier *</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.supplierId} disabled={locked}
-                onChange={(e) => onField('supplierId', e.target.value)}>
-                <option value="">— Pick supplier —</option>
-                {sortByText(suppliers).map((s) => (
-                  <option key={s.id} value={s.id}>{s.code} · {s.name}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                className={styles.fieldSelect}
+                value={draft.supplierId}
+                disabled={locked}
+                onChange={(v) => onField('supplierId', v)}
+                placeholder="— Pick supplier —"
+                options={sortByText(suppliers).map((s) => ({ value: s.id, label: `${s.code} · ${s.name}` }))}
+              />
               <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
             </span>
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Currency</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.currency} disabled={locked}
-                onChange={(e) => onField('currency', e.target.value)}>
-                <option value="MYR">MYR</option>
-                <option value="RMB">RMB</option>
-                <option value="USD">USD</option>
-                <option value="SGD">SGD</option>
-              </select>
+              <SearchableSelect
+                className={styles.fieldSelect}
+                value={draft.currency}
+                disabled={locked}
+                onChange={(v) => onField('currency', v)}
+                options={[
+                  { value: 'MYR', label: 'MYR' },
+                  { value: 'RMB', label: 'RMB' },
+                  { value: 'USD', label: 'USD' },
+                  { value: 'SGD', label: 'SGD' },
+                ]}
+              />
               <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
             </span>
           </label>
@@ -1395,13 +1402,16 @@ const SupplierCard = ({
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Purchase Location</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.purchaseLocationId} disabled={locked}
-                onChange={(e) => onField('purchaseLocationId', e.target.value)}>
-                <option value="">— No default —</option>
-                {sortByText(warehouses.filter((w) => w.is_active)).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                className={styles.fieldSelect}
+                value={draft.purchaseLocationId}
+                disabled={locked}
+                onChange={(v) => onField('purchaseLocationId', v)}
+                options={[
+                  { value: '', label: '— No default —' },
+                  ...sortByText(warehouses.filter((w) => w.is_active)).map((w) => ({ value: w.id, label: w.code })),
+                ]}
+              />
               <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
             </span>
           </label>

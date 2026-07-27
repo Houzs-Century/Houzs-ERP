@@ -43,6 +43,7 @@ import { fabricOptionLabel, type FabricTrackingRow } from '../lib/fabric-queries
 import { sortByText, sortByNumeric, byText } from '../lib/sort-options';
 import type { Warehouse } from '../lib/inventory-queries';
 import { MoneyInput } from './MoneyInput';
+import { SearchableSelect } from './SearchableSelect';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -380,55 +381,43 @@ export const PoLineCard = ({
               <div className={styles.formGrid4}>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Fabrics</span>
-                  <select
+                  <SearchableSelect
                     className={styles.fieldSelect}
                     value={String(l.variants.fabricCode ?? '')}
                     disabled={identityLocked}
-                    onChange={(e) => onSetVariant('fabricCode', e.target.value)}
-                  >
-                    <option value="" disabled>Select…</option>
-                    {[...fabrics.filter((f) => f.is_active !== false || f.fabric_code === String(l.variants.fabricCode ?? ''))].sort((a, b) => byText(fabricOptionLabel(a), fabricOptionLabel(b))).map((f) => (
-                      <option key={f.id} value={f.fabric_code}>
-                        {fabricOptionLabel(f)}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(v) => onSetVariant('fabricCode', v)}
+                    options={[...fabrics.filter((f) => f.is_active !== false || f.fabric_code === String(l.variants.fabricCode ?? ''))].sort((a, b) => byText(fabricOptionLabel(a), fabricOptionLabel(b))).map((f) => ({ value: f.fabric_code, label: fabricOptionLabel(f) }))}
+                  />
                 </label>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Gaps</span>
-                  <select
+                  <SearchableSelect
                     className={styles.fieldSelect}
                     value={String(l.variants.gap ?? '')}
                     disabled={identityLocked}
-                    onChange={(e) => onSetVariant('gap', e.target.value)}
-                  >
-                    <option value="" disabled>Select…</option>
-                    {sortByNumeric(restrictStringsToPool(maintPickerValues(maint!.gaps, String(l.variants.gap ?? '')), allowOpts?.gaps, String(l.variants.gap ?? ''))).map((g) => (<option key={g} value={g}>{g}</option>))}
-                  </select>
+                    onChange={(v) => onSetVariant('gap', v)}
+                    options={sortByNumeric(restrictStringsToPool(maintPickerValues(maint!.gaps, String(l.variants.gap ?? '')), allowOpts?.gaps, String(l.variants.gap ?? ''))).map((g) => ({ value: g, label: g }))}
+                  />
                 </label>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Divan Heights</span>
-                  <select
+                  <SearchableSelect
                     className={styles.fieldSelect}
                     value={String(l.variants.divanHeight ?? '')}
                     disabled={identityLocked}
-                    onChange={(e) => onSetVariant('divanHeight', e.target.value)}
-                  >
-                    <option value="" disabled>Select…</option>
-                    {sortByNumeric(restrictPricedToPool(activeOptions(maint!.divanHeights, String(l.variants.divanHeight ?? '')), allowOpts?.divan_heights, String(l.variants.divanHeight ?? ''))).map((o) => (<option key={o.value} value={o.value}>{o.value}</option>))}
-                  </select>
+                    onChange={(v) => onSetVariant('divanHeight', v)}
+                    options={sortByNumeric(restrictPricedToPool(activeOptions(maint!.divanHeights, String(l.variants.divanHeight ?? '')), allowOpts?.divan_heights, String(l.variants.divanHeight ?? ''))).map((o) => ({ value: o.value, label: o.value }))}
+                  />
                 </label>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Leg Heights</span>
-                  <select
+                  <SearchableSelect
                     className={styles.fieldSelect}
                     value={String(l.variants.legHeight ?? '')}
                     disabled={identityLocked}
-                    onChange={(e) => onSetVariant('legHeight', e.target.value)}
-                  >
-                    <option value="" disabled>Select…</option>
-                    {sortByNumeric(restrictPricedToPool(activeOptions(maint!.legHeights, String(l.variants.legHeight ?? '')), allowOpts?.leg_heights, String(l.variants.legHeight ?? ''))).map((o) => (<option key={o.value} value={o.value}>{o.value}</option>))}
-                  </select>
+                    onChange={(v) => onSetVariant('legHeight', v)}
+                    options={sortByNumeric(restrictPricedToPool(activeOptions(maint!.legHeights, String(l.variants.legHeight ?? '')), allowOpts?.leg_heights, String(l.variants.legHeight ?? ''))).map((o) => ({ value: o.value, label: o.value }))}
+                  />
                 </label>
               </div>
               <SpecialOrders
@@ -449,43 +438,33 @@ export const PoLineCard = ({
               <div className={styles.formGrid4}>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Fabrics</span>
-                  <select
+                  <SearchableSelect
                     className={styles.fieldSelect}
                     value={String(l.variants.fabricCode ?? '')}
                     disabled={disabled}
-                    onChange={(e) => onSetVariant('fabricCode', e.target.value)}
-                  >
-                    <option value="" disabled>Select…</option>
-                    {[...fabrics.filter((f) => f.is_active !== false || f.fabric_code === String(l.variants.fabricCode ?? ''))].sort((a, b) => byText(fabricOptionLabel(a), fabricOptionLabel(b))).map((f) => (
-                      <option key={f.id} value={f.fabric_code}>
-                        {fabricOptionLabel(f)}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(v) => onSetVariant('fabricCode', v)}
+                    options={[...fabrics.filter((f) => f.is_active !== false || f.fabric_code === String(l.variants.fabricCode ?? ''))].sort((a, b) => byText(fabricOptionLabel(a), fabricOptionLabel(b))).map((f) => ({ value: f.fabric_code, label: fabricOptionLabel(f) }))}
+                  />
                 </label>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Seat Size</span>
-                  <select
+                  <SearchableSelect
                     className={styles.fieldSelect}
                     value={String(l.variants.seatHeight ?? '')}
                     disabled={identityLocked}
-                    onChange={(e) => onSetVariant('seatHeight', e.target.value)}
-                  >
-                    <option value="" disabled>Select…</option>
-                    {sortByNumeric(restrictStringsToPool(maintPickerValues(maint!.sofaSizes, String(l.variants.seatHeight ?? '')), allowOpts?.sizes, String(l.variants.seatHeight ?? ''))).map((s) => (<option key={s} value={s}>{s}</option>))}
-                  </select>
+                    onChange={(v) => onSetVariant('seatHeight', v)}
+                    options={sortByNumeric(restrictStringsToPool(maintPickerValues(maint!.sofaSizes, String(l.variants.seatHeight ?? '')), allowOpts?.sizes, String(l.variants.seatHeight ?? ''))).map((s) => ({ value: s, label: s }))}
+                  />
                 </label>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Leg Heights</span>
-                  <select
+                  <SearchableSelect
                     className={styles.fieldSelect}
                     value={String(l.variants.legHeight ?? '')}
                     disabled={identityLocked}
-                    onChange={(e) => onSetVariant('legHeight', e.target.value)}
-                  >
-                    <option value="" disabled>Select…</option>
-                    {sortByNumeric(restrictPricedToPool(activeOptions(maint!.sofaLegHeights, String(l.variants.legHeight ?? '')), allowOpts?.leg_heights, String(l.variants.legHeight ?? ''))).map((o) => (<option key={o.value} value={o.value}>{o.value}</option>))}
-                  </select>
+                    onChange={(v) => onSetVariant('legHeight', v)}
+                    options={sortByNumeric(restrictPricedToPool(activeOptions(maint!.sofaLegHeights, String(l.variants.legHeight ?? '')), allowOpts?.leg_heights, String(l.variants.legHeight ?? ''))).map((o) => ({ value: o.value, label: o.value }))}
+                  />
                 </label>
                 <span />
               </div>
@@ -559,17 +538,16 @@ export const PoLineCard = ({
         {!hidePoFields && (
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Ship-to Location</span>
-          <select
+          <SearchableSelect
+            className={styles.fieldInput}
             value={l.warehouseId ?? ''}
             disabled={disabled}
-            onChange={(e) => onChange({ warehouseId: e.target.value })}
-            className={styles.fieldInput}
-          >
-            <option value="">— Inherit Purchase Location —</option>
-            {sortByText(warehouses).map((w) => (
-              <option key={w.id} value={w.id}>{w.code}</option>
-            ))}
-          </select>
+            onChange={(v) => onChange({ warehouseId: v })}
+            options={[
+              { value: '', label: '— Inherit Purchase Location —' },
+              ...sortByText(warehouses).map((w) => ({ value: w.id, label: w.code })),
+            ]}
+          />
         </label>
         )}
       </div>
