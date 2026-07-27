@@ -853,8 +853,32 @@ export function AmendmentDetailV2() {
   const goBack = () => navigate("/scm/amendments");
   const openSalesOrder = () =>
     soDocNo && navigate(`/scm/sales-orders/${soDocNo}?edit=1`);
-  const openBoundPo = () =>
-    boundPo?.id && navigate(`/scm/purchase-orders/${boundPo.id}?edit=1`);
+  /* Smart jump (owner 2026-07-27) — the two-lane flow materialises the PO leg
+     as a follow-up PO Amendment: while one still awaits the purchaser's
+     signature, the bound-PO jump lands on ITS job card (where the signing
+     happens). Legacy rows (no follow-up) keep landing on the PO editor, whose
+     Revision-ready banner hosts Approve PO; once revised, land on the
+     read-only PO detail instead. */
+  const pendingFollowUp =
+    poFollowUps.find((f) => {
+      const s = (f.status ?? "").toUpperCase();
+      return s !== "APPROVED" && s !== "REJECTED";
+    }) ?? null;
+  const openBoundPo = () => {
+    // Click-time closure — poRevised is declared just below and initialised
+    // long before any click can land.
+    if (!poRevised && pendingFollowUp) {
+      navigate(`/scm/po-amendments/${pendingFollowUp.id}`);
+      return;
+    }
+    if (boundPo?.id) {
+      navigate(
+        poRevised
+          ? `/scm/purchase-orders/${boundPo.id}`
+          : `/scm/purchase-orders/${boundPo.id}?edit=1`,
+      );
+    }
+  };
 
   // Later gates (approve-po / send) live on the bound-PO editor surface, so
   // once the SO gate has cleared we hand off there rather than duplicating the
@@ -959,8 +983,14 @@ export function AmendmentDetailV2() {
                 {/* At SO_APPROVED the PO has NOT been revised — approve-so
                     rewrites the Sales Order and nothing else. Calling it "the
                     revised PO" here told the approver a job was done that still
-                    needs doing (Owner 2026-07-19, Q5). */}
-                {poRevised ? "Open revised PO" : "Open bound PO"}
+                    needs doing (Owner 2026-07-19, Q5). Owner 2026-07-27: with a
+                    pending follow-up the jump goes to the PO Amendment job card,
+                    and the label says so. */}
+                {poRevised
+                  ? "Open Revised bound PO"
+                  : pendingFollowUp
+                    ? "Open PO Amendment"
+                    : "Open bound PO"}
               </Button>
             )}
           </div>
@@ -1237,7 +1267,11 @@ export function AmendmentDetailV2() {
                         icon={<ExternalLink size={14} />}
                         onClick={openBoundPo}
                       >
-                        {poRevised ? "Continue on revised PO" : "Revise the bound PO"}
+                        {poRevised
+                          ? "Continue on revised PO"
+                          : pendingFollowUp
+                            ? "Confirm the PO Amendment"
+                            : "Revise the bound PO"}
                       </Button>
                     </>
                   )}
