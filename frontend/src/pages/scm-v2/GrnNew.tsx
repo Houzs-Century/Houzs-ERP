@@ -45,6 +45,7 @@ import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { useRacks } from '../../vendor/scm/lib/warehouse-queries';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { skuMapFromBindings, supplierCodeFor } from '../../vendor/scm/lib/supplier-doc-data';
+import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
@@ -754,24 +755,22 @@ export const GrnNew = () => {
             ) : (
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Receive against PO</span>
-                <select
-                  value={selPoId}
-                  onChange={(e) => setSelPoId(e.target.value)}
+                <SearchableSelect
                   className={styles.fieldInput}
+                  value={selPoId}
+                  onChange={setSelPoId}
                   disabled={poListQ.isLoading || outstanding.length === 0}
-                >
-                  <option value="">
-                    {poListQ.isLoading ? 'Loading POs…'
-                      : outstanding.length === 0 ? 'No outstanding POs — receive manually below'
-                      : '— Pick an outstanding PO (or leave blank for a manual receipt) —'}
-                  </option>
-                  {sortByText(outstanding).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.po_number} · {p.supplier?.name ?? p.supplier?.code ?? '—'} · {fmtDateOrDash(p.po_date)}
-                      {p.status === 'PARTIALLY_RECEIVED' ? ' (partial)' : ''}
-                    </option>
-                  ))}
-                </select>
+                  placeholder={poListQ.isLoading ? 'Loading POs…'
+                    : outstanding.length === 0 ? 'No outstanding POs — receive manually below'
+                    : '— Pick an outstanding PO (or leave blank for a manual receipt) —'}
+                  options={[
+                    { value: '', label: '— Manual receipt (no PO) —' },
+                    ...sortByText(outstanding).map((p) => ({
+                      value: p.id,
+                      label: `${p.po_number} · ${p.supplier?.name ?? p.supplier?.code ?? '—'} · ${fmtDateOrDash(p.po_date)}${p.status === 'PARTIALLY_RECEIVED' ? ' (partial)' : ''}`,
+                    })),
+                  ]}
+                />
               </label>
             )}
             <label className={styles.field}>
@@ -783,17 +782,14 @@ export const GrnNew = () => {
             <label className={styles.field}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Supplier <span className={styles.req}>*</span>{hasPicks ? ' (from picks)' : ''}</span>
               {isManual ? (
-                <select
-                  value={manualSupplierId}
-                  onChange={(e) => setManualSupplierId(e.target.value)}
+                <SearchableSelect
                   className={styles.fieldInput}
+                  value={manualSupplierId}
+                  onChange={setManualSupplierId}
                   disabled={suppliersQ.isLoading}
-                >
-                  <option value="">{suppliersQ.isLoading ? 'Loading suppliers…' : '— Pick a supplier —'}</option>
-                  {sortByText(suppliersQ.data ?? []).map((s) => (
-                    <option key={s.id} value={s.id}>{s.code} · {s.name}</option>
-                  ))}
-                </select>
+                  placeholder={suppliersQ.isLoading ? 'Loading suppliers…' : '— Pick a supplier —'}
+                  options={sortByText(suppliersQ.data ?? []).map((s) => ({ value: s.id, label: `${s.code} · ${s.name}` }))}
+                />
               ) : (
                 <input type="text" readOnly value={supplierName ?? '(auto-filled from PO)'} className={styles.fieldInput} style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }} />
               )}
@@ -828,18 +824,14 @@ export const GrnNew = () => {
                 Threads into the create payload → inventory-IN lands here. */}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Receive into *</span>
-              <select
-                value={warehouseId}
-                onChange={(e) => setWarehouseId(e.target.value)}
+              <SearchableSelect
                 className={styles.fieldInput}
+                value={warehouseId}
+                onChange={setWarehouseId}
                 disabled={warehousesQ.isLoading}
-                required
-              >
-                <option value="">{warehousesQ.isLoading ? 'Loading warehouses…' : '— Pick a warehouse —'}</option>
-                {sortByText(warehousesQ.data ?? []).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code}</option>
-                ))}
-              </select>
+                placeholder={warehousesQ.isLoading ? 'Loading warehouses…' : '— Pick a warehouse —'}
+                options={sortByText(warehousesQ.data ?? []).map((w) => ({ value: w.id, label: w.code }))}
+              />
               <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
                 Warehouse the received stock moves into.
               </span>
