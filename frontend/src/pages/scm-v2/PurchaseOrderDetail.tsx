@@ -785,11 +785,16 @@ export const PurchaseOrderDetail = () => {
               Revised · rev {(po as unknown as { revision?: number }).revision}
             </span>
           )}
-          <RelationshipMapButton type="po" id={po.id} />
-          <Button variant="ghost" size="md" onClick={handlePrint}>
-            <Printer {...ICON} />
-            <span>Print PDF</span>
-          </Button>
+          {/* View-only actions (owner 2026-07-27): hidden while editing so the
+              edit action row stays on ONE line — Receive Goods sits beside Save
+              instead of wrapping. Both return in view mode. */}
+          {!isEditing && <RelationshipMapButton type="po" id={po.id} />}
+          {!isEditing && (
+            <Button variant="ghost" size="md" onClick={handlePrint}>
+              <Printer {...ICON} />
+              <span>Print PDF</span>
+            </Button>
+          )}
           {/* PR #78 — Convert from Sales Order. Gated behind Edit mode (it
               mutates line items). Commander 2026-05-29 — opens the full "Pick
               Sales Orders for this PO" picker scoped to this PO's supplier. */}
