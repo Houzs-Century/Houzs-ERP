@@ -689,9 +689,10 @@ function CasesView({
       filterable: true,
       label: "DO No",
       // Hand-entered DO on the case wins; the server merge fills the rest
-      // ("DO1 · DO2" when the order shipped in parts): Houzs cases from the
-      // AutoCount DO mirror (ref-matched), 2990 from the SCM module. Most
-      // cases never get the manual field.
+      // ("DO1 · DO2" when the order shipped in parts): Houzs cases from
+      // AutoCount — the SO's own transfer_to chain, widened by the
+      // ref-matched DO mirror — 2990 from the SCM module. Most cases
+      // never get the manual field.
       render: (r) => (
         <span className="font-mono text-xs">{r.delivery_order || r.do_numbers || "—"}</span>
       ),
@@ -4183,7 +4184,9 @@ function DetailContent({
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
               {([
                 ["SO", c.doc_no, true],
-                ["DO", c.delivery_order, true],
+                // Hand-entered DO wins; do_numbers = the server-resolved
+                // AutoCount/SCM linkage (same precedence as the list).
+                ["DO", c.delivery_order || c.do_numbers, true],
                 ["DO date", formatDate(c.do_date), false],
                 ["PO", c.po_no, true],
                 ["Location", c.location, false],

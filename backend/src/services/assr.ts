@@ -555,6 +555,7 @@ export async function getAssrDetail(env: Env, id: number) {
             cr.phone1 as creditor_phone,
             cr.mobile as creditor_mobile,
             cr.attention as creditor_attention,
+            co.code as company_code,
             CAST((julianday(c.deadline_at) - julianday('now')) * 24 AS INTEGER) as hours_to_deadline,
             CASE
               WHEN c.stage = 'completed' THEN 0
@@ -568,11 +569,18 @@ export async function getAssrDetail(env: Env, id: number) {
        LEFT JOIN users u4 ON u4.id = c.verified_by
        LEFT JOIN users u5 ON u5.id = c.assigned_to_2
        LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code
+       LEFT JOIN companies co ON co.id = c.company_id
       WHERE c.id = ?`
   )
     .bind(id)
     .first<any>();
   if (!caseRow) return null;
+
+  // Same DO resolution the list does (transfer_to → ref-matched mirror →
+  // SCM fallback) so the detail page's DO field also fills for cases
+  // whose hand-entered delivery_order was never set — which is nearly
+  // all of them.
+  await attachDeliveryOrders(env, [caseRow]);
 
   const items = await env.DB.prepare(
     `SELECT * FROM assr_items WHERE assr_id = ? ORDER BY id`
@@ -1792,25 +1800,58 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
  *  context carries no DO doc no), so the list resolves DOs from the
  *  systems that actually issue them (Nico 2026-07-27):
  *
- *  1. Houzs cases — the AutoCount DO mirror (mig 0215), matched by the
- *     shared customer Ref: AutoCount's DO HEADER has no FromDocNo (SO
- *     linkage is per detail line only), but the Ref carries through the
- *     SO → DO transfer, and assr_cases.ref_no holds that same Ref.
- *     Case-insensitive — refs arrive as "znt4951" and "ZNT6121" alike.
+ *  1. Houzs cases — EXACT linkage first: `sales_orders.transfer_to`,
+ *     AutoCount's own SO → DO transfer chain (computed by the
+ *     middleware's SO getSince and persisted by the 5-min pull). Then
+ *     WIDENED by the AutoCount DO mirror (mig 0215) on the shared
+ *     customer Ref — partial deliveries cut several DOs but the SO
+ *     header only points at one, and rows the pull hasn't re-touched
+ *     predate the transfer_to column. Union of both, deduped.
+ *     Ref-matching is case-insensitive ("znt4951" vs "ZNT6121"); the DO
+ *     HEADER itself has no FromDocNo (that exists per detail line only),
+ *     which is why Ref carries the linkage at all.
  *  2. 2990 / still-unmatched cases — the SCM module's scm.delivery_orders
  *     via its real so_doc_no column (Supabase).
  *
- *  Fail-soft by design: either lookup erroring (or Supabase being absent,
+ *  Fail-soft by design: any lookup erroring (or Supabase being absent,
  *  e.g. the D1 test env) leaves rows without do_numbers — the list itself
  *  must never 500 over an enrichment column. Failures are logged, not
  *  swallowed silently. */
 async function attachDeliveryOrders(env: Env, rows: any[]) {
   if (rows.length === 0) return;
 
-  const houzs = rows.filter(
-    (r) => (!r.company_code || r.company_code === "HOUZS") && (r.ref_no || "").trim()
-  );
-  const refs = [...new Set(houzs.map((r) => String(r.ref_no).trim().toLowerCase()))];
+  const houzs = rows.filter((r) => !r.company_code || r.company_code === "HOUZS");
+
+  const bySoDo = new Map<string, string>();
+  const soDocNos = [...new Set(houzs.map((r) => r.doc_no).filter(Boolean))] as string[];
+  if (soDocNos.length > 0) {
+    try {
+      const q = await env.DB.prepare(
+        `SELECT doc_no, transfer_to FROM sales_orders
+          WHERE transfer_to IS NOT NULL AND doc_no IN (${soDocNos.map(() => "?").join(",")})`
+      )
+        .bind(...soDocNos)
+        .all();
+      for (const d of (q.results ?? []) as any[]) {
+        // XS-prefixed docs are AutoCount's cancelled-transfer artifacts —
+        // the SO pull filters those SOs out today, but older mirror rows
+        // may still carry one; never show them as a live DO.
+        const t = d.transfer_to != null ? String(d.transfer_to).trim() : "";
+        if (d.doc_no && t && !/^xs/i.test(t)) bySoDo.set(String(d.doc_no), t);
+      }
+    } catch (e) {
+      console.warn("[assr-list] SO transfer_to lookup failed:", e);
+    }
+  }
+
+  const byRef = new Map<string, string[]>();
+  const refs = [
+    ...new Set(
+      houzs
+        .map((r) => String(r.ref_no ?? "").trim().toLowerCase())
+        .filter(Boolean)
+    ),
+  ];
   if (refs.length > 0) {
     try {
       const q = await env.DB.prepare(
@@ -1819,7 +1860,6 @@ async function attachDeliveryOrders(env: Env, rows: any[]) {
       )
         .bind(...refs)
         .all();
-      const byRef = new Map<string, string[]>();
       for (const d of (q.results ?? []) as any[]) {
         const key = String(d.ref || "").trim().toLowerCase();
         if (!key || !d.doc_no) continue;
@@ -1827,13 +1867,17 @@ async function attachDeliveryOrders(env: Env, rows: any[]) {
         list.push(String(d.doc_no));
         byRef.set(key, list);
       }
-      for (const r of houzs) {
-        const hits = byRef.get(String(r.ref_no).trim().toLowerCase());
-        if (hits && hits.length > 0) r.do_numbers = [...hits].sort().join(" · ");
-      }
     } catch (e) {
       console.warn("[assr-list] AutoCount DO-mirror lookup failed:", e);
     }
+  }
+
+  for (const r of houzs) {
+    const hits = new Set<string>();
+    const exact = bySoDo.get(r.doc_no);
+    if (exact) hits.add(exact);
+    for (const d of byRef.get(String(r.ref_no ?? "").trim().toLowerCase()) ?? []) hits.add(d);
+    if (hits.size > 0) r.do_numbers = [...hits].sort().join(" · ");
   }
 
   if (!isSupabaseConfigured(env)) return;
