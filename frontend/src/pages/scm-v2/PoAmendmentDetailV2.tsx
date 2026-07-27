@@ -649,7 +649,9 @@ export function PoAmendmentDetailV2() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="ghost" icon={<ExternalLink size={14} />} onClick={openPo}>
+            {/* Owner 2026-07-27: bordered secondary, matching the SO amendment
+                job card's header pair — the naked ghost read as plain text. */}
+            <Button variant="secondary" icon={<ExternalLink size={14} />} onClick={openPo}>
               Open Purchase Order
             </Button>
           </div>
