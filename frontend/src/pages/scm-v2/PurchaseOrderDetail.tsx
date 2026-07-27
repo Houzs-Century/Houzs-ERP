@@ -754,6 +754,13 @@ export const PurchaseOrderDetail = () => {
                     <span className="font-mono font-semibold">{po.supplier.code}</span>
                   </>
                 )}
+                <span>·</span>
+                {/* Total rides the meta line (owner 2026-07-27) — out of the
+                    action row so the buttons stop wrapping. Tracks live draft
+                    edits. */}
+                <span className="font-money font-semibold text-ink">
+                  Total {fmtRm(grandTotal, po.currency)}
+                </span>
               </div>
             </div>
           </div>
@@ -762,15 +769,9 @@ export const PurchaseOrderDetail = () => {
               followed — the classNames resolved to undefined and the whole
               action row rendered unstyled/overflowing. Real utilities now. */}
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
-          {/* PR — Commander 2026-05-27: align with SO Detail PR #231 — total
-              moves into a right-rail KPI tile next to the action group so the
-              page title stays compact. Commander 2026-05-29 — the total tracks
-              the live line items (incl. unsaved draft edits). */}
-          <div className="flex shrink-0 items-baseline gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5">
-            <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Total</span>
-            <span className="font-money text-[14.5px] font-bold text-ink">{fmtRm(grandTotal, po.currency)}</span>
-          </div>
-          {/* Status pill lives in the title row now (V2-parity header). */}
+          {/* Total + status pill now live in the title / meta rows (V2-parity
+              header, owner 2026-07-27) so this row carries ONLY action buttons
+              and stops wrapping a lone Save onto a second line. */}
           {/* SO-amendment workflow — "Revised · rev N" badge once this PO has been
               revised in place by an approved amendment (revision > 1). */}
           {((po as unknown as { revision?: number }).revision ?? 1) > 1 && (

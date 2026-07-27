@@ -326,8 +326,11 @@ function RevisionHero({
    Unchanged fields stay muted on both sides — they are context, not the ask. */
 const wasCls = (changed: boolean, base: string): string =>
   cn(base, changed && "line-through decoration-ink-muted/60");
+/* Owner 2026-07-27 — the changed value on the Requesting side is now RED (was
+   petrol) so the approver's eye lands on exactly what the customer is asking to
+   change. Unchanged fields stay muted context on both sides. */
 const nowCls = (changed: boolean, base: string): string =>
-  cn(base, changed ? "font-semibold text-primary-ink" : "text-ink-muted");
+  cn(base, changed ? "font-semibold text-err" : "text-ink-muted");
 
 function DiffCard({ line }: { line: AmendmentLine }) {
   const old = oldOf(line);
