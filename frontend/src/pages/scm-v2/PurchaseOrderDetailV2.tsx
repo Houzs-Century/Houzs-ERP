@@ -29,6 +29,7 @@ import {
   RotateCcw,
   Package,
   FilePenLine,
+  Share2,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -63,6 +64,10 @@ import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 // concurrent relmap-clickable-amendment work; this addition is confined to the
 // import + one button + modal state to keep the merge trivial.
 import { PoAmendmentCreateModal } from "../../components/scm-v2/PoAmendmentCreateModal";
+// Relationship map (owner 2026-07-27) — the purchase-side twin of the SO/DO/
+// SI/DR maps: same shared 5-node canvas, chain + clicks from the PO hook.
+import { DocumentRelationshipMapModal } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { usePoRelationshipMap } from "./po-relationship-map";
 import { cn } from "../../lib/utils";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -390,6 +395,9 @@ function PurchaseOrderDetailV2ReadOnly() {
   const [sendingToSupplier, setSendingToSupplier] = useState(false);
   // PO amendment create modal (feat/amendment-ui) — localized state.
   const [showAmendModal, setShowAmendModal] = useState(false);
+  // Relationship map modal — open state only; the chain itself comes from
+  // usePoRelationshipMap below (after the header row resolves).
+  const [relMapOpen, setRelMapOpen] = useState(false);
 
   /* Nick 2026-07-09 — Ship-to warehouse cell was rendering the raw
      `purchase_location_id` UUID because the field only carries the id;
@@ -413,6 +421,15 @@ function PurchaseOrderDetailV2ReadOnly() {
     () => ((detail.data as { items?: PoItemRow[] } | undefined)?.items ?? []),
     [detail.data]
   );
+
+  // The 5-node purchase chain + what each node does when clicked (shared hook,
+  // one logic layer — mirrors how the SO detail pages consume their map).
+  const {
+    nodes: chainNodes,
+    onNodeClick: onChainNodeClick,
+    amendments: chainAmendments,
+    onAmendmentClick: onChainAmendmentClick,
+  } = usePoRelationshipMap(purchaseOrder);
 
   useSetBreadcrumbs([
     { label: "Purchase Orders", to: "/scm/purchase-orders" },
@@ -868,6 +885,9 @@ function PurchaseOrderDetailV2ReadOnly() {
             <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>
               History
             </Button>
+            <Button variant="ghost" icon={<Share2 size={14} />} onClick={() => setRelMapOpen(true)}>
+              Relationship Map
+            </Button>
             <Button variant="secondary" icon={<Printer size={14} />} onClick={goPrintPdf}>
               Print PDF
             </Button>
@@ -1152,6 +1172,25 @@ function PurchaseOrderDetailV2ReadOnly() {
           </button>
         </div>
       </div>
+
+      {/* Relationship map modal — the purchase-side twin of the SO map (same
+          shared 5-node canvas, read as the purchase chain). */}
+      <DocumentRelationshipMapModal
+        open={relMapOpen}
+        onClose={() => setRelMapOpen(false)}
+        nodes={chainNodes}
+        onNodeClick={(n) => {
+          // Close only when the click actually navigated away; an in-app
+          // notice (multi-doc lists / access gates) renders OVER the map.
+          if (onChainNodeClick(n)) setRelMapOpen(false);
+        }}
+        amendments={chainAmendments}
+        onAmendmentClick={(a) => {
+          if (onChainAmendmentClick(a)) setRelMapOpen(false);
+        }}
+        rowLabels={{ primary: "Purchase chain", secondary: "After goods receipt" }}
+        amendmentsLabel="Amendments off this Purchase Order"
+      />
     </div>
   );
 }

@@ -448,6 +448,7 @@ export const GrnFromPo = () => {
             grnId:               appendToGrn,
             purchaseOrderItemId: r.poItemId,
             materialCode:        r.itemCode,
+            supplierSku:         r.supplierSku ?? undefined,
             materialName:        r.description ?? r.itemCode,
             itemGroup:           r.itemGroup || undefined,
             variants:            (r.variants as Record<string, unknown> | null) ?? undefined,

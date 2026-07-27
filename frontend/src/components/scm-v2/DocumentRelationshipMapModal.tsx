@@ -125,15 +125,24 @@ export function DocumentRelationshipMapModal({
   onNodeClick,
   amendments,
   onAmendmentClick,
+  rowLabels,
+  amendmentsLabel,
 }: {
   open: boolean;
   onClose: () => void;
   nodes: ChainNode[];
   onNodeClick?: (node: ChainNode) => void;
-  // Optional amendments branch (SO map only). When present, a labelled row of
+  // Optional amendments branch (SO / PO maps). When present, a labelled row of
   // clickable amendment chips renders beneath the graph.
   amendments?: AmendmentChip[];
   onAmendmentClick?: (a: AmendmentChip) => void;
+  // Optional canvas row-label overrides — the PO map reads the same 5-node
+  // shape as a purchase chain ("Purchase chain" / "After goods receipt")
+  // instead of the sales-side defaults. Omitted → labels unchanged.
+  rowLabels?: { primary: string; secondary: string };
+  // Optional heading for the amendments row (default keeps the SO map's
+  // "Amendments off the Sales Order").
+  amendmentsLabel?: string;
 }) {
   // Canvas layout — fixed pixel positions so the graph reads at any modal
   // width. Two shapes:
@@ -262,13 +271,13 @@ export function DocumentRelationshipMapModal({
         }}
       >
         <span className="absolute left-3 top-2 font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
-          {twoChain ? "Sales chain" : "Upstream"}
+          {rowLabels?.primary ?? (twoChain ? "Sales chain" : "Upstream")}
         </span>
         <span
           className="absolute font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted"
           style={twoChain ? { left: x0 + xStep, top: 168 } : { left: 360, top: 168 }}
         >
-          {twoChain ? "Purchase chain" : "Generated after delivery"}
+          {rowLabels?.secondary ?? (twoChain ? "Purchase chain" : "Generated after delivery")}
         </span>
 
         <svg
@@ -380,7 +389,7 @@ export function DocumentRelationshipMapModal({
         <div className="mt-3 rounded-xl border border-border-subtle bg-surface-2 px-3 py-2.5">
           <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
             <Share2 size={11} />
-            Amendments off the Sales Order
+            {amendmentsLabel ?? "Amendments off the Sales Order"}
           </div>
           <div className="flex flex-wrap gap-2">
             {amendments.map((a) => (

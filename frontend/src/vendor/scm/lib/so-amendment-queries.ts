@@ -53,6 +53,13 @@ export type AmendmentRow = {
      signs). NULL on rows raised before the rework — those keep the legacy
      supplier-confirmed two-gate chain. */
   lane?: 'LINES' | 'DELIVERY' | string | null;
+  /* Owner 2026-07-27 — the PO(s) this SO's lines were purchased on
+     (purchase_order_items.so_item_id linkage, resolved by the list endpoint).
+     The PO Amendments inbox merges rows with a bound PO alongside the direct
+     po_amendments so purchasing sees the whole revision queue in one place.
+     Empty on an SO with no purchase leg (and on responses from a pre-upgrade
+     backend, so read it defensively). */
+  bound_pos?: Array<{ id: string; po_number: string; status: string }>;
 };
 
 export type AmendmentLine = {
