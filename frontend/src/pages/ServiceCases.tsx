@@ -83,6 +83,13 @@ import { isSalesStaff } from "../auth/salesAccess";
 import { api, buildQuery } from "../api/client";
 import { formatPhone } from "../vendor/shared/phone";
 import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
+import {
+  UploadDropZone,
+  clipboardFiles,
+  acceptedUploadFiles,
+  hoveredUploadZones,
+  useStrayFileDropGuard,
+} from "../lib/uploadDropZone";
 import { loadThumbFirst } from "../lib/imagePipeline";
 import { formatCurrency, formatDate, formatDateTime, cn } from "../lib/utils";
 import { ServiceMetrics } from "./ServiceMetrics";
@@ -2347,29 +2354,17 @@ function CreatePanel({
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
+  // A drop that misses the dropzone below must not navigate the SPA
+  // away to the dropped file.
+  useStrayFileDropGuard();
+
   // Clipboard paste — when the panel is mounted, intercept any paste
   // that carries file blobs (typically a screenshot or copied image)
   // and route it through addFiles. Plain-text pastes are left alone
   // so the Issue Description textarea still works.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      if (!e.clipboardData) return;
-      const blobs: File[] = [];
-      for (const item of Array.from(e.clipboardData.items)) {
-        if (item.kind !== "file") continue;
-        const blob = item.getAsFile();
-        if (!blob) continue;
-        // Clipboard files often arrive without a name (e.g. screenshot
-        // paste on Windows / macOS). Synthesize one whose extension
-        // matches the MIME so addFiles' extension check passes.
-        if (blob.name && blob.name.includes(".")) {
-          blobs.push(blob);
-        } else {
-          const sub = (blob.type.split("/")[1] || "bin").toLowerCase();
-          const ext = sub === "jpeg" ? "jpg" : sub;
-          blobs.push(new File([blob], `pasted-${Date.now()}.${ext}`, { type: blob.type }));
-        }
-      }
+      const blobs = clipboardFiles(e);
       if (blobs.length === 0) return;
       e.preventDefault();
       const dt = new DataTransfer();
@@ -3134,20 +3129,36 @@ function DetailContent({
     detail.reload();
   }
 
-  async function uploadFile(e: React.ChangeEvent<HTMLInputElement>, category: string) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Keep a mistargeted drop from navigating the SPA to the file, and
+  // teach the paste affordance: a file paste that lands while no upload
+  // zone is hovered would otherwise vanish silently.
+  useStrayFileDropGuard();
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (e.defaultPrevented || hoveredUploadZones.size > 0) return;
+      if (clipboardFiles(e).length === 0) return;
+      toast.info("To paste files, hover over an upload area first (Photos card or a stage's upload slot).");
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+    // toast methods are stable under the hood.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function uploadFiles(files: File[], category: string) {
+    const accepted = acceptedUploadFiles(files, toast);
+    if (accepted.length === 0) return;
     setUploading(true);
     try {
       // WO-7: shared pipeline — compresses photos + uploads their thumbs.
-      await uploadAssrAttachment(id, file, category);
-      detail.reload();
-      toast.success("File uploaded");
+      for (const f of accepted) await uploadAssrAttachment(id, f, category);
+      toast.success(accepted.length > 1 ? `${accepted.length} files uploaded` : "File uploaded");
     } catch (err: any) {
       toast.error(`Upload failed: ${err?.message || err}`);
     } finally {
       setUploading(false);
-      e.target.value = "";
+      // Reload even on failure — earlier files of a batch may have saved.
+      detail.reload();
     }
   }
 
@@ -3450,6 +3461,10 @@ function DetailContent({
               <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-ink-muted">
                 Photos / Videos ({attachments.length})
               </div>
+            <UploadDropZone
+              disabled={uploading}
+              onFiles={(files) => uploadFiles(files, c.stage === "completed" ? "completion" : "evidence")}
+            >
             {attachments.length > 0 && (() => {
               // Issue evidence (what the service form / staff reported)
               // and QC-result shots read very differently — split the
@@ -3519,11 +3534,19 @@ function DetailContent({
               <input
                 type="file"
                 accept="image/*,video/mp4,video/quicktime,video/webm,.pdf"
+                multiple
                 className="hidden"
-                onChange={(e) => uploadFile(e, c.stage === "completed" ? "completion" : "evidence")}
+                onChange={(e) => {
+                  uploadFiles(Array.from(e.target.files ?? []), c.stage === "completed" ? "completion" : "evidence");
+                  e.target.value = "";
+                }}
                 disabled={uploading}
               />
             </label>
+            <div className="mt-1.5 text-[10px] text-ink-muted">
+              Drag &amp; drop or paste (Ctrl+V) supported
+            </div>
+            </UploadDropZone>
             </div>
           </PanelSection>
 
@@ -6084,75 +6107,81 @@ function MilestoneAttachmentSlot({
     (a: any) => a?.category === category
   );
 
-  async function upload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function uploadFiles(files: File[]) {
+    const accepted = acceptedUploadFiles(files, toast);
+    if (accepted.length === 0) return;
     setUploading(true);
     try {
       // WO-7: shared pipeline — compresses photos + uploads their thumbs.
-      await uploadAssrAttachment(caseId, file, category);
-      detail.reload();
-      toast.success(`${label} uploaded`);
+      for (const f of accepted) await uploadAssrAttachment(caseId, f, category);
+      toast.success(accepted.length > 1 ? `${accepted.length} files uploaded` : `${label} uploaded`);
     } catch (err: any) {
       toast.error(err?.message || "Upload failed");
     } finally {
       setUploading(false);
-      e.target.value = "";
+      // Reload even on failure — earlier files of a batch may have saved.
+      detail.reload();
     }
   }
 
   return (
     <div>
-      {!compact && (
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          {label}
-        </div>
-      )}
-      {matches.length > 0 ? (
-        <div className="mb-2 grid grid-cols-3 gap-2">
-          {matches.map((att: any, i: number) => (
-            <AttachmentThumb
-              key={att.id}
-              att={att}
-              onClick={() => {
-                const t = att.content_type || "";
-                if (t.startsWith("image/") || t.startsWith("video/")) setLbIndex(i);
+      <UploadDropZone disabled={uploading || archived} onFiles={uploadFiles}>
+        {!compact && (
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+            {label}
+          </div>
+        )}
+        {matches.length > 0 ? (
+          <div className="mb-2 grid grid-cols-3 gap-2">
+            {matches.map((att: any, i: number) => (
+              <AttachmentThumb
+                key={att.id}
+                att={att}
+                onClick={() => {
+                  const t = att.content_type || "";
+                  if (t.startsWith("image/") || t.startsWith("video/")) setLbIndex(i);
+                }}
+                onArchive={archived ? undefined : async () => {
+                  if (!await dialog.confirm(`Archive this ${label.toLowerCase()}?`)) return;
+                  try {
+                    await api.post(`/api/assr/attachments/${att.id}/archive`);
+                    toast.success("Archived");
+                    detail.reload();
+                  } catch (err: any) {
+                    toast.error(err?.message || "Something went wrong. Please try again.");
+                  }
+                }}
+              />
+            ))}
+          </div>
+        ) : !compact ? (
+          <div className="mb-2 rounded-md border border-dashed border-border bg-bg/30 px-3 py-2 text-[11px] text-ink-muted">
+            {emptyLabel || `No ${label.toLowerCase()} yet.`}
+          </div>
+        ) : null}
+        {!archived && (
+          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink hover:border-accent/40">
+            <Upload size={12} />
+            {uploading
+              ? "Uploading..."
+              : matches.length
+              ? "Replace / Add"
+              : (uploadLabel || `Upload ${label.toLowerCase()}`)}
+            <input
+              type="file"
+              accept="image/*,video/mp4,video/quicktime,video/webm,.pdf"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                uploadFiles(Array.from(e.target.files ?? []));
+                e.target.value = "";
               }}
-              onArchive={archived ? undefined : async () => {
-                if (!await dialog.confirm(`Archive this ${label.toLowerCase()}?`)) return;
-                try {
-                  await api.post(`/api/assr/attachments/${att.id}/archive`);
-                  toast.success("Archived");
-                  detail.reload();
-                } catch (err: any) {
-                  toast.error(err?.message || "Something went wrong. Please try again.");
-                }
-              }}
+              disabled={uploading}
             />
-          ))}
-        </div>
-      ) : !compact ? (
-        <div className="mb-2 rounded-md border border-dashed border-border bg-bg/30 px-3 py-2 text-[11px] text-ink-muted">
-          {emptyLabel || `No ${label.toLowerCase()} yet.`}
-        </div>
-      ) : null}
-      {!archived && (
-        <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink hover:border-accent/40">
-          <Upload size={12} />
-          {uploading
-            ? "Uploading..."
-            : matches.length
-            ? "Replace / Add"
-            : (uploadLabel || `Upload ${label.toLowerCase()}`)}
-          <input
-            type="file"
-            accept="image/*,video/mp4,video/quicktime,video/webm,.pdf"
-            className="hidden"
-            onChange={upload}
-            disabled={uploading}
-          />
-        </label>
-      )}
+          </label>
+        )}
+      </UploadDropZone>
       {lbIndex !== null && matches[lbIndex] && (
         <StaffLightbox
           attachments={matches}
