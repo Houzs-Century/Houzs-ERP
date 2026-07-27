@@ -1020,8 +1020,12 @@ export const PurchaseOrderDetail = () => {
             We never auto-edit a PO that may already be with the supplier; the
             purchaser syncs + re-sends. (Commander 2026-06-16.) */}
         {showDrift && driftCount > 0 && (
+          /* English copy (owner UI rule: no Chinese ships in the interface;
+             swept 2026-07-27 while fixing the missing edit-mode redline). */
           <div className={styles.bannerWarn} style={{ margin: 'var(--space-2) var(--space-3)' }}>
-            ⚠ 有 <strong>{driftCount}</strong> 行的来源 SO 在本 PO 开单后被改过。请核对下方红字、同步规格后<strong>重新发给供应商</strong>,以免工厂照旧规格生产。
+            ⚠ <strong>{driftCount}</strong> line{driftCount === 1 ? "'s" : 's'} source SO changed after this
+            PO was raised. Check the red notes below, sync the specs, then <strong>re-send to the
+            supplier</strong> — otherwise the factory keeps building to the old spec.
           </div>
         )}
 
@@ -1032,29 +1036,62 @@ export const PurchaseOrderDetail = () => {
              auto-recompute, and the qty/price/disc/delivery/ship-to row. The ONE
              page-level Save diffs each draft and add/update/deletes. */
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', padding: 'var(--space-3)' }}>
-            {editLines.map((l, idx) => (
-              <PoLineCard
-                key={l.rid}
-                index={idx}
-                line={l}
-                currency={po.currency}
-                supplierId={poSupplierId}
-                bindings={bindings}
-                allSkus={allSkus}
-                warehouses={warehousesForLines}
-                maint={maint}
-                fabrics={fabrics}
-                specialsPools={specialsPools}
-                onChange={(patch) => patchLine(l.rid, patch)}
-                onPickBinding={(b) => pickBinding(l.rid, b)}
-                onSetVariant={(k, v) => setVariant(l.rid, k, v)}
-                /* Item-first reverse lookup is a Create-only affordance (no
-                   supplier to narrow on an existing PO) — no-op here. */
-                onPendingItemPick={() => {}}
-                onRemove={() => removeLine(l.rid)}
-                disabled={isLocked}
-              />
-            ))}
+            {editLines.map((l, idx) => {
+              /* Owner 2026-07-27 ("为什么没有 SO Request 的相关信息?") — the
+                 per-line SO-drift redline rendered ONLY in the View table, yet
+                 the drift banner AND the amendment's bound-PO jump both land in
+                 EDIT mode — the very place the spec must be synced before
+                 Approve PO. Surface the same redline above each affected card
+                 (matched by the draft's itemId; new manual lines have none). */
+              const drift = showDrift
+                ? (visibleItems.find((it) => it.id === l.itemId)?.so_drift ?? null)
+                : null;
+              return (
+                <div key={l.rid} style={{ display: 'grid', gap: 4 }}>
+                  {drift && (
+                    <div style={{
+                      fontSize: 'var(--fs-11)', fontWeight: 700,
+                      color: 'var(--c-danger, #b8331f)',
+                      background: 'rgba(184, 51, 31, 0.06)',
+                      border: '1px solid rgba(184, 51, 31, 0.3)',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '6px 10px',
+                      display: 'grid', gap: 2,
+                    }}>
+                      {drift.itemChanged && (
+                        <div>⚠ SO now orders {drift.itemSo} (this PO still has {drift.itemPo}) — cancel &amp; re-raise is safer than editing.</div>
+                      )}
+                      {!drift.itemChanged && drift.specSo !== drift.specPo && (
+                        <div>⚠ SO spec now: {drift.specSo || '—'} (this PO still: {drift.specPo || '—'})</div>
+                      )}
+                      {drift.warehouseChanged && (
+                        <div>⚠ SO warehouse moved — change this line's warehouse to the SO's, then Save.</div>
+                      )}
+                    </div>
+                  )}
+                  <PoLineCard
+                    index={idx}
+                    line={l}
+                    currency={po.currency}
+                    supplierId={poSupplierId}
+                    bindings={bindings}
+                    allSkus={allSkus}
+                    warehouses={warehousesForLines}
+                    maint={maint}
+                    fabrics={fabrics}
+                    specialsPools={specialsPools}
+                    onChange={(patch) => patchLine(l.rid, patch)}
+                    onPickBinding={(b) => pickBinding(l.rid, b)}
+                    onSetVariant={(k, v) => setVariant(l.rid, k, v)}
+                    /* Item-first reverse lookup is a Create-only affordance (no
+                       supplier to narrow on an existing PO) — no-op here. */
+                    onPendingItemPick={() => {}}
+                    onRemove={() => removeLine(l.rid)}
+                    disabled={isLocked}
+                  />
+                </div>
+              );
+            })}
             {editLines.length === 0 && (
               <p className={styles.emptyRow} style={{ padding: 'var(--space-3)' }}>
                 No items yet — click "Add item" above, or "From Sales Order" to convert.
@@ -1101,19 +1138,21 @@ export const PurchaseOrderDetail = () => {
                       return summary ? <div className={styles.muted} style={{ fontSize: 'var(--fs-11)' }}>{summary}</div> : null;
                     })()}
                     {showDrift && it.so_drift && (
+                      /* English copy (owner UI rule; swept 2026-07-27 with the
+                         edit-mode redline fix — both modes read identically). */
                       <div style={{ marginTop: 3, fontSize: 'var(--fs-11)', fontWeight: 700, color: 'var(--c-danger, #b8331f)', display: 'grid', gap: 2 }}>
                         {it.so_drift.itemChanged && (
-                          <div>⚠ SO 已换产品 → {it.so_drift.itemSo}(本单仍是 {it.so_drift.itemPo}),建议取消重开</div>
+                          <div>⚠ SO now orders {it.so_drift.itemSo} (this PO still has {it.so_drift.itemPo}) — cancel &amp; re-raise is safer than editing.</div>
                         )}
                         {!it.so_drift.itemChanged && it.so_drift.specSo !== it.so_drift.specPo && (
-                          <div>⚠ SO 现规格:{it.so_drift.specSo || '—'}(本单仍是 {it.so_drift.specPo || '—'})</div>
+                          <div>⚠ SO spec now: {it.so_drift.specSo || '—'} (this PO still: {it.so_drift.specPo || '—'})</div>
                         )}
                         {/* Staff #12 — SO line's ship-from warehouse moved after this PO
                             was raised; the PO still points at the old warehouse. Rebind
                             via Edit → change this line's warehouse → Save (the line PATCH
                             is GRN-gated, so a received PO can't be rebound). */}
                         {it.so_drift.warehouseChanged && (
-                          <div>⚠ SO 仓库已改 —— 本单仍指向原仓库;请「编辑」把本行仓库改成 SO 的仓库后保存(已收货的 PO 不可改)。</div>
+                          <div>⚠ SO warehouse moved — this PO still points at the old one. Edit → change this line's warehouse to the SO's → Save (blocked once received).</div>
                         )}
                       </div>
                     )}
