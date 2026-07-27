@@ -47,7 +47,10 @@ import {
    fee/addon → SERVICE-line decomposition builders are pure + shared. */
 import {
   isServiceLine, isDeliveryFeeServiceCode,
-  SVC_DELIVERY, SVC_DELIVERY_CROSS, SVC_DELIVERY_ADD,
+  // SVC_DELIVERY / SVC_DELIVERY_CROSS are no longer named here: the delete side
+  // of the delivery-line rebuild moved into scm.rebuild_mfg_so_delivery_lines
+  // (migration 0214), which lists the three codes itself.
+  SVC_DELIVERY_ADD,
 } from '../shared/service-sku';
 import {
   buildDeliveryFeeServiceLines,
@@ -5889,18 +5892,20 @@ async function recomputeDeliveryFeeCore(
     .select('debtor_name, venue, customer_delivery_date, company_id').eq('doc_no', docNo).maybeSingle();
   const h = (hdr ?? {}) as { debtor_name?: string | null; venue?: string | null; customer_delivery_date?: string | null; company_id?: number | null };
 
-  // Replace the SVC-DELIVERY* lines: delete the old, insert the recomputed.
-  const { error: delErr } = await sb.from('mfg_sales_order_items').delete()
-    .eq('doc_no', docNo).in('item_code', [SVC_DELIVERY, SVC_DELIVERY_CROSS, SVC_DELIVERY_ADD]);
-  if (delErr) {
-    if (sb?.__atomicCommand === true) throw new Error(`Delivery line delete failed: ${delErr.message}`);
-    /* eslint-disable-next-line no-console */ console.error('[so-redetect] delivery line delete failed:', delErr.message);
-  }
-  if (specs.length > 0) {
+  /* Replace the SVC-DELIVERY* lines: delete the old, insert the recomputed,
+     stamp the header — as ONE atomic RPC (migration 0214, ported from 2990
+     migration 0211). The Backend SO Detail Save fires one line PATCH per changed
+     line IN PARALLEL, and each PATCH ends here; when this was two statements
+     (delete, then insert) two rebuilds could interleave as
+     delete/delete/insert/insert and double the delivery fee on the bill
+     (SO-2606-043 2026-06-28, SO-2607-010 2026-07-12). Being inside the
+     atomic-command transaction does not fix it — under READ COMMITTED the second
+     DELETE cannot see the first transaction's new rows. The RPC takes a per-doc_no
+     advisory xact lock, so concurrent rebuilds serialize and the last writer
+     leaves exactly one consistent set. */
+  {
     const lineDateToday = todayMyt();
     const rows = specs.map((spec, i) => ({
-      // Multi-company (mig 0061): the rebuilt delivery line inherits the SO's company.
-      ...(h.company_id != null ? { company_id: h.company_id } : {}),
       doc_no: docNo,                                    // ⚠️ NOT NULL — omitting it silently dropped the line (the bug)
       line_no: keptMaxLineNo >= 0 ? keptMaxLineNo + 1 + i : null,
       line_date: lineDateToday,
@@ -5932,23 +5937,20 @@ async function recomputeDeliveryFeeCore(
       venue: h.venue ?? null,
       stock_status: 'READY',
     }));
-    // Multi-company: the rebuilt delivery-fee lines inherit the SO's company.
-    const coRows = h.company_id != null ? rows.map((r) => ({ company_id: h.company_id, ...r })) : rows;
-    const { error: insErr } = await sb.from('mfg_sales_order_items').insert(coRows);
-    if (insErr) {
-      if (sb?.__atomicCommand === true) throw new Error(`Delivery line insert failed: ${insErr.message}`);
-      /* eslint-disable-next-line no-console */ console.error('[so-redetect] delivery line insert failed:', insErr.message);
+    /* company_id is NOT passed: the RPC reads it off the SO header, so a rebuilt
+       line can never land in another company (mig 0083 made it NOT NULL). */
+    const { error: rebuildErr } = await sb.rpc('rebuild_mfg_so_delivery_lines', {
+      p_doc_no: docNo,
+      p_source_doc_no: sourceDocNo,
+      p_delivery_fee_centi: fee.total,
+      p_rows: rows,
+    });
+    if (rebuildErr) {
+      if (sb?.__atomicCommand === true) throw new Error(`Delivery line rebuild failed: ${rebuildErr.message}`);
+      /* eslint-disable-next-line no-console */ console.error('[so-redetect] delivery line rebuild failed:', rebuildErr.message);
     }
   }
 
-  const { error: headerFeeError } = await sb.from('mfg_sales_orders').update({
-    cross_category_source_doc_no: sourceDocNo,
-    delivery_fee_centi: fee.total,
-    updated_at: new Date().toISOString(),
-  }).eq('doc_no', docNo);
-  if (headerFeeError && sb?.__atomicCommand === true) {
-    throw new Error(`Delivery fee header update failed: ${headerFeeError.message}`);
-  }
   await recomputeTotals(sb, docNo, c);
   return { isFollowup, sourceDocNo, total: fee.total };
 }
@@ -9010,7 +9012,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
      Backend-loaded swap build may carry the canonical `seatHeight`; POS posts
      `depth`. recomputeFromSnapshot below also reads `depth ?? seatHeight`. */
   const depth = String((newVariants as { depth?: unknown; seatHeight?: unknown }).depth ?? (newVariants as { seatHeight?: unknown }).seatHeight ?? '24');
-  const [cfg, fabLite, combos, sellingTiers, fabricAddonCfg, specialDefs, modulePrices, moduleCostRows, modelOverridesSwap] = await Promise.all([
+  const [cfg, fabLite, combos, sellingTiers, fabricAddonCfg, specialDefs, modulePrices, moduleCostRows, modelOverridesSwap, compartmentOverridesSwap] = await Promise.all([
     loadMaintenanceConfig(sb),
     loadFabricByCode(sb, (newVariants.fabricCode as string | undefined) ?? null),
     loadActiveSofaCombos(sb, c),
@@ -9020,6 +9022,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     loadModelSofaModulePrices(sb, prodLite.base_model, depth),
     loadModelSofaModuleCostRows(sb, prodLite.base_model),
     loadModelFabricTierOverrides(sb),
+    loadCompartmentFabricTierOverrides(sb), // migration 0025 — per-compartment Δ
   ]);
   const qty = Math.max(1, Math.floor(Number(item.qty ?? 1)));
   const clientUnit = Math.max(0, Math.round(Number(item.unitPriceCenti ?? 0)));
@@ -9042,7 +9045,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     prodLite, fabLite, cfg, combos, modulePrices, sellingTiers, fabricAddonCfg,
     null,
     rewardComboMatch && rewardCtx ? rewardCtx.comboIds : null,
-    specialDefs, moduleCostRows, modelOverridesSwap,
+    specialDefs, moduleCostRows, modelOverridesSwap, compartmentOverridesSwap,
   );
   const posTablet = await isPosTabletCaller(c);
   /* Reward swaps skip the drift COMPARISON (the POS configurator prices the
@@ -9395,7 +9398,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
       ]);
       const rec = recomputeFromSnapshot(
         { itemCode: line.item_code, itemGroup: String(line.item_group ?? 'others'), qty: Number(line.qty), unitPriceCenti: 0, variants: v as MfgItemForRecompute['variants'] },
-        rp, rfab, cfg, null, null, rtiers, fabricAddonCfg, null, null, specialDefs, null, modelOverridesSwap,
+        rp, rfab, cfg, null, null, rtiers, fabricAddonCfg, null, null, specialDefs, null, modelOverridesSwap, compartmentOverridesSwap,
       );
       const revertUnit = rec.unit_price_sen > 0 ? rec.unit_price_sen : Number(line.unit_price_centi);
       const lqty = Number(line.qty);
