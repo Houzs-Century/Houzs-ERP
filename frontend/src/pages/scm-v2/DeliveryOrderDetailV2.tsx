@@ -70,6 +70,8 @@ import { buildVariantSummary, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders } from "../../auth/salesAccess";
+import { useBranding } from "../../hooks/useBranding";
+import { shortCompanyName } from "../../lib/branding";
 
 // ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
@@ -681,6 +683,10 @@ function PrintPdfModal({
   onPrint: () => void;
 }) {
   const totalQty = items.reduce((sum, l) => sum + Number(l.qty ?? 0), 0);
+  // Letterhead follows the ACTIVE company (2990 DO previews were branded with
+  // a hardcoded Houzs literal). Same source as the real jspdf letterhead, so
+  // the preview card and the downloaded PDF always name the same company.
+  const branding = useBranding();
   return (
     <ModalOverlay
       open={open}
@@ -709,8 +715,8 @@ function PrintPdfModal({
       <div className="overflow-hidden rounded-xl border border-border-subtle">
         <div className="flex items-start justify-between gap-3 bg-sidebar px-5 py-4 text-sidebar-ink">
           <div>
-            <div className="font-display text-[14px] font-bold tracking-wider text-white">
-              HOUZS CENTURY
+            <div className="font-display text-[14px] font-bold uppercase tracking-wider text-white">
+              {shortCompanyName(branding.companyName)}
             </div>
             <div className="mt-0.5 text-[10.5px] uppercase tracking-brand text-sidebar-ink-muted">
               Delivery Order
