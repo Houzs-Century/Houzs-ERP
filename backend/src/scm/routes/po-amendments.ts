@@ -29,6 +29,10 @@ import type { Env, Variables } from '../env';
 import type { Context } from 'hono';
 import { canTransition, nextStatus, type PoAmendStatus, type PoAmendAction } from '../shared/po-amendment';
 import { applyPoAmendment, ReceivedFloorError } from '../lib/po-revision';
+/* Two-lane rework: a follow-up row's approve re-derives its PO from the SO's
+   current truth. po-revision re-exports so-revision's ReceivedFloorError (same
+   class), so the one imported above already covers both engines. */
+import { reviseBoundPo } from '../lib/so-revision';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import {
@@ -60,9 +64,16 @@ type AmendmentForWrite = {
   id: string;
   po_id: string;
   po_number: string;
+  amendment_no: string | null;
   status: PoAmendStatus;
   version: number;
   requested_by: string | null;
+  /* Two-lane rework (2026-07-27): set on a FOLLOW-UP row auto-raised by an SO
+     amendment's LINES-lane apply. Its approve re-derives the PO from the SO's
+     CURRENT truth (reviseBoundPo, scoped to this po) instead of applying the
+     preview lines; see lib/amendment-po-followup.ts. */
+  source_so_amendment_id: string | null;
+  source_so_amendment_no: string | null;
 };
 
 async function loadAmendmentForWrite(
@@ -72,7 +83,7 @@ async function loadAmendmentForWrite(
 ): Promise<{ ok: true; amendment: AmendmentForWrite } | { ok: false }> {
   const { data } = await scopeToCompany(
     sb.from('po_amendments')
-      .select('id, po_id, po_number, status, version, requested_by')
+      .select('id, po_id, po_number, amendment_no, status, version, requested_by, source_so_amendment_id, source_so_amendment_no')
       .eq('id', id),
     c,
   ).maybeSingle();
@@ -87,7 +98,7 @@ async function loadAmendmentForWrite(
 poAmendments.get('/', async (c) => {
   const sb = c.get('supabase');
   const { data, error } = await scopeToCompany(sb.from('po_amendments')
-    .select('id, po_id, po_number, amendment_no, status, reason, requested_by, resolution, created_at, updated_at'), c)
+    .select('id, po_id, po_number, amendment_no, status, reason, requested_by, resolution, source_so_amendment_id, source_so_amendment_no, created_at, updated_at'), c)
     .order('created_at', { ascending: false })
     .limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -104,6 +115,7 @@ poAmendments.get('/:id', async (c) => {
     scopeToCompany(sb.from('po_amendments')
       .select('id, po_id, po_number, amendment_no, status, reason, requested_by, ' +
         'approved_by, approved_at, rejected_by, rejected_at, rejection_reason, resolution, ' +
+        'source_so_amendment_id, source_so_amendment_no, ' +
         'header_changes, old_header_snapshot, edited_at, edit_count, created_at, updated_at')
       .eq('id', id), c).maybeSingle(),
     sb.from('po_amendment_lines')
@@ -317,9 +329,29 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
   if (claimError) return c.json({ error: 'update_failed', reason: claimError.message }, 500);
   if (!claimed) return c.json({ error: 'amendment_version_conflict' }, 409);
 
-  let applied: Awaited<ReturnType<typeof applyPoAmendment>>;
+  /* Two-lane rework — a FOLLOW-UP row (source_so_amendment_id set) is the
+     purchaser's SECOND signature on an SO amendment: its lines are a preview,
+     and the real apply is reviseBoundPo scoped to THIS po — the same engine the
+     legacy approve-po gate ran — so the PO is re-derived from the Sales Order's
+     CURRENT truth at confirm time (a later product amendment approved in
+     between is picked up, never lost). A manual row keeps applyPoAmendment. */
+  let appliedRevision: number;
+  let appliedWarnings: string[];
   try {
-    applied = await applyPoAmendment(sb, id, user.id, c);
+    if (amendment.source_so_amendment_id) {
+      const revised = await reviseBoundPo(sb, amendment.source_so_amendment_id, user.id, c, { onlyPoId: amendment.po_id });
+      const mine = revised.perPo.find((p) => p.poId === amendment.po_id);
+      appliedRevision = mine?.revision ?? 0;
+      appliedWarnings = revised.warnings;
+      if (!mine) {
+        appliedWarnings = [...appliedWarnings,
+          'This purchase order no longer carries lines bound to that sales order, so there was nothing to re-derive.'];
+      }
+    } else {
+      const applied = await applyPoAmendment(sb, id, user.id, c);
+      appliedRevision = applied.revision;
+      appliedWarnings = applied.warnings;
+    }
   } catch (e) {
     // Release the lease so a retry is clean.
     await sb.from('po_amendments').update({ apply_lease_token: null, apply_lease_expires_at: null })
@@ -352,7 +384,27 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
   if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
   if (!updated) return c.json({ error: 'amendment_version_conflict' }, 409);
 
-  return c.json({ amendment: updated, revision: applied.revision, warnings: applied.warnings });
+  /* Sourced confirms audit here (applyPoAmendment writes its own audit on the
+     manual path; reviseBoundPo audits on the SO trail, so the PO's own history
+     needs this row to show the second signature). */
+  if (amendment.source_so_amendment_id) {
+    await recordEntityAudit(sb, {
+      entityType: 'PURCHASE_ORDER',
+      entityId:   amendment.po_id,
+      entityDocNo: amendment.po_number,
+      action:     'AMENDMENT_PO_APPROVED',
+      actor:      { id: c.get('houzsUser')?.id ?? null, name: c.get('houzsUser')?.name ?? null },
+      companyId:  activeCompanyId(c) ?? null,
+      fieldChanges: [
+        { field: 'amendment_no', to: amendment.amendment_no },
+        { field: 'source_so_amendment', to: amendment.source_so_amendment_no },
+        { field: 'po_revision', to: appliedRevision },
+      ],
+      note: `Follow-up confirmed — PO re-derived from the revised Sales Order (${amendment.source_so_amendment_no ?? 'SO amendment'}), now revision ${appliedRevision}.`,
+    });
+  }
+
+  return c.json({ amendment: updated, revision: appliedRevision, warnings: appliedWarnings });
 }
 poAmendments.patch('/:id/approve', (c) => {
   const company = requireActiveCompanyId(c);

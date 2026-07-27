@@ -20,8 +20,12 @@
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { canTransition, nextStatus, type AmendStatus, type AmendAction } from '../shared';
+import {
+  canTransition, nextStatus, type AmendStatus, type AmendAction,
+  canLaneTransition, LANE_APPROVE_KEY, LANE_LABEL, type AmendmentLane,
+} from '../shared';
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
+import { raisePoFollowUps } from '../lib/amendment-po-followup';
 import { hasHouzsPerm, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { recordSoAudit } from '../lib/so-audit';
@@ -62,11 +66,27 @@ async function gateActorStaffId(
 type AmendmentForWrite = {
   id: string;
   so_doc_no: string;
+  amendment_no?: string | null;
   status: AmendStatus;
   version: number;
+  /* Two-lane rework (2026-07-27): 'LINES' | 'DELIVERY' on post-rework rows,
+     NULL on legacy rows — which keep the original supplier-confirmed two-gate
+     chain and its original keys. */
+  lane?: string | null;
+  reason?: string | null;
   apply_lease_token?: string | null;
   apply_lease_expires_at?: string | null;
 };
+
+/** Lane of a loaded row — narrowed to the two known values, else legacy. */
+const laneOf = (a: AmendmentForWrite): AmendmentLane | null =>
+  a.lane === 'LINES' || a.lane === 'DELIVERY' ? a.lane : null;
+
+/* The refusal every legacy-only gate answers when pointed at a lane row. */
+const NOT_IN_LANE_FLOW = (what: string) => ({
+  error: 'not_in_lane_flow',
+  reason: `This amendment uses the two-lane flow — ${what}`,
+});
 type AmendmentWriteLoad =
   // A Houzs-NATIVE amendment: apply locally, exactly as before.
   | { ok: true; mirrored: false; amendment: AmendmentForWrite }
@@ -102,7 +122,7 @@ async function loadAmendmentForWrite(
 ): Promise<AmendmentWriteLoad> {
   const { data } = await scopeToCompany(
     sb.from('so_amendments')
-      .select('id, so_doc_no, status, version, apply_lease_token, apply_lease_expires_at')
+      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at')
       .eq('id', id),
     c,
   ).maybeSingle();
@@ -219,7 +239,7 @@ soAmendments.get('/', async (c) => {
   // scopeToCompany: isolate the list to the active company (mig 0080 company_id);
   // no-op pre-activation so single-company Houzs is unchanged.
   const { data, error } = await scopeToCompany(sb.from('so_amendments')
-    .select('id, so_doc_no, amendment_no, status, reason, requested_by, created_at, updated_at'), c)
+    .select('id, so_doc_no, amendment_no, status, lane, reason, requested_by, created_at, updated_at'), c)
     .order('created_at', { ascending: false })
     .limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -280,7 +300,7 @@ soAmendments.get('/:id', async (c) => {
   const [amdRes, lineRes] = await Promise.all([
     // scopeToCompany: detail read isolated to the active company (mig 0080); no-op pre-activation.
     scopeToCompany(sb.from('so_amendments')
-      .select('id, so_doc_no, amendment_no, status, reason, requested_by, ' +
+      .select('id, so_doc_no, amendment_no, status, lane, reason, requested_by, ' +
         'supplier_confirmed_by, supplier_confirmation_ref, supplier_confirmation_note, ' +
         'supplier_confirmation_attachment_key, so_approved_by, so_approved_at, ' +
         'po_approved_by, po_approved_at, sent_at, created_at, updated_at, ' +
@@ -339,7 +359,20 @@ soAmendments.get('/:id', async (c) => {
     }
   }
 
-  return c.json({ amendment, lines, salesOrder, purchaseOrders });
+  /* Two-lane rework — the follow-up PO Amendments this amendment auto-raised
+     when its LINES lane applied. A REJECTED follow-up is the "PO not followed
+     up" flag the SO/amendment detail surfaces; an APPROVED one is the
+     purchaser's second signature done. Empty for DELIVERY-lane + legacy rows. */
+  let poFollowUps: Array<Record<string, unknown>> = [];
+  {
+    const { data: fuRows } = await sb.from('po_amendments')
+      .select('id, po_id, po_number, amendment_no, status, resolution, approved_at, rejected_at, created_at')
+      .eq('source_so_amendment_id', id)
+      .order('created_at', { ascending: true });
+    poFollowUps = (fuRows ?? []) as Array<Record<string, unknown>>;
+  }
+
+  return c.json({ amendment, lines, salesOrder, purchaseOrders, poFollowUps });
 });
 
 /* ── PATCH /:id/supplier-confirm ───────────────────────────────────────────
@@ -369,6 +402,13 @@ soAmendments.patch('/:id/supplier-confirm', async (c) => {
     });
   }
   const { amendment } = loaded;
+
+  /* Two-lane rework: there is NO supplier-confirmation gate on a lane row —
+     the purchaser checks with the supplier BEFORE signing (their signature is
+     the confirmation). Only legacy (lane NULL) rows keep this step. */
+  if (laneOf(amendment)) {
+    return c.json(NOT_IN_LANE_FLOW('there is no supplier-confirmation step. Approve or reject it directly.'), 409);
+  }
 
   const action: AmendAction = 'supplier-confirm';
   if (!canTransition(amendment.status, action)) {
@@ -420,26 +460,34 @@ soAmendments.patch('/:id/supplier-confirm', async (c) => {
 export async function approveSoCommandHandler(c: any, sb: any): Promise<Response> {
   const id = c.req.param('id'); const user = c.get('user');
 
-  if (!hasHouzsPerm(c, 'scm.amendment.approve_so')) {
-    return c.json({
-      error: 'approve_so_forbidden',
-      message: 'You do not have permission to approve a Sales Order revision.',
-    }, 403);
-  }
-
+  /* Two-lane rework: the gate key depends on WHICH row this is, so load first.
+     LINES → scm.amendment.approve_lines (purchasing), DELIVERY →
+     scm.amendment.approve_delivery (logistics), legacy NULL-lane rows keep the
+     original scm.amendment.approve_so. */
   const loaded = await loadAmendmentForWrite(sb, id, c);
   if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
+  const lane = laneOf(loaded.amendment);
+  const approveKey = lane ? LANE_APPROVE_KEY[lane] : 'scm.amendment.approve_so';
+  if (!hasHouzsPerm(c, approveKey)) {
+    return c.json({
+      error: 'approve_so_forbidden',
+      message: lane
+        ? `You do not have permission to approve the ${LANE_LABEL[lane]} lane of an SO amendment.`
+        : 'You do not have permission to approve a Sales Order revision.',
+    }, 403);
+  }
   if (loaded.mirrored) return dispatchMirroredCommand(c, sb, loaded.amendment, 'approve-so', {});
   const { amendment } = loaded;
 
   const action: AmendAction = 'approve-so';
-  if (!canTransition(amendment.status, action)) {
+  const legal = lane ? canLaneTransition(amendment.status, action) : canTransition(amendment.status, action);
+  if (!legal) {
     return c.json({
       error: 'bad_transition',
       reason: `Cannot approve the SO revision from status ${amendment.status}.`,
     }, 409);
   }
-  const to = nextStatus(amendment.status, action);
+  const to = lane ? ('SO_APPROVED' as AmendStatus) : nextStatus(amendment.status, action);
   if (!to) return c.json({ error: 'bad_transition' }, 409);
 
   /* Claim BOTH the amendment and its SO before the first apply write. The
@@ -537,8 +585,43 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
   if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
   if (!updated) return c.json({ error: 'amendment_version_conflict' }, 409);
 
+  /* Two-lane rework — the LINES lane's PO leg: raise the follow-up PO
+     Amendment(s) INSIDE this same transaction (runScmPgCommand), so the SO
+     revision and the purchaser's to-do commit or roll back together. The
+     purchaser confirms them in PO Amendments (their second signature), where
+     the apply is reviseBoundPo scoped to that one PO. DELIVERY lane and legacy
+     rows never reach this: DELIVERY never touches a PO, legacy uses approve-po. */
+  let poFollowUps: Awaited<ReturnType<typeof raisePoFollowUps>> = { followUps: [], warnings: [] };
+  if (lane === 'LINES') {
+    poFollowUps = await raisePoFollowUps(sb, c, {
+      soAmendmentId: amendment.id,
+      soAmendmentNo: amendment.amendment_no ?? '',
+      soDocNo: amendment.so_doc_no,
+      reason: amendment.reason ?? null,
+      requesterStaffId: await gateActorStaffId(sb, c.get('houzsUser')?.id, user.id),
+    });
+    await recordSoAudit(sb, {
+      docNo: amendment.so_doc_no,
+      action: 'AMENDMENT_PO_FOLLOWUP_RAISED',
+      actorId: user.id,
+      actorName: actorName(user),
+      fieldChanges: [
+        { field: 'po_follow_ups', to: poFollowUps.followUps.map((f) => f.amendmentNo).join(', ') || 'none' },
+        ...(poFollowUps.warnings.length ? [{ field: 'needs_attention', to: poFollowUps.warnings.join(' | ') }] : []),
+      ],
+      note: poFollowUps.followUps.length
+        ? `Follow-up PO amendment(s) raised for purchasing to confirm: ${poFollowUps.followUps.map((f) => `${f.amendmentNo} (${f.poNumber})`).join('; ')}`
+        : 'No PO follow-up needed for this amendment.',
+    });
+  }
+
   await scheduleStockAllocationAfterCommand(c, sb, `amendment-approve-so:${amendment.so_doc_no}`);
-  return c.json({ amendment: updated, revision: applied.revision });
+  return c.json({
+    amendment: updated,
+    revision: applied.revision,
+    poFollowUps: poFollowUps.followUps,
+    warnings: poFollowUps.warnings,
+  });
 }
 soAmendments.patch('/:id/approve-so', (c) => {
   const company = requireActiveCompanyId(c);
@@ -568,6 +651,11 @@ export async function approvePoCommandHandler(c: any, sb: any) {
   if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
   if (loaded.mirrored) return dispatchMirroredCommand(c, sb, loaded.amendment, 'approve-po', {});
   const { amendment } = loaded;
+
+  /* Two-lane rework: a lane row's PO leg lives in PO Amendments. */
+  if (laneOf(amendment)) {
+    return c.json(NOT_IN_LANE_FLOW('the PO side is confirmed in PO Amendments, not here.'), 409);
+  }
 
   const action: AmendAction = 'approve-po';
   if (!canTransition(amendment.status, action)) {
@@ -683,6 +771,12 @@ soAmendments.patch('/:id/send', async (c) => {
   if (loaded.mirrored) return dispatchMirroredCommand(c, sb, loaded.amendment, 'send', {});
   const { amendment } = loaded;
 
+  /* Two-lane rework: a lane row never reaches PO_APPROVED — sending the
+     revised PO happens off the PO itself once its follow-up is confirmed. */
+  if (laneOf(amendment)) {
+    return c.json(NOT_IN_LANE_FLOW('print and send the revised PO from the Purchase Order after confirming its follow-up amendment.'), 409);
+  }
+
   const action: AmendAction = 'send';
   if (!canTransition(amendment.status, action)) {
     return c.json({
@@ -739,13 +833,6 @@ soAmendments.patch('/:id/send', async (c) => {
 soAmendments.patch('/:id/reject', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
-  if (!hasHouzsPerm(c, 'scm.amendment.approve_po')) {
-    return c.json({
-      error: 'reject_forbidden',
-      message: 'You do not have permission to reject an amendment.',
-    }, 403);
-  }
-
   let body: { reason?: string } = {};
   try { body = (await c.req.json()) as typeof body; } catch { /* validated below */ }
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
@@ -756,21 +843,37 @@ soAmendments.patch('/:id/reject', async (c) => {
     }, 400);
   }
 
+  /* Two-lane rework: the reject key follows the row's lane (its own approver
+     refuses it); legacy rows keep the original purchasing gate. Loaded first
+     because the key depends on the row. */
   const loaded = await loadAmendmentForWrite(sb, id, c);
   if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
+  const lane = laneOf(loaded.amendment);
+  const rejectKey = lane ? LANE_APPROVE_KEY[lane] : 'scm.amendment.approve_po';
+  if (!hasHouzsPerm(c, rejectKey)) {
+    return c.json({
+      error: 'reject_forbidden',
+      message: lane
+        ? `You do not have permission to reject the ${LANE_LABEL[lane]} lane of an SO amendment.`
+        : 'You do not have permission to reject an amendment.',
+    }, 403);
+  }
   if (loaded.mirrored) {
     return dispatchMirroredCommand(c, sb, loaded.amendment, 'reject', { reason });
   }
   const { amendment } = loaded;
 
   const action: AmendAction = 'reject';
-  if (!canTransition(amendment.status, action)) {
+  const legal = lane ? canLaneTransition(amendment.status, action) : canTransition(amendment.status, action);
+  if (!legal) {
     return c.json({
       error: 'bad_transition',
-      reason: `Cannot reject an amendment from status ${amendment.status}.`,
+      reason: lane && amendment.status !== 'REQUESTED'
+        ? `This amendment is already ${amendment.status === 'SO_APPROVED' ? 'applied' : 'closed'} — it can no longer be rejected.`
+        : `Cannot reject an amendment from status ${amendment.status}.`,
     }, 409);
   }
-  const to = nextStatus(amendment.status, action);
+  const to = lane ? ('REJECTED' as AmendStatus) : nextStatus(amendment.status, action);
   if (!to) return c.json({ error: 'bad_transition' }, 409);
 
   const { data: updated, error: updErr } = await sb.from('so_amendments').update({
@@ -842,7 +945,11 @@ soAmendments.patch('/:id/withdraw', async (c) => {
     .select('requested_by').eq('id', id).maybeSingle();
   const requestedBy = (ownerRow as { requested_by?: string | null } | null)?.requested_by ?? null;
   const isRequester = callerStaffId != null && requestedBy != null && callerStaffId === requestedBy;
-  if (!isRequester && !hasHouzsPerm(c, 'scm.amendment.approve_po')) {
+  /* Two-lane rework: the "someone who could reject it anyway" fallback follows
+     the row's lane key; legacy rows keep the original purchasing gate. */
+  const withdrawLane = laneOf(amendment);
+  const withdrawFallbackKey = withdrawLane ? LANE_APPROVE_KEY[withdrawLane] : 'scm.amendment.approve_po';
+  if (!isRequester && !hasHouzsPerm(c, withdrawFallbackKey)) {
     return c.json({
       error: 'withdraw_forbidden',
       message: 'Only the person who raised this amendment can withdraw it.',

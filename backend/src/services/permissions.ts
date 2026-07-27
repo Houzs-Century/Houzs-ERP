@@ -64,17 +64,27 @@ export const PERMISSIONS: PermissionDef[] = [
   // to one super_admin row), so gate on this admin-level key instead. Owner + IT
   // Admin cover it via "*"; grant other positions via the Team > Positions matrix.
   { key: "scm.so.remove_processing_date", resource: "Supply Chain", verb: "manage", label: "Remove SO Processing Date", description: "Clear an already-set Processing Date on a SCM Sales Order (admin-level; pulls the order back out of the Proceed lane)" },
-  // SO amendment / revision workflow (port of 2990 0703). A processing-locked SO
-  // (already PO'd to the supplier) can only change through a supplier-confirmed,
-  // two-gate amendment: REQUESTED -> SUPPLIER_PENDING -> SO_APPROVED -> PO_APPROVED
-  // -> SENT. 2990 gated each step on scm.staff.role (dead in Houzs — the SCM bridge
-  // pins every caller to one super_admin row), so these flat keys gate the REAL
-  // caller instead. Owner + IT Admin cover all via "*"; grant purchasing / desk
-  // positions via the Team > Positions matrix. approve_po also gates send + reject.
-  { key: "scm.amendment.create",           resource: "Supply Chain", verb: "manage", label: "Raise SO amendment",          description: "Raise an amendment request against a processing-locked SCM Sales Order (opens the supplier-confirmed two-gate revision flow)" },
-  { key: "scm.amendment.supplier_confirm", resource: "Supply Chain", verb: "manage", label: "Confirm SO amendment (supplier)", description: "Record the supplier's confirmation of a requested SO amendment (REQUESTED -> SUPPLIER_PENDING)" },
-  { key: "scm.amendment.approve_so",       resource: "Supply Chain", verb: "manage", label: "Approve SO revision",         description: "Approve the Sales Order revision of an amendment — applies the line diffs, re-runs pricing, snapshots the prior version (SUPPLIER_PENDING -> SO_APPROVED)" },
-  { key: "scm.amendment.approve_po",       resource: "Supply Chain", verb: "manage", label: "Approve/send/reject PO revision", description: "Approve the bound Purchase Order revision, mark it sent, or reject an amendment (SO_APPROVED -> PO_APPROVED -> SENT, or -> REJECTED)" },
+  // SO amendment / revision workflow — TWO-LANE model (owner rework 2026-07-27).
+  // A processing-locked SO changes only through an amendment; at submit the
+  // request is auto-classified (and, when mixed, SPLIT) into two independent
+  // lanes, each with ONE approver signature that applies immediately:
+  //   LINES    (product lines: SKU/spec, colour, qty, price, add/remove; the
+  //             apply auto-raises a follow-up PO Amendment for purchasing to
+  //             confirm)                                  -> approve_lines
+  //   DELIVERY (schedule dates, State/Postcode/City — and later the address /
+  //             disposal / transport-charge fields; never touches a PO)
+  //                                                       -> approve_delivery
+  // Owner + IT Admin cover all via "*". The Purchaser / Logistic role grants
+  // ride migration 0214 (the Roles UI refuses system-role edits).
+  { key: "scm.amendment.create",           resource: "Supply Chain", verb: "manage", label: "Raise SO amendment",          description: "Raise an amendment request against a processing-locked SCM Sales Order (salespeople are additionally admitted for their OWN orders by org field)" },
+  { key: "scm.amendment.approve_lines",    resource: "Supply Chain", verb: "manage", label: "Approve SO amendment — product lines", description: "Approve (or reject) the PRODUCT-LINE lane of an SO amendment: SKU/spec, colour/fabric, quantity, price, added/removed lines. Approving applies the SO revision at once and auto-raises the follow-up PO Amendment for purchasing to confirm" },
+  { key: "scm.amendment.approve_delivery", resource: "Supply Chain", verb: "manage", label: "Approve SO amendment — delivery",      description: "Approve (or reject) the DELIVERY lane of an SO amendment: schedule dates, State/Postcode/City (and the delivery-info fields as they come under control). Applies the SO revision at once; never touches a Purchase Order" },
+  // LEGACY keys — gate only pre-rework amendments still mid-chain (lane IS NULL:
+  // supplier-confirm / approve-so / approve-po / send). Not granted to any role;
+  // Owner + IT Admin pass via "*". Kept so historical rows stay operable.
+  { key: "scm.amendment.supplier_confirm", resource: "Supply Chain", verb: "manage", label: "Confirm SO amendment (supplier) — legacy", description: "LEGACY flow only: record the supplier's confirmation on a pre-rework amendment (REQUESTED -> SUPPLIER_PENDING)" },
+  { key: "scm.amendment.approve_so",       resource: "Supply Chain", verb: "manage", label: "Approve SO revision — legacy",         description: "LEGACY flow only: approve the Sales Order revision of a pre-rework amendment (SUPPLIER_PENDING -> SO_APPROVED)" },
+  { key: "scm.amendment.approve_po",       resource: "Supply Chain", verb: "manage", label: "Approve/send/reject PO revision — legacy", description: "LEGACY flow only: approve the bound PO revision, mark it sent, or reject a pre-rework amendment (SO_APPROVED -> PO_APPROVED -> SENT, or -> REJECTED)" },
   // PO amendment / revision workflow (Houzs, mig 0192). A standalone amendment
   // that revises a Purchase Order directly (line qty / cost / spec / delivery,
   // add or remove a line, or the header supplier / delivery / notes) through a

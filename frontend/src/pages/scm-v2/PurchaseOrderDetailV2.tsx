@@ -52,6 +52,7 @@ import {
 } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
+import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
@@ -841,8 +842,10 @@ function PurchaseOrderDetailV2ReadOnly() {
                 </Badge>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
+                {/* _R suffix (owner 2026-07-27): a revised PO's number shows its
+                    revision marker everywhere it is read or printed. */}
                 <span className="font-mono font-semibold text-primary-ink">
-                  {purchaseOrder.po_number}
+                  {poDisplayNumber(purchaseOrder.po_number, (purchaseOrder as unknown as { revision?: number | null }).revision)}
                 </span>
                 <Divider />
                 <span>Ordered {fmtDate(purchaseOrder.po_date)}</span>

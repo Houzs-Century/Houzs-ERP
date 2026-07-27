@@ -44,6 +44,7 @@ import {
 } from '@2990s/shared/so-line-display';
 import { COMPANY, amountInWordsMyr, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
+import { poDisplayNumber } from './po-status';
 import {
   loadSupplierDocData,
   supplierCodeFor,
@@ -53,6 +54,10 @@ import {
 
 type PoHeader = {
   po_number:     string;
+  /** Mig 0080 — approved-revision counter. The PRINTED number carries the _R
+      suffix (poDisplayNumber) so the supplier can tell a revised order sheet
+      from the original: PO-xxx_R1, _R2… Optional: absent → no suffix. */
+  revision?:     number | null;
   /** Supplier id — drives the print-time binding lookup for lines that never
       snapshotted a supplier_sku AND the full supplier-master top-up (fax /
       attention / payment terms). Optional: missing id → '—' fallback. */
@@ -236,7 +241,8 @@ async function renderPurchaseOrderInto(
     {
       title: 'PO DETAILS',
       rows: [
-        ['PO No', header.po_number],
+        // _R suffix (owner 2026-07-27) — the printed number shows the revision.
+        ['PO No', poDisplayNumber(header.po_number, header.revision)],
         ['Your Ref No', yourRef],
         ['Date', fmtDocDate(header.po_date)],
         /* Migration 0180 — print the EFFECTIVE (latest revised) delivery date. */
@@ -344,7 +350,7 @@ async function renderPurchaseOrderInto(
   const drawPageHeader = (pageNumber: number) => {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80);
     doc.text(
-      `${header.po_number} · Page ${pageNumber} of ${totalPagesExp}`,
+      `${poDisplayNumber(header.po_number, header.revision)} · Page ${pageNumber} of ${totalPagesExp}`,
       pageW - margin, 10, { align: 'right' },
     );
     doc.setTextColor(0);
@@ -476,7 +482,7 @@ export async function generatePurchaseOrderPdf(
   const { supplierName } = await renderPurchaseOrderInto(doc, autoTable, header, items, opts);
   finalizePoPdf(doc);
   const safeName = supplierName.replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 32);
-  doc.save(`${header.po_number}-${safeName}.pdf`);
+  doc.save(`${poDisplayNumber(header.po_number, header.revision)}-${safeName}.pdf`);
 }
 
 /* The SAME PO PDF, returned as raw base64 instead of downloaded — for emailing it
