@@ -59,7 +59,8 @@
     "WorkspaceTabs": { "cardMode": "column" },
     "ResizableDrawer": { "cardMode": "single", "primaryStory": "ScheduleTrip", "viewport": "1100x640" },
     "ResizableDetailDrawer": { "cardMode": "single", "primaryStory": "Open", "viewport": "1100x640" },
-    "PoAmendmentCreateModal": { "cardMode": "single", "primaryStory": "AmendLines", "viewport": "1200x760" }
+    "PoAmendmentCreateModal": { "cardMode": "single", "primaryStory": "AmendLines", "viewport": "1200x760" },
+    "PresenceButton": { "cardMode": "single", "primaryStory": "OpenPopover", "viewport": "460x640" }
   },
   "componentSrcMap": {
     "AndroidInstallGuide": "src/components/AndroidInstallGuide.tsx",
@@ -117,6 +118,7 @@
     "PhotoGallery": "src/components/scm-v2/PhotoGallery.tsx",
     "PnlCalendar": "src/components/PnlCalendar.tsx",
     "PoAmendmentCreateModal": "src/components/scm-v2/PoAmendmentCreateModal.tsx",
+    "PresenceButton": "src/components/PresenceButton.tsx",
     "PresencePanel": "src/components/PresencePanel.tsx",
     "ProjectChat": "src/components/ProjectChat.tsx",
     "ProjectGantt": "src/components/ProjectGantt.tsx",
