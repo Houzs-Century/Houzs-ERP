@@ -945,11 +945,17 @@ export function AmendmentDetailV2() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="ghost" icon={<GitBranch size={14} />} onClick={openSalesOrder}>
+            {/* Owner 2026-07-27: the header jump actions read as a UNIFORM
+                bordered pair (secondary) — the naked ghost next to a boxed
+                secondary looked like plain text + a stray box, off-theme. */}
+            <Button variant="secondary" icon={<GitBranch size={14} />} onClick={openSalesOrder}>
               Open Sales Order
             </Button>
             {pastSoGate && boundPo?.id && (
-              <Button variant="secondary" icon={<ExternalLink size={14} />} onClick={openBoundPo}>
+              /* Owner 2026-07-27: while the PO revision is still OWED (bound PO
+                 not yet revised) this is the page's pending action — petrol
+                 primary. Once revised it calms back to secondary. */
+              <Button variant={poRevised ? "secondary" : "primary"} icon={<ExternalLink size={14} />} onClick={openBoundPo}>
                 {/* At SO_APPROVED the PO has NOT been revised — approve-so
                     rewrites the Sales Order and nothing else. Calling it "the
                     revised PO" here told the approver a job was done that still
