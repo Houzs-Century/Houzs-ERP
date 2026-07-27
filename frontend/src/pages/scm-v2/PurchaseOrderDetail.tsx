@@ -935,7 +935,26 @@ export const PurchaseOrderDetail = () => {
         }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <History {...ICON} />
-            <span>Revision ready — amendment <strong>{openAmendment.amendment_no}</strong></span>
+            {/* Owner 2026-07-27 — the amendment number is a LINK to its detail,
+                where the full WAS → REQUESTING diff (what the customer changed)
+                lives. Approving the PO here doesn't show the change details
+                inline, so the operator needs one click to see exactly what was
+                revised. */}
+            <span>
+              Revision ready — amendment{' '}
+              <button
+                type="button"
+                onClick={() => navigate(`/scm/amendments/${openAmendment.id}`)}
+                style={{
+                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                  color: 'var(--c-secondary-a, #2F5D4F)', fontWeight: 700,
+                  fontSize: 'inherit', textDecoration: 'underline',
+                }}
+              >
+                {openAmendment.amendment_no}
+              </button>
+              {' '}(view change details)
+            </span>
             <StatusPill docType="soAmendment" status={openAmendment.status} />
             {openAmendment.status === 'SO_APPROVED'
               ? <span className={styles.muted}>Approve this PO to apply the supplier-confirmed changes.</span>
@@ -1583,13 +1602,31 @@ const PoRevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currenc
             </tr>
           </thead>
           <tbody>
-            {lines.map((l, i) => (
-              <tr key={i}>
-                <td>{str(l.material_code ?? l.materialCode ?? l.item_code ?? l.itemCode)}</td>
-                <td className={styles.tableRight}>{str(l.qty)}</td>
-                <td className={styles.tableRight}>{centi(l.unit_price_centi ?? l.unitPriceCenti)}</td>
-              </tr>
-            ))}
+            {lines.map((l, i) => {
+              /* Owner 2026-07-27 — the snapshot listed only code/qty/price, so a
+                 fabric change (the common amendment) was invisible in the prior
+                 version. Show the spec: the stored variant summary if the
+                 snapshot line carries variants, else its description2 string. */
+              const itemGroup = str(l.item_group ?? l.itemGroup ?? 'others');
+              const variants = (l.variants ?? null) as Record<string, unknown> | null;
+              const spec =
+                buildVariantSummary(itemGroup === '—' ? 'others' : itemGroup, variants) ||
+                str(l.description2 ?? l.description ?? '').replace(/^—$/, '');
+              return (
+                <tr key={i}>
+                  <td>
+                    <div>{str(l.material_code ?? l.materialCode ?? l.item_code ?? l.itemCode)}</div>
+                    {spec && (
+                      <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
+                        {spec}
+                      </div>
+                    )}
+                  </td>
+                  <td className={styles.tableRight}>{str(l.qty)}</td>
+                  <td className={styles.tableRight}>{centi(l.unit_price_centi ?? l.unitPriceCenti)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       ) : (
