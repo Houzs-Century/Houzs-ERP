@@ -30,6 +30,8 @@ import {
   HC_SUBSTATUS_VALUES,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
+import { useCreateAmendment } from '../lib/so-amendment-queries';
+import { procLockActive } from '../lib/so-detail-gates';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 
@@ -50,10 +52,21 @@ export const DeliveryFieldsDrawer = ({
   onClose: () => void;
 }) => {
   const update = useUpdateDeliveryFields();
+  const createAmendment = useCreateAmendment();
   const notify = useNotify();
 
   // The order always carries an SO doc_no; DO-execution fields need a DO.
   const hasDo = order.delivery_orders.length > 0;
+
+  /* Two-lane phase 2 (owner 2026-07-27): Replacement / Disposal is a CONTROLLED
+     SO field. On a processing-locked order its change "appears in SO Amendment —
+     Logistics reviews → approves" (the owner's ruling), so saving here routes
+     that ONE field into an amendment request while everything else still saves
+     directly. Same predicate the SO editor uses (procLockActive). */
+  const procLocked = procLockActive({
+    internal_expected_dd: order.internal_expected_dd,
+    status: order.status,
+  });
 
   const [form, setForm] = useState({
     // SO-context
@@ -75,6 +88,11 @@ export const DeliveryFieldsDrawer = ({
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
     setForm((s) => ({ ...s, [k]: v }));
 
+  /* Disposal actually changed vs the persisted value ('' and null collapse). */
+  const disposalDirty =
+    (form.replacementDisposal.trim() || null) !== (order.replacement_disposal ?? null);
+  const disposalViaAmendment = procLocked && disposalDirty;
+
   const submit = () => {
     // Always send SO-context; send DO-execution only when a DO exists (else the
     // API would just hint anyway — keep the request tight).
@@ -83,9 +101,12 @@ export const DeliveryFieldsDrawer = ({
       id: order.so_doc_no,
       possessionDate: form.possessionDate || null,
       houseType: form.houseType || null,
-      replacementDisposal: form.replacementDisposal || null,
       referral: form.referral || null,
     };
+    /* Locked + changed → the disposal value is EXCLUDED from the direct save
+       (the API 409s it anyway) and submitted as a DELIVERY-lane amendment
+       below. Unlocked, it saves directly as before. */
+    if (!disposalViaAmendment) body.replacementDisposal = form.replacementDisposal || null;
     if (hasDo) {
       Object.assign(body, {
         timeRange: form.timeRange || null,
@@ -100,8 +121,31 @@ export const DeliveryFieldsDrawer = ({
     }
     update.mutate(body as Parameters<typeof update.mutate>[0], {
       onSuccess: (res) => {
-        if (res?.no_do_hint) notify({ title: 'Saved (partly)', body: res.no_do_hint });
-        onClose();
+        if (!disposalViaAmendment) {
+          if (res?.no_do_hint) notify({ title: 'Saved (partly)', body: res.no_do_hint });
+          onClose();
+          return;
+        }
+        createAmendment.mutate({
+          docNo: order.so_doc_no,
+          reason: 'Replacement / disposal update (Delivery Planning board)',
+          lines: [],
+          headerChanges: { replacementDisposal: form.replacementDisposal.trim() || null },
+        }, {
+          onSuccess: () => {
+            notify({
+              title: 'Saved — disposal change sent for approval',
+              body: 'The Replacement / Disposal change was raised as an SO Amendment. Review and approve it in Amendments (Logistics).',
+            });
+            onClose();
+          },
+          onError: (err) =>
+            notify({
+              title: 'Disposal change NOT submitted',
+              body: `${err instanceof Error ? err.message : 'Something went wrong.'} The other fields were saved.`,
+              tone: 'error',
+            }),
+        });
       },
       onError: (err) =>
         notify({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
@@ -149,6 +193,14 @@ export const DeliveryFieldsDrawer = ({
             <input className={styles.searchInput} style={inputStyle}
               value={form.replacementDisposal} placeholder="What's being disposed / how the old set is handled"
               onChange={(e) => set('replacementDisposal', e.target.value)} />
+            {procLocked && (
+              <div style={{
+                marginTop: 4, fontSize: 'var(--fs-11)', color: 'var(--c-burnt)',
+              }}>
+                Order is locked — saving a change here raises an SO Amendment for
+                Logistics to approve.
+              </div>
+            )}
           </label>
 
           <label style={fieldRow}>

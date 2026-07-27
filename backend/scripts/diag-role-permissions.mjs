@@ -47,6 +47,10 @@ const notice = (msg) =>
 // (services/permissions.ts). approve_po also gates send + reject + withdraw.
 const AMENDMENT_KEYS = [
   "scm.amendment.create",
+  // Two-lane rework (mig 0216) — the live gate keys.
+  "scm.amendment.approve_lines",
+  "scm.amendment.approve_delivery",
+  // Legacy chain keys (pre-rework rows only).
   "scm.amendment.supplier_confirm",
   "scm.amendment.approve_so",
   "scm.amendment.approve_po",

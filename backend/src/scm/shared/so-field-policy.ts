@@ -127,27 +127,101 @@ export const SO_HEADER_FIELD_POLICY: readonly SoHeaderFieldPolicy[] = [
       + 'set contained it, so a posted City change wrote through on a locked SO and no '
       + 'amendment could carry it. Desktop did not lock it at all.',
   },
+  /* Two-lane rework phase 2 (owner 2026-07-27): the DELIVERY ADDRESS block and
+     the disposal note join the CONTROLLED set — the owner's category-2 spec
+     names "delivery address" and "disposal add on" as Logistics-approved
+     changes, which reverses the earlier "address lines save straight away"
+     ruling this table used to flag. All classify to the DELIVERY lane
+     (amendment-lane.ts). */
+  {
+    column: 'address1',
+    payloadKey: 'address1',
+    label: 'Address line 1',
+    cls: 'CONTROLLED',
+    reason:
+      'The delivery address the trip is planned to and the paperwork prints. '
+      + 'Owner 2026-07-27 (two-lane spec): address changes on a locked SO are '
+      + 'a Logistics-approved amendment, no longer a direct save.',
+  },
+  {
+    column: 'address2',
+    payloadKey: 'address2',
+    label: 'Address line 2',
+    cls: 'CONTROLLED',
+    reason: 'Same rationale as Address line 1 — one address, one rule.',
+  },
+  {
+    column: 'address3',
+    payloadKey: 'address3',
+    label: 'Address line 3',
+    cls: 'CONTROLLED',
+    reason: 'Same rationale as Address line 1 — one address, one rule.',
+  },
+  {
+    column: 'address4',
+    payloadKey: 'address4',
+    label: 'Address line 4',
+    cls: 'CONTROLLED',
+    reason:
+      'Same rationale as Address line 1 — and legacy rows double this line as '
+      + 'the postcode (the editor falls back postcode ?? address4), so it '
+      + 'freezes with Postcode too.',
+  },
+  {
+    column: 'ship_to_address',
+    payloadKey: 'shipToAddress',
+    label: 'Ship-to address',
+    cls: 'CONTROLLED',
+    reason:
+      'Free-text delivery destination rendered on supplier-facing paperwork — '
+      + 'the exact rationale that froze Postcode and City. No editor field '
+      + 'writes it after create; controlling it closes the direct-API hole.',
+  },
+  {
+    column: 'bill_to_address',
+    payloadKey: 'billToAddress',
+    label: 'Bill-to address',
+    cls: 'CONTROLLED',
+    reason:
+      'Kept with its sibling address fields so the whole ship/bill/install '
+      + 'block moves through one channel once the SO is committed.',
+  },
+  {
+    column: 'install_to_address',
+    payloadKey: 'installToAddress',
+    label: 'Install-to address',
+    cls: 'CONTROLLED',
+    reason: 'Same rationale as Ship-to address — where the crew actually goes.',
+  },
+  {
+    column: 'replacement_disposal',
+    payloadKey: 'replacementDisposal',
+    label: 'Replacement / disposal',
+    cls: 'CONTROLLED',
+    reason:
+      'The owner\'s "disposal add on" — what the crew hauls away, which changes '
+      + 'the delivery job itself. NOTE: the Delivery Planning fields drawer '
+      + '(delivery-planning.ts /:type/:id/fields) still writes it DIRECTLY — '
+      + 'that surface is page-guarded to Logistics, who are this lane\'s own '
+      + 'approvers, so their direct edit is the approved change. This row gates '
+      + 'the sales-reachable header PATCH and lets an amendment carry it.',
+  },
 ];
 
 /* WHY FREE IS THE DEFAULT, AND WHAT THAT COSTS
    -------------------------------------------
    The free bucket is "every patchable column not named above": customer name,
    phone, email, customer type, customer SO ref, salesperson, building type,
-   venue, branding, note, address lines 1-4, emergency contact + relationship,
-   and the payments collection. That matches the owner's ruling and matches how
-   the header PATCH has always behaved.
+   venue, branding, note, emergency contact + relationship, and the payments
+   collection. That matches the owner's ruling and matches how the header PATCH
+   has always behaved.
 
-   It is a RESIDUE, not a per-field decision, and two entries deserve the
+   It is a RESIDUE, not a per-field decision. One entry still deserves the
    owner's eye rather than my silence:
-     * ship_to_address / bill_to_address / install_to_address and address3 /
-       address4 are free-text delivery destinations by name, and they render on
-       supplier-facing paperwork — which is the exact rationale used to freeze
-       Postcode and City. They are left FREE because the owner ruled "address
-       lines save straight away" and these are address lines. Flagged, not
-       silently reclassified.
      * A delivery-address change on an SO with an already-SCHEDULED delivery
-       trip does not re-plan that trip. The address is free to change per the
-       owner's ruling; the UI warns at the point of edit instead. */
+       trip does not re-plan that trip. The address now moves by amendment
+       (rows above, 2026-07-27), so Logistics signs it — but the trip still
+       needs re-planning by hand after the amendment applies. */
 export const SO_FREE_HEADER_NOTE =
   'Header columns absent from SO_HEADER_FIELD_POLICY are FREE: Save writes them directly, '
   + 'audited via entity-audit.';

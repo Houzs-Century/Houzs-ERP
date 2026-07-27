@@ -375,7 +375,10 @@ export function scopeSoItemToDocument<T>(
     .eq('id', itemId) as T;
 }
 
-function soProcessingLocked(
+/* Exported (two-lane phase 2): delivery-planning.ts guards its board write of
+   the CONTROLLED replacement_disposal field with the SAME predicate, so the
+   two surfaces can never disagree about when the lock is on. */
+export function soProcessingLocked(
   header: { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
 ): boolean {
   if (!header) return false;
@@ -10722,7 +10725,15 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   // `*`, office positions via the matrix) OR any salesperson by STABLE ORG
   // FIELD (isSalesCaller). Ownership is enforced after the SO row loads, so a
   // rep passing here can still only amend a Sales Order within their own scope.
-  if (!hasHouzsPerm(c, 'scm.amendment.create') && !isSalesCaller(c)) {
+  /* Two-lane phase 2: a LANE APPROVER may also RAISE a request — whoever can
+     sign a change can obviously ask for it (the Delivery-Planning drawer
+     raises replacement-disposal changes under this: the owner ruled those
+     "appear in SO Amendment — Logistics reviews → approves" rather than any
+     direct-write shortcut). Additive to the create key + the sales org-field
+     path; ownership scoping below is unchanged. */
+  const isLaneApprover =
+    hasHouzsPerm(c, 'scm.amendment.approve_lines') || hasHouzsPerm(c, 'scm.amendment.approve_delivery');
+  if (!hasHouzsPerm(c, 'scm.amendment.create') && !isSalesCaller(c) && !isLaneApprover) {
     return c.json({
       error: 'amendment_create_forbidden',
       message: 'You do not have permission to raise a Sales Order amendment.',

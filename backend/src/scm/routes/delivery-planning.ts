@@ -68,6 +68,7 @@ import { paginateAll } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
+import { soProcessingLocked } from './mfg-sales-orders';
 import { activeCompanyId, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
@@ -1615,6 +1616,29 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
       }
       const assignment = ownDoId ? await fetchDoCrewAssignment(sb, ownDoId) : { driverIds: [], helperIds: [] };
       if (!scopeMatchesAssignment(scope, assignment)) return c.json({ error: NOT_YOUR_JOB }, 403);
+    }
+  }
+
+  /* Two-lane phase 2 (owner 2026-07-27): replacement_disposal is a CONTROLLED
+     SO field — on a processing-locked order it "appears in SO Amendment;
+     Logistics reviews → approves" (owner's words), never a board direct-write.
+     The drawer routes the change into an amendment client-side; this 409 is
+     the control for anything that bypasses the drawer. The other SO-context
+     fields here (possession/house type/referral/DP amend dates) stay FREE. */
+  if (soUpdates['replacement_disposal'] !== undefined && soDocNo) {
+    const { data: lockRow } = await sb.from('mfg_sales_orders')
+      .select('internal_expected_dd, proceeded_at, status')
+      .eq('doc_no', soDocNo).maybeSingle();
+    const before = await sb.from('mfg_sales_orders')
+      .select('replacement_disposal').eq('doc_no', soDocNo).maybeSingle();
+    const current = (before.data as { replacement_disposal?: string | null } | null)?.replacement_disposal ?? null;
+    const requested = (soUpdates['replacement_disposal'] ?? null) as string | null;
+    const genuineChange = String(current ?? '') !== String(requested ?? '');
+    if (genuineChange && soProcessingLocked(lockRow as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null)) {
+      return c.json({
+        error: 'so_locked_processing',
+        reason: 'Replacement / disposal is locked on this order — request the change as an amendment instead (it goes to Logistics for approval in SO Amendments).',
+      }, 409);
     }
   }
 
