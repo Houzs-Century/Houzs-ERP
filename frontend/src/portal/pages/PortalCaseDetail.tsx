@@ -4,6 +4,12 @@ import { Upload, Send, Package, Star, X, ChevronLeft, ChevronRight, Trash2, Cloc
 import { createPortal } from "react-dom";
 import { portalApi } from "../portalApi";
 import { prepareImageForUpload } from "../../lib/imagePipeline";
+import {
+  UploadDropZone,
+  clipboardFiles,
+  hoveredUploadZones,
+  useStrayFileDropGuard,
+} from "../../lib/uploadDropZone";
 import { PortalFrame } from "../components/PortalFrame";
 import { useDialog } from "../../hooks/useDialog";
 import { formatDate, formatDateTime } from "../../lib/utils";
@@ -131,30 +137,31 @@ export function PortalCaseDetailPage() {
     }
   }
 
-  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const raw = e.target.files?.[0];
-    if (!raw) return;
-    e.target.value = "";
-    if (!ALLOWED_EXT.includes((raw.name.split(".").pop() || "").toLowerCase())) {
-      setErr(`Unsupported file type: .${(raw.name.split(".").pop() || "").toLowerCase()}`);
-      return;
-    }
+  async function uploadFiles(raws: File[]) {
+    if (uploading || raws.length === 0) return;
     setUploading(true);
     setErr(null);
     try {
-      // WO-7 — customers upload straight from their phone camera roll, so
-      // compress photos before the 10 MB gate. The prepared file's name
-      // carries the re-encoded extension (webp is in ALLOWED_EXT).
-      const { file: f } = await prepareImageForUpload(raw, { wantThumb: false });
-      if (f.size > MAX_SIZE) { setErr("File exceeds 10 MB"); setUploading(false); return; }
-      const ext = (f.name.split(".").pop() || "").toLowerCase();
-      const buf = await f.arrayBuffer();
-      await portalApi.putBinary(
-        `/api/portal/case/attachments?ext=${ext}&name=${encodeURIComponent(f.name)}`,
-        token,
-        buf,
-        f.type || "image/jpeg"
-      );
+      for (const raw of raws) {
+        const rawExt = (raw.name.split(".").pop() || "").toLowerCase();
+        if (!ALLOWED_EXT.includes(rawExt)) {
+          setErr(`Unsupported file type: .${rawExt}`);
+          continue;
+        }
+        // WO-7 — customers upload straight from their phone camera roll, so
+        // compress photos before the 10 MB gate. The prepared file's name
+        // carries the re-encoded extension (webp is in ALLOWED_EXT).
+        const { file: f } = await prepareImageForUpload(raw, { wantThumb: false });
+        if (f.size > MAX_SIZE) { setErr("File exceeds 10 MB"); continue; }
+        const ext = (f.name.split(".").pop() || "").toLowerCase();
+        const buf = await f.arrayBuffer();
+        await portalApi.putBinary(
+          `/api/portal/case/attachments?ext=${ext}&name=${encodeURIComponent(f.name)}`,
+          token,
+          buf,
+          f.type || "image/jpeg"
+        );
+      }
       await load();
     } catch (e: any) {
       setErr(e?.message || "Upload failed");
@@ -162,6 +169,33 @@ export function PortalCaseDetailPage() {
       setUploading(false);
     }
   }
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.files?.[0];
+    e.target.value = "";
+    if (raw) await uploadFiles([raw]);
+  }
+
+  // Drop / paste to upload. This page has exactly ONE upload target, so a
+  // screenshot paste anywhere lands in Photos & evidence; the dropzone's own
+  // hover-paste still wins when the pointer is over it (registry check keeps
+  // the two listeners from double-firing in either registration order).
+  useStrayFileDropGuard();
+  const uploadFilesRef = useRef(uploadFiles);
+  useEffect(() => {
+    uploadFilesRef.current = uploadFiles;
+  });
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (e.defaultPrevented || hoveredUploadZones.size > 0) return;
+      const files = clipboardFiles(e);
+      if (files.length === 0) return;
+      e.preventDefault();
+      void uploadFilesRef.current(files);
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, []);
 
   if (expired) {
     return (
@@ -495,6 +529,7 @@ export function PortalCaseDetailPage() {
 
         {/* Photos */}
         <section className="rounded-2xl border border-border bg-surface p-5">
+          <UploadDropZone disabled={uploading} onFiles={(files) => void uploadFiles(files)}>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
               Photos &amp; evidence
@@ -527,8 +562,9 @@ export function PortalCaseDetailPage() {
             </div>
           )}
           <div className="mt-2 text-[10px] text-ink-muted">
-            JPG / PNG / WEBP · up to 10 MB each.
+            JPG / PNG / WEBP · up to 10 MB each · drag &amp; drop or paste (Ctrl+V) supported.
           </div>
+          </UploadDropZone>
         </section>
 
         {/* Updates (timeline) */}

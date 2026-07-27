@@ -20,6 +20,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Package, Printer, Trash2, Upload } from "lucide-react";
 import { portalApi } from "../portalApi";
 import { prepareImageForUpload } from "../../lib/imagePipeline";
+import { UploadDropZone, useStrayFileDropGuard } from "../../lib/uploadDropZone";
 import { PortalFrame } from "../components/PortalFrame";
 import { StatusPill } from "../components/StatusPill";
 import { Button } from "../../components/Button";
@@ -260,6 +261,11 @@ export function PortalSupplierCasePage() {
     }
   }
 
+  // Two upload slots render side by side, so pasted files are routed by
+  // the hovered dropzone (no document-wide paste here); this guard only
+  // keeps a missed drop from navigating the SPA to the file.
+  useStrayFileDropGuard();
+
   // Upload a photo into one of the two PictureBlock slots. Category
   // maps to the existing assr_attachments CHECK constraint:
   //   evidence   → "Service Issue" slot
@@ -294,6 +300,12 @@ export function PortalSupplierCasePage() {
     } finally {
       setUploadingSlot(null);
     }
+  }
+
+  // Multi-file entry for drop / paste (the picker forwards a single file
+  // through here too) — sequential so uploadingSlot stays honest.
+  async function uploadPhotos(raws: File[], category: "evidence" | "completion") {
+    for (const raw of raws) await uploadPhoto(raw, category);
   }
 
   async function archivePhoto(attId: number) {
@@ -599,7 +611,7 @@ export function PortalSupplierCasePage() {
             token={token}
             attachments={data.attachments.filter((a) => a.category === "evidence")}
             uploading={uploadingSlot === "evidence"}
-            onUpload={(f) => uploadPhoto(f, "evidence")}
+            onUpload={(files) => void uploadPhotos(files, "evidence")}
             onArchive={archivePhoto}
           />
           <PictureBlock
@@ -609,7 +621,7 @@ export function PortalSupplierCasePage() {
             token={token}
             attachments={data.attachments.filter((a) => a.category === "completion")}
             uploading={uploadingSlot === "completion"}
-            onUpload={(f) => uploadPhoto(f, "completion")}
+            onUpload={(files) => void uploadPhotos(files, "completion")}
             onArchive={archivePhoto}
           />
         </div>
@@ -697,17 +709,18 @@ function PictureBlock({
   token: string;
   attachments: SupplierCase["attachments"];
   uploading: boolean;
-  onUpload: (f: File) => void;
+  onUpload: (files: File[]) => void;
   onArchive: (attId: number) => void;
 }) {
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     e.target.value = "";
-    if (f) onUpload(f);
+    if (f) onUpload([f]);
   }
 
   return (
     <div>
+      <UploadDropZone disabled={uploading} onFiles={onUpload}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-wider text-ink">
@@ -751,6 +764,7 @@ function PictureBlock({
           ))}
         </div>
       )}
+      </UploadDropZone>
     </div>
   );
 }
