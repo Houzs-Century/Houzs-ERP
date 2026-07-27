@@ -43,6 +43,14 @@ import {
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary, fmtDateTime } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
+import { poDisplayNumber } from '../../vendor/scm/lib/po-status';
+
+/* dd/mm/yyyy — the V2 detail header's date shape, for the meta line. */
+const fmtDmy = (iso: string | null | undefined): string => {
+  if (!iso) return '—';
+  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})/.exec(iso);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+};
 import { formatPhone } from '@2990s/shared/phone';
 import {
   usePurchaseOrderDetail,
@@ -703,32 +711,66 @@ export const PurchaseOrderDetail = () => {
       {/* Commander 2026-05-29 — dropped the GRNs/Invoice/Returns smart-button
           row + the "PO date · N lines · Expected" subtitle (not needed). */}
 
-      {/* ── Header ──────────────────────────────────────────────── */}
-      <div className={styles.headerRow}>
-        <div className={styles.titleBlock}>
-          <Link to="/scm/purchase-orders" className={styles.backBtn}>
-            <ArrowLeft {...ICON} />
-            <span>Back</span>
-          </Link>
-          <div>
-            <h1 className={styles.title}>
-              {/* PR — Commander 2026-05-27: icon shrinks from 20 → 14 to
-                  balance the fs-15 title. */}
-              <FileText size={14} strokeWidth={1.75} style={{ color: 'var(--c-burnt)' }} />
-              {po.po_number} — {po.supplier?.name ?? po.supplier?.code ?? '—'}
-            </h1>
+      {/* ── Header — V2-parity chrome (owner 2026-07-27 "这里设计不对"): the
+          edit surface opens with the same header language as the V2 detail
+          pages — square back button, display-weight supplier title, status
+          pill, mono meta line (with the _R revision display number). The
+          action buttons keep their existing logic untouched. ── */}
+      <div className="mb-3 border-b border-border pb-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <button
+              type="button"
+              onClick={() => navigate('/scm/purchase-orders')}
+              aria-label="Back to Purchase Orders"
+              className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary hover:border-primary/50 hover:text-primary"
+            >
+              <ArrowLeft size={16} />
+            </button>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
+                  {po.supplier?.name ?? po.supplier?.code ?? po.po_number}
+                </h1>
+                <StatusPill docType="po" status={po.status} />
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
+                <span className="font-mono font-semibold text-primary-ink">
+                  {poDisplayNumber(po.po_number, (po as unknown as { revision?: number | null }).revision)}
+                </span>
+                <span>·</span>
+                <span>Ordered {fmtDmy(po.po_date)}</span>
+                {po.expected_at && (
+                  <>
+                    <span>·</span>
+                    <span>Expected {fmtDmy(po.expected_at)}</span>
+                  </>
+                )}
+                <span>·</span>
+                <span>{visibleItems.length} line{visibleItems.length === 1 ? '' : 's'}</span>
+                {po.supplier?.code && (
+                  <>
+                    <span>·</span>
+                    <span className="font-mono font-semibold">{po.supplier.code}</span>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-        <div className={styles.actions}>
+          {/* styles.actions / styles.totalRail were RETIRED from the module css
+              ("header chrome is inline Tailwind now") but this page never
+              followed — the classNames resolved to undefined and the whole
+              action row rendered unstyled/overflowing. Real utilities now. */}
+          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
           {/* PR — Commander 2026-05-27: align with SO Detail PR #231 — total
               moves into a right-rail KPI tile next to the action group so the
               page title stays compact. Commander 2026-05-29 — the total tracks
               the live line items (incl. unsaved draft edits). */}
-          <div className={styles.totalRail}>
-            <span className={styles.totalRailLabel}>Total</span>
-            <span className={styles.totalRailValue}>{fmtRm(grandTotal, po.currency)}</span>
+          <div className="flex shrink-0 items-baseline gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5">
+            <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Total</span>
+            <span className="font-money text-[14.5px] font-bold text-ink">{fmtRm(grandTotal, po.currency)}</span>
           </div>
-          <StatusPill docType="po" status={po.status} />
+          {/* Status pill lives in the title row now (V2-parity header). */}
           {/* SO-amendment workflow — "Revised · rev N" badge once this PO has been
               revised in place by an approved amendment (revision > 1). */}
           {((po as unknown as { revision?: number }).revision ?? 1) > 1 && (
@@ -861,6 +903,7 @@ export const PurchaseOrderDetail = () => {
               <span>{savingDraft ? 'Saving…' : 'Save'}</span>
             </Button>
           )}
+          </div>
         </div>
       </div>
 
@@ -1023,9 +1066,14 @@ export const PurchaseOrderDetail = () => {
           /* English copy (owner UI rule: no Chinese ships in the interface;
              swept 2026-07-27 while fixing the missing edit-mode redline). */
           <div className={styles.bannerWarn} style={{ margin: 'var(--space-2) var(--space-3)' }}>
-            ⚠ <strong>{driftCount}</strong> line{driftCount === 1 ? "'s" : 's'} source SO changed after this
-            PO was raised. Check the red notes below, sync the specs, then <strong>re-send to the
-            supplier</strong> — otherwise the factory keeps building to the old spec.
+            {/* bannerWarn is a COLUMN flex — bare text + <strong> children become
+                separate flex rows (the old Chinese copy broke the same way), so
+                the whole sentence rides in ONE span. */}
+            <span>
+              ⚠ <strong>{driftCount}</strong> line{driftCount === 1 ? "'s" : 's'} source SO changed after this
+              PO was raised. Check the red notes below, sync the specs, then <strong>re-send to the
+              supplier</strong> — otherwise the factory keeps building to the old spec.
+            </span>
           </div>
         )}
 
