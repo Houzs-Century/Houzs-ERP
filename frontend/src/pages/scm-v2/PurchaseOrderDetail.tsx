@@ -43,6 +43,14 @@ import {
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary, fmtDateTime } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
+import { poDisplayNumber } from '../../vendor/scm/lib/po-status';
+
+/* dd/mm/yyyy — the V2 detail header's date shape, for the meta line. */
+const fmtDmy = (iso: string | null | undefined): string => {
+  if (!iso) return '—';
+  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})/.exec(iso);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+};
 import { formatPhone } from '@2990s/shared/phone';
 import {
   usePurchaseOrderDetail,
@@ -75,6 +83,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
+import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import {
   useApprovePo,
@@ -703,32 +712,67 @@ export const PurchaseOrderDetail = () => {
       {/* Commander 2026-05-29 — dropped the GRNs/Invoice/Returns smart-button
           row + the "PO date · N lines · Expected" subtitle (not needed). */}
 
-      {/* ── Header ──────────────────────────────────────────────── */}
-      <div className={styles.headerRow}>
-        <div className={styles.titleBlock}>
-          <Link to="/scm/purchase-orders" className={styles.backBtn}>
-            <ArrowLeft {...ICON} />
-            <span>Back</span>
-          </Link>
-          <div>
-            <h1 className={styles.title}>
-              {/* PR — Commander 2026-05-27: icon shrinks from 20 → 14 to
-                  balance the fs-15 title. */}
-              <FileText size={14} strokeWidth={1.75} style={{ color: 'var(--c-burnt)' }} />
-              {po.po_number} — {po.supplier?.name ?? po.supplier?.code ?? '—'}
-            </h1>
+      {/* ── Header — V2-parity chrome (owner 2026-07-27 "这里设计不对"): the
+          edit surface opens with the same header language as the V2 detail
+          pages — square back button, display-weight supplier title, status
+          pill, mono meta line (with the _R revision display number). The
+          action buttons keep their existing logic untouched. ── */}
+      <div className="mb-3 border-b border-border pb-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <button
+              type="button"
+              onClick={() => navigate('/scm/purchase-orders')}
+              aria-label="Back to Purchase Orders"
+              className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary hover:border-primary/50 hover:text-primary"
+            >
+              <ArrowLeft size={16} />
+            </button>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
+                  {po.supplier?.name ?? po.supplier?.code ?? po.po_number}
+                </h1>
+                <StatusPill docType="po" status={po.status} />
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
+                <span className="font-mono font-semibold text-primary-ink">
+                  {poDisplayNumber(po.po_number, (po as unknown as { revision?: number | null }).revision)}
+                </span>
+                <span>·</span>
+                <span>Ordered {fmtDmy(po.po_date)}</span>
+                {po.expected_at && (
+                  <>
+                    <span>·</span>
+                    <span>Expected {fmtDmy(po.expected_at)}</span>
+                  </>
+                )}
+                <span>·</span>
+                <span>{visibleItems.length} line{visibleItems.length === 1 ? '' : 's'}</span>
+                {po.supplier?.code && (
+                  <>
+                    <span>·</span>
+                    <span className="font-mono font-semibold">{po.supplier.code}</span>
+                  </>
+                )}
+                <span>·</span>
+                {/* Total rides the meta line (owner 2026-07-27) — out of the
+                    action row so the buttons stop wrapping. Tracks live draft
+                    edits. */}
+                <span className="font-money font-semibold text-ink">
+                  Total {fmtRm(grandTotal, po.currency)}
+                </span>
+              </div>
+            </div>
           </div>
-        </div>
-        <div className={styles.actions}>
-          {/* PR — Commander 2026-05-27: align with SO Detail PR #231 — total
-              moves into a right-rail KPI tile next to the action group so the
-              page title stays compact. Commander 2026-05-29 — the total tracks
-              the live line items (incl. unsaved draft edits). */}
-          <div className={styles.totalRail}>
-            <span className={styles.totalRailLabel}>Total</span>
-            <span className={styles.totalRailValue}>{fmtRm(grandTotal, po.currency)}</span>
-          </div>
-          <StatusPill docType="po" status={po.status} />
+          {/* styles.actions / styles.totalRail were RETIRED from the module css
+              ("header chrome is inline Tailwind now") but this page never
+              followed — the classNames resolved to undefined and the whole
+              action row rendered unstyled/overflowing. Real utilities now. */}
+          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+          {/* Total + status pill now live in the title / meta rows (V2-parity
+              header, owner 2026-07-27) so this row carries ONLY action buttons
+              and stops wrapping a lone Save onto a second line. */}
           {/* SO-amendment workflow — "Revised · rev N" badge once this PO has been
               revised in place by an approved amendment (revision > 1). */}
           {((po as unknown as { revision?: number }).revision ?? 1) > 1 && (
@@ -742,11 +786,16 @@ export const PurchaseOrderDetail = () => {
               Revised · rev {(po as unknown as { revision?: number }).revision}
             </span>
           )}
-          <RelationshipMapButton type="po" id={po.id} />
-          <Button variant="ghost" size="md" onClick={handlePrint}>
-            <Printer {...ICON} />
-            <span>Print PDF</span>
-          </Button>
+          {/* View-only actions (owner 2026-07-27): hidden while editing so the
+              edit action row stays on ONE line — Receive Goods sits beside Save
+              instead of wrapping. Both return in view mode. */}
+          {!isEditing && <RelationshipMapButton type="po" id={po.id} />}
+          {!isEditing && (
+            <Button variant="ghost" size="md" onClick={handlePrint}>
+              <Printer {...ICON} />
+              <span>Print PDF</span>
+            </Button>
+          )}
           {/* PR #78 — Convert from Sales Order. Gated behind Edit mode (it
               mutates line items). Commander 2026-05-29 — opens the full "Pick
               Sales Orders for this PO" picker scoped to this PO's supplier. */}
@@ -861,6 +910,7 @@ export const PurchaseOrderDetail = () => {
               <span>{savingDraft ? 'Saving…' : 'Save'}</span>
             </Button>
           )}
+          </div>
         </div>
       </div>
 
@@ -885,7 +935,26 @@ export const PurchaseOrderDetail = () => {
         }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <History {...ICON} />
-            <span>Revision ready — amendment <strong>{openAmendment.amendment_no}</strong></span>
+            {/* Owner 2026-07-27 — the amendment number is a LINK to its detail,
+                where the full WAS → REQUESTING diff (what the customer changed)
+                lives. Approving the PO here doesn't show the change details
+                inline, so the operator needs one click to see exactly what was
+                revised. */}
+            <span>
+              Revision ready — amendment{' '}
+              <button
+                type="button"
+                onClick={() => navigate(`/scm/amendments/${openAmendment.id}`)}
+                style={{
+                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                  color: 'var(--c-secondary-a, #2F5D4F)', fontWeight: 700,
+                  fontSize: 'inherit', textDecoration: 'underline',
+                }}
+              >
+                {openAmendment.amendment_no}
+              </button>
+              {' '}(view change details)
+            </span>
             <StatusPill docType="soAmendment" status={openAmendment.status} />
             {openAmendment.status === 'SO_APPROVED'
               ? <span className={styles.muted}>Approve this PO to apply the supplier-confirmed changes.</span>
@@ -1023,9 +1092,14 @@ export const PurchaseOrderDetail = () => {
           /* English copy (owner UI rule: no Chinese ships in the interface;
              swept 2026-07-27 while fixing the missing edit-mode redline). */
           <div className={styles.bannerWarn} style={{ margin: 'var(--space-2) var(--space-3)' }}>
-            ⚠ <strong>{driftCount}</strong> line{driftCount === 1 ? "'s" : 's'} source SO changed after this
-            PO was raised. Check the red notes below, sync the specs, then <strong>re-send to the
-            supplier</strong> — otherwise the factory keeps building to the old spec.
+            {/* bannerWarn is a COLUMN flex — bare text + <strong> children become
+                separate flex rows (the old Chinese copy broke the same way), so
+                the whole sentence rides in ONE span. */}
+            <span>
+              ⚠ <strong>{driftCount}</strong> line{driftCount === 1 ? "'s" : 's'} source SO changed after this
+              PO was raised. Check the red notes below, sync the specs, then <strong>re-send to the
+              supplier</strong> — otherwise the factory keeps building to the old spec.
+            </span>
           </div>
         )}
 
@@ -1283,26 +1357,32 @@ const SupplierCard = ({
           <label className={styles.field} style={{ gridColumn: 'span 2' }}>
             <span className={styles.fieldLabel}>Supplier *</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.supplierId} disabled={locked}
-                onChange={(e) => onField('supplierId', e.target.value)}>
-                <option value="">— Pick supplier —</option>
-                {sortByText(suppliers).map((s) => (
-                  <option key={s.id} value={s.id}>{s.code} · {s.name}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                className={styles.fieldSelect}
+                value={draft.supplierId}
+                disabled={locked}
+                onChange={(v) => onField('supplierId', v)}
+                placeholder="— Pick supplier —"
+                options={sortByText(suppliers).map((s) => ({ value: s.id, label: `${s.code} · ${s.name}` }))}
+              />
               <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
             </span>
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Currency</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.currency} disabled={locked}
-                onChange={(e) => onField('currency', e.target.value)}>
-                <option value="MYR">MYR</option>
-                <option value="RMB">RMB</option>
-                <option value="USD">USD</option>
-                <option value="SGD">SGD</option>
-              </select>
+              <SearchableSelect
+                className={styles.fieldSelect}
+                value={draft.currency}
+                disabled={locked}
+                onChange={(v) => onField('currency', v)}
+                options={[
+                  { value: 'MYR', label: 'MYR' },
+                  { value: 'RMB', label: 'RMB' },
+                  { value: 'USD', label: 'USD' },
+                  { value: 'SGD', label: 'SGD' },
+                ]}
+              />
               <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
             </span>
           </label>
@@ -1341,13 +1421,16 @@ const SupplierCard = ({
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Purchase Location</span>
             <span className={styles.selectWrap}>
-              <select className={styles.fieldSelect} value={draft.purchaseLocationId} disabled={locked}
-                onChange={(e) => onField('purchaseLocationId', e.target.value)}>
-                <option value="">— No default —</option>
-                {sortByText(warehouses.filter((w) => w.is_active)).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                className={styles.fieldSelect}
+                value={draft.purchaseLocationId}
+                disabled={locked}
+                onChange={(v) => onField('purchaseLocationId', v)}
+                options={[
+                  { value: '', label: '— No default —' },
+                  ...sortByText(warehouses.filter((w) => w.is_active)).map((w) => ({ value: w.id, label: w.code })),
+                ]}
+              />
               <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
             </span>
           </label>
@@ -1519,13 +1602,31 @@ const PoRevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currenc
             </tr>
           </thead>
           <tbody>
-            {lines.map((l, i) => (
-              <tr key={i}>
-                <td>{str(l.material_code ?? l.materialCode ?? l.item_code ?? l.itemCode)}</td>
-                <td className={styles.tableRight}>{str(l.qty)}</td>
-                <td className={styles.tableRight}>{centi(l.unit_price_centi ?? l.unitPriceCenti)}</td>
-              </tr>
-            ))}
+            {lines.map((l, i) => {
+              /* Owner 2026-07-27 — the snapshot listed only code/qty/price, so a
+                 fabric change (the common amendment) was invisible in the prior
+                 version. Show the spec: the stored variant summary if the
+                 snapshot line carries variants, else its description2 string. */
+              const itemGroup = str(l.item_group ?? l.itemGroup ?? 'others');
+              const variants = (l.variants ?? null) as Record<string, unknown> | null;
+              const spec =
+                buildVariantSummary(itemGroup === '—' ? 'others' : itemGroup, variants) ||
+                str(l.description2 ?? l.description ?? '').replace(/^—$/, '');
+              return (
+                <tr key={i}>
+                  <td>
+                    <div>{str(l.material_code ?? l.materialCode ?? l.item_code ?? l.itemCode)}</div>
+                    {spec && (
+                      <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
+                        {spec}
+                      </div>
+                    )}
+                  </td>
+                  <td className={styles.tableRight}>{str(l.qty)}</td>
+                  <td className={styles.tableRight}>{centi(l.unit_price_centi ?? l.unitPriceCenti)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       ) : (

@@ -163,20 +163,37 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
     [soNodes, noteSos],
   );
 
-  /* PO amendments branch off this PO. The graph returns the whole family's
-     (poAmendments spans sibling POs too) — keep this PO's own. Their detail
-     route (/scm/po-amendments/:id) is gated on scm.procurement.po, the same
-     area as the page hosting this map, so no extra access check is needed. */
-  const amendments: AmendmentChip[] = useMemo(
-    () =>
-      (flow.data?.poAmendments ?? [])
-        .filter((a) => a.poId === poId)
-        .map((a) => ({ id: a.id, label: `Amendment ${a.amendmentNo}`, status: a.status })),
-    [flow.data, poId],
-  );
+  /* Amendments branch off this PO — BOTH kinds (owner 2026-07-27, "这个应该有
+     amendment SO 怎么没有?"):
+       · SO amendments off this PO's source SO — a pending SO revision is the
+         reason this PO must be re-approved, so it belongs on the PO map; the
+         graph already returns them (document-flow resolves them for the root
+         SO regardless of anchor type). Chip → /scm/amendments/:id.
+       · direct PO amendments on this PO (poAmendments spans sibling POs, so
+         keep this PO's own). Chip → /scm/po-amendments/:id.
+     The kind is carried in an id PREFIX ("so:" / "po:") so the one click
+     handler routes to the right job card; both detail routes are gated on
+     areas this PO page's viewer already holds. */
+  const amendments: AmendmentChip[] = useMemo(() => {
+    const so = (flow.data?.amendments ?? []).map((a) => ({
+      id: `so:${a.id}`,
+      label: `SO Amendment ${a.amendmentNo}`,
+      status: a.status,
+    }));
+    const po = (flow.data?.poAmendments ?? [])
+      .filter((a) => a.poId === poId)
+      .map((a) => ({
+        id: `po:${a.id}`,
+        label: `PO Amendment ${a.amendmentNo}`,
+        status: a.status,
+      }));
+    return [...so, ...po];
+  }, [flow.data, poId]);
   const onAmendmentClick = useCallback(
     (a: AmendmentChip): boolean => {
-      navigate(`/scm/po-amendments/${a.id}`);
+      const [kind, ...rest] = a.id.split(":");
+      const realId = rest.join(":");
+      navigate(kind === "so" ? `/scm/amendments/${realId}` : `/scm/po-amendments/${realId}`);
       return true;
     },
     [navigate],
