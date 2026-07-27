@@ -226,6 +226,22 @@ export interface ACSalesOrder {
   LastModified?: string | null;
 }
 
+// Slim Delivery Order header from the middleware's
+// /DeliveryOrder/getSince/{checkpoint} (nine-column projection; the
+// full-dump getAll ships the whole 181-column vDeliveryOrder row and is
+// parsed structurally instead of through a type).
+export interface ACDeliveryOrder {
+  DocNo: string;
+  DocDate?: string | null;
+  Ref?: string | null;
+  DebtorName?: string | null;
+  SalesAgent?: string | null;
+  SalesLocation?: string | null;
+  Total?: number | null;
+  Cancelled?: string | null;
+  LastModified?: string | null;
+}
+
 // Line-item detail for a single Sales Order from AutoCount's
 // /SalesOrder/getDetail/{docNo} endpoint. Field names mirror the
 // middleware response; shape is flexible since installs vary.
