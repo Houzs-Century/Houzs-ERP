@@ -92,6 +92,25 @@ Related short-circuit gates: Processing + Delivery all-or-nothing
 elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
 writes `internal_expected_dd`.
 
+### Selling-price authoring — who may set the line price
+
+The unit selling price is **operator-authored** and the trust gate is by SESSION,
+not role (Owner ruling, `mfg-sales-orders.ts` `isPosTabletCaller`):
+- **POS-tablet session** (`origin='pos'`, minted at `/api/pos/pin-login`): the
+  server recomputes the authoritative catalog price and **drift-rejects (400)** a
+  deviating client price — the anti-tamper non-negotiable. (Empty until the 2990
+  POS repoints here.)
+- **Every other session** (desktop web ERP, mobile, invite, TOTP): **not POS →
+  never drift-rejected.** Owner ruling 2026-07: a salesperson may hand-type the
+  price. `recomputeFromSnapshot(..., trustOperatorSelling=true)` — passed on the
+  create / add-line / patch paths as `!isPosTabletCaller` — persists the operator's
+  entered price instead of normalising a catalog line to `sell_price_sen` (client
+  0 = "not provided" still fills the catalog price). COST stays a server snapshot.
+- **Frontend gate**: `SoLineCard` / `MobileNewSO` `canEditPrice = isAdminLevel ||
+  isHatchSales`; the Houzs bridge (`vendor/scm/lib/auth.ts`) now returns
+  `isHatchSales` true for `sales` (+ `super_admin`), so the price input is editable
+  for salespersons on both surfaces.
+
 ---
 
 ## 3. Backend (list handler)

@@ -3868,6 +3868,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   // Audit 2026-06-11 C2 — module COST rows, memoized per base_model (the
   // per-line seat size + fabric tier resolution happens inside the recompute).
   const sofaModuleCostRowsMemo = new Map<string, Promise<SofaModuleCostRowLite[] | null>>();
+  /* Owner ruling — a non-POS (web/mobile office/sales) author prices freely, so
+     their hand-entered selling price is persisted as-is (see the trust boundary
+     below + recomputeFromSnapshot). POS tablet callers stay authoritative +
+     drift-rejected. */
+  const trustOperatorSelling = !(await isPosTabletCaller(c));
   const recomputes: Array<RecomputedLine | null> = await Promise.all(items.map(async (it, idx) => {
     const itemCode = String(it.itemCode ?? '');
     if (!itemCode) return null;
@@ -3913,7 +3918,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     // change. PWP always wins if both somehow apply (a gift is non-sofa, no code).
     const pwpBaseSen = pwpBaseByIdx.get(idx) ?? freeGiftBaseByIdx.get(idx) ?? null;
     const pwpSofaComboIds = pwpSofaByIdx.get(idx) ?? null;
-    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides);
+    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides, trustOperatorSelling);
   }));
   /* Commander 2026-05-29 (system-wide) — the SELLING unit price is now
      operator-authored on every SO line. The product price tables are COST,
@@ -7230,6 +7235,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     sofaModuleCostRowsLite,
     modelOverridesLite,      // migration 0175 — per-Model Δ
     compartmentOverridesLite, // migration 0025 — per-compartment Δ
+    !(await isPosTabletCaller(c)), // owner ruling — non-POS author prices freely
   );
   /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). POS tablet
      roles are drift-rejected + take the server price; Backend / office authors
@@ -7733,6 +7739,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       sofaModuleCostRowsPatch,
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
+      !posTablet, // owner ruling — non-POS author prices freely
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even
