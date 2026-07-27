@@ -38,6 +38,7 @@ const MIN_TICK_GAP_MS = 30_000;
  */
 
 let sharedMembers: ActiveMember[] = [];
+let sharedAway: ActiveMember[] = [];
 let sharedLoading = true;
 let poller: number | undefined;
 let started = false;
@@ -58,6 +59,9 @@ async function fetchActive(): Promise<void> {
   try {
     const res = await api.get<PresenceResponse>("/api/presence");
     sharedMembers = res.active;
+    // Optional on the wire: a backend from before the who's-online popover
+    // (deploy skew) sends no away tier.
+    sharedAway = res.away ?? [];
   } catch {
     // Network blip or 401 — keep the last known list, don't clear.
   } finally {
@@ -68,7 +72,11 @@ async function fetchActive(): Promise<void> {
 
 async function beat(): Promise<void> {
   try {
-    await api.post("/api/presence/heartbeat");
+    // Pathname only (no query/hash): enough for the popover's deep link,
+    // and keeps filter noise / tokens out of the presence table.
+    await api.post("/api/presence/heartbeat", {
+      path: window.location.pathname,
+    });
   } catch {
     // ignore — next interval will retry
   }
@@ -120,7 +128,11 @@ function stopIfIdle(): void {
   }, 1_000);
 }
 
-export function usePresence(): { members: ActiveMember[]; loading: boolean } {
+export function usePresence(): {
+  members: ActiveMember[];
+  away: ActiveMember[];
+  loading: boolean;
+} {
   const { user } = useAuth();
   const [, force] = useState(0);
 
@@ -142,5 +154,5 @@ export function usePresence(): { members: ActiveMember[]; loading: boolean } {
     };
   }, [isAuthed]);
 
-  return { members: sharedMembers, loading: sharedLoading };
+  return { members: sharedMembers, away: sharedAway, loading: sharedLoading };
 }

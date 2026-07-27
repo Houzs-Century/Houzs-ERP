@@ -12,6 +12,7 @@ import { useAuth } from "../auth/AuthContext";
 import { usePresence } from "../hooks/usePresence";
 import { GlobalSearchTrigger } from "./GlobalSearch";
 import { NotificationBell } from "./NotificationBell";
+import { PresenceButton } from "./PresenceButton";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { Avatar } from "./Avatar";
 import { cn } from "../lib/utils";
@@ -28,7 +29,8 @@ import { clearAllScmHandoffs } from "../lib/scmHandoffStorage";
 /**
  * Desktop-only sticky top chrome — ONE 52px bar (top-chrome redesign 2b,
  * owner handoff 2026-07-23). Left: the WorkspaceTabs strip inline. Right:
- * search (Ctrl+K) · company switcher icon · notification bell (red dot) ·
+ * search (Ctrl+K) · company switcher icon · who's-online (green count badge,
+ * popover with deep links — 2026-07-26) · notification bell (red dot) ·
  * divider · avatar + name/role with the online state as a green corner dot.
  *
  * The breadcrumb row is GONE — the page name lives once, in the PageHeader
@@ -56,6 +58,7 @@ export function TopNavbar() {
         </div>
         {user && (
           <>
+            <PresenceButton />
             <NotificationBell collapsed direction="down" align="end" tone="navbar" unread="dot" />
             <span aria-hidden className="mx-0.5 h-6 w-px bg-border-subtle" />
             <ProfileMenu />

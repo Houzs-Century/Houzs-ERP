@@ -65,8 +65,13 @@ export function NotificationBell({
         title="Notifications"
         className={cn(
           "relative inline-flex items-center rounded-md transition-colors",
+          // Navbar tone: the same boxed tile as PresenceButton (owner
+          // 2026-07-27, "通知button要和who online button UI 一样") — bordered
+          // rest state, petrol-soft when its popover is open.
           tone === "navbar"
-            ? "text-ink-secondary hover:bg-surface-2 hover:text-primary-ink"
+            ? open
+              ? "border border-primary bg-primary-soft text-primary-ink focus:outline-none focus:ring-2 focus:ring-primary/40"
+              : "border border-border bg-surface text-ink-secondary hover:border-border-strong hover:bg-surface-dim focus:outline-none focus:ring-2 focus:ring-primary/40"
             : "text-sidebar-ink-muted hover:bg-sidebar-hover hover:text-accent",
           collapsed ? "h-9 w-9 justify-center" : "h-9 w-full gap-2 px-3"
         )}
