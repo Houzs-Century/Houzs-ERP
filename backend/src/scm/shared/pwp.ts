@@ -26,6 +26,13 @@ export interface PwpRule {
   rewardCategory: string;
   /** product_models.id[] that may be redeemed. [] = whole reward category. */
   eligibleRewardModelIds: string[];
+  /** Variant/compartment refinement (migration 0182 · Houzs 0051), ANDed on top of the model
+   *  lists. [] / absent = no refinement. Matched by passesRefinementColumns so
+   *  this POS preview agrees with the server mint/claim gates. */
+  triggerSizeCodes?: string[];
+  triggerCompartments?: string[];
+  rewardSizeCodes?: string[];
+  rewardCompartments?: string[];
   /** Reward units unlocked per qualifying trigger unit (≥ 1). */
   qtyPerTrigger: number;
   /** SOFA trigger: sofa_combo_pricing.id[] whose build qualifies as a trigger
@@ -49,6 +56,11 @@ export interface PwpLineInput {
   category: string;
   /** product_models.id of the line's product. null = legacy / unknown → never matches a model list. */
   modelId: string | null;
+  /** mfg size_code (mattress/bedframe) + sofa build modules — for the 0182
+   *  refinement gate. Absent = no size / no modules (refinement still passes when
+   *  the rule has no refinement). */
+  sizeCode?: string | null;
+  builtCompartments?: string[];
   /** Units on this line (≥ 0). */
   qty: number;
   /** Display label of the product (for the trigger reference on the invoice). */
@@ -69,8 +81,18 @@ export interface PwpGrant {
   triggerRef: { name: string; code: string } | null;
 }
 
+import { passesRefinementColumns, type RuleLineInput } from './rule-target';
+
 const inList = (modelId: string | null, list: string[]): boolean =>
   list.length === 0 ? true : modelId != null && list.includes(modelId);
+
+/** PwpLineInput → the RuleLineInput shape the 0182 refinement gate needs. */
+const toRuleLine = (l: PwpLineInput): RuleLineInput => ({
+  category: l.category,
+  modelId: l.modelId,
+  sizeCode: l.sizeCode ?? null,
+  builtCompartments: l.builtCompartments ?? [],
+});
 
 const safeQty = (n: number): number => {
   const q = Math.floor(Number(n) || 0);
@@ -99,6 +121,8 @@ export function resolvePwp(rules: PwpRule[], lines: PwpLineInput[]): PwpGrant[] 
     for (const line of ordered) {
       if (line.category !== rule.triggerCategory) continue;
       if (!inList(line.modelId, rule.triggerEligibleModelIds)) continue;
+      // Variant/compartment refinement (0182 · Houzs 0051) — narrows the trigger further.
+      if (!passesRefinementColumns(toRuleLine(line), rule.triggerSizeCodes, rule.triggerCompartments)) continue;
       // Promo is one-way (Loo 2026-06-06): a reward-side line (already bought
       // with a code, or asking to be priced as a reward right now) never
       // opens promo allowance — else a rule whose trigger set == reward set
@@ -116,6 +140,8 @@ export function resolvePwp(rules: PwpRule[], lines: PwpLineInput[]): PwpGrant[] 
       if (!line.pwpRequested) continue;
       if (line.category !== rule.rewardCategory) continue;
       if (!inList(line.modelId, rule.eligibleRewardModelIds)) continue;
+      // Variant/compartment refinement (0182 · Houzs 0051) — narrows the reward further.
+      if (!passesRefinementColumns(toRuleLine(line), rule.rewardSizeCodes, rule.rewardCompartments)) continue;
       const need = safeQty(line.qty);
       if (need <= 0) continue;
       if (cursor + need > slots.length) continue;   // not enough allowance → not granted

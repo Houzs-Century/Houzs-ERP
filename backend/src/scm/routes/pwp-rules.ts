@@ -43,6 +43,25 @@ const createSchema = z.object({
 });
 const patchSchema = createSchema.partial();
 
+// A SOFA trigger is matched EITHER by Combo (trigger_combo_ids) OR by Model
+// (trigger_eligible_model_ids) — never both, never neither. Mirrors the POS
+// editor's per-trigger toggle so a tampered/legacy client can't store an
+// ambiguous sofa trigger (which would make the reserve/recompute mode-derivation
+// — "which array is populated" — undefined). Non-sofa triggers are always by
+// Model (an empty model list = the whole category, which is allowed).
+function sofaTriggerXorError(
+  cat: string | undefined,
+  comboIds: string[] | undefined,
+  modelIds: string[] | undefined,
+): string | null {
+  if (cat !== 'SOFA') return null;
+  const hasCombo = (comboIds ?? []).length > 0;
+  const hasModel = (modelIds ?? []).length > 0;
+  if (hasCombo && hasModel) return 'A sofa trigger cannot be both by Combo and by Model — pick one.';
+  if (!hasCombo && !hasModel) return 'A sofa trigger needs at least one combo (by Combo) or one Model (by Model).';
+  return null;
+}
+
 type RuleRow = {
   id: string;
   trigger_category: string;
@@ -118,6 +137,9 @@ pwpRules.post('/', async (c) => {
     return c.json({ error: 'validation_failed', issues: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })) }, 400);
   }
 
+  const trigErr = sofaTriggerXorError(parsed.data.triggerCategory, parsed.data.triggerComboIds, parsed.data.triggerEligibleModelIds);
+  if (trigErr) return c.json({ error: 'invalid_sofa_trigger', reason: trigErr }, 400);
+
   const supabase = c.get('supabase');
   const { data, error } = await supabase
     .from('pwp_rules')
@@ -157,6 +179,13 @@ pwpRules.patch('/:id', async (c) => {
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
     return c.json({ error: 'validation_failed', issues: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })) }, 400);
+  }
+
+  // Validate the sofa-trigger XOR only when the trigger is being (re)set — the
+  // editor always sends triggerCategory + both arrays together on save.
+  if (parsed.data.triggerCategory !== undefined) {
+    const trigErr = sofaTriggerXorError(parsed.data.triggerCategory, parsed.data.triggerComboIds, parsed.data.triggerEligibleModelIds);
+    if (trigErr) return c.json({ error: 'invalid_sofa_trigger', reason: trigErr }, 400);
   }
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
