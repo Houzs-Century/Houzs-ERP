@@ -270,6 +270,13 @@ export function recomputeFromSnapshot(
    *  resolveFabricTierOverride so POS and server agree. null map → model-only
    *  path (back-compatible). Quick-Pick bundles + non-sofa lines: model only. */
   compartmentFabricOverrides: Map<string, FabricTierModelOverride> | null = null,
+  /** Owner ruling 2026-05-31 (extended): a TRUSTED non-POS author (web/mobile
+   *  office or sales staff) prices freely, so a hand-entered selling price is
+   *  PERSISTED as-is instead of normalised to the authoritative catalog figure.
+   *  Default false = the authoritative behaviour for every other caller. NEVER
+   *  true for a POS-tablet session (those are drift-rejected upstream). Cost is a
+   *  server-only snapshot and is untouched by this flag. */
+  trustOperatorSelling: boolean = false,
 ): RecomputedLine {
   const category = toMfgCategory(item.itemGroup, product?.category ?? '');
   const variants = item.variants ?? {};
@@ -576,9 +583,19 @@ export function recomputeFromSnapshot(
     unitToPersistSen = manualUnitSelling;
   }
 
+  /* Owner ruling — a TRUSTED non-POS author prices freely: when a price was
+     actually entered, persist THAT over the authoritative catalog figure.
+     manualUnitSelling === 0 means "not provided" (client couldn't resolve it) ->
+     keep the authoritative fill. `drift` above is unchanged (only a POS caller is
+     rejected on it; a trusted caller's drift is ignored by the route). */
+  if (trustOperatorSelling && manualUnitSelling > 0) {
+    unitToPersistSen = manualUnitSelling;
+  }
+
   return {
     itemCode:          item.itemCode,
-    // Persist the AUTHORITATIVE selling price on a catalog line (D4); the
+    // Persist the AUTHORITATIVE selling price on a catalog line (D4) — UNLESS a
+    // trusted non-POS author entered their own price (owner ruling); the
     // operator's manual price on a sofa / custom / not-found line.
     unit_price_sen:    unitToPersistSen,
     divan_price_sen:   breakdown.divanSurchargeSen,

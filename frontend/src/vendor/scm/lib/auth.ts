@@ -25,12 +25,16 @@ export type StaffRole =
 export const isAdminLevel = (role: StaffRole | null | undefined): boolean =>
   role === 'admin' || role === 'super_admin';
 
-/* HOUZS VENDOR — SoLineCard reads isHatchSales(staff?.role) to decide whether a
-   POS selling role may hand-type a line price (the "SO emergency hatch"). The
-   Houzs bridge only ever produces 'super_admin' or 'sales', neither a hatch
-   sales role, so this is always false — price stays locked unless isAdminLevel
-   (super_admin) is true, matching the verbatim non-hatch gate. */
-export const isHatchSales = (_role: StaffRole | null | undefined): boolean => false;
+/* HOUZS VENDOR — SoLineCard / MobileNewSO read isHatchSales(staff?.role) to
+   decide whether a selling role may hand-type a line price. OWNER RULING
+   (2026-07): a salesperson MAY set the selling price when opening an SO (it
+   varies per order — roadshow / negotiated). The Houzs bridge only ever produces
+   'super_admin' or 'sales', and both should price freely, so this is now true.
+   Safe against the anti-tamper gate: only a POS-tablet SESSION is drift-rejected
+   server-side (isPosTabletCaller), and a web/mobile author's typed price is
+   persisted by the backend (recomputeFromSnapshot trustOperatorSelling). */
+export const isHatchSales = (role: StaffRole | null | undefined): boolean =>
+  role === 'sales' || role === 'super_admin';
 
 export interface StaffProfile {
   /** HOUZS VENDOR — the SO PaymentsTable seeds "Collected By" from staff.id.
