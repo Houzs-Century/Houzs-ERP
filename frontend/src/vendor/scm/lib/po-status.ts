@@ -26,3 +26,19 @@ export const PO_STATUS_LABEL: Record<PoStatus, string> = {
 export function poStatusLabel(status: PoStatus): string {
   return PO_STATUS_LABEL[status] ?? status.replace(/_/g, ' ');
 }
+
+/** Display/printed PO number with its revision marker (owner 2026-07-27):
+ *  `PO-2607-021_R1` after the first approved revision, `_R2` after the second.
+ *  purchase_orders.revision starts at 1 (mig 0080) and bumps on every approved
+ *  revision, so the suffix is revision − 1. The UNDERLYING po_number never
+ *  changes — GRN / PI / receipts all join on it — this is display + paper only,
+ *  so the supplier can tell a revised order sheet from the original at a
+ *  glance. */
+export function poDisplayNumber(
+  poNumber: string | null | undefined,
+  revision: number | string | null | undefined,
+): string {
+  const base = String(poNumber ?? '');
+  const rev = Number(revision ?? 1);
+  return Number.isFinite(rev) && rev > 1 ? `${base}_R${rev - 1}` : base;
+}

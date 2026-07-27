@@ -152,7 +152,7 @@ type SoHeader = {
      SENT/REJECTED). Same flags the desktop SalesOrderDetail routes on. */
   amendment_eligible: boolean | null;
   has_open_amendment: boolean | null;
-  open_amendment: { id: string; status: string; amendment_no: string } | null;
+  open_amendment: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
   /* Scan-flow proof photos (migrations 0033 + 0034) — R2 keys for the
      handwritten order slip and the card-terminal payment receipt this SO was
      scanned from. Dual-read camelCase ?? snake_case at the use site (the pg
@@ -446,7 +446,19 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
     (openAmendmentDetail.data?.amendment as { requested_by?: string | null } | undefined)?.requested_by ?? null;
   const isAmendmentRequester =
     amendmentRequestedBy != null && scmStaff?.id != null && String(amendmentRequestedBy) === String(scmStaff.id);
-  const canRejectAmendment = houzsAuth.can("scm.amendment.approve_po");
+  /* Two-lane rework (2026-07-27): a lane row (open_amendment.lane set) has ONE
+     approver key — LINES → purchasing, DELIVERY → logistics — and its whole
+     life is REQUESTED → applied. The legacy chain keys below stay for
+     pre-rework (lane null) rows only. */
+  const amendmentLane =
+    openAmendment?.lane === "LINES" || openAmendment?.lane === "DELIVERY"
+      ? openAmendment.lane : null;
+  const canApproveLane =
+    amendmentLane != null
+    && houzsAuth.can(amendmentLane === "LINES" ? "scm.amendment.approve_lines" : "scm.amendment.approve_delivery");
+  const canRejectAmendment = amendmentLane
+    ? canApproveLane
+    : houzsAuth.can("scm.amendment.approve_po");
   /* Approve-PO + Send gates (SO_APPROVED -> PO_APPROVED -> SENT) ride the SAME
      purchasing key the server enforces + the desktop PO banner uses
      (scm.amendment.approve_po). The server 403 stays the real gate. */
@@ -455,8 +467,9 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
      "SO revised, PO not yet revised" safety warning; null until the PO exists. */
   const boundPo =
     (openAmendmentDetail.data?.purchaseOrders?.[0] as { id: string; po_number: string; status: string } | undefined) ?? null;
-  const canOfferReject =
-    (amendmentStatus === "REQUESTED" || amendmentStatus === "SUPPLIER_PENDING") && canRejectAmendment;
+  const canOfferReject = amendmentLane
+    ? amendmentStatus === "REQUESTED" && canRejectAmendment
+    : (amendmentStatus === "REQUESTED" || amendmentStatus === "SUPPLIER_PENDING") && canRejectAmendment;
   const canOfferWithdraw =
     amendmentStatus === "REQUESTED" && (isAmendmentRequester || canRejectAmendment);
 
@@ -535,14 +548,26 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
   const handleApproveSo = async () => {
     if (!openAmendment || busy) return;
     if (!(await confirm({
-      title: `Approve SO revision for ${docNo}?`,
-      body: "This applies the supplier-confirmed changes: the Sales Order is re-derived and the current version is snapshotted into Revisions. This cannot be undone.",
-      confirmLabel: "Approve revision",
+      title: `Approve ${amendmentLane ? "amendment" : "SO revision"} for ${docNo}?`,
+      body: amendmentLane === "LINES"
+        ? "Check with the supplier BEFORE approving — your signature records the change is workable. The Sales Order is revised at once and a follow-up PO Amendment is raised for you to confirm in PO Amendments. This cannot be undone."
+        : amendmentLane === "DELIVERY"
+          ? "This applies the delivery changes to the Sales Order at once (the current version is snapshotted into Revisions). The purchase order is not touched. This cannot be undone."
+          : "This applies the supplier-confirmed changes: the Sales Order is re-derived and the current version is snapshotted into Revisions. This cannot be undone.",
+      confirmLabel: amendmentLane ? "Approve & apply" : "Approve revision",
     }))) return;
     setBusy(true);
     try {
-      await approveSo.mutateAsync({ id: openAmendment.id });
-      void notifyTop({ title: "SO revision approved" });
+      const res = await approveSo.mutateAsync({ id: openAmendment.id }) as unknown as {
+        poFollowUps?: Array<{ amendmentNo?: string; poNumber?: string }>;
+      } | undefined;
+      const fu = res?.poFollowUps ?? [];
+      void notifyTop({
+        title: amendmentLane ? "Amendment applied" : "SO revision approved",
+        body: fu.length
+          ? `Follow-up PO amendment${fu.length === 1 ? "" : "s"} raised: ${fu.map((f) => f.amendmentNo ?? "").join("; ")} — confirm in PO Amendments.`
+          : undefined,
+      });
     } catch (e) {
       void notifyTop({ title: "Could not approve the revision", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" });
     } finally {
@@ -769,8 +794,30 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
                     View changes
                   </button>
                 </div>
-                {/* Gate actions — perm + status gated, exactly like desktop. */}
-                {openAmendment.status === "REQUESTED" && canSupplierConfirm && (
+                {/* Two-lane rework — a lane row is ONE signature: approve at
+                    REQUESTED applies the SO on the spot (LINES also raises the
+                    follow-up PO Amendment for purchasing to confirm in PO
+                    Amendments). The legacy multi-gate buttons below are
+                    lane-null only. */}
+                {amendmentLane != null && openAmendment.status === "REQUESTED" && canApproveLane && (
+                  <button
+                    type="button"
+                    onClick={() => void handleApproveSo()}
+                    disabled={busy}
+                    className="money"
+                    style={{ border: "1px solid #bcdcd7", background: "#e1efed", color: "#16695f", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
+                  >
+                    {busy ? "Working…" : amendmentLane === "LINES" ? "Approve product changes" : "Approve delivery changes"}
+                  </button>
+                )}
+                {amendmentLane != null && openAmendment.status === "REQUESTED" && !canApproveLane && (
+                  <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "#6d5626" }}>
+                    Waiting for {amendmentLane === "LINES" ? "Purchasing" : "Logistics"} — one signature applies it.
+                  </div>
+                )}
+                {/* Gate actions — perm + status gated, exactly like desktop.
+                    LEGACY (lane null) rows only. */}
+                {amendmentLane == null && openAmendment.status === "REQUESTED" && canSupplierConfirm && (
                   <button
                     type="button"
                     onClick={() => setSupplierConfirmOpen(true)}
@@ -781,7 +828,7 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
                     Record supplier confirmation
                   </button>
                 )}
-                {openAmendment.status === "SUPPLIER_PENDING" && canApproveSo && (
+                {amendmentLane == null && openAmendment.status === "SUPPLIER_PENDING" && canApproveSo && (
                   <button
                     type="button"
                     onClick={() => void handleApproveSo()}
@@ -797,7 +844,7 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
                     supplier is still building the OLD version until this runs
                     (safety warning, owner 2026-07-19). Desktop drives this from the
                     PO page; mobile has no PO editor, so the gate lives here. */}
-                {openAmendment.status === "SO_APPROVED" && (
+                {amendmentLane == null && openAmendment.status === "SO_APPROVED" && (
                   <>
                     <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "#6d5626", background: "rgba(214,158,46,0.12)", border: "1px solid rgba(214,158,46,0.4)", borderRadius: 9, padding: "8px 10px" }}>
                       The Sales Order is revised{boundPo?.po_number ? <> but <strong>{boundPo.po_number}</strong> is NOT</> : ", but its purchase order is NOT"} — the supplier is still working to the old version until the PO revision is approved too.
@@ -818,7 +865,7 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
                 {/* PO_APPROVED -> Send. Marks the amendment SENT (no server email);
                     the Revised PO PDF is downloaded from the desktop PO screen — the
                     mobile app has no PO PDF generator. */}
-                {openAmendment.status === "PO_APPROVED" && (
+                {amendmentLane == null && openAmendment.status === "PO_APPROVED" && (
                   <>
                     <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "#6d5626" }}>
                       The PO is revised. Mark it sent, then open the bound PO on desktop to download the Revised PO for the supplier.

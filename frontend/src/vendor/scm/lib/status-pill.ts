@@ -26,7 +26,7 @@ export type StatusDocType =
   | 'po' | 'grn' | 'pi' | 'pr'
   | 'so' | 'do' | 'si' | 'dr'
   | 'stockTransfer' | 'stockTake'
-  | 'soAmendment' | 'poAmendment' | 'pv';
+  | 'soAmendment' | 'soAmendmentLane' | 'poAmendment' | 'pv';
 
 type Entry = { label: string; tone: StatusTone };
 
@@ -120,6 +120,15 @@ const SO_AMENDMENT: Record<string, Entry> = {
   REJECTED:         { label: 'Rejected',           tone: 'danger' },
 };
 
+// Two-lane rework (2026-07-27): a LANE amendment (so_amendments.lane set) has
+// ONE signature — REQUESTED -> SO_APPROVED is its applied TERMINAL, so it reads
+// "Applied" (success), not the legacy mid-chain "SO Approved" (progress).
+const SO_AMENDMENT_LANE: Record<string, Entry> = {
+  REQUESTED:   { label: 'Requested', tone: 'info' },
+  SO_APPROVED: { label: 'Applied',   tone: 'success' },
+  REJECTED:    { label: 'Rejected',  tone: 'danger' },
+};
+
 // PO amendment / revision workflow (Houzs, mig 0192). SIMPLIFIED single-approver
 // state machine: REQUESTED -> APPROVED, with REJECTED the terminal close for both
 // a rejection and a withdrawal. REQUESTED reads as in-flight (info/burnt); APPROVED
@@ -142,7 +151,7 @@ const MAPS: Record<StatusDocType, Record<string, Entry>> = {
   po: PO, grn: GRN, pi: PI, pr: PR,
   so: SO, do: DO, si: SI, dr: DR,
   stockTransfer: STOCK_TRANSFER, stockTake: STOCK_TAKE,
-  soAmendment: SO_AMENDMENT, poAmendment: PO_AMENDMENT, pv: PV,
+  soAmendment: SO_AMENDMENT, soAmendmentLane: SO_AMENDMENT_LANE, poAmendment: PO_AMENDMENT, pv: PV,
 };
 
 const titleCase = (raw: string): string =>

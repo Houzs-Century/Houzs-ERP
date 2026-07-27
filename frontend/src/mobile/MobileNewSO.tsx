@@ -1850,8 +1850,9 @@ export function MobileNewSO({
             confirmLabel: "Submit amendment",
           });
           if (reason == null) { setSubmitting(false); return; } // cancelled the prompt
+          let amendCreatedRes: unknown = null;
           try {
-            await createAmendment.mutateAsync({
+            amendCreatedRes = await createAmendment.mutateAsync({
               docNo, reason: reason.trim() || undefined, lines: amLines, headerChanges,
               idempotencyKey: amendIdemKey,
             });
@@ -1868,7 +1869,20 @@ export function MobileNewSO({
           invalidateSoShared(qc);
           await qc.invalidateQueries({ queryKey: ["mfg-sales-order-detail", docNo] });
           await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
-          void notify({ title: "Amendment submitted", body: "It now needs supplier confirmation, then approval, before the order is revised." });
+          /* Two-lane rework — the server classifies (and may split) the request:
+             product changes wait on Purchasing, delivery changes on Logistics. */
+          {
+            const createdList = ((amendCreatedRes as {
+              amendments?: Array<{ amendment_no?: string | null; lane?: string | null }>;
+            } | null)?.amendments ?? []);
+            const laneName = (l?: string | null) =>
+              l === "LINES" ? "Purchasing" : l === "DELIVERY" ? "Logistics" : "";
+            void notify(createdList.length > 1
+              ? { title: "Amendment split into two approvals", body: `${createdList.map((a) => `${a.amendment_no ?? ""} → ${laneName(a.lane)}`).join("; ")}. Each applies when its approver signs.` }
+              : createdList[0]?.lane
+                ? { title: "Amendment submitted", body: `Waiting for ${laneName(createdList[0].lane)} — one signature applies it to the order.` }
+                : { title: "Amendment submitted", body: "It now needs approval before the order is revised." });
+          }
           if (onSaved) onSaved(docNo);
           else onBack();
           return;

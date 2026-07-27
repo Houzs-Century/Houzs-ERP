@@ -29,6 +29,7 @@ import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
+import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
 import {
   DocumentLinesExpansion,
   type DocumentDrillLine,
@@ -850,9 +851,10 @@ export function PurchaseOrdersListV2() {
       label: "PO No.",
       width: "132px",
       alwaysVisible: true,
-      getValue: (r) => r.po_number,
+      // _R suffix (owner 2026-07-27) — a revised PO reads PO-xxx_R1 everywhere.
+      getValue: (r) => poDisplayNumber(r.po_number, r.revision),
       render: (r) => (
-        <span className="font-mono text-[12.5px] font-semibold text-ink">{r.po_number}</span>
+        <span className="font-mono text-[12.5px] font-semibold text-ink">{poDisplayNumber(r.po_number, r.revision)}</span>
       ),
     },
     {

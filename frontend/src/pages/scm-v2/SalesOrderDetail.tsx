@@ -272,7 +272,9 @@ type SoHeader = {
      amendment (status NOT IN SENT/REJECTED). */
   amendment_eligible?: boolean;
   has_open_amendment?: boolean;
-  open_amendment?: { id: string; status: string; amendment_no: string } | null;
+  open_amendment?: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
+  /* Two-lane rework: up to TWO can be open at once (one per lane). */
+  open_amendments?: Array<{ id: string; status: string; amendment_no: string; lane?: string | null }> | null;
   // ── PR #35 additions ────────────────────────────────────────────────
   customer_id: string | null;
   customer_state: string | null;
@@ -1013,7 +1015,7 @@ export const SalesOrderDetail = () => {
       });
       /* 2. The approval half — frozen header fields + line diffs. */
       amendKeyRef.current ??= newIdempotencyKey();
-      await createAmendment.mutateAsync({
+      const createdRes = await createAmendment.mutateAsync({
         docNo: header.doc_no,
         reason: reason.trim() || undefined,
         lines,
@@ -1022,10 +1024,28 @@ export const SalesOrderDetail = () => {
       });
       setSavingOrder(false);
       endEditSession();
-      notify({
-        title: 'Amendment submitted',
-        body: 'It now needs supplier confirmation, then approval, before the order is revised.',
-      });
+      /* Two-lane rework: the server classifies (and may SPLIT) the request —
+         product changes go to Purchasing, delivery changes to Logistics, each
+         applied by ONE signature. Tell the operator exactly what was raised. */
+      const createdList = ((createdRes as unknown as {
+        amendments?: Array<{ amendment_no?: string | null; lane?: string | null }>;
+      } | undefined)?.amendments ?? []);
+      const laneName = (l?: string | null) =>
+        l === 'LINES' ? 'Purchasing' : l === 'DELIVERY' ? 'Logistics' : '';
+      notify(createdList.length > 1
+        ? {
+          title: 'Amendment split into two approvals',
+          body: `${createdList.map((a) => `${a.amendment_no ?? ''} → ${laneName(a.lane)}`).join('; ')}. Each applies as soon as its approver signs.`,
+        }
+        : createdList[0]?.lane
+          ? {
+            title: 'Amendment submitted',
+            body: `Waiting for ${laneName(createdList[0].lane)} — one signature applies it to the order.`,
+          }
+          : {
+            title: 'Amendment submitted',
+            body: 'It now needs approval before the order is revised.',
+          });
     } catch (e) {
       setSavingOrder(false);
       // authed-fetch already humanises the API error to one plain sentence.
@@ -1382,11 +1402,16 @@ export const SalesOrderDetail = () => {
      pending banner + its supplier-confirm / approve actions. */
   const amendmentEligible = soAmendmentEligible(header, isLocked);
   const openAmendment = header.open_amendment ?? null;
-  const hasOpenAmendment = Boolean(header.has_open_amendment) && openAmendment != null;
-  // While an amendment is already open, a second one can't be raised — the edit
-  // page reverts to the normal (direct) Save so the operator isn't blocked from
-  // fixing a still-editable field, and the amendment work happens in the banner.
-  const amendmentMode = amendmentEligible && !hasOpenAmendment;
+  /* Two-lane rework: up to TWO amendments can be awaiting approval (one per
+     lane). A LEGACY open row (lane null, mid two-gate chain) still blocks
+     everything; lane rows only block their own lane — the server 409s a
+     same-lane resubmission with a plain message, so the editor stays usable
+     while ONE lane is free. */
+  const openAmendments = header.open_amendments ?? (openAmendment ? [openAmendment] : []);
+  const legacyOpenAmendment = openAmendments.some((a) => a.lane == null);
+  const bothLanesBusy =
+    openAmendments.some((a) => a.lane === 'LINES') && openAmendments.some((a) => a.lane === 'DELIVERY');
+  const amendmentMode = amendmentEligible && !legacyOpenAmendment && !bothLanesBusy;
 
   /* Line editing is locked by EITHER the status/downstream lock OR the process
      lock — both mean the lines are no longer ours to change directly.
@@ -1809,8 +1834,8 @@ export const SalesOrderDetail = () => {
           An amendment is in flight. Show its status pill + the gate actions,
           gated by permission AND the amendment's current state, plus a "view
           changes" link opening the before/after diff. */}
-      {hasOpenAmendment && openAmendment && (
-        <div style={{
+      {openAmendments.map((oa) => (
+        <div key={oa.id} style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           flexWrap: 'wrap', gap: 'var(--space-3)',
           padding: 'var(--space-3) var(--space-4)',
@@ -1821,10 +1846,16 @@ export const SalesOrderDetail = () => {
         }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <History {...ICON} />
-            <span>Amendment <strong>{openAmendment.amendment_no}</strong> pending</span>
-            <StatusPill docType="soAmendment" status={openAmendment.status} />
+            <span>Amendment <strong>{oa.amendment_no}</strong> pending</span>
+            <StatusPill docType={oa.lane ? 'soAmendmentLane' : 'soAmendment'} status={oa.status} />
+            {/* Two-lane rework: say WHO it is waiting on. */}
+            {(oa.lane === 'LINES' || oa.lane === 'DELIVERY') && (
+              <span style={{ color: 'var(--fg-muted)' }}>
+                waiting for {oa.lane === 'LINES' ? 'Purchasing' : 'Logistics'}
+              </span>
+            )}
             <button type="button"
-              onClick={() => setViewingAmendmentId(openAmendment.id)}
+              onClick={() => setViewingAmendmentId(oa.id)}
               style={{
                 background: 'none', border: 'none', padding: 0, cursor: 'pointer',
                 color: 'var(--c-burnt)', fontWeight: 600, fontSize: 'var(--fs-13)',
@@ -1833,36 +1864,40 @@ export const SalesOrderDetail = () => {
               view changes
             </button>
           </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            {/* Record supplier confirmation — only at REQUESTED, gated on perm */}
-            {openAmendment.status === 'REQUESTED' && canSupplierConfirm && (
-              <Button variant="primary"
-                onClick={() => setShowSupplierForm((v) => !v)}
-                disabled={supplierConfirm.isPending}>
-                <Check {...ICON} />
-                <span>Record supplier confirmation</span>
-              </Button>
-            )}
-            {/* Approve SO revision — only at SUPPLIER_PENDING, gated on perm */}
-            {openAmendment.status === 'SUPPLIER_PENDING' && canApproveSo && (
-              <Button variant="primary"
-                onClick={handleApproveSo} disabled={approveSo.isPending}>
-                <Check {...ICON} />
-                <span>Approve SO revision</span>
-              </Button>
-            )}
-          </span>
+          {/* Lane rows approve on the Amendment detail page (one signature);
+              the inline gates below are the LEGACY chain's only. */}
+          {oa.lane == null && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              {/* Record supplier confirmation — only at REQUESTED, gated on perm */}
+              {oa.status === 'REQUESTED' && canSupplierConfirm && (
+                <Button variant="primary"
+                  onClick={() => setShowSupplierForm((v) => !v)}
+                  disabled={supplierConfirm.isPending}>
+                  <Check {...ICON} />
+                  <span>Record supplier confirmation</span>
+                </Button>
+              )}
+              {/* Approve SO revision — only at SUPPLIER_PENDING, gated on perm */}
+              {oa.status === 'SUPPLIER_PENDING' && canApproveSo && (
+                <Button variant="primary"
+                  onClick={handleApproveSo} disabled={approveSo.isPending}>
+                  <Check {...ICON} />
+                  <span>Approve SO revision</span>
+                </Button>
+              )}
+            </span>
+          )}
           {/* Inline supplier-confirmation form (ref + note + attachment key) */}
-          {showSupplierForm && openAmendment.status === 'REQUESTED' && canSupplierConfirm && (
+          {oa.lane == null && showSupplierForm && oa.status === 'REQUESTED' && canSupplierConfirm && (
             <div style={{ flexBasis: '100%' }}>
               <SupplierConfirmForm
-                amendmentId={openAmendment.id}
+                amendmentId={oa.id}
                 onDone={() => setShowSupplierForm(false)}
               />
             </div>
           )}
         </div>
-      )}
+      ))}
 
       {/* ── Tab strip (Phase 1-C) — Order vs Revisions ────────────────
           The Revisions tab lists prior SO snapshots read-only. Default is the
