@@ -4921,6 +4921,7 @@ export function InvitePanel({
   const [managerQuery, setManagerQuery] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [posPin, setPosPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [issued, setIssued] = useState<{
     active?: boolean;
@@ -4928,7 +4929,21 @@ export function InvitePanel({
     email: string;
     invite_url?: string;
     email_sent?: boolean;
+    pos_pin_set?: boolean;
   } | null>(null);
+
+  // POS PIN is the TABLET credential and it is separate from the password above:
+  // pos.2990shome.com signs in by picking a name + 6-digit PIN, with no password
+  // field at all. Only a sales position can PIN-login (backend /api/pos/pin-login
+  // refuses the rest), so the field appears for exactly those positions.
+  const selectedPosition = positions.find((p) => p.id === positionId);
+  const isSalesPosition = !!selectedPosition?.slug?.startsWith("sales");
+  const salesDeptNoPosition =
+    positionId === "" &&
+    deptId !== "" &&
+    (departments.find((d) => d.id === deptId)?.name ?? "")
+      .toLowerCase()
+      .includes("sales");
 
   // Page access for the chosen position — the invitee can only reach pages
   // their position grants, so a position with zero granted pages drops them
@@ -4983,6 +4998,11 @@ export function InvitePanel({
       toast.error("Password must be at least 12 characters");
       return;
     }
+    const pin = isSalesPosition ? posPin.trim() : "";
+    if (pin && !/^\d{6}$/.test(pin)) {
+      toast.error("POS PIN must be exactly 6 digits");
+      return;
+    }
     setBusy(true);
     try {
       const res = await api.post<{
@@ -4991,6 +5011,7 @@ export function InvitePanel({
         email: string;
         invite_url?: string;
         email_sent?: boolean;
+        pos_pin_set?: boolean;
       }>("/api/users/invite", {
         email: email.toLowerCase().trim(),
         name: name.trim() || undefined,
@@ -5006,6 +5027,7 @@ export function InvitePanel({
         // Houzs server-side). Backend defaults to [1] (Houzs) if absent.
         company_ids: scoped ? undefined : companyIds,
         password: pw || undefined,
+        pos_pin: pin || undefined,
       });
       setIssued(res);
       toast.success(
@@ -5015,6 +5037,13 @@ export function InvitePanel({
           ? `Invitation emailed to ${res.email}`
           : `Invitation issued for ${res.email}`
       );
+      // The member exists either way; only the tablet PIN failed. Say so
+      // instead of letting them find out at the POS.
+      if (pin && res.pos_pin_set === false) {
+        toast.error(
+          "Member created, but the POS PIN could not be set (no sales profile yet) — use Set PIN on their row.",
+        );
+      }
       onInvited();
     } catch (e: any) {
       toast.error(e?.message || "Failed to invite");
@@ -5034,6 +5063,7 @@ export function InvitePanel({
     setCompanyIds([1]);
     setPassword("");
     setShowPassword(false);
+    setPosPin("");
     setIssued(null);
     onClose();
   }
@@ -5188,7 +5218,34 @@ export function InvitePanel({
                     Team → Positions first, or the member sees a blank screen.
                   </div>
                 )}
+                {salesDeptNoPosition && (
+                  <div className="mt-1 text-[10px] text-ink-muted">
+                    Pick a Sales position to give this member a POS tablet PIN.
+                  </div>
+                )}
               </div>
+              {isSalesPosition && (
+                <div>
+                  <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+                    POS PIN
+                  </label>
+                  <input
+                    type="text"
+                    value={posPin}
+                    onChange={(e) => setPosPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="6 digits (optional)"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    className="h-10 w-full rounded-md border border-border bg-surface px-3 font-mono text-[13px] tracking-[0.3em] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  />
+                  <div className="mt-1 text-[10px] text-ink-muted">
+                    Tablet sign-in for the POS — they pick their name and enter this
+                    PIN (there is no password on the POS). Same PIN re-confirms My
+                    Orders. Changeable later from the POS, or via Set PIN on their
+                    row.
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
                   Role
