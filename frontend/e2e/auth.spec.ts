@@ -81,8 +81,12 @@ test.describe("auth", () => {
     // Reached the authed shell:
     //  1. the session token is now set (login actually succeeded), and
     //  2. the login form is gone, and
-    //  3. the desktop TopNavbar (Layout.tsx) rendered — its Breadcrumb nav is
-    //     part of the authed chrome on every page.
+    //  3. the desktop TopNavbar rendered — its Account-menu trigger is part of
+    //     the authed chrome on every page. NOT the Breadcrumb nav: since the
+    //     2b top-chrome redesign the TopNavbar only pushes crumbs to context
+    //     ("nothing renders them here today"), and Breadcrumbs.tsx returns
+    //     null until a page sets crumbs — which the landing dashboard never
+    //     does, so that assertion only ever passed by landing somewhere else.
     await expect
       .poll(async () => page.evaluate((k) => window.localStorage.getItem(k), AUTH_TOKEN_KEY), {
         message: "auth token should be set after a successful login",
@@ -90,6 +94,6 @@ test.describe("auth", () => {
       })
       .not.toBeNull();
     await expect(page.locator(emailInput)).toBeHidden();
-    await expect(page.getByRole("navigation", { name: "Breadcrumb" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Account menu" })).toBeVisible();
   });
 });

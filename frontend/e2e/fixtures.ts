@@ -53,10 +53,12 @@ export const stagingProofRequired =
 // localStorage keys the frontend reads. Duplicated here (not imported from
 // src/) so this e2e package stays self-contained. Keep in sync with:
 //   - the auth token store            → "auth:token"
-//   - src/lib/activeCompany.ts        → ACTIVE_COMPANY_KEY
+// (There is deliberately NO active-company key here any more: since the
+// per-window rework, src/lib/activeCompany.ts purges the old origin-wide
+// `houzs.activeCompanyId` as legacy on auth, and the supported pre-auth
+// hand-off is the `?company=<id>` URL seed — see company-isolation.spec.ts.)
 // ──────────────────────────────────────────────────────────────────────────
 export const AUTH_TOKEN_KEY = "auth:token";
-export const ACTIVE_COMPANY_KEY = "houzs.activeCompanyId";
 
 // Raised when staging answers with a transient/unavailable status (a paused
 // free-tier Supabase, a cold Worker, a 5xx). Optional local runs may skip it;
