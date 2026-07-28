@@ -1,0 +1,53 @@
+name: FAIR PNL polish-all
+
+# Owner-triggered. Default dry-run. Tasks:
+#   standardize   : fix state to venue-picker + rebuild name uniform + multi-day gap ends
+#   autocost      : backfill transport/merchandise/commission from cost rates (reconcile-polish)
+#   cleanup-empty : archive true-empty shells (0 income/lines/files/checklist)
+#   cleanup-dups  : archive exact-duplicate projects (keep richest; never file-bearing)
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        type: choice
+        options: [standardize, autocost, cleanup-empty, cleanup-dups]
+        default: standardize
+      mode:
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: fair-pnl-polish-all
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: standardize (${{ inputs.mode }})
+        if: ${{ inputs.task == 'standardize' }}
+        working-directory: backend
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
+        run: node scripts/fair-pnl/standardize-state-name.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
+      - name: autocost (${{ inputs.mode }})
+        if: ${{ inputs.task == 'autocost' }}
+        working-directory: backend
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
+        run: node scripts/fair-pnl/reconcile-polish.mjs --pass=autocost ${{ inputs.mode == 'commit' && '--commit' || '' }}
+      - name: cleanup-empty (${{ inputs.mode }})
+        if: ${{ inputs.task == 'cleanup-empty' }}
+        working-directory: backend
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
+        run: node scripts/fair-pnl/cleanup-projects.mjs --pass=empty ${{ inputs.mode == 'commit' && '--commit' || '' }}
+      - name: cleanup-dups (${{ inputs.mode }})
+        if: ${{ inputs.task == 'cleanup-dups' }}
+        working-directory: backend
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
+        run: node scripts/fair-pnl/cleanup-projects.mjs --pass=dups ${{ inputs.mode == 'commit' && '--commit' || '' }}
