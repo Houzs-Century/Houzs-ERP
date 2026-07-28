@@ -20,7 +20,8 @@ const toRm = (v) => Math.round(Number(v || 0));
 const days = (a, b) => Math.abs((Date.parse(a) - Date.parse(b)) / 86400000);
 
 async function main() {
-  const rows = JSON.parse(fs.readFileSync(path.join(HERE, "seed2024_final.json"), "utf8"));
+  const SEED_FILE = process.env.SEED_FILE || "seed2024_final.json";
+  const rows = JSON.parse(fs.readFileSync(path.join(HERE, SEED_FILE), "utf8"));
   const [brands, venues, organizers, etypes, existing, houzs, codes] = await Promise.all([
     sql`SELECT name FROM project_brands WHERE COALESCE(active,1)=1`,
     sql`SELECT name, state FROM project_venues`,
