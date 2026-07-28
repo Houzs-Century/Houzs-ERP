@@ -59,6 +59,21 @@ visible.
 placeholder user is created with those org fields; accept-invite activates it. Frontend:
 User Management → Members → "Invite Member" (Department → Position auto-scoped → Reports-to).
 
+**Two credentials, not one.** `password` is the DESKTOP/mobile credential (email + password;
+leave blank to send an invite link instead). `pos_pin` is the TABLET credential — the POS has
+no password field at all, you pick your name and type 6 digits. A member created without a PIN
+therefore has no way into the POS until an admin uses Members → Set PIN. The invite panel shows
+the POS PIN field only when the picked position's slug starts with `sales`, and the backend
+**refuses** a PIN for any other position: `/api/pos/pin-login` rejects non-sales slugs, so a PIN
+stored elsewhere is a credential that can never sign in. The response carries `pos_pin_set` when
+a PIN was sent — `false` means the member exists but has no `scm.staff` row yet, and the UI says
+so rather than letting them discover it at the tablet. `services/posPin.ts` is the single writer
+for `scm.pos_pins` (invite + Members → Set PIN both go through it).
+
+Mobile's generic Members form (`MobileModuleList.tsx FORM_MEMBERS`) carries neither password nor
+PIN — it is a schema-driven fallback with no conditional fields. Credential provisioning is a
+desktop surface.
+
 ## Managing it in the UI
 - **User Management → Members**: Position column (inline edit), filter by Department/Position.
 - **User Management → Positions**: pick a position → set each page none/view/edit/full → Save
