@@ -18,7 +18,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Search, ArrowUpRight, ArrowDownLeft, DollarSign, Star, X, Plus,
+  Search, ArrowUpRight, ArrowDownLeft, Star, X, Plus,
   Warehouse as WarehouseIcon, ChevronRight, ChevronDown,
 } from 'lucide-react';
 import { Button } from '../../components/Button';
@@ -28,7 +28,7 @@ import { SearchProgress } from '../../components/SearchProgress';
 import { SearchScopeHint } from '../../components/SearchScopeHint';
 import { useDebouncedSearchTerm, useSearchResultTransition } from '../../hooks/useServerSearch';
 import { adjustmentReasonLabel, formatVariantKey, fmtCenti, fmtDate, fmtQty } from '@2990s/shared';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataTable, type Column } from '../../components/DataTable';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import {
   useWarehouses,
@@ -357,34 +357,33 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
         />
       </div>
 
-      {/* Stock aging */}
+      {/* Stock aging — batch 2: DataTable, aging-bucket order preserved (the
+          buckets arrive youngest→oldest from the server; keep insertion order,
+          so no default sort). */}
       <p className={styles.eyebrow}>Stock Aging — by date received</p>
-      <div className={styles.tableCard}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Age Bucket</th>
-              <th style={{ textAlign: 'right' }}>Qty</th>
-              <th style={{ textAlign: 'right' }}>Value</th>
-              <th style={{ width: '34%' }}>Share of value</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.aging.map((b) => (
-              <tr key={b.key}>
-                <td>{b.label}</td>
-                <td className={`${styles.numCell} ${b.qty > 0 ? styles.numCellPos : styles.numCellZero}`}>{fmtQty(b.qty)}</td>
-                <td className={styles.numCell} style={{ fontWeight: 700 }}>{b.valueSen > 0 ? fmtRm(b.valueSen) : '—'}</td>
-                <td>
-                  <div className="h-2.5 overflow-hidden rounded-full bg-surface-2">
-                    <div className="h-full bg-primary" style={{ width: `${(b.valueSen / agingMax) * 100}%` }} />
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable<(typeof data.aging)[number]>
+        tableId="inventory-analytics-aging"
+        layoutFamily="inventory-analytics-aging"
+        exportName="stock-aging"
+        rows={data.aging}
+        loading={false}
+        emptyLabel="No open lots."
+        getRowKey={(b) => b.key}
+        columns={[
+          { key: 'bucket', label: 'Age Bucket', getValue: (b) => b.label, render: (b) => b.label },
+          { key: 'qty', label: 'Qty', align: 'right', width: '110px', getValue: (b) => b.qty, render: (b) => <span className={`${styles.numCell} ${b.qty > 0 ? styles.numCellPos : styles.numCellZero}`}>{fmtQty(b.qty)}</span> },
+          { key: 'value', label: 'Value', align: 'right', width: '140px', getValue: (b) => b.valueSen / 100, render: (b) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{b.valueSen > 0 ? fmtRm(b.valueSen) : '—'}</span> },
+          {
+            key: 'share', label: 'Share of value', width: '34%', disableSort: true,
+            getValue: (b) => b.valueSen,
+            render: (b) => (
+              <div className="h-2.5 overflow-hidden rounded-full bg-surface-2">
+                <div className="h-full bg-primary" style={{ width: `${(b.valueSen / agingMax) * 100}%` }} />
+              </div>
+            ),
+          },
+        ] satisfies Column<(typeof data.aging)[number]>[]}
+      />
 
       {/* ABC classification */}
       <p className={styles.eyebrow}>ABC Classification — by sales value over the window</p>
@@ -399,33 +398,23 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
         ))}
       </div>
 
-      {/* Dead stock */}
+      {/* Dead stock — batch 2: DataTable. */}
       <p className={styles.eyebrow}>Dead Stock — has stock, no sale in {days} days</p>
-      <div className={styles.tableCard}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th style={{ textAlign: 'right' }}>Qty</th>
-              <th style={{ textAlign: 'right' }}>Value</th>
-              <th>Last Sold</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.deadStock.length === 0 && (
-              <tr><td colSpan={4} className={styles.emptyRow}>No dead stock — every SKU in stock sold within {days} days.</td></tr>
-            )}
-            {data.deadStock.map((d) => (
-              <tr key={d.product_code}>
-                <td><span className={styles.codeChip}>{d.product_code}</span> {d.product_name}</td>
-                <td className={`${styles.numCell} ${styles.numCellPos}`}>{fmtQty(d.qty)}</td>
-                <td className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(d.valueSen)}</td>
-                <td className={styles.numCellZero}>{fmtDay(d.lastSoldAt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable<(typeof data.deadStock)[number]>
+        tableId="inventory-analytics-dead"
+        layoutFamily="inventory-analytics-dead"
+        exportName="dead-stock"
+        rows={data.deadStock}
+        loading={false}
+        emptyLabel={`No dead stock — every SKU in stock sold within ${days} days.`}
+        getRowKey={(d) => d.product_code}
+        columns={[
+          { key: 'product', label: 'Product', getValue: (d) => `${d.product_code} ${d.product_name}`, render: (d) => <><span className={styles.codeChip}>{d.product_code}</span> {d.product_name}</> },
+          { key: 'qty', label: 'Qty', align: 'right', width: '110px', getValue: (d) => d.qty, render: (d) => <span className={`${styles.numCell} ${styles.numCellPos}`}>{fmtQty(d.qty)}</span> },
+          { key: 'value', label: 'Value', align: 'right', width: '140px', getValue: (d) => d.valueSen / 100, render: (d) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(d.valueSen)}</span> },
+          { key: 'lastSold', label: 'Last Sold', width: '130px', getValue: (d) => d.lastSoldAt ?? '', render: (d) => <span className={styles.numCellZero}>{fmtDay(d.lastSoldAt)}</span> },
+        ] satisfies Column<(typeof data.deadStock)[number]>[]}
+      />
     </div>
   );
 };
@@ -505,7 +494,7 @@ const BalancesTab = ({
       </div>
 
       <p className={styles.eyebrow}>
-        {isLoading || searching ? 'Loading…' : `${visibleRows.length} SKU rows · double-click a row to see per-warehouse breakdown`}
+        {isLoading || searching ? 'Loading…' : `${visibleRows.length} SKU rows · click a row for the per-warehouse breakdown · chevron for variants`}
       </p>
       <SearchProgress active={searching} label={search.trim() ? searchTransition.statusText : 'Loading inventory…'} />
       <SearchScopeHint
@@ -523,107 +512,101 @@ const BalancesTab = ({
         </div>
       )}
 
-      <DataGrid<InventoryProductTotal>
-        rows={visibleRows}
+      {/* Batch 2: DataTable. The old DataGrid bound double-click to the
+          drawer and row-click to expansion; DataTable splits them cleanly —
+          row CLICK opens the per-warehouse breakdown drawer (better
+          discoverability than double-click), the chevron owns the variant
+          expansion. Page-level search stays server-scoped (contract above),
+          so no DataTable search config. */}
+      <DataTable<InventoryProductTotal>
+        tableId="inventory-balances"
+        layoutFamily="inventory-balances"
+        exportName="inventory-balances"
+        rows={isLoading || searching ? null : visibleRows}
+        loading={isLoading || searching}
+        emptyLabel="No SKUs match the filters."
+        getRowKey={(r) => r.product_code}
         columns={BALANCE_COLUMNS}
-        storageKey="dg-inventory-balances"
-        exportName="Inventory Balances"
-        rowKey={(r) => r.product_code}
-        searchPlaceholder="Search SKUs…"
-        hideSearch
-        groupBanner={false}
-        isLoading={isLoading || searching}
-        emptyMessage="No SKUs match the filters."
-        onRowDoubleClick={(r) => onDrilldown(r.product_code, r.product_name)}
-        rowStyle={() => ({ cursor: 'pointer' })}
-        /* Variant drill (Commander 2026-05-29, ported to DataGrid.expandable):
-           click a row / its chevron to expand the SKU into its attribute-
-           composition buckets. Lazy: only fetches when expanded. Double-click
-           still opens the per-warehouse breakdown drawer. */
+        onRowClick={(r) => onDrilldown(r.product_code, r.product_name)}
+        /* Variant drill (Commander 2026-05-29): chevron expands the SKU into
+           its attribute-composition buckets. Lazy: only fetches when expanded. */
         expandable={{
-          renderExpansion: (r) => (
+          render: (r) => (
             <>
               <IncomingPoPanel pos={r.incoming_pos} />
               <SkuVariantPanel code={r.product_code} />
             </>
           ),
-          rowExpansionKey: (r) => r.product_code,
+          rowKey: (r) => r.product_code,
         }}
       />
     </>
   );
 };
 
-/* DataGrid columns for the Balances tab — module scope so the grid's memo
-   gets a stable reference. Mirrors the legacy <table> 1:1; the chevron the
-   old markup hand-rolled is now DataGrid's synthetic expand column. */
-const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
+/* Balances columns — batch 2: DataTable `Column`s at module scope. Sorting
+   derives from `getValue` (numbers for qty/money, strings for text); the
+   chevron is DataTable's synthetic expand column. */
+const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
   {
     key: 'code',
     label: 'Product Code',
-    width: 160,
-    accessor: (r) => (
+    width: '160px',
+    getValue: (r) => r.product_code,
+    render: (r) => (
       <Link
         to={`/scm/inventory/stock-card/${encodeURIComponent(r.product_code)}`}
         className={styles.codeChip}
         onClick={(e) => e.stopPropagation()}
-        onDoubleClick={(e) => e.stopPropagation()}
         title="Open Stock Card"
         style={{ textDecoration: 'none' }}
       >
         {r.product_code}
       </Link>
     ),
-    searchValue: (r) => r.product_code,
-    filterValue: (r) => r.product_code,
-    sortFn: (a, b) => (a.product_code ?? '').localeCompare(b.product_code ?? ''),
   },
   {
     key: 'desc',
     label: 'Description',
-    width: 240,
-    accessor: (r) => (
+    width: '240px',
+    getValue: (r) => `${r.product_name} ${r.branding ?? ''}`,
+    render: (r) => (
       <>
         {r.product_name}
         {r.branding && <span className={styles.numCellZero}> · {r.branding}</span>}
       </>
     ),
-    searchValue: (r) => `${r.product_name} ${r.branding ?? ''}`,
-    filterValue: (r) => r.product_name,
-    sortFn: (a, b) => (a.product_name ?? '').localeCompare(b.product_name ?? ''),
   },
   {
     key: 'category',
     label: 'Category',
-    width: 100,
-    accessor: (r) => <span className={styles.numCellZero}>{r.category}</span>,
-    searchValue: (r) => r.category,
-    filterValue: (r) => r.category,
+    width: '100px',
+    getValue: (r) => r.category,
+    render: (r) => <span className={styles.numCellZero}>{r.category}</span>,
   },
   {
     key: 'stock',
     label: 'Stock',
-    width: 80,
+    width: '80px',
     align: 'right',
-    accessor: (r) => {
+    getValue: (r) => r.total_qty,
+    render: (r) => {
       const qtyClass = r.total_qty > 0 ? styles.numCellPos
         : r.total_qty < 0 ? styles.numCellNeg
         : styles.numCellZero;
       return <span className={`${styles.numCell} ${qtyClass}`}>{fmtQty(r.total_qty)}</span>;
     },
-    searchValue: (r) => String(r.total_qty),
-    filterValue: (r) => String(r.total_qty),
-    sortFn: (a, b) => a.total_qty - b.total_qty,
   },
   {
     key: 'incoming',
     label: 'Incoming',
-    width: 100,
+    width: '100px',
     align: 'right',
     // Owner 2026-07-24 — PO qty ARRIVING WITHIN ~30 days. The tooltip + the row
     // drill name WHICH PO(s) and their ETA (incoming_pos); the cell stays a
     // scannable "+N".
-    accessor: (r) => (
+    getValue: (r) => r.incoming_qty,
+    render: (r) => (
       <span
         className={`${styles.numCell} ${r.incoming_qty > 0 ? styles.numCellPos : styles.numCellZero}`}
         title={r.incoming_qty > 0
@@ -633,18 +616,16 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
         {r.incoming_qty > 0 ? `+${fmtQty(r.incoming_qty)}` : '—'}
       </span>
     ),
-    searchValue: () => '',
-    filterValue: (r) => String(r.incoming_qty),
-    sortFn: (a, b) => a.incoming_qty - b.incoming_qty,
   },
   {
     key: 'committed',
     label: 'Scheduled',
-    width: 100,
+    width: '100px',
     align: 'right',
     // Demand from open SO lines that HAVE a delivery date (scheduled to ship).
     // Backend field stays `committed_scheduled`; the on-screen label is "Scheduled".
-    accessor: (r) => (
+    getValue: (r) => r.committed_scheduled,
+    render: (r) => (
       <span
         className={`${styles.numCell} ${r.committed_scheduled > 0 ? styles.numCellNeg : styles.numCellZero}`}
         title="Scheduled = open Sales-Order demand that has a delivery date (scheduled to ship). Delivered/cancelled lines are already netted out. This is subtracted from Stock + Incoming to give Available."
@@ -652,18 +633,16 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
         {r.committed_scheduled > 0 ? `−${fmtQty(r.committed_scheduled)}` : '—'}
       </span>
     ),
-    searchValue: () => '',
-    filterValue: (r) => String(r.committed_scheduled),
-    sortFn: (a, b) => a.committed_scheduled - b.committed_scheduled,
   },
   {
     key: 'available',
     label: 'Available',
-    width: 100,
+    width: '100px',
     align: 'right',
     // Available = Stock + Incoming − Scheduled (owner 2026-07-24 — Incoming is
     // now INCLUDED; the on-screen equation is spelled out in the tooltip).
-    accessor: (r) => (
+    getValue: (r) => r.available_qty,
+    render: (r) => (
       <span
         className={`${styles.numCell} ${r.available_qty < 0 ? styles.numCellNeg : r.available_qty > 0 ? styles.numCellPos : styles.numCellZero}`}
         title={`${fmtQty(r.total_qty)} stock + ${fmtQty(r.incoming_qty)} incoming − ${fmtQty(r.committed_scheduled)} scheduled = ${fmtQty(r.available_qty)} available`}
@@ -671,17 +650,15 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
         {fmtQty(r.available_qty)}
       </span>
     ),
-    searchValue: () => '',
-    filterValue: (r) => String(r.available_qty),
-    sortFn: (a, b) => a.available_qty - b.available_qty,
   },
   {
     key: 'unscheduled',
     label: 'Unscheduled',
-    width: 105,
+    width: '105px',
     align: 'right',
     // Demand from open SO lines with NO delivery date (future / uncertain).
-    accessor: (r) => (
+    getValue: (r) => r.unscheduled_qty,
+    render: (r) => (
       <span
         className={`${styles.numCell} ${r.unscheduled_qty > 0 ? '' : styles.numCellZero}`}
         title="Unscheduled = open Sales-Order demand with no delivery date yet (future / uncertain). Not subtracted from Available, but eats into Spare."
@@ -689,19 +666,17 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
         {r.unscheduled_qty > 0 ? fmtQty(r.unscheduled_qty) : '—'}
       </span>
     ),
-    searchValue: () => '',
-    filterValue: (r) => String(r.unscheduled_qty),
-    sortFn: (a, b) => a.unscheduled_qty - b.unscheduled_qty,
   },
   {
     key: 'surplus',
     label: 'Spare',
-    width: 95,
+    width: '95px',
     align: 'right',
     // Spare = Available − Unscheduled. Negative = even undated demand can't be
     // met (reads as short); positive = genuinely spare / idle stock (dead-stock
     // signal). Backend field stays `surplus_qty`; the on-screen label is "Spare".
-    accessor: (r) => (
+    getValue: (r) => r.surplus_qty,
+    render: (r) => (
       <span
         className={`${styles.numCell} ${r.surplus_qty < 0 ? styles.numCellNeg : r.surplus_qty > 0 ? styles.numCellPos : styles.numCellZero}`}
         title={`${fmtQty(r.available_qty)} available − ${fmtQty(r.unscheduled_qty)} unscheduled = ${fmtQty(r.surplus_qty)} spare`}
@@ -709,9 +684,6 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
         {fmtQty(r.surplus_qty)}
       </span>
     ),
-    searchValue: () => '',
-    filterValue: (r) => String(r.surplus_qty),
-    sortFn: (a, b) => a.surplus_qty - b.surplus_qty,
   },
   {
     // Owner 2026-07-25 — per-SKU dead-stock indicator. Reconciles with the Spare
@@ -722,8 +694,9 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
     // list load (the crash guard). The drawer gives the exact per-lot split.
     key: 'deadstock',
     label: 'Dead stock',
-    width: 110,
-    accessor: (r) => {
+    width: '110px',
+    getValue: (r) => (r.surplus_qty > 0 ? (isMakeToOrderCategory(r.category) ? `dead ${r.surplus_qty}` : `spare ${r.surplus_qty}`) : ''),
+    render: (r) => {
       if (r.surplus_qty <= 0) return <span className={styles.numCellZero}>—</span>;
       const mto = isMakeToOrderCategory(r.category);
       return (
@@ -737,53 +710,40 @@ const BALANCE_COLUMNS: DataGridColumn<InventoryProductTotal>[] = [
         </span>
       );
     },
-    searchValue: () => '',
-    filterValue: (r) => (r.surplus_qty > 0 ? (isMakeToOrderCategory(r.category) ? 'dead' : 'spare') : ''),
-    sortFn: (a, b) => a.surplus_qty - b.surplus_qty,
   },
   {
     key: 'value',
     label: 'Value',
-    width: 110,
+    width: '110px',
     align: 'right',
-    accessor: (r) => (
+    getValue: (r) => r.total_value_sen / 100,
+    render: (r) => (
       <span className={`${styles.numCell} ${styles.numCellZero}`}>
         {r.total_value_sen > 0 ? fmtRm(r.total_value_sen) : '—'}
       </span>
     ),
-    searchValue: () => '',
-    filterValue: (r) => r.total_value_sen > 0 ? fmtRm(r.total_value_sen) : '—',
-    sortFn: (a, b) => a.total_value_sen - b.total_value_sen,
   },
   {
     key: 'unitCost',
     label: 'Unit Cost',
-    width: 100,
+    width: '100px',
     align: 'right',
-    accessor: (r) => (
+    getValue: (r) => ((r.owned_qty ?? r.total_qty) > 0 && r.total_value_sen > 0 ? r.total_value_sen / (r.owned_qty ?? r.total_qty) / 100 : 0),
+    render: (r) => (
       <span className={`${styles.numCell} ${styles.numCellZero}`}>
         {(r.owned_qty ?? r.total_qty) > 0 && r.total_value_sen > 0 ? fmtRm(Math.round(r.total_value_sen / (r.owned_qty ?? r.total_qty))) : '—'}
       </span>
     ),
-    searchValue: () => '',
-    filterValue: (r) => (r.owned_qty ?? r.total_qty) > 0 && r.total_value_sen > 0 ? fmtRm(Math.round(r.total_value_sen / (r.owned_qty ?? r.total_qty))) : '—',
-    sortFn: (a, b) => {
-      const ua = (a.owned_qty ?? a.total_qty) > 0 && a.total_value_sen > 0 ? a.total_value_sen / (a.owned_qty ?? a.total_qty) : 0;
-      const ub = (b.owned_qty ?? b.total_qty) > 0 && b.total_value_sen > 0 ? b.total_value_sen / (b.owned_qty ?? b.total_qty) : 0;
-      return ua - ub;
-    },
   },
   {
     key: 'age',
     label: 'Age',
-    width: 70,
-    accessor: (r) => (
+    width: '70px',
+    /* Oldest lot first when ascending — null (no lots) sorts last. */
+    getValue: (r) => r.oldest_lot_at ?? '9999-12-31',
+    render: (r) => (
       <span className={styles.numCellZero} title={r.oldest_lot_at ?? undefined}>{fmtAgeDays(r.oldest_lot_at)}</span>
     ),
-    searchValue: () => '',
-    filterValue: (r) => fmtAgeDays(r.oldest_lot_at),
-    /* Oldest lot first when ascending — null (no lots) sorts last. */
-    sortFn: (a, b) => (a.oldest_lot_at ?? '9999-12-31').localeCompare(b.oldest_lot_at ?? '9999-12-31'),
   },
 ];
 
@@ -969,92 +929,80 @@ const BatchesTab = ({
         </div>
       )}
 
-      <DataGrid<InventoryBatch>
-        rows={batches}
+      {/* Batch 2: DataTable — the page's own search box above stays (its
+          scope line is a contract string); the chevron expands the batch into
+          its surviving component SKUs. */}
+      <DataTable<InventoryBatch>
+        tableId="inventory-batches"
+        layoutFamily="inventory-batches"
+        exportName="inventory-batches"
+        rows={isLoading ? null : batches}
+        loading={isLoading}
+        emptyLabel={`No open batches${q ? ' match the search' : ''}.`}
+        getRowKey={(b) => `${b.warehouseId}|${b.batchNo}`}
         columns={BATCH_COLUMNS}
-        storageKey="dg-inventory-batches"
-        exportName="Inventory Batches"
-        rowKey={(b) => `${b.warehouseId}|${b.batchNo}`}
-        searchPlaceholder="Search batches…"
-        hideSearch
-        groupBanner={false}
-        isLoading={isLoading}
-        emptyMessage={`No open batches${q ? ' match the search' : ''}.`}
-        rowStyle={() => ({ cursor: 'pointer' })}
-        /* Click a row / its chevron to expand the batch into its surviving
-           component SKUs — same behavior as the legacy click-to-expand rows. */
         expandable={{
-          renderExpansion: (b) => <BatchComponentsPanel batch={b} />,
-          rowExpansionKey: (b) => `${b.warehouseId}|${b.batchNo}`,
+          render: (b) => <BatchComponentsPanel batch={b} />,
+          rowKey: (b) => `${b.warehouseId}|${b.batchNo}`,
         }}
       />
     </>
   );
 };
 
-/* DataGrid columns for the Batches tab — module scope for a stable
-   reference. Chevron comes from DataGrid's synthetic expand column. */
-const BATCH_COLUMNS: DataGridColumn<InventoryBatch>[] = [
+/* Batches columns — batch 2: DataTable `Column`s at module scope. The
+   chevron comes from DataTable's synthetic expand column; page-level search
+   already matches component SKUs inside the batch, so no per-column search. */
+const BATCH_COLUMNS: Column<InventoryBatch>[] = [
   {
     key: 'batch',
     label: 'Batch / PO',
-    width: 160,
-    accessor: (b) => <span className={styles.codeChip}>{b.batchNo}</span>,
-    /* Search must keep matching component SKUs inside the batch (legacy
-       page-level search semantics). */
-    searchValue: (b) =>
-      `${b.batchNo} ${b.supplierName ?? ''} ${(b.components ?? []).map((c) => `${c.productCode} ${c.productName ?? ''}`).join(' ')}`,
-    filterValue: (b) => b.batchNo,
-    sortFn: (a, b) => (a.batchNo ?? '').localeCompare(b.batchNo ?? ''),
+    width: '160px',
+    getValue: (b) => b.batchNo ?? '',
+    render: (b) => <span className={styles.codeChip}>{b.batchNo}</span>,
   },
   {
     key: 'warehouse',
     label: 'Warehouse',
-    width: 150,
-    accessor: (b) => b.warehouseName ?? '—',
+    width: '150px',
+    getValue: (b) => b.warehouseName ?? '—',
+    render: (b) => b.warehouseName ?? '—',
   },
   {
     key: 'supplier',
     label: 'Supplier',
-    width: 170,
-    accessor: (b) => b.supplierName ?? <span className={styles.numCellZero}>—</span>,
-    searchValue: (b) => b.supplierName ?? '',
-    filterValue: (b) => b.supplierName ?? '—',
+    width: '170px',
+    getValue: (b) => b.supplierName ?? '',
+    render: (b) => b.supplierName ?? <span className={styles.numCellZero}>—</span>,
   },
   {
     key: 'components',
     label: 'Components',
-    width: 100,
+    width: '100px',
     align: 'right',
-    accessor: (b) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{(b.components ?? []).length}</span>,
-    searchValue: () => '',
-    filterValue: (b) => String((b.components ?? []).length),
-    sortFn: (a, b) => (a.components ?? []).length - (b.components ?? []).length,
+    getValue: (b) => (b.components ?? []).length,
+    render: (b) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{(b.components ?? []).length}</span>,
   },
   {
     key: 'modules',
     label: 'Modules',
-    width: 90,
+    width: '90px',
     align: 'right',
-    accessor: (b) => (
+    getValue: (b) => b.totalRemaining,
+    render: (b) => (
       <span className={`${styles.numCell} ${b.totalRemaining > 0 ? styles.numCellPos : styles.numCellZero}`}>
         {fmtQty(b.totalRemaining)}
       </span>
     ),
-    searchValue: () => '',
-    filterValue: (b) => String(b.totalRemaining),
-    sortFn: (a, b) => a.totalRemaining - b.totalRemaining,
   },
   {
     key: 'received',
     label: 'Received',
-    width: 90,
-    accessor: (b) => (
+    width: '90px',
+    getValue: (b) => b.receivedAt ?? '9999-12-31',
+    render: (b) => (
       <span className={styles.numCellZero} title={b.receivedAt ?? undefined}>{fmtAgeDays(b.receivedAt)}</span>
     ),
-    searchValue: () => '',
-    filterValue: (b) => fmtAgeDays(b.receivedAt),
-    sortFn: (a, b) => (a.receivedAt ?? '9999-12-31').localeCompare(b.receivedAt ?? '9999-12-31'),
   },
 ];
 
@@ -1257,56 +1205,67 @@ const ReservationsTab = ({
         </div>
       )}
 
-      <div className={styles.tableCard}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Assigned / Free</th>
-              <th>Product</th>
-              <th>Warehouse</th>
-              <th>Batch</th>
-              <th style={{ textAlign: 'right' }}>Qty on Shelf</th>
-              <th>Assigned SO &middot; Qty &middot; Delivery</th>
-              <th>Reserved Since</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && <tr><td colSpan={7} className={styles.emptyRow}>Loading…</td></tr>}
-            {!isLoading && rows.length === 0 && (
-              <tr><td colSpan={7} className={styles.emptyRow}>No open lots match the filters.</td></tr>
-            )}
-            {!isLoading && rows.map((r, i) => (
-              <tr key={`${r.warehouse_id}|${r.product_code}|${r.variant_key}|${r.batch_no ?? ''}|${i}`}>
-                <td>{renderAssignedFreeStatus(r)}</td>
-                <td>
-                  <div>
-                    <Link
-                      to={`/scm/inventory/stock-card/${encodeURIComponent(r.product_code)}`}
-                      className={styles.codeChip}
-                      style={{ textDecoration: 'none' }}
-                    >
-                      {r.product_code}
-                    </Link>
-                  </div>
-                  <div className={styles.numCellZero} style={{ fontSize: 'var(--fs-11)' }}>
-                    {r.product_name ?? '—'}
-                    {r.variant_key ? ` · ${formatVariantKey(r.variant_key) || 'Standard'}` : ''}
-                  </div>
-                </td>
-                <td>{r.warehouse_code ?? r.warehouse_name ?? '—'}</td>
-                <td className={styles.numCellZero}>{r.batch_no ?? '—'}</td>
-                <td className={`${styles.numCell} ${r.qty_remaining > 0 ? styles.numCellPos : styles.numCellZero}`}>
-                  {fmtQty(r.qty_remaining)}
-                </td>
-                <td>{renderAssignedFor(r)}</td>
-                <td className={styles.numCellZero} title={r.reserved_since ?? undefined}>
-                  {r.reserved_since ? fmtAgeDays(r.reserved_since) : '—'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* Batch 2: DataTable. Row identity includes the loop index in the old
+          markup because (warehouse, product, variant, batch) can repeat across
+          lots — keep the same composite via list position lookup. */}
+      <DataTable<InventoryReservation>
+        tableId="inventory-reservations"
+        layoutFamily="inventory-reservations"
+        exportName="inventory-reservations"
+        rows={isLoading ? null : rows}
+        loading={isLoading}
+        emptyLabel="No open lots match the filters."
+        getRowKey={(r) => `${r.warehouse_id}|${r.product_code}|${r.variant_key}|${r.batch_no ?? ''}|${rows.indexOf(r)}`}
+        columns={[
+          { key: 'status', label: 'Assigned / Free', width: '150px', getValue: (r) => (lotAssignedQty(r) > 0 ? 'assigned' : 'free'), render: (r) => renderAssignedFreeStatus(r) },
+          {
+            key: 'product', label: 'Product', width: '240px',
+            getValue: (r) => `${r.product_code} ${r.product_name ?? ''}`,
+            render: (r) => (
+              <>
+                <div>
+                  <Link
+                    to={`/scm/inventory/stock-card/${encodeURIComponent(r.product_code)}`}
+                    className={styles.codeChip}
+                    style={{ textDecoration: 'none' }}
+                  >
+                    {r.product_code}
+                  </Link>
+                </div>
+                <div className={styles.numCellZero} style={{ fontSize: 'var(--fs-11)' }}>
+                  {r.product_name ?? '—'}
+                  {r.variant_key ? ` · ${formatVariantKey(r.variant_key) || 'Standard'}` : ''}
+                </div>
+              </>
+            ),
+          },
+          { key: 'warehouse', label: 'Warehouse', width: '120px', getValue: (r) => r.warehouse_code ?? r.warehouse_name ?? '—', render: (r) => r.warehouse_code ?? r.warehouse_name ?? '—' },
+          { key: 'batch', label: 'Batch', width: '140px', getValue: (r) => r.batch_no ?? '', render: (r) => <span className={styles.numCellZero}>{r.batch_no ?? '—'}</span> },
+          {
+            key: 'qty', label: 'Qty on Shelf', align: 'right', width: '110px',
+            getValue: (r) => r.qty_remaining,
+            render: (r) => (
+              <span className={`${styles.numCell} ${r.qty_remaining > 0 ? styles.numCellPos : styles.numCellZero}`}>
+                {fmtQty(r.qty_remaining)}
+              </span>
+            ),
+          },
+          {
+            key: 'assigned', label: 'Assigned SO · Qty · Delivery', disableSort: true,
+            getValue: (r) => (r.mrp_assigned_to ?? []).map((x) => x.doc_no).join(' '),
+            render: (r) => renderAssignedFor(r),
+          },
+          {
+            key: 'since', label: 'Reserved Since', width: '120px',
+            getValue: (r) => r.reserved_since ?? '9999-12-31',
+            render: (r) => (
+              <span className={styles.numCellZero} title={r.reserved_since ?? undefined}>
+                {r.reserved_since ? fmtAgeDays(r.reserved_since) : '—'}
+              </span>
+            ),
+          },
+        ] satisfies Column<InventoryReservation>[]}
+      />
     </>
   );
 };
@@ -1696,77 +1655,70 @@ const MovementsTab = ({
         </div>
       )}
 
-      <div className={styles.tableCard}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Type</th>
-              <th>Warehouse</th>
-              <th>Product</th>
-              <th style={{ textAlign: 'right' }}>Qty</th>
-              <th style={{ textAlign: 'right' }}>Unit Cost</th>
-              <th style={{ textAlign: 'right' }}>Line Cost</th>
-              <th>Source Doc</th>
-              <th>Reason</th>
-              <th>Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && (
-              <tr><td colSpan={10} className={styles.emptyRow}>Loading…</td></tr>
-            )}
-            {!isLoading && movements.length === 0 && (
-              <tr><td colSpan={10} className={styles.emptyRow}>No movements match the filters.</td></tr>
-            )}
-            {!isLoading && movements.map((m) => {
-              const w = wmap.get(m.warehouse_id);
-              return (
-                <tr key={m.id}>
-                  <td className={styles.numCellZero}>{fmtDateTime(m.created_at)}</td>
-                  <td>
-                    <span className={`${styles.movementPill} ${
-                      m.movement_type === 'IN' ? styles.movementIn
-                      : m.movement_type === 'OUT' ? styles.movementOut
-                      : styles.movementAdj}`}>
-                      {m.movement_type === 'IN' && <ArrowDownLeft size={11} strokeWidth={2} style={{ marginRight: 4 }} />}
-                      {m.movement_type === 'OUT' && <ArrowUpRight size={11} strokeWidth={2} style={{ marginRight: 4 }} />}
-                      {m.movement_type}
-                    </span>
-                  </td>
-                  <td>{w ? w.code : '—'}</td>
-                  <td>
-                    <div><span className={styles.codeChip}>{m.product_code}</span></div>
-                    <div className={styles.numCellZero} style={{ fontSize: 'var(--fs-11)' }}>{m.product_name ?? '—'}</div>
-                  </td>
-                  <td className={`${styles.numCell} ${m.movement_type === 'IN' ? styles.numCellPos : styles.numCellNeg}`}>
-                    {m.movement_type === 'IN' ? '+' : m.movement_type === 'OUT' ? '−' : ''}
-                    {fmtQty(Math.abs(m.qty))}
-                  </td>
-                  <td className={`${styles.numCell} ${styles.numCellZero}`}>
-                    {m.unit_cost_sen && m.unit_cost_sen > 0 ? fmtRm(m.unit_cost_sen) : '—'}
-                  </td>
-                  <td className={`${styles.numCell} ${styles.numCellZero}`}>
-                    {m.total_cost_sen && m.total_cost_sen > 0 ? fmtRm(m.total_cost_sen) : '—'}
-                  </td>
-                  <td>
-                    {m.source_doc_no ? (() => {
-                      const href = docHrefFor(m);
-                      return href
-                        ? <Link to={href} className={styles.docLink}>{m.source_doc_no}</Link>
-                        : <span className={styles.docLink}>{m.source_doc_no}</span>;
-                    })() : <span className={styles.numCellZero}>—</span>}
-                  </td>
-                  <td className={styles.numCellZero}>
-                    {m.reason_code ? adjustmentReasonLabel(m.reason_code) : '—'}
-                  </td>
-                  <td className={`${styles.numCellZero} ${styles.notesCell}`} title={m.notes ?? ''}>{m.notes ?? '—'}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {/* Batch 2: DataTable — the append-only ledger, newest first from the
+          server (no default sort). */}
+      <DataTable<InventoryMovement>
+        tableId="inventory-movements"
+        layoutFamily="inventory-movements"
+        exportName="inventory-movements"
+        rows={isLoading ? null : movements}
+        loading={isLoading}
+        emptyLabel="No movements match the filters."
+        getRowKey={(m) => m.id}
+        columns={[
+          { key: 'when', label: 'When', width: '150px', getValue: (m) => m.created_at, render: (m) => <span className={styles.numCellZero}>{fmtDateTime(m.created_at)}</span> },
+          {
+            key: 'type', label: 'Type', width: '110px',
+            getValue: (m) => m.movement_type,
+            render: (m) => (
+              <span className={`${styles.movementPill} ${
+                m.movement_type === 'IN' ? styles.movementIn
+                : m.movement_type === 'OUT' ? styles.movementOut
+                : styles.movementAdj}`}>
+                {m.movement_type === 'IN' && <ArrowDownLeft size={11} strokeWidth={2} style={{ marginRight: 4 }} />}
+                {m.movement_type === 'OUT' && <ArrowUpRight size={11} strokeWidth={2} style={{ marginRight: 4 }} />}
+                {m.movement_type}
+              </span>
+            ),
+          },
+          { key: 'warehouse', label: 'Warehouse', width: '110px', getValue: (m) => wmap.get(m.warehouse_id)?.code ?? '—', render: (m) => wmap.get(m.warehouse_id)?.code ?? '—' },
+          {
+            key: 'product', label: 'Product', width: '200px',
+            getValue: (m) => `${m.product_code} ${m.product_name ?? ''}`,
+            render: (m) => (
+              <>
+                <div><span className={styles.codeChip}>{m.product_code}</span></div>
+                <div className={styles.numCellZero} style={{ fontSize: 'var(--fs-11)' }}>{m.product_name ?? '—'}</div>
+              </>
+            ),
+          },
+          {
+            key: 'qty', label: 'Qty', align: 'right', width: '90px',
+            getValue: (m) => (m.movement_type === 'OUT' ? -Math.abs(m.qty) : Math.abs(m.qty)),
+            render: (m) => (
+              <span className={`${styles.numCell} ${m.movement_type === 'IN' ? styles.numCellPos : styles.numCellNeg}`}>
+                {m.movement_type === 'IN' ? '+' : m.movement_type === 'OUT' ? '−' : ''}
+                {fmtQty(Math.abs(m.qty))}
+              </span>
+            ),
+          },
+          { key: 'unitCost', label: 'Unit Cost', align: 'right', width: '100px', getValue: (m) => (m.unit_cost_sen ?? 0) / 100, render: (m) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{m.unit_cost_sen && m.unit_cost_sen > 0 ? fmtRm(m.unit_cost_sen) : '—'}</span> },
+          { key: 'lineCost', label: 'Line Cost', align: 'right', width: '110px', getValue: (m) => (m.total_cost_sen ?? 0) / 100, render: (m) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{m.total_cost_sen && m.total_cost_sen > 0 ? fmtRm(m.total_cost_sen) : '—'}</span> },
+          {
+            key: 'source', label: 'Source Doc', width: '140px',
+            getValue: (m) => m.source_doc_no ?? '',
+            render: (m) => {
+              if (!m.source_doc_no) return <span className={styles.numCellZero}>—</span>;
+              const href = docHrefFor(m);
+              return href
+                ? <Link to={href} className={styles.docLink}>{m.source_doc_no}</Link>
+                : <span className={styles.docLink}>{m.source_doc_no}</span>;
+            },
+          },
+          { key: 'reason', label: 'Reason', width: '130px', getValue: (m) => (m.reason_code ? adjustmentReasonLabel(m.reason_code) : ''), render: (m) => <span className={styles.numCellZero}>{m.reason_code ? adjustmentReasonLabel(m.reason_code) : '—'}</span> },
+          { key: 'notes', label: 'Notes', getValue: (m) => m.notes ?? '', render: (m) => <span className={`${styles.numCellZero} ${styles.notesCell}`} title={m.notes ?? ''}>{m.notes ?? '—'}</span> },
+        ] satisfies Column<InventoryMovement>[]}
+      />
     </>
   );
 };
@@ -1802,48 +1754,35 @@ const CogsTab = ({
 
       <p className={styles.eyebrow}>{isLoading ? 'Loading…' : `${cogs.length} consumption entries`}</p>
 
-      <div className={styles.tableCard}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Warehouse</th>
-              <th>Product</th>
-              <th style={{ textAlign: 'right' }}>Qty</th>
-              <th style={{ textAlign: 'right' }}>Unit Cost</th>
-              <th style={{ textAlign: 'right' }}>COGS</th>
-              <th>Doc</th>
-              <th>Lot Received</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && <tr><td colSpan={8} className={styles.emptyRow}>Loading…</td></tr>}
-            {!isLoading && cogs.length === 0 && (
-              <tr><td colSpan={8} className={styles.emptyRow}>
-                <DollarSign size={32} strokeWidth={1.5} />
-                <div style={{ marginTop: 8 }}>No COGS entries yet.</div>
-                <div style={{ marginTop: 4, fontSize: 'var(--fs-12)' }}>
-                  COGS is auto-posted when a DO or Purchase Return consumes a lot.
-                </div>
-              </td></tr>
-            )}
-            {!isLoading && cogs.map((c) => (
-              <tr key={c.id}>
-                <td className={styles.numCellZero}>{fmtDateTime(c.consumed_at)}</td>
-                <td>{c.warehouse_code}</td>
-                <td><span className={styles.codeChip}>{c.product_code}</span></td>
-                <td className={`${styles.numCell} ${styles.numCellNeg}`}>−{fmtQty(c.qty_consumed)}</td>
-                <td className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(c.unit_cost_sen)}</td>
-                <td className={`${styles.numCell}`} style={{ fontWeight: 700 }}>{fmtRm(c.total_cost_sen)}</td>
-                <td>{c.source_doc_no ? <span className={styles.docLink}>{c.source_doc_no}</span> : '—'}</td>
-                <td className={styles.numCellZero}>
-                  {fmtDateTime(c.lot_received_at)}{c.lot_source_doc_no ? ` · ${c.lot_source_doc_no}` : ''}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* Batch 2: DataTable. The icon-decorated empty state flattens to the
+          shared emptyLabel sentence (same trade every converted page made). */}
+      <DataTable<CogsEntry>
+        tableId="inventory-cogs"
+        layoutFamily="inventory-cogs"
+        exportName="inventory-cogs"
+        rows={isLoading ? null : cogs}
+        loading={isLoading}
+        emptyLabel="No COGS entries yet — COGS is auto-posted when a DO or Purchase Return consumes a lot."
+        getRowKey={(c) => c.id}
+        columns={[
+          { key: 'when', label: 'When', width: '150px', getValue: (c) => c.consumed_at, render: (c) => <span className={styles.numCellZero}>{fmtDateTime(c.consumed_at)}</span> },
+          { key: 'warehouse', label: 'Warehouse', width: '110px', getValue: (c) => c.warehouse_code, render: (c) => c.warehouse_code },
+          { key: 'product', label: 'Product', width: '160px', getValue: (c) => c.product_code, render: (c) => <span className={styles.codeChip}>{c.product_code}</span> },
+          { key: 'qty', label: 'Qty', align: 'right', width: '90px', getValue: (c) => -c.qty_consumed, render: (c) => <span className={`${styles.numCell} ${styles.numCellNeg}`}>−{fmtQty(c.qty_consumed)}</span> },
+          { key: 'unitCost', label: 'Unit Cost', align: 'right', width: '100px', getValue: (c) => c.unit_cost_sen / 100, render: (c) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(c.unit_cost_sen)}</span> },
+          { key: 'cogs', label: 'COGS', align: 'right', width: '110px', getValue: (c) => c.total_cost_sen / 100, render: (c) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(c.total_cost_sen)}</span> },
+          { key: 'doc', label: 'Doc', width: '140px', getValue: (c) => c.source_doc_no ?? '', render: (c) => c.source_doc_no ? <span className={styles.docLink}>{c.source_doc_no}</span> : '—' },
+          {
+            key: 'lot', label: 'Lot Received', width: '200px',
+            getValue: (c) => c.lot_received_at,
+            render: (c) => (
+              <span className={styles.numCellZero}>
+                {fmtDateTime(c.lot_received_at)}{c.lot_source_doc_no ? ` · ${c.lot_source_doc_no}` : ''}
+              </span>
+            ),
+          },
+        ] satisfies Column<CogsEntry>[]}
+      />
     </>
   );
 };
@@ -1871,48 +1810,36 @@ const WarehousesTab = () => {
         </Button>
       </div>
 
-      <div className={styles.tableCard}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Code</th>
-              <th>Name</th>
-              <th>Location</th>
-              <th>Default</th>
-              <th>Status</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {warehouses.isLoading && (
-              <tr><td colSpan={6} className={styles.emptyRow}>Loading…</td></tr>
-            )}
-            {!warehouses.isLoading && (warehouses.data?.length ?? 0) === 0 && (
-              <tr><td colSpan={6} className={styles.emptyRow}>
-                <WarehouseIcon size={32} strokeWidth={1.5} />
-                <div style={{ marginTop: 8 }}>No warehouses yet.</div>
-              </td></tr>
-            )}
-            {warehouses.data?.map((w) => (
-              <tr key={w.id}>
-                <td><span className={styles.codeChip}>{w.code}</span></td>
-                <td>{w.name}</td>
-                <td className={styles.numCellZero}>{w.location ?? '—'}</td>
-                <td>{w.is_default ? <Star size={12} strokeWidth={2}
-                  className="fill-primary text-primary" /> : '—'}</td>
-                <td>
-                  <span className={`${styles.movementPill} ${w.is_active ? styles.movementIn : styles.movementAdj}`}>
-                    {w.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td>
-                  <Button variant="ghost" onClick={() => setEditing(w)}>Edit</Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* Batch 2: DataTable. */}
+      <DataTable<Warehouse>
+        tableId="inventory-warehouses"
+        layoutFamily="inventory-warehouses"
+        exportName="warehouses"
+        rows={warehouses.isLoading ? null : (warehouses.data ?? [])}
+        loading={warehouses.isLoading}
+        emptyLabel="No warehouses yet."
+        getRowKey={(w) => w.id}
+        columns={[
+          { key: 'code', label: 'Code', width: '150px', getValue: (w) => w.code, render: (w) => <span className={styles.codeChip}>{w.code}</span> },
+          { key: 'name', label: 'Name', getValue: (w) => w.name, render: (w) => w.name },
+          { key: 'location', label: 'Location', getValue: (w) => w.location ?? '', render: (w) => <span className={styles.numCellZero}>{w.location ?? '—'}</span> },
+          { key: 'default', label: 'Default', width: '90px', getValue: (w) => (w.is_default ? 1 : 0), render: (w) => w.is_default ? <Star size={12} strokeWidth={2} className="fill-primary text-primary" /> : '—' },
+          {
+            key: 'status', label: 'Status', width: '110px',
+            getValue: (w) => (w.is_active ? 'Active' : 'Inactive'),
+            render: (w) => (
+              <span className={`${styles.movementPill} ${w.is_active ? styles.movementIn : styles.movementAdj}`}>
+                {w.is_active ? 'Active' : 'Inactive'}
+              </span>
+            ),
+          },
+          {
+            key: 'actions', label: '', width: '90px', disableSort: true,
+            getValue: () => '',
+            render: (w) => <Button variant="ghost" onClick={() => setEditing(w)}>Edit</Button>,
+          },
+        ] satisfies Column<Warehouse>[]}
+      />
 
       {(creating || editing) && (
         <WarehouseDrawer
