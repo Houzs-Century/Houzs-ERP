@@ -1,7 +1,12 @@
-// FAIR PNL — archive the 21 leftover seed projects that have NO Excel/v8 row of
-// their own after the venue-canonical rematch (11 are duplicate twins of owner
-// events seeded by the early, weaker matcher; 10 are orphans whose figures came
-// from rows now correctly claimed by other projects). Owner approved removal.
+// FAIR PNL — archive the 3 confirmed duplicate seed projects. The owner reviewed
+// the full unmatched list against the calendar and the raw FAIR PNL sheets: 18 of
+// the 21 "unmatched" seeds are REAL events my matcher failed to read (label quirks
+// like "MLE SREMEBAN" = Dataran Centrio Seremban, "HOMEDEC SPICE" = Setia Spice) —
+// those are KEPT. Only these 3 are visibly doubled on the calendar, each shadowing
+// a real project with identical/near figures:
+//   p2032 <-> p144 (AKEMI MLE @ MID VALLEY 2026-03-20, both RM382,597)
+//   p2044 <-> p34  (AKEMI MEGAHOME @ MITC 2026-04-30)
+//   p2054 <-> p367 (AKEMI BIGHOME @ MID VALLEY 2026-06-05, both RM515,856)
 //
 // SAFETY: every pid must be created_by=0 (seed), have zero checklist attachments,
 // and not already be archived — otherwise it is skipped and reported, never forced.
@@ -13,8 +18,7 @@ const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
 const sql = postgres(DSN, { ssl: "require", max: 1, idle_timeout: 20, connect_timeout: 30 });
 
-const PIDS = [2068, 2069, 2070, 2131, 2147, 647, 648, 1797, 1900, 1901,
-  1956, 1963, 1982, 1980, 1979, 1981, 1985, 2004, 2032, 2044, 2054];
+const PIDS = [2032, 2044, 2054];
 
 async function main() {
   const rows = await sql`
