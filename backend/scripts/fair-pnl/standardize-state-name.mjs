@@ -32,7 +32,7 @@ async function main() {
   const vstate = new Map(venues.map((v) => [v.name, v.state]));
   const projects = await sql`
     SELECT id, brand, venue, organizer, state, name FROM projects
-    WHERE archived_at IS NULL AND start_date >= '2024-01-01' AND start_date < '2026-07-01'
+    WHERE archived_at IS NULL AND start_date >= '2024-01-01'
     ORDER BY start_date`;
   console.log(`\n=== FAIR PNL standardize state+name — ${COMMIT ? "COMMIT" : "DRY-RUN"} ===`);
   console.log(`in-scope projects: ${projects.length}`);
