@@ -9922,11 +9922,17 @@ function PhasePhotosSection({ projectId }: { projectId: number }) {
 
 // Schedule reference (owner 2026-07-23) — the mall handbook's official event
 // schedule screenshot, so logistics can read setup/dismantle dates + times off
-// it. Desktop-only (this page IS the PC PMS; mobile PMS never renders it).
+// it. Also on mobile since 2026-07-23 (MobilePMS SetupDismantle, same
+// phase="schedule" rows), so the "desktop only" badge is retired.
 // Reuses the phase-photos machinery with phase="schedule".
 function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readOnly?: boolean }) {
   const toast = useToast();
+  const dialog = useDialog();
   const fileRef = useRef<HTMLInputElement>(null);
+  // Remark-first-before-upload (owner 2026-07-27), same flow as the Defect List:
+  // Upload prompts for a required remark, then the file picker; the screenshot
+  // uploads carrying that remark (stored as the phase-photo caption).
+  const pendingCaptionRef = useRef<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const photos = useQuery<{ photos: PhasePhoto[] }>(
     "/api/projects/:/phase-photos",
@@ -9934,7 +9940,20 @@ function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readO
     [projectId],
   );
   const items = (photos.data?.photos ?? []).filter((p) => p.phase === "schedule");
-  const upload = async (file: File) => {
+  const startUpload = async () => {
+    const remark = await dialog.prompt({
+      title: "Remark for this schedule",
+      message: "Write a remark before uploading (required).",
+      placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm",
+      required: true,
+      multiline: true,
+      confirmLabel: "Choose file…",
+    });
+    if (remark == null || !remark.trim()) return;
+    pendingCaptionRef.current = remark.trim();
+    fileRef.current?.click();
+  };
+  const upload = async (file: File, caption?: string) => {
     if (file.size > 50 * 1024 * 1024) {
       toast?.error("That file is over 50MB.");
       return;
@@ -9956,6 +9975,7 @@ function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readO
         phase: "schedule",
         r2_key: up.key,
         content_type: up.mime_type,
+        caption: caption ?? null,
       });
       photos.reload();
     } catch (e) {
@@ -9971,14 +9991,20 @@ function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readO
         <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">
           Schedule reference
         </span>
-        <span className="rounded-full border border-border px-1.5 py-0.5 text-[8.5px] font-bold uppercase tracking-wider text-ink-muted">
-          Desktop only
-        </span>
       </div>
       {items.length > 0 ? (
         <PhotoGroup label="Schedule" photos={items} onChange={() => photos.reload()} />
       ) : (
         <div className="text-[12px] text-ink-muted">No schedule screenshot uploaded yet.</div>
+      )}
+      {items.some((p) => p.caption) && (
+        <div className="mt-1.5 space-y-0.5">
+          {items.filter((p) => p.caption).map((p) => (
+            <div key={p.id} className="text-[10.5px] text-ink-secondary whitespace-pre-wrap break-words">
+              <span className="font-semibold text-ink-muted">Remark:</span> {p.caption}
+            </div>
+          ))}
+        </div>
       )}
       {!readOnly && (
         <>
@@ -9989,11 +10015,13 @@ function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readO
             accept="image/*,application/pdf,.heic"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) void upload(f);
+              const cap = pendingCaptionRef.current;
+              pendingCaptionRef.current = undefined;
+              if (f) void upload(f, cap);
             }}
           />
           <button
-            onClick={() => fileRef.current?.click()}
+            onClick={() => void startUpload()}
             disabled={busy}
             className="mt-2 inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent disabled:opacity-50"
           >

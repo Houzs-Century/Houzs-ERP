@@ -1306,6 +1306,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 notify={notify}
                 reloadPhotos={reloadPhotos}
                 confirm={confirm}
+                prompt={prompt}
               />
             )}
 
@@ -1425,6 +1426,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 notify={notify}
                 reloadPhotos={reloadPhotos}
                 confirm={confirm}
+                prompt={prompt}
               />
             )}
 
@@ -2434,7 +2436,7 @@ const isoTimePart = (iso: string | null | undefined): string => {
 // PUT /:id/phase-photos/upload → POST /:id/phase-photos). Schedule/driver/
 // lorry all persist via PATCH /:id.
 function SetupDismantle({
-  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm,
+  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm, prompt,
 }: {
   projectId: number;
   project: ProjectDetail["project"];
@@ -2456,6 +2458,7 @@ function SetupDismantle({
   notify: NotifyFn;
   reloadPhotos: () => void;
   confirm: ConfirmFn;
+  prompt: PromptFn;
 }) {
   const setupPhoto = photos.find((ph) => ph.phase === "setup");
   const dismantlePhoto = photos.find((ph) => ph.phase === "dismantle");
@@ -2463,7 +2466,21 @@ function SetupDismantle({
   const scheduleShots = photos.filter((ph): ph is PhasePhoto & { r2_key: string } => ph.phase === "schedule" && !!ph.r2_key);
   const schedRef = useRef<HTMLInputElement | null>(null);
   const [schedView, setSchedView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
-  const uploadSchedule = async (file: File) => {
+  // Remark-first-before-upload (owner 2026-07-27), same flow as the Defect List:
+  // prompt for a required remark, then the file picker; the screenshot uploads
+  // carrying that remark (stored as the phase-photo caption).
+  const pendingSchedCaptionRef = useRef<string | undefined>(undefined);
+  const startScheduleUpload = async () => {
+    const remark = await prompt({
+      title: "Remark for this schedule",
+      placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm (required)",
+      validate: (v) => (v.trim() ? null : "Please write a remark before uploading."),
+    });
+    if (remark == null || !remark.trim()) return;
+    pendingSchedCaptionRef.current = remark.trim();
+    schedRef.current?.click();
+  };
+  const uploadSchedule = async (file: File, caption?: string) => {
     if (file.size > 50 * 1024 * 1024) {
       await notify({ title: "File too large", body: "Max 50MB.", tone: "error" });
       return;
@@ -2481,7 +2498,7 @@ function SetupDismantle({
         buf,
         file.type || "application/octet-stream",
       );
-      await api.post(`/api/projects/${projectId}/phase-photos`, { phase: "schedule", r2_key: up.key, content_type: up.mime_type });
+      await api.post(`/api/projects/${projectId}/phase-photos`, { phase: "schedule", r2_key: up.key, content_type: up.mime_type, caption: caption ?? null });
       reloadPhotos();
     } catch (e) {
       await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
@@ -2550,12 +2567,21 @@ function SetupDismantle({
               ))}
             </div>
           )}
+          {scheduleShots.some((s) => s.caption) && (
+            <div style={{ marginBottom: canScheduleEdit ? 8 : 0, display: "flex", flexDirection: "column", gap: 2 }}>
+              {scheduleShots.filter((s) => s.caption).map((s) => (
+                <div key={s.id} style={{ fontSize: 11.5, color: "#6b6f63", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  <b style={{ color: "#8c968a" }}>Remark:</b> {s.caption}
+                </div>
+              ))}
+            </div>
+          )}
           {canScheduleEdit && (
             <>
-              <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => schedRef.current?.click()}>
+              <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => void startScheduleUpload()}>
                 {scheduleShots.length ? "+ Add / replace screenshot" : "Upload handbook schedule screenshot"}
               </button>
-              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadSchedule(f); }} />
+              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; const cap = pendingSchedCaptionRef.current; pendingSchedCaptionRef.current = undefined; if (f) void uploadSchedule(f, cap); }} />
             </>
           )}
           {schedView && (
