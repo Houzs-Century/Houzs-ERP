@@ -3217,7 +3217,7 @@ export function buildProjectsCalendarModel({
   mode,
   anchorMonth,
   brand,
-  section,
+  status,
   organizer,
   showTasks,
   expandAll,
@@ -3229,23 +3229,19 @@ export function buildProjectsCalendarModel({
   mode: CalendarMode;
   anchorMonth: number;
   brand: string;
-  section: string;
+  status: string;
   organizer: string;
   showTasks: boolean;
   expandAll: boolean;
 }) {
-  const matchesSection = (project: CalendarProject): boolean => {
-    if (!section) return true;
-    const total = project.sections_total ?? 0;
-    const active = project.active_section_name ?? null;
-    if (section === "__done") return total > 0 && active == null;
-    if (section === "__none") return total === 0;
-    return active === section;
-  };
+  // Filter by project STATUS (owner 2026-07-28) — the calendar's old "section"
+  // dropdown is now confirmed / pending / cancelled.
+  const matchesStatus = (project: CalendarProject): boolean =>
+    !status || (project.status || "").toLowerCase() === status;
 
   const projects = allProjects.filter((project) => {
     if (brand && project.brand !== brand) return false;
-    if (!matchesSection(project)) return false;
+    if (!matchesStatus(project)) return false;
     if (organizer && (project.organizer || "") !== organizer) return false;
     return true;
   });
@@ -3254,7 +3250,7 @@ export function buildProjectsCalendarModel({
     ? allTasks.filter((task) => {
         if (brand && task.brand !== brand) return false;
         if (organizer && (task.organizer || "") !== organizer) return false;
-        return !section || projectById.has(task.project_id);
+        return !status || projectById.has(task.project_id);
       })
     : [];
 
@@ -3419,7 +3415,7 @@ function ProjectsCalendarView() {
     PROJECTS_CALENDAR_FILTER_KEYS
   );
   const brand = params.get("brand") || "";
-  const section = params.get("section") || "";
+  const status = params.get("status") || "";
   const organizer = params.get("organizer") || "";
   // anchor lives in URL as `month=YYYY-MM` so a refresh / shared link
   // lands on the same month.
@@ -3432,7 +3428,7 @@ function ProjectsCalendarView() {
     setParams(next, { replace: true });
   }
   const setBrand = (v: string) => patchParams({ brand: v });
-  const setSection = (v: string) => patchParams({ section: v });
+  const setStatus = (v: string) => patchParams({ status: v });
   const setOrganizer = (v: string) => patchParams({ organizer: v });
 
   // showTasks / showHolidays are personal display prefs (checkbox toggles
@@ -3639,7 +3635,7 @@ function ProjectsCalendarView() {
         mode,
         anchorMonth,
         brand,
-        section,
+        status,
         organizer,
         showTasks,
         expandAll,
@@ -3652,7 +3648,7 @@ function ProjectsCalendarView() {
       mode,
       anchorMonth,
       brand,
-      section,
+      status,
       organizer,
       showTasks,
       expandAll,
@@ -3810,18 +3806,15 @@ function ProjectsCalendarView() {
           </select>
           <span className="relative inline-flex">
           <select
-              value={section}
-              onChange={(e) => setSection(e.target.value)}
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
               className="h-8 appearance-none rounded-md border border-border bg-surface pl-2 pr-7 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
-              title="Filter by current section (stage)"
+              title="Filter by status"
             >
-              <option value="">All sections</option>
-              {(sectionsListQ.data?.data ?? []).map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-              <option value="__done">Completed</option>
+              <option value="">All statuses</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="pending">Pending</option>
+              <option value="cancelled">Cancelled</option>
             </select>
             <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted" />
           </span>
@@ -3842,7 +3835,7 @@ function ProjectsCalendarView() {
             <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted" />
           </span>
           <ResetFiltersButton
-            active={!!(brand || section || organizer || params.get("stage"))}
+            active={!!(brand || status || organizer || params.get("stage"))}
             onReset={() => {
               // Functional form so the latest URL state is read at call
               // time rather than the closure-captured `params` snapshot
@@ -3853,7 +3846,7 @@ function ProjectsCalendarView() {
               setParams(
                 (prev) => {
                   const next = new URLSearchParams(prev);
-                  ["brand", "section", "organizer", "stage"].forEach((k) =>
+                  ["brand", "status", "organizer", "stage"].forEach((k) =>
                     next.delete(k)
                   );
                   return next;
@@ -3886,11 +3879,11 @@ function ProjectsCalendarView() {
           >
             {showHolidays ? <Check size={12} /> : <Circle size={12} />} MY Holidays
           </button>
-          {(brand || section || organizer) && (
+          {(brand || status || organizer) && (
             <button
               onClick={() => {
                 setBrand("");
-                setSection("");
+                setStatus("");
                 setOrganizer("");
               }}
               className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted hover:text-err"
@@ -5422,7 +5415,11 @@ function ProjectTeamSection({
     () => api.get(`/api/projects/sales-rep-options`),
     []
   );
-  const reps = repsQ.data?.data ?? [];
+  // Alphabetical by NAME (owner 2026-07-28) — was code order (SR-004, SR-005…);
+  // the SR-xxx code is just a stable id and does NOT need to be renumbered.
+  const reps = [...(repsQ.data?.data ?? [])].sort((a, b) =>
+    (a.name ?? "").localeCompare(b.name ?? ""),
+  );
   const takenRepIds = new Set(attendees.map((a) => a.sales_rep_id));
   const availableReps = reps.filter((r) => !takenRepIds.has(r.id));
   const [busy, setBusy] = useState(false);

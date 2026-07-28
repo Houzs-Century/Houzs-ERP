@@ -59,7 +59,7 @@ describe("buildProjectsCalendarModel", () => {
       project(2),
       project(3),
       project(4),
-      project(5, { active_section_name: "Live" }),
+      project(5, { status: "pending" }),
     ];
 
     const model = buildProjectsCalendarModel({
@@ -70,7 +70,7 @@ describe("buildProjectsCalendarModel", () => {
       mode: "month",
       anchorMonth: 2,
       brand: "",
-      section: "Setup",
+      status: "confirmed",
       organizer: "",
       showTasks: true,
       expandAll: false,
