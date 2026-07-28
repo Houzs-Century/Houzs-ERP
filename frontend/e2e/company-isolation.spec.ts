@@ -58,8 +58,10 @@ test.describe("company isolation", () => {
     });
 
     // Sign in (seeded) and confirm the authed shell before probing companies.
+    // Account-menu trigger, not the Breadcrumb nav — see auth.spec.ts: the 2b
+    // top-chrome redesign left no always-rendered breadcrumb landmark.
     await page.goto("/");
-    await expect(page.getByRole("navigation", { name: "Breadcrumb" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Account menu" })).toBeVisible();
 
     const companies = await readCompanies(page, STAGING_API_URL);
     const multiCompany = companies.length >= 2;
