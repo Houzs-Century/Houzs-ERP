@@ -97,7 +97,7 @@ Add the missing 7th type as a Model‑A ASSR leg.
 **DB (respect the D1‑vs‑PG split — `assr_cases` is mirrored in both):**
 - `backend/src/db/migrations/127_assr_inspection_visit.sql` (**D1 test mirror**): `ALTER TABLE assr_cases ADD COLUMN inspection_visit_at TEXT;` (match `customer_pickup_at`'s type from `107`).
 - `backend/src/db/migrations-pg/0140_assr_inspection_visit.sql` (**prod PG**): `ALTER TABLE assr_cases ADD COLUMN IF NOT EXISTS inspection_visit_at DATE;` (match `customer_pickup_at`'s PG type from `0064`).
-- `backend/src/db/migrations-pg/0141_scm_trip_stop_type_inspection.sql` (**PG enum**): `ALTER TYPE scm.trip_stop_type ADD VALUE IF NOT EXISTS 'INSPECTION';` (mirror `0128`). Forward‑compat for when ASSR legs get trip wiring in P3. *(The D1 mirror models `trip_stops.stop_type` as a CHECK constraint listing values — extend it too only if a test exercises an INSPECTION stop.)*
+- `backend/src/db/migrations-pg/0165_scm_trip_stop_type_inspection.sql` (**PG enum** — SHIPPED; drafted here as `0141`/renumbered `0158`, landed as `0165` after main's numbering advanced): `ALTER TYPE scm.trip_stop_type ADD VALUE IF NOT EXISTS 'INSPECTION';` (mirror `0128`). The P3 trip wiring itself landed via `0166_scm_trip_stops_assr_case.sql` + PR #947. *(The D1 mirror models `trip_stops.stop_type` as a CHECK constraint listing values — extend it too only if a test exercises an INSPECTION stop.)*
 
 **Backend — `backend/src/scm/routes/delivery-planning.ts` (ASSR union + schedule):**
 - ASSR union SELECT (~984‑991): add `inspection_visit_at` and `inspection_by` to the selected columns; extend the `WHERE (customer_pickup_at IS NOT NULL OR do_date IS NOT NULL)` with `OR (inspection_visit_at IS NOT NULL AND inspection_by = 'own')`.
@@ -175,5 +175,6 @@ Add the missing 7th type as a Model‑A ASSR leg.
 | ASSR inspection fields | `migrations-pg/0073` (`inspection_by`) · D1 `110`; `0062` (`qc_receipt_date`) · D1 `105` |
 
 ## Appendix B — migration numbering (next free)
+- STALE SNAPSHOT (2026-07-18) — the numbers below were "next free" when this spec was written and are long taken. What shipped: `0140_assr_inspection_visit`, and the INSPECTION enum as **`0165`** (not `0141` — renumbered twice as main advanced), with `0166_scm_trip_stops_assr_case` for the P3 trip wiring. Always take the next free number at implementation time; never trust a spec's snapshot.
 - D1 test mirror `backend/src/db/migrations/`: next = **127**.
 - Prod PG `backend/src/db/migrations-pg/`: next = **0140** (then `0141` for the enum).
