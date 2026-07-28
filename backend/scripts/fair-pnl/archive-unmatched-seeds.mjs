@@ -18,7 +18,9 @@ const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
 const sql = postgres(DSN, { ssl: "require", max: 1, idle_timeout: 20, connect_timeout: 30 });
 
-const PIDS = [2032, 2044, 2054];
+// + p647/p648: owner checked the Dec 2024 FAIR PNL sheet — no ZANOTTI AMAN CENTRAL
+// (19/12) and no AKEMI ITCC (24/12) exist there, so these two seeds have no source.
+const PIDS = [647, 648, 2032, 2044, 2054];
 
 async function main() {
   const rows = await sql`
