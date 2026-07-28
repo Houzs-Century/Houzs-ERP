@@ -1969,11 +1969,11 @@ interface ProfitabilityBreakdown {
   margin: number | null;
 }
 
-// The dimension a breakdown groups on — drives the Layer-2 drill query.
+// The dimension a breakdown groups on — drives the drill-down queries.
 type ProfitabilityGroupBy = "brand" | "event_type" | "organizer" | "venue" | "month";
 
-// Filters currently active on the dashboard, forwarded to the drill query so a
-// group's project list reflects the same scope as the group table.
+// Filters currently active on the dashboard, forwarded to every drill query so
+// a drill always reflects the same scope as the group table it opened from.
 interface ProfitabilityFilters {
   date_from?: string;
   date_to?: string;
@@ -1982,8 +1982,42 @@ interface ProfitabilityFilters {
   event_type_id?: string;
 }
 
-// Layer 2: one project inside a group. Same P&L columns as the group row,
-// plus identity so the row can navigate to the project page (Layer 3).
+// The open drill path, held in the URL (see ProjectsAnalyticsView): which
+// dimension card is expanded (dim), to which value (value), and — for the four
+// real dimensions — which month under it (month). Only one path is open at a
+// time so the URL stays a single shareable drill.
+interface ProfitabilityDrillState {
+  dim: ProfitabilityGroupBy | null;
+  value: string | null;
+  month: string | null;
+  toggleValue: (dim: ProfitabilityGroupBy, key: string) => void;
+  toggleMonth: (key: string) => void;
+}
+
+// Layer 2 (dimension cards): one finance month inside a dimension value. Same
+// P&L columns as the group row; `key` is the YYYY-MM bucket.
+interface ProfitabilityDrillMonth {
+  key: string;
+  count: number;
+  income: number;
+  cogs: number;
+  cost: number;
+  rental: number;
+  gp: number;
+  profit: number;
+  margin: number | null;
+}
+
+interface ProfitabilityMonthsResponse {
+  level: "months";
+  dimension: ProfitabilityGroupBy;
+  value: string;
+  months: ProfitabilityDrillMonth[];
+}
+
+// Layer 3: one project inside a month (or, for the By-Month card, inside the
+// clicked month). Same P&L columns plus identity so the row can navigate to
+// the project page (Layer 4).
 interface ProfitabilityProjectRow {
   id: number;
   code: string;
@@ -2003,8 +2037,10 @@ interface ProfitabilityProjectRow {
 }
 
 interface ProfitabilityProjectsResponse {
-  group_by: ProfitabilityGroupBy;
-  group: string;
+  level: "projects";
+  dimension: ProfitabilityGroupBy;
+  value: string;
+  month: string | null;
   projects: ProfitabilityProjectRow[];
 }
 
@@ -2768,12 +2804,78 @@ function ProjectsAnalyticsView() {
   // Belt-and-suspenders finance gate (see FinanceListView): the profitability
   // fetch is denyFinance-guarded server-side; never fire it for a non-viewer.
   const canProjectFinance = !!user?.project_finance_viewer;
-  const [dateFrom, setDateFrom] = useState<string>(`${thisYear}-01-01`);
-  const [dateTo, setDateTo] = useState<string>(`${thisYear}-12-31`);
-  const [brand, setBrand] = useState<string>("");
-  const [organizer, setOrganizer] = useState<string>("");
-  const [eventTypeId, setEventTypeId] = useState<string>("");
   const toast = useToast();
+
+  // URL is state (repo rule): the analytics filters AND the open drill path
+  // both live in the query string, so a drilled view is shareable and the
+  // browser Back button unwinds the drill one level at a time. A filter
+  // defaults to the current year when its param is ABSENT; an explicit empty
+  // param (e.g. ?af_from=) means the user cleared that bound.
+  const [params, setParams] = useSearchParams();
+  const dateFrom = params.get("af_from") ?? `${thisYear}-01-01`;
+  const dateTo = params.get("af_to") ?? `${thisYear}-12-31`;
+  const brand = params.get("af_brand") ?? "";
+  const organizer = params.get("af_org") ?? "";
+  const eventTypeId = params.get("af_type") ?? "";
+
+  // Writing a filter clears the open drill: its value may not exist under the
+  // new scope, so an orphaned drill path would just render "no data".
+  const setFilterParam = (key: string, val: string) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set(key, val);
+      next.delete("dim");
+      next.delete("dv");
+      next.delete("dm");
+      return next;
+    });
+  };
+  const setDateFrom = (v: string) => setFilterParam("af_from", v);
+  const setDateTo = (v: string) => setFilterParam("af_to", v);
+  const setBrand = (v: string) => setFilterParam("af_brand", v);
+  const setOrganizer = (v: string) => setFilterParam("af_org", v);
+  const setEventTypeId = (v: string) => setFilterParam("af_type", v);
+  const clearFilters = () => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      // Explicit empty bounds = "all time"; the rest default to "" when absent.
+      next.set("af_from", "");
+      next.set("af_to", "");
+      for (const k of ["af_brand", "af_org", "af_type", "dim", "dv", "dm"]) next.delete(k);
+      return next;
+    });
+  };
+
+  // The open drill path — only one at a time keeps the URL a single shareable
+  // path. Clicking a value in another card replaces the path; changing the
+  // month within a card just swaps `dm`.
+  const drillDim = (params.get("dim") as ProfitabilityGroupBy | null) ?? null;
+  const drillState: ProfitabilityDrillState = {
+    dim: drillDim,
+    value: params.get("dv"),
+    month: params.get("dm"),
+    toggleValue: (dim, key) =>
+      setParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (next.get("dim") === dim && next.get("dv") === key) {
+          next.delete("dim");
+          next.delete("dv");
+          next.delete("dm");
+        } else {
+          next.set("dim", dim);
+          next.set("dv", key);
+          next.delete("dm");
+        }
+        return next;
+      }),
+    toggleMonth: (key) =>
+      setParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (next.get("dm") === key) next.delete("dm");
+        else next.set("dm", key);
+        return next;
+      }),
+  };
 
   const brands = useQuery<{ data: string[] }>("/api/projects/brands", () => api.get("/api/projects/brands"));
   const eventTypes = useQuery<{ data: EventType[] }>("/api/projects/event-types", () =>
@@ -2891,13 +2993,7 @@ function ProjectsAnalyticsView() {
           ))}
         </select>
         <button
-          onClick={() => {
-            setDateFrom("");
-            setDateTo("");
-            setBrand("");
-            setOrganizer("");
-            setEventTypeId("");
-          }}
+          onClick={clearFilters}
           className="h-8 rounded-md border border-border bg-surface px-2.5 text-[11px] text-ink-secondary hover:border-accent/40 hover:text-accent"
         >
           Clear
@@ -2968,6 +3064,7 @@ function ProjectsAnalyticsView() {
               rows={d.by_brand}
               groupBy="brand"
               filters={drillFilters}
+              drill={drillState}
               onOpenProject={(id) => navigate(`/projects/${id}`)}
             />
             <BreakdownCard
@@ -2975,6 +3072,7 @@ function ProjectsAnalyticsView() {
               rows={d.by_event_type}
               groupBy="event_type"
               filters={drillFilters}
+              drill={drillState}
               onOpenProject={(id) => navigate(`/projects/${id}`)}
             />
             <BreakdownCard
@@ -2982,6 +3080,7 @@ function ProjectsAnalyticsView() {
               rows={d.by_organizer}
               groupBy="organizer"
               filters={drillFilters}
+              drill={drillState}
               onOpenProject={(id) => navigate(`/projects/${id}`)}
             />
             <BreakdownCard
@@ -2989,6 +3088,7 @@ function ProjectsAnalyticsView() {
               rows={d.by_venue}
               groupBy="venue"
               filters={drillFilters}
+              drill={drillState}
               onOpenProject={(id) => navigate(`/projects/${id}`)}
             />
             <BreakdownCard
@@ -2996,6 +3096,7 @@ function ProjectsAnalyticsView() {
               rows={d.by_month}
               groupBy="month"
               filters={drillFilters}
+              drill={drillState}
               onOpenProject={(id) => navigate(`/projects/${id}`)}
               monthMode
             />
@@ -3027,6 +3128,7 @@ function BreakdownCard({
   rows,
   groupBy,
   filters,
+  drill,
   onOpenProject,
   monthMode,
 }: {
@@ -3034,6 +3136,7 @@ function BreakdownCard({
   rows: ProfitabilityBreakdown[] | undefined;
   groupBy: ProfitabilityGroupBy;
   filters: ProfitabilityFilters;
+  drill: ProfitabilityDrillState;
   onOpenProject: (id: number) => void;
   monthMode?: boolean;
 }) {
@@ -3042,15 +3145,22 @@ function BreakdownCard({
   const safeRows = rows ?? [];
   const maxAbsProfit = Math.max(1, ...safeRows.map((r) => Math.abs(r.profit)));
 
-  // Layer 2 — one group expanded at a time. The drill query is keyed by the
-  // group AND the active filters, so it re-fetches when either changes and a
-  // group's project list always matches the group table's scope.
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  const drill = useQuery<ProfitabilityProjectsResponse>(
+  // This card owns the drill only while the URL's `dim` points at it; the open
+  // value / month come straight from the URL so the drill is shareable and the
+  // Back button unwinds it. One value (and, for a dimension card, one month)
+  // is open at a time.
+  const isCardActive = drill.dim === groupBy;
+  const expandedValue = isCardActive ? drill.value : null;
+  const expandedMonth = isCardActive ? drill.month : null;
+
+  // Layer 2 — the value's performance BY MONTH. Only the four real dimensions
+  // have a month level; the By-Month card drills straight to projects. Keyed by
+  // the value AND the active filters so it re-fetches when either changes.
+  const monthsQuery = useQuery<ProfitabilityMonthsResponse>(
     [
-      "profitability-drill",
+      "profitability-drill-months",
       groupBy,
-      expandedKey ?? "",
+      expandedValue ?? "",
       filters.date_from ?? "",
       filters.date_to ?? "",
       filters.brand ?? "",
@@ -3059,9 +3169,9 @@ function BreakdownCard({
     ],
     () =>
       api.get(
-        `/api/projects/analytics/profitability/projects${buildQuery({
-          group_by: groupBy,
-          group: expandedKey ?? undefined,
+        `/api/projects/analytics/profitability/drill${buildQuery({
+          dimension: groupBy,
+          value: expandedValue ?? undefined,
           date_from: filters.date_from,
           date_to: filters.date_to,
           brand: filters.brand,
@@ -3071,17 +3181,59 @@ function BreakdownCard({
       ),
     [
       groupBy,
-      expandedKey,
+      expandedValue,
       filters.date_from,
       filters.date_to,
       filters.brand,
       filters.organizer,
       filters.event_type_id,
     ],
-    { enabled: expandedKey != null }
+    { enabled: !monthMode && isCardActive && expandedValue != null }
   );
 
-  // 8 columns: Name, #, Revenue, COGS, GP, Rental, NP, Margin.
+  // Layer 3 — the projects inside the open month (dimension cards) or inside
+  // the open month value itself (By-Month card). One projects query per card;
+  // the open-at-a-time rule means only the current month renders it.
+  const projectsQuery = useQuery<ProfitabilityProjectsResponse>(
+    [
+      "profitability-drill-projects",
+      groupBy,
+      expandedValue ?? "",
+      monthMode ? "" : expandedMonth ?? "",
+      filters.date_from ?? "",
+      filters.date_to ?? "",
+      filters.brand ?? "",
+      filters.organizer ?? "",
+      filters.event_type_id ?? "",
+    ],
+    () =>
+      api.get(
+        `/api/projects/analytics/profitability/drill${buildQuery({
+          dimension: groupBy,
+          value: expandedValue ?? undefined,
+          month: monthMode ? undefined : expandedMonth ?? undefined,
+          date_from: filters.date_from,
+          date_to: filters.date_to,
+          brand: filters.brand,
+          organizer: filters.organizer,
+          event_type_id: filters.event_type_id,
+        })}`
+      ),
+    [
+      groupBy,
+      expandedValue,
+      monthMode,
+      expandedMonth,
+      filters.date_from,
+      filters.date_to,
+      filters.brand,
+      filters.organizer,
+      filters.event_type_id,
+    ],
+    { enabled: isCardActive && expandedValue != null && (monthMode ? true : expandedMonth != null) }
+  );
+
+  // 8 columns: Name/Month, #, Revenue, COGS, GP, Rental, NP, Margin.
   const COLSPAN = 8;
 
   return (
@@ -3098,11 +3250,11 @@ function BreakdownCard({
       ) : (
         <div className="max-h-[320px] overflow-auto">
           {/* Full P&L model per group: Revenue − COGS = GP; GP − Cost = NP,
-              with Rental (a slice of Cost) pulled out as its own column.
-              min-width keeps the eight columns legible; the wrapper scrolls
-              horizontally on a narrow (mobile / half-width) card. Click a row
-              to expand the projects behind it (Layer 2); click a project to
-              open its page (Layer 3). */}
+              with Rental (a slice of Cost) pulled out as its own column. Click
+              a row to drill: a dimension value opens its months (Layer 2), a
+              month opens its projects (Layer 3), a project opens its page
+              (Layer 4). min-width keeps the eight columns legible; the wrapper
+              scrolls horizontally on a narrow (mobile / half-width) card. */}
           <table className="w-full min-w-[600px] text-[11px]">
             <thead className="bg-bg/40 text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
               <tr>
@@ -3119,13 +3271,11 @@ function BreakdownCard({
             <tbody>
               {safeRows.map((r) => {
                 const barPct = Math.round((Math.abs(r.profit) / maxAbsProfit) * 100);
-                const isExpanded = expandedKey === r.key;
+                const isExpanded = expandedValue === r.key;
                 return (
                   <Fragment key={r.key}>
                     <tr
-                      onClick={() =>
-                        setExpandedKey((cur) => (cur === r.key ? null : r.key))
-                      }
+                      onClick={() => drill.toggleValue(groupBy, r.key)}
                       aria-expanded={isExpanded}
                       className={cn(
                         "cursor-pointer border-t border-border-subtle hover:bg-accent-soft/30",
@@ -3183,10 +3333,22 @@ function BreakdownCard({
                         {r.margin != null ? `${r.margin.toFixed(1)}%` : "—"}
                       </td>
                     </tr>
-                    {isExpanded && (
-                      <BreakdownDrillRows
-                        drill={drill}
-                        groupKey={r.key}
+                    {isExpanded && !monthMode && (
+                      <BreakdownMonthRows
+                        monthsQuery={monthsQuery}
+                        projectsQuery={projectsQuery}
+                        parentValue={r.key}
+                        expandedMonth={expandedMonth}
+                        onToggleMonth={drill.toggleMonth}
+                        colSpan={COLSPAN}
+                        onOpenProject={onOpenProject}
+                      />
+                    )}
+                    {isExpanded && monthMode && (
+                      <BreakdownProjectRows
+                        projectsQuery={projectsQuery}
+                        expectValue={r.key}
+                        expectMonth={null}
                         colSpan={COLSPAN}
                         onOpenProject={onOpenProject}
                       />
@@ -3202,50 +3364,174 @@ function BreakdownCard({
   );
 }
 
-// Layer-2 body: the projects behind one expanded group row. Rendered as sibling
-// <tr>s inside the same table so their P&L columns line up under the group's.
-// Each project row navigates to its detail page (Layer 3).
-function BreakdownDrillRows({
-  drill,
-  groupKey,
+// A single full-width message row (loading / error / empty) spanning the drill
+// table, so nested states never break the column grid.
+function DrillMessageRow({
+  colSpan,
+  tone,
+  children,
+}: {
+  colSpan: number;
+  tone?: "muted" | "err";
+  children: React.ReactNode;
+}) {
+  return (
+    <tr className="border-t border-border-subtle bg-bg/30">
+      <td
+        colSpan={colSpan}
+        className={cn(
+          "px-2 py-3 text-center text-[10px]",
+          tone === "err" ? "text-err" : "text-ink-muted"
+        )}
+      >
+        {children}
+      </td>
+    </tr>
+  );
+}
+
+// Layer-2 body: the months behind one expanded dimension value, rendered as
+// sibling <tr>s so their P&L columns line up under the group's. Each month
+// expands in turn to its projects (Layer 3).
+function BreakdownMonthRows({
+  monthsQuery,
+  projectsQuery,
+  parentValue,
+  expandedMonth,
+  onToggleMonth,
   colSpan,
   onOpenProject,
 }: {
-  drill: QueryState<ProfitabilityProjectsResponse>;
-  groupKey: string;
+  monthsQuery: QueryState<ProfitabilityMonthsResponse>;
+  projectsQuery: QueryState<ProfitabilityProjectsResponse>;
+  parentValue: string;
+  expandedMonth: string | null;
+  onToggleMonth: (key: string) => void;
   colSpan: number;
   onOpenProject: (id: number) => void;
 }) {
-  if (drill.loading) {
+  if (monthsQuery.loading) {
+    return <DrillMessageRow colSpan={colSpan}>Loading months…</DrillMessageRow>;
+  }
+  if (monthsQuery.error) {
     return (
-      <tr className="border-t border-border-subtle bg-bg/30">
-        <td colSpan={colSpan} className="px-2 py-3 text-center text-[10px] text-ink-muted">
-          Loading projects…
-        </td>
-      </tr>
+      <DrillMessageRow colSpan={colSpan} tone="err">
+        {monthsQuery.error}
+      </DrillMessageRow>
     );
   }
-  if (drill.error) {
-    return (
-      <tr className="border-t border-border-subtle bg-bg/30">
-        <td colSpan={colSpan} className="px-2 py-3 text-center text-[10px] text-err">
-          {drill.error}
-        </td>
-      </tr>
-    );
+  // Guard on value match so a resolving query never flashes another value's
+  // months under this one.
+  const months =
+    monthsQuery.data && monthsQuery.data.value === parentValue
+      ? monthsQuery.data.months
+      : [];
+  if (months.length === 0) {
+    return <DrillMessageRow colSpan={colSpan}>No monthly activity.</DrillMessageRow>;
   }
-  // Guard on group match so a resolving query never flashes another group's
-  // rows under this one.
-  const projects =
-    drill.data && drill.data.group === groupKey ? drill.data.projects : [];
+  return (
+    <>
+      {months.map((m) => {
+        const isMonthExpanded = expandedMonth === m.key;
+        return (
+          <Fragment key={m.key}>
+            <tr
+              onClick={() => onToggleMonth(m.key)}
+              aria-expanded={isMonthExpanded}
+              className={cn(
+                "cursor-pointer border-t border-border-subtle bg-bg/20 hover:bg-accent-soft/30",
+                isMonthExpanded && "bg-accent-soft/20"
+              )}
+            >
+              <td className="px-2 py-1.5 pl-6">
+                <div className="flex items-center gap-1">
+                  {isMonthExpanded ? (
+                    <ChevronDown size={11} className="shrink-0 text-ink-muted" />
+                  ) : (
+                    <ChevronRight size={11} className="shrink-0 text-ink-muted" />
+                  )}
+                  <span className="font-medium text-ink">{formatMonth(m.key)}</span>
+                </div>
+              </td>
+              <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">{m.count}</td>
+              <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
+                {formatCurrency(m.income, { compact: true })}
+              </td>
+              <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+                {formatCurrency(m.cogs, { compact: true })}
+              </td>
+              <td
+                className={cn(
+                  "whitespace-nowrap px-1.5 py-1.5 text-right font-mono",
+                  m.gp >= 0 ? "text-ink" : "text-err"
+                )}
+              >
+                {formatCurrency(m.gp, { compact: true })}
+              </td>
+              <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+                {formatCurrency(m.rental, { compact: true })}
+              </td>
+              <td
+                className={cn(
+                  "whitespace-nowrap px-1.5 py-1.5 text-right font-mono font-bold",
+                  m.profit >= 0 ? "text-synced" : "text-err"
+                )}
+              >
+                {formatCurrency(m.profit, { compact: true })}
+              </td>
+              <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
+                {m.margin != null ? `${m.margin.toFixed(1)}%` : "—"}
+              </td>
+            </tr>
+            {isMonthExpanded && (
+              <BreakdownProjectRows
+                projectsQuery={projectsQuery}
+                expectValue={parentValue}
+                expectMonth={m.key}
+                colSpan={colSpan}
+                onOpenProject={onOpenProject}
+              />
+            )}
+          </Fragment>
+        );
+      })}
+    </>
+  );
+}
+
+// Layer-3 body: the projects behind one expanded month (or, for the By-Month
+// card, one expanded month value). Each project row navigates to its detail
+// page (Layer 4). Guarded on value+month so a resolving query never flashes
+// the wrong slice under this row.
+function BreakdownProjectRows({
+  projectsQuery,
+  expectValue,
+  expectMonth,
+  colSpan,
+  onOpenProject,
+}: {
+  projectsQuery: QueryState<ProfitabilityProjectsResponse>;
+  expectValue: string;
+  expectMonth: string | null;
+  colSpan: number;
+  onOpenProject: (id: number) => void;
+}) {
+  const d = projectsQuery.data;
+  const matches =
+    !!d && d.value === expectValue && (d.month ?? null) === (expectMonth ?? null);
+  if (projectsQuery.loading || !matches) {
+    if (projectsQuery.error) {
+      return (
+        <DrillMessageRow colSpan={colSpan} tone="err">
+          {projectsQuery.error}
+        </DrillMessageRow>
+      );
+    }
+    return <DrillMessageRow colSpan={colSpan}>Loading projects…</DrillMessageRow>;
+  }
+  const projects = d!.projects;
   if (projects.length === 0) {
-    return (
-      <tr className="border-t border-border-subtle bg-bg/30">
-        <td colSpan={colSpan} className="px-2 py-3 text-center text-[10px] text-ink-muted">
-          No projects.
-        </td>
-      </tr>
-    );
+    return <DrillMessageRow colSpan={colSpan}>No projects.</DrillMessageRow>;
   }
   return (
     <>
@@ -3255,7 +3541,7 @@ function BreakdownDrillRows({
           onClick={() => onOpenProject(p.id)}
           className="cursor-pointer border-t border-border-subtle bg-bg/30 hover:bg-accent-soft/40"
         >
-          <td className="px-2 py-1.5 pl-6">
+          <td className="px-2 py-1.5 pl-10">
             <div className="flex items-center gap-1">
               <span className="truncate font-medium text-ink">{p.name}</span>
               <ExternalLink size={9} className="shrink-0 text-ink-muted" />
