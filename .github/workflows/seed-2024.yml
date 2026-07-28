@@ -1,0 +1,33 @@
+name: FAIR PNL 2024 seed (PMS backfill)
+
+# Owner-triggered ONLY. Default dry-run (read-only): validates every value against
+# the maintained pickers, lists new venues + would-insert projects, writes nothing.
+# Choose "commit" only after a clean dry-run. Own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) or commit (write to prod)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: fair-pnl-2024-seed
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Run FAIR PNL 2024 seed (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/seed-2024.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
