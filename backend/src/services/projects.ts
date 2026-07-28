@@ -1473,6 +1473,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // Stock-out record submitted by the purchaser, now awaiting director approval.
   const STOCK_OUT_AWAITING_APPROVAL = `EXISTS (SELECT 1 FROM project_checklist pc
                 WHERE pc.project_id = p.id AND pc.title = 'Stock Out Transfer Record'
+                  AND pc.status = 'pending'
                   AND pc.review_status IN ('pending_review', 'amended') AND ${DUE_GATE})`;
   // The Agreement / Quotation is the APPROVER's pending only once it has been
   // SUBMITTED for review (owner 2026-07-23, weisiang report): before BD uploads
@@ -1481,6 +1482,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // not-yet-uploaded agreement on the Super Admin's My Pending).
   const AGREEMENT_PENDING = `EXISTS (SELECT 1 FROM project_checklist pc
                 WHERE pc.project_id = p.id AND pc.title = 'Agreement / Quotation'
+                  AND pc.status = 'pending'
                   AND pc.review_status IN ('pending_review', 'amended') AND ${DUE_GATE})`;
   // A submitted doc is the APPROVER's pending, not the submitter's (owner
   // 2026-07-21, Sim/Purchaser report): while it awaits review
@@ -1540,6 +1542,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     pendingOr.push(
       `EXISTS (SELECT 1 FROM project_checklist pc
                 WHERE pc.project_id = p.id
+                  AND pc.status = 'pending'
                   AND pc.review_status IN ('pending_review', 'amended')
                   AND pc.required_perm IN (${ph}) AND ${DUE_GATE})`
     );
