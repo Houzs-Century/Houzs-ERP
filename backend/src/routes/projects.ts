@@ -1107,6 +1107,14 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       rental: null,
       total_sales: null,
       contractor_cost: null,
+      // Ledger-derived finance columns follow the same wire-level redaction.
+      fin_revenue: null,
+      fin_cogs: null,
+      fin_cogs_matt_sofa: null,
+      fin_cogs_bedframe: null,
+      fin_cogs_accessories: null,
+      fin_rental: null,
+      fin_total_cost: null,
     }));
   }
   return c.json(result);
