@@ -1201,7 +1201,7 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
   // + the SO venue picker listed every HOUZS exhibition venue — the same leak
   // already fixed for the brand pool below.
   const rows = await c.env.DB.prepare(
-    `SELECT id, name, state, notes, active FROM project_venues
+    `SELECT id, name, state, size, notes, active FROM project_venues
       WHERE active = 1${activeCompanySql(c)} ORDER BY name`
   ).all();
   type VenueOut = Record<string, unknown> & { name?: unknown; origin: 'PROJECT' | 'SHOWROOM' };
@@ -1250,6 +1250,7 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
           id: `showroom:${String(r.id ?? "")}`,
           name: venueName,
           state: null,
+          size: null,
           notes: `Showroom · ${String(r.name ?? r.code ?? "").trim()}`,
           active: 1,
           origin: "SHOWROOM" as const,
@@ -1275,6 +1276,7 @@ app.post("/venues", requirePermission("projects.write"), async (c) => {
   const body = await c.req.json<{
     name?: string;
     state?: string | null;
+    size?: string | null;
     notes?: string | null;
   }>();
   const rawName = (body.name || "").trim();
@@ -1308,18 +1310,19 @@ app.post("/venues", requirePermission("projects.write"), async (c) => {
       `UPDATE project_venues
           SET active = 1,
               state  = COALESCE(?, state),
+              size   = COALESCE(?, size),
               notes  = COALESCE(?, notes)
         WHERE id = ? AND company_id = ?`
     )
-      .bind(body.state ?? null, body.notes ?? null, existing.id, co.companyId)
+      .bind(body.state ?? null, body.size ?? null, body.notes ?? null, existing.id, co.companyId)
       .run();
     return c.json({ id: existing.id, name: existing.name, state: existing.state }, 200);
   }
   const r = await c.env.DB.prepare(
-    `INSERT INTO project_venues (name, state, notes, created_by, company_id)
-     VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO project_venues (name, state, size, notes, created_by, company_id)
+     VALUES (?, ?, ?, ?, ?, ?)`
   )
-    .bind(name, body.state ?? null, body.notes ?? null, user?.id ?? null, co.companyId)
+    .bind(name, body.state ?? null, body.size ?? null, body.notes ?? null, user?.id ?? null, co.companyId)
     .run();
   return c.json({ id: r.meta.last_row_id, name, state: body.state ?? null }, 201);
 });
@@ -1336,6 +1339,7 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
   const body = await c.req.json<{
     name?: string;
     state?: string | null;
+    size?: string | null;
     notes?: string | null;
   }>();
   const sets: string[] = [];
@@ -1349,6 +1353,10 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
   if ("state" in body) {
     sets.push("state = ?");
     binds.push(body.state ?? null);
+  }
+  if ("size" in body) {
+    sets.push("size = ?");
+    binds.push(body.size ?? null);
   }
   if ("notes" in body) {
     sets.push("notes = ?");
