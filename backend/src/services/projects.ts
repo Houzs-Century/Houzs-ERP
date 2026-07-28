@@ -1783,7 +1783,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   const rows = await env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.stage, p.status, p.brand,
             p.start_date, p.end_date,
-            p.state, p.venue, p.booth_no, p.size_sqm,
+            p.state, p.venue, p.organizer, p.booth_no, p.size_sqm,
             p.archived_at,
             p.pic_id, pic.name as pic_name, pic.phone as pic_phone,
             p.created_by, cb.name as created_by_name,

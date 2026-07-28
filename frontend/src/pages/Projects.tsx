@@ -153,6 +153,7 @@ interface ProjectRow {
   end_date: string | null;
   state: string | null;
   venue: string | null;
+  organizer: string | null;
   booth_no: string | null;
   size_sqm: number | null;
   archived_at: string | null;
@@ -1162,6 +1163,12 @@ function ProjectsListView() {
       const csvCols = columns
         .filter((c) => typeof c.getValue === "function")
         .map((c) => ({ key: c.key, label: c.label || c.key, getValue: c.getValue! }));
+      // Owner 2026-07-23: add an Organizer column to the EXPORT only (not the
+      // on-screen table), placed right after Brand.
+      const orgCol = { key: "organizer", label: "Organizer", getValue: (r: ProjectRow) => r.organizer ?? "" };
+      const brandIdx = csvCols.findIndex((c) => c.label === "Brand");
+      if (brandIdx >= 0) csvCols.splice(brandIdx + 1, 0, orgCol);
+      else csvCols.push(orgCol);
       if (!csvCols.length || all.length === 0) {
         toast.error(all.length === 0 ? "No projects match the current filter." : "Nothing to export.");
         return;
