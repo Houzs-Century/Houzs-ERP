@@ -3,18 +3,28 @@
 //
 // Owner mockup 2026-07-18. Six job types via a dropdown (owner: "做成 dropdown
 // 比较省空间"). Each type's party comes from a different master; the operator may
-// give a SOURCE reference (SO no / supplier id / project id / service case id) and
-// the SERVER auto-fills the party from it, or fill the fields by hand for a manual
-// job (setup / dismantle). Manual fields sent here WIN over the server auto-fill.
+// give a SOURCE reference and the SERVER auto-fills the party from it, or fill
+// the fields by hand for a manual job (setup / dismantle). Manual fields sent
+// here WIN over the server auto-fill.
+//
+// P3 follow-up (2026-07-28): the source is a type-to-search PICKER, not a raw
+// id input — SUPPLIER_PICKUP picks from the supplier master, SETUP/DISMANTLE
+// from the PMS project list — and picking LIVE-PREFILLS the party fields so
+// the operator sees (and may edit) what will be stored before creating. The
+// prefill mirrors backend dp-party.ts field-for-field; because prefilled
+// fields go up as overrides, preview and outcome cannot drift. If the list
+// fetch fails (a position without that master's page access), the picker
+// degrades to the original free-text id input — the server-side fill on
+// create never needed the caller to read the master.
 //
 // Mirrors DeliveryFieldsDrawer's chrome + the Suppliers CSS module. In-app
-// NotifyDialog only. Live auto-fill PREVIEW (fetch the master to prefill before
-// create) is a follow-up — today the server fills on create and overrides win.
+// NotifyDialog only.
 // ----------------------------------------------------------------------------
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { X } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@2990s/design-system';
 import {
   useCreateDpOrder,
@@ -22,7 +32,13 @@ import {
   DP_JOB_TYPE_LABEL,
   type DpOrderCreate,
 } from '../lib/delivery-planning-queries';
+import { useSuppliers, useSupplierDetail } from '../lib/suppliers-queries';
+import { SearchableSelect } from './SearchableSelect';
 import { useNotify } from './NotifyDialog';
+// App-level client for the PMS project list (/api/projects lives outside the
+// /api/scm mount that the vendored authed-fetch targets). Same app-import
+// precedent as DataGrid's activeCompany subscription.
+import { api } from '../../../api/client';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -42,6 +58,16 @@ function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: s
   }
 }
 
+/* The slice of a PMS project row this picker needs (GET /api/projects → { data }). */
+type ProjectPickRow = {
+  id: number;
+  code: string | null;
+  name: string | null;
+  venue: string | null;
+  organizer: string | null;
+  state: string | null;
+};
+
 export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   const create = useCreateDpOrder();
   const notify = useNotify();
@@ -58,6 +84,74 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     setForm((s) => ({ ...s, [k]: v }));
 
   const src = sourceMeta(form.jobType);
+
+  /* ── Source pickers ──────────────────────────────────────────────────────
+     Fetch lazily per kind (enabled-gated) so a drawer opened for a manual
+     SETUP never touches the supplier master and vice versa. isError → the
+     free-text fallback below. */
+  const suppliersQ = useSuppliers(undefined);
+  const suppliersEnabled = src.kind === 'supplier';
+  const projectsQ = useQuery<{ data: ProjectPickRow[] }>({
+    queryKey: ['dp-project-pick'],
+    queryFn: () => api.get<{ data: ProjectPickRow[] }>('/api/projects?per_page=200'),
+    enabled: src.kind === 'project',
+    staleTime: 60_000,
+  });
+
+  const supplierOptions = useMemo(
+    () => (suppliersQ.data ?? []).map((s) => ({ value: s.id, label: `${s.name} (${s.code})` })),
+    [suppliersQ.data],
+  );
+  const projectOptions = useMemo(
+    () => (projectsQ.data?.data ?? []).map((p) => ({
+      value: String(p.id),
+      label: `${p.code ?? p.id} — ${p.name ?? ''}${p.venue ? ` · ${p.venue}` : ''}`,
+    })),
+    [projectsQ.data],
+  );
+
+  /* Supplier prefill — the DETAIL row (the list view predates the structured
+     address columns), applied once per pick so later hand-edits are never
+     clobbered by a background refetch. Field precedence mirrors backend
+     dp-party.ts snapshotFromSupplier exactly. */
+  const pickedSupplierId = src.kind === 'supplier' && form.source ? form.source : null;
+  const supplierDetailQ = useSupplierDetail(pickedSupplierId);
+  const [prefilledFor, setPrefilledFor] = useState<string | null>(null);
+  useEffect(() => {
+    const row = supplierDetailQ.data?.supplier as (Record<string, unknown> & { id?: string }) | undefined;
+    if (!row || !pickedSupplierId || row.id !== pickedSupplierId || prefilledFor === pickedSupplierId) return;
+    const t = (v: unknown): string => (v == null ? '' : String(v).trim());
+    const structured = [row.address1, row.address2, row.address3, row.address4].some((v) => t(v) !== '');
+    setForm((s) => ({
+      ...s,
+      partyName: t(row.name),
+      contactName: t(row.contact_person) || t(row.attention),
+      contactPhone: t(row.phone) || t(row.mobile),
+      address1: structured ? t(row.address1) : t(row.address),
+      address2: structured ? t(row.address2) : '',
+      address3: structured ? t(row.address3) : '',
+      address4: structured ? t(row.address4) : '',
+      city: t(row.city),
+      postcode: t(row.postcode),
+      state: t(row.state),
+    }));
+    setPrefilledFor(pickedSupplierId);
+  }, [supplierDetailQ.data, pickedSupplierId, prefilledFor]);
+
+  /* Project prefill — from the picked LIST row (venue + state; the PIC's
+     name/phone need a users lookup the server does on create, and the venue
+     address only lives on the full project row — the hint says so). */
+  const pickProject = (id: string) => {
+    set('source', id);
+    const p = (projectsQ.data?.data ?? []).find((r) => String(r.id) === id);
+    if (!p) return;
+    setForm((s) => ({
+      ...s,
+      source: id,
+      partyName: (p.venue ?? p.organizer ?? '').trim(),
+      state: (p.state ?? '').trim(),
+    }));
+  };
 
   const submit = () => {
     const body: DpOrderCreate = { jobType: form.jobType };
@@ -95,6 +189,14 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   const inputStyle: CSSProperties = { width: '100%' };
   const row2: CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' };
 
+  /* Which control the source field renders as. A failed list fetch (403 for a
+     position without that master's page, or a network hiccup) falls back to
+     the original free-text id input rather than a dead picker. */
+  const sourceControl =
+    src.kind === 'supplier' && !suppliersQ.isError ? 'supplier-picker'
+    : src.kind === 'project' && !projectsQ.isError ? 'project-picker'
+    : 'text';
+
   return (
     <div className={styles.backdrop} onClick={onClose}>
       <div className={styles.drawer} onClick={(e) => e.stopPropagation()}>
@@ -107,15 +209,57 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
           <label style={fieldRow}>
             <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Job type</div>
             <select className={styles.searchInput} style={inputStyle}
-              value={form.jobType} onChange={(e) => set('jobType', e.target.value as DpOrderCreate['jobType'])}>
+              value={form.jobType}
+              onChange={(e) => {
+                // A supplier id is meaningless on a SETUP and vice versa — and
+                // so is the party the old source prefilled (a venue name must
+                // not survive into "Supplier name" as a would-be override).
+                // Switching type clears the pick AND the party fields;
+                // date/remark stay, they are type-agnostic.
+                const jobType = e.target.value as DpOrderCreate['jobType'];
+                setForm((s) => ({
+                  ...s,
+                  jobType,
+                  source: '',
+                  partyName: '', contactName: '', contactPhone: '',
+                  address1: '', address2: '', address3: '', address4: '',
+                  city: '', postcode: '', state: '',
+                }));
+                setPrefilledFor(null);
+              }}>
               {DP_CREATABLE_JOB_TYPES.map((t) => <option key={t} value={t}>{DP_JOB_TYPE_LABEL[t]}</option>)}
             </select>
           </label>
 
           <label style={fieldRow}>
             <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>{src.label} <span style={{ textTransform: 'none', color: 'var(--c-muted, #767b6e)' }}>— optional</span></div>
-            <input className={styles.searchInput} style={inputStyle} placeholder={src.hint}
-              value={form.source} onChange={(e) => set('source', e.target.value)} />
+            {sourceControl === 'supplier-picker' ? (
+              <SearchableSelect
+                value={form.source}
+                onChange={(id) => { set('source', id); setPrefilledFor(null); }}
+                options={supplierOptions}
+                placeholder={suppliersQ.isLoading ? 'Loading suppliers…' : 'Search supplier by name or code…'}
+                className={styles.searchInput}
+                ariaLabel="Supplier"
+              />
+            ) : sourceControl === 'project-picker' ? (
+              <SearchableSelect
+                value={form.source}
+                onChange={pickProject}
+                options={projectOptions}
+                placeholder={projectsQ.isLoading ? 'Loading projects…' : 'Search project by code, name or venue…'}
+                className={styles.searchInput}
+                ariaLabel="Project / venue"
+              />
+            ) : (
+              <input className={styles.searchInput} style={inputStyle} placeholder={src.hint}
+                value={form.source} onChange={(e) => set('source', e.target.value)} />
+            )}
+            {sourceControl === 'project-picker' && form.source !== '' && (
+              <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>
+                Venue address + PIC contact auto-fill from the project on create.
+              </div>
+            )}
           </label>
 
           <div className={styles.eyebrow} style={{ margin: 'var(--space-2) 0', color: 'var(--c-burnt)' }}>
