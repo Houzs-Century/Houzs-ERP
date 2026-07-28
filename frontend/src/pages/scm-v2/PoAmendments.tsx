@@ -219,11 +219,11 @@ export const PoAmendments = () => {
         <FilterPills
           options={STATUS_CHIPS.map((s) => ({
             value: s,
-            label: `${amendmentBucketLabel(s)} · ${
+            label: amendmentBucketLabel(s),
+            count:
               s === 'all'
                 ? allRows.length
-                : allRows.filter((a) => amendmentBucketOf(a.status) === s).length
-            }`,
+                : allRows.filter((a) => amendmentBucketOf(a.status) === s).length,
           }))}
           value={statusChip}
           onChange={(v) => setStatusChip(v)}

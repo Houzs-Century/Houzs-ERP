@@ -3,6 +3,16 @@ import { cn } from "../lib/utils";
 interface Pill<T extends string> {
   value: T;
   label: string;
+  /**
+   * Optional count badge after the label. CALLER-SUPPLIED, deliberately: on a
+   * client-filtered list (Amendments — the whole ≤500-row population is
+   * loaded) counting the loaded rows is honest, but on a server-filtered /
+   * paginated list the loaded page is NOT the population — pass the backend's
+   * status-counts aggregate (the `statusCounts` shape the GRN/SO/DO/PI/SI
+   * list endpoints already return), never a count of what happens to be
+   * loaded.
+   */
+  count?: number;
 }
 
 interface Props<T extends string> {
@@ -46,6 +56,16 @@ export function FilterPills<T extends string>({ options, value, onChange }: Prop
               )}
             >
               {opt.label}
+              {typeof opt.count === "number" && (
+                <span
+                  className={cn(
+                    "ml-1.5 inline-block rounded-full px-1.5 py-px text-[10px] font-bold tabular-nums align-middle",
+                    active ? "bg-white/20 text-white" : "bg-bg text-ink-muted"
+                  )}
+                >
+                  {opt.count}
+                </span>
+              )}
             </button>
           );
         })}
