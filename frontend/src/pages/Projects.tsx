@@ -6324,25 +6324,28 @@ function TaskAttachmentRow({
             </button>
           )}
         </div>
-        {/* Per-photo remark: hidden until the row's Remark button is toggled on. */}
-        {showRemark && (canManage ? (
-          <input
+        {/* A saved per-photo remark is ALWAYS visible read-only (owner
+            2026-07-27: Defect List remarks were hidden until the row's Remark
+            toggle was opened, so uploaded captions looked missing). Editing
+            still lives behind the Remark toggle for managers. */}
+        {canManage && showRemark ? (
+          <textarea
             value={caption}
             onChange={(e) => setCaption(e.target.value)}
             onBlur={() => void saveCaption()}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
             onClick={(e) => e.stopPropagation()}
             disabled={savingCaption}
+            rows={2}
             placeholder="Add a remark for this photo…"
-            className="mt-1.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[10.5px] outline-none focus:border-primary disabled:opacity-60"
+            className="mt-1.5 w-full resize-y whitespace-pre-wrap break-words rounded-md border border-border bg-surface px-2 py-1 text-[10.5px] leading-snug outline-none focus:border-primary disabled:opacity-60"
           />
         ) : (
           caption.trim() && (
-            <div className="mt-1.5 text-[10.5px] text-ink-secondary">
+            <div className="mt-1.5 text-[10.5px] text-ink-secondary whitespace-pre-wrap break-words">
               <span className="font-semibold text-ink-muted">Remark:</span> {caption}
             </div>
           )
-        ))}
+        )}
       </div>
       {previewing && (
         <MediaLightbox
@@ -7378,9 +7381,9 @@ function DocRow({
               return <span className="text-ink-muted">—</span>;
             return (
               <div className="space-y-0.5">
-                {item.notes && <div>{item.notes}</div>}
+                {item.notes && <div className="whitespace-pre-wrap break-words">{item.notes}</div>}
                 {remarkComments.map((c) => (
-                  <div key={c.id} className="text-[9px] leading-snug text-ink-muted">
+                  <div key={c.id} className="text-[9px] leading-snug text-ink-muted whitespace-pre-wrap break-words">
                     <span className={cn("font-semibold", commentKindColor(c.kind))}>
                       {commentKindLabel(c.kind)}:
                     </span>{" "}
@@ -7524,21 +7527,22 @@ function DocRow({
                     .slice()
                     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
                     .map((c) => (
-                      <div key={c.id} className="text-[10px] leading-snug text-ink-secondary">
+                      <div key={c.id} className="text-[10px] leading-snug text-ink-secondary whitespace-pre-wrap break-words">
                         <span className="text-ink-muted">{c.user_name || "—"} · {formatDateTime(c.created_at)}:</span>{" "}
                         {c.body}
                       </div>
                     ))}
                 </div>
               )}
-              <div className="flex items-center gap-2">
-                <input
+              <div className="flex items-start gap-2">
+                <textarea
                   value={remark}
                   onChange={(e) => setRemark(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void postRemark(); } }}
-                  placeholder="Add a remark…"
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void postRemark(); } }}
+                  rows={2}
+                  placeholder="Add a remark… (Enter to post, Shift+Enter for a new line)"
                   autoFocus
-                  className="flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] outline-none focus:border-primary"
+                  className="min-h-[2.5rem] flex-1 resize-y whitespace-pre-wrap break-words rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] leading-snug outline-none focus:border-primary"
                 />
                 <button
                   onClick={() => void postRemark()}
@@ -8294,7 +8298,7 @@ function ChecklistRow({
               {comments
                 .filter((c) => c.kind !== "submit" && c.body)
                 .map((c) => (
-                  <div key={c.id} className="rounded bg-bg/60 px-2 py-1 text-[10.5px]">
+                  <div key={c.id} className="rounded bg-bg/60 px-2 py-1 text-[10.5px] whitespace-pre-wrap break-words">
                     <span className={cn("font-semibold", commentKindColor(c.kind))}>
                       {commentKindLabel(c.kind)}
                     </span>
@@ -8306,12 +8310,13 @@ function ChecklistRow({
                 ))}
             </div>
           )}
-          <div className="flex items-center gap-1.5">
-            <input
+          <div className="flex items-start gap-1.5">
+            <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
+              rows={2}
               placeholder="Add a remark…"
-              className="flex-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] outline-none focus:border-primary"
+              className="min-h-[2.25rem] flex-1 resize-y whitespace-pre-wrap break-words rounded-md border border-border bg-surface px-2 py-1 text-[11px] leading-snug outline-none focus:border-primary"
             />
             <button
               onClick={async () => {

@@ -472,6 +472,17 @@
 - **So.** No APPLY was run (it would change 0 rows). The 2990 side is already correct once #1156 deploys. HOUZS's 705 blank fabrics need their supplier codes entered manually via the now-restored column (or recovered from a pre-2026-06-22 HOUZS backup if one exists — no evidence they were ever set distinctly).
 - **Display.** `fabricDualCode` now formats the two codes with PARENTHESES — `BF-01 (PC151-01)` — per owner ("你正常不是都会有括弧（bracket）"), replacing the middle-dot. On-screen ORDER-LINE enrichment (SO/PO/DO lines showing the bracketed supplier code, not just the picker) is a separate follow-up — `buildVariantSummary` renders from the variant blob, which carries only the internal fabric code, so the supplier code has to be threaded in.
 - **Ref:** #<PR>.
+### [MEDIUM] Defect List (and every) per-photo remark was invisible on desktop unless you toggled the row's Remark button — uploaded captions looked missing
+- **Symptom.** Owner 2026-07-27: Kar Jiun uploaded two Defect List photos on the MODERN HOME @ MID VALLEY project with no visible remark. The remarks were actually entered (the compulsory per-photo prompt): captions `Water Mark on Immortal King` and `Pen ink on trion` were saved on `project_checklist_attachments.caption` (verified in prod). They just never rendered on the desktop project detail.
+- **Root cause (traced).** In `AttachmentRow` (`frontend/src/pages/Projects.tsx`), the whole caption block — both the edit input AND the read-only `Remark: …` line — was wrapped in `{showRemark && (…)}`. `showRemark` defaults to false (it is the per-row Remark toggle), so a SAVED caption was hidden until a manager opened that toggle. Mobile (`MobilePMS` `AttachRemark`) always shows `Remark: {cap}`, so the two surfaces disagreed.
+- **Fix.** Split the gate: a non-empty caption now ALWAYS renders read-only; only the EDIT control stays behind `canManage && showRemark`. Same one-product parity as mobile.
+- **Ref:** main, 2026-07-27. Frontend only.
+
+### [LOW] Task remarks did not wrap — long notes ran off the side and the input scrolled horizontally instead of growing
+- **Symptom.** Owner 2026-07-27: a long checklist remark (`Aeon Kota Bharu Kelantan Center court 01 & 02/08/26 …`) ran off to the right instead of wrapping down, and the `Add a remark…` box was a single-line `<input>` that scrolled sideways while typing.
+- **Root cause.** The two remark boxes (`DocumentTable` review box + `ChecklistRow` file-less box) used single-line `<input>`; the display `<div>`s had no `break-words`, so an unbroken token could overflow. Same on mobile (`AttachRemark` / `ItemRemark`).
+- **Fix.** Inputs → auto-growing `<textarea rows={2}>` (`resize-y`); display + textarea get `whitespace-pre-wrap break-words` (desktop) / `whiteSpace:pre-wrap; wordBreak:break-word` (mobile). The DocumentTable box keeps Enter-to-post with Shift+Enter for a newline.
+- **Ref:** main, 2026-07-27. Frontend only.
 
 ## 2026-07-23
 

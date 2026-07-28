@@ -1943,21 +1943,21 @@ function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: boolean 
   };
   if (!canEdit) {
     return cap.trim() ? (
-      <div style={{ fontSize: 11.5, color: "#6b6f63", paddingLeft: 2 }}>
+      <div style={{ fontSize: 11.5, color: "#6b6f63", paddingLeft: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
         <b style={{ color: "#8c968a" }}>Remark:</b> {cap}
       </div>
     ) : null;
   }
   return (
-    <input
+    <textarea
       className="fld-i"
       value={cap}
       disabled={saving}
+      rows={2}
       onChange={(e) => setCap(e.target.value)}
       onBlur={() => void save()}
-      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
       placeholder="Add remark…"
-      style={{ fontSize: 12, padding: "5px 8px" }}
+      style={{ fontSize: 12, padding: "5px 8px", resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
     />
   );
 }
@@ -1986,22 +1986,22 @@ function ItemRemark({ it, canEdit }: { it: ChecklistItem; canEdit: boolean }) {
   };
   if (!canEdit) {
     return (it.notes ?? "").trim() ? (
-      <div style={{ padding: "0 0 8px 24px", fontSize: 11.5, color: "#6b6f63" }}>
+      <div style={{ padding: "0 0 8px 24px", fontSize: 11.5, color: "#6b6f63", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
         <b style={{ color: "#8c968a" }}>Remark:</b> {it.notes}
       </div>
     ) : null;
   }
   return (
     <div style={{ padding: "0 0 8px 24px" }}>
-      <input
+      <textarea
         className="fld-i"
         value={val}
         disabled={saving}
+        rows={2}
         onChange={(e) => setVal(e.target.value)}
         onBlur={() => void save()}
-        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
         placeholder="Add remark…"
-        style={{ fontSize: 12, padding: "6px 9px" }}
+        style={{ fontSize: 12, padding: "6px 9px", resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
       />
     </div>
   );
