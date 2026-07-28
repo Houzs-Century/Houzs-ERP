@@ -39,6 +39,10 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "stock_transfer.approve", resource: "Projects", verb: "manage", label: "Approve stock transfers", description: "Tick the Stock Out Transfer Record checklist step (director approval gate)" },
   { key: "agreement.approve", resource: "Projects", verb: "manage", label: "Approve agreements", description: "Tick the Agreement / Quotation checklist step (director approval gate)" },
   { key: "projects.manage",  resource: "Projects", verb: "manage", label: "Manage projects",   description: "Archive, change stage, edit templates, backfill CSV" },
+  // Granular finance-view (owner 2026-07-23): grants a non-director role the
+  // money figures (rental / sales / profit) + the Finances page, WITHOUT the
+  // full DIRECTOR tier. Read by pmsAccess.isFinanceViewer. Given to the BD role.
+  { key: "projects.finance.view", resource: "Projects", verb: "read", label: "View project finances", description: "See project money figures (rental / sales / profit) and the Finances page without being a director" },
 
   // Sales entries — rep-facing sales log that later pushes to AutoCount
   { key: "sales.read",   resource: "Sales Entries", verb: "read",   label: "View sales entries",   description: "See the Sales tab; scoped users see only their own entries" },
