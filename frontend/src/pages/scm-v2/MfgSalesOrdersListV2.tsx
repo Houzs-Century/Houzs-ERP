@@ -1892,16 +1892,19 @@ export function MfgSalesOrdersListV2() {
   ];
 
   /* One pill per vocabulary status, each carrying its FULL-set count (see
-     SO_STATUS_TABS). "Other" (legacy/unknown status spellings) appears only
-     when the server reports a non-zero count for it — or while it is the
-     active filter, so the selected pill can never vanish from under the user. */
-  const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
+     SO_STATUS_TABS) via FilterPills' count badge — these are the SERVER's
+     statusCounts, never a count of the loaded page. "Other" (legacy/unknown
+     status spellings) appears only when the server reports a non-zero count
+     for it — or while it is the active filter, so the selected pill can never
+     vanish from under the user. */
+  const statusPillOptions: Array<{ value: StatusTab; label: string; count: number }> = [
     ...SO_STATUS_TABS.map(({ value, label }) => ({
       value,
-      label: `${label} · ${counts[value] ?? 0}`,
+      label,
+      count: counts[value] ?? 0,
     })),
     ...((counts.other ?? 0) > 0 || status === "other"
-      ? [{ value: "other" as StatusTab, label: `Other · ${counts.other ?? 0}` }]
+      ? [{ value: "other" as StatusTab, label: "Other", count: counts.other ?? 0 }]
       : []),
   ];
 
