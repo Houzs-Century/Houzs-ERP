@@ -29,11 +29,12 @@ async function main() {
   if (!po) { log(`PO ${PO_NUMBER} not found. Nothing to do.`); return; }
   log(`PO status: ${po.status}`);
 
+  // PO lines use material_code for the item code (SO lines use item_code).
   const poLines = await sb`
-    SELECT id, item_code, qty, so_item_id
+    SELECT id, material_code AS item_code, qty, so_item_id
       FROM scm.purchase_order_items
      WHERE purchase_order_id = ${po.id}
-     ORDER BY item_code`;
+     ORDER BY material_code`;
   const soLines = await sb`
     SELECT id, item_code, qty
       FROM scm.mfg_sales_order_items
