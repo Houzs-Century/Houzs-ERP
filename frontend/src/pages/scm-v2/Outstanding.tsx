@@ -20,7 +20,7 @@ import {
   type OutstandingModule,
   type OutstandingFilterMode,
 } from '../../vendor/scm/lib/outstanding-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataTable, type Column } from '../../components/DataTable';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 
@@ -124,7 +124,10 @@ export const Outstanding = () => {
           : `${rows.length} ${activeModule.toUpperCase()} rows (${mode})`}
       </p>
 
+      {/* key= remounts the table per module — columns AND search reset with
+          the tab, so a PI search never filters the SO list. */}
       <ModuleTable
+        key={activeModule}
         module={activeModule}
         rows={rows}
         isLoading={rowsQ.isLoading}
@@ -147,11 +150,11 @@ const FilterChip = ({ label, active, onClick }: { label: string; active: boolean
     }}>{label}</button>
 );
 
-/* ── DataGrid conversion (dg-inventory rollout) ──────────────────────────
-   Per-module column specs ported 1:1 from the legacy <table>. Each module
-   gets its own storageKey (columns differ per module, so a shared layout
-   would corrupt across tabs). Money (centi) + qty columns sort numerically
-   on the raw value; date columns sort on the raw ISO string. */
+/* ── Batch 2: shared DataTable ───────────────────────────────────────────
+   Per-module column specs ported 1:1. Each module keeps its own tableId
+   (columns differ per module, so a shared layout would corrupt across
+   tabs). Money (centi) + qty columns sort numerically on the raw value via
+   getValue; date columns sort on the raw ISO string. */
 type OutRow = Record<string, unknown>;
 
 type ColSpec = {
@@ -232,53 +235,70 @@ const ModuleTable = ({
 }) => {
   const config = useMemo(() => MODULES.find((m) => m.value === module)!, [module]);
 
-  const columns = useMemo<DataGridColumn<OutRow>[]>(() => {
-    const cols: DataGridColumn<OutRow>[] = MODULE_COLUMNS[module].map((spec) => ({
+  type KeyedRow = OutRow & { __rk: string };
+  const columns = useMemo<Column<KeyedRow>[]>(() => {
+    const cols: Column<KeyedRow>[] = MODULE_COLUMNS[module].map((spec) => ({
       key: spec.key,
       label: spec.label,
-      width: spec.kind === 'money' || spec.kind === 'qty' ? 120 : 140,
-      align: spec.kind === 'money' || spec.kind === 'qty' ? 'right' : 'left',
-      accessor: (r) => cellText(spec, r),
-      searchValue: (r) => cellText(spec, r),
-      filterValue: (r) => cellText(spec, r),
-      sortFn: spec.kind === 'money' || spec.kind === 'qty'
-        ? (a, b) => (Number(a[spec.key]) || 0) - (Number(b[spec.key]) || 0)
-        : (a, b) => String(a[spec.key] ?? '').localeCompare(String(b[spec.key] ?? '')),
+      width: spec.kind === 'money' || spec.kind === 'qty' ? '120px' : '140px',
+      align: spec.kind === 'money' || spec.kind === 'qty' ? ('right' as const) : undefined,
+      getValue: (r: KeyedRow) =>
+        spec.kind === 'money' || spec.kind === 'qty'
+          ? Number(r[spec.key]) || 0
+          : String(r[spec.key] ?? ''),
+      render: (r: KeyedRow) => cellText(spec, r),
     }));
     cols.push({
       key: '__open__',
       label: '',
-      width: 80,
-      sortable: false,
-      groupable: false,
-      accessor: (r) => (
+      width: '80px',
+      disableSort: true,
+      getValue: () => '',
+      render: (r) => (
         <Link to={config.route(r)} className={styles.docLink ?? ''}>
           Open →
         </Link>
       ),
-      searchValue: () => '',
-      filterValue: () => '',
     });
     return cols;
   }, [module, config]);
 
   /* Rows can lack a stable id for some modules — pre-compute a row key that
      falls back to doc_no then the index (matches the legacy <tr key>). */
-  const keyedRows = useMemo(
+  const keyedRows: KeyedRow[] = useMemo(
     () => rows.map((r, i) => ({ ...r, __rk: String(r.id ?? r.doc_no ?? i) })),
     [rows],
   );
 
+  /* Loaded-only search across the module's visible columns — the page
+     filters (DataTable renders box + hint), same fields the old DataGrid's
+     built-in search matched. Component remounts per module (key= above), so
+     the term never leaks across tabs. */
+  const [search, setSearch] = useState('');
+  const visible = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return keyedRows;
+    const specs = MODULE_COLUMNS[module];
+    return keyedRows.filter((r) =>
+      specs.some((spec) => cellText(spec, r).toLowerCase().includes(term)),
+    );
+  }, [keyedRows, search, module]);
+
   return (
-    <DataGrid<OutRow & { __rk: string }>
-      rows={keyedRows}
+    <DataTable<KeyedRow>
+      tableId={`outstanding-${module}`}
+      layoutFamily={`outstanding-${module}`}
+      exportName={`outstanding-${module}`}
+      rows={isLoading ? null : visible}
+      loading={isLoading}
+      emptyLabel="No rows match the filters."
+      getRowKey={(r) => r.__rk}
       columns={columns}
-      storageKey={`dg-outstanding-${module}`}
-      rowKey={(r) => r.__rk}
-      searchPlaceholder={`Search ${module.toUpperCase()} rows…`}
-      groupBanner={false}
-      isLoading={isLoading}
-      emptyMessage="No rows match the filters."
+      search={{
+        value: search,
+        onChange: setSearch,
+        placeholder: `Search ${module.toUpperCase()} rows…`,
+      }}
     />
   );
 };
