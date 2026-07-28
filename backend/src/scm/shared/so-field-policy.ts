@@ -200,11 +200,13 @@ export const SO_HEADER_FIELD_POLICY: readonly SoHeaderFieldPolicy[] = [
     cls: 'CONTROLLED',
     reason:
       'The owner\'s "disposal add on" — what the crew hauls away, which changes '
-      + 'the delivery job itself. NOTE: the Delivery Planning fields drawer '
-      + '(delivery-planning.ts /:type/:id/fields) still writes it DIRECTLY — '
-      + 'that surface is page-guarded to Logistics, who are this lane\'s own '
-      + 'approvers, so their direct edit is the approved change. This row gates '
-      + 'the sales-reachable header PATCH and lets an amendment carry it.',
+      + 'the delivery job itself. Two-lane phase 2 (#1349) closed the last side '
+      + 'door: the Delivery Planning fields drawer submits a disposal change on '
+      + 'a processing-locked SO as a DELIVERY-lane amendment, and the direct '
+      + 'write route (delivery-planning.ts /:type/:id/fields) 409s a genuine '
+      + 'change while locked. Unlocked SOs still save directly — FREE before '
+      + 'the lock is the standing rule. This row gates the sales-reachable '
+      + 'header PATCH and lets the amendment carry it.',
   },
 ];
 
