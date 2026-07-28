@@ -8,7 +8,6 @@ import {
   companyHeaderOf,
   readCompanies,
   readSoDocPrefixes,
-  ACTIVE_COMPANY_KEY,
   STAGING_API_URL,
   missingCredentialsMaySkip,
   stagingProofRequired,
@@ -57,10 +56,13 @@ test.describe("company isolation", () => {
       }
     });
 
-    // Sign in (seeded) and confirm the authed shell before probing companies.
-    // Account-menu trigger, not the Breadcrumb nav — see auth.spec.ts: the 2b
-    // top-chrome redesign left no always-rendered breadcrumb landmark.
-    await page.goto("/");
+    // Sign in (seeded) and confirm the authed shell on an EXPLICIT page —
+    // /scm/products, not "/": the shell restores users.last_path from "/",
+    // which can navigate mid-`page.evaluate` and destroy the execution
+    // context. Account-menu trigger, not the Breadcrumb nav — see
+    // auth.spec.ts: the 2b top-chrome redesign left no always-rendered
+    // breadcrumb landmark.
+    await page.goto("/scm/products");
     await expect(page.getByRole("button", { name: "Account menu" })).toBeVisible();
 
     const companies = await readCompanies(page, STAGING_API_URL);
@@ -76,13 +78,18 @@ test.describe("company isolation", () => {
     const c1 = companies.length > 0 ? companies[0].id : 1;
     const c2 = multiCompany ? companies[1].id : c1 + 1;
 
-    // ── Company 1: load the catalog, expect a request scoped to c1 ──────────
-    await page.evaluate(
-      ([k, v]) => window.localStorage.setItem(k, v),
-      [ACTIVE_COMPANY_KEY, String(c1)] as const,
+    // ── Company 1: land with the ?company= boot seed, expect a c1 request ───
+    // Since the per-window rework (#1102) the original origin-wide
+    // localStorage key is purged as legacy on auth — writing it is worse than
+    // a no-op. The supported pre-auth hand-off is the `?company=<id>` URL
+    // seed (consumeCompanyUrlSeed, the switcher's own "Open in new window"
+    // path): it writes THIS TAB's sessionStorage pick pre-React, so the very
+    // first authed request already carries the right X-Company-Id header.
+    const req1 = page.waitForRequest(
+      (r) => isProductListGet(r) && companyHeaderOf(r.headers()) === String(c1),
+      { timeout: 45_000 },
     );
-    const req1 = page.waitForRequest(isProductListGet, { timeout: 45_000 });
-    await page.goto("/scm/products");
+    await page.goto(`/scm/products?company=${c1}`);
     await req1;
 
     expect(
@@ -92,20 +99,16 @@ test.describe("company isolation", () => {
 
     const prefixesC1 = multiCompany ? await readSoDocPrefixes(page, STAGING_API_URL, c1) : [];
 
-    // ── Switch to Company 2, reload, expect a FRESH request scoped to c2 ─────
-    // This mirrors the switcher's own behaviour: write the active company to
-    // localStorage, then a full reload (TopNavbar's CompanySwitcher does
-    // setActiveCompanyId(id) + window.location.reload()).
+    // ── Switch to Company 2, expect a FRESH request scoped to c2 ────────────
+    // The URL seed again: it overwrites this tab's sessionStorage pick
+    // pre-React on a full document load, which is exactly what the in-place
+    // switcher produces (setActiveCompanyId + window.location.reload()).
     const countBeforeSwitch = productReqs.length;
-    await page.evaluate(
-      ([k, v]) => window.localStorage.setItem(k, v),
-      [ACTIVE_COMPANY_KEY, String(c2)] as const,
-    );
     const req2 = page.waitForRequest(
       (r) => isProductListGet(r) && companyHeaderOf(r.headers()) === String(c2),
       { timeout: 45_000 },
     );
-    await page.goto("/scm/products");
+    await page.goto(`/scm/products?company=${c2}`);
     await req2;
 
     // The switch produced a REAL, freshly-scoped network request — not a
