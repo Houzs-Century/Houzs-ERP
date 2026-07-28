@@ -24,6 +24,15 @@ async function main() {
     GROUP BY p.id, et.name
     ORDER BY p.start_date, p.brand`;
 
+  const catlines = await sql`
+    SELECT l.project_id AS pid, l.category AS cat, l.kind AS kind,
+           COALESCE(SUM(l.amount),0) AS amt, COUNT(*)::int AS n
+    FROM project_finance_lines l
+    JOIN projects p ON p.id = l.project_id
+    WHERE l.archived_at IS NULL AND p.archived_at IS NULL
+      AND p.start_date >= '2024-01-01' AND p.start_date < '2026-07-01'
+    GROUP BY l.project_id, l.category, l.kind`;
+
   const venues = await sql`SELECT name FROM project_venues ORDER BY name`;
   const brands = await sql`SELECT name FROM project_brands ORDER BY name`;
   let organizers = []; try { organizers = await sql`SELECT name FROM project_organizers ORDER BY name`; } catch (e) { organizers = [{ name: `__ERR__ ${e.message}` }]; }
@@ -41,7 +50,8 @@ async function main() {
     venues: venues.map((v) => v.name), brands: brands.map((b) => b.name),
     organizers: organizers.map((o) => o.name), event_types: etypes.map((e) => e.name),
   };
-  const payload = Buffer.from(JSON.stringify({ projects: dump, pickers })).toString("base64");
+  const catdump = catlines.map((r) => ({ pid: r.pid, cat: r.cat, kind: r.kind, amt: Number(r.amt), n: r.n }));
+  const payload = Buffer.from(JSON.stringify({ projects: dump, pickers, catlines: catdump })).toString("base64");
   console.log(`PMS_INSCOPE_COUNT=${projects.length}`);
   console.log(`JB_LEN=${payload.length}`);
   for (let i = 0; i < payload.length; i += 180) console.log("JB:" + payload.slice(i, i + 180));
