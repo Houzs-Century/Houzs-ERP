@@ -4,6 +4,7 @@ import { scopeNotExpiredSql } from "./projectAcl";
 import { isSensitiveChecklistItem, isSetupDismantleSection } from "./pmsAccess";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeMyState } from "../scm/lib/canonical-state";
+import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 
 // ── Codes ─────────────────────────────────────────────────────
 // Format: `YYYY-MM-{ORGANIZER}-{STATE}-{VENUE}-{BRAND}` — built from
@@ -238,6 +239,9 @@ export async function createProject(env: Env, input: CreateProjectInput) {
      Pinang'/'Kuala Lumpur'. Foreign state names (China provinces) pass
      through unchanged. */
   input.state = canonicalizeMyState(input.state ?? null);
+  // Fold showroom-venue aliases (e.g. "PJ Showroom") to the canonical "2990s PJ"
+  // at the write front door so every surface that later reads this row agrees.
+  input.venue = canonicalizeVenue(input.venue ?? null);
 
   // Derive code from identity fields. Throws if state/venue/brand are
   // missing; route layer converts to a 400. Organizer null OR
@@ -561,6 +565,10 @@ export async function patchProject(
      bucketing stops splitting the same physical state. */
   if ("state" in body) {
     body.state = canonicalizeMyState(body.state as string | null);
+  }
+  // Fold showroom-venue aliases to canonical on edit too (front door, same as create).
+  if ("venue" in body) {
+    body.venue = canonicalizeVenue(body.venue as string | null);
   }
 
   const sets: string[] = [];
