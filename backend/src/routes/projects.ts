@@ -2295,6 +2295,10 @@ app.patch("/:id/finance", requirePermission("projects.write"), async (c) => {
   const body = await c.req.json<Record<string, any>>();
   const ok = await patchFinance(c.env, id, body, user?.id ?? 0);
   if (!ok) return c.json({ error: "No changes" }, 400);
+  // Entering/changing sales must auto-backfill the derived cost lines
+  // (transport/merchandise/commission) from the brand cost rates. Best-effort:
+  // a recompute failure must not fail the finance write.
+  await recomputeAutoCostLines(c.env, id, user?.id ?? 0).catch(() => {});
   await audit(c, {
     action: "finance.update",
     entityType: "project_finance",

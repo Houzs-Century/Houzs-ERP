@@ -4199,7 +4199,6 @@ function ProjectsCalendarView() {
                         seg.clipRight ? "rounded-r-none" : "rounded-r-md"
                       )}
                     >
-                      {seg.clipLeft && "‹ "}
                       {(seg.project.event_type_name || "").toLowerCase() === "solo"
                         ? composeDefaultProjectName({
                             state: seg.project.state,
@@ -4209,7 +4208,6 @@ function ProjectsCalendarView() {
                             event_type_slug: "solo",
                           })
                         : seg.project.name}
-                      {seg.clipRight && " ›"}
                     </button>
                   );
                 })}
