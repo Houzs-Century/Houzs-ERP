@@ -1533,17 +1533,28 @@ function SalesAttending({
   reload: () => void;
 }) {
   const [adding, setAdding] = useState(false);
-  const [pick, setPick] = useState("");
+  // Multi-select (owner 2026-07-23): tick several reps, add them in one go —
+  // mirrors the desktop checkbox list instead of the old one-at-a-time picker.
+  const [picks, setPicks] = useState<Set<number>>(new Set());
   const present = new Set(attendees.map((a) => a.sales_rep_id));
   const available = options.filter((o) => !present.has(o.id));
 
-  const add = async () => {
-    const repId = parseInt(pick, 10);
-    if (!Number.isFinite(repId)) return;
+  const toggle = (id: number) =>
+    setPicks((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
+  const addSelected = async () => {
+    if (!picks.size) return;
     setBusy(true);
     try {
-      await api.post(`/api/projects/${projectId}/sales-attendees`, { sales_rep_id: repId });
-      setPick("");
+      for (const repId of picks) {
+        await api.post(`/api/projects/${projectId}/sales-attendees`, { sales_rep_id: repId });
+      }
+      setPicks(new Set());
       setAdding(false);
       reload();
     } catch (e) {
@@ -1576,15 +1587,33 @@ function SalesAttending({
         )}
       </div>
       {adding && (
-        <div style={{ display: "flex", gap: 7, marginBottom: 8 }}>
-          <select className="fld-i" value={pick} onChange={(e) => setPick(e.target.value)} style={{ flex: 1 }} disabled={busy}>
-            <option value="">Select a rep…</option>
-            {available.map((o) => (
-              <option key={o.id} value={o.id}>{[o.name || `#${o.id}`, o.code].filter(Boolean).join(" · ")}</option>
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid #e3e6e0", borderRadius: 10 }}>
+            {available.length === 0 && (
+              <div style={{ fontSize: 12, color: "#9aa093", padding: "9px 11px" }}>Everyone is already attending.</div>
+            )}
+            {available.map((o, i) => (
+              <label
+                key={o.id}
+                style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderTop: i === 0 ? "none" : "1px solid #eceee9", cursor: busy ? "default" : "pointer" }}
+              >
+                <input type="checkbox" checked={picks.has(o.id)} disabled={busy} onChange={() => toggle(o.id)} />
+                <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{o.code || "—"}</span>
+                <span style={{ fontSize: 13 }}>{o.name || `#${o.id}`}</span>
+              </label>
             ))}
-          </select>
-          <button className="tinybtn" style={{ background: "#16695f", borderColor: "#16695f", color: "#fff" }} disabled={busy || !pick} onClick={add}>Add</button>
-          <button className="tinybtn" disabled={busy} onClick={() => { setAdding(false); setPick(""); }}>Cancel</button>
+          </div>
+          <div style={{ display: "flex", gap: 7, marginTop: 7 }}>
+            <button
+              className="tinybtn"
+              style={{ background: "#16695f", borderColor: "#16695f", color: "#fff" }}
+              disabled={busy || picks.size === 0}
+              onClick={addSelected}
+            >
+              Add selected{picks.size ? ` (${picks.size})` : ""}
+            </button>
+            <button className="tinybtn" disabled={busy} onClick={() => { setAdding(false); setPicks(new Set()); }}>Cancel</button>
+          </div>
         </div>
       )}
       {attendees.length === 0 && <div style={{ fontSize: 12, color: "#9aa093" }}>None assigned.</div>}
