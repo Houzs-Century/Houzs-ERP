@@ -5,12 +5,14 @@ name: FAIR PNL polish-all
 #   autocost      : backfill transport/merchandise/commission from cost rates (reconcile-polish)
 #   cleanup-empty : archive true-empty shells (0 income/lines/files/checklist)
 #   cleanup-dups  : archive exact-duplicate projects (keep richest; never file-bearing)
+#   align-figures : set sales/COGS/rental/setup to v8 for the 429 EXACT+VENUE high-confidence
+#                   events (align_v8_targets.json). Owner + seed events. Run autocost after.
 on:
   workflow_dispatch:
     inputs:
       task:
         type: choice
-        options: [standardize, autocost, cleanup-empty, cleanup-dups]
+        options: [standardize, autocost, cleanup-empty, cleanup-dups, align-figures]
         default: standardize
       mode:
         type: choice
@@ -51,3 +53,8 @@ jobs:
         working-directory: backend
         env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
         run: node scripts/fair-pnl/cleanup-projects.mjs --pass=dups ${{ inputs.mode == 'commit' && '--commit' || '' }}
+      - name: align-figures (${{ inputs.mode }})
+        if: ${{ inputs.task == 'align-figures' }}
+        working-directory: backend
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
+        run: node scripts/fair-pnl/align-seed-figures-v8.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
