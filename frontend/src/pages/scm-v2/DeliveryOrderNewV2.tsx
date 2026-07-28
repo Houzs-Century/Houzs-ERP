@@ -73,7 +73,7 @@ import { splitE164, combineE164 } from "../../vendor/shared/phone";
 /* One DO line draft = the SHARED SoLineDraft (same variant taxonomy the SO
    uses) plus a stable React id and, in edit mode, the persisted item id used
    to diff add / update / delete against the loaded DO. */
-type DoDraftLine = SoLineDraft & { rid: string; itemId?: string };
+type DoDraftLine = SoLineDraft & { rid: string; itemId?: string; soItemId?: string | null };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -588,6 +588,11 @@ export function DeliveryOrderNewV2() {
 
   // ── Item body — the shared shape create-items + add/update-item all send.
   const toDoItemBody = (l: DoDraftLine) => ({
+    // Carry the SO line id so the backend links the DO line to its SO line —
+    // the key the remaining-qty guard, the sofa batch guard and the drop-ship
+    // batch stamping all resolve on. Dropping it made every SO-sourced sofa DO
+    // that needs drop-ship hard-block (offenders resolved soItemId=null -> no PO).
+    soItemId: l.soItemId ?? null,
     itemCode: l.itemCode,
     itemGroup: l.itemGroup,
     description: l.description,
@@ -616,6 +621,7 @@ export function DeliveryOrderNewV2() {
       setLines(
         stash.map((s) => ({
           ...newDoLine(null),
+          soItemId: s.soItemId ? String(s.soItemId) : null,
           itemCode: String(s.itemCode ?? ""),
           itemGroup: String(s.itemGroup ?? "others"),
           description: String(s.description ?? ""),
@@ -676,7 +682,8 @@ export function DeliveryOrderNewV2() {
     if (!rows || rows.length === 0) return;
     setLines(
       rows.map((it) => ({
-        ...newDoLine(it.soItemId),
+        ...newDoLine(null),
+        soItemId: it.soItemId,
         itemCode: it.itemCode,
         itemGroup: it.itemGroup ?? "others",
         description: it.description ?? "",
