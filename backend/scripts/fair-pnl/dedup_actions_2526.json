@@ -570,5 +570,108 @@
 "keeper": 1962,
 "reason": "half of event; move money to keeper then delete",
 "income": 3750
+},
+{
+"op": "archive",
+"id": 1993,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 33259
+},
+{
+"op": "archive",
+"id": 1918,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 16461
+},
+{
+"op": "archive",
+"id": 1996,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 13472
+},
+{
+"op": "archive",
+"id": 1827,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 14876
+},
+{
+"op": "archive",
+"id": 2003,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 14899
+},
+{
+"op": "archive",
+"id": 1997,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 165715
+},
+{
+"op": "archive",
+"id": 1751,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 62002
+},
+{
+"op": "archive",
+"id": 1743,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 116085
+},
+{
+"op": "archive",
+"id": 1991,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 58813
+},
+{
+"op": "archive",
+"id": 1828,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 49438
+},
+{
+"op": "archive",
+"id": 1975,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 38905
+},
+{
+"op": "archive",
+"id": 1994,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 79833
+},
+{
+"op": "archive",
+"id": 1858,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 39779
+},
+{
+"op": "archive",
+"id": 1968,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 3088
+},
+{
+"op": "archive",
+"id": 2010,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 42876
+},
+{
+"op": "archive",
+"id": 2024,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 71805
+},
+{
+"op": "move_then_archive",
+"id": 2204,
+"keeper": 239,
+"reason": "AEON CHERAS venue-map fix: money -> owner project p239",
+"income": 70669
 }
 ]
