@@ -25,7 +25,7 @@ import {
   type ApAgingRow,
   type JournalEntry,
 } from '../../vendor/scm/lib/accounting-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataTable, type Column } from '../../components/DataTable';
 import { fmtCenti } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
@@ -89,110 +89,57 @@ const TabBtn = ({
 const jeStatus = (r: JournalEntry): string =>
   r.reversed ? 'REVERSED' : r.posted ? 'POSTED' : 'DRAFT';
 
-/* Shared DataGrid conversion (2026-06-12) — journal-entry LIST only; the
-   other Accounting tabs (GL / Balances / AR / AP) keep their legacy tables.
-   Static column spec at module scope so DataGrid's memo hits. */
-const JE_COLUMNS: DataGridColumn<JournalEntry>[] = [
-  {
-    key: 'jeNo',
-    label: 'JE No',
-    width: 140,
-    accessor: (r) => <span className={styles.codeChip}>{r.je_no}</span>,
-    searchValue: (r) => r.je_no,
-    filterValue: (r) => r.je_no,
-    sortFn: (a, b) => (a.je_no ?? '').localeCompare(b.je_no ?? ''),
-  },
-  {
-    key: 'date',
-    label: 'Date',
-    width: 110,
-    accessor: (r) => fmtDateOrDash(r.entry_date),
-    filterValue: (r) => fmtDateOrDash(r.entry_date),
-    sortFn: (a, b) => (a.entry_date ?? '').localeCompare(b.entry_date ?? ''),
-    filterType: 'date', dateValue: (r) => r.entry_date,
-  },
-  {
-    key: 'source',
-    label: 'Source',
-    width: 110,
-    accessor: (r) => r.source_type,
-    filterValue: (r) => r.source_type,
-  },
-  {
-    key: 'doc',
-    label: 'Doc',
-    width: 140,
-    accessor: (r) => r.source_doc_no ?? '—',
-    filterValue: (r) => r.source_doc_no ?? '—',
-  },
-  {
-    key: 'debit',
-    label: 'Debit',
-    width: 130,
-    align: 'right',
-    accessor: (r) => fmt(r.total_debit_sen),
-    searchValue: () => '',
-    filterValue: (r) => fmt(r.total_debit_sen),
-    sortFn: (a, b) => a.total_debit_sen - b.total_debit_sen,
-  },
-  {
-    key: 'credit',
-    label: 'Credit',
-    width: 130,
-    align: 'right',
-    accessor: (r) => fmt(r.total_credit_sen),
-    searchValue: () => '',
-    filterValue: (r) => fmt(r.total_credit_sen),
-    sortFn: (a, b) => a.total_credit_sen - b.total_credit_sen,
-  },
-  {
-    key: 'status',
-    label: 'Status',
-    width: 110,
-    accessor: (r) => (
-      <span className={`${styles.statusPill} ${r.posted ? styles.statusActive : styles.statusInactive}`}>
-        {jeStatus(r)}
-      </span>
-    ),
-    searchValue: (r) => jeStatus(r),
-    filterValue: (r) => jeStatus(r),
-  },
-];
-
+/* Shared DataTable (batch 2 of the SO-sample unification, owner 2026-07-28:
+   ALL Accounting tabs converge on DataTable — this tab was the last DataGrid
+   holdout). The source-type scope select stays a page-level control above the
+   table, same rule as GL's account scope: the DataTable toolbar owns
+   search/export/columns. */
 const JeTab = () => {
   const [sourceType, setSourceType] = useState<string>('');
   const q = useJournalEntries(sourceType ? { sourceType } : undefined);
   const rows = useMemo(() => q.data?.journalEntries ?? [], [q.data]);
 
   return (
-    <DataGrid
-      rows={rows}
-      columns={JE_COLUMNS}
-      storageKey="dg-accounting-je"
-      rowKey={(r) => r.id}
-      searchPlaceholder="Filter visible entries…"
-      loadedSearchLimit={500}
-      groupBanner={false}
-      isLoading={q.isLoading}
-      emptyMessage="No entries."
-      toolbar={
-        <>
-          <select
-            value={sourceType}
-            onChange={(e) => setSourceType(e.target.value)}
-            className={styles.searchInput}
-            style={{ maxWidth: 200 }}>
-            <option value="">All sources</option>
-            <option value="SI">SI — Sales Invoice</option>
-            <option value="PI">PI — Purchase Invoice</option>
-            <option value="SI_PAYMENT">SI Payment</option>
-            <option value="PI_PAYMENT">PI Payment</option>
-            <option value="MANUAL">Manual</option>
-          </select>
-          <span className={styles.subtitle}>{rows.length} entries</span>
-        </>
-      }
-    />
+    <div className="space-y-3">
+      <select
+        value={sourceType}
+        onChange={(e) => setSourceType(e.target.value)}
+        className={styles.searchInput}
+        style={{ maxWidth: 200 }}>
+        <option value="">All sources</option>
+        <option value="SI">SI — Sales Invoice</option>
+        <option value="PI">PI — Purchase Invoice</option>
+        <option value="SI_PAYMENT">SI Payment</option>
+        <option value="PI_PAYMENT">PI Payment</option>
+        <option value="MANUAL">Manual</option>
+      </select>
+      <DataTable<JournalEntry>
+        tableId="accounting-je"
+        layoutFamily="accounting-je"
+        exportName="journal-entries"
+        rows={q.isLoading ? null : rows}
+        loading={q.isLoading}
+        emptyLabel="No entries."
+        getRowKey={(r) => r.id}
+        columns={[
+          { key: 'je_no', label: 'JE No', width: '140px', getValue: (r) => r.je_no, render: (r) => <span className={styles.codeChip}>{r.je_no}</span> },
+          { key: 'entry_date', label: 'Date', width: '110px', getValue: (r) => r.entry_date, render: (r) => fmtDateOrDash(r.entry_date) },
+          { key: 'source', label: 'Source', width: '110px', getValue: (r) => r.source_type, render: (r) => r.source_type },
+          { key: 'doc', label: 'Doc', width: '140px', getValue: (r) => r.source_doc_no ?? '', render: (r) => r.source_doc_no ?? '—' },
+          { key: 'debit', label: 'Debit', align: 'right', width: '130px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
+          { key: 'credit', label: 'Credit', align: 'right', width: '130px', getValue: (r) => r.total_credit_sen / 100, render: (r) => fmt(r.total_credit_sen) },
+          {
+            key: 'status', label: 'Status', width: '110px',
+            getValue: (r) => jeStatus(r),
+            render: (r) => (
+              <span className={`${styles.statusPill} ${r.posted ? styles.statusActive : styles.statusInactive}`}>
+                {jeStatus(r)}
+              </span>
+            ),
+          },
+        ] satisfies Column<JournalEntry>[]}
+      />
+    </div>
   );
 };
 
@@ -203,108 +150,94 @@ const GlTab = () => {
   const q = useGlEntries(accountCode ? { accountCode } : undefined);
   const rows = q.data?.glEntries ?? [];
 
+  type GlRow = (typeof rows)[number];
   return (
-    <section className={styles.tableCard}>
-      <div className={styles.actionsRow} style={{ padding: 'var(--space-3) var(--space-4)' }}>
-        <select
-          value={accountCode}
-          onChange={(e) => setAccountCode(e.target.value)}
-          className={styles.searchInput}
-          style={{ maxWidth: 320 }}>
-          <option value="">All accounts</option>
-          {[...(accounts.data?.accounts ?? [])]
-            .sort((a, b) => byText(a.account_code, b.account_code))
-            .map((a) => (
-            <option key={a.account_code} value={a.account_code}>
-              {a.account_code} — {a.account_name}
-            </option>
-          ))}
-        </select>
-        <span className={styles.subtitle}>{rows.length} entries</span>
-      </div>
-      <table className={styles.table}>
-        <thead>
-          <tr>
-            <th>Date</th><th>JE No</th><th>Source</th><th>Account</th>
-            <th style={{ textAlign: 'right' }}>Debit</th>
-            <th style={{ textAlign: 'right' }}>Credit</th>
-            <th>Party</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr><td colSpan={7} className={styles.emptyRow}>No GL entries posted yet.</td></tr>
-          ) : rows.map((r) => (
-            <tr key={r.line_id}>
-              <td>{fmtDateOrDash(r.entry_date)}</td>
-              <td><span className={styles.codeChip}>{r.je_no}</span></td>
-              <td>{r.source_type}{r.source_doc_no ? ` · ${r.source_doc_no}` : ''}</td>
-              <td>{r.account_code} — {r.account_name}</td>
-              <td style={{ textAlign: 'right' }}>{r.debit_sen > 0 ? fmt(r.debit_sen) : '—'}</td>
-              <td style={{ textAlign: 'right' }}>{r.credit_sen > 0 ? fmt(r.credit_sen) : '—'}</td>
-              <td>{r.party_name ?? r.party_code ?? '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
+    <div className="space-y-3">
+      {/* Account scope select stays a page-level control above the table
+          (the DataTable toolbar owns search/export/columns). */}
+      <select
+        value={accountCode}
+        onChange={(e) => setAccountCode(e.target.value)}
+        className={styles.searchInput}
+        style={{ maxWidth: 320 }}>
+        <option value="">All accounts</option>
+        {[...(accounts.data?.accounts ?? [])]
+          .sort((a, b) => byText(a.account_code, b.account_code))
+          .map((a) => (
+          <option key={a.account_code} value={a.account_code}>
+            {a.account_code} — {a.account_name}
+          </option>
+        ))}
+      </select>
+      <DataTable<GlRow>
+        tableId="accounting-gl"
+        layoutFamily="accounting-gl"
+        exportName="general-ledger"
+        rows={q.isLoading ? null : rows}
+        loading={q.isLoading}
+        emptyLabel="No GL entries posted yet."
+        getRowKey={(r) => r.line_id}
+        columns={[
+          { key: 'entry_date', label: 'Date', width: '110px', getValue: (r) => r.entry_date, render: (r) => fmtDateOrDash(r.entry_date) },
+          { key: 'je_no', label: 'JE No', width: '130px', getValue: (r) => r.je_no, render: (r) => <span className={styles.codeChip}>{r.je_no}</span> },
+          { key: 'source', label: 'Source', width: '180px', getValue: (r) => `${r.source_type}${r.source_doc_no ? ` · ${r.source_doc_no}` : ''}`, render: (r) => `${r.source_type}${r.source_doc_no ? ` · ${r.source_doc_no}` : ''}` },
+          { key: 'account', label: 'Account', getValue: (r) => `${r.account_code} — ${r.account_name}`, render: (r) => `${r.account_code} — ${r.account_name}` },
+          { key: 'debit', label: 'Debit', align: 'right', width: '120px', getValue: (r) => r.debit_sen / 100, render: (r) => (r.debit_sen > 0 ? fmt(r.debit_sen) : '—') },
+          { key: 'credit', label: 'Credit', align: 'right', width: '120px', getValue: (r) => r.credit_sen / 100, render: (r) => (r.credit_sen > 0 ? fmt(r.credit_sen) : '—') },
+          { key: 'party', label: 'Party', width: '160px', getValue: (r) => r.party_name ?? r.party_code ?? '', render: (r) => r.party_name ?? r.party_code ?? '—' },
+        ] satisfies Column<GlRow>[]}
+      />
+    </div>
   );
 };
 
 /* ── Balances ────────────────────────────────────────────────────────── */
+const ACCOUNT_TYPE_ORDER = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];
+
 const BalancesTab = () => {
   const q = useAccountBalances();
-  const rows = useMemo(() => q.data?.balances ?? [], [q.data]);
+  // Pre-sort into the canonical statement order — DataTable's groupBy buckets
+  // in first-seen row order, so this IS the group order until the user sorts.
+  const rows = useMemo(() => {
+    const all = q.data?.balances ?? [];
+    const rank = (t: string) => {
+      const i = ACCOUNT_TYPE_ORDER.indexOf(t);
+      return i === -1 ? ACCOUNT_TYPE_ORDER.length : i;
+    };
+    return [...all].sort(
+      (a, b) => rank(a.account_type) - rank(b.account_type) || a.account_code.localeCompare(b.account_code),
+    );
+  }, [q.data]);
 
-  const grouped = useMemo(() => {
-    const order = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];
-    const g: Record<string, typeof rows> = {};
-    for (const r of rows) (g[r.account_type] ??= []).push(r);
-    return order.map((t) => ({ type: t, rows: g[t] ?? [] }));
-  }, [rows]);
-
+  type BalanceRow = (typeof rows)[number];
   return (
-    <section className={styles.tableCard}>
-      <table className={styles.table}>
-        <thead>
-          <tr>
-            <th>Account</th>
-            <th style={{ textAlign: 'right' }}>Σ Debit</th>
-            <th style={{ textAlign: 'right' }}>Σ Credit</th>
-            <th style={{ textAlign: 'right' }}>Balance</th>
-          </tr>
-        </thead>
-        <tbody>
-          {grouped.map((g) => (
-            g.rows.length > 0 && (
-              <>
-                <tr key={`g-${g.type}`}>
-                  <td colSpan={4} style={{
-                    fontWeight: 700, background: 'var(--c-cream)',
-                    color: 'var(--c-burnt)',
-                  }}>
-                    {g.type}
-                  </td>
-                </tr>
-                {g.rows.map((r) => (
-                  <tr key={r.account_code}>
-                    <td>{r.account_code} — {r.account_name}</td>
-                    <td style={{ textAlign: 'right' }}>{fmt(r.total_debit_sen)}</td>
-                    <td style={{ textAlign: 'right' }}>{fmt(r.total_credit_sen)}</td>
-                    <td style={{
-                      textAlign: 'right', fontWeight: 700,
-                      color: r.balance_sen < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)',
-                    }}>
-                      {fmt(r.balance_sen)}
-                    </td>
-                  </tr>
-                ))}
-              </>
-            )
-          ))}
-        </tbody>
-      </table>
-    </section>
+    <DataTable<BalanceRow>
+      tableId="accounting-balances"
+      layoutFamily="accounting-balances"
+      exportName="account-balances"
+      rows={q.isLoading ? null : rows}
+      loading={q.isLoading}
+      emptyLabel="No balances yet."
+      getRowKey={(r) => r.account_code}
+      groupBy={{ key: 'type' }}
+      columns={[
+        // Grouping key — the collapsible header row shows the type, so the
+        // column itself starts hidden (still revealable from Columns).
+        { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => r.account_type },
+        { key: 'account', label: 'Account', getValue: (r) => `${r.account_code} — ${r.account_name}`, render: (r) => `${r.account_code} — ${r.account_name}` },
+        { key: 'debit', label: 'Σ Debit', align: 'right', width: '140px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
+        { key: 'credit', label: 'Σ Credit', align: 'right', width: '140px', getValue: (r) => r.total_credit_sen / 100, render: (r) => fmt(r.total_credit_sen) },
+        {
+          key: 'balance', label: 'Balance', align: 'right', width: '150px',
+          getValue: (r) => r.balance_sen / 100,
+          render: (r) => (
+            <span style={{ fontWeight: 700, color: r.balance_sen < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)' }}>
+              {fmt(r.balance_sen)}
+            </span>
+          ),
+        },
+      ] satisfies Column<BalanceRow>[]}
+    />
   );
 };
 
@@ -317,32 +250,28 @@ const ArAgingTab = () => {
   return (
     <>
       <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_centi, 0)} />
-      <section className={styles.tableCard}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Invoice</th><th>Customer</th><th>Date</th><th>Due</th>
-              <th style={{ textAlign: 'right' }}>Outstanding</th>
-              <th>Days Overdue</th><th>Bucket</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr><td colSpan={7} className={styles.emptyRow}>No outstanding AR.</td></tr>
-            ) : rows.map((r) => (
-              <tr key={r.invoice_id}>
-                <td><span className={styles.codeChip}>{r.invoice_number}</span></td>
-                <td>{r.debtor_name}{r.debtor_code ? ` (${r.debtor_code})` : ''}</td>
-                <td>{fmtDateOrDash(r.invoice_date)}</td>
-                <td>{r.due_date ?? '—'}</td>
-                <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(r.outstanding_centi)}</td>
-                <td>{r.days_overdue > 0 ? r.days_overdue : '—'}</td>
-                <td><BucketPill bucket={r.aging_bucket} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+      <DataTable<ArAgingRow>
+        tableId="accounting-ar-aging"
+        layoutFamily="accounting-ar-aging"
+        exportName="ar-aging"
+        rows={q.isLoading ? null : rows}
+        loading={q.isLoading}
+        emptyLabel="No outstanding AR."
+        getRowKey={(r) => r.invoice_id}
+        columns={[
+          { key: 'invoice', label: 'Invoice', width: '140px', getValue: (r) => r.invoice_number, render: (r) => <span className={styles.codeChip}>{r.invoice_number}</span> },
+          { key: 'customer', label: 'Customer', getValue: (r) => `${r.debtor_name}${r.debtor_code ? ` (${r.debtor_code})` : ''}`, render: (r) => `${r.debtor_name}${r.debtor_code ? ` (${r.debtor_code})` : ''}` },
+          { key: 'invoice_date', label: 'Date', width: '110px', getValue: (r) => r.invoice_date, render: (r) => fmtDateOrDash(r.invoice_date) },
+          { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => r.due_date ?? '—' },
+          {
+            key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
+            getValue: (r) => r.outstanding_centi / 100,
+            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_centi)}</span>,
+          },
+          { key: 'days_overdue', label: 'Days Overdue', align: 'right', width: '120px', getValue: (r) => r.days_overdue, render: (r) => (r.days_overdue > 0 ? r.days_overdue : '—') },
+          { key: 'bucket', label: 'Bucket', width: '110px', getValue: (r) => r.aging_bucket, render: (r) => <BucketPill bucket={r.aging_bucket} /> },
+        ] satisfies Column<ArAgingRow>[]}
+      />
     </>
   );
 };
@@ -356,35 +285,35 @@ const ApAgingTab = () => {
   return (
     <>
       <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_centi, 0)} />
-      <section className={styles.tableCard}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              {/* Owner 2026-07-24: supplier NAME and CODE are separate columns
-                  on every procurement table, not one combined cell. */}
-              <th>Invoice</th><th>Supplier</th><th>Supplier Code</th><th>Date</th><th>Due</th>
-              <th style={{ textAlign: 'right' }}>Outstanding</th>
-              <th>Days Overdue</th><th>Bucket</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr><td colSpan={8} className={styles.emptyRow}>No outstanding AP.</td></tr>
-            ) : rows.map((r) => (
-              <tr key={r.invoice_id}>
-                <td><span className={styles.codeChip}>{r.invoice_number}</span></td>
-                <td>{r.supplier_name ?? '—'}</td>
-                <td>{r.supplier_code ? <span className={styles.codeChip}>{r.supplier_code}</span> : '—'}</td>
-                <td>{fmtDateOrDash(r.invoice_date)}</td>
-                <td>{r.due_date ?? '—'}</td>
-                <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(r.outstanding_centi)}</td>
-                <td>{r.days_overdue > 0 ? r.days_overdue : '—'}</td>
-                <td><BucketPill bucket={r.aging_bucket} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+      <DataTable<ApAgingRow>
+        tableId="accounting-ap-aging"
+        layoutFamily="accounting-ap-aging"
+        exportName="ap-aging"
+        rows={q.isLoading ? null : rows}
+        loading={q.isLoading}
+        emptyLabel="No outstanding AP."
+        getRowKey={(r) => r.invoice_id}
+        columns={[
+          { key: 'invoice', label: 'Invoice', width: '140px', getValue: (r) => r.invoice_number, render: (r) => <span className={styles.codeChip}>{r.invoice_number}</span> },
+          // Owner 2026-07-24: supplier NAME and CODE are separate columns on
+          // every procurement table, not one combined cell.
+          { key: 'supplier', label: 'Supplier', getValue: (r) => r.supplier_name ?? '', render: (r) => r.supplier_name ?? '—' },
+          {
+            key: 'supplier_code', label: 'Supplier Code', width: '130px',
+            getValue: (r) => r.supplier_code ?? '',
+            render: (r) => (r.supplier_code ? <span className={styles.codeChip}>{r.supplier_code}</span> : '—'),
+          },
+          { key: 'invoice_date', label: 'Date', width: '110px', getValue: (r) => r.invoice_date, render: (r) => fmtDateOrDash(r.invoice_date) },
+          { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => r.due_date ?? '—' },
+          {
+            key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
+            getValue: (r) => r.outstanding_centi / 100,
+            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_centi)}</span>,
+          },
+          { key: 'days_overdue', label: 'Days Overdue', align: 'right', width: '120px', getValue: (r) => r.days_overdue, render: (r) => (r.days_overdue > 0 ? r.days_overdue : '—') },
+          { key: 'bucket', label: 'Bucket', width: '110px', getValue: (r) => r.aging_bucket, render: (r) => <BucketPill bucket={r.aging_bucket} /> },
+        ] satisfies Column<ApAgingRow>[]}
+      />
     </>
   );
 };
