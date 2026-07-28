@@ -2306,7 +2306,13 @@ function TaskRow({
           </button>
         </>
       )}
-      {canTick && awaitingReview && (
+      {/* Approve / Reject (owner 2026-07-21): ALWAYS offered on an
+          approval-gated task (required_perm) to a user HOLDING that
+          permission, until the task is approved/done — no longer only after
+          a submit-for-review. Non-gated tasks keep the old behaviour
+          (buttons only while a submission awaits review). */}
+      {canTick && !done &&
+        (it.required_perm ? can(it.required_perm) : awaitingReview) && (
         <>
           <button className="tinybtn" style={{ background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={() => review("approve")}>Approve</button>
           <button className="tinybtn" style={{ background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => review("reject")}>Reject</button>

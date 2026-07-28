@@ -7436,9 +7436,14 @@ function DocRow({
                     ))}
                 </div>
               )}
-              {/* Approve/Reject only while awaiting; hidden once decided,
-                  reappear on re-upload (upload auto-submits). */}
-              {awaiting && canApprove ? (
+              {/* Approve/Reject visibility (owner 2026-07-21): an
+                  approval-gated document (required_perm) offers the buttons to
+                  a permission holder WHENEVER it still needs the decision —
+                  not only after a submit. Non-gated documents keep the old
+                  submit-then-review behaviour. */}
+              {(item.required_perm
+                ? canApprove && rs !== "approved" && item.status !== "done"
+                : awaiting && canApprove) ? (
                 <div className="flex flex-wrap items-center gap-1">
                   <button
                     onClick={() => onReview(item, "approve", {})}
@@ -8244,12 +8249,13 @@ function ChecklistRow({
         </div>
       </div>
 
-      {/* Management approve/reject — shown while awaiting a decision;
-          they disappear once approved/rejected and reappear on re-upload
-          (upload auto-submits). Approver only. */}
-      {reviewable &&
-        awaitingReview &&
-        canApprove && (
+      {/* Management approve/reject. Owner 2026-07-21: an approval-gated task
+          (required_perm) offers the buttons to a permission holder WHENEVER
+          it still needs the decision — not only after a submit. Non-gated
+          reviewable docs keep the old submit-then-review behaviour. */}
+      {(item.required_perm
+        ? canApprove && item.review_status !== "approved" && item.status !== "done"
+        : reviewable && awaitingReview && canApprove) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
             <input
               value={reason}
