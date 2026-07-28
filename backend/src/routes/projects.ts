@@ -56,6 +56,7 @@ import { audit } from "../services/audit";
 import { hasPermission, holdsChecklistApproval } from "../services/permissions";
 import { recomputeAutoCostLines } from "../services/projectCostRates";
 import { todayMyt } from "../scm/lib/my-time";
+import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 import { getDb } from "../db/client";
 import {
   project_brands,
@@ -1276,8 +1277,12 @@ app.post("/venues", requirePermission("projects.write"), async (c) => {
     state?: string | null;
     notes?: string | null;
   }>();
-  const name = (body.name || "").trim();
-  if (!name) return c.json({ error: "name required" }, 400);
+  const rawName = (body.name || "").trim();
+  if (!rawName) return c.json({ error: "name required" }, 400);
+  // Fold showroom-venue aliases (e.g. "PJ Showroom") to canonical "2990s PJ" before
+  // the by-name lookup + INSERT, so re-adding an alias reactivates the ONE canonical
+  // picker row instead of spawning a duplicate menu entry (the main drift vector).
+  const name = canonicalizeVenue(rawName) ?? rawName;
   // Resolve the active company for this WRITE, or refuse. The INSERT below used
   // to omit company_id, so a venue created while viewing 2990 was written with
   // company_id = HOUZS (the project_venues.company_id DEFAULT, mig 0093). The
@@ -1717,7 +1722,10 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
 
   const by_brand = groupBy((r) => r.brand);
   const by_organizer = groupBy((r) => r.organizer);
-  const by_venue = groupBy((r) => r.venue);
+  // Canonicalize at read time too: any legacy row still holding an alias buckets
+  // under "2990s PJ" so the breakdown never shows the same showroom twice, even
+  // before the one-shot backfill runs.
+  const by_venue = groupBy((r) => canonicalizeVenue(r.venue));
   const by_event_type = groupBy((r) => r.event_type_name);
   // YYYY-MM bucket from start_date
   const by_month = groupBy((r) =>

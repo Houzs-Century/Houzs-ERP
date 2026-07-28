@@ -39,6 +39,8 @@
 // ----------------------------------------------------------------------------
 
 /** How an SO's venue got there. Persisted in scm.mfg_sales_orders.venue_source. */
+import { canonicalizeVenue } from './canonical-venue';
+
 export type VenueSource = 'PMS' | 'SHOWROOM' | 'MANUAL';
 
 /**
@@ -188,7 +190,7 @@ export function resolveVenueBinding(input: {
   const winner = inPeriod[0];
   if (winner) {
     return {
-      venueName: clean(winner.venue),
+      venueName: canonicalizeVenue(clean(winner.venue)),
       projectId: winner.projectId,
       projectName: clean(winner.projectName),
       source: 'PMS',
@@ -203,7 +205,7 @@ export function resolveVenueBinding(input: {
   const showroomVenue = clean(input.showroom?.venueName);
   if (input.showroom && showroomVenue) {
     return {
-      venueName: showroomVenue,
+      venueName: canonicalizeVenue(showroomVenue),
       projectId: null,
       projectName: null,
       source: 'SHOWROOM',
