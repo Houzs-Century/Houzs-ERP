@@ -666,5 +666,12 @@
 "id": 2024,
 "reason": "REVIEW confirmed dup (in Excel / cross-month half)",
 "income": 71805
+},
+{
+"op": "move_then_archive",
+"id": 2204,
+"keeper": 239,
+"reason": "AEON CHERAS venue-map fix: money -> owner project p239",
+"income": 70669
 }
 ]
