@@ -99,6 +99,20 @@ const JeTab = () => {
   const q = useJournalEntries(sourceType ? { sourceType } : undefined);
   const rows = useMemo(() => q.data?.journalEntries ?? [], [q.data]);
 
+  // Loaded-only search over the visible entries (the old DataGrid's
+  // "Filter visible entries…" box) — DataTable renders the box + scope hint,
+  // the page does the filtering (DeliveryReturnsListV2 convention).
+  const [search, setSearch] = useState('');
+  const visible = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter((r) =>
+      `${r.je_no} ${r.entry_date} ${r.source_type} ${r.source_doc_no ?? ''} ${jeStatus(r)}`
+        .toLowerCase()
+        .includes(term),
+    );
+  }, [rows, search]);
+
   return (
     <div className="space-y-3">
       <select
@@ -117,10 +131,19 @@ const JeTab = () => {
         tableId="accounting-je"
         layoutFamily="accounting-je"
         exportName="journal-entries"
-        rows={q.isLoading ? null : rows}
+        rows={q.isLoading ? null : visible}
         loading={q.isLoading}
         emptyLabel="No entries."
         getRowKey={(r) => r.id}
+        /* Search is loaded-only (the JE query caps at 500 — searchScope
+           contract): DataTable renders the box + scope hint, the page owns
+           the actual filtering, per the DeliveryReturnsListV2 convention. */
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: 'Filter visible entries…',
+          loadedLimit: 500,
+        }}
         columns={[
           { key: 'je_no', label: 'JE No', width: '140px', getValue: (r) => r.je_no, render: (r) => <span className={styles.codeChip}>{r.je_no}</span> },
           { key: 'entry_date', label: 'Date', width: '110px', getValue: (r) => r.entry_date, render: (r) => fmtDateOrDash(r.entry_date) },
