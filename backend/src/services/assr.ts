@@ -356,7 +356,9 @@ export async function createAssrCase(
     }
   }
 
-  const assrNo = await nextAssrNumber(env);
+  // `let`, not `const` — the create loop below takes a FRESH number when the
+  // unique guard (mig 0218 / D1 135) reports a concurrent create won the race.
+  let assrNo = await nextAssrNumber(env);
   const today = todayMyt();
   // complained_date — honour an explicit intake value (validated to a
   // strict YYYY-MM-DD), else default to today (MYT). Anything malformed
@@ -423,7 +425,29 @@ export async function createAssrCase(
   const companyCol = companyId != null ? ", company_id" : "";
   const companyPlaceholder = companyId != null ? ", ?" : "";
 
-  const result = await env.DB.prepare(
+  /* Guarded take-a-number. nextAssrNumber is read-max-then-+1 with no lock,
+     so two concurrent creates can mint the same number — that is exactly how
+     the 8 grandfathered 2604 duplicates happened. The partial unique index
+     (PG mig 0218, D1 135) turns the race into a constraint error; losing
+     racer takes a fresh number and retries. Bounded so a NON-race unique
+     error (or an index misconfiguration) still surfaces instead of looping. */
+  let result: Awaited<ReturnType<ReturnType<typeof env.DB.prepare>["run"]>> | null = null;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      result = await insertCase();
+      break;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (attempt < 3 && /unique|duplicate/i.test(msg)) {
+        assrNo = await nextAssrNumber(env);
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  function insertCase() {
+    return env.DB.prepare(
     `INSERT INTO assr_cases (
        assr_no, status, stage, doc_no, complained_date, customer_name, phone, location,
        sales_agent, item_code, complaint_issue, issue_category, priority, po_no, addr1, addr2, addr3, addr4, created_by,
@@ -478,8 +502,9 @@ export async function createAssrCase(
       ...(companyId != null ? [companyId] : [])
     )
     .run();
+  }
 
-  const assrId = result.meta.last_row_id as number;
+  const assrId = result!.meta.last_row_id as number;
 
   // Seed the per-stage lifecycle row for Stage 1 so the Workflow
   // Progress Tracker has data and the alert engine has a target.
