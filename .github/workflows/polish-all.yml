@@ -12,7 +12,7 @@ on:
     inputs:
       task:
         type: choice
-        options: [standardize, autocost, cleanup-empty, cleanup-dups, align-figures]
+        options: [standardize, autocost, cleanup-empty, cleanup-dups, align-figures, archive-unmatched]
         default: standardize
       mode:
         type: choice
@@ -58,3 +58,8 @@ jobs:
         working-directory: backend
         env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
         run: node scripts/fair-pnl/align-seed-figures-v8.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
+      - name: archive-unmatched (${{ inputs.mode }})
+        if: ${{ inputs.task == 'archive-unmatched' }}
+        working-directory: backend
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
+        run: node scripts/fair-pnl/archive-unmatched-seeds.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
