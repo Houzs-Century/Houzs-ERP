@@ -16,7 +16,12 @@ async function main() {
            COALESCE(SUM(l.amount) FILTER (WHERE l.category ILIKE 'cogs%' AND l.archived_at IS NULL),0) cogs,
            COALESCE(SUM(l.amount) FILTER (WHERE l.category ILIKE 'rental%' AND l.archived_at IS NULL),0) rental,
            (SELECT COUNT(*)::int FROM project_phase_photos ph WHERE ph.project_id = p.id) nphotos,
-           (SELECT COUNT(*)::int FROM project_attachments a  WHERE a.project_id  = p.id) nattach
+           (SELECT COUNT(*)::int FROM project_attachments a  WHERE a.project_id  = p.id) nattach,
+           (SELECT COUNT(*)::int FROM project_checklist_attachments ca
+              JOIN project_checklist c ON c.id = ca.item_id
+              WHERE c.project_id = p.id AND ca.archived_at IS NULL) nchkatt,
+           (SELECT COUNT(*)::int FROM project_checklist c
+              WHERE c.project_id = p.id AND c.evidence_r2_key IS NOT NULL AND c.evidence_r2_key <> '') nevidence
     FROM projects p
     LEFT JOIN project_finance_lines l ON l.project_id = p.id
     LEFT JOIN project_event_types et ON et.id = p.event_type_id
@@ -33,7 +38,7 @@ async function main() {
       AND p.start_date >= '2024-01-01' AND p.start_date < '2026-07-01'
     GROUP BY l.project_id, l.category, l.kind`;
 
-  const venues = await sql`SELECT name FROM project_venues ORDER BY name`;
+  const venues = await sql`SELECT name, state FROM project_venues ORDER BY name`;
   const brands = await sql`SELECT name FROM project_brands ORDER BY name`;
   let organizers = []; try { organizers = await sql`SELECT name FROM project_organizers ORDER BY name`; } catch (e) { organizers = [{ name: `__ERR__ ${e.message}` }]; }
   const etypes = await sql`SELECT name FROM project_event_types ORDER BY name`;
@@ -44,10 +49,11 @@ async function main() {
     status: p.status, stage: p.stage, name: p.name, by: p.created_by,
     income: Number(p.income), cogs: Number(p.cogs), rental: Number(p.rental),
     nlines: Number(p.nlines), nphotos: p.nphotos, nattach: p.nattach,
+    nchkatt: p.nchkatt, nevidence: p.nevidence,
   }));
 
   const pickers = {
-    venues: venues.map((v) => v.name), brands: brands.map((b) => b.name),
+    venues: venues.map((v) => ({ name: v.name, state: v.state })), brands: brands.map((b) => b.name),
     organizers: organizers.map((o) => o.name), event_types: etypes.map((e) => e.name),
   };
   const catdump = catlines.map((r) => ({ pid: r.pid, cat: r.cat, kind: r.kind, amt: Number(r.amt), n: r.n }));
