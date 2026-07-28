@@ -2,6 +2,7 @@ import type { Env } from "../types";
 import { todayMyt } from "../scm/lib/my-time";
 import { isServiceLine } from "../scm/shared/service-sku";
 import { AutoCountClient, cleanPhone } from "./autocount";
+import { normalizePhone } from "../scm/shared/phone";
 import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
@@ -437,7 +438,7 @@ export async function createAssrCase(
       input.doc_no,
       complainedDate,
       context?.DebtorName ?? null,
-      cleanPhone(context?.Phone1),
+      normalizePhone(context?.Phone1) ?? cleanPhone(context?.Phone1),
       context?.SalesLocation ?? null,
       context?.SalesAgent ?? null,
       firstItem,
@@ -931,7 +932,7 @@ export async function patchAssrCase(
       }
       if (so) {
         if (!("customer_name" in body) && so.debtor_name) body.customer_name = so.debtor_name;
-        if (!("phone" in body) && so.phone) body.phone = cleanPhone(so.phone);
+        if (!("phone" in body) && so.phone) body.phone = normalizePhone(so.phone) ?? cleanPhone(so.phone);
         if (!("sales_agent" in body) && so.sales_agent) body.sales_agent = so.sales_agent;
         if (!("ref_no" in body) && so.ref) body.ref_no = so.ref;
       }
