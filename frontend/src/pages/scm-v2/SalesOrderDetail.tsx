@@ -118,6 +118,7 @@ import {
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
 import { useStaff, usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
+import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { soStatusDisplay, type DeliveryState, type SoLifecycle } from '../../vendor/scm/lib/so-status';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useAuth } from '../../vendor/scm/lib/auth';
@@ -3232,26 +3233,30 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                     a City change wrote straight through on a locked, PO'd SO.
                     It is CONTROLLED now (so-field-policy) and rides the
                     amendment when the SO is amendment-eligible. */}
-                <select className={styles.fieldSelect} value={form.city}
-                  onChange={(e) => setForm((s) => ({ ...s, city: e.target.value, postcode: '' }))}
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  value={form.city}
+                  onChange={(v) => setForm((s) => ({ ...s, city: v, postcode: '' }))}
                   disabled={inputsDisabled || stateLocked || !form.state}
-                  title={stateLocked ? 'Processing has passed — City is locked (it is part of the PO delivery location).' : undefined}>
-                  <option value="">{form.state ? 'Pick city' : '— pick state first'}</option>
-                  {sortByText(cities).map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+                  title={stateLocked ? 'Processing has passed — City is locked (it is part of the PO delivery location).' : undefined}
+                  placeholder={form.state ? 'Pick city' : '— pick state first'}
+                  options={sortByText(cities).map((c) => ({ value: c, label: c }))}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Postcode</span>
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={form.postcode}
-                  onChange={(e) => set('postcode', e.target.value)}
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  value={form.postcode}
+                  onChange={(v) => set('postcode', v)}
                   disabled={inputsDisabled || stateLocked || !form.city}
-                  title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}>
-                  <option value="">{form.city ? 'Pick postcode' : '— pick city first'}</option>
-                  {sortByNumeric(postcodes).map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
+                  title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}
+                  placeholder={form.city ? 'Pick postcode' : '— pick city first'}
+                  options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
