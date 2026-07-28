@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { hasPermission } from "../services/permissions";
+import { hasPermission, holdsChecklistApproval } from "../services/permissions";
 import { allowedCompanyIds } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 
@@ -279,7 +279,9 @@ async function loadReviewQueue(env: Env, userId: number, perms: string[], isStar
       }>();
     for (const r of rows.results ?? []) {
       // Filter: can the current user actually approve this?
-      const canApprove = !r.required_perm || isStar || hasPermission(perms, r.required_perm);
+      // Approval keys are explicit-only (owner matrix 2026-07-21) — the `*`
+      // wildcard no longer implies approver status for gated items.
+      const canApprove = !r.required_perm || holdsChecklistApproval(perms, r.required_perm);
       if (!canApprove) continue;
       items.push({
         type: "project_review",
