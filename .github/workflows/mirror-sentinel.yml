@@ -8,8 +8,12 @@ name: Mirror drift sentinel (2990 -> Houzs, read-only)
 #
 # Alarm conditions (see backend/scripts/mirror-drift-sentinel.mjs):
 #   - outbox rows stuck (status <> 'done' and enqueued > 15 min ago)
-#   - persisted drift: source SO count != mirrored count, once the delta has
-#     outlived a drain cycle (stuck rows, or an empty pending+sent queue)
+#   - missing mirror rows: source SO doc_nos absent from the mirror, once the
+#     gap has outlived a drain cycle (stuck rows, or an empty pending+sent
+#     queue). Count EQUALITY is deliberately not the invariant any more: since
+#     the 2026-07-24 POS cutover, new 2990-company SOs are born directly in
+#     Houzs and never exist in the legacy source DB, so the mirror outgrowing
+#     the source is healthy (reported as `extra`, never alarmed on).
 #   - no successful delivery for > 1 hour while rows are pending
 #
 # CREDENTIALS -- it now runs with the secrets this repo ALREADY has.

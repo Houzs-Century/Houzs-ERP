@@ -53,7 +53,7 @@ import {
 import { getPmsAccess, getPmsRole, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
 import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
-import { hasPermission } from "../services/permissions";
+import { hasPermission, holdsChecklistApproval } from "../services/permissions";
 import { recomputeAutoCostLines } from "../services/projectCostRates";
 import { todayMyt } from "../scm/lib/my-time";
 import { getDb } from "../db/client";
@@ -3190,8 +3190,9 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
     .first<{ required_perm: string | null; role_label: string | null }>();
   if (!item) return c.json({ error: "Not found" }, 404);
   if (item.required_perm) {
-    const has =
-      user.permissions.includes("*") || user.permissions.includes(item.required_perm);
+    // Approval keys are explicit-only (owner matrix 2026-07-21) — `*` does
+    // not pass; see EXPLICIT_APPROVAL_KEYS.
+    const has = holdsChecklistApproval(user.permissions, item.required_perm);
     if (!has) {
       return c.json({ error: `Requires ${item.required_perm}` }, 403);
     }
@@ -3235,8 +3236,9 @@ app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "p
   // direct status transitions). Submissions and comments are open to
   // any user with projects.write.
   if ((action === "approve" || action === "reject") && item.required_perm) {
-    const has =
-      user.permissions.includes("*") || user.permissions.includes(item.required_perm);
+    // Approval keys are explicit-only (owner matrix 2026-07-21) — `*` does
+    // not pass; see EXPLICIT_APPROVAL_KEYS.
+    const has = holdsChecklistApproval(user.permissions, item.required_perm);
     if (!has) return c.json({ error: `Requires ${item.required_perm}` }, 403);
   }
   // Per-function gate for tick-only roles (Sales-department visibility, rules
@@ -3419,15 +3421,12 @@ app.put(
       .bind(itemId)
       .first<{ required_perm: string | null; role_label: string | null }>();
     if (!item) return c.json({ error: "Not found" }, 404);
-    // Per-item function gate (Sales-department visibility, rule 4): an item
-    // tagged with a required_perm can only be attached to by someone holding
-    // that permission — same rule the status/review routes enforce. This
-    // applies to EVERYONE (incl. projects.write holders) so a sales PIC can
-    // only fill in documents badged for their own function; other-function
-    // documents (DRIVER / PURCHASER / …) stay view+download only for them.
-    if (item.required_perm && !hasPermission(granted, item.required_perm)) {
-      return c.json({ error: `Requires ${item.required_perm}` }, 403);
-    }
+    // Owner 2026-07-21: required_perm gates the DECISION (approve/reject +
+    // status flips), NOT the upload. The document's owner function uploads it
+    // (e.g. the Purchaser files the Stock Out Transfer Record) and the
+    // approvers decide on it — demanding the approval key here is what locked
+    // purchasers out of their own documents. Uploads stay gated by
+    // projects.write / the role_label rule below.
     // Tick-only roles (no projects.write — i.e. drivers) may only attach to
     // tasks badged for THEIR role (item.role_label vs the user's role name).
     // Mirrors the mobile UI rule; owner 2026-07-09.

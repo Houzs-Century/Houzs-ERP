@@ -36,9 +36,17 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "projects.checklist.tick", resource: "Projects", verb: "write", label: "Tick checklist items", description: "Flip the status of (non-gated) checklist items, without editing project config" },
   { key: "projects.write",   resource: "Projects", verb: "write",  label: "Edit projects",     description: "Create and update projects, checklist items, finance" },
   { key: "projects.approve", resource: "Projects", verb: "manage", label: "Approve gated steps", description: "Tick permission-gated checklist items (e.g. 3D final approval)" },
-  { key: "stock_transfer.approve", resource: "Projects", verb: "manage", label: "Approve stock transfers", description: "Tick the Stock Out Transfer Record checklist step (director approval gate)" },
+  { key: "stock_transfer.approve", resource: "Projects", verb: "manage", label: "Approve stock OUT transfers", description: "Approve the Stock Out Transfer Record checklist step (owner rule 2026-07-21: HQ + Peter + Kingsley only)" },
+  // Owner 2026-07-21: Stock IN got its own key (it used to share
+  // projects.approve with the 3D final approval) so its approver set can be
+  // narrower — HQ + Peter only.
+  { key: "stock_in.approve", resource: "Projects", verb: "manage", label: "Approve stock IN transfers", description: "Approve the Stock In Transfer Record checklist step (owner rule 2026-07-21: HQ + Peter only)" },
   { key: "agreement.approve", resource: "Projects", verb: "manage", label: "Approve agreements", description: "Tick the Agreement / Quotation checklist step (director approval gate)" },
   { key: "projects.manage",  resource: "Projects", verb: "manage", label: "Manage projects",   description: "Archive, change stage, edit templates, backfill CSV" },
+  // Granular finance-view (owner 2026-07-23): grants a non-director role the
+  // money figures (rental / sales / profit) + the Finances page, WITHOUT the
+  // full DIRECTOR tier. Read by pmsAccess.isFinanceViewer. Given to the BD role.
+  { key: "projects.finance.view", resource: "Projects", verb: "read", label: "View project finances", description: "See project money figures (rental / sales / profit) and the Finances page without being a director" },
 
   // Sales entries — rep-facing sales log that later pushes to AutoCount
   { key: "sales.read",   resource: "Sales Entries", verb: "read",   label: "View sales entries",   description: "See the Sales tab; scoped users see only their own entries" },
@@ -187,6 +195,31 @@ export function isValidPermission(key: string): boolean {
  * (legacy / test fixtures) or a Set (the fast path used by every
  * authed request — populated by `services/auth.ts::hydrateAuthUser`).
  */
+/**
+ * Owner approval matrix (2026-07-21): the checklist APPROVAL keys are granted
+ * EXPLICITLY only — the `*` wildcard does NOT confer them. Admins / the
+ * developer / anyone whose position injects `*` must not silently become an
+ * approver; the Owner role carries the keys explicitly instead. Any other
+ * required_perm keeps normal wildcard semantics.
+ */
+export const EXPLICIT_APPROVAL_KEYS: ReadonlySet<string> = new Set([
+  "agreement.approve",
+  "stock_transfer.approve",
+  "stock_in.approve",
+  "projects.approve",
+]);
+
+export function holdsChecklistApproval(
+  granted: ReadonlyArray<string> | ReadonlySet<string>,
+  required: string,
+): boolean {
+  const holdsKey = Array.isArray(granted)
+    ? granted.includes(required)
+    : (granted as ReadonlySet<string>).has(required);
+  if (EXPLICIT_APPROVAL_KEYS.has(required)) return holdsKey;
+  return holdsKey || hasPermission(granted, "*");
+}
+
 export function hasPermission(
   granted: ReadonlyArray<string> | ReadonlySet<string>,
   required: string,

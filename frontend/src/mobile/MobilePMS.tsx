@@ -12,7 +12,7 @@ import { useSearchResultTransition } from "../hooks/useServerSearch";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesNonDirector, isSalesDirectorUser } from "../auth/salesAccess";
 import { capability } from "../auth/capabilities";
-import { readProjectAccess, projectAccessUnresolved } from "../auth/projectAccess";
+import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
@@ -2068,7 +2068,10 @@ function TaskRow({
   const na = status === "na";
   const c = it.role_label ? roleColor(it.role_label) : null;
   // A row the caller can't tick because it needs a specific permission.
-  const permBlocked = !!it.required_perm && !can(it.required_perm);
+  // Approval keys are EXPLICIT-only (owner matrix 2026-07-21) — `*` holders
+  // are not automatically approvers; see auth/projectAccess.ts.
+  const permBlocked =
+    !!it.required_perm && !holdsChecklistApproval(user?.permissions, it.required_perm);
   const canRowTick = canTick && !permBlocked;
   // Attach button: full-write users get it on every task; tick-only users
   // (drivers) only on tasks badged for THEIR role — a driver should upload
@@ -2343,7 +2346,7 @@ function TaskRow({
           a submit-for-review. Non-gated tasks keep the old behaviour
           (buttons only while a submission awaits review). */}
       {canTick && !done &&
-        (it.required_perm ? can(it.required_perm) : awaitingReview) && (
+        (it.required_perm ? holdsChecklistApproval(user?.permissions, it.required_perm) : awaitingReview) && (
         <>
           <button className="tinybtn" style={{ background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={() => review("approve")}>Approve</button>
           <button className="tinybtn" style={{ background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => review("reject")}>Reject</button>

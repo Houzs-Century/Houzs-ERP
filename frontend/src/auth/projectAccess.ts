@@ -148,6 +148,29 @@ export function projectAccessUnresolved(
  * exactly the bug this module exists to remove. A call site that wants "edit"
  * asks `canEdit`.
  */
+/**
+ * Owner approval matrix (2026-07-21): checklist APPROVAL keys are granted
+ * EXPLICITLY only — the `*` wildcard does NOT confer them (the Super-Admin
+ * position injects `*`, and admins/devs must not silently be approvers; the
+ * Owner role carries the keys explicitly). Any other required_perm keeps
+ * normal wildcard semantics. Mirror of backend services/permissions.ts.
+ */
+export const EXPLICIT_APPROVAL_KEYS: ReadonlySet<string> = new Set([
+  "agreement.approve",
+  "stock_transfer.approve",
+  "stock_in.approve",
+  "projects.approve",
+]);
+
+export function holdsChecklistApproval(
+  permissions: readonly string[] | null | undefined,
+  required: string,
+): boolean {
+  const p = permissions ?? [];
+  if (EXPLICIT_APPROVAL_KEYS.has(required)) return p.includes(required);
+  return p.includes("*") || p.includes(required);
+}
+
 export function readProjectAccess(
   carrier: ProjectAccessCarrier | null | undefined,
 ): ProjectAccess {

@@ -9,11 +9,25 @@
 // (anogrigyjbduyzclzjgn) as scm.mfg_sales_orders WHERE company_id = 2.
 //
 // There is no alarm today if the mirror silently stops (pg_cron paused,
-// receiver down, or rows wedged). This script is that alarm: it compares the
-// source SO count against the mirrored count and inspects outbox health, prints
-// a one-line summary, and EXITS NON-ZERO when an alarm condition is met so the
-// scheduled GitHub Action fails and the owner gets the standard failed-workflow
-// email. Exit 0 when healthy. It only ever SELECTs -- never writes.
+// receiver down, or rows wedged). This script is that alarm: it verifies every
+// source SO doc_no is PRESENT in the mirror (source is a subset of the mirror)
+// and inspects outbox health, prints a one-line summary, and EXITS NON-ZERO
+// when an alarm condition is met so the scheduled GitHub Action fails and the
+// owner gets the standard failed-workflow email. Exit 0 when healthy. It only
+// ever SELECTs -- never writes.
+//
+// WHY subset, not count equality (2026-07-28). Equality was the original
+// invariant and it went permanently red on 2026-07-27 at drift=-5: the five
+// "extra" rows were 2990-SO-2607-020..024, every one created since the
+// 2026-07-24 POS cutover by the POS seam principal DIRECTLY in Houzs. Post-
+// cutover, new 2990-company SOs are born in Houzs and never exist in the
+// legacy source DB, so the mirror legitimately outgrows the source -- equality
+// alarms on healthy growth and gets one count redder per POS sale. The failure
+// this sentinel exists to catch (2026-07-17, source=63 mirrored=62: one source
+// SO the mirror never received) is one-directional, so the check is now the
+// set difference source MINUS mirror, by doc_no. Mirror-only rows are printed
+// as `extra` for visibility (Houzs-born rows; in principle also a lost
+// source-delete delivery) but never alarm.
 //
 // CREDENTIALS -- why there are two paths.
 // This script originally demanded SENTINEL_2990_DB_URL + SENTINEL_HOUZS_DB_URL,
@@ -82,13 +96,22 @@ const dst = postgres(urlHouzs, { ssl: "require", prepare: false, max: 1 });
 // The SO alarm is scoped to the SO mirror; amendments get their own block.
 const SO_ENTITY = "sales_order";
 
-/** 2990 SO count + outbox health, over whichever transport is configured.
- *  The REST branch counts with head:true rather than fetching rows: PostgREST
- *  caps a select at 1000 rows and the outbox grows one row per SO EDIT, so
- *  aggregating client-side would silently under-report past that ceiling. */
+// Mirror rows carry the batch importer's company prefix (see prefixDoc in
+// backend/src/scm/lib/mirror-map.ts): source "SO-2607-020" is stored as
+// "2990-SO-2607-020". Apply the same rule to source doc_nos before diffing.
+const prefix2990 = (v) => (v == null || String(v).startsWith("2990-") ? String(v) : `2990-${v}`);
+
+/** 2990 SO doc_nos + outbox health, over whichever transport is configured.
+ *  The SO doc_no list is fetched in full (tens of rows; the set-diff needs the
+ *  actual keys). The OUTBOX is still counted with head:true / FILTER
+ *  aggregates rather than fetched: PostgREST caps a select at 1000 rows and
+ *  the outbox grows one row per SO EDIT, so aggregating that client-side would
+ *  silently under-report past the ceiling. The REST doc_no fetch page-walks in
+ *  1000s and cross-checks against the head-count for the same reason. */
 async function read2990() {
   if (src) {
-    const [{ n: sourceCount }] = await src`SELECT count(*)::int AS n FROM public.mfg_sales_orders`;
+    const srcRows = await src`SELECT doc_no FROM public.mfg_sales_orders`;
+    const sourceDocNos = srcRows.map((r) => prefix2990(r.doc_no));
     const [o] = await src`
       SELECT
         count(*) FILTER (WHERE status = 'pending')::int AS pending,
@@ -102,7 +125,7 @@ async function read2990() {
       FROM public.sync_outbox
       WHERE entity = ${SO_ENTITY}`;
     return {
-      sourceCount: Number(sourceCount),
+      sourceDocNos,
       pending: Number(o.pending),
       sent: Number(o.sent),
       done: Number(o.done),
@@ -122,6 +145,27 @@ async function read2990() {
   const soHead = await rest.from("mfg_sales_orders").select("*", { count: "exact", head: true });
   if (soHead.error) throw new Error(`mfg_sales_orders count: ${soHead.error.message}`);
 
+  // Page-walk the doc_no list and refuse to proceed on a partial read: a
+  // silently truncated list would report every truncated row as "missing".
+  const sourceDocNos = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await rest
+      .from("mfg_sales_orders")
+      .select("doc_no")
+      .order("doc_no", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`mfg_sales_orders doc_nos: ${error.message}`);
+    for (const r of data ?? []) sourceDocNos.push(prefix2990(r.doc_no));
+    if (!data || data.length < PAGE) break;
+  }
+  if (sourceDocNos.length !== Number(soHead.count ?? 0)) {
+    throw new Error(
+      `source doc_no page-walk returned ${sourceDocNos.length} rows but head-count says ` +
+        `${soHead.count} -- refusing to set-diff a partial list`,
+    );
+  }
+
   const cutoff = new Date(Date.now() - STUCK_MINUTES * 60_000).toISOString();
   const [pending, sent, done, stuck] = await Promise.all([
     outboxCount((q) => q.eq("status", "pending")),
@@ -140,7 +184,7 @@ async function read2990() {
   if (last.error) throw new Error(`last delivery: ${last.error.message}`);
 
   return {
-    sourceCount: Number(soHead.count ?? 0),
+    sourceDocNos,
     pending,
     sent,
     done,
@@ -222,12 +266,18 @@ async function readAmendments() {
 }
 
 async function main() {
-  const { sourceCount, pending, sent, done, stuck, lastDelivery } = await read2990();
+  const { sourceDocNos, pending, sent, done, stuck, lastDelivery } = await read2990();
+  const sourceCount = sourceDocNos.length;
 
-  const [{ n: mirroredCount }] =
-    await dst`SELECT count(*)::int AS n FROM scm.mfg_sales_orders WHERE company_id = 2`;
+  const mirroredRows = await dst`SELECT doc_no FROM scm.mfg_sales_orders WHERE company_id = 2`;
+  const mirroredSet = new Set(mirroredRows.map((r) => r.doc_no));
+  const mirroredCount = mirroredSet.size;
 
-  const drift = sourceCount - mirroredCount;
+  // The one-directional invariant (see header): every source SO must exist in
+  // the mirror. `extra` = mirror-only rows -- healthy Houzs-born growth since
+  // the POS cutover -- reported but never alarmed on.
+  const missing = sourceDocNos.filter((d) => !mirroredSet.has(d));
+  const extra = mirroredCount - (sourceCount - missing.length);
 
   const { summary: amendmentSummary, alarms: amendmentAlarms } = await readAmendments();
 
@@ -240,24 +290,29 @@ async function main() {
 
   // --- alarm decision ---
   // 1) rows wedged in the SO outbox past the stuck window;
-  // 2) a persisted drift;
+  // 2) source SOs missing from the mirror, once the gap has outlived a drain
+  //    cycle;
   // 3) deliveries gone stale while pending work is queued;
   // 4) the amendment mirror's own stuck rows. Kept in the same alarm list so one
   //    failing workflow still means "the mirror needs a look", but worded so the
   //    reader knows WHICH mirror.
   //
-  // (2) no longer requires stuck rows. The original rule was `drift !== 0 && stuck > 0`
-  // -- reasoning that a transient in-flight delta is normal, which is true, but it
-  // means a trigger that never fired, or a row the reconcile sweep dropped, produces
-  // drift with an EMPTY outbox and stays silent forever. That is exactly the 63-vs-62
-  // case: a missing SO leaves nothing wedged to point at it. Drift now alarms on its
-  // own; the transient case is excluded by requiring the delta to outlive a drain
-  // cycle, which `pending == 0 && sent == 0` establishes far more precisely than
-  // `stuck` ever did.
+  // (2) does not require stuck rows. A trigger that never fired, or a row the
+  // reconcile sweep dropped, produces a missing SO with an EMPTY outbox and
+  // would stay silent forever -- exactly the 63-vs-62 case: a missing SO
+  // leaves nothing wedged to point at it. The transient just-created case is
+  // excluded by requiring the gap to outlive a drain cycle, which
+  // `pending == 0 && sent == 0` establishes far more precisely than `stuck`
+  // ever did. Named doc_nos go in the alarm because "3 missing" is a number to
+  // worry about; the doc_no is what someone can chase at 2am.
   const alarms = [...amendmentAlarms];
   if (stuck > 0) alarms.push(`${stuck} SO outbox row(s) stuck > ${STUCK_MINUTES}m`);
-  if (drift !== 0 && (stuck > 0 || (pending === 0 && sent === 0)))
-    alarms.push(`persisted drift ${drift} (source ${sourceCount} - mirrored ${mirroredCount})`);
+  if (missing.length > 0 && (stuck > 0 || (pending === 0 && sent === 0)))
+    alarms.push(
+      `${missing.length} source SO(s) missing from mirror: ` +
+        missing.slice(0, 10).join(", ") +
+        (missing.length > 10 ? ` (+${missing.length - 10} more)` : ""),
+    );
   if (staleDelivery)
     alarms.push(
       `no delivery for ${deliveryAgeHours == null ? "ever" : deliveryAgeHours.toFixed(1) + "h"} while ${pending} pending`,
@@ -266,7 +321,7 @@ async function main() {
   const lastDeliveryStr = lastDelivery ? new Date(lastDelivery).toISOString() : "never";
 
   console.log(
-    `mirror-sentinel: source=${sourceCount} mirrored=${mirroredCount} drift=${drift} ` +
+    `mirror-sentinel: source=${sourceCount} mirrored=${mirroredCount} missing=${missing.length} extra=${extra} ` +
       `stuck=${stuck} pending=${pending} sent=${sent} done=${done} lastDelivery=${lastDeliveryStr} ` +
       `transport=${src ? "pg" : "rest"} | ${amendmentSummary}`,
   );
@@ -286,7 +341,7 @@ async function main() {
     }
     return 1;
   }
-  console.log("OK: mirror healthy (no stuck rows, no persisted drift, deliveries current).");
+  console.log("OK: mirror healthy (no stuck rows, no missing source SOs, deliveries current).");
   return 0;
 }
 

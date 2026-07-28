@@ -113,6 +113,7 @@ import { FabricsTable } from '../../vendor/scm/components/FabricsTable';
 import { SofaComboTab } from '../../vendor/scm/components/SofaComboTab';
 import { FabricTracking } from './FabricTracking';
 import { formatSizeRich, formatSizeRichWithCfg, resolveSizeInfo } from '../../vendor/scm/lib/size-info';
+import { formatPhone } from '../../vendor/shared/phone';
 import { ProductModels, NewModelDialog } from './ProductModels';
 import { VariantsTab } from './products/VariantsTab';
 import { Categories } from './Categories';
@@ -4625,7 +4626,7 @@ const ProductSuppliersDrawer = ({
                         {s.suppliers?.name ?? '—'}
                       </div>
                       <div style={{ fontSize: 'var(--fs-11)', color: '#767b6e' }}>
-                        {s.suppliers?.code ?? ''}{s.suppliers?.phone ? ` · ${s.suppliers.phone}` : ''}
+                        {s.suppliers?.code ?? ''}{s.suppliers?.phone ? ` · ${formatPhone(s.suppliers.phone)}` : ''}
                       </div>
                     </td>
                     <td>

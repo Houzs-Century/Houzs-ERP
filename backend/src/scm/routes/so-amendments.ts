@@ -76,6 +76,8 @@ type AmendmentForWrite = {
   reason?: string | null;
   apply_lease_token?: string | null;
   apply_lease_expires_at?: string | null;
+  /* Needed by the approve-time date-pair re-check (owner 2026-07-28). */
+  header_changes?: Record<string, unknown> | null;
 };
 
 /** Lane of a loaded row — narrowed to the two known values, else legacy. */
@@ -122,7 +124,7 @@ async function loadAmendmentForWrite(
 ): Promise<AmendmentWriteLoad> {
   const { data } = await scopeToCompany(
     sb.from('so_amendments')
-      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at')
+      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes')
       .eq('id', id),
     c,
   ).maybeSingle();
@@ -535,6 +537,41 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
   }
   const to = lane ? ('SO_APPROVED' as AmendStatus) : nextStatus(amendment.status, action);
   if (!to) return c.json({ error: 'bad_transition' }, 409);
+
+  /* ── Approve-time date-pair re-check (owner 2026-07-28) ────────────────────
+     The submit-time pair guard (mfg-sales-orders.ts, amendment_dates_order)
+     validates proc ≤ delivery on the COMBINED request, but the two-lane split
+     then turns a both-dates reschedule into two one-signature documents with
+     independent lives. If the sibling lane was rejected — or the SO's other
+     date moved by any other route — between submit and approve, applying this
+     half alone would invert the pair, and nothing downstream re-checks it.
+     Re-validate against the SO's CURRENT other date at the moment of
+     approval: the last write that can still say no. Fail-open on a missing SO
+     row — the apply path right below owns that refusal. */
+  const headerChanges = amendment.header_changes ?? null;
+  if (headerChanges && ('internalExpectedDd' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
+    const { data: soDates } = await sb.from('mfg_sales_orders')
+      .select('internal_expected_dd, customer_delivery_date')
+      .eq('doc_no', amendment.so_doc_no)
+      .maybeSingle();
+    const cur = (soDates ?? {}) as { internal_expected_dd?: string | null; customer_delivery_date?: string | null };
+    const ymd = (v: unknown): string => (v == null ? '' : String(v).slice(0, 10));
+    const nextProc = 'internalExpectedDd' in headerChanges
+      ? ymd(headerChanges['internalExpectedDd'])
+      : ymd(cur.internal_expected_dd);
+    const nextDeliv = 'customerDeliveryDate' in headerChanges
+      ? ymd(headerChanges['customerDeliveryDate'])
+      : ymd(cur.customer_delivery_date);
+    if (nextProc !== '' && nextDeliv !== '' && nextProc > nextDeliv) {
+      return c.json({
+        error: 'amendment_dates_order_stale',
+        reason:
+          `Approving this would put the Processing Date (${nextProc}) after the Delivery Date (${nextDeliv}). ` +
+          'The other half of the paired reschedule was rejected, or the order\'s dates have moved since this ' +
+          'was requested — reject this amendment and re-request both dates together.',
+      }, 409);
+    }
+  }
 
   /* Claim BOTH the amendment and its SO before the first apply write. The
      version predicates detect conflicts while runScmPgCommand keeps the claim,

@@ -2,7 +2,7 @@
  *
  *  WHY THIS FILE EXISTS. The mobile shell (MobileApp) is a `useState` screen
  *  machine, not a router: it mounts INSTEAD of the desktop `<Routes>` tree
- *  (auth/AuthScreens.tsx AuthGate) and, until this file, never read
+ *  (auth/AuthGate.tsx AuthGate) and, until this file, never read
  *  `window.location.pathname` at all. Its screen state simply initialised to
  *  the first bottom tab. So EVERY URL — /scm/purchase-orders,
  *  /scm/purchase-invoices, /scm/hr/settings, a typo, anything — rendered the

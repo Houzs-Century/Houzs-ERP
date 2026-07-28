@@ -209,6 +209,21 @@ export default defineConfig(({ mode }) => {
                 priority: 30,
               },
               {
+                // Icons the SHELL actually renders (sidebar nav, top bar,
+                // FABs…) — the `$initial` reachability tag limits this group to
+                // entry-reachable lucide modules, exactly like `initial-app`
+                // below. Split from the catch-all `lucide` group (2026-07-23)
+                // because that chunk is the union of every icon ANY route uses
+                // (~52 KB raw), and one eager shell import made ALL of it a
+                // modulepreload on first paint. Route-only icons now stay in
+                // `lucide`, which nothing eager references, so it loads with
+                // the first route that needs it.
+                name: "lucide-initial",
+                test: /[\\/]node_modules[\\/]lucide-react[\\/]/,
+                tags: ["$initial"],
+                priority: 35,
+              },
+              {
                 name: "lucide",
                 test: /[\\/]node_modules[\\/]lucide-react[\\/]/,
                 priority: 30,

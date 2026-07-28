@@ -101,7 +101,7 @@ import { useRafCoalescedHover } from "../hooks/useRafCoalescedHover";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
 import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent } from "../auth/salesAccess";
-import { readProjectAccess, projectAccessUnresolved } from "../auth/projectAccess";
+import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
 import { ACCESS_RANK } from "../types";
 import { Forbidden } from "./Forbidden";
@@ -5098,7 +5098,7 @@ function ProjectDetailContent({
     // control reached any other way silently does nothing instead of firing a
     // 403 that lands as a "Forbidden: requires one of ..." toast.
     if (!can("projects.write") && !can("projects.checklist.tick")) return;
-    if (item.required_perm && !can(item.required_perm)) return;
+    if (item.required_perm && !holdsChecklistApproval(user?.permissions, item.required_perm)) return;
     try {
       await api.post(`/api/projects/checklist/${item.id}/status`, { status });
       detail.reload();
@@ -6636,7 +6636,7 @@ function TasklistSections({
   onItemDelete: (item: ChecklistItem) => void;
   toast: ReturnType<typeof useToast>;
 }) {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const dialog = useDialog();
   const [addSectionOpen, setAddSectionOpen] = useState(false);
   const [newSectionName, setNewSectionName] = useState("");
@@ -7057,7 +7057,7 @@ function TasklistSections({
                   items={items}
                   comments={comments}
                   canManage={!!canManage}
-                  canApproveFor={(it) => !it.required_perm || can(it.required_perm)}
+                  canApproveFor={(it) => !it.required_perm || holdsChecklistApproval(user?.permissions, it.required_perm)}
                   attachmentsByItem={attachmentsByItem}
                   onStatus={(it, s) => onItemStatus(it, s)}
                   onReview={async (it, action, payload) => {
@@ -7092,7 +7092,7 @@ function TasklistSections({
                     item={item}
                     comments={comments.filter((c) => c.item_id === item.id)}
                     canTick={canTick}
-                    canApprove={!item.required_perm || can(item.required_perm)}
+                    canApprove={!item.required_perm || holdsChecklistApproval(user?.permissions, item.required_perm)}
                     canManage={canManage}
                     attachments={
                       // 3D shared upload: the Peter approval row mirrors the
