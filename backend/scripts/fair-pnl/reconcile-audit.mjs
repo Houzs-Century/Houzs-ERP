@@ -9,7 +9,7 @@ const sql = postgres(DSN, { ssl: "require", max: 1, idle_timeout: 20, connect_ti
 async function main() {
   const projects = await sql`
     SELECT p.id, p.brand, p.venue, p.state, p.organizer, p.start_date, p.end_date,
-           p.branding, p.name, p.status, p.stage, p.created_by,
+           p.name, p.status, p.stage, p.created_by,
            et.name AS event_type,
            COUNT(l.id) FILTER (WHERE l.archived_at IS NULL) nlines,
            COALESCE(SUM(l.amount) FILTER (WHERE l.kind='income'   AND l.archived_at IS NULL),0) income,
@@ -31,7 +31,7 @@ async function main() {
 
   const dump = projects.map((p) => ({
     id: p.id, brand: p.brand, venue: p.venue, state: p.state, organizer: p.organizer,
-    start: p.start_date, end: p.end_date, branding: p.branding, event_type: p.event_type,
+    start: p.start_date, end: p.end_date, event_type: p.event_type,
     status: p.status, stage: p.stage, name: p.name, by: p.created_by,
     income: Number(p.income), cogs: Number(p.cogs), rental: Number(p.rental),
     nlines: Number(p.nlines), nphotos: p.nphotos, nattach: p.nattach,
