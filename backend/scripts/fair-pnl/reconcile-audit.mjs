@@ -37,15 +37,14 @@ async function main() {
     nlines: Number(p.nlines), nphotos: p.nphotos, nattach: p.nattach,
   }));
 
-  console.log(`PMS_INSCOPE_COUNT=${projects.length}`);
-  console.log("===PROJECTS_JSON_START===");
-  console.log(JSON.stringify(dump));
-  console.log("===PROJECTS_JSON_END===");
-  console.log("===PICKERS_JSON_START===");
-  console.log(JSON.stringify({
+  const pickers = {
     venues: venues.map((v) => v.name), brands: brands.map((b) => b.name),
     organizers: organizers.map((o) => o.name), event_types: etypes.map((e) => e.name),
-  }));
-  console.log("===PICKERS_JSON_END===");
+  };
+  const payload = Buffer.from(JSON.stringify({ projects: dump, pickers })).toString("base64");
+  console.log(`PMS_INSCOPE_COUNT=${projects.length}`);
+  console.log(`JB_LEN=${payload.length}`);
+  for (let i = 0; i < payload.length; i += 180) console.log("JB:" + payload.slice(i, i + 180));
+  console.log("JB_DONE");
 }
 main().then(() => sql.end()).catch((e) => { console.error(e); process.exit(1); });
