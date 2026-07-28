@@ -11,7 +11,7 @@ import "./vendor/design-system/tokens.css";
 import { ToastProvider } from "./hooks/useToast";
 import { DialogProvider } from "./hooks/useDialog";
 import { AuthProvider } from "./auth/AuthContext";
-import { AuthGate, AcceptInviteScreen } from "./auth/AuthScreens";
+import { AuthGate } from "./auth/AuthGate";
 import { PwaBanners } from "./components/PwaBanners";
 import { ChunkReloadBoundary } from "./components/RouteFallback";
 import { registerPwa } from "./pwa";
@@ -52,6 +52,9 @@ if (canonicalTarget) window.location.replace(canonicalTarget);
 const SurveyPublic = lazy(() => import("./pages/SurveyPublic").then((m) => ({ default: m.SurveyPublic })));
 const PortalApp = lazy(() => import("./portal/PortalApp").then((m) => ({ default: m.PortalApp })));
 const ResetPassword = lazy(() => import("./pages/ResetPassword").then((m) => ({ default: m.ResetPassword })));
+// Invite acceptance rides in the unauthenticated-screens chunk (see
+// auth/AuthGate.tsx) — same split, same reason: staff sessions never load it.
+const AcceptInviteScreen = lazy(() => import("./auth/AuthScreens").then((m) => ({ default: m.AcceptInviteScreen })));
 
 function PublicFallback() {
   return <div className="flex min-h-screen items-center justify-center text-sm text-ink-muted">Loading</div>;
@@ -164,10 +167,12 @@ function RootApp() {
   if (surface === "invite") {
     return (
       <AuthProvider>
-        <Routes>
-          <Route path="/invite/:token" element={<AcceptInviteScreen />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <Suspense fallback={<PublicFallback />}>
+          <Routes>
+            <Route path="/invite/:token" element={<AcceptInviteScreen />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </AuthProvider>
     );
   }
