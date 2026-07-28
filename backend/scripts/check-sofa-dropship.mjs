@@ -52,9 +52,15 @@ async function main() {
     : [];
   const poById = new Map(pos.map((p) => [p.id, p]));
   const livePoNumbersByLine = new Map();
+  const allBoundByLine = new Map(); // so_item_id -> [{po_number, status, dead}] incl. dead POs
   for (const r of poi) {
     const po = poById.get(r.purchase_order_id);
-    if (!po || DEAD.has(String(po.status ?? "").toUpperCase())) continue; // H1
+    if (!po) continue;
+    const dead = DEAD.has(String(po.status ?? "").toUpperCase());
+    const arr = allBoundByLine.get(r.so_item_id) ?? [];
+    arr.push({ po_number: po.po_number, status: po.status, dead });
+    allBoundByLine.set(r.so_item_id, arr);
+    if (dead) continue; // H1 — dead POs do not count as live
     const set = livePoNumbersByLine.get(r.so_item_id) ?? new Set();
     if (po.po_number) set.add(po.po_number);
     livePoNumbersByLine.set(r.so_item_id, set);
@@ -73,6 +79,11 @@ async function main() {
     else verdict = `MULTIPLE live bound POs [${live.join(", ")}] -> H3 ambiguity, blocks until one is cancelled.`;
     const sofaTag = isSofa(l.item_group) ? "[SOFA] " : "";
     log(`  ${sofaTag}${l.item_code} (${l.item_group}, qty ${l.qty}): ${verdict}`);
+    // Show the bound POs and their status so "I have a PO" reconciles with the verdict
+    // (a DRAFT/CANCELLED bound PO is excluded by H1 — approving it makes drop-ship offer).
+    const bound = allBoundByLine.get(l.id) ?? [];
+    if (bound.length === 0) log(`        bound POs: none (so_item_id not linked to any PO line — the SO's Incoming-PO column may match by item code, which is NOT the drop-ship link).`);
+    else for (const b of bound) log(`        bound PO ${b.po_number ?? "(no number)"}: status ${b.status}${b.dead ? " -> DEAD (excluded; approve/activate it out of DRAFT/CANCELLED)" : " -> live"}`);
     if (isSofa(l.item_group)) {
       if (batch) sofaHasBatch++;
       else if (live.length === 0) sofaNoPo++;
@@ -82,7 +93,7 @@ async function main() {
   }
   log("");
   log(`SOFA lines — no-PO(hard block): ${sofaNoPo}, one-PO(dropship ok): ${sofaOnePo}, multi-PO(H3): ${sofaMultiPo}, has-batch(ok): ${sofaHasBatch}`);
-  if (sofaNoPo > 0) log(`VERDICT: DATA issue. ${sofaNoPo} sofa line(s) have no live bound PO — re-raise those POs through 'Convert from SO' and the existing drop-ship path will offer.`);
+  if (sofaNoPo > 0) log(`VERDICT: DATA issue. ${sofaNoPo} sofa line(s) have no LIVE bound PO. If a bound PO shows DRAFT/CANCELLED above, APPROVE/activate it (that alone makes drop-ship offer). If it shows 'bound POs: none', the PO is not linked to the SO line — re-raise via 'Convert from SO'.`);
   else if (sofaMultiPo > 0) log(`VERDICT: cancel the extra PO(s) on the multi-PO line(s), then drop-ship offers.`);
   else log(`VERDICT: no no-PO sofa lines — if it still hard-blocks, it is the genuine logic gap (stock on hand under an un-locked batch) that needs the operator-chosen-batch feature.`);
 }
