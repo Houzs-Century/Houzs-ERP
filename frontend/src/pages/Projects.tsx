@@ -161,6 +161,20 @@ interface ProjectRow {
   rental: number | null;
   total_sales: number | null;
   contractor_cost: number | null;
+  // Ledger-derived per-category finance sums (whole RM integers) from the
+  // list endpoint. Null for finance-hidden users (redacted server-side).
+  // GP / NP / percent columns are derived from these in the column defs.
+  fin_revenue?: number | null;
+  fin_cogs?: number | null;
+  fin_cogs_matt_sofa?: number | null;
+  fin_cogs_bedframe?: number | null;
+  fin_cogs_accessories?: number | null;
+  fin_rental?: number | null;
+  fin_total_cost?: number | null;
+  // Venue physical size (m²) — populated once feat/pms-venue-size-field lands
+  // the `size` column on project_venues and the list joins it. Guarded: the
+  // column renders "—" while this is absent.
+  venue_size?: number | null;
   progress_pct: number;
   pic_id: number | null;
   pic_name: string | null;
@@ -1379,6 +1393,164 @@ function ProjectsListView() {
         </span>
       ),
       getValue: (r) => r.total_sales,
+    },
+    // ── Ledger-derived finance columns (opt-in via the column chooser) ──
+    // Computed per project from project_finance_lines by the list endpoint
+    // (SUM(amount) per category, single grouped join — no N+1). Amounts are
+    // whole RM integers. GP / NP / percent are derived here from the raw
+    // sums so the list matches the Finance tab (/finance/by-project). All
+    // defaultHidden so the default view is unchanged; null = finance-hidden.
+    {
+      key: "revenue",
+      label: "Revenue (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_revenue != null ? formatCurrency(r.fin_revenue, { compact: true }) : "—"}
+        </span>
+      ),
+      getValue: (r) => r.fin_revenue ?? null,
+    },
+    {
+      key: "cogs",
+      label: "COGS (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) =>
+        r.fin_cogs != null ? (
+          <span
+            className="font-mono text-[11px]"
+            title={
+              `Matt / sofa: ${formatCurrency(r.fin_cogs_matt_sofa ?? 0)}\n` +
+              `Bedframe: ${formatCurrency(r.fin_cogs_bedframe ?? 0)}\n` +
+              `Accessories: ${formatCurrency(r.fin_cogs_accessories ?? 0)}`
+            }
+          >
+            {formatCurrency(r.fin_cogs, { compact: true })}
+          </span>
+        ) : (
+          <span className="font-mono text-[11px]">—</span>
+        ),
+      getValue: (r) => r.fin_cogs ?? null,
+    },
+    {
+      key: "cogs_matt_sofa",
+      label: "COGS Matt/Sofa (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_cogs_matt_sofa != null ? formatCurrency(r.fin_cogs_matt_sofa, { compact: true }) : "—"}
+        </span>
+      ),
+      getValue: (r) => r.fin_cogs_matt_sofa ?? null,
+    },
+    {
+      key: "cogs_bedframe",
+      label: "COGS Bedframe (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_cogs_bedframe != null ? formatCurrency(r.fin_cogs_bedframe, { compact: true }) : "—"}
+        </span>
+      ),
+      getValue: (r) => r.fin_cogs_bedframe ?? null,
+    },
+    {
+      key: "cogs_accessories",
+      label: "COGS Accessories (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_cogs_accessories != null ? formatCurrency(r.fin_cogs_accessories, { compact: true }) : "—"}
+        </span>
+      ),
+      getValue: (r) => r.fin_cogs_accessories ?? null,
+    },
+    {
+      key: "gp",
+      label: "GP (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_revenue != null && r.fin_cogs != null
+            ? formatCurrency(r.fin_revenue - r.fin_cogs, { compact: true })
+            : "—"}
+        </span>
+      ),
+      getValue: (r) =>
+        r.fin_revenue != null && r.fin_cogs != null ? r.fin_revenue - r.fin_cogs : null,
+    },
+    {
+      key: "gp_pct",
+      label: "GP %",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => {
+        // Guard divide-by-zero: no revenue means GP% is undefined, not 0.
+        if (r.fin_revenue == null || r.fin_cogs == null || r.fin_revenue <= 0) {
+          return <span className="font-mono text-[11px]">—</span>;
+        }
+        const pct = ((r.fin_revenue - r.fin_cogs) / r.fin_revenue) * 100;
+        return <span className="font-mono text-[11px]">{pct.toFixed(1)}%</span>;
+      },
+      getValue: (r) =>
+        r.fin_revenue != null && r.fin_cogs != null && r.fin_revenue > 0
+          ? ((r.fin_revenue - r.fin_cogs) / r.fin_revenue) * 100
+          : null,
+    },
+    {
+      key: "np",
+      label: "NP (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_revenue != null && r.fin_total_cost != null
+            ? formatCurrency(r.fin_revenue - r.fin_total_cost, { compact: true })
+            : "—"}
+        </span>
+      ),
+      getValue: (r) =>
+        r.fin_revenue != null && r.fin_total_cost != null
+          ? r.fin_revenue - r.fin_total_cost
+          : null,
+    },
+    {
+      key: "margin_pct",
+      label: "Margin %",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => {
+        // NP / Revenue. Same divide-by-zero guard as GP%.
+        if (r.fin_revenue == null || r.fin_total_cost == null || r.fin_revenue <= 0) {
+          return <span className="font-mono text-[11px]">—</span>;
+        }
+        const pct = ((r.fin_revenue - r.fin_total_cost) / r.fin_revenue) * 100;
+        return <span className="font-mono text-[11px]">{pct.toFixed(1)}%</span>;
+      },
+      getValue: (r) =>
+        r.fin_revenue != null && r.fin_total_cost != null && r.fin_revenue > 0
+          ? ((r.fin_revenue - r.fin_total_cost) / r.fin_revenue) * 100
+          : null,
+    },
+    {
+      key: "venue_size",
+      label: "Venue size",
+      align: "right",
+      defaultHidden: true,
+      // Depends on feat/pms-venue-size-field exposing `size` on the venue /
+      // project payload. Renders "—" until that lands.
+      render: (r) => (
+        <span className="text-[11px]">
+          {r.venue_size != null ? `${r.venue_size} m²` : "—"}
+        </span>
+      ),
+      getValue: (r) => r.venue_size ?? null,
     },
   ];
 
