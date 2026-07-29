@@ -991,7 +991,9 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   // Permit full-width ("big"), then Weekend Activity + Decoration row.
   const mgmtOperationTiles: DocTile[] = [
     ...(canBdEdit ? [{ label: "License", match: /^license/i }] : []),
-    { label: "Stamp Duty", match: /^stamp duty/i, readOnly: !canBdEdit },
+    // Owner 2026-07-28: Stamp Duty is hidden from the Sales Director view
+    // (sales staff never had it); mgt/BD/owner keep the tile.
+    ...(isSalesDirectorPos ? [] : [{ label: "Stamp Duty", match: /^stamp duty/i, readOnly: !canBdEdit }]),
     { label: "Permit", match: /permit/i, readOnly: !canBdEdit, fullWidth: true, mediaH: 108 },
     { label: "Weekend Activity", match: /^weekend/i, remarkTile: true, readOnly: !canBdEdit },
     { label: "Decoration", match: /^deco/i, readOnly: !canBdEdit, remarkWithFiles: true },
@@ -1376,15 +1378,19 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                     busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
                   />
                 )}
-                <SalesDocsCard
-                  tiles={mgmtPaymentTiles}
-                  showRoleTags
-                  title="Payment"
-                  checklist={data.checklist}
-                  attachments={data.checklist_attachments}
-                  canTick={canTick && !archived}
-                  busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
-                />
+                {/* Owner 2026-07-28: the PAYMENT card is hidden from the Sales
+                    Director view (sales staff never see it either). */}
+                {!isSalesDirectorPos && (
+                  <SalesDocsCard
+                    tiles={mgmtPaymentTiles}
+                    showRoleTags
+                    title="Payment"
+                    checklist={data.checklist}
+                    attachments={data.checklist_attachments}
+                    canTick={canTick && !archived}
+                    busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
+                  />
+                )}
                 <SalesDocsCard
                   tiles={mgmtOperationTiles}
                   showRoleTags
