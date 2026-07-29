@@ -120,6 +120,23 @@ column + a per-row input committed on blur). Synthetic showroom rows report
 0178/0182) are NOT yet read or written by these handlers — only `name`, `state`,
 `size`, `notes` are persisted.
 
+**Venue NAMES are canonicalized on write, in two layers.** The same showroom used
+to appear as both "PJ Showroom" and "2990s PJ" because `projects.venue` is free
+text and both prior cleanups were one-shot backfills with no guard, so the drift
+came back. The rule now lives in `backend/src/scm/lib/canonical-venue.ts`
+(`VENUE_CANONICAL_MAP` + `canonicalizeVenue()`), applied at `createProject` /
+`patchProject`, `POST /venues` (an alias folds into the ONE canonical picker row
+instead of spawning a duplicate), `resolveVenueBinding`, and read-time in the
+by-venue P&L grouping — and, since PG mig **0229**, in the database itself:
+`scm.canonicalize_venue()` plus a `BEFORE INSERT OR UPDATE` trigger on
+`projects.venue`, `project_venues.name`, `scm.mfg_sales_orders.venue` and
+`scm.warehouses.venue_name`, so a write that never goes through a route cannot
+re-introduce an alias. NULL and blank are left alone — this unifies known
+aliases, it does not assign a venue. **Adding an alias means editing four files
+together** (the TS module, PG mig 0229, its D1 parity file, and
+`backfill-canonicalize-venue.mjs`); `backend/tests/venueCanonicalSql.test.ts`
+fails the build if they fall out of step.
+
 ### Data hooks and caching
 
 The desktop page sets **no per-callsite `staleTime`, `gcTime` or
