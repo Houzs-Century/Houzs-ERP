@@ -328,6 +328,57 @@ function sanitizeColumnWidths(value: unknown): Record<string, number> {
   return widths;
 }
 
+// Persisted column filters: { colKey: [allowed values] }. Keeps only plain
+// string arrays (de-duped, like setColumnFilter writes them) so a corrupt
+// entry can never crash row filtering; empty lists are dropped because an
+// empty allow-list means "no filter on this column".
+function sanitizeColFilters(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [key, vals] of Object.entries(value as Record<string, unknown>)) {
+    if (!key || !Array.isArray(vals)) continue;
+    const strings = [...new Set(vals.filter((v): v is string => typeof v === "string"))].slice(0, 500);
+    if (strings.length > 0) out[key] = strings;
+    if (Object.keys(out).length >= 100) break;
+  }
+  return out;
+}
+
+// Keep a fixed-position popover fully inside the viewport. The menus are
+// anchored at the pointer / funnel button, so one opened near the bottom or
+// right edge used to hang off-screen — and since any page scroll dismisses
+// them, the clipped tail was simply unreachable. Measure after render and
+// pull top/left back inside; re-clamp when the menu resizes (the filter
+// checklist grows and shrinks with its search box). Before the first
+// measurement the raw anchor is used, and the layout effect corrects it in
+// the same frame, so nothing visibly jumps.
+function useViewportClampedPos(
+  anchor: { x: number; y: number } | null,
+  ref: React.RefObject<HTMLDivElement | null>,
+): { top: number; left: number } | null {
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!anchor) {
+      setPos(null);
+      return;
+    }
+    const el = ref.current;
+    if (!el) return;
+    const clamp = () => {
+      setPos({
+        top: Math.max(8, Math.min(anchor.y, window.innerHeight - el.offsetHeight - 8)),
+        left: Math.max(8, Math.min(anchor.x, window.innerWidth - el.offsetWidth - 8)),
+      });
+    };
+    clamp();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(clamp) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [anchor, ref]);
+  if (!anchor) return null;
+  return pos ?? { top: anchor.y, left: anchor.x };
+}
+
 function useSmallViewport(): boolean {
   const [small, setSmall] = useState(readSmallViewport);
 
@@ -614,17 +665,32 @@ export function DataTable<T>({
   const [dropCol, setDropCol] = useState<string | null>(null);
   const draggedRef = useRef(false);
 
-  // Per-column value filters (opt-in `filterable` on the column).
-  // Transient — filters are a working gesture, not a saved view, so a
-  // reload starts clean. `colFilters[key]` = the set of allowed values;
-  // absent/empty = no filter on that column.
-  const [colFilters, setColFilters] = useState<Record<string, string[]>>({});
+  // Per-column value filters (the funnel popover). Persisted per table and
+  // company like the rest of the dt:* layout prefs — owner 2026-07-29:
+  // filters kept resetting on reload ("不能保留 filter 记忆"), so they are a
+  // saved view now, not a working gesture. `colFilters[key]` = the set of
+  // allowed values; absent/empty = no filter on that column. The funnel icon
+  // stays highlighted on restored filters, and each column's popover Clear
+  // (or the page's reset control) drops its entry.
+  const [colFilters, setColFilters] = useLocalStorage<Record<string, string[]>>(
+    `dt:filters:${idKey}`,
+    {},
+    legacyStorageKey("filters"),
+    sanitizeColFilters,
+  );
   const [filterMenu, setFilterMenu] = useState<{
     x: number;
     y: number;
     colKey: string;
   } | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
+  // Menu DOM nodes, for viewport clamping and (filter popover only) telling
+  // an inside-the-menu scroll apart from a page scroll in the close handler.
+  const filterMenuRef = useRef<HTMLDivElement | null>(null);
+  const headerMenuRef = useRef<HTMLDivElement | null>(null);
+  const rowMenuRef = useRef<HTMLDivElement | null>(null);
+  const filterMenuPos = useViewportClampedPos(filterMenu, filterMenuRef);
+  const headerMenuPos = useViewportClampedPos(headerMenu, headerMenuRef);
 
   function toggleFilterValue(colKey: string, value: string) {
     setColFilters((prev) => {
@@ -681,6 +747,7 @@ export function DataTable<T>({
       divider?: boolean;
     }>;
   } | null>(null);
+  const rowMenuPos = useViewportClampedPos(rowMenu, rowMenuRef);
 
   // Collapsed group keys (opt-in `groupBy`). Persisted per table so a
   // user's collapse choices survive reloads, mirroring the other dt:* prefs.
@@ -1164,19 +1231,27 @@ export function DataTable<T>({
 
   // Close the filter popover on outside click, Escape, or scroll — same
   // pattern as the header menu. Clicks inside stop propagation so ticking
-  // checkboxes doesn't dismiss it.
+  // checkboxes doesn't dismiss it. Scrolls are heard in the CAPTURE phase
+  // (scroll doesn't bubble), which also catches the popover's own value
+  // checklist — but scrolling INSIDE the popover must not dismiss it (owner
+  // 2026-07-29: the list past ~240px was unreachable, any wheel closed the
+  // menu), so scrolls originating within the menu are let through.
   useEffect(() => {
     if (!filterMenu) return;
     const close = () => setFilterMenu(null);
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Node && filterMenuRef.current?.contains(e.target)) return;
+      close();
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
     };
     window.addEventListener("click", close);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("click", close);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("keydown", onKey);
     };
   }, [filterMenu]);
@@ -2433,21 +2508,23 @@ export function DataTable<T>({
 
           const sortBtn =
             "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink transition-colors hover:bg-surface-dim disabled:cursor-not-allowed disabled:text-ink-muted disabled:hover:bg-transparent";
+          const pos = filterMenuPos ?? { top: filterMenu.y, left: filterMenu.x };
           return createPortal(
             <div
-              className="fixed z-[120] w-[236px] overflow-hidden rounded-md border border-border bg-surface shadow-slab"
-              style={{ top: filterMenu.y, left: Math.max(8, Math.min(filterMenu.x, window.innerWidth - 244)) }}
+              ref={filterMenuRef}
+              className="fixed z-[120] flex max-h-[calc(100dvh-16px)] w-[236px] flex-col overflow-hidden rounded-md border border-border bg-surface shadow-slab"
+              style={{ top: pos.top, left: pos.left }}
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.preventDefault()}
             >
-              <div className="border-b border-border-subtle px-3 py-2">
+              <div className="shrink-0 border-b border-border-subtle px-3 py-2">
                 <span className="text-[10px] font-bold uppercase tracking-brand text-ink-secondary">
                   {col.label || col.key}
                 </span>
               </div>
 
               {/* Sort */}
-              <div className="border-b border-border-subtle py-1">
+              <div className="shrink-0 border-b border-border-subtle py-1">
                 <button
                   type="button"
                   className={cn(sortBtn, sortActive === "asc" && "text-primary")}
@@ -2496,7 +2573,7 @@ export function DataTable<T>({
               </div>
 
               {/* Search */}
-              <div className="border-b border-border-subtle px-3 py-1.5">
+              <div className="shrink-0 border-b border-border-subtle px-3 py-1.5">
                 <input
                   autoFocus
                   value={filterQuery}
@@ -2507,7 +2584,7 @@ export function DataTable<T>({
               </div>
 
               {/* Bulk actions */}
-              <div className="flex items-center gap-1 border-b border-border-subtle px-2 py-1.5 text-[11px] font-semibold">
+              <div className="flex shrink-0 items-center gap-1 border-b border-border-subtle px-2 py-1.5 text-[11px] font-semibold">
                 <button
                   type="button"
                   onClick={selectAll}
@@ -2536,8 +2613,11 @@ export function DataTable<T>({
                 </button>
               </div>
 
-              {/* Value checklist */}
-              <div className="max-h-[240px] overflow-y-auto py-1">
+              {/* Value checklist — its own scroller. `overscroll-contain` so a
+                  wheel that hits the top/bottom of the list doesn't chain into
+                  a page scroll (which closes the popover); `min-h-0` lets it
+                  shrink when the viewport-capped flex column runs short. */}
+              <div className="max-h-[240px] min-h-0 overflow-y-auto overscroll-contain py-1">
                 {shown.length === 0 && (
                   <div className="px-3 py-2 text-[12px] text-ink-muted">No values</div>
                 )}
@@ -2571,10 +2651,12 @@ export function DataTable<T>({
           const canHide = !col.alwaysVisible;
           const itemCls =
             "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink transition-colors hover:bg-surface-dim disabled:cursor-not-allowed disabled:text-ink-muted disabled:hover:bg-transparent";
+          const pos = headerMenuPos ?? { top: headerMenu.y, left: headerMenu.x };
           return createPortal(
             <div
+              ref={headerMenuRef}
               className="fixed z-[120] min-w-[176px] overflow-hidden rounded-md border border-border bg-surface py-1 shadow-slab"
-              style={{ top: headerMenu.y, left: headerMenu.x }}
+              style={{ top: pos.top, left: pos.left }}
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.preventDefault()}
             >
@@ -2656,8 +2738,12 @@ export function DataTable<T>({
       {rowMenu &&
         createPortal(
           <div
+            ref={rowMenuRef}
             className="fixed z-[130] min-w-[176px] overflow-hidden rounded-md border border-border bg-surface py-1 shadow-slab"
-            style={{ top: rowMenu.y, left: rowMenu.x }}
+            style={{
+              top: rowMenuPos?.top ?? rowMenu.y,
+              left: rowMenuPos?.left ?? rowMenu.x,
+            }}
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
           >

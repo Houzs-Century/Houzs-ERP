@@ -313,7 +313,8 @@ describe("DataTable column width persistence", () => {
     // operator, not to a table, so it is a single global key. Anything else
     // appearing outside the family is a regression.
     const perTable = keys.filter((key) => key !== "dt:cols-drawer-az");
-    expect(perTable).toHaveLength(8);
+    // hidden, shown, order, sort, mview, widths, pinned, groups, filters.
+    expect(perTable).toHaveLength(9);
     expect(perTable.every((key) => key.endsWith(":sales-order-lines"))).toBe(true);
   });
 
@@ -879,5 +880,62 @@ describe("DataTable header filter + sort menu", () => {
     // "Order 6" sorts last ascending, first descending (string compare puts
     // "Order 6" after "Order 1".."Order 5" but the reverse leads with 6).
     expect(firstName()).toBe("Order 6");
+  });
+
+  it("stays open while its own checklist scrolls, closes on a page scroll", () => {
+    setViewport(1280);
+    render(
+      <DataTable tableId="filter-scroll" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    openFunnel("Status");
+    const menu = screen.getByPlaceholderText("Search values…").closest("div.fixed")!;
+    // Scroll originating INSIDE the popover (the value checklist is its own
+    // scroller) must not dismiss it — this was the "can't scroll the list"
+    // bug: the capture-phase window listener heard the inner scroll too.
+    fireEvent.scroll(menu.querySelector(".overflow-y-auto")!);
+    expect(screen.queryByPlaceholderText("Search values…")).toBeTruthy();
+    // A scroll anywhere else (page/table) still closes it: the menu is
+    // fixed-positioned and would detach from its anchor.
+    fireEvent.scroll(document);
+    expect(screen.queryByPlaceholderText("Search values…")).toBeNull();
+  });
+
+  it("persists ticked filters and restores them on remount", () => {
+    setViewport(1280);
+    const { container, unmount } = render(
+      <DataTable tableId="filter-persist" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    openFunnel("Status");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
+    expect(rowCount(container)).toBe(3);
+    expect(JSON.parse(localStorage.getItem("dt:filters:filter-persist") ?? "null")).toEqual({
+      status: ["Open"],
+    });
+
+    unmount();
+    const second = render(
+      <DataTable tableId="filter-persist" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    // The stored filter applies from the first paint…
+    expect(rowCount(second.container)).toBe(3);
+    // …and the funnel stays highlighted so the narrowed view is explained.
+    expect(screen.getByTitle("Filter & sort Status").className).toContain("text-accent");
+    // Clear drops the persisted entry, not just the in-memory one.
+    openFunnel("Status");
+    fireEvent.click(screen.getByText("Clear"));
+    expect(rowCount(second.container)).toBe(6);
+    expect(JSON.parse(localStorage.getItem("dt:filters:filter-persist") ?? "null")).toEqual({});
+  });
+
+  it("ignores corrupt persisted filters instead of crashing or hiding rows", () => {
+    setViewport(1280);
+    localStorage.setItem(
+      "dt:filters:filter-corrupt",
+      JSON.stringify({ status: "not-an-array", name: [1, 2], "": ["x"] }),
+    );
+    const { container } = render(
+      <DataTable tableId="filter-corrupt" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    expect(rowCount(container)).toBe(6);
   });
 });
