@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { Fragment, createContext, useContext, useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams, Navigate, useSearchParams } from "react-router-dom";
 import {
@@ -5781,6 +5781,20 @@ function ProjectDetailContent({
     []
   );
   const users = usersQ.data ?? [];
+  // Defect action timeline (owner 2026-07-29) — who may stamp Ongoing/Done on
+  // defect uploads: the purchaser (Sim), BD, and wildcard/manage admins.
+  const defectActionsValue = useMemo(
+    () => ({
+      actions: (((detail.data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
+      canAct:
+        !!user &&
+        (user.permissions?.includes("*") ||
+          user.permissions?.includes("projects.manage") ||
+          /purchaser|bd/i.test(user.role_name ?? "")),
+      reload: () => detail.reload(),
+    }),
+    [detail, detail.data, user],
+  );
   const [transitioning, setTransitioning] = useState(false);
   const [addItemOpen, setAddItemOpen] = useState(false);
 
@@ -6037,6 +6051,7 @@ function ProjectDetailContent({
           {/* Operational area — Chat on the side; Sales / Tasklist /
               Logistics / Finance Ledger stacked in Main (Finance at the
               bottom; Logistics directly above it per the team's request). */}
+          <DefectActionsCtx.Provider value={defectActionsValue}>
           <DetailGrid>
             <DetailMain>
               <ProjectSalesEntriesSection
@@ -6132,6 +6147,7 @@ function ProjectDetailContent({
               </PanelSection>
             </DetailAside>
           </DetailGrid>
+          </DefectActionsCtx.Provider>
         </>
       )}
     </DetailLayout>
@@ -6965,19 +6981,67 @@ function formatBytes(n: number | null | undefined): string {
 // Delete. Auth-protected R2 fetch goes through api.fetchBlobUrl so
 // the browser's <img> tag can render the bytes (it can't carry the
 // Bearer header on its own).
+// ── Defect-file ACTION TIMELINE (owner 2026-07-29) ──────────────
+// Append-only Ongoing / Done log the purchaser (Sim) + BD stamp on each
+// defect-list upload — every click ADDS an entry (status · name · time +
+// optional remark); history is never overwritten. Provided by the project
+// detail view; consumed inside TaskAttachmentRow so no prop-drilling.
+interface AttachmentAction {
+  id: number;
+  attachment_id: number;
+  status: string;
+  remark: string | null;
+  user_name?: string | null;
+  created_at: string;
+}
+const DefectActionsCtx = createContext<{
+  actions: AttachmentAction[];
+  canAct: boolean;
+  reload: () => void;
+} | null>(null);
+
 function TaskAttachmentRow({
   attachment,
   canManage,
   showRemark,
+  itemTitle,
   onDelete,
   toast,
 }: {
   attachment: TaskAttachment;
   canManage?: boolean;
   showRemark?: boolean;
+  /** Title of the checklist item this file belongs to — gates the defect
+   *  action timeline to Defect List rows. */
+  itemTitle?: string;
   onDelete: () => void;
   toast?: ReturnType<typeof useToast>;
 }) {
+  const defectCtx = useContext(DefectActionsCtx);
+  const isDefectFile = (itemTitle ?? "").trim().toLowerCase().startsWith("defect list");
+  const fileActions = isDefectFile && defectCtx
+    ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
+    : [];
+  const [actionDraft, setActionDraft] = useState<null | "ongoing" | "done">(null);
+  const [actionRemark, setActionRemark] = useState("");
+  const [savingAction, setSavingAction] = useState(false);
+  async function saveAction() {
+    if (!actionDraft) return;
+    setSavingAction(true);
+    try {
+      await api.post(`/api/projects/checklist/attachments/${attachment.id}/actions`, {
+        status: actionDraft,
+        remark: actionRemark,
+      });
+      setActionDraft(null);
+      setActionRemark("");
+      defectCtx?.reload();
+    } catch (e: any) {
+      toast?.error(e?.message || "Failed to save");
+    } finally {
+      setSavingAction(false);
+    }
+  }
   const isImage = (attachment.content_type ?? "").startsWith("image/");
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -7117,6 +7181,105 @@ function TaskAttachmentRow({
               <span className="font-semibold text-ink-muted">Remark:</span> {caption}
             </div>
           )
+        )}
+        {/* Defect action timeline — buttons for the purchaser/BD, the stacked
+            history for everyone. Both buttons stay clickable forever; each
+            save APPENDS an entry (owner 2026-07-29). */}
+        {isDefectFile && defectCtx && (
+          <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
+            {defectCtx.canAct && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => { setActionDraft("ongoing"); }}
+                  className={cn(
+                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
+                    actionDraft === "ongoing"
+                      ? "border-amber-500 bg-amber-100 text-amber-700"
+                      : "border-amber-300 bg-surface text-amber-600 hover:bg-amber-50",
+                  )}
+                >
+                  Ongoing
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setActionDraft("done"); }}
+                  className={cn(
+                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
+                    actionDraft === "done"
+                      ? "border-green-600 bg-green-100 text-green-700"
+                      : "border-green-300 bg-surface text-green-600 hover:bg-green-50",
+                  )}
+                >
+                  Done
+                </button>
+              </div>
+            )}
+            {actionDraft && (
+              <div className="mt-1.5">
+                <textarea
+                  value={actionRemark}
+                  onChange={(e) => setActionRemark(e.target.value)}
+                  disabled={savingAction}
+                  rows={2}
+                  placeholder="Add a remark (optional)…"
+                  className="w-full resize-y rounded-md border border-border bg-surface px-2 py-1 text-[10.5px] leading-snug outline-none focus:border-primary disabled:opacity-60"
+                />
+                <div className="mt-1 flex justify-end gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => { setActionDraft(null); setActionRemark(""); }}
+                    disabled={savingAction}
+                    className="rounded-md border border-border bg-surface px-2.5 py-1 text-[10px] font-semibold text-ink-secondary hover:border-accent/40"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void saveAction()}
+                    disabled={savingAction}
+                    className="rounded-md bg-ink px-2.5 py-1 text-[10px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
+                  >
+                    {savingAction ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </div>
+            )}
+            {fileActions.length > 0 && (
+              <div className="mt-1.5 space-y-1.5 border-t border-border-subtle pt-1.5">
+                {[...fileActions].reverse().map((a) => (
+                  <div key={a.id}>
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                      <span
+                        className={cn(
+                          "h-1.5 w-1.5 shrink-0 rounded-full",
+                          a.status === "done" ? "bg-green-600" : "bg-amber-500",
+                        )}
+                      />
+                      <span
+                        className={cn(
+                          "rounded px-1.5 py-0.5 font-bold",
+                          a.status === "done"
+                            ? "bg-green-100 text-green-700"
+                            : "bg-amber-100 text-amber-700",
+                        )}
+                      >
+                        {a.status === "done" ? "Done" : "Ongoing"}
+                      </span>
+                      <span className="text-ink-muted">
+                        {a.user_name || "—"} · {formatDateTime(a.created_at)}
+                      </span>
+                    </div>
+                    {a.remark && (
+                      <div className="ml-3 mt-0.5 whitespace-pre-wrap break-words text-[10.5px] text-ink-secondary">
+                        {a.remark}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </div>
       {previewing && (
@@ -8383,6 +8546,7 @@ function DocRow({
                   attachment={a}
                   canManage={canManage}
                   showRemark={remarkOpen}
+                  itemTitle={item.title}
                   onDelete={() => removeAtt(a.id)}
                   toast={toast}
                 />
@@ -8957,6 +9121,7 @@ function ChecklistRow({
                         attachment={a}
                         canManage={canManage}
                         showRemark={expanded}
+                        itemTitle={item.title}
                         onDelete={() => deleteAttachment(a.id)}
                         toast={toast}
                       />

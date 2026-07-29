@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -796,6 +796,22 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   };
   const reloadPhotos = () => qc.invalidateQueries({ queryKey: ["mobile-pms-phase-photos", id] });
 
+  // Defect action timeline (owner 2026-07-29) — who may stamp Ongoing/Done on
+  // defect uploads: the purchaser (Sim), BD, and wildcard/manage admins.
+  const defectActionsValue = useMemo(
+    () => ({
+      actions: (((data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
+      canAct:
+        !!user &&
+        (user.permissions?.includes("*") ||
+          user.permissions?.includes("projects.manage") ||
+          /purchaser|bd/i.test(user.role_name ?? "")),
+      reload,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, user],
+  );
+
   // Central PATCH /:id helper (project-detail edits, PIC, status, stage,
   // setup/dismantle logistics). Surfaces the "shifted N tasks" hint the
   // backend returns when a date move re-dates the checklist.
@@ -1036,6 +1052,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const picPhone = formatPhone(p?.pic_phone);
 
   return (
+    <DefectActionsCtx.Provider value={defectActionsValue}>
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
       <header className="hdr" style={{ background: "var(--ink-dark)", borderBottom: "none" }}>
         <div className="hdr-row" style={{ marginBottom: 10, gap: 7 }}>
@@ -1526,6 +1543,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
         )}
       </div>
     </div>
+    </DefectActionsCtx.Provider>
   );
 }
 
@@ -2010,6 +2028,82 @@ function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: boolean 
   );
 }
 
+// ── Defect-file ACTION TIMELINE (owner 2026-07-29) ──────────────
+// Append-only Ongoing / Done log the purchaser (Sim) + BD stamp on each
+// defect-list upload — every save ADDS an entry (status · name · time +
+// optional remark); history is never overwritten. Mirrors the desktop
+// TaskAttachmentRow timeline; provided by ProjectDetailView.
+type AttachmentAction = {
+  id: number;
+  attachment_id: number;
+  status: string;
+  remark: string | null;
+  user_name?: string | null;
+  created_at: string;
+};
+const DefectActionsCtx = createContext<{
+  actions: AttachmentAction[];
+  canAct: boolean;
+  reload: () => void;
+} | null>(null);
+
+function DefectFileActions({ att }: { att: TaskAttachment }) {
+  const ctx = useContext(DefectActionsCtx);
+  const [draft, setDraft] = useState<null | "ongoing" | "done">(null);
+  const [remark, setRemark] = useState("");
+  const [saving, setSaving] = useState(false);
+  if (!ctx) return null;
+  const list = ctx.actions.filter((x) => x.attachment_id === att.id);
+  const save = async () => {
+    if (!draft) return;
+    setSaving(true);
+    try {
+      await api.post(`/api/projects/checklist/attachments/${att.id}/actions`, { status: draft, remark });
+      setDraft(null);
+      setRemark("");
+      ctx.reload();
+    } catch {
+      /* keep the draft so the user can retry */
+    } finally {
+      setSaving(false);
+    }
+  };
+  const ts = (v: string) => String(v || "").slice(0, 16).replace("T", " ");
+  return (
+    <div style={{ paddingLeft: 2 }}>
+      {ctx.canAct && (
+        <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
+          <button className="tinybtn" disabled={saving} style={{ background: draft === "ongoing" ? "#f6efd9" : "#fff", borderColor: "#e7d9ae", color: "#6e4d12", fontWeight: draft === "ongoing" ? 800 : 700 }} onClick={() => setDraft("ongoing")}>Ongoing</button>
+          <button className="tinybtn" disabled={saving} style={{ background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
+        </div>
+      )}
+      {draft && (
+        <div style={{ marginTop: 6 }}>
+          <textarea className="fld-i" value={remark} disabled={saving} rows={2} onChange={(e) => setRemark(e.target.value)} placeholder="Add a remark (optional)…" style={{ fontSize: 12, padding: "5px 8px", resize: "vertical" }} />
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 4 }}>
+            <button className="tinybtn" disabled={saving} onClick={() => { setDraft(null); setRemark(""); }}>Cancel</button>
+            <button className="tinybtn" disabled={saving} style={{ background: "#11140f", borderColor: "#11140f", color: "#fff" }} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
+          </div>
+        </div>
+      )}
+      {list.length > 0 && (
+        <div style={{ marginTop: 6, borderTop: "1px solid #eceee9", paddingTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+          {[...list].reverse().map((a) => (
+            <div key={a.id}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ width: 6, height: 6, borderRadius: 3, background: a.status === "done" ? "#2f8a5b" : "#c9971f", flex: "none" }} />
+                <span className="rbadge" style={{ background: a.status === "done" ? "#e2f0e9" : "#f6efd9", color: a.status === "done" ? "#2f8a5b" : "#6e4d12" }}>{a.status === "done" ? "Done" : "Ongoing"}</span>
+                <span style={{ fontSize: 10.5, color: "#9aa093" }}>{a.user_name || "—"} · {ts(a.created_at)}</span>
+              </div>
+              {a.remark && <div style={{ fontSize: 11.5, color: "#6b6f63", marginLeft: 12, marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{a.remark}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Item-level remark box (owner 2026-07-16, relocated same evening): the sales
 // PIC's photo tasks — Setup Image, Defect List, Event Complete Image — carry a
 // standalone remark fillable WITHOUT uploading a file. Saved to the item's
@@ -2247,6 +2341,7 @@ function TaskRow({
             )}
           </span>
           {(it.title || "").trim().toLowerCase().startsWith("defect list") && <AttachRemark att={a} canEdit={canAttach} />}
+          {(it.title || "").trim().toLowerCase().startsWith("defect list") && <DefectFileActions att={a} />}
         </div>
       ))}
     </div>
@@ -3001,6 +3096,11 @@ const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
 // Same card style as sales, ALL view/download-only — crew's own photo work
 // (setup/dismantle) moved to the Setup & Dismantle section's phase photos.
 // Decoration shows its remark AND its files (view remark + download).
+// Defect tiles carry the per-file Ongoing/Done timeline + the N/A button
+// (owner 2026-07-29). Matched off the resolved checklist item title.
+const isDefectTile = (t: { item?: ChecklistItem | null }): boolean =>
+  /^defect list/i.test((t.item?.title ?? "").trim());
+
 const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
   // Owner 2026-07-22: Stock Out Transfer Record + Blank Floorplan tiles
   // removed from the crew card — the floorplan already lives in the
@@ -3290,33 +3390,39 @@ function SalesDocsCard({
                     ))}
                   </div>
                 )}
-                {!t.remarkTile && !t.remarkWithFiles && !t.readOnly && t.atts.length > 0 && (
+                {/* Defect tiles ALSO list files when read-only (owner 2026-07-29):
+                    the purchaser's view tile carries the per-file Ongoing/Done
+                    timeline, so Sim can action defects from her card. */}
+                {!t.remarkTile && !t.remarkWithFiles && (!t.readOnly || isDefectTile(t)) && t.atts.length > 0 && (
                   <div style={{ padding: "0 9px 6px", display: "flex", flexDirection: "column", gap: 5 }}>
                     {t.atts.map((a, i) => (
-                      <span key={a.id} style={{ display: "inline-flex", alignItems: "stretch" }}>
-                        <button
-                          type="button"
-                          className="tinybtn"
-                          style={{ flex: 1, minWidth: 0, display: "inline-flex", alignItems: "center", gap: 5, ...(canTick ? { borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none" } : {}) }}
-                          onClick={() => setView({ items: t.files, idx: i })}
-                          title={a.file_name ?? undefined}
-                        >
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.file_name || "File"}</span>
-                        </button>
-                        {canTick && (
+                      <div key={a.id}>
+                        <span style={{ display: "inline-flex", alignItems: "stretch", width: "100%" }}>
                           <button
                             type="button"
                             className="tinybtn"
-                            disabled={busy}
-                            style={{ flex: "none", padding: "0 8px", borderTopLeftRadius: 0, borderBottomLeftRadius: 0, color: "#a13a34", display: "inline-flex", alignItems: "center" }}
-                            onClick={() => void removeFile(t, a)}
-                            title="Remove file"
-                            aria-label="Remove file"
+                            style={{ flex: 1, minWidth: 0, display: "inline-flex", alignItems: "center", gap: 5, ...(canTick && !t.readOnly ? { borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none" } : {}) }}
+                            onClick={() => setView({ items: t.files, idx: i })}
+                            title={a.file_name ?? undefined}
                           >
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.file_name || "File"}</span>
                           </button>
-                        )}
-                      </span>
+                          {canTick && !t.readOnly && (
+                            <button
+                              type="button"
+                              className="tinybtn"
+                              disabled={busy}
+                              style={{ flex: "none", padding: "0 8px", borderTopLeftRadius: 0, borderBottomLeftRadius: 0, color: "#a13a34", display: "inline-flex", alignItems: "center" }}
+                              onClick={() => void removeFile(t, a)}
+                              title="Remove file"
+                              aria-label="Remove file"
+                            >
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                            </button>
+                          )}
+                        </span>
+                        {isDefectTile(t) && <DefectFileActions att={a} />}
+                      </div>
                     ))}
                   </div>
                 )}
@@ -3324,6 +3430,31 @@ function SalesDocsCard({
                   <div style={{ padding: "0 9px 8px" }}>
                     <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => void startUpload(t)}>
                       {t.files.length ? "+ Add more" : "Upload"}
+                    </button>
+                  </div>
+                )}
+                {/* N/A — no defect (owner 2026-07-29): sales PIC + driver mark a
+                    defect list N/A when nothing is defective. Tap again undoes. */}
+                {isDefectTile(t) && t.item && canTick && !t.readOnly && (
+                  <div style={{ padding: "0 9px 8px" }}>
+                    <button
+                      className="tinybtn"
+                      style={{ width: "100%", background: t.item.status === "na" ? "#f4f6f3" : "#fff", color: "#767b6e" }}
+                      disabled={busy}
+                      onClick={async () => {
+                        const next = t.item!.status === "na" ? "pending" : "na";
+                        setBusy(true);
+                        try {
+                          await api.post(`/api/projects/checklist/${t.item!.id}/status`, { status: next });
+                          reload();
+                        } catch (e) {
+                          await notify({ title: "Failed to update", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      {t.item.status === "na" ? "Marked N/A — tap to undo" : "N/A — no defect"}
                     </button>
                   </div>
                 )}

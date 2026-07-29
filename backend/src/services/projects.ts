@@ -1566,6 +1566,21 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                                                         AND da.archived_at IS NULL)))))`
     );
     pendingBinds.push(dueToday);
+    // Defect ACTIONING (owner 2026-07-29): every uploaded defect-list file is
+    // the purchaser task until its LATEST timeline entry is done — Ongoing
+    // keeps it pending, Done clears it; a later Ongoing entry reopens it.
+    // No binds.
+    pendingOr.push(
+      `EXISTS (SELECT 1 FROM project_checklist dl
+                JOIN project_checklist_attachments da
+                  ON da.item_id = dl.id AND da.archived_at IS NULL
+                WHERE dl.project_id = p.id
+                  AND dl.title LIKE 'Defect List%'
+                  AND COALESCE((SELECT act.status
+                                  FROM project_checklist_attachment_actions act
+                                 WHERE act.attachment_id = da.id
+                                 ORDER BY act.id DESC LIMIT 1), '') <> 'done')`
+    );
   } else if (f.pending_label) {
     // LIKE contains-match so a combined badge (the "SALES PIC & DRIVER"
     // Defect List pair, owner 2026-07-29) lands in BOTH the sales lane and
