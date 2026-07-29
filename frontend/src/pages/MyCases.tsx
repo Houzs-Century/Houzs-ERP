@@ -48,6 +48,7 @@ const STAGE_LABEL: Record<string, string> = {
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Delivery / Service",
   completed: "Completed",
+  voided: "Voided — Not Valid",
 };
 
 const STAGE_COLOR: Record<string, string> = {

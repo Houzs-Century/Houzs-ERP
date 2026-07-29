@@ -82,6 +82,7 @@ const STAGE_LABEL: Record<string, string> = {
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Pending Delivery / Service",
   completed: "Completed",
+  voided: "Voided — Not Valid",
   registration: "Pending Review",
   triage: "Under Verification",
   action: "Pending Solution",

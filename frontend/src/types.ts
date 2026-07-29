@@ -111,7 +111,8 @@ export type AssrStage =
   | "pending_supplier_pickup"
   | "pending_item_ready"
   | "pending_delivery_service"
-  | "completed";
+  | "completed"
+  | "voided";
 export type ResolutionMethod = "replace_unit" | "supplier_repair" | "field_service_own" | "field_service_supplier" | "return_visit";
 
 export interface AssrCase {

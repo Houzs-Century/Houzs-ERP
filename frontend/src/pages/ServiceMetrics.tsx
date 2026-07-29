@@ -44,6 +44,7 @@ const STAGE_FUNNEL_LABEL: Record<string, string> = {
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Delivery / Service",
   completed: "Completed",
+  voided: "Voided — Not Valid",
 };
 
 const NCR_LABEL: Record<string, string> = {

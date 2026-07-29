@@ -277,6 +277,7 @@ const RESOLUTION_LABELS: Record<string, string> = {
 };
 const resolutionLabel = (v: string) => RESOLUTION_LABELS[v] ?? cap(v.replace(/_/g, " "));
 const prettyStage = (stage: string) => {
+  if (stage === "voided") return "Voided — Not Valid";
   const idx = STAGE_INDEX[stage];
   return idx != null ? STAGES[idx].long : cap(stage.replace(/_/g, " ")) || "—";
 };

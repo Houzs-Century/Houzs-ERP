@@ -58,7 +58,12 @@ export type Stage =
   | "pending_supplier_pickup"   // Stage 4 — supplier pickup AND return leg
   | "pending_item_ready"        // Stage 5 — QC after the supplier returns it
   | "pending_delivery_service"  // Stage 6 — SA assigns Logistic Admin
-  | "completed";                // Stage 7 — system
+  | "completed"                 // Stage 7 — system
+  //  voided — terminal alt-outcome (Nico 2026-07-29): the case was
+  //  verified as not valid / not warranty-covered, so it closes here
+  //  instead of running Solution → Supplier → Delivery. Parallel to
+  //  'completed', NOT a pipeline step.
+  | "voided";
 
 type Priority = "low" | "normal" | "high" | "urgent";
 
@@ -79,7 +84,7 @@ export function slaHoursFor(priority: string | null | undefined): number {
 // renderers that still read `status`).
 function statusForStage(stage: Stage): string {
   if (stage === "pending_review") return "Open";
-  if (stage === "completed") return "Closed";
+  if (stage === "completed" || stage === "voided") return "Closed";
   return "In Progress";
 }
 
@@ -98,6 +103,7 @@ export const ALL_STAGES: ReadonlyArray<Stage> = [
   "pending_item_ready",
   "pending_delivery_service",
   "completed",
+  "voided",
 ];
 
 // Default per-stage target days (proposal §8.1 — Normal profile).
@@ -111,6 +117,7 @@ const DEFAULT_STAGE_TARGET_DAYS: Record<Stage, number> = {
   pending_item_ready: 5,
   pending_delivery_service: 4,
   completed: 0,
+  voided: 0,
 };
 
 /**
@@ -735,9 +742,19 @@ export async function transitionStage(
   sets.push("sub_status = ?");
   binds.push(subDefault);
 
+  // Both terminal stages stop the SLA clock (closed_at). Only a genuine
+  // 'completed' stamps completion_date + feeds the satisfaction survey;
+  // 'voided' (not valid / not warranty-covered) closes without either,
+  // so it stays out of the completed count + CSAT.
+  // NB the D1 test mirror's stage CHECK does not yet list 'voided'
+  // (prod PG carries no CHECK); don't add a voided-writing DB test there.
+  if (newStage === "completed" || newStage === "voided") {
+    sets.push("closed_at = ?");
+    binds.push(nowIso);
+  }
   if (newStage === "completed") {
-    sets.push("closed_at = ?", "completion_date = ?");
-    binds.push(nowIso, nowIso.slice(0, 10));
+    sets.push("completion_date = ?");
+    binds.push(nowIso.slice(0, 10));
   }
 
   binds.push(id);

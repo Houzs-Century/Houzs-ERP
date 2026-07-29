@@ -120,6 +120,7 @@ const STAGE_OPTIONS: { value: StageFilter; label: string }[] = [
   { value: "pending_item_ready", label: "Pending Item Ready" },
   { value: "pending_delivery_service", label: "Delivery / Service" },
   { value: "completed", label: "Completed" },
+  { value: "voided", label: "Voided — Not Valid" },
 ];
 
 const RESOLUTION_OPTIONS = [
@@ -5534,6 +5535,7 @@ function WorkflowCard({
   /** Directly switch the sub-status (PATCH sub_status). */
   onSubChange?: (key: string) => void;
 }) {
+  const isVoided = currentStage === "voided";
   const curIdx = Math.max(0, stages.findIndex((s) => s.id === currentStage));
   const n = stages.length;
   return (
@@ -5542,7 +5544,7 @@ function WorkflowCard({
         <div className="text-[13px] font-bold tracking-tight text-ink">Workflow</div>
         <div className="flex items-center gap-2.5">
           <span className="font-mono text-[11px] text-ink-muted">
-            Step {curIdx + 1} / {n}
+            {isVoided ? "Voided" : `Step ${curIdx + 1} / ${n}`}
           </span>
           {!disabled && (
             <>
@@ -5559,6 +5561,9 @@ function WorkflowCard({
                 {DETAIL_STAGES.map((s) => (
                   <option key={s.id} value={s.id}>{s.long}</option>
                 ))}
+                {/* Terminal alt-outcome — not a pipeline step, offered as
+                    a final option (Nico 2026-07-29). */}
+                <option value="voided">Voided — Not Valid</option>
               </select>
               {onSubChange && ASSR_SUB_STATUSES[currentStage] && (
                 <select
@@ -5577,6 +5582,19 @@ function WorkflowCard({
           )}
         </div>
       </div>
+      {isVoided ? (
+        <div className="flex items-center gap-3 rounded-lg border border-err/30 bg-err/5 px-4 py-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-err/15 text-[15px] font-bold text-err">
+            ✕
+          </span>
+          <div>
+            <div className="text-[13px] font-bold text-err">Voided — Not Valid</div>
+            <div className="text-[11px] text-ink-muted">
+              Case closed — not valid / not warranty-covered. Pick a stage above to reopen it.
+            </div>
+          </div>
+        </div>
+      ) : (
       <ol className="flex items-start">
         {stages.map((s, i) => {
           const done = i < curIdx;
@@ -5624,6 +5642,7 @@ function WorkflowCard({
           );
         })}
       </ol>
+      )}
     </div>
   );
 }
@@ -5658,11 +5677,14 @@ function StatusSummaryBar({
     {
       label: "Status",
       value: caseStageLabel(c.stage),
-      sub: subStatus
-        ? `Step ${curIdx + 1} / ${n} · ${subStatus.label}`
-        : `Step ${curIdx + 1} / ${n}`,
-      valColor: "text-ink",
-      dotColor: "bg-accent",
+      sub:
+        c.stage === "voided"
+          ? "Closed — not valid"
+          : subStatus
+            ? `Step ${curIdx + 1} / ${n} · ${subStatus.label}`
+            : `Step ${curIdx + 1} / ${n}`,
+      valColor: c.stage === "voided" ? "text-err" : "text-ink",
+      dotColor: c.stage === "voided" ? "bg-err" : "bg-accent",
     },
     {
       label: "Priority",

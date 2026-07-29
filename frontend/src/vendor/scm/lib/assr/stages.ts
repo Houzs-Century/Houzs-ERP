@@ -22,7 +22,9 @@ export type AssrStageKey =
   | "pending_supplier_pickup"
   | "pending_item_ready"
   | "pending_delivery_service"
-  | "completed";
+  | "completed"
+  // voided = terminal alt-outcome; NOT in ASSR_STAGES (never a funnel dot).
+  | "voided";
 
 export interface AssrStageDef {
   /** SQL enum value. */
