@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { lineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../auth/AuthContext";
@@ -303,6 +303,12 @@ const byDate = (a: unknown, b: unknown) => {
   const tb = b ? +new Date(String(b)) : 0;
   return (isNaN(tb) ? 0 : tb) - (isNaN(ta) ? 0 : ta);
 };
+/* Member lifecycle order for the Status sort — mirrors the desktop grid's
+   rank (active first, then invited, then disabled). */
+const MEMBER_STATUS_RANK: Record<string, number> = { active: 0, invited: 1, disabled: 2 };
+/* Nulls-last sentinel for ascending string sorts (a member with no
+   department sorts after the named ones, not before). */
+const LAST = "￿";
 
 /** Pick the array out of a keyed response, or return it if already an array.
  *  With no listKey, take the first array-valued property of the object. */
@@ -365,6 +371,7 @@ export function MobileModuleList({
   onBack,
   onOpen,
   onNew,
+  aboveList,
 }: {
   config: ModuleConfig;
   onBack?: () => void;
@@ -372,6 +379,9 @@ export function MobileModuleList({
   /** Wired by the parent when config.form is present — opens MobileModuleForm
    *  in create mode. The "+ New" header button calls this. */
   onNew?: () => void;
+  /** Module-specific block rendered at the top of the scroll area, above the
+   *  cards (e.g. the Members list's Pending Invitations accordion). */
+  aboveList?: ReactNode;
 }) {
   const [q, setQ] = useState("");
   const [chip, setChip] = useState("all");
@@ -604,6 +614,7 @@ export function MobileModuleList({
       </header>
 
       <div ref={scrollRef} className="hz-scroll" style={{ flex: 1, overflowY: "auto", padding: 14, paddingBottom: 120 }}>
+        {aboveList}
         {/* Variable-count note pill (spec § list-note): server total for a
             paginated list, else the count of shown records. */}
         {!listLoading && !error && rows.length > 0 && (
@@ -1455,8 +1466,49 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
       { key: "all", label: "All", match: () => true },
       { key: "active", label: "Active", match: (r) => eq(pick(r, "status"), "active") },
       { key: "invited", label: "Invited", match: (r) => eq(pick(r, "status"), "invited") },
+      { key: "disabled", label: "Disabled", match: (r) => eq(pick(r, "status"), "disabled") },
     ],
-    sorts: [{ key: "name", label: "Name", cmp: (a, b) => byStr(a.name, b.name) }],
+    // Sort set mirrors the desktop grid (Name / Recently active / Status)
+    // plus the card-visible org fields (owner 2026-07-29: "sort功能不完整").
+    sorts: [
+      { key: "name", label: "Name", cmp: (a, b) => byStr(a.name || a.email, b.name || b.email) },
+      {
+        key: "recent",
+        label: "Recently active",
+        cmp: (a, b) => byDate(pick(a, "lastLoginAt", "last_login_at"), pick(b, "lastLoginAt", "last_login_at")),
+      },
+      {
+        key: "status",
+        label: "Status",
+        cmp: (a, b) =>
+          (MEMBER_STATUS_RANK[String(pick(a, "status"))] ?? 9) -
+            (MEMBER_STATUS_RANK[String(pick(b, "status"))] ?? 9) ||
+          byStr(a.name || a.email, b.name || b.email),
+      },
+      {
+        key: "dept",
+        label: "Department",
+        cmp: (a, b) =>
+          byStr(
+            pick(a, "departmentName", "department_name") || LAST,
+            pick(b, "departmentName", "department_name") || LAST,
+          ) || byStr(a.name || a.email, b.name || b.email),
+      },
+      {
+        key: "position",
+        label: "Position",
+        cmp: (a, b) =>
+          byStr(
+            pick(a, "positionName", "position_name") || LAST,
+            pick(b, "positionName", "position_name") || LAST,
+          ) || byStr(a.name || a.email, b.name || b.email),
+      },
+      {
+        key: "joined",
+        label: "Newest joined",
+        cmp: (a, b) => byDate(pick(a, "joinedAt", "joined_at"), pick(b, "joinedAt", "joined_at")),
+      },
+    ],
     form: FORM_MEMBERS,
   },
 

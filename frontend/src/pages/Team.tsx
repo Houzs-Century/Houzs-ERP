@@ -25,6 +25,7 @@ import { prepareImageForUpload } from "../lib/imagePipeline";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesDirectorUser } from "../auth/salesAccess";
 import { relativeTime, cn } from "../lib/utils";
+import { inviteExpiry, inviteLink } from "../lib/invitations";
 import { formatPhone } from "../vendor/shared/phone";
 import type { TeamMember, Invitation, Role, Department, Position } from "../types";
 import { MemberOrgPerformance } from "./team/MemberOrgPerformance";
@@ -913,10 +914,7 @@ function MembersTab({
   }
 
   function copyInviteLink(inv: Invitation) {
-    // Prefer the server-built canonical link (PUBLIC_APP_URL) so copied
-    // links always carry erp.houzscentury.com regardless of which origin
-    // the admin's browser is on.
-    const link = inv.invite_url || `${window.location.origin}/#invite=${inv.token}`;
+    const link = inviteLink(inv);
     navigator.clipboard.writeText(link).then(
       () => toast.success("Invite link copied to clipboard"),
       () => toast.error("Couldn't access clipboard")
@@ -1646,16 +1644,9 @@ function MembersTab({
     },
   ];
 
-  // ── Pending invitations table (Theme C DataTable, replaces the old
-  //    hand-rolled row list) ─────────────────────────────────────────
-  // Expiry bucket for an invitation — drives the Status badge + row dimming.
-  function inviteExpiry(inv: Invitation): "expired" | "expiring" | "pending" {
-    const ms = new Date(inv.expires_at).getTime() - Date.now();
-    if (ms < 0) return "expired";
-    if (ms < 2 * 24 * 60 * 60 * 1000) return "expiring";
-    return "pending";
-  }
-
+  // ── Pending invitations table (Theme C DataTable) — expiry buckets and
+  //    the copied link come from lib/invitations, shared with the mobile
+  //    MobileInvitations card. ──────────────────────────────────────
   /* No getValue carries token/invite_url — the CSV export must never
      contain a live invite credential. Copy Link stays a per-row action. */
   const inviteColumns: Column<Invitation>[] = [

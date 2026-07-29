@@ -24,6 +24,7 @@ import { AndroidInstallGuide } from "../components/AndroidInstallGuide";
 // MODULE_CONFIGS / FORM_MEMBERS_EDIT are read synchronously by the routing +
 // form logic below, so it can't be deferred without splitting those out first.
 import { MobileModuleList, MODULE_CONFIGS, FORM_MEMBERS_EDIT } from "./MobileModuleList";
+import { MobileInvitations } from "./MobileInvitations";
 import { mobileDestinationMatches, resolveMobileRoute, type MobileRoute } from "./mobileRoute";
 import type { SearchNav } from "./MobileSearch";
 import type { MobileScanPrefill } from "./MobileScan";
@@ -702,7 +703,8 @@ function MobileAppInner() {
         : undefined;
     overlay = <MobileModuleList config={MODULE_CONFIGS[k]} onBack={back}
       onOpen={(row) => setScreen({ t: "module-detail", key: k, row, title: screen.title })}
-      onNew={onNew} />;
+      onNew={onNew}
+      aboveList={k === "members" ? <MobileInvitations /> : undefined} />;
   }
   else if (screen.t === "convert") {
     // Convert is entered from a module list ("+ New") → return to that list
