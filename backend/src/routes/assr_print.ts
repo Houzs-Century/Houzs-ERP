@@ -242,6 +242,11 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     return "—";
   })();
   const statusPillLabel = STAGE_LABEL[cs.stage] || cs.stage;
+  // Void reason prints beneath the status when the case is voided
+  // (Nico 2026-07-29) so the recipient sees why it was rejected.
+  const voidReason = cs.stage === "voided" && (cs as any).void_reason
+    ? String((cs as any).void_reason)
+    : null;
   // Switchable sub-status (mig 0116) — the supplier copy shows it as a
   // second pill so the workshop sees where inside the stage the case
   // sits (e.g. Pending Supplier Return = bring it back).
@@ -688,6 +693,11 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
         <div class="status-pill"><span class="cap">Sub-Status</span><span class="val">${esc(subStatusLabel)}</span></div>` : ""}
       </div>`}
     </div>
+    ${voidReason ? `
+    <div style="margin: 3mm 0 0; border: 0.5pt solid #c0392b; background: #fdf2f0; border-radius: 1.5mm; padding: 2.4mm 3mm;">
+      <div style="font-size: 7pt; letter-spacing: .08em; text-transform: uppercase; color: #c0392b; font-weight: 700;">Voided — Not Valid · Reason</div>
+      <div style="font-size: 9pt; color: #7a2018; margin-top: 0.8mm;">${esc(voidReason)}</div>
+    </div>` : ""}
 
     ${!isSupplier ? (() => {
       // ── ASSR Form (design handoff) — boxed meta grid, black section

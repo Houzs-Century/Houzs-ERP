@@ -158,6 +158,8 @@ export interface AssrCase {
   company_code?: string | null;
   satisfaction_rating: number | null;
   satisfaction_notes: string | null;
+  /** Why a case was voided (not valid / not warranty-covered). */
+  void_reason?: string | null;
   // AutoCount-derived creditor (procurement supplier). Auto-resolved
   // from the case's item_code via StockItem.MainSupplier.
   creditor_code?: string | null;

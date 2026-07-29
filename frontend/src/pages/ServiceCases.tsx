@@ -3247,6 +3247,7 @@ function DetailContent({
   const [transitioning, setTransitioning] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [showClosePrompt, setShowClosePrompt] = useState(false);
+  const [showVoidPrompt, setShowVoidPrompt] = useState(false);
   // PR 3 — stage accordion open row. Defaults to the case's current
   // stage so ops lands on the row they need to work; changing the
   // stage from the Workflow card also snaps this to the new stage.
@@ -3569,6 +3570,20 @@ function DetailContent({
             />
           )}
 
+          {/* Void Prompt — records WHY the case is not valid before it
+              moves to the terminal 'voided' stage (Nico 2026-07-29). */}
+          {showVoidPrompt && (
+            <VoidPrompt
+              onConfirm={async (reason) => {
+                await patch({ void_reason: reason || null });
+                await transition("voided");
+                setShowVoidPrompt(false);
+              }}
+              onCancel={() => setShowVoidPrompt(false)}
+              transitioning={transitioning}
+            />
+          )}
+
           {/* Archived banner */}
           {c.archived_at && (
             <div className="border-b border-border bg-ink-muted/5 px-5 py-2 text-[11px] text-ink-muted">
@@ -3589,10 +3604,11 @@ function DetailContent({
               currentStage={c.stage}
               stages={activeStages}
               transitioning={transitioning}
-              onChange={(s) => transition(s)}
+              onChange={(s) => (s === "voided" ? setShowVoidPrompt(true) : transition(s))}
               disabled={!!c.archived_at}
               subStatus={caseSubStatus(c)}
               onSubChange={(k) => patch({ sub_status: k })}
+              voidReason={c.void_reason ?? null}
             />
             <StatusSummaryBar
               c={c}
@@ -5522,6 +5538,7 @@ function WorkflowCard({
   disabled,
   subStatus,
   onSubChange,
+  voidReason,
 }: {
   currentStage: AssrStage;
   // PR 4 — pass the filtered active-stage list. Internal resolution
@@ -5534,6 +5551,8 @@ function WorkflowCard({
   subStatus?: { key: string; label: string } | null;
   /** Directly switch the sub-status (PATCH sub_status). */
   onSubChange?: (key: string) => void;
+  /** Reason shown on the terminal Voided banner. */
+  voidReason?: string | null;
 }) {
   const isVoided = currentStage === "voided";
   const curIdx = Math.max(0, stages.findIndex((s) => s.id === currentStage));
@@ -5590,7 +5609,9 @@ function WorkflowCard({
           <div>
             <div className="text-[13px] font-bold text-err">Voided — Not Valid</div>
             <div className="text-[11px] text-ink-muted">
-              Case closed — not valid / not warranty-covered. Pick a stage above to reopen it.
+              {voidReason
+                ? `Reason: ${voidReason}`
+                : "Case closed — not valid / not warranty-covered. Pick a stage above to reopen it."}
             </div>
           </div>
         </div>
@@ -7582,6 +7603,52 @@ function ClosePrompt({
           className="rounded-md bg-err px-4 py-2 text-[12px] font-semibold text-white disabled:opacity-50"
         >
           {transitioning ? "Closing..." : "Confirm Close"}
+        </button>
+        <button
+          onClick={onCancel}
+          className="rounded-md border border-border px-3 py-2 text-[12px] text-ink-secondary"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Void Prompt (reason capture) ─────────────────────────────
+// Mirrors ClosePrompt: an inline red banner that records WHY the case
+// is not valid / not warranty-covered before it moves to 'voided'.
+// Reason is required — the terminal state must carry an explanation.
+function VoidPrompt({
+  onConfirm,
+  onCancel,
+  transitioning,
+}: {
+  onConfirm: (reason: string) => Promise<void>;
+  onCancel: () => void;
+  transitioning: boolean;
+}) {
+  const [reason, setReason] = useState("");
+  return (
+    <div className="border-b border-border bg-err/5 px-5 py-4">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-brand text-err">
+        Void Case — Not Valid / Not Warranty-Covered
+      </div>
+      <textarea
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="Reason — why is this case not valid / not warranty-covered? (e.g. out of warranty, customer misuse, not a product defect)"
+        rows={2}
+        autoFocus
+        className="mb-3 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-err"
+      />
+      <div className="flex gap-2">
+        <button
+          onClick={() => onConfirm(reason.trim())}
+          disabled={transitioning || !reason.trim()}
+          className="rounded-md bg-err px-4 py-2 text-[12px] font-semibold text-white disabled:opacity-50"
+        >
+          {transitioning ? "Voiding..." : "Confirm Void"}
         </button>
         <button
           onClick={onCancel}
