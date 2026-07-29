@@ -18,9 +18,12 @@ const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
 const sql = postgres(DSN, { ssl: "require", max: 1, idle_timeout: 20, connect_timeout: 30 });
 
-// + p647/p648: owner checked the Dec 2024 FAIR PNL sheet — no ZANOTTI AMAN CENTRAL
-// (19/12) and no AKEMI ITCC (24/12) exist there, so these two seeds have no source.
-const PIDS = [647, 648, 2032, 2044, 2054];
+// Round 2 (2026-07-29, after the raw-sheet sweep): p1963 is the Oct-half of the
+// 17/10-02/11 AMAN CENTRAL fair seeded as its own Nov event — its RM173,518 is
+// already inside p301's merged total (173,518 + 38,905 = 212,423, and COGS
+// 85,432 + 19,322 = 104,754, both matching p301 exactly). Owner: remove.
+// Round 1 (already archived): 647, 648, 2032, 2044, 2054.
+const PIDS = [1963];
 
 async function main() {
   const rows = await sql`
