@@ -1321,9 +1321,11 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 /* Crew manage the setup/dismantle photos (owner 2026-07-21);
                    the backend re-gates on being crewed on the phase. */
                 canPhoto={(isDriverCrew || isStorekeeper) && !archived}
-                /* Schedule reference (owner 2026-07-23): owner/BD/logistic
-                   upload the handbook schedule screenshot from mobile too. */
-                canScheduleEdit={(isOwnerAdmin || isBD || isLogistic) && !archived}
+                /* Schedule reference (owner 2026-07-29): hidden from all —
+                   logistic views/downloads, the BD/owner tier (canBdEdit:
+                   owner/BD/weisiang) uploads/removes. */
+                canScheduleView={isLogistic || canBdEdit}
+                canScheduleEdit={canBdEdit && !archived}
                 busy={busy}
                 setBusy={setBusy}
                 patchProject={patchProject}
@@ -1447,7 +1449,11 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 lorries={lorries}
                 canWrite={canWrite && access.canEdit && !archived}
                 canPhoto={(isDriverCrew || isStorekeeper) && !archived}
-                canScheduleEdit={(isOwnerAdmin || isBD || isLogistic) && !archived}
+                /* Schedule reference (owner 2026-07-29): hidden from all —
+                   logistic views/downloads, the BD/owner tier (canBdEdit:
+                   owner/BD/weisiang) uploads/removes. */
+                canScheduleView={isLogistic || canBdEdit}
+                canScheduleEdit={canBdEdit && !archived}
                 busy={busy}
                 setBusy={setBusy}
                 patchProject={patchProject}
@@ -2591,7 +2597,7 @@ const isoTimePart = (iso: string | null | undefined): string => {
 // PUT /:id/phase-photos/upload → POST /:id/phase-photos). Schedule/driver/
 // lorry all persist via PATCH /:id.
 function SetupDismantle({
-  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm, prompt,
+  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleView, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm, prompt,
 }: {
   projectId: number;
   project: ProjectDetail["project"];
@@ -2604,8 +2610,10 @@ function SetupDismantle({
    *  backend gates on being crewed on that phase. */
   canPhoto?: boolean;
   /** Owner 2026-07-23: the mall-handbook Schedule reference block (desktop's
-   *  ScheduleRef, phase="schedule") now renders on mobile too — view for
-   *  every section viewer, upload/remove for owner/BD/logistic. */
+   *  ScheduleRef, phase="schedule") now renders on mobile too. Owner
+   *  2026-07-29: HIDDEN unless canScheduleView — logistic views/downloads,
+   *  the BD/owner tier (canScheduleEdit) uploads/removes. */
+  canScheduleView?: boolean;
   canScheduleEdit?: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -2690,7 +2698,10 @@ function SetupDismantle({
         {!anyData && !canWrite && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: 12 }}>No setup or dismantle logistics assigned yet.</div>}
 
         {/* Schedule reference (owner 2026-07-23, mobile port of the desktop
-            block): the mall handbook's official schedule screenshot. */}
+            block): the mall handbook's official schedule screenshot. Owner
+            2026-07-29: hidden from everyone except logistic (view/download)
+            and the BD/owner edit tier. */}
+        {canScheduleView && (
         <div style={{ border: "1px dashed #d6d9d2", borderRadius: 10, padding: "9px 11px", marginBottom: 14 }}>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#767b6e", marginBottom: 6 }}>Schedule reference</div>
           {scheduleShots.length === 0 && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: canScheduleEdit ? 8 : 0 }}>No schedule screenshot uploaded yet.</div>}
@@ -2750,6 +2761,7 @@ function SetupDismantle({
             />
           )}
         </div>
+        )}
 
         <PhaseBlock
           kind="Setup"

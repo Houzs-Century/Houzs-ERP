@@ -10306,9 +10306,10 @@ function LogisticsCrewSection({
 }) {
   const { user } = useAuth();
   // Owner 2026-07-23: EVERYONE may VIEW the logistics crew (Setup / Dismantle /
-  // Service + schedule reference), but only LOGISTIC + BD may EDIT it —
-  // plus Owner / Management / Super Admin (directors), who edit everything.
-  // Everyone else (Sales, ops, purchasing, storekeeper…) renders read-only.
+  // Service), but only LOGISTIC + BD may EDIT it — plus Owner / Management /
+  // Super Admin (directors), who edit everything. Everyone else (Sales, ops,
+  // purchasing, storekeeper…) renders read-only. (The schedule reference is
+  // stricter still — see canViewSchedule below.)
   const _pos = (user?.position_name ?? "").toLowerCase();
   const _role = (user?.role_name ?? "").toLowerCase();
   const _email = (user?.email ?? "").toLowerCase();
@@ -10328,6 +10329,10 @@ function LogisticsCrewSection({
     !!user?.permissions?.includes("*") ||
     /\bbd\b/.test(_role) ||
     _email === "weisiang329@gmail.com";
+  // …and HIDDEN from everyone else (owner 2026-07-29): logistic may view /
+  // download, the edit tier above may edit; nobody else sees the block at all.
+  const canViewSchedule =
+    canEditSchedule || /logistic/.test(_pos) || /logistic/.test(_role);
   const [crew, setCrew] = useState<CrewMember[]>([]);
   const [lorryOptions, setLorryOptions] = useState<string[]>([]);
   // A failed reference read must not render as an empty list. `.catch(() => {})`
@@ -10390,13 +10395,16 @@ function LogisticsCrewSection({
       )}
       {/* Schedule reference (owner 2026-07-23): the mall handbook's official
           event schedule screenshot, so logistics can read off setup/dismantle
-          dates + times. Desktop-only (this whole page is the PC PMS). */}
-      <ScheduleRef
-        projectId={project.id}
-        readOnly={!canEditSchedule}
-        remark={project.schedule_remark}
-        onSaveRemark={(v) => patch({ schedule_remark: v })}
-      />
+          dates + times. Owner 2026-07-29: hidden from everyone except
+          logistic (view/download) and the BD/owner edit tier. */}
+      {canViewSchedule && (
+        <ScheduleRef
+          projectId={project.id}
+          readOnly={!canEditSchedule}
+          remark={project.schedule_remark}
+          onSaveRemark={(v) => patch({ schedule_remark: v })}
+        />
+      )}
       <div>
         <DateTimeField label="Setup Time" value={project.setup_start_at} onSave={(v) => patch({ setup_start_at: v })} readOnly={readOnly} />
       </div>
