@@ -8201,11 +8201,23 @@ function ItemRemarkInput({ caseId, item, field, label, placeholder, disabled, on
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
-        // Enter saves (blur); Alt+Enter inserts a line break (Nico 2026-07-29).
+        // Enter saves (blur); Alt+Enter inserts a line break (Nico
+        // 2026-07-29). The browser does NOT insert a newline for
+        // Alt+Enter on its own (only plain/Shift+Enter do), so the
+        // break is spliced in manually at the caret.
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.altKey) {
-            e.preventDefault();
-            e.currentTarget.blur();
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          const el = e.currentTarget;
+          if (e.altKey) {
+            const start = el.selectionStart ?? draft.length;
+            const end = el.selectionEnd ?? draft.length;
+            setDraft(draft.slice(0, start) + "\n" + draft.slice(end));
+            requestAnimationFrame(() => {
+              el.selectionStart = el.selectionEnd = start + 1;
+            });
+          } else {
+            el.blur();
           }
         }}
         disabled={disabled}
