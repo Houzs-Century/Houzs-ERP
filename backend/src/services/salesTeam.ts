@@ -47,8 +47,12 @@ export async function wouldCreateUplineCycle(
 }
 
 // ── Subtree resolution ───────────────────────────────────────
-// Returns the set of rep ids in a rep's downline (inclusive). Used
-// by the admin-of-subtree permission check on PATCH endpoints.
+// Returns the set of rep ids in a rep's downline (inclusive); archived
+// reps are pruned together with their whole branch. No callers on main
+// today: SCM row-level visibility moved to the users manager_id tree
+// (scm/lib/salesScope.ts, PR #245) and the admin-of-subtree PATCH checks
+// left with the stripped sales-team admin module. Kept deliberately —
+// salesTeamSubtree.test.ts pins the contract.
 
 export async function subtreeRepIds(env: Env, rootRepId: number): Promise<Set<number>> {
   const result = new Set<number>([rootRepId]);
@@ -70,68 +74,6 @@ export async function subtreeRepIds(env: Env, rootRepId: number): Promise<Set<nu
     frontier = next;
   }
   return result;
-}
-
-// ── Row-level sales visibility scope ─────────────────────────
-//
-// Position-based "own / subordinates" scoping for the SCM sales-side
-// documents (sales orders, delivery orders, invoices, consignment).
-// An ACTIVE sales rep sees only documents whose salesperson_id is
-// themselves or anyone in their downline subtree. The rule is uniform
-// across tiers because the hierarchy already encodes them:
-//   • Director (tree root)  → subtree = whole org → sees everyone
-//   • Manager  (mid node)   → subtree = their branch
-//   • Exec / Person (leaf)  → subtree = {self} → sees only own
-// A user who is NOT a sales rep (ops, admins, owner) reaches these
-// lists via SCM access rather than as a salesperson, so they are
-// unrestricted — the function returns null ("no WHERE filter"). A rep
-// flagged is_admin (a Sales Director / sales-team admin) is likewise
-// unrestricted: they see EVERY salesperson's documents, not just their
-// own subtree — Directors run parallel branches but each oversees the
-// whole sales floor.
-//
-// salesperson_id (integer) and sales_reps.user_id (bigint) share the
-// numeric user-id domain, so the returned ids filter directly.
-export async function salesVisibilityUserIds(
-  env: Env,
-  userId: number | string,
-): Promise<number[] | null> {
-  const rep = await env.DB.prepare(
-    `SELECT id, is_admin FROM sales_reps WHERE user_id = ? AND archived_at IS NULL LIMIT 1`,
-  )
-    .bind(userId)
-    .first<{ id: number; is_admin: number }>();
-  if (!rep) return null; // not a scoped salesperson → unrestricted
-  if (rep.is_admin) return null; // Sales Director / sales-team admin → sees everyone
-
-  const repIds = await subtreeRepIds(env, rep.id);
-  const placeholders = [...repIds].map(() => "?").join(",");
-  const rows = await env.DB.prepare(
-    `SELECT user_id FROM sales_reps
-       WHERE id IN (${placeholders}) AND user_id IS NOT NULL`,
-  )
-    .bind(...repIds)
-    .all<{ user_id: number }>();
-
-  const ids = (rows.results ?? []).map((r) => Number(r.user_id));
-  // Floor: always include the caller, covering a self rep row whose
-  // user_id link is somehow absent from the mapped set.
-  if (!ids.includes(Number(userId))) ids.push(Number(userId));
-  return ids;
-}
-
-// True when a document's salesperson_id falls within the caller's
-// visibility scope (or the caller is unrestricted). Used by SO detail
-// reads to 404 an out-of-subtree doc the same way the POS self-scope
-// hatch does — indistinguishable from a nonexistent doc_no.
-export async function salespersonInScope(
-  env: Env,
-  userId: number | string,
-  salespersonId: number | string | null | undefined,
-): Promise<boolean> {
-  const ids = await salesVisibilityUserIds(env, userId);
-  if (ids === null) return true; // unrestricted
-  return salespersonId != null && ids.includes(Number(salespersonId));
 }
 
 // ── Audit log helper ─────────────────────────────────────────
