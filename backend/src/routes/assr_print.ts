@@ -624,11 +624,13 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .boxed { border: 0.4pt solid #d5d5d5; border-top: none; padding: 3.6mm 4mm; }
     .signoff.boxed-grid { border: 0.4pt solid #d5d5d5; border-top: none; }
     .doc-footer {
-      display: flex; align-items: center; justify-content: space-between; gap: 4mm;
+      display: flex; align-items: flex-end; justify-content: space-between; gap: 4mm;
       padding-top: 3.6mm; margin-top: 4mm; border-top: 0.4pt solid #e0e0e0;
       font-size: 9.4pt; color: #9a9a9a;
     }
     .doc-footer .contact { font-size: 10.0pt; color: #3a3a3a; }
+    .doc-footer .fleft { display: flex; flex-direction: column; gap: 1.2mm; text-align: left; }
+    .doc-footer .fright { white-space: nowrap; }
     .doc-footer .contact b.mono { font-family: "IBM Plex Mono", monospace; }
 
     .foot { padding-top: 2mm; border-top: 0.5pt solid #000; text-align: center; font-size: 10.0pt; color: #555; letter-spacing: 0.5pt; }
@@ -807,8 +809,11 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     </div>
 
     <div class="doc-footer">
-      <span>Computer-generated document · valid without signature until countersigned above. · Printed <b class="mono">${printedStamp()}</b></span>
-      <span class="contact"><b>Warehouse Contact</b> · ${esc(coShort)} CS Team &nbsp;<b class="mono">${esc(csPhone)}</b></span>
+      <span class="fleft">
+        <span>Computer-generated document · valid without signature until countersigned above.</span>
+        <span class="contact"><b>Warehouse Contact</b> · ${esc(coShort)} CS Team &nbsp;<b class="mono">${esc(csPhone)}</b></span>
+      </span>
+      <span class="fright">Printed <b class="mono">${printedStamp()}</b></span>
     </div>`;
     })() : ""}
 
@@ -905,8 +910,11 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     </div>
 
     <div class="doc-footer">
-      <span>Computer-generated document · valid without signature until countersigned above. · Printed <b class="mono">${printedStamp()}</b></span>
-      <span class="contact"><b>${esc(coShort)} Contact</b> · CS Team &nbsp;<b class="mono">${esc(csPhone)}</b></span>
+      <span class="fleft">
+        <span>Computer-generated document · valid without signature until countersigned above.</span>
+        <span class="contact"><b>${esc(coShort)} Contact</b> · CS Team &nbsp;<b class="mono">${esc(csPhone)}</b></span>
+      </span>
+      <span class="fright">Printed <b class="mono">${printedStamp()}</b></span>
     </div>`;
     })() : ""}
 
