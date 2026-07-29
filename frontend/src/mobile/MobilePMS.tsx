@@ -3009,6 +3009,30 @@ function SalesDocsCard({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const pendingRef = useRef<{ itemId: number; caption?: string } | null>(null);
   const [view, setView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
+  // Approve/Reject on the doc tiles (owner 2026-07-29). The tasklist that used
+  // to carry these is gone on mobile, so a reviewable doc (Agreement/Quotation,
+  // Stock Out/In, 3D/2D Design, Display Floorplan, Exchange List) had no way to
+  // be approved on a phone. Same gate + endpoint as the desktop DocRow and the
+  // old TaskRow: the item's required_perm holder (server re-checks, 403s a
+  // non-holder), once a file exists and the item isn't done.
+  const { user } = useAuth();
+  const review = async (item: ChecklistItem, action: "approve" | "reject") => {
+    const body: Record<string, unknown> = { action };
+    if (action === "reject") {
+      const reason = await prompt({ title: `Reject "${item.title}"?`, placeholder: "Reason (required)", validate: (v) => (v.trim() ? null : "A reason is required.") });
+      if (reason == null || !reason.trim()) return;
+      body.reason = reason.trim();
+    }
+    setBusy(true);
+    try {
+      await api.post(`/api/projects/checklist/${item.id}/review`, body);
+      reload();
+    } catch (e) {
+      await notify({ title: "Failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const tiles = tileDefs.map((t) => {
     const item = (checklist ?? []).find(
@@ -3159,6 +3183,16 @@ function SalesDocsCard({
               : t.remarkWithFiles ? (t.files.length > 0 || !!(t.item?.notes ?? "").trim())
               : t.files.length > 0;
             const mediaH = t.mediaH ?? 80;
+            // Review state (desktop parity). A reviewable doc carries a
+            // required_perm; approve/reject show to a holder once a file
+            // exists and the item isn't done. Un-permed reviewables fall back
+            // to the awaiting-review state, exactly as the old TaskRow did.
+            const rItem = t.item!;
+            const reviewStatus = (rItem.review_status ?? "").toLowerCase();
+            const reviewDone = (rItem.status ?? "").toLowerCase() === "done";
+            const awaitingReview = reviewStatus === "pending_review" || reviewStatus === "amended";
+            const canReview = canTick && !reviewDone && t.files.length > 0 &&
+              (rItem.required_perm ? holdsChecklistApproval(user?.permissions, rItem.required_perm) : awaitingReview);
             return (
               <div key={t.label} style={{ border: "1px solid #d6d9d2", borderRadius: 11, overflow: "hidden", background: "#fff", ...(t.fullWidth ? { gridColumn: "1 / -1" } : {}) }}>
                 <div
@@ -3192,6 +3226,15 @@ function SalesDocsCard({
                         <span className="rbadge" style={{ background: `${roleColor(t.item!.role_label!)}1f`, color: roleColor(t.item!.role_label!) }}>
                           {formatRoleLabel(t.item!.role_label!)}
                         </span>
+                      )}
+                      {/* Review decision (owner 2026-07-29): the approve/reject
+                          state travels with the tile so uploader + approver both
+                          see it — green approved · red rejected · amber pending. */}
+                      {reviewStatus && (
+                        <span className="rbadge" style={{
+                          background: reviewStatus === "approved" ? "#e2f0e9" : reviewStatus === "rejected" ? "#f7e7e5" : "#f6efd9",
+                          color: reviewStatus === "approved" ? "#2f8a5b" : reviewStatus === "rejected" ? "#a13a34" : "#6e4d12",
+                        }}>{humanize(reviewStatus).toUpperCase()}</span>
                       )}
                     </div>
                   </div>
@@ -3252,6 +3295,15 @@ function SalesDocsCard({
                     <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => void startUpload(t)}>
                       {t.files.length ? "+ Add more" : "Upload"}
                     </button>
+                  </div>
+                )}
+                {/* Approve / Reject — shown to a holder of this doc's approval
+                    permission (server re-checks). Renders even on a read-only
+                    tile: the approver often isn't the uploader. */}
+                {canReview && (
+                  <div style={{ padding: "0 9px 8px", display: "flex", gap: 6 }}>
+                    <button className="tinybtn" style={{ flex: 1, background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={() => void review(rItem, "approve")}>Approve</button>
+                    <button className="tinybtn" style={{ flex: 1, background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => void review(rItem, "reject")}>Reject</button>
                   </div>
                 )}
               </div>
