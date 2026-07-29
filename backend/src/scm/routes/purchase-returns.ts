@@ -17,6 +17,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, reverseMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
@@ -492,7 +493,7 @@ async function writePrLineDeltaMovement(
     // Multi-company: the delta movement inherits the PR header's company.
     const { data: prHeader } = await sb.from('purchase_returns')
       .select('company_id').eq('id', args.prId).maybeSingle();
-    await writeMovements(sb, [{
+    const deltaRows: Parameters<typeof writeMovements>[1] = [{
       movement_type: isOut ? 'OUT' : 'IN',
       warehouse_id: warehouseId,
       product_code: args.line.material_code,
@@ -506,7 +507,13 @@ async function writePrLineDeltaMovement(
       source_doc_no: args.returnNumber,
       performed_by: args.userId,
       notes: isOut ? 'PR line added/increased' : 'PR line reduced/removed — reversing return',
-    }], (prHeader as { company_id?: number | null } | null)?.company_id ?? null);
+    }];
+    await writeMovements(sb, deltaRows, (prHeader as { company_id?: number | null } | null)?.company_id ?? null);
+    /* Oversell retro-cost (0154) — a REVERSING delta is an IN: the goods never
+       went back to the supplier, so they re-open a lot a prior "ship anyway" DO
+       can be costed from. Wired 2026-07-29; before that only a GRN reconciled
+       (COE §2). The OUT direction is filtered out by the helper. Best-effort. */
+    await reconcileUncostedAfterIn(sb, deltaRows, args.userId);
     try {
       const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
       await recomputeSoStockAllocation(sb);

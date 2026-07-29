@@ -37,6 +37,7 @@
 // ----------------------------------------------------------------------------
 
 import { writeMovements } from './inventory-movements';
+import { reconcileUncostedAfterIn } from './oversell-retrocost';
 
 export type LoanerSourceType = 'CS_DO' | 'CS_DR';
 
@@ -195,6 +196,17 @@ export async function transferLoaner(
       notes:           `Consignment loaner transfer from warehouse ${fromWh} (value-neutral)`,
     }], companyId);
     if (!inOk.ok) errors.push(`IN ${ln.product_code}: ${inOk.reason ?? 'unknown'}`);
+    /* Oversell retro-cost (0154) — the loaner hop opens a lot at the DESTINATION,
+       so a prior "ship anyway" DO that went out at RM0 there can now be costed
+       from it. Wired 2026-07-29; until then only the GRN post reconciled, so
+       stock arriving by transfer never repaired the earlier shipment (COE §2).
+       Best-effort — never fails the loaner. */
+    if (inOk.ok) {
+      await reconcileUncostedAfterIn(sb, [{
+        movement_type: 'IN', warehouse_id: toWh, product_code: ln.product_code,
+        variant_key: variantKey, qty: ln.qty,
+      }], userId);
+    }
   }
 
   /* The transfer is net-zero across all warehouses, but SO allocation sums every
@@ -330,6 +342,13 @@ export async function reverseLoaner(
       notes:           `Consignment loaner cancelled — reversing transfer (value-neutral)`,
     }], companyId);
     if (!inOk.ok) errors.push(`reverse IN ${b.product_code}: ${inOk.reason ?? 'unknown'}`);
+    /* Same as the forward hop: the reversal re-opens a lot at the SOURCE shelf. */
+    if (inOk.ok) {
+      await reconcileUncostedAfterIn(sb, [{
+        movement_type: 'IN', warehouse_id: fromWh, product_code: b.product_code,
+        variant_key: b.variant_key, qty: b.net_out,
+      }], userId);
+    }
   }
 
   try {

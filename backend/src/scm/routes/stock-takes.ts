@@ -34,6 +34,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { recordEntityAudit, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody, type FieldChange } from '../lib/entity-audit';
 import { resolveForcedUnitCostSen, type LotCostRow } from '../shared';
+import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 
 export const stockTakes = new Hono<{ Bindings: Env; Variables: Variables }>();
 stockTakes.use('*', supabaseAuth);
@@ -547,6 +548,9 @@ stockTakes.patch('/:id/reverse', async (c) => {
   if (reverseRows.length > 0) {
     const { error: insErr } = await sb.from('inventory_movements').insert(stampCompany(reverseRows, c));
     if (insErr) movementErrors.push(insErr.message);
+    /* Undoing a NEGATIVE variance is a positive ADJUSTMENT — it re-opens a lot,
+       so it is a stock IN and gets the same retro-cost as the post path. */
+    if (!insErr) await reconcileUncostedAfterIn(sb, reverseRows, user.id);
   }
 
   /* POSTED is the prior status by construction — the .eq('status','POSTED')
@@ -799,6 +803,13 @@ export const postStockTakeHandler = async (c: any) => {
     // back (matches the audit-DLQ posture in writeMovements()).
     const { error: mErr } = await sb.from('inventory_movements').insert(stampCompany(adjustmentRows, c));
     if (mErr) movementErrors.push(mErr.message);
+    /* Oversell retro-cost (0154) — a POSITIVE variance opens a lot, so a prior
+       "ship anyway" DO that went out at RM0 in this warehouse can now be costed
+       from it. Wired 2026-07-29; before that only a GRN reconciled, so stock
+       found by a count never repaired the earlier shipment (COE §2). Negative
+       variances are filtered out by the helper. Best-effort — never fails the
+       post, and the shortfall is retried on the next IN. */
+    if (!mErr) await reconcileUncostedAfterIn(sb, adjustmentRows, user.id);
   }
 
   /* The variance that actually hit stock, per SKU — keyed by product code for

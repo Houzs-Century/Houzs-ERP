@@ -31,6 +31,7 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { writeMovements, defaultWarehouseId, resolveWarehouseLotCosts } from '../lib/inventory-movements';
+import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo } from '../lib/doc-no';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -192,6 +193,11 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
   if (writes.length === 0) return [];
   // Multi-company: resync movements inherit the receive's company.
   const res = await writeMovements(sb, writes, (header as { company_id?: number | null }).company_id ?? null);
+  /* Oversell retro-cost (0154) — a consignment receive opens lots, so a prior
+     "ship anyway" DO that went out at RM0 in this warehouse can now be costed
+     from them. Wired 2026-07-29; before that only a GRN reconciled (COE §2).
+     Best-effort — never fails the receive. */
+  if (res.ok) await reconcileUncostedAfterIn(sb, writes, performedBy);
   try {
     const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
     await recomputeSoStockAllocation(sb);

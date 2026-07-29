@@ -28,6 +28,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { reverseMovements } from '../lib/inventory-movements';
 import { buildTransferPayload } from '../lib/stock-transfer-atomic';
+import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix } from '../lib/companyScope';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
@@ -214,6 +215,26 @@ async function writeTransferMovements(
         p_lines:             payload,
       });
       if (rpcErr) movementErrors.push(`TRANSFER ${header.transfer_no}: ${rpcErr.message ?? 'movement apply failed'}`);
+      /* Oversell retro-cost (0154) — the transfer just opened lots at the
+         DESTINATION. If that warehouse had a prior "ship anyway" DO whose short
+         units went out at RM0, retro-cost them from the arriving lots now. Until
+         2026-07-29 this ran ONLY on GRN post, so stock replenished by a transfer
+         left the earlier shipment at zero COGS forever (COE §2). Best-effort:
+         never rolls the transfer back. Only on a clean apply — a failed RPC
+         rolled the whole transfer back, so no lot exists to draw on. */
+      if (!rpcErr) {
+        await reconcileUncostedAfterIn(
+          sb,
+          payload.map((p) => ({
+            movement_type: 'IN',
+            warehouse_id: header.to_warehouse_id,
+            product_code: p.product_code,
+            variant_key: p.variant_key,
+            qty: p.qty,
+          })),
+          userId,
+        );
+      }
     } catch (e) {
       movementErrors.push(`TRANSFER ${header.transfer_no}: ${e instanceof Error ? e.message : String(e)}`);
     }
