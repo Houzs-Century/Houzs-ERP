@@ -295,16 +295,17 @@
   border-bottom: 1px solid #d6d9d2;
   text-align: left;
 }
-/* Head row now matches the system-wide table head (Inventory .table thead
-   th): surface-2 slab, mono-ish button face, wide tracking. */
+/* Batch 3 theme skin — head row takes the SO-sample DataTable header spec
+   (sans 10px/700, tracking-brand, surface-dim, ink). */
 .skuTable th {
-  font-family: var(--font-button);
-  font-size: var(--fs-11);
-  font-weight: 600;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.18em;
-  color: #767b6e;
-  background: #f4f6f3;
+  color: var(--c-ink, #11140f);
+  background: #e3e6e0;
+  border-bottom-width: 2px;
 }
 .skuTable tbody tr:hover { background: #f4f6f3; }
 .skuTable tbody tr:last-child td { border-bottom: none; }

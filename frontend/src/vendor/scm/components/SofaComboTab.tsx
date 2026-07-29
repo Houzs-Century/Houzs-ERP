@@ -1580,10 +1580,16 @@ const moduleChipOff: CSSProperties = {
 
 // Batch per-height grid (mode === 'grid') ─────────────────────────────
 const gridHeadCellStyle: CSSProperties = {
+  // Batch 3 theme skin — the SO-sample DataTable header spec (sans 10px/700,
+  // tracking-brand, surface-dim fill, ink) on the combo grid's head row.
   fontFamily: 'var(--font-sans)',
-  fontSize: 'var(--fs-11)',
-  fontWeight: 600,
-  color: 'var(--fg-muted)',
+  fontSize: 10,
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  letterSpacing: '0.18em',
+  color: 'var(--c-ink, #11140f)',
+  background: '#e3e6e0',
+  borderBottom: '2px solid #d6d9d2',
   textAlign: 'center',
   padding: '4px 6px',
   whiteSpace: 'nowrap',

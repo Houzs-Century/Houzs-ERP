@@ -2032,7 +2032,7 @@ export function ModularAssignSupplierDialog({
         }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-sans)' }}>
             <thead>
-              <tr style={{ background: '#f4f6f3', borderBottom: '1px solid #d6d9d2' }}>
+              <tr style={{ background: '#e3e6e0', borderBottom: '2px solid #d6d9d2' }}>
                 <th style={thStyle}>Model · Supplier</th>
                 <th style={thStyle}>Supplier Code</th>
                 <th style={thStyle}>Description</th>
@@ -2061,7 +2061,7 @@ export function ModularAssignSupplierDialog({
                 const head = rowsForModel[0]!;
                 return (
                   <Fragment key={modelId}>
-                    <tr style={{ background: '#f4f6f3', borderBottom: '1px solid #d6d9d2' }}>
+                    <tr style={{ background: '#e3e6e0', borderBottom: '2px solid #d6d9d2' }}>
                       <td colSpan={7} style={{
                         padding: '6px 12px',
                         fontSize: 'var(--fs-12)',
@@ -2221,18 +2221,20 @@ export function ModularAssignSupplierDialog({
 }
 
 const thStyle: React.CSSProperties = {
+  // Batch 3 theme skin — the SO-sample DataTable header spec (sans 10px/700,
+  // tracking-brand 0.18em, surface-dim #e3e6e0, ink).
   fontFamily: 'var(--font-sans)',
-  fontSize: 'var(--fs-12)',
-  fontWeight: 600,
+  fontSize: 10,
+  fontWeight: 700,
   textAlign: 'left',
   padding: '8px 12px',
-  color: '#767b6e',
+  color: 'var(--c-ink, #11140f)',
   textTransform: 'uppercase',
-  letterSpacing: '0.04em',
+  letterSpacing: '0.18em',
   // Keep the column headers visible while the (Model × Supplier) rows scroll.
   position: 'sticky',
   top: 0,
-  background: '#f4f6f3',
+  background: '#e3e6e0',
   zIndex: 1,
 };
 const tdStyle: React.CSSProperties = {
