@@ -31,6 +31,7 @@ import {
   ArrowDownToLine, ArrowUpFromLine, History,
 } from 'lucide-react';
 import { Button } from '../../components/Button';
+import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
 import { fmtDate, fmtQty } from '@2990s/shared';
@@ -809,43 +810,39 @@ function MovementPill({ type }: { type: RackMovementType }) {
   return <span className={`${styles.movementPill} ${cls}`}>{label}</span>;
 }
 
+/* Batch 4: the shared movement ledger renders through DataTable — one
+   conversion covers both consumers (Stock In/Out's recent list + the full
+   Movement History tab). Server order (newest first) is the default; the
+   date column's getValue keeps re-sorts honest. */
 function MovementTable({ movements, isLoading }: { movements: RackMovement[]; isLoading: boolean }) {
-  if (isLoading) return <div className={styles.emptyRow}>Loading movements…</div>;
-  if (movements.length === 0) return <div className={styles.emptyRow}>No movements found.</div>;
   return (
-    <div className={styles.tableCard}>
-      <div className={styles.tableScroll}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Type</th>
-              <th>Rack</th>
-              <th>Document</th>
-              <th>Product</th>
-              <th style={{ textAlign: 'right' }}>Qty</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            {movements.map((m) => (
-              <tr key={m.id}>
-                <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(m.created_at)}</td>
-                <td><MovementPill type={m.movement_type} /></td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  {m.rack_label ?? '—'}
-                  {m.movement_type === 'TRANSFER' && m.to_rack_label ? ` → ${m.to_rack_label}` : ''}
-                </td>
-                <td>{m.source_doc_no ? <span className={styles.codeChip}>{m.source_doc_no}</span> : '—'}</td>
-                <td>{m.product_name || m.product_code || '—'}</td>
-                <td style={{ textAlign: 'right' }}>{fmtQty(m.quantity)}</td>
-                <td>{m.reason ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <DataTable<RackMovement>
+      tableId="warehouse-racks-movements"
+      layoutFamily="warehouse-racks-movements"
+      exportName="rack-movements"
+      rows={isLoading ? null : movements}
+      loading={isLoading}
+      emptyLabel="No movements found."
+      getRowKey={(m) => m.id}
+      columns={[
+        { key: 'date', label: 'Date', width: '120px', getValue: (m) => m.created_at ?? '', render: (m) => <span style={{ whiteSpace: 'nowrap' }}>{fmtDate(m.created_at)}</span> },
+        { key: 'type', label: 'Type', width: '110px', getValue: (m) => m.movement_type, render: (m) => <MovementPill type={m.movement_type} /> },
+        {
+          key: 'rack', label: 'Rack', width: '140px',
+          getValue: (m) => `${m.rack_label ?? ''}${m.to_rack_label ?? ''}`,
+          render: (m) => (
+            <span style={{ whiteSpace: 'nowrap' }}>
+              {m.rack_label ?? '—'}
+              {m.movement_type === 'TRANSFER' && m.to_rack_label ? ` → ${m.to_rack_label}` : ''}
+            </span>
+          ),
+        },
+        { key: 'doc', label: 'Document', width: '140px', getValue: (m) => m.source_doc_no ?? '', render: (m) => m.source_doc_no ? <span className={styles.codeChip}>{m.source_doc_no}</span> : '—' },
+        { key: 'product', label: 'Product', getValue: (m) => m.product_name || m.product_code || '', render: (m) => m.product_name || m.product_code || '—' },
+        { key: 'qty', label: 'Qty', align: 'right', width: '90px', getValue: (m) => m.quantity, render: (m) => fmtQty(m.quantity) },
+        { key: 'reason', label: 'Reason', getValue: (m) => m.reason ?? '', render: (m) => m.reason ?? '—' },
+      ] satisfies Column<RackMovement>[]}
+    />
   );
 }
 
