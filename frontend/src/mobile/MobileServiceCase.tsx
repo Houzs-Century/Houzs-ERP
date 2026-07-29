@@ -3114,14 +3114,15 @@ function MobileItemRemark({ c, it, busy, onChanged, notify, field, placeholder }
     }
   };
   return (
-    <input
+    <textarea
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       disabled={busy}
       placeholder={placeholder}
+      rows={2}
       className="fld-i"
-      style={{ width: "100%", boxSizing: "border-box", marginTop: 8, fontSize: 11.5 }}
+      style={{ width: "100%", boxSizing: "border-box", marginTop: 8, fontSize: 11.5, resize: "vertical", lineHeight: 1.35 }}
     />
   );
 }
