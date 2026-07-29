@@ -154,17 +154,30 @@ function composeDefaultProjectName(p: {
   return `${left} @ ${venue}`;
 }
 
-function projectBarLabel(p: CalProject): string {
-  if ((p.event_type_name || "").toLowerCase() === "solo") {
-    return composeDefaultProjectName({
-      state: p.state,
-      brand: p.brand,
-      organizer: p.organizer,
-      venue: p.venue,
-      eventTypeSlug: "solo",
-    });
+// Event bars show the STATE in all-caps (owner 2026-07-29). Newer stored names
+// lead with a Title-Case state ("Kuala Lumpur"), so uppercase that leading
+// state on render. No-op when the name doesn't begin with the state. Mirrors
+// pages/Projects.tsx upcaseLeadingState so the two surfaces read identically.
+function upcaseLeadingState(name: string, state?: string | null): string {
+  const s = (state || "").trim();
+  if (s && name.toLowerCase().startsWith(s.toLowerCase())) {
+    return s.toUpperCase() + name.slice(s.length);
   }
-  return p.name;
+  return name;
+}
+
+function projectBarLabel(p: CalProject): string {
+  const raw =
+    (p.event_type_name || "").toLowerCase() === "solo"
+      ? composeDefaultProjectName({
+          state: p.state,
+          brand: p.brand,
+          organizer: p.organizer,
+          venue: p.venue,
+          eventTypeSlug: "solo",
+        })
+      : p.name;
+  return upcaseLeadingState(raw, p.state);
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -329,7 +342,7 @@ export function MobileCalendar({
           kind: "project",
           projectId: p.id,
           date,
-          label: p.code ? `[${p.brand ?? "—"}] ${p.name}` : p.name,
+          label: p.code ? `[${p.brand ?? "—"}] ${upcaseLeadingState(p.name, p.state)}` : upcaseLeadingState(p.name, p.state),
           barLabel: projectBarLabel(p),
           color: statusColor(p.status),
           brand: p.brand,

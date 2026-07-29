@@ -707,6 +707,18 @@ function composeDefaultProjectName(p: {
   return `${left} @ ${venue}`;
 }
 
+// Event labels show the STATE in all-caps ("KUALA LUMPUR [AKEMI] …", owner
+// 2026-07-29). Stored names composed after the 2026-07-22 canonical-state
+// migration lead with a Title-Case state ("Kuala Lumpur"), so uppercase that
+// leading state on render. No-op when the name doesn't begin with the state.
+function upcaseLeadingState(name: string, state?: string | null): string {
+  const s = (state || "").trim();
+  if (s && name.toLowerCase().startsWith(s.toLowerCase())) {
+    return s.toUpperCase() + name.slice(s.length);
+  }
+  return name;
+}
+
 /* Canonical Malaysian states — aligned to `scm.my_localities` after mig 0172
    (owner 2026-07-22). PMS used to store an UPPERCASE short list (`JOHOR` /
    `KL` / `PENANG`) while SCM stored the Title Case full names (`Johor` /
@@ -4951,15 +4963,18 @@ function ProjectsCalendarView() {
                         seg.clipRight ? "rounded-r-none" : "rounded-r-md"
                       )}
                     >
-                      {(seg.project.event_type_name || "").toLowerCase() === "solo"
-                        ? composeDefaultProjectName({
-                            state: seg.project.state,
-                            brand: seg.project.brand,
-                            organizer: seg.project.organizer,
-                            venue: seg.project.venue,
-                            event_type_slug: "solo",
-                          })
-                        : seg.project.name}
+                      {upcaseLeadingState(
+                        (seg.project.event_type_name || "").toLowerCase() === "solo"
+                          ? composeDefaultProjectName({
+                              state: seg.project.state,
+                              brand: seg.project.brand,
+                              organizer: seg.project.organizer,
+                              venue: seg.project.venue,
+                              event_type_slug: "solo",
+                            })
+                          : seg.project.name,
+                        seg.project.state,
+                      )}
                     </button>
                   );
                 })}
@@ -5058,7 +5073,7 @@ function CalendarBarPopover({
         </span>
       </div>
       <div className="mt-1 font-display text-[13px] font-bold leading-snug tracking-tight text-ink">
-        {p.name}
+        {upcaseLeadingState(p.name, p.state)}
       </div>
       <div className="mt-2 space-y-1">
         {rows
@@ -5262,7 +5277,7 @@ function CalendarDayModal({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[12px] font-medium text-ink">
-                        {p.name}
+                        {upcaseLeadingState(p.name, p.state)}
                       </div>
                       <div className="mt-1 flex items-center gap-1.5 text-[10px]">
                         <span

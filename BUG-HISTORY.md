@@ -12,6 +12,11 @@
 - **Fix.** `scope` defaults to `completed` on `/analytics/profitability` AND `/analytics/profitability/drill` (the drill keeps its own copy of the predicates, so it needed the filter twice — and `drillFilters` silently omitted the field because it is optional, which type-checked while drifting). Measured figures recorded at the callsite so the next reader does not repeat the assumption. `started` / `all` remain selectable via `af_scope`.
 - **Lesson.** The theory was plausible and wrong; only the measurement settled it. Measure before shipping a fix whose whole value rests on a causal claim.
 - **Ref:** PR #1397 then #1400, 2026-07-29.
+### [LOW] Calendar event bars showed the STATE in Title Case for non-solo events
+- **Symptom.** Owner 2026-07-29: calendar month-grid bars read "Kuala Lumpur [AKEMI] HOMELOVE @ …" (Title Case state) instead of the all-caps convention "KUALA LUMPUR [AKEMI] …". Solo events were already all-caps; every non-solo event (HOMELOVE, REX, BIGHOME, MYHOME, PERFECT LIVING, MEGAHOME…) leaked Title Case.
+- **Root cause.** The bar composes solo names live via `composeDefaultProjectName` (which upper-cases the leading state, owner 2026-07-24) but renders the STORED `p.name` for non-solo events. Names composed after the 2026-07-22 canonical-state migration lead with a Title-Case state, so those show as stored.
+- **Fix.** Frontend only. Added `upcaseLeadingState(name, state)` — uppercases the name's leading state when it matches, else a no-op — and applied it to every calendar label on both surfaces: desktop bar + day-modal + hover card (`Projects.tsx`), mobile bar (`projectBarLabel`) + day-sheet label (`MobileCalendar.tsx`). Display-only; no data change.
+- **Ref:** main, 2026-07-29. Frontend only.
 
 ### [LOW] Postcode input overflowed its cell in the Project Maintenance add-venue row
 - **Symptom.** Owner: in Project Maintenance - Venues, the "postcode" field in the add-new-venue row spills past its grid column, overlapping the neighbouring control.
