@@ -3114,6 +3114,97 @@ const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
   { label: "Defect List Dismantle", match: /^defect list dismantle/i, requirePhotoRemark: true },
 ];
 
+// ── Document review (Approve / Reject) — shared by the doc cards ──
+// The reviewable document titles, matched by prefix (mobile titles can carry
+// suffixes). Mirrors pages/Projects.tsx REVIEWABLE_TITLES.
+const REVIEWABLE_TITLE_RE = /^(agreement|stock\s*(out|in)\s*transfer|display\s*floor\s*plan|3d\s*design|2d\s*design|exchange\s*list)/i;
+
+// After uploading to a reviewable doc, auto-submit it so the approver's
+// Approve/Reject (re)appear — desktop does exactly this (Projects.tsx upload →
+// onReview("submit")). Non-perm reviewables (3D/2D/Display/Exchange) depend on
+// this: their gate needs review_status=pending_review, which nothing else sets.
+// Non-fatal: a failed submit only delays the amber PENDING badge.
+async function autoSubmitReviewable(itemId: number, title: string | null | undefined): Promise<void> {
+  if (!REVIEWABLE_TITLE_RE.test((title ?? "").trim())) return;
+  try {
+    await api.post(`/api/projects/checklist/${itemId}/review`, { action: "submit" });
+  } catch {
+    /* non-fatal — the approver can still submit via re-upload */
+  }
+}
+
+// Whether to show Approve/Reject on a document tile — desktop-parity gate
+// (pages/Projects.tsx DocRow): once a file exists, a holder of the item's
+// approval permission decides a still-open gated doc; an un-permed reviewable
+// keeps the submit-then-review flow (any viewer, while a review is pending).
+// canApprove = wildcard-free: an explicit approval key is required for the four
+// EXPLICIT_APPROVAL_KEYS, but a non-perm reviewable is open to any viewer.
+function checklistReviewVisible(
+  permissions: readonly string[] | null | undefined,
+  item: ChecklistItem | undefined,
+  hasFiles: boolean,
+): boolean {
+  if (!item || !hasFiles) return false;
+  const status = (item.status ?? "").toLowerCase();
+  const reviewStatus = (item.review_status ?? "").toLowerCase();
+  const canApprove = !item.required_perm || holdsChecklistApproval(permissions, item.required_perm);
+  if (item.required_perm) return canApprove && reviewStatus !== "approved" && status !== "done";
+  const reviewable = REVIEWABLE_TITLE_RE.test((item.title ?? "").trim());
+  const awaitingReview = reviewStatus === "pending_review" || reviewStatus === "amended";
+  return reviewable && awaitingReview && canApprove;
+}
+
+// The Approve / Reject button pair + review handler, shared by the doc cards.
+// Reject requires a reason (prompt); both POST /checklist/:id/review (the
+// endpoint re-checks the approval permission server-side → 403s a non-holder).
+function ReviewButtons({
+  item, busy, setBusy, prompt, notify, reload,
+}: {
+  item: ChecklistItem;
+  busy: boolean;
+  setBusy: SetBusy;
+  prompt: PromptFn;
+  notify: NotifyFn;
+  reload: () => void;
+}) {
+  const review = async (action: "approve" | "reject") => {
+    const body: Record<string, unknown> = { action };
+    if (action === "reject") {
+      const reason = await prompt({ title: `Reject "${item.title}"?`, placeholder: "Reason (required)", validate: (v) => (v.trim() ? null : "A reason is required.") });
+      if (reason == null || !reason.trim()) return;
+      body.reason = reason.trim();
+    }
+    setBusy(true);
+    try {
+      await api.post(`/api/projects/checklist/${item.id}/review`, body);
+      reload();
+    } catch (e) {
+      await notify({ title: "Failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+      <button className="tinybtn" style={{ flex: 1, background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("approve"); }}>Approve</button>
+      <button className="tinybtn" style={{ flex: 1, background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("reject"); }}>Reject</button>
+    </div>
+  );
+}
+
+// Small review-decision badge (green approved / red rejected / amber pending),
+// shared by the doc cards. Renders nothing when there's no decision yet.
+function ReviewBadge({ reviewStatus }: { reviewStatus: string | null | undefined }) {
+  const rs = (reviewStatus ?? "").toLowerCase();
+  if (!rs) return null;
+  return (
+    <span className="rbadge" style={{
+      background: rs === "approved" ? "#e2f0e9" : rs === "rejected" ? "#f7e7e5" : "#f6efd9",
+      color: rs === "approved" ? "#2f8a5b" : rs === "rejected" ? "#a13a34" : "#6e4d12",
+    }}>{humanize(rs).toUpperCase()}</span>
+  );
+}
+
 function SalesDocsCard({
   checklist, attachments, canTick, busy, setBusy, notify, prompt, confirm, reload,
   tiles: tileDefs = SALES_DOC_TILES,
@@ -3137,32 +3228,14 @@ function SalesDocsCard({
   showRoleTags?: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const pendingRef = useRef<{ itemId: number; caption?: string } | null>(null);
+  const pendingRef = useRef<{ itemId: number; title: string | null; caption?: string } | null>(null);
   const [view, setView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
   // Approve/Reject on the doc tiles (owner 2026-07-29). The tasklist that used
   // to carry these is gone on mobile, so a reviewable doc (Agreement/Quotation,
   // Stock Out/In, 3D/2D Design, Display Floorplan, Exchange List) had no way to
-  // be approved on a phone. Same gate + endpoint as the desktop DocRow and the
-  // old TaskRow: the item's required_perm holder (server re-checks, 403s a
-  // non-holder), once a file exists and the item isn't done.
+  // be approved on a phone. Gate + endpoint match the desktop DocRow exactly
+  // (shared checklistReviewVisible / ReviewButtons); user drives the perm check.
   const { user } = useAuth();
-  const review = async (item: ChecklistItem, action: "approve" | "reject") => {
-    const body: Record<string, unknown> = { action };
-    if (action === "reject") {
-      const reason = await prompt({ title: `Reject "${item.title}"?`, placeholder: "Reason (required)", validate: (v) => (v.trim() ? null : "A reason is required.") });
-      if (reason == null || !reason.trim()) return;
-      body.reason = reason.trim();
-    }
-    setBusy(true);
-    try {
-      await api.post(`/api/projects/checklist/${item.id}/review`, body);
-      reload();
-    } catch (e) {
-      await notify({ title: "Failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const tiles = tileDefs.map((t) => {
     const item = (checklist ?? []).find(
@@ -3202,7 +3275,7 @@ function SalesDocsCard({
       if (remark == null || !remark.trim()) return;
       caption = remark.trim();
     }
-    pendingRef.current = { itemId: t.item.id, caption };
+    pendingRef.current = { itemId: t.item.id, title: t.item.title, caption };
     fileRef.current?.click();
   };
 
@@ -3228,6 +3301,8 @@ function SalesDocsCard({
         buf,
         file.type || "application/octet-stream",
       );
+      // Reviewable docs auto-submit so the approver's Approve/Reject appear (desktop parity).
+      await autoSubmitReviewable(pending.itemId, pending.title);
       reload();
     } catch (e) {
       await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
@@ -3313,16 +3388,9 @@ function SalesDocsCard({
               : t.remarkWithFiles ? (t.files.length > 0 || !!(t.item?.notes ?? "").trim())
               : t.files.length > 0;
             const mediaH = t.mediaH ?? 80;
-            // Review state (desktop parity). A reviewable doc carries a
-            // required_perm; approve/reject show to a holder once a file
-            // exists and the item isn't done. Un-permed reviewables fall back
-            // to the awaiting-review state, exactly as the old TaskRow did.
+            // Review state (desktop parity) — shared gate + badge + buttons.
             const rItem = t.item!;
-            const reviewStatus = (rItem.review_status ?? "").toLowerCase();
-            const reviewDone = (rItem.status ?? "").toLowerCase() === "done";
-            const awaitingReview = reviewStatus === "pending_review" || reviewStatus === "amended";
-            const canReview = canTick && !reviewDone && t.files.length > 0 &&
-              (rItem.required_perm ? holdsChecklistApproval(user?.permissions, rItem.required_perm) : awaitingReview);
+            const canReview = checklistReviewVisible(user?.permissions, rItem, t.files.length > 0);
             return (
               <div key={t.label} style={{ border: "1px solid #d6d9d2", borderRadius: 11, overflow: "hidden", background: "#fff", ...(t.fullWidth ? { gridColumn: "1 / -1" } : {}) }}>
                 <div
@@ -3357,15 +3425,9 @@ function SalesDocsCard({
                           {formatRoleLabel(part)}
                         </span>
                       ))}
-                      {/* Review decision (owner 2026-07-29): the approve/reject
-                          state travels with the tile so uploader + approver both
-                          see it — green approved · red rejected · amber pending. */}
-                      {reviewStatus && (
-                        <span className="rbadge" style={{
-                          background: reviewStatus === "approved" ? "#e2f0e9" : reviewStatus === "rejected" ? "#f7e7e5" : "#f6efd9",
-                          color: reviewStatus === "approved" ? "#2f8a5b" : reviewStatus === "rejected" ? "#a13a34" : "#6e4d12",
-                        }}>{humanize(reviewStatus).toUpperCase()}</span>
-                      )}
+                      {/* Review decision (owner 2026-07-29): green approved ·
+                          red rejected · amber pending — travels with the tile. */}
+                      <ReviewBadge reviewStatus={rItem.review_status} />
                     </div>
                   </div>
                 </div>
@@ -3462,9 +3524,8 @@ function SalesDocsCard({
                     permission (server re-checks). Renders even on a read-only
                     tile: the approver often isn't the uploader. */}
                 {canReview && (
-                  <div style={{ padding: "0 9px 8px", display: "flex", gap: 6 }}>
-                    <button className="tinybtn" style={{ flex: 1, background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={() => void review(rItem, "approve")}>Approve</button>
-                    <button className="tinybtn" style={{ flex: 1, background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => void review(rItem, "reject")}>Reject</button>
+                  <div style={{ padding: "0 9px 8px" }}>
+                    <ReviewButtons item={rItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
                   </div>
                 )}
               </div>
@@ -3518,6 +3579,17 @@ function FloorPlans({
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const transfers = stockTransfers ?? [];
+  // Approve/Reject on the reviewable Floor-Plans docs (owner 2026-07-29): Stock
+  // Out Transfer Record (stock_transfer.approve), 3D / 2D Design + Display Floor
+  // Plan (no perm → submit-then-review). Shared gate/buttons with the doc cards.
+  const { user } = useAuth();
+  const prompt = usePrompt();
+  const itemByPrefix = (prefix: RegExp): ChecklistItem | undefined =>
+    (checklist ?? []).find((it) => prefix.test((it.title || "").trim()));
+  const threeDItem = itemByPrefix(/^3d\s*(design|render)/i);
+  const twoDItem = itemByPrefix(/^2d\s*design/i);
+  const displayItem = itemByPrefix(/^display\s*floor\s*plan/i);
+  const stockOutItem = itemByPrefix(/^stock\s*out\s*transfer/i);
 
   // The tiles mirror the "Blank Floorplan" / "Filled Floorplan" CHECKLIST
   // task attachments (mig 050 moved uploads per-task — files attached in the
@@ -3583,6 +3655,8 @@ function FloorPlans({
         buf,
         file.type || "application/octet-stream",
       );
+      // Auto-submit so the approver's Approve/Reject appear (desktop parity).
+      await autoSubmitReviewable(stockOutUploadTaskId, stockOutItem?.title ?? "Stock Out Transfer Record");
       reload();
     } catch (e) {
       await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
@@ -3705,6 +3779,16 @@ function FloorPlans({
           </span>
           <span style={{ color: "#8c968a" }}>›</span>
         </div>
+        {/* Display Floor Plan review (owner 2026-07-29) — approve/reject for a
+            holder/approver once it's uploaded + submitted. */}
+        {displayItem && (displayItem.review_status || checklistReviewVisible(user?.permissions, displayItem, displayPlanFiles.length > 0)) && (
+          <div style={{ marginTop: -3, marginBottom: 10 }}>
+            {displayItem.review_status && <div style={{ marginBottom: 4 }}><ReviewBadge reviewStatus={displayItem.review_status} /></div>}
+            {checklistReviewVisible(user?.permissions, displayItem, displayPlanFiles.length > 0) && (
+              <ReviewButtons item={displayItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
+            )}
+          </div>
+        )}
 
         {/* Unfilled / Filled plan tiles — tap to view the stored floorplan.
             Filled plan is hidden from driver/helper/storekeeper (owner
@@ -3723,6 +3807,10 @@ function FloorPlans({
             !(hidePlanTiles && (label === "Unfilled" || label === "Filled"))
           ).map(([label, files, badge, badgeBg, badgeCol]) => {
             const latest = files[files.length - 1];
+            // 3D / 2D Design are reviewable (owner 2026-07-29); the plan tiles
+            // (Unfilled/Filled) are not.
+            const tileItem = label === "3D Design" ? threeDItem : label === "2D Design" ? twoDItem : undefined;
+            const tileCanReview = checklistReviewVisible(user?.permissions, tileItem, files.length > 0);
             return (
               <div
                 key={label}
@@ -3737,9 +3825,12 @@ function FloorPlans({
                   : <div className="ph" style={{ height: 80 }} />}
                 <div style={{ padding: "7px 9px" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#11140f" }}>{label === "Unfilled" || label === "Filled" ? `${label} plan` : label}</div>
-                  <span className="rbadge" style={{ background: latest ? badgeBg : "#f0f1ed", color: latest ? badgeCol : "#9aa093" }}>
-                    {latest ? `${badge}${files.length > 1 ? ` · ${files.length}` : ""}` : "NONE"}
-                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                    <span className="rbadge" style={{ background: latest ? badgeBg : "#f0f1ed", color: latest ? badgeCol : "#9aa093" }}>
+                      {latest ? `${badge}${files.length > 1 ? ` · ${files.length}` : ""}` : "NONE"}
+                    </span>
+                    {tileItem && <ReviewBadge reviewStatus={tileItem.review_status} />}
+                  </div>
                   {label === "Filled" && canWrite && filledPlanTaskId != null && (
                     <button
                       className="tinybtn"
@@ -3749,6 +3840,9 @@ function FloorPlans({
                     >
                       {files.length ? "+ Add / replace" : "Upload"}
                     </button>
+                  )}
+                  {tileCanReview && tileItem && (
+                    <ReviewButtons item={tileItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
                   )}
                 </div>
               </div>
@@ -3797,6 +3891,20 @@ function FloorPlans({
             ))}
           </div>
         )}
+        {/* Stock Out Transfer Record review (owner 2026-07-29) — approve/reject
+            for a stock_transfer.approve holder once a record is uploaded. */}
+        {stockOutItem && (() => {
+          const stockOutHasFiles = (checklistAttachments ?? []).some((a) => !a.archived_at && a.item_id === stockOutItem.id);
+          if (!stockOutItem.review_status && !checklistReviewVisible(user?.permissions, stockOutItem, stockOutHasFiles)) return null;
+          return (
+            <div style={{ marginBottom: 8 }}>
+              {stockOutItem.review_status && <div style={{ marginBottom: 4 }}><ReviewBadge reviewStatus={stockOutItem.review_status} /></div>}
+              {checklistReviewVisible(user?.permissions, stockOutItem, stockOutHasFiles) && (
+                <ReviewButtons item={stockOutItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
+              )}
+            </div>
+          );
+        })()}
         {/* Purchaser stock-out upload (owner 2026-07-23) — attaches to the
             Stock Out Transfer Record checklist task, same store the tasklist
             row used, so desktop and mobile stay one file set. */}
