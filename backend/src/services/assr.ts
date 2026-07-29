@@ -1875,7 +1875,13 @@ async function attachDeliveryOrders(env: Env, rows: any[]) {
     ...new Set(
       houzs
         .map((r) => String(r.ref_no ?? "").trim().toLowerCase())
-        .filter(Boolean)
+        // A ref can only be a matching KEY if it carries at least one
+        // letter/digit. Operators park "-" / "—" / "." in Ref on both sides,
+        // and placeholders are SHARED, not identifying: prod carries 22
+        // mirror DOs whose ref is "-", so a case whose ref_no is also "-"
+        // (ASSR/2607-065, 2026-07-29) glued all 22 unrelated DOs onto
+        // itself. `Boolean` alone let every non-empty placeholder through.
+        .filter((s) => /[a-z0-9]/.test(s))
     ),
   ];
   if (refs.length > 0) {
