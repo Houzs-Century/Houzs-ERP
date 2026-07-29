@@ -2159,6 +2159,9 @@ interface ProfitabilityFilters {
   brand?: string;
   organizer?: string;
   event_type_id?: string;
+  // Lifecycle scope — must be forwarded to the drill so a drilled level totals
+  // the same population as the card it was opened from.
+  scope?: string;
 }
 
 // The open drill path, held in the URL (see ProjectsAnalyticsView): which
@@ -2230,6 +2233,7 @@ interface ProfitabilityResponse {
     brand: string | null;
     event_type_id: string | null;
     organizer: string | null;
+    scope: string;
   };
   totals: {
     projects: number;
@@ -2996,6 +3000,9 @@ function ProjectsAnalyticsView() {
   const brand = params.get("af_brand") ?? "";
   const organizer = params.get("af_org") ?? "";
   const eventTypeId = params.get("af_type") ?? "";
+  // An event that has not started only carries booked rental, so counting it
+  // reads as a loss that has not happened — settled/started is the default.
+  const scope = params.get("af_scope") ?? "started";
 
   // Writing a filter clears the open drill: its value may not exist under the
   // new scope, so an orphaned drill path would just render "no data".
@@ -3014,13 +3021,14 @@ function ProjectsAnalyticsView() {
   const setBrand = (v: string) => setFilterParam("af_brand", v);
   const setOrganizer = (v: string) => setFilterParam("af_org", v);
   const setEventTypeId = (v: string) => setFilterParam("af_type", v);
+  const setScope = (v: string) => setFilterParam("af_scope", v);
   const clearFilters = () => {
     setParams((prev) => {
       const next = new URLSearchParams(prev);
       // Explicit empty bounds = "all time"; the rest default to "" when absent.
       next.set("af_from", "");
       next.set("af_to", "");
-      for (const k of ["af_brand", "af_org", "af_type", "dim", "dv", "dm"]) next.delete(k);
+      for (const k of ["af_brand", "af_org", "af_type", "af_scope", "dim", "dv", "dm"]) next.delete(k);
       return next;
     });
   };
@@ -3073,9 +3081,10 @@ function ProjectsAnalyticsView() {
           brand: brand || undefined,
           organizer: organizer || undefined,
           event_type_id: eventTypeId || undefined,
+          scope,
         })}`
       ),
-    [dateFrom, dateTo, brand, organizer, eventTypeId],
+    [dateFrom, dateTo, brand, organizer, eventTypeId, scope],
     { enabled: canProjectFinance }
   );
 
@@ -3096,6 +3105,7 @@ function ProjectsAnalyticsView() {
     brand: brand || undefined,
     organizer: organizer || undefined,
     event_type_id: eventTypeId || undefined,
+    scope,
   };
 
   return (
@@ -3158,6 +3168,16 @@ function ProjectsAnalyticsView() {
               {t.name}
             </option>
           ))}
+        </select>
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value)}
+          title="Events that have not started yet carry only their booked rental, which reads as a loss that has not happened."
+          className="h-8 appearance-none rounded-md border border-border bg-surface px-2 text-[12px]"
+        >
+          <option value="started">Started events</option>
+          <option value="completed">Completed only</option>
+          <option value="all">All incl. upcoming</option>
         </select>
         <select
           value={organizer}
@@ -3356,6 +3376,7 @@ function BreakdownCard({
           brand: filters.brand,
           organizer: filters.organizer,
           event_type_id: filters.event_type_id,
+          scope: filters.scope,
         })}`
       ),
     [
@@ -3366,6 +3387,7 @@ function BreakdownCard({
       filters.brand,
       filters.organizer,
       filters.event_type_id,
+      filters.scope,
     ],
     { enabled: !monthMode && isCardActive && expandedValue != null }
   );
@@ -3396,6 +3418,7 @@ function BreakdownCard({
           brand: filters.brand,
           organizer: filters.organizer,
           event_type_id: filters.event_type_id,
+          scope: filters.scope,
         })}`
       ),
     [
@@ -3408,6 +3431,7 @@ function BreakdownCard({
       filters.brand,
       filters.organizer,
       filters.event_type_id,
+      filters.scope,
     ],
     { enabled: isCardActive && expandedValue != null && (monthMode ? true : expandedMonth != null) }
   );

@@ -1,0 +1,47 @@
+[
+ {
+  "pid": 69,
+  "sales": 67262,
+  "cogs_matt_sofa": 31638,
+  "cogs_bedframe": 0,
+  "cogs_accessories": 0,
+  "rental": 15650,
+  "setup": 6225
+ },
+ {
+  "pid": 104,
+  "sales": 16100,
+  "cogs_matt_sofa": 7740,
+  "cogs_bedframe": 0,
+  "cogs_accessories": 0,
+  "rental": 6397,
+  "setup": 3527
+ },
+ {
+  "pid": 235,
+  "sales": 81396,
+  "cogs_matt_sofa": 41017,
+  "cogs_bedframe": 0,
+  "cogs_accessories": 0,
+  "rental": 25800,
+  "setup": 3321
+ },
+ {
+  "pid": 381,
+  "sales": 38160,
+  "cogs_matt_sofa": 20222,
+  "cogs_bedframe": 0,
+  "cogs_accessories": 0,
+  "rental": 15200,
+  "setup": 2990
+ },
+ {
+  "pid": 2056,
+  "sales": 16277,
+  "cogs_matt_sofa": 7554,
+  "cogs_bedframe": 0,
+  "cogs_accessories": 272,
+  "rental": 12814,
+  "setup": 2995
+ }
+]
