@@ -1015,7 +1015,17 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     // hasPermission handles the `*` wildcard, so admins/owner still match.
     const held = GATING_APPROVE_PERMS.filter((p) => hasPermission(granted, p));
     const r = (user.role_name || "").toLowerCase();
-    if (held.length > 0) {
+    if (r.includes("bd")) {
+      // BD (owner 2026-07-29 "why empty my pending"): the BD role now holds
+      // projects.approve (full grant 2026-07-23), so the approve-holder branch
+      // below swallowed them and their OWN BD-badged work (License / Stamp
+      // Duty / Agreement upload) never surfaced — My Pending showed only
+      // things awaiting approval, usually nothing. BD gets BOTH: the BD task
+      // lane AND the approver lanes.
+      pendingLabel = "BD";
+      if (held.length > 0) pendingApprove = held;
+      pendingAgreement = true;
+    } else if (held.length > 0) {
       // Super Admin / owner (weisiang): what they must approve, PLUS the
       // Agreement / Quotation once its timeline arrives (owner 2026-07-21).
       pendingApprove = held;
@@ -1031,7 +1041,6 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     } else if (r === "purchaser") pendingLabel = "PURCHASER";
     else if (r === "logistic") pendingLogistic = true; // setup not arranged
     else if (r === "driver" || r === "helper" || r === "storekeeper") pendingLabel = "DRIVER";
-    else if (r.includes("bd")) pendingLabel = "BD";
     else if (r.includes("sales")) {
       // Sales PIC: their SALES-PIC-badged tasks + the Sales Attending assignment.
       pendingLabel = "SALES PIC";
