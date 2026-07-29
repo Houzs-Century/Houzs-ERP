@@ -326,7 +326,7 @@ export const HrCommission = () => {
 
           <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-[12px]">
-              <thead className="bg-bg/40 text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
+              <thead className="border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink">
                 <tr>
                   <th className="px-3 py-2 text-left">Salesperson</th>
                   <th className="px-2 py-2 text-left">Tier</th>
@@ -367,7 +367,7 @@ export const HrCommission = () => {
 
         <div className="overflow-x-auto rounded-md border border-border bg-surface">
           <table className="w-full text-[12px]">
-            <thead className="bg-bg/40 text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
+            <thead className="border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink">
               <tr>
                 <th className="px-3 py-2 text-left">Period</th>
                 <th className="px-2 py-2 text-right">Rev</th>

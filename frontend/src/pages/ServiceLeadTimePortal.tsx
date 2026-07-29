@@ -106,7 +106,7 @@ function PriorityTargetsSection({
       <div className="overflow-x-auto">
         <table className="w-full text-[12px]">
           <thead>
-            <tr className="bg-bg text-[10px] font-semibold uppercase tracking-brand text-ink-secondary">
+            <tr className="border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink">
               <th className="sticky left-0 z-10 bg-bg px-4 py-2 text-left font-semibold">
                 Priority
               </th>
