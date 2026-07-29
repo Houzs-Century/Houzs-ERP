@@ -131,7 +131,7 @@ export function MailboxesTab() {
           <div className="overflow-hidden rounded-md border border-border bg-surface shadow-stone">
             <table className="w-full text-left">
               <thead>
-                <tr className="border-b border-border bg-surface-dim text-[10px] font-bold uppercase tracking-wide text-ink-muted">
+                <tr className="border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink">
                   <th className="px-4 py-2.5">Address</th>
                   <th className="px-4 py-2.5">Label</th>
                   <th className="px-4 py-2.5">Assigned to</th>
@@ -964,7 +964,7 @@ function AccessMatrix({
         <div className="overflow-x-auto rounded-md border border-border bg-surface shadow-stone">
           <table className="w-full text-left">
             <thead>
-              <tr className="border-b border-border bg-surface-dim text-[10px] font-bold uppercase tracking-wide text-ink-muted">
+              <tr className="border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink">
                 <th className="sticky left-0 z-10 bg-surface-dim px-4 py-2.5">
                   Member
                 </th>

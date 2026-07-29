@@ -675,7 +675,7 @@ function VariantsTable({
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-stone">
       <table className="w-full text-[12.5px]">
-        <thead className="bg-surface-2 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+        <thead className="border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink">
           <tr>
             <th className="px-3 py-2 text-left">SKU</th>
             <th className="px-3 py-2 text-left">Variant</th>
