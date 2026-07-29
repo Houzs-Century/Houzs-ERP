@@ -12,7 +12,7 @@ on:
     inputs:
       task:
         type: choice
-        options: [standardize, autocost, cleanup-empty, cleanup-dups, align-figures, archive-unmatched]
+        options: [standardize, autocost, cleanup-empty, cleanup-dups, align-figures, archive-unmatched, audit-zeros]
         default: standardize
       mode:
         type: choice
@@ -63,3 +63,8 @@ jobs:
         working-directory: backend
         env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
         run: node scripts/fair-pnl/archive-unmatched-seeds.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
+      - name: audit-zeros (read-only)
+        if: ${{ inputs.task == 'audit-zeros' }}
+        working-directory: backend
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
+        run: node scripts/fair-pnl/audit-zeros-margins.mjs
