@@ -53,9 +53,14 @@ const SCM_SEGMENT_LABELS: Record<string, [string, string]> = {
   "delivery-orders": ["Delivery Orders", "Delivery Order"],
   "sales-invoices": ["Sales Invoices", "Sales Invoice"],
   "delivery-returns": ["Delivery Returns", "Delivery Return"],
-  "amendments": ["Amendments", "Amendment"],
+  // Owner 2026-07-27 — the two amendment queues carry SHORT tab names so the
+  // workspace strip stays scannable ("SO Amdt." / "PO Amdt."), and the two
+  // sides are distinguishable at a glance. Detail pages push their own
+  // breadcrumbs, so the descriptive titles live on-page, not here.
+  "amendments": ["SO Amdt.", "SO Amdt."],
   // Procurement chain
   "purchase-orders": ["Purchase Orders", "Purchase Order"],
+  "po-amendments": ["PO Amdt.", "PO Amdt."],
   "purchase-invoices": ["Purchase Invoices", "Purchase Invoice"],
   "purchase-returns": ["Purchase Returns", "Purchase Return"],
   "grns": ["Goods Received Notes", "Goods Received Note"],

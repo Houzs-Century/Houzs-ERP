@@ -71,6 +71,29 @@ PostgREST aggregate over the base table (JS-reduce fallback if aggregates are
 disabled). `?status=OTHER` filters to exactly that catch-all bucket; every real
 status stays an exact match.
 
+### Deleting an SO — DRAFT only, and the test-order escape hatch
+
+`DELETE /:docNo` (`mfg-sales-orders.ts:5555`) hard-deletes a **DRAFT and nothing
+else** — `409 so_not_draft` on anything CONFIRMED or later. That is deliberate: a
+confirmed order is CANCELLED, a reversible audited status change that also books
+any deposit as customer credit, and cancel is FINAL (`:5396` — no un-cancel,
+because the credit has no claw-back).
+
+Which leaves the POS smoke-test problem: a real handover on 2990 POS mints a real
+`doc_no`, a real payment and real PWP vouchers. To purge one, use
+**Actions -> "Delete test SO"** (`backend/scripts/delete-test-so.mjs`). Dry-run by
+default; `apply=1` also requires `confirm_doc` to repeat the doc_no. It REFUSES on
+any downstream DO/SI (both FKs are `ON DELETE SET NULL`, so a delete would
+silently orphan a real document), on a status past CONFIRMED, on more than one
+payment, and on vouchers already in circulation.
+
+Vouchers are the part that does not cascade: `pwp_codes.source_doc_no` /
+`.redeemed_doc_no` carry **no FK** to the SO, so deleting — or cancelling — an
+order leaves its issued vouchers AVAILABLE and redeemable. The script cleans up
+after itself (deletes what the order issued, hands back with `restore_redeemed=1`
+what was spent on it); **the app's cancel path still does not** — see
+`BUG-HISTORY.md` 2026-07-28.
+
 ### Processing-Date save gates (aggregated `validation_failed`)
 
 Setting or changing the Processing Date (`internal_expected_dd` — the UI's
@@ -91,6 +114,25 @@ Related short-circuit gates: Processing + Delivery all-or-nothing
 (`processing_date_remove_forbidden`), and the processing-date LOCK once the day
 elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
 writes `internal_expected_dd`.
+
+### Selling-price authoring — who may set the line price
+
+The unit selling price is **operator-authored** and the trust gate is by SESSION,
+not role (Owner ruling, `mfg-sales-orders.ts` `isPosTabletCaller`):
+- **POS-tablet session** (`origin='pos'`, minted at `/api/pos/pin-login`): the
+  server recomputes the authoritative catalog price and **drift-rejects (400)** a
+  deviating client price — the anti-tamper non-negotiable. (Empty until the 2990
+  POS repoints here.)
+- **Every other session** (desktop web ERP, mobile, invite, TOTP): **not POS →
+  never drift-rejected.** Owner ruling 2026-07: a salesperson may hand-type the
+  price. `recomputeFromSnapshot(..., trustOperatorSelling=true)` — passed on the
+  create / add-line / patch paths as `!isPosTabletCaller` — persists the operator's
+  entered price instead of normalising a catalog line to `sell_price_sen` (client
+  0 = "not provided" still fills the catalog price). COST stays a server snapshot.
+- **Frontend gate**: `SoLineCard` / `MobileNewSO` `canEditPrice = isAdminLevel ||
+  isHatchSales`; the Houzs bridge (`vendor/scm/lib/auth.ts`) now returns
+  `isHatchSales` true for `sales` (+ `super_admin`), so the price input is editable
+  for salespersons on both surfaces.
 
 ---
 

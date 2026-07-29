@@ -118,6 +118,7 @@ import {
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
 import { useStaff, usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
+import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { soStatusDisplay, type DeliveryState, type SoLifecycle } from '../../vendor/scm/lib/so-status';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useAuth } from '../../vendor/scm/lib/auth';
@@ -272,7 +273,9 @@ type SoHeader = {
      amendment (status NOT IN SENT/REJECTED). */
   amendment_eligible?: boolean;
   has_open_amendment?: boolean;
-  open_amendment?: { id: string; status: string; amendment_no: string } | null;
+  open_amendment?: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
+  /* Two-lane rework: up to TWO can be open at once (one per lane). */
+  open_amendments?: Array<{ id: string; status: string; amendment_no: string; lane?: string | null }> | null;
   // ── PR #35 additions ────────────────────────────────────────────────
   customer_id: string | null;
   customer_state: string | null;
@@ -1013,7 +1016,7 @@ export const SalesOrderDetail = () => {
       });
       /* 2. The approval half — frozen header fields + line diffs. */
       amendKeyRef.current ??= newIdempotencyKey();
-      await createAmendment.mutateAsync({
+      const createdRes = await createAmendment.mutateAsync({
         docNo: header.doc_no,
         reason: reason.trim() || undefined,
         lines,
@@ -1022,10 +1025,28 @@ export const SalesOrderDetail = () => {
       });
       setSavingOrder(false);
       endEditSession();
-      notify({
-        title: 'Amendment submitted',
-        body: 'It now needs supplier confirmation, then approval, before the order is revised.',
-      });
+      /* Two-lane rework: the server classifies (and may SPLIT) the request —
+         product changes go to Purchasing, delivery changes to Logistics, each
+         applied by ONE signature. Tell the operator exactly what was raised. */
+      const createdList = ((createdRes as unknown as {
+        amendments?: Array<{ amendment_no?: string | null; lane?: string | null }>;
+      } | undefined)?.amendments ?? []);
+      const laneName = (l?: string | null) =>
+        l === 'LINES' ? 'Purchasing' : l === 'DELIVERY' ? 'Logistics' : '';
+      notify(createdList.length > 1
+        ? {
+          title: 'Amendment split into two approvals',
+          body: `${createdList.map((a) => `${a.amendment_no ?? ''} → ${laneName(a.lane)}`).join('; ')}. Each applies as soon as its approver signs.`,
+        }
+        : createdList[0]?.lane
+          ? {
+            title: 'Amendment submitted',
+            body: `Waiting for ${laneName(createdList[0].lane)} — one signature applies it to the order.`,
+          }
+          : {
+            title: 'Amendment submitted',
+            body: 'It now needs approval before the order is revised.',
+          });
     } catch (e) {
       setSavingOrder(false);
       // authed-fetch already humanises the API error to one plain sentence.
@@ -1382,11 +1403,16 @@ export const SalesOrderDetail = () => {
      pending banner + its supplier-confirm / approve actions. */
   const amendmentEligible = soAmendmentEligible(header, isLocked);
   const openAmendment = header.open_amendment ?? null;
-  const hasOpenAmendment = Boolean(header.has_open_amendment) && openAmendment != null;
-  // While an amendment is already open, a second one can't be raised — the edit
-  // page reverts to the normal (direct) Save so the operator isn't blocked from
-  // fixing a still-editable field, and the amendment work happens in the banner.
-  const amendmentMode = amendmentEligible && !hasOpenAmendment;
+  /* Two-lane rework: up to TWO amendments can be awaiting approval (one per
+     lane). A LEGACY open row (lane null, mid two-gate chain) still blocks
+     everything; lane rows only block their own lane — the server 409s a
+     same-lane resubmission with a plain message, so the editor stays usable
+     while ONE lane is free. */
+  const openAmendments = header.open_amendments ?? (openAmendment ? [openAmendment] : []);
+  const legacyOpenAmendment = openAmendments.some((a) => a.lane == null);
+  const bothLanesBusy =
+    openAmendments.some((a) => a.lane === 'LINES') && openAmendments.some((a) => a.lane === 'DELIVERY');
+  const amendmentMode = amendmentEligible && !legacyOpenAmendment && !bothLanesBusy;
 
   /* Line editing is locked by EITHER the status/downstream lock OR the process
      lock — both mean the lines are no longer ours to change directly.
@@ -1809,8 +1835,8 @@ export const SalesOrderDetail = () => {
           An amendment is in flight. Show its status pill + the gate actions,
           gated by permission AND the amendment's current state, plus a "view
           changes" link opening the before/after diff. */}
-      {hasOpenAmendment && openAmendment && (
-        <div style={{
+      {openAmendments.map((oa) => (
+        <div key={oa.id} style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           flexWrap: 'wrap', gap: 'var(--space-3)',
           padding: 'var(--space-3) var(--space-4)',
@@ -1821,10 +1847,16 @@ export const SalesOrderDetail = () => {
         }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <History {...ICON} />
-            <span>Amendment <strong>{openAmendment.amendment_no}</strong> pending</span>
-            <StatusPill docType="soAmendment" status={openAmendment.status} />
+            <span>Amendment <strong>{oa.amendment_no}</strong> pending</span>
+            <StatusPill docType={oa.lane ? 'soAmendmentLane' : 'soAmendment'} status={oa.status} />
+            {/* Two-lane rework: say WHO it is waiting on. */}
+            {(oa.lane === 'LINES' || oa.lane === 'DELIVERY') && (
+              <span style={{ color: 'var(--fg-muted)' }}>
+                waiting for {oa.lane === 'LINES' ? 'Purchasing' : 'Logistics'}
+              </span>
+            )}
             <button type="button"
-              onClick={() => setViewingAmendmentId(openAmendment.id)}
+              onClick={() => setViewingAmendmentId(oa.id)}
               style={{
                 background: 'none', border: 'none', padding: 0, cursor: 'pointer',
                 color: 'var(--c-burnt)', fontWeight: 600, fontSize: 'var(--fs-13)',
@@ -1833,36 +1865,40 @@ export const SalesOrderDetail = () => {
               view changes
             </button>
           </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            {/* Record supplier confirmation — only at REQUESTED, gated on perm */}
-            {openAmendment.status === 'REQUESTED' && canSupplierConfirm && (
-              <Button variant="primary"
-                onClick={() => setShowSupplierForm((v) => !v)}
-                disabled={supplierConfirm.isPending}>
-                <Check {...ICON} />
-                <span>Record supplier confirmation</span>
-              </Button>
-            )}
-            {/* Approve SO revision — only at SUPPLIER_PENDING, gated on perm */}
-            {openAmendment.status === 'SUPPLIER_PENDING' && canApproveSo && (
-              <Button variant="primary"
-                onClick={handleApproveSo} disabled={approveSo.isPending}>
-                <Check {...ICON} />
-                <span>Approve SO revision</span>
-              </Button>
-            )}
-          </span>
+          {/* Lane rows approve on the Amendment detail page (one signature);
+              the inline gates below are the LEGACY chain's only. */}
+          {oa.lane == null && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              {/* Record supplier confirmation — only at REQUESTED, gated on perm */}
+              {oa.status === 'REQUESTED' && canSupplierConfirm && (
+                <Button variant="primary"
+                  onClick={() => setShowSupplierForm((v) => !v)}
+                  disabled={supplierConfirm.isPending}>
+                  <Check {...ICON} />
+                  <span>Record supplier confirmation</span>
+                </Button>
+              )}
+              {/* Approve SO revision — only at SUPPLIER_PENDING, gated on perm */}
+              {oa.status === 'SUPPLIER_PENDING' && canApproveSo && (
+                <Button variant="primary"
+                  onClick={handleApproveSo} disabled={approveSo.isPending}>
+                  <Check {...ICON} />
+                  <span>Approve SO revision</span>
+                </Button>
+              )}
+            </span>
+          )}
           {/* Inline supplier-confirmation form (ref + note + attachment key) */}
-          {showSupplierForm && openAmendment.status === 'REQUESTED' && canSupplierConfirm && (
+          {oa.lane == null && showSupplierForm && oa.status === 'REQUESTED' && canSupplierConfirm && (
             <div style={{ flexBasis: '100%' }}>
               <SupplierConfirmForm
-                amendmentId={openAmendment.id}
+                amendmentId={oa.id}
                 onDone={() => setShowSupplierForm(false)}
               />
             </div>
           )}
         </div>
-      )}
+      ))}
 
       {/* ── Tab strip (Phase 1-C) — Order vs Revisions ────────────────
           The Revisions tab lists prior SO snapshots read-only. Default is the
@@ -2792,6 +2828,15 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
        delivery destination, same as Postcode. Without it here a City change on
        an amendment-eligible SO would be silently dropped from the request. */
     city:                 form.city,
+    /* Address lines joined 2026-07-27 (two-lane phase 2): a street/unit change
+       on a locked SO is a Logistics-approved amendment, no longer a direct
+       save. Without these here the request would silently drop the change —
+       the exact City defect this table exists to prevent. The editor form
+       collects TWO address lines (address3/4 are legacy/postcode-mirror
+       columns with no input here); buildAmendmentHeaderChanges skips keys the
+       surface doesn't collect, so omitting them is the correct shape. */
+    address1:             form.address1,
+    address2:             form.address2,
   };
   const lockedHeaderOriginal = {
     internalExpectedDd:   header.internal_expected_dd ?? '',
@@ -2799,6 +2844,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     customerState:        header.customer_state ?? '',
     postcode:             header.postcode ?? header.address4 ?? '',
     city:                 header.city ?? '',
+    address1:             header.address1 ?? '',
+    address2:             header.address2 ?? '',
   };
 
   const trySave = (
@@ -3186,26 +3233,30 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                     a City change wrote straight through on a locked, PO'd SO.
                     It is CONTROLLED now (so-field-policy) and rides the
                     amendment when the SO is amendment-eligible. */}
-                <select className={styles.fieldSelect} value={form.city}
-                  onChange={(e) => setForm((s) => ({ ...s, city: e.target.value, postcode: '' }))}
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  value={form.city}
+                  onChange={(v) => setForm((s) => ({ ...s, city: v, postcode: '' }))}
                   disabled={inputsDisabled || stateLocked || !form.state}
-                  title={stateLocked ? 'Processing has passed — City is locked (it is part of the PO delivery location).' : undefined}>
-                  <option value="">{form.state ? 'Pick city' : '— pick state first'}</option>
-                  {sortByText(cities).map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+                  title={stateLocked ? 'Processing has passed — City is locked (it is part of the PO delivery location).' : undefined}
+                  placeholder={form.state ? 'Pick city' : '— pick state first'}
+                  options={sortByText(cities).map((c) => ({ value: c, label: c }))}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Postcode</span>
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={form.postcode}
-                  onChange={(e) => set('postcode', e.target.value)}
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  value={form.postcode}
+                  onChange={(v) => set('postcode', v)}
                   disabled={inputsDisabled || stateLocked || !form.city}
-                  title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}>
-                  <option value="">{form.city ? 'Pick postcode' : '— pick city first'}</option>
-                  {sortByNumeric(postcodes).map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
+                  title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}
+                  placeholder={form.city ? 'Pick postcode' : '— pick city first'}
+                  options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>

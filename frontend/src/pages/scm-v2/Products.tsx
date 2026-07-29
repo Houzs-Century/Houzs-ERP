@@ -102,7 +102,7 @@ import {
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataTable, type Column } from '../../components/DataTable';
 import { SkeletonRows } from '../../vendor/scm/components/Skeleton';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { usePrompt } from '../../vendor/scm/components/PromptDialog';
@@ -113,6 +113,7 @@ import { FabricsTable } from '../../vendor/scm/components/FabricsTable';
 import { SofaComboTab } from '../../vendor/scm/components/SofaComboTab';
 import { FabricTracking } from './FabricTracking';
 import { formatSizeRich, formatSizeRichWithCfg, resolveSizeInfo } from '../../vendor/scm/lib/size-info';
+import { formatPhone } from '../../vendor/shared/phone';
 import { ProductModels, NewModelDialog } from './ProductModels';
 import { VariantsTab } from './products/VariantsTab';
 import { Categories } from './Categories';
@@ -610,45 +611,24 @@ const SkuMasterTab = () => {
   const vStart = canVirtualize ? winRange.start : 0;
   const vEnd = canVirtualize ? Math.min(rows.length, winRange.end) : rows.length;
 
-  /* ── DataGrid conversion (owner request 2026-06-12) ─────────────────
-     Normal viewing renders through the shared DataGrid (sorting, per-column
-     filters, column show/hide, reorder/pin, layout persistence). Edit
-     Prices mode keeps the legacy table below — DataGrid can't host the
-     inline price-edit cells (PriceInput / BrandingInput draft buffers live
-     on the memoized ProductRow), so the legacy markup stays the editor.
-     Category chips / search / Export / Import / bulk actions above are
-     untouched and drive both views. */
-  const gridColumns = useMemo<DataGridColumn<MfgProductRow>[]>(() => {
-    const stop = {
-      onClick: (e: React.MouseEvent) => e.stopPropagation(),
-      onDoubleClick: (e: React.MouseEvent) => e.stopPropagation(),
-    };
-    const cols: DataGridColumn<MfgProductRow>[] = [
-      {
-        key: 'sel',
-        label: '',
-        width: 36,
-        minWidth: 36,
-        sortable: false,
-        groupable: false,
-        accessor: (r) => (
-          <span {...stop} style={{ display: 'inline-flex' }}>
-            <input
-              type="checkbox"
-              aria-label={`Select ${r.code}`}
-              checked={selectedIds.has(r.id)}
-              onChange={() => toggleRow(r.id)}
-              style={{ cursor: 'pointer' }}
-            />
-          </span>
-        ),
-        searchValue: () => '',
-      },
+  /* ── Batch 2: shared DataTable (was DataGrid, owner request 2026-06-12) ──
+     Normal viewing renders through DataTable (sorting, per-column filters,
+     column show/hide, layout persistence). Row selection moved off the
+     hand-rolled checkbox column onto DataTable's first-class `selection`
+     (header select-all with indeterminate comes with it, so the old toolbar
+     checkbox label is gone). Edit Prices mode keeps the legacy table below —
+     the shared table can't host the inline price-edit cells (PriceInput /
+     BrandingInput draft buffers live on the memoized ProductRow), so the
+     legacy markup stays the editor. Category chips / search / Export /
+     Import / bulk actions above are untouched and drive both views. */
+  const gridColumns = useMemo<Column<MfgProductRow>[]>(() => {
+    const cols: Column<MfgProductRow>[] = [
       {
         key: 'code',
         label: 'Product Code',
-        width: 180,
-        accessor: (r) => (
+        width: '180px',
+        getValue: (r) => r.code ?? '',
+        render: (r) => (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <button
               type="button"
@@ -666,15 +646,13 @@ const SkuMasterTab = () => {
             <span className={styles.codeChip}>{r.code}</span>
           </span>
         ),
-        searchValue: (r) => r.code,
-        filterValue: (r) => r.code,
-        sortFn: (a, b) => (a.code ?? '').localeCompare(b.code ?? ''),
       },
       {
         key: 'desc',
         label: 'Description',
-        width: 240,
-        accessor: (r) => (
+        width: '240px',
+        getValue: (r) => r.name ?? '',
+        render: (r) => (
           <span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
               <span className={styles.nameCompact}>{r.name}</span>
@@ -691,34 +669,27 @@ const SkuMasterTab = () => {
             {r.description && <div className={styles.nameSubCompact}>{r.description}</div>}
           </span>
         ),
-        searchValue: (r) => `${r.name} ${r.description ?? ''}${r.one_shot ? ' one-shot' : ''}`,
-        filterValue: (r) => r.name,
-        sortFn: (a, b) => (a.name ?? '').localeCompare(b.name ?? ''),
       },
     ];
     if (isSofaView) {
       cols.push({
         key: 'model',
         label: 'Model',
-        width: 120,
-        accessor: (r) => r.base_model ?? '—',
-        filterValue: (r) => r.base_model ?? '—',
+        width: '120px',
+        getValue: (r) => r.base_model ?? '',
+        render: (r) => r.base_model ?? '—',
       });
       for (const s of sofaSizes) {
         cols.push({
           key: `size-${s}`,
           label: s,
-          width: 110,
+          width: '110px',
           align: 'right',
-          accessor: (r) => {
+          getValue: (r) => priceForHeightTier(r.seat_height_prices, s, tier) ?? -1,
+          render: (r) => {
             const sen = priceForHeightTier(r.seat_height_prices, s, tier);
             return <span className={sen ? styles.price : styles.priceEmpty}>{fmtRm(sen)}</span>;
           },
-          searchValue: () => '',
-          filterValue: (r) => fmtRm(priceForHeightTier(r.seat_height_prices, s, tier)),
-          sortFn: (a, b) =>
-            (priceForHeightTier(a.seat_height_prices, s, tier) ?? -1)
-            - (priceForHeightTier(b.seat_height_prices, s, tier) ?? -1),
         });
       }
     } else if (isMattressView) {
@@ -726,33 +697,30 @@ const SkuMasterTab = () => {
         {
           key: 'branding',
           label: 'Branding',
-          width: 130,
-          accessor: (r) => r.branding
+          width: '130px',
+          getValue: (r) => r.branding ?? '',
+          render: (r) => r.branding
             ? <span className={styles.catPill}>{r.branding}</span>
             : <span className={styles.priceEmpty}>—</span>,
-          searchValue: (r) => r.branding ?? '',
-          filterValue: (r) => r.branding ?? '—',
         },
         {
           key: 'size',
           label: 'Size',
-          width: 120,
-          accessor: (r) => r.size_label ?? '—',
-          filterValue: (r) => r.size_label ?? '—',
+          width: '120px',
+          getValue: (r) => r.size_label ?? '',
+          render: (r) => r.size_label ?? '—',
         },
         {
           key: 'price',
           label: 'Price',
-          width: 120,
+          width: '120px',
           align: 'right',
-          accessor: (r) => (
+          getValue: (r) => r.base_price_sen ?? -1,
+          render: (r) => (
             <span className={r.base_price_sen ? styles.price : styles.priceEmpty}>
               {fmtRm(r.base_price_sen)}
             </span>
           ),
-          searchValue: () => '',
-          filterValue: (r) => fmtRm(r.base_price_sen),
-          sortFn: (a, b) => (a.base_price_sen ?? -1) - (b.base_price_sen ?? -1),
         },
       );
     } else {
@@ -760,83 +728,75 @@ const SkuMasterTab = () => {
         {
           key: 'category',
           label: 'Category',
-          width: 110,
-          accessor: (r) => <span className={styles.catPill}>{r.category}</span>,
-          searchValue: (r) => r.category,
-          filterValue: (r) => r.category,
+          width: '110px',
+          getValue: (r) => r.category,
+          render: (r) => <span className={styles.catPill}>{r.category}</span>,
         },
         {
           key: 'size',
           label: 'Size',
-          width: 120,
-          accessor: (r) => r.size_label ?? '—',
-          filterValue: (r) => r.size_label ?? '—',
+          width: '120px',
+          getValue: (r) => r.size_label ?? '',
+          render: (r) => r.size_label ?? '—',
         },
         {
           key: 'price2',
           label: 'Price 2',
-          width: 110,
+          width: '110px',
           align: 'right',
-          accessor: (r) => (
+          getValue: (r) => r.base_price_sen ?? -1,
+          render: (r) => (
             <span className={r.base_price_sen ? styles.price : styles.priceEmpty}>
               {fmtRm(r.base_price_sen)}
             </span>
           ),
-          searchValue: () => '',
-          filterValue: (r) => fmtRm(r.base_price_sen),
-          sortFn: (a, b) => (a.base_price_sen ?? -1) - (b.base_price_sen ?? -1),
         },
         {
           key: 'price1',
           label: 'Price 1',
-          width: 110,
+          width: '110px',
           align: 'right',
-          accessor: (r) => (
+          getValue: (r) => r.price1_sen ?? -1,
+          render: (r) => (
             <span className={r.price1_sen ? styles.price : styles.priceEmpty}>
               {fmtRm(r.price1_sen)}
             </span>
           ),
-          searchValue: () => '',
-          filterValue: (r) => fmtRm(r.price1_sen),
-          sortFn: (a, b) => (a.price1_sen ?? -1) - (b.price1_sen ?? -1),
         },
       );
     }
     cols.push(
       {
         // 0166 — SKU barcode. Shown by default (purchaser request). Edit from
-        // the SKU detail drawer (double-click a row) or set it when creating a SKU.
+        // the SKU detail drawer (click a row) or set it when creating a SKU.
         key: 'barcode',
         label: 'Barcode',
-        width: 140,
-        accessor: (r) => r.barcode
+        width: '140px',
+        getValue: (r) => r.barcode ?? '',
+        render: (r) => r.barcode
           ? <span className={styles.codeChip}>{r.barcode}</span>
           : <span className={styles.priceEmpty}>—</span>,
-        searchValue: (r) => r.barcode ?? '',
-        filterValue: (r) => r.barcode ?? '—',
-        sortFn: (a, b) => (a.barcode ?? '').localeCompare(b.barcode ?? ''),
       },
       {
         key: 'unit',
         label: 'Unit (m³)',
-        width: 90,
+        width: '90px',
         align: 'right',
-        accessor: (r) => fmtUnit(r.unit_m3_milli),
-        filterValue: (r) => fmtUnit(r.unit_m3_milli),
-        sortFn: (a, b) => a.unit_m3_milli - b.unit_m3_milli,
+        getValue: (r) => r.unit_m3_milli,
+        render: (r) => fmtUnit(r.unit_m3_milli),
       },
       {
         key: 'status',
         label: 'Status',
-        width: 90,
-        accessor: (r) => r.status,
-        filterValue: (r) => r.status,
+        width: '90px',
+        getValue: (r) => r.status,
+        render: (r) => r.status,
       },
     );
     return cols;
-  }, [isSofaView, isMattressView, sofaSizes, tier, selectedIds, toggleRow]);
+  }, [isSofaView, isMattressView, sofaSizes, tier]);
 
-  const gridStorageKey = `dg-products-sku-${isSofaView ? 'sofa' : isMattressView ? 'mattress' : 'default'}`;
+  const gridTableId = `products-sku-${isSofaView ? 'sofa' : isMattressView ? 'mattress' : 'default'}`;
 
   return (
     <>
@@ -985,40 +945,34 @@ const SkuMasterTab = () => {
       )}
 
       {!editMode && (
-        /* Normal viewing — shared DataGrid (sort / filter / column show-hide /
-           reorder / pin / persisted layout). Double-click a row — or the truck
-           icon — opens the Suppliers drawer, same as the legacy table. The
-           select-all checkbox lives in the grid toolbar; row checkboxes feed
-           the same bulk Delete as Edit Prices mode. */
-        <DataGrid
-          rows={rows}
+        /* Batch 2: normal viewing — shared DataTable. Row CLICK — or the truck
+           icon — opens the Suppliers drawer (was double-click on DataGrid;
+           same Inventory-Balances convention). Selection is DataTable's
+           first-class checkbox column: header select-all (indeterminate)
+           replaces the old toolbar label, per-row ticks feed the same bulk
+           Delete / status actions as Edit Prices mode. Page search stays the
+           server-backed box above — no table search. */
+        <DataTable<MfgProductRow>
+          tableId={gridTableId}
+          layoutFamily={gridTableId}
+          exportName="sku-master"
+          rows={isLoading || searching ? null : rows}
+          loading={isLoading || searching}
+          emptyLabel="No products yet. Run the seed import if you just migrated the schema."
+          getRowKey={(r) => r.id}
           columns={gridColumns}
-          storageKey={gridStorageKey}
-          exportName="SKU Master"
-          rowKey={(r) => r.id}
-          hideSearch
-          onRowDoubleClick={(r) => setSuppliersRow(r)}
-          groupBanner={false}
-          isLoading={isLoading || searching}
-          emptyMessage="No products yet. Run the seed import if you just migrated the schema."
-          toolbar={
-            <label
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                fontSize: 'var(--fs-12)', color: '#767b6e', cursor: 'pointer',
-              }}
-            >
-              <input
-                type="checkbox"
-                aria-label="Select all visible SKUs"
-                checked={allSelected}
-                ref={(el) => { if (el) el.indeterminate = someSelected; }}
-                onChange={toggleAllVisible}
-                style={{ cursor: 'pointer' }}
-              />
-              <span>Select all</span>
-            </label>
-          }
+          onRowClick={(r) => setSuppliersRow(r)}
+          selection={{
+            selectedIds,
+            onToggle: toggleRow,
+            onToggleAll: (keys, all) =>
+              setSelectedIds((prev) => {
+                const n = new Set(prev);
+                if (all) for (const k of keys) n.delete(k);
+                else for (const k of keys) n.add(k);
+                return n;
+              }),
+          }}
         />
       )}
 
@@ -4625,7 +4579,7 @@ const ProductSuppliersDrawer = ({
                         {s.suppliers?.name ?? '—'}
                       </div>
                       <div style={{ fontSize: 'var(--fs-11)', color: '#767b6e' }}>
-                        {s.suppliers?.code ?? ''}{s.suppliers?.phone ? ` · ${s.suppliers.phone}` : ''}
+                        {s.suppliers?.code ?? ''}{s.suppliers?.phone ? ` · ${formatPhone(s.suppliers.phone)}` : ''}
                       </div>
                     </td>
                     <td>

@@ -391,7 +391,7 @@ export function UnbilledDeliveriesV2() {
     },
   ];
 
-  const agePillOptions = AGE_TABS.map((t) => ({ value: t.value, label: `${t.label} · ${ageCounts[t.value]}` }));
+  const agePillOptions = AGE_TABS.map((t) => ({ value: t.value, label: t.label, count: ageCounts[t.value] }));
 
   /* Every tile below is a reduce over `filtered`, which is [] until the query
      lands and stays [] when it fails. On this page that renders as "Not billed

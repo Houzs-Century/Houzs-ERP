@@ -31,7 +31,6 @@ import {
   type InventoryLot,
 } from '../../vendor/scm/lib/inventory-queries';
 import { adjustmentReasonLabel, fmtCenti, fmtDate as fmtDateShared, fmtQty } from '@2990s/shared';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import { DataTable, type Column } from '../../components/DataTable';
 import styles from './Inventory.module.css';
 import chrome from './SalesOrderDetail.module.css';
@@ -120,35 +119,34 @@ export const StockCard = () => {
 
   const lots: InventoryLot[] = lotsQ.data ?? [];
 
-  /* DataGrid conversion (dg-inventory rollout) — the Movements ledger renders
-     through the shared grid. Running Balance is precomputed per row above
-     (chronological), so it stays correct no matter how the grid re-sorts.
+  /* Batch 2 — the Movements ledger renders through the shared DataTable
+     (was DataGrid). Running Balance is precomputed per row above
+     (chronological), so it stays correct no matter how the table re-sorts.
      The Per-Warehouse Balance and FIFO Lots cards stay as plain tables —
      small summary views with their own collapse toggle. */
   type MovementRow = InventoryMovement & { runningBalance: number };
-  const movementColumns = useMemo<DataGridColumn<MovementRow>[]>(() => {
-    // SHORT code-name only ("KL WAREHOUSE") — the ONE canonical warehouse label
-    // (owner 2026-07-24). Not a code+name concat, not the long `name`.
-    const whName = (id: string) => {
-      const wh = warehouses.find((w) => w.id === id);
-      return wh ? wh.code : '—';
-    };
+  // SHORT code-name only ("KL WAREHOUSE") — the ONE canonical warehouse label
+  // (owner 2026-07-24). Not a code+name concat, not the long `name`.
+  const whName = useMemo(() => {
+    const byId = new Map(warehouses.map((w) => [w.id, w.code]));
+    return (id: string) => byId.get(id) ?? '—';
+  }, [warehouses]);
+  const movementColumns = useMemo<Column<MovementRow>[]>(() => {
     const signedQty = (m: MovementRow) => m.movement_type === 'OUT' ? -m.qty : m.qty;
     return [
       {
         key: 'date',
         label: 'Date',
-        width: 130,
-        accessor: (m) => <span className={styles.numCellZero}>{fmtDateTime(m.created_at)}</span>,
-        searchValue: (m) => fmtDateTime(m.created_at),
-        filterValue: (m) => fmtDateTime(m.created_at),
-        sortFn: (a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''),
+        width: '130px',
+        getValue: (m) => m.created_at ?? '',
+        render: (m) => <span className={styles.numCellZero}>{fmtDateTime(m.created_at)}</span>,
       },
       {
         key: 'type',
         label: 'Type',
-        width: 110,
-        accessor: (m) => (
+        width: '110px',
+        getValue: (m) => m.movement_type,
+        render: (m) => (
           <span className={`${styles.movementPill} ${
             m.movement_type === 'IN' ? styles.movementIn
             : m.movement_type === 'OUT' ? styles.movementOut
@@ -163,15 +161,13 @@ export const StockCard = () => {
             {m.movement_type}
           </span>
         ),
-        searchValue: (m) => m.movement_type,
-        filterValue: (m) => m.movement_type,
-        sortFn: (a, b) => (a.movement_type ?? '').localeCompare(b.movement_type ?? ''),
       },
       {
         key: 'sourceDoc',
         label: 'Source Doc',
-        width: 130,
-        accessor: (m) => {
+        width: '130px',
+        getValue: (m) => m.source_doc_no ?? '',
+        render: (m) => {
           const href = docHrefFor(m);
           return m.source_doc_no ? (
             href ? (
@@ -183,24 +179,21 @@ export const StockCard = () => {
             <span className={styles.numCellZero}>—</span>
           );
         },
-        searchValue: (m) => m.source_doc_no ?? '',
-        filterValue: (m) => m.source_doc_no ?? '—',
-        sortFn: (a, b) => (a.source_doc_no ?? '').localeCompare(b.source_doc_no ?? ''),
       },
       {
         key: 'warehouse',
         label: 'Warehouse',
-        width: 150,
-        accessor: (m) => whName(m.warehouse_id),
-        searchValue: (m) => whName(m.warehouse_id),
-        filterValue: (m) => whName(m.warehouse_id),
+        width: '150px',
+        getValue: (m) => whName(m.warehouse_id),
+        render: (m) => whName(m.warehouse_id),
       },
       {
         key: 'qty',
         label: 'Qty',
-        width: 90,
+        width: '90px',
         align: 'right',
-        accessor: (m) => {
+        getValue: (m) => signedQty(m),
+        render: (m) => {
           const qtySign = m.movement_type === 'IN'
             ? '+'
             : m.movement_type === 'OUT'
@@ -215,61 +208,65 @@ export const StockCard = () => {
             </span>
           );
         },
-        searchValue: (m) => String(m.qty),
-        filterValue: (m) => String(m.qty),
-        sortFn: (a, b) => signedQty(a) - signedQty(b),
       },
       {
         key: 'unitCost',
         label: 'Unit Cost',
-        width: 110,
+        width: '110px',
         align: 'right',
-        accessor: (m) => (
+        getValue: (m) => (m.unit_cost_sen ?? 0) / 100,
+        render: (m) => (
           <span className={`${styles.numCell} ${styles.numCellZero}`}>
             {m.unit_cost_sen && m.unit_cost_sen > 0 ? fmtRm(m.unit_cost_sen) : '—'}
           </span>
         ),
-        searchValue: () => '',
-        filterValue: (m) => m.unit_cost_sen && m.unit_cost_sen > 0 ? fmtRm(m.unit_cost_sen) : '—',
-        sortFn: (a, b) => (a.unit_cost_sen ?? 0) - (b.unit_cost_sen ?? 0),
       },
       {
         key: 'running',
         label: 'Running Balance',
-        width: 130,
+        width: '130px',
         align: 'right',
-        accessor: (m) => (
+        getValue: (m) => m.runningBalance,
+        render: (m) => (
           <span className={styles.numCell} style={{ fontWeight: 700 }}>
             {fmtQty(m.runningBalance)}
           </span>
         ),
-        searchValue: (m) => String(m.runningBalance),
-        filterValue: (m) => String(m.runningBalance),
-        sortFn: (a, b) => a.runningBalance - b.runningBalance,
       },
       {
         key: 'reason',
         label: 'Reason',
-        width: 130,
+        width: '130px',
         // reason_code is set on ADJUSTMENT movements (and COUNT on stock-take
         // corrections); other movement types have none → '—'. The raw code
         // (WRITEOFF / DAMAGE …) is mapped to its plain label, matching mobile.
-        accessor: (m) => (
+        getValue: (m) => (m.reason_code ? adjustmentReasonLabel(m.reason_code) : ''),
+        render: (m) => (
           <span className={styles.numCellZero}>{m.reason_code ? adjustmentReasonLabel(m.reason_code) : '—'}</span>
         ),
-        searchValue: (m) => (m.reason_code ? adjustmentReasonLabel(m.reason_code) : ''),
-        filterValue: (m) => (m.reason_code ? adjustmentReasonLabel(m.reason_code) : '—'),
       },
       {
         key: 'notes',
         label: 'Notes',
-        width: 200,
-        accessor: (m) => <span className={`${styles.numCellZero} ${styles.notesCell}`} title={m.notes ?? ''}>{m.notes ?? '—'}</span>,
-        searchValue: (m) => m.notes ?? '',
-        filterValue: (m) => m.notes ?? '—',
+        width: '200px',
+        getValue: (m) => m.notes ?? '',
+        render: (m) => <span className={`${styles.numCellZero} ${styles.notesCell}`} title={m.notes ?? ''}>{m.notes ?? '—'}</span>,
       },
     ];
-  }, [warehouses]);
+  }, [whName]);
+
+  /* Loaded-only search over the ledger — the page filters (DataTable renders
+     box + hint), matching the old DataGrid's built-in search fields. */
+  const [movementSearch, setMovementSearch] = useState('');
+  const visibleMovements = useMemo(() => {
+    const term = movementSearch.trim().toLowerCase();
+    if (!term) return movementsWithBalance;
+    return movementsWithBalance.filter((m) =>
+      `${fmtDateTime(m.created_at)} ${m.movement_type} ${m.source_doc_no ?? ''} ${whName(m.warehouse_id)} ${m.qty} ${m.reason_code ? adjustmentReasonLabel(m.reason_code) : ''} ${m.notes ?? ''}`
+        .toLowerCase()
+        .includes(term),
+    );
+  }, [movementsWithBalance, movementSearch, whName]);
 
   // ── Stats (always reflect the active warehouse filter) ────────────────
   const productName =
@@ -428,15 +425,20 @@ export const StockCard = () => {
               : String(movementsQ.error)}
           </div>
         ) : (
-          <DataGrid<MovementRow>
-            rows={movementsWithBalance}
+          <DataTable<MovementRow>
+            tableId="stockcard-movements"
+            layoutFamily="stockcard-movements"
+            exportName="stock-card-movements"
+            rows={movementsQ.isLoading ? null : visibleMovements}
+            loading={movementsQ.isLoading}
+            emptyLabel="No movements for this SKU yet."
+            getRowKey={(m) => m.id}
             columns={movementColumns}
-            storageKey="dg-stockcard-movements"
-            rowKey={(m) => m.id}
-            searchPlaceholder="Search movements…"
-            groupBanner={false}
-            isLoading={movementsQ.isLoading}
-            emptyMessage="No movements for this SKU yet."
+            search={{
+              value: movementSearch,
+              onChange: setMovementSearch,
+              placeholder: 'Search movements…',
+            }}
           />
         )}
       </section>

@@ -12,7 +12,7 @@ import { useSearchResultTransition } from "../hooks/useServerSearch";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesNonDirector, isSalesDirectorUser } from "../auth/salesAccess";
 import { capability } from "../auth/capabilities";
-import { readProjectAccess, projectAccessUnresolved } from "../auth/projectAccess";
+import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
@@ -1306,6 +1306,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 notify={notify}
                 reloadPhotos={reloadPhotos}
                 confirm={confirm}
+                prompt={prompt}
               />
             )}
 
@@ -1425,6 +1426,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 notify={notify}
                 reloadPhotos={reloadPhotos}
                 confirm={confirm}
+                prompt={prompt}
               />
             )}
 
@@ -1531,17 +1533,28 @@ function SalesAttending({
   reload: () => void;
 }) {
   const [adding, setAdding] = useState(false);
-  const [pick, setPick] = useState("");
+  // Multi-select (owner 2026-07-23): tick several reps, add them in one go —
+  // mirrors the desktop checkbox list instead of the old one-at-a-time picker.
+  const [picks, setPicks] = useState<Set<number>>(new Set());
   const present = new Set(attendees.map((a) => a.sales_rep_id));
   const available = options.filter((o) => !present.has(o.id));
 
-  const add = async () => {
-    const repId = parseInt(pick, 10);
-    if (!Number.isFinite(repId)) return;
+  const toggle = (id: number) =>
+    setPicks((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
+  const addSelected = async () => {
+    if (!picks.size) return;
     setBusy(true);
     try {
-      await api.post(`/api/projects/${projectId}/sales-attendees`, { sales_rep_id: repId });
-      setPick("");
+      for (const repId of picks) {
+        await api.post(`/api/projects/${projectId}/sales-attendees`, { sales_rep_id: repId });
+      }
+      setPicks(new Set());
       setAdding(false);
       reload();
     } catch (e) {
@@ -1574,15 +1587,33 @@ function SalesAttending({
         )}
       </div>
       {adding && (
-        <div style={{ display: "flex", gap: 7, marginBottom: 8 }}>
-          <select className="fld-i" value={pick} onChange={(e) => setPick(e.target.value)} style={{ flex: 1 }} disabled={busy}>
-            <option value="">Select a rep…</option>
-            {available.map((o) => (
-              <option key={o.id} value={o.id}>{[o.name || `#${o.id}`, o.code].filter(Boolean).join(" · ")}</option>
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid #e3e6e0", borderRadius: 10 }}>
+            {available.length === 0 && (
+              <div style={{ fontSize: 12, color: "#9aa093", padding: "9px 11px" }}>Everyone is already attending.</div>
+            )}
+            {available.map((o, i) => (
+              <label
+                key={o.id}
+                style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderTop: i === 0 ? "none" : "1px solid #eceee9", cursor: busy ? "default" : "pointer" }}
+              >
+                <input type="checkbox" checked={picks.has(o.id)} disabled={busy} onChange={() => toggle(o.id)} />
+                <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{o.code || "—"}</span>
+                <span style={{ fontSize: 13 }}>{o.name || `#${o.id}`}</span>
+              </label>
             ))}
-          </select>
-          <button className="tinybtn" style={{ background: "#16695f", borderColor: "#16695f", color: "#fff" }} disabled={busy || !pick} onClick={add}>Add</button>
-          <button className="tinybtn" disabled={busy} onClick={() => { setAdding(false); setPick(""); }}>Cancel</button>
+          </div>
+          <div style={{ display: "flex", gap: 7, marginTop: 7 }}>
+            <button
+              className="tinybtn"
+              style={{ background: "#16695f", borderColor: "#16695f", color: "#fff" }}
+              disabled={busy || picks.size === 0}
+              onClick={addSelected}
+            >
+              Add selected{picks.size ? ` (${picks.size})` : ""}
+            </button>
+            <button className="tinybtn" disabled={busy} onClick={() => { setAdding(false); setPicks(new Set()); }}>Cancel</button>
+          </div>
         </div>
       )}
       {attendees.length === 0 && <div style={{ fontSize: 12, color: "#9aa093" }}>None assigned.</div>}
@@ -1943,21 +1974,21 @@ function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: boolean 
   };
   if (!canEdit) {
     return cap.trim() ? (
-      <div style={{ fontSize: 11.5, color: "#6b6f63", paddingLeft: 2 }}>
+      <div style={{ fontSize: 11.5, color: "#6b6f63", paddingLeft: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
         <b style={{ color: "#8c968a" }}>Remark:</b> {cap}
       </div>
     ) : null;
   }
   return (
-    <input
+    <textarea
       className="fld-i"
       value={cap}
       disabled={saving}
+      rows={2}
       onChange={(e) => setCap(e.target.value)}
       onBlur={() => void save()}
-      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
       placeholder="Add remark…"
-      style={{ fontSize: 12, padding: "5px 8px" }}
+      style={{ fontSize: 12, padding: "5px 8px", resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
     />
   );
 }
@@ -1986,22 +2017,22 @@ function ItemRemark({ it, canEdit }: { it: ChecklistItem; canEdit: boolean }) {
   };
   if (!canEdit) {
     return (it.notes ?? "").trim() ? (
-      <div style={{ padding: "0 0 8px 24px", fontSize: 11.5, color: "#6b6f63" }}>
+      <div style={{ padding: "0 0 8px 24px", fontSize: 11.5, color: "#6b6f63", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
         <b style={{ color: "#8c968a" }}>Remark:</b> {it.notes}
       </div>
     ) : null;
   }
   return (
     <div style={{ padding: "0 0 8px 24px" }}>
-      <input
+      <textarea
         className="fld-i"
         value={val}
         disabled={saving}
+        rows={2}
         onChange={(e) => setVal(e.target.value)}
         onBlur={() => void save()}
-        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
         placeholder="Add remark…"
-        style={{ fontSize: 12, padding: "6px 9px" }}
+        style={{ fontSize: 12, padding: "6px 9px", resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
       />
     </div>
   );
@@ -2037,7 +2068,10 @@ function TaskRow({
   const na = status === "na";
   const c = it.role_label ? roleColor(it.role_label) : null;
   // A row the caller can't tick because it needs a specific permission.
-  const permBlocked = !!it.required_perm && !can(it.required_perm);
+  // Approval keys are EXPLICIT-only (owner matrix 2026-07-21) — `*` holders
+  // are not automatically approvers; see auth/projectAccess.ts.
+  const permBlocked =
+    !!it.required_perm && !holdsChecklistApproval(user?.permissions, it.required_perm);
   const canRowTick = canTick && !permBlocked;
   // Attach button: full-write users get it on every task; tick-only users
   // (drivers) only on tasks badged for THEIR role — a driver should upload
@@ -2306,7 +2340,13 @@ function TaskRow({
           </button>
         </>
       )}
-      {canTick && awaitingReview && (
+      {/* Approve / Reject (owner 2026-07-21): ALWAYS offered on an
+          approval-gated task (required_perm) to a user HOLDING that
+          permission, until the task is approved/done — no longer only after
+          a submit-for-review. Non-gated tasks keep the old behaviour
+          (buttons only while a submission awaits review). */}
+      {canTick && !done &&
+        (it.required_perm ? holdsChecklistApproval(user?.permissions, it.required_perm) : awaitingReview) && (
         <>
           <button className="tinybtn" style={{ background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={() => review("approve")}>Approve</button>
           <button className="tinybtn" style={{ background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => review("reject")}>Reject</button>
@@ -2428,7 +2468,7 @@ const isoTimePart = (iso: string | null | undefined): string => {
 // PUT /:id/phase-photos/upload → POST /:id/phase-photos). Schedule/driver/
 // lorry all persist via PATCH /:id.
 function SetupDismantle({
-  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm,
+  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm, prompt,
 }: {
   projectId: number;
   project: ProjectDetail["project"];
@@ -2450,6 +2490,7 @@ function SetupDismantle({
   notify: NotifyFn;
   reloadPhotos: () => void;
   confirm: ConfirmFn;
+  prompt: PromptFn;
 }) {
   const setupPhoto = photos.find((ph) => ph.phase === "setup");
   const dismantlePhoto = photos.find((ph) => ph.phase === "dismantle");
@@ -2457,7 +2498,21 @@ function SetupDismantle({
   const scheduleShots = photos.filter((ph): ph is PhasePhoto & { r2_key: string } => ph.phase === "schedule" && !!ph.r2_key);
   const schedRef = useRef<HTMLInputElement | null>(null);
   const [schedView, setSchedView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
-  const uploadSchedule = async (file: File) => {
+  // Remark-first-before-upload (owner 2026-07-27), same flow as the Defect List:
+  // prompt for a required remark, then the file picker; the screenshot uploads
+  // carrying that remark (stored as the phase-photo caption).
+  const pendingSchedCaptionRef = useRef<string | undefined>(undefined);
+  const startScheduleUpload = async () => {
+    const remark = await prompt({
+      title: "Remark for this schedule",
+      placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm (required)",
+      validate: (v) => (v.trim() ? null : "Please write a remark before uploading."),
+    });
+    if (remark == null || !remark.trim()) return;
+    pendingSchedCaptionRef.current = remark.trim();
+    schedRef.current?.click();
+  };
+  const uploadSchedule = async (file: File, caption?: string) => {
     if (file.size > 50 * 1024 * 1024) {
       await notify({ title: "File too large", body: "Max 50MB.", tone: "error" });
       return;
@@ -2475,7 +2530,7 @@ function SetupDismantle({
         buf,
         file.type || "application/octet-stream",
       );
-      await api.post(`/api/projects/${projectId}/phase-photos`, { phase: "schedule", r2_key: up.key, content_type: up.mime_type });
+      await api.post(`/api/projects/${projectId}/phase-photos`, { phase: "schedule", r2_key: up.key, content_type: up.mime_type, caption: caption ?? null });
       reloadPhotos();
     } catch (e) {
       await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
@@ -2544,12 +2599,21 @@ function SetupDismantle({
               ))}
             </div>
           )}
+          {scheduleShots.some((s) => s.caption) && (
+            <div style={{ marginBottom: canScheduleEdit ? 8 : 0, display: "flex", flexDirection: "column", gap: 2 }}>
+              {scheduleShots.filter((s) => s.caption).map((s) => (
+                <div key={s.id} style={{ fontSize: 11.5, color: "#6b6f63", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  <b style={{ color: "#8c968a" }}>Remark:</b> {s.caption}
+                </div>
+              ))}
+            </div>
+          )}
           {canScheduleEdit && (
             <>
-              <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => schedRef.current?.click()}>
+              <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => void startScheduleUpload()}>
                 {scheduleShots.length ? "+ Add / replace screenshot" : "Upload handbook schedule screenshot"}
               </button>
-              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadSchedule(f); }} />
+              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; const cap = pendingSchedCaptionRef.current; pendingSchedCaptionRef.current = undefined; if (f) void uploadSchedule(f, cap); }} />
             </>
           )}
           {schedView && (

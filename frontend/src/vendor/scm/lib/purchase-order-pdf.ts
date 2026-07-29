@@ -36,14 +36,16 @@
 // autotable didDrawPage hook + jsPDF putTotalPages.
 // ----------------------------------------------------------------------------
 
-import { effectiveDelivery, fmtMoneyCenti } from '@2990s/shared';
+import { buildDefaultSofaCells, effectiveDelivery, findModule, fmtMoneyCenti, SOFA_MODULES, type Cell, type Depth } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
+import { drawSofaLayout } from './sofa-layout-pdf';
 import { COMPANY, amountInWordsMyr, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
+import { poDisplayNumber } from './po-status';
 import {
   loadSupplierDocData,
   supplierCodeFor,
@@ -53,6 +55,10 @@ import {
 
 type PoHeader = {
   po_number:     string;
+  /** Mig 0080 — approved-revision counter. The PRINTED number carries the _R
+      suffix (poDisplayNumber) so the supplier can tell a revised order sheet
+      from the original: PO-xxx_R1, _R2… Optional: absent → no suffix. */
+  revision?:     number | null;
   /** Supplier id — drives the print-time binding lookup for lines that never
       snapshotted a supplier_sku AND the full supplier-master top-up (fax /
       attention / payment terms). Optional: missing id → '—' fallback. */
@@ -129,6 +135,72 @@ const fmtMoney = (centi: number, currency: string): string => fmtMoneyCenti(cent
 
 const fmtAmount = (centi: number): string =>
   (centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/* A sofa is split into per-MODULE PO lines. Each line's `variants` carries that
+   ONE module's spatial slot at the TOP LEVEL (x / y / rot + cellIndex), its module
+   code lives in `material_code` ("{MODEL}-2A(RHF)"), and a shared `summary` string
+   describes the whole sofa. So we build ONE cell per line and the caller groups
+   lines by `summary` into the full layout. (The earlier `variants.cells`-array
+   assumption was wrong — real lines store the slot flat, so nothing ever drew.)
+   Returns null for non-sofa / malformed / unknown-module lines. Never throws. */
+const SOFA_MODULE_IDS_BY_LEN = SOFA_MODULES.map((m) => m.id).sort((a, b) => b.length - a.length);
+function sofaCellFromLine(
+  variants: Record<string, unknown> | null | undefined,
+  materialCode: string | null | undefined,
+): { cell: Cell; depth: Depth; groupKey: string; idx: number } | null {
+  if (!variants || typeof variants !== 'object') return null;
+  const v = variants as Record<string, unknown>;
+  const x = v.x;
+  const y = v.y;
+  if (typeof x !== 'number' || !Number.isFinite(x)) return null;
+  if (typeof y !== 'number' || !Number.isFinite(y)) return null;
+  // Module id = the SOFA_MODULES id the material_code ENDS with (longest match):
+  // "XAMMAR-2A(RHF)" → "2A(RHF)".
+  const code = (materialCode ?? '').trim();
+  const moduleId = SOFA_MODULE_IDS_BY_LEN.find((id) => code.endsWith(id)) ?? null;
+  if (!moduleId || !findModule(moduleId)) return null;
+  const rot: 0 | 90 | 180 | 270 = v.rot === 90 || v.rot === 180 || v.rot === 270 ? v.rot : 0;
+  const depthRaw = v.depth;
+  const depth: Depth = typeof depthRaw === 'string' && depthRaw.trim() ? depthRaw : '24';
+  const groupKey = typeof v.summary === 'string' && v.summary.trim() ? v.summary.trim() : '';
+  const idx = typeof v.cellIndex === 'number' && Number.isFinite(v.cellIndex) ? v.cellIndex : 0;
+  return { cell: { moduleId, x, y, rot }, depth, groupKey, idx };
+}
+
+/* Resolve a sofa MODULE id (+ the BASE model it belongs to) from a
+   geometry-less BACKEND line — a sofa added via SO New / Maintenance stores
+   the module only as a per-line SKU ("{MODEL}-2A(RHF)"), never x/y/cells, so
+   `sofaCellFromLine` (which needs stored x/y) returns null for it. The module
+   is the longest SOFA_MODULES suffix the SKU code ENDS with; the base model is
+   whatever precedes it ("XAMMAR-2A(RHF)" → base "XAMMAR", module "2A(RHF)").
+   When the code carries no recognisable suffix we fall back to the trailing
+   "MODULE(HAND)" token of the material_name / description ("SOFA XAMMAR
+   2A(RHF)" → "2A(RHF)"). Returns null for non-sofa / unresolvable lines so the
+   caller can skip them. Never throws. */
+const SOFA_MODULE_TOKEN_RE = /([A-Za-z0-9]+(?:\([A-Za-z]+\))+|CNR|Console|STOOL|1NA|2NA|1S|2S|3S)\s*$/;
+function sofaModuleFromLine(
+  materialCode: string | null | undefined,
+  fallbackText: string | null | undefined,
+): { moduleId: string; baseModel: string } | null {
+  // Preferred: the SKU code's longest known-module suffix.
+  const code = (materialCode ?? '').trim();
+  if (code) {
+    const suffix = SOFA_MODULE_IDS_BY_LEN.find((id) => code.endsWith(id));
+    if (suffix && findModule(suffix)) {
+      // Base model = the code minus the module suffix (drop a trailing '-').
+      const base = code.slice(0, code.length - suffix.length).replace(/[-\s]+$/, '');
+      return { moduleId: suffix, baseModel: base };
+    }
+  }
+  // Fallback: the trailing "MODULE(HAND)" token of the name / description.
+  const text = (fallbackText ?? '').trim();
+  const m = text.match(SOFA_MODULE_TOKEN_RE);
+  const token = m?.[1]?.trim();
+  if (token && findModule(token)) {
+    return { moduleId: token, baseModel: '' };
+  }
+  return null;
+}
 
 type JsPdf = import('jspdf').jsPDF;
 type AutoTableFn = (typeof import('jspdf-autotable'))['default'];
@@ -236,7 +308,8 @@ async function renderPurchaseOrderInto(
     {
       title: 'PO DETAILS',
       rows: [
-        ['PO No', header.po_number],
+        // _R suffix (owner 2026-07-27) — the printed number shows the revision.
+        ['PO No', poDisplayNumber(header.po_number, header.revision)],
         ['Your Ref No', yourRef],
         ['Date', fmtDocDate(header.po_date)],
         /* Migration 0180 — print the EFFECTIVE (latest revised) delivery date. */
@@ -344,7 +417,7 @@ async function renderPurchaseOrderInto(
   const drawPageHeader = (pageNumber: number) => {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80);
     doc.text(
-      `${header.po_number} · Page ${pageNumber} of ${totalPagesExp}`,
+      `${poDisplayNumber(header.po_number, header.revision)} · Page ${pageNumber} of ${totalPagesExp}`,
       pageW - margin, 10, { align: 'right' },
     );
     doc.setTextColor(0);
@@ -422,10 +495,139 @@ async function renderPurchaseOrderInto(
     lastY += 4;
   }
 
-  // ── Sofa layout schematics — REMOVED from the PO PDF (owner 2026-07-24).
-  //    The "Sofa layout — front faces TV" orientation diagram was dropped from
-  //    the supplier-facing PO. The customer-facing SO PDFs are unaffected and
-  //    keep their own layout rendering.
+  // ── Sofa layout schematics (orientation aid for the supplier) ─────
+  // (Removed by #1212, owner 2026-07-24; REINSTATED per owner 2026-07-27 —
+  //  the supplier PO must carry the source SO's sofa layout diagram.)
+  // A POS sofa is split across per-module lines that share a `variants.summary`
+  // AND carry stored x/y geometry; group those lines (by SO no + summary) and
+  // build the full cells array, ordered by cellIndex. A BACKEND sofa (SO New /
+  // Maintenance) stores the module SKU per line but NO geometry — there was
+  // never a real arrangement to lose — so we RECONSTRUCT a default left→right
+  // layout from its module list (grouped by SO no + base model). Non-sofa /
+  // malformed lines fall through and are skipped. Purely additive; most POs
+  // draw nothing here. A group is EITHER geometry-based OR reconstructed, never
+  // both: a POS sofa's lines all carry geometry (never enter the fallback map)
+  // and a backend sofa's lines never carry geometry — and we additionally drop
+  // any reconstructed group whose (SO, base model) already drew from geometry.
+  type DistinctSofa = { cells: Cell[]; depth: Depth; model: string; soNo: string };
+  const sofaGroups = new Map<
+    string,
+    { parts: Array<{ cell: Cell; idx: number }>; depth: Depth; model: string; soNo: string }
+  >();
+  /* Geometry-less backend sofa lines, grouped by SO no + base model, modules
+     kept in line (= display) order for a deterministic left→right layout. */
+  const fallbackGroups = new Map<
+    string,
+    { modules: Array<{ moduleId: string }>; depth: Depth; model: string; soNo: string }
+  >();
+  /* (SO, base model) keys that already produced a geometry-based sofa — used to
+     suppress any reconstructed group that would double-draw the same build. */
+  const geometryKeys = new Set<string>();
+  const baseModelKey = (soNo: string, baseModel: string): string => `${soNo}|${baseModel.toUpperCase()}`;
+
+  for (const it of items) {
+    const soNo = (it.so_doc_no ?? '').trim();
+    const part = sofaCellFromLine(it.variants, it.material_code);
+    if (part) {
+      // ── Stored-geometry path (POS-configured sofas) — UNCHANGED. ──
+      const gk = `${soNo}|${part.groupKey}`;
+      let g = sofaGroups.get(gk);
+      if (!g) {
+        // Caption = the whole-sofa modules ("L(LHF) + 2A(RHF)", the summary up
+        // to the first '·'), else the per-line model name.
+        const model = (part.groupKey ? (part.groupKey.split('·')[0] ?? '').trim() : '')
+          || (it.material_name ?? '').trim()
+          || (it.material_code ?? '').trim();
+        g = { parts: [], depth: part.depth, model, soNo };
+        sofaGroups.set(gk, g);
+      }
+      g.parts.push({ cell: part.cell, idx: part.idx });
+      // Record the base model so a reconstructed group can't double-draw it.
+      const bm = sofaModuleFromLine(it.material_code, it.material_name ?? it.description);
+      if (bm) geometryKeys.add(baseModelKey(soNo, bm.baseModel));
+      continue;
+    }
+    // ── Reconstruction path (geometry-less BACKEND / old sofas). ──
+    if ((it.item_group ?? '').toLowerCase() !== 'sofa') continue;
+    const mod = sofaModuleFromLine(it.material_code, it.material_name ?? it.description);
+    if (!mod) continue;
+    const depthRaw = (it.variants as { depth?: unknown } | null)?.depth;
+    const depth: Depth = typeof depthRaw === 'string' && depthRaw.trim() ? depthRaw : '24';
+    const fk = baseModelKey(soNo, mod.baseModel);
+    let fg = fallbackGroups.get(fk);
+    if (!fg) {
+      const model = (it.material_name ?? '').trim() || (it.material_code ?? '').trim();
+      fg = { modules: [], depth, model, soNo };
+      fallbackGroups.set(fk, fg);
+    }
+    fg.modules.push({ moduleId: mod.moduleId });
+  }
+
+  const distinctSofas: DistinctSofa[] = [];
+  for (const g of sofaGroups.values()) {
+    const cells = g.parts.sort((a, b) => a.idx - b.idx).map((p) => p.cell);
+    if (cells.length === 0) continue;
+    distinctSofas.push({ cells, depth: g.depth, model: g.model, soNo: g.soNo });
+  }
+  for (const [fk, g] of fallbackGroups) {
+    if (geometryKeys.has(fk)) continue; // already drawn from real geometry
+    const cells = buildDefaultSofaCells(g.modules, g.depth);
+    if (cells.length === 0) continue;
+    // Caption from the module list ("L(LHF) + 2A(RHF)"), else the per-line name.
+    const caption = cells.map((c) => c.moduleId).join(' + ') || g.model;
+    distinctSofas.push({ cells, depth: g.depth, model: caption, soNo: g.soNo });
+  }
+
+  if (distinctSofas.length > 0) {
+    const contentW = pageW - margin * 2;
+    const DIAGRAM_W = 36;   // mm — ~32–38mm wide per owner
+    const DIAGRAM_H = 34;   // mm — sofa + TV block
+    const CAP_H = 4;        // mm — model + SO caption under each diagram
+    const GAP_X = 6;        // mm — horizontal gap between diagrams
+    const ROW_H = DIAGRAM_H + CAP_H + 6; // mm — one row of diagrams + caption + padding
+    const perRow = Math.max(1, Math.floor((contentW + GAP_X) / (DIAGRAM_W + GAP_X)));
+
+    // Section needs room for the title + at least one row; else new page.
+    const TITLE_H = 8;
+    if (lastY + TITLE_H + ROW_H > 285) {
+      doc.addPage(); drawPageHeader(doc.getNumberOfPages()); lastY = 20;
+    }
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0);
+    doc.text('Sofa layout — front faces TV (orientation / LHF·RHF)', margin, lastY);
+    lastY += 6;
+
+    let col = 0;
+    let rowTop = lastY;
+    for (const sofa of distinctSofas) {
+      // New row when the current row is full.
+      if (col >= perRow) {
+        col = 0;
+        rowTop += ROW_H;
+      }
+      // New page when this row would overflow.
+      if (rowTop + ROW_H > 290) {
+        doc.addPage(); drawPageHeader(doc.getNumberOfPages());
+        rowTop = 20;
+        col = 0;
+        // Repeat the section title at the top of the continued page.
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0);
+        doc.text('Sofa layout — front faces TV (orientation / LHF·RHF) (cont.)', margin, rowTop);
+        rowTop += 6;
+      }
+      const dx = margin + col * (DIAGRAM_W + GAP_X);
+      const drawn = drawSofaLayout(doc, sofa.cells, sofa.depth, dx, rowTop, DIAGRAM_W, DIAGRAM_H);
+      // Caption: model + SO no, wrapped to the diagram width.
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(80);
+      const capParts = [sofa.model, sofa.soNo].filter(Boolean);
+      const capLines = doc.splitTextToSize(capParts.join(' · ') || 'Sofa', DIAGRAM_W) as string[];
+      const capY = rowTop + Math.max(drawn, DIAGRAM_H) + 2.5;
+      doc.text(capLines, dx + DIAGRAM_W / 2, capY, { align: 'center' });
+      doc.setTextColor(0);
+      col += 1;
+    }
+    lastY = rowTop + ROW_H;
+  }
 
   // ── Signature block ──────────────────────────────────────────────
   if (lastY > 240) { doc.addPage(); drawPageHeader(doc.getNumberOfPages()); lastY = 20; }
@@ -476,7 +678,7 @@ export async function generatePurchaseOrderPdf(
   const { supplierName } = await renderPurchaseOrderInto(doc, autoTable, header, items, opts);
   finalizePoPdf(doc);
   const safeName = supplierName.replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 32);
-  doc.save(`${header.po_number}-${safeName}.pdf`);
+  doc.save(`${poDisplayNumber(header.po_number, header.revision)}-${safeName}.pdf`);
 }
 
 /* The SAME PO PDF, returned as raw base64 instead of downloaded — for emailing it

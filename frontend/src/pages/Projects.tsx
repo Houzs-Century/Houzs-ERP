@@ -101,7 +101,7 @@ import { useRafCoalescedHover } from "../hooks/useRafCoalescedHover";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
 import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent } from "../auth/salesAccess";
-import { readProjectAccess, projectAccessUnresolved } from "../auth/projectAccess";
+import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
 import { ACCESS_RANK } from "../types";
 import { Forbidden } from "./Forbidden";
@@ -153,6 +153,7 @@ interface ProjectRow {
   end_date: string | null;
   state: string | null;
   venue: string | null;
+  organizer: string | null;
   booth_no: string | null;
   size_sqm: number | null;
   archived_at: string | null;
@@ -160,6 +161,20 @@ interface ProjectRow {
   rental: number | null;
   total_sales: number | null;
   contractor_cost: number | null;
+  // Ledger-derived per-category finance sums (whole RM integers) from the
+  // list endpoint. Null for finance-hidden users (redacted server-side).
+  // GP / NP / percent columns are derived from these in the column defs.
+  fin_revenue?: number | null;
+  fin_cogs?: number | null;
+  fin_cogs_matt_sofa?: number | null;
+  fin_cogs_bedframe?: number | null;
+  fin_cogs_accessories?: number | null;
+  fin_rental?: number | null;
+  fin_total_cost?: number | null;
+  // Venue physical size (m²) — populated once feat/pms-venue-size-field lands
+  // the `size` column on project_venues and the list joins it. Guarded: the
+  // column renders "—" while this is absent.
+  venue_size?: number | null;
   progress_pct: number;
   pic_id: number | null;
   pic_name: string | null;
@@ -1162,6 +1177,12 @@ function ProjectsListView() {
       const csvCols = columns
         .filter((c) => typeof c.getValue === "function")
         .map((c) => ({ key: c.key, label: c.label || c.key, getValue: c.getValue! }));
+      // Owner 2026-07-23: add an Organizer column to the EXPORT only (not the
+      // on-screen table), placed right after Brand.
+      const orgCol = { key: "organizer", label: "Organizer", getValue: (r: ProjectRow) => r.organizer ?? "" };
+      const brandIdx = csvCols.findIndex((c) => c.label === "Brand");
+      if (brandIdx >= 0) csvCols.splice(brandIdx + 1, 0, orgCol);
+      else csvCols.push(orgCol);
       if (!csvCols.length || all.length === 0) {
         toast.error(all.length === 0 ? "No projects match the current filter." : "Nothing to export.");
         return;
@@ -1372,6 +1393,164 @@ function ProjectsListView() {
         </span>
       ),
       getValue: (r) => r.total_sales,
+    },
+    // ── Ledger-derived finance columns (opt-in via the column chooser) ──
+    // Computed per project from project_finance_lines by the list endpoint
+    // (SUM(amount) per category, single grouped join — no N+1). Amounts are
+    // whole RM integers. GP / NP / percent are derived here from the raw
+    // sums so the list matches the Finance tab (/finance/by-project). All
+    // defaultHidden so the default view is unchanged; null = finance-hidden.
+    {
+      key: "revenue",
+      label: "Revenue (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_revenue != null ? formatCurrency(r.fin_revenue, { compact: true }) : "—"}
+        </span>
+      ),
+      getValue: (r) => r.fin_revenue ?? null,
+    },
+    {
+      key: "cogs",
+      label: "COGS (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) =>
+        r.fin_cogs != null ? (
+          <span
+            className="font-mono text-[11px]"
+            title={
+              `Matt / sofa: ${formatCurrency(r.fin_cogs_matt_sofa ?? 0)}\n` +
+              `Bedframe: ${formatCurrency(r.fin_cogs_bedframe ?? 0)}\n` +
+              `Accessories: ${formatCurrency(r.fin_cogs_accessories ?? 0)}`
+            }
+          >
+            {formatCurrency(r.fin_cogs, { compact: true })}
+          </span>
+        ) : (
+          <span className="font-mono text-[11px]">—</span>
+        ),
+      getValue: (r) => r.fin_cogs ?? null,
+    },
+    {
+      key: "cogs_matt_sofa",
+      label: "COGS Matt/Sofa (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_cogs_matt_sofa != null ? formatCurrency(r.fin_cogs_matt_sofa, { compact: true }) : "—"}
+        </span>
+      ),
+      getValue: (r) => r.fin_cogs_matt_sofa ?? null,
+    },
+    {
+      key: "cogs_bedframe",
+      label: "COGS Bedframe (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_cogs_bedframe != null ? formatCurrency(r.fin_cogs_bedframe, { compact: true }) : "—"}
+        </span>
+      ),
+      getValue: (r) => r.fin_cogs_bedframe ?? null,
+    },
+    {
+      key: "cogs_accessories",
+      label: "COGS Accessories (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_cogs_accessories != null ? formatCurrency(r.fin_cogs_accessories, { compact: true }) : "—"}
+        </span>
+      ),
+      getValue: (r) => r.fin_cogs_accessories ?? null,
+    },
+    {
+      key: "gp",
+      label: "GP (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_revenue != null && r.fin_cogs != null
+            ? formatCurrency(r.fin_revenue - r.fin_cogs, { compact: true })
+            : "—"}
+        </span>
+      ),
+      getValue: (r) =>
+        r.fin_revenue != null && r.fin_cogs != null ? r.fin_revenue - r.fin_cogs : null,
+    },
+    {
+      key: "gp_pct",
+      label: "GP %",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => {
+        // Guard divide-by-zero: no revenue means GP% is undefined, not 0.
+        if (r.fin_revenue == null || r.fin_cogs == null || r.fin_revenue <= 0) {
+          return <span className="font-mono text-[11px]">—</span>;
+        }
+        const pct = ((r.fin_revenue - r.fin_cogs) / r.fin_revenue) * 100;
+        return <span className="font-mono text-[11px]">{pct.toFixed(1)}%</span>;
+      },
+      getValue: (r) =>
+        r.fin_revenue != null && r.fin_cogs != null && r.fin_revenue > 0
+          ? ((r.fin_revenue - r.fin_cogs) / r.fin_revenue) * 100
+          : null,
+    },
+    {
+      key: "np",
+      label: "NP (RM)",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="font-mono text-[11px]">
+          {r.fin_revenue != null && r.fin_total_cost != null
+            ? formatCurrency(r.fin_revenue - r.fin_total_cost, { compact: true })
+            : "—"}
+        </span>
+      ),
+      getValue: (r) =>
+        r.fin_revenue != null && r.fin_total_cost != null
+          ? r.fin_revenue - r.fin_total_cost
+          : null,
+    },
+    {
+      key: "margin_pct",
+      label: "Margin %",
+      align: "right",
+      defaultHidden: true,
+      render: (r) => {
+        // NP / Revenue. Same divide-by-zero guard as GP%.
+        if (r.fin_revenue == null || r.fin_total_cost == null || r.fin_revenue <= 0) {
+          return <span className="font-mono text-[11px]">—</span>;
+        }
+        const pct = ((r.fin_revenue - r.fin_total_cost) / r.fin_revenue) * 100;
+        return <span className="font-mono text-[11px]">{pct.toFixed(1)}%</span>;
+      },
+      getValue: (r) =>
+        r.fin_revenue != null && r.fin_total_cost != null && r.fin_revenue > 0
+          ? ((r.fin_revenue - r.fin_total_cost) / r.fin_revenue) * 100
+          : null,
+    },
+    {
+      key: "venue_size",
+      label: "Venue size",
+      align: "right",
+      defaultHidden: true,
+      // Depends on feat/pms-venue-size-field exposing `size` on the venue /
+      // project payload. Renders "—" until that lands.
+      render: (r) => (
+        <span className="text-[11px]">
+          {r.venue_size != null ? `${r.venue_size} m²` : "—"}
+        </span>
+      ),
+      getValue: (r) => r.venue_size ?? null,
     },
   ];
 
@@ -3770,7 +3949,7 @@ export function buildProjectsCalendarModel({
   mode,
   anchorMonth,
   brand,
-  section,
+  status,
   organizer,
   showTasks,
   expandAll,
@@ -3782,23 +3961,19 @@ export function buildProjectsCalendarModel({
   mode: CalendarMode;
   anchorMonth: number;
   brand: string;
-  section: string;
+  status: string;
   organizer: string;
   showTasks: boolean;
   expandAll: boolean;
 }) {
-  const matchesSection = (project: CalendarProject): boolean => {
-    if (!section) return true;
-    const total = project.sections_total ?? 0;
-    const active = project.active_section_name ?? null;
-    if (section === "__done") return total > 0 && active == null;
-    if (section === "__none") return total === 0;
-    return active === section;
-  };
+  // Filter by project STATUS (owner 2026-07-28) — the calendar's old "section"
+  // dropdown is now confirmed / pending / cancelled.
+  const matchesStatus = (project: CalendarProject): boolean =>
+    !status || (project.status || "").toLowerCase() === status;
 
   const projects = allProjects.filter((project) => {
     if (brand && project.brand !== brand) return false;
-    if (!matchesSection(project)) return false;
+    if (!matchesStatus(project)) return false;
     if (organizer && (project.organizer || "") !== organizer) return false;
     return true;
   });
@@ -3807,7 +3982,7 @@ export function buildProjectsCalendarModel({
     ? allTasks.filter((task) => {
         if (brand && task.brand !== brand) return false;
         if (organizer && (task.organizer || "") !== organizer) return false;
-        return !section || projectById.has(task.project_id);
+        return !status || projectById.has(task.project_id);
       })
     : [];
 
@@ -3972,7 +4147,7 @@ function ProjectsCalendarView() {
     PROJECTS_CALENDAR_FILTER_KEYS
   );
   const brand = params.get("brand") || "";
-  const section = params.get("section") || "";
+  const status = params.get("status") || "";
   const organizer = params.get("organizer") || "";
   // anchor lives in URL as `month=YYYY-MM` so a refresh / shared link
   // lands on the same month.
@@ -3985,7 +4160,7 @@ function ProjectsCalendarView() {
     setParams(next, { replace: true });
   }
   const setBrand = (v: string) => patchParams({ brand: v });
-  const setSection = (v: string) => patchParams({ section: v });
+  const setStatus = (v: string) => patchParams({ status: v });
   const setOrganizer = (v: string) => patchParams({ organizer: v });
 
   // showTasks / showHolidays are personal display prefs (checkbox toggles
@@ -4192,7 +4367,7 @@ function ProjectsCalendarView() {
         mode,
         anchorMonth,
         brand,
-        section,
+        status,
         organizer,
         showTasks,
         expandAll,
@@ -4205,7 +4380,7 @@ function ProjectsCalendarView() {
       mode,
       anchorMonth,
       brand,
-      section,
+      status,
       organizer,
       showTasks,
       expandAll,
@@ -4363,18 +4538,15 @@ function ProjectsCalendarView() {
           </select>
           <span className="relative inline-flex">
           <select
-              value={section}
-              onChange={(e) => setSection(e.target.value)}
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
               className="h-8 appearance-none rounded-md border border-border bg-surface pl-2 pr-7 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
-              title="Filter by current section (stage)"
+              title="Filter by status"
             >
-              <option value="">All sections</option>
-              {(sectionsListQ.data?.data ?? []).map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-              <option value="__done">Completed</option>
+              <option value="">All statuses</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="pending">Pending</option>
+              <option value="cancelled">Cancelled</option>
             </select>
             <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted" />
           </span>
@@ -4395,7 +4567,7 @@ function ProjectsCalendarView() {
             <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted" />
           </span>
           <ResetFiltersButton
-            active={!!(brand || section || organizer || params.get("stage"))}
+            active={!!(brand || status || organizer || params.get("stage"))}
             onReset={() => {
               // Functional form so the latest URL state is read at call
               // time rather than the closure-captured `params` snapshot
@@ -4406,7 +4578,7 @@ function ProjectsCalendarView() {
               setParams(
                 (prev) => {
                   const next = new URLSearchParams(prev);
-                  ["brand", "section", "organizer", "stage"].forEach((k) =>
+                  ["brand", "status", "organizer", "stage"].forEach((k) =>
                     next.delete(k)
                   );
                   return next;
@@ -4439,11 +4611,11 @@ function ProjectsCalendarView() {
           >
             {showHolidays ? <Check size={12} /> : <Circle size={12} />} MY Holidays
           </button>
-          {(brand || section || organizer) && (
+          {(brand || status || organizer) && (
             <button
               onClick={() => {
                 setBrand("");
-                setSection("");
+                setStatus("");
                 setOrganizer("");
               }}
               className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted hover:text-err"
@@ -4752,7 +4924,6 @@ function ProjectsCalendarView() {
                         seg.clipRight ? "rounded-r-none" : "rounded-r-md"
                       )}
                     >
-                      {seg.clipLeft && "‹ "}
                       {(seg.project.event_type_name || "").toLowerCase() === "solo"
                         ? composeDefaultProjectName({
                             state: seg.project.state,
@@ -4762,7 +4933,6 @@ function ProjectsCalendarView() {
                             event_type_slug: "solo",
                           })
                         : seg.project.name}
-                      {seg.clipRight && " ›"}
                     </button>
                   );
                 })}
@@ -5651,7 +5821,7 @@ function ProjectDetailContent({
     // control reached any other way silently does nothing instead of firing a
     // 403 that lands as a "Forbidden: requires one of ..." toast.
     if (!can("projects.write") && !can("projects.checklist.tick")) return;
-    if (item.required_perm && !can(item.required_perm)) return;
+    if (item.required_perm && !holdsChecklistApproval(user?.permissions, item.required_perm)) return;
     try {
       await api.post(`/api/projects/checklist/${item.id}/status`, { status });
       detail.reload();
@@ -5975,7 +6145,11 @@ function ProjectTeamSection({
     () => api.get(`/api/projects/sales-rep-options`),
     []
   );
-  const reps = repsQ.data?.data ?? [];
+  // Alphabetical by NAME (owner 2026-07-28) — was code order (SR-004, SR-005…);
+  // the SR-xxx code is just a stable id and does NOT need to be renumbered.
+  const reps = [...(repsQ.data?.data ?? [])].sort((a, b) =>
+    (a.name ?? "").localeCompare(b.name ?? ""),
+  );
   const takenRepIds = new Set(attendees.map((a) => a.sales_rep_id));
   const availableReps = reps.filter((r) => !takenRepIds.has(r.id));
   const [busy, setBusy] = useState(false);
@@ -6877,25 +7051,28 @@ function TaskAttachmentRow({
             </button>
           )}
         </div>
-        {/* Per-photo remark: hidden until the row's Remark button is toggled on. */}
-        {showRemark && (canManage ? (
-          <input
+        {/* A saved per-photo remark is ALWAYS visible read-only (owner
+            2026-07-27: Defect List remarks were hidden until the row's Remark
+            toggle was opened, so uploaded captions looked missing). Editing
+            still lives behind the Remark toggle for managers. */}
+        {canManage && showRemark ? (
+          <textarea
             value={caption}
             onChange={(e) => setCaption(e.target.value)}
             onBlur={() => void saveCaption()}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
             onClick={(e) => e.stopPropagation()}
             disabled={savingCaption}
+            rows={2}
             placeholder="Add a remark for this photo…"
-            className="mt-1.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[10.5px] outline-none focus:border-primary disabled:opacity-60"
+            className="mt-1.5 w-full resize-y whitespace-pre-wrap break-words rounded-md border border-border bg-surface px-2 py-1 text-[10.5px] leading-snug outline-none focus:border-primary disabled:opacity-60"
           />
         ) : (
           caption.trim() && (
-            <div className="mt-1.5 text-[10.5px] text-ink-secondary">
+            <div className="mt-1.5 text-[10.5px] text-ink-secondary whitespace-pre-wrap break-words">
               <span className="font-semibold text-ink-muted">Remark:</span> {caption}
             </div>
           )
-        ))}
+        )}
       </div>
       {previewing && (
         <MediaLightbox
@@ -7182,7 +7359,7 @@ function TasklistSections({
   onItemDelete: (item: ChecklistItem) => void;
   toast: ReturnType<typeof useToast>;
 }) {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const dialog = useDialog();
   const [addSectionOpen, setAddSectionOpen] = useState(false);
   const [newSectionName, setNewSectionName] = useState("");
@@ -7603,7 +7780,7 @@ function TasklistSections({
                   items={items}
                   comments={comments}
                   canManage={!!canManage}
-                  canApproveFor={(it) => !it.required_perm || can(it.required_perm)}
+                  canApproveFor={(it) => !it.required_perm || holdsChecklistApproval(user?.permissions, it.required_perm)}
                   attachmentsByItem={attachmentsByItem}
                   onStatus={(it, s) => onItemStatus(it, s)}
                   onReview={async (it, action, payload) => {
@@ -7638,7 +7815,7 @@ function TasklistSections({
                     item={item}
                     comments={comments.filter((c) => c.item_id === item.id)}
                     canTick={canTick}
-                    canApprove={!item.required_perm || can(item.required_perm)}
+                    canApprove={!item.required_perm || holdsChecklistApproval(user?.permissions, item.required_perm)}
                     canManage={canManage}
                     attachments={
                       // 3D shared upload: the Peter approval row mirrors the
@@ -7931,9 +8108,9 @@ function DocRow({
               return <span className="text-ink-muted">—</span>;
             return (
               <div className="space-y-0.5">
-                {item.notes && <div>{item.notes}</div>}
+                {item.notes && <div className="whitespace-pre-wrap break-words">{item.notes}</div>}
                 {remarkComments.map((c) => (
-                  <div key={c.id} className="text-[9px] leading-snug text-ink-muted">
+                  <div key={c.id} className="text-[9px] leading-snug text-ink-muted whitespace-pre-wrap break-words">
                     <span className={cn("font-semibold", commentKindColor(c.kind))}>
                       {commentKindLabel(c.kind)}:
                     </span>{" "}
@@ -7989,9 +8166,14 @@ function DocRow({
                     ))}
                 </div>
               )}
-              {/* Approve/Reject only while awaiting; hidden once decided,
-                  reappear on re-upload (upload auto-submits). */}
-              {awaiting && canApprove ? (
+              {/* Approve/Reject visibility (owner 2026-07-21): an
+                  approval-gated document (required_perm) offers the buttons to
+                  a permission holder WHENEVER it still needs the decision —
+                  not only after a submit. Non-gated documents keep the old
+                  submit-then-review behaviour. */}
+              {(item.required_perm
+                ? canApprove && rs !== "approved" && item.status !== "done"
+                : awaiting && canApprove) ? (
                 <div className="flex flex-wrap items-center gap-1">
                   <button
                     onClick={() => onReview(item, "approve", {})}
@@ -8077,21 +8259,22 @@ function DocRow({
                     .slice()
                     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
                     .map((c) => (
-                      <div key={c.id} className="text-[10px] leading-snug text-ink-secondary">
+                      <div key={c.id} className="text-[10px] leading-snug text-ink-secondary whitespace-pre-wrap break-words">
                         <span className="text-ink-muted">{c.user_name || "—"} · {formatDateTime(c.created_at)}:</span>{" "}
                         {c.body}
                       </div>
                     ))}
                 </div>
               )}
-              <div className="flex items-center gap-2">
-                <input
+              <div className="flex items-start gap-2">
+                <textarea
                   value={remark}
                   onChange={(e) => setRemark(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void postRemark(); } }}
-                  placeholder="Add a remark…"
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void postRemark(); } }}
+                  rows={2}
+                  placeholder="Add a remark… (Enter to post, Shift+Enter for a new line)"
                   autoFocus
-                  className="flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] outline-none focus:border-primary"
+                  className="min-h-[2.5rem] flex-1 resize-y whitespace-pre-wrap break-words rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] leading-snug outline-none focus:border-primary"
                 />
                 <button
                   onClick={() => void postRemark()}
@@ -8796,12 +8979,13 @@ function ChecklistRow({
         </div>
       </div>
 
-      {/* Management approve/reject — shown while awaiting a decision;
-          they disappear once approved/rejected and reappear on re-upload
-          (upload auto-submits). Approver only. */}
-      {reviewable &&
-        awaitingReview &&
-        canApprove && (
+      {/* Management approve/reject. Owner 2026-07-21: an approval-gated task
+          (required_perm) offers the buttons to a permission holder WHENEVER
+          it still needs the decision — not only after a submit. Non-gated
+          reviewable docs keep the old submit-then-review behaviour. */}
+      {(item.required_perm
+        ? canApprove && item.review_status !== "approved" && item.status !== "done"
+        : reviewable && awaitingReview && canApprove) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
             <input
               value={reason}
@@ -8847,7 +9031,7 @@ function ChecklistRow({
               {comments
                 .filter((c) => c.kind !== "submit" && c.body)
                 .map((c) => (
-                  <div key={c.id} className="rounded bg-bg/60 px-2 py-1 text-[10.5px]">
+                  <div key={c.id} className="rounded bg-bg/60 px-2 py-1 text-[10.5px] whitespace-pre-wrap break-words">
                     <span className={cn("font-semibold", commentKindColor(c.kind))}>
                       {commentKindLabel(c.kind)}
                     </span>
@@ -8859,12 +9043,13 @@ function ChecklistRow({
                 ))}
             </div>
           )}
-          <div className="flex items-center gap-1.5">
-            <input
+          <div className="flex items-start gap-1.5">
+            <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
+              rows={2}
               placeholder="Add a remark…"
-              className="flex-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] outline-none focus:border-primary"
+              className="min-h-[2.25rem] flex-1 resize-y whitespace-pre-wrap break-words rounded-md border border-border bg-surface px-2 py-1 text-[11px] leading-snug outline-none focus:border-primary"
             />
             <button
               onClick={async () => {
@@ -10467,11 +10652,17 @@ function PhasePhotosSection({ projectId }: { projectId: number }) {
 
 // Schedule reference (owner 2026-07-23) — the mall handbook's official event
 // schedule screenshot, so logistics can read setup/dismantle dates + times off
-// it. Desktop-only (this page IS the PC PMS; mobile PMS never renders it).
+// it. Also on mobile since 2026-07-23 (MobilePMS SetupDismantle, same
+// phase="schedule" rows), so the "desktop only" badge is retired.
 // Reuses the phase-photos machinery with phase="schedule".
 function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readOnly?: boolean }) {
   const toast = useToast();
+  const dialog = useDialog();
   const fileRef = useRef<HTMLInputElement>(null);
+  // Remark-first-before-upload (owner 2026-07-27), same flow as the Defect List:
+  // Upload prompts for a required remark, then the file picker; the screenshot
+  // uploads carrying that remark (stored as the phase-photo caption).
+  const pendingCaptionRef = useRef<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const photos = useQuery<{ photos: PhasePhoto[] }>(
     "/api/projects/:/phase-photos",
@@ -10479,7 +10670,20 @@ function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readO
     [projectId],
   );
   const items = (photos.data?.photos ?? []).filter((p) => p.phase === "schedule");
-  const upload = async (file: File) => {
+  const startUpload = async () => {
+    const remark = await dialog.prompt({
+      title: "Remark for this schedule",
+      message: "Write a remark before uploading (required).",
+      placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm",
+      required: true,
+      multiline: true,
+      confirmLabel: "Choose file…",
+    });
+    if (remark == null || !remark.trim()) return;
+    pendingCaptionRef.current = remark.trim();
+    fileRef.current?.click();
+  };
+  const upload = async (file: File, caption?: string) => {
     if (file.size > 50 * 1024 * 1024) {
       toast?.error("That file is over 50MB.");
       return;
@@ -10501,6 +10705,7 @@ function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readO
         phase: "schedule",
         r2_key: up.key,
         content_type: up.mime_type,
+        caption: caption ?? null,
       });
       photos.reload();
     } catch (e) {
@@ -10516,14 +10721,20 @@ function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readO
         <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">
           Schedule reference
         </span>
-        <span className="rounded-full border border-border px-1.5 py-0.5 text-[8.5px] font-bold uppercase tracking-wider text-ink-muted">
-          Desktop only
-        </span>
       </div>
       {items.length > 0 ? (
         <PhotoGroup label="Schedule" photos={items} onChange={() => photos.reload()} />
       ) : (
         <div className="text-[12px] text-ink-muted">No schedule screenshot uploaded yet.</div>
+      )}
+      {items.some((p) => p.caption) && (
+        <div className="mt-1.5 space-y-0.5">
+          {items.filter((p) => p.caption).map((p) => (
+            <div key={p.id} className="text-[10.5px] text-ink-secondary whitespace-pre-wrap break-words">
+              <span className="font-semibold text-ink-muted">Remark:</span> {p.caption}
+            </div>
+          ))}
+        </div>
       )}
       {!readOnly && (
         <>
@@ -10534,11 +10745,13 @@ function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readO
             accept="image/*,application/pdf,.heic"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) void upload(f);
+              const cap = pendingCaptionRef.current;
+              pendingCaptionRef.current = undefined;
+              if (f) void upload(f, cap);
             }}
           />
           <button
-            onClick={() => fileRef.current?.click()}
+            onClick={() => void startUpload()}
             disabled={busy}
             className="mt-2 inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent disabled:opacity-50"
           >

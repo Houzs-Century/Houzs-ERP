@@ -189,6 +189,15 @@ matter how tall the CONTENT is. Two working fixes, by shape:
 `inset-0` overlays (PoAmendmentCreateModal scrim) are immune — offsets define
 the box without % height. In-app renders are unaffected (h-full = viewport).
 
+## PresenceButton preview — 2026-07-27
+Popover only opens on click → the primary story auto-clicks the button after
+mount (AutoOpen helper, same trick as DetailListingShell's AutoInquiry).
+Stub set: /api/auth/status + /api/auth/me (AuthProvider bootstrap) +
+/api/presence (3 online with last_path incl. one doc-number path + 2 away) +
+heartbeat; wrap = MemoryRouter > AuthProvider from the bundle. Also
+2026-07-27: conventions.md type section rewritten to the system-stack truth
+(owner 7-24 「统一掉」— Plex only survives as the font-serif opt-in).
+
 ## WorkspaceTabs preview store seeding — 2026-07-26
 entry.tsx re-exports `markWorkspaceOpenIntent` + `recordWorkspaceVisit`
 (src/lib/workspaceTabs) for the WorkspaceTabs preview: clear

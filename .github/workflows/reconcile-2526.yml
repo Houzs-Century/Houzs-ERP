@@ -1,0 +1,46 @@
+name: FAIR PNL 2025-26 reconcile
+
+# Owner-triggered ONLY. Default dry-run. Two tasks:
+#   seed-gaps : create the 6 events the owner has but PMS lacks
+#   dedup     : archive PMS-side duplicates (money-preserving); never touches file-bearing projects
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "which step"
+        type: choice
+        options: [seed-gaps, dedup]
+        default: seed-gaps
+      mode:
+        description: "dry-run (report only) or commit (write to prod)"
+        type: choice
+        options: [dry-run, commit]
+        default: dry-run
+
+concurrency:
+  group: fair-pnl-2526-reconcile
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: seed-gaps (${{ inputs.mode }})
+        if: ${{ inputs.task == 'seed-gaps' }}
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SEED_FILE: seed_gaps.json
+        run: node scripts/fair-pnl/seed-2024.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}
+      - name: dedup (${{ inputs.mode }})
+        if: ${{ inputs.task == 'dedup' }}
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/dedup-2526.mjs ${{ inputs.mode == 'commit' && '--commit' || '' }}

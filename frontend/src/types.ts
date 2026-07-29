@@ -145,6 +145,9 @@ export interface AssrCase {
   assigned_to_2_name?: string | null;
   ref_no: string | null;
   delivery_order: string | null;
+  /** Live DO numbers from scm.delivery_orders (so_doc_no join), merged by
+   *  the list/export endpoints; "DO1 · DO2" when the SO has several. */
+  do_numbers?: string | null;
   do_date: string | null;
   closed_at: string | null;
   created_by: number | null;
@@ -665,13 +668,20 @@ export interface ActiveMember {
   role_id: number;
   role_name: string;
   last_seen_at: string;
+  /** Last SPA pathname the 60s heartbeat reported — deep-link target for the
+   *  who's-online popover. Null until that user's client sends it. */
+  last_path?: string | null;
   is_self: boolean;
 }
 
 export interface PresenceResponse {
   active: ActiveMember[];
+  /** Quiet for 2–15 min (tab hidden/idle). Optional: absent from a backend
+   *  that predates the who's-online popover (deploy skew). */
+  away?: ActiveMember[];
   count: number;
   window_seconds: number;
+  away_window_seconds?: number;
 }
 
 // ──────────────────────────────────────────────────────────

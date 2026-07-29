@@ -27,6 +27,11 @@
 //     whether that person can PIN-login (user link, position slug, company
 //     membership). Use it to answer "why can't X log in / who is X here"
 //     before assigning a PIN. ASSIGNMENTS is ignored in this mode.
+//     It also reports each PIN's FORMAT (never the hash): services/auth.ts
+//     verifyPassword only understands b64(16-byte salt)$b64(32-byte hash), so a
+//     PIN stored in any other shape can never verify — "has_pin=true but nobody
+//     can log in" is a real state and this is what distinguishes it from a
+//     forgotten PIN.
 //
 // Exit 0 for every legitimate answer (including "ambiguous, wrote nothing");
 // non-zero only for an unreachable DB or malformed input.
@@ -72,6 +77,18 @@ const dryRun = process.env.DRY_RUN === "1" || process.env.DRY_RUN === "true";
 const notice = (msg) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : msg);
 
+// Classify a stored PIN by SHAPE alone — the hash itself is never printed.
+// 'pbkdf2' is the only shape services/auth.ts verifyPassword can check; anything
+// else is a credential that will always fail, however correct the typed PIN is.
+function pinFormat(hash) {
+  if (!hash) return "none";
+  if (hash.startsWith("$2")) return "bcrypt-UNVERIFIABLE";
+  if (!HASH_RE.test(hash)) return "unknown-UNVERIFIABLE";
+  const [salt, key] = hash.split("$");
+  const len = (b64) => Buffer.from(b64, "base64").length;
+  return len(salt) === 16 && len(key) === 32 ? "pbkdf2" : "pbkdf2-BAD-LENGTHS";
+}
+
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
 try {
@@ -79,7 +96,7 @@ try {
     const like = "%" + lookup + "%";
     const staff = await pg`
       SELECT s.id, s.staff_code, s.name, s.user_id, s.active,
-             (p.staff_id IS NOT NULL) AS has_pin
+             (p.staff_id IS NOT NULL) AS has_pin, p.pin_hash
       FROM scm.staff s
       LEFT JOIN scm.pos_pins p ON p.staff_id = s.id
       WHERE s.name ILIKE ${like} OR s.staff_code ILIKE ${like}
@@ -96,7 +113,7 @@ try {
     notice(
       `staff rows matching '${lookup}': ${staff.length ? "" : "NONE"}` +
         staff
-          .map((r) => `${r.name} [${r.staff_code}] id=${r.id} user_id=${r.user_id ?? "NONE"} active=${r.active} has_pin=${r.has_pin}`)
+          .map((r) => `${r.name} [${r.staff_code}] id=${r.id} user_id=${r.user_id ?? "NONE"} active=${r.active} has_pin=${r.has_pin} pin_format=${pinFormat(r.pin_hash)}`)
           .join(" | "),
     );
     notice(

@@ -45,6 +45,7 @@ import {
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
+import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import {
   PaymentsTable, labelToApi, draftMethodFields, type PaymentDraft,
@@ -906,30 +907,28 @@ export const ConsignmentOrderNew = () => {
             <label className={styles.field}>
               <span className={styles.fieldLabel}>City</span>
               <span className={styles.selectWrap}>
-                <select
+                <SearchableSelect
                   className={styles.fieldSelect}
                   value={city}
-                  onChange={(e) => { setCity(e.target.value); setPostcode(''); }}
+                  onChange={(v) => { setCity(v); setPostcode(''); }}
                   disabled={!state}
-                >
-                  <option value="">{state ? 'Pick city' : '— pick state first'}</option>
-                  {sortByText(cities).map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+                  placeholder={state ? 'Pick city' : '— pick state first'}
+                  options={sortByText(cities).map((c) => ({ value: c, label: c }))}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Postcode</span>
               <span className={styles.selectWrap}>
-                <select
+                <SearchableSelect
                   className={styles.fieldSelect}
                   value={postcode}
-                  onChange={(e) => setPostcode(e.target.value)}
+                  onChange={setPostcode}
                   disabled={!state || !city}
-                >
-                  <option value="">{(state && city) ? 'Pick postcode' : '— pick city first'}</option>
-                  {sortByNumeric(postcodes).map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
+                  placeholder={(state && city) ? 'Pick postcode' : '— pick city first'}
+                  options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>

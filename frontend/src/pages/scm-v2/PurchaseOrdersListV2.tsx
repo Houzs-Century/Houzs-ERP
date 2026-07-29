@@ -29,6 +29,7 @@ import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
+import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
 import {
   DocumentLinesExpansion,
   type DocumentDrillLine,
@@ -295,6 +296,11 @@ function DetailDrawer({
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
   const total = row ? totalOf(row) : 0;
+  /* SO→PO drift (owner 2026-07-27) — surface the pending SO change in the peek
+     drawer too, not only the full page. Actionable pre-receipt only. */
+  const showDrift =
+    row?.status === "SUBMITTED" || row?.status === "PARTIALLY_RECEIVED";
+  const driftCount = showDrift ? items.filter((l) => l.so_drift).length : 0;
 
   return (
     <ResizableDetailDrawer
@@ -379,6 +385,12 @@ function DetailDrawer({
               </div>
 
               <SectionHeading>Line items</SectionHeading>
+              {driftCount > 0 && (
+                <div className="mb-2 rounded-lg border border-accent-bright/40 bg-accent-bright/10 px-3 py-2 text-[11.5px] text-ink">
+                  ⚠ <strong>{driftCount}</strong> line{driftCount === 1 ? "'s" : "s"} source SO changed after this PO
+                  was raised — see the red notes below and re-send the corrected PO.
+                </div>
+              )}
               <div className="overflow-hidden rounded-lg border border-border">
                 <div className="grid grid-cols-[1fr_44px_44px_44px_92px] gap-2 border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
                   <span>Item</span>
@@ -424,6 +436,17 @@ function DetailDrawer({
                         {secondary && (
                           <div className="mt-0.5 text-[11.5px] leading-snug text-ink-secondary">
                             {secondary}
+                          </div>
+                        )}
+                        {showDrift && l.so_drift && (
+                          <div className="mt-1 grid gap-0.5 rounded border border-err/30 bg-err/5 px-1.5 py-1 text-[10.5px] font-semibold text-err">
+                            {l.so_drift.itemChanged && (
+                              <span>⚠ SO now: {l.so_drift.itemSo} (PO still: {l.so_drift.itemPo})</span>
+                            )}
+                            {!l.so_drift.itemChanged && l.so_drift.specSo !== l.so_drift.specPo && (
+                              <span>⚠ SO spec now: {l.so_drift.specSo || "—"} (PO still: {l.so_drift.specPo || "—"})</span>
+                            )}
+                            {l.so_drift.warehouseChanged && <span>⚠ SO warehouse moved.</span>}
                           </div>
                         )}
                       </div>
@@ -850,9 +873,10 @@ export function PurchaseOrdersListV2() {
       label: "PO No.",
       width: "132px",
       alwaysVisible: true,
-      getValue: (r) => r.po_number,
+      // _R suffix (owner 2026-07-27) — a revised PO reads PO-xxx_R1 everywhere.
+      getValue: (r) => poDisplayNumber(r.po_number, r.revision),
       render: (r) => (
-        <span className="font-mono text-[12.5px] font-semibold text-ink">{r.po_number}</span>
+        <span className="font-mono text-[12.5px] font-semibold text-ink">{poDisplayNumber(r.po_number, r.revision)}</span>
       ),
     },
     {

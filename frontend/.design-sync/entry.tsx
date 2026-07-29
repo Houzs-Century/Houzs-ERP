@@ -58,6 +58,7 @@ export * from '../src/components/Pagination';
 export * from '../src/components/Panel';
 export * from '../src/components/PasswordStrengthMeter';
 export * from '../src/components/PnlCalendar';
+export * from '../src/components/PresenceButton';
 export * from '../src/components/PresencePanel';
 export * from '../src/components/ProjectChat';
 export * from '../src/components/ProjectGantt';

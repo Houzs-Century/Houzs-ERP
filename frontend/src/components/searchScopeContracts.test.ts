@@ -9,7 +9,6 @@ describe("list search scope contracts", () => {
   test.each([
     ["pages/scm-v2/Amendments.tsx", 500],
     ["pages/scm-v2/PaymentVouchers.tsx", 500],
-    ["pages/scm-v2/Accounting.tsx", 500],
     ["pages/scm-v2/PurchaseConsignmentReturns.tsx", 300],
     ["pages/scm-v2/PurchaseConsignmentOrders.tsx", 1000],
     ["pages/scm-v2/PurchaseConsignmentReceives.tsx", 1000],
@@ -17,6 +16,18 @@ describe("list search scope contracts", () => {
   ])("declares the loaded-only upstream cap for %s", (file, limit) => {
     expect(source(file)).toContain(`loadedSearchLimit={${limit}}`);
   });
+
+  // Pages whose list moved from DataGrid to DataTable (batch 2 of the table
+  // unification) declare the same cap through the DataTable `search` config —
+  // the table renders the scope hint itself, so the marker is the config
+  // field, not the DataGrid JSX attribute. Conversions migrate entries from
+  // the roster above into this one.
+  test.each([["pages/scm-v2/Accounting.tsx", 500]])(
+    "declares the loaded-only cap via DataTable search config for %s",
+    (file, limit) => {
+      expect(source(file)).toContain(`loadedLimit: ${limit}`);
+    }
+  );
 
   test.each([
     ["pages/scm-v2/DeliveryReturnsListV2.tsx", 500],

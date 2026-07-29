@@ -344,6 +344,28 @@ export const pgTransactionSupabase = (sql: Sql) => ({
       // Transaction-scoped locks release automatically on commit/rollback.
       return { data: true, error: null };
     }
+    if (name === 'rebuild_mfg_so_delivery_lines') {
+      /* Atomic SVC-DELIVERY* rebuild (migration 0214). It must be reachable from
+         inside an atomic command too: the delivery fee re-derives at the end of
+         every line PATCH, and those PATCHes run in this transaction wrapper. The
+         function's own pg_advisory_xact_lock is what serializes concurrent
+         rebuilds of the same SO — holding it inside the caller's transaction is
+         exactly the intent (it releases at commit/rollback). */
+      try {
+        await sql.unsafe(
+          'SELECT scm.rebuild_mfg_so_delivery_lines($1::text, $2::text, $3::bigint, $4::jsonb)',
+          [
+            args.p_doc_no,
+            args.p_source_doc_no,
+            args.p_delivery_fee_centi,
+            JSON.stringify(args.p_rows ?? []),
+          ] as never[],
+        );
+        return { data: null, error: null };
+      } catch (e) {
+        return { data: null, error: { message: e instanceof Error ? e.message : String(e) } };
+      }
+    }
     throw new Error(`Unsupported SCM transaction RPC: ${name}`);
   },
 });

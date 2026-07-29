@@ -1,0 +1,37 @@
+name: Sofa drop-ship diagnostic (read-only)
+
+# Why a sofa DO hard-blocks: for one SO, report each sofa line's allocated batch +
+# live bound PO count, so we know if it is a data issue (no PO bound to the SO line)
+# or the genuine logic gap. Read-only. Actions -> run -> read the annotations.
+on:
+  workflow_dispatch:
+    inputs:
+      so_doc:
+        description: "Sales Order doc no (e.g. 2990-SO-2607-005)"
+        required: true
+        type: string
+
+concurrency:
+  group: check-sofa-dropship
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-sofa-dropship.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SO_DOC: ${{ inputs.so_doc }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

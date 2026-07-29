@@ -1,0 +1,677 @@
+[
+{
+"op": "move_then_archive",
+"id": 1767,
+"keeper": 21,
+"reason": "half of event; move money to keeper then delete",
+"income": 87647
+},
+{
+"op": "move_then_archive",
+"id": 1915,
+"keeper": 1919,
+"reason": "half of event; move money to keeper then delete",
+"income": 17900
+},
+{
+"op": "archive",
+"id": 1951,
+"reason": "empty shell (0 income/files)",
+"income": 0
+},
+{
+"op": "archive",
+"id": 2043,
+"reason": "keeper already = Excel total (dup money)",
+"income": 304004
+},
+{
+"op": "move_then_archive",
+"id": 1853,
+"keeper": 1863,
+"reason": "half of event; move money to keeper then delete",
+"income": 7139
+},
+{
+"op": "archive",
+"id": 2013,
+"reason": "keeper already = Excel total (dup money)",
+"income": 48247
+},
+{
+"op": "move_then_archive",
+"id": 1860,
+"keeper": 1960,
+"reason": "half of event; move money to keeper then delete",
+"income": 13638
+},
+{
+"op": "archive",
+"id": 1765,
+"reason": "keeper already = Excel total (dup money)",
+"income": 178655
+},
+{
+"op": "archive",
+"id": 1826,
+"reason": "keeper already = Excel total (dup money)",
+"income": 89752
+},
+{
+"op": "archive",
+"id": 2011,
+"reason": "keeper already = Excel total (dup money)",
+"income": 10389
+},
+{
+"op": "archive",
+"id": 2025,
+"reason": "keeper already = Excel total (dup money)",
+"income": 75383
+},
+{
+"op": "archive",
+"id": 2009,
+"reason": "keeper already = Excel total (dup money)",
+"income": 3900
+},
+{
+"op": "archive",
+"id": 2002,
+"reason": "keeper already = Excel total (dup money)",
+"income": 3300
+},
+{
+"op": "archive",
+"id": 1897,
+"reason": "keeper already = Excel total (dup money)",
+"income": 6599
+},
+{
+"op": "archive",
+"id": 1969,
+"reason": "empty shell (0 income/files)",
+"income": 0
+},
+{
+"op": "archive",
+"id": 1818,
+"reason": "keeper already = Excel total (dup money)",
+"income": 66235
+},
+{
+"op": "archive",
+"id": 1804,
+"reason": "keeper already = Excel total (dup money)",
+"income": 24476
+},
+{
+"op": "archive",
+"id": 1970,
+"reason": "keeper already = Excel total (dup money)",
+"income": 18942
+},
+{
+"op": "archive",
+"id": 1769,
+"reason": "keeper already = Excel total (dup money)",
+"income": 13625
+},
+{
+"op": "move_then_archive",
+"id": 1857,
+"keeper": 1757,
+"reason": "half of event; move money to keeper then delete",
+"income": 47564
+},
+{
+"op": "archive",
+"id": 2052,
+"reason": "keeper already = Excel total (dup money)",
+"income": 20188
+},
+{
+"op": "move_then_archive",
+"id": 1768,
+"keeper": 1838,
+"reason": "half of event; move money to keeper then delete",
+"income": 31638
+},
+{
+"op": "move_then_archive",
+"id": 1856,
+"keeper": 1756,
+"reason": "half of event; move money to keeper then delete",
+"income": 181985
+},
+{
+"op": "move_then_archive",
+"id": 1772,
+"keeper": 1778,
+"reason": "half of event; move money to keeper then delete",
+"income": 4787
+},
+{
+"op": "archive",
+"id": 2042,
+"reason": "keeper already = Excel total (dup money)",
+"income": 88034
+},
+{
+"op": "archive",
+"id": 1771,
+"reason": "keeper already = Excel total (dup money)",
+"income": 13187
+},
+{
+"op": "archive",
+"id": 2048,
+"reason": "keeper already = Excel total (dup money)",
+"income": 16699
+},
+{
+"op": "archive",
+"id": 1922,
+"reason": "keeper already = Excel total (dup money)",
+"income": 11583
+},
+{
+"op": "archive",
+"id": 1972,
+"reason": "empty shell (0 income/files)",
+"income": 0
+},
+{
+"op": "archive",
+"id": 1984,
+"reason": "keeper already = Excel total (dup money)",
+"income": 14900
+},
+{
+"op": "archive",
+"id": 1998,
+"reason": "keeper already = Excel total (dup money)",
+"income": 21587
+},
+{
+"op": "archive",
+"id": 1819,
+"reason": "keeper already = Excel total (dup money)",
+"income": 7388
+},
+{
+"op": "archive",
+"id": 1805,
+"reason": "keeper already = Excel total (dup money)",
+"income": 4000
+},
+{
+"op": "archive",
+"id": 2031,
+"reason": "keeper already = Excel total (dup money)",
+"income": 80068
+},
+{
+"op": "archive",
+"id": 2034,
+"reason": "keeper already = Excel total (dup money)",
+"income": 147009
+},
+{
+"op": "move_then_archive",
+"id": 1855,
+"keeper": 145,
+"reason": "half of event; move money to keeper then delete",
+"income": 71532
+},
+{
+"op": "archive",
+"id": 2053,
+"reason": "keeper already = Excel total (dup money)",
+"income": 31775
+},
+{
+"op": "archive",
+"id": 2016,
+"reason": "keeper already = Excel total (dup money)",
+"income": 8479
+},
+{
+"op": "archive",
+"id": 2019,
+"reason": "keeper already = Excel total (dup money)",
+"income": 9900
+},
+{
+"op": "move_then_archive",
+"id": 1916,
+"keeper": 1920,
+"reason": "half of event; move money to keeper then delete",
+"income": 5700
+},
+{
+"op": "move_then_archive",
+"id": 1921,
+"keeper": 1917,
+"reason": "half of event; move money to keeper then delete",
+"income": 44905
+},
+{
+"op": "archive",
+"id": 1952,
+"reason": "empty shell (0 income/files)",
+"income": 0
+},
+{
+"op": "move_then_archive",
+"id": 1852,
+"keeper": 1862,
+"reason": "half of event; move money to keeper then delete",
+"income": 11338
+},
+{
+"op": "archive",
+"id": 2049,
+"reason": "empty shell (0 income/files)",
+"income": 0
+},
+{
+"op": "move_then_archive",
+"id": 1859,
+"keeper": 299,
+"reason": "half of event; move money to keeper then delete",
+"income": 27500
+},
+{
+"op": "archive",
+"id": 2018,
+"reason": "keeper already = Excel total (dup money)",
+"income": 8406
+},
+{
+"op": "archive",
+"id": 2015,
+"reason": "keeper already = Excel total (dup money)",
+"income": 6960
+},
+{
+"op": "archive",
+"id": 1911,
+"reason": "keeper already = Excel total (dup money)",
+"income": 61540
+},
+{
+"op": "archive",
+"id": 1955,
+"reason": "keeper already = Excel total (dup money)",
+"income": 26100
+},
+{
+"op": "archive",
+"id": 1949,
+"reason": "keeper already = Excel total (dup money)",
+"income": 57549
+},
+{
+"op": "archive",
+"id": 1967,
+"reason": "keeper already = Excel total (dup money)",
+"income": 35588
+},
+{
+"op": "archive",
+"id": 2008,
+"reason": "keeper already = Excel total (dup money)",
+"income": 17799
+},
+{
+"op": "archive",
+"id": 2001,
+"reason": "keeper already = Excel total (dup money)",
+"income": 32208
+},
+{
+"op": "archive",
+"id": 2050,
+"reason": "keeper already = Excel total (dup money)",
+"income": 27136
+},
+{
+"op": "move_then_archive",
+"id": 1773,
+"keeper": 1759,
+"reason": "half of event; move money to keeper then delete",
+"income": 17288
+},
+{
+"op": "move_then_archive",
+"id": 1802,
+"keeper": 12,
+"reason": "half of event; move money to keeper then delete",
+"income": 19381
+},
+{
+"op": "archive",
+"id": 1965,
+"reason": "empty shell (0 income/files)",
+"income": 0
+},
+{
+"op": "archive",
+"id": 1977,
+"reason": "keeper already = Excel total (dup money)",
+"income": 134191
+},
+{
+"op": "move_then_archive",
+"id": 1953,
+"keeper": 190,
+"reason": "half of event; move money to keeper then delete",
+"income": 31264
+},
+{
+"op": "archive",
+"id": 1973,
+"reason": "empty shell (0 income/files)",
+"income": 0
+},
+{
+"op": "archive",
+"id": 2005,
+"reason": "keeper already = Excel total (dup money)",
+"income": 2000
+},
+{
+"op": "archive",
+"id": 2033,
+"reason": "keeper already = Excel total (dup money)",
+"income": 274439
+},
+{
+"op": "archive",
+"id": 2020,
+"reason": "keeper already = Excel total (dup money)",
+"income": 52823
+},
+{
+"op": "archive",
+"id": 2007,
+"reason": "keeper already = Excel total (dup money)",
+"income": 42486
+},
+{
+"op": "archive",
+"id": 2000,
+"reason": "keeper already = Excel total (dup money)",
+"income": 9587
+},
+{
+"op": "archive",
+"id": 2051,
+"reason": "keeper already = Excel total (dup money)",
+"income": 61249
+},
+{
+"op": "move_then_archive",
+"id": 1957,
+"keeper": 275,
+"reason": "half of event; move money to keeper then delete",
+"income": 40110
+},
+{
+"op": "move_then_archive",
+"id": 1770,
+"keeper": 1846,
+"reason": "half of event; move money to keeper then delete",
+"income": 7390
+},
+{
+"op": "archive",
+"id": 1803,
+"reason": "empty shell (0 income/files)",
+"income": 0
+},
+{
+"op": "archive",
+"id": 1836,
+"reason": "keeper already = Excel total (dup money)",
+"income": 69004
+},
+{
+"op": "archive",
+"id": 2039,
+"reason": "empty shell (0 income/files)",
+"income": 0
+},
+{
+"op": "move_then_archive",
+"id": 1801,
+"keeper": 268,
+"reason": "half of event; move money to keeper then delete",
+"income": 29888
+},
+{
+"op": "archive",
+"id": 1748,
+"reason": "keeper already = Excel total (dup money)",
+"income": 176865
+},
+{
+"op": "archive",
+"id": 1809,
+"reason": "keeper already = Excel total (dup money)",
+"income": 167735
+},
+{
+"op": "archive",
+"id": 1841,
+"reason": "keeper already = Excel total (dup money)",
+"income": 183826
+},
+{
+"op": "archive",
+"id": 1842,
+"reason": "keeper already = Excel total (dup money)",
+"income": 149851
+},
+{
+"op": "archive",
+"id": 1881,
+"reason": "keeper already = Excel total (dup money)",
+"income": 181722
+},
+{
+"op": "archive",
+"id": 1902,
+"reason": "keeper already = Excel total (dup money)",
+"income": 169433
+},
+{
+"op": "archive",
+"id": 2012,
+"reason": "keeper already = Excel total (dup money)",
+"income": 1800
+},
+{
+"op": "archive",
+"id": 2014,
+"reason": "keeper already = Excel total (dup money)",
+"income": 81428
+},
+{
+"op": "archive",
+"id": 2017,
+"reason": "keeper already = Excel total (dup money)",
+"income": 44710
+},
+{
+"op": "move_then_archive",
+"id": 1992,
+"keeper": 1824,
+"reason": "half of event; move money to keeper then delete",
+"income": 10000
+},
+{
+"op": "move_then_archive",
+"id": 1976,
+"keeper": 1824,
+"reason": "half of event; move money to keeper then delete",
+"income": 8148
+},
+{
+"op": "move_then_archive",
+"id": 1995,
+"keeper": 1824,
+"reason": "half of event; move money to keeper then delete",
+"income": 33628
+},
+{
+"op": "archive",
+"id": 1774,
+"reason": "empty shell (0 income/files)",
+"income": 0
+},
+{
+"op": "move_then_archive",
+"id": 1966,
+"keeper": 1978,
+"reason": "half of event; move money to keeper then delete",
+"income": 30538
+},
+{
+"op": "move_then_archive",
+"id": 1954,
+"keeper": 1948,
+"reason": "half of event; move money to keeper then delete",
+"income": 8000
+},
+{
+"op": "archive",
+"id": 1999,
+"reason": "keeper already = Excel total (dup money)",
+"income": 18886
+},
+{
+"op": "archive",
+"id": 2023,
+"reason": "empty shell (0 income/files)",
+"income": 0
+},
+{
+"op": "move_then_archive",
+"id": 1974,
+"keeper": 1962,
+"reason": "half of event; move money to keeper then delete",
+"income": 2300
+},
+{
+"op": "move_then_archive",
+"id": 2045,
+"keeper": 1962,
+"reason": "half of event; move money to keeper then delete",
+"income": 3750
+},
+{
+"op": "archive",
+"id": 1993,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 33259
+},
+{
+"op": "archive",
+"id": 1918,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 16461
+},
+{
+"op": "archive",
+"id": 1996,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 13472
+},
+{
+"op": "archive",
+"id": 1827,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 14876
+},
+{
+"op": "archive",
+"id": 2003,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 14899
+},
+{
+"op": "archive",
+"id": 1997,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 165715
+},
+{
+"op": "archive",
+"id": 1751,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 62002
+},
+{
+"op": "archive",
+"id": 1743,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 116085
+},
+{
+"op": "archive",
+"id": 1991,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 58813
+},
+{
+"op": "archive",
+"id": 1828,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 49438
+},
+{
+"op": "archive",
+"id": 1975,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 38905
+},
+{
+"op": "archive",
+"id": 1994,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 79833
+},
+{
+"op": "archive",
+"id": 1858,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 39779
+},
+{
+"op": "archive",
+"id": 1968,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 3088
+},
+{
+"op": "archive",
+"id": 2010,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 42876
+},
+{
+"op": "archive",
+"id": 2024,
+"reason": "REVIEW confirmed dup (in Excel / cross-month half)",
+"income": 71805
+},
+{
+"op": "move_then_archive",
+"id": 2204,
+"keeper": 239,
+"reason": "AEON CHERAS venue-map fix: money -> owner project p239",
+"income": 70669
+}
+]

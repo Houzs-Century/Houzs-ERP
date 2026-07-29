@@ -53,6 +53,7 @@ import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRet
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
+import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { useAuth } from '../../vendor/scm/lib/auth';
 /* Houzs auth — the REAL logged-in user (name + id). The vendored 2990 auth
    bridge (useAuth above) has no staff row for the owner (id:null), which left
@@ -2057,30 +2058,28 @@ export const SalesOrderNew = () => {
             <label className={styles.field}>
               <span className={styles.fieldLabel}>City</span>
               <span className={styles.selectWrap}>
-                <select
+                <SearchableSelect
                   className={styles.fieldSelect}
                   value={city}
-                  onChange={(e) => { const c = e.target.value; setCity(c); setPostcode(''); applyCityReverse(c); }}
+                  onChange={(v) => { setCity(v); setPostcode(''); applyCityReverse(v); }}
                   disabled={loc.isLoading}
-                >
-                  <option value="">{loc.isLoading ? 'Loading…' : 'Pick city'}</option>
-                  {sortByText(cityChoices).map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+                  placeholder={loc.isLoading ? 'Loading…' : 'Pick city'}
+                  options={sortByText(cityChoices).map((c) => ({ value: c, label: c }))}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Postcode</span>
               <span className={styles.selectWrap}>
-                <select
+                <SearchableSelect
                   className={styles.fieldSelect}
                   value={postcode}
-                  onChange={(e) => { const p = e.target.value; setPostcode(p); applyPostcodeReverse(p); }}
+                  onChange={(v) => { setPostcode(v); applyPostcodeReverse(v); }}
                   disabled={loc.isLoading}
-                >
-                  <option value="">{loc.isLoading ? 'Loading…' : 'Pick postcode'}</option>
-                  {sortByNumeric(postcodeChoices).map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
+                  placeholder={loc.isLoading ? 'Loading…' : 'Pick postcode'}
+                  options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>

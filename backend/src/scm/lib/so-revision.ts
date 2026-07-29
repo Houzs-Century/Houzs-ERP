@@ -785,6 +785,11 @@ export async function reviseBoundPo(
   amendmentId: string,
   userId: string | null,
   c?: Context<any>,
+  /* onlyPoId — revise ONE bound PO instead of all (two-lane rework 2026-07-27):
+     the PO-Amendments confirm gate approves one follow-up at a time, so its
+     apply must not touch the sibling POs still awaiting their own confirms.
+     Unscoped (the legacy approve-po gate) keeps the original revise-all. */
+  opts?: { onlyPoId?: string },
 ): Promise<ReviseBoundPoResult> {
   const noop = (): ReviseBoundPoResult => ({ revisedPoIds: [], perPo: [], warnings: [] });
 
@@ -908,7 +913,16 @@ export async function reviseBoundPo(
     supplier_id: string | null; purchase_location_id: string | null; company_id: number | null;
   }>).filter((p) => String(p.status).toUpperCase() !== 'CANCELLED');
   if (livePos.length === 0) return noop();
-  const livePoIds = new Set(livePos.map((p) => p.id));
+
+  /* Single-PO scope (two-lane rework) — everything downstream keys off
+     scopedPos / scopedPoIds: the re-derive set, the orphan set, the ADD
+     placement and the per-PO apply loop. ADD supplier-matching still consults
+     the FULL livePos so a line whose supplier belongs to a SIBLING po is
+     silently deferred to that PO's own confirm rather than mis-warned here. */
+  const scopedPos = opts?.onlyPoId ? livePos.filter((p) => p.id === opts.onlyPoId) : livePos;
+  if (scopedPos.length === 0) return noop();
+  const scopeCoversAll = scopedPos.length === livePos.length;
+  const livePoIds = new Set(scopedPos.map((p) => p.id));
 
   // (8) Re-read the NOW-REVISED SO lines keyed by id (the derivation source).
   //     Houzs: the per-line delivery date column is `line_delivery_date`.
@@ -990,16 +1004,21 @@ export async function reviseBoundPo(
       const label = (line.description || itemCode || 'a new item').trim();
       const binding = itemCode ? mainBindingByCode.get(itemCode) : undefined;
       if (!binding) {
-        warnings.push(`A newly added item (${label}) has no supplier set, so it could not be added to a purchase order. Set its main supplier, then raise a purchase order for it.`);
+        /* Scoped confirm: this warning belongs to whichever confirm can act on
+           it. Emit it only when the scope covers every bound PO, so a partial
+           confirm doesn't false-alarm about a sibling PO's item. */
+        if (scopeCoversAll) warnings.push(`A newly added item (${label}) has no supplier set, so it could not be added to a purchase order. Set its main supplier, then raise a purchase order for it.`);
         continue;
       }
       const forSupplier = livePos.filter((p) => p.supplier_id === binding.supplierId);
       const target = forSupplier.find((p) => p.purchase_location_id && p.purchase_location_id === line.warehouse_id)
         ?? forSupplier[0];
       if (!target) {
-        warnings.push(`A newly added item (${label}) is from a supplier that has no open purchase order on this sales order, so a purchase order still needs to be raised for it.`);
+        if (scopeCoversAll) warnings.push(`A newly added item (${label}) is from a supplier that has no open purchase order on this sales order, so a purchase order still needs to be raised for it.`);
         continue;
       }
+      // Out-of-scope target = a sibling PO's line; its own confirm inserts it.
+      if (!livePoIds.has(target.id)) continue;
       const arr = addedByPo.get(target.id) ?? [];
       arr.push({ soItemId, line, supplierSku: binding.supplierSku });
       addedByPo.set(target.id, arr);
@@ -1026,7 +1045,7 @@ export async function reviseBoundPo(
   //      lines (warn if received), insert added lines, recompute totals, bump,
   //      audit.
   const perPo: ReviseBoundPoResult['perPo'] = [];
-  for (const po of livePos) {
+  for (const po of scopedPos) {
     const nextRevision = await snapshotPo(sb, po.id, amendmentId, userId, c);
     let linesRederived = 0;
     let linesRemoved = 0;

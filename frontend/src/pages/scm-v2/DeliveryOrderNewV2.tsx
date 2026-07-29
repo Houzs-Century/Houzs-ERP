@@ -64,13 +64,16 @@ import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { cn } from "../../lib/utils";
+import { useStaffLookup } from "../../hooks/useStaffLookup";
+import { useStateWarehouseMappings } from "../../vendor/scm/lib/state-warehouse-queries";
+import { splitE164, combineE164 } from "../../vendor/shared/phone";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /* One DO line draft = the SHARED SoLineDraft (same variant taxonomy the SO
    uses) plus a stable React id and, in edit mode, the persisted item id used
    to diff add / update / delete against the loaded DO. */
-type DoDraftLine = SoLineDraft & { rid: string; itemId?: string };
+type DoDraftLine = SoLineDraft & { rid: string; itemId?: string; soItemId?: string | null };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -239,14 +242,20 @@ function PhoneInput({
   onChange: (v: string) => void;
   placeholder?: string;
 }) {
+  // The prefix box owns the country code, so the input holds only the national
+  // digits. Seeded values arrive E.164 ("+60169691009"); showing them verbatim
+  // rendered a double "+60 +60169691009". splitE164 strips the code for display,
+  // combineE164 puts it back into storage form, so the stored value stays E.164
+  // and the submit path is unchanged.
+  const national = splitE164(value).national;
   return (
     <div className="flex items-stretch gap-1.5">
       <div className="inline-flex h-10 w-[86px] shrink-0 items-center justify-center rounded-lg border border-border bg-surface-2 text-[12px] font-semibold text-ink-secondary">
         MY +60
       </div>
       <TextInput
-        value={value}
-        onChange={onChange}
+        value={national}
+        onChange={(v) => onChange(combineE164("60", v))}
         placeholder={placeholder || "11-6155 6133"}
         className="flex-1"
       />
@@ -474,6 +483,10 @@ export function DeliveryOrderNewV2() {
      clean copy, no error text — left for a dedicated dialog sweep.) */
   const askConfirm = useConfirm();
   const notify = useNotify();
+  // Resolve salesperson id -> name (never render a raw UUID) and populate the
+  // Sales-location picker from the real warehouse list (not hardcoded demos).
+  const { nameOf } = useStaffLookup();
+  const stateWarehousesQ = useStateWarehouseMappings();
 
   useSetBreadcrumbs([
     { label: "Delivery Orders", to: "/scm/delivery-orders" },
@@ -544,6 +557,23 @@ export function DeliveryOrderNewV2() {
   const [asDraft, setAsDraft] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Sales-location options come from the real state->warehouse mappings (each maps
+  // to a warehouse code), not the two hardcoded demo rows the field used to carry —
+  // those never matched the prefilled warehouse code, so a carried value rendered
+  // as the empty placeholder. Keep any already-set value visible even if it is not
+  // in the mapping list.
+  const salesLocationOpts = useMemo(() => {
+    const byValue = new Map<string, { value: string; label: string }>();
+    for (const m of stateWarehousesQ.data?.mappings ?? []) {
+      const w = m.warehouse;
+      if (w?.code) byValue.set(w.code, { value: w.code, label: w.name || w.code });
+    }
+    if (salesLocation && !byValue.has(salesLocation)) {
+      byValue.set(salesLocation, { value: salesLocation, label: salesLocation });
+    }
+    return Array.from(byValue.values());
+  }, [stateWarehousesQ.data, salesLocation]);
+
   // One-shot seed guards + the original-line signatures used to diff an edit.
   const [stashSeeded, setStashSeeded] = useState(false);
   const [editSeeded, setEditSeeded] = useState(false);
@@ -558,6 +588,11 @@ export function DeliveryOrderNewV2() {
 
   // ── Item body — the shared shape create-items + add/update-item all send.
   const toDoItemBody = (l: DoDraftLine) => ({
+    // Carry the SO line id so the backend links the DO line to its SO line —
+    // the key the remaining-qty guard, the sofa batch guard and the drop-ship
+    // batch stamping all resolve on. Dropping it made every SO-sourced sofa DO
+    // that needs drop-ship hard-block (offenders resolved soItemId=null -> no PO).
+    soItemId: l.soItemId ?? null,
     itemCode: l.itemCode,
     itemGroup: l.itemGroup,
     description: l.description,
@@ -586,6 +621,7 @@ export function DeliveryOrderNewV2() {
       setLines(
         stash.map((s) => ({
           ...newDoLine(null),
+          soItemId: s.soItemId ? String(s.soItemId) : null,
           itemCode: String(s.itemCode ?? ""),
           itemGroup: String(s.itemGroup ?? "others"),
           description: String(s.description ?? ""),
@@ -623,7 +659,9 @@ export function DeliveryOrderNewV2() {
     setPhone(so.phone ?? "");
     setEmail(so.email ?? "");
     setCustomerType(so.customerType ?? "");
-    setSalesperson(so.salesperson ?? "");
+    // Resolve to a person's name — the SO carries salesperson as a raw UUID on
+    // some rows, which rendered verbatim in the field before.
+    setSalesperson(nameOf(so.agent, so.salespersonId, so.salesperson ?? ""));
     setAddr1(so.address1 ?? "");
     setAddr2(so.address2 ?? "");
     setState(so.customerState ?? "");
@@ -644,7 +682,8 @@ export function DeliveryOrderNewV2() {
     if (!rows || rows.length === 0) return;
     setLines(
       rows.map((it) => ({
-        ...newDoLine(it.soItemId),
+        ...newDoLine(null),
+        soItemId: it.soItemId,
         itemCode: it.itemCode,
         itemGroup: it.itemGroup ?? "others",
         description: it.description ?? "",
@@ -676,7 +715,7 @@ export function DeliveryOrderNewV2() {
     setPhone(String(doo.phone ?? ""));
     setEmail(String(doo.email ?? ""));
     setCustomerType(String((doo.customer_type ?? "") as string));
-    setSalesperson(String((doo.agent ?? doo.salesperson_id ?? "") as string));
+    setSalesperson(nameOf(doo.agent as string, doo.salesperson_id as string, ""));
     setAddr1(String(doo.address1 ?? ""));
     setAddr2(String(doo.address2 ?? ""));
     setState(String(doo.customer_state ?? ""));
@@ -1152,10 +1191,7 @@ export function DeliveryOrderNewV2() {
                   value={salesLocation}
                   onChange={setSalesLocation}
                   placeholder="—"
-                  options={[
-                    { value: "KL Warehouse", label: "KL Warehouse" },
-                    { value: "Cheras DC", label: "Cheras DC" },
-                  ]}
+                  options={salesLocationOpts}
                 />
               </div>
             </div>

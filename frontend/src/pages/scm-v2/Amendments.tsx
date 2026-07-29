@@ -63,6 +63,20 @@ const buildAmendmentColumns = (
     sortFn: (a, b) => Number(a.amendment_no ?? 0) - Number(b.amendment_no ?? 0),
   },
   {
+    /* Two-lane rework — WHO this request is waiting on: product changes sign
+       with Purchasing, delivery changes with Logistics. Pre-rework rows (lane
+       NULL) show the legacy multi-gate chain as "Legacy". */
+    key: 'lane', label: 'Approver', width: 120, sortable: true, groupable: true,
+    accessor: (a) =>
+      a.lane === 'LINES' ? 'Purchasing'
+        : a.lane === 'DELIVERY' ? 'Logistics'
+          : <span style={{ color: 'var(--fg-muted)' }}>Legacy</span>,
+    searchValue: (a) => (a.lane === 'LINES' ? 'Purchasing' : a.lane === 'DELIVERY' ? 'Logistics' : 'Legacy'),
+    exportValue: (a) => (a.lane === 'LINES' ? 'Purchasing' : a.lane === 'DELIVERY' ? 'Logistics' : 'Legacy'),
+    groupValue: (a) => (a.lane === 'LINES' ? 'Purchasing' : a.lane === 'DELIVERY' ? 'Logistics' : 'Legacy'),
+    sortFn: (a, b) => String(a.lane ?? '').localeCompare(String(b.lane ?? '')),
+  },
+  {
     key: 'requested_by', label: 'Requested by', width: 200, sortable: true, groupable: true,
     accessor: (a) => actorNameOf(a.requested_by),
     searchValue: (a) => actorNameOf(a.requested_by, ''),
@@ -154,11 +168,11 @@ export const Amendments = () => {
         <FilterPills
           options={STATUS_CHIPS.map((s) => ({
             value: s,
-            label: `${amendmentBucketLabel(s)} · ${
+            label: amendmentBucketLabel(s),
+            count:
               s === 'all'
                 ? allRows.length
-                : allRows.filter((a) => amendmentBucketOf(a.status) === s).length
-            }`,
+                : allRows.filter((a) => amendmentBucketOf(a.status) === s).length,
           }))}
           value={statusChip}
           onChange={(v) => setStatusChip(v)}

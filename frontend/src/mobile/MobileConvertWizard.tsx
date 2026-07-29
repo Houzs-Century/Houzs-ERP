@@ -135,6 +135,10 @@ type OutstandingSoLine = {
 // Carries the per-line fields the New-GRN create needs to build a DRAFT receipt.
 type OutstandingPoLine = {
   poItemId: string; poId: string; supplierId: string; itemCode: string;
+  // Owner 2026-07-27 — the supplier's own code (the PO line's snapshot); the
+  // /grns/outstanding-po-items endpoint returns it (#1347). Surfaced so the
+  // mobile receiver sees the code the delivery note uses, like the desktop.
+  supplierSku: string | null;
   description: string | null; itemGroup: string | null; variants: unknown;
   deliveryDate: string | null; warehouseLocationId: string | null;
   qty: number; receivedQty: number; remainingQty: number; unitPriceCenti: number;
@@ -146,7 +150,7 @@ type OutstandingPoLine = {
 // qty; this drives a per-line DRAFT create instead.
 type GrnPickLine = {
   poItemId: string; poId: string; supplierId: string;
-  itemCode: string; description: string | null; itemGroup: string | null;
+  itemCode: string; supplierSku: string | null; description: string | null; itemGroup: string | null;
   variants: unknown; unitPriceCenti: number;
   origQty: number;       // ordered qty
   remaining: number;     // outstanding (qty − received_qty)
@@ -388,6 +392,7 @@ export function MobileConvertWizard({
           poId: str(r.poId),
           supplierId: str(r.supplierId),
           itemCode: str(r.itemCode),
+          supplierSku: (pick(r, "supplierSku") as string | undefined) ?? null,
           description: (pick(r, "description") as string | undefined) ?? null,
           itemGroup: (pick(r, "itemGroup") as string | undefined) ?? null,
           variants: r.variants ?? null,
@@ -909,6 +914,11 @@ function GrnLinesStep({
                 />
                 <span style={{ minWidth: 0, flex: 1 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.description || l.itemCode}</span>
+                  {l.supplierSku && (
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, fontWeight: 600, color: "#767b6e", fontFamily: "var(--font-mono, monospace)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      Supplier SKU: {l.supplierSku}
+                    </span>
+                  )}
                   <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>
                     Outstanding ×{l.remaining} of {ofQty} · {fmtCenti(l.unitPriceCenti)} each
                   </span>

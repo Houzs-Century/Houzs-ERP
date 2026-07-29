@@ -2,8 +2,10 @@ import type { Env } from "../types";
 import { todayMyt } from "../scm/lib/my-time";
 import { isServiceLine } from "../scm/shared/service-sku";
 import { AutoCountClient, cleanPhone } from "./autocount";
+import { normalizePhone } from "../scm/shared/phone";
 import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
+import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -354,7 +356,9 @@ export async function createAssrCase(
     }
   }
 
-  const assrNo = await nextAssrNumber(env);
+  // `let`, not `const` — the create loop below takes a FRESH number when the
+  // unique guard (mig 0218 / D1 135) reports a concurrent create won the race.
+  let assrNo = await nextAssrNumber(env);
   const today = todayMyt();
   // complained_date — honour an explicit intake value (validated to a
   // strict YYYY-MM-DD), else default to today (MYT). Anything malformed
@@ -421,7 +425,29 @@ export async function createAssrCase(
   const companyCol = companyId != null ? ", company_id" : "";
   const companyPlaceholder = companyId != null ? ", ?" : "";
 
-  const result = await env.DB.prepare(
+  /* Guarded take-a-number. nextAssrNumber is read-max-then-+1 with no lock,
+     so two concurrent creates can mint the same number — that is exactly how
+     the 8 grandfathered 2604 duplicates happened. The partial unique index
+     (PG mig 0218, D1 135) turns the race into a constraint error; losing
+     racer takes a fresh number and retries. Bounded so a NON-race unique
+     error (or an index misconfiguration) still surfaces instead of looping. */
+  let result: Awaited<ReturnType<ReturnType<typeof env.DB.prepare>["run"]>> | null = null;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      result = await insertCase();
+      break;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (attempt < 3 && /unique|duplicate/i.test(msg)) {
+        assrNo = await nextAssrNumber(env);
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  function insertCase() {
+    return env.DB.prepare(
     `INSERT INTO assr_cases (
        assr_no, status, stage, doc_no, complained_date, customer_name, phone, location,
        sales_agent, item_code, complaint_issue, issue_category, priority, po_no, addr1, addr2, addr3, addr4, created_by,
@@ -436,7 +462,7 @@ export async function createAssrCase(
       input.doc_no,
       complainedDate,
       context?.DebtorName ?? null,
-      cleanPhone(context?.Phone1),
+      normalizePhone(context?.Phone1) ?? cleanPhone(context?.Phone1),
       context?.SalesLocation ?? null,
       context?.SalesAgent ?? null,
       firstItem,
@@ -476,8 +502,9 @@ export async function createAssrCase(
       ...(companyId != null ? [companyId] : [])
     )
     .run();
+  }
 
-  const assrId = result.meta.last_row_id as number;
+  const assrId = result!.meta.last_row_id as number;
 
   // Seed the per-stage lifecycle row for Stage 1 so the Workflow
   // Progress Tracker has data and the alert engine has a target.
@@ -554,6 +581,7 @@ export async function getAssrDetail(env: Env, id: number) {
             cr.phone1 as creditor_phone,
             cr.mobile as creditor_mobile,
             cr.attention as creditor_attention,
+            co.code as company_code,
             CAST((julianday(c.deadline_at) - julianday('now')) * 24 AS INTEGER) as hours_to_deadline,
             CASE
               WHEN c.stage = 'completed' THEN 0
@@ -567,11 +595,18 @@ export async function getAssrDetail(env: Env, id: number) {
        LEFT JOIN users u4 ON u4.id = c.verified_by
        LEFT JOIN users u5 ON u5.id = c.assigned_to_2
        LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code
+       LEFT JOIN companies co ON co.id = c.company_id
       WHERE c.id = ?`
   )
     .bind(id)
     .first<any>();
   if (!caseRow) return null;
+
+  // Same DO resolution the list does (transfer_to → ref-matched mirror →
+  // SCM fallback) so the detail page's DO field also fills for cases
+  // whose hand-entered delivery_order was never set — which is nearly
+  // all of them.
+  await attachDeliveryOrders(env, [caseRow]);
 
   const items = await env.DB.prepare(
     `SELECT * FROM assr_items WHERE assr_id = ? ORDER BY id`
@@ -922,7 +957,7 @@ export async function patchAssrCase(
       }
       if (so) {
         if (!("customer_name" in body) && so.debtor_name) body.customer_name = so.debtor_name;
-        if (!("phone" in body) && so.phone) body.phone = cleanPhone(so.phone);
+        if (!("phone" in body) && so.phone) body.phone = normalizePhone(so.phone) ?? cleanPhone(so.phone);
         if (!("sales_agent" in body) && so.sales_agent) body.sales_agent = so.sales_agent;
         if (!("ref_no" in body) && so.ref) body.ref_no = so.ref;
       }
@@ -1656,18 +1691,19 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
     // and item_code are denormalized columns on assr_cases; item_description
     // lives only in the child assr_items table, matched via a correlated
     // EXISTS so it also works inside the COUNT(*) query (no assr_items join).
-    // Additive — keeps case no / SO doc / Ref / customer.
+    // Additive — keeps case no / SO doc / Ref / customer. Salesperson
+    // (sales_agent) matches too, alongside its list column (2026-07-27).
     // Also match customer PHONE. assr_cases.phone is stored separator-free
     // (write path runs cleanPhone(so.phone) — strips +/-/space), so a term the
     // user types with dashes/spaces is cleanPhone'd the SAME way before the
     // LIKE; the raw predicate still catches an exact-format substring.
     where.push(
-      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)))"
+      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)))"
     );
     const like = `%${f.search.toLowerCase()}%`;
     const digits = cleanPhone(f.search);
     const phoneLike = digits ? `%${digits.toLowerCase()}%` : like;
-    binds.push(like, like, like, like, like, like, like, phoneLike, like, like);
+    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like);
   }
   // Calendar date-window bound (perf/servicecase-board-calendar-bound):
   // the Cases Calendar passes the viewed month grid as from/to so it pulls
@@ -1774,12 +1810,127 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
     .bind(...binds, perPage, offset)
     .all();
 
+  const data = rows.results ?? [];
+  await attachDeliveryOrders(env, data as any[]);
+
   return {
-    data: rows.results ?? [],
+    data,
     page,
     per_page: perPage,
     total: total?.count ?? 0,
   };
+}
+
+/** Attach live DO numbers as `do_numbers` on each row. The case table's own
+ *  delivery_order column stays NULL at create time (the AutoCount SO
+ *  context carries no DO doc no), so the list resolves DOs from the
+ *  systems that actually issue them (Nico 2026-07-27):
+ *
+ *  1. Houzs cases — EXACT linkage first: `sales_orders.transfer_to`,
+ *     AutoCount's own SO → DO transfer chain (computed by the
+ *     middleware's SO getSince and persisted by the 5-min pull). Then
+ *     WIDENED by the AutoCount DO mirror (mig 0215) on the shared
+ *     customer Ref — partial deliveries cut several DOs but the SO
+ *     header only points at one, and rows the pull hasn't re-touched
+ *     predate the transfer_to column. Union of both, deduped.
+ *     Ref-matching is case-insensitive ("znt4951" vs "ZNT6121"); the DO
+ *     HEADER itself has no FromDocNo (that exists per detail line only),
+ *     which is why Ref carries the linkage at all.
+ *  2. 2990 / still-unmatched cases — the SCM module's scm.delivery_orders
+ *     via its real so_doc_no column (Supabase).
+ *
+ *  Fail-soft by design: any lookup erroring (or Supabase being absent,
+ *  e.g. the D1 test env) leaves rows without do_numbers — the list itself
+ *  must never 500 over an enrichment column. Failures are logged, not
+ *  swallowed silently. */
+async function attachDeliveryOrders(env: Env, rows: any[]) {
+  if (rows.length === 0) return;
+
+  const houzs = rows.filter((r) => !r.company_code || r.company_code === "HOUZS");
+
+  const bySoDo = new Map<string, string>();
+  const soDocNos = [...new Set(houzs.map((r) => r.doc_no).filter(Boolean))] as string[];
+  if (soDocNos.length > 0) {
+    try {
+      const q = await env.DB.prepare(
+        `SELECT doc_no, transfer_to FROM sales_orders
+          WHERE transfer_to IS NOT NULL AND doc_no IN (${soDocNos.map(() => "?").join(",")})`
+      )
+        .bind(...soDocNos)
+        .all();
+      for (const d of (q.results ?? []) as any[]) {
+        // XS-prefixed docs are AutoCount's cancelled-transfer artifacts —
+        // the SO pull filters those SOs out today, but older mirror rows
+        // may still carry one; never show them as a live DO.
+        const t = d.transfer_to != null ? String(d.transfer_to).trim() : "";
+        if (d.doc_no && t && !/^xs/i.test(t)) bySoDo.set(String(d.doc_no), t);
+      }
+    } catch (e) {
+      console.warn("[assr-list] SO transfer_to lookup failed:", e);
+    }
+  }
+
+  const byRef = new Map<string, string[]>();
+  const refs = [
+    ...new Set(
+      houzs
+        .map((r) => String(r.ref_no ?? "").trim().toLowerCase())
+        .filter(Boolean)
+    ),
+  ];
+  if (refs.length > 0) {
+    try {
+      const q = await env.DB.prepare(
+        `SELECT doc_no, ref FROM autocount_delivery_orders
+          WHERE cancelled = 0 AND LOWER(ref) IN (${refs.map(() => "?").join(",")})`
+      )
+        .bind(...refs)
+        .all();
+      for (const d of (q.results ?? []) as any[]) {
+        const key = String(d.ref || "").trim().toLowerCase();
+        if (!key || !d.doc_no) continue;
+        const list = byRef.get(key) ?? [];
+        list.push(String(d.doc_no));
+        byRef.set(key, list);
+      }
+    } catch (e) {
+      console.warn("[assr-list] AutoCount DO-mirror lookup failed:", e);
+    }
+  }
+
+  for (const r of houzs) {
+    const hits = new Set<string>();
+    const exact = bySoDo.get(r.doc_no);
+    if (exact) hits.add(exact);
+    for (const d of byRef.get(String(r.ref_no ?? "").trim().toLowerCase()) ?? []) hits.add(d);
+    if (hits.size > 0) r.do_numbers = [...hits].sort().join(" · ");
+  }
+
+  if (!isSupabaseConfigured(env)) return;
+  const rest = rows.filter((r) => !r.do_numbers);
+  const docNos = [...new Set(rest.map((r) => r.doc_no).filter(Boolean))] as string[];
+  if (docNos.length === 0) return;
+  try {
+    const sb = getSupabaseService(env);
+    const { data, error } = await sb
+      .from("delivery_orders")
+      .select("so_doc_no, do_number")
+      .in("so_doc_no", docNos)
+      .order("do_number", { ascending: true });
+    if (error) throw error;
+    const bySo = new Map<string, string[]>();
+    for (const d of data ?? []) {
+      if (!d.so_doc_no || !d.do_number) continue;
+      const list = bySo.get(d.so_doc_no) ?? [];
+      list.push(d.do_number);
+      bySo.set(d.so_doc_no, list);
+    }
+    for (const r of rest) {
+      r.do_numbers = bySo.get(r.doc_no)?.join(" · ") ?? null;
+    }
+  } catch (e) {
+    console.warn("[assr-list] SCM delivery-order merge skipped:", e);
+  }
 }
 
 // Full dump used by the CSV export route. Honors the same filters
@@ -1832,25 +1983,27 @@ export async function exportAssrCases(
     // and item_code are denormalized columns on assr_cases; item_description
     // lives only in the child assr_items table, matched via a correlated
     // EXISTS so it also works inside the COUNT(*) query (no assr_items join).
-    // Additive — keeps case no / SO doc / Ref / customer.
+    // Additive — keeps case no / SO doc / Ref / customer. Salesperson
+    // (sales_agent) matches too, alongside its list column (2026-07-27).
     // Also match customer PHONE. assr_cases.phone is stored separator-free
     // (write path runs cleanPhone(so.phone) — strips +/-/space), so a term the
     // user types with dashes/spaces is cleanPhone'd the SAME way before the
     // LIKE; the raw predicate still catches an exact-format substring.
     where.push(
-      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)))"
+      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)))"
     );
     const like = `%${f.search.toLowerCase()}%`;
     const digits = cleanPhone(f.search);
     const phoneLike = digits ? `%${digits.toLowerCase()}%` : like;
-    binds.push(like, like, like, like, like, like, like, phoneLike, like, like);
+    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like);
   }
   pushVisibilityScope(where, binds, f.visible_to_user_ids, f.visible_agent_names);
   pushAllowedCompanies(where, f.allowed_company_ids);
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const rows = await env.DB.prepare(
-    `SELECT c.assr_no, c.doc_no, c.stage, c.status, c.priority,
+    `SELECT c.assr_no, c.doc_no, c.ref_no, c.stage, c.status, c.priority,
             c.customer_name, c.phone AS customer_phone, c.location,
+            c.sales_agent, c.delivery_order,
             c.service_category, c.ncr_category, c.resolution_method,
             c.item_code, c.complaint_issue,
             c.complained_date, c.created_at, c.deadline_at,
@@ -1858,6 +2011,7 @@ export async function exportAssrCases(
             u.name as assigned_to_name, u2.name as created_by_name,
             c.creditor_code as creditor_code,
             cr.company_name as creditor_name,
+            co.code as company_code,
             CASE
               WHEN c.stage = 'completed' THEN 0
               WHEN c.deadline_at IS NOT NULL AND datetime('now') > c.deadline_at THEN 1
@@ -1867,13 +2021,16 @@ export async function exportAssrCases(
        LEFT JOIN users u ON u.id = c.assigned_to
        LEFT JOIN users u2 ON u2.id = c.created_by
        LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code
+       LEFT JOIN companies co ON co.id = c.company_id
      ${whereSql}
      ORDER BY c.id DESC
      LIMIT 10000`
   )
     .bind(...binds)
     .all();
-  return rows.results ?? [];
+  const results = (rows.results ?? []) as any[];
+  await attachDeliveryOrders(env, results);
+  return results;
 }
 
 // ── Activity log helper ───────────────────────────────────────

@@ -347,26 +347,6 @@ export const NAV_TABS: NavTab[] = [
         requireFinanceViewer: true,
       },
       {
-        to: "/fair-report-fill",
-        label: "Fair Report Fill",
-        icon: DollarSign,
-        pageAccess: "projects.finances",
-        requireFinanceViewer: true,
-      },
-      {
-        to: "/schedule-reconcile",
-        label: "Schedule Reconcile",
-        icon: Calendar,
-        pageAccess: "projects",
-      },
-      {
-        to: "/setup-invoice",
-        label: "Setup Invoice",
-        icon: DollarSign,
-        pageAccess: "projects.finances",
-        requireFinanceViewer: true,
-      },
-      {
         to: "/projects?view=maintenance",
         label: "Project Maintenance",
         icon: Wrench,
@@ -435,7 +415,9 @@ export const NAV_TABS: NavTab[] = [
       // the row. Same shape + same reasoning as the DO / SI leaves below.
       {
         to: "/scm/amendments",
-        label: "Amendments",
+        // Owner 2026-07-27 — spelled out so the sales side reads unambiguously
+        // against the Procurement group's "PO Amendments".
+        label: "Sales Order Amendment",
         icon: History,
         salesRepOnly: true,
       },
@@ -489,7 +471,7 @@ export const NAV_TABS: NavTab[] = [
           // rep-only leaf above instead, so this carries hideForSalesRep like its
           // DO / SI siblings — belt-and-braces against the parent's flag being
           // removed, which would otherwise render the row TWICE for a rep.
-          { to: "/scm/amendments", label: "Amendments", icon: History, anyPerm: ["*", "scm.access", "scm.amendment.create", "scm.amendment.supplier_confirm", "scm.amendment.approve_so", "scm.amendment.approve_po"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true },
+          { to: "/scm/amendments", label: "Sales Order Amendment", icon: History, anyPerm: ["*", "scm.access", "scm.amendment.create", "scm.amendment.supplier_confirm", "scm.amendment.approve_so", "scm.amendment.approve_po"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true },
           { to: "/scm/delivery-orders", label: "Delivery Orders", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.delivery"], hideForSalesRep: true },
           { to: "/scm/sales-invoices", label: "Sales Invoices", icon: FileText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.invoices"], hideForSalesRep: true },
           { to: "/scm/delivery-returns", label: "Delivery Returns", icon: RotateCcw, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.returns"], hideForSales: true },

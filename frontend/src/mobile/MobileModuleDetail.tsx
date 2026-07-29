@@ -269,6 +269,10 @@ type DocMap = {
   /** [Total, Secondary, Tertiary] stats — each [label, value, color] or null. */
   stats: (h: any) => Array<[string, string, string] | null>;
   line: (it: any) => { name: string; sub?: string; qty: unknown; unitCenti: unknown; amountCenti: unknown };
+  /** Optional amber warning bar between the stats and the line items —
+   *  computed from the SAME detail payload (header + items), so no extra
+   *  fetch. Return null for "nothing to warn about". */
+  notice?: (h: any, items: any[]) => string | null;
 };
 
 const nested = (v: any) => (Array.isArray(v) ? v[0] : v) ?? null;
@@ -422,6 +426,17 @@ const DOC_MODULES: Record<string, DocMap> = {
       unitCenti: it.unit_price_centi,
       amountCenti: it.line_total_centi,
     }),
+    /* SO→PO drift (desktop parity, Commander 2026-06-16) — the detail payload's
+       items already carry so_drift; same status gate as the desktop banner
+       (only an order that is with the supplier can be stale). The phone gets
+       the warning, the sync/re-send workflow stays on desktop. */
+    notice: (h, items) => {
+      const st = s(h?.status);
+      if (st !== "SUBMITTED" && st !== "PARTIALLY_RECEIVED") return null;
+      const n = (items ?? []).filter((it) => it?.so_drift).length;
+      if (n === 0) return null;
+      return `⚠ ${n} line${n === 1 ? "'s" : "s'"} source SO changed after this PO was raised — sync the specs and re-send to the supplier from desktop, otherwise the factory keeps building to the old spec.`;
+    },
   },
 
   /* Purchase Invoice — supplier + PI number in the header, supplier code +
@@ -1376,6 +1391,28 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 13 }}>
               {stats.map((st, i) => (st ? <Stat key={st[0]} label={st[0]} value={st[1]} color={st[2]} /> : <div key={i} />))}
             </div>
+
+            {/* Module-declared warning bar (e.g. PO SO→drift) — amber is the
+                intentional warning slot; computed off the loaded payload, so it
+                can only appear once the items are actually here. */}
+            {!isLoading && !error && (() => {
+              const notice = map.notice?.(header, items) ?? null;
+              return notice ? (
+                <div style={{
+                  background: "rgba(212,151,40,0.12)",
+                  border: "1px solid rgba(212,151,40,0.45)",
+                  color: "#8a6116",
+                  borderRadius: 10,
+                  padding: "9px 11px",
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  lineHeight: 1.45,
+                  marginBottom: 13,
+                }}>
+                  {notice}
+                </div>
+              ) : null;
+            })()}
 
             <Eyebrow>Line items</Eyebrow>
             <div style={cardStyle}>

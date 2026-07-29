@@ -1,17 +1,30 @@
 name: Delete test SO
 
-# Deletes a single (test) Sales Order + all its child rows.
-# Refuses if the SO has downstream docs, multiple payments, or is past
-# the CONFIRMED lane. See backend/scripts/delete-test-so.mjs for the
+# Deletes a single (test) Sales Order + all its child rows + the PWP
+# vouchers it minted. Refuses if the SO has downstream docs, multiple
+# payments, is past the CONFIRMED lane, or if any of its vouchers are
+# already in circulation. See backend/scripts/delete-test-so.mjs for the
 # full safety contract.
+#
+# Run it as a DRY-RUN first — it prints every row it would touch. To
+# apply, set apply=1 AND retype the doc_no in confirm_doc; they must
+# match exactly or the script refuses.
 on:
   workflow_dispatch:
     inputs:
       doc_no:
-        description: "The SO doc_no to delete (e.g. 2990-SO-2607-019)"
+        description: "The SO doc_no to delete (e.g. 2990-SO-2607-025)"
         required: true
+      confirm_doc:
+        description: "Retype the SAME doc_no — required only when apply=1"
+        required: false
+        default: ""
       apply:
         description: "Set to 1 to DELETE (else dry-run report only)"
+        required: false
+        default: "0"
+      restore_redeemed:
+        description: "Set to 1 to hand back vouchers redeemed ON this SO (status -> AVAILABLE)"
         required: false
         default: "0"
       target:
@@ -22,6 +35,11 @@ on:
         options:
           - staging
           - prod
+
+# Never queue behind — or displace — a release.
+concurrency:
+  group: delete-test-so
+  cancel-in-progress: false
 
 jobs:
   delete-staging:
@@ -40,12 +58,16 @@ jobs:
       - run: node scripts/delete-test-so.mjs
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
-          DOC_NO: ${{ github.event.inputs.doc_no }}
-          APPLY: ${{ github.event.inputs.apply }}
+          DOC_NO: ${{ inputs.doc_no }}
+          CONFIRM_DOC: ${{ inputs.confirm_doc }}
+          APPLY: ${{ inputs.apply }}
+          RESTORE_REDEEMED: ${{ inputs.restore_redeemed }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
 
   delete-prod:
     if: ${{ inputs.target == 'prod' }}
     runs-on: ubuntu-latest
+    environment: Production
     defaults:
       run:
         working-directory: backend
@@ -58,5 +80,8 @@ jobs:
       - run: node scripts/delete-test-so.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DOC_NO: ${{ github.event.inputs.doc_no }}
-          APPLY: ${{ github.event.inputs.apply }}
+          DOC_NO: ${{ inputs.doc_no }}
+          CONFIRM_DOC: ${{ inputs.confirm_doc }}
+          APPLY: ${{ inputs.apply }}
+          RESTORE_REDEEMED: ${{ inputs.restore_redeemed }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

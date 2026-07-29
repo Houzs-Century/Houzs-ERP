@@ -777,6 +777,11 @@ export function MobileNewSO({
   const [origState, setOrigState] = useState<string>("");
   const [origPostcode, setOrigPostcode] = useState<string>("");
   const [origCity, setOrigCity] = useState<string>("");
+  /* Address lines joined the frozen set 2026-07-27 (two-lane phase 2) — the
+     PERSISTED values pair with addr1/addr2 exactly as origCity pairs with city,
+     so a locked-SO address edit diffs into the amendment request. */
+  const [origAddress1, setOrigAddress1] = useState<string>("");
+  const [origAddress2, setOrigAddress2] = useState<string>("");
   /* PERSISTED SO status — feeds the SHARED procLockActive() so the processing
      lock keeps a DRAFT / CANCELLED SO editable (status guard), matching the
      mobile detail screen + desktop instead of the old status-blind copy. */
@@ -901,6 +906,8 @@ export function MobileNewSO({
         setOrigState(h.customer_state ?? "");
         setOrigPostcode(h.postcode ?? "");
         setOrigCity(h.city ?? "");
+        setOrigAddress1(h.address1 ?? "");
+        setOrigAddress2(h.address2 ?? "");
         /* The pristine baseline — the SAME builder save() uses, fed the values
            just seeded above, so an untouched form diffs to {}. salespersonId is
            seeded to "" here exactly as the picker is (this form never seeds it
@@ -1787,6 +1794,11 @@ export function MobileNewSO({
             customerState:        state,
             postcode:             postcode.trim(),
             city:                 city.trim(),
+            /* Address lines joined the frozen set 2026-07-27 (two-lane phase
+               2) — collected here so a mobile address edit on a locked SO
+               rides the amendment instead of being silently dropped. */
+            address1:             addr1.trim(),
+            address2:             addr2.trim(),
           },
           {
             internalExpectedDd:   origProcDate,
@@ -1794,6 +1806,8 @@ export function MobileNewSO({
             customerState:        origState,
             postcode:             origPostcode,
             city:                 origCity,
+            address1:             origAddress1,
+            address2:             origAddress2,
           },
         );
         const outgoingPatch = amendmentMode
@@ -1850,8 +1864,9 @@ export function MobileNewSO({
             confirmLabel: "Submit amendment",
           });
           if (reason == null) { setSubmitting(false); return; } // cancelled the prompt
+          let amendCreatedRes: unknown = null;
           try {
-            await createAmendment.mutateAsync({
+            amendCreatedRes = await createAmendment.mutateAsync({
               docNo, reason: reason.trim() || undefined, lines: amLines, headerChanges,
               idempotencyKey: amendIdemKey,
             });
@@ -1868,7 +1883,20 @@ export function MobileNewSO({
           invalidateSoShared(qc);
           await qc.invalidateQueries({ queryKey: ["mfg-sales-order-detail", docNo] });
           await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
-          void notify({ title: "Amendment submitted", body: "It now needs supplier confirmation, then approval, before the order is revised." });
+          /* Two-lane rework — the server classifies (and may split) the request:
+             product changes wait on Purchasing, delivery changes on Logistics. */
+          {
+            const createdList = ((amendCreatedRes as {
+              amendments?: Array<{ amendment_no?: string | null; lane?: string | null }>;
+            } | null)?.amendments ?? []);
+            const laneName = (l?: string | null) =>
+              l === "LINES" ? "Purchasing" : l === "DELIVERY" ? "Logistics" : "";
+            void notify(createdList.length > 1
+              ? { title: "Amendment split into two approvals", body: `${createdList.map((a) => `${a.amendment_no ?? ""} → ${laneName(a.lane)}`).join("; ")}. Each applies when its approver signs.` }
+              : createdList[0]?.lane
+                ? { title: "Amendment submitted", body: `Waiting for ${laneName(createdList[0].lane)} — one signature applies it to the order.` }
+                : { title: "Amendment submitted", body: "It now needs approval before the order is revised." });
+          }
           if (onSaved) onSaved(docNo);
           else onBack();
           return;

@@ -20,6 +20,7 @@ import {
   erpProductName,
 } from "../services/email";
 import { syncSalesRepFromUser } from "../services/salesTeam";
+import { isPosPin, isPosPinPosition, setPosPinForUser } from "../services/posPin";
 import { audit } from "../services/audit";
 import {
   getBranding,
@@ -942,6 +943,12 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     // is created ACTIVE — no invite link / accept step. The member signs in
     // with email + this password and can change it later.
     password?: string;
+    // 6-digit POS tablet PIN, for a member being created into a SALES position.
+    // The email+password above is the DESKTOP credential; the POS has no
+    // password field at all (pos.2990shome.com is name-pick + PIN), so without
+    // this a new salesperson was created with no way to sign into the tablet
+    // until an admin went back and used Members → Set PIN.
+    pos_pin?: string;
   }>();
 
   const db = getDb(c.env);
@@ -1012,9 +1019,14 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
   let departmentId = body.department_id ?? null;
   const positionId = body.position_id ?? null;
   const managerId = body.manager_id ?? null;
+  let positionSlug: string | null = null;
   if (positionId) {
     const pos = await db
-      .select({ id: positions.id, department_id: positions.department_id })
+      .select({
+        id: positions.id,
+        department_id: positions.department_id,
+        slug: positions.slug,
+      })
       .from(positions)
       .where(eq(positions.id, positionId))
       .limit(1);
@@ -1026,6 +1038,27 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
       );
     }
     if (!departmentId && pos[0].department_id) departmentId = pos[0].department_id;
+    positionSlug = pos[0].slug ?? null;
+  }
+
+  // POS PIN — validated BEFORE the user is created, so a bad PIN never leaves a
+  // half-provisioned member behind. The sales-position rule is not cosmetic:
+  // /api/pos/pin-login refuses any other position, so a PIN stored against one
+  // would be a credential that can never sign in.
+  const posPin = body.pos_pin?.trim() || null;
+  if (posPin) {
+    if (!isPosPin(posPin)) {
+      return c.json({ error: "POS PIN must be exactly 6 digits" }, 400);
+    }
+    if (!isPosPinPosition(positionSlug)) {
+      return c.json(
+        {
+          error:
+            "A POS PIN only works for a Sales position — pick one, or leave the PIN blank.",
+        },
+        400,
+      );
+    }
   }
 
   const existing = await db
@@ -1126,6 +1159,13 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     await syncSalesRepFromUser(c.env, userId, me.id);
   }
 
+  // POS tablet PIN. The scm.staff row this keys off is created by the
+  // sync_user_to_staff trigger on the users INSERT above (mig 0066), so it
+  // exists by now — but a false result (no staff row) is reported rather than
+  // swallowed, because the member would otherwise look provisioned and still
+  // be unable to sign into the tablet.
+  const posPinSet = posPin && userId ? await setPosPinForUser(c.env, userId, posPin) : false;
+
   // Admin set a password → the account is live now; no invite token/email.
   if (activate) {
     await audit(c, {
@@ -1140,9 +1180,14 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
         position_id: positionId,
         manager_id: managerId,
         activated: true,
+        pos_pin_set: posPin ? posPinSet : undefined,
       },
     });
-    return c.json({ active: true, email });
+    return c.json({
+      active: true,
+      email,
+      ...(posPin ? { pos_pin_set: posPinSet } : {}),
+    });
   }
 
   // Issue a fresh invitation token.
@@ -1198,6 +1243,7 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
       position_id: positionId,
       manager_id: managerId,
       email_status: sendResult.status,
+      pos_pin_set: posPin ? posPinSet : undefined,
     },
   });
 
@@ -1208,6 +1254,7 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     invite_url,
     email_sent: sendResult.status === "sent",
     email_status: sendResult.status,
+    ...(posPin ? { pos_pin_set: posPinSet } : {}),
   });
 });
 

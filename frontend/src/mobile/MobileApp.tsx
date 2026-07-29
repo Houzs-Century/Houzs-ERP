@@ -246,7 +246,7 @@ export type MobileMenuItem = {
 export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = [
   { group: "Sales & Finance", items: [
     { to: "/scm/sales-orders", label: "Sales Orders" },
-    { to: "/scm/amendments", label: "Amendments" },
+    { to: "/scm/amendments", label: "Sales Order Amendment" },
     /* SO Maintenance — gated on the BACKEND's own answer, `scm.maintenance.open`.
        This row said `directorOnly` (auth/salesAccess.isDirectorUser = {`*`,
        Super Admin, Sales Director, Finance Manager}) and so did the desktop

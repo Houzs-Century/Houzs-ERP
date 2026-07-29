@@ -47,15 +47,19 @@ Logo, doc numbers, eyebrow labels, soft brand-tinted backgrounds.
 ### Type
 
 **One typeface for prose & titles** — `font-display` and `font-body` both
-resolve to **IBM Plex Sans** (latin) with **Noto Sans SC** for CN glyphs via
-the family stack. Hierarchy comes from `font-weight` + `font-size`, never
-from switching family. Loaded via `@import url(google fonts)` in styles.css.
+resolve to the **system UI stack** (Segoe UI / PingFang / OS CJK fallback;
+owner call 2026-07-24 「统一掉」— one face system-wide). Hierarchy comes from
+`font-weight` + `font-size`, never from switching family. `font-serif`
+(IBM Plex Serif + Noto Serif SC) remains as a deliberate opt-in for rare
+display moments; the Google-fonts `@import` in styles.css now only backs
+that serif opt-in plus the script/mark token faces.
 
-**Codes, IDs, eyebrows get `font-mono`** — real **IBM Plex Mono**. Use it for
-doc numbers, SKUs, timestamps and eyebrow labels (`font-mono uppercase
-tracking-wider`). **Money cells get `font-money`** — same Plex Mono plus
-tabular nums, so amounts line up by decimal across rows; reach for it on any
-column or detail field showing currency or quantities.
+**Codes, IDs, eyebrows get `font-mono`** — the **system mono-friendly stack**
+(plain zero; Plex Mono's dotted zero was retired 2026-07-24). Use it for doc
+numbers, SKUs, timestamps and eyebrow labels (`font-mono uppercase
+tracking-wider`). **Money cells get `font-money`** — same digits plus tabular
+nums, so amounts line up by decimal across rows; reach for it on any column
+or detail field showing currency or quantities.
 
 Brand wordmarks use `tracking-brand`.
 

@@ -1,0 +1,46 @@
+name: Canonicalize venue names (DRY-RUN gated)
+
+# Fold showroom-venue aliases ("PJ Showroom" etc.) to the canonical "2990s PJ"
+# across projects.venue, scm.mfg_sales_orders.venue, scm.warehouses.venue_name and
+# the project_venues picker, so every surface displays one venue. Idempotent,
+# alias-only. DRY-RUN unless apply=1. merge_picker=1 also merges duplicate picker
+# rows (repoints SO venue_id then deletes the alias row).
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      merge_picker:
+        description: "1 to also merge duplicate picker rows (repoints venue_id)"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: canonicalize-venue
+  cancel-in-progress: true
+
+jobs:
+  canonicalize:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-canonicalize-venue.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          MERGE_PICKER: ${{ inputs.merge_picker }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

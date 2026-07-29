@@ -39,6 +39,9 @@ interface VenueRow {
   country?: string | null;
   postcode?: string | null;
   city?: string | null;
+  /* Mig 0222 — physical venue size, free text (e.g. "12,000 sqft" or "Hall 3").
+     Optional so pre-mig responses still parse. */
+  size?: string | null;
   notes: string | null;
   active: number;
 }
@@ -330,6 +333,8 @@ function VenueManager() {
   const [countryField, setCountryField] = useState("");
   const [cityField, setCityField] = useState("");
   const [postcodeField, setPostcodeField] = useState("");
+  /* Mig 0222 — free-text physical venue size (owner enters sqft or a hall label). */
+  const [sizeField, setSizeField] = useState("");
   const [adding, setAdding] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
@@ -352,12 +357,14 @@ function VenueManager() {
         country: countryField.trim() || null,
         city: cityField.trim() || null,
         postcode: postcodeField.trim() || null,
+        size: sizeField.trim() || null,
       });
       setName("");
       setStateField("");
       setCountryField("");
       setCityField("");
       setPostcodeField("");
+      setSizeField("");
       q.reload();
       toast.success(`Added ${trimmed}`);
     } catch (e: any) {
@@ -410,13 +417,19 @@ function VenueManager() {
           - Country auto-fills from State via StatePicker's derivedCountry
             callback. City + Postcode are optional and scoped to the picked
             state. */}
-      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_180px_140px_130px_110px_auto]">
+      {/* grid-cols use minmax(0,1fr) on the name track and min-w-0 on every input
+          so each field shrinks to its own fixed track instead of forcing its
+          ~20ch intrinsic min-width. That intrinsic min-width was the postcode
+          overflow the owner reported: a bare <input> in a fixed 110px grid cell
+          keeps min-width:auto, refuses to shrink below its content box, and
+          spills past the cell. min-w-0 lets it size to the track. */}
+      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_170px_130px_120px_110px_110px_auto]">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add()}
           placeholder="Venue name…"
-          className="h-9 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+          className="h-9 min-w-0 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
         />
         <StatePicker
           value={stateField}
@@ -431,7 +444,7 @@ function VenueManager() {
           onChange={(e) => setCountryField(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add()}
           disabled={knownCountries.length === 0}
-          className="h-9 rounded-md border border-border bg-surface px-2 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+          className="h-9 min-w-0 rounded-md border border-border bg-surface px-2 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
         >
           <option value="">
             {knownCountries.length === 0 ? "no countries" : "— country —"}
@@ -445,7 +458,7 @@ function VenueManager() {
           onChange={(e) => setCityField(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add()}
           disabled={!stateField || cityOptions.length === 0}
-          className="h-9 rounded-md border border-border bg-surface px-2 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+          className="h-9 min-w-0 rounded-md border border-border bg-surface px-2 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
         >
           <option value="">
             {!stateField ? "pick state first" : cityOptions.length === 0 ? "no cities" : "— city —"}
@@ -460,7 +473,14 @@ function VenueManager() {
           onKeyDown={(e) => e.key === "Enter" && add()}
           inputMode="numeric"
           placeholder="postcode"
-          className="h-9 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+          className="h-9 min-w-0 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+        />
+        <input
+          value={sizeField}
+          onChange={(e) => setSizeField(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
+          placeholder="size"
+          className="h-9 min-w-0 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
         />
         <Button variant="primary" onClick={add} disabled={adding || !name.trim()}>
           Add
@@ -509,6 +529,20 @@ function VenueManager() {
                 }}
               />
             </div>
+            {/* Inline size edit (mig 0222). Free text, committed on blur — not on
+                every keystroke — so the operator can type "12,000 sqft" without a
+                PATCH per character. key includes the saved value so a reload after
+                save re-seeds defaultValue. */}
+            <input
+              key={`size-${v.id}-${v.size ?? ""}`}
+              defaultValue={v.size ?? ""}
+              onBlur={(e) => {
+                const next = e.target.value.trim();
+                if (next !== (v.size ?? "")) patch(v.id, { size: next || null });
+              }}
+              placeholder="size"
+              className="h-8 w-28 min-w-0 rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+            />
             <RowActionsMenu
               items={[
                 {

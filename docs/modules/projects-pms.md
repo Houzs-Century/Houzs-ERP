@@ -111,6 +111,15 @@ its existing-by-name upsert to the caller's company so it can't hijack another
 company's same-named row. `PATCH`/`DELETE /venues/:id` carry the same
 `activeCompanySql(c)` guard on their WHERE; PATCH returns **404** on a scoped miss.
 
+A venue carries an optional free-text `size` column (PG mig 0222) — the owner
+writes a physical area (`"12,000 sqft"`) or a hall label (`"Hall 3"`), so it is
+`text`, not a number. It is read in `GET /venues`, and accepted on `POST`
+(INSERT + reactivate upsert) and `PATCH`. `VenueManager` edits it inline (add-row
+column + a per-row input committed on blur). Synthetic showroom rows report
+`size: null`. The country/city/postcode columns the add-form also posts (mig
+0178/0182) are NOT yet read or written by these handlers — only `name`, `state`,
+`size`, `notes` are persisted.
+
 ### Data hooks and caching
 
 The desktop page sets **no per-callsite `staleTime`, `gcTime` or
@@ -302,9 +311,16 @@ Two things happen here that are easy to miss:
    the client may choose — it is forced on (`:837-841`): a helper or storekeeper
    only ever sees the events they are crewed on.
 2. **Server-side finance stripping.** The list SELECTs `pf.rental`,
-   `total_sales`, `contractor_cost` per row; for any non-director sales user
-   those three are blanked **before the response is written**
-   (`:845-853`, via `financeHiddenForUser`). The money never reaches the client,
+   `total_sales`, `contractor_cost` per row, plus a **ledger-derived finance
+   block** (`fin_revenue`, `fin_cogs` + the three `cogs_matt_sofa/bedframe/
+   accessories` splits, `fin_rental`, `fin_total_cost`) via a single grouped
+   `LEFT JOIN` over `project_finance_lines` (one aggregation, never a per-row
+   fetch). These power the opt-in Revenue / COGS / GP / GP% / NP / Margin%
+   columns in the desktop list chooser; GP / NP / percent are derived
+   client-side (`Projects.tsx` column defs) from the raw sums so the numbers
+   match the Finance tab (`/finance/by-project`). For any non-director sales
+   user every one of these money fields is blanked **before the response is
+   written** (`financeHiddenForUser`). The money never reaches the client,
    rather than being hidden in the UI.
 3. **`my_pending_titles` — the caller's own pending work, per row.** Crew
    callers always get their open DRIVER-badged task titles (`'|'`-joined)

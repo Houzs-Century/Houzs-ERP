@@ -29,6 +29,7 @@ import {
   RotateCcw,
   Package,
   FilePenLine,
+  Share2,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -52,6 +53,7 @@ import {
 } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
+import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
@@ -62,6 +64,10 @@ import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 // concurrent relmap-clickable-amendment work; this addition is confined to the
 // import + one button + modal state to keep the merge trivial.
 import { PoAmendmentCreateModal } from "../../components/scm-v2/PoAmendmentCreateModal";
+// Relationship map (owner 2026-07-27) — the purchase-side twin of the SO/DO/
+// SI/DR maps: same shared 5-node canvas, chain + clicks from the PO hook.
+import { DocumentRelationshipMapModal } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { usePoRelationshipMap } from "./po-relationship-map";
 import { cn } from "../../lib/utils";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -389,6 +395,9 @@ function PurchaseOrderDetailV2ReadOnly() {
   const [sendingToSupplier, setSendingToSupplier] = useState(false);
   // PO amendment create modal (feat/amendment-ui) — localized state.
   const [showAmendModal, setShowAmendModal] = useState(false);
+  // Relationship map modal — open state only; the chain itself comes from
+  // usePoRelationshipMap below (after the header row resolves).
+  const [relMapOpen, setRelMapOpen] = useState(false);
 
   /* Nick 2026-07-09 — Ship-to warehouse cell was rendering the raw
      `purchase_location_id` UUID because the field only carries the id;
@@ -412,6 +421,15 @@ function PurchaseOrderDetailV2ReadOnly() {
     () => ((detail.data as { items?: PoItemRow[] } | undefined)?.items ?? []),
     [detail.data]
   );
+
+  // The 5-node purchase chain + what each node does when clicked (shared hook,
+  // one logic layer — mirrors how the SO detail pages consume their map).
+  const {
+    nodes: chainNodes,
+    onNodeClick: onChainNodeClick,
+    amendments: chainAmendments,
+    onAmendmentClick: onChainAmendmentClick,
+  } = usePoRelationshipMap(purchaseOrder);
 
   useSetBreadcrumbs([
     { label: "Purchase Orders", to: "/scm/purchase-orders" },
@@ -579,6 +597,21 @@ function PurchaseOrderDetailV2ReadOnly() {
     }
   };
 
+  /* SO→PO drift + pending amendment (owner 2026-07-27, "为什么没有 SO Request
+     的相关信息?"). The View surface showed neither the pending SO revision nor
+     what it now requests — both only lived in the ?edit=1 editor. so_drift is
+     per-line (set by the detail endpoint when a line's source SO changed after
+     this PO was raised); open_amendment is the best-effort pending-amendment
+     stamp. Drift is only actionable pre-receipt (a received/cancelled PO can't
+     be re-sent), mirroring the editor's gate. */
+  const showDrift =
+    purchaseOrder?.status === "SUBMITTED" || purchaseOrder?.status === "PARTIALLY_RECEIVED";
+  const driftCount = showDrift ? items.filter((l) => l.so_drift).length : 0;
+  const openAmendment =
+    (purchaseOrder as unknown as {
+      open_amendment?: { id: string; status: string; amendment_no: string } | null;
+    })?.open_amendment ?? null;
+
   // Line item columns — carries a Received and a Balance column so ops can see
   // per-line where the PO stands vs the supplier's shipments. Any of these can
   // be hidden from the Columns drawer; only Item is alwaysVisible.
@@ -616,6 +649,22 @@ function PurchaseOrderDetailV2ReadOnly() {
             {secondary && (
               <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-ink-muted">
                 <span className="truncate text-ink-secondary">{secondary}</span>
+              </div>
+            )}
+            {/* SO-drift redline — what the source SO now requests vs what this
+                PO still holds. The same note the editor shows, so the reader
+                sees the pending change without opening the SO. */}
+            {showDrift && l.so_drift && (
+              <div className="mt-1 grid gap-0.5 rounded border border-err/30 bg-err/5 px-2 py-1 text-[11px] font-semibold text-err">
+                {l.so_drift.itemChanged && (
+                  <span>⚠ SO now orders {l.so_drift.itemSo} (this PO still has {l.so_drift.itemPo}) — cancel &amp; re-raise is safer.</span>
+                )}
+                {!l.so_drift.itemChanged && l.so_drift.specSo !== l.so_drift.specPo && (
+                  <span>⚠ SO spec now: {l.so_drift.specSo || "—"} (this PO still: {l.so_drift.specPo || "—"})</span>
+                )}
+                {l.so_drift.warehouseChanged && (
+                  <span>⚠ SO warehouse moved — this PO still points at the old one.</span>
+                )}
               </div>
             )}
           </div>
@@ -841,8 +890,10 @@ function PurchaseOrderDetailV2ReadOnly() {
                 </Badge>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
+                {/* _R suffix (owner 2026-07-27): a revised PO's number shows its
+                    revision marker everywhere it is read or printed. */}
                 <span className="font-mono font-semibold text-primary-ink">
-                  {purchaseOrder.po_number}
+                  {poDisplayNumber(purchaseOrder.po_number, (purchaseOrder as unknown as { revision?: number | null }).revision)}
                 </span>
                 <Divider />
                 <span>Ordered {fmtDate(purchaseOrder.po_date)}</span>
@@ -864,6 +915,9 @@ function PurchaseOrderDetailV2ReadOnly() {
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>
               History
+            </Button>
+            <Button variant="ghost" icon={<Share2 size={14} />} onClick={() => setRelMapOpen(true)}>
+              Relationship Map
             </Button>
             <Button variant="secondary" icon={<Printer size={14} />} onClick={goPrintPdf}>
               Print PDF
@@ -1013,6 +1067,38 @@ function PurchaseOrderDetailV2ReadOnly() {
 
             {/* Line items */}
             <Section title={`Line items · ${items.length}`}>
+              {/* Revision-pending / SO-drift banner (owner 2026-07-27). A pending
+                  SO amendment means this PO must be re-approved before the
+                  supplier builds the new spec; surface it here (the editor
+                  already did) with a jump to the amendment. Shows when the PO
+                  carries a pending amendment OR any line has drifted from its SO. */}
+              {(openAmendment || driftCount > 0) && (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-accent-bright/40 bg-accent-bright/10 px-3.5 py-2.5 text-[12.5px] text-ink">
+                  <span className="min-w-0">
+                    ⚠{" "}
+                    {driftCount > 0 ? (
+                      <>
+                        <strong>{driftCount}</strong> line{driftCount === 1 ? "'s" : "s"} source SO changed after this
+                        PO was raised — check the red notes below, sync the specs, then <strong>re-send to the supplier</strong>.
+                      </>
+                    ) : (
+                      <>
+                        The source Sales Order has a pending revision — <strong>approve this PO</strong> to apply the
+                        supplier-confirmed changes before the factory builds.
+                      </>
+                    )}
+                  </span>
+                  {openAmendment && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/scm/amendments/${openAmendment.id}`)}
+                      className="shrink-0 rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] font-semibold text-ink hover:border-primary/50 hover:text-primary"
+                    >
+                      View amendment {openAmendment.amendment_no}
+                    </button>
+                  )}
+                </div>
+              )}
               <DataTable<PoItemRow>
                 tableId={`po-lines-${id}`}
                 layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseOrderLines}
@@ -1149,6 +1235,25 @@ function PurchaseOrderDetailV2ReadOnly() {
           </button>
         </div>
       </div>
+
+      {/* Relationship map modal — the purchase-side twin of the SO map (same
+          shared 5-node canvas, read as the purchase chain). */}
+      <DocumentRelationshipMapModal
+        open={relMapOpen}
+        onClose={() => setRelMapOpen(false)}
+        nodes={chainNodes}
+        onNodeClick={(n) => {
+          // Close only when the click actually navigated away; an in-app
+          // notice (multi-doc lists / access gates) renders OVER the map.
+          if (onChainNodeClick(n)) setRelMapOpen(false);
+        }}
+        amendments={chainAmendments}
+        onAmendmentClick={(a) => {
+          if (onChainAmendmentClick(a)) setRelMapOpen(false);
+        }}
+        rowLabels={{ primary: "Purchase chain", secondary: "After goods receipt" }}
+        amendmentsLabel="Related amendments (Sales Order & this PO)"
+      />
     </div>
   );
 }

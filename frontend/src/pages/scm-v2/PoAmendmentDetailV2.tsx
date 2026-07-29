@@ -387,7 +387,16 @@ export function PoAmendmentDetailV2() {
     created_at?: string | null;
     po_number?: string;
     po_id?: string;
+    source_so_amendment_id?: string | null;
+    source_so_amendment_no?: string | null;
   }) | null;
+  /* Two-lane rework: a FOLLOW-UP row was auto-raised by an SO amendment's
+     product-lane apply. Its lines are a PREVIEW — confirming re-derives this PO
+     from the Sales Order's CURRENT truth (reviseBoundPo), so the wording below
+     says "confirm", and the source amendment is one click away. */
+  const sourceSoAmendmentId = asStr(amendment?.source_so_amendment_id);
+  const sourceSoAmendmentNo = asStr(amendment?.source_so_amendment_no);
+  const isFollowUp = sourceSoAmendmentId != null;
 
   const lines = useMemo(() => (data?.lines ?? []) as PoAmendmentLine[], [data]);
   const purchaseOrder = data?.purchaseOrder ?? null;
@@ -475,11 +484,17 @@ export function PoAmendmentDetailV2() {
     if (!id || !amendment) return;
     if (
       !(await askConfirm({
-        title: `Approve amendment for ${poNumber}?`,
-        body:
-          "This applies the requested changes: the Purchase Order is re-derived and the " +
-          "current version is snapshotted into Revisions. This cannot be undone.",
-        confirmLabel: "Approve amendment",
+        title: isFollowUp
+          ? `Confirm the PO revision for ${poNumber}?`
+          : `Approve amendment for ${poNumber}?`,
+        body: isFollowUp
+          ? `The Sales Order was already revised by ${sourceSoAmendmentNo ?? "its amendment"}. `
+            + "Confirming re-derives this Purchase Order from the Sales Order as it stands now "
+            + "(quantities, specs, supplier costs), snapshots the current version into Revisions "
+            + "and bumps the PO revision — the printed number gains a _R suffix. This cannot be undone."
+          : "This applies the requested changes: the Purchase Order is re-derived and the " +
+            "current version is snapshotted into Revisions. This cannot be undone.",
+        confirmLabel: isFollowUp ? "Confirm PO revision" : "Approve amendment",
       }))
     )
       return;
@@ -489,7 +504,7 @@ export function PoAmendmentDetailV2() {
         onSuccess: (res) => {
           const warnings = (res?.warnings ?? []) as string[];
           notify({
-            title: "PO amendment approved",
+            title: isFollowUp ? "PO revision confirmed" : "PO amendment approved",
             body: warnings.length > 0 ? warnings.join(" ") : undefined,
           });
         },
@@ -634,7 +649,9 @@ export function PoAmendmentDetailV2() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="ghost" icon={<ExternalLink size={14} />} onClick={openPo}>
+            {/* Owner 2026-07-27: bordered secondary, matching the SO amendment
+                job card's header pair — the naked ghost read as plain text. */}
+            <Button variant="secondary" icon={<ExternalLink size={14} />} onClick={openPo}>
               Open Purchase Order
             </Button>
           </div>
@@ -696,6 +713,23 @@ export function PoAmendmentDetailV2() {
               resolution={asStr(amendment.resolution)}
               rejectionReason={asStr(amendment.rejection_reason)}
             />
+
+            {/* Two-lane rework — where this follow-up came from, one click back
+                to the SO amendment that already applied. */}
+            {isFollowUp && (
+              <div className="rounded-lg border border-accent/40 bg-accent/10 px-3.5 py-3 text-[12px] leading-relaxed text-ink">
+                Auto-raised from SO amendment{" "}
+                <button
+                  type="button"
+                  onClick={() => sourceSoAmendmentId && navigate(`/scm/amendments/${sourceSoAmendmentId}`)}
+                  className="font-mono font-semibold text-primary-ink hover:underline"
+                >
+                  {sourceSoAmendmentNo ?? "view"}
+                </button>
+                {" "}— the Sales Order is already revised. Confirming here re-derives this
+                PO from the Sales Order as it stands now; the lines below are a preview.
+              </div>
+            )}
 
             <AsideCard title="Requested by">
               <div className="space-y-2 text-[13px]">
@@ -773,7 +807,9 @@ export function PoAmendmentDetailV2() {
                       onClick={() => void handleApprove()}
                       disabled={approve.isPending}
                     >
-                      {approve.isPending ? "Approving…" : "Approve amendment"}
+                      {approve.isPending
+                        ? isFollowUp ? "Confirming…" : "Approving…"
+                        : isFollowUp ? "Confirm PO revision" : "Approve amendment"}
                     </Button>
                   )}
                   {canReject && (

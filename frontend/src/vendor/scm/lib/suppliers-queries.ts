@@ -140,6 +140,9 @@ export type PoHeaderRow = {
   submitted_at: string | null;
   received_at: string | null;
   cancelled_at: string | null;
+  /** Mig 0080 — bumped on every approved revision (SO-amendment follow-up or
+   *  standalone PO amendment). Display shows `_R{revision-1}` when > 1. */
+  revision?: number | null;
   /** PR #77 — default ship-to warehouse for every line on this PO. */
   purchase_location_id: string | null;
   created_at: string;
@@ -647,6 +650,10 @@ export type OutstandingPoItem = {
   poId:           string;
   poDocNo:        string;
   itemCode:       string;
+  /* Owner 2026-07-27 — the PO line's supplier-SKU snapshot (#1189), carried so
+     the New-GRN line shows (and saves) the code the supplier's delivery note
+     uses. Null on lines raised before the snapshot column existed. */
+  supplierSku:    string | null;
   description:    string | null;
   itemGroup:      string;
   qty:            number;

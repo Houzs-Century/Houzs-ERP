@@ -83,6 +83,13 @@ import { isSalesStaff } from "../auth/salesAccess";
 import { api, buildQuery } from "../api/client";
 import { formatPhone } from "../vendor/shared/phone";
 import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
+import {
+  UploadDropZone,
+  clipboardFiles,
+  acceptedUploadFiles,
+  hoveredUploadZones,
+  useStrayFileDropGuard,
+} from "../lib/uploadDropZone";
 import { loadThumbFirst } from "../lib/imagePipeline";
 import { formatCurrency, formatDate, formatDateTime, cn } from "../lib/utils";
 import { ServiceMetrics } from "./ServiceMetrics";
@@ -455,6 +462,10 @@ function CasesView({
     creditor_code: creditorFilter || undefined,
   };
 
+  // Manual AutoCount DO-mirror refresh (backend gates on
+  // service_cases.manage; the daily cron covers routine freshness).
+  const [syncingDo, setSyncingDo] = useState(false);
+
   const list = useQuery<Paginated<AssrCase>>("assr-list",
     (signal) =>
       api.get(
@@ -674,6 +685,20 @@ function CasesView({
       getValue: (r) => r.ref_no,
     },
     {
+      key: "do_numbers",
+      filterable: true,
+      label: "DO No",
+      // Hand-entered DO on the case wins; the server merge fills the rest
+      // ("DO1 · DO2" when the order shipped in parts): Houzs cases from
+      // AutoCount — the SO's own transfer_to chain, widened by the
+      // ref-matched DO mirror — 2990 from the SCM module. Most cases
+      // never get the manual field.
+      render: (r) => (
+        <span className="font-mono text-xs">{r.delivery_order || r.do_numbers || "—"}</span>
+      ),
+      getValue: (r) => r.delivery_order || r.do_numbers,
+    },
+    {
       key: "customer_name",
       filterable: true,
       label: "Customer",
@@ -686,6 +711,19 @@ function CasesView({
         </span>
       ),
       getValue: (r) => r.customer_name,
+    },
+    {
+      key: "sales_agent",
+      filterable: true,
+      label: "Salesperson",
+      // The SO's sales agent — copied onto the case at intake from the
+      // AutoCount mirror; server search matches it too.
+      render: (r) => (
+        <span className="block max-w-[140px] truncate" title={r.sales_agent || undefined}>
+          {r.sales_agent || "—"}
+        </span>
+      ),
+      getValue: (r) => r.sales_agent,
     },
     {
       key: "priority_dwell",
@@ -790,6 +828,57 @@ function CasesView({
       defaultHidden: true,
       render: (r) => formatDate(r.items_ready_at),
       getValue: (r) => r.items_ready_at,
+    },
+    // The rest of the intake snapshot (already in the list payload) —
+    // hidden by default, togglable from the Columns menu (Nico 2026-07-27:
+    // the list was missing case info like DO / salesperson / contact).
+    {
+      key: "phone",
+      filterable: true,
+      label: "Phone",
+      defaultHidden: true,
+      render: (r) => <span className="font-mono text-xs">{r.phone || "—"}</span>,
+      getValue: (r) => r.phone,
+    },
+    {
+      key: "location",
+      filterable: true,
+      label: "Location",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="block max-w-[160px] truncate" title={r.location || undefined}>
+          {r.location || "—"}
+        </span>
+      ),
+      getValue: (r) => r.location,
+    },
+    {
+      key: "service_category",
+      filterable: true,
+      label: "Service Category",
+      defaultHidden: true,
+      render: (r) => r.service_category || "—",
+      getValue: (r) => r.service_category,
+    },
+    {
+      key: "issue_category",
+      filterable: true,
+      label: "Issue Category",
+      defaultHidden: true,
+      render: (r) => r.issue_category || "—",
+      getValue: (r) => r.issue_category,
+    },
+    {
+      key: "creditor_name",
+      filterable: true,
+      label: "Supplier",
+      defaultHidden: true,
+      render: (r) => (
+        <span className="block max-w-[160px] truncate" title={r.creditor_name || undefined}>
+          {r.creditor_name || "—"}
+        </span>
+      ),
+      getValue: (r) => r.creditor_name,
     },
   ];
 
@@ -903,6 +992,29 @@ function CasesView({
         >
           Export All
         </Button>
+        <Button
+          variant="ghost"
+          icon={<RefreshCw size={14} className={syncingDo ? "animate-spin" : undefined} />}
+          disabled={syncingDo}
+          title="Pull the latest Delivery Orders from AutoCount (runs nightly by itself)"
+          onClick={async () => {
+            setSyncingDo(true);
+            try {
+              const r = await api.post<{ upserted: number; fetched: number }>(
+                "/api/assr/sync-delivery-orders",
+                {}
+              );
+              toast.success(`Delivery orders refreshed — ${r.upserted} of ${r.fetched} synced`);
+              list.reload();
+            } catch (e: any) {
+              toast.error(e?.message || "DO sync failed");
+            } finally {
+              setSyncingDo(false);
+            }
+          }}
+        >
+          {syncingDo ? "Syncing DO…" : "Sync DO"}
+        </Button>
       </div>
 
       {caseView === "board" && (
@@ -984,7 +1096,7 @@ function CasesView({
         search={{
           value: search,
           onChange: (v) => { setPage(1); setSearch(v); },
-          placeholder: "Search ASSR no, SO no, Ref no, customer, phone…",
+          placeholder: "Search ASSR no, SO no, Ref no, customer, salesperson, phone…",
           searching: searchTransition.isSearching,
           countPending: list.loading || list.placeholder || Boolean(list.error) || searchTransition.resultsAreStale,
           scope: "server",
@@ -2266,8 +2378,21 @@ function CreatePanel({
   // suggestion — used to suppress the dropdown once a selection is
   // committed (re-typing reopens it).
   const [soSuggestions, setSoSuggestions] = useState<
-    { doc_no: string; ref: string | null; debtor_name: string | null; phone: string | null; doc_date: string | null; sales_agent: string | null; company_code?: string | null }[]
+    { doc_no: string; ref: string | null; debtor_name: string | null; phone: string | null; doc_date: string | null; sales_agent: string | null; company_code?: string | null; case_count?: number; open_case_count?: number }[]
   >([]);
+  // Existing-case duplicate warning (owner 2026-07-27: duplicates keep
+  // getting raised because intake can't see an SO's earlier cases).
+  // Fetched whenever an SO is picked or looked up; tagged with the
+  // doc_no it answers so a stale response never labels a different SO.
+  const [existingCases, setExistingCases] = useState<{
+    docNo: string;
+    cases: {
+      id: number; assr_no: string; doc_no: string; stage: string | null;
+      status: string | null; complaint_issue: string | null;
+      complained_date: string | null; created_at: string | null;
+      item_code: string | null; created_by_name: string | null;
+    }[];
+  } | null>(null);
   const [pickedDocNo, setPickedDocNo] = useState<string | null>(null);
   const [searchingSO, setSearchingSO] = useState(false);
   // The dropdown is rendered through a portal because PanelSection
@@ -2347,29 +2472,17 @@ function CreatePanel({
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
+  // A drop that misses the dropzone below must not navigate the SPA
+  // away to the dropped file.
+  useStrayFileDropGuard();
+
   // Clipboard paste — when the panel is mounted, intercept any paste
   // that carries file blobs (typically a screenshot or copied image)
   // and route it through addFiles. Plain-text pastes are left alone
   // so the Issue Description textarea still works.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      if (!e.clipboardData) return;
-      const blobs: File[] = [];
-      for (const item of Array.from(e.clipboardData.items)) {
-        if (item.kind !== "file") continue;
-        const blob = item.getAsFile();
-        if (!blob) continue;
-        // Clipboard files often arrive without a name (e.g. screenshot
-        // paste on Windows / macOS). Synthesize one whose extension
-        // matches the MIME so addFiles' extension check passes.
-        if (blob.name && blob.name.includes(".")) {
-          blobs.push(blob);
-        } else {
-          const sub = (blob.type.split("/")[1] || "bin").toLowerCase();
-          const ext = sub === "jpeg" ? "jpg" : sub;
-          blobs.push(new File([blob], `pasted-${Date.now()}.${ext}`, { type: blob.type }));
-        }
-      }
+      const blobs = clipboardFiles(e);
       if (blobs.length === 0) return;
       e.preventDefault();
       const dt = new DataTransfer();
@@ -2382,10 +2495,24 @@ function CreatePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Best-effort — the warning is advisory, so a failed fetch just shows
+  // nothing rather than blocking intake.
+  async function fetchExistingCases(d: string) {
+    try {
+      const res = await api.get<{ cases: NonNullable<typeof existingCases>["cases"] }>(
+        `/api/assr/so-cases/${encodeURIComponent(d)}`
+      );
+      setExistingCases({ docNo: d, cases: res.cases ?? [] });
+    } catch {
+      setExistingCases(null);
+    }
+  }
+
   async function lookup() {
     if (!docNo.trim()) return;
     setLookingUp(true);
     setLookupItems(null);
+    void fetchExistingCases(docNo.trim());
     try {
       const res = await api.get<{ items: { item_code: string; item_description: string | null; qty?: number }[] }>(
         `/api/assr/lookup-items/${encodeURIComponent(docNo.trim())}`
@@ -2454,6 +2581,7 @@ function CreatePanel({
     setDocNo(s.doc_no);
     setPickedDocNo(s.doc_no);
     setSoSuggestions([]);
+    void fetchExistingCases(s.doc_no);
     setCustomerInfo({ name: s.debtor_name ?? undefined, phone: s.phone ?? undefined });
     // Seed Ref No from the SO's own customer reference; stays editable.
     if (s.ref && !refNo.trim()) setRefNo(s.ref);
@@ -2635,6 +2763,11 @@ function CreatePanel({
                     <span className="rounded bg-bg px-1.5 py-0.5 text-[10px] font-semibold text-ink-muted">{s.company_code}</span>
                   )}
                   {s.ref && <span className="rounded bg-bg px-1.5 py-0.5 font-mono text-[10px] text-ink-muted">ref: {s.ref}</span>}
+                  {(s.case_count ?? 0) > 0 && (
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                      {s.case_count} case{(s.case_count ?? 0) > 1 ? "s" : ""}
+                    </span>
+                  )}
                   {s.doc_date && <span className="ml-auto text-[10px] text-ink-muted">{s.doc_date}</span>}
                 </div>
                 {(s.debtor_name || s.phone) && (
@@ -2692,6 +2825,48 @@ function CreatePanel({
                 }
               }}
             />
+          )}
+        {/* Existing-case warning — shown only while the input still holds
+            the doc_no the fetch answered, so retyping self-dismisses it.
+            Cases open in a new tab: the operator is mid-form and likely
+            wants to compare before deciding to abandon this create. */}
+        {existingCases &&
+          existingCases.cases.length > 0 &&
+          docNo.trim().toLowerCase() === existingCases.docNo.toLowerCase() && (
+            <div className="mt-2 rounded-md border border-amber-500/60 bg-amber-50/60 px-3 py-2.5 dark:bg-amber-500/10">
+              <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">
+                <AlertCircle size={13} />
+                This order already has {existingCases.cases.length} service case
+                {existingCases.cases.length > 1 ? "s" : ""}
+              </div>
+              <div className="mt-1.5 space-y-1">
+                {existingCases.cases.map((ec) => (
+                  <button
+                    key={ec.id}
+                    type="button"
+                    onClick={() => window.open(`/assr/${ec.id}`, "_blank", "noopener")}
+                    className="flex w-full flex-col gap-0.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-left text-[11px] transition-colors hover:bg-accent-soft/20"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono font-semibold text-ink">{ec.assr_no}</span>
+                      <StatusDot variant={stageVariant(ec.stage ?? "")} label={caseStageLabel(ec.stage ?? "")} />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-ink-secondary">
+                      <span>{formatDate(ec.complained_date || ec.created_at)}</span>
+                      {ec.created_by_name && <span className="text-ink-muted">by {ec.created_by_name}</span>}
+                      {ec.complaint_issue && (
+                        <span className="truncate text-ink-muted" title={ec.complaint_issue}>
+                          {ec.complaint_issue.length > 70 ? `${ec.complaint_issue.slice(0, 70)}…` : ec.complaint_issue}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="mt-1.5 text-[10.5px] text-ink-muted">
+                Open the existing case and add to it instead of creating a duplicate — only continue if this is a genuinely new issue.
+              </div>
+            </div>
           )}
       </PanelSection>
 
@@ -3134,20 +3309,36 @@ function DetailContent({
     detail.reload();
   }
 
-  async function uploadFile(e: React.ChangeEvent<HTMLInputElement>, category: string) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Keep a mistargeted drop from navigating the SPA to the file, and
+  // teach the paste affordance: a file paste that lands while no upload
+  // zone is hovered would otherwise vanish silently.
+  useStrayFileDropGuard();
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (e.defaultPrevented || hoveredUploadZones.size > 0) return;
+      if (clipboardFiles(e).length === 0) return;
+      toast.info("To paste files, hover over an upload area first (Photos card or a stage's upload slot).");
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+    // toast methods are stable under the hood.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function uploadFiles(files: File[], category: string) {
+    const accepted = acceptedUploadFiles(files, toast);
+    if (accepted.length === 0) return;
     setUploading(true);
     try {
       // WO-7: shared pipeline — compresses photos + uploads their thumbs.
-      await uploadAssrAttachment(id, file, category);
-      detail.reload();
-      toast.success("File uploaded");
+      for (const f of accepted) await uploadAssrAttachment(id, f, category);
+      toast.success(accepted.length > 1 ? `${accepted.length} files uploaded` : "File uploaded");
     } catch (err: any) {
       toast.error(`Upload failed: ${err?.message || err}`);
     } finally {
       setUploading(false);
-      e.target.value = "";
+      // Reload even on failure — earlier files of a batch may have saved.
+      detail.reload();
     }
   }
 
@@ -3450,6 +3641,10 @@ function DetailContent({
               <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-ink-muted">
                 Photos / Videos ({attachments.length})
               </div>
+            <UploadDropZone
+              disabled={uploading}
+              onFiles={(files) => uploadFiles(files, c.stage === "completed" ? "completion" : "evidence")}
+            >
             {attachments.length > 0 && (() => {
               // Issue evidence (what the service form / staff reported)
               // and QC-result shots read very differently — split the
@@ -3519,11 +3714,19 @@ function DetailContent({
               <input
                 type="file"
                 accept="image/*,video/mp4,video/quicktime,video/webm,.pdf"
+                multiple
                 className="hidden"
-                onChange={(e) => uploadFile(e, c.stage === "completed" ? "completion" : "evidence")}
+                onChange={(e) => {
+                  uploadFiles(Array.from(e.target.files ?? []), c.stage === "completed" ? "completion" : "evidence");
+                  e.target.value = "";
+                }}
                 disabled={uploading}
               />
             </label>
+            <div className="mt-1.5 text-[10px] text-ink-muted">
+              Drag &amp; drop or paste (Ctrl+V) supported
+            </div>
+            </UploadDropZone>
             </div>
           </PanelSection>
 
@@ -4056,7 +4259,9 @@ function DetailContent({
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
               {([
                 ["SO", c.doc_no, true],
-                ["DO", c.delivery_order, true],
+                // Hand-entered DO wins; do_numbers = the server-resolved
+                // AutoCount/SCM linkage (same precedence as the list).
+                ["DO", c.delivery_order || c.do_numbers, true],
                 ["DO date", formatDate(c.do_date), false],
                 ["PO", c.po_no, true],
                 ["Location", c.location, false],
@@ -4278,7 +4483,10 @@ function DetailContent({
                 onSave={(v) => patch({ customer_email: v })}
                 placeholder="customer@example.com"
               />
-              <FieldRow label="Created">{formatDate(c.complained_date)}</FieldRow>
+              <FieldRow label="Created">
+                {formatDate(c.complained_date)}
+                {c.created_by_name ? ` · by ${c.created_by_name}` : ""}
+              </FieldRow>
             </>
             ) : (
             <>
@@ -4341,10 +4549,13 @@ function DetailContent({
                   </span>
                 )}
               </div>
-              {(c.customer_email || c.complained_date) && (
+              {(c.customer_email || c.complained_date || c.created_by_name) && (
                 <div className="space-y-1 border-t border-border-subtle pt-2">
                   {c.customer_email && <FieldRow label="Email">{c.customer_email}</FieldRow>}
-                  <FieldRow label="Created">{formatDate(c.complained_date)}</FieldRow>
+                  <FieldRow label="Created">
+                    {formatDate(c.complained_date)}
+                    {c.created_by_name ? ` · by ${c.created_by_name}` : ""}
+                  </FieldRow>
                 </div>
               )}
             </>
@@ -6084,75 +6295,81 @@ function MilestoneAttachmentSlot({
     (a: any) => a?.category === category
   );
 
-  async function upload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function uploadFiles(files: File[]) {
+    const accepted = acceptedUploadFiles(files, toast);
+    if (accepted.length === 0) return;
     setUploading(true);
     try {
       // WO-7: shared pipeline — compresses photos + uploads their thumbs.
-      await uploadAssrAttachment(caseId, file, category);
-      detail.reload();
-      toast.success(`${label} uploaded`);
+      for (const f of accepted) await uploadAssrAttachment(caseId, f, category);
+      toast.success(accepted.length > 1 ? `${accepted.length} files uploaded` : `${label} uploaded`);
     } catch (err: any) {
       toast.error(err?.message || "Upload failed");
     } finally {
       setUploading(false);
-      e.target.value = "";
+      // Reload even on failure — earlier files of a batch may have saved.
+      detail.reload();
     }
   }
 
   return (
     <div>
-      {!compact && (
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          {label}
-        </div>
-      )}
-      {matches.length > 0 ? (
-        <div className="mb-2 grid grid-cols-3 gap-2">
-          {matches.map((att: any, i: number) => (
-            <AttachmentThumb
-              key={att.id}
-              att={att}
-              onClick={() => {
-                const t = att.content_type || "";
-                if (t.startsWith("image/") || t.startsWith("video/")) setLbIndex(i);
+      <UploadDropZone disabled={uploading || archived} onFiles={uploadFiles}>
+        {!compact && (
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+            {label}
+          </div>
+        )}
+        {matches.length > 0 ? (
+          <div className="mb-2 grid grid-cols-3 gap-2">
+            {matches.map((att: any, i: number) => (
+              <AttachmentThumb
+                key={att.id}
+                att={att}
+                onClick={() => {
+                  const t = att.content_type || "";
+                  if (t.startsWith("image/") || t.startsWith("video/")) setLbIndex(i);
+                }}
+                onArchive={archived ? undefined : async () => {
+                  if (!await dialog.confirm(`Archive this ${label.toLowerCase()}?`)) return;
+                  try {
+                    await api.post(`/api/assr/attachments/${att.id}/archive`);
+                    toast.success("Archived");
+                    detail.reload();
+                  } catch (err: any) {
+                    toast.error(err?.message || "Something went wrong. Please try again.");
+                  }
+                }}
+              />
+            ))}
+          </div>
+        ) : !compact ? (
+          <div className="mb-2 rounded-md border border-dashed border-border bg-bg/30 px-3 py-2 text-[11px] text-ink-muted">
+            {emptyLabel || `No ${label.toLowerCase()} yet.`}
+          </div>
+        ) : null}
+        {!archived && (
+          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink hover:border-accent/40">
+            <Upload size={12} />
+            {uploading
+              ? "Uploading..."
+              : matches.length
+              ? "Replace / Add"
+              : (uploadLabel || `Upload ${label.toLowerCase()}`)}
+            <input
+              type="file"
+              accept="image/*,video/mp4,video/quicktime,video/webm,.pdf"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                uploadFiles(Array.from(e.target.files ?? []));
+                e.target.value = "";
               }}
-              onArchive={archived ? undefined : async () => {
-                if (!await dialog.confirm(`Archive this ${label.toLowerCase()}?`)) return;
-                try {
-                  await api.post(`/api/assr/attachments/${att.id}/archive`);
-                  toast.success("Archived");
-                  detail.reload();
-                } catch (err: any) {
-                  toast.error(err?.message || "Something went wrong. Please try again.");
-                }
-              }}
+              disabled={uploading}
             />
-          ))}
-        </div>
-      ) : !compact ? (
-        <div className="mb-2 rounded-md border border-dashed border-border bg-bg/30 px-3 py-2 text-[11px] text-ink-muted">
-          {emptyLabel || `No ${label.toLowerCase()} yet.`}
-        </div>
-      ) : null}
-      {!archived && (
-        <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink hover:border-accent/40">
-          <Upload size={12} />
-          {uploading
-            ? "Uploading..."
-            : matches.length
-            ? "Replace / Add"
-            : (uploadLabel || `Upload ${label.toLowerCase()}`)}
-          <input
-            type="file"
-            accept="image/*,video/mp4,video/quicktime,video/webm,.pdf"
-            className="hidden"
-            onChange={upload}
-            disabled={uploading}
-          />
-        </label>
-      )}
+          </label>
+        )}
+      </UploadDropZone>
       {lbIndex !== null && matches[lbIndex] && (
         <StaffLightbox
           attachments={matches}

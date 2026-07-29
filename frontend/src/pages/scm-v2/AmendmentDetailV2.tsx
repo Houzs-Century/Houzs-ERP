@@ -155,6 +155,26 @@ const stageIndexOf = (status: string): number => {
   }
 };
 
+/* Two-lane rework (2026-07-27): a LANE amendment is ONE signature — its whole
+   life is Requested → Applied (SO_APPROVED as terminal). The legacy 4-stage
+   chain above stays for pre-rework (lane NULL) rows. */
+export type SoAmendmentLaneValue = "LINES" | "DELIVERY";
+const LANE_STAGES: Stage[] = [
+  { key: "REQUESTED", label: "Requested" },
+  { key: "APPLIED", label: "Applied" },
+];
+const laneStageIndexOf = (status: string): number => {
+  switch (status) {
+    case "REQUESTED": return 0;
+    case "SO_APPROVED": return 1;
+    default: return -1; // REJECTED / unknown
+  }
+};
+export const LANE_TITLE: Record<SoAmendmentLaneValue, string> = {
+  LINES: "Product lines · Purchasing",
+  DELIVERY: "Delivery · Logistics",
+};
+
 /* Hero accent dot per status tone — the dark hero can't use the light-surface
    tone.fg/bg, so map the canonical tone to a hero-friendly dot class. */
 const HERO_DOT: Record<StatusTone, string> = {
@@ -187,15 +207,18 @@ function RevisionHero({
   soRevision,
   resolution,
   rejectionReason,
+  lane = null,
 }: {
   status: string;
   amendmentNo: string | null;
   soRevision: number | null;
   resolution: string | null;
   rejectionReason: string | null;
+  lane?: SoAmendmentLaneValue | null;
 }) {
-  const { label, tone } = resolveStatusPill("soAmendment", status);
-  const reached = stageIndexOf(status);
+  const { label, tone } = resolveStatusPill(lane ? "soAmendmentLane" : "soAmendment", status);
+  const stages = lane ? LANE_STAGES : STAGES;
+  const reached = lane ? laneStageIndexOf(status) : stageIndexOf(status);
   const rejected = status === "REJECTED";
 
   return (
@@ -234,9 +257,10 @@ function RevisionHero({
           </div>
         </div>
       ) : (
-        // 4-stage stepper — reached stages fill accent, the current stage rings.
+        // Stage stepper (4 legacy / 2 lane) — reached stages fill accent, the
+        // current stage rings.
         <div className="mt-5 flex items-center">
-          {STAGES.map((s, i) => {
+          {stages.map((s, i) => {
             const isDone = i < reached;
             const isCurrent = i === reached;
             return (
@@ -263,7 +287,7 @@ function RevisionHero({
                   <span
                     className={cn(
                       "h-[2px] flex-1",
-                      i === STAGES.length - 1 ? "opacity-0" : isDone ? "bg-accent-bright" : "bg-white/15"
+                      i === stages.length - 1 ? "opacity-0" : isDone ? "bg-accent-bright" : "bg-white/15"
                     )}
                   />
                 </div>
@@ -302,8 +326,11 @@ function RevisionHero({
    Unchanged fields stay muted on both sides — they are context, not the ask. */
 const wasCls = (changed: boolean, base: string): string =>
   cn(base, changed && "line-through decoration-ink-muted/60");
+/* Owner 2026-07-27 — the changed value on the Requesting side is now RED (was
+   petrol) so the approver's eye lands on exactly what the customer is asking to
+   change. Unchanged fields stay muted context on both sides. */
 const nowCls = (changed: boolean, base: string): string =>
-  cn(base, changed ? "font-semibold text-primary-ink" : "text-ink-muted");
+  cn(base, changed ? "font-semibold text-err" : "text-ink-muted");
 
 function DiffCard({ line }: { line: AmendmentLine }) {
   const old = oldOf(line);
@@ -569,11 +596,25 @@ export function AmendmentDetailV2() {
   const amendment = (data?.amendment ?? null) as (Record<string, unknown> & {
     status?: string;
     amendment_no?: number | string | null;
+    lane?: string | null;
     reason?: string | null;
     requested_by?: string | null;
     created_at?: string | null;
     so_doc_no?: string;
   }) | null;
+  /* Two-lane rework: 'LINES' | 'DELIVERY' on post-rework rows; NULL keeps the
+     legacy supplier-confirmed two-gate UI below untouched. */
+  const lane: SoAmendmentLaneValue | null =
+    amendment?.lane === "LINES" || amendment?.lane === "DELIVERY" ? amendment.lane : null;
+  /* The follow-up PO Amendments this amendment auto-raised when its LINES lane
+     applied (the purchaser's second signature). REJECTED here = "PO not
+     followed up" — the SO changed but the PO deliberately did not. */
+  const poFollowUps = ((data as {
+    poFollowUps?: Array<{
+      id: string; po_number?: string | null; amendment_no?: string | null;
+      status?: string | null; resolution?: string | null;
+    }>;
+  } | undefined)?.poFollowUps ?? []);
   /* Owner 2026-07-16 — only lines that ACTUALLY request something. A recorded
      line whose new_* equals its own old_snapshot is not a change: it must not
      render as a card and must not count. Pre-fix rows are already in the DB, so
@@ -666,12 +707,20 @@ export function AmendmentDetailV2() {
     );
   };
 
-  const canSupplierConfirm = can("scm.amendment.supplier_confirm");
-  const canApproveSo = can("scm.amendment.approve_so");
-  /* Reject rides the same purchasing gate the backend enforces
-     (scm.amendment.approve_po), so the button cannot appear for someone the
-     server will refuse. */
-  const canReject = can("scm.amendment.approve_po");
+  /* Legacy (lane NULL) keys — untouched. */
+  const canSupplierConfirm = !lane && can("scm.amendment.supplier_confirm");
+  const canApproveSo = !lane && can("scm.amendment.approve_so");
+  /* Two-lane rework: ONE signature per lane — LINES is purchasing's
+     (approve_lines), DELIVERY is logistics' (approve_delivery). Super admin
+     passes via the * wildcard. */
+  const canApproveLane =
+    lane != null
+    && can(lane === "LINES" ? "scm.amendment.approve_lines" : "scm.amendment.approve_delivery");
+  /* Reject rides the row's own approver gate: the lane key on lane rows, the
+     legacy purchasing gate (approve_po) on pre-rework rows — mirroring the
+     backend exactly so the button cannot appear for someone the server will
+     refuse. */
+  const canReject = lane ? canApproveLane : can("scm.amendment.approve_po");
 
   /* Withdraw is the REQUESTER's own escape hatch, which reject cannot be: reject
      is gated to approve_po, which a salesperson does not hold. Without it the
@@ -763,21 +812,40 @@ export function AmendmentDetailV2() {
     if (!id || !amendment) return;
     if (
       !(await askConfirm({
-        title: `Approve SO revision for ${soDocNo}?`,
-        body:
-          "This applies the supplier-confirmed changes: the Sales Order is re-derived and the " +
-          "current version is snapshotted into Revisions. This cannot be undone.",
-        confirmLabel: "Approve revision",
+        title: `Approve ${lane ? "amendment" : "SO revision"} for ${soDocNo}?`,
+        body: lane === "LINES"
+          ? "Check with the supplier BEFORE approving — your signature records that the change "
+            + "is workable. The Sales Order is revised at once (the current version is snapshotted "
+            + "into Revisions), and a follow-up PO Amendment is raised for you to confirm the "
+            + "purchase-order side. This cannot be undone."
+          : lane === "DELIVERY"
+            ? "This applies the delivery changes to the Sales Order at once (the current version "
+              + "is snapshotted into Revisions). The purchase order is not touched. This cannot be undone."
+            : "This applies the supplier-confirmed changes: the Sales Order is re-derived and the "
+              + "current version is snapshotted into Revisions. This cannot be undone.",
+        confirmLabel: lane ? "Approve & apply" : "Approve revision",
       }))
     )
       return;
     approveSo.mutate(
       { id },
       {
-        onSuccess: () => notify({ title: "SO revision approved" }),
+        onSuccess: (res: unknown) => {
+          const followUps = ((res as { poFollowUps?: Array<{ amendmentNo?: string; poNumber?: string }> } | undefined)?.poFollowUps ?? []);
+          const warnings = ((res as { warnings?: string[] } | undefined)?.warnings ?? []);
+          notify({
+            title: lane ? "Amendment applied" : "SO revision approved",
+            body: [
+              followUps.length
+                ? `Follow-up PO amendment${followUps.length === 1 ? "" : "s"} raised: ${followUps.map((f) => `${f.amendmentNo ?? ""} (${f.poNumber ?? ""})`).join("; ")} — confirm ${followUps.length === 1 ? "it" : "them"} in PO Amendments.`
+                : "",
+              ...warnings,
+            ].filter(Boolean).join(" ") || undefined,
+          });
+        },
         onError: (e) =>
           notify({
-            title: "Could not approve the revision",
+            title: lane ? "Could not apply this amendment" : "Could not approve the revision",
             body: `${plainError(e)} The Sales Order was NOT changed — please try again.`,
             tone: "error",
           }),
@@ -788,8 +856,32 @@ export function AmendmentDetailV2() {
   const goBack = () => navigate("/scm/amendments");
   const openSalesOrder = () =>
     soDocNo && navigate(`/scm/sales-orders/${soDocNo}?edit=1`);
-  const openBoundPo = () =>
-    boundPo?.id && navigate(`/scm/purchase-orders/${boundPo.id}?edit=1`);
+  /* Smart jump (owner 2026-07-27) — the two-lane flow materialises the PO leg
+     as a follow-up PO Amendment: while one still awaits the purchaser's
+     signature, the bound-PO jump lands on ITS job card (where the signing
+     happens). Legacy rows (no follow-up) keep landing on the PO editor, whose
+     Revision-ready banner hosts Approve PO; once revised, land on the
+     read-only PO detail instead. */
+  const pendingFollowUp =
+    poFollowUps.find((f) => {
+      const s = (f.status ?? "").toUpperCase();
+      return s !== "APPROVED" && s !== "REJECTED";
+    }) ?? null;
+  const openBoundPo = () => {
+    // Click-time closure — poRevised is declared just below and initialised
+    // long before any click can land.
+    if (!poRevised && pendingFollowUp) {
+      navigate(`/scm/po-amendments/${pendingFollowUp.id}`);
+      return;
+    }
+    if (boundPo?.id) {
+      navigate(
+        poRevised
+          ? `/scm/purchase-orders/${boundPo.id}`
+          : `/scm/purchase-orders/${boundPo.id}?edit=1`,
+      );
+    }
+  };
 
   // Later gates (approve-po / send) live on the bound-PO editor surface, so
   // once the SO gate has cleared we hand off there rather than duplicating the
@@ -852,7 +944,12 @@ export function AmendmentDetailV2() {
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
                   Amendment{amendmentNo ? ` ${amendmentNo}` : ""}
                 </h1>
-                <StatusPill docType="soAmendment" status={status} />
+                <StatusPill docType={lane ? "soAmendmentLane" : "soAmendment"} status={status} />
+                {lane && (
+                  <span className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">
+                    {LANE_TITLE[lane]}
+                  </span>
+                )}
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
                 <span className="font-mono font-semibold text-primary-ink">{soDocNo}</span>
@@ -875,16 +972,28 @@ export function AmendmentDetailV2() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="ghost" icon={<GitBranch size={14} />} onClick={openSalesOrder}>
+            {/* Owner 2026-07-27: the header jump actions read as a UNIFORM
+                bordered pair (secondary) — the naked ghost next to a boxed
+                secondary looked like plain text + a stray box, off-theme. */}
+            <Button variant="secondary" icon={<GitBranch size={14} />} onClick={openSalesOrder}>
               Open Sales Order
             </Button>
             {pastSoGate && boundPo?.id && (
-              <Button variant="secondary" icon={<ExternalLink size={14} />} onClick={openBoundPo}>
+              /* Owner 2026-07-27: while the PO revision is still OWED (bound PO
+                 not yet revised) this is the page's pending action — petrol
+                 primary. Once revised it calms back to secondary. */
+              <Button variant={poRevised ? "secondary" : "primary"} icon={<ExternalLink size={14} />} onClick={openBoundPo}>
                 {/* At SO_APPROVED the PO has NOT been revised — approve-so
                     rewrites the Sales Order and nothing else. Calling it "the
                     revised PO" here told the approver a job was done that still
-                    needs doing (Owner 2026-07-19, Q5). */}
-                {poRevised ? "Open revised PO" : "Open bound PO"}
+                    needs doing (Owner 2026-07-19, Q5). Owner 2026-07-27: with a
+                    pending follow-up the jump goes to the PO Amendment job card,
+                    and the label says so. */}
+                {poRevised
+                  ? "Open Revised bound PO"
+                  : pendingFollowUp
+                    ? "Open PO Amendment"
+                    : "Open bound PO"}
               </Button>
             )}
           </div>
@@ -958,6 +1067,7 @@ export function AmendmentDetailV2() {
               soRevision={typeof salesOrder?.revision === "number" ? salesOrder.revision : null}
               resolution={asStr(amendment.resolution)}
               rejectionReason={asStr(amendment.rejection_reason)}
+              lane={lane}
             />
 
             <AsideCard title="Requested by">
@@ -997,9 +1107,9 @@ export function AmendmentDetailV2() {
               <AsideCard title="Department routing">
                 <AmendmentRoutingBlock kinds={allFieldKinds} />
                 <p className="mt-3 border-t border-border-subtle pt-2 text-[11px] leading-relaxed text-ink-muted">
-                  Advisory routing — it shows who is responsible for what. Any authorized
-                  approver applies the whole amendment in one signature; who approved and when
-                  is recorded on the Sales Order history.
+                  {lane
+                    ? "This request was auto-routed at submission: product-line changes go to Purchasing, delivery changes to Logistics. One signature from this lane's approver applies it; who approved and when is recorded on the Sales Order history."
+                    : "Advisory routing — it shows who is responsible for what. Any authorized approver applies the whole amendment in one signature; who approved and when is recorded on the Sales Order history."}
                 </p>
               </AsideCard>
             )}
@@ -1015,10 +1125,107 @@ export function AmendmentDetailV2() {
               </Button>
             </AsideCard>
 
+            {/* Two-lane rework — a lane row has ONE signature and, on the LINES
+                lane, the follow-up PO Amendment chips after it applies. */}
+            {lane && (status === "REQUESTED" || status === "SO_APPROVED") && (
+              <AsideCard title={lane === "LINES" ? "Purchasing approval" : "Logistics approval"}>
+                <div className="space-y-2">
+                  {status === "REQUESTED" && canApproveLane && (
+                    <Button
+                      variant="primary"
+                      className="w-full"
+                      icon={<CheckCircle2 size={14} />}
+                      onClick={() => void handleApproveSo()}
+                      disabled={approveSo.isPending}
+                    >
+                      {approveSo.isPending
+                        ? "Applying…"
+                        : lane === "LINES" ? "Approve product changes" : "Approve delivery changes"}
+                    </Button>
+                  )}
+                  {status === "REQUESTED" && !canApproveLane && (
+                    <p className="text-[12px] text-ink-muted">
+                      Awaiting {lane === "LINES" ? "Purchasing" : "Logistics"} approval — one
+                      signature applies the change to the Sales Order.
+                    </p>
+                  )}
+                  {status === "SO_APPROVED" && lane === "DELIVERY" && (
+                    <p className="text-[12px] text-ink-muted">
+                      Applied — the delivery details are updated on the Sales Order. The
+                      purchase order was not touched.
+                    </p>
+                  )}
+                  {status === "SO_APPROVED" && lane === "LINES" && (
+                    <div className="space-y-2">
+                      {poFollowUps.length === 0 && (
+                        <p className="text-[12px] text-ink-muted">
+                          Applied. No purchase order needed revising for this change.
+                        </p>
+                      )}
+                      {poFollowUps.map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => navigate(`/scm/po-amendments/${f.id}`)}
+                          className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-2 text-left hover:border-primary/50"
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate font-mono text-[12px] font-semibold text-primary-ink">
+                              {f.amendment_no ?? f.po_number ?? "PO amendment"}
+                            </span>
+                            <span className="block text-[11px] text-ink-muted">
+                              {f.status === "REQUESTED"
+                                ? "Awaiting your PO confirmation"
+                                : f.status === "APPROVED"
+                                  ? "PO revision confirmed"
+                                  : f.resolution === "WITHDRAWN" ? "Withdrawn" : "Rejected — PO unchanged"}
+                            </span>
+                          </span>
+                          <StatusPill docType="poAmendment" status={String(f.status ?? "")} />
+                        </button>
+                      ))}
+                      {poFollowUps.some((f) => f.status === "REJECTED" && f.resolution !== "WITHDRAWN") && (
+                        <p className="rounded-md border border-warn/40 bg-warn/10 px-2.5 py-2 text-[12px] text-ink">
+                          The Sales Order is revised but its PO follow-up was rejected — the
+                          supplier is still working to the old version. Raise a corrective
+                          amendment or revise the PO by hand.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {/* Reject — the lane approver's refusal; REQUESTED only (after
+                      apply there is nothing left to refuse). Reason mandatory. */}
+                  {status === "REQUESTED" && canReject && (
+                    <Button
+                      variant="secondary"
+                      className="w-full"
+                      icon={<XCircle size={14} />}
+                      onClick={() => void handleReject()}
+                      disabled={rejectAmendment.isPending}
+                    >
+                      {rejectAmendment.isPending ? "Rejecting…" : "Reject amendment"}
+                    </Button>
+                  )}
+                  {canWithdraw && (
+                    <Button
+                      variant="ghost"
+                      className="w-full"
+                      icon={<Undo2 size={14} />}
+                      onClick={() => void handleWithdraw()}
+                      disabled={withdrawAmendment.isPending}
+                    >
+                      {withdrawAmendment.isPending ? "Withdrawing…" : "Withdraw this request"}
+                    </Button>
+                  )}
+                </div>
+              </AsideCard>
+            )}
+
             {/* Gate actions — supplier-confirm / approve-so are wired directly
                 (the same vendored hooks the mobile flow uses); the later gates
-                (approve-po / send) hand off to the bound-PO editor. */}
-            {(status === "REQUESTED" || status === "SUPPLIER_PENDING" || pastSoGate) && (
+                (approve-po / send) hand off to the bound-PO editor. LEGACY
+                (lane NULL) rows only — lane rows use the card above. */}
+            {!lane && (status === "REQUESTED" || status === "SUPPLIER_PENDING" || pastSoGate) && (
               <AsideCard title="Gate actions">
                 <div className="space-y-2">
                   {status === "REQUESTED" && canSupplierConfirm && (
@@ -1063,7 +1270,11 @@ export function AmendmentDetailV2() {
                         icon={<ExternalLink size={14} />}
                         onClick={openBoundPo}
                       >
-                        {poRevised ? "Continue on revised PO" : "Revise the bound PO"}
+                        {poRevised
+                          ? "Continue on revised PO"
+                          : pendingFollowUp
+                            ? "Confirm the PO Amendment"
+                            : "Revise the bound PO"}
                       </Button>
                     </>
                   )}

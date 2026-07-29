@@ -44,6 +44,8 @@ import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { useRacks } from '../../vendor/scm/lib/warehouse-queries';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
+import { skuMapFromBindings, supplierCodeFor } from '../../vendor/scm/lib/supplier-doc-data';
+import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
@@ -103,6 +105,11 @@ type DraftLine = {
   materialKind:      string;
   materialCode:      string;
   materialName:      string;
+  /* Owner 2026-07-27 — the SUPPLIER's own code for this SKU: the PO line's
+     snapshot (single-PO / picks paths) or the binding's at pick time (manual
+     path). Render + create-payload fall back to the live supplier binding when
+     null (old PO lines predate the snapshot column — GRN-detail #1217 parity). */
+  supplierSku:       string | null;
   /* Commander 2026-05-29 — GRN must show WHAT is being received (carry the
      PO line's category + variant selections, exactly like the PO shows). */
   itemGroup:         string | null;
@@ -307,6 +314,7 @@ export const GrnNew = () => {
         purchaseOrderItemId: p.poItemId,
         materialKind:        'mfg_product',
         materialCode:        p.itemCode,
+        supplierSku:         p.supplierSku ?? null,
         materialName:        p.description ?? p.itemCode,
         itemGroup:           p.itemGroup || null,
         variants:            (p.variants as Record<string, unknown> | null) ?? null,
@@ -347,6 +355,7 @@ export const GrnNew = () => {
         materialKind:        'mfg_product',
         materialCode:        '',
         materialName:        '',
+        supplierSku:         null,
         itemGroup:           null,
         variants:            null,
         outstanding:         null,
@@ -369,6 +378,7 @@ export const GrnNew = () => {
           materialKind:      it.material_kind,
           materialCode:      it.material_code,
           materialName:      it.material_name,
+          supplierSku:       (it.supplier_sku as string | null) ?? null,
           itemGroup:         it.item_group ?? null,
           variants:          (it.variants as Record<string, unknown> | null) ?? null,
           outstanding,
@@ -486,6 +496,19 @@ export const GrnNew = () => {
   // supplier is set yet we fall back to the free useMfgProducts search below.
   const supplierDetailQ = useSupplierDetail(supplierId);
   const bindings        = useMemo(() => supplierDetailQ.data?.bindings ?? [], [supplierDetailQ.data?.bindings]);
+  /* Owner 2026-07-27 — per-line Supplier SKU, snapshot-first (the PO line's /
+     binding-pick's code on the DraftLine), else the LIVE binding for this
+     supplier + internal code (#1217 GRN-detail parity — covers PO lines raised
+     before the snapshot column). Null when neither resolves; shown as '—' and
+     omitted from the create payload. */
+  const skuByMaterialCode = useMemo(() => skuMapFromBindings(bindings), [bindings]);
+  const supplierSkuOf = (l: DraftLine): string | null => {
+    const code = supplierCodeFor(
+      { material_code: l.materialCode, supplier_sku: l.supplierSku },
+      skuByMaterialCode,
+    );
+    return code === '—' ? null : code;
+  };
   /* Commander 2026-05-29 — the resolved supplier object (same source PO uses)
      so the GRN header can auto-fill Name + Address + the Contact · Phone ·
      Email · Terms · Currency info bar, exactly like New PO. */
@@ -553,6 +576,7 @@ export const GrnNew = () => {
       materialKind:        'mfg_product',
       materialCode:        '',
       materialName:        '',
+      supplierSku:         null,
       itemGroup:           null,
       variants:            null,
       outstanding:         null,
@@ -572,19 +596,23 @@ export const GrnNew = () => {
     setLine(rid, {
       materialCode: code,
       materialName: sku?.name ?? code,
+      // Catalogue pick carries no supplier code — clear any stale one; the
+      // render/payload fall back to the live binding for this supplier+code.
+      supplierSku:  null,
       itemGroup:    sku?.category ? sku.category.toLowerCase() : null,
     });
   };
 
   // Commander 2026-05-29 — supplier-bound pick (New PO parity): when a supplier
   // is chosen and the typed/picked code matches one of THAT supplier's
-  // bindings, fill name + UNIT PRICE (from the binding) + itemGroup. GRN's
-  // DraftLine has no supplierSku field, so we skip it. Category is resolved
-  // from the full catalogue (categoryForCode) since bindings carry no category.
+  // bindings, fill name + UNIT PRICE (from the binding) + itemGroup + the
+  // supplier's own SKU (owner 2026-07-27). Category is resolved from the full
+  // catalogue (categoryForCode) since bindings carry no category.
   const pickBindingForLine = (rid: string, b: typeof bindings[number]) => {
     setLine(rid, {
       materialCode:   b.material_code,
       materialName:   b.material_name,
+      supplierSku:    b.supplier_sku ?? null,
       unitPriceCenti: b.unit_price_centi,
       itemGroup:      categoryForCode(b.material_code) ?? null,
     });
@@ -641,6 +669,10 @@ export const GrnNew = () => {
           materialKind:        l.materialKind,
           materialCode:        l.materialCode,
           materialName:        l.materialName,
+          // Owner 2026-07-27 — persist the supplier's own code exactly as the
+          // form showed it (snapshot-first, else live binding) so the GRN line
+          // reconciles against the supplier's delivery note (grn_items.supplier_sku).
+          supplierSku:         supplierSkuOf(l) ?? undefined,
           qtyReceived:         l.qtyReceived,
           // Commander 2026-05-29 — GRN only captures received qty; accepted
           // follows received (rejected 0) so the existing API + inventory
@@ -723,24 +755,22 @@ export const GrnNew = () => {
             ) : (
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Receive against PO</span>
-                <select
-                  value={selPoId}
-                  onChange={(e) => setSelPoId(e.target.value)}
+                <SearchableSelect
                   className={styles.fieldInput}
+                  value={selPoId}
+                  onChange={setSelPoId}
                   disabled={poListQ.isLoading || outstanding.length === 0}
-                >
-                  <option value="">
-                    {poListQ.isLoading ? 'Loading POs…'
-                      : outstanding.length === 0 ? 'No outstanding POs — receive manually below'
-                      : '— Pick an outstanding PO (or leave blank for a manual receipt) —'}
-                  </option>
-                  {sortByText(outstanding).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.po_number} · {p.supplier?.name ?? p.supplier?.code ?? '—'} · {fmtDateOrDash(p.po_date)}
-                      {p.status === 'PARTIALLY_RECEIVED' ? ' (partial)' : ''}
-                    </option>
-                  ))}
-                </select>
+                  placeholder={poListQ.isLoading ? 'Loading POs…'
+                    : outstanding.length === 0 ? 'No outstanding POs — receive manually below'
+                    : '— Pick an outstanding PO (or leave blank for a manual receipt) —'}
+                  options={[
+                    { value: '', label: '— Manual receipt (no PO) —' },
+                    ...sortByText(outstanding).map((p) => ({
+                      value: p.id,
+                      label: `${p.po_number} · ${p.supplier?.name ?? p.supplier?.code ?? '—'} · ${fmtDateOrDash(p.po_date)}${p.status === 'PARTIALLY_RECEIVED' ? ' (partial)' : ''}`,
+                    })),
+                  ]}
+                />
               </label>
             )}
             <label className={styles.field}>
@@ -752,17 +782,14 @@ export const GrnNew = () => {
             <label className={styles.field}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Supplier <span className={styles.req}>*</span>{hasPicks ? ' (from picks)' : ''}</span>
               {isManual ? (
-                <select
-                  value={manualSupplierId}
-                  onChange={(e) => setManualSupplierId(e.target.value)}
+                <SearchableSelect
                   className={styles.fieldInput}
+                  value={manualSupplierId}
+                  onChange={setManualSupplierId}
                   disabled={suppliersQ.isLoading}
-                >
-                  <option value="">{suppliersQ.isLoading ? 'Loading suppliers…' : '— Pick a supplier —'}</option>
-                  {sortByText(suppliersQ.data ?? []).map((s) => (
-                    <option key={s.id} value={s.id}>{s.code} · {s.name}</option>
-                  ))}
-                </select>
+                  placeholder={suppliersQ.isLoading ? 'Loading suppliers…' : '— Pick a supplier —'}
+                  options={sortByText(suppliersQ.data ?? []).map((s) => ({ value: s.id, label: `${s.code} · ${s.name}` }))}
+                />
               ) : (
                 <input type="text" readOnly value={supplierName ?? '(auto-filled from PO)'} className={styles.fieldInput} style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }} />
               )}
@@ -797,18 +824,14 @@ export const GrnNew = () => {
                 Threads into the create payload → inventory-IN lands here. */}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Receive into *</span>
-              <select
-                value={warehouseId}
-                onChange={(e) => setWarehouseId(e.target.value)}
+              <SearchableSelect
                 className={styles.fieldInput}
+                value={warehouseId}
+                onChange={setWarehouseId}
                 disabled={warehousesQ.isLoading}
-                required
-              >
-                <option value="">{warehousesQ.isLoading ? 'Loading warehouses…' : '— Pick a warehouse —'}</option>
-                {sortByText(warehousesQ.data ?? []).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code}</option>
-                ))}
-              </select>
+                placeholder={warehousesQ.isLoading ? 'Loading warehouses…' : '— Pick a warehouse —'}
+                options={sortByText(warehousesQ.data ?? []).map((w) => ({ value: w.id, label: w.code }))}
+              />
               <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
                 Warehouse the received stock moves into.
               </span>
@@ -1028,8 +1051,10 @@ export const GrnNew = () => {
                     </div>
                   </div>
 
-                  {/* Identity row — Item Code (Internal) + Description */}
-                  <div className={styles.formGrid2}>
+                  {/* Identity row — Item Code (Internal) + Supplier SKU +
+                      Description (owner 2026-07-27: the supplier's code must
+                      show on the receiving line, PO/GRN-detail parity). */}
+                  <div className={styles.formGrid3}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Item Code (Internal)</span>
                       {isManualLine ? (
@@ -1053,8 +1078,10 @@ export const GrnNew = () => {
                               // back to the full SKU search match.
                               const match = (productsQ.data ?? []).find((p) => p.code === code);
                               if (match) { pickItemForLine(l.rid, code); return; }
-                              // Free typing — keep what's typed so the field stays editable.
-                              setLine(l.rid, { materialCode: code });
+                              // Free typing — keep what's typed so the field
+                              // stays editable; a stale supplier code must not
+                              // outlive the pick it belonged to.
+                              setLine(l.rid, { materialCode: code, supplierSku: null });
                             }}
                             placeholder={supplierId && bindings.length > 0
                               ? 'Pick one of this supplier’s bound SKUs…'
@@ -1086,6 +1113,19 @@ export const GrnNew = () => {
                           style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
                       )}
+                    </label>
+                    {/* The SUPPLIER's own code beside ours — the pair the
+                        receiver reconciles against the delivery note. Read-only;
+                        snapshot-first, else the live binding (supplierSkuOf). */}
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>Supplier SKU</span>
+                      <input
+                        type="text"
+                        readOnly
+                        value={supplierSkuOf(l) ?? '—'}
+                        className={styles.fieldInput}
+                        style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
+                      />
                     </label>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Description</span>

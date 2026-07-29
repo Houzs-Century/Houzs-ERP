@@ -13,6 +13,7 @@ import { useToast } from "../hooks/useToast";
 import { useDialog } from "../hooks/useDialog";
 import { Skeleton, ListSkeleton } from "../components/Skeleton";
 import { DataTable, type Column } from "../components/DataTable";
+import { FilterPills } from "../components/FilterPills";
 import { StatCard } from "../components/StatCard";
 import { Badge } from "../components/Badge";
 import { EmptyState } from "../components/EmptyState";
@@ -65,6 +66,13 @@ const QUICK_SEGMENTS = [
   ["no_mgr", "No manager"],
   ["no_photo", "No photo"],
 ] as const;
+
+// yyyy/mm/dd for the date columns — same normalisation as the SO list's
+// fmtDate, plus space-separated Postgres timestamps ("2026-07-22 09:14:33").
+const fmtDay = (iso: string | null | undefined): string => {
+  if (!iso) return "—";
+  return iso.replace(/[T ].*$/, "").replace(/-/g, "/");
+};
 
 // Full department set for a member (mig 0020) — primary first, falling back to
 // the single primary on older backends that don't send department_ids.
@@ -678,6 +686,15 @@ function MembersTab({
      - default view是listing"). Identity-scoped preference still wins, so
      anyone who explicitly picked the grid keeps it. */
   const [view, setView] = useIdentityPreference("team:view", "list", enumPreference(["grid", "list"] as const));
+  /* Invitations collapse by default: the freeze cap yields row height to any
+     content below the members table, so an always-open second table squeezed
+     members to the 240px floor (owner 2026-07-28: "member 显示太少了"). */
+  const [invitesView, setInvitesView] = useIdentityPreference(
+    "team:invites",
+    "collapsed",
+    enumPreference(["open", "collapsed"] as const),
+  );
+  const invitesOpen = invitesView === "open";
   // Grid ordering (the table view has its own column sort).
   const [gridSort, setGridSort] = useIdentityPreference(
     "team:gridSort",
@@ -972,7 +989,13 @@ function MembersTab({
         segs.every((k) => segMatch(k, u)) &&
         (q === "" ||
           (u.name || "").toLowerCase().includes(q) ||
-          (u.email || "").toLowerCase().includes(q)),
+          (u.email || "").toLowerCase().includes(q) ||
+          (u.phone || "").replace(/[\s-]/g, "").includes(q.replace(/[\s-]/g, "")) ||
+          (u.role_name || "").toLowerCase().includes(q) ||
+          (u.department_name || "").toLowerCase().includes(q) ||
+          (u.position_id != null
+            ? (posNameById.get(u.position_id) || "").toLowerCase().includes(q)
+            : false)),
     );
   }, [
     members.data,
@@ -985,6 +1008,7 @@ function MembersTab({
     quickFilters,
     onlineIds,
     searchQ,
+    posNameById,
   ]);
 
   // Distinct brands across members — drives the brand filter dropdown.
@@ -1078,6 +1102,25 @@ function MembersTab({
   function pickStatus(s: "active" | "invited" | "disabled") {
     setFilterStatus((cur) => (cur === s ? "" : s));
   }
+
+  // Status strip under the section header — same slab as the SO list's
+  // status tabs, counts baked into the labels over the FULL member set.
+  const statusPillOptions = [
+    { value: "all" as const, label: `All · ${counts.total}` },
+    { value: "active" as const, label: `Active · ${counts.active}` },
+    { value: "invited" as const, label: `Pending · ${counts.invited}` },
+    { value: "disabled" as const, label: `Disabled · ${counts.disabled}` },
+  ];
+
+  // How many members report to each manager — powers the hidden
+  // "Direct Reports" column without a backend round-trip.
+  const directReports = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const u of members.data?.users ?? []) {
+      if (u.manager_id != null) m.set(u.manager_id, (m.get(u.manager_id) ?? 0) + 1);
+    }
+    return m;
+  }, [members.data]);
 
   // Re-read the viewed member from the live list so the detail page stays
   // current after an edit reload (rather than holding a stale snapshot).
@@ -1295,6 +1338,26 @@ function MembersTab({
       ),
     },
     {
+      key: "status",
+      label: "Status",
+      width: "100px",
+      getValue: (u) => statusLabels[u.status] ?? u.status,
+      render: (u) => (
+        <Badge
+          tone={
+            u.status === "active"
+              ? "success"
+              : u.status === "disabled"
+              ? "error"
+              : "warning"
+          }
+          size="xs"
+        >
+          {statusLabels[u.status] ?? u.status}
+        </Badge>
+      ),
+    },
+    {
       key: "department",
       label: "Department",
       width: "150px",
@@ -1375,6 +1438,174 @@ function MembersTab({
         </span>
       ),
     },
+    /* Reveal-on-demand columns (SO-list parity) — every field /api/users
+       already returns, so the Columns panel decides, not the payload. */
+    {
+      key: "email",
+      label: "Email",
+      width: "220px",
+      defaultHidden: true,
+      getValue: (u) => u.email || "",
+      render: (u) => (
+        <span className="truncate text-[12px] text-ink-secondary">{u.email}</span>
+      ),
+    },
+    {
+      key: "phone",
+      label: "Phone",
+      width: "140px",
+      defaultHidden: true,
+      getValue: (u) => u.phone || "",
+      render: (u) => (
+        <span className="truncate font-mono text-[12px] text-ink-secondary">
+          {u.phone ? formatPhone(u.phone) : "—"}
+        </span>
+      ),
+    },
+    {
+      key: "role",
+      label: "Role",
+      width: "140px",
+      defaultHidden: true,
+      getValue: (u) => u.role_name || "",
+      render: (u) => (
+        <span className="truncate text-[12px] text-ink-secondary">
+          {u.role_name || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "division",
+      label: "Division",
+      width: "130px",
+      defaultHidden: true,
+      getValue: (u) => u.division || "",
+      render: (u) => (
+        <span className="truncate text-[12px] text-ink-secondary">
+          {u.division || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "brands",
+      label: "Brands",
+      width: "170px",
+      defaultHidden: true,
+      getValue: (u) => (u.brands ?? []).join(", "),
+      render: (u) =>
+        (u.brands ?? []).length ? (
+          <span className="flex flex-wrap gap-1">
+            {(u.brands ?? []).map((b) => (
+              <Badge key={b} tone="accent" size="xs" caseless>
+                {b}
+              </Badge>
+            ))}
+          </span>
+        ) : (
+          <span className="text-[12px] text-ink-muted">—</span>
+        ),
+    },
+    {
+      key: "email_alias",
+      label: "Email Alias",
+      width: "190px",
+      defaultHidden: true,
+      getValue: (u) => u.email_alias || "",
+      render: (u) => (
+        <span className="truncate text-[12px] text-ink-secondary">
+          {u.email_alias || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "presence",
+      label: "Presence",
+      width: "100px",
+      defaultHidden: true,
+      getValue: (u) => (onlineIds.has(u.id) ? "Online" : "Offline"),
+      render: (u) => (
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-secondary">
+          <StatusDot variant={onlineIds.has(u.id) ? "synced" : "neutral"} />
+          {onlineIds.has(u.id) ? "Online" : "Offline"}
+        </span>
+      ),
+    },
+    {
+      key: "direct_reports",
+      label: "Direct Reports",
+      width: "110px",
+      align: "right",
+      defaultHidden: true,
+      getValue: (u) => directReports.get(u.id) ?? 0,
+      render: (u) => {
+        const n = directReports.get(u.id) ?? 0;
+        return n > 0 ? (
+          <span className="font-mono text-[12px] text-ink-secondary">{n}</span>
+        ) : (
+          <span className="text-[12px] text-ink-muted">—</span>
+        );
+      },
+    },
+    {
+      key: "invited_at",
+      label: "Invited",
+      width: "110px",
+      defaultHidden: true,
+      getValue: (u) => u.invited_at || "",
+      render: (u) => (
+        <span className="font-mono text-[11px] text-ink-muted">
+          {fmtDay(u.invited_at)}
+        </span>
+      ),
+    },
+    {
+      key: "invited_by",
+      label: "Invited By",
+      width: "160px",
+      defaultHidden: true,
+      getValue: (u) => u.invited_by_name || u.invited_by_email || "",
+      render: (u) => (
+        <span className="truncate text-[12px] text-ink-secondary">
+          {u.invited_by_name || u.invited_by_email || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "joined_at",
+      label: "Joined",
+      width: "110px",
+      defaultHidden: true,
+      getValue: (u) => u.joined_at || "",
+      render: (u) => (
+        <span className="font-mono text-[11px] text-ink-muted">
+          {fmtDay(u.joined_at)}
+        </span>
+      ),
+    },
+    {
+      key: "created_at",
+      label: "Created",
+      width: "110px",
+      defaultHidden: true,
+      getValue: (u) => u.created_at || "",
+      render: (u) => (
+        <span className="font-mono text-[11px] text-ink-muted">
+          {fmtDay(u.created_at)}
+        </span>
+      ),
+    },
+    {
+      key: "status_reason",
+      label: "Status Reason",
+      width: "180px",
+      defaultHidden: true,
+      getValue: (u) => u.status_reason || "",
+      render: (u) => (
+        <span className="truncate text-[12px] text-ink-muted">
+          {u.status_reason || "—"}
+        </span>
+      ),
+    },
     {
       key: "actions",
       label: "",
@@ -1387,7 +1618,10 @@ function MembersTab({
           <span className="inline-flex items-center gap-1">
             {canImpersonate && u.status === "active" && (
               <button
-                onClick={() => loginAs(u)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  loginAs(u);
+                }}
                 title="Log in as this member"
                 aria-label="Log in as this member"
                 className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-ink-secondary transition-colors hover:border-accent/40 hover:bg-accent-soft/50 hover:text-accent"
@@ -1396,7 +1630,10 @@ function MembersTab({
               </button>
             )}
             <button
-              onClick={() => setEditing(u)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditing(u);
+              }}
               title="Edit member"
               aria-label="Edit member"
               className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-ink-secondary transition-colors hover:border-accent/40 hover:bg-accent-soft/50 hover:text-accent"
@@ -1407,6 +1644,184 @@ function MembersTab({
         );
       },
     },
+  ];
+
+  // ── Pending invitations table (Theme C DataTable, replaces the old
+  //    hand-rolled row list) ─────────────────────────────────────────
+  // Expiry bucket for an invitation — drives the Status badge + row dimming.
+  function inviteExpiry(inv: Invitation): "expired" | "expiring" | "pending" {
+    const ms = new Date(inv.expires_at).getTime() - Date.now();
+    if (ms < 0) return "expired";
+    if (ms < 2 * 24 * 60 * 60 * 1000) return "expiring";
+    return "pending";
+  }
+
+  /* No getValue carries token/invite_url — the CSV export must never
+     contain a live invite credential. Copy Link stays a per-row action. */
+  const inviteColumns: Column<Invitation>[] = [
+    {
+      key: "email",
+      label: "Email",
+      getValue: (inv) => inv.email || "",
+      render: (inv) => (
+        <span className="truncate text-[13px] font-semibold text-ink">{inv.email}</span>
+      ),
+    },
+    {
+      key: "role",
+      label: "Role",
+      width: "150px",
+      getValue: (inv) => inv.role_name || "",
+      render: (inv) =>
+        inv.role_name ? (
+          <span className="rounded bg-accent-soft px-1.5 py-px font-mono text-[9px] font-semibold uppercase tracking-wider text-accent-ink">
+            {inv.role_name}
+          </span>
+        ) : (
+          <span className="text-[12px] text-ink-muted">—</span>
+        ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      width: "120px",
+      getValue: (inv) =>
+        inviteExpiry(inv) === "expired"
+          ? "Expired"
+          : inviteExpiry(inv) === "expiring"
+          ? "Expiring soon"
+          : "Pending",
+      render: (inv) => {
+        const s = inviteExpiry(inv);
+        return s === "expired" ? (
+          <Badge tone="error" size="xs">
+            Expired
+          </Badge>
+        ) : s === "expiring" ? (
+          <Badge tone="warning" size="xs">
+            Expiring soon
+          </Badge>
+        ) : (
+          <Badge tone="neutral" size="xs">
+            Pending
+          </Badge>
+        );
+      },
+    },
+    {
+      key: "invited",
+      label: "Invited",
+      width: "110px",
+      getValue: (inv) => inv.created_at || "",
+      render: (inv) => (
+        <span className="text-[11px] text-ink-muted" title={fmtDay(inv.created_at)}>
+          {relativeTime(inv.created_at)}
+        </span>
+      ),
+    },
+    {
+      key: "expires",
+      label: "Expires",
+      width: "120px",
+      getValue: (inv) => inv.expires_at || "",
+      render: (inv) => (
+        <span
+          className={cn(
+            "text-[11px]",
+            inviteExpiry(inv) === "expired" ? "font-semibold text-err" : "text-ink-muted",
+          )}
+          title={fmtDay(inv.expires_at)}
+        >
+          {relativeTime(inv.expires_at)}
+        </span>
+      ),
+    },
+    {
+      key: "emailed",
+      label: "Emailed",
+      width: "120px",
+      getValue: (inv) =>
+        inv.email_status === "sent"
+          ? inv.emailed_at || "sent"
+          : inv.email_status
+          ? "not sent"
+          : "",
+      render: (inv) =>
+        inv.email_status === "sent" ? (
+          <span className="text-[11px] text-ink-muted">
+            {inv.emailed_at ? relativeTime(inv.emailed_at) : "sent"}
+          </span>
+        ) : inv.email_status ? (
+          <Badge tone="warning" size="xs">
+            Not sent
+          </Badge>
+        ) : (
+          <span className="text-[11px] text-ink-muted">—</span>
+        ),
+    },
+    {
+      key: "invited_by",
+      label: "Invited By",
+      width: "180px",
+      defaultHidden: true,
+      getValue: (inv) => inv.invited_by_email || "",
+      render: (inv) => (
+        <span className="truncate text-[12px] text-ink-secondary">
+          {inv.invited_by_email || "—"}
+        </span>
+      ),
+    },
+    ...(canManage
+      ? [
+          {
+            key: "invite_actions",
+            label: "",
+            width: "190px",
+            align: "right",
+            disableSort: true,
+            render: (inv: Invitation) => (
+              <span className="inline-flex items-center gap-1">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    resendInvite(inv);
+                  }}
+                  disabled={resendingId === inv.id}
+                  className="rounded p-1.5 text-ink-muted transition-colors hover:bg-accent-soft hover:text-accent disabled:opacity-50"
+                  aria-label="Resend invitation email"
+                  title="Resend invitation email"
+                >
+                  <RefreshCw
+                    size={14}
+                    className={resendingId === inv.id ? "animate-spin" : undefined}
+                  />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    copyInviteLink(inv);
+                  }}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-accent/40 hover:bg-accent-soft/50 hover:text-accent"
+                >
+                  <Copy size={12} />
+                  Copy Link
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    revokeInvite(inv);
+                  }}
+                  className="rounded p-1.5 text-ink-muted transition-colors hover:bg-err/10 hover:text-err"
+                  aria-label="Revoke invitation"
+                  title="Revoke invitation"
+                >
+                  <X size={14} />
+                </button>
+              </span>
+            ),
+          } as Column<Invitation>,
+        ]
+      : []),
   ];
 
   return (
@@ -1442,33 +1857,41 @@ function MembersTab({
       {/* Status overview — each card filters the list when clicked. */}
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
+          pending={members.loading && !members.data}
           label="Active Users"
           value={counts.active}
           subtitle="Can sign in"
           tone="success"
+          rail="bg-synced"
           onClick={() => pickStatus("active")}
           active={filterStatus === "active"}
         />
         <StatCard
+          pending={members.loading && !members.data}
           label="Pending Invites"
           value={counts.invited}
           subtitle="Awaiting first sign-in"
           tone="warning"
+          rail="bg-accent"
           onClick={() => pickStatus("invited")}
           active={filterStatus === "invited"}
         />
         <StatCard
+          pending={members.loading && !members.data}
           label="Disabled"
           value={counts.disabled}
           subtitle="Access revoked"
           tone="error"
+          rail="bg-err"
           onClick={() => pickStatus("disabled")}
           active={filterStatus === "disabled"}
         />
         <StatCard
+          pending={members.loading && !members.data}
           label="Total Members"
           value={counts.total}
           subtitle="All accounts"
+          rail="bg-primary"
           onClick={() => setFilterStatus("")}
           active={filterStatus === ""}
         />
@@ -1482,18 +1905,22 @@ function MembersTab({
             Members ({filteredMembers.length}/{members.data?.users.length ?? 0})
           </h2>
           <div className="ml-auto flex items-center gap-2">
-            <div className="relative">
-              <Search
-                size={12}
-                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-muted"
-              />
-              <input
-                value={searchQ}
-                onChange={(e) => setSearchQ(e.target.value)}
-                placeholder="Search name or email…"
-                className="h-7 w-48 rounded-md border border-border bg-surface pl-7 pr-2 text-[11px] text-ink outline-none placeholder:text-ink-muted hover:border-accent/50 focus:border-primary focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
+            {/* List view searches inside the DataTable toolbar; the grid
+                keeps its own box since the table chrome isn't mounted. */}
+            {view === "grid" && (
+              <div className="relative">
+                <Search
+                  size={12}
+                  className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-muted"
+                />
+                <input
+                  value={searchQ}
+                  onChange={(e) => setSearchQ(e.target.value)}
+                  placeholder="Search name, email, phone, role…"
+                  className="h-7 w-48 rounded-md border border-border bg-surface pl-7 pr-2 text-[11px] text-ink outline-none placeholder:text-ink-muted hover:border-accent/50 focus:border-primary focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+            )}
 
             {/* Filters — everything tucked into one popover to keep the bar tidy */}
             <div className="relative">
@@ -1712,6 +2139,16 @@ function MembersTab({
           </div>
         </div>
 
+        {/* Status strip — SO-list pattern: one slab, counts in the labels.
+            Mirrors the stat cards' filter (both drive filterStatus). */}
+        <div className="mb-3">
+          <FilterPills
+            options={statusPillOptions}
+            value={filterStatus === "" ? "all" : filterStatus}
+            onChange={(v) => setFilterStatus(v === "all" ? "" : v)}
+          />
+        </div>
+
         {/* Active filters — removable pills so applied filters are visible. */}
         {activeFilters.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-1.5">
@@ -1753,8 +2190,15 @@ function MembersTab({
             loading={members.loading}
             error={members.error}
             getRowKey={(u) => u.id}
+            onRowClick={(u) => setViewingId(u.id)}
             emptyLabel="No members match these filters."
             exportName="team-members"
+            search={{
+              value: searchQ,
+              onChange: setSearchQ,
+              placeholder: "Search name, email, phone, role…",
+              totalRecords: filteredMembers.length,
+            }}
           />
         ) : members.loading && !members.data ? (
           <ListSkeleton rows={6} />
@@ -1887,13 +2331,31 @@ function MembersTab({
         )}
       </div>
 
-      {/* Pending invitations */}
+      {/* Pending invitations — collapsed by default so the members table
+          keeps the full freeze height (the row cap yields to content below). */}
       <div className="mb-6">
-        <div className="mb-3 flex items-center gap-2">
-          <span className="h-px w-5 bg-accent" />
-          <h2 className="text-[10px] font-bold uppercase tracking-brand text-accent">
-            Pending Invitations ({invites.data?.invitations.length ?? 0})
-          </h2>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setInvitesView(invitesOpen ? "collapsed" : "open")}
+            aria-expanded={invitesOpen}
+            className="group inline-flex items-center gap-2"
+          >
+            <span className="h-px w-5 bg-accent" />
+            <h2 className="text-[10px] font-bold uppercase tracking-brand text-accent underline-offset-2 group-hover:underline">
+              Pending Invitations ({invites.data?.invitations.length ?? 0})
+            </h2>
+            {invitesOpen ? (
+              <ChevronDown size={12} className="text-accent" />
+            ) : (
+              <ChevronRight size={12} className="text-accent" />
+            )}
+          </button>
+          {!invitesOpen && expiredInvites.length > 0 && (
+            <Badge tone="error" size="xs">
+              {expiredInvites.length} expired
+            </Badge>
+          )}
           {canManage && expiredInvites.length > 0 && (
             <button
               type="button"
@@ -1904,80 +2366,21 @@ function MembersTab({
             </button>
           )}
         </div>
-        <div className="overflow-hidden rounded-md border border-border bg-surface shadow-stone">
-          {invites.data?.invitations.length === 0 && (
-            <div className="px-5 py-6 text-center text-sm text-ink-muted">
-              No pending invitations
-            </div>
-          )}
-          {invites.data?.invitations.map((inv) => (
-            <div
-              key={inv.id}
-              className="flex flex-wrap items-center gap-3 border-b border-border-subtle px-4 py-4 last:border-b-0 sm:flex-nowrap sm:gap-4 sm:px-5"
-            >
-              <StatusDot
-                variant={new Date(inv.expires_at).getTime() < Date.now() ? "error" : "neutral"}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-semibold text-ink">{inv.email}</span>
-                  <span className="rounded bg-accent-soft px-1.5 py-px font-mono text-[9px] font-semibold uppercase tracking-wider text-accent-ink">
-                    {inv.role_name}
-                  </span>
-                  {(() => {
-                    const ms = new Date(inv.expires_at).getTime() - Date.now();
-                    if (ms < 0) return <Badge tone="error" size="xs">Expired</Badge>;
-                    if (ms < 2 * 24 * 60 * 60 * 1000)
-                      return <Badge tone="warning" size="xs">Expiring soon</Badge>;
-                    return null;
-                  })()}
-                </div>
-                <div className="mt-0.5 text-[11px] text-ink-muted">
-                  Invited {relativeTime(inv.created_at)} · expires{" "}
-                  {relativeTime(inv.expires_at)}
-                  {inv.email_status === "sent" ? (
-                    <>
-                      {" "}· emailed
-                      {inv.emailed_at ? ` ${relativeTime(inv.emailed_at)}` : ""}
-                    </>
-                  ) : inv.email_status ? (
-                    <span style={{ color: "#b45309" }}> · email not sent</span>
-                  ) : null}
-                </div>
-              </div>
-              {canManage && (
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => resendInvite(inv)}
-                    disabled={resendingId === inv.id}
-                    className="rounded p-1.5 text-ink-muted transition-colors hover:bg-accent-soft hover:text-accent disabled:opacity-50"
-                    aria-label="Resend invitation email"
-                    title="Resend invitation email"
-                  >
-                    <RefreshCw
-                      size={14}
-                      className={resendingId === inv.id ? "animate-spin" : undefined}
-                    />
-                  </button>
-                  <button
-                    onClick={() => copyInviteLink(inv)}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-accent/40 hover:bg-accent-soft/50 hover:text-accent"
-                  >
-                    <Copy size={12} />
-                    Copy Link
-                  </button>
-                  <button
-                    onClick={() => revokeInvite(inv)}
-                    className="rounded p-1.5 text-ink-muted transition-colors hover:bg-err/10 hover:text-err"
-                    aria-label="Revoke"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        {invitesOpen && (
+          <DataTable
+            tableId="team-invitations"
+            columns={inviteColumns}
+            rows={invites.data ? invites.data.invitations : null}
+            loading={invites.loading}
+            error={invites.error}
+            getRowKey={(inv) => inv.id}
+            emptyLabel="No pending invitations."
+            exportName="team-invitations"
+            getRowClassName={(inv) =>
+              inviteExpiry(inv) === "expired" ? "opacity-60" : undefined
+            }
+          />
+        )}
       </div>
       </>
       )}
@@ -4921,6 +5324,7 @@ export function InvitePanel({
   const [managerQuery, setManagerQuery] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [posPin, setPosPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [issued, setIssued] = useState<{
     active?: boolean;
@@ -4928,7 +5332,21 @@ export function InvitePanel({
     email: string;
     invite_url?: string;
     email_sent?: boolean;
+    pos_pin_set?: boolean;
   } | null>(null);
+
+  // POS PIN is the TABLET credential and it is separate from the password above:
+  // pos.2990shome.com signs in by picking a name + 6-digit PIN, with no password
+  // field at all. Only a sales position can PIN-login (backend /api/pos/pin-login
+  // refuses the rest), so the field appears for exactly those positions.
+  const selectedPosition = positions.find((p) => p.id === positionId);
+  const isSalesPosition = !!selectedPosition?.slug?.startsWith("sales");
+  const salesDeptNoPosition =
+    positionId === "" &&
+    deptId !== "" &&
+    (departments.find((d) => d.id === deptId)?.name ?? "")
+      .toLowerCase()
+      .includes("sales");
 
   // Page access for the chosen position — the invitee can only reach pages
   // their position grants, so a position with zero granted pages drops them
@@ -4983,6 +5401,11 @@ export function InvitePanel({
       toast.error("Password must be at least 12 characters");
       return;
     }
+    const pin = isSalesPosition ? posPin.trim() : "";
+    if (pin && !/^\d{6}$/.test(pin)) {
+      toast.error("POS PIN must be exactly 6 digits");
+      return;
+    }
     setBusy(true);
     try {
       const res = await api.post<{
@@ -4991,6 +5414,7 @@ export function InvitePanel({
         email: string;
         invite_url?: string;
         email_sent?: boolean;
+        pos_pin_set?: boolean;
       }>("/api/users/invite", {
         email: email.toLowerCase().trim(),
         name: name.trim() || undefined,
@@ -5006,6 +5430,7 @@ export function InvitePanel({
         // Houzs server-side). Backend defaults to [1] (Houzs) if absent.
         company_ids: scoped ? undefined : companyIds,
         password: pw || undefined,
+        pos_pin: pin || undefined,
       });
       setIssued(res);
       toast.success(
@@ -5015,6 +5440,13 @@ export function InvitePanel({
           ? `Invitation emailed to ${res.email}`
           : `Invitation issued for ${res.email}`
       );
+      // The member exists either way; only the tablet PIN failed. Say so
+      // instead of letting them find out at the POS.
+      if (pin && res.pos_pin_set === false) {
+        toast.error(
+          "Member created, but the POS PIN could not be set (no sales profile yet) — use Set PIN on their row.",
+        );
+      }
       onInvited();
     } catch (e: any) {
       toast.error(e?.message || "Failed to invite");
@@ -5034,6 +5466,7 @@ export function InvitePanel({
     setCompanyIds([1]);
     setPassword("");
     setShowPassword(false);
+    setPosPin("");
     setIssued(null);
     onClose();
   }
@@ -5188,7 +5621,34 @@ export function InvitePanel({
                     Team → Positions first, or the member sees a blank screen.
                   </div>
                 )}
+                {salesDeptNoPosition && (
+                  <div className="mt-1 text-[10px] text-ink-muted">
+                    Pick a Sales position to give this member a POS tablet PIN.
+                  </div>
+                )}
               </div>
+              {isSalesPosition && (
+                <div>
+                  <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+                    POS PIN
+                  </label>
+                  <input
+                    type="text"
+                    value={posPin}
+                    onChange={(e) => setPosPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="6 digits (optional)"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    className="h-10 w-full rounded-md border border-border bg-surface px-3 font-mono text-[13px] tracking-[0.3em] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  />
+                  <div className="mt-1 text-[10px] text-ink-muted">
+                    Tablet sign-in for the POS — they pick their name and enter this
+                    PIN (there is no password on the POS). Same PIN re-confirms My
+                    Orders. Changeable later from the POS, or via Set PIN on their
+                    row.
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
                   Role

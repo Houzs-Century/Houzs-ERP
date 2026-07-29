@@ -18,6 +18,7 @@ import {
   resolveFabricTierOverride,
   type RuleLineInput,
   passesRefinementColumns,
+  splitAmendmentByLane, LANE_LABEL, type AmendmentLane,
 } from '../shared';
 import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricing';
 /* Special delivery fee rules (migration 0024, #691 RuleTarget) — the model |
@@ -47,7 +48,10 @@ import {
    fee/addon → SERVICE-line decomposition builders are pure + shared. */
 import {
   isServiceLine, isDeliveryFeeServiceCode,
-  SVC_DELIVERY, SVC_DELIVERY_CROSS, SVC_DELIVERY_ADD,
+  // SVC_DELIVERY / SVC_DELIVERY_CROSS are no longer named here: the delete side
+  // of the delivery-line rebuild moved into scm.rebuild_mfg_so_delivery_lines
+  // (migration 0214), which lists the three codes itself.
+  SVC_DELIVERY_ADD,
 } from '../shared/service-sku';
 import {
   buildDeliveryFeeServiceLines,
@@ -371,7 +375,10 @@ export function scopeSoItemToDocument<T>(
     .eq('id', itemId) as T;
 }
 
-function soProcessingLocked(
+/* Exported (two-lane phase 2): delivery-planning.ts guards its board write of
+   the CONTROLLED replacement_disposal field with the SAME predicate, so the
+   two surfaces can never disagree about when the lock is on. */
+export function soProcessingLocked(
   header: { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
 ): boolean {
   if (!header) return false;
@@ -2508,27 +2515,38 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   const amendSoStatus = String((h.data as { status?: string | null }).status ?? '').toUpperCase();
   const amendTerminalStatus = ['SHIPPED', 'DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED'].includes(amendSoStatus);
   const amendmentEligible = amendProcessingLocked && !amendHardLocked && !amendTerminalStatus;
-  let openAmendment: { id: string; status: string; amendment_no: string } | null = null;
+  /* Two-lane rework: up to TWO amendments can be awaiting approval at once —
+     one per lane. `open_amendments` is the full set; the singular
+     `open_amendment` (first/newest) is kept so pre-rework consumers keep
+     working. OPEN for a lane row = REQUESTED (SO_APPROVED is its applied
+     terminal); a legacy row stays open through its whole two-gate chain. */
+  type OpenAmendment = { id: string; status: string; amendment_no: string; lane: string | null };
+  let openAmendments: OpenAmendment[] = [];
   {
     // scopeToCompany: the new so_amendments table carries company_id (mig 0080);
     // no-op pre-activation. so_doc_no is already company-unique, so this is belt+braces.
+    /* Server-side openness filter — applied (SO_APPROVED) lane rows accumulate
+       over an SO's life, so a bare newest-N read could push the one genuinely
+       OPEN row past the limit. (lane IS NULL OR status = REQUESTED) AND status
+       NOT IN (SENT, REJECTED) returns at most 2 lane rows + any legacy chain. */
     const { data: amRows } = await scopeToCompany(sb
       .from('so_amendments')
-      .select('id, status, amendment_no')
+      .select('id, status, amendment_no, lane')
       .eq('so_doc_no', docNo), c)
       .not('status', 'in', '("SENT","REJECTED")')
+      .or('lane.is.null,status.eq.REQUESTED')
       .order('created_at', { ascending: false })
-      .limit(1);
-    const am = ((amRows ?? []) as Array<Record<string, unknown>>)[0];
-    if (am) {
-      openAmendment = {
+      .limit(4);
+    openAmendments = ((amRows ?? []) as Array<Record<string, unknown>>)
+      .map((am) => ({
         // Postgres.js/PostgREST may surface columns camelCased; dual-read to be safe.
-        id: String((am.id ?? (am as Record<string, unknown>).id) ?? ''),
+        id: String(am.id ?? ''),
         status: String(am.status ?? ''),
         amendment_no: String((am.amendment_no ?? (am as Record<string, unknown>).amendmentNo) ?? ''),
-      };
-    }
+        lane: am.lane == null ? null : String(am.lane),
+      }));
   }
+  const openAmendment = openAmendments[0] ?? null;
   const salesOrder = {
     ...(h.data as unknown as Record<string, unknown>),
     has_children: (doCount ?? 0) > 0 || (siCount ?? 0) > 0,
@@ -2536,6 +2554,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     amendment_eligible: amendmentEligible,
     has_open_amendment: openAmendment != null,
     open_amendment: openAmendment,
+    open_amendments: openAmendments,
     customer_credit_centi: customerCreditCenti,
     // Authoritative received-to-date + remaining balance for the detail page
     // and the customer-facing print (so-doc.ts reads paid_centi_total).
@@ -3849,6 +3868,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   // Audit 2026-06-11 C2 — module COST rows, memoized per base_model (the
   // per-line seat size + fabric tier resolution happens inside the recompute).
   const sofaModuleCostRowsMemo = new Map<string, Promise<SofaModuleCostRowLite[] | null>>();
+  /* Owner ruling — a non-POS (web/mobile office/sales) author prices freely, so
+     their hand-entered selling price is persisted as-is (see the trust boundary
+     below + recomputeFromSnapshot). POS tablet callers stay authoritative +
+     drift-rejected. */
+  const trustOperatorSelling = !(await isPosTabletCaller(c));
   const recomputes: Array<RecomputedLine | null> = await Promise.all(items.map(async (it, idx) => {
     const itemCode = String(it.itemCode ?? '');
     if (!itemCode) return null;
@@ -3894,7 +3918,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     // change. PWP always wins if both somehow apply (a gift is non-sofa, no code).
     const pwpBaseSen = pwpBaseByIdx.get(idx) ?? freeGiftBaseByIdx.get(idx) ?? null;
     const pwpSofaComboIds = pwpSofaByIdx.get(idx) ?? null;
-    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides);
+    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides, trustOperatorSelling);
   }));
   /* Commander 2026-05-29 (system-wide) — the SELLING unit price is now
      operator-authored on every SO line. The product price tables are COST,
@@ -5889,18 +5913,20 @@ async function recomputeDeliveryFeeCore(
     .select('debtor_name, venue, customer_delivery_date, company_id').eq('doc_no', docNo).maybeSingle();
   const h = (hdr ?? {}) as { debtor_name?: string | null; venue?: string | null; customer_delivery_date?: string | null; company_id?: number | null };
 
-  // Replace the SVC-DELIVERY* lines: delete the old, insert the recomputed.
-  const { error: delErr } = await sb.from('mfg_sales_order_items').delete()
-    .eq('doc_no', docNo).in('item_code', [SVC_DELIVERY, SVC_DELIVERY_CROSS, SVC_DELIVERY_ADD]);
-  if (delErr) {
-    if (sb?.__atomicCommand === true) throw new Error(`Delivery line delete failed: ${delErr.message}`);
-    /* eslint-disable-next-line no-console */ console.error('[so-redetect] delivery line delete failed:', delErr.message);
-  }
-  if (specs.length > 0) {
+  /* Replace the SVC-DELIVERY* lines: delete the old, insert the recomputed,
+     stamp the header — as ONE atomic RPC (migration 0214, ported from 2990
+     migration 0211). The Backend SO Detail Save fires one line PATCH per changed
+     line IN PARALLEL, and each PATCH ends here; when this was two statements
+     (delete, then insert) two rebuilds could interleave as
+     delete/delete/insert/insert and double the delivery fee on the bill
+     (SO-2606-043 2026-06-28, SO-2607-010 2026-07-12). Being inside the
+     atomic-command transaction does not fix it — under READ COMMITTED the second
+     DELETE cannot see the first transaction's new rows. The RPC takes a per-doc_no
+     advisory xact lock, so concurrent rebuilds serialize and the last writer
+     leaves exactly one consistent set. */
+  {
     const lineDateToday = todayMyt();
     const rows = specs.map((spec, i) => ({
-      // Multi-company (mig 0061): the rebuilt delivery line inherits the SO's company.
-      ...(h.company_id != null ? { company_id: h.company_id } : {}),
       doc_no: docNo,                                    // ⚠️ NOT NULL — omitting it silently dropped the line (the bug)
       line_no: keptMaxLineNo >= 0 ? keptMaxLineNo + 1 + i : null,
       line_date: lineDateToday,
@@ -5932,23 +5958,20 @@ async function recomputeDeliveryFeeCore(
       venue: h.venue ?? null,
       stock_status: 'READY',
     }));
-    // Multi-company: the rebuilt delivery-fee lines inherit the SO's company.
-    const coRows = h.company_id != null ? rows.map((r) => ({ company_id: h.company_id, ...r })) : rows;
-    const { error: insErr } = await sb.from('mfg_sales_order_items').insert(coRows);
-    if (insErr) {
-      if (sb?.__atomicCommand === true) throw new Error(`Delivery line insert failed: ${insErr.message}`);
-      /* eslint-disable-next-line no-console */ console.error('[so-redetect] delivery line insert failed:', insErr.message);
+    /* company_id is NOT passed: the RPC reads it off the SO header, so a rebuilt
+       line can never land in another company (mig 0083 made it NOT NULL). */
+    const { error: rebuildErr } = await sb.rpc('rebuild_mfg_so_delivery_lines', {
+      p_doc_no: docNo,
+      p_source_doc_no: sourceDocNo,
+      p_delivery_fee_centi: fee.total,
+      p_rows: rows,
+    });
+    if (rebuildErr) {
+      if (sb?.__atomicCommand === true) throw new Error(`Delivery line rebuild failed: ${rebuildErr.message}`);
+      /* eslint-disable-next-line no-console */ console.error('[so-redetect] delivery line rebuild failed:', rebuildErr.message);
     }
   }
 
-  const { error: headerFeeError } = await sb.from('mfg_sales_orders').update({
-    cross_category_source_doc_no: sourceDocNo,
-    delivery_fee_centi: fee.total,
-    updated_at: new Date().toISOString(),
-  }).eq('doc_no', docNo);
-  if (headerFeeError && sb?.__atomicCommand === true) {
-    throw new Error(`Delivery fee header update failed: ${headerFeeError.message}`);
-  }
   await recomputeTotals(sb, docNo, c);
   return { isFollowup, sourceDocNo, total: fee.total };
 }
@@ -7212,6 +7235,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     sofaModuleCostRowsLite,
     modelOverridesLite,      // migration 0175 — per-Model Δ
     compartmentOverridesLite, // migration 0025 — per-compartment Δ
+    !(await isPosTabletCaller(c)), // owner ruling — non-POS author prices freely
   );
   /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). POS tablet
      roles are drift-rejected + take the server price; Backend / office authors
@@ -7715,6 +7739,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       sofaModuleCostRowsPatch,
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
+      !posTablet, // owner ruling — non-POS author prices freely
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even
@@ -9010,7 +9035,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
      Backend-loaded swap build may carry the canonical `seatHeight`; POS posts
      `depth`. recomputeFromSnapshot below also reads `depth ?? seatHeight`. */
   const depth = String((newVariants as { depth?: unknown; seatHeight?: unknown }).depth ?? (newVariants as { seatHeight?: unknown }).seatHeight ?? '24');
-  const [cfg, fabLite, combos, sellingTiers, fabricAddonCfg, specialDefs, modulePrices, moduleCostRows, modelOverridesSwap] = await Promise.all([
+  const [cfg, fabLite, combos, sellingTiers, fabricAddonCfg, specialDefs, modulePrices, moduleCostRows, modelOverridesSwap, compartmentOverridesSwap] = await Promise.all([
     loadMaintenanceConfig(sb),
     loadFabricByCode(sb, (newVariants.fabricCode as string | undefined) ?? null),
     loadActiveSofaCombos(sb, c),
@@ -9020,6 +9045,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     loadModelSofaModulePrices(sb, prodLite.base_model, depth),
     loadModelSofaModuleCostRows(sb, prodLite.base_model),
     loadModelFabricTierOverrides(sb),
+    loadCompartmentFabricTierOverrides(sb), // migration 0025 — per-compartment Δ
   ]);
   const qty = Math.max(1, Math.floor(Number(item.qty ?? 1)));
   const clientUnit = Math.max(0, Math.round(Number(item.unitPriceCenti ?? 0)));
@@ -9042,7 +9068,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     prodLite, fabLite, cfg, combos, modulePrices, sellingTiers, fabricAddonCfg,
     null,
     rewardComboMatch && rewardCtx ? rewardCtx.comboIds : null,
-    specialDefs, moduleCostRows, modelOverridesSwap,
+    specialDefs, moduleCostRows, modelOverridesSwap, compartmentOverridesSwap,
   );
   const posTablet = await isPosTabletCaller(c);
   /* Reward swaps skip the drift COMPARISON (the POS configurator prices the
@@ -9395,7 +9421,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
       ]);
       const rec = recomputeFromSnapshot(
         { itemCode: line.item_code, itemGroup: String(line.item_group ?? 'others'), qty: Number(line.qty), unitPriceCenti: 0, variants: v as MfgItemForRecompute['variants'] },
-        rp, rfab, cfg, null, null, rtiers, fabricAddonCfg, null, null, specialDefs, null, modelOverridesSwap,
+        rp, rfab, cfg, null, null, rtiers, fabricAddonCfg, null, null, specialDefs, null, modelOverridesSwap, compartmentOverridesSwap,
       );
       const revertUnit = rec.unit_price_sen > 0 ? rec.unit_price_sen : Number(line.unit_price_centi);
       const lqty = Number(line.qty);
@@ -10706,7 +10732,15 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   // `*`, office positions via the matrix) OR any salesperson by STABLE ORG
   // FIELD (isSalesCaller). Ownership is enforced after the SO row loads, so a
   // rep passing here can still only amend a Sales Order within their own scope.
-  if (!hasHouzsPerm(c, 'scm.amendment.create') && !isSalesCaller(c)) {
+  /* Two-lane phase 2: a LANE APPROVER may also RAISE a request — whoever can
+     sign a change can obviously ask for it (the Delivery-Planning drawer
+     raises replacement-disposal changes under this: the owner ruled those
+     "appear in SO Amendment — Logistics reviews → approves" rather than any
+     direct-write shortcut). Additive to the create key + the sales org-field
+     path; ownership scoping below is unchanged. */
+  const isLaneApprover =
+    hasHouzsPerm(c, 'scm.amendment.approve_lines') || hasHouzsPerm(c, 'scm.amendment.approve_delivery');
+  if (!hasHouzsPerm(c, 'scm.amendment.create') && !isSalesCaller(c) && !isLaneApprover) {
     return c.json({
       error: 'amendment_create_forbidden',
       message: 'You do not have permission to raise a Sales Order amendment.',
@@ -10771,14 +10805,18 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     }, 409);
   }
 
-  // Guard 4 — one OPEN amendment per SO (status NOT IN SENT/REJECTED). The
-  // partial unique index uq_so_amendment_open is the DB backstop; pre-check here
-  // for a clean 409. Also feeds the amendment_no counter below.
+  // Guard 4 — openness (two-lane rework 2026-07-27). A LEGACY open row (lane
+  // NULL, pre-rework, possibly mid two-gate chain) still blocks EVERYTHING —
+  // its chain owns the SO until it closes. Lane rows block only their OWN lane;
+  // that half of the guard runs after classification below, where we know which
+  // lanes this submission needs. The partial unique indexes
+  // (uq_so_amendment_open_legacy / uq_so_amendment_open_lane, mig 0215) are the
+  // DB backstop; the pre-checks give clean 409s + feed the amendment_no counter.
   const { data: priorRows } = await scopeToCompany(sb.from('so_amendments')
-    .select('id, status').eq('so_doc_no', docNo), c);
-  const prior = (priorRows ?? []) as Array<{ id: string; status: string }>;
-  const hasOpen = prior.some((a) => a.status !== 'SENT' && a.status !== 'REJECTED');
-  if (hasOpen) {
+    .select('id, status, lane').eq('so_doc_no', docNo), c);
+  const prior = (priorRows ?? []) as Array<{ id: string; status: string; lane: string | null }>;
+  const legacyOpen = prior.some((a) => a.lane == null && a.status !== 'SENT' && a.status !== 'REJECTED');
+  if (legacyOpen) {
     return c.json({
       error: 'amendment_already_open',
       reason: 'An amendment is already open on this Sales Order — resolve it before raising another.',
@@ -10867,24 +10905,43 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     }
   }
 
-  // Mint amendment_no = `${docNo}/A${n}`, n = (prior amendments for this SO) + 1.
-  const amendmentNo = `${docNo}/A${prior.length + 1}`;
-
-  // Insert the amendment header (status REQUESTED, requested_by = current staff).
-  // company_id: stamp the active company (mig 0080 nullable column); no-op pre-activation.
-  /* Header half (mig 0119) — the REQUESTED values plus a snapshot of what they
-     replace, so the approver sees a before/after without re-reading the SO (by
-     approval time the SO may have moved on). Snapshot only the keys actually
-     being changed, read off the SO row we already hold. NULL when the amendment
-     is line-only, which is exactly the pre-0119 shape. */
-  const oldHeaderSnapshot: Record<string, string | null> = {};
-  if (hasHeaderChanges) {
-    const curRow = soRow as unknown as Record<string, unknown>;
-    for (const key of Object.keys(headerChanges)) {
-      const col = AMENDABLE_HEADER_FIELDS[key];
-      const cur = curRow[col];
-      oldHeaderSnapshot[key] = cur == null ? null : String(cur);
+  /* ── Two-lane split (owner rework 2026-07-27) ─────────────────────────────
+     Classify every requested change into its approval lane — LINES (product
+     lines → Purchasing) or DELIVERY (schedule/location, service lines →
+     Logistics) — and, when the submission mixes both, SPLIT it into two
+     amendment documents that live independent lives. Line classification keys
+     off the item code the change targets, resolved SERVER-SIDE from the order
+     (an ADD has no persisted line, so its requested new_item_code is used). */
+  const referencedIds = [...new Set(submittedLines
+    .map((l) => l.salesOrderItemId)
+    .filter((x): x is string => typeof x === 'string' && x.length > 0))];
+  const itemCodeById = new Map<string, string | null>();
+  if (referencedIds.length > 0) {
+    const { data: codeRows, error: codeErr } = await sb.from('mfg_sales_order_items')
+      .select('id, item_code').eq('doc_no', docNo).in('id', referencedIds);
+    if (codeErr) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
+    for (const r of (codeRows ?? []) as Array<{ id: string; item_code: string | null }>) {
+      itemCodeById.set(r.id, r.item_code);
     }
+  }
+  const split = splitAmendmentByLane(
+    headerChanges,
+    submittedLines,
+    (l) => (l.salesOrderItemId ? itemCodeById.get(l.salesOrderItemId) : l.newItemCode),
+  );
+
+  // Guard 4b — per-lane openness: each lane admits ONE amendment awaiting its
+  // approver. The other lane stays free — that is the whole point of the split.
+  const openLanes = new Set(prior
+    .filter((a) => (a.lane === 'LINES' || a.lane === 'DELIVERY') && a.status === 'REQUESTED')
+    .map((a) => a.lane as AmendmentLane));
+  const blockedLanes = split.lanes.filter((l) => openLanes.has(l));
+  if (blockedLanes.length > 0) {
+    return c.json({
+      error: 'amendment_already_open',
+      reason: `An amendment for ${blockedLanes.map((l) => LANE_LABEL[l]).join(' and ')} is already awaiting approval on this Sales Order — resolve it before requesting another change of that kind.`,
+      lanes: blockedLanes,
+    }, 409);
   }
 
   /* Requester = the caller's REAL scm.staff uuid (mig 0066 sync row), NOT
@@ -10895,71 +10952,108 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      when the sync row is missing so the FK stays valid. */
   const requesterStaffId = (await resolveCallerStaffId(sb, c.get('houzsUser')?.id)) ?? user.id;
 
-  const { data: created, error: insErr } = await sb.from('so_amendments').insert({
-    so_doc_no:    docNo,
-    amendment_no: amendmentNo,
-    status:       'REQUESTED',
-    reason:       body.reason ?? null,
-    requested_by: requesterStaffId,
-    company_id:   activeCompanyId(c),
-    header_changes:      hasHeaderChanges ? headerChanges : null,
-    old_header_snapshot: hasHeaderChanges ? oldHeaderSnapshot : null,
-  }).select('id, so_doc_no, amendment_no, status, reason, requested_by, created_at, header_changes, old_header_snapshot').single();
-  if (insErr) return c.json({ error: 'create_failed', reason: insErr.message }, 500);
-  const amendment = created as {
-    id: string; so_doc_no: string; amendment_no: string; status: string;
+  /* One insert per lane present. Numbering stays a single /A{n} sequence per SO
+     (a mixed submission mints /A3 and /A4). Everything is rolled back together
+     if any half fails — a split must never half-exist. */
+  const createdAmendments: Array<{
+    id: string; so_doc_no: string; amendment_no: string; status: string; lane: AmendmentLane;
     reason: string | null; requested_by: string | null; created_at: string;
+  }> = [];
+  const rollbackCreated = async () => {
+    for (const a of createdAmendments) {
+      await sb.from('so_amendments').delete().eq('id', a.id);
+    }
   };
 
-  // Insert the amendment lines from the submitted diff (SPEC/QTY/ADD/REMOVE +
-  // an old-values snapshot for display). May legitimately be empty now that a
-  // header-only amendment is a first-class case (Guard 5 already rejected the
-  // no-lines-AND-no-header-changes case).
-  const lines = submittedLines;
+  for (const [i, laneKey] of split.lanes.entries()) {
+    const half = split.perLane[laneKey];
+    const laneHasHeader = half.headerKeys.length > 0;
+    const amendmentNo = `${docNo}/A${prior.length + 1 + i}`;
 
-  /* Line rows come from the SHARED builder (lib/amendment-lines), which also
-     stamps each line's ITEM GROUP into old_snapshot server-side, read from
-     mfg_sales_order_items rather than trusted from the client. The EDIT
-     endpoint (PUT /so-amendments/:id) calls the same function, so a corrected
-     amendment records the same shape as the original. */
-  if (lines.length > 0) {
-    const built = await buildAmendmentLineRows(sb, docNo, amendment.id, lines);
-    if (!built.ok) {
-      // Roll the header back — a half-written amendment must not wedge the
-      // one-open gate.
-      await sb.from('so_amendments').delete().eq('id', amendment.id);
-      return built.reason === 'unreadable'
-        ? c.json(LINE_BUILD_ERRORS.unreadable, 500)
-        : c.json(LINE_BUILD_ERRORS.missing(built.missingIds.length), 409);
+    /* Header half (mig 0119) — the REQUESTED values plus a snapshot of what
+       they replace, so the approver sees a before/after without re-reading the
+       SO. Snapshot only this LANE's keys, read off the SO row we already hold. */
+    const oldHeaderSnapshot: Record<string, string | null> = {};
+    if (laneHasHeader) {
+      const curRow = soRow as unknown as Record<string, unknown>;
+      for (const key of half.headerKeys) {
+        const col = AMENDABLE_HEADER_FIELDS[key];
+        const cur = curRow[col];
+        oldHeaderSnapshot[key] = cur == null ? null : String(cur);
+      }
     }
-    const lineRows = built.rows;
-    // stampCompany: tag every line row with the active company (mig 0080); no-op pre-activation.
-    const { error: lineErr } = await sb.from('so_amendment_lines').insert(stampCompany(lineRows, c));
-    if (lineErr) {
-      // Roll back the header so a half-written amendment can't wedge the one-open
-      // gate (the FK cascade would also drop the lines, but there are none yet).
-      await sb.from('so_amendments').delete().eq('id', amendment.id);
-      return c.json({ error: 'create_failed', reason: lineErr.message }, 500);
+
+    const { data: created, error: insErr } = await sb.from('so_amendments').insert({
+      so_doc_no:    docNo,
+      amendment_no: amendmentNo,
+      status:       'REQUESTED',
+      lane:         laneKey,
+      reason:       body.reason ?? null,
+      requested_by: requesterStaffId,
+      company_id:   activeCompanyId(c),
+      header_changes:      laneHasHeader ? half.headerChanges : null,
+      old_header_snapshot: laneHasHeader ? oldHeaderSnapshot : null,
+    }).select('id, so_doc_no, amendment_no, status, lane, reason, requested_by, created_at, header_changes, old_header_snapshot').single();
+    if (insErr) {
+      await rollbackCreated();
+      if (/uq_so_amendment_open|duplicate key/i.test(insErr.message)) {
+        return c.json({
+          error: 'amendment_already_open',
+          reason: 'An amendment is already open for this kind of change — reload and try again.',
+        }, 409);
+      }
+      return c.json({ error: 'create_failed', reason: insErr.message }, 500);
     }
+    const amendment = created as (typeof createdAmendments)[number];
+    createdAmendments.push(amendment);
+
+    /* Line rows come from the SHARED builder (lib/amendment-lines), which also
+       stamps each line's ITEM GROUP into old_snapshot server-side, read from
+       mfg_sales_order_items rather than trusted from the client. The EDIT
+       endpoint (PUT /so-amendments/:id) calls the same function. */
+    if (half.lines.length > 0) {
+      const built = await buildAmendmentLineRows(sb, docNo, amendment.id, half.lines);
+      if (!built.ok) {
+        await rollbackCreated();
+        return built.reason === 'unreadable'
+          ? c.json(LINE_BUILD_ERRORS.unreadable, 500)
+          : c.json(LINE_BUILD_ERRORS.missing(built.missingIds.length), 409);
+      }
+      // stampCompany: tag every line row with the active company (mig 0080).
+      const { error: lineErr } = await sb.from('so_amendment_lines').insert(stampCompany(built.rows, c));
+      if (lineErr) {
+        await rollbackCreated();
+        return c.json({ error: 'create_failed', reason: lineErr.message }, 500);
+      }
+    }
+
+    await recordSoAudit(sb, {
+      docNo,
+      action: 'AMENDMENT_REQUESTED',
+      actorId: user.id,
+      actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+      fieldChanges: [
+        { field: 'amendment', from: null, to: amendmentNo },
+        { field: 'lane', to: laneKey },
+        // Requested header changes are audited at REQUEST time (not just at
+        // apply) so the History timeline shows what was asked for even if it's
+        // rejected.
+        ...half.headerKeys.map((k) => ({
+          field: `requested_${AMENDABLE_HEADER_FIELDS[k]}`,
+          from:  oldHeaderSnapshot[k],
+          to:    half.headerChanges[k],
+        })),
+      ],
+      note: body.reason ?? undefined,
+    });
   }
 
-  await recordSoAudit(sb, {
-    docNo,
-    action: 'AMENDMENT_REQUESTED',
-    actorId: user.id,
-    actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-    fieldChanges: [
-      { field: 'amendment', from: null, to: amendmentNo },
-      // Requested header changes are audited at REQUEST time (not just at apply)
-      // so the History timeline shows what was asked for even if it's rejected.
-      ...Object.keys(headerChanges).map((k) => ({
-        field: `requested_${AMENDABLE_HEADER_FIELDS[k]}`,
-        from:  oldHeaderSnapshot[k],
-        to:    headerChanges[k],
-      })),
-    ],
-    note: body.reason ?? undefined,
-  });
-
-  return c.json({ amendment }, 201);
+  /* `amendment` (singular) keeps the pre-split response contract for existing
+     callers; `amendments` carries the full split so the UI can say "this was
+     split into two approvals". */
+  return c.json({
+    amendment: createdAmendments[0],
+    amendments: createdAmendments,
+    lanes: split.lanes,
+  }, 201);
 });

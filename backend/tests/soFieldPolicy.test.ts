@@ -65,6 +65,16 @@ describe('lockedColumnsChanged — a CONTROLLED field posted directly is rejecte
       .toEqual(['sales_location']);
   });
 
+  it('rejects an address change — two-lane phase 2 (owner 2026-07-27)', () => {
+    /* The owner's category-2 ruling reversed the earlier "address lines save
+       straight away": a street/unit change on a locked SO is a Logistics-
+       approved amendment now. This is the regression guard for the reversal. */
+    expect(lockedColumnsChanged({ address1: '99 Jalan Baru', address2: 'Taman Baru' }, BEFORE).sort())
+      .toEqual(['address1', 'address2']);
+    expect(lockedColumnsChanged({ replacement_disposal: 'Old sofa 1pc' }, BEFORE))
+      .toEqual(['replacement_disposal']);
+  });
+
   it('reports EVERY offending column, not just the first', () => {
     const changed = lockedColumnsChanged(
       { customer_state: 'Johor', postcode: '80000', city: 'JB', phone: '0199999999' },
@@ -76,14 +86,13 @@ describe('lockedColumnsChanged — a CONTROLLED field posted directly is rejecte
 
 describe('lockedColumnsChanged — FREE fields pass straight through', () => {
   it('lets the owner-ruled free-edit fields through on a locked SO', () => {
-    // Owner: payments, customer phone, delivery address lines. The amendment
-    // gate exists for what gets DELIVERED or CHARGED; contact details are not
-    // that, and routing them through approval means nobody updates them.
+    // Owner: payments + contact details stay free — the amendment gate exists
+    // for what gets DELIVERED or CHARGED, and routing contact details through
+    // approval means nobody updates them. The delivery ADDRESS left this list
+    // 2026-07-27 (two-lane phase 2) — see the CONTROLLED rejection test above.
     const patch = {
       phone: '0177777777',
       email: 'new@b.com',
-      address1: '99 Jalan Baru',
-      address2: 'Taman Baru',
       debtor_name: 'Ali A. Abu',
       note: 'leave with guard',
       emergency_contact_name: 'Fatimah',

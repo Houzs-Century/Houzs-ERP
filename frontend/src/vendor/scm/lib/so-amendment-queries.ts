@@ -48,6 +48,18 @@ export type AmendmentRow = {
      signal the approver needs on the card itself. */
   edited_at?: string | null;
   edit_count?: number | null;
+  /* Two-lane rework (2026-07-27, mig 0216): 'LINES' (product changes →
+     Purchasing signs) | 'DELIVERY' (delivery/customer changes → Logistics
+     signs). NULL on rows raised before the rework — those keep the legacy
+     supplier-confirmed two-gate chain. */
+  lane?: 'LINES' | 'DELIVERY' | string | null;
+  /* Owner 2026-07-27 — the PO(s) this SO's lines were purchased on
+     (purchase_order_items.so_item_id linkage, resolved by the list endpoint).
+     The PO Amendments inbox merges rows with a bound PO alongside the direct
+     po_amendments so purchasing sees the whole revision queue in one place.
+     Empty on an SO with no purchase leg (and on responses from a pre-upgrade
+     backend, so read it defensively). */
+  bound_pos?: Array<{ id: string; po_number: string; status: string }>;
 };
 
 export type AmendmentLine = {
@@ -116,6 +128,9 @@ const invalidateAmendmentSideEffects = (
   qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail'] });
   qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
   qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail'] });
+  /* Two-lane rework: a LINES-lane approve auto-raises follow-up rows in the PO
+     Amendments module — its list must show them without a manual refresh. */
+  qc.invalidateQueries({ queryKey: ['po-amendments'] });
   /* A gate writes one AMENDMENT_* audit row, and the amendment's Approval-history
      view reads the SO audit log — refetch it so the new decision shows at once
      (broad key: the gate carries the amendment id, not the SO doc_no here). */
@@ -225,8 +240,16 @@ export const useSupplierConfirm = () => {
 export const useApproveSo = () => {
   const qc = useQueryClient();
   return useMutation({
+    /* Two-lane rework: a LINES-lane approve also returns the follow-up PO
+       Amendment(s) it auto-raised (+ any plain-language warnings) so the
+       approver's toast can point at their next signature. */
     mutationFn: ({ id }: { id: string }) =>
-      authedFetch<{ amendment: AmendmentRow; revision: number }>(`/so-amendments/${id}/approve-so`, { method: 'PATCH' }),
+      authedFetch<{
+        amendment: AmendmentRow;
+        revision: number;
+        poFollowUps?: Array<{ poId: string; poNumber: string; amendmentId: string; amendmentNo: string }>;
+        warnings?: string[];
+      }>(`/so-amendments/${id}/approve-so`, { method: 'PATCH' }),
     onSuccess: (_, vars) => invalidateAmendmentSideEffects(qc, vars.id),
   });
 };

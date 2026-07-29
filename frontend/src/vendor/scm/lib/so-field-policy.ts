@@ -76,6 +76,64 @@ export const SO_HEADER_FIELD_POLICY: readonly SoHeaderFieldPolicy[] = [
     cls: 'CONTROLLED',
     reason: 'Same as Postcode: part of the PO delivery destination.',
   },
+  /* Two-lane rework phase 2 (owner 2026-07-27): the delivery-address block +
+     disposal note are Logistics-approved amendment fields (DELIVERY lane). */
+  {
+    column: 'address1',
+    payloadKey: 'address1',
+    label: 'Address line 1',
+    cls: 'CONTROLLED',
+    reason: 'The delivery address the trip is planned to — moves by Logistics-approved amendment.',
+  },
+  {
+    column: 'address2',
+    payloadKey: 'address2',
+    label: 'Address line 2',
+    cls: 'CONTROLLED',
+    reason: 'Same as Address line 1 — one address, one rule.',
+  },
+  {
+    column: 'address3',
+    payloadKey: 'address3',
+    label: 'Address line 3',
+    cls: 'CONTROLLED',
+    reason: 'Same as Address line 1 — one address, one rule.',
+  },
+  {
+    column: 'address4',
+    payloadKey: 'address4',
+    label: 'Address line 4',
+    cls: 'CONTROLLED',
+    reason: 'Same as Address line 1 — and legacy rows double it as the postcode.',
+  },
+  {
+    column: 'ship_to_address',
+    payloadKey: 'shipToAddress',
+    label: 'Ship-to address',
+    cls: 'CONTROLLED',
+    reason: 'Free-text destination on supplier-facing paperwork — the Postcode rationale.',
+  },
+  {
+    column: 'bill_to_address',
+    payloadKey: 'billToAddress',
+    label: 'Bill-to address',
+    cls: 'CONTROLLED',
+    reason: 'Moves with its sibling ship/install addresses through one channel.',
+  },
+  {
+    column: 'install_to_address',
+    payloadKey: 'installToAddress',
+    label: 'Install-to address',
+    cls: 'CONTROLLED',
+    reason: 'Same as Ship-to address — where the crew actually goes.',
+  },
+  {
+    column: 'replacement_disposal',
+    payloadKey: 'replacementDisposal',
+    label: 'Replacement / disposal',
+    cls: 'CONTROLLED',
+    reason: 'The disposal add-on — changes the delivery job. Logistics\' own Delivery Planning drawer still writes it directly (they are the lane approver).',
+  },
 ];
 
 /** payloadKeys an amendment may carry, in table order. */
@@ -146,23 +204,13 @@ export const paymentRowMutable = (
   return { mutable: false, problem: PAYMENT_WINDOW_CLOSED_MESSAGE };
 };
 
-/* ── Delivery-address staleness — A KNOWN GAP, NOT CLOSED HERE ─────────────
-   The owner ruled the delivery address FREE-EDIT and that ruling stands. The
-   destination IDENTITY (State / City / Postcode) is CONTROLLED, so a change
-   there goes through approval. What stays free is the street/unit text
-   (address1-4), and changing THAT late does not re-plan an already-scheduled
-   delivery trip — the trip holds its own stop, and delivery-planning buckets an
-   SO by customer STATE, which did not move. So the driver can still be sent to
-   the old street address.
-
-   A warning at the point of edit was considered and NOT shipped, because no SO
-   detail surface — desktop, mobile, or the header API — currently carries any
-   "this order has a delivery scheduled" signal. Showing the warning
-   unconditionally would fire on every address edit including the large majority
-   with nothing scheduled, and a warning that is usually wrong is how operators
-   learn to dismiss warnings without reading them.
-
-   Closing it properly means surfacing a scheduled-trip flag on the SO header
-   (delivery-planning already knows; the SO does not ask) and gating the warning
-   on it. That is a real change to the header payload and to delivery-planning's
-   read surface, so it is reported for the owner rather than half-built here. */
+/* ── Delivery-address staleness — NARROWED 2026-07-27 ──────────────────────
+   The address block (address1-4 + ship/bill/install-to) is now CONTROLLED
+   (owner two-lane spec, rows above): a street/unit change on a locked SO moves
+   by Logistics-approved amendment, so the person who plans trips is the person
+   who signs the change. What this still does NOT do is re-plan an
+   already-SCHEDULED trip when the amendment applies — the trip holds its own
+   stop. The Logistics approver is at least now IN the loop by construction;
+   re-planning after applying remains a by-hand step. Surfacing a
+   scheduled-trip flag on the SO header (delivery-planning already knows; the
+   SO does not ask) is still the proper close, reported for the owner. */

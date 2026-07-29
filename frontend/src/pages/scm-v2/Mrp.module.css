@@ -85,18 +85,19 @@
   font-size: var(--fs-13);
 }
 .table thead th {
-  /* Ink & Petrol section-head look — mono uppercase 10.5 px with a wider
-     tracking, matches the SO New / Maintenance table header rhythm. */
+  /* Batch 2 theme skin (owner 2026-07-28: MRP keeps its hand-built tree,
+     visuals align to the SO-sample DataTable header): sans 10px/700
+     uppercase, tracking-brand 0.18em, surface-dim #e3e6e0, ink text,
+     2px bottom rule — the same measured spec every converted table renders. */
   text-align: left;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: #767b6e;
+  color: #11140f;
   padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid #c2c6bd;
-  background: #f4f6f3;
+  border-bottom: 2px solid #d6d9d2;
+  background: #e3e6e0;
   white-space: nowrap;
 }
 .num {
@@ -244,10 +245,12 @@
   margin: 0 var(--space-3) 0 var(--space-3);
 }
 .childTable thead th {
+  /* Nested detail header — stays light (no fill, muted ink) but takes the
+     sample's brand tracking so parent and child headers read as one system. */
   text-align: left;
   font-size: var(--fs-10, 10px);
   font-weight: 700;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: #767b6e;
   padding: var(--space-2) var(--space-3);

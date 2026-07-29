@@ -473,11 +473,36 @@ describe("assertAuditWritable — the decision that makes the refusal honest", (
   });
 
   test("a probe that rejects blocks instead of escaping the handler", async () => {
+    // A GENUINE transport throw (socket/DB down) must stay fail-closed and must
+    // NOT fall back to the weaker reachability read.
+    let fellBack = false;
     const r = await assertAuditWritable(
-      stubClient({ rpc: async () => { throw new Error("socket closed"); } }),
+      stubClient({ rpc: async () => { throw new Error("socket closed"); }, onFrom: () => { fellBack = true; } }),
       { entityType: "INVENTORY_ADJUSTMENT", action: "CREATE" },
     );
     expect(r.ok).toBe(false);
+    expect(fellBack).toBe(false);
+  });
+
+  test("an rpc UNSUPPORTED in the atomic transaction client degrades to reachability", async () => {
+    // pg-supabase-transaction.rpc() throws `Unsupported SCM transaction RPC: …`
+    // for the entity_audit_writable probe when a runScmPgCommand-wrapped handler
+    // (PO-amendment approve / SO-amendment PO follow-up confirm) runs it. That is
+    // "not callable HERE", not a failure — it must fall through to the .from()
+    // reachability read (which the atomic client DOES support), not 503. This is
+    // the regression guard for the two-lane PO follow-up confirm.
+    let fellBack = false;
+    const r = await assertAuditWritable(
+      stubClient({
+        rpc: async () => { throw new Error("Unsupported SCM transaction RPC: entity_audit_writable"); },
+        select: async () => ({ data: [], error: null }),
+        onFrom: () => { fellBack = true; },
+      }),
+      { entityType: "PURCHASE_ORDER", entityId: "po-1", action: "AMENDMENT_PO_APPROVED" },
+    );
+    expect(r.ok).toBe(true);
+    expect(r.reason).toBe("reachability_only");
+    expect(fellBack).toBe(true);
   });
 
   test("before the SQL is applied it degrades to reachability, and says so", async () => {

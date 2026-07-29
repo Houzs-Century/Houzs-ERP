@@ -1,5 +1,8 @@
 import { ACCESS_RANK, type AuthUser, type AccessLevel } from "../types";
-import { COSTING_DISPLAY_ENABLED } from "@2990s/shared";
+// Concrete module, NOT the @2990s/shared barrel: this file is eagerly imported
+// by App.tsx, and the barrel drags the whole vendored shared graph (sofa-build,
+// mfg-pricing, phone, …, ~24 KB raw) into the initial bundle for one boolean.
+import { COSTING_DISPLAY_ENABLED } from "../vendor/shared/costing-enabled";
 import { capability } from "./capabilities";
 
 /**

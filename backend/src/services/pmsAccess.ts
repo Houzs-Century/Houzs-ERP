@@ -317,6 +317,13 @@ export function isSetupDismantleSection(
  * source of truth the routes and the /me finance-viewer flag both call.
  */
 export function isFinanceViewer(user: AuthUser | null | undefined): boolean {
+  // Granular grant (owner 2026-07-23): a specific non-director role may be given
+  // finance-view explicitly via the `projects.finance.view` permission (e.g. the
+  // BD role), WITHOUT widening the DIRECTOR cohort or its view-all / sales-scope
+  // side effects. Additive — directors still qualify below; only role-holders of
+  // this exact permission are newly admitted. Cost (isProductCostViewer) is a
+  // separate gate and is unaffected.
+  if (user?.permissions_set?.has("projects.finance.view")) return true;
   return getPmsRole(user, { pic_id: null }) === "DIRECTOR";
 }
 

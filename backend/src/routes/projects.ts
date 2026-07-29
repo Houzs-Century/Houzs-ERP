@@ -53,9 +53,10 @@ import {
 import { getPmsAccess, getPmsRole, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
 import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
-import { hasPermission } from "../services/permissions";
+import { hasPermission, holdsChecklistApproval } from "../services/permissions";
 import { recomputeAutoCostLines } from "../services/projectCostRates";
 import { todayMyt } from "../scm/lib/my-time";
+import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 import { getDb } from "../db/client";
 import {
   project_brands,
@@ -1106,6 +1107,14 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       rental: null,
       total_sales: null,
       contractor_cost: null,
+      // Ledger-derived finance columns follow the same wire-level redaction.
+      fin_revenue: null,
+      fin_cogs: null,
+      fin_cogs_matt_sofa: null,
+      fin_cogs_bedframe: null,
+      fin_cogs_accessories: null,
+      fin_rental: null,
+      fin_total_cost: null,
     }));
   }
   return c.json(result);
@@ -1200,7 +1209,7 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
   // + the SO venue picker listed every HOUZS exhibition venue — the same leak
   // already fixed for the brand pool below.
   const rows = await c.env.DB.prepare(
-    `SELECT id, name, state, notes, active FROM project_venues
+    `SELECT id, name, state, size, notes, active FROM project_venues
       WHERE active = 1${activeCompanySql(c)} ORDER BY name`
   ).all();
   type VenueOut = Record<string, unknown> & { name?: unknown; origin: 'PROJECT' | 'SHOWROOM' };
@@ -1249,6 +1258,7 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
           id: `showroom:${String(r.id ?? "")}`,
           name: venueName,
           state: null,
+          size: null,
           notes: `Showroom · ${String(r.name ?? r.code ?? "").trim()}`,
           active: 1,
           origin: "SHOWROOM" as const,
@@ -1274,10 +1284,15 @@ app.post("/venues", requirePermission("projects.write"), async (c) => {
   const body = await c.req.json<{
     name?: string;
     state?: string | null;
+    size?: string | null;
     notes?: string | null;
   }>();
-  const name = (body.name || "").trim();
-  if (!name) return c.json({ error: "name required" }, 400);
+  const rawName = (body.name || "").trim();
+  if (!rawName) return c.json({ error: "name required" }, 400);
+  // Fold showroom-venue aliases (e.g. "PJ Showroom") to canonical "2990s PJ" before
+  // the by-name lookup + INSERT, so re-adding an alias reactivates the ONE canonical
+  // picker row instead of spawning a duplicate menu entry (the main drift vector).
+  const name = canonicalizeVenue(rawName) ?? rawName;
   // Resolve the active company for this WRITE, or refuse. The INSERT below used
   // to omit company_id, so a venue created while viewing 2990 was written with
   // company_id = HOUZS (the project_venues.company_id DEFAULT, mig 0093). The
@@ -1303,18 +1318,19 @@ app.post("/venues", requirePermission("projects.write"), async (c) => {
       `UPDATE project_venues
           SET active = 1,
               state  = COALESCE(?, state),
+              size   = COALESCE(?, size),
               notes  = COALESCE(?, notes)
         WHERE id = ? AND company_id = ?`
     )
-      .bind(body.state ?? null, body.notes ?? null, existing.id, co.companyId)
+      .bind(body.state ?? null, body.size ?? null, body.notes ?? null, existing.id, co.companyId)
       .run();
     return c.json({ id: existing.id, name: existing.name, state: existing.state }, 200);
   }
   const r = await c.env.DB.prepare(
-    `INSERT INTO project_venues (name, state, notes, created_by, company_id)
-     VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO project_venues (name, state, size, notes, created_by, company_id)
+     VALUES (?, ?, ?, ?, ?, ?)`
   )
-    .bind(name, body.state ?? null, body.notes ?? null, user?.id ?? null, co.companyId)
+    .bind(name, body.state ?? null, body.size ?? null, body.notes ?? null, user?.id ?? null, co.companyId)
     .run();
   return c.json({ id: r.meta.last_row_id, name, state: body.state ?? null }, 201);
 });
@@ -1331,6 +1347,7 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
   const body = await c.req.json<{
     name?: string;
     state?: string | null;
+    size?: string | null;
     notes?: string | null;
   }>();
   const sets: string[] = [];
@@ -1344,6 +1361,10 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
   if ("state" in body) {
     sets.push("state = ?");
     binds.push(body.state ?? null);
+  }
+  if ("size" in body) {
+    sets.push("size = ?");
+    binds.push(body.size ?? null);
   }
   if ("notes" in body) {
     sets.push("notes = ?");
@@ -1727,7 +1748,10 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
 
   const by_brand = groupBy((r) => r.brand);
   const by_organizer = groupBy((r) => r.organizer);
-  const by_venue = groupBy((r) => r.venue);
+  // Canonicalize at read time too: any legacy row still holding an alias buckets
+  // under "2990s PJ" so the breakdown never shows the same showroom twice, even
+  // before the one-shot backfill runs.
+  const by_venue = groupBy((r) => canonicalizeVenue(r.venue));
   const by_event_type = groupBy((r) => r.event_type_name);
   // YYYY-MM bucket from start_date
   const by_month = groupBy((r) =>
@@ -1990,7 +2014,7 @@ app.get("/sales-rep-options", requirePermission("projects.write"), async (c) => 
        FROM sales_reps r
       WHERE r.archived_at IS NULL
         AND r.status = 'active'
-      ORDER BY r.code`
+      ORDER BY r.name, r.code`
   ).all<{ id: number; code: string; name: string; phone: string | null }>();
   return c.json({ data: rows.results ?? [] });
 });
@@ -2498,6 +2522,10 @@ app.patch("/:id/finance", requirePermission("projects.write"), async (c) => {
   const body = await c.req.json<Record<string, any>>();
   const ok = await patchFinance(c.env, id, body, user?.id ?? 0);
   if (!ok) return c.json({ error: "No changes" }, 400);
+  // Entering/changing sales must auto-backfill the derived cost lines
+  // (transport/merchandise/commission) from the brand cost rates. Best-effort:
+  // a recompute failure must not fail the finance write.
+  await recomputeAutoCostLines(c.env, id, user?.id ?? 0).catch(() => {});
   await audit(c, {
     action: "finance.update",
     entityType: "project_finance",
@@ -3393,8 +3421,9 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
     .first<{ required_perm: string | null; role_label: string | null }>();
   if (!item) return c.json({ error: "Not found" }, 404);
   if (item.required_perm) {
-    const has =
-      user.permissions.includes("*") || user.permissions.includes(item.required_perm);
+    // Approval keys are explicit-only (owner matrix 2026-07-21) — `*` does
+    // not pass; see EXPLICIT_APPROVAL_KEYS.
+    const has = holdsChecklistApproval(user.permissions, item.required_perm);
     if (!has) {
       return c.json({ error: `Requires ${item.required_perm}` }, 403);
     }
@@ -3438,8 +3467,9 @@ app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "p
   // direct status transitions). Submissions and comments are open to
   // any user with projects.write.
   if ((action === "approve" || action === "reject") && item.required_perm) {
-    const has =
-      user.permissions.includes("*") || user.permissions.includes(item.required_perm);
+    // Approval keys are explicit-only (owner matrix 2026-07-21) — `*` does
+    // not pass; see EXPLICIT_APPROVAL_KEYS.
+    const has = holdsChecklistApproval(user.permissions, item.required_perm);
     if (!has) return c.json({ error: `Requires ${item.required_perm}` }, 403);
   }
   // Per-function gate for tick-only roles (Sales-department visibility, rules
@@ -3622,15 +3652,12 @@ app.put(
       .bind(itemId)
       .first<{ required_perm: string | null; role_label: string | null }>();
     if (!item) return c.json({ error: "Not found" }, 404);
-    // Per-item function gate (Sales-department visibility, rule 4): an item
-    // tagged with a required_perm can only be attached to by someone holding
-    // that permission — same rule the status/review routes enforce. This
-    // applies to EVERYONE (incl. projects.write holders) so a sales PIC can
-    // only fill in documents badged for their own function; other-function
-    // documents (DRIVER / PURCHASER / …) stay view+download only for them.
-    if (item.required_perm && !hasPermission(granted, item.required_perm)) {
-      return c.json({ error: `Requires ${item.required_perm}` }, 403);
-    }
+    // Owner 2026-07-21: required_perm gates the DECISION (approve/reject +
+    // status flips), NOT the upload. The document's owner function uploads it
+    // (e.g. the Purchaser files the Stock Out Transfer Record) and the
+    // approvers decide on it — demanding the approval key here is what locked
+    // purchasers out of their own documents. Uploads stay gated by
+    // projects.write / the role_label rule below.
     // Tick-only roles (no projects.write — i.e. drivers) may only attach to
     // tasks badged for THEIR role (item.role_label vs the user's role name).
     // Mirrors the mobile UI rule; owner 2026-07-09.

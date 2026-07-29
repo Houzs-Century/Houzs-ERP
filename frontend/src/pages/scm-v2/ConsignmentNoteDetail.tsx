@@ -52,6 +52,7 @@ import {
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
+import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 
@@ -801,24 +802,28 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             <label className={styles.field}>
               <span className={styles.fieldLabel}>City</span>
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={form.city}
-                  onChange={(e) => setForm((s) => ({ ...s, city: e.target.value, postcode: '' }))}
-                  disabled={inputsDisabled || !form.state}>
-                  <option value="">{form.state ? 'Pick city' : '— pick state first'}</option>
-                  {sortByText(cities).map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  value={form.city}
+                  onChange={(v) => setForm((s) => ({ ...s, city: v, postcode: '' }))}
+                  disabled={inputsDisabled || !form.state}
+                  placeholder={form.state ? 'Pick city' : '— pick state first'}
+                  options={sortByText(cities).map((c) => ({ value: c, label: c }))}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Postcode</span>
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={form.postcode}
-                  onChange={(e) => set('postcode', e.target.value)}
-                  disabled={inputsDisabled || !form.city}>
-                  <option value="">{form.city ? 'Pick postcode' : '— pick city first'}</option>
-                  {sortByNumeric(postcodes).map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  value={form.postcode}
+                  onChange={(v) => set('postcode', v)}
+                  disabled={inputsDisabled || !form.city}
+                  placeholder={form.city ? 'Pick postcode' : '— pick city first'}
+                  options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>

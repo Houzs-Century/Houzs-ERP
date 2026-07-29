@@ -25,6 +25,7 @@ import {
   hashPassword,
   SESSION_ORIGIN_POS,
 } from "../services/auth";
+import { setPosPinForUser } from "../services/posPin";
 
 type Vars = { user?: { id: number }; companyId?: number };
 const pos = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -164,13 +165,8 @@ pos.post("/admin-set-pin/:userId", auth, requirePermission("users.manage"), asyn
   let body: { pin?: string };
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid_json" }, 400); }
   if (!isPin(body.pin)) return c.json({ error: "pin_invalid" }, 400);
-  const staffId = await staffIdForUser(c, userId);
-  if (!staffId) return c.json({ error: "no_staff_row", message: "This member has no sales profile yet." }, 409);
-  const hash = await hashPassword(body.pin!);
-  await c.env.DB.prepare(
-    `INSERT INTO scm.pos_pins (staff_id, pin_hash, updated_at) VALUES (?, ?, now())
-       ON CONFLICT (staff_id) DO UPDATE SET pin_hash = EXCLUDED.pin_hash, updated_at = now()`,
-  ).bind(staffId, hash).run();
+  const written = await setPosPinForUser(c.env, userId, body.pin!);
+  if (!written) return c.json({ error: "no_staff_row", message: "This member has no sales profile yet." }, 409);
   return c.json({ ok: true });
 });
 pos.post("/admin-reset-pin/:userId", auth, requirePermission("users.manage"), async (c) => {
