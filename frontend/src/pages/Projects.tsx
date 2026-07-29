@@ -5892,6 +5892,9 @@ function ProjectDetailContent({
       eyebrow="Project"
       title={p?.name || "Loading…"}
       description={p ? `${STAGE_LABEL[p.stage]}${p.brand ? ` · ${p.brand}` : ""}${p.venue ? ` · ${p.venue}` : ""}${p.duration_days ? ` · ${p.duration_days} day${p.duration_days === 1 ? "" : "s"}` : ""}` : undefined}
+      // Owner 2026-07-29: keep the event title (+ actions) pinned while
+      // scrolling the project detail — same sticky chrome ASSR detail uses.
+      stickyTitle
       backTo="/projects"
       loading={detail.loading && !p}
       error={detail.error}
