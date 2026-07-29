@@ -593,7 +593,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       font-size: 11.2pt; font-weight: 600; line-height: 1.5;
     }
     .itable .td.code { font-family: "IBM Plex Mono", "Roboto Mono", monospace; }
-    .itable .td.remark { font-size: 10.4pt; font-weight: 700; color: #3a3a3a; }
+    .itable .td.remark { font-size: 10.4pt; font-weight: 700; color: #3a3a3a; white-space: pre-line; }
     .itable .td.blank { min-height: 9mm; }
     .pgrid {
       display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2.8mm;
