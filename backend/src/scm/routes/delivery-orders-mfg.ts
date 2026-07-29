@@ -2783,11 +2783,15 @@ deliveryOrdersMfg.post('/', async (c) => {
     so_doc_no: (body.soDocNo as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: debtorName,
-    do_date: (body.doDate as string) ?? todayMyt(),
-    expected_delivery_at: (body.expectedDeliveryAt as string) ?? (body.customerDeliveryDate as string) ?? null,
-    customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
+    /* Coerce empty-string dates to null — an unfilled date input posts "" and
+       `?? null` does NOT catch it (nullish only), so "" reached the date column
+       and Postgres rejected it ("invalid input syntax for type date"). This was
+       masked until the sofa drop-ship guard stopped hard-blocking before the insert. */
+    do_date: emptyDate(body.doDate) ?? todayMyt(),
+    expected_delivery_at: emptyDate(body.expectedDeliveryAt) ?? emptyDate(body.customerDeliveryDate),
+    customer_delivery_date: emptyDate(body.customerDeliveryDate),
     /* Mig 0053 (port of 2990 0199) — sea-freight DO-execution column. */
-    arrives_em_warehouse_date: (body.arrivesEmWarehouseDate as string) ?? null,
+    arrives_em_warehouse_date: emptyDate(body.arrivesEmWarehouseDate),
     driver_id: (body.driverId as string) ?? null,
     driver_name: (body.driverName as string) ?? null,
     vehicle: (body.vehicle as string) ?? null,
@@ -2946,6 +2950,13 @@ deliveryOrdersMfg.post('/', async (c) => {
    Shared by POST / (bulk create) and POST /:id/items (single add). Computes
    line_total / line_cost / margin so recomputeTotals can roll them up.
    `lineNo` (0165) = the DO's listing position; omit/null for un-numbered. */
+/** Empty-string dates ("" from an unfilled input) become null; a real date passes
+ *  through trimmed. Postgres date columns reject "" but accept null. */
+function emptyDate(v: unknown): string | null {
+  const s = String(v ?? '').trim();
+  return s === '' ? null : s;
+}
+
 function buildItemRow(deliveryOrderId: string, it: Record<string, unknown>, lineNo?: number | null) {
   const qty = Number(it.qty ?? 1);
   const unitPrice = Number(it.unitPriceCenti ?? 0);
