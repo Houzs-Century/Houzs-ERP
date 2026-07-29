@@ -8423,9 +8423,11 @@ function DocRow({
               <button
                 onClick={() => fileRef.current?.click()}
                 disabled={uploading}
+                title="Attach file"
+                aria-label="Attach file"
                 className="rounded-md border border-border bg-surface inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold text-ink-muted hover:border-accent/40 hover:text-accent disabled:opacity-50"
               >
-                {uploading ? "…" : "+ Add"}
+                {uploading ? "…" : <Paperclip size={13} />}
               </button>
             )}
             {canManage && (
