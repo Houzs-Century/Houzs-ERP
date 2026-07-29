@@ -322,7 +322,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     body {
       font-family: "Google Sans", "Product Sans", "Roboto", "Helvetica Neue", Helvetica, Arial, sans-serif;
       color: #000;
-      font-size: 10pt;
+      font-size: 12.5pt;
       line-height: 1.5;
       background: #fff;
       -webkit-font-smoothing: antialiased;
@@ -372,19 +372,19 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       border-bottom: 1.5pt solid #000;
     }
     .letterhead .logo { max-height: 46px; max-width: 210px; object-fit: contain; display: block; }
-    .letterhead .logo-fallback { font-weight: 700; font-size: 18pt; letter-spacing: 1.2pt; color: #000; text-transform: uppercase; }
-    .letterhead .company { text-align: right; font-size: 8.5pt; line-height: 1.4; color: #000; max-width: 95mm; }
-    .letterhead .company .co-name { font-weight: 700; font-size: 10pt; letter-spacing: 0.3pt; text-transform: uppercase; }
-    .letterhead .company .reg-no { font-family: "Roboto Mono", monospace; font-size: 8pt; margin-top: 0.5pt; }
+    .letterhead .logo-fallback { font-weight: 700; font-size: 19.4pt; letter-spacing: 1.2pt; color: #000; text-transform: uppercase; }
+    .letterhead .company { text-align: right; font-size: 10.6pt; line-height: 1.4; color: #000; max-width: 95mm; }
+    .letterhead .company .co-name { font-weight: 700; font-size: 12.5pt; letter-spacing: 0.3pt; text-transform: uppercase; }
+    .letterhead .company .reg-no { font-family: "Roboto Mono", monospace; font-size: 10.0pt; margin-top: 0.5pt; }
 
     /* Design refresh — Plex Serif for the document title, left-aligned
        to sit next to the report meta on the right (the header row is
        still centered by the parent .doc-title container). */
     .doc-title { text-align: left; margin: 0 0 8mm 0; }
-    .doc-title h1 { margin: 0; font-family: "IBM Plex Serif", "Georgia", serif; font-size: 22pt; font-weight: 700; letter-spacing: 0.2pt; line-height: 1.05; }
-    .doc-title .subtitle { margin-top: 2mm; font-family: "Roboto Mono", monospace; font-size: 8.5pt; letter-spacing: 1.5pt; text-transform: uppercase; color: #555; }
-    .doc-title .ref { margin-top: 3mm; font-family: "Roboto Mono", monospace; font-size: 11pt; color: #333; white-space: nowrap; }
-    .doc-title .ref b { font-size: 12.5pt; }
+    .doc-title h1 { margin: 0; font-family: "IBM Plex Serif", "Georgia", serif; font-size: 23.8pt; font-weight: 700; letter-spacing: 0.2pt; line-height: 1.05; }
+    .doc-title .subtitle { margin-top: 2mm; font-family: "Roboto Mono", monospace; font-size: 10.6pt; letter-spacing: 1.5pt; text-transform: uppercase; color: #555; }
+    .doc-title .ref { margin-top: 3mm; font-family: "Roboto Mono", monospace; font-size: 13.8pt; color: #333; white-space: nowrap; }
+    .doc-title .ref b { font-size: 15.6pt; }
 
     /* Info strip with optional QR panel on the side */
     .info {
@@ -397,42 +397,42 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       grid-template-columns: 1fr 1fr 38mm;
     }
     .info .col .label {
-      font-size: 8pt; letter-spacing: 1pt; text-transform: uppercase; color: #555;
+      font-size: 10.0pt; letter-spacing: 1pt; text-transform: uppercase; color: #555;
       border-bottom: 0.5pt solid #000; padding-bottom: 1.5mm; margin-bottom: 2.5mm; font-weight: 700;
     }
     .info .col .line {
-      display: flex; gap: 4mm; padding: 2mm 0; border-bottom: 0.4pt solid #d0d0d0; font-size: 10pt;
+      display: flex; gap: 4mm; padding: 2mm 0; border-bottom: 0.4pt solid #d0d0d0; font-size: 12.5pt;
     }
     .info .col .line:last-child { border-bottom: none; }
     .info .col .line .k { flex: 0 0 26mm; color: #555; }
     .info .col .line .v { flex: 1; color: #000; font-weight: 500; }
-    .info .col .name-line { font-size: 11pt; font-weight: 700; margin-bottom: 1mm; }
+    .info .col .name-line { font-size: 13.8pt; font-weight: 700; margin-bottom: 1mm; }
 
     .qr-panel {
       border: 0.6pt solid #000; padding: 3mm; text-align: center;
       display: flex; flex-direction: column; align-items: center; gap: 2mm;
     }
     .qr-panel .qr-cap {
-      font-size: 7.5pt; letter-spacing: 1pt; text-transform: uppercase; color: #555; font-weight: 700;
+      font-size: 9.4pt; letter-spacing: 1pt; text-transform: uppercase; color: #555; font-weight: 700;
     }
     .qr-panel .qr-svg { width: 32mm; height: 32mm; }
     .qr-panel .qr-svg svg { width: 100%; height: 100%; display: block; }
-    .qr-panel .qr-url { font-family: "Roboto Mono", monospace; font-size: 6.5pt; word-break: break-all; line-height: 1.3; color: #333; }
+    .qr-panel .qr-url { font-family: "Roboto Mono", monospace; font-size: 8.1pt; word-break: break-all; line-height: 1.3; color: #333; }
 
     section { margin-top: 7mm; page-break-inside: avoid; }
     h2.sec {
-      font-size: 9.5pt; font-weight: 700; letter-spacing: 2pt; text-transform: uppercase;
+      font-size: 11.9pt; font-weight: 700; letter-spacing: 2pt; text-transform: uppercase;
       margin: 0 0 3mm 0; padding-bottom: 2mm; border-bottom: 0.8pt solid #000;
     }
 
     .items { width: 100%; border-collapse: collapse; }
-    .items th { text-align: left; font-size: 8pt; letter-spacing: 1pt; text-transform: uppercase; font-weight: 700; padding: 2mm 2mm; color: #555; border-bottom: 0.4pt solid #d0d0d0; }
-    .items td { font-size: 10pt; padding: 2mm 2mm; border-bottom: 0.4pt solid #d0d0d0; vertical-align: top; }
+    .items th { text-align: left; font-size: 10.0pt; letter-spacing: 1pt; text-transform: uppercase; font-weight: 700; padding: 2mm 2mm; color: #555; border-bottom: 0.4pt solid #d0d0d0; }
+    .items td { font-size: 12.5pt; padding: 2mm 2mm; border-bottom: 0.4pt solid #d0d0d0; vertical-align: top; }
     .items tr:last-child td { border-bottom: 0.4pt solid #d0d0d0; }
     .items .num { text-align: right; font-variant-numeric: tabular-nums; font-family: "Roboto Mono", monospace; }
-    .items .code { font-family: "Roboto Mono", monospace; font-size: 9.5pt; }
+    .items .code { font-family: "Roboto Mono", monospace; font-size: 11.9pt; }
 
-    .rows .row { display: flex; gap: 4mm; padding: 2mm 0; border-bottom: 0.4pt solid #d0d0d0; font-size: 10pt; }
+    .rows .row { display: flex; gap: 4mm; padding: 2mm 0; border-bottom: 0.4pt solid #d0d0d0; font-size: 12.5pt; }
     .rows .row:last-child { border-bottom: none; }
     .rows .row .k { flex: 0 0 48mm; color: #555; }
     .rows .row .v { flex: 1; color: #000; font-weight: 500; }
@@ -440,22 +440,22 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .rows-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10mm; }
     .rows-2col .row .k { flex-basis: 38mm; }
 
-    .para { margin-top: 2mm; font-size: 10pt; line-height: 1.6; }
-    .para .cap { font-size: 8pt; font-weight: 700; letter-spacing: 1pt; text-transform: uppercase; color: #555; margin-bottom: 1mm; }
+    .para { margin-top: 2mm; font-size: 12.5pt; line-height: 1.6; }
+    .para .cap { font-size: 10.0pt; font-weight: 700; letter-spacing: 1pt; text-transform: uppercase; color: #555; margin-bottom: 1mm; }
     .para .body { white-space: pre-line; }
 
     .photos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3mm; }
     .photo { border: 0.5pt solid #000; page-break-inside: avoid; }
     .photo img { width: 100%; height: 44mm; object-fit: cover; display: block; }
-    .photo .cap { padding: 2mm 2mm; font-size: 7.5pt; letter-spacing: 0.8pt; text-transform: uppercase; color: #555; border-top: 0.4pt solid #000; text-align: center; }
+    .photo .cap { padding: 2mm 2mm; font-size: 9.4pt; letter-spacing: 0.8pt; text-transform: uppercase; color: #555; border-top: 0.4pt solid #000; text-align: center; }
 
-    .timeline .entry { display: grid; grid-template-columns: 40mm 1fr; gap: 5mm; padding: 2mm 0; border-bottom: 0.4pt solid #d0d0d0; font-size: 10pt; page-break-inside: avoid; }
+    .timeline .entry { display: grid; grid-template-columns: 40mm 1fr; gap: 5mm; padding: 2mm 0; border-bottom: 0.4pt solid #d0d0d0; font-size: 12.5pt; page-break-inside: avoid; }
     .timeline .entry:last-child { border-bottom: none; }
-    .timeline .when { font-family: "Roboto Mono", monospace; font-size: 8.5pt; color: #333; }
+    .timeline .when { font-family: "Roboto Mono", monospace; font-size: 10.6pt; color: #333; }
     .timeline .who { font-weight: 700; color: #000; margin-right: 3pt; }
 
     .total-line { margin-top: 4mm; display: flex; justify-content: flex-end; }
-    .total-line .row { display: flex; justify-content: space-between; gap: 18mm; min-width: 80mm; padding: 2mm 0; border-top: 1pt solid #000; border-bottom: 1.5pt solid #000; font-size: 11pt; font-weight: 700; letter-spacing: 0.5pt; text-transform: uppercase; }
+    .total-line .row { display: flex; justify-content: space-between; gap: 18mm; min-width: 80mm; padding: 2mm 0; border-top: 1pt solid #000; border-bottom: 1.5pt solid #000; font-size: 13.8pt; font-weight: 700; letter-spacing: 0.5pt; text-transform: uppercase; }
     .total-line .v { font-family: "Roboto Mono", monospace; }
 
     /* Supplier-only PO banner — highlighted across the page */
@@ -464,10 +464,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       padding: 3mm 4mm; border: 1.5pt solid #000; margin-top: 4mm;
     }
     .po-banner .col .k {
-      font-size: 7.5pt; letter-spacing: 1pt; text-transform: uppercase; color: #555; font-weight: 700;
+      font-size: 9.4pt; letter-spacing: 1pt; text-transform: uppercase; color: #555; font-weight: 700;
     }
     .po-banner .col .v {
-      font-family: "Roboto Mono", monospace; font-size: 12pt; font-weight: 700; margin-top: 1mm;
+      font-family: "Roboto Mono", monospace; font-size: 15.0pt; font-weight: 700; margin-top: 1mm;
     }
     .po-banner .col.deadline .v { color: #b91c1c; }
 
@@ -475,7 +475,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .ack { margin-top: 8mm; page-break-inside: avoid; }
     .ack .check-row {
       display: flex; align-items: center; gap: 6mm; padding: 3mm 0;
-      border-bottom: 0.4pt solid #d0d0d0; font-size: 10pt;
+      border-bottom: 0.4pt solid #d0d0d0; font-size: 12.5pt;
     }
     .ack .check-row .box {
       width: 5mm; height: 5mm; border: 1pt solid #000; flex-shrink: 0;
@@ -485,7 +485,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     }
     .ack .sig-grid .sig {
       border-top: 0.6pt solid #000; padding-top: 1.5mm;
-      font-size: 8pt; letter-spacing: 1pt; text-transform: uppercase; color: #555; font-weight: 700;
+      font-size: 10.0pt; letter-spacing: 1pt; text-transform: uppercase; color: #555; font-weight: 700;
     }
     .ack .sig-grid .sig-box {
       height: 18mm; border-bottom: 0.6pt solid #000;
@@ -504,11 +504,11 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .signoff .panel + .panel { border-left: 0.6pt solid #000; }
     .signoff .panel h3 {
       margin: 0 0 4mm 0; font-family: "IBM Plex Serif", "Georgia", serif;
-      font-size: 12pt; font-weight: 700;
+      font-size: 15.0pt; font-weight: 700;
     }
     .signoff .check {
       display: flex; align-items: flex-start; gap: 4mm; margin-bottom: 3.5mm;
-      font-size: 10pt; line-height: 1.4;
+      font-size: 12.5pt; line-height: 1.4;
     }
     .signoff .check .box {
       width: 4.5mm; height: 4.5mm; border: 0.8pt solid #000; flex-shrink: 0; margin-top: 0.6mm;
@@ -517,7 +517,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       border-top: 0.6pt solid #000; margin-top: 6mm; padding-top: 2mm;
     }
     .signoff .sig-rule .cap {
-      font-family: "Roboto Mono", monospace; font-size: 7.5pt;
+      font-family: "Roboto Mono", monospace; font-size: 9.4pt;
       letter-spacing: 0.8pt; text-transform: uppercase; color: #6a6a6a; font-weight: 700;
     }
     .signoff .name-date {
@@ -527,7 +527,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       flex: 1; border-bottom: 0.5pt solid #666; padding-bottom: 1.5mm;
     }
     .signoff .name-date .cell .cap {
-      font-family: "Roboto Mono", monospace; font-size: 7.5pt;
+      font-family: "Roboto Mono", monospace; font-size: 9.4pt;
       letter-spacing: 0.8pt; text-transform: uppercase; color: #6a6a6a; font-weight: 700;
     }
 
@@ -537,10 +537,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .bar {
       background: #141414; color: #fff;
       font-family: "IBM Plex Serif", "Georgia", serif;
-      font-size: 10.5pt; font-weight: 600; letter-spacing: 0.5pt;
+      font-size: 13.1pt; font-weight: 600; letter-spacing: 0.5pt;
       padding: 1.8mm 3.6mm; margin-top: 5mm;
     }
-    .bar .note { font-family: "IBM Plex Sans", sans-serif; font-size: 7.5pt; font-weight: 400; color: #b8bdb5; letter-spacing: 0; }
+    .bar .note { font-family: "IBM Plex Sans", sans-serif; font-size: 9.4pt; font-weight: 400; color: #b8bdb5; letter-spacing: 0; }
     .mgrid { display: grid; border-left: 0.4pt solid #d5d5d5; }
     .mgrid.cols-6 { grid-template-columns: 27mm 1fr 27mm 1fr 27mm 1fr; }
     .mgrid.cols-4 { grid-template-columns: 27mm 1fr 27mm 1fr; }
@@ -549,12 +549,12 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .mgrid .lc {
       padding: 2.4mm 2.8mm; background: #f3f3f1;
       border-right: 0.4pt solid #d5d5d5; border-bottom: 0.4pt solid #d5d5d5;
-      font-size: 8pt; color: #5a5a5a; font-weight: 600; line-height: 1.35;
+      font-size: 10.0pt; color: #5a5a5a; font-weight: 600; line-height: 1.35;
     }
     .mgrid .vc {
       padding: 2.4mm 2.8mm;
       border-right: 0.4pt solid #d5d5d5; border-bottom: 0.4pt solid #d5d5d5;
-      font-size: 8.8pt; font-weight: 600; line-height: 1.45;
+      font-size: 11.0pt; font-weight: 600; line-height: 1.45;
       display: flex; align-items: center; flex-wrap: wrap;
     }
     .mgrid .vc.mono { font-family: "IBM Plex Mono", "Roboto Mono", monospace; }
@@ -562,10 +562,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .mgrid .span3 { grid-column: span 3; }
     .mgrid .span5 { grid-column: span 5; }
     .chip {
-      font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 8.5pt; font-weight: 700;
+      font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 10.6pt; font-weight: 700;
       border: 1.1pt solid #141414; padding: 0.4mm 2.4mm; border-radius: 0.8mm;
     }
-    .pill-cat { font-size: 8.5pt; font-weight: 700; border: 0.7pt solid #141414; padding: 0.6mm 2.8mm; border-radius: 3.2mm; }
+    .pill-cat { font-size: 10.6pt; font-weight: 700; border: 0.7pt solid #141414; padding: 0.6mm 2.8mm; border-radius: 3.2mm; }
     .status-pills { display: flex; gap: 2.4mm; flex-shrink: 0; }
     /* Customer/office header: Status sits beside Service, Sub-Status stacks
        under Status (col 2, row 2). Supplier copy keeps the plain flex row. */
@@ -578,22 +578,22 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       border: 1.1pt solid #141414; background: #fff;
       display: flex; flex-direction: column; justify-content: center;
     }
-    .status-pill .cap { font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 6.5pt; font-weight: 700; letter-spacing: 1pt; color: #8a8a8a; text-transform: uppercase; }
-    .status-pill .val { font-size: 9pt; font-weight: 700; margin-top: 0.6mm; }
+    .status-pill .cap { font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 8.1pt; font-weight: 700; letter-spacing: 1pt; color: #8a8a8a; text-transform: uppercase; }
+    .status-pill .val { font-size: 11.2pt; font-weight: 700; margin-top: 0.6mm; }
     .ititle { display: grid; background: #f3f3f1; border-left: 0.4pt solid #d5d5d5; }
     .itable { display: grid; border-left: 0.4pt solid #d5d5d5; }
     .itable .th {
       padding: 2mm 2.8mm; background: #f3f3f1;
       border-right: 0.4pt solid #d5d5d5; border-bottom: 0.4pt solid #d5d5d5;
-      font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 7pt; font-weight: 700;
+      font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 8.8pt; font-weight: 700;
       letter-spacing: 0.8pt; color: #5a5a5a;
     }
     .itable .td {
       padding: 2.8mm; border-right: 0.4pt solid #d5d5d5; border-bottom: 0.4pt solid #d5d5d5;
-      font-size: 9pt; font-weight: 600; line-height: 1.5;
+      font-size: 11.2pt; font-weight: 600; line-height: 1.5;
     }
     .itable .td.code { font-family: "IBM Plex Mono", "Roboto Mono", monospace; }
-    .itable .td.remark { font-size: 8.3pt; font-weight: 400; color: #3a3a3a; }
+    .itable .td.remark { font-size: 10.4pt; font-weight: 700; color: #3a3a3a; }
     .itable .td.blank { min-height: 9mm; }
     .pgrid {
       display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2.8mm;
@@ -601,28 +601,28 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     }
     .pgrid .ph { aspect-ratio: 4 / 3; border-radius: 1mm; overflow: hidden; position: relative; background: #f0f0ee; }
     .pgrid .ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .pgrid .ph .tag { position: absolute; left: 2mm; bottom: 1.6mm; font-family: "IBM Plex Mono", monospace; font-size: 6pt; color: rgba(255,255,255,0.75); }
+    .pgrid .ph .tag { position: absolute; left: 2mm; bottom: 1.6mm; font-family: "IBM Plex Mono", monospace; font-size: 7.5pt; color: rgba(255,255,255,0.75); }
     .pgrid .add {
       aspect-ratio: 4 / 3; border-radius: 1mm; border: 1.1pt dashed #cccccc;
       display: flex; align-items: center; justify-content: center; gap: 1.6mm;
-      color: #b0b0b0; font-size: 8pt;
+      color: #b0b0b0; font-size: 10.0pt;
     }
     .credit-box { display: grid; grid-template-columns: 1.5fr 1fr 1fr; border: 1.1pt solid #141414; margin-top: 4mm; }
     .credit-box .cell { padding: 3.2mm 3.6mm; }
     .credit-box .cell + .cell { border-left: 0.4pt solid #d5d5d5; }
-    .credit-box .k { font-family: "IBM Plex Mono", monospace; font-size: 6.8pt; font-weight: 700; letter-spacing: 1pt; color: #8a8a8a; text-transform: uppercase; margin-bottom: 1.6mm; }
-    .credit-box .v { font-family: "IBM Plex Mono", monospace; font-size: 10.5pt; font-weight: 700; line-height: 1.35; }
+    .credit-box .k { font-family: "IBM Plex Mono", monospace; font-size: 8.5pt; font-weight: 700; letter-spacing: 1pt; color: #8a8a8a; text-transform: uppercase; margin-bottom: 1.6mm; }
+    .credit-box .v { font-family: "IBM Plex Mono", monospace; font-size: 13.1pt; font-weight: 700; line-height: 1.35; }
     .boxed { border: 0.4pt solid #d5d5d5; border-top: none; padding: 3.6mm 4mm; }
     .signoff.boxed-grid { border: 0.4pt solid #d5d5d5; border-top: none; }
     .doc-footer {
       display: flex; align-items: center; justify-content: space-between; gap: 4mm;
       padding-top: 3.6mm; margin-top: 4mm; border-top: 0.4pt solid #e0e0e0;
-      font-size: 7.5pt; color: #9a9a9a;
+      font-size: 9.4pt; color: #9a9a9a;
     }
-    .doc-footer .contact { font-size: 8pt; color: #3a3a3a; }
+    .doc-footer .contact { font-size: 10.0pt; color: #3a3a3a; }
     .doc-footer .contact b.mono { font-family: "IBM Plex Mono", monospace; }
 
-    .foot { padding-top: 2mm; border-top: 0.5pt solid #000; text-align: center; font-size: 8pt; color: #555; letter-spacing: 0.5pt; }
+    .foot { padding-top: 2mm; border-top: 0.5pt solid #000; text-align: center; font-size: 10.0pt; color: #555; letter-spacing: 0.5pt; }
 
     .print-bar {
       position: fixed; top: 14px; right: 14px;
@@ -635,14 +635,14 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .print-bar .tip em { font-style: normal; background: #f2ead9; padding: 0 3px; border-radius: 2px; }
     .print-bar button {
       padding: 8pt 14pt; background: #000; color: #fff; border: none; border-radius: 2pt;
-      font-family: "Google Sans", "Roboto", Helvetica, Arial, sans-serif; font-size: 8.5pt;
+      font-family: "Google Sans", "Roboto", Helvetica, Arial, sans-serif; font-size: 10.6pt;
       font-weight: 700; letter-spacing: 1.5pt; text-transform: uppercase; cursor: pointer;
     }
     .print-bar button.secondary { background: #fff; color: #000; border: 0.5pt solid #000; }
     @media print { .print-bar { display: none !important; } }
 
     .muted { color: #555; }
-    .small { font-size: 8.5pt; }
+    .small { font-size: 10.6pt; }
 
   </style>
 </head>
@@ -695,8 +695,8 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     </div>
     ${voidReason ? `
     <div style="margin: 3mm 0 0; border: 0.5pt solid #c0392b; background: #fdf2f0; border-radius: 1.5mm; padding: 2.4mm 3mm;">
-      <div style="font-size: 7pt; letter-spacing: .08em; text-transform: uppercase; color: #c0392b; font-weight: 700;">Voided — Not Valid · Reason</div>
-      <div style="font-size: 9pt; color: #7a2018; margin-top: 0.8mm;">${esc(voidReason)}</div>
+      <div style="font-size: 8.8pt; letter-spacing: .08em; text-transform: uppercase; color: #c0392b; font-weight: 700;">Voided — Not Valid · Reason</div>
+      <div style="font-size: 11.2pt; color: #7a2018; margin-top: 0.8mm;">${esc(voidReason)}</div>
     </div>` : ""}
 
     ${!isSupplier ? (() => {
@@ -761,7 +761,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">PO No</div><div class="vc mono">${esc(cs.po_no || "—")}</div>
       <div class="lc">SO No</div><div class="vc mono">${esc(cs.doc_no || "—")}</div>
       <div class="lc">Address</div><div class="vc span5">${esc([cs.addr1, cs.addr2, cs.addr3, cs.addr4].filter(Boolean).join(", ") || "—")}</div>
-      <div class="lc">Description of the problem</div><div class="vc span5" style="font-size: 9.4pt;">${esc(cs.complaint_issue || "—")}</div>
+      <div class="lc">Description of the problem</div><div class="vc span5" style="font-size: 11.8pt;">${esc(cs.complaint_issue || "—")}</div>
     </div>
 
     <!-- items -->
@@ -848,16 +848,16 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">Delivery Area</div><div class="vc">${esc(cs.location || (cs as any).addr4 || "—")}</div>
       <div class="lc">Coordinator</div><div class="vc">Service Admin (Purchasing)</div>
       <div class="lc">Warehouse</div><div class="vc">${esc(warehouseLabel || "—")}</div>
-      <div class="lc">Note</div><div class="vc span3" style="font-weight: 400; color: #6a6a6a; font-size: 8.2pt;">Customer's direct phone &amp; full address are shared after dispatch is confirmed.</div>
+      <div class="lc">Note</div><div class="vc span3" style="font-weight: 400; color: #6a6a6a; font-size: 10.2pt;">Customer's direct phone &amp; full address are shared after dispatch is confirmed.</div>
     </div>
 
     <!-- reported issue -->
     <div class="bar">Reported Issue</div>
     <div class="boxed">
-      <div style="font-size: 7.6pt; letter-spacing: .08em; text-transform: uppercase; color: #8a8578;">Product Code</div>
-      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.8pt; font-weight: 700; margin-top: 0.8mm;">${esc((items as any[]).map((it) => it.item_code).filter(Boolean).join(", ") || "—")}</div>
-      <div style="font-size: 7.6pt; letter-spacing: .08em; text-transform: uppercase; color: #8a8578; margin-top: 2.4mm;">Issue Details</div>
-      <div style="font-size: 8.8pt; color: #3a3a3a; margin-top: 0.8mm; line-height: 1.55;">${esc(cs.complaint_issue || "—")}${cs.issue_category ? ` &nbsp;·&nbsp; Category: ${esc(cs.issue_category)}` : ""}</div>
+      <div style="font-size: 9.5pt; letter-spacing: .08em; text-transform: uppercase; color: #8a8578;">Product Code</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12.2pt; font-weight: 700; margin-top: 0.8mm;">${esc((items as any[]).map((it) => it.item_code).filter(Boolean).join(", ") || "—")}</div>
+      <div style="font-size: 9.5pt; letter-spacing: .08em; text-transform: uppercase; color: #8a8578; margin-top: 2.4mm;">Issue Details</div>
+      <div style="font-size: 11.0pt; color: #3a3a3a; margin-top: 0.8mm; line-height: 1.55;">${esc(cs.complaint_issue || "—")}${cs.issue_category ? ` &nbsp;·&nbsp; Category: ${esc(cs.issue_category)}` : ""}</div>
     </div>
 
     <!-- items -->
@@ -893,7 +893,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       </div>
       <div class="panel">
         <h3>${esc(coShort)} Representative</h3>
-        <div style="font-size: 8.6pt; color: #6a6a6a; line-height: 1.5; margin-bottom: 9mm;">Verified the returned item and confirmed the service against the resolution plan.</div>
+        <div style="font-size: 10.8pt; color: #6a6a6a; line-height: 1.5; margin-bottom: 9mm;">Verified the returned item and confirmed the service against the resolution plan.</div>
         <div class="sig-rule"><span class="cap">Signature</span></div>
         <div class="name-date">
           <div class="cell"><span class="cap">Name</span></div>
