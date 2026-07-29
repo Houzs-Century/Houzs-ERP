@@ -22,6 +22,7 @@ Team page shell are separate concerns and are only referenced here.
 | Edit drawer | same file → `EditMemberPanel` | One `PATCH /api/users/:id` on save; showroom parking via `/api/scm/staff`. |
 | Invite drawer | same file → `InvitePanel` | `POST /api/users/invite`. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` (`members` module) | Person cards; chips All / Active / Invited. |
+| Mobile invitations | `frontend/src/mobile/MobileInvitations.tsx` | Accordion card at the top of the members list (`aboveList` slot): count + expired badge always visible; expanded rows offer Resend / Copy Link / Revoke + bulk revoke-expired for `users.manage`. Expiry buckets + copied link shared with desktop via `frontend/src/lib/invitations.ts`. |
 | Mobile actions | `frontend/src/mobile/MobileModuleDetail.tsx` → `MemberActions` | Mirrors desktop resend-invite / reset-password 1:1 (single-logic-layer rule). |
 
 ### Members list anatomy (top to bottom)
