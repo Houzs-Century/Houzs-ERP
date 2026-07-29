@@ -791,7 +791,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
         <h3>Customer</h3>
         <div class="check"><span class="box"></span><span>I confirm the reported issue and details above are correct.</span></div>
         <div class="check"><span class="box"></span><span>I have received the serviced / replaced item in good condition.</span></div>
-        <div class="sig-rule"><span class="cap">Signature</span><span class="small muted" style="float: right;">${esc(cs.customer_name || "")}</span></div>
+        <div class="sig-rule"><span class="cap">Signature</span></div>
         <div class="name-date">
           <div class="cell"><span class="cap">Name</span></div>
           <div class="cell" style="max-width: 44mm"><span class="cap">Date</span></div>
