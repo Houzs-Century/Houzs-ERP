@@ -880,6 +880,9 @@ const PATCH_FIELDS = [
   // Nick 2026-07-15 — switchable sub-status (小类) inside Verification
   // and Supplier. Values are allow-listed in the PATCH route.
   "sub_status",
+  // Void reason (Nico 2026-07-29) — why the case is not valid /
+  // not warranty-covered, captured when it moves to 'voided'.
+  "void_reason",
 ] as const;
 
 // Human labels for the append-only per-field timeline audit. Anything not
