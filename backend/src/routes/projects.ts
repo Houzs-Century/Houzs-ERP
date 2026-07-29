@@ -1600,9 +1600,23 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   const brand = c.req.query("brand");
   const eventTypeParam = c.req.query("event_type_id");
   const organizer = c.req.query("organizer");
+  // An event that has not started yet carries its booked rental but no sales,
+  // so counting it reads as a loss that has not happened. Default the P&L view
+  // to events that have actually started — by DATE, which is a fact, rather than
+  // by stage, which depends on someone keeping it up to date.
+  //   started (default) — start_date on or before today
+  //   completed         — stage = completed (settled events only)
+  //   all               — the full pipeline, future bookings included
+  const scope = c.req.query("scope") || "started";
 
   const where: string[] = ["p.archived_at IS NULL"];
   const binds: any[] = [];
+  if (scope === "started") {
+    where.push("substr(p.start_date, 1, 10) <= ?");
+    binds.push(new Date().toISOString().slice(0, 10));
+  } else if (scope === "completed") {
+    where.push("p.stage = 'completed'");
+  }
   // Multi-company: active-company predicate ("" when unresolved). Inlined
   // fragment (validated integer), appended after the joined WHERE below.
   const coSql = activeCompanySql(c, "p.company_id");
@@ -1752,6 +1766,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
       brand: brand ?? null,
       event_type_id: eventTypeParam ?? null,
       organizer: organizer ?? null,
+      scope,
     },
     totals: {
       projects: total_projects,
