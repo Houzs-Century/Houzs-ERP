@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Star, TrendingUp, AlertTriangle, Clock, CheckCircle2, Activity, Smile, Hourglass, ExternalLink, Gauge, LineChart, PieChart } from "lucide-react";
 import { FilterPills } from "../components/FilterPills";
+import { DataTable, type Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { DashboardGrid, DashboardPanels, DashboardBreakdown } from "../components/Dashboard";
 import { Panel } from "../components/Panel";
@@ -44,7 +45,6 @@ const STAGE_FUNNEL_LABEL: Record<string, string> = {
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Delivery / Service",
   completed: "Completed",
-  voided: "Voided — Not Valid",
 };
 
 const NCR_LABEL: Record<string, string> = {
@@ -429,54 +429,56 @@ export function ServiceMetrics() {
             Creditor Performance
           </div>
         </div>
-        {m && m.creditor_performance.length > 0 ? (
-          <table className="w-full text-[12px]">
-            <thead>
-              <tr className="border-b-2 border-border bg-surface-dim text-left text-[10px] font-semibold uppercase tracking-brand text-ink-secondary">
-                <th className="px-5 py-2">Creditor</th>
-                <th className="px-3 py-2 text-right">Cases</th>
-                <th className="px-3 py-2 text-right">Closed</th>
-                <th className="px-3 py-2 text-right">Breached</th>
-                <th className="px-3 py-2 text-right">Avg Resolution</th>
-                <th className="px-3 py-2 text-right">Rating</th>
-              </tr>
-            </thead>
-            <tbody>
-              {m.creditor_performance.map((s) => (
-                <tr key={s.creditor_code} className="border-t border-border-subtle hover:bg-bg/40">
-                  <td className="px-5 py-2">
-                    <div className="font-semibold">{s.name || s.creditor_code}</div>
-                    <div className="font-mono text-[10px] text-ink-muted">{s.creditor_code}</div>
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">{s.total_cases}</td>
-                  <td className="px-3 py-2 text-right font-mono text-synced">{s.closed_cases}</td>
-                  <td className={cn("px-3 py-2 text-right font-mono", s.breached > 0 ? "font-bold text-err" : "text-ink-muted")}>
-                    {s.breached}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {s.avg_resolution_hours != null
-                      ? s.avg_resolution_hours >= 24
-                        ? `${(s.avg_resolution_hours / 24).toFixed(1)}d`
-                        : `${Math.round(s.avg_resolution_hours)}h`
-                      : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {s.avg_rating != null ? (
-                      <span className="inline-flex items-center gap-1">
-                        <Star size={10} className="fill-amber-400 text-amber-400" />
-                        <span className="font-mono">{s.avg_rating.toFixed(1)}</span>
-                      </span>
-                    ) : (
-                      <span className="text-ink-muted">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="px-5 py-4 text-[12px] text-ink-muted">No creditor assignments in this period</div>
-        )}
+        {/* Batch 4: pure-display report table → DataTable (sort + column
+            show/hide + export on a read-only metrics table). */}
+        <DataTable<AssrMetrics["creditor_performance"][number]>
+          tableId="service-metrics-creditor"
+          layoutFamily="service-metrics-creditor"
+          exportName="creditor-performance"
+          rows={m ? m.creditor_performance : null}
+          loading={!m}
+          emptyLabel="No creditor assignments in this period"
+          getRowKey={(s) => s.creditor_code}
+          columns={[
+            {
+              key: "creditor", label: "Creditor", getValue: (s) => s.name || s.creditor_code,
+              render: (s) => (
+                <>
+                  <div className="font-semibold">{s.name || s.creditor_code}</div>
+                  <div className="font-mono text-[10px] text-ink-muted">{s.creditor_code}</div>
+                </>
+              ),
+            },
+            { key: "cases", label: "Cases", align: "right", width: "90px", getValue: (s) => s.total_cases, render: (s) => <span className="font-mono">{s.total_cases}</span> },
+            { key: "closed", label: "Closed", align: "right", width: "90px", getValue: (s) => s.closed_cases, render: (s) => <span className="font-mono text-synced">{s.closed_cases}</span> },
+            { key: "breached", label: "Breached", align: "right", width: "100px", getValue: (s) => s.breached, render: (s) => <span className={cn("font-mono", s.breached > 0 ? "font-bold text-err" : "text-ink-muted")}>{s.breached}</span> },
+            {
+              key: "avg", label: "Avg Resolution", align: "right", width: "130px",
+              getValue: (s) => s.avg_resolution_hours ?? -1,
+              render: (s) => (
+                <span className="font-mono">
+                  {s.avg_resolution_hours != null
+                    ? s.avg_resolution_hours >= 24
+                      ? `${(s.avg_resolution_hours / 24).toFixed(1)}d`
+                      : `${Math.round(s.avg_resolution_hours)}h`
+                    : "—"}
+                </span>
+              ),
+            },
+            {
+              key: "rating", label: "Rating", align: "right", width: "90px",
+              getValue: (s) => s.avg_rating ?? -1,
+              render: (s) => s.avg_rating != null ? (
+                <span className="inline-flex items-center gap-1">
+                  <Star size={10} className="fill-amber-400 text-amber-400" />
+                  <span className="font-mono">{s.avg_rating.toFixed(1)}</span>
+                </span>
+              ) : (
+                <span className="text-ink-muted">—</span>
+              ),
+            },
+          ] satisfies Column<AssrMetrics["creditor_performance"][number]>[]}
+        />
       </div>
 
       <DashboardPanels cols={2}>
