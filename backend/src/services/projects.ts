@@ -1569,9 +1569,17 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     // Defect ACTIONING (owner 2026-07-29): every uploaded defect-list file is
     // the purchaser task until its LATEST timeline entry is done — Ongoing
     // keeps it pending, Done clears it; a later Ongoing entry reopens it.
-    // No binds.
+    // Timeline-gated to events that ended within the last 30 days so the
+    // historical backlog (41 old events with defect uploads predating this
+    // feature) does not flood the lane. One bind (defectSince).
+    const defectSince = (() => {
+      const d = new Date(`${dueToday}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - 30);
+      return d.toISOString().slice(0, 10);
+    })();
     pendingOr.push(
-      `EXISTS (SELECT 1 FROM project_checklist dl
+      `(substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?
+        AND EXISTS (SELECT 1 FROM project_checklist dl
                 JOIN project_checklist_attachments da
                   ON da.item_id = dl.id AND da.archived_at IS NULL
                 WHERE dl.project_id = p.id
@@ -1579,8 +1587,9 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                   AND COALESCE((SELECT act.status
                                   FROM project_checklist_attachment_actions act
                                  WHERE act.attachment_id = da.id
-                                 ORDER BY act.id DESC LIMIT 1), '') <> 'done')`
+                                 ORDER BY act.id DESC LIMIT 1), '') <> 'done'))`
     );
+    pendingBinds.push(defectSince);
   } else if (f.pending_label) {
     // LIKE contains-match so a combined badge (the "SALES PIC & DRIVER"
     // Defect List pair, owner 2026-07-29) lands in BOTH the sales lane and
