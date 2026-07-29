@@ -1,20 +1,20 @@
 [
  {
-  "pid": 1917,
-  "sales": 44905,
-  "cogs_matt_sofa": 16120,
-  "cogs_bedframe": 3720,
-  "cogs_accessories": 2391,
-  "rental": 6750,
-  "setup": 3406
+  "pid": 1744,
+  "sales": 167469,
+  "cogs_matt_sofa": 59608,
+  "cogs_bedframe": 19470,
+  "cogs_accessories": 3746,
+  "rental": 31516,
+  "setup": 6809
  },
  {
-  "pid": 302,
-  "sales": 134191,
-  "cogs_matt_sofa": 45920,
-  "cogs_bedframe": 16090,
-  "cogs_accessories": 5146,
-  "rental": 25213,
-  "setup": 6393
+  "pid": 1745,
+  "sales": 7888,
+  "cogs_matt_sofa": 2100,
+  "cogs_bedframe": 0,
+  "cogs_accessories": 0,
+  "rental": 1484,
+  "setup": 321
  }
 ]
