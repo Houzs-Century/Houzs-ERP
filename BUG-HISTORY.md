@@ -1,5 +1,11 @@
 ## 2026-07-29
 
+### [LOW] Postcode input overflowed its cell in the Project Maintenance add-venue row
+- **Symptom.** Owner: in Project Maintenance - Venues, the "postcode" field in the add-new-venue row spills past its grid column, overlapping the neighbouring control.
+- **Root cause (traced, not guessed).** The add-venue row is a CSS grid with fixed tracks (`grid-cols-[1fr_180px_140px_130px_110px_auto]`, `ProjectMaintenance.tsx` add-venue `<div>`). A grid item defaults to `min-width: auto`, which resolves to the item's content-box min — for a bare `<input>` that is its ~20-character intrinsic width. The postcode input therefore refused to shrink to its 110px track and overflowed. box-sizing was already `border-box` (Tailwind preflight), so padding was not the cause; the min-width floor was.
+- **Fix.** Added `min-w-0` (min-width:0) to every input/select in the row so each shrinks to its own fixed track, and changed the name track to `minmax(0,1fr)` so the flexible column can shrink too rather than pushing the fixed ones. Re-balanced the template to `grid-cols-[minmax(0,1fr)_170px_130px_120px_110px_110px_auto]` when the new venue-size column was added in the same change.
+- **Ref:** `feat/pms-venue-size-field` 2026-07-29.
+
 ### [HIGH] DO create 500'd on an empty delivery-date — `""` reached a Postgres date column (unmasked once the sofa drop-ship guard stopped blocking)
 - **Symptom.** Owner 2026-07-29: after the sofa drop-ship dialog finally appeared and "Confirm drop-ship" was clicked, the create failed with the generic "The system hit a problem. Please try again." Live capture of the POST `/scm/delivery-orders-mfg` (dropShip:true) returned 500 `{error:"insert_failed", reason:"invalid input syntax for type date: \"\""}`.
 - **Root cause (traced with a live capture, not guessed).** The request header carried `customerDeliveryDate:""` and `expectedDeliveryAt:""` (unfilled date inputs post an empty string). The create-header insert bound them with `(body.x as string) ?? null`, and `??` is nullish — it does NOT replace `""`. So `""` reached `delivery_orders.customer_delivery_date` / `expected_delivery_at` (Postgres `date`), which rejects it. This was latent forever but masked: the sofa batch guard 409'd BEFORE the insert on every drop-ship sofa DO, so the insert never ran until the `soItemId` fix let drop-ship through.

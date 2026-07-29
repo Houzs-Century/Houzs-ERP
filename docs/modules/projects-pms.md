@@ -111,6 +111,15 @@ its existing-by-name upsert to the caller's company so it can't hijack another
 company's same-named row. `PATCH`/`DELETE /venues/:id` carry the same
 `activeCompanySql(c)` guard on their WHERE; PATCH returns **404** on a scoped miss.
 
+A venue carries an optional free-text `size` column (PG mig 0222) — the owner
+writes a physical area (`"12,000 sqft"`) or a hall label (`"Hall 3"`), so it is
+`text`, not a number. It is read in `GET /venues`, and accepted on `POST`
+(INSERT + reactivate upsert) and `PATCH`. `VenueManager` edits it inline (add-row
+column + a per-row input committed on blur). Synthetic showroom rows report
+`size: null`. The country/city/postcode columns the add-form also posts (mig
+0178/0182) are NOT yet read or written by these handlers — only `name`, `state`,
+`size`, `notes` are persisted.
+
 ### Data hooks and caching
 
 The desktop page sets **no per-callsite `staleTime`, `gcTime` or
