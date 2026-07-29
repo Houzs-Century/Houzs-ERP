@@ -251,14 +251,30 @@ export interface PmsAccess {
 export function getPmsAccess(user: AuthUser | null | undefined, project: ProjectLike): PmsAccess {
   const role = getPmsRole(user, project);
   const sections = SECTIONS_BY_ROLE[role];
+  // Granular WF_SENSITIVE grant (owner 2026-07-29): a non-director role that
+  // holds `agreement.approve` (e.g. BD Exec) must SEE the Agreement / Quotation
+  // — it is the very item they approve, so hiding it strips the whole CONTRACT
+  // section from them. Mirrors the isFinanceViewer `projects.finance.view`
+  // precedent: additive, directors still qualify via the role sections, and it
+  // never widens the director cohort or its view-all / sales-scope side effects.
+  const canSensitive =
+    sections.includes("WF_SENSITIVE") || !!user?.permissions_set?.has("agreement.approve");
+  // Granular EDIT grant (owner 2026-07-29, "open edit for BD"): a non-director
+  // role holding `projects.manage` (BD Exec, IT Admin) may EDIT the project
+  // detail. Gated on `projects.manage` — NOT `projects.write` — precisely so the
+  // 32 Sales Person users (who hold projects.write but must stay read-only on
+  // the project per the Sales-PIC rule) are unaffected. Directors/Logistic keep
+  // EDIT via their role sections; this only newly admits the management tier.
+  const canEdit =
+    sections.includes("EDIT") || !!user?.permissions_set?.has("projects.manage");
   return {
     role,
     canOpen: role !== "NONE",
-    canEdit: sections.includes("EDIT"),
+    canEdit,
     canFinancial: sections.includes("FINANCIAL"),
     canRental: sections.includes("RENTAL"),
     canPayment: sections.includes("PAYMENT"),
-    canSensitive: sections.includes("WF_SENSITIVE"),
+    canSensitive,
     canSetupDismantle: sections.includes("SETUP_DISMANTLE"),
     sections,
   };

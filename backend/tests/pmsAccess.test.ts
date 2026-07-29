@@ -109,6 +109,28 @@ describe("pmsAccess — project-detail section gating", () => {
     expect(a.sections).toContain("SETUP_DISMANTLE");
   });
 
+  test("BD (agreement.approve + projects.manage) SEES the agreement and can EDIT, without becoming a director (owner 2026-07-29)", () => {
+    const bd = user({
+      position_name: "Operation Executive",
+      perms: ["projects.write", "projects.manage", "agreement.approve"],
+    });
+    const a = getPmsAccess(bd, { pic_id: 99 });
+    expect(a.role).toBe("OTHER"); // still NOT a director
+    expect(a.canSensitive).toBe(true); // agreement.approve unhides WF_SENSITIVE
+    expect(a.canEdit).toBe(true); // projects.manage unlocks EDIT
+    // Gains nothing else — money stays director-only.
+    expect(a.canFinancial).toBe(false);
+    expect(a.canRental).toBe(false);
+  });
+
+  test("projects.write ALONE does not grant EDIT or WF_SENSITIVE — a Sales Person stays read-only (over-grant guard)", () => {
+    const salesPerson = user({ id: 7, position_name: "Sales Executive", perms: ["projects.write"] });
+    const a = getPmsAccess(salesPerson, { pic_id: 7 });
+    expect(a.role).toBe("PIC");
+    expect(a.canEdit).toBe(false); // NOT projects.manage → no edit
+    expect(a.canSensitive).toBe(false); // NOT agreement.approve → no agreement
+  });
+
   test("isFinanceViewer / financeHiddenForUser gate money for non-directors only", () => {
     const director = user({ position_name: "Sales Director" });
     const salesPic = user({ id: 7, position_name: "Sales Executive" });
