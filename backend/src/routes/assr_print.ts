@@ -74,6 +74,20 @@ function fmtDateTime(s: string | null | undefined): string {
   return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
 }
 
+// "Printed 2026/07/30 11:05 PM" — the sign-off footer's print stamp
+// (Nico 2026-07-30: yyyy/mm/dd [hh:mm @AM/PM]). MYT like fmtDateTime.
+function printedStamp(): string {
+  const d = new Date(Date.now() + MYT_OFFSET_MS);
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const h24 = d.getUTCHours();
+  const ampm = h24 >= 12 ? "PM" : "AM";
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  const min = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${yyyy}/${mm}/${dd} ${h12}:${min} ${ampm}`;
+}
+
 const STAGE_LABEL: Record<string, string> = {
   pending_review: "Pending Review",
   under_verification: "Under Verification",
@@ -503,7 +517,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .signoff .panel { padding: 5mm 6mm 6mm; }
     .signoff .panel + .panel { border-left: 0.6pt solid #000; }
     .signoff .panel h3 {
-      margin: 0 0 4mm 0; font-family: "IBM Plex Serif", "Georgia", serif;
+      margin: 0 0 4mm 0; font-family: "Google Sans", "Roboto", Helvetica, Arial, sans-serif;
       font-size: 15.0pt; font-weight: 700;
     }
     .signoff .check {
@@ -536,8 +550,8 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
        cells with hairline rules, outlined chips. B&W only. ── */
     .bar {
       background: #141414; color: #fff;
-      font-family: "IBM Plex Serif", "Georgia", serif;
-      font-size: 13.1pt; font-weight: 600; letter-spacing: 0.5pt;
+      font-family: "Google Sans", "Roboto", Helvetica, Arial, sans-serif;
+      font-size: 13.1pt; font-weight: 700; letter-spacing: 0.5pt;
       padding: 1.8mm 3.6mm; margin-top: 5mm;
     }
     .bar .note { font-family: "IBM Plex Sans", sans-serif; font-size: 9.4pt; font-weight: 400; color: #b8bdb5; letter-spacing: 0; }
@@ -566,20 +580,15 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       border: 1.1pt solid #141414; padding: 0.4mm 2.4mm; border-radius: 0.8mm;
     }
     .pill-cat { font-size: 10.6pt; font-weight: 700; border: 0.7pt solid #141414; padding: 0.6mm 2.8mm; border-radius: 3.2mm; }
-    .status-pills { display: flex; gap: 2.4mm; flex-shrink: 0; }
-    /* Customer/office header: Status sits beside Service, Sub-Status stacks
-       under Status (col 2, row 2). Supplier copy keeps the plain flex row. */
-    .status-pills.stacked { display: grid; grid-template-columns: auto auto; align-items: start; }
-    .status-pills.stacked .p-service   { grid-column: 1; grid-row: 1; }
-    .status-pills.stacked .p-status    { grid-column: 2; grid-row: 1; }
-    .status-pills.stacked .p-substatus { grid-column: 2; grid-row: 2; }
-    .status-pill {
-      min-width: 40mm; padding: 1.6mm 3.2mm; border-radius: 1.8mm;
-      border: 1.1pt solid #141414; background: #fff;
-      display: flex; flex-direction: column; justify-content: center;
-    }
-    .status-pill .cap { font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 8.1pt; font-weight: 700; letter-spacing: 1pt; color: #8a8a8a; text-transform: uppercase; }
-    .status-pill .val { font-size: 11.2pt; font-weight: 700; margin-top: 0.6mm; }
+    /* Status corner — owner-approved merged box (Nico 2026-07-30,
+       Theme C): petrol header carries the stage, soft rows carry the
+       sub-status / service route. Empty service row is simply omitted. */
+    .sbox { border: 1.2pt solid #16695f; border-radius: 2.4mm; overflow: hidden; min-width: 62mm; max-width: 74mm; flex-shrink: 0; }
+    .sbox .main { background: #16695f; color: #fff; font-size: 13pt; font-weight: 800; padding: 2.4mm 4mm; letter-spacing: 0.1pt; }
+    .sbox .row { padding: 1.9mm 4mm 2.1mm; background: #e1efed; display: flex; align-items: baseline; gap: 2.6mm; }
+    .sbox .row + .row { border-top: 0.4pt solid rgba(22,105,95,.25); }
+    .sbox .row .cap { font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 7pt; font-weight: 700; letter-spacing: 0.9pt; color: #16695f; text-transform: uppercase; flex: none; }
+    .sbox .row .val { font-size: 10.5pt; font-weight: 800; color: #0c3f39; }
     .ititle { display: grid; background: #f3f3f1; border-left: 0.4pt solid #d5d5d5; }
     .itable { display: grid; border-left: 0.4pt solid #d5d5d5; }
     .itable .th {
@@ -592,7 +601,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       padding: 2.8mm; border-right: 0.4pt solid #d5d5d5; border-bottom: 0.4pt solid #d5d5d5;
       font-size: 11.2pt; font-weight: 600; line-height: 1.5;
     }
-    .itable .td.code { font-family: "IBM Plex Mono", "Roboto Mono", monospace; }
+    .itable .td.code { font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 12.5pt; font-weight: 800; }
     .itable .td.remark { font-size: 10.4pt; font-weight: 700; color: #3a3a3a; white-space: pre-line; }
     .itable .td.blank { min-height: 9mm; }
     .pgrid {
@@ -682,16 +691,11 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
         ${docSubtitle ? `<div class="subtitle">${esc(docSubtitle)}</div>` : ""}
         <div class="ref">ASSR No. <b>${esc(cs.assr_no)}</b>${cs.ref_no ? ` · Ref No. <b>${esc(cs.ref_no)}</b>` : ""}</div>
       </div>
-      ${!isSupplier ? `
-      <div class="status-pills stacked">
-        <div class="status-pill p-service"><span class="cap">Service</span><span class="val">${esc(servicePillLabel)}</span></div>
-        <div class="status-pill p-status"><span class="cap">Status</span><span class="val">${esc(statusPillLabel)}</span></div>${subStatusLabel ? `
-        <div class="status-pill p-substatus"><span class="cap">Sub-Status</span><span class="val">${esc(subStatusLabel)}</span></div>` : ""}
-      </div>` : `
-      <div class="status-pills">
-        <div class="status-pill"><span class="cap">Status</span><span class="val">${esc(statusPillLabel)}</span></div>${subStatusLabel ? `
-        <div class="status-pill"><span class="cap">Sub-Status</span><span class="val">${esc(subStatusLabel)}</span></div>` : ""}
-      </div>`}
+      <div class="sbox">
+        <div class="main">${esc(statusPillLabel)}</div>${subStatusLabel ? `
+        <div class="row"><span class="cap">Sub-Status</span><span class="val">${esc(subStatusLabel)}</span></div>` : ""}${!isSupplier && servicePillLabel && servicePillLabel !== "—" ? `
+        <div class="row"><span class="cap">Service</span><span class="val">${esc(servicePillLabel)}</span></div>` : ""}
+      </div>
     </div>
     ${voidReason ? `
     <div style="margin: 3mm 0 0; border: 0.5pt solid #c0392b; background: #fdf2f0; border-radius: 1.5mm; padding: 2.4mm 3mm;">
@@ -742,13 +746,11 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       };
       return `
     <!-- meta grid -->
-    <div class="mgrid cols-6 rule-top">
+    <div class="mgrid cols-8 rule-top">
       <div class="lc">Sales Agent</div><div class="vc">${esc(cs.sales_agent || "—")}</div>
       <div class="lc">Request Date</div><div class="vc mono">${fmtDate(cs.complained_date)}</div>
-      <div class="lc">ASSR No</div><div class="vc mono" style="white-space: nowrap;">${esc(cs.assr_no)}</div>
       <div class="lc">Category</div><div class="vc">${cs.service_category || cs.issue_category ? `<span class="pill-cat">${esc(cs.service_category || cs.issue_category)}</span>` : `<span class="dim">—</span>`}</div>
-      <div class="lc">Delivery Return</div><div class="vc dim">No · NA</div>
-      <div class="lc">Purchase Return</div><div class="vc dim">No · NA</div>
+      <div class="lc">ASSR No</div><div class="vc mono" style="white-space: nowrap;">${esc(cs.assr_no)}</div>
     </div>
 
     <!-- customer info -->
@@ -805,7 +807,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     </div>
 
     <div class="doc-footer">
-      <span>Computer-generated document · valid without signature until countersigned above.</span>
+      <span>Computer-generated document · valid without signature until countersigned above. · Printed <b class="mono">${printedStamp()}</b></span>
       <span class="contact"><b>Warehouse Contact</b> · ${esc(coShort)} CS Team &nbsp;<b class="mono">${esc(csPhone)}</b></span>
     </div>`;
     })() : ""}
@@ -903,7 +905,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     </div>
 
     <div class="doc-footer">
-      <span>Computer-generated document · valid without signature until countersigned above.</span>
+      <span>Computer-generated document · valid without signature until countersigned above. · Printed <b class="mono">${printedStamp()}</b></span>
       <span class="contact"><b>${esc(coShort)} Contact</b> · CS Team &nbsp;<b class="mono">${esc(csPhone)}</b></span>
     </div>`;
     })() : ""}
