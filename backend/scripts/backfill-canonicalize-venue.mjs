@@ -28,7 +28,8 @@ const MERGE_PICKER = process.env.MERGE_PICKER === "1";
 const dst = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
-// KEEP IN SYNC with backend/src/scm/lib/canonical-venue.ts
+// KEEP IN SYNC with backend/src/scm/lib/canonical-venue.ts AND the SQL guards in
+// backend/src/db/migrations-pg/*_venue_canonicalize.sql (+ its D1 parity file).
 const CANONICAL_MAP = {
   "2990s PJ": ["pj showroom", "pj-showroom", "pjshowroom", "2990s pj", "2990spj", "2990 pj", "2990pj"],
 };

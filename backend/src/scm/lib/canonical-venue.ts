@@ -9,6 +9,15 @@
 // writes or displays a venue resolves through the same map.
 //
 // To unify another venue in future, add a row to VENUE_CANONICAL_MAP.
+//
+// KEEP IN SYNC — the same rule is spelled out in three more places, and two
+// copies of it disagreeing is the exact failure this module exists to prevent:
+//   * backend/src/db/migrations-pg/*_venue_canonicalize.sql — scm.canonicalize_venue(),
+//     the BEFORE INSERT/UPDATE trigger that catches writes bypassing this front door
+//   * backend/src/db/migrations/*_venue_canonicalize.sql — the D1 test-mirror triggers
+//   * backend/scripts/backfill-canonicalize-venue.mjs — the one-shot cleanup
+// Changing VENUE_CANONICAL_MAP means changing all four. backend/tests/venueCanonicalSql.test.ts
+// fails the build if the SQL guards fall behind this map.
 
 /** canonical display name -> the raw variants that must fold into it (compare key form). */
 export const VENUE_CANONICAL_MAP: Record<string, string[]> = {
