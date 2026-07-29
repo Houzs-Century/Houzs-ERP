@@ -8665,7 +8665,7 @@ function ChecklistRow({
   // Defect List (owner 2026-07-16): a remark is COMPULSORY before each photo —
   // Attach opens a required-remark prompt first, then the file picker, and the
   // photo uploads carrying that remark.
-  const isDefectList = (item.title || "").trim().toLowerCase() === "defect list";
+  const isDefectList = (item.title || "").trim().toLowerCase().startsWith("defect list");
   const pendingCaptionRef = useRef<string | undefined>(undefined);
   async function startAttach() {
     if (isDefectList) {
@@ -9647,6 +9647,8 @@ function AddStockTransferForm({
 function roleChipClass(role: string | null | undefined): string {
   switch ((role || "").toUpperCase()) {
     case "SALES PIC":
+    // Shared sales+driver deliverables (the Defect List pair, owner 2026-07-29).
+    case "SALES PIC & DRIVER":
       return "border-pink-300 bg-pink-100 text-pink-700";
     case "DRIVER":
       return "border-blue-300 bg-blue-100 text-blue-700";

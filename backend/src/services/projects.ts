@@ -1170,7 +1170,9 @@ export function stripSetupDismantle<
     (it: any) =>
       it.section_id != null &&
       sdSectionIds.has(it.section_id) &&
-      String(it.role_label ?? "").trim().toUpperCase() !== "SALES PIC"
+      // startsWith: the shared "SALES PIC & DRIVER" rows (Defect List pair,
+      // owner 2026-07-29) are sales deliverables too — keep them on the wire.
+      !String(it.role_label ?? "").trim().toUpperCase().startsWith("SALES PIC")
   );
   const removedItemIds = new Set(removedItems.map((it: any) => it.id));
   const removedSectionIds = new Set(
@@ -1507,8 +1509,10 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   if (f.pending_label === "PURCHASER") {
     // Purchaser staging (owner 2026-07-21):
     //   - Stock Out Transfer Record unlocks once the Display Floor Plan is done.
-    //   - Exchange List + Stock In Transfer Record unlock once the Defect List
-    //     is done (Sales PIC's post-event check).
+    //   - Exchange List + Stock In Transfer Record unlock once ANY Defect List
+    //     (Setup/Dismantle pair since 2026-07-29) is done OR has an upload —
+    //     sales/drivers complete by uploading, and the owner wants the
+    //     purchaser chasing replacements as soon as defects are filed.
     //   - Every other PURCHASER task surfaces on its own due date.
     pendingOr.push(
       `EXISTS (SELECT 1 FROM project_checklist pc
@@ -1525,17 +1529,23 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                   AND (pc.title NOT IN ('Exchange List', 'Stock In Transfer Record')
                        OR EXISTS (SELECT 1 FROM project_checklist dl
                                    WHERE dl.project_id = p.id
-                                     AND dl.title = 'Defect List'
-                                     AND (dl.status = 'done' OR dl.review_status = 'approved'))))`
+                                     AND dl.title LIKE 'Defect List%'
+                                     AND (dl.status = 'done' OR dl.review_status = 'approved'
+                                          OR EXISTS (SELECT 1 FROM project_checklist_attachments da
+                                                      WHERE da.item_id = dl.id
+                                                        AND da.archived_at IS NULL)))))`
     );
     pendingBinds.push(dueToday);
   } else if (f.pending_label) {
+    // LIKE contains-match so a combined badge (the "SALES PIC & DRIVER"
+    // Defect List pair, owner 2026-07-29) lands in BOTH the sales lane and
+    // the driver lane. Single labels behave exactly as before.
     pendingOr.push(
       `EXISTS (SELECT 1 FROM project_checklist pc
                 WHERE pc.project_id = p.id AND pc.status = 'pending'
-                  AND pc.role_label = ? AND ${NOT_IN_REVIEW} AND ${DUE_GATE})`
+                  AND pc.role_label LIKE ? AND ${NOT_IN_REVIEW} AND ${DUE_GATE})`
     );
-    pendingBinds.push(f.pending_label, dueToday);
+    pendingBinds.push(`%${f.pending_label}%`, dueToday);
   }
   if (f.pending_title) {
     pendingOr.push(
@@ -1771,7 +1781,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
               COALESCE((SELECT group_concat(c3.title, '|') FROM project_checklist c3
                 WHERE c3.project_id = p.id
                   AND c3.status NOT IN ('done', 'na')
-                  AND c3.role_label = '${ptl}'
+                  AND c3.role_label LIKE '%${ptl}%'
                   AND substr(COALESCE(c3.due_date, p.start_date), 1, 10) <= '${dueToday}'), '')
               || ${f.pending_sales_attending ? `CASE WHEN ${ATTENDING_DUTY_LIT} THEN '|Set Sales Attending' ELSE '' END` : `''`},
             '|'), '') as my_pending_titles`
@@ -1857,10 +1867,10 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
             -- mis-scans quotes inside comments and 500s the whole list query.
             (SELECT COUNT(*) FROM project_checklist c
               WHERE c.project_id = p.id
-                AND c.role_label = 'SALES PIC') as sales_tasks_total,
+                AND c.role_label LIKE 'SALES PIC%') as sales_tasks_total,
             (SELECT COUNT(*) FROM project_checklist c
               WHERE c.project_id = p.id
-                AND c.role_label = 'SALES PIC'
+                AND c.role_label LIKE 'SALES PIC%'
                 AND (c.status IN ('done', 'na')
                      OR EXISTS (SELECT 1 FROM project_checklist_attachments a
                                  WHERE a.item_id = c.id

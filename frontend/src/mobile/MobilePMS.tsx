@@ -941,10 +941,12 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     // Setup & Dismantle documents → each role sees only its own part.
     if (it.section_id != null && sdSectionIds.has(it.section_id)) {
       if (seeAllTasks) return false;
-      if (isDriverCrew || isStorekeeper) return label !== "DRIVER";
+      // includes(): a combined badge ("SALES PIC & DRIVER" — the Defect List
+      // Setup/Dismantle pair, owner 2026-07-29) shows to every listed role.
+      if (isDriverCrew || isStorekeeper) return !label.includes("DRIVER");
       if (isPurchaser) return label !== "PURCHASER";
-      if (isLogistic) return !(label === "SALES PIC" || label === "DRIVER");
-      if (isSalesStaff) return label !== "SALES PIC";
+      if (isLogistic) return !(label.includes("SALES PIC") || label.includes("DRIVER"));
+      if (isSalesStaff) return !label.includes("SALES PIC");
       return false;
     }
     return false;
@@ -970,14 +972,16 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const opsSdTiles: DocTile[] = [
     { label: "Setup Image (Driver)", match: /^setup image/i, driverOnly: true, readOnly: true },
     { label: "Setup Image (Sales PIC)", match: /^setup image/i, salesPicOnly: true, readOnly: true },
-    { label: "Defect List", match: /^defect list/i, readOnly: true },
+    { label: "Defect List Setup", match: /^defect list setup/i, readOnly: true },
+    { label: "Defect List Dismantle", match: /^defect list dismantle/i, readOnly: true },
     { label: "Event Complete Image", match: /^event complete image/i, readOnly: true },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: true },
   ];
   // Purchaser view (Sim, Farra): exactly three S&D tiles — Defect List to
   // consult, their own two deliverables to edit.
   const purchaserSdTiles: DocTile[] = [
-    { label: "Defect List", match: /^defect list/i, readOnly: true },
+    { label: "Defect List Setup", match: /^defect list setup/i, readOnly: true },
+    { label: "Defect List Dismantle", match: /^defect list dismantle/i, readOnly: true },
     { label: "Exchange List", match: /^exchange list/i },
     { label: "Stock In Transfer Record", match: /^stock in transfer/i },
   ];
@@ -1005,7 +1009,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const mgmtSdTiles: DocTile[] = [
     { label: "Setup Image (Driver)", match: /^setup image/i, driverOnly: true, readOnly: !canBdEdit },
     { label: "Setup Image (Sales PIC)", match: /^setup image/i, salesPicOnly: true, readOnly: !canBdEdit },
-    { label: "Defect List", match: /^defect list/i, readOnly: !canBdEdit },
+    { label: "Defect List Setup", match: /^defect list setup/i, readOnly: !canBdEdit },
+    { label: "Defect List Dismantle", match: /^defect list dismantle/i, readOnly: !canBdEdit },
     { label: "Exchange List", match: /^exchange list/i, readOnly: !canBdEdit },
     { label: "Event Complete Image", match: /^event complete image/i, readOnly: !canBdEdit },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: !canBdEdit },
@@ -1791,6 +1796,8 @@ const ROLE_COLOR: Record<string, string> = {
   "SALES PIC": "#16695f",
   SALES: "#16695f",
   LOGISTIC: "#2f8a5b",
+  // Shared sales+driver deliverables (the Defect List pair, owner 2026-07-29).
+  "SALES PIC & DRIVER": "#16695f",
 };
 const roleColor = (label: string) => ROLE_COLOR[label.toUpperCase()] ?? "#767b6e";
 // Owner 2026-07-15: badges should read sentence-case ("Purchaser", "Driver",
@@ -2088,10 +2095,16 @@ function TaskRow({
   const tickOnly = canTick && !can("projects.write");
   const badge = (it.role_label ?? "").trim().toUpperCase();
   const userRole = (user?.role_name ?? "").trim().toUpperCase();
+  // A combined badge ("SALES PIC & DRIVER" — the Defect List pair, owner
+  // 2026-07-29) admits every listed role; each part keeps the DRIVER →
+  // helper/storekeeper extension. Mirrors backend roleLabelAdmits.
   const roleMatchesUser =
     !!badge && !!userRole &&
-    (badge === userRole ||
-      (badge === "DRIVER" && (userRole === "HELPER" || userRole === "STOREKEEPER")));
+    badge.split("&").some((part) => {
+      const l = part.trim();
+      return !!l && (l === userRole ||
+        (l === "DRIVER" && (userRole === "HELPER" || userRole === "STOREKEEPER")));
+    });
   const canAttach = canTick && (!tickOnly || roleMatchesUser);
   // Owner 2026-07-17: sales staff may DELETE files only on their own four
   // deliverables (the SALES PIC-badged Setup Image / Event Complete Image /
@@ -2105,7 +2118,7 @@ function TaskRow({
   const canRemoveFile =
     canAttach &&
     (!_isSalesStaffUser ||
-      (badge === "SALES PIC" && SALES_REMOVABLE.test((it.title || "").trim())));
+      (badge.includes("SALES PIC") && SALES_REMOVABLE.test((it.title || "").trim())));
 
   const cycle = async () => {
     if (!canRowTick || busy) return;
@@ -2229,7 +2242,7 @@ function TaskRow({
               </button>
             )}
           </span>
-          {(it.title || "").trim().toLowerCase() === "defect list" && <AttachRemark att={a} canEdit={canAttach} />}
+          {(it.title || "").trim().toLowerCase().startsWith("defect list") && <AttachRemark att={a} canEdit={canAttach} />}
         </div>
       ))}
     </div>
@@ -2299,7 +2312,7 @@ function TaskRow({
   // Defect List (owner 2026-07-16): a remark is COMPULSORY before each photo —
   // tapping Attach opens a required-remark prompt first, then the file picker,
   // and the photo uploads carrying that remark.
-  const isDefectList = (it.title || "").trim().toLowerCase() === "defect list";
+  const isDefectList = (it.title || "").trim().toLowerCase().startsWith("defect list");
   const pendingCaptionRef = useRef<string | undefined>(undefined);
   const startAttach = async () => {
     if (isDefectList) {
@@ -2361,8 +2374,9 @@ function TaskRow({
     </div>
     {fileChips}
     {/* Sales PIC photo tasks: standalone remark box (no file needed). Only the
-        SALES PIC-badged variants — "Setup Image" also exists DRIVER-badged. */}
-    {(it.role_label ?? "").trim().toUpperCase() === "SALES PIC" &&
+        SALES PIC-badged variants — "Setup Image" also exists DRIVER-badged.
+        startsWith: the Defect List pair is badged "SALES PIC & DRIVER". */}
+    {(it.role_label ?? "").trim().toUpperCase().startsWith("SALES PIC") &&
       /^(setup image|defect list|event complete image)/i.test((it.title || "").trim()) &&
       <ItemRemark it={it} canEdit={canTick} />}
     {reviewStatus && reviewStatus !== "approved" && (
@@ -2967,7 +2981,11 @@ const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
   { label: "Permit", match: /permit/i, readOnly: true },
   { label: "Decoration", match: /^deco/i, readOnly: true },
   { label: "Setup Image", match: /^setup image/i, salesPicOnly: true },
-  { label: "Defect List", match: /^defect list/i, requirePhotoRemark: true },
+  // Defect List split (owner 2026-07-29): Setup + Dismantle variants, both
+  // shared with the driver crew ("SALES PIC & DRIVER") and both keeping the
+  // compulsory per-photo remark.
+  { label: "Defect List Setup", match: /^defect list setup/i, requirePhotoRemark: true },
+  { label: "Defect List Dismantle", match: /^defect list dismantle/i, requirePhotoRemark: true },
   { label: "Event Complete Image", match: /^event complete image/i, fullWidth: true, mediaH: 108 },
 ];
 
@@ -2982,6 +3000,10 @@ const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
   // just the permit + decoration brief.
   { label: "Permit", match: /permit/i, readOnly: true },
   { label: "Decoration", match: /^deco/i, readOnly: true, remarkWithFiles: true },
+  // Defect List pair (owner 2026-07-29): shared sales+driver deliverables
+  // ("SALES PIC & DRIVER") — crew EDIT them here, compulsory remark per photo.
+  { label: "Defect List Setup", match: /^defect list setup/i, requirePhotoRemark: true },
+  { label: "Defect List Dismantle", match: /^defect list dismantle/i, requirePhotoRemark: true },
 ];
 
 function SalesDocsCard({

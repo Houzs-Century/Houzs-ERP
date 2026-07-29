@@ -3423,10 +3423,18 @@ function roleLabelAdmits(
   label: string | null | undefined,
   roleName: string | null | undefined,
 ): boolean {
-  const l = (label ?? "").trim().toUpperCase();
   const r = (roleName ?? "").trim().toUpperCase();
-  if (!l || !r) return false;
-  return l === r || (l === "DRIVER" && (r === "HELPER" || r === "STOREKEEPER"));
+  if (!r) return false;
+  // A combined badge ("SALES PIC & DRIVER" — the Defect List Setup/Dismantle
+  // pair, owner 2026-07-29) admits every listed role; each part keeps the
+  // DRIVER → helper/storekeeper extension.
+  return (label ?? "")
+    .toUpperCase()
+    .split("&")
+    .some((part) => {
+      const l = part.trim();
+      return !!l && (l === r || (l === "DRIVER" && (r === "HELPER" || r === "STOREKEEPER")));
+    });
 }
 
 // Status transitions (pending/done/na/blocked). Enforces required_perm
