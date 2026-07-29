@@ -566,6 +566,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       font-size: 10.0pt; color: #5a5a5a; font-weight: 600; line-height: 1.35;
     }
     .mgrid .vc {
+      font-family: "IBM Plex Mono", "Roboto Mono", monospace;
       padding: 2.4mm 2.8mm;
       border-right: 0.4pt solid #d5d5d5; border-bottom: 0.4pt solid #d5d5d5;
       font-size: 11.0pt; font-weight: 600; line-height: 1.45;
@@ -584,11 +585,11 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
        Theme C): petrol header carries the stage, soft rows carry the
        sub-status / service route. Empty service row is simply omitted. */
     .sbox { border: 1.2pt solid #16695f; border-radius: 2.4mm; overflow: hidden; min-width: 62mm; max-width: 74mm; flex-shrink: 0; }
-    .sbox .main { background: #16695f; color: #fff; font-size: 13pt; font-weight: 800; padding: 2.4mm 4mm; letter-spacing: 0.1pt; }
+    .sbox .main { background: #16695f; color: #fff; font-family: "IBM Plex Serif", "Georgia", serif; font-size: 13pt; font-weight: 700; padding: 2.4mm 4mm; letter-spacing: 0.1pt; }
     .sbox .row { padding: 1.9mm 4mm 2.1mm; background: #e1efed; display: flex; align-items: baseline; gap: 2.6mm; }
     .sbox .row + .row { border-top: 0.4pt solid rgba(22,105,95,.25); }
     .sbox .row .cap { font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 7pt; font-weight: 700; letter-spacing: 0.9pt; color: #16695f; text-transform: uppercase; flex: none; }
-    .sbox .row .val { font-size: 10.5pt; font-weight: 800; color: #0c3f39; }
+    .sbox .row .val { font-family: "IBM Plex Serif", "Georgia", serif; font-size: 10.5pt; font-weight: 700; color: #0c3f39; }
     .ititle { display: grid; background: #f3f3f1; border-left: 0.4pt solid #d5d5d5; }
     .itable { display: grid; border-left: 0.4pt solid #d5d5d5; }
     .itable .th {
@@ -602,7 +603,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       font-size: 11.2pt; font-weight: 600; line-height: 1.5;
     }
     .itable .td.code { font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 12.5pt; font-weight: 800; }
-    .itable .td.remark { font-size: 10.4pt; font-weight: 700; color: #3a3a3a; white-space: pre-line; }
+    .itable .td.remark { font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 10.4pt; font-weight: 700; color: #3a3a3a; white-space: pre-line; }
     .itable .td.blank { min-height: 9mm; }
     .pgrid {
       display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2.8mm;
