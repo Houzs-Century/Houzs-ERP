@@ -365,6 +365,7 @@ const SHEET_STATUS: Record<string, string> = {
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Pending Delivery/Service",
   completed: "Completed",
+  voided: "Voided",
 };
 
 app.get("/status-export", async (c) => {
