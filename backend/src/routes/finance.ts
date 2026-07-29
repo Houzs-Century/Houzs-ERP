@@ -178,14 +178,19 @@ async function rawSales(env: Env, start: string, end: string, companyId?: number
 // pulls now scope on the active company, matching rawSales' predicate shape:
 // `companyId === undefined` (pre-migration / cold-start) omits the filter so
 // single-company Houzs stays unchanged.
+// Archiving a project does NOT archive its finance lines, so summing the ledger
+// without joining projects counts cost from projects that were deliberately
+// removed. Measured 2026-07-29: RM 6,290,856 of the RM 69,251,852 this reported
+// belonged to archived projects — the six duplicate FAIR PNL seeds among them.
 async function rawProjectCost(env: Env, start: string, end: string, companyId?: number) {
   const rows = await env.DB.prepare(
-    `SELECT COALESCE(occurred_at, created_at) AS d, COALESCE(amount, 0) AS a
-       FROM project_finance_lines
-      WHERE kind = 'cost' AND archived_at IS NULL
-        AND COALESCE(occurred_at, created_at) >= ?
-        AND COALESCE(occurred_at, created_at) < ?
-        ${companyId != null ? "AND company_id = ?" : ""}`
+    `SELECT COALESCE(l.occurred_at, l.created_at) AS d, COALESCE(l.amount, 0) AS a
+       FROM project_finance_lines l
+       JOIN projects p ON p.id = l.project_id AND p.archived_at IS NULL
+      WHERE l.kind = 'cost' AND l.archived_at IS NULL
+        AND COALESCE(l.occurred_at, l.created_at) >= ?
+        AND COALESCE(l.occurred_at, l.created_at) < ?
+        ${companyId != null ? "AND l.company_id = ?" : ""}`
   )
     .bind(start, end, ...(companyId != null ? [companyId] : []))
     .all<{ d: string; a: number }>();
