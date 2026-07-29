@@ -2153,6 +2153,7 @@ interface ProfitabilityResponse {
     brand: string | null;
     event_type_id: string | null;
     organizer: string | null;
+    scope: string;
   };
   totals: {
     projects: number;
@@ -2909,6 +2910,9 @@ function ProjectsAnalyticsView() {
   const [brand, setBrand] = useState<string>("");
   const [organizer, setOrganizer] = useState<string>("");
   const [eventTypeId, setEventTypeId] = useState<string>("");
+  // An event that has not started only carries booked rental, so including it
+  // shows a loss that has not happened. Default to events already under way.
+  const [scope, setScope] = useState<string>("started");
   const toast = useToast();
 
   const brands = useQuery<{ data: string[] }>("/api/projects/brands", () => api.get("/api/projects/brands"));
@@ -2928,9 +2932,10 @@ function ProjectsAnalyticsView() {
           brand: brand || undefined,
           organizer: organizer || undefined,
           event_type_id: eventTypeId || undefined,
+          scope,
         })}`
       ),
-    [dateFrom, dateTo, brand, organizer, eventTypeId],
+    [dateFrom, dateTo, brand, organizer, eventTypeId, scope],
     { enabled: canProjectFinance }
   );
 
@@ -3005,6 +3010,16 @@ function ProjectsAnalyticsView() {
           ))}
         </select>
         <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value)}
+          title="Events that have not started yet carry only their booked rental, which reads as a loss that has not happened."
+          className="h-8 appearance-none rounded-md border border-border bg-surface px-2 text-[12px]"
+        >
+          <option value="started">Started events</option>
+          <option value="completed">Completed only</option>
+          <option value="all">All incl. upcoming</option>
+        </select>
+        <select
           value={organizer}
           onChange={(e) => setOrganizer(e.target.value)}
           className="h-8 appearance-none rounded-md border border-border bg-surface px-2 text-[12px]"
@@ -3023,6 +3038,7 @@ function ProjectsAnalyticsView() {
             setBrand("");
             setOrganizer("");
             setEventTypeId("");
+            setScope("started");
           }}
           className="h-8 rounded-md border border-border bg-surface px-2.5 text-[11px] text-ink-secondary hover:border-accent/40 hover:text-accent"
         >
