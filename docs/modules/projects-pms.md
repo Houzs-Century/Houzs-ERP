@@ -212,6 +212,18 @@ The `event_type` key is the type NAME; the dimension `month` is the **By-Month c
 special case (its L1 rows are start-date months carrying whole-project totals, so it
 skips L2 and returns those whole-project rows directly).
 
+**Lifecycle scope — `scope` (default `completed`).** Both endpoints accept
+`scope=completed|started|all`; the UI holds it in the URL as `af_scope`.
+`completed` = `p.stage='completed'`, `started` = `start_date <= today`, `all` = no
+lifecycle filter. It defaults to settled-only because an unsettled event has its
+rental and setup booked while sales are still being keyed, so counting it
+understates profit — measured on prod 2026-07-29: `all` 720 projects NP RM -50,931
+vs `completed` 528 projects NP **RM +710,285**. (The intuitive culprit, future
+bookings, is NOT it: all 107 not-yet-started events carry RM 15,200 between them.
+See BUG-HISTORY 2026-07-29.) **The drill endpoint keeps its own copy of the
+project-level predicates**, so any new filter must be added to BOTH or a drilled
+level totals a different population than the card it was opened from.
+
 **Month binning** is on the finance line's own date — `COALESCE(occurred_at,
 created_at)` (index `idx_pfl_occurred`, mig `0213`/`132`) — so revenue/cost lands in
 the month it was recognised and the L2 month rows sum back to the L1 value total
@@ -285,6 +297,12 @@ Related routes elsewhere:
 - `backend/src/routes/finance.ts:220`, `:390` — `GET /api/finance/pnl` and
   `/pnl/bucket`, gated on `projects.read`. `finance.ts:10` flags that
   `projects.read` alone gates a route that reads `project_finance_lines` cost.
+  Its `scope` param means the COST DOMAIN (`all|sales|projects|service|po`), not a
+  lifecycle — the Projects P&L tab passes `scope=projects`, which is why that tab
+  shows cost with no revenue. `rawProjectCost` must JOIN `projects` and require
+  `archived_at IS NULL`: archiving a project does NOT archive its finance lines, so
+  without the join a removed project reports forever (RM 6.29M of RM 69.25M when
+  measured 2026-07-29, PR #1401).
 - `backend/src/routes/notifications.ts:56` `GET /` — **no permission gate at
   all**, deliberately (`:45-55`: a Sales user who lacks the `projects.read`
   matrix permission still needs a bell). Scoped by `getProjectScope` at `:63`
