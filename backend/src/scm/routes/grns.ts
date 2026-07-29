@@ -367,13 +367,17 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
   const { data: preRow } = await scopeToCompanyId(
     sb.from('grns').select('status').eq('id', grnId), companyId,
   ).maybeSingle();
-  const preStatus = ((preRow as { status?: string | null } | null)?.status ?? '').toUpperCase();
-  if (!preStatus) return { ok: false, reason: 'not_found', status: 404 };
+  /* CAS on the RAW stored value, compare on an upper-cased copy. Feeding the
+     normalised string back into .eq() would never match a row whose status is
+     not already upper-case, turning every post into a spurious 409. */
+  const preStatus = (preRow as { status?: string | null } | null)?.status ?? null;
+  if (preStatus == null) return { ok: false, reason: 'not_found', status: 404 };
+  const preStatusNorm = preStatus.toUpperCase();
   /* A CANCELLED GRN already had its receipt reversed by an OUT; re-posting it
      would book the stock a second time against that reversal. CLOSED was already
      excluded by the old predicate. */
-  if (preStatus === 'CANCELLED' || preStatus === 'CLOSED') {
-    return { ok: false, reason: `grn_${preStatus.toLowerCase()}`, status: 409 };
+  if (preStatusNorm === 'CANCELLED' || preStatusNorm === 'CLOSED') {
+    return { ok: false, reason: `grn_${preStatusNorm.toLowerCase()}`, status: 409 };
   }
   const { data, error } = await scopeToCompanyId(sb.from('grns').update({
     status: 'POSTED',
