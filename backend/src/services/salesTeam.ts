@@ -21,8 +21,10 @@ export async function nextSalesRepCode(env: Env): Promise<string> {
 
 // ── Cycle check ──────────────────────────────────────────────
 // Walk upward from the proposed upline; if we ever land on the rep
-// itself, the assignment would create a loop. Used by POST + PATCH
-// to refuse a bad upline.
+// itself, the assignment would create a loop. Caller-less on main:
+// its POST/PATCH sales-team admin routes are stranded on
+// ux/tier3-polish and the module is slated to return (owner call,
+// 2026-07-29). Kept deliberately — don't sweep as dead code.
 
 export async function wouldCreateUplineCycle(
   env: Env,
@@ -217,6 +219,11 @@ export async function syncSalesRepFromUser(
 // returns nothing and we exit. When there IS drift, runs the same
 // syncSalesRepFromUser used by the PATCH hook so the audit trail
 // looks identical regardless of which path created the rep.
+//
+// Caller-less on main: the Sales Team list endpoint lives in the
+// sales-team admin routes stranded on ux/tier3-polish, and the module
+// is slated to return (owner call, 2026-07-29). Kept deliberately —
+// don't sweep as dead code.
 
 export async function autoBackfillSalesReps(env: Env): Promise<number> {
   const rows = await env.DB.prepare(
