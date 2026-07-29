@@ -1784,33 +1784,49 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   });
 });
 
-// ── Analytics / profitability drill-down ─────────────────────
-// Layer 2 of the profitability dashboard: the individual projects behind
-// ONE group row (e.g. brand=AKEMI, or organizer=ACME). Shares the exact
-// filter set + category semantics of /analytics/profitability above, then
-// narrows to the clicked group — so a drill always reflects the same scope
-// as the group table it was opened from. Layer 3 (the project page) is a
-// plain client navigation to /projects/:id, no endpoint needed.
-const PROFITABILITY_GROUP_BY = {
+// ── Analytics / profitability drill-down (L2 months -> L3 projects) ─────
+// The dashboard's group tables (L1) break profitability down by brand /
+// organizer / venue / event type. This endpoint powers the two levels BELOW
+// a group value, sharing L1's exact filter set so a drill always sits inside
+// the same scope as the table it opened from:
+//   L2  dimension + value            -> that value's performance BY MONTH
+//   L3  dimension + value + month    -> the individual projects in that month
+// (L4 — the project page — is a plain client navigation to /projects/:id.)
+//
+// Months are binned on each finance line's OWN date, COALESCE(occurred_at,
+// created_at) (index idx_pfl_occurred), so revenue/cost lands in the month it
+// was recognised and the L2 month rows sum back to the L1 value total — every
+// line has exactly one month. The By-Month card is the one exception: its L1
+// rows are already start-date months carrying whole-project totals, so
+// dimension=month skips L2 and returns those same whole-project rows (L3).
+const PROFITABILITY_DIMENSION = {
   brand: "p.brand = ?",
   organizer: "p.organizer = ?",
   venue: "p.venue = ?",
   event_type: "et.name = ?",
   month: "substr(p.start_date, 1, 7) = ?",
 } as const;
-type ProfitabilityGroupBy = keyof typeof PROFITABILITY_GROUP_BY;
+type ProfitabilityDimension = keyof typeof PROFITABILITY_DIMENSION;
 
-app.get("/analytics/profitability/projects", requirePageAccess("projects.finances"), async (c) => {
+// COGS family (matches /analytics/profitability): the legacy `cogs` slug plus
+// the three product sub-categories. Everything else under kind='cost' is the
+// non-COGS "cost" bucket; `rental` is surfaced as its own slice of that.
+const PROFIT_COGS_CATEGORIES = "('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')";
+// The finance-line month expression the drill bins on (see idx_pfl_occurred).
+const PROFIT_MONTH_EXPR = "substr(COALESCE(l.occurred_at, l.created_at), 1, 7)";
+
+app.get("/analytics/profitability/drill", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
-  const groupByParam = c.req.query("group_by") ?? "";
-  const group = c.req.query("group");
-  if (!(groupByParam in PROFITABILITY_GROUP_BY)) {
-    return c.json({ error: "Invalid group_by (expected brand|organizer|venue|event_type|month)" }, 400);
+  const dimensionParam = c.req.query("dimension") ?? "";
+  const value = c.req.query("value");
+  const month = c.req.query("month"); // YYYY-MM — only meaningful for the four real dims
+  if (!(dimensionParam in PROFITABILITY_DIMENSION)) {
+    return c.json({ error: "Invalid dimension (expected brand|organizer|venue|event_type|month)" }, 400);
   }
-  if (group == null || group === "") {
-    return c.json({ error: "Missing group" }, 400);
+  if (value == null || value === "") {
+    return c.json({ error: "Missing value" }, 400);
   }
-  const groupBy = groupByParam as ProfitabilityGroupBy;
+  const dimension = dimensionParam as ProfitabilityDimension;
 
   const dateFrom = c.req.query("date_from");
   const dateTo = c.req.query("date_to");
@@ -1818,8 +1834,9 @@ app.get("/analytics/profitability/projects", requirePageAccess("projects.finance
   const eventTypeParam = c.req.query("event_type_id");
   const organizer = c.req.query("organizer");
 
-  // Same base predicate set as the group endpoint, so the drill respects
-  // whatever filters are active on the dashboard.
+  // Project-level predicates — identical filter set to /analytics/profitability
+  // so the drill respects whatever filters are active on the dashboard, then
+  // narrowed to the clicked dimension value.
   const where: string[] = ["p.archived_at IS NULL"];
   const binds: any[] = [];
   const coSql = activeCompanySql(c, "p.company_id");
@@ -1843,31 +1860,83 @@ app.get("/analytics/profitability/projects", requirePageAccess("projects.finance
     where.push("p.organizer = ?");
     binds.push(organizer);
   }
-  // The group constraint — the one row the user clicked.
-  where.push(PROFITABILITY_GROUP_BY[groupBy]);
-  binds.push(group);
+  where.push(PROFITABILITY_DIMENSION[dimension]);
+  binds.push(value);
   const whereSql = where.join(" AND ");
 
+  // ── L2: BY MONTH ── a dimension value with no month picked (never the
+  // By-Month card, which drills straight to projects). One row per finance
+  // month, summing that month's lines across the value's projects.
+  if (dimension !== "month" && (month == null || month === "")) {
+    const rows = await c.env.DB.prepare(
+      `SELECT ${PROFIT_MONTH_EXPR} AS month,
+              COUNT(DISTINCT p.id) AS count,
+              COALESCE(SUM(CASE WHEN l.kind = 'income' THEN l.amount ELSE 0 END), 0) AS income,
+              COALESCE(SUM(CASE WHEN l.kind = 'cost' AND l.category IN ${PROFIT_COGS_CATEGORIES} THEN l.amount ELSE 0 END), 0) AS cogs,
+              COALESCE(SUM(CASE WHEN l.kind = 'cost' AND l.category NOT IN ${PROFIT_COGS_CATEGORIES} THEN l.amount ELSE 0 END), 0) AS cost,
+              COALESCE(SUM(CASE WHEN l.kind = 'cost' AND l.category = 'rental' THEN l.amount ELSE 0 END), 0) AS rental
+         FROM projects p
+         JOIN project_finance_lines l ON l.project_id = p.id AND l.archived_at IS NULL
+         LEFT JOIN project_event_types et ON et.id = p.event_type_id
+        WHERE ${whereSql}${coSql}
+          AND COALESCE(l.occurred_at, l.created_at) IS NOT NULL
+        GROUP BY ${PROFIT_MONTH_EXPR}`
+    )
+      .bind(...binds)
+      .all<{
+        month: string;
+        count: number;
+        income: number;
+        cogs: number;
+        cost: number;
+        rental: number;
+      }>();
+
+    const months = (rows.results ?? [])
+      .map((r) => ({
+        key: r.month,
+        count: r.count,
+        income: r.income,
+        cogs: r.cogs,
+        cost: r.cost,
+        rental: r.rental,
+        gp: r.income - r.cogs,
+        profit: r.income - r.cogs - r.cost, // NP = income − cogs − cost
+        margin: r.income > 0 ? ((r.income - r.cogs - r.cost) / r.income) * 100 : null,
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key));
+
+    return c.json({ level: "months", dimension, value, months });
+  }
+
+  // ── L3: PROJECTS ── either a month was picked under a dimension value, or
+  // the By-Month card was drilled (dimension=month, value=YYYY-MM). Metric
+  // scope differs so each level reconciles with its parent:
+  //   dimension=month  -> whole-project totals (all lines), matching the
+  //                       start-date-month rows the By-Month card shows.
+  //   dimension in 4 + m -> that finance-month's lines only, so the project
+  //                       rows sum back to the L2 month row above them.
+  const lineMonthFilter = dimension === "month" ? "" : ` AND ${PROFIT_MONTH_EXPR} = ?`;
+  const lineJoin = dimension === "month" ? "LEFT JOIN" : "JOIN";
+  // Bind order MUST match the textual order of `?` in the query. The month
+  // placeholder lives in the JOIN…ON clause, BEFORE the WHERE placeholders, so
+  // it is bound FIRST — otherwise every WHERE value shifts one slot.
+  const projBinds = dimension === "month" ? [...binds] : [month, ...binds];
+
   const rows = await c.env.DB.prepare(
-    `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue,
-            p.start_date, p.end_date,
-            et.name as event_type_name,
-            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
-                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'income'), 0) as income,
-            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
-                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
-                         AND l.category IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')), 0) as cogs,
-            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
-                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
-                         AND l.category NOT IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')), 0) as cost,
-            COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l
-                       WHERE l.project_id = p.id AND l.archived_at IS NULL AND l.kind = 'cost'
-                         AND l.category = 'rental'), 0) as rental
+    `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue, p.start_date,
+            et.name AS event_type_name,
+            COALESCE(SUM(CASE WHEN l.kind = 'income' THEN l.amount ELSE 0 END), 0) AS income,
+            COALESCE(SUM(CASE WHEN l.kind = 'cost' AND l.category IN ${PROFIT_COGS_CATEGORIES} THEN l.amount ELSE 0 END), 0) AS cogs,
+            COALESCE(SUM(CASE WHEN l.kind = 'cost' AND l.category NOT IN ${PROFIT_COGS_CATEGORIES} THEN l.amount ELSE 0 END), 0) AS cost,
+            COALESCE(SUM(CASE WHEN l.kind = 'cost' AND l.category = 'rental' THEN l.amount ELSE 0 END), 0) AS rental
        FROM projects p
+       ${lineJoin} project_finance_lines l ON l.project_id = p.id AND l.archived_at IS NULL${lineMonthFilter}
        LEFT JOIN project_event_types et ON et.id = p.event_type_id
-      WHERE ${whereSql}${coSql}`
+      WHERE ${whereSql}${coSql}
+      GROUP BY p.id, p.code, p.name, p.brand, p.organizer, p.venue, p.start_date, et.name`
   )
-    .bind(...binds)
+    .bind(...projBinds)
     .all<{
       id: number;
       code: string;
@@ -1876,7 +1945,6 @@ app.get("/analytics/profitability/projects", requirePageAccess("projects.finance
       organizer: string | null;
       venue: string | null;
       start_date: string | null;
-      end_date: string | null;
       event_type_name: string | null;
       income: number;
       cogs: number;
@@ -1904,7 +1972,7 @@ app.get("/analytics/profitability/projects", requirePageAccess("projects.finance
     }))
     .sort((a, b) => b.profit - a.profit);
 
-  return c.json({ group_by: groupBy, group, projects });
+  return c.json({ level: "projects", dimension, value, month: month ?? null, projects });
 });
 
 // Project-scoped sales-attending picker source — every active sales-team

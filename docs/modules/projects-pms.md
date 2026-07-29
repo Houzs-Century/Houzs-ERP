@@ -170,33 +170,50 @@ here, and it is highly regular:**
 | Reads of project data | `requirePageAccess("projects.list")` | `GET /` `:722`, `GET /summary` `:670`, `GET /:id` `:1497`, `GET /:id/activity` `:1848`, `GET /checklist-templates` `:1094` |
 | Reads of lookups | `requirePageAccess("projects")` | `GET /organizers` `:887`, `GET /venues` `:939`, `GET /sections-distinct` `:869` |
 | Calendar | `requirePageAccess("projects.calendar")` | `GET /calendar/events` `:3756` |
-| Money reads | `requirePageAccess("projects.finances")` | `GET /cost-rates` `:559`, `GET /finance/by-project` `:2001`, `GET /finance/lines` `:2209`, `GET /analytics/profitability`, `GET /analytics/profitability/projects` (group drill-down) |
+| Money reads | `requirePageAccess("projects.finances")` | `GET /cost-rates` `:559`, `GET /finance/by-project` `:2001`, `GET /finance/lines` `:2209`, `GET /analytics/profitability`, `GET /analytics/profitability/drill` (L2 months / L3 projects drill-down) |
 | Ordinary writes | `requirePermission("projects.write")` | ~61 routes — finance lines, payments, stock transfers, defects, team, sales attendees, attachments, sections |
 | Admin writes | `requirePermission("projects.manage")` | ~29 routes — event types, brands, cost rates, archive/unarchive, checklist templates, CSV import |
 | Checklist ticking | `requireAnyPermission(["projects.write","projects.checklist.tick"])` | `PATCH /checklist/:itemId` `:2792`, `/status` `:2843`, `/review` `:2887`, attachments `:3071`, `:3170`, `:3215` |
 | Chat | `requireAnyPermission(["projects.write","projects.chat"])` | `POST /:id/notes` `:1832` |
 | Unguarded by middleware | — | small public lookups (`/states` `:858`, `/payment-statuses` `:859`, `/brands` `:204`, `/event-types` `:104`, `/finance/categories` `:1987`), the attachment stream `:3690`, and the **phase-photo** routes `:2427`, `:2472`, `:2507`, `:2539`, which carry an inline permission-OR-crew check instead |
 
-### Profitability analytics — rental column + 3-layer drill-down
+### Profitability analytics — rental column + L1→L4 drill-down
 
 The Finances tab's **Analytics** sub-view (`Projects.tsx` `ProjectsAnalyticsView` +
 `BreakdownCard`) groups every non-archived project's P&L four ways — **By Brand, By
-Event Type, By Organizer, By Venue** (plus By Month) — and each group row now shows
-**Revenue · COGS · GP · Rental · NP · Margin**. `rental` is the `category='rental'`
-slice of `cost` (`kind='cost'`), pulled out as its own visible column; it does NOT
-change NP, which stays `income − cogs − cost`. `GET /analytics/profitability` returns
-`rental` per group, in `totals`, and on the top/bottom ranked rows.
+Event Type, By Organizer, By Venue** (plus By Month) — and every level shows the same
+columns: **Revenue · COGS · GP · Rental · NP · Margin**. `rental` is the
+`category='rental'` slice of `cost` (`kind='cost'`), pulled out as its own visible
+column; it does NOT change NP, which stays `income − cogs − cost`. `GET
+/analytics/profitability` (L1) returns `rental` per group, in `totals`, and on the
+top/bottom ranked rows.
 
-Group rows expand IN PLACE (accordion, one open at a time) to the projects behind
-them via `GET /analytics/profitability/projects?group_by=<brand|event_type|organizer|
-venue|month>&group=<value>` — it takes the SAME date/brand/organizer/event-type
-filters as the group endpoint, so a drill stays inside the group table's scope. It
-returns `{ group_by, group, projects[] }`, each project carrying the same
-`income/cogs/cost/rental/gp/profit/margin` plus `id/code/name/start_date`, so a
-project row navigates to `/projects/:id` (Layer 3). The grouping key for
-`event_type` is the type NAME (matching the group table); `month` is `YYYY-MM` of
-`start_date`. This dashboard is **desktop-only** — mobile PMS is a single-project
-detail surface with no grouped analytics.
+**Four drill levels**, each carrying the parent filter down:
+- **L1** the dimension list (exists) — a brand/organizer/venue/event-type row.
+- **L2** click a dimension value → its performance **BY MONTH**.
+- **L3** click a month → the individual **projects** in that month.
+- **L4** click a project → navigate to `/projects/:id`.
+
+L2/L3 are served by `GET /analytics/profitability/drill?dimension=<brand|event_type|
+organizer|venue|month>&value=<L1 key>[&month=YYYY-MM]` — same date/brand/organizer/
+event-type filters as L1, so a drill stays inside the group table's scope. With no
+`month` it returns `{ level:"months", dimension, value, months[] }` (L2); with a
+`month` it returns `{ level:"projects", dimension, value, month, projects[] }` (L3).
+The `event_type` key is the type NAME; the dimension `month` is the **By-Month card**
+special case (its L1 rows are start-date months carrying whole-project totals, so it
+skips L2 and returns those whole-project rows directly).
+
+**Month binning** is on the finance line's own date — `COALESCE(occurred_at,
+created_at)` (index `idx_pfl_occurred`, mig `0213`/`132`) — so revenue/cost lands in
+the month it was recognised and the L2 month rows sum back to the L1 value total
+(every line has exactly one month; the L3 project rows sum back to their L2 month).
+
+**Drill state lives in the URL** (`ProjectsAnalyticsView`, repo "URL is state" rule):
+the filters (`af_from`/`af_to`/`af_brand`/`af_org`/`af_type`) and the open drill path
+(`dim`/`dv`/`dm`) are all query params, so a drilled view is shareable and Back
+unwinds it one level. One drill path is open at a time. This dashboard is
+**desktop-only** — mobile PMS is a single-project detail surface with no grouped
+analytics.
 
 ### Roadshow PMS Agent — Job E: setup-invoice OCR into project setup COGS
 
