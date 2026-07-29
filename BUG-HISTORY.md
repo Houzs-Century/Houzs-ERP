@@ -1,5 +1,18 @@
 ## 2026-07-29
 
+### [HIGH] P&L Calendar counted cost from ARCHIVED projects — RM 6.29M of RM 69.25M
+- **Symptom.** Owner 2026-07-29: the Projects - P&L tab showed project cost for months whose events had been removed, and Dec-2026 (a future month) carried a figure at all.
+- **Root cause (traced against prod, not guessed).** `rawProjectCost` (`backend/src/routes/finance.ts`) summed `project_finance_lines` with **no join to `projects`**. Archiving a project sets `projects.archived_at` but leaves its finance lines untouched, so every cost line of a removed project kept reporting forever. A read-only prod query (`polish-all.yml` task=audit-pnl, window 2024-2026) measured it: of RM 69,251,852 counted, **RM 6,290,856 belonged to archived projects** — including the six duplicate FAIR PNL seeds archived the same day — and RM 6,689,940 to unsettled ones.
+- **Fix.** Join `projects` and require `archived_at IS NULL`. The sibling `rawSales` / `rawServiceCost` / `rawPoCost` helpers read their own tables and were checked — not affected.
+- **Ref:** PR #1401, 2026-07-29.
+
+### [MEDIUM] Profitability/P&L showed a net LOSS that had not happened — and the first fix targeted the wrong cause
+- **Symptom.** Owner 2026-07-29: the Profitability dashboard read RM -50,931 net profit over 719 projects. Owner: "还没开始的 event 不要算进来啊 误导人家亏损而已 因为只有 rental amount".
+- **Root cause (measured, after a WRONG first attempt).** `/analytics/profitability` filtered only on `archived_at` and the date range — no lifecycle predicate — so every project counted. PR #1397 assumed not-yet-started events were the cause and defaulted the new `scope` to `started`. **A read-only prod audit refuted that**: `all` 720 projects NP RM -50,931 -> `started` 613 projects NP RM -35,731 (barely moves; all 107 future events carry only RM 15,200 of booked cost) -> `completed` 528 projects NP **RM +710,285 (1.2%)**. The distortion is the ~85 events that HAVE started but are not settled — rental and setup are booked while sales are still being keyed — dragging NP by ~RM 746K.
+- **Fix.** `scope` defaults to `completed` on `/analytics/profitability` AND `/analytics/profitability/drill` (the drill keeps its own copy of the predicates, so it needed the filter twice — and `drillFilters` silently omitted the field because it is optional, which type-checked while drifting). Measured figures recorded at the callsite so the next reader does not repeat the assumption. `started` / `all` remain selectable via `af_scope`.
+- **Lesson.** The theory was plausible and wrong; only the measurement settled it. Measure before shipping a fix whose whole value rests on a causal claim.
+- **Ref:** PR #1397 then #1400, 2026-07-29.
+
 ### [LOW] Postcode input overflowed its cell in the Project Maintenance add-venue row
 - **Symptom.** Owner: in Project Maintenance - Venues, the "postcode" field in the add-new-venue row spills past its grid column, overlapping the neighbouring control.
 - **Root cause (traced, not guessed).** The add-venue row is a CSS grid with fixed tracks (`grid-cols-[1fr_180px_140px_130px_110px_auto]`, `ProjectMaintenance.tsx` add-venue `<div>`). A grid item defaults to `min-width: auto`, which resolves to the item's content-box min — for a bare `<input>` that is its ~20-character intrinsic width. The postcode input therefore refused to shrink to its 110px track and overflowed. box-sizing was already `border-box` (Tailwind preflight), so padding was not the cause; the min-width floor was.
