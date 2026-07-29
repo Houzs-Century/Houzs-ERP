@@ -237,6 +237,9 @@ interface ProjectDetail {
     // JSON as setup/dismantle plus a `remark` ("what service/exchange").
     // Optional so existing project mocks/fixtures without it still typecheck.
     service_crew?: string | null;
+    // Schedule Reference remark (owner 2026-07-23): free-text setup/dismantle
+    // times for solo events with no handbook screenshot (mig 0218).
+    schedule_remark?: string | null;
     banner_message: string | null;
     banner_tone: "info" | "warning" | "error" | null;
     // Payment workflow
@@ -10254,7 +10257,12 @@ function LogisticsCrewSection({
       {/* Schedule reference (owner 2026-07-23): the mall handbook's official
           event schedule screenshot, so logistics can read off setup/dismantle
           dates + times. Desktop-only (this whole page is the PC PMS). */}
-      <ScheduleRef projectId={project.id} readOnly={!canEditSchedule} />
+      <ScheduleRef
+        projectId={project.id}
+        readOnly={!canEditSchedule}
+        remark={project.schedule_remark}
+        onSaveRemark={(v) => patch({ schedule_remark: v })}
+      />
       <div>
         <DateTimeField label="Setup Time" value={project.setup_start_at} onSave={(v) => patch({ setup_start_at: v })} readOnly={readOnly} />
       </div>
@@ -10679,9 +10687,24 @@ function PhasePhotosSection({ projectId }: { projectId: number }) {
 // it. Also on mobile since 2026-07-23 (MobilePMS SetupDismantle, same
 // phase="schedule" rows), so the "desktop only" badge is retired.
 // Reuses the phase-photos machinery with phase="schedule".
-function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readOnly?: boolean }) {
+function ScheduleRef({
+  projectId,
+  readOnly = false,
+  remark,
+  onSaveRemark,
+}: {
+  projectId: number;
+  readOnly?: boolean;
+  /** Project-level schedule remark (owner 2026-07-23): solo events have no
+   *  handbook to screenshot, so logistics types the setup/dismantle times as
+   *  free text INSTEAD of uploading — no file required. Saves on blur. */
+  remark?: string | null;
+  onSaveRemark?: (v: string) => void;
+}) {
   const toast = useToast();
   const dialog = useDialog();
+  const [remarkDraft, setRemarkDraft] = useState(remark ?? "");
+  useEffect(() => setRemarkDraft(remark ?? ""), [remark]);
   const fileRef = useRef<HTMLInputElement>(null);
   // Remark-first-before-upload (owner 2026-07-27), same flow as the Defect List:
   // Upload prompts for a required remark, then the file picker; the screenshot
@@ -10784,6 +10807,32 @@ function ScheduleRef({ projectId, readOnly = false }: { projectId: number; readO
           </button>
         </>
       )}
+      {/* Standalone remark (owner 2026-07-23): solo events have no handbook —
+          logistics types the setup/dismantle times here instead. No file
+          needed; saves on blur. Read-only viewers still see the text. */}
+      {onSaveRemark && (readOnly ? (
+        (remark ?? "").trim() !== "" && (
+          <div className="mt-2 text-[11px] text-ink-secondary whitespace-pre-wrap break-words">
+            <span className="font-semibold text-ink-muted">Remark:</span> {remark}
+          </div>
+        )
+      ) : (
+        <label className="mt-2 block">
+          <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-ink-muted">
+            Remark (no handbook — type setup / dismantle times)
+          </span>
+          <textarea
+            value={remarkDraft}
+            rows={2}
+            onChange={(e) => setRemarkDraft(e.target.value)}
+            onBlur={() => {
+              if (remarkDraft !== (remark ?? "")) onSaveRemark(remarkDraft);
+            }}
+            placeholder="e.g. solo event — setup 15/8 9pm after mall close, dismantle 19/8 10pm"
+            className="w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40"
+          />
+        </label>
+      ))}
     </div>
   );
 }

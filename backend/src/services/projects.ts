@@ -472,6 +472,9 @@ const PATCH_FIELDS = [
   // service_crew (owner 2026-07-22): the mid-fair Service / Exchange trip —
   // same JSON shape as setup/dismantle plus a `remark` ("what service/exchange").
   "setup_crew", "dismantle_crew", "service_crew",
+  // Schedule Reference remark (mig 0218, owner 2026-07-23): free-text
+  // setup/dismantle times for solo events that have no handbook screenshot.
+  "schedule_remark",
   // Banner
   "banner_message", "banner_tone",
 ] as const;
@@ -1144,6 +1147,8 @@ export function stripSetupDismantle<
         dismantle_crew: null,
         // service_crew (owner 2026-07-22) is the same hidden logistics panel.
         service_crew: null,
+        // schedule_remark (owner 2026-07-23) renders in the same panel too.
+        schedule_remark: null,
         setup_start_at: null,
         dismantle_start_at: null,
       }
