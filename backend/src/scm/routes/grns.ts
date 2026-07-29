@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
-import { reconcileUncostedOuts } from '../lib/oversell-retrocost';
+import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
   orderSofaModuleRowsWithinBuilds,
@@ -350,13 +350,44 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
   // while the row is still DRAFT) MUST flip the row to POSTED before recounting —
   // otherwise this GRN's own just-confirmed lines wouldn't count. Idempotent on
   // the legacy already-POSTED path (no status change there).
+  //
+  /* GUARD 1 — the flip is an atomic compare-and-swap on the status this call
+     actually observed, not `.neq('status','CLOSED')`. The old predicate matched
+     ANY non-CLOSED row, so two concurrent confirms of one DRAFT GRN both flipped
+     successfully and both went on to write the stock IN — doubling on-hand qty
+     AND landed value, with no DB unique index behind it to reject the second
+     write (unlike DO/DR, which have one). CAS-ing on the observed value means
+     only the call that actually performs the transition proceeds; the loser
+     matches no row and is refused. Same pattern stock-take already uses
+     (stock-takes.ts, `.eq('status','OPEN')` on its POST flip).
+
+     The expected value is READ rather than hard-coded to 'DRAFT' because the
+     create-as-posted paths insert the row with status 'POSTED' and then call
+     this chokepoint — hard-coding DRAFT would refuse every non-draft create. */
+  const { data: preRow } = await scopeToCompanyId(
+    sb.from('grns').select('status').eq('id', grnId), companyId,
+  ).maybeSingle();
+  /* CAS on the RAW stored value, compare on an upper-cased copy. Feeding the
+     normalised string back into .eq() would never match a row whose status is
+     not already upper-case, turning every post into a spurious 409. */
+  const preStatus = (preRow as { status?: string | null } | null)?.status ?? null;
+  if (preStatus == null) return { ok: false, reason: 'not_found', status: 404 };
+  const preStatusNorm = preStatus.toUpperCase();
+  /* A CANCELLED GRN already had its receipt reversed by an OUT; re-posting it
+     would book the stock a second time against that reversal. CLOSED was already
+     excluded by the old predicate. */
+  if (preStatusNorm === 'CANCELLED' || preStatusNorm === 'CLOSED') {
+    return { ok: false, reason: `grn_${preStatusNorm.toLowerCase()}`, status: 409 };
+  }
   const { data, error } = await scopeToCompanyId(sb.from('grns').update({
     status: 'POSTED',
     posted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }).eq('id', grnId), companyId).neq('status', 'CLOSED').select('id, status, posted_at').maybeSingle();
+  }).eq('id', grnId), companyId).eq('status', preStatus).select('id, status, posted_at').maybeSingle();
   if (error) return { ok: false, reason: error.message, status: 500 };
-  if (!data) return { ok: false, reason: 'cannot_post', status: 409 };
+  // Lost the race: another confirm advanced the row between the read and the
+  // flip. That call owns the stock write; this one must not duplicate it.
+  if (!data) return { ok: false, reason: 'already_posting', status: 409 };
 
   // Recount received_qty + re-evaluate PO status from live GRN lines (now that
   // this GRN is POSTED, its lines count).
@@ -442,7 +473,24 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
         batch_no: it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null,
         performed_by: userId,
       }));
+    /* GUARD 2 — has this GRN already booked its receipt? Direct mirror of
+       deductInventoryForDo's idempotency guard #1 (delivery-orders-mfg.ts). The
+       CAS above closes the concurrent-confirm race for callers that go through
+       the status flip; this defends EVERY caller of the chokepoint, including a
+       re-entry on an already-POSTED row (where the CAS legitimately matches and
+       changes nothing). Post-time is the only moment a GRN has zero IN rows —
+       the line-add / line-edit delta INs are written later, on an already-POSTED
+       GRN, so they cannot make this guard fire early. */
+    let alreadyBooked = false;
     if (movements.length > 0) {
+      const { count: existingIn } = await sb.from('inventory_movements')
+        .select('id', { head: true, count: 'exact' })
+        .eq('source_doc_type', 'GRN')
+        .eq('source_doc_id', grnId)
+        .eq('movement_type', 'IN');
+      alreadyBooked = (existingIn ?? 0) > 0;
+    }
+    if (movements.length > 0 && !alreadyBooked) {
       /* Capture the best-effort write result so the caller can surface a failed
          stock IN (was silently swallowed — GRN flipped POSTED with stock NOT
          booked and the caller never told). No rollback; just make it loud. */
@@ -1757,7 +1805,18 @@ export const postGrnHandler = async (c: any) => {
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
   const res = await postGrnAndRollup(sb, id, user.id, co.companyId);
-  if (!res.ok) return c.json({ error: 'post_failed', reason: res.reason }, 500);
+  /* Honour the chokepoint's own status. A lost confirm race (409
+     'already_posting') is a normal outcome — the other call committed the stock —
+     not a server fault; it used to surface as a 500 because res.status was
+     discarded here. */
+  if (!res.ok) {
+    if (res.status === 409) {
+      const { data: now } = await scopeToCompanyId(sb.from('grns')
+        .select('id, status, posted_at, total_centi').eq('id', id), co.companyId).maybeSingle();
+      return c.json({ error: 'cannot_confirm', reason: res.reason, grn: now ?? undefined }, 409);
+    }
+    return c.json({ error: 'post_failed', reason: res.reason }, res.status === 404 ? 404 : 500);
+  }
   // Header money rollup (no stock) — keep it in sync on confirm.
   await recomputeGrnTotals(sb, id);
   const { data } = await scopeToCompanyId(sb.from('grns').select('id, status, posted_at, total_centi').eq('id', id), co.companyId).single();
@@ -2309,6 +2368,12 @@ grns.patch('/:id', async (c) => {
       if (movements.length > 0) {
         try {
           await writeMovements(sb, movements, activeCompanyId(c));
+          /* Oversell retro-cost (0154) — the relocate opens lots in the NEW
+             warehouse, so a prior "ship anyway" DO that went out at RM0 there can
+             now be costed from them. Wired 2026-07-29; until then only the GRN
+             POST reconciled, so the edit paths that also open lots were blind to
+             prior shorts (COE §2). Best-effort. */
+          await reconcileUncostedAfterIn(sb, movements, user?.id ?? null);
           try {
             const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
             await recomputeSoStockAllocation(sb);
@@ -2587,6 +2652,16 @@ grns.post('/:id/items', async (c) => {
           performed_by: user.id,
           notes: 'GRN line added — receipt',
         }], activeCompanyId(c));
+        /* Oversell retro-cost (0154) — a line added to a POSTED GRN opens a lot
+           outside postGrnAndRollup, so it needs the same reconcile the post does.
+           Wired 2026-07-29 (COE §2). Best-effort. */
+        await reconcileUncostedAfterIn(sb, [{
+          movement_type: 'IN',
+          warehouse_id: warehouseId,
+          product_code: String(it.materialCode),
+          variant_key: computeVariantKey((it.itemGroup as string) ?? null, (it.variants as VariantAttrs | null) ?? null),
+          qty: qtyReceived,
+        }], user.id);
         /* New stock landed → re-walk SO allocation. */
         try {
           const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
@@ -2838,6 +2913,11 @@ grns.patch('/:id/items/:itemId', async (c) => {
     if (movements.length > 0) {
       try {
         await writeMovements(sb, movements, activeCompanyId(c));
+        /* Oversell retro-cost (0154) — a line edit that RAISES the accepted qty
+           (or moves it to a new variant bucket) opens a lot, so a prior "ship
+           anyway" DO that went out at RM0 here can now be costed from it. Wired
+           2026-07-29 (COE §2). Reversing OUTs are filtered out. Best-effort. */
+        await reconcileUncostedAfterIn(sb, movements, user.id);
         try {
           const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
           await recomputeSoStockAllocation(sb);

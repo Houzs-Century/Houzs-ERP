@@ -10,6 +10,7 @@ import { describe, expect, test } from 'vitest';
 import {
   planUncostedRetrocost,
   reconcileUncostedOuts,
+  reconcileUncostedAfterIn,
   type RetroOutMovement,
   type RetroLot,
 } from './oversell-retrocost';
@@ -229,5 +230,64 @@ describe('reconcileUncostedOuts — orchestration', () => {
     const res = await reconcileUncostedOuts(sb, [{ warehouse_id: WH, product_code: 'P1', variant_key: '' }], CUTOFF, 'user-1');
     expect(res.reconciled).toBe(0);
     expect(res.affectedDoIds).toEqual([]); // lookup not run because nothing was reconciled
+  });
+});
+
+/* reconcileUncostedAfterIn — the shared post-IN entry point every stock-IN path
+   calls (2026-07-29). What is worth pinning here is the LOT-OPENING FILTER (it
+   must mirror the FIFO trigger exactly: an IN always opens a lot, an ADJUSTMENT
+   only when positive) and the NEVER-THROWS contract — a failed retro-cost must
+   not be able to roll back the receipt that triggered it. */
+describe('reconcileUncostedAfterIn — lot-opening filter + failure containment', () => {
+  const WH = 'wh-1';
+  const bucketsOf = (sb: { calls: Array<{ name: string; args: Record<string, unknown> }> }) =>
+    sb.calls.filter((c) => c.name === 'fn_reconcile_uncosted_out')
+      .map((c) => `${c.args.p_warehouse_id}::${c.args.p_product_code}::${c.args.p_variant_key}`);
+
+  test('reconciles IN and POSITIVE ADJUSTMENT rows; ignores OUT and NEGATIVE ADJUSTMENT', async () => {
+    const sb = fakeSb({ rpc: () => 0, outMovements: [] });
+    await reconcileUncostedAfterIn(sb, [
+      { movement_type: 'IN', warehouse_id: WH, product_code: 'P-IN', variant_key: '', qty: 2 },
+      { movement_type: 'ADJUSTMENT', warehouse_id: WH, product_code: 'P-PLUS', variant_key: '', qty: 3 },
+      { movement_type: 'ADJUSTMENT', warehouse_id: WH, product_code: 'P-MINUS', variant_key: '', qty: -3 },
+      { movement_type: 'OUT', warehouse_id: WH, product_code: 'P-OUT', variant_key: '', qty: 5 },
+    ], 'user-1');
+    expect(bucketsOf(sb)).toEqual([`${WH}::P-IN::`, `${WH}::P-PLUS::`]);
+  });
+
+  test('an OUT-only batch (a resync that only removed stock) calls nothing', async () => {
+    const sb = fakeSb({ rpc: () => 0, outMovements: [] });
+    const res = await reconcileUncostedAfterIn(sb, [
+      { movement_type: 'OUT', warehouse_id: WH, product_code: 'P1', variant_key: '', qty: 1 },
+    ], 'user-1');
+    expect(sb.calls).toHaveLength(0);
+    expect(res).toEqual({ reconciled: 0, affectedDoIds: [] });
+  });
+
+  test('rows missing a warehouse or product are dropped rather than reconciled as an empty bucket', async () => {
+    const sb = fakeSb({ rpc: () => 0, outMovements: [] });
+    await reconcileUncostedAfterIn(sb, [
+      { movement_type: 'IN', warehouse_id: '', product_code: 'P1', variant_key: '', qty: 1 },
+      { movement_type: 'IN', warehouse_id: WH, product_code: '', variant_key: '', qty: 1 },
+      { movement_type: 'IN', warehouse_id: WH, product_code: 'P1', qty: 1 }, // variant_key absent -> ''
+    ], 'user-1');
+    expect(bucketsOf(sb)).toEqual([`${WH}::P1::`]);
+  });
+
+  test('a throwing client is contained — resolves 0, never rejects (the receipt must not roll back)', async () => {
+    const exploding = {
+      rpc() { throw new Error('connection reset'); },
+      from() { throw new Error('connection reset'); },
+    };
+    await expect(reconcileUncostedAfterIn(exploding, [
+      { movement_type: 'IN', warehouse_id: WH, product_code: 'P1', variant_key: '', qty: 1 },
+    ], 'user-1')).resolves.toEqual({ reconciled: 0, affectedDoIds: [] });
+  });
+
+  test('null / empty row list is a no-op', async () => {
+    const sb = fakeSb({ rpc: () => 0, outMovements: [] });
+    expect(await reconcileUncostedAfterIn(sb, [], 'user-1')).toEqual({ reconciled: 0, affectedDoIds: [] });
+    expect(await reconcileUncostedAfterIn(sb, null, 'user-1')).toEqual({ reconciled: 0, affectedDoIds: [] });
+    expect(sb.calls).toHaveLength(0);
   });
 });

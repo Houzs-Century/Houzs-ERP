@@ -2504,7 +2504,7 @@ function KV({ label, value, multiline, mono }: { label: string; value: string; m
   return (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "6px 0", borderTop: `1px solid #f4f5f2` }}>
       <span style={{ fontSize: 11, color: MUTED, flex: "none" }}>{label}</span>
-      <span className={mono ? "money" : undefined} style={{ fontSize: 12.5, fontWeight: 600, color: INK, textAlign: "right", whiteSpace: multiline ? "normal" : "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</span>
+      <span className={mono ? "money" : undefined} style={{ fontSize: 12.5, fontWeight: 600, color: INK, textAlign: multiline ? "left" : "right", whiteSpace: multiline ? "pre-line" : "nowrap", overflow: "hidden", textOverflow: multiline ? undefined : "ellipsis", lineHeight: multiline ? 1.45 : undefined }}>{value}</span>
     </div>
   );
 }
@@ -2514,7 +2514,7 @@ function PGrid({ label, value, mono, span, multiline }: { label: string; value: 
   return (
     <div style={span ? { gridColumn: "1 / -1" } : undefined}>
       <div className="pkv-l">{label}</div>
-      <div className={`pkv-v${mono ? " money" : ""}`} style={{ lineHeight: multiline ? 1.4 : undefined, fontSize: multiline ? 12 : undefined, fontWeight: multiline ? 600 : undefined, wordBreak: "break-word" }}>{value}</div>
+      <div className={`pkv-v${mono ? " money" : ""}`} style={{ lineHeight: multiline ? 1.4 : undefined, fontSize: multiline ? 12 : undefined, fontWeight: multiline ? 600 : undefined, wordBreak: "break-word", whiteSpace: multiline ? "pre-line" : undefined }}>{value}</div>
     </div>
   );
 }
@@ -3114,14 +3114,15 @@ function MobileItemRemark({ c, it, busy, onChanged, notify, field, placeholder }
     }
   };
   return (
-    <input
+    <textarea
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       disabled={busy}
       placeholder={placeholder}
+      rows={2}
       className="fld-i"
-      style={{ width: "100%", boxSizing: "border-box", marginTop: 8, fontSize: 11.5 }}
+      style={{ width: "100%", boxSizing: "border-box", marginTop: 8, fontSize: 11.5, resize: "vertical", lineHeight: 1.35 }}
     />
   );
 }

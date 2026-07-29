@@ -8163,10 +8163,18 @@ function ItemRemarkInput({ caseId, item, field, label, placeholder, disabled, on
 }) {
   const current = String(item[field] ?? "");
   const [draft, setDraft] = useState(current);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     setDraft(String(item[field] ?? ""));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, item[field]]);
+  // Auto-grow so multi-line remarks stay fully visible.
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft]);
 
   async function commit() {
     if (draft.trim() === current.trim()) return;
@@ -8183,18 +8191,39 @@ function ItemRemarkInput({ caseId, item, field, label, placeholder, disabled, on
 
   if (disabled && !current) return null;
   return (
-    <div className="mt-1 flex items-center gap-1.5">
-      <span className="w-[52px] shrink-0 text-[8.5px] font-bold uppercase tracking-wider text-ink-muted">
+    <div className="mt-1 flex items-start gap-1.5">
+      <span className="mt-1 w-[52px] shrink-0 text-[8.5px] font-bold uppercase tracking-wider text-ink-muted">
         {label}
       </span>
-      <input
+      <textarea
+        ref={taRef}
+        rows={1}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
-        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        // Enter saves (blur); Alt+Enter inserts a line break (Nico
+        // 2026-07-29). The browser does NOT insert a newline for
+        // Alt+Enter on its own (only plain/Shift+Enter do), so the
+        // break is spliced in manually at the caret.
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          const el = e.currentTarget;
+          if (e.altKey) {
+            const start = el.selectionStart ?? draft.length;
+            const end = el.selectionEnd ?? draft.length;
+            setDraft(draft.slice(0, start) + "\n" + draft.slice(end));
+            requestAnimationFrame(() => {
+              el.selectionStart = el.selectionEnd = start + 1;
+            });
+          } else {
+            el.blur();
+          }
+        }}
         disabled={disabled}
         placeholder={placeholder}
-        className="w-full rounded bg-bg/60 px-2 py-1 text-[11.5px] text-ink outline-none placeholder:text-ink-muted/60 focus:ring-1 focus:ring-primary/30 disabled:opacity-60"
+        title="Enter to save · Alt+Enter for a new line"
+        className="w-full resize-none overflow-hidden rounded bg-bg/60 px-2 py-1 text-[11.5px] leading-snug text-ink outline-none placeholder:text-ink-muted/60 focus:ring-1 focus:ring-primary/30 disabled:opacity-60"
       />
     </div>
   );

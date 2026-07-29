@@ -20,6 +20,7 @@ import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { doLineRemaining, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
@@ -385,6 +386,12 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
        and the caller never told). No rollback; just make it loud. */
     const res = await writeMovements(sb, movements, (drHeader as { company_id?: number | null } | null)?.company_id ?? null);
     if (!res.ok) movementErrors.push(`IN ${drNo}: ${res.reason ?? 'unknown'}`);
+    /* Oversell retro-cost (0154) — a customer return puts goods back on the
+       shelf, which is a stock IN like any other. A prior "ship anyway" DO that
+       went out at RM0 in this warehouse can now be costed from the re-opened
+       lots. Wired 2026-07-29; before that only a GRN reconciled (COE §2).
+       Best-effort — never fails the return. */
+    if (res.ok) await reconcileUncostedAfterIn(sb, movements, performedBy);
   }
   return movementErrors;
 }
@@ -535,6 +542,10 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
   }
   if (writes.length > 0) {
     await writeMovements(sb, writes, (drHeader as { company_id?: number | null } | null)?.company_id ?? null);
+    /* Oversell retro-cost (0154) — a resync that RAISES the returned qty writes a
+       lot-opening IN / positive ADJUSTMENT, so it is a stock IN and gets the same
+       retro-cost as the create path. Negative deltas are filtered out. */
+    await reconcileUncostedAfterIn(sb, writes, performedBy);
     /* Returned-stock level changed → re-walk SO allocation. Best-effort. */
     try {
       const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');

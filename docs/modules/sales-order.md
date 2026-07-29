@@ -88,11 +88,31 @@ silently orphan a real document), on a status past CONFIRMED, on more than one
 payment, and on vouchers already in circulation.
 
 Vouchers are the part that does not cascade: `pwp_codes.source_doc_no` /
-`.redeemed_doc_no` carry **no FK** to the SO, so deleting — or cancelling — an
-order leaves its issued vouchers AVAILABLE and redeemable. The script cleans up
-after itself (deletes what the order issued, hands back with `restore_redeemed=1`
-what was spent on it); **the app's cancel path still does not** — see
-`BUG-HISTORY.md` 2026-07-28.
+`.redeemed_doc_no` carry **no FK** to the SO, so nothing the database does will
+clean them up. Both paths now settle them explicitly — the script deletes what
+the order issued and hands back with `restore_redeemed=1` what was spent on it
+(`BUG-HISTORY.md` 2026-07-28); the cancel path VOIDS instead of deleting, below.
+
+### Cancelling an SO settles its PWP vouchers
+
+`PATCH /:docNo/status` → `CANCELLED` (`backend/src/scm/lib/so-cancel-vouchers.ts`):
+
+| voucher | on cancel |
+|---|---|
+| issued BY this SO (`source_doc_no`) | `status -> VOID` — never deleted, the cancelled order still needs its record |
+| earned elsewhere, spent HERE (`redeemed_doc_no`) | `status -> AVAILABLE`, redemption columns cleared — the customer's property |
+| issued by this SO, already redeemed on ANOTHER order | **cancel REFUSED**, `409 pwp_voucher_redeemed_elsewhere`, naming the code + that order |
+| minted AND redeemed on this same SO | `status -> VOID` (dies with the order — NOT a refusal) |
+
+`VOID` is a new value on `pwp_codes.status` (plain `text`, no check constraint).
+Every redemption gate is an allow-list (`AVAILABLE`, or `RESERVED` owned by the
+caller), so `VOID` is refused by construction rather than by a new rule.
+
+The cancel transition — and only that transition — runs inside
+`runScmPgCommand`'s real transaction, because a half-applied cancel would burn a
+customer's vouchers on an order that is still live. So a cancel needs
+`DATABASE_URL`: without it the endpoint fails closed with
+`503 scm_pg_command_required`. See `BUG-HISTORY.md` 2026-07-29.
 
 ### Processing-Date save gates (aggregated `validation_failed`)
 

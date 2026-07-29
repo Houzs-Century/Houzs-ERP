@@ -27,6 +27,7 @@ import { buildVariantSummary } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { defaultWarehouseId, writeMovements, resolveWarehouseLotBatches, resolveWarehouseLotCosts } from '../lib/inventory-movements';
+import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -366,6 +367,11 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
   if (writes.length === 0) return [];
   // Multi-company: resync movements inherit the return's company.
   const res = await writeMovements(sb, writes, (header as { company_id?: number | null }).company_id ?? null);
+  /* Oversell retro-cost (0154) — a consignment return books goods back onto the
+     shelf (IN), so a prior "ship anyway" DO that went out at RM0 in this
+     warehouse can now be costed from the re-opened lots. Wired 2026-07-29;
+     before that only a GRN reconciled (COE §2). Best-effort. */
+  if (res.ok) await reconcileUncostedAfterIn(sb, writes, performedBy);
   try {
     const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
     await recomputeSoStockAllocation(sb);

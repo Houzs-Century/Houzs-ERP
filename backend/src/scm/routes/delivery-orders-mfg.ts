@@ -18,6 +18,7 @@ import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shar
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { findOverDeliveredSoItems } from '../lib/do-over-delivery';
@@ -1292,6 +1293,12 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
   if (writes.length > 0) {
     // Multi-company: resync movements inherit the DO's company.
     await writeMovements(sb, writes, (doHeader as { company_id?: number | null }).company_id ?? null);
+    /* Oversell retro-cost (0154) — a reduced / deleted line on a shipped DO gives
+       stock BACK (a lot-opening IN), so a prior "ship anyway" DO that went out at
+       RM0 in this warehouse can now be costed from it. Wired 2026-07-29; until
+       then only the GRN post reconciled (COE §2). Runs BEFORE this DO's own
+       restamp so both read the same movement state. Best-effort. */
+    await reconcileUncostedAfterIn(sb, writes, performedBy);
     /* Costing C — line set changed → re-derive each line's actual FIFO cost
        from the now-current movements (ship OUT + these resync deltas). */
     await restampDoActualCost(sb, deliveryOrderId);
@@ -1452,7 +1459,15 @@ async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performed
     nonDropshipHandled,
   });
   // Multi-company: reversal movements inherit the DO's company.
-  if (movements.length > 0) await writeMovements(sb, movements, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
+  if (movements.length > 0) {
+    await writeMovements(sb, movements, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
+    /* Oversell retro-cost (0154) — a cancelled DO puts its shipment back on the
+       shelf (a reversing IN, or a positive ADJUSTMENT for a plain bucket), so a
+       prior "ship anyway" DO that went out at RM0 in this warehouse can now be
+       costed from the re-opened lots. Wired 2026-07-29; until then only the GRN
+       post reconciled (COE §2). Best-effort — never un-cancels the DO. */
+    await reconcileUncostedAfterIn(sb, movements, performedBy);
+  }
 }
 
 /* ── doLineConsumedQty (Commander 2026-05-30, TASK #24) ───────────────────────
