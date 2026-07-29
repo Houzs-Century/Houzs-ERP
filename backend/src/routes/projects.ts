@@ -1621,14 +1621,19 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   const brand = c.req.query("brand");
   const eventTypeParam = c.req.query("event_type_id");
   const organizer = c.req.query("organizer");
-  // An event that has not started yet carries its booked rental but no sales,
-  // so counting it reads as a loss that has not happened. Default the P&L view
-  // to events that have actually started — by DATE, which is a fact, rather than
-  // by stage, which depends on someone keeping it up to date.
-  //   started (default) — start_date on or before today
-  //   completed         — stage = completed (settled events only)
-  //   all               — the full pipeline, future bookings included
-  const scope = c.req.query("scope") || "started";
+  // An unsettled event carries booked rental/setup while its sales are still
+  // being keyed, so counting it reads as a loss that has not happened.
+  // Measured on prod 2026-07-29 over the same 2024-2026 window:
+  //   all       720 projects  NP RM -50,931
+  //   started   613 projects  NP RM -35,731  <- barely moves: the 107 future
+  //                                             events carry only RM 15,200
+  //   completed 528 projects  NP RM +710,285 (1.2%)  <- the honest P&L
+  // The distortion is NOT future bookings; it is the ~85 events that have
+  // started but are not settled, which drag NP by ~RM 746K between them.
+  //   completed (default) — stage = completed
+  //   started             — start_date on or before today
+  //   all                 — the full pipeline, future bookings included
+  const scope = c.req.query("scope") || "completed";
 
   const where: string[] = ["p.archived_at IS NULL"];
   const binds: any[] = [];
@@ -1877,7 +1882,7 @@ app.get("/analytics/profitability/drill", requirePageAccess("projects.finances")
   // so the drill respects whatever filters are active on the dashboard, then
   // narrowed to the clicked dimension value. `scope` MUST match the parent or a
   // drilled level would total differently from the card it was opened from.
-  const scope = c.req.query("scope") || "started";
+  const scope = c.req.query("scope") || "completed";
   const where: string[] = ["p.archived_at IS NULL"];
   const binds: any[] = [];
   if (scope === "started") {

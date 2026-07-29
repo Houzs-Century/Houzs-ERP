@@ -3005,7 +3005,7 @@ function ProjectsAnalyticsView() {
   const eventTypeId = params.get("af_type") ?? "";
   // An event that has not started only carries booked rental, so counting it
   // reads as a loss that has not happened — settled/started is the default.
-  const scope = params.get("af_scope") ?? "started";
+  const scope = params.get("af_scope") ?? "completed";
 
   // Writing a filter clears the open drill: its value may not exist under the
   // new scope, so an orphaned drill path would just render "no data".
@@ -3175,11 +3175,11 @@ function ProjectsAnalyticsView() {
         <select
           value={scope}
           onChange={(e) => setScope(e.target.value)}
-          title="Events that have not started yet carry only their booked rental, which reads as a loss that has not happened."
+          title="Unsettled events have their rental and setup booked while sales are still being keyed, so including them understates profit. Settled-only is the true P&L."
           className="h-8 appearance-none rounded-md border border-border bg-surface px-2 text-[12px]"
         >
-          <option value="started">Started events</option>
           <option value="completed">Completed only</option>
+          <option value="started">Started events</option>
           <option value="all">All incl. upcoming</option>
         </select>
         <select
