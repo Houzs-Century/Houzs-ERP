@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-24
 **Trigger:** Owner reported that some ACCESSORIES were already SHIPPED but the Delivery Order shows NO cost — RM0 — with margin therefore reading as pure profit on those lines. Asked for a read-only audit of the whole inventory-costing pipeline ("this is the most money-sensitive area") before any fix.
-**Status:** Root cause TRACED and confirmed against the code. NO costing-logic change shipped (owner owns that decision). Shipped a READ-ONLY DETECTOR to size the exposure; the fix is DEFERRED to the owner. This is the per-class COE; the specific RM0 symptom is also logged in `BUG-HISTORY.md`.
+**Status (updated 2026-07-29):** Root cause TRACED and confirmed against the code. Detector shipped 2026-07-24 and RUN 2026-07-29 — measured exposure **3 short-costed OUT movements / 3 units / 2 DOs**. Owner then approved the write-path fix ("都处理"), which SHIPPED 2026-07-29: every stock-IN path now retro-costs prior shorts, not just GRN post (§7). **Backfill of the 3 historical movements is still DEFERRED** to the owner (§5 item 2). This is the per-class COE; the specific RM0 symptom is also logged in `BUG-HISTORY.md`.
 
 ---
 
@@ -46,8 +46,8 @@ Run: Actions -> **Uncosted COGS check (read-only)** -> Run workflow; the verdict
 
 ## 5. DEFERRED — owner decides (intentionally NOT auto-done)
 
-1. **The fix itself — owner (money-critical costing change).** Options: (a) extend the `reconcileUncostedOuts` caller to the other stock-IN paths (stock-transfer / stock-take / adjustment / consignment-receive / returns) so any replenishment retro-costs prior shorts; or (b) add a periodic read-then-reconcile sweep over uncosted OUTs. Either is a change to the money-critical scm FIFO layer that lives directly in prod and is not fully reproducible from the repo, so per the 0154 header it MUST be validated on STAGING first and the apply coordinated — do NOT merge blind. Not attempted in this PR.
-2. **Backfill of already-stranded rows — owner.** Once the detector quantifies the permanent-miss set, the owner decides whether to retro-cost the historical rows (and at which cost basis) — same STAGING-first discipline.
+1. ~~**The fix itself — owner (money-critical costing change).**~~ **RESOLVED 2026-07-29** — owner approved, option (a) shipped. See §7.
+2. **Backfill of already-stranded rows — owner. STILL OPEN.** The detector has now quantified the set: **3 short-costed OUT movements, 3 units, 2 DOs** (`2990-DO-2607-009` TRION-(K); `2990-DO-2607-017` TRION-(K) + 2990 KETTA-FIRM MATT (K)), measured 2026-07-29. The §7 fix is GO-FORWARD ONLY and deliberately did not touch them — retro-costing historical rows is a data repair with its own cost-basis decision, same STAGING-first discipline. Note the fix will repair these three by itself the moment those buckets next receive stock through ANY path, so doing nothing is now a valid option in a way it was not before.
 3. **Storing the shortfall explicitly — owner/eng.** The trigger discards `qty_short`; there is no column flagging an OUT as under-costed, so detection depends on the consumptions-vs-qty join. A persisted shortfall flag would make orphaned RM0 rows self-evident. Design decision, deferred.
 
 ## 6. Lessons
@@ -56,3 +56,33 @@ Run: Actions -> **Uncosted COGS check (read-only)** -> Run workflow; the verdict
 - **"Best-effort, self-heals later" needs a guaranteed later.** The oversell RM0 is acceptable ONLY because a receipt reconciles it — that guarantee silently doesn't hold for non-GRN replenishment. Any "will be fixed on the next X" needs X to be the ONLY way the state can change, or a sweep to catch the rest.
 - **Size before fixing money data.** The safe first move on a money-critical gap is a read-only detector (this PR), not a hot fix — it quantifies the exposure and gives the owner the numbers to decide, with zero risk to the FIFO layer.
 - **Verify against the pipeline, not the symptom.** The RM0 looked like "accessories aren't costed"; tracing the actual code showed accessories ARE costed and the real fault was reconcile wiring — the ruled-out list (§4) is what stops the next person re-chasing the category-exemption theory.
+- **Count the paths before writing the fix (added 2026-07-29).** The 2026-07-24 trace listed five other stock-IN paths. Grepping the write side properly at fix time found **sixteen** callsites that open a lot, because a lot is opened by the trigger's `IN` branch AND its positive-`ADJUSTMENT` branch, and half the openers are resyncs / reversals / cancels rather than anything named "receive". A fix scoped to the five named paths would have looked complete and left the hole open.
+
+## 7. Write-path fix SHIPPED — 2026-07-29 (owner-approved)
+
+Owner approved §5 item 1 ("都处理") after the detector returned the numbers. Option (a) shipped: extend the caller set. **Go-forward only — no backfill** (§5 item 2 stays open).
+
+**Mechanism.** New shared helper `reconcileUncostedAfterIn(sb, rows, performedBy)` in `backend/src/scm/lib/oversell-retrocost.ts`. It takes the movement rows a path just committed, keeps the LOT-OPENING ones — `IN`, or `ADJUSTMENT` with `qty > 0`, mirroring the trigger's own test in `inventory-fifo-trigger.sql` — captures the receipt cutoff, and calls the SAME `reconcileUncostedOuts` → `scm.fn_reconcile_uncosted_out` (0154) the GRN post has always used, then re-stamps the affected DO lines + Sales Invoices. **NO SQL, schema, or migration change**: the function's signature is untouched; only who calls it changed. **It never throws** — a retro-cost is a repair, never a precondition of the receipt that triggered it, so a failure is logged and swallowed and the shortfall is retried idempotently on the next IN into that bucket.
+
+**Paths that now reconcile** (previously: GRN post only):
+
+| Path | File |
+|---|---|
+| GRN post (unchanged — see note) | `scm/routes/grns.ts` `postGrnAndRollup` |
+| GRN warehouse relocate / line add / line edit | `scm/routes/grns.ts` |
+| Stock transfer (destination warehouse) | `scm/routes/stock-transfers.ts` `writeTransferMovements` |
+| Stock take post (positive variance) + reverse | `scm/routes/stock-takes.ts` |
+| Manual inventory adjustment (positive delta) | `scm/routes/inventory-adjustments.ts` |
+| Purchase-consignment receive resync | `scm/routes/purchase-consignment-receives.ts` |
+| Delivery (customer) return — create + resync | `scm/routes/delivery-returns.ts` |
+| Consignment note resync (reduce / cancel returns stock) | `scm/routes/consignment-notes.ts` |
+| Consignment return resync | `scm/routes/consignment-returns.ts` |
+| PC return resync (reduce / cancel returns stock) | `scm/routes/purchase-consignment-returns.ts` |
+| Purchase-return reversing delta | `scm/routes/purchase-returns.ts` |
+| DO resync add-back + DO cancel/reversal add-back | `scm/routes/delivery-orders-mfg.ts` |
+| Consignment loaner hop + its reversal | `scm/lib/consignment-loaner.ts` |
+| Generic `reverseMovements` (reversing an OUT writes an IN) | `scm/lib/inventory-movements.ts` |
+
+**Why `postGrnAndRollup` was deliberately left alone.** There the oversell reconcile must run AFTER `reconcileDropshipBatches`, and its cutoff is captured BEFORE that call. That ordering decides which reconcile gets first claim on the arriving lots, so it is load-bearing; routing it through the helper would have moved the cutoff and inverted the claim order. It calls the same `reconcileUncostedOuts` either way — there is one implementation, two entry shapes.
+
+**Verification honesty.** `npm --prefix backend typecheck` clean and `npm --prefix backend test` green. Those prove the wiring compiles and the pure model still behaves; they do **NOT** prove the trigger/function behaviour — the scm FIFO layer is Supabase Postgres + PL/pgSQL and this repo's vitest harness rebuilds only the D1 side, so no test in this repo executes `fn_reconcile_uncosted_out`. Per the 0154 header the runtime behaviour is validated on STAGING, not here.

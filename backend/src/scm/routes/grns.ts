@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
-import { reconcileUncostedOuts } from '../lib/oversell-retrocost';
+import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
   orderSofaModuleRowsWithinBuilds,
@@ -2368,6 +2368,12 @@ grns.patch('/:id', async (c) => {
       if (movements.length > 0) {
         try {
           await writeMovements(sb, movements, activeCompanyId(c));
+          /* Oversell retro-cost (0154) — the relocate opens lots in the NEW
+             warehouse, so a prior "ship anyway" DO that went out at RM0 there can
+             now be costed from them. Wired 2026-07-29; until then only the GRN
+             POST reconciled, so the edit paths that also open lots were blind to
+             prior shorts (COE §2). Best-effort. */
+          await reconcileUncostedAfterIn(sb, movements, user?.id ?? null);
           try {
             const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
             await recomputeSoStockAllocation(sb);
@@ -2646,6 +2652,16 @@ grns.post('/:id/items', async (c) => {
           performed_by: user.id,
           notes: 'GRN line added — receipt',
         }], activeCompanyId(c));
+        /* Oversell retro-cost (0154) — a line added to a POSTED GRN opens a lot
+           outside postGrnAndRollup, so it needs the same reconcile the post does.
+           Wired 2026-07-29 (COE §2). Best-effort. */
+        await reconcileUncostedAfterIn(sb, [{
+          movement_type: 'IN',
+          warehouse_id: warehouseId,
+          product_code: String(it.materialCode),
+          variant_key: computeVariantKey((it.itemGroup as string) ?? null, (it.variants as VariantAttrs | null) ?? null),
+          qty: qtyReceived,
+        }], user.id);
         /* New stock landed → re-walk SO allocation. */
         try {
           const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
@@ -2897,6 +2913,11 @@ grns.patch('/:id/items/:itemId', async (c) => {
     if (movements.length > 0) {
       try {
         await writeMovements(sb, movements, activeCompanyId(c));
+        /* Oversell retro-cost (0154) — a line edit that RAISES the accepted qty
+           (or moves it to a new variant bucket) opens a lot, so a prior "ship
+           anyway" DO that went out at RM0 here can now be costed from it. Wired
+           2026-07-29 (COE §2). Reversing OUTs are filtered out. Best-effort. */
+        await reconcileUncostedAfterIn(sb, movements, user.id);
         try {
           const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
           await recomputeSoStockAllocation(sb);

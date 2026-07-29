@@ -269,7 +269,7 @@ export const orderSofaModuleRowsWithinBuilds = <T extends RawSoDisplayLine>(line
  *  source_doc_no = this SO — i.e. vouchers THIS order's trigger items issued). */
 export interface SoPwpCodeRow {
   code: string;
-  status: string; // RESERVED | USED | AVAILABLE
+  status: string; // RESERVED | USED | AVAILABLE | VOID (issuing order cancelled)
   trigger_item_code?: string | null;
   redeemed_doc_no?: string | null;
   /** The POS cart line that earned this code — groups codes into per-trigger-line
@@ -299,10 +299,15 @@ export function pwpRewardNote(variants: unknown): SoPwpNote | null {
   return { tone: 'used', text: parts.join(' · ') };
 }
 
-const pwpTriggerNoteOf = (cd: SoPwpCodeRow): SoPwpNote =>
-  cd.status === 'USED'
-    ? { tone: 'used' as const, text: `PWP: ${cd.code}` }
-    : { tone: 'unused' as const, text: `PWP voucher issued: ${cd.code} · not redeemed yet` };
+const pwpTriggerNoteOf = (cd: SoPwpCodeRow): SoPwpNote => {
+  if (cd.status === 'USED') return { tone: 'used', text: `PWP: ${cd.code}` };
+  /* A voided voucher must never read as "not redeemed yet" — the order that
+     issued it was cancelled, so it is dead, not pending (2026-07-29). */
+  if (cd.status === 'VOID') {
+    return { tone: 'unused', text: `PWP voucher issued: ${cd.code} · voided (order cancelled)` };
+  }
+  return { tone: 'unused', text: `PWP voucher issued: ${cd.code} · not redeemed yet` };
+};
 
 /** Notes for a TRIGGER line: vouchers this SO issued off this item_code.
  *  USED → short reference; otherwise → 排法 A "issued, not redeemed yet".
