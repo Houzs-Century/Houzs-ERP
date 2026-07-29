@@ -201,11 +201,13 @@ export function AssistantLauncher() {
       )}
     >
       {/* Official icons8 "Nolan" bot PNG (owner 2026-07-23: 一模一样 — the
-          asset itself, per owner instruction; free-tier terms want a visible
-          Icons8 credit in the product OR a paid licence — owner to pick, see
-          PR). The BLINK: the icon's face plate is white, so two white "eyelid"
-          dots parked over the eyes simply flash opaque every ~4.2s. Guarded
-          by prefers-reduced-motion. */}
+          asset itself, per owner instruction). Licence RESOLVED (owner
+          2026-07-29): stay on the FREE tier — the visible, clickable
+          icons8.com credit in the Settings footer satisfies it. Do not
+          remove that footer link while this PNG ships. The BLINK: the
+          icon's face plate is white, so two white "eyelid" dots parked over
+          the eyes simply flash opaque every ~4.2s. Guarded by
+          prefers-reduced-motion. */}
       {/* 80% of the 56px disc (owner: icon可以大一点 填满圆形80%) — fixed px
           because the percentage box resolves against the border-box minus
           borders and lands at ~77%. */}
