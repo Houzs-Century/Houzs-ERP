@@ -45,6 +45,7 @@ import {
 import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope';
 import { todayMyt } from './my-time';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
+import { soAmendableHeaderFields } from '../shared/so-field-policy';
 
 /* The routable field atoms an SO amendment moves — lines + header — for the audit
    routing note. Mirrors the frontend amendmentLineFieldKinds / soHeaderFieldKind
@@ -126,17 +127,18 @@ function assertNotMirrored(docNo: string, fn: string, c?: Context<any>): void {
 }
 
 /* The frozen header columns an amendment may carry, keyed by the camelCase
-   payload name -> column. MIRRORS AMENDABLE_HEADER_FIELDS in
-   routes/mfg-sales-orders.ts (the create-time trust boundary that already
-   rejected any unlisted key). Re-checked here so a row written before/outside
-   that validation can never write an arbitrary column on approve — this is the
-   LAST gate before the value lands on the SO. */
-const AMENDABLE_HEADER_FIELDS: Record<string, string> = {
-  internalExpectedDd:   'internal_expected_dd',
-  customerDeliveryDate: 'customer_delivery_date',
-  customerState:        'customer_state',
-  postcode:             'postcode',
-};
+   payload name -> column. Sourced from the SAME policy table the create route
+   validates against (shared/so-field-policy.ts CONTROLLED rows) — NOT a local
+   copy. The previous hand-maintained 4-key copy here claimed to "mirror" the
+   create-time list and silently drifted when the two-lane rework made
+   city / address1-4 / shipTo / billTo / installTo / replacementDisposal
+   CONTROLLED (#1346/#1349): the create route accepted those keys, the apply
+   loop's hasOwnProperty check skipped them, and an APPROVED amendment landed
+   with only part of its changes (owner-reported 2026-07-29, 2990-SO-2606-049/A1
+   — State + Postcode applied, City silently dropped). Deriving from the policy
+   table keeps this the LAST gate before the write (unknown keys still skipped)
+   while making create-vs-apply drift structurally impossible. */
+const AMENDABLE_HEADER_FIELDS: Record<string, string> = soAmendableHeaderFields();
 
 type AmendmentLineRow = {
   id: string;
