@@ -279,3 +279,103 @@ export async function reconcileUncostedOuts(
   }
   return { ok: true, reconciled, affectedDoIds: [...affectedDoIds] };
 }
+
+// ----------------------------------------------------------------------------
+// reconcileUncostedAfterIn — the SHARED post-IN entry point (2026-07-29).
+//
+// WHY. reconcileUncostedOuts above was wired to exactly ONE caller, the GRN post
+// handler. Lots are opened by MANY other paths (stock transfer, stock take,
+// manual adjustment, consignment receive, and every return / resync / reversal
+// that books goods back onto the shelf), and none of them retro-costed the prior
+// short. An accessory oversold via "ship anyway" and then replenished by an
+// inter-warehouse transfer or a positive count stayed at RM0 COGS forever —
+// `docs/inventory-costing-oversell-coe.md`, BUG-HISTORY 2026-07-24.
+//
+// WHAT. Give every stock-IN path the SAME reconcile the GRN post runs, in one
+// line: hand it the movement rows that were just committed and it derives the
+// lot-opening buckets, reconciles, and re-stamps the affected DO lines + Sales
+// Invoices. No costing logic lives here — it delegates to reconcileUncostedOuts,
+// which delegates to scm.fn_reconcile_uncosted_out (migration 0154). No schema
+// or SQL change: the function's signature is unchanged, only who calls it.
+//
+// NEVER THROWS. A retro-cost is a repair, never a precondition of the receipt
+// that triggered it: a failure here must not roll back a legitimate stock IN.
+// Everything is swallowed and logged, exactly like the GRN callsite, and the
+// shortfall is simply retried (idempotently) on the next IN into that bucket.
+//
+// The GRN post keeps its own inline block deliberately: there the oversell
+// reconcile must run AFTER reconcileDropshipBatches, and its cutoff is captured
+// before that call, so the ordering is load-bearing and is left untouched.
+// ----------------------------------------------------------------------------
+
+/** A movement row as any stock-IN path writes it. Typed loose on purpose so both
+ *  the strongly-typed writeMovements payloads and the raw
+ *  `Record<string, unknown>` inserts (stock take, adjustment) fit without a cast. */
+export type PostedMovementRow = {
+  movement_type?: unknown;
+  warehouse_id?: unknown;
+  product_code?: unknown;
+  variant_key?: unknown;
+  qty?: unknown;
+};
+
+/**
+ * Retro-cost prior oversold OUTs from the lots a just-committed stock IN opened.
+ * Call AFTER the movement rows are written (the FIFO trigger opens the lots on
+ * insert, so they exist by the time this runs).
+ *
+ * Lot-opening test mirrors the FIFO trigger (`inventory-fifo-trigger.sql`):
+ * `IN` always opens a lot; `ADJUSTMENT` opens one only when qty > 0 — a negative
+ * ADJUSTMENT consumes lots exactly like an OUT and must NOT trigger a reconcile.
+ * Rows that open nothing are ignored, so a mixed OUT/IN batch (a GRN warehouse
+ * relocate, a resync delta) is safe to pass wholesale.
+ *
+ * @param rows the movement rows just committed (any mix; filtered here)
+ * @param performedBy actor id stamped on the retro-cost consumptions
+ */
+export async function reconcileUncostedAfterIn(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  rows: PostedMovementRow[] | null | undefined,
+  performedBy: string | null,
+): Promise<{ reconciled: number; affectedDoIds: string[] }> {
+  const none = { reconciled: 0, affectedDoIds: [] as string[] };
+  try {
+    const buckets: UncostedBucket[] = [];
+    for (const r of rows ?? []) {
+      const type = String(r?.movement_type ?? '').toUpperCase();
+      const opensLot = type === 'IN' || (type === 'ADJUSTMENT' && Number(r?.qty ?? 0) > 0);
+      if (!opensLot) continue;
+      const warehouseId = typeof r?.warehouse_id === 'string' ? r.warehouse_id : '';
+      const productCode = typeof r?.product_code === 'string' ? r.product_code : '';
+      if (!warehouseId || !productCode) continue;
+      buckets.push({
+        warehouse_id: warehouseId,
+        product_code: productCode,
+        variant_key: typeof r?.variant_key === 'string' ? r.variant_key : '',
+      });
+    }
+    if (buckets.length === 0) return none;
+
+    /* Cutoff = now, i.e. after the IN committed. Only OUTs that shipped BEFORE
+       this may draw on the arriving lots; a later order consumes them through the
+       normal FIFO trigger at its own ship time (coverage-theft guard, 0154). */
+    const cutoffTs = new Date().toISOString();
+    const res = await reconcileUncostedOuts(sb, buckets, cutoffTs, performedBy);
+    if (res.affectedDoIds.length > 0) {
+      try {
+        const { restampDoActualCost } = await import('../routes/delivery-orders-mfg');
+        const { restampSiFromDo } = await import('./recost');
+        for (const doId of res.affectedDoIds) {
+          await restampDoActualCost(sb, doId);
+          try { await restampSiFromDo(sb, doId); } catch { /* best-effort */ }
+        }
+      } catch (e) { /* eslint-disable-next-line no-console */ console.error('[oversell] DO restamp failed:', e); }
+    }
+    return { reconciled: res.reconciled, affectedDoIds: res.affectedDoIds };
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[oversell] post-IN reconcile failed:', e);
+    return none;
+  }
+}

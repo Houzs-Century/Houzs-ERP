@@ -35,6 +35,7 @@ import {
 } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
+import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { recordEntityAudit, compactChanges, fieldChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
 import type { Env, Variables } from '../env';
@@ -162,6 +163,20 @@ inventoryAdjustments.post('/', async (c) => {
     performed_by: user.id,
   }).select('id').single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
+
+  /* Oversell retro-cost (0154) — a POSITIVE adjustment opens a lot, so a prior
+     "ship anyway" DO that went out at RM0 in this warehouse can now be costed
+     from it. Wired 2026-07-29; before that only a GRN reconciled, so stock added
+     by hand never repaired the earlier shipment (COE §2). A negative delta
+     consumes lots and is filtered out by the helper. Best-effort — the movement
+     is already committed and must not be undone by a failed repair. */
+  await reconcileUncostedAfterIn(sb, [{
+    movement_type: 'ADJUSTMENT',
+    warehouse_id: warehouseId,
+    product_code: productCode,
+    variant_key: variantKey,
+    qty: qtyDelta,
+  }], user.id);
 
   /* A manual adjustment has no header document — the movement row IS the
      document, so the movement id is the entity id. This is the only path in the

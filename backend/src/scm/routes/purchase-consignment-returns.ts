@@ -35,6 +35,7 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { writeMovements, defaultWarehouseId, resolveWarehouseLotBatches } from '../lib/inventory-movements';
+import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
@@ -187,6 +188,12 @@ async function resyncPcReturnInventory(sb: any, returnId: string, performedBy: s
   if (writes.length === 0) return [];
   // Multi-company: resync movements inherit the return's company.
   const res = await writeMovements(sb, writes, (header as { company_id?: number | null }).company_id ?? null);
+  /* Oversell retro-cost (0154) — a reduced / cancelled PC return writes a
+     lot-opening IN (goods never left for the supplier after all), so a prior
+     "ship anyway" DO that went out at RM0 in this warehouse can now be costed
+     from it. Wired 2026-07-29; before that only a GRN reconciled (COE §2).
+     Best-effort. */
+  if (res.ok) await reconcileUncostedAfterIn(sb, writes, performedBy);
   try {
     const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
     await recomputeSoStockAllocation(sb);

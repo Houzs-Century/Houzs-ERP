@@ -481,6 +481,8 @@ export async function reverseMovements(
     }
 
     let reversed = 0, skipped = 0, failed = 0;
+    // Reversing rows that OPENED a lot (an IN) — the retro-cost input below.
+    const openedLotRows: MovementInput[] = [];
     // Track how much of each bucket's net we still need to neutralise as we walk
     // the original rows, so we don't over-reverse a bucket that's already square.
     const remaining = new Map(netByBucket);
@@ -517,11 +519,23 @@ export async function reverseMovements(
       const res = await writeMovements(sb, [row]);
       if (res.ok) {
         reversed += 1;
+        if (opposite === 'IN') openedLotRows.push(row);
         // Walk the remaining net toward 0 by the reversed direction's signed qty.
         remaining.set(k, net + (opposite === 'IN' ? r.qty : -r.qty));
       } else {
         failed += 1;
       }
+    }
+    /* Oversell retro-cost (0154) — reversing an OUT writes an IN, which re-opens
+       a lot. A prior "ship anyway" DO whose short units went out at RM0 in that
+       warehouse can now be costed from it. Wired 2026-07-29: until then only the
+       GRN post reconciled, so a cancelled PR / stock transfer put stock back
+       without ever repairing the earlier shipment (COE §2). Runs ONCE for the
+       whole reversal, after every row is committed. Best-effort — never throws,
+       never rolls a reversal back. */
+    if (openedLotRows.length > 0) {
+      const { reconcileUncostedAfterIn } = await import('./oversell-retrocost');
+      await reconcileUncostedAfterIn(sb, openedLotRows, performedBy);
     }
     return { ok: failed === 0, reversed, skipped, failed };
   } catch (e) {
