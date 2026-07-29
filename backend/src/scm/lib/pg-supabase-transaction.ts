@@ -358,7 +358,17 @@ export const pgTransactionSupabase = (sql: Sql) => ({
             args.p_doc_no,
             args.p_source_doc_no,
             args.p_delivery_fee_centi,
-            JSON.stringify(args.p_rows ?? []),
+            // sql.json(), NOT JSON.stringify(): binding a pre-stringified string
+            // to a $n::jsonb parameter double-serializes it. postgres.js's
+            // describe phase discovers the jsonb OID and runs its OWN serializer
+            // over our string, so `[]` went in as the jsonb STRING `"[]"` and the
+            // RPC's jsonb_populate_recordset("non-array") aborted the whole
+            // approve-so transaction (owner-reported 2026-07-29, SO-2606-049 KL
+            // address amendment; the fee re-derive produced zero SVC lines →
+            // empty rows → the string that provoked it). sql.json sends the raw
+            // value once with OID 3802 — the exact fix commandParameter() above
+            // already applies to every other jsonb column on this shim.
+            sql.json((args.p_rows ?? []) as never),
           ] as never[],
         );
         return { data: null, error: null };
