@@ -8131,11 +8131,11 @@ function DocRow({
             <FileText size={13} className="mt-0.5 shrink-0 text-ink-muted" />
             <div className="min-w-0">
               <div className="font-medium text-ink">{item.title}</div>
-              {item.role_label && (
-                <span className={cn("mt-0.5 inline-block whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[9px] font-bold tracking-wide", roleChipClass(item.role_label))}>
-                  {formatRoleLabel(item.role_label)}
+              {item.role_label && roleLabelParts(item.role_label).map((part) => (
+                <span key={part} className={cn("mr-1 mt-0.5 inline-block whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[9px] font-bold tracking-wide", roleChipClass(part))}>
+                  {formatRoleLabel(part)}
                 </span>
-              )}
+              ))}
             </div>
           </div>
         </td>
@@ -8779,11 +8779,11 @@ function ChecklistRow({
           )}
           <div className="min-w-0">
             <div className={cn("text-[12px] font-medium", pillDone && "text-ink-muted")}>{item.title}</div>
-            {item.role_label && (
-              <span className={cn("mt-0.5 inline-block rounded-full border px-1.5 py-0.5 text-[9px] font-bold tracking-wide", roleChipClass(item.role_label))}>
-                {formatRoleLabel(item.role_label)}
+            {item.role_label && roleLabelParts(item.role_label).map((part) => (
+              <span key={part} className={cn("mr-1 mt-0.5 inline-block rounded-full border px-1.5 py-0.5 text-[9px] font-bold tracking-wide", roleChipClass(part))}>
+                {formatRoleLabel(part)}
               </span>
-            )}
+            ))}
           </div>
           <span className="flex-1" />
           {canManage && (
@@ -8884,14 +8884,15 @@ function ChecklistRow({
             </span>
             {(item.role_label || item.required_perm || reviewBadge) && (
               <div className="mt-0.5 flex basis-full flex-wrap items-center gap-1.5">
-                {item.role_label && (
+                {item.role_label && roleLabelParts(item.role_label).map((part) => (
                   <span
-                    className={cn("rounded-full border px-1.5 py-0.5 text-[9px] font-bold tracking-wide", roleChipClass(item.role_label))}
+                    key={part}
+                    className={cn("rounded-full border px-1.5 py-0.5 text-[9px] font-bold tracking-wide", roleChipClass(part))}
                     title="Owner role"
                   >
-                    {formatRoleLabel(item.role_label)}
+                    {formatRoleLabel(part)}
                   </span>
-                )}
+                ))}
                 {item.required_perm && (
                   <span
                     className="inline-flex items-center gap-0.5 rounded-full bg-accent-soft px-1.5 py-0.5 text-[9px] font-semibold text-accent"
@@ -9644,6 +9645,13 @@ function AddStockTransferForm({
 // Shared helper used by the crew section's "LOGISTIC" badge. (The
 // branch also uses this on checklist rows; that doc-mode work is out
 // of scope for this port, so the helper is introduced here standalone.)
+// Owner 2026-07-29: a combined role_label ("SALES PIC & DRIVER") renders as
+// SEPARATE tags — one chip per role, each in its own colour — never one
+// merged "Sales PIC & Driver" pill.
+function roleLabelParts(label: string): string[] {
+  return label.split("&").map((s) => s.trim()).filter(Boolean);
+}
+
 function roleChipClass(role: string | null | undefined): string {
   switch ((role || "").toUpperCase()) {
     case "SALES PIC":

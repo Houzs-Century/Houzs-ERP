@@ -1810,6 +1810,10 @@ const formatRoleLabel = (label: string): string =>
     .split(/\s+/)
     .map((w) => (ROLE_ACRONYMS.has(w.toUpperCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()))
     .join(" ");
+// Owner 2026-07-29: a combined role_label ("SALES PIC & DRIVER") renders as
+// SEPARATE badges — one per role, each in its own colour — never one merged tag.
+const roleLabelParts = (label: string): string[] =>
+  label.split("&").map((s) => s.trim()).filter(Boolean);
 
 // Checklist status cycle for the tick control: pending → done → na → pending.
 const NEXT_STATUS: Record<string, "pending" | "done" | "na"> = {
@@ -2275,7 +2279,9 @@ function TaskRow({
         <span style={{ width: 15, height: 15, flex: "none" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "#11140f" }}>{it.title}</div>
-          {it.role_label && c && <span className="rbadge" style={{ background: `${c}1f`, color: c, marginTop: 4, display: "inline-flex" }}>{formatRoleLabel(it.role_label)}</span>}
+          {it.role_label && c && roleLabelParts(it.role_label).map((part) => (
+            <span key={part} className="rbadge" style={{ background: `${roleColor(part)}1f`, color: roleColor(part), marginTop: 4, marginRight: 4, display: "inline-flex" }}>{formatRoleLabel(part)}</span>
+          ))}
         </div>
         {opts.map(([v, label]) => {
           const on = v === cur;
@@ -2347,7 +2353,9 @@ function TaskRow({
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: na ? "#9aa093" : "#11140f", textDecoration: na ? "line-through" : "none" }}>{it.title}</div>
-        {it.role_label && c && <span className="rbadge" style={{ background: `${c}1f`, color: c, marginTop: 4, display: "inline-flex" }}>{formatRoleLabel(it.role_label)}</span>}
+        {it.role_label && c && roleLabelParts(it.role_label).map((part) => (
+          <span key={part} className="rbadge" style={{ background: `${roleColor(part)}1f`, color: roleColor(part), marginTop: 4, marginRight: 4, display: "inline-flex" }}>{formatRoleLabel(part)}</span>
+        ))}
       </div>
       {it.due_date && <span style={{ fontSize: 9.5, color: "#9aa093", whiteSpace: "nowrap" }}>{dm(it.due_date)}</span>}
       {canAttach && (
@@ -3244,11 +3252,11 @@ function SalesDocsCard({
                       {/* Owner 2026-07-23: oversight viewers (mgt/BD/owner/SD/
                           logistic) see WHO owns each deliverable — the task's
                           role chip, same colours as the old tasklist rows. */}
-                      {showRoleTags && (t.item?.role_label ?? "").trim() && (
-                        <span className="rbadge" style={{ background: `${roleColor(t.item!.role_label!)}1f`, color: roleColor(t.item!.role_label!) }}>
-                          {formatRoleLabel(t.item!.role_label!)}
+                      {showRoleTags && (t.item?.role_label ?? "").trim() && roleLabelParts(t.item!.role_label!).map((part) => (
+                        <span key={part} className="rbadge" style={{ background: `${roleColor(part)}1f`, color: roleColor(part), marginRight: 4 }}>
+                          {formatRoleLabel(part)}
                         </span>
-                      )}
+                      ))}
                       {/* Review decision (owner 2026-07-29): the approve/reject
                           state travels with the tile so uploader + approver both
                           see it — green approved · red rejected · amber pending. */}

@@ -3849,6 +3849,55 @@ app.patch(
   }
 );
 
+// Per-attachment ACTION TIMELINE (owner 2026-07-29): append-only Ongoing /
+// Done entries the Purchaser (Sim) or BD stamp on defect-list uploads — each
+// click ADDS an entry with an optional remark; history is never overwritten.
+// A file whose LATEST entry is done clears from the purchaser My Pending lane
+// (listProjects PURCHASER arm). Wildcard / projects.manage admins may act too.
+app.post(
+  "/checklist/attachments/:attId/actions",
+  requireAnyPermission(["projects.write", "projects.checklist.tick"]),
+  async (c) => {
+    const attId = parseInt(c.req.param("attId"), 10);
+    if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
+    const user = c.get("user");
+    const granted = user?.permissions_set ?? user?.permissions;
+    const role = (user?.role_name ?? "").toLowerCase();
+    const mayAct =
+      hasPermission(granted, "*") ||
+      hasPermission(granted, "projects.manage") ||
+      role.includes("purchaser") ||
+      role.includes("bd");
+    if (!mayAct) {
+      return c.json({ error: "Only the purchaser or BD can log defect actions" }, 403);
+    }
+    const body = await c.req.json<{ status?: string; remark?: string | null }>();
+    const status = (body.status ?? "").toLowerCase();
+    if (status !== "ongoing" && status !== "done") {
+      return c.json({ error: "status must be ongoing or done" }, 400);
+    }
+    const att = await c.env.DB.prepare(
+      `SELECT a.id FROM project_checklist_attachments a
+        WHERE a.id = ? AND a.archived_at IS NULL`
+    )
+      .bind(attId)
+      .first<{ id: number }>();
+    if (!att) return c.json({ error: "Not found" }, 404);
+    // Optional remark — an empty string is a legitimate save (owner spec).
+    const remark =
+      typeof body.remark === "string" && body.remark.trim()
+        ? body.remark.slice(0, 2000)
+        : null;
+    await c.env.DB.prepare(
+      `INSERT INTO project_checklist_attachment_actions (attachment_id, status, remark, user_id)
+       VALUES (?, ?, ?, ?)`
+    )
+      .bind(attId, status, remark, user?.id ?? null)
+      .run();
+    return c.json({ ok: true });
+  }
+);
+
 // ── Template sections + requires_review (mig 050) ───────────
 // Used by the Project Maintenance template editor (Phase B in the
 // frontend rollout). The clone-on-create path in

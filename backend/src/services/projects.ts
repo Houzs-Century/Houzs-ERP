@@ -766,6 +766,25 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
     taskAttachments = a.results ?? [];
   }
 
+  // Per-attachment ACTION TIMELINE (owner 2026-07-29): append-only Ongoing /
+  // Done log the purchaser + BD stamp on defect-list uploads. Fetched for the
+  // whole project in one query; the UI groups by attachment_id.
+  let attachmentActions: any[] = [];
+  if (taskAttachments.length) {
+    const attIds = taskAttachments.map((a: any) => a.id);
+    const ph = attIds.map(() => "?").join(",");
+    const acts = await env.DB.prepare(
+      `SELECT act.*, u.name as user_name
+         FROM project_checklist_attachment_actions act
+         LEFT JOIN users u ON u.id = act.user_id
+        WHERE act.attachment_id IN (${ph})
+        ORDER BY act.id ASC`
+    )
+      .bind(...attIds)
+      .all();
+    attachmentActions = acts.results ?? [];
+  }
+
   // Project-level attachments — kept for legacy data. The UI panel was
   // removed in mig 050; this stays in the response so any old client
   // doesn't 500 on a missing field.
@@ -1027,6 +1046,7 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
     checklist: checklist.results ?? [],
     checklist_comments: comments,
     checklist_attachments: taskAttachments,
+    checklist_attachment_actions: attachmentActions,
     sections: sectionList,
     section_progress: sectionProgress,
     attachments: attachments.results ?? [],
@@ -1199,6 +1219,15 @@ export function stripSetupDismantle<
   const checklist_attachments = (detail.checklist_attachments ?? []).filter(
     (a: any) => !removedItemIds.has(a.item_id)
   );
+  // Drop action-timeline rows whose attachment was stripped with its item.
+  const removedAttIds = new Set(
+    (detail.checklist_attachments ?? [])
+      .filter((a: any) => removedItemIds.has(a.item_id))
+      .map((a: any) => a.id)
+  );
+  const checklist_attachment_actions = (
+    (detail as any).checklist_attachment_actions ?? []
+  ).filter((act: any) => !removedAttIds.has(act.attachment_id));
   const sections = (detail.sections ?? []).filter(
     (s: any) => !removedSectionIds.has(s.id)
   );
@@ -1227,6 +1256,7 @@ export function stripSetupDismantle<
     checklist,
     checklist_comments,
     checklist_attachments,
+    checklist_attachment_actions,
     sections,
     section_progress,
   };
