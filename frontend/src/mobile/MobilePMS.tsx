@@ -2340,12 +2340,12 @@ function TaskRow({
           </button>
         </>
       )}
-      {/* Approve / Reject (owner 2026-07-21): ALWAYS offered on an
-          approval-gated task (required_perm) to a user HOLDING that
-          permission, until the task is approved/done — no longer only after
-          a submit-for-review. Non-gated tasks keep the old behaviour
-          (buttons only while a submission awaits review). */}
-      {canTick && !done &&
+      {/* Approve / Reject offered on an approval-gated task (required_perm) to
+          a user HOLDING that permission until the task is approved/done (owner
+          2026-07-21); non-gated tasks show them only while a submission awaits
+          review. BUT only once a file is uploaded (owner 2026-07-29): there is
+          nothing to approve before the document exists. */}
+      {canTick && !done && files.length > 0 &&
         (it.required_perm ? holdsChecklistApproval(user?.permissions, it.required_perm) : awaitingReview) && (
         <>
           <button className="tinybtn" style={{ background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={() => review("approve")}>Approve</button>

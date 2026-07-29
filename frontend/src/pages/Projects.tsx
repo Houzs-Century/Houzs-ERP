@@ -8193,12 +8193,13 @@ function DocRow({
                     ))}
                 </div>
               )}
-              {/* Approve/Reject visibility (owner 2026-07-21): an
-                  approval-gated document (required_perm) offers the buttons to
-                  a permission holder WHENEVER it still needs the decision —
-                  not only after a submit. Non-gated documents keep the old
-                  submit-then-review behaviour. */}
-              {(item.required_perm
+              {/* Approve/Reject visibility. A gated document (required_perm)
+                  offers the buttons to a permission holder whenever it still
+                  needs the decision (owner 2026-07-21); non-gated docs keep the
+                  submit-then-review flow. BUT only once a file is uploaded
+                  (owner 2026-07-27): there is nothing to approve before the
+                  document exists, so an empty row must not show the buttons. */}
+              {attachments.length > 0 && (item.required_perm
                 ? canApprove && rs !== "approved" && item.status !== "done"
                 : awaiting && canApprove) ? (
                 <div className="flex flex-wrap items-center gap-1">
@@ -9006,11 +9007,12 @@ function ChecklistRow({
         </div>
       </div>
 
-      {/* Management approve/reject. Owner 2026-07-21: an approval-gated task
-          (required_perm) offers the buttons to a permission holder WHENEVER
-          it still needs the decision — not only after a submit. Non-gated
-          reviewable docs keep the old submit-then-review behaviour. */}
-      {(item.required_perm
+      {/* Management approve/reject. A gated task (required_perm) offers the
+          buttons to a permission holder whenever it still needs the decision
+          (owner 2026-07-21); non-gated reviewable docs keep submit-then-review.
+          BUT only once a file is uploaded (owner 2026-07-27): there is nothing
+          to approve before the document exists. */}
+      {!!attachments && attachments.length > 0 && (item.required_perm
         ? canApprove && item.review_status !== "approved" && item.status !== "done"
         : reviewable && awaitingReview && canApprove) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
@@ -9960,8 +9962,6 @@ function PhaseCrewEditor({
   // Remarks save on blur (not per keystroke) so a long note isn't a PATCH storm.
   const [remarkDraft, setRemarkDraft] = useState(pc.remark);
   useEffect(() => setRemarkDraft(pc.remark), [pc.remark]);
-  const [outRemarkDraft, setOutRemarkDraft] = useState(pc.outsourcedRemark);
-  useEffect(() => setOutRemarkDraft(pc.outsourcedRemark), [pc.outsourcedRemark]);
   // Which provider's add-box is open in the Setup/Dismantle outsourced row.
   const [openProvider, setOpenProvider] = useState<OutsourcedProvider | null>(null);
   const addOutsourced = (entry: OutsourcedEntry) =>
@@ -9970,9 +9970,6 @@ function PhaseCrewEditor({
     const entries = pc.outsourced.entries.filter((_, j) => j !== i);
     save({ ...pc, outsourced: { enabled: entries.length > 0, entries } });
   };
-  // Setup & Dismantle get the three-provider button row; Service / Exchange
-  // keeps the single Outsourced checkbox (it has its own per-lorry dropdown).
-  const isSetupDismantle = field === "setup_crew" || field === "dismantle_crew";
   // Always show at least one lorry card so an empty project isn't blank —
   // the card is only persisted once the user actually fills something in.
   const lorries = pc.lorryCrew.length ? pc.lorryCrew : [{ plate: "", drivers: [], helpers: [] }];
@@ -10021,27 +10018,6 @@ function PhaseCrewEditor({
                 </button>
               )}
             </div>
-            {/* 3rd-party transport (owner 2026-07-23): a trip not done by an
-                internal lorry (the plate above) is via Grab or Lalamove. Blank
-                = internal lorry. SERVICE / EXCHANGE ONLY — setup & dismantle
-                always run on internal lorries, so the dropdown is hidden there
-                (owner 2026-07-23). */}
-            {field === "service_crew" && (
-              <div className="flex items-center gap-1">
-                <Truck size={12} className="shrink-0 opacity-0" />
-                <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider text-ink-muted">3rd-party</span>
-                <select
-                  value={lorry.provider ?? ""}
-                  onChange={(e) => updateLorry(li, { provider: e.target.value })}
-                  disabled={readOnly}
-                  className="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-[12px] disabled:bg-bg/40 disabled:opacity-70"
-                >
-                  <option value="">—</option>
-                  <option value="Grab">Grab</option>
-                  <option value="Lalamove">Lalamove</option>
-                </select>
-              </div>
-            )}
             <CrewSlotRow label="Driver 1" color="text-synced" options={drivers} slot={lorry.drivers[0]} onChange={(s) => setLorrySlot(li, "drivers", 0, s)} readOnly={readOnly} />
             <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
             <CrewSlotRow label="Helper 1" color="text-warning-text" options={helpers} slot={lorry.helpers[0]} onChange={(s) => setLorrySlot(li, "helpers", 0, s)} readOnly={readOnly} />
@@ -10057,107 +10033,70 @@ function PhaseCrewEditor({
           + Add lorry
         </button>
       )}
-      {isSetupDismantle ? (
-        <div className="mt-1 space-y-1.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Outsourced trips</div>
-          <OutsourcedEntryChips entries={pc.outsourced.entries} readOnly={readOnly} onRemove={removeOutsourced} />
-          {!readOnly && (
-            <>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {(["outsource", "lalamove", "grab"] as OutsourcedProvider[]).map((prov) => (
-                  <button
-                    key={prov}
-                    type="button"
-                    onClick={() => setOpenProvider(openProvider === prov ? null : prov)}
-                    className={cn(
-                      "rounded-md border px-3 py-1.5 text-[11px] font-semibold",
-                      openProvider === prov
-                        ? "border-accent bg-accent/10 text-accent"
-                        : "border-border bg-surface text-ink-secondary hover:border-accent/40 hover:text-accent",
-                    )}
-                  >
-                    {OUTSOURCED_PROVIDER_LABEL[prov]}
-                  </button>
-                ))}
-              </div>
-              {(openProvider === "outsource" || openProvider === "lalamove") && (
-                <OutsourcedBox
-                  onAdd={(o) => {
-                    addOutsourced({ provider: openProvider, ...o });
-                    setOpenProvider(null);
-                  }}
-                />
-              )}
-              {openProvider === "grab" && (
-                <GrabHelperBox
-                  helpers={helpers}
-                  onAdd={(o) => {
-                    addOutsourced({ provider: "grab", ...o });
-                    setOpenProvider(null);
-                  }}
-                />
-              )}
-            </>
-          )}
-        </div>
-      ) : (
-        <>
-          <label className="mt-1 flex items-center gap-2 text-[11px] font-semibold text-ink-secondary">
-            <input
-              type="checkbox"
-              checked={pc.outsourced.enabled}
-              disabled={readOnly}
-              onChange={(e) => save({ ...pc, outsourced: { ...pc.outsourced, enabled: e.target.checked } })}
-            />
-            Outsourced
-          </label>
-          {pc.outsourced.enabled && (
-            <div className="space-y-1.5">
-              <OutsourcedEntryChips entries={pc.outsourced.entries} readOnly={readOnly} onRemove={removeOutsourced} />
-              {!readOnly && (
-                <OutsourcedBox onAdd={(o) => addOutsourced({ provider: "outsource", ...o })} />
-              )}
+      <div className="mt-1 space-y-1.5">
+        {/* Outsourced trips (owner 2026-07-27): the same three-provider row on
+            Service / Exchange as Setup & Dismantle. Outsource / Lalamove open a
+            name/phone/plate box; Grab opens a Helper 1 / Helper 2 picker. */}
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Outsourced trips</div>
+        <OutsourcedEntryChips entries={pc.outsourced.entries} readOnly={readOnly} onRemove={removeOutsourced} />
+        {!readOnly && (
+          <>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(["outsource", "lalamove", "grab"] as OutsourcedProvider[]).map((prov) => (
+                <button
+                  key={prov}
+                  type="button"
+                  onClick={() => setOpenProvider(openProvider === prov ? null : prov)}
+                  className={cn(
+                    "rounded-md border px-3 py-1.5 text-[11px] font-semibold",
+                    openProvider === prov
+                      ? "border-accent bg-accent/10 text-accent"
+                      : "border-border bg-surface text-ink-secondary hover:border-accent/40 hover:text-accent",
+                  )}
+                >
+                  {OUTSOURCED_PROVIDER_LABEL[prov]}
+                </button>
+              ))}
             </div>
-          )}
-        </>
-      )}
+            {(openProvider === "outsource" || openProvider === "lalamove") && (
+              <OutsourcedBox
+                onAdd={(o) => {
+                  addOutsourced({ provider: openProvider, ...o });
+                  setOpenProvider(null);
+                }}
+              />
+            )}
+            {openProvider === "grab" && (
+              <GrabHelperBox
+                helpers={helpers}
+                onAdd={(o) => {
+                  addOutsourced({ provider: "grab", ...o });
+                  setOpenProvider(null);
+                }}
+              />
+            )}
+          </>
+        )}
+      </div>
       {showRemark && (
-        <div className="mt-1 space-y-2">
-          {/* Two remarks (owner 2026-07-23): one for the internal lorry crew,
-              one for the outsourced (Grab/Lalamove) side. */}
-          <label className="block">
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">
-              {remarkLabel} — lorry
-            </span>
-            <textarea
-              value={remarkDraft}
-              disabled={readOnly}
-              rows={2}
-              onChange={(e) => setRemarkDraft(e.target.value)}
-              onBlur={() => {
-                if (remarkDraft !== pc.remark) save({ ...pc, remark: remarkDraft });
-              }}
-              placeholder="What service / exchange — internal lorry…"
-              className="w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40 disabled:bg-bg/40"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">
-              {remarkLabel} — outsource
-            </span>
-            <textarea
-              value={outRemarkDraft}
-              disabled={readOnly}
-              rows={2}
-              onChange={(e) => setOutRemarkDraft(e.target.value)}
-              onBlur={() => {
-                if (outRemarkDraft !== pc.outsourcedRemark) save({ ...pc, outsourcedRemark: outRemarkDraft });
-              }}
-              placeholder="What service / exchange — Grab / Lalamove…"
-              className="w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40 disabled:bg-bg/40"
-            />
-          </label>
-        </div>
+        <label className="mt-1 block">
+          {/* Single service/exchange remark (owner 2026-07-27): the earlier
+              split lorry/outsource remarks collapsed back to one box. */}
+          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">
+            {remarkLabel}
+          </span>
+          <textarea
+            value={remarkDraft}
+            disabled={readOnly}
+            rows={2}
+            onChange={(e) => setRemarkDraft(e.target.value)}
+            onBlur={() => {
+              if (remarkDraft !== pc.remark) save({ ...pc, remark: remarkDraft });
+            }}
+            placeholder="What service / exchange…"
+            className="w-full resize-y whitespace-pre-wrap break-words rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40 disabled:bg-bg/40"
+          />
+        </label>
       )}
     </div>
   );
