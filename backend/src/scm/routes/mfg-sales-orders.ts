@@ -186,6 +186,9 @@ import type { Env, Variables } from '../env';
    without a request-scoped client; it uses the scm-scoped service client. */
 import { getSupabaseService } from '../../db/supabase';
 import { deferScmAfterCommit, runScmPgCommand } from '../lib/pg-supabase-transaction';
+import {
+  applySoCancelVouchers, planSoCancelVouchers, soCancelVoucherAuditChanges,
+} from '../lib/so-cancel-vouchers';
 import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 
 export const mfgSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -5454,41 +5457,80 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
       patch.proceeded_at = new Date().toISOString();
     }
   }
-  const { data, error } = await sb.from('mfg_sales_orders').update(patch)
-    .eq('doc_no', docNo)
-    .eq('version', currentVersion)
-    .eq('status', fromStatus)
-    .or(`edit_lease_token.is.null,edit_lease_expires_at.lt.${new Date().toISOString()}`)
-    .select('doc_no, status, proceeded_at, version').maybeSingle();
-  if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-  // Stale/missing docNo (deleted, wrong tab) matches 0 rows → a clean 404
-  // ("no longer found, refresh") instead of an opaque 500 (bug-hunt 2026-06-20).
-  if (!data) {
-    const { data: latest } = await sb.from('mfg_sales_orders').select('version').eq('doc_no', docNo).maybeSingle();
-    if (!latest) return c.json({ error: 'not_found' }, 404);
-    return c.json(soVersionConflict(Number((latest as { version?: number }).version ?? currentVersion)), 409);
-  }
+  /* PWP settlement on cancel (2026-07-29) — a cancel must also settle the
+     vouchers the order touched, and it must do so in the SAME unit of work as
+     the status flip: half-applied, a cancel either burns the customer's
+     vouchers on an order that is still live, or leaves a cancelled order's
+     vouchers AVAILABLE and redeemable (the bug this closes). PostgREST cannot
+     span two statements, so the cancel transition — and ONLY that transition —
+     runs through runScmPgCommand's real transaction; every other status move
+     keeps the existing single-statement path (and its D1/PostgREST
+     availability) untouched. */
+  const isCancel = toStatus === 'CANCELLED' && fromNorm !== 'CANCELLED';
 
-  // Audit row — best-effort. We keep writing the legacy mfg_so_status_changes
-  // row for now (the existing StatusTimeline panel still reads it) and ALSO
-  // emit the unified mfg_so_audit_log row for the PR-D History panel.
-  await sb.from('mfg_so_status_changes').insert({
-    company_id: activeCompanyId(c), // multi-company: match the SO's company
-    doc_no: docNo,
-    from_status: fromStatus,
-    to_status: toStatus,
-    changed_by: user.id,
-    notes: body.notes ?? null,
-  });
-  await recordSoAudit(sb, {
-    docNo,
-    action: 'UPDATE_STATUS',
-    actorId: user.id,
-    actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-    fieldChanges: [{ field: 'status', from: fromStatus, to: toStatus }],
-    statusSnapshot: toStatus,
-    note: body.notes ?? undefined,
-  });
+  const commitStatusChange = async (sbx: any): Promise<Response> => {
+    /* Read the voucher position INSIDE the transaction, and refuse before any
+       write — a blocked cancel must leave the order exactly as it was. */
+    const voucherPlan = isCancel ? await planSoCancelVouchers(sbx, docNo) : null;
+    if (voucherPlan?.blocked) return c.json(voucherPlan.blocked, 409);
+
+    const { data, error } = await sbx.from('mfg_sales_orders').update(patch)
+      .eq('doc_no', docNo)
+      .eq('version', currentVersion)
+      .eq('status', fromStatus)
+      .or(`edit_lease_token.is.null,edit_lease_expires_at.lt.${new Date().toISOString()}`)
+      .select('doc_no, status, proceeded_at, version').maybeSingle();
+    if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+    // Stale/missing docNo (deleted, wrong tab) matches 0 rows → a clean 404
+    // ("no longer found, refresh") instead of an opaque 500 (bug-hunt 2026-06-20).
+    if (!data) {
+      const { data: latest } = await sbx.from('mfg_sales_orders').select('version').eq('doc_no', docNo).maybeSingle();
+      if (!latest) return c.json({ error: 'not_found' }, 404);
+      return c.json(soVersionConflict(Number((latest as { version?: number }).version ?? currentVersion)), 409);
+    }
+
+    if (voucherPlan) await applySoCancelVouchers(sbx, docNo, voucherPlan);
+
+    // Audit row — best-effort on the ordinary path. Inside the cancel's atomic
+    // command recordSoAudit throws instead, so a cancel can never commit the
+    // voiding without the trail that explains it.
+    await sbx.from('mfg_so_status_changes').insert({
+      company_id: activeCompanyId(c), // multi-company: match the SO's company
+      doc_no: docNo,
+      from_status: fromStatus,
+      to_status: toStatus,
+      changed_by: user.id,
+      notes: body.notes ?? null,
+    });
+    await recordSoAudit(sbx, {
+      docNo,
+      action: 'UPDATE_STATUS',
+      actorId: user.id,
+      actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+      fieldChanges: [
+        { field: 'status', from: fromStatus, to: toStatus },
+        ...(voucherPlan ? soCancelVoucherAuditChanges(voucherPlan) : []),
+      ],
+      statusSnapshot: toStatus,
+      note: body.notes ?? undefined,
+    });
+
+    return c.json({
+      salesOrder: data,
+      version: currentVersion + 1,
+      ...(voucherPlan ? {
+        pwpVouchers: {
+          voided: voucherPlan.toVoid.map((r) => r.code),
+          returned: voucherPlan.toRestore.map((r) => r.code),
+        },
+      } : {}),
+    });
+  };
+
+  const statusResponse = isCancel
+    ? await runScmPgCommand(c, (tx) => commitStatusChange(tx))
+    : await commitStatusChange(sb);
+  if (!statusResponse.ok) return statusResponse;
 
   /* OCR self-learning — a DRAFT confirmed is the operator's verdict on the
      scan that produced it. The BACKGROUND scan path (enqueue → DRAFT) stamps
@@ -5527,7 +5569,9 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[customer-credit] so-cancel credit failed:', e); }
   }
 
-  return c.json({ salesOrder: data, version: currentVersion + 1 });
+  // The committed response (incl. any pwpVouchers summary) was built inside the
+  // command; the effects above are best-effort and never change it.
+  return statusResponse;
 });
 
 // ── DELETE /mfg-sales-orders/:docNo — discard a DRAFT ───────────────────────
