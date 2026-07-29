@@ -1,0 +1,48 @@
+name: Link PO to SO lines (DRY-RUN gated)
+
+# Stamp purchase_order_items.so_item_id so an existing PO binds to a sales order's
+# lines — the link the sofa drop-ship guard needs. Matches by item code, unambiguous
+# only, idempotent. DRY-RUN unless apply=1.
+on:
+  workflow_dispatch:
+    inputs:
+      po_number:
+        description: "Purchase Order number (e.g. 2990-PO-2607-009)"
+        required: true
+        type: string
+      so_doc:
+        description: "Sales Order doc no (e.g. 2990-SO-2607-005)"
+        required: true
+        type: string
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: link-po-to-so
+  cancel-in-progress: true
+
+jobs:
+  link:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/link-po-to-so.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PO_NUMBER: ${{ inputs.po_number }}
+          SO_DOC: ${{ inputs.so_doc }}
+          APPLY: ${{ inputs.apply }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

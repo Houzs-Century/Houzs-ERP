@@ -4,6 +4,7 @@ import { scopeNotExpiredSql } from "./projectAcl";
 import { isSensitiveChecklistItem, isSetupDismantleSection } from "./pmsAccess";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeMyState } from "../scm/lib/canonical-state";
+import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 
 // ── Codes ─────────────────────────────────────────────────────
 // Format: `YYYY-MM-{ORGANIZER}-{STATE}-{VENUE}-{BRAND}` — built from
@@ -238,6 +239,9 @@ export async function createProject(env: Env, input: CreateProjectInput) {
      Pinang'/'Kuala Lumpur'. Foreign state names (China provinces) pass
      through unchanged. */
   input.state = canonicalizeMyState(input.state ?? null);
+  // Fold showroom-venue aliases (e.g. "PJ Showroom") to the canonical "2990s PJ"
+  // at the write front door so every surface that later reads this row agrees.
+  input.venue = canonicalizeVenue(input.venue ?? null);
 
   // Derive code from identity fields. Throws if state/venue/brand are
   // missing; route layer converts to a 400. Organizer null OR
@@ -561,6 +565,10 @@ export async function patchProject(
      bucketing stops splitting the same physical state. */
   if ("state" in body) {
     body.state = canonicalizeMyState(body.state as string | null);
+  }
+  // Fold showroom-venue aliases to canonical on edit too (front door, same as create).
+  if ("venue" in body) {
+    body.venue = canonicalizeVenue(body.venue as string | null);
   }
 
   const sets: string[] = [];
@@ -1792,6 +1800,18 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
             p.created_by, cb.name as created_by_name,
             et.name as event_type_name,
             pf.rental, pf.total_sales, pf.contractor_cost,
+            -- Ledger-derived per-category finance sums (whole RM integers).
+            -- One grouped scan of the lines joined once (fl below), never a
+            -- per-row fetch. Mirrors the category buckets the Finance tab uses
+            -- in routes/projects.ts /finance/by-project. GP / NP / percent are
+            -- derived client-side so the list stays a thin projection.
+            COALESCE(fl.fin_revenue, 0) as fin_revenue,
+            COALESCE(fl.fin_cogs, 0) as fin_cogs,
+            COALESCE(fl.fin_cogs_matt_sofa, 0) as fin_cogs_matt_sofa,
+            COALESCE(fl.fin_cogs_bedframe, 0) as fin_cogs_bedframe,
+            COALESCE(fl.fin_cogs_accessories, 0) as fin_cogs_accessories,
+            COALESCE(fl.fin_rental, 0) as fin_rental,
+            COALESCE(fl.fin_total_cost, 0) as fin_total_cost,
             -- Computed progress %: done / (total − na). SUM(CASE…) for
             -- D1/SQLite compatibility — avoids the newer FILTER clause.
             (SELECT CASE
@@ -1843,6 +1863,19 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
        FROM projects p
        LEFT JOIN project_event_types et ON et.id = p.event_type_id
        LEFT JOIN project_finance pf ON pf.project_id = p.id
+       LEFT JOIN (
+              SELECT l.project_id,
+                     SUM(CASE WHEN l.kind = 'income' AND l.category = 'sales' THEN l.amount ELSE 0 END) as fin_revenue,
+                     SUM(CASE WHEN l.kind = 'cost' AND l.category IN ('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories') THEN l.amount ELSE 0 END) as fin_cogs,
+                     SUM(CASE WHEN l.kind = 'cost' AND l.category = 'cogs_matt_sofa' THEN l.amount ELSE 0 END) as fin_cogs_matt_sofa,
+                     SUM(CASE WHEN l.kind = 'cost' AND l.category = 'cogs_bedframe' THEN l.amount ELSE 0 END) as fin_cogs_bedframe,
+                     SUM(CASE WHEN l.kind = 'cost' AND l.category = 'cogs_accessories' THEN l.amount ELSE 0 END) as fin_cogs_accessories,
+                     SUM(CASE WHEN l.kind = 'cost' AND l.category = 'rental' THEN l.amount ELSE 0 END) as fin_rental,
+                     SUM(CASE WHEN l.kind = 'cost' THEN l.amount ELSE 0 END) as fin_total_cost
+                FROM project_finance_lines l
+               WHERE l.archived_at IS NULL
+               GROUP BY l.project_id
+            ) fl ON fl.project_id = p.id
        LEFT JOIN users pic ON pic.id = p.pic_id
        LEFT JOIN users cb ON cb.id = p.created_by
      ${whereSql}

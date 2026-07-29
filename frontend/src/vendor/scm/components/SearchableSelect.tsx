@@ -25,6 +25,7 @@ export function SearchableSelect({
   className,
   invalid = false,
   ariaLabel,
+  title,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -35,6 +36,8 @@ export function SearchableSelect({
   className?: string;
   invalid?: boolean;
   ariaLabel?: string;
+  /** Hover tooltip (e.g. why a field is locked). Falls back to the selected label. */
+  title?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -96,7 +99,7 @@ export function SearchableSelect({
           setSearch(e.target.value);
           setOpen(true);
         }}
-        title={selectedLabel || undefined}
+        title={title ?? (selectedLabel || undefined)}
         style={invalid && !disabled ? { borderColor: "var(--c-festive-b, #B8331F)" } : undefined}
       />
       {open && !disabled && menuPos &&
