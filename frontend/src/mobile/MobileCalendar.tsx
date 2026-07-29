@@ -747,18 +747,22 @@ function DaySheet({ year, month, day, events, onClose, onOpen }: {
                 onClick={() => onOpen(e.projectId)}
                 style={{ padding: "11px 13px", borderLeft: `4px solid ${e.kind === "task" && e.overdue ? OVERDUE_COLOR : e.color}`, cursor: "pointer" }}
               >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                  <span style={{ fontSize: 13.5, fontWeight: 800, color: e.kind === "task" && e.overdue ? "var(--red)" : "var(--ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.label}</span>
+                {/* Owner 2026-07-29: the day-sheet is where the full event name
+                    is meant to be READ — the month-grid bars can't fit it in a
+                    7-column phone layout. So the name + venue WRAP here (no
+                    nowrap/ellipsis), and the status pill aligns to the top. */}
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 800, color: e.kind === "task" && e.overdue ? "var(--red)" : "var(--ink)", lineHeight: 1.35, overflowWrap: "anywhere", minWidth: 0 }}>{e.label}</span>
                   {e.status && (
                     <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", padding: "3px 9px", borderRadius: 20, background: `color-mix(in srgb, ${e.color} 16%, white)`, color: "var(--brand-d)", flex: "none" }}>{e.status}</span>
                   )}
                 </div>
                 {(e.sub || e.organizer || (e.kind === "task" && e.initials)) && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 5, fontSize: 11.5, color: "var(--mut)", minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 7, marginTop: 5, fontSize: 11.5, color: "var(--mut)", minWidth: 0 }}>
                     {e.kind === "task" && e.initials && <span className="badge b-grey" style={{ flex: "none" }}>{e.initials}</span>}
-                    {e.sub && <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{e.sub}</span>}
+                    {e.sub && <span style={{ overflowWrap: "anywhere", minWidth: 0 }}>{e.sub}</span>}
                     {e.sub && e.organizer && <span style={{ opacity: .4, flex: "none" }}>·</span>}
-                    {e.organizer && <span style={{ whiteSpace: "nowrap", flex: "none" }}>{e.organizer}</span>}
+                    {e.organizer && <span style={{ flex: "none" }}>{e.organizer}</span>}
                   </div>
                 )}
               </div>
