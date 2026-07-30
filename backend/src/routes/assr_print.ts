@@ -689,17 +689,22 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 
     <tbody><tr><td>
 
-    <div class="doc-title" style="display: flex; align-items: flex-start; justify-content: space-between; gap: 6mm;">
-      <div>
-        <h1>${esc(docTitle)}</h1>
-        ${docSubtitle ? `<div class="subtitle">${esc(docSubtitle)}</div>` : ""}
-        <div class="ref">ASSR No. <b>${esc(cs.assr_no)}</b>${cs.ref_no ? ` · Ref No. <b>${esc(cs.ref_no)}</b>` : ""}</div>
+    <!-- The nowrap ref line lives BELOW the flex row on its own full-width
+         line — beside the status box the two can't fit A4 when the Ref No
+         is long (Nico 2026-07-30: the box spilled past the right margin). -->
+    <div class="doc-title">
+      <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 6mm;">
+        <div style="min-width: 0;">
+          <h1>${esc(docTitle)}</h1>
+          ${docSubtitle ? `<div class="subtitle">${esc(docSubtitle)}</div>` : ""}
+        </div>
+        <div class="sbox">
+          <div class="main">${esc(statusPillLabel)}</div>${subStatusLabel ? `
+          <div class="row"><span class="cap">Sub-Status</span><span class="val">${esc(subStatusLabel)}</span></div>` : ""}${!isSupplier && servicePillLabel && servicePillLabel !== "—" ? `
+          <div class="row"><span class="cap">Service</span><span class="val">${esc(servicePillLabel)}</span></div>` : ""}
+        </div>
       </div>
-      <div class="sbox">
-        <div class="main">${esc(statusPillLabel)}</div>${subStatusLabel ? `
-        <div class="row"><span class="cap">Sub-Status</span><span class="val">${esc(subStatusLabel)}</span></div>` : ""}${!isSupplier && servicePillLabel && servicePillLabel !== "—" ? `
-        <div class="row"><span class="cap">Service</span><span class="val">${esc(servicePillLabel)}</span></div>` : ""}
-      </div>
+      <div class="ref">ASSR No. <b>${esc(cs.assr_no)}</b>${cs.ref_no ? ` · Ref No. <b>${esc(cs.ref_no)}</b>` : ""}</div>
     </div>
     ${voidReason ? `
     <div style="margin: 3mm 0 0; border: 0.5pt solid #c0392b; background: #fdf2f0; border-radius: 1.5mm; padding: 2.4mm 3mm;">
