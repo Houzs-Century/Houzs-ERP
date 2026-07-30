@@ -1,0 +1,27 @@
+name: FX actual-paid basis check (read-only)
+
+# Owner-triggered follow-up to the foreign-rate-1 detector (R2): reports the
+# currency master rate, the PI's invoiced-vs-paid figures, and any payment
+# voucher's own cash-out rate — the three numbers that decide the TRUE cost
+# basis for a foreign document booked at rate 1. SELECT-only.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: fx-actual-paid-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: check (read-only)
+        working-directory: backend
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
+        run: node scripts/check-fx-actual-paid.mjs
