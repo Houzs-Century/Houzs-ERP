@@ -45,7 +45,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { PAYMENT_VOUCHER_AUDIT_LABELS } from './entity-audit-labels';
-import { resolveFxRate } from './fx-rate';
+import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -134,6 +134,10 @@ export const PaymentVoucherDetail = () => {
   /* Multi-currency (Phase 1-A) — MYR per 1 unit of the PV currency, string-typed.
      Seeded from the voucher on enter-edit; shown only for a foreign currency. */
   const [exchangeRate, setExchangeRate]           = useState('1');
+  /* RINGGIT IN, RATE OUT (2026-07-30) — the owner knows what left the bank, not
+     what the rate was. When set, the rate is DERIVED from this; the rate field stays
+     editable as the fallback. Mirrors PaymentVoucherNew. */
+  const [myrPaidSen, setMyrPaidSen]               = useState<number | null>(null);
   const [editLines, setEditLines]                 = useState<EditLine[]>([]);
   // Migration 0202 — edit allocations: applied amount per PI id (centi).
   const [allocAmounts, setAllocAmounts]           = useState<Record<string, number>>({});
@@ -151,6 +155,10 @@ export const PaymentVoucherDetail = () => {
     setVoucherDate(pv.voucher_date ?? '');
     setNotes(pv.notes ?? '');
     setExchangeRate(String(pv.exchange_rate ?? '1'));
+    /* Cleared on entering edit, never back-derived from the stored rate: the MYR
+       field means "this is what I actually paid", and inventing it from a rate would
+       put a figure nobody typed in front of the operator as if it were evidence. */
+    setMyrPaidSen(null);
     // Seed the applied-amount map from the loaded allocations (keyed by PI id).
     setAllocAmounts(Object.fromEntries(
       allocations.map((a) => [String(a.piId ?? a.pi_id ?? ''), Number(a.amountCenti ?? a.amount_centi ?? 0)]),
@@ -187,7 +195,18 @@ export const PaymentVoucherDetail = () => {
   const editCurrency = (supplierDetail?.currency ?? supplierRow?.currency ?? pv?.currency ?? 'MYR').toUpperCase();
   const currency  = isEditing ? editCurrency : viewCurrency;
   const isForeign = currency !== 'MYR';
-  useEffect(() => { if (isEditing && !isForeign) setExchangeRate('1'); }, [isEditing, isForeign]);
+  useEffect(() => { if (isEditing && !isForeign) { setExchangeRate('1'); setMyrPaidSen(null); } }, [isEditing, isForeign]);
+  /* Derived from the ringgit actually paid over the foreign face total, re-derived
+     when either moves. null (blank figure, or a zero total — the divide-by-zero)
+     leaves the rate alone rather than blanking it. */
+  const derivedRate = useMemo(
+    () => (isEditing && isForeign ? deriveRateFromMyrPaid(myrPaidSen, editTotalCenti) : null),
+    [isEditing, isForeign, myrPaidSen, editTotalCenti],
+  );
+  useEffect(() => {
+    if (derivedRate === null) return;
+    setExchangeRate(String(derivedRate));
+  }, [derivedRate]);
   const rate = resolveFxRate(isEditing ? exchangeRate : pv?.exchange_rate);
 
   /* ── Edit allocations (migration 0202) ────────────────────────────────────
@@ -406,8 +425,25 @@ export const PaymentVoucherDetail = () => {
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Exchange rate (MYR per 1 {editCurrency})</span>
                   <input type="number" min={0} step="0.000001" inputMode="decimal"
-                    value={exchangeRate} onChange={(e) => setExchangeRate(e.target.value)}
+                    value={exchangeRate}
+                    onChange={(e) => { setMyrPaidSen(null); setExchangeRate(e.target.value); }}
                     className={styles.fieldInput} style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }} />
+                </label>
+              )}
+              {/* Ringgit in, rate out — see PaymentVoucherNew for the reasoning. Also
+                  the figure the invoice adopts: posting this voucher writes the rate
+                  onto the foreign PI it knocks off and re-costs that PI's GRN. */}
+              {isForeign && (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Actual MYR paid (optional)</span>
+                  <MoneyInput bare valueSen={myrPaidSen ?? 0}
+                    onCommit={(sen) => setMyrPaidSen((sen ?? 0) > 0 ? (sen as number) : null)}
+                    inputClassName={styles.fieldInput} selectOnFocus />
+                  <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
+                    {derivedRate !== null
+                      ? <>Derived rate {derivedRate} MYR per 1 {editCurrency} — the invoice you knock off will adopt it</>
+                      : <>What actually left the bank for this {editCurrency} payment. The rate is worked out from it.</>}
+                  </span>
                 </label>
               )}
               <label className={styles.field}>

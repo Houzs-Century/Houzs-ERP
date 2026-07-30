@@ -12,7 +12,7 @@ import {
 import { postPiAccounting, reversePiAccounting, resyncPiAccounting } from './accounting';
 import { recostForPi, recostFromGrn } from '../lib/recost';
 import { normalizeCurrency, normalizeExchangeRate, masterRateForCurrency } from '../lib/fx';
-import { assertForeignRatePostable } from '../lib/fx-guard';
+import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
@@ -1651,6 +1651,21 @@ purchaseInvoices.patch('/:id', async (c) => {
   const { data: beforeRow } = await sb.from('purchase_invoices')
     .select(`${HEADER}, company_id`).eq('id', id).maybeSingle();
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
+  /* R2 EDIT-PATH GUARD (2026-07-30) — the sibling of the GRN PATCH guard. Flipping
+     this invoice to a foreign currency with no rate anywhere leaves exchange_rate at
+     the 1 it holds from having been ringgit, and recostFromGrn then folds the raw
+     foreign price into every lot this invoice bills. Fires ONLY on a real flip to a
+     non-MYR code; an all-MYR invoice and any edit that does not touch the currency
+     are unaffected. */
+  {
+    const rateGuard = await assertForeignRatePatchable(sb, {
+      fromCurrency: before.currency,
+      toCurrency: updates.currency,
+      operatorRate: body.exchangeRate,
+      docLabel: 'purchase invoice',
+    });
+    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+  }
   /* Migration 0082 — keep exchange_rate consistent with the effective currency
      (rate explicitly sent → normalise against it; currency flipped to MYR without
      a rate → reset to 1; else untouched). MYR ⇒ 1, a no-op. */
