@@ -10442,7 +10442,10 @@ function LogisticsCrewSection({
         showRemark
         remarkLabel="Service / Exchange — what"
       />
-      <ServicePhotos projectId={project.id} readOnly={readOnly} />
+      {/* Service photo upload moved to mobile-only (owner 2026-07-29): the
+          desktop keeps a read-only gallery, so force readOnly to drop the
+          "Add service photo" button here. Field staff attach on MobilePMS. */}
+      <ServicePhotos projectId={project.id} readOnly />
     </PanelSection>
   );
 }

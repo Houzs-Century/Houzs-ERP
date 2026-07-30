@@ -2681,6 +2681,51 @@ function SetupDismantle({
     } finally { setBusy(false); }
   };
 
+  // Service / Exchange photos (owner 2026-07-29): the mid-fair service/exchange
+  // photos are now captured on MOBILE only — the desktop keeps a read-only
+  // gallery. phase="service", same endpoints + owner/BD/logistic gate as the
+  // schedule block. No required remark (matches the old desktop upload).
+  const serviceShots = photos.filter((ph): ph is PhasePhoto & { r2_key: string } => ph.phase === "service" && !!ph.r2_key);
+  const serviceRef = useRef<HTMLInputElement | null>(null);
+  const [serviceView, setServiceView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
+  const uploadService = async (file: File) => {
+    if (file.size > 50 * 1024 * 1024) {
+      await notify({ title: "File too large", body: "Max 50MB.", tone: "error" });
+      return;
+    }
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    if (!ext) {
+      await notify({ title: "Missing extension", body: "The file needs an extension.", tone: "error" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const up = await api.putBinary<{ key: string; mime_type: string }>(
+        `/api/projects/${projectId}/phase-photos/upload?phase=service&ext=${encodeURIComponent(ext)}`,
+        buf,
+        file.type || "application/octet-stream",
+      );
+      await api.post(`/api/projects/${projectId}/phase-photos`, { phase: "service", r2_key: up.key, content_type: up.mime_type });
+      reloadPhotos();
+    } catch (e) {
+      await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
+    } finally {
+      setBusy(false);
+      if (serviceRef.current) serviceRef.current.value = "";
+    }
+  };
+  const removeService = async (ph: PhasePhoto) => {
+    if (!(await confirm({ title: "Remove this service photo?", confirmLabel: "Remove", danger: true }))) return;
+    setBusy(true);
+    try {
+      await api.del(`/api/projects/phase-photos/${ph.id}`);
+      reloadPhotos();
+    } catch (e) {
+      await notify({ title: "Remove failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
+    } finally { setBusy(false); }
+  };
+
   const anyData =
     project.setup_start_at || project.dismantle_start_at ||
     project.setup_driver_name || project.dismantle_driver_name ||
@@ -2762,6 +2807,59 @@ function SetupDismantle({
           )}
         </div>
         )}
+
+        {/* Service / Exchange photos (owner 2026-07-29): mobile-only capture of
+            the mid-fair service/exchange trip; desktop keeps a read-only gallery. */}
+        <div style={{ border: "1px dashed #d6d9d2", borderRadius: 10, padding: "9px 11px", marginBottom: 14 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#767b6e", marginBottom: 6 }}>Service / Exchange photos</div>
+          {serviceShots.length === 0 && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: canScheduleEdit ? 8 : 0 }}>No service photo yet.</div>}
+          {serviceShots.length > 0 && (
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: canScheduleEdit ? 8 : 0 }}>
+              {serviceShots.map((ph, i) => (
+                <div key={ph.id} style={{ position: "relative" }}>
+                  <div
+                    role="button"
+                    onClick={() => setServiceView({
+                      items: serviceShots.map((s): MediaItem => ({ r2_key: s.r2_key, content_type: mimeFromKey(s.r2_key), caption: s.caption ?? "Service photo" })),
+                      idx: i,
+                    })}
+                    style={{ borderRadius: 8, overflow: "hidden", border: "1px solid #e3e6e0", cursor: "pointer" }}
+                  >
+                    <R2Thumb r2Key={ph.r2_key} style={{ width: 84, height: 64 }} />
+                  </div>
+                  {canScheduleEdit && (
+                    <button
+                      aria-label="Remove service photo"
+                      disabled={busy}
+                      onClick={() => void removeService(ph)}
+                      style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", border: "1px solid #d6d9d2", background: "#fff", color: "#a13a34", fontSize: 12, lineHeight: 1, cursor: "pointer" }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {canScheduleEdit && (
+            <>
+              <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => serviceRef.current?.click()}>
+                Add service photo
+              </button>
+              <input ref={serviceRef} type="file" accept="image/*,video/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadService(f); }} />
+            </>
+          )}
+          {serviceView && (
+            <MediaLightbox
+              items={serviceView.items}
+              index={serviceView.idx}
+              onChange={(i) => setServiceView((v) => (v ? { ...v, idx: i } : v))}
+              onClose={() => setServiceView(null)}
+              baseUrl="/api/projects/attachments"
+              badge="Service"
+            />
+          )}
+        </div>
 
         <PhaseBlock
           kind="Setup"
