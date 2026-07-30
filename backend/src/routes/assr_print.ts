@@ -871,7 +871,8 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div style="font-size: 9.5pt; letter-spacing: .08em; text-transform: uppercase; color: #8a8578;">Product Code</div>
       <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12.2pt; font-weight: 700; margin-top: 0.8mm;">${esc((items as any[]).map((it) => it.item_code).filter(Boolean).join(", ") || "—")}</div>
       <div style="font-size: 9.5pt; letter-spacing: .08em; text-transform: uppercase; color: #8a8578; margin-top: 2.4mm;">Issue Details</div>
-      <div style="font-size: 11.0pt; color: #3a3a3a; margin-top: 0.8mm; line-height: 1.55;">${esc(cs.complaint_issue || "—")}${cs.issue_category ? ` &nbsp;·&nbsp; Category: ${esc(cs.issue_category)}` : ""}</div>
+      <div style="font-size: 11.0pt; font-weight: 700; color: #111; margin-top: 0.8mm; line-height: 1.55; white-space: pre-line;">${esc(cs.complaint_issue || "—")}</div>${cs.issue_category ? `
+      <div style="font-size: 10.0pt; color: #555; margin-top: 1.2mm;">Category: <b>${esc(cs.issue_category)}</b></div>` : ""}
     </div>
 
     <!-- items -->
