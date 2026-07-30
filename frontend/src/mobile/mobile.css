@@ -183,13 +183,16 @@
 .hz-m .sheet-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 16px calc(env(safe-area-inset-bottom) + 12px); border-top: 1px solid #e3e6e0; }
 
 /* ---- calendar ---- */
-.hz-m .cal-bar { display: flex; align-items: flex-start; gap: 5px; margin: 2px 5px; padding: 3px 8px; border-radius: 0 4px 4px 0; font-size: 10px; font-weight: 600; overflow: hidden; background-color: color-mix(in srgb,var(--bar) 14%,white); color: #111810; box-shadow: inset 3px 0 0 var(--bar); cursor: pointer; }
 /* Owner 2026-07-30: the FULL event name must be readable on the month grid
-   itself — bars WRAP (and grow tall) instead of ellipsising. Their grid rows
-   auto-size, so a long fair name just makes its week block taller. */
-.hz-m .cal-bar .cal-bar-lbl { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
+   itself — bars WRAP (and grow tall) instead of ellipsising; their grid rows
+   auto-size, so a long fair name just makes its week block taller. Shrunk
+   (9px font, tight padding/margins) so a Thu/Fri-start bar — only 2-3
+   columns wide before the week ends — still fits enough characters per
+   line to read the whole name. */
+.hz-m .cal-bar { display: flex; align-items: flex-start; gap: 4px; margin: 2px 3px; padding: 2px 5px; border-radius: 0 4px 4px 0; font-size: 9px; font-weight: 600; overflow: hidden; background-color: color-mix(in srgb,var(--bar) 14%,white); color: #111810; box-shadow: inset 3px 0 0 var(--bar); cursor: pointer; }
+.hz-m .cal-bar .cal-bar-lbl { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
 /* Task project-status dot — the same legend colours used at the top of the screen. */
-.hz-m .cal-bar .cal-bar-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; margin-top: 3px; }
+.hz-m .cal-bar .cal-bar-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; margin-top: 2px; }
 /* Overdue task — the "cancelled / late" red family (--bar is set to --red in JS). */
 .hz-m .cal-bar.overdue { color: var(--red); }
 /* Search → calendar jump: the tapped project's bar is ring-highlighted so the
