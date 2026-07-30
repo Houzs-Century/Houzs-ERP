@@ -33,6 +33,11 @@ export type DocumentDrillLine = {
   // (purchase docs only). Empty / absent → the Assigned SO + delivery cells show
   // a dash, exactly like the SO detail's Stock / Incoming PO columns.
   assignedSos?: OriginAssignment[];
+  // Does a STORED so_item_id back this line's SKU, or is the Assigned SO above
+  // only an MRP allocation? The two used to render identically apart from a
+  // dashed border, and the owner read a guess as a binding (2026-07-29). When
+  // false, the cell says so in words.
+  sourceLinked?: boolean;
 };
 
 // Permissive superset of the per-line fields the six document detail hooks
@@ -171,7 +176,8 @@ export function DocumentLinesExpansion({
                 {fmtRm(l.amountCenti)}
               </span>
               {showAssignment && (
-                <span className="flex min-w-0 flex-wrap gap-1">
+                <span className="flex min-w-0 flex-col gap-1">
+                  <span className="flex min-w-0 flex-wrap gap-1">
                   {assigned.length > 0 ? (
                     assigned.map((a) => {
                       // Floating (live MRP coverage) reads as a dashed chip with a
@@ -179,26 +185,28 @@ export function DocumentLinesExpansion({
                       // reads as a solid chip. Owner distinguishes the two.
                       const floating = a.locked === false;
                       const title = floating
-                        ? "Floating — live MRP coverage (updates until delivered)"
-                        : "Locked — delivered or raised from this Sales Order";
+                        ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
+                        : a.source === "delivered"
+                          ? "Locked — this PO's goods were delivered against this Sales Order"
+                          : "Locked — this PO line stores a link to this Sales Order";
                       const base =
-                        "rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink";
-                      const border = floating
-                        ? "border border-dashed border-border"
-                        : "border border-border-subtle bg-surface-2";
+                        "rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold";
+                      const tone = floating
+                        ? "border border-dashed border-border text-ink-secondary"
+                        : "border border-border-subtle bg-surface-2 text-accent-ink";
                       return onOpenSo ? (
                         <button
                           type="button"
                           key={a.soDocNo}
                           title={title}
                           onClick={() => onOpenSo(a.soDocNo)}
-                          className={cn(base, border, "hover:border-accent hover:text-accent")}
+                          className={cn(base, tone, "hover:border-accent hover:text-accent")}
                         >
                           {a.soDocNo}
                           {floating && <span className="text-ink-muted">{" ~"}</span>}
                         </button>
                       ) : (
-                        <span key={a.soDocNo} title={title} className={cn(base, border)}>
+                        <span key={a.soDocNo} title={title} className={cn(base, tone)}>
                           {a.soDocNo}
                           {floating && <span className="text-ink-muted">{" ~"}</span>}
                         </span>
@@ -206,6 +214,18 @@ export function DocumentLinesExpansion({
                     })
                   ) : (
                     <span className="text-[11px] text-ink-muted">—</span>
+                  )}
+                  </span>
+                  {/* The dashed border alone was too quiet: say in words that
+                      nothing in the database binds this line, so nobody reads a
+                      live allocation as a commitment (BUG-HISTORY 2026-07-31). */}
+                  {assigned.length > 0 && l.sourceLinked === false && (
+                    <span
+                      className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted"
+                      title="No stored link on the purchase order line — this is an MRP allocation only. Bind the line to its Sales Order line on the PO's edit screen."
+                    >
+                      MRP guess · not linked
+                    </span>
                   )}
                 </span>
               )}

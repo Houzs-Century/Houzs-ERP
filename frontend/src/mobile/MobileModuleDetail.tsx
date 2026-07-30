@@ -5,7 +5,7 @@ import { lineIdentity, orderLineIdentity } from "@2990s/shared";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "@2990s/shared/phone";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
-import { usePoSoCoverage, originsByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
+import { usePoSoCoverage, originsByCode, storedLinkSkus, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -174,13 +174,16 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned }: {
+function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLinked }: {
   name: string; sub?: string; qty: unknown; unitCenti: unknown; amountCenti: unknown;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
   // date, matched by SKU. Empty array → dash, mirroring the desktop columns.
   // Display-only on mobile (the phone shell doesn't route to the SO).
   assigned?: OriginAssignment[];
+  // false = no stored so_item_id behind the chip above; it is an MRP allocation
+  // only. Desktop and mobile say this the same way (one-product rule).
+  sourceLinked?: boolean;
 }) {
   const q = Number(qty);
   const qtyLabel = Number.isFinite(q) ? q : 0;
@@ -204,13 +207,22 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned }: {
             return (
               <span
                 key={a.soDocNo}
-                title={floating ? "Floating — live MRP coverage (updates until delivered)" : "Locked — delivered or raised from this Sales Order"}
-                style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#0c3f39", background: floating ? "transparent" : "#eef3f1", border: floating ? "1px dashed #b6c6c0" : "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px" }}
+                title={floating
+                  ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
+                  : a.source === "delivered"
+                    ? "Locked — this PO's goods were delivered against this Sales Order"
+                    : "Locked — this PO line stores a link to this Sales Order"}
+                style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: floating ? "#5c6357" : "#0c3f39", background: floating ? "transparent" : "#eef3f1", border: floating ? "1px dashed #b6c6c0" : "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px" }}
               >
                 {a.soDocNo}{a.deliveryDate ? ` · ${dmy(a.deliveryDate)}` : ""}{floating ? " ~" : ""}
               </span>
             );
           }) : <span style={{ fontSize: 11, color: "#9aa093" }}>—</span>}
+          {assigned.length > 0 && sourceLinked === false && (
+            <span style={{ flexBasis: "100%", fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093" }}>
+              MRP guess · not linked
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -1302,6 +1314,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
   const coverageType = COVERAGE_TYPE[moduleKey] ?? null;
   const covQ = usePoSoCoverage(coverageType, coverageType && id ? id : null);
   const originByCode = originsByCode(covQ.data);
+  const linkedSkus = storedLinkSkus(covQ.data);
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-module-detail", map.path, id],
     queryFn: () => authedFetch<Record<string, unknown>>(`${map.path}/${encodeURIComponent(id)}`),
@@ -1422,7 +1435,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
                 const l = map.line(it);
                 const code = String(((it?.material_code ?? it?.item_code) ?? "")).trim();
                 const assigned = coverageType ? (originByCode.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} />;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
           </div>

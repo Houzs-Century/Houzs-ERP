@@ -35,7 +35,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
-import { usePoSoCoverage, originsByCode } from "../../vendor/scm/lib/flow-queries";
+import { usePoSoCoverage, originsByCode, storedLinkSkus } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -583,6 +583,7 @@ function PoLinesExpansion({ id }: { id: string }) {
   const detailQ = usePurchaseOrderDetail(id);
   const covQ = usePoSoCoverage("po", id);
   const byCode = originsByCode(covQ.data);
+  const linkedSkus = storedLinkSkus(covQ.data);
   const items =
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => ({
@@ -594,6 +595,7 @@ function PoLinesExpansion({ id }: { id: string }) {
     qty: Number(l.qty ?? 0),
     amountCenti: l.line_total_centi ?? 0,
     assignedSos: byCode.get((l.material_code ?? "").trim()) ?? [],
+    sourceLinked: linkedSkus.has((l.material_code ?? "").trim()),
   }));
   return (
     <div className="flex flex-col gap-2">

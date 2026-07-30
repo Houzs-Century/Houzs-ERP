@@ -68,8 +68,20 @@ export const useDocumentFlow = (type: FlowNodeType | null, id: string | null) =>
    FLOATING MRP coverage (shifts as demand moves, evaporates on delivery). This
    is the exact reverse of the SO detail's covering-PO, so SO→PO and PO→SO can
    never disagree. Backend: GET /po-so-coverage/:type/:id. */
-export type OriginAssignment = { soDocNo: string; deliveryDate: string | null; locked?: boolean };
-export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[] };
+export type OriginAssignment = {
+  soDocNo: string;
+  deliveryDate: string | null;
+  locked?: boolean;
+  /* WHY this row exists: 'delivered' (the goods shipped to that SO), 'linked'
+     (a stored purchase_order_items.so_item_id / "From SOs" note) or 'mrp' (a
+     live allocation only). Absent on responses from an older backend. */
+  source?: 'delivered' | 'linked' | 'mrp';
+};
+/* `storedLink` — do this SKU's PO lines actually carry a stored so_item_id?
+   Separate from the assignments on purpose: a SKU can show an MRP-derived SO
+   while nothing in the database binds it, and reading that as a binding is the
+   2026-07-29 incident. Optional so an older backend degrades to "unknown". */
+export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[]; storedLink?: boolean };
 export type PoSoCoverageResp = { poNumber: string | null; poId: string | null; origins: SkuOrigin[] };
 
 export const usePoSoCoverage = (type: 'po' | 'grn' | 'pi' | null, id: string | null) =>
@@ -91,6 +103,17 @@ export const originsByCode = (resp: PoSoCoverageResp | undefined): Map<string, O
     if (o.itemCode) m.set(o.itemCode, o.assignments ?? []);
   }
   return m;
+};
+
+/* The SKUs whose PO lines carry a REAL stored so_item_id. Everything else that
+   shows an Assigned SO is showing an MRP allocation, which moves and can
+   evaporate — the two must not read the same on screen. */
+export const storedLinkSkus = (resp: PoSoCoverageResp | undefined): Set<string> => {
+  const s = new Set<string>();
+  for (const o of resp?.origins ?? []) {
+    if (o.itemCode && o.storedLink) s.add(o.itemCode);
+  }
+  return s;
 };
 
 /* Advisory candidate POs for an SO with NO linked purchase leg (pre-MRP orders,

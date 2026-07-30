@@ -96,11 +96,28 @@ async function resolvePo(
    date. `locked` = STATIC (delivered→DO-linked, or a stored raise-link); false /
    absent = FLOATING (live MRP coverage that shifts and evaporates on delivery).
    Clickable to the SO on the frontend. */
-export type OriginAssignment = { soDocNo: string; deliveryDate: string | null; locked?: boolean };
+export type OriginAssignment = {
+  soDocNo: string;
+  deliveryDate: string | null;
+  locked?: boolean;
+  /* WHICH of the three layers produced this row. `locked` alone says static vs
+     floating; `source` says WHY, which is what the UI needs to write the
+     difference in words rather than as a dashed border the owner can miss:
+       delivered — the goods physically shipped to that SO (linkage C)
+       linked    — a STORED purchase_order_items.so_item_id / "From SOs" note
+       mrp       — a live MRP allocation and nothing more (no stored link) */
+  source?: 'delivered' | 'linked' | 'mrp';
+};
 /* Per-SKU assignment: the covering PO line's material_code and every SO assigned
    to it. Only SKUs WITH an assignment appear (a bare stock SKU is absent, and
-   the UI shows a dash for it). */
-export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[] };
+   the UI shows a dash for it).
+
+   `storedLink` = at least one PO line for this SKU actually carries a stored
+   so_item_id. It is deliberately SEPARATE from the assignments: a SKU can show
+   an MRP-derived SO while its PO lines are all unlinked, and that combination —
+   an assignment on screen with nothing behind it in the database — is exactly
+   what the 2026-07-29 incident mistook for a binding. */
+export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[]; storedLink: boolean };
 
 type SoHeaderRow = {
   doc_no: string | null;
@@ -162,7 +179,7 @@ export function buildStoredOrigins(
     const docs = docsByCode.get(code);
     if (!docs || docs.size === 0) continue;
     out.set(code, sortAssignments([...docs].map((soDocNo) => ({
-      soDocNo, deliveryDate: ddByDoc.get(soDocNo) ?? null, locked: true,
+      soDocNo, deliveryDate: ddByDoc.get(soDocNo) ?? null, locked: true, source: 'linked' as const,
     }))));
   }
   return out;
@@ -210,7 +227,7 @@ export function buildDeliveredSoLock(
   const out = new Map<string, OriginAssignment[]>();
   for (const [code, docs] of docsByCode.entries()) {
     out.set(code, sortAssignments([...docs].map((soDocNo) => ({
-      soDocNo, deliveryDate: ddByDoc.get(soDocNo) ?? null, locked: true,
+      soDocNo, deliveryDate: ddByDoc.get(soDocNo) ?? null, locked: true, source: 'delivered' as const,
     }))));
   }
   return out;
@@ -226,6 +243,10 @@ export function mergeAssignments(
   doLock: Map<string, OriginAssignment[]>,
   storedOrigin: Map<string, OriginAssignment[]>,
   floating: Map<string, OriginAssignment[]>,
+  /* SKUs whose PO lines carry a stored so_item_id. Reported per SKU so the UI
+     can distinguish "the database binds this" from "MRP currently thinks this",
+     independently of which layer happened to win the precedence. */
+  linkedSkus: Set<string> = new Set(),
 ): SkuOrigin[] {
   const wantedSkus = new Set((poSkus ?? []).map((s) => (s ?? '').trim()).filter(Boolean));
   const out: SkuOrigin[] = [];
@@ -235,7 +256,7 @@ export function mergeAssignments(
       ?? (storedOrigin.get(code)?.length ? storedOrigin.get(code) : null)
       ?? (floating.get(code)?.length ? floating.get(code) : null);
     if (!picked || picked.length === 0) continue;
-    out.push({ itemCode: code, assignments: picked });
+    out.push({ itemCode: code, assignments: picked, storedLink: linkedSkus.has(code) });
   }
   return out.sort((a, b) => a.itemCode.localeCompare(b.itemCode));
 }
@@ -374,6 +395,15 @@ poSoCoverage.get('/:type/:id', async (c) => {
     ).eq('purchase_order_id', po.poId);
     const poSkus = ((poLines ?? []) as Array<{ material_code: string | null }>)
       .map((l) => l.material_code);
+    /* Which SKUs are STORED-linked at the row level. Not the same question as
+       "did the stored-origin layer win": a delivered SKU outranks it, and an
+       MRP-only SKU can show an SO with no stored link at all. */
+    const linkedSkus = new Set(
+      ((poLines ?? []) as Array<{ material_code: string | null; so_item_id: string | null }>)
+        .filter((l) => !!l.so_item_id)
+        .map((l) => (l.material_code ?? '').trim())
+        .filter(Boolean),
+    );
     const soItemIds = [
       ...new Set(
         ((poLines ?? []) as Array<{ so_item_id: string | null }>)
@@ -433,7 +463,7 @@ poSoCoverage.get('/:type/:id', async (c) => {
         [...byCode.entries()].map(([code, inner]) => [
           code,
           sortAssignments([...inner.entries()].map(([soDocNo, deliveryDate]) => ({
-            soDocNo, deliveryDate, locked: false,
+            soDocNo, deliveryDate, locked: false, source: 'mrp' as const,
           }))),
         ]),
       );
@@ -463,7 +493,7 @@ poSoCoverage.get('/:type/:id', async (c) => {
       }
     }
 
-    const origins = mergeAssignments(poSkus, doLockRes.bySku, storedOrigin, floating);
+    const origins = mergeAssignments(poSkus, doLockRes.bySku, storedOrigin, floating, linkedSkus);
     return c.json({ poNumber: po.poNumber, poId: po.poId, origins });
   } catch (e) {
     return c.json({ error: 'load_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
