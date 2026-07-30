@@ -27,7 +27,18 @@
 //     + scopeToCompany on the list; JE + JE-lines inherit the PV's company_id.
 //   * doc numbers via companyDocPrefix + mintMonthlyDocNo (max+1, self-healing)
 //     with insertWithDocNoRetry on the header insert.
-//   * FX removed (no currencies master): currency defaults MYR, rate 1.
+//   * FX: the currencies master landed with migration 0082, so a PV carries a real
+//     currency + exchange_rate (MYR per 1 unit of it); MYR still defaults to rate 1,
+//     a strict no-op.
+//
+// THE PAYMENT DEFINES THE FX RATE (owner-approved, 2026-07-30). Houzs pays its
+// China suppliers BEFORE the goods and the invoice arrive, so the rate is a fact
+// about the payment, not a field to maintain. When this voucher's knock-off settles
+// a foreign PI that carries no real rate (stored 1 — audit finding R2), the
+// voucher's rate is written onto that invoice and recostFromGrn re-costs the GRN
+// behind it. An invoice that already carries a DIFFERENT deliberate rate is left
+// alone and the disagreement reported. The whole decision lives in
+// lib/pv-rate-adoption.ts, pure and unit-tested; see docs/modules/payment-voucher.md.
 //
 // Idempotent: a post guards on an existing ACTIVE (non-reversed) JE for
 // source_type='PV' + the pv_number; a cancel reverses that JE (contra) keyed on
@@ -44,6 +55,8 @@ import { normalizeCurrency, normalizeExchangeRate, masterRateForCurrency } from 
 import { todayMyt } from '../lib/my-time';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
 import { settlePiPaidCenti } from '../lib/pi-settlement';
+import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
+import { recostFromGrn } from '../lib/recost';
 
 export const paymentVouchers = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentVouchers.use('*', supabaseAuth);
@@ -442,7 +455,10 @@ paymentVouchers.patch('/:id', async (c) => {
    POST /:id/post — write the balanced GL entry, flip DRAFT → POSTED
    ──────────────────────────────────────────────────────────────────────── */
 
-paymentVouchers.post('/:id/post', async (c) => {
+/* Exported for the same reason cancelPaymentVoucherHandler is: the supabaseAuth
+   bridge cannot run in the vitest harness, so the tests mount the handler on a bare
+   Hono app with a fake PostgREST client (precedent: tests/companyScopeHardening.test.ts). */
+export const postPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
   }
@@ -569,6 +585,14 @@ paymentVouchers.post('/:id/post', async (c) => {
      idempotency guard above early-returns on a re-post). Cap each allocation at
      the PI's remaining outstanding. Best-effort. FREIGHT / OTHER settle nothing. */
   const overAllocated: string[] = [];
+  /* "The payment defines the FX rate" (owner, 2026-07-30) — see lib/pv-rate-adoption.
+     rateAdopted names the invoices whose un-rated foreign rate this payment filled
+     in (and whose GRN was therefore re-costed); rateMismatch names the ones that
+     already carried a DIFFERENT deliberate rate and were LEFT ALONE. Both are
+     handed back to the caller for the same reason overAllocated is: they are money
+     facts an operator has to be able to see, not implementation detail. */
+  const rateAdopted: string[] = [];
+  const rateMismatch: string[] = [];
   if (normalizePurpose(pv.purpose) === 'SUPPLIER_PAYMENT') {
     const { data: allocs } = await sb.from('pv_allocations')
       .select('id, pi_id, amount_centi').eq('pv_id', id);
@@ -608,14 +632,145 @@ paymentVouchers.post('/:id/post', async (c) => {
         /* eslint-disable-next-line no-console */
         console.error('[pv-settle-pi] settlement failed — PI left unsettled:', pv.pv_number, 'pi', a.pi_id, settled.reason);
       }
+
+      /* ── THE PAYMENT DEFINES THE FX RATE (owner-approved, 2026-07-30) ────────
+         The knock-off is the moment the true MYR-per-foreign-unit figure becomes
+         known, so it is the moment an un-rated foreign invoice gets its rate and
+         its GRN gets re-costed. The whole decision is in planPvRateAdoption, which
+         is pure — see lib/pv-rate-adoption.ts for the table and the reasoning.
+
+         BEST-EFFORT BY CONTRACT, and this is not a preference. By the time we are
+         here the journal entry is committed and the money has left the bank; there
+         is no transaction to roll back into and nothing about a costing refresh
+         justifies 500-ing a payment that already happened. So every failure below
+         is logged and stepped over, exactly as the settle failure above is. */
+      if (settled.appliedCenti > 0) {
+        try {
+          const { data: piRaw } = await sb.from('purchase_invoices')
+            .select('id, invoice_number, currency, exchange_rate, grn_id').eq('id', a.pi_id).maybeSingle();
+          const piRow = piRaw as {
+            id: string; invoice_number: string | null; currency: string | null;
+            exchange_rate: string | number | null; grn_id: string | null;
+          } | null;
+          if (piRow) {
+            const plan = planPvRateAdoption({
+              appliedCenti: settled.appliedCenti,
+              pvCurrency: pv.currency,
+              pvExchangeRate: pv.exchange_rate,
+              pi: {
+                piId: piRow.id,
+                docNo: piRow.invoice_number,
+                currency: piRow.currency,
+                exchangeRate: piRow.exchange_rate,
+                grnId: piRow.grn_id,
+              },
+            });
+            const piLabel = piRow.invoice_number ?? a.pi_id;
+
+            if (plan.action === 'adopt') {
+              const { error: rateErr } = await sb.from('purchase_invoices')
+                .update({ exchange_rate: plan.rate, updated_at: new Date().toISOString() })
+                .eq('id', a.pi_id);
+              if (rateErr) {
+                /* eslint-disable-next-line no-console */
+                console.error('[pv-fx-rate] rate adoption write failed — invoice left un-rated:',
+                  pv.pv_number, 'pi', piLabel, rateErr.message);
+              } else {
+                rateAdopted.push(`${piLabel}: rate ${plan.oldRate} -> ${plan.rate} (from ${pv.pv_number})`);
+                /* Audited against the PURCHASE INVOICE, not the voucher: the invoice
+                   is the row that changed, so this is where "who changed this PI's
+                   rate and on what evidence" belongs. The note carries the voucher
+                   number — the evidence itself. NOTE: the PI detail page does not
+                   mount EntityHistoryPanel yet (only GRN / PV / stock take / stock
+                   transfer do), so this row is correct by data model but not yet
+                   READABLE — which is why the voucher-side summary row below exists
+                   as well. A PI History drawer is the obvious follow-up. */
+                await recordEntityAudit(sb, {
+                  entityType: 'PURCHASE_INVOICE',
+                  entityId: a.pi_id,
+                  entityDocNo: piRow.invoice_number ?? null,
+                  action: 'UPDATE',
+                  actor: c.get('houzsUser'),
+                  companyId,
+                  note: `Exchange rate adopted from payment voucher ${pv.pv_number}`,
+                  fieldChanges: compactChanges([
+                    fieldChange('exchangeRate', plan.oldRate, plan.rate),
+                    fieldChange('currency', null, normalizeCurrency(piRow.currency)),
+                    fieldChange('rateSourcePv', null, pv.pv_number),
+                    fieldChange('appliedCenti', null, settled.appliedCenti),
+                  ]),
+                });
+                /* Re-cost the GRN this invoice bills so the corrected rate reaches
+                   the FIFO lot and cascades to consumptions / DO lines / SI lines.
+                   Its own try/catch: recostFromGrn is best-effort internally, but a
+                   throw here must not escape into the payment's response. */
+                if (plan.grnId) {
+                  try {
+                    await recostFromGrn(sb, plan.grnId);
+                  } catch (e) {
+                    /* eslint-disable-next-line no-console */
+                    console.error('[pv-fx-rate] recost after rate adoption failed — rate stored, lots stale:',
+                      pv.pv_number, 'pi', piLabel, 'grn', plan.grnId, e);
+                  }
+                }
+              }
+            } else if (plan.action === 'report_mismatch') {
+              /* The invoice carries a rate somebody entered on purpose that
+                 disagrees with what was actually paid. Overwriting it is a policy
+                 call the owner has not made, and a partial payment at a second rate
+                 is legitimate — so the invoice is left exactly as it is, and the
+                 disagreement is surfaced instead of resolved. */
+              /* eslint-disable-next-line no-console */
+              console.error('[pv-fx-rate] invoice rate differs from the payment rate — invoice LEFT UNCHANGED:',
+                pv.pv_number, 'pi', piLabel, 'invoice rate', plan.piRate, 'payment rate', plan.pvRate);
+              rateMismatch.push(`${piLabel}: invoice rate ${plan.piRate}, payment rate ${plan.pvRate} — invoice rate kept`);
+            }
+          }
+        } catch (e) {
+          /* eslint-disable-next-line no-console */
+          console.error('[pv-fx-rate] rate adoption skipped after an unexpected failure — payment stands:',
+            pv.pv_number, 'pi', a.pi_id, e);
+        }
+      }
     }
+  }
+
+  /* A SECOND audit row, on the VOUCHER this time, summarising the rate work.
+     Not a duplicate of the per-invoice rows above, and needed for a practical
+     reason: the Purchase Invoice detail page has no History drawer yet (only GRN,
+     PV, stock take and stock transfer mount EntityHistoryPanel), so the invoice-side
+     rows are recorded correctly but not yet READABLE. The voucher's own History is
+     where the owner will look, and "this payment set the rate on PI-x" belongs there
+     regardless — the voucher is the evidence. Written after the loop because it
+     summarises it; the POST row above is untouched so a settlement hiccup can still
+     never cost us the record that the GL posted. */
+  if (rateAdopted.length > 0 || rateMismatch.length > 0) {
+    await recordEntityAudit(sb, {
+      entityType: 'PAYMENT_VOUCHER',
+      entityId: id,
+      entityDocNo: pv.pv_number,
+      action: 'UPDATE',
+      actor: c.get('houzsUser'),
+      companyId,
+      statusSnapshot: 'POSTED',
+      note: 'Exchange rate propagated from this payment to the invoices it settled',
+      fieldChanges: compactChanges([
+        fieldChange('currency', null, normalizeCurrency(pv.currency)),
+        fieldChange('exchangeRate', null, roundRate6(pv.exchange_rate)),
+        fieldChange('fxRateAdoptedOnPi', null, rateAdopted.length > 0 ? rateAdopted.join('; ') : null),
+        fieldChange('fxRateMismatchOnPi', null, rateMismatch.length > 0 ? rateMismatch.join('; ') : null),
+      ]),
+    });
   }
 
   return c.json({
     ok: true, jeNo: je.je_no, jeId: je.id, totalSen,
     ...(overAllocated.length > 0 ? { overAllocated } : {}),
+    ...(rateAdopted.length > 0 ? { rateAdopted } : {}),
+    ...(rateMismatch.length > 0 ? { rateMismatch } : {}),
   });
-});
+};
+paymentVouchers.post('/:id/post', postPaymentVoucherHandler);
 
 /* ────────────────────────────────────────────────────────────────────────
    POST /:id/cancel — reverse the JE (if posted), flip → CANCELLED.
@@ -634,10 +789,16 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur } = await scopeToCompanyId(
-    sb.from('payment_vouchers').select('id, status, pv_number, purpose').eq('id', id), co.companyId,
+    /* currency + exchange_rate join the select for the FX-rate retention notice at
+       the end of this handler — the voucher's own rate is what identifies the
+       invoices whose rate it established. */
+    sb.from('payment_vouchers').select('id, status, pv_number, purpose, currency, exchange_rate, company_id').eq('id', id), co.companyId,
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
-  const head = cur as { id: string; status: string; pv_number: string; purpose: string | null };
+  const head = cur as {
+    id: string; status: string; pv_number: string; purpose: string | null;
+    currency: string | null; exchange_rate: string | number | null; company_id: number | null;
+  };
   // Idempotent — already cancelled, echo back.
   if (head.status === 'CANCELLED') return c.json({ paymentVoucher: { id, status: 'CANCELLED' } });
 
@@ -704,12 +865,60 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   /* PV→PI settlement reversal (0202) — un-apply what this PV settled. Decrement
      each linked PI's paid_centi by the EXACT applied_centi recorded at post.
      Only a SUPPLIER_PAYMENT PV ever moved paid_centi. Best-effort. */
+  /* FX-RATE RETENTION on cancel (2026-07-30) — the invoices still carrying the rate
+     this voucher established, named so the History panel says so out loud. See
+     lib/pv-rate-adoption.ts (isRateRetainedFromPv) for WHY the rate and the re-cost
+     are deliberately NOT reverted: the only value to revert to is 1, which is the
+     R2 mis-cost itself, so "undoing" it would knowingly push a 1:1 foreign basis
+     back through every lot, DO and SI the recost had corrected. */
+  const fxRateRetained: string[] = [];
   if (normalizePurpose(head.purpose) === 'SUPPLIER_PAYMENT') {
     const { data: allocs } = await sb.from('pv_allocations')
       .select('id, pi_id, applied_centi').eq('pv_id', id);
     for (const a of (allocs ?? []) as Array<{ id: string; pi_id: string; applied_centi: number }>) {
       const applied = Math.max(0, Number(a.applied_centi ?? 0));
       if (applied <= 0) continue;
+
+      /* Read BEFORE the reversal: the settle moves paid_centi and status, never the
+         rate, but reading first keeps this notice about the state the operator was
+         looking at when they pressed Cancel. */
+      try {
+        const { data: piRaw } = await sb.from('purchase_invoices')
+          .select('invoice_number, currency, exchange_rate').eq('id', a.pi_id).maybeSingle();
+        const piRow = piRaw as { invoice_number: string | null; currency: string | null; exchange_rate: string | number | null } | null;
+        if (piRow && isRateRetainedFromPv({
+          pvCurrency: head.currency,
+          pvExchangeRate: head.exchange_rate,
+          piCurrency: piRow.currency,
+          piExchangeRate: piRow.exchange_rate,
+        })) {
+          const piLabel = piRow.invoice_number ?? a.pi_id;
+          fxRateRetained.push(`${piLabel}: rate ${roundRate6(piRow.exchange_rate)} kept`);
+          /* On the INVOICE's own history, because that is where a reader who saw
+             "rate adopted from PV-xxxx" will go looking when the voucher is
+             cancelled. Silence there reads as "the rate went back". */
+          await recordEntityAudit(sb, {
+            entityType: 'PURCHASE_INVOICE',
+            entityId: a.pi_id,
+            entityDocNo: piRow.invoice_number ?? null,
+            action: 'UPDATE',
+            actor: c.get('houzsUser'),
+            companyId: head.company_id ?? null,
+            note: `Payment voucher ${cancelled.pv_number} cancelled — the exchange rate it established is RETAINED and inventory is not re-costed back`,
+            /* NOT recorded as an exchangeRate from->to pair: nothing moved, and
+               fieldChange collapses an equal pair to null anyway. The point of this
+               row is that the value STAYED, so it is recorded as its own field. */
+            fieldChanges: compactChanges([
+              fieldChange('exchangeRateRetained', null, roundRate6(piRow.exchange_rate)),
+              fieldChange('fxRateRetainedFromPv', null, cancelled.pv_number),
+            ]),
+          });
+        }
+      } catch (e) {
+        /* eslint-disable-next-line no-console */
+        console.error('[pv-fx-rate] retention notice skipped — cancel continues:', cancelled.pv_number, 'pi', a.pi_id, e);
+      }
+
       const reversed = await settlePiPaidCenti(sb, a.pi_id, -applied);
       /* Only zero the allocation when the reversal actually landed. Clearing it
          after a failed settle would erase the one record of how much is still
@@ -734,7 +943,10 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
     }
   }
 
-  return c.json({ paymentVoucher: { id: cancelled.id, status: cancelled.status } });
+  return c.json({
+    paymentVoucher: { id: cancelled.id, status: cancelled.status },
+    ...(fxRateRetained.length > 0 ? { fxRateRetained } : {}),
+  });
 };
 paymentVouchers.post('/:id/cancel', cancelPaymentVoucherHandler);
 

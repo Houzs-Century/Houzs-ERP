@@ -70,14 +70,24 @@ export type ForeignRateBlock = {
   message: string;
 };
 
-/** The 422 body an offending POST receives — actionable, never a 500. */
+/**
+ * The 422 body an offending POST receives — actionable, never a 500.
+ *
+ * The message names BOTH remedies because there are genuinely two, and which one
+ * applies depends on where the operator is in the cycle. Houzs pays its China
+ * suppliers BEFORE the goods and the invoice arrive, so most of the time the real
+ * rate is already knowable from a bank transfer — recording that payment voucher is
+ * the better answer than typing a rate, because the voucher's rate then flows onto
+ * the invoice and re-costs the GRN on its own (lib/pv-rate-adoption.ts). Telling the
+ * operator only to "set the rate" points them at the harder, guessier of the two.
+ */
 export function foreignRateBlockBody(currency: unknown, docLabel: string): ForeignRateBlock {
   const cur = normalizeCurrency(currency);
   return {
     error: 'foreign_rate_unset',
     currency: cur,
     doc: docLabel,
-    message: `Set the ${cur} exchange rate before posting this ${docLabel}.`,
+    message: `No ${cur} exchange rate is set, so this ${docLabel} would be costed as if ${cur} were ringgit. Set the ${cur} rate in the currency master, enter the rate on this ${docLabel}, or record the supplier payment first — a payment voucher's rate is adopted by the invoice it settles.`,
   };
 }
 
@@ -120,6 +130,75 @@ export async function assertForeignRatePostable(
   const masterRate = await readMasterRateRaw(sb, currency);
   if (isUnratedForeignPost({ currency, operatorRate: args.operatorRate, masterRate })) {
     return { ok: false, body: foreignRateBlockBody(currency, args.docLabel) };
+  }
+  return { ok: true };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   THE EDIT-PATH HOLE (2026-07-30) — the POST guard above closed the create
+   boundary, and the very next door was left open.
+
+   `PATCH /grns/:id` and `PATCH /purchase-invoices/:id` both accept `currency`. Both
+   derive exchange_rate from it with the SAME three-branch rule: a rate explicitly
+   sent is normalised; a flip TO MYR resets the rate to 1; and *neither* leaves the
+   stored rate UNTOUCHED (grns.ts, purchase-invoices.ts). So switching an MYR
+   document to RMB without sending a rate leaves exchange_rate sitting at 1 — the
+   value it held because the document used to be ringgit — and nothing looks at the
+   currency master at all. That is bit-for-bit the R2 mis-cost, reached by editing
+   instead of creating, and the POST guard never sees it.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The EDIT predicate — pure and DB-free, like its POST sibling.
+ *
+ * Fires ONLY on a genuine currency FLIP to a foreign code with no rate anywhere:
+ *
+ *   · currency not being changed by this patch  → never blocked. The document's rate
+ *     was already gated at create; re-litigating it would refuse edits to unrelated
+ *     fields (notes, warehouse, supplier) on every foreign document in the system.
+ *   · flipping TO MYR                           → never blocked (the routes pin rate 1).
+ *   · flipping FROM MYR to MYR, or no-op flip    → never blocked.
+ *   · operator sent a positive finite rate      → allowed, same courtesy as POST.
+ *   · otherwise the stored rate is about to describe the WRONG currency, so the
+ *     currency master is the only source left; if that is unset → block.
+ *
+ * Deliberately narrow. An all-MYR document can never trip it (the only MYR path
+ * through here returns false immediately), which matters because all-MYR is the
+ * overwhelming majority of documents in this system.
+ */
+export function isUnratedForeignCurrencyFlip(args: {
+  /** The currency stored on the row BEFORE this patch. */
+  fromCurrency: unknown;
+  /** The currency the patch sets, or undefined when the patch does not touch it. */
+  toCurrency: unknown;
+  operatorRate: unknown;
+  masterRate: unknown;
+}): boolean {
+  if (args.toCurrency === undefined || args.toCurrency === null) return false; // not a flip
+  const to = normalizeCurrency(args.toCurrency);
+  if (to === MYR) return false;
+  if (normalizeCurrency(args.fromCurrency) === to) return false; // same currency, not a flip
+  if (isPositiveFiniteRate(args.operatorRate)) return false;
+  return !isPositiveFiniteRate(args.masterRate);
+}
+
+/**
+ * DB-aware PATCH-boundary check. Mirrors assertForeignRatePostable and returns the
+ * same 422 body, so the two boundaries speak with one voice. `toCurrency` must be
+ * undefined when the patch does not carry a currency.
+ */
+export async function assertForeignRatePatchable(
+  sb: { from: (t: string) => any },
+  args: { fromCurrency: unknown; toCurrency: unknown; operatorRate: unknown; docLabel: string },
+): Promise<{ ok: true } | { ok: false; body: ForeignRateBlock }> {
+  if (args.toCurrency === undefined || args.toCurrency === null) return { ok: true };
+  const to = normalizeCurrency(args.toCurrency);
+  if (to === MYR) return { ok: true };
+  if (normalizeCurrency(args.fromCurrency) === to) return { ok: true };
+  if (isPositiveFiniteRate(args.operatorRate)) return { ok: true };
+  const masterRate = await readMasterRateRaw(sb, to);
+  if (isUnratedForeignCurrencyFlip({ ...args, toCurrency: to, masterRate })) {
+    return { ok: false, body: foreignRateBlockBody(to, args.docLabel) };
   }
   return { ok: true };
 }

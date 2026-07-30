@@ -35,3 +35,39 @@ export function resolveFxRate(raw: unknown): number {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
+
+/**
+ * Turn "I paid RM 13,404.50 for a ¥21,625.00 invoice" into the exchange rate.
+ *
+ * WHY: nobody at Houzs thinks in rates. They pay a China supplier BEFORE the goods
+ * and the invoice arrive, and what they know afterwards is the figure on the bank
+ * transfer — the ringgit that left. `0.619838` is not a number anyone has; it is a
+ * number they would have to work out, and working it out by hand is how a rate ends
+ * up wrong by a factor of ten on a document that silently re-costs inventory.
+ *
+ * Both inputs are INTEGER SEN / CENTI in their own currency, which is how every
+ * money field in this codebase travels. The rate is MYR per 1 unit of the foreign
+ * currency, so the units cancel and the division is simply myr / foreign.
+ *
+ * Returns null — never 0, never NaN, never Infinity — for anything that is not a
+ * derivable rate: a zero or missing foreign total (the divide-by-zero), a
+ * zero/blank MYR figure (the operator has not typed it yet, which must not be read
+ * as "the rate is 0"), or a negative. The caller leaves the existing rate alone on
+ * null; a 0 folded into the rate field would be resolveFxRate'd back to 1 and post
+ * the raw foreign figure as ringgit, which is exactly the mis-cost this whole
+ * feature exists to stop.
+ *
+ * Rounded to 6 decimals to match the stored numeric(14,6) — so the rate the screen
+ * shows is the rate the database will hold, not one that shifts on save.
+ */
+export function deriveRateFromMyrPaid(
+  myrPaidSen: number | null | undefined,
+  foreignFaceCenti: number | null | undefined,
+): number | null {
+  const myr = Number(myrPaidSen);
+  const foreign = Number(foreignFaceCenti);
+  if (!Number.isFinite(myr) || myr <= 0) return null;
+  if (!Number.isFinite(foreign) || foreign <= 0) return null;
+  const rate = Math.round((myr / foreign) * 1e6) / 1e6;
+  return rate > 0 ? rate : null;
+}

@@ -13,7 +13,7 @@ import {
 } from '../shared/so-line-display';
 import { recostFromGrn } from '../lib/recost';
 import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurrency } from '../lib/fx';
-import { assertForeignRatePostable } from '../lib/fx-guard';
+import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
@@ -2395,6 +2395,21 @@ grns.patch('/:id', async (c) => {
   }
   // currency is stored upper-cased like the create paths.
   if (updates.currency !== undefined) updates.currency = normalizeCurrency(updates.currency);
+  /* R2 EDIT-PATH GUARD (2026-07-30) — flipping this GRN to a foreign currency with no
+     rate anywhere would leave exchange_rate at the 1 it holds because the GRN used to
+     be ringgit, and capitalise the raw foreign figure into the lot. The create
+     boundary has been guarded since the R2 fix; this is the same hole reached by
+     editing. Fires ONLY on a real flip to a non-MYR code — an all-MYR GRN and any
+     edit that does not touch the currency are untouched. */
+  {
+    const rateGuard = await assertForeignRatePatchable(sb, {
+      fromCurrency: before.currency,
+      toCurrency: updates.currency,
+      operatorRate: body.exchangeRate,
+      docLabel: 'GRN',
+    });
+    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
+  }
   /* Migration 0082 — landed-cost basis. Normalise the enum on write. */
   let methodChanged = false;
   if (body.allocationMethod !== undefined) {

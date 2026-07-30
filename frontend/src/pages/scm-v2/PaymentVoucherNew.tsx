@@ -38,7 +38,7 @@ import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { resolveFxRate } from './fx-rate';
+import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -105,8 +105,17 @@ export const PaymentVoucherNew = () => {
   /* Multi-currency (Phase 1-A) — MYR per 1 unit of the PV currency, string-typed.
      Shown only for a foreign currency; MYR posts 1:1 (no-op). */
   const [exchangeRate, setExchangeRate]           = useState<string>('1');
-  /* Track a manual rate edit so the currency-master auto-fill stops overwriting it. */
-  const [rateTouched, setRateTouched]             = useState<boolean>(false);
+  /* WHERE THE RATE CAME FROM. Three sources, and the effect below only overwrites
+     the rate for the one that is still 'auto':
+       'auto' — the currency master's rate_to_myr (the old rateTouched=false case);
+       'myr'  — DERIVED from the ringgit the operator says actually left the bank;
+       'rate' — typed straight into the rate field.
+     The owner does not think in rates: he knows "I paid RM 13,404 for this ¥21,625
+     invoice". 'myr' is that input; 'rate' stays as the fallback for anyone who does
+     think in rates, and the rate field remains editable either way. */
+  const [rateSource, setRateSource]               = useState<'auto' | 'rate' | 'myr'>('auto');
+  /* The actual MYR paid, integer sen. null = not entered. */
+  const [myrPaidSen, setMyrPaidSen]               = useState<number | null>(null);
   /* Multi-currency (Phase 1-A) — operator-chosen currency; defaults to the linked
      supplier's currency (below). */
   const [currencyOverride, setCurrencyOverride]   = useState<string | null>(null);
@@ -133,10 +142,10 @@ export const PaymentVoucherNew = () => {
      currency (still editable). MYR resets to 1; a manual edit wins. */
   const currenciesQ = useActiveCurrencies();
   useEffect(() => {
-    if (!isForeign) { setExchangeRate('1'); setRateTouched(false); return; }
-    if (rateTouched) return;
+    if (!isForeign) { setExchangeRate('1'); setRateSource('auto'); setMyrPaidSen(null); return; }
+    if (rateSource !== 'auto') return;
     setExchangeRate(String(rateFor(currenciesQ.data, currency)));
-  }, [isForeign, currency, currenciesQ.data, rateTouched]);
+  }, [isForeign, currency, currenciesQ.data, rateSource]);
 
   const setLine  = (rid: string, patch: Partial<DraftLine>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
@@ -144,6 +153,21 @@ export const PaymentVoucherNew = () => {
   const addLine  = () => setLines((prev) => [...prev, newLine()]);
 
   const totalCenti = useMemo(() => lines.reduce((s, l) => s + l.amountCenti, 0), [lines]);
+
+  /* RINGGIT IN, RATE OUT. The rate is derived from the MYR actually paid divided by
+     the foreign face total, and RE-derived when either side moves — editing a line
+     amount after entering the ringgit must not leave a rate that no longer matches
+     what was paid. deriveRateFromMyrPaid returns null for a zero/blank figure on
+     EITHER side (the divide-by-zero included), and null leaves the rate alone rather
+     than blanking it to something resolveFxRate would fold back to 1. */
+  const derivedRate = useMemo(
+    () => (isForeign ? deriveRateFromMyrPaid(myrPaidSen, totalCenti) : null),
+    [isForeign, myrPaidSen, totalCenti],
+  );
+  useEffect(() => {
+    if (rateSource !== 'myr' || derivedRate === null) return;
+    setExchangeRate(String(derivedRate));
+  }, [rateSource, derivedRate]);
 
   /* ── Apply to PI (migration 0202) ─────────────────────────────────────────
      Only for a SUPPLIER_PAYMENT voucher with a supplier chosen: list that
@@ -322,10 +346,34 @@ export const PaymentVoucherNew = () => {
               currency={currency}
               onCurrencyChange={setCurrencyOverride}
               exchangeRate={exchangeRate}
-              onRateChange={(v) => { setRateTouched(true); setExchangeRate(v); }}
+              onRateChange={(v) => { setRateSource('rate'); setMyrPaidSen(null); setExchangeRate(v); }}
               rateHint={<>≈ {fmtRm(Math.round(totalCenti * resolveFxRate(exchangeRate)), 'MYR')} posted to GL</>}
               styles={styles}
             />
+
+            {/* ── Ringgit in, rate out ─────────────────────────────────────────
+                The owner knows what left the bank, not what the rate was. Enter the
+                actual MYR paid and the rate is worked out from it; the rate field
+                above stays editable for anyone who does think in rates. This is also
+                the figure the invoice adopts: posting this voucher writes the rate
+                onto the foreign PI it knocks off and re-costs that PI's GRN. */}
+            {isForeign && (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Actual MYR paid (optional)</span>
+                <MoneyInput bare valueSen={myrPaidSen ?? 0}
+                  onCommit={(sen) => {
+                    const v = sen ?? 0;
+                    if (v > 0) { setMyrPaidSen(v); setRateSource('myr'); }
+                    else { setMyrPaidSen(null); setRateSource('auto'); }
+                  }}
+                  inputClassName={styles.fieldInput} selectOnFocus />
+                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
+                  {derivedRate !== null
+                    ? <>Derived rate {derivedRate} MYR per 1 {currency} — the invoice you knock off will adopt it</>
+                    : <>What actually left the bank for this {currency} payment. The rate is worked out from it.</>}
+                </span>
+              </label>
+            )}
           </div>
         </div>
       </section>

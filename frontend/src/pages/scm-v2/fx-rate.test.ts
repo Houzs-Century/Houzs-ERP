@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveFxRate } from "./fx-rate";
+import { resolveFxRate, deriveRateFromMyrPaid } from "./fx-rate";
 
 /**
  * The regression these guard is NOT "resolveFxRate returns a number" — it is
@@ -53,5 +53,64 @@ describe("resolveFxRate", () => {
     for (const c of cases) {
       expect(resolveFxRate(c)).toBe(oldWriteRule(c));
     }
+  });
+});
+
+/**
+ * "I paid RM 13,404.50 for a ¥21,625.00 invoice" — the input the owner actually
+ * has, turned into the rate the document stores. The guard here is that NOTHING
+ * unusable ever reaches the rate field: a null tells the caller to leave the
+ * existing rate alone, whereas a 0 or NaN would be resolveFxRate'd back to 1 and
+ * post the raw foreign figure as ringgit — the exact mis-cost this feature exists
+ * to prevent.
+ */
+describe("deriveRateFromMyrPaid", () => {
+  it("derives the rate from the ringgit that actually left the bank", () => {
+    // ¥10,000.00 = 1_000_000 centi; RM 6,198.38 = 619_838 sen -> 0.619838.
+    expect(deriveRateFromMyrPaid(619_838, 1_000_000)).toBe(0.619838);
+    // And the owner's real invoice: ¥21,625.00 paid with RM 13,404.01.
+    expect(deriveRateFromMyrPaid(1_340_401, 2_162_500)).toBe(0.619839);
+  });
+
+  it("rounds to the stored numeric(14,6) so the screen and the database agree", () => {
+    // 1/3 would otherwise carry 16 digits the column cannot hold.
+    expect(deriveRateFromMyrPaid(1, 3)).toBe(0.333333);
+    expect(deriveRateFromMyrPaid(2, 3)).toBe(0.666667);
+  });
+
+  it("handles a rate above 1 (a stronger currency, e.g. SGD/USD)", () => {
+    expect(deriveRateFromMyrPaid(4_350_000, 1_000_000)).toBe(4.35);
+  });
+
+  it("returns null on a zero or missing FOREIGN total — the divide-by-zero", () => {
+    expect(deriveRateFromMyrPaid(1_340_450, 0)).toBeNull();
+    expect(deriveRateFromMyrPaid(1_340_450, null)).toBeNull();
+    expect(deriveRateFromMyrPaid(1_340_450, undefined)).toBeNull();
+    expect(deriveRateFromMyrPaid(1_340_450, -100)).toBeNull();
+  });
+
+  it("returns null while the MYR figure is still blank or zero, never a rate of 0", () => {
+    // The operator has not typed it yet. Treating that as 0 would blank the rate.
+    expect(deriveRateFromMyrPaid(0, 2_162_500)).toBeNull();
+    expect(deriveRateFromMyrPaid(null, 2_162_500)).toBeNull();
+    expect(deriveRateFromMyrPaid(undefined, 2_162_500)).toBeNull();
+    expect(deriveRateFromMyrPaid(-1, 2_162_500)).toBeNull();
+  });
+
+  it("returns null rather than NaN / Infinity for junk", () => {
+    expect(deriveRateFromMyrPaid(Number.NaN, 2_162_500)).toBeNull();
+    expect(deriveRateFromMyrPaid(Number.POSITIVE_INFINITY, 2_162_500)).toBeNull();
+    expect(deriveRateFromMyrPaid(1_340_450, Number.NaN)).toBeNull();
+  });
+
+  it("never returns something resolveFxRate would fold to 1 behind the user's back", () => {
+    // Any non-null result must be a rate the write path will honour verbatim.
+    const r = deriveRateFromMyrPaid(1_340_450, 2_162_500)!;
+    expect(resolveFxRate(String(r))).toBe(r);
+  });
+
+  it("a MYR figure so small it rounds to zero at 6dp is refused, not stored as 0", () => {
+    // 1 sen against a ¥10,000,000.00 invoice rounds to 0.000000 — not a rate.
+    expect(deriveRateFromMyrPaid(1, 1_000_000_000)).toBeNull();
   });
 });

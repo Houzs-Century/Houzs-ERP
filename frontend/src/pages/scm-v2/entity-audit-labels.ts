@@ -32,12 +32,22 @@ const PV_FIELDS: Record<string, string> = {
   totalCenti: 'Total', allocatedCenti: 'Allocated to invoices',
   lineCount: 'Lines', jeNo: 'GL entry no', postedTotalSen: 'Posted total',
   reversalJeNo: 'Reversal GL entry no', reversalOk: 'Reversal succeeded',
+  /* 2026-07-30 — "the payment defines the FX rate". A knock-off writes its rate onto
+     an un-rated foreign invoice and re-costs that invoice's GRN; a rate that
+     disagrees with one already entered is reported, never overwritten. Cancelling
+     the voucher RETAINS the rate (reverting would restore the 1:1 mis-cost). */
+  fxRateAdoptedOnPi: 'Exchange rate set on invoice',
+  fxRateMismatchOnPi: 'Invoice rate differs (kept)',
+  fxRateRetainedFromPv: 'Exchange rate kept from voucher',
+  exchangeRateRetained: 'Exchange rate retained',
+  rateSourcePv: 'Rate taken from voucher',
+  appliedCenti: 'Applied to invoice',
 };
 
 export const PAYMENT_VOUCHER_AUDIT_LABELS: AuditLabelDictionary = {
   actions: PV_ACTIONS,
   fields: PV_FIELDS,
-  moneyFields: new Set(['totalCenti', 'allocatedCenti', 'postedTotalSen']),
+  moneyFields: new Set(['totalCenti', 'allocatedCenti', 'postedTotalSen', 'appliedCenti']),
 };
 
 /* ── GRN — routes/grns.ts ─────────────────────────────────────────────────── */

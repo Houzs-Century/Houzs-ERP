@@ -1,16 +1,20 @@
-// Unit tests for the R2 foreign-rate POST-boundary guard (fx-guard.ts).
-// Audit: docs/inventory-costing-integrity-audit.md, R2. The predicate is pure so
+// Unit tests for the R2 foreign-rate write-boundary guards (fx-guard.ts) — both the
+// POST boundary (create) and, since 2026-07-30, the PATCH boundary (a currency FLIP
+// on an existing document, which the POST guard never saw).
+// Audit: docs/inventory-costing-integrity-audit.md, R2. The predicates are pure so
 // the bulk of the coverage is DB-free; a minimal fake PostgREST client drives the
-// DB-aware assertForeignRatePostable over the currencies master read. Route-level
-// coverage is not possible in this repo's harness (scm rides Supabase Postgres,
-// which the vitest pool does not stand up) — staging validation remains.
+// DB-aware assert* helpers over the currencies master read. Route-level coverage is
+// not possible in this repo's harness (scm rides Supabase Postgres, which the vitest
+// pool does not stand up) — staging validation remains.
 import { describe, it, expect } from 'vitest';
 import {
   isPositiveFiniteRate,
   isUnratedForeignPost,
+  isUnratedForeignCurrencyFlip,
   foreignRateBlockBody,
   readMasterRateRaw,
   assertForeignRatePostable,
+  assertForeignRatePatchable,
 } from './fx-guard';
 
 type Row = Record<string, unknown>;
@@ -98,13 +102,29 @@ describe('isUnratedForeignPost — the R2 predicate', () => {
 });
 
 describe('foreignRateBlockBody', () => {
-  it('produces an actionable, currency + doc specific 422 payload', () => {
-    expect(foreignRateBlockBody('rmb', 'GRN')).toEqual({
-      error: 'foreign_rate_unset',
-      currency: 'RMB',
-      doc: 'GRN',
-      message: 'Set the RMB exchange rate before posting this GRN.',
-    });
+  it('produces a currency + doc specific 422 payload', () => {
+    const b = foreignRateBlockBody('rmb', 'GRN');
+    expect(b.error).toBe('foreign_rate_unset');
+    expect(b.currency).toBe('RMB');
+    expect(b.doc).toBe('GRN');
+  });
+
+  /* The message names all THREE ways out, and the payment one on purpose: Houzs
+     pays its China suppliers before the goods and the invoice arrive, so the true
+     rate is usually already knowable from a bank transfer, and recording that
+     voucher is better than typing a rate — its rate is adopted by the invoice it
+     settles and re-costs the GRN (lib/pv-rate-adoption.ts). */
+  it('names the currency master, the document field, AND recording the payment', () => {
+    const m = foreignRateBlockBody('rmb', 'GRN').message;
+    expect(m).toContain('currency master');
+    expect(m).toContain('enter the rate on this GRN');
+    expect(m).toContain('record the supplier payment first');
+    expect(m).toContain('RMB');
+  });
+
+  it('says what goes WRONG, not just what to do — the reason a 1:1 post is refused', () => {
+    expect(foreignRateBlockBody('RMB', 'purchase invoice').message)
+      .toContain('as if RMB were ringgit');
   });
 });
 
@@ -133,7 +153,7 @@ describe('assertForeignRatePostable — DB-aware POST-boundary check', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.body.error).toBe('foreign_rate_unset');
-      expect(r.body.message).toBe('Set the RMB exchange rate before posting this GRN.');
+      expect(r.body.message).toContain('RMB');
     }
   });
 
@@ -158,6 +178,89 @@ describe('assertForeignRatePostable — DB-aware POST-boundary check', () => {
   it('allows an MYR doc unconditionally (never blocked, never queried)', async () => {
     const sb = fakeSb([]);
     const r = await assertForeignRatePostable(sb, { currency: 'MYR', operatorRate: undefined, docLabel: 'GRN' });
+    expect(r.ok).toBe(true);
+  });
+});
+
+/* ── The EDIT-path hole (2026-07-30) ───────────────────────────────────────────
+   The POST guard above closed the create boundary; PATCH /grns/:id and
+   PATCH /purchase-invoices/:id both accept `currency` and neither consulted the
+   master. Flip an MYR document to RMB with no rate and exchange_rate stays at the 1
+   it held for being ringgit — the R2 mis-cost reached by editing. */
+
+describe('isUnratedForeignCurrencyFlip — the EDIT predicate', () => {
+  const base = { fromCurrency: 'MYR', toCurrency: 'RMB', operatorRate: undefined, masterRate: null };
+
+  it('blocks a flip from MYR to an unrated foreign currency', () => {
+    expect(isUnratedForeignCurrencyFlip(base)).toBe(true);
+  });
+
+  it('does NOT fire when the patch does not touch the currency at all', () => {
+    // The single most important case: editing notes / warehouse / supplier on an
+    // existing foreign document must never be refused.
+    expect(isUnratedForeignCurrencyFlip({ ...base, fromCurrency: 'RMB', toCurrency: undefined })).toBe(false);
+    expect(isUnratedForeignCurrencyFlip({ ...base, toCurrency: null })).toBe(false);
+  });
+
+  it('does NOT fire on a flip TO MYR (the routes pin the rate to 1)', () => {
+    expect(isUnratedForeignCurrencyFlip({ ...base, fromCurrency: 'RMB', toCurrency: 'MYR' })).toBe(false);
+  });
+
+  it('does NOT fire when the currency is unchanged, however it is spelled', () => {
+    expect(isUnratedForeignCurrencyFlip({ ...base, fromCurrency: 'RMB', toCurrency: 'rmb' })).toBe(false);
+    expect(isUnratedForeignCurrencyFlip({ ...base, fromCurrency: null, toCurrency: 'MYR' })).toBe(false);
+  });
+
+  it('allows the flip when the operator supplies a positive rate', () => {
+    expect(isUnratedForeignCurrencyFlip({ ...base, operatorRate: 0.62 })).toBe(false);
+    expect(isUnratedForeignCurrencyFlip({ ...base, operatorRate: '0.62' })).toBe(false);
+  });
+
+  it('allows the flip when the currency master carries a positive rate', () => {
+    expect(isUnratedForeignCurrencyFlip({ ...base, masterRate: 0.62 })).toBe(false);
+  });
+
+  it.each([undefined, null, '', 0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'a master rate of %p is no rate at all and the flip is blocked',
+    (masterRate) => {
+      expect(isUnratedForeignCurrencyFlip({ ...base, masterRate })).toBe(true);
+    },
+  );
+
+  it('blocks a flip between two DIFFERENT foreign currencies — the stored rate now describes the wrong one', () => {
+    expect(isUnratedForeignCurrencyFlip({ ...base, fromCurrency: 'USD', toCurrency: 'RMB' })).toBe(true);
+  });
+});
+
+describe('assertForeignRatePatchable — DB-aware PATCH-boundary check', () => {
+  it('blocks an MYR -> RMB flip with no rate anywhere, with the same 422 body', async () => {
+    const sb = fakeSb([{ code: 'RMB', rate_to_myr: null }]);
+    const r = await assertForeignRatePatchable(sb, { fromCurrency: 'MYR', toCurrency: 'RMB', operatorRate: undefined, docLabel: 'GRN' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.body.error).toBe('foreign_rate_unset');
+      expect(r.body.currency).toBe('RMB');
+    }
+  });
+
+  it('allows a patch that carries no currency (never even reads the master)', async () => {
+    const r = await assertForeignRatePatchable(throwingSb(), { fromCurrency: 'RMB', toCurrency: undefined, operatorRate: undefined, docLabel: 'GRN' });
+    expect(r.ok).toBe(true);
+  });
+
+  it('allows an all-MYR patch', async () => {
+    const r = await assertForeignRatePatchable(throwingSb(), { fromCurrency: 'MYR', toCurrency: 'MYR', operatorRate: undefined, docLabel: 'purchase invoice' });
+    expect(r.ok).toBe(true);
+  });
+
+  it('allows re-sending the SAME foreign currency without a rate', async () => {
+    const r = await assertForeignRatePatchable(throwingSb(), { fromCurrency: 'RMB', toCurrency: 'RMB', operatorRate: undefined, docLabel: 'GRN' });
+    expect(r.ok).toBe(true);
+  });
+
+  it('allows the flip once the master has a rate', async () => {
+    const sb = fakeSb([{ code: 'RMB', rate_to_myr: 0.62 }]);
+    const r = await assertForeignRatePatchable(sb, { fromCurrency: 'MYR', toCurrency: 'RMB', operatorRate: undefined, docLabel: 'GRN' });
     expect(r.ok).toBe(true);
   });
 });
