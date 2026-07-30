@@ -1,0 +1,26 @@
+name: Hard-committed PO check (read-only)
+
+# Owner-triggered. Sizes ship-before-arrival: which short OUTs the receipt
+# reconcile can never claim, which open PO units are already spoken for while
+# MRP still offers them, and how many PO lines carry the SO link at all.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: hard-committed-po-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: check (read-only)
+        working-directory: backend
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
+        run: node scripts/check-hard-committed-po.mjs
