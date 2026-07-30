@@ -563,7 +563,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .mgrid .lc {
       padding: 2.4mm 2.8mm; background: #f3f3f1;
       border-right: 0.4pt solid #d5d5d5; border-bottom: 0.4pt solid #d5d5d5;
-      font-size: 10.0pt; color: #5a5a5a; font-weight: 600; line-height: 1.35;
+      font-size: 8.8pt; color: #5a5a5a; font-weight: 600; line-height: 1.35;
     }
     .mgrid .vc {
       font-family: "IBM Plex Sans", "Google Sans", "Roboto", sans-serif;
