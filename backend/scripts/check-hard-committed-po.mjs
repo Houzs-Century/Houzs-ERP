@@ -12,6 +12,10 @@
 //       to an outstanding drop-ship OUT. So the same undelivered PO units can be
 //       offered to a second SO, which gets nothing when the goods land and the
 //       reconcile nets the first shipment instead.
+// NOTE: status/currency columns in this schema are ENUMS, not text. COALESCE(col,'')
+// tries to coerce '' INTO the enum and fails with "invalid input value for enum".
+// Always ::text BEFORE any string function — the same trap that had
+// check-foreign-rate-one.mjs silently dead until 2026-07-30.
 import postgres from "postgres";
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
@@ -26,13 +30,13 @@ async function main() {
   const outs = await sql`
     SELECT m.id, m.source_doc_no, m.product_code, m.variant_key, m.batch_no,
            m.warehouse_id, ABS(m.qty) AS out_qty, m.created_at,
-           d.is_dropship, UPPER(COALESCE(d.status,'')) AS do_status,
+           d.is_dropship, UPPER(COALESCE(d.status::text,'')) AS do_status,
            COALESCE((SELECT SUM(c.qty_consumed) FROM scm.inventory_lot_consumptions c
                       WHERE c.movement_id = m.id), 0) AS consumed
       FROM scm.inventory_movements m
       JOIN scm.delivery_orders d ON d.id = m.source_doc_id
      WHERE m.movement_type = 'OUT' AND m.source_doc_type = 'DO'
-       AND UPPER(COALESCE(d.status,'')) <> 'CANCELLED'
+       AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'
      ORDER BY m.created_at`;
   const short = outs.filter((r) => Number(r.out_qty) - Number(r.consumed) > 0);
 
@@ -57,10 +61,10 @@ async function main() {
   else {
     const rows = await sql`
       SELECT poi.material_code, poi.variants, poi.qty, poi.received_qty,
-             po.po_number, UPPER(COALESCE(po.status,'')) AS po_status
+             po.po_number, UPPER(COALESCE(po.status::text,'')) AS po_status
         FROM scm.purchase_order_items poi
         JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
-       WHERE UPPER(COALESCE(po.status,'')) NOT IN ('CANCELLED','DRAFT')
+       WHERE UPPER(COALESCE(po.status::text,'')) NOT IN ('CANCELLED','DRAFT')
          AND (poi.qty - COALESCE(poi.received_qty,0)) > 0
          AND poi.material_code IN ${sql([...new Set(claimable.map((r) => r.product_code))])}`;
     notice(`  open PO lines for the committed SKUs      : ${rows.length}`);
