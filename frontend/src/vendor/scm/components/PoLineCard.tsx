@@ -85,7 +85,9 @@ export type PoLineDraft = {
   /** true once the operator types into Unit Price — a manual override wins and
       the parent's supplier-price auto-fill stops touching this line's cost. */
   priceTouched?: boolean;
-  /** Source SO line id when the line came from "From SO" (Create only). */
+  /** Source SO line id. Set by the "From SO" flows, and — since 2026-07-31 —
+      editable on the PO detail grid so a hand-typed line can be bound to the
+      Sales Order line it is actually buying for. Null = stock replenishment. */
   soItemId?: string | null;
 };
 
@@ -124,6 +126,7 @@ export const PoLineCard = ({
   disabled = false,
   hidePoFields = false,
   identityReadOnly = false,
+  soLinkOptions,
 }: {
   index: number;
   line: PoLineDraft;
@@ -167,6 +170,13 @@ export const PoLineCard = ({
       (item code + supplier SKU) and variants READ-ONLY; only qty/price/discount
       stay editable. Defaults off (full Create-style editing). */
   identityReadOnly?: boolean;
+  /** Source-SO-line picker. Pass the candidate SO lines for THIS line's SKU and
+      the picker renders; omit it entirely and the card behaves exactly as
+      before (Create + the PI reuse do not offer it). The parent owns candidate
+      selection so the card never fetches — see PurchaseOrderDetail, which reads
+      the SAME /outstanding-so-items shortage view the From-SO picker and the
+      mobile convert wizard use, rather than inventing a second query. */
+  soLinkOptions?: Array<{ value: string; label: string }>;
 }) => {
   const l = line;
   /* Per-Model allowed_options for this line's SKU — the SAME by-code source
@@ -221,6 +231,43 @@ export const PoLineCard = ({
               {categoryLabel}
             </span>
           )}
+          {/* The stored SO link, stated on the card itself. A PO line that
+              carries one is what lets a shipment bind its incoming batch; a
+              line without one silently loses the drop-ship offer, so the
+              difference has to be visible while the line is being edited. */}
+          {l.soItemId ? (
+            <span
+              title="Bound to a Sales Order line — this PO can be resolved as that line's incoming supply."
+              style={{
+                fontFamily: 'var(--font-button)',
+                fontSize: 'var(--fs-11)',
+                fontWeight: 700,
+                letterSpacing: '0.10em',
+                padding: '2px 8px',
+                borderRadius: 'var(--radius-pill)',
+                background: 'rgba(22, 105, 95, 0.12)',
+                color: 'var(--c-pine, #0c3f39)',
+              }}
+            >
+              SO LINKED
+            </span>
+          ) : soLinkOptions && soLinkOptions.length > 0 ? (
+            <span
+              title="A matching Sales Order line is still short of supply. Bind it below so the drop-ship offer and the incoming-PO match can find it."
+              style={{
+                fontFamily: 'var(--font-button)',
+                fontSize: 'var(--fs-11)',
+                fontWeight: 700,
+                letterSpacing: '0.10em',
+                padding: '2px 8px',
+                borderRadius: 'var(--radius-pill)',
+                border: '1px dashed var(--line)',
+                color: 'var(--fg-muted)',
+              }}
+            >
+              NOT LINKED
+            </span>
+          ) : null}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
           <span className={styles.previewPrice}>{fmtRm(lineTotalCenti, currency)}</span>
@@ -339,6 +386,29 @@ export const PoLineCard = ({
         </label>
         )}
       </div>
+
+      {/* Source Sales Order line — OPTIONAL by design. A genuine stock
+          replenishment PO has no SO and must stay valid, so the empty option is
+          first and is the default. Only lines still short of supply for THIS
+          SKU are offered (the parent filters); the server re-checks company,
+          cancellation and SKU match and refuses a mismatch. */}
+      {soLinkOptions && !hidePoFields && (
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Source Sales Order line (optional)</span>
+          <SearchableSelect
+            className={styles.fieldSelect}
+            value={l.soItemId ?? ''}
+            disabled={disabled}
+            onChange={(v) => onChange({ soItemId: v || null })}
+            options={[
+              { value: '', label: l.materialCode.trim()
+                ? '— None (stock replenishment) —'
+                : '— Pick an item code first —' },
+              ...soLinkOptions,
+            ]}
+          />
+        </label>
+      )}
 
       {/* Description — full width */}
       <label className={styles.field}>
