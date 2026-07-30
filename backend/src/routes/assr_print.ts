@@ -641,17 +641,18 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
        reached the paper but not this bar). Petrol primary, sage neutrals. */
     .print-bar {
       position: fixed; top: 14px; right: 14px;
-      display: flex; gap: 8px; align-items: center; z-index: 100;
+      display: flex; flex-direction: column; gap: 7px; align-items: flex-end; z-index: 100;
       padding: 8px; background: rgba(255,255,255,0.96); backdrop-filter: blur(6px);
       border: 1px solid #d6d9d2; border-radius: 10px; box-shadow: 0 4px 18px rgba(19,32,28,0.16);
     }
-    .print-bar .tip { max-width: 260px; padding: 0 8px; font-size: 10.5px; line-height: 1.4; color: #414539; }
+    .print-bar .actions { display: flex; gap: 8px; align-items: center; }
+    .print-bar .tip { max-width: 300px; padding: 0 4px 2px; font-size: 10.5px; line-height: 1.4; color: #414539; text-align: right; }
     .print-bar .tip strong { color: #11140f; }
     .print-bar .tip em { font-style: normal; background: #e1efed; color: #0c3f39; padding: 0 3px; border-radius: 3px; }
     .print-bar button {
       padding: 8pt 14pt; background: #16695f; color: #fff; border: none; border-radius: 7px;
       font-family: "Google Sans", "Roboto", Helvetica, Arial, sans-serif; font-size: 10.6pt;
-      font-weight: 700; letter-spacing: 1.5pt; text-transform: uppercase; cursor: pointer;
+      font-weight: 800; letter-spacing: 1.5pt; text-transform: uppercase; cursor: pointer;
     }
     .print-bar button:hover { background: #10534b; }
     .print-bar button.secondary { background: #fff; color: #414539; border: 1px solid #c2c6bd; }
@@ -665,13 +666,15 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 </head>
 <body>
   <div class="print-bar">
+    <div class="actions">
+      <button class="secondary" onclick="window.close()">Close</button>
+      <button onclick="window.print()">Print / Save as PDF</button>
+    </div>
     <div class="tip">
       <strong>Tip:</strong> in the print dialog, open
       <em>More settings</em> and untick <em>Headers and footers</em>
       to hide the browser's URL/date line.
     </div>
-    <button class="secondary" onclick="window.close()">Close</button>
-    <button onclick="window.print()">Print / Save as PDF</button>
   </div>
 
   <table class="sheet">
