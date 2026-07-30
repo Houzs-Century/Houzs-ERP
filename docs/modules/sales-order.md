@@ -114,6 +114,44 @@ customer's vouchers on an order that is still live. So a cancel needs
 `DATABASE_URL`: without it the endpoint fails closed with
 `503 scm_pg_command_required`. See `BUG-HISTORY.md` 2026-07-29.
 
+### The SO line's downstream links — `so_item_id`, and what deletes it
+
+`scm.mfg_sales_order_items.id` is referenced by **three** tables, and all three
+FKs are declared `ON DELETE SET NULL`
+(`backend/scripts/scm-schema/2990s-full-schema.sql`):
+
+| Referencing column | Line | What it decides |
+|---|---|---|
+| `purchase_order_items.so_item_id` | `:1747` | whether a shipment can bind its incoming PO — the drop-ship guard (`dropship-batch.ts`) resolves the expected batch through it, MRP reads it, and `recomputeSoPicked` counts `po_qty_picked` from it |
+| `delivery_order_items.so_item_id` | `:1651` | which SO line a shipped unit served |
+| `sales_invoice_items.so_item_id` | `:1767` | which SO line a billed unit served |
+
+So **deleting an SO line silently unlinks every downstream document** — the rows
+survive, only the link is wiped, which is exactly what makes it invisible.
+
+- **A genuine line DELETE** (`DELETE /:docNo/items/:itemId`, and the automatic
+  free-gift cleanup in `free-gift-reconcile.ts`) SHOULD null: the line is gone,
+  so a link to it would be a lie. Nothing to fix there.
+- **A delete-and-REINSERT must not.** `POST /:docNo/items/:itemId/tbc-swap-sofa`
+  replaces a whole sofa build with a new set of module lines when a TBC fabric is
+  confirmed. Since 2026-07-31 it freezes the links first
+  (`snapshotSoLineLinks`), then re-points them onto the replacement lines
+  (`planSoLineRelink` / `applySoLineRelink`, `backend/src/scm/lib/so-line-relink.ts`)
+  inside the SAME transaction. Matching is by SKU, paired ordinally within a SKU
+  by `line_no`; an old module SKU the new build does not carry is **not**
+  re-pointed — that link is genuinely gone, and it is reported
+  (`soLinks: { restored, dropped }` on the response, plus `sourceLinksCarried` /
+  `sourceLinksDropped` on the `UPDATE_LINE` audit row) rather than lost quietly.
+- The single-item `tbc-swap` (`:8669`) UPDATEs the row in place — the id
+  survives, so no link is touched. Safe by construction, not by a guard.
+- The SO **amendment** REMOVE (`applySoAmendment`) is a genuine removal and keeps
+  nulling; its `snapshotSo` `poLinks` blob is the compensating record the
+  Approve-PO gate (`reviseBoundPo`) reads to reconcile the orphaned PO line. It
+  captures the PO side only — the DO / SI sides are not snapshotted there.
+
+The 2026-07-31 measurement of the live database: **101 PO lines, only 34 carry
+`so_item_id` — 67 are NULL.**
+
 ### Processing-Date save gates (aggregated `validation_failed`)
 
 Setting or changing the Processing Date (`internal_expected_dd` — the UI's
