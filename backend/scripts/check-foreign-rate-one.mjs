@@ -91,10 +91,14 @@ const pickCol = (cols, candidates) => candidates.find((c) => cols.has(c)) ?? nul
 
 // MYR is the base; blank / null currency normalises to MYR (fx.normalizeCurrency),
 // so only a genuinely-foreign code with an effective rate of 1 is an offender.
+// The currency column is NOT text in prod — it is a domain/enum, so btrim() has no
+// candidate signature for it and the whole check died with
+// "function pg_catalog.btrim(scm.currency_code) does not exist". Cast to text first;
+// ::text is valid for text, varchar, a domain over either, and an enum alike.
 const foreignRateOne = (currCol, rateCol) =>
   `${currCol} IS NOT NULL
-     AND UPPER(TRIM(${currCol})) <> 'MYR'
-     AND UPPER(TRIM(${currCol})) <> ''
+     AND UPPER(TRIM(${currCol}::text)) <> 'MYR'
+     AND UPPER(TRIM(${currCol}::text)) <> ''
      AND COALESCE(${rateCol}, 1) = 1`;
 
 async function main() {
@@ -156,7 +160,7 @@ async function main() {
         WITH lot AS (${lotAggFor()})
         SELECT g.id::text                       AS doc_id,
                ${noSel}                          AS doc_no,
-               UPPER(TRIM(g."${ident(gCurr)}"))  AS currency,
+               UPPER(TRIM(g."${ident(gCurr)}"::text))  AS currency,
                g."${ident(gRate)}"               AS exchange_rate,
                ${coSel},
                COALESCE(l.recv_value_sen, 0)     AS recv_value_sen,
@@ -221,7 +225,7 @@ async function main() {
       const rows = await pg.unsafe(`
         SELECT p.id::text                       AS doc_id,
                ${noSel}                          AS doc_no,
-               UPPER(TRIM(p."${ident(pCurr)}"))  AS currency,
+               UPPER(TRIM(p."${ident(pCurr)}"::text))  AS currency,
                p."${ident(pRate)}"               AS exchange_rate,
                ${coSel},
                ${pGrn ? `p."${ident(pGrn)}"::text AS grn_id,` : "NULL::text AS grn_id,"}

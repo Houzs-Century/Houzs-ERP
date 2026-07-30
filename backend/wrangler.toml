@@ -13,24 +13,6 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 AUTOCOUNT_API_URL = "https://it-houzs.dev/"
-# ── Sales Order CAS cutover window ──────────────────────────────────────────
-# Making the concurrency `version` mandatory is a breaking wire change for every
-# browser tab that is ALREADY OPEN when this Worker deploys. Those tabs run the
-# previous bundle, never send a version, and would all take 428 on their next
-# Save at the same moment — a salesperson mid-order loses that save.
-#
-# While this instant is in the FUTURE, a request that omits `version` is
-# accepted with the pre-CAS last-writer-wins semantics — exactly today's
-# production behaviour, so the window adds no risk main does not already carry;
-# it only delays the new protection. A STALE version is still 409 in every case:
-# the window never forgives a client that spoke the protocol and lost, only one
-# that cannot speak it at all.
-#
-# Once the instant passes, the same configuration is strict again with NO
-# deploy. Set generously on purpose — a window that is too short hurts people, a
-# window that is too long costs nothing. DELETE this line once it is in the past
-# (it is inert either way); unset is the permanent steady state.
-SO_CAS_GRACE_UNTIL = "2026-07-22T18:00:00Z"
 
 # Inbound AutoCount sync kill switch. "true" = skip every AutoCount pull
 # (cron SO/PO/overdue/creditors/stock + manual /api/sync/pull). Non-AutoCount
@@ -278,8 +260,6 @@ compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
 [env.staging.vars]
-# Same cutover window as production — see the prod [vars] block.
-SO_CAS_GRACE_UNTIL = "2026-07-22T18:00:00Z"
 AUTOCOUNT_API_URL = "https://it-houzs.dev/"
 AUTOCOUNT_SYNC_DISABLED = "true"
 # Cost/margin DISPLAY switch — ON in staging too (mirrors prod). See the prod
