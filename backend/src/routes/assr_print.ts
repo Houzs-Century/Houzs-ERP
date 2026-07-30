@@ -637,21 +637,25 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 
     .foot { padding-top: 2mm; border-top: 0.5pt solid #000; text-align: center; font-size: 10.0pt; color: #555; letter-spacing: 0.5pt; }
 
+    /* Screen-only toolbar — Theme C skin (Nico 2026-07-30: the redesign
+       reached the paper but not this bar). Petrol primary, sage neutrals. */
     .print-bar {
       position: fixed; top: 14px; right: 14px;
       display: flex; gap: 8px; align-items: center; z-index: 100;
-      padding: 6px; background: rgba(255,255,255,0.95); backdrop-filter: blur(6px);
-      border-radius: 3pt; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+      padding: 8px; background: rgba(255,255,255,0.96); backdrop-filter: blur(6px);
+      border: 1px solid #d6d9d2; border-radius: 10px; box-shadow: 0 4px 18px rgba(19,32,28,0.16);
     }
-    .print-bar .tip { max-width: 260px; padding: 0 8px; font-size: 10.5px; line-height: 1.4; color: #444; }
-    .print-bar .tip strong { color: #000; }
-    .print-bar .tip em { font-style: normal; background: #f2ead9; padding: 0 3px; border-radius: 2px; }
+    .print-bar .tip { max-width: 260px; padding: 0 8px; font-size: 10.5px; line-height: 1.4; color: #414539; }
+    .print-bar .tip strong { color: #11140f; }
+    .print-bar .tip em { font-style: normal; background: #e1efed; color: #0c3f39; padding: 0 3px; border-radius: 3px; }
     .print-bar button {
-      padding: 8pt 14pt; background: #000; color: #fff; border: none; border-radius: 2pt;
+      padding: 8pt 14pt; background: #16695f; color: #fff; border: none; border-radius: 7px;
       font-family: "Google Sans", "Roboto", Helvetica, Arial, sans-serif; font-size: 10.6pt;
       font-weight: 700; letter-spacing: 1.5pt; text-transform: uppercase; cursor: pointer;
     }
-    .print-bar button.secondary { background: #fff; color: #000; border: 0.5pt solid #000; }
+    .print-bar button:hover { background: #10534b; }
+    .print-bar button.secondary { background: #fff; color: #414539; border: 1px solid #c2c6bd; }
+    .print-bar button.secondary:hover { border-color: #16695f; color: #16695f; }
     @media print { .print-bar { display: none !important; } }
 
     .muted { color: #555; }
