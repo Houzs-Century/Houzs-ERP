@@ -164,6 +164,35 @@ UUID**; use `houzsUser.id` for the public bigint.
   sourced from an SO in any of those is refused (`firstUnorderableSo`, `:313`).
   A purely manual line with no SO link skips the check entirely.
 
+### Binding a PO line to its source SO line (`so_item_id`)
+
+`so_item_id` is what lets a shipment resolve its incoming PO: `dropship-batch.ts`
+finds the expected batch through it, `/po-so-coverage` treats it as the STATIC
+link, and `recomputeSoPicked` counts from it. Measured on prod 2026-07-31, **67
+of 101 live PO lines carried none** — the From-SO and convert-from-SO paths stamp
+it, but a hand-typed line never could.
+
+- **`POST /:id/items`** has accepted `soItemId` / `so_item_id` since an earlier
+  audit fix, and now also runs `recomputeSoPicked` for the line it binds.
+- **`PATCH /:id/items/:itemId`** accepts it too (2026-07-31), so an already-saved
+  line can be bound or unbound. Partial-PATCH semantics: an **absent** key keeps
+  the stored link; an explicit `null` / `''` **unbinds** (a genuine stock
+  replenishment PO must stay valid). Both the previous and the new SO line are
+  re-counted so quota moves with the link.
+- Both writes go through `soLinkTargetRefusal` — the SO line must exist **in the
+  active company**, must not be cancelled, and its `item_code` must equal the PO
+  line's `material_code`. Otherwise `404 so_line_not_found`,
+  `409 so_line_cancelled` or `409 so_link_material_mismatch`.
+- **UI:** the PO detail edit grid's `PoLineCard` renders an optional *Source
+  Sales Order line* picker plus a `SO LINKED` / `NOT LINKED` badge. Candidates
+  come from the existing `GET /mfg-purchase-orders/outstanding-so-items` shortage
+  view (the same source the From-SO picker and `MobileConvertWizard` read),
+  filtered to the line's own SKU; the parent (`PurchaseOrderDetail`) selects them
+  and passes `soLinkOptions`, so the card never fetches and Create / the PI reuse
+  are unchanged. **No mobile counterpart** — mobile's PO surface
+  (`MobileModuleList` / `MobileModuleDetail`) is list + header only and has no
+  per-line editor at all.
+
 ### The SO-quota counter — `recomputeSoPicked` (`:2352-2398`)
 
 Live-count, not arithmetic: it re-sums `purchase_order_items.qty` per

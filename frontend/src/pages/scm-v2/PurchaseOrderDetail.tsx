@@ -64,6 +64,7 @@ import {
   useDeletePurchaseOrder,
   useSuppliers,
   useSupplierDetail,
+  useOutstandingSoItems,
   type BindingRow,
   type PoItemRow,
   type SupplierRow,
@@ -157,6 +158,11 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   warehouseId:    it.warehouse_id ?? undefined,
   category:       it.item_group ?? undefined,
   variants:       (it.variants as Record<string, unknown> | null) ?? {},
+  /* Migration 0098 — the stored source SO line. Seeded so Edit can SHOW the
+     existing binding (and change it) instead of silently dropping it: without
+     this the draft always read null, so the Save diff could never tell a bound
+     line from an unbound one. */
+  soItemId:       it.so_item_id ?? null,
   /* An existing line's stored price is authoritative — don't let the cost
      auto-recompute clobber it on enter-edit. Editing the variants re-arms it. */
   priceTouched:   true,
@@ -181,6 +187,13 @@ export const PurchaseOrderDetail = () => {
   // human-readable name; the header only carries the warehouse id. Load
   // warehouses once at the top so the print handler can resolve it.
   const warehousesQTop = useWarehouses();
+  /* Candidate source SO lines for the per-line binder (2026-07-31). REUSES the
+     stock-aware shortage view the From-SO picker and MobileConvertWizard read
+     (GET /mfg-purchase-orders/outstanding-so-items) rather than a second query:
+     it is already company-scoped, already drops cancelled / draft / on-hold SOs
+     and already hides lines with no remaining shortage, which is exactly the
+     "still short" rule this picker needs. */
+  const outstandingSoQ = useOutstandingSoItems();
 
   /* Phase 1-C — SO-amendment workflow (approve-po / send gates + revisions
      list). The green "Revision ready" banner hosts Approve PO (at SO_APPROVED)
@@ -374,6 +387,33 @@ export const PurchaseOrderDetail = () => {
      mutation fires straight away — only the field/variant edits are buffered
      until the single top Save. */
   const visibleItems = items;
+
+  /* Source-SO-line options for one draft line. Only lines for the SAME SKU are
+     offered (the server refuses a mismatch anyway, and offering one would just
+     be a trap), and only lines the shortage view still reports as short. A line
+     that is ALREADY bound keeps its own option even when it has dropped off the
+     shortage view — otherwise a controlled select would fall back to the
+     placeholder and the operator would read a real binding as "none". */
+  const soLinkOptionsFor = (l: EditLine): Array<{ value: string; label: string }> => {
+    const code = l.materialCode.trim().toUpperCase();
+    const opts: Array<{ value: string; label: string }> = [];
+    if (code) {
+      for (const s of outstandingSoQ.data ?? []) {
+        if ((s.itemCode ?? '').trim().toUpperCase() !== code) continue;
+        const who = s.debtorName ? ` · ${s.debtorName}` : '';
+        opts.push({ value: s.soItemId, label: `${s.soDocNo}${who} · ${s.remainingQty} short` });
+      }
+    }
+    if (l.soItemId && !opts.some((o) => o.value === l.soItemId)) {
+      const stored = items.find((it) => it.id === l.itemId);
+      opts.unshift({
+        value: l.soItemId,
+        label: `${stored?.so_doc_no ?? 'Linked Sales Order'} · currently linked`,
+      });
+    }
+    return opts;
+  };
+
   /* SO→PO drift (Commander 2026-06-16) — lines whose source SO was edited AFTER
      this PO was raised, so the PO no longer matches the live SO. Only actionable
      while the PO is still open (pre-receipt): a received / cancelled PO can't be
@@ -568,6 +608,7 @@ export const PurchaseOrderDetail = () => {
           (d.supplierDeliveryDate3 ?? null) !== (it.supplier_delivery_date_3 ?? null) ||
           (d.supplierDeliveryDate4 ?? null) !== (it.supplier_delivery_date_4 ?? null) ||
           (d.warehouseId ?? null) !== (it.warehouse_id ?? null) ||
+          (d.soItemId ?? null) !== (it.so_item_id ?? null) ||
           JSON.stringify(d.variants ?? {}) !== JSON.stringify((it.variants as Record<string, unknown> | null) ?? {});
         if (!changed) continue;
         await updateItem.mutateAsync({
@@ -586,6 +627,9 @@ export const PurchaseOrderDetail = () => {
           warehouseId:    d.warehouseId ?? null,
           itemGroup:      d.category,
           variants:       d.variants ?? {},
+          /* Explicit null UNBINDS; the key is always sent so a cleared picker
+             actually reaches the server (an absent key means "keep"). */
+          soItemId:       d.soItemId ?? null,
         });
       }
       setIsEditing(false);
@@ -1162,6 +1206,7 @@ export const PurchaseOrderDetail = () => {
                     onPendingItemPick={() => {}}
                     onRemove={() => removeLine(l.rid)}
                     disabled={isLocked}
+                    soLinkOptions={soLinkOptionsFor(l)}
                   />
                 </div>
               );

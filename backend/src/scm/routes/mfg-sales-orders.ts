@@ -170,6 +170,7 @@ import { claimPwpForSingleLine, rollbackSinglePwpClaim } from '../lib/pwp-claim-
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
 import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
+import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
 import { summariseReadiness } from '../lib/so-readiness';
@@ -9387,17 +9388,46 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     }
   }
 
+  /* Freeze the downstream SO-line links BEFORE the delete below. Three tables
+     reference mfg_sales_order_items.id with ON DELETE SET NULL — the PO line
+     (which is what the drop-ship guard resolves an incoming batch through), the
+     DO line and the SI line. This exchange is a delete-and-REINSERT, not a
+     removal, so letting the FK null them loses the SO<->PO binding on exactly
+     the product family where it is load-bearing. See so-line-relink.ts. */
+  const oldIds = oldLines.map((l) => l.id);
+  const soLinkSnapshot = await snapshotSoLineLinks(sb, oldIds);
+
   /* Insert the NEW set first, then remove the OLD — an insert failure leaves
      the order untouched; a delete failure rolls the inserts back. */
-  const { data: inserted, error: insErr } = await sb.from('mfg_sales_order_items').insert(stampCompany(rows, c)).select('id');
+  const { data: inserted, error: insErr } = await sb.from('mfg_sales_order_items')
+    .insert(stampCompany(rows, c)).select('id, item_code, line_no');
   if (insErr) return c.json({ error: 'insert_failed', reason: insErr.message }, 500);
-  const oldIds = oldLines.map((l) => l.id);
   const { error: delErr } = await sb.from('mfg_sales_order_items').delete().in('id', oldIds);
   if (delErr) {
     const newIds = ((inserted ?? []) as Array<{ id: string }>).map((r) => r.id);
     if (newIds.length > 0) await sb.from('mfg_sales_order_items').delete().in('id', newIds);
     return c.json({ error: 'swap_failed', reason: delErr.message }, 500);
   }
+
+  /* Carry the frozen links onto the replacement lines, matched by SKU. A module
+     SKU with no counterpart in the new build is NOT re-pointed — that link is
+     genuinely gone and is reported instead of quietly invented. */
+  const soLinkResult = await (async () => {
+    if (soLinkSnapshot.length === 0) return { restored: 0, dropped: 0 };
+    const plan = planSoLineRelink(
+      oldLines.map((l) => ({ id: l.id, itemCode: l.item_code, lineNo: l.line_no ?? null })),
+      ((inserted ?? []) as Array<{ id: string; item_code: string | null; line_no: number | null }>)
+        .map((r) => ({ id: r.id, itemCode: r.item_code, lineNo: r.line_no })),
+      soLinkSnapshot,
+    );
+    if (plan.dropped.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn('[tbc-swap-sofa] SO line links dropped (no replacement carries the SKU)', {
+        docNo, dropped: plan.dropped,
+      });
+    }
+    return applySoLineRelink(sb, plan, (error, label) => throwAtomicCommandWrite(sb, error, label));
+  })();
 
   /* Old build photos are external R2 side effects. Defer until AFTER the DB
      transaction commits; deleting them here would make rollback lose files. */
@@ -9571,6 +9601,12 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
         ? [{ field: 'pwpRewardKept', to: rewardCtx.code } satisfies FieldChange] : []),
       ...(pwpVoucherReleased
         ? [{ field: 'pwpVoucherReleased', to: pwpVoucherReleased } satisfies FieldChange] : []),
+      /* Say out loud what happened to the SO<->PO/DO/SI links: silence here is
+         what let the 2026-07-29 incident look like a routine exchange. */
+      ...(soLinkResult.restored > 0
+        ? [{ field: 'sourceLinksCarried', to: String(soLinkResult.restored) } satisfies FieldChange] : []),
+      ...(soLinkResult.dropped > 0
+        ? [{ field: 'sourceLinksDropped', to: String(soLinkResult.dropped) } satisfies FieldChange] : []),
     ],
   });
   await scheduleStockAllocationAfterCommand(c, sb, `tbc-swap-sofa:${docNo}`);
@@ -9579,6 +9615,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     ok: true,
     totalCenti: newBuildTotal,
     lines: rows.length,
+    soLinks: soLinkResult,
     pwp: {
       kept: pwpKeepCodes.length,
       reverted: pwpRevertCodes.length,

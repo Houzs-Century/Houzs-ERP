@@ -53,7 +53,7 @@ describe("buildStoredOrigins (linkage B — the PO's stored raise-link origin, S
       [{ doc_no: "SO-2606-033", item_code: "BF-15" }],
     );
     expect(origins.get("BF-15")).toEqual([
-      { soDocNo: "SO-2606-033", deliveryDate: "2026-08-01", locked: true },
+      { soDocNo: "SO-2606-033", deliveryDate: "2026-08-01", locked: true, source: "linked" },
     ]);
   });
 
@@ -109,7 +109,7 @@ describe("buildDeliveredSoLock (linkage C — DELIVERED goods locked to their DO
       new Map([["SO-777", "2026-08-20"]]),
     );
     expect(bySku.get("BF-15")).toEqual([
-      { soDocNo: "SO-777", deliveryDate: "2026-08-20", locked: true },
+      { soDocNo: "SO-777", deliveryDate: "2026-08-20", locked: true, source: "delivered" },
     ]);
   });
 
@@ -148,7 +148,29 @@ describe("mergeAssignments (precedence: delivered-DO > stored-origin > MRP-float
       new Map([["BF-15", [a("SO-ORIGIN", true)]]]),
       new Map([["BF-15", [a("SO-FLOAT", false)]]]),
     );
-    expect(merged).toEqual([{ itemCode: "BF-15", assignments: [a("SO-DELIVERED", true)] }]);
+    expect(merged).toEqual([
+      { itemCode: "BF-15", assignments: [a("SO-DELIVERED", true)], storedLink: false },
+    ]);
+  });
+
+  /* 2026-07-31 — `storedLink` is a SEPARATE axis from which layer won. 67 of the
+     101 live PO lines carry no so_item_id, so a screen that renders an MRP guess
+     with the same weight as a real binding is what the owner was reading when he
+     believed a PO was bound to an SO that it was not. */
+  test("storedLink is reported independently of the winning layer", () => {
+    const linked = new Set(["BF-15"]);
+    const delivered = mergeAssignments(
+      ["BF-15"], new Map([["BF-15", [a("SO-DELIVERED", true)]]]), new Map(), new Map(), linked,
+    );
+    expect(delivered[0].storedLink).toBe(true);
+
+    // MRP-only coverage on a SKU whose PO lines carry NO so_item_id: an
+    // assignment is shown, and storedLink says there is nothing behind it.
+    const guessed = mergeAssignments(
+      ["BF-15"], new Map(), new Map(), new Map([["BF-15", [a("SO-FLOAT", false)]]]), new Set(),
+    );
+    expect(guessed[0].assignments[0].locked).toBe(false);
+    expect(guessed[0].storedLink).toBe(false);
   });
 
   test("(b) stored origin wins over floating when not delivered", () => {

@@ -2442,6 +2442,62 @@ async function recomputeSoPicked(sb: any, soItemIds: Array<string | null | undef
   }
 }
 
+/* ── SO-link target gate ────────────────────────────────────────────────────
+   `purchase_order_items.so_item_id` is not decoration: the drop-ship guard
+   resolves an incoming batch through it, MRP reads it, and the SO's
+   po_qty_picked is recounted from it. So the operator-facing bind (add-line and
+   line-edit) must not be able to point a PO line at just any SO line. Three
+   things are checked, and a failure is a 409 the UI can show verbatim:
+
+     • the SO line exists and belongs to the ACTIVE COMPANY (a foreign uuid
+       resolves to nothing, exactly like every other cross-company read here);
+     • it is not cancelled — a cancelled line has no demand to fulfil;
+     • its item_code equals the PO line's material_code. Binding a PO line for
+       one SKU to an SO line for another makes every downstream reader lie.
+
+   Returns null when the link is acceptable (including when there is none). */
+async function soLinkTargetRefusal(
+  sb: any,
+  c: any,
+  soItemId: string | null,
+  materialCode: string,
+): Promise<{ body: Record<string, unknown>; status: 404 | 409 } | null> {
+  if (!soItemId) return null;
+  const { data } = await scopeToCompany(
+    sb.from('mfg_sales_order_items').select('id, doc_no, item_code, cancelled').eq('id', soItemId), c,
+  ).maybeSingle();
+  const row = data as { id: string; doc_no: string | null; item_code: string | null; cancelled: boolean | null } | null;
+  if (!row) {
+    return {
+      body: { error: 'so_line_not_found', reason: 'That Sales Order line does not exist on this company.' },
+      status: 404,
+    };
+  }
+  if (row.cancelled) {
+    return {
+      body: {
+        error: 'so_line_cancelled',
+        reason: `Sales Order line ${row.doc_no ?? ''} is cancelled — it has no demand to purchase against.`.trim(),
+      },
+      status: 409,
+    };
+  }
+  const soCode = String(row.item_code ?? '').trim().toUpperCase();
+  const poCode = String(materialCode ?? '').trim().toUpperCase();
+  if (!soCode || soCode !== poCode) {
+    return {
+      body: {
+        error: 'so_link_material_mismatch',
+        reason: `This line orders ${materialCode}, but the picked Sales Order line is for ${row.item_code ?? '(no item)'}. Pick the matching line, or leave the source blank.`,
+        soItemCode: row.item_code,
+        materialCode,
+      },
+      status: 409,
+    };
+  }
+  return null;
+}
+
 mfgPurchaseOrders.post('/:id/items', async (c) => {
   const poId = c.req.param('id');
   let it: Record<string, unknown>;
@@ -2479,7 +2535,11 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   /* Audit fix — Add-item dropped the source SO link. Without so_item_id the
      line never counts toward the SO's po_qty_picked, so the From-SO picker
      keeps offering an already-covered line. Dual-read camelCase??snake_case. */
-  const soItemId = ((it.soItemId ?? it.so_item_id) as string | null | undefined) ?? null;
+  const soItemId = (((it.soItemId ?? it.so_item_id) as string | null | undefined) || null);
+  {
+    const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.materialCode ?? ''));
+    if (refusal) return c.json(refusal.body, refusal.status);
+  }
 
   const row: Record<string, unknown> = {
     purchase_order_id: poId,
@@ -2522,6 +2582,13 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   await recomputePoTotals(sb, poId);
   await recomputePoExpectedAt(sb, poId);
+  /* A newly-bound line consumes SO quota, so the source line must drop out of
+     the From-SO picker — the same recount the line-edit and delete paths run.
+     Best-effort: the line is already stored, never fail the add on a counter. */
+  if (soItemId) {
+    try { await recomputeSoPicked(sb, [soItemId]); }
+    catch { /* don't fail the add on a counter recount */ }
+  }
 
   /* UPDATE, not CREATE: the entity is the PURCHASE ORDER and it already existed.
      The line's identity travels in the note and as the to-value of every pair. */
@@ -2619,6 +2686,24 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
+  /* Bind / unbind the source SO line (2026-07-31). Add-item has accepted
+     soItemId since the earlier audit fix, but a line already saved had NO way
+     back: 67 of 101 live PO lines carry no link, and without one the drop-ship
+     offer never appears and the shipment cannot bind its incoming PO. Explicit
+     null / '' UNBINDS (a genuine stock-replenishment PO must stay valid); an
+     ABSENT key keeps the stored link, the same partial-PATCH contract as every
+     other field above. */
+  const prevSoItemId = ((prev as { so_item_id?: string | null }).so_item_id) ?? null;
+  let nextSoItemId = prevSoItemId;
+  const soItemKeySent = it.soItemId !== undefined || it.so_item_id !== undefined;
+  if (soItemKeySent) {
+    nextSoItemId = (((it.soItemId ?? it.so_item_id) as string | null | undefined) || null);
+    const effCode = String((it.materialCode ?? (prev as { material_code?: string }).material_code) ?? '');
+    const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, effCode);
+    if (refusal) return c.json(refusal.body, refusal.status);
+    updates['so_item_id'] = nextSoItemId;
+  }
+
   const { error } = await scopeToCompanyId(sb.from('purchase_order_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
@@ -2653,9 +2738,12 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
      SO line releases that quota back to the From-SO picker (qty - picked > 0
      again); if it raised qty, picked rises. Self-healing — see recomputeSoPicked.
      Best-effort: never fail the edit on a recount error. */
-  const editedSoItem = (prev as { so_item_id?: string | null }).so_item_id ?? null;
-  if (editedSoItem) {
-    try { await recomputeSoPicked(sb, [editedSoItem]); }
+  /* BOTH sides when the link itself moved: the line the PO stopped serving has
+     to release its quota back to the picker, and the one it now serves has to
+     claim it. Same recount, two ids. */
+  const touchedSoItems = [...new Set([prevSoItemId, nextSoItemId].filter((x): x is string => !!x))];
+  if (touchedSoItems.length > 0) {
+    try { await recomputeSoPicked(sb, touchedSoItems); }
     catch { /* don't fail the edit on a counter recount */ }
   }
   return c.json({ ok: true });
