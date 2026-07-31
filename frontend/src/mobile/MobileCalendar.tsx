@@ -492,7 +492,10 @@ export function MobileCalendar({
         </div>
       </header>
 
-      <div className="scroll" style={{ padding: 12, paddingBottom: 120, background: "#fff" }}>
+      {/* Owner 2026-07-30: 12px → 7px side padding. Every pixel taken off the
+          page edge widens all 7 day columns, which is what lets a long event
+          name finish on one line inside its bar. */}
+      <div className="scroll" style={{ padding: "12px 7px", paddingBottom: 120, background: "#fff" }}>
         {/* Month nav — ‹ · Today · › · right-aligned month title (v7 lockup) */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
           <button onClick={() => nav(-1)} aria-label="Previous month" className="cal-navbtn">‹</button>
@@ -665,7 +668,11 @@ function MonthGrid({ weeks, byDay, expand, onExpandAll, onOpenDay, empty, onOpen
             {/* Bars grid — 7 columns aligned to the day numbers above; each bar
                 spans grid-column start..end so it sits on its real dates. Each
                 bar keeps its own row so overlapping fairs stack (no packing). */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", rowGap: 2, padding: "2px 0" }}>
+            {/* overflow hidden: bar labels are allowed to spill right past
+                their tinted box into that row's empty columns (owner
+                2026-07-30, so long names read on one line) — this clips the
+                spill at the week's right edge so no text escapes the grid. */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", rowGap: 2, padding: "2px 0", overflow: "hidden" }}>
               {bars.slice(0, cap).map(({ e, startIdx, endIdx }, i) => {
                 const focused = focusProjectId != null && e.kind === "project" && e.projectId === focusProjectId;
                 const isTask = e.kind === "task";

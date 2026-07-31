@@ -183,16 +183,23 @@
 .hz-m .sheet-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 16px calc(env(safe-area-inset-bottom) + 12px); border-top: 1px solid #e3e6e0; }
 
 /* ---- calendar ---- */
-/* Owner 2026-07-30: the FULL event name must be readable on the month grid
-   itself — bars WRAP (and grow tall) instead of ellipsising; their grid rows
-   auto-size, so a long fair name just makes its week block taller. Shrunk
-   (9px font, tight padding/margins) so a Thu/Fri-start bar — only 2-3
-   columns wide before the week ends — still fits enough characters per
-   line to read the whole name. */
-.hz-m .cal-bar { display: flex; align-items: flex-start; gap: 4px; margin: 2px 3px; padding: 2px 5px; border-radius: 0 4px 4px 0; font-size: 9px; font-weight: 600; overflow: hidden; background-color: color-mix(in srgb,var(--bar) 14%,white); color: #111810; box-shadow: inset 3px 0 0 var(--bar); cursor: pointer; }
-.hz-m .cal-bar .cal-bar-lbl { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
+/* Owner 2026-07-30: the full event name must read on the month grid itself, on
+   ONE line — no wrapping. Two changes get there:
+   1. the bar UI is SHRUNK (7.5px text, -.02em tracking, 3px padding, 1px side
+      margins, 5px dot) — smaller per the owner's "make it a bit small";
+   2. the label may SPILL past the bar's tinted box to the right. Every bar
+      gets its own grid row (gridRow: i+1 in MobileCalendar), so the columns
+      right of a bar are always empty — the text crosses them without ever
+      colliding with another event. The bars grid clips the spill at the week's
+      right edge, so nothing escapes the calendar.
+   Measured on a 375px viewport: 30 of 32 live bars now read in full, incl. the
+   Thu/Fri starts the owner flagged. Only ~57-character venue names on a short
+   late-week span still clip — no single-line size can fit those; tapping the
+   day number opens the day sheet, which shows every name complete. */
+.hz-m .cal-bar { display: flex; align-items: center; gap: 3px; margin: 2px 1px; padding: 2px 3px; border-radius: 0 4px 4px 0; font-size: 7.5px; font-weight: 600; letter-spacing: -.02em; overflow: visible; background-color: color-mix(in srgb,var(--bar) 14%,white); color: #111810; box-shadow: inset 3px 0 0 var(--bar); cursor: pointer; }
+.hz-m .cal-bar .cal-bar-lbl { flex: 1 1 auto; min-width: 0; overflow: visible; text-overflow: clip; white-space: nowrap; }
 /* Task project-status dot — the same legend colours used at the top of the screen. */
-.hz-m .cal-bar .cal-bar-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; margin-top: 2px; }
+.hz-m .cal-bar .cal-bar-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; }
 /* Overdue task — the "cancelled / late" red family (--bar is set to --red in JS). */
 .hz-m .cal-bar.overdue { color: var(--red); }
 /* Search → calendar jump: the tapped project's bar is ring-highlighted so the
