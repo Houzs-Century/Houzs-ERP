@@ -1559,7 +1559,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                   AND (pc.title NOT IN ('Exchange List', 'Stock In Transfer Record')
                        OR EXISTS (SELECT 1 FROM project_checklist dl
                                    WHERE dl.project_id = p.id
-                                     AND dl.title LIKE 'Defect List%'
+                                     AND (dl.title LIKE 'Defect List%' OR dl.title LIKE 'Defect Item%')
                                      AND (dl.status = 'done' OR dl.review_status = 'approved'
                                           OR EXISTS (SELECT 1 FROM project_checklist_attachments da
                                                       WHERE da.item_id = dl.id
@@ -1583,7 +1583,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                 JOIN project_checklist_attachments da
                   ON da.item_id = dl.id AND da.archived_at IS NULL
                 WHERE dl.project_id = p.id
-                  AND dl.title LIKE 'Defect List%'
+                  AND (dl.title LIKE 'Defect List%' OR dl.title LIKE 'Defect Item%')
                   AND COALESCE((SELECT act.status
                                   FROM project_checklist_attachment_actions act
                                  WHERE act.attachment_id = da.id

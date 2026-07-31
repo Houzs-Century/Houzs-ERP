@@ -7018,7 +7018,7 @@ function TaskAttachmentRow({
   toast?: ReturnType<typeof useToast>;
 }) {
   const defectCtx = useContext(DefectActionsCtx);
-  const isDefectFile = (itemTitle ?? "").trim().toLowerCase().startsWith("defect list");
+  const isDefectFile = /^defect (list|item)/i.test((itemTitle ?? "").trim());
   const fileActions = isDefectFile && defectCtx
     ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
     : [];
@@ -8831,7 +8831,7 @@ function ChecklistRow({
   // Defect List (owner 2026-07-16): a remark is COMPULSORY before each photo —
   // Attach opens a required-remark prompt first, then the file picker, and the
   // photo uploads carrying that remark.
-  const isDefectList = (item.title || "").trim().toLowerCase().startsWith("defect list");
+  const isDefectList = /^defect (list|item)/i.test((item.title || "").trim());
   const pendingCaptionRef = useRef<string | undefined>(undefined);
   async function startAttach() {
     if (isDefectList) {

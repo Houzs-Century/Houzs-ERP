@@ -81,9 +81,13 @@ function effectivePicId(project: { pic_id: number | null; created_by?: number | 
 }
 
 /** PIC visibility expiry: a scoped PIC keeps a project until this many days
- *  AFTER it ends (owner: "完了的四天之后"). After that the project drops out of
- *  their list + detail. Unscoped roles (admins/finance/ops) are unaffected. */
-export const PIC_GRACE_DAYS = 4;
+ *  AFTER it ends (was 4 — owner: "完了的四天之后"). Widened to 30 on 2026-07-31
+ *  ("karjiun cannot see project, fix it"): the post-event work added this week
+ *  — Defect List Dismantle uploads + the purchaser/BD defect actioning loop —
+ *  runs well past 4 days, and the PIC must stay on the event while it does.
+ *  Matches the 30-day teardown window the purchaser pending lane uses.
+ *  Unscoped roles (admins/finance/ops) are unaffected. */
+export const PIC_GRACE_DAYS = 30;
 
 /** SQL predicate (D1/PG via the shim) for "still visible to a scoped PIC":
  *  no end date, or it ended within the last PIC_GRACE_DAYS. Used in the list

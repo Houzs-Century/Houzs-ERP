@@ -2,11 +2,10 @@ import { useEffect, useState } from "react";
 import { CompanyMark } from "./CompanyMark";
 import { shortCompanyName } from "../lib/branding";
 import { useBranding } from "../hooks/useBranding";
-import { Download, WifiOff, X, RefreshCw } from "lucide-react";
+import { Download, WifiOff, X } from "lucide-react";
 import {
   onInstallAvailability,
   onOnline,
-  onUpdateAvailable,
   promptInstall,
   isStandalone,
 } from "../pwa";
@@ -31,11 +30,9 @@ export function PwaBanners() {
   const [canInstall, setCanInstall] = useState(false);
   const [online, setOnline] = useState(true);
   const [showInstall, setShowInstall] = useState(false);
-  const [updateReady, setUpdateReady] = useState(false);
 
   useEffect(() => onInstallAvailability(setCanInstall), []);
   useEffect(() => onOnline(setOnline), []);
-  useEffect(() => onUpdateAvailable(setUpdateReady), []);
 
   useEffect(() => {
     if (!canInstall || isStandalone()) {
@@ -74,29 +71,10 @@ export function PwaBanners() {
         </div>
       )}
 
-      {/* New-build banner (owner 2026-07-23). A deployed change used to be
-          invisible until a manual hard refresh; now a fresh build takes over
-          via the SW and this offers a one-tap Reload. Top-centre so it reads
-          as a system notice, not tied to a page. Never auto-reloads — an
-          operator could be mid-order. */}
-      {updateReady && (
-        <div
-          className="fixed left-1/2 top-3 z-[101] flex -translate-x-1/2 items-center gap-3 rounded-full border border-primary/30 bg-surface px-4 py-2 shadow-slab"
-          role="status"
-          aria-live="polite"
-        >
-          <span className="flex items-center gap-1.5 text-[12px] font-semibold text-ink">
-            <RefreshCw size={13} strokeWidth={2} className="text-primary" />
-            A new version is available
-          </span>
-          <button
-            onClick={() => window.location.reload()}
-            className="rounded-full bg-primary px-3 py-1 text-[11.5px] font-bold text-white hover:bg-primary-ink"
-          >
-            Reload
-          </button>
-        </div>
-      )}
+      {/* The new-build banner that lived here was REMOVED (owner 2026-07-31:
+          "why got 2 button refresh?") — NewVersionBanner.tsx already shows the
+          bottom "A newer version is ready · Refresh now" toast, so this
+          top-centre pill was a duplicate prompt for the same event. */}
 
       {showInstall && (
         <div className="fixed inset-x-3 bottom-3 z-[100] mx-auto max-w-md rounded-2xl border border-border bg-surface px-[18px] py-4 shadow-slab sm:inset-x-auto sm:right-6 sm:bottom-6 sm:w-[340px]">

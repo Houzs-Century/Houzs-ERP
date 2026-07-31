@@ -988,16 +988,16 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const opsSdTiles: DocTile[] = [
     { label: "Setup Image (Driver)", match: /^setup image/i, driverOnly: true, readOnly: true },
     { label: "Setup Image (Sales PIC)", match: /^setup image/i, salesPicOnly: true, readOnly: true },
-    { label: "Defect List Setup", match: /^defect list setup/i, readOnly: true },
-    { label: "Defect List Dismantle", match: /^defect list dismantle/i, readOnly: true },
+    { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
+    { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
     { label: "Event Complete Image", match: /^event complete image/i, readOnly: true },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: true },
   ];
   // Purchaser view (Sim, Farra): exactly three S&D tiles — Defect List to
   // consult, their own two deliverables to edit.
   const purchaserSdTiles: DocTile[] = [
-    { label: "Defect List Setup", match: /^defect list setup/i, readOnly: true },
-    { label: "Defect List Dismantle", match: /^defect list dismantle/i, readOnly: true },
+    { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
+    { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
     { label: "Exchange List", match: /^exchange list/i },
     { label: "Stock In Transfer Record", match: /^stock in transfer/i },
   ];
@@ -1025,8 +1025,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const mgmtSdTiles: DocTile[] = [
     { label: "Setup Image (Driver)", match: /^setup image/i, driverOnly: true, readOnly: !canBdEdit },
     { label: "Setup Image (Sales PIC)", match: /^setup image/i, salesPicOnly: true, readOnly: !canBdEdit },
-    { label: "Defect List Setup", match: /^defect list setup/i, readOnly: !canBdEdit },
-    { label: "Defect List Dismantle", match: /^defect list dismantle/i, readOnly: !canBdEdit },
+    { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: !canBdEdit },
+    { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: !canBdEdit },
     { label: "Exchange List", match: /^exchange list/i, readOnly: !canBdEdit },
     { label: "Event Complete Image", match: /^event complete image/i, readOnly: !canBdEdit },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: !canBdEdit },
@@ -2214,7 +2214,7 @@ function TaskRow({
   // deliverables (the SALES PIC-badged Setup Image / Event Complete Image /
   // Defect List / Filled Floorplan). Every other row is add-only for them —
   // no × on the chips. Directors/mgt/admin keep full remove everywhere.
-  const SALES_REMOVABLE = /^(setup image|event complete image|defect list|filled floor\s*plan)/i;
+  const SALES_REMOVABLE = /^(setup image|event complete image|defect (list|item)|filled floor\s*plan)/i;
   const _isSalesStaffUser =
     (/sales/i.test((user?.department_name ?? "").trim()) || /^sales/i.test((user?.position_name ?? "").trim())) &&
     !/\b(Super Admin|Sales Director|Finance Manager)\b/i.test((user?.position_name ?? "").trim()) &&
@@ -2346,8 +2346,8 @@ function TaskRow({
               </button>
             )}
           </span>
-          {(it.title || "").trim().toLowerCase().startsWith("defect list") && <AttachRemark att={a} canEdit={canAttach} />}
-          {(it.title || "").trim().toLowerCase().startsWith("defect list") && <DefectFileActions att={a} />}
+          {/^defect (list|item)/i.test((it.title || "").trim()) && <AttachRemark att={a} canEdit={canAttach} />}
+          {/^defect (list|item)/i.test((it.title || "").trim()) && <DefectFileActions att={a} />}
         </div>
       ))}
     </div>
@@ -3197,8 +3197,8 @@ const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
   // Defect List split (owner 2026-07-29): Setup + Dismantle variants, both
   // shared with the driver crew ("SALES PIC & DRIVER") and both keeping the
   // compulsory per-photo remark.
-  { label: "Defect List Setup", match: /^defect list setup/i, requirePhotoRemark: true },
-  { label: "Defect List Dismantle", match: /^defect list dismantle/i, requirePhotoRemark: true },
+  { label: "Defect Item Setup", match: /^defect (list|item) setup/i, requirePhotoRemark: true },
+  { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, requirePhotoRemark: true },
   { label: "Event Complete Image", match: /^event complete image/i, fullWidth: true, mediaH: 108 },
 ];
 
@@ -3220,8 +3220,8 @@ const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
   { label: "Decoration", match: /^deco/i, readOnly: true, remarkWithFiles: true },
   // Defect List pair (owner 2026-07-29): shared sales+driver deliverables
   // ("SALES PIC & DRIVER") — crew EDIT them here, compulsory remark per photo.
-  { label: "Defect List Setup", match: /^defect list setup/i, requirePhotoRemark: true },
-  { label: "Defect List Dismantle", match: /^defect list dismantle/i, requirePhotoRemark: true },
+  { label: "Defect Item Setup", match: /^defect (list|item) setup/i, requirePhotoRemark: true },
+  { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, requirePhotoRemark: true },
 ];
 
 // ── Document review (Approve / Reject) — shared by the doc cards ──
