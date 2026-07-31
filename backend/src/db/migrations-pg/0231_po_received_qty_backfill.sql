@@ -1,4 +1,8 @@
--- 0230_po_received_qty_backfill.sql
+-- 0231_po_received_qty_backfill.sql
+-- Renumbered from 0230 on 2026-07-31: #1435 and #1439 both merged a 0230 and
+-- the later one had to move. Safe to rename because NEITHER had been applied —
+-- the backend deploy had been failing since 08:22, so the last APPLIED file
+-- predates both (CLAUDE.md: check before renaming an applied migration).
 -- Owner 2026-07-31: re-run the PO receipt recount over history, because for a
 -- bounded window it never ran at all and 11 fully-received POs are still sitting
 -- in the buyer's outstanding list.
