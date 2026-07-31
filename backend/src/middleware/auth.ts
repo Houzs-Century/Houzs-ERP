@@ -127,11 +127,16 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
     return c.json({ error: "Your session has expired. Please sign in again." }, 401);
   }
 
-  // Legacy shared key — service-tier access for tooling and cron. No session
-  // row exists, so `sessionOrigin` is deliberately left unset: the shared key
-  // is a trusted backend caller, never a POS tablet, and must keep pricing
+  // Service-tier access. DASHBOARD_API_KEY = legacy shared key (tooling/cron);
+  // CONNECT_SERVICE_TOKEN = dedicated key for Houzs Connect's org sync, so that
+  // integration has its own credential and the legacy key never needs rotating.
+  // No session row exists, so `sessionOrigin` is deliberately left unset: these
+  // are trusted backend callers, never a POS tablet, and must keep pricing
   // freely.
-  if (c.env.DASHBOARD_API_KEY && token === c.env.DASHBOARD_API_KEY) {
+  if (
+    (c.env.DASHBOARD_API_KEY && token === c.env.DASHBOARD_API_KEY) ||
+    (c.env.CONNECT_SERVICE_TOKEN && token === c.env.CONNECT_SERVICE_TOKEN)
+  ) {
     c.set("user", SERVICE_USER);
     c.set("userId", (SERVICE_USER as any).id ?? null);
     await next();

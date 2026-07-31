@@ -87,6 +87,10 @@ export type Env = {
   // Inbound-sync kill switch. "true" = skip every AutoCount pull (cron + manual).
   AUTOCOUNT_SYNC_DISABLED?: string;
   DASHBOARD_API_KEY: string;
+  // Dedicated service token for Houzs Connect's org sync — accepted as the
+  // same service-tier caller as DASHBOARD_API_KEY (see middleware/auth.ts),
+  // so Connect authenticates with its own credential.
+  CONNECT_SERVICE_TOKEN: string;
   GOOGLE_MAPS_API_KEY?: string;
   // Email (Resend). Leave RESEND_API_KEY unset to run in no-op mode —
   // send() will log + skip, never throw.
