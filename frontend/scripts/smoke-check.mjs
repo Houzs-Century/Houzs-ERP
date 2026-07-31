@@ -25,6 +25,10 @@ base.pathname = base.pathname.replace(/\/$/, "");
 const attempts = Math.max(1, Number(process.env.FRONTEND_SMOKE_ATTEMPTS ?? 8));
 const retryDelayMs = Math.max(0, Number(process.env.FRONTEND_SMOKE_RETRY_MS ?? 2_000));
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// _headers asks for 300s. The zone's Browser Cache TTL currently raises every
+// short max-age to 14400, so that is the ceiling this can assert until the
+// dashboard setting moves to "Respect Existing Headers".
+const MAX_CHUNK_TTL_SECONDS = 14_400;
 const get = (path) => fetch(new URL(path, `${base.href}/`), {
   cache: "no-store",
   redirect: "follow",
@@ -79,8 +83,20 @@ async function proveRelease() {
   if (!chunkResponse.ok || !/(?:java|ecma)script/i.test(chunkType) || /^\s*<!doctype html/i.test(chunkBody)) {
     throw new Error(`entry chunk returned ${chunkResponse.status} ${chunkType || "no content-type"}`);
   }
-  if (!/immutable/i.test(chunkResponse.headers.get("cache-control") ?? "")) {
-    throw new Error("entry chunk is missing immutable cache policy");
+  // The hashed bundles deliberately carry a BOUNDED TTL and NO `immutable` — see
+  // the warning block in frontend/public/_headers. Pages answers an unknown path
+  // with index.html at 200, so a request landing mid-deploy caches HTML *under the
+  // asset URL*; `immutable` pins that poisoned copy for a year, which is what took
+  // the ERP down on 2026-07-31. This assertion enforces the policy that replaced
+  // it: the copy must be able to expire. It used to demand the opposite and went
+  // red on every deploy from 2026-07-31 08:22 once _headers dropped `immutable`.
+  const chunkCache = chunkResponse.headers.get("cache-control") ?? "";
+  if (/immutable/i.test(chunkCache)) {
+    throw new Error(`entry chunk is served immutable (${chunkCache}) — a poisoned copy could never expire`);
+  }
+  const chunkMaxAge = Number(/max-age=(\d+)/i.exec(chunkCache)?.[1] ?? NaN);
+  if (!Number.isFinite(chunkMaxAge) || chunkMaxAge > MAX_CHUNK_TTL_SECONDS) {
+    throw new Error(`entry chunk cache policy is unbounded or too long (${chunkCache || "no cache-control"})`);
   }
 
   const swResponse = await get("/sw.js");
@@ -88,8 +104,19 @@ async function proveRelease() {
   if (!swResponse.ok || swBody.includes("__SW_BUILD_ID__")) {
     throw new Error(`service worker is unavailable or unstamped (${swResponse.status})`);
   }
-  if (!/max-age=0|no-cache|no-store/i.test(swResponse.headers.get("cache-control") ?? "")) {
-    throw new Error("service worker can be served without revalidation");
+  // _headers asks for `max-age=0, must-revalidate`, but the zone's Browser Cache
+  // TTL rewrites the NUMBER and leaves the rest — live is
+  // `max-age=14400, must-revalidate`. That is the same override that keeps
+  // /assets3/* off its intended 300, and it made this assertion the NEXT
+  // blocker once the `immutable` one above was corrected. `must-revalidate` is
+  // the directive that actually survives, so require any of the four rather than
+  // a max-age the zone will not let through. Note this is a weaker guarantee than
+  // the file asks for; the registration uses updateViaCache "imports" (verified in
+  // a live browser), so the SW SCRIPT still bypasses the HTTP cache on every
+  // update check and its VERSION bump is not delayed by the 4-hour TTL.
+  const swCache = swResponse.headers.get("cache-control") ?? "";
+  if (!/max-age=0|no-cache|no-store|must-revalidate/i.test(swCache)) {
+    throw new Error(`service worker can be served without revalidation (${swCache || "no cache-control"})`);
   }
   const version = swBody.match(/const VERSION = "([^"]+)";/)?.[1];
   if (!version) throw new Error("service worker has no release version");

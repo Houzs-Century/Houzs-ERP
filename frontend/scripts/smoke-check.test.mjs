@@ -28,7 +28,10 @@ function runSmoke(baseUrl) {
   });
 }
 
-async function withServer(stale, callback) {
+// Mirrors the live policy in frontend/public/_headers: bounded, never immutable.
+const ENTRY_CACHE = "public, max-age=300";
+
+async function withServer(stale, callback, entryCache = ENTRY_CACHE, swCache = "max-age=0, must-revalidate") {
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
     if (path === "/" || path === "/scm/sales-orders") {
@@ -37,12 +40,12 @@ async function withServer(stale, callback) {
       return;
     }
     if (path === "/sw.js") {
-      response.writeHead(200, { "content-type": "application/javascript", "cache-control": "max-age=0, must-revalidate" });
+      response.writeHead(200, { "content-type": "application/javascript", "cache-control": swCache });
       response.end(readFileSync(join(dist, "sw.js")));
       return;
     }
     if (path === entry) {
-      response.writeHead(200, { "content-type": "application/javascript", "cache-control": "max-age=31536000, immutable" });
+      response.writeHead(200, { "content-type": "application/javascript", "cache-control": entryCache });
       response.end(readFileSync(join(dist, entry)));
       return;
     }
@@ -64,6 +67,49 @@ test("passes only when the live release matches the emitted dist", async () => {
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /\[frontend-smoke\] PASS/);
   });
+});
+
+// A poisoned chunk (HTML cached under an asset URL) can only self-heal if the
+// copy expires. `immutable` pins it for a year — the 2026-07-31 outage.
+test("fails when the entry chunk is served immutable", async () => {
+  await withServer(false, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /immutable/i);
+  }, "public, max-age=31536000, immutable");
+});
+
+test("fails when the entry chunk TTL is longer than the poison window we accept", async () => {
+  await withServer(false, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /unbounded or too long/i);
+  }, "public, max-age=86400");
+});
+
+test("accepts the zone's current 4-hour ceiling", async () => {
+  await withServer(false, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+    assert.equal(result.code, 0, result.stderr);
+  }, "public, max-age=14400");
+});
+
+// The zone rewrites the max-age and leaves the rest, so live sw.js is
+// `max-age=14400, must-revalidate`. Requiring max-age=0 made this the next
+// blocker behind the immutable one.
+test("accepts the sw cache-control the zone actually serves", async () => {
+  await withServer(false, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+    assert.equal(result.code, 0, result.stderr);
+  }, ENTRY_CACHE, "public, max-age=14400, must-revalidate");
+});
+
+test("fails when the sw can be served with no revalidation at all", async () => {
+  await withServer(false, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /without revalidation/i);
+  }, ENTRY_CACHE, "public, max-age=600");
 });
 
 test("fails when an older entry is internally consistent but not the emitted dist", async () => {
