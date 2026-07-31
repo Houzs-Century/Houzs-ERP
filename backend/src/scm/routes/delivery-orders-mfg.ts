@@ -485,28 +485,44 @@ async function recomputeTotals(sb: any, deliveryOrderId: string) {
    EXPORTED (Costing B, 2026-06-01) so the recost engine (apps/api/src/lib/
    recost.ts) can re-run it after a PI/GR price correction re-costs the lots. */
 /* ── resolveShipCommitments (2026-07-31) ──────────────────────────────────────
-   THE ONE PLACE a ship decides whether it is binding an incoming PO.
+   WHERE A SOFT MRP ALLOCATION BECOMES A HARD BINDING.
 
-   Owner's rule: "when they pick ship-anyway, that matched PO should be bound and
-   go negative against it." So binding follows the FACT that the line resolves a
-   PO — it is not a second question after the drop-ship dialog, and it is not
-   gated on the DO header's is_dropship flag (which mig 0057 defines as the UI
-   badge). The decision table itself is PURE and unit-tested in
-   scm/lib/ship-commitment.ts; this helper only gathers the four facts it needs:
+   The owner's model: every shortage — mattress, bedframe AND sofa — is allocated
+   by MRP against the customer delivery-date list, and that allocation is
+   deliberately SOFT so an urgent insert can re-shuffle it by priority. "The
+   moment an SO becomes a DO, it must turn hard": the DO knows whose goods it is
+   taking, so in MRP the demand AND the supply drop together, and a shipment with
+   nothing on hand goes negative against THAT PO so the GRN offsets it.
 
-     · isSofa            — detectSofaSoItemIds (the same detector the cost paths use)
-     · allocatedBatchNo  — mfg_sales_order_items.allocated_batch_no (a RECEIVED batch)
-     · expectedBatchNo   — resolveExpectedBatchBySoItem in 'block' mode, so a line
-                           bound to >1 live PO (audit H3) resolves to null and
-                           binds NOTHING rather than guessing a dye lot
-     · availableQty      — from the shortage list the short-stock guard just
-                           produced, so the binding cannot disagree with the
-                           question the operator was asked
+   ⚠ THE STEP THAT IS EASY TO MISS. resolveExpectedBatchBySoItem resolves the
+   incoming batch ONLY through purchase_order_items.so_item_id — it can USE a
+   hard binding, it cannot CREATE one. So "bind the matched PO on ship-anyway"
+   is a NO-OP on the common case, where the PO the SO screen shows is still a
+   soft MRP match. This helper closes that gap: for a line shipping short with no
+   live bound PO it takes the allocation the SO screen is ALREADY showing
+   (computeMrp -> mrpLineCoverage, the engine behind `coverage_po` and behind
+   /po-so-coverage), WRITES it as so_item_id, and then lets the existing resolver
+   and fn_reconcile_dropship_batch work unchanged.
 
-   Returns lineRef -> the binding for the lines that bind (batch + ETA, so the
-   ONE dialog the operator sees can name the incoming PO). Best-effort
-   throughout: any read failure yields no commitments, i.e. exactly today's
-   behaviour (ship, no binding) — a binding lookup must never block a shipment. */
+   ONE ENGINE, NOT A SECOND MATCHING RULE — screen and binding read the same
+   allocation on purpose. Two rules that can disagree is the original bug.
+
+   TWO PHASES, because the write needs a document to attribute itself to:
+     · harden = null   — PREVIEW, no writes. Runs before the short-stock 409 so
+       the ONE dialog can name the incoming PO, hard match or soft.
+     · harden = {...}  — COMMIT, after the DO header exists, so the audit row can
+       say which DO caused the bind.
+
+   Facts handed to the PURE decision table (scm/lib/ship-commitment.ts):
+     · isSofa            — detectSofaSoItemIds (the detector the cost paths use)
+     · allocatedBatchNo  — mfg_sales_order_items.allocated_batch_no (RECEIVED)
+     · expectedBatchNo   — resolveExpectedBatchBySoItem in 'block' mode, so >1
+                           live PO (audit H3) resolves to null and binds nothing
+     · availableQty      — from the shortage list the guard just produced, so the
+                           binding cannot disagree with the question that was asked
+
+   Best-effort throughout: any failure yields no commitments, i.e. exactly
+   today's behaviour (ship, unbound). A binding lookup must never block a ship. */
 type ShipCandidateLine = {
   lineRef: string;
   soItemId: string | null;
@@ -521,9 +537,12 @@ type ShipBinding = { itemCode: string; poNumber: string; eta: string | null };
 async function resolveShipCommitments(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  c: any,
   lines: ShipCandidateLine[],
   warehouseId: string | null,
   shortages: StockShortage[],
+  harden: { doId: string; doNumber: string } | null,
 ): Promise<Map<string, ShipBinding>> {
   const out = new Map<string, ShipBinding>();
   const linked = lines.filter((l) => l.soItemId && Number(l.qty) > 0);
@@ -551,6 +570,113 @@ async function resolveShipCommitments(
        it "stock on hand" for the decision table. */
     const availableByBucket = new Map<string, number>();
     for (const s of shortages) availableByBucket.set(`${s.itemCode}::${s.variantKey}`, s.available);
+    const availableOf = (l: ShipCandidateLine): number =>
+      availableByBucket.get(`${l.itemCode}::${l.variantKey}`) ?? Number(l.qty);
+
+    /* Which lines are shipping short with NO live bound PO? Only those consult
+       MRP. `expected.has()` — not `.poNumber` — is the test on purpose: a
+       multi-PO line IS in the map with a null poNumber, and hardening it would
+       manufacture the third live PO that H3 exists to refuse. Gating on
+       "actually short" also keeps computeMrp off every ordinary stocked ship. */
+    const needsMatch = linked.filter((l) => {
+      const sid = l.soItemId as string;
+      if (allocated.get(sid)) return false;
+      if (expected.has(sid)) return false;
+      return sofaIds.has(sid) || availableOf(l) <= 0;
+    });
+
+    const softEta = new Map<string, string | null>();
+    if (needsMatch.length > 0) {
+      /* The SAME allocation the SO detail renders. Dynamic import because mrp.ts
+         already imports soDeliverableRemaining from THIS file — a static import
+         would close an ESM cycle for a call most ships never make. */
+      const softPo = new Map<string, string>();
+      try {
+        const { computeMrp, mrpLineCoverage } = await import('./mrp');
+        const { loadLeadBuffers } = await import('../../services/agents/procurement-learning');
+        const mrpResult = await computeMrp(sb, {
+          catFilter: null, whFilter: null, includeUndated: true,
+          companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB),
+        });
+        const coverage = mrpLineCoverage(mrpResult);
+        for (const l of needsMatch) {
+          const cov = coverage.get(l.soItemId as string);
+          if (cov?.source === 'po' && cov.po) {
+            softPo.set(l.soItemId as string, cov.po);
+            softEta.set(l.soItemId as string, cov.eta ?? null);
+          }
+        }
+      } catch (e) {
+        /* eslint-disable-next-line no-console */
+        console.error('[ship-commitment] MRP coverage unavailable (shipping unbound):', e);
+      }
+
+      if (harden && softPo.size > 0) {
+        /* An automatic bind is held to EXACTLY the invariants a hand-typed one is
+           (soLinkTargetRefusal, shipped in #1434): the SO line must exist in the
+           active company, must not be cancelled, and its item_code must equal the
+           PO line's material_code. */
+        /* Note it scopes to the ACTIVE company, which on the /from-sos merge path
+           can differ from the DO's inherited company. A cross-company pick is
+           therefore refused rather than bound — deliberately the same answer a
+           human would get on the PO screen. */
+        const { soLinkTargetRefusal, recomputeSoPicked } = await import('./mfg-purchase-orders');
+        const { hardenSoPoLinks } = await import('../lib/harden-so-po-link');
+        const matches: Array<{ soItemId: string; itemCode: string; poNumber: string }> = [];
+        for (const l of needsMatch) {
+          const po = softPo.get(l.soItemId as string);
+          if (!po) continue;
+          if (await soLinkTargetRefusal(sb, c, l.soItemId, l.itemCode)) continue;
+          matches.push({ soItemId: l.soItemId as string, itemCode: l.itemCode, poNumber: po });
+        }
+        const outcomes = await hardenSoPoLinks(sb, matches, async (o) => {
+          if (!o.poId) return;
+          await recordEntityAudit(sb, {
+            entityType: 'PURCHASE_ORDER',
+            entityId: o.poId,
+            entityDocNo: o.poNumber,
+            action: 'UPDATE',
+            actor: c.get('houzsUser'),
+            companyId: activeCompanyId(c),
+            statusSnapshot: null,
+            note: `Source Sales Order line bound by Delivery Order ${harden.doNumber} — the MRP allocation this line already showed is now a hard commitment (${o.itemCode}).`,
+            fieldChanges: compactChanges([
+              fieldChange('soItemId', null, o.soItemId),
+              fieldChange('boundByDo', null, harden.doNumber),
+            ]),
+          });
+        });
+        for (const o of outcomes) {
+          /* Never silent. Each refusal needs a different human move — link the PO
+             line by hand, raise a PO, or accept that another order has the units. */
+          if (!o.hardened) {
+            /* eslint-disable-next-line no-console */
+            console.error('[ship-commitment] could not harden MRP match', {
+              do: harden.doNumber, soItemId: o.soItemId, itemCode: o.itemCode,
+              poNumber: o.poNumber, reason: o.reason,
+            });
+          }
+        }
+        const bound = outcomes.filter((o) => o.hardened);
+        if (bound.length > 0) {
+          // po_qty_picked must follow the link — the SAME recount the PO screens use.
+          try { await recomputeSoPicked(sb, bound.map((o) => o.soItemId)); }
+          catch { /* best-effort; the live-count model self-heals */ }
+          /* Re-resolve through the UNCHANGED resolver, still in 'block' mode, so
+             the batch that reaches the movement is the one dropship-batch.ts
+             derives from the STORED link — never one this code guessed. */
+          const rehydrated = await resolveExpectedBatchBySoItem(
+            sb, bound.map((o) => o.soItemId), { onMultiPo: 'block' });
+          for (const [sid, eb] of rehydrated) expected.set(sid, eb);
+        }
+      } else if (!harden) {
+        /* PREVIEW ONLY — advisory, so the dialog can name the PO. Nothing is
+           written; the commit phase re-derives everything from the stored link. */
+        for (const [sid, po] of softPo) {
+          if (!expected.has(sid)) expected.set(sid, { poNumber: po, eta: softEta.get(sid) ?? null });
+        }
+      }
+    }
 
     const facts: ShipLineFact[] = linked.map((l) => ({
       lineRef: l.lineRef,
@@ -561,7 +687,7 @@ async function resolveShipCommitments(
       isSofa: !!l.soItemId && sofaIds.has(l.soItemId),
       allocatedBatchNo: allocated.get(l.soItemId as string) ?? null,
       expectedBatchNo: (l.soItemId ? expected.get(l.soItemId)?.poNumber : null) ?? null,
-      availableQty: availableByBucket.get(`${l.itemCode}::${l.variantKey}`) ?? Number(l.qty),
+      availableQty: availableOf(l),
       shipQty: Number(l.qty),
     }));
 
@@ -570,7 +696,7 @@ async function resolveShipCommitments(
       out.set(d.lineRef, {
         itemCode: d.itemCode,
         poNumber: d.batchNo,
-        eta: (d.soItemId ? expected.get(d.soItemId)?.eta : null) ?? null,
+        eta: (d.soItemId ? (expected.get(d.soItemId)?.eta ?? softEta.get(d.soItemId)) : null) ?? null,
       });
     }
   } catch (e) {
@@ -2838,35 +2964,28 @@ deliveryOrdersMfg.post('/', async (c) => {
      is how the two would come to disagree. Only the 409 is gated. */
   const shipWarehouseId = (body.warehouseId as string | undefined) ?? (await defaultWarehouseId(sb));
   let shortages: StockShortage[] = [];
-  let commitments = new Map<string, ShipBinding>();
+  const shipCandidates: ShipCandidateLine[] = items.map((it, idx) => ({
+    lineRef: String(idx),
+    soItemId: (it.soItemId as string | null) ?? null,
+    itemCode: String(it.itemCode ?? ''),
+    itemGroup: (it.itemGroup as string | null) ?? null,
+    variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
+    qty: Number(it.qty ?? 0),
+  }));
   if (items.length > 0 && shipWarehouseId) {
-    const stockLines = items.map((it) => ({
+    shortages = await checkStockAvailability(sb, shipWarehouseId, items.map((it) => ({
       itemCode: String(it.itemCode ?? ''),
       productName: (it.description as string | null) ?? null,
       variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
       qty: Number(it.qty ?? 0),
-    }));
-    shortages = await checkStockAvailability(sb, shipWarehouseId, stockLines);
-    /* Binding follows the fact (mig 0230): a line that ships before its goods
-       arrive and resolves exactly one live bound PO carries that PO's batch,
-       whichever dialog the operator happened to answer. Resolved BEFORE the 409
-       so the single "ship anyway?" dialog can name the incoming PO. */
-    commitments = await resolveShipCommitments(
-      sb,
-      items.map((it, idx) => ({
-        lineRef: String(idx),
-        soItemId: (it.soItemId as string | null) ?? null,
-        itemCode: String(it.itemCode ?? ''),
-        itemGroup: (it.itemGroup as string | null) ?? null,
-        variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
-        qty: Number(it.qty ?? 0),
-      })),
-      shipWarehouseId,
-      shortages,
-    );
+    })));
     if (shortages.length > 0 && !body.confirmShortStock) {
+      /* PREVIEW (no writes) — name the incoming PO in the ONE dialog, so the
+         operator's single "ship anyway" answer already covers the binding. */
+      const preview = await resolveShipCommitments(
+        sb, c, shipCandidates, shipWarehouseId, shortages, null);
       markIdempotencyNoWrite(c);
-      return c.json(shortStockResponse(shortages, bindingList(commitments)), 409);
+      return c.json(shortStockResponse(shortages, bindingList(preview)), 409);
     }
   }
 
@@ -3003,6 +3122,14 @@ deliveryOrdersMfg.post('/', async (c) => {
   const h = header as unknown as { id: string; do_number: string };
 
   if (items.length > 0) {
+    /* COMMIT — the header exists, so the SO becomes a DO right here. Any soft
+       MRP match on a short line is written as a hard so_item_id (attributed to
+       this DO in the PO's audit log), and the batch that lands on the line is
+       re-derived from that stored link. */
+    const commitments = await resolveShipCommitments(
+      sb, c, shipCandidates, shipWarehouseId ?? null, shortages,
+      { doId: h.id, doNumber: h.do_number },
+    );
     const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo, commitments.get(String(lineNo))?.poNumber ?? null));
     const { error: iErr } = await sb.from('delivery_order_items').insert(stampCompany(rows, c));
     if (iErr) { await sb.from('delivery_orders').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
@@ -3340,24 +3467,21 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
   /* Binding follows the fact (mig 0230) — per PICK, not per header flag. This is
      the path where the all-or-nothing header decision hurt most: a merged DO can
      span several SOs, and one unresolvable line used to deny the netting to
-     every other line that could have had it. Resolved BEFORE the 409 so the one
-     "ship anyway?" dialog can name the incoming PO. */
-  const commitments = await resolveShipCommitments(
-    sb,
-    sortedPicks.map((line) => ({
-      lineRef: line.soItemId,
-      soItemId: line.soItemId,
-      itemCode: line.itemCode,
-      itemGroup: line.itemGroup ?? null,
-      variantKey: computeVariantKey(line.itemGroup ?? null, (line.variants as VariantAttrs | null) ?? null),
-      qty: pickQtyById.get(line.soItemId) ?? 0,
-    })),
-    shipWarehouseId ?? null,
-    shortages,
-  );
+     every other line that could have had it. */
+  const shipCandidates: ShipCandidateLine[] = sortedPicks.map((line) => ({
+    lineRef: line.soItemId,
+    soItemId: line.soItemId,
+    itemCode: line.itemCode,
+    itemGroup: line.itemGroup ?? null,
+    variantKey: computeVariantKey(line.itemGroup ?? null, (line.variants as VariantAttrs | null) ?? null),
+    qty: pickQtyById.get(line.soItemId) ?? 0,
+  }));
   if (shortages.length > 0 && !body.confirmShortStock) {
+    // PREVIEW (no writes) — name the incoming PO in the one dialog.
+    const preview = await resolveShipCommitments(
+      sb, c, shipCandidates, shipWarehouseId ?? null, shortages, null);
     markIdempotencyNoWrite(c);
-    return c.json(shortStockResponse(shortages, bindingList(commitments)), 409);
+    return c.json(shortStockResponse(shortages, bindingList(preview)), 409);
   }
 
   // Pull the FIRST SO's header for the DO header snapshot (address / salesperson
@@ -3437,6 +3561,14 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
   );
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   const dh = doHeader as unknown as { id: string; do_number: string };
+
+  /* COMMIT — the header exists, so the picks become a shipment here. Soft MRP
+     matches on short picks harden into real so_item_id links (audited against
+     this DO), and each line's batch is re-derived from the stored link. */
+  const commitments = await resolveShipCommitments(
+    sb, c, shipCandidates, shipWarehouseId ?? null, shortages,
+    { doId: dh.id, doNumber: dh.do_number },
+  );
 
   // 3b. One DO line per pick — qty = the picked qty (NOT the full SO line qty).
   //     Carry cost so margins survive. line_no (0165) = the sortedPicks
@@ -3920,25 +4052,31 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
     addShortages = await checkStockAvailability(sb, addWarehouseId, stockLines);
   }
 
-  /* Binding follows the fact (mig 0230). Decided at WRITE time on every path,
-     the same way is_dropship has always been decided at create and applied at
-     confirm — one model, not two. Resolved before the 409 so the dialog names
-     the incoming PO. */
-  const addCommitments = await resolveShipCommitments(sb, [{
+  const addCandidates: ShipCandidateLine[] = [{
     lineRef: 'add',
     soItemId: (it.soItemId as string | null) ?? null,
     itemCode: String(it.itemCode ?? ''),
     itemGroup: (it.itemGroup as string | null) ?? null,
     variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
     qty: Number(it.qty ?? 0),
-  }], addWarehouseId ?? null, addShortages);
+  }];
 
   /* Only a line on an ALREADY-SHIPPED DO moves stock on add, so only that case
      asks the operator. The measurement is taken either way — it is what the
      binding decision reads, and it must be the same measurement. */
   if (addShipsNow && addShortages.length > 0 && !(it as { confirmShortStock?: boolean }).confirmShortStock) {
-    return c.json(shortStockResponse(addShortages, bindingList(addCommitments)), 409);
+    const preview = await resolveShipCommitments(
+      sb, c, addCandidates, addWarehouseId ?? null, addShortages, null);
+    return c.json(shortStockResponse(addShortages, bindingList(preview)), 409);
   }
+
+  /* COMMIT — the DO already exists here, so hardening can attribute itself to it
+     immediately. Decided at WRITE time on every path, the same way is_dropship
+     has always been decided at create and applied at confirm: one model. */
+  const addCommitments = await resolveShipCommitments(
+    sb, c, addCandidates, addWarehouseId ?? null, addShortages,
+    { doId: id, doNumber: (header as { do_number?: string | null }).do_number ?? id },
+  );
 
   /* Remaining-qty guard (Wei Siang 2026-05-30) — if the added line traces back
      to an SO line, it may not push that SO line past its ordered qty. Same cap

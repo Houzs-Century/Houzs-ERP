@@ -31,6 +31,8 @@
 //        with (a resync must never fall back to an un-batched OUT).
 // ----------------------------------------------------------------------------
 
+import { DEAD_PO_STATUSES } from './harden-so-po-link';
+
 export type ExpectedBatch = {
   /** = scm.purchase_orders.po_number — the batch_no the GRN will stamp on its
    *  IN. null when the batch cannot be resolved (only possible in 'block'
@@ -43,10 +45,12 @@ export type ExpectedBatch = {
   multiPo?: boolean;
 };
 
-/** PO statuses that can still receive a GRN under their number. A CANCELLED
- *  PO never will; a DRAFT PO is reference-only (mirrors recomputeSoPicked's
- *  dead-PO set in mfg-purchase-orders.ts). */
-const DEAD_PO_STATUSES = new Set(['CANCELLED', 'DRAFT']);
+/* DEAD_PO_STATUSES — PO statuses that can still receive a GRN under their
+   number. A CANCELLED PO never will; a DRAFT PO is reference-only (mirrors
+   recomputeSoPicked's dead-PO set in mfg-purchase-orders.ts). Imported at the
+   top of this file from harden-so-po-link.ts, which must refuse to CREATE a
+   binding to exactly the POs this file refuses to RESOLVE one from — a second
+   copy of the set is how the two would drift. */
 
 /** Resolve each SO line's EXPECTED batch (bound LIVE PO number + ETA). A line
  *  with no live bound PO is simply absent from the returned map (caller treats

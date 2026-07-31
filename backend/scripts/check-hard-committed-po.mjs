@@ -117,14 +117,20 @@ async function main() {
     notice("    automatically a fault.");
   }
 
-  // (C) the link that decides which path a shipment can take at all.
+  // (C) the link a shipment binds through. Since 2026-07-31 a DO can CREATE this
+  // link at ship time by hardening the soft MRP allocation the SO screen already
+  // shows (scm/lib/harden-so-po-link.ts), so a NULL here is no longer a dead end
+  // — it only means no shipment has needed that line yet. What matters now is
+  // whether the count is going UP over time.
   notice("================ (C) SO->PO LINK COVERAGE (so_item_id) ================");
   const [{ total, linked }] = await sql`
     SELECT COUNT(*)::int AS total, COUNT(so_item_id)::int AS linked
       FROM scm.purchase_order_items`;
   notice(`  purchase_order_items rows                 : ${total}`);
-  notice(`   - with so_item_id set (bindable)          : ${linked}`);
-  notice(`   - NULL (can only ever ship unbound)       : ${total - linked}`);
+  notice(`   - with so_item_id set (hard binding)      : ${linked}`);
+  notice(`   - NULL (soft/MRP only, or no demand)      : ${total - linked}`);
+  notice("  A NULL is only a problem if a shipment could not harden it — those are");
+  notice("  logged by the DO ship path as '[ship-commitment] could not harden MRP match'.");
   notice("=== END — read-only, no rows changed. ===");
 }
 main().then(() => sql.end()).catch((e) => { console.error("HARD_COMMITTED_PO_FAIL", e?.message ?? e); process.exit(1); });

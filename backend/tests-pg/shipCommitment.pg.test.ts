@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { outstandingCommitments, type CommittedShipmentRow } from '../src/scm/lib/ship-commitment';
+import { hardenSoPoLinks } from '../src/scm/lib/harden-so-po-link';
+import { resolveExpectedBatchBySoItem } from '../src/scm/lib/dropship-batch';
 
 /* END-TO-END PROOF of the ship-before-arrival binding, against real Postgres.
  *
@@ -71,6 +73,9 @@ async function resetFixture(sql: Sql): Promise<void> {
   await sql.unsafe(`
     CREATE SCHEMA IF NOT EXISTS scm;
 
+    DROP TABLE IF EXISTS scm.purchase_order_items CASCADE;
+    DROP TABLE IF EXISTS scm.purchase_orders CASCADE;
+    DROP TABLE IF EXISTS scm.mfg_sales_order_items CASCADE;
     DROP TABLE IF EXISTS scm.inventory_lot_consumptions CASCADE;
     DROP TABLE IF EXISTS scm.inventory_lots CASCADE;
     DROP TABLE IF EXISTS scm.inventory_movements CASCADE;
@@ -140,9 +145,88 @@ async function resetFixture(sql: Sql): Promise<void> {
       created_by uuid,
       company_id integer DEFAULT 1
     );
+
+    -- The SO->PO side, so the SOFT-to-HARD step can be proven end to end.
+    CREATE TABLE scm.mfg_sales_order_items (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      doc_no text,
+      item_code text
+    );
+    -- Dates as text on purpose: PostgREST delivers a date column to the app as
+    -- an ISO STRING, and dropship-batch.ts sorts them as strings. A real date
+    -- column here would hand the module a JS Date the production client never
+    -- gives it, and the fixture would be testing the driver, not the code.
+    CREATE TABLE scm.purchase_orders (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      po_number text,
+      status text,
+      expected_at text,
+      supplier_delivery_date_2 text,
+      supplier_delivery_date_3 text,
+      supplier_delivery_date_4 text
+    );
+    CREATE TABLE scm.purchase_order_items (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      purchase_order_id uuid REFERENCES scm.purchase_orders(id) ON DELETE CASCADE,
+      material_code text,
+      qty integer,
+      received_qty integer DEFAULT 0,
+      so_item_id uuid REFERENCES scm.mfg_sales_order_items(id) ON DELETE SET NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
   `);
 
   await sql.unsafe(await commitmentMigrationSql());
+}
+
+/* A minimal PostgREST-shaped adapter over the real connection, carrying exactly
+   the calls harden-so-po-link and dropship-batch make. The point is to drive
+   BOTH modules unchanged against a real database — the soft-to-hard step and the
+   resolver that reads its result are the two halves that have to agree. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function pgRest(sql: Sql): any {
+  const allowed = new Set(['purchase_orders', 'purchase_order_items']);
+  return {
+    from(table: string) {
+      if (!allowed.has(table)) throw new Error(`unexpected table ${table}`);
+      const where: string[] = [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const params: any[] = [];
+      let patch: Record<string, string> | null = null;
+      const p = (v: unknown) => { params.push(v); return `$${params.length}`; };
+      const run = async () => {
+        const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+        if (patch) {
+          const sets = Object.keys(patch).map((k) => `${k} = ${p(patch![k])}::uuid`).join(', ');
+          await sql.unsafe(`UPDATE scm.${table} SET ${sets} ${clause}`, params);
+          return { data: null, error: null };
+        }
+        const data = await sql.unsafe(`SELECT * FROM scm.${table} ${clause}`, params);
+        return { data, error: null };
+      };
+      const q = {
+        select: () => q,
+        update: (nextPatch: Record<string, string>) => { patch = nextPatch; return q; },
+        // `::text` on both sides so one comparator serves uuid and text columns.
+        in: (col: string, vals: unknown[]) => {
+          where.push(`${col}::text = ANY(${p(vals.map(String))}::text[])`);
+          return q;
+        },
+        eq: (col: string, val: unknown) => { where.push(`${col}::text = ${p(String(val))}`); return q; },
+        is: (col: string, val: unknown) => {
+          where.push(val === null ? `${col} IS NULL` : `${col} IS NOT NULL`);
+          return run();
+        },
+        not: (col: string, _op: string, val: unknown) => {
+          where.push(val === null ? `${col} IS NOT NULL` : `${col} IS NULL`);
+          return q;
+        },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        then: (res: any, rej: any) => run().then(res, rej),
+      };
+      return q;
+    },
+  };
 }
 
 type ShipOpts = { isDropship?: boolean; commitLine?: boolean; status?: string; qty?: number };
@@ -344,6 +428,129 @@ describePg('ship-before-arrival binding (migrations-pg *_scm_ship_commitment_bin
 
   test('MRP: a cancelled DO never holds a deduction', async () => {
     await shipShort(admin, { commitLine: true, status: 'CANCELLED' });
+    expect((await commitmentsFromDb(admin)).size).toBe(0);
+  });
+
+  /* ── the SOFT -> HARD step, which is the point of the change ─────────────── */
+
+  test('THE PREMISE: a SOFT MRP match resolves NO batch — the resolver only reads hard links', async () => {
+    // The PO exists, it is live, it orders exactly this SKU, and MRP would name
+    // it. But nothing has written so_item_id, so resolveExpectedBatchBySoItem —
+    // which walks purchase_order_items.so_item_id and nothing else — finds it
+    // NOT. This is why "bind the matched PO on ship-anyway" was a no-op.
+    const [so] = await admin<Array<{ id: string }>>`
+      insert into scm.mfg_sales_order_items (doc_no, item_code)
+      values ('2990-SO-2607-005', ${CODE}) returning id`;
+    const [po] = await admin<Array<{ id: string }>>`
+      insert into scm.purchase_orders (po_number, status, expected_at)
+      values (${BATCH}, 'SUBMITTED', '2026-08-14') returning id`;
+    await admin`
+      insert into scm.purchase_order_items (purchase_order_id, material_code, qty, received_qty)
+      values (${po!.id}::uuid, ${CODE}, 3, 0)`;
+
+    const sb = pgRest(admin);
+    expect((await resolveExpectedBatchBySoItem(sb, [so!.id], { onMultiPo: 'block' })).size).toBe(0);
+  });
+
+  test('hardening the soft match makes the UNCHANGED resolver return the PO, and the batch is the PO number', async () => {
+    const [so] = await admin<Array<{ id: string }>>`
+      insert into scm.mfg_sales_order_items (doc_no, item_code)
+      values ('2990-SO-2607-005', ${CODE}) returning id`;
+    const [po] = await admin<Array<{ id: string }>>`
+      insert into scm.purchase_orders (po_number, status, expected_at, supplier_delivery_date_2)
+      values (${BATCH}, 'SUBMITTED', '2026-08-14', '2026-08-20') returning id`;
+    await admin`
+      insert into scm.purchase_order_items (purchase_order_id, material_code, qty, received_qty)
+      values (${po!.id}::uuid, ${CODE}, 3, 0)`;
+
+    const sb = pgRest(admin);
+    const outcomes = await hardenSoPoLinks(sb, [{ soItemId: so!.id, itemCode: CODE, poNumber: BATCH }]);
+    expect(outcomes[0]).toMatchObject({ hardened: true, reason: 'hardened' });
+
+    const [row] = await admin`
+      select so_item_id from scm.purchase_order_items where purchase_order_id = ${po!.id}::uuid`;
+    expect(row!.so_item_id).toBe(so!.id);
+
+    const resolved = await resolveExpectedBatchBySoItem(sb, [so!.id], { onMultiPo: 'block' });
+    // batch_no IS the PO number (dropship-batch.ts), and the ETA is the latest
+    // revised supplier date, not the original.
+    expect(resolved.get(so!.id)).toEqual({ poNumber: BATCH, eta: '2026-08-20' });
+  });
+
+  test('hardening never binds a CANCELLED PO, so the resolver still finds nothing', async () => {
+    const [so] = await admin<Array<{ id: string }>>`
+      insert into scm.mfg_sales_order_items (doc_no, item_code)
+      values ('2990-SO-2607-005', ${CODE}) returning id`;
+    const [po] = await admin<Array<{ id: string }>>`
+      insert into scm.purchase_orders (po_number, status) values (${BATCH}, 'CANCELLED') returning id`;
+    await admin`
+      insert into scm.purchase_order_items (purchase_order_id, material_code, qty, received_qty)
+      values (${po!.id}::uuid, ${CODE}, 3, 0)`;
+
+    const sb = pgRest(admin);
+    expect((await hardenSoPoLinks(sb, [{ soItemId: so!.id, itemCode: CODE, poNumber: BATCH }]))[0])
+      .toMatchObject({ hardened: false, reason: 'po_not_live' });
+    const [row] = await admin`select so_item_id from scm.purchase_order_items limit 1`;
+    expect(row!.so_item_id).toBeNull();
+    expect((await resolveExpectedBatchBySoItem(sb, [so!.id], { onMultiPo: 'block' })).size).toBe(0);
+  });
+
+  test("hardening never steals another Sales Order's PO line", async () => {
+    const rows = await admin<Array<{ id: string }>>`
+      insert into scm.mfg_sales_order_items (doc_no, item_code)
+      values ('2990-SO-2607-005', ${CODE}), ('2990-SO-2607-006', ${CODE}) returning id`;
+    const [mine, theirs] = [rows[0]!.id, rows[1]!.id];
+    const [po] = await admin<Array<{ id: string }>>`
+      insert into scm.purchase_orders (po_number, status) values (${BATCH}, 'SUBMITTED') returning id`;
+    await admin`
+      insert into scm.purchase_order_items (purchase_order_id, material_code, qty, received_qty, so_item_id)
+      values (${po!.id}::uuid, ${CODE}, 3, 0, ${theirs}::uuid)`;
+
+    const sb = pgRest(admin);
+    expect((await hardenSoPoLinks(sb, [{ soItemId: mine, itemCode: CODE, poNumber: BATCH }]))[0])
+      .toMatchObject({ hardened: false, reason: 'taken_by_other_so' });
+    const [row] = await admin`select so_item_id from scm.purchase_order_items limit 1`;
+    expect(row!.so_item_id).toBe(theirs); // untouched
+  });
+
+  test('THE WHOLE CHAIN: soft match -> hardened -> batched OUT -> GRN -> reconciled, cost lands', async () => {
+    // 1. The state the owner describes: MRP has soft-allocated this PO to this
+    //    SO line and both screens show it, but nothing is written.
+    const [so] = await admin<Array<{ id: string }>>`
+      insert into scm.mfg_sales_order_items (doc_no, item_code)
+      values ('2990-SO-2607-005', ${CODE}) returning id`;
+    const [po] = await admin<Array<{ id: string }>>`
+      insert into scm.purchase_orders (po_number, status, expected_at)
+      values (${BATCH}, 'SUBMITTED', '2026-08-14') returning id`;
+    await admin`
+      insert into scm.purchase_order_items (purchase_order_id, material_code, qty, received_qty)
+      values (${po!.id}::uuid, ${CODE}, 3, 0)`;
+    const sb = pgRest(admin);
+
+    // 2. The SO becomes a DO with nothing on hand: the match turns HARD.
+    await hardenSoPoLinks(sb, [{ soItemId: so!.id, itemCode: CODE, poNumber: BATCH }]);
+    const resolved = await resolveExpectedBatchBySoItem(sb, [so!.id], { onMultiPo: 'block' });
+    const batch = resolved.get(so!.id)?.poNumber;
+    expect(batch).toBe(BATCH);
+
+    // 3. Ship 2 short against THAT batch, with the per-line commitment marker.
+    const { movId } = await shipShort(admin, { isDropship: false, commitLine: true, qty: 2 });
+
+    // MRP owes 2 units against this PO from this moment on.
+    expect([...(await commitmentsFromDb(admin)).values()]).toEqual([2]);
+
+    // 4. The GRN lands under the same number and the reconcile nets it.
+    const lotId = await receive(admin, 3, 120_000);
+    expect(Number((await reconcileBatch(admin))[0]!.n)).toBe(2);
+
+    const cost = await movementCost(admin, movId);
+    expect(cost.total_cost_sen).toBe(240_000);
+    expect(cost.unit_cost_sen).toBe(120_000);
+    const [lot] = await admin<Array<{ qty_remaining: number }>>`
+      select qty_remaining from scm.inventory_lots where id = ${lotId}::uuid`;
+    expect(Number(lot!.qty_remaining)).toBe(1);
+
+    // 5. And the MRP deduction retires itself — no second bite.
     expect((await commitmentsFromDb(admin)).size).toBe(0);
   });
 

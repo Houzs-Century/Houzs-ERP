@@ -11,6 +11,12 @@
 // on a line that HAS a resolvable incoming PO therefore shipped un-bound — the
 // receipt could never net it, and the units stayed at RM0 forever.
 //
+// The other half of the model lives in harden-so-po-link.ts: until the DO, the
+// PO the SO screen shows is a SOFT MRP allocation, and this table can only act
+// on a HARD one. The ship writes the soft match first; by the time
+// `expectedBatchNo` reaches this file it has been re-resolved from the stored
+// link, so nothing here ever acts on a guess.
+//
 // This module holds the two PURE decisions that follow from the fact, with no
 // database in either:
 //
@@ -57,7 +63,13 @@ export type ShipLineFact = {
    *  is physically received, so a non-null value means this is a normal ship. */
   allocatedBatchNo: string | null;
   /** The single live bound PO number (= the batch_no the GRN will stamp), from
-   *  resolveExpectedBatchBySoItem in 'block' mode. null = none, or ambiguous. */
+   *  resolveExpectedBatchBySoItem in 'block' mode. null = none, or ambiguous.
+   *
+   *  Since 2026-07-31 this may be a link the ship itself just HARDENED: a line
+   *  shipping short whose PO was only a soft MRP allocation gets that allocation
+   *  written as so_item_id first (harden-so-po-link.ts), and the value here is
+   *  then RE-RESOLVED through the same unchanged resolver. This table never sees
+   *  a soft match dressed up as a hard one. */
   expectedBatchNo: string | null;
   /** Live on-hand qty in this (warehouse, item, variant) bucket at ship time. */
   availableQty: number;

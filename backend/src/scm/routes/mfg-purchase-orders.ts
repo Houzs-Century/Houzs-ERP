@@ -2394,7 +2394,11 @@ async function recomputePoExpectedAt(sb: any, poId: string) {
    MRP keeps reading po_qty_picked, now always accurate. Two plain queries (no
    PostgREST embedding) so behaviour is predictable in production. Best-effort:
    callers wrap in try/catch and never fail the PO mutation on a recount error. */
-async function recomputeSoPicked(sb: any, soItemIds: Array<string | null | undefined>) {
+/* EXPORTED 2026-07-31 — the DO ship path hardens an MRP soft match into a
+   real so_item_id, so the picked count has to follow that link too. It calls
+   THIS function rather than carrying its own recount: two counters for one
+   fact is how po_qty_picked drifted before the live-recount model. */
+export async function recomputeSoPicked(sb: any, soItemIds: Array<string | null | undefined>) {
   const ids = [...new Set(soItemIds.filter((x): x is string => Boolean(x)))];
   if (ids.length === 0) return;
   // Best-effort, never throws (Commander 2026-05-30): the primary write already
@@ -2456,7 +2460,9 @@ async function recomputeSoPicked(sb: any, soItemIds: Array<string | null | undef
        one SKU to an SO line for another makes every downstream reader lie.
 
    Returns null when the link is acceptable (including when there is none). */
-async function soLinkTargetRefusal(
+/* EXPORTED 2026-07-31 — reused by the DO ship path so an automatic bind is
+   held to exactly the invariants a hand-typed one is. */
+export async function soLinkTargetRefusal(
   sb: any,
   c: any,
   soItemId: string | null,

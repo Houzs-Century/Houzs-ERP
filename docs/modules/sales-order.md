@@ -152,23 +152,34 @@ survive, only the link is wiped, which is exactly what makes it invisible.
 The 2026-07-31 measurement of the live database: **101 PO lines, only 34 carry
 `so_item_id` — 67 are NULL.**
 
-#### What the link now decides at ship time
+#### The link is now WRITTEN when the SO becomes a DO
 
-Until 2026-07-31 `so_item_id` only mattered if the operator reached the drop-ship
-dialog: a plain "Ship anyway" ignored it, so the shipment bound nothing and the
-GRN could never net it. That is no longer true. A DO line that ships before its
-goods arrive and resolves **exactly one live bound PO** through this column is
-bound to that PO's batch automatically, and the binding is recorded per LINE in
-`delivery_order_items.committed_po_batch_no` (migration 0230). The full decision
-table, and what "resolves" excludes (ambiguous multi-PO, partial short, already
-allocated), lives in **`docs/modules/delivery-order.md` §5**.
+Until 2026-07-31 `so_item_id` was only ever created by a human or by
+Convert-from-SO, and it only mattered if the operator reached the drop-ship
+dialog. Both halves of that changed.
 
-Two knock-on effects for anyone working on the SO:
+**The allocation the SO screen shows is SOFT until the DO.** `coverage_po` on
+this page comes from `computeMrp` / `mrpLineCoverage` — a floating, re-shufflable
+match, not a stored link (that is exactly why `/po-so-coverage` labels an
+MRP-only chip "MRP guess · not linked"). **When the SO becomes a DO the ship
+hardens it**: for a line going out short with no live bound PO, the DO writes
+that same allocation into `purchase_order_items.so_item_id`
+(`backend/src/scm/lib/harden-so-po-link.ts`), audited on the PO's timeline with
+the DO number, then re-resolves the batch through the unchanged resolver and
+records it per line in `delivery_order_items.committed_po_batch_no` (mig 0230).
+It refuses rather than guesses — dead PO, no matching line, nothing open, or
+already promised to another SO line — and never overwrites an existing link. The
+full decision table lives in **`docs/modules/delivery-order.md` §5**.
 
-- **The link is now load-bearing for COSTING, not just for a dialog.** A bound
-  line's OUT is stamped with the incoming PO number, so its COGS lands from THAT
-  batch's lot when the GRN posts. Break the link (see the `ON DELETE SET NULL`
-  trap above) and the shipment silently reverts to an unbound oversell.
+Three knock-on effects for anyone working on the SO:
+
+- **`po_qty_picked` moves at ship time now.** Hardening re-runs
+  `recomputeSoPicked`, so a line whose PO was soft-matched drops out of the
+  From-SO picker's remaining once it ships.
+- **The link is load-bearing for COSTING, not just for a dialog.** A bound line's
+  OUT is stamped with the incoming PO number, so its COGS lands from THAT batch's
+  lot when the GRN posts. Break the link (see the `ON DELETE SET NULL` trap
+  above) and the shipment silently reverts to an unbound oversell.
 - **MRP stops offering the committed units.** `mrp.ts` subtracts them from that
   PO's incoming supply and adds the same units back to on-hand stock (the OUT had
   already taken them off `inventory_balances`) — so a second SO is not promised

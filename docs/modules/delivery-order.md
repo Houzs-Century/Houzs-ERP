@@ -252,20 +252,62 @@ cancelling the PO is blocked while such an OUT is outstanding
 to `fn_reverse_do_out(..., p_batched_only := TRUE)` — the same audited body the
 non-drop-ship path uses, so both share one implementation.
 
-### Shipping before the goods arrive — the per-LINE commitment (mig 0230, 2026-07-31)
+### Shipping before the goods arrive — soft allocation becomes a hard binding (mig 0230, 2026-07-31)
 
-**Binding is a consequence of the line, not an answer to a dialog.** A DO line
-that ships before its goods land and resolves exactly ONE live bound PO now
-stores that PO number in `delivery_order_items.committed_po_batch_no`, whichever
-guard the operator answered. `is_dropship` keeps the meaning migration 0057 gave
-it — the UI badge.
+**The model, in the owner's terms.** Every shortage — mattress, bedframe AND
+sofa — is allocated by MRP against the customer delivery-date list, and that
+allocation is deliberately **SOFT**: the PO screen shows which SO it is for, the
+SO screen shows which PO will supply it, and an urgent insert re-shuffles both.
+**The moment an SO becomes a DO it must turn HARD**: the DO knows whose goods it
+is taking, so MRP's demand and supply drop together, and a ship with nothing on
+hand goes negative against *that* PO so the GRN offsets it.
 
-The decision is a pure function, `planShipCommitments`
-(`backend/src/scm/lib/ship-commitment.ts`), unit-tested as a table:
+**Two steps, and the first one is the easy one to miss.**
+
+1. **HARDEN.** `resolveExpectedBatchBySoItem` walks
+   `purchase_order_items.so_item_id` and nothing else — it can *use* a hard
+   binding, it cannot *create* one. So for a line shipping short with no live
+   bound PO, the ship first takes the allocation the SO screen is already showing
+   (`computeMrp` → `mrpLineCoverage`, the engine behind `coverage_po` and behind
+   `/po-so-coverage`) and WRITES it as `so_item_id`
+   (`backend/src/scm/lib/harden-so-po-link.ts`). One engine, not a second
+   matching rule — screen and binding cannot disagree.
+2. **BIND.** The batch is then re-resolved through the unchanged resolver and
+   stored per line in `delivery_order_items.committed_po_batch_no`. For a sofa
+   the batch IS the PO number, which is what makes the GRN offset work.
+
+**What hardening refuses** (each logged as
+`[ship-commitment] could not harden MRP match`, never silent — the shipment then
+goes out unbound, as it does today):
+
+| Refusal | Meaning |
+|---|---|
+| `po_not_live` | the MRP-named PO is CANCELLED or DRAFT — H1; that batch will never arrive |
+| `no_matching_line` | no line of that PO orders this SKU (MRP matched a pooled variant bucket) |
+| `no_open_qty` | every matching line is fully received — nothing incoming to bind |
+| `taken_by_other_so` | every matching open line is promised to a DIFFERENT SO line. **Never stolen** — the write is guarded `.is('so_item_id', null)`, so a concurrent bind wins rather than being overwritten |
+
+It is only ever attempted for a line that currently resolves **no** live bound
+PO, so it can never manufacture the >1-live-PO ambiguity H3 exists to refuse.
+Two free lines of the *same* PO are not that ambiguity — every candidate yields
+the same `po_number`, so the pick is deterministic (oldest first). It runs
+through the same `soLinkTargetRefusal` gate a hand-typed bind uses (#1434), so
+it is active-company-scoped, refuses a cancelled SO line, and refuses a SKU
+mismatch. Each write is audited on the **PO's** timeline naming the DO that
+caused it, and `recomputeSoPicked` re-runs so `po_qty_picked` follows the link.
+**Hardening is not rolled back if the DO create later fails** — it records a
+true relationship, and a compensating unbind could clobber a link someone else
+made in between.
+
+`is_dropship` keeps the meaning migration 0057 gave it — the UI badge.
+
+Once a hard link exists, the per-line binding decision is a pure function,
+`planShipCommitments` (`backend/src/scm/lib/ship-commitment.ts`), unit-tested as
+a table:
 
 | Line | Binds? | Why |
 |---|---|---|
-| resolves one live PO, nothing on hand | **yes**, to that PO's number | every shipped unit comes from that PO |
+| resolves one live PO (hard, or just hardened), nothing on hand | **yes**, to that PO's number | every shipped unit comes from that PO |
 | resolves no live PO (or >1 — ambiguous, audit H3) | no | there is no incoming batch to name, and a guessed dye lot is worse than none |
 | SOFA with no `allocated_batch_no`, one live PO | **yes** | a sofa OUT is batch-scoped by construction; this is the classic drop-ship |
 | `allocated_batch_no` set | no | the allocator only sets it once a covering batch is PHYSICALLY received — a normal ship |
@@ -278,6 +320,13 @@ a DRAFT DO carries its commitment to Confirm. `resolveDoSofaBatchMap` reads the
 STORED value (source 2 of 3) at every later seam — resync delta, restamp, recost
 — so a PO cancelled or added after the ship can never move the bucket an OUT was
 already stamped with.
+
+Each of the three paths runs the resolver **twice, in two modes**: a PREVIEW
+(`harden = null`, no writes) before the short-stock 409 so the one dialog can
+name the PO, and a COMMIT (`harden = {doId, doNumber}`) after the DO header
+exists so the audit row can say which DO caused the bind. `computeMrp` is only
+called when a line is actually short with no live bound PO, so an ordinary
+well-stocked ship never pays for it.
 
 **Receipt.** `scm.fn_reconcile_dropship_batch` claims an OUT when the source DO
 is not CANCELLED **and** (`is_dropship = TRUE` **or** one of its lines carries

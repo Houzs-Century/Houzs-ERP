@@ -110,14 +110,29 @@ the flag FALSE, so even a batch-stamped OUT was invisible to the reconcile
 forever. Measured on prod 2026-07-30/31 with `check-hard-committed-po.mjs`:
 **3 short OUTs, ALL `is_dropship = N`, none carrying `batch_no`, 0 claimable.**
 
-**The fix — migration 0230, plus a pure decision module.**
+**And the deeper reason it could not have worked anyway.** Even the drop-ship
+path can only bind a link that ALREADY EXISTS: `resolveExpectedBatchBySoItem`
+walks `purchase_order_items.so_item_id` and nothing else. But until the DO, the
+PO the SO screen shows is a **soft MRP allocation** — floating, re-shufflable,
+not stored (`coverage_po`, from `computeMrp`/`mrpLineCoverage`). So "bind the
+matched PO" was a no-op on the common case, which is also why 67 of 101 live PO
+lines had no `so_item_id` at all. **The missing step was writing the soft
+allocation, not reading a hard one.**
+
+**The fix — migration 0230, a hardening module, and a pure decision table.**
 
 | Piece | What |
 |---|---|
+| `harden-so-po-link.ts` | at DO time, WRITES the soft MRP allocation as `purchase_order_items.so_item_id` — same engine the SO screen renders, so screen and binding cannot disagree. Refuses (never guesses) on a dead PO, no matching line, nothing open, or a line already promised to another SO; never overwrites; audited on the PO naming the DO; re-runs `recomputeSoPicked` |
 | `scm.delivery_order_items.committed_po_batch_no` | the per-LINE marker: "this line shipped before its goods arrived, against THIS incoming PO's batch" |
-| `planShipCommitments` (`backend/src/scm/lib/ship-commitment.ts`) | the PURE decision table that writes it — see `docs/modules/delivery-order.md` §5 for every row |
+| `planShipCommitments` (`backend/src/scm/lib/ship-commitment.ts`) | the PURE decision table that fills it, fed by the batch RE-RESOLVED from the stored link — see `docs/modules/delivery-order.md` §5 for every row |
 | `fn_reconcile_dropship_batch` | claims on `is_dropship` **OR** a matching per-line marker. A plain "Ship anyway" now nets on receipt, and one unresolvable line on a mixed DO no longer denies netting to the rest |
 | `fn_reconcile_uncosted_out` (0154) | the MIRROR exclusion — it must not retro-cost a line-committed OUT from an arbitrary lot, which for a sofa means another dye lot |
+
+**Soft stays soft until the DO, on purpose.** MRP's allocation must keep
+re-shuffling for an urgent insert; that is what makes it useful. Hardening is
+the one event that ends the shuffling for those units, and it happens exactly
+where the goods stop being a plan and become a shipment.
 
 **The header flag was deliberately NOT widened.** Making `is_dropship` mean "any
 short ship" would have put the "Drop-ship — batch not received" badge on ordinary
@@ -148,12 +163,16 @@ whichever Sales Order happens to sort first in the bucket. `applyCommittedSupply
 guarantees deduction and add-back are the same number in the same bucket, and a
 unit test asserts exactly that invariant.
 
-**Verification.** 24 pure decision cases
-(`backend/src/scm/lib/ship-commitment.test.ts`) and 12 real-Postgres cases
+**Verification.** 41 pure cases (24 in `ship-commitment.test.ts`, 17 in
+`harden-so-po-link.test.ts`) and 17 real-Postgres cases
 (`backend/tests-pg/shipCommitment.pg.test.ts`). The pg suite applies migration
-0230 itself, DEMONSTRATES the old behaviour first (no claim signal -> reconcile
-returns 0, cost stays RM0), then walks the full claim: ship 2 short bound to
-`2990-PO-2607-009`, receive 3 at RM1,200 each, reconcile -> 2 consumed, movement
-stamped 240,000 sen, lot down to 1 remaining, and the MRP commitment recomputes
-to zero on its own. Executed locally against a real PostgreSQL 16.4 as well as in
-CI's `backend-postgres` job.
+0230 itself and DEMONSTRATES BOTH premises before proving either fix: a soft MRP
+match resolves NO batch (the resolver only reads hard links), and an OUT with no
+claim signal is never reconciled (cost stays RM0). Then it walks the whole chain
+end to end — soft match -> hardened `so_item_id` -> the UNCHANGED resolver
+returns `2990-PO-2607-009` with the latest revised ETA -> ship 2 short against
+that batch -> MRP owes 2 -> receive 3 at RM1,200 -> reconcile consumes 2, the
+movement is stamped 240,000 sen and the lot drops to 1 remaining -> the MRP
+commitment recomputes to zero on its own. It also proves hardening refuses a
+CANCELLED PO and never steals another Sales Order's PO line. Executed locally
+against a real PostgreSQL 16.4 as well as in CI's `backend-postgres` job.
