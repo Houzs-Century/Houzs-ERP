@@ -22,7 +22,7 @@ import { todayMyt } from '../lib/my-time';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { PI_LINE_AUDIT_FIELDS, PI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
-import { resolvePoSoCoverageForPos } from './po-so-coverage';
+import { resolvePoSoCoverageForPos, resolveDeliveredDosForPos } from './po-so-coverage';
 
 export const purchaseInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoices.use('*', supabaseAuth);
@@ -501,7 +501,11 @@ async function attachPiAssignedSos(
         if (g.purchase_order_id) poByGrn.set(g.id, g.purchase_order_id);
       }
     }
-    const assignedByPo = await resolvePoSoCoverageForPos(sb, c, [...poByGrn.values()]);
+    const poIds = [...poByGrn.values()];
+    const assignedByPo = await resolvePoSoCoverageForPos(sb, c, poIds);
+    /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped the PI's
+       parent PO's goods + qty, via the SAME pi → grn → PO chain. */
+    const deliveredByPo = await resolveDeliveredDosForPos(sb, c, poIds);
     return rows.map((r) => {
       const poId = r.grn_id ? poByGrn.get(r.grn_id) : undefined;
       const summary = poId ? assignedByPo.get(poId) : undefined;
@@ -509,10 +513,11 @@ async function attachPiAssignedSos(
         ...r,
         assigned_sos: summary?.assignedSos ?? [],
         assigned_so_linked: summary?.sourceLinked ?? false,
+        delivered_dos: poId ? (deliveredByPo.get(poId)?.deliveredDos ?? []) : [],
       };
     });
   } catch {
-    return rows.map((r) => ({ ...r, assigned_sos: [], assigned_so_linked: false }));
+    return rows.map((r) => ({ ...r, assigned_sos: [], assigned_so_linked: false, delivered_dos: [] }));
   }
 }
 

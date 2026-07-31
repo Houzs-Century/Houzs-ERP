@@ -35,10 +35,8 @@ import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
 import {
   DocumentLinesExpansion,
-  AssignedSoCell,
   type DocumentDrillLine,
 } from "../../components/DocumentLinesExpansion";
-import type { OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -87,6 +85,11 @@ type DoRow = {
   sales_location: string | null;
   customer_so_no: string | null;
   po_doc_no: string | null;
+  /** Source PO(s) this DO's shipped goods came from (batch_no = source PO on the
+   *  OUT movements ∪ consumed FIFO lots). "—" for un-batched (plain-FIFO /
+   *  pre-batch) stock. A DO is a sales-side doc, so it shows Source PO, not an
+   *  Assigned SO (owner 2026-07-31). */
+  source_pos?: string[] | null;
   ref: string | null;
   branding: string | null;
   driver_name: string | null;
@@ -732,11 +735,11 @@ type DoDrillItem = {
   unit_price_centi?: number;
   amount_centi?: number;
   total_centi?: number;
-  /* Intrinsic Assigned SO for this DO line (owner 2026-07-31) — a DO is HARD-
-     linked to its Sales Order, never an MRP guess. The detail endpoint resolves
-     each line's so_item_id → SO doc_no + effective delivery date. */
-  so_doc_no?: string | null;
-  so_delivery_date?: string | null;
+  /* Source PO(s) this DO line's shipped goods came from (owner 2026-07-31) — the
+     durable batch_no = source-PO hard link resolved by the DO detail endpoint
+     from the OUT movements ∪ consumed FIFO lots. A DO is a sales-side doc, so it
+     shows Source PO, not an Assigned SO. */
+  source_pos?: string[] | null;
 };
 
 function DoLinesExpansion({ doId }: { doId: string }) {
@@ -745,25 +748,16 @@ function DoLinesExpansion({ doId }: { doId: string }) {
   const items =
     ((detailQ.data as { items?: unknown[] } | undefined)?.items as DoDrillItem[]) ??
     [];
-  // A DO line's SO is intrinsic and hard-linked (locked, never floating) — feed
-  // it to the shared drill-down as a single STATIC assignment so the DO reads the
-  // SAME "Assigned SO" + delivery date the PO / GRN / PI drill-downs do.
-  const lines: DocumentDrillLine[] = items.map((l) => {
-    const assignedSos: OriginAssignment[] = l.so_doc_no
-      ? [{ soDocNo: l.so_doc_no, deliveryDate: l.so_delivery_date ?? null, locked: true, source: "delivered" }]
-      : [];
-    return {
-      itemGroup: l.item_group ?? null,
-      code: l.item_code || l.product_code || null,
-      description: l.description || l.product_name || null,
-      description2: l.description2 ?? null,
-      variants: l.variants ?? null,
-      qty: Number(l.qty ?? 0),
-      amountCenti: l.amount_centi ?? l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0),
-      assignedSos,
-      sourceLinked: true,
-    };
-  });
+  const lines: DocumentDrillLine[] = items.map((l) => ({
+    itemGroup: l.item_group ?? null,
+    code: l.item_code || l.product_code || null,
+    description: l.description || l.product_name || null,
+    description2: l.description2 ?? null,
+    variants: l.variants ?? null,
+    qty: Number(l.qty ?? 0),
+    amountCenti: l.amount_centi ?? l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0),
+    sourcePos: l.source_pos ?? [],
+  }));
   return (
     <div className="flex flex-col gap-2">
       <DocumentLinesExpansion
@@ -772,8 +766,7 @@ function DoLinesExpansion({ doId }: { doId: string }) {
         errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
         lines={lines}
         emptyLabel="No lines on this delivery order."
-        showAssignment
-        onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+        showSourcePo
       />
     </div>
   );
@@ -1059,31 +1052,61 @@ export function MfgDeliveryOrdersListV2() {
       ),
     },
     {
-      // Owner 2026-07-31: unified "Assigned SO" column across PO / GRN / PI / DO.
-      // A DO's SO is intrinsic and hard-linked (never an MRP guess), so it always
-      // renders as a solid, static chip — no dashed "~" guess treatment.
+      // Owner 2026-07-31: a DO is BORN FROM a Sales Order, so "Assigned SO" is
+      // redundant here — restore the document-flow "From SO" anchor (clickable to
+      // the parent SO). The useful cross-doc fact for a shipped DO is its Source
+      // PO, in the next column.
       key: "so_doc_no",
-      label: "Assigned SO",
-      width: "168px",
+      label: "From SO",
+      width: "150px",
       disableSort: true,
       getValue: (r) => r.so_doc_no ?? "",
       render: (r) =>
         r.so_doc_no ? (
-          <AssignedSoCell
-            assignments={[
-              {
-                soDocNo: r.so_doc_no,
-                deliveryDate: r.customer_delivery_date ?? null,
-                locked: true,
-                source: "delivered",
-              },
-            ]}
-            sourceLinked
-            onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
-          />
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/scm/sales-orders/${encodeURIComponent(r.so_doc_no!)}`);
+            }}
+            className="font-mono text-[12px] font-semibold text-ink-secondary hover:text-accent hover:underline"
+          >
+            {r.so_doc_no}
+          </button>
         ) : (
           <span className="text-[12px] text-ink-muted">—</span>
         ),
+    },
+    {
+      // Owner 2026-07-31: which PO the shipped goods actually came from — the
+      // durable batch_no = source-PO hard link, not a guess. EVERY source PO
+      // renders (no collapse); "—" when un-batched (plain FIFO / pre-batch stock).
+      key: "source_pos",
+      label: "Source PO",
+      width: "168px",
+      disableSort: true,
+      getValue: (r) => (r.source_pos ?? []).join(", "),
+      render: (r) => {
+        const pos = r.source_pos ?? [];
+        if (pos.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
+        return (
+          <span className="flex min-w-0 flex-wrap items-center gap-1">
+            {pos.map((po) => (
+              <button
+                key={po}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/scm/purchase-orders?q=${encodeURIComponent(po)}`);
+                }}
+                className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
+              >
+                {po}
+              </button>
+            ))}
+          </span>
+        );
+      },
     },
     {
       /* Transfer-to (audit R8): the SI(s) this DO was invoiced into, mirroring

@@ -38,6 +38,14 @@ export type DocumentDrillLine = {
   // dashed border, and the owner read a guess as a binding (2026-07-29). When
   // false, the cell says so in words.
   sourceLinked?: boolean;
+  // SALES docs (DO / SI): the source PO(s) the shipped/invoiced goods actually
+  // came from — the durable batch_no = source-PO hard link, not a guess. Empty /
+  // absent → the Source PO cell shows a dash (plain FIFO / pre-batch stock).
+  sourcePos?: string[];
+  // PURCHASE docs (PO / GRN / PI): the Delivery Order(s) that have shipped this
+  // line's goods (batch_no = this PO) with the qty shipped per DO. Empty / absent
+  // → the Delivered cell shows a dash (nothing delivered against this line yet).
+  deliveredDos?: Array<{ doNo: string; qty: number }>;
 };
 
 // Permissive superset of the per-line fields the six document detail hooks
@@ -68,12 +76,20 @@ export type DrillItemFields = {
 // Shared centi → RM string, same helper the lists use.
 const fmtRm = (centi: number): string => fmtCenti(centi);
 
-const GRID =
-  "grid grid-cols-[92px_minmax(220px,1fr)_64px_110px] items-start gap-2";
-// With the two purchase-doc origin columns (Assigned SO + SO Delivery Date),
-// mirroring the SO detail's Group…Stock…Incoming-PO grid.
-const GRID_ASSIGN =
-  "grid grid-cols-[92px_minmax(200px,1fr)_56px_104px_minmax(150px,190px)_120px] items-start gap-2";
+// Column widths are driven by which optional columns are on, so the template is
+// built at RUNTIME and applied via an inline style — a dynamically-joined
+// `grid-cols-[...]` class would never be seen by Tailwind's JIT scanner.
+function buildGrid(opts: { assign: boolean; delivered: boolean; sourcePo: boolean }): {
+  cols: string;
+  minW: number;
+} {
+  const cols = ["92px", "minmax(180px,1fr)", "56px", "104px"];
+  let minW = 540;
+  if (opts.assign) { cols.push("minmax(150px,190px)", "120px"); minW += 300; }
+  if (opts.delivered) { cols.push("minmax(150px,200px)"); minW += 200; }
+  if (opts.sourcePo) { cols.push("minmax(140px,190px)"); minW += 200; }
+  return { cols: cols.join(" "), minW };
+}
 
 export function DocumentLinesExpansion({
   isLoading,
@@ -82,7 +98,10 @@ export function DocumentLinesExpansion({
   lines,
   emptyLabel = "No lines on this document.",
   showAssignment = false,
+  showDelivered = false,
+  showSourcePo = false,
   onOpenSo,
+  onOpenDo,
 }: {
   isLoading: boolean;
   isError?: boolean;
@@ -93,10 +112,20 @@ export function DocumentLinesExpansion({
   // columns from each line's `assignedSos`. onOpenSo makes the SO chip clickable
   // (desktop deep-link); omit it for a display-only surface.
   showAssignment?: boolean;
+  // Purchase docs (PO / GRN / PI): render a Delivered column from each line's
+  // `deliveredDos` — the DO(s) that shipped this line's goods.
+  showDelivered?: boolean;
+  // Sales docs (DO / SI): render a Source PO column from each line's `sourcePos`.
+  showSourcePo?: boolean;
   onOpenSo?: (soDocNo: string) => void;
+  onOpenDo?: (doNo: string) => void;
 }) {
-  const grid = showAssignment ? GRID_ASSIGN : GRID;
-  const minW = showAssignment ? "min-w-[840px]" : "min-w-[540px]";
+  const { cols: gridCols, minW: minWpx } = buildGrid({
+    assign: showAssignment,
+    delivered: showDelivered,
+    sourcePo: showSourcePo,
+  });
+  const gridStyle = { gridTemplateColumns: gridCols } as const;
   if (isLoading) {
     return (
       <div className="py-4 text-center text-[12px] text-ink-muted">
@@ -121,12 +150,10 @@ export function DocumentLinesExpansion({
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-      <div className={minW}>
+      <div style={{ minWidth: `${minWpx}px` }}>
         <div
-          className={cn(
-            grid,
-            "border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted"
-          )}
+          style={gridStyle}
+          className="grid items-start gap-2 border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted"
         >
           <span>Group</span>
           <span>Item</span>
@@ -134,6 +161,8 @@ export function DocumentLinesExpansion({
           <span className="text-right">Amount</span>
           {showAssignment && <span>Assigned SO</span>}
           {showAssignment && <span>SO Delivery Date</span>}
+          {showDelivered && <span>Delivered</span>}
+          {showSourcePo && <span>Source PO</span>}
         </div>
         {lines.map((l, i) => {
           // Item CODE first, then the variant subtitle; live variant summary
@@ -148,13 +177,13 @@ export function DocumentLinesExpansion({
               (l.description2 ?? ""),
           });
           const assigned = l.assignedSos ?? [];
+          const delivered = l.deliveredDos ?? [];
+          const sourcePos = l.sourcePos ?? [];
           return (
             <div
               key={i}
-              className={cn(
-                grid,
-                "border-b border-border-subtle px-4 py-2.5 last:border-b-0"
-              )}
+              style={gridStyle}
+              className="grid items-start gap-2 border-b border-border-subtle px-4 py-2.5 last:border-b-0"
             >
               <span>
                 <ItemGroupPill group={l.itemGroup} />
@@ -245,6 +274,56 @@ export function DocumentLinesExpansion({
                   )}
                 </span>
               )}
+              {showDelivered && (
+                <span className="flex min-w-0 flex-wrap items-center gap-1">
+                  {delivered.length > 0 ? (
+                    delivered.map((d) => {
+                      const base =
+                        "rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-ink-secondary";
+                      const label = (
+                        <>
+                          {d.doNo}
+                          {d.qty > 0 && (
+                            <span className="text-ink-muted">{` x${d.qty}`}</span>
+                          )}
+                        </>
+                      );
+                      return onOpenDo ? (
+                        <button
+                          type="button"
+                          key={d.doNo}
+                          onClick={() => onOpenDo(d.doNo)}
+                          className={cn(base, "hover:border-accent hover:text-accent")}
+                        >
+                          {label}
+                        </button>
+                      ) : (
+                        <span key={d.doNo} className={base}>
+                          {label}
+                        </span>
+                      );
+                    })
+                  ) : (
+                    <span className="text-[11px] text-ink-muted">—</span>
+                  )}
+                </span>
+              )}
+              {showSourcePo && (
+                <span className="flex min-w-0 flex-wrap items-center gap-1">
+                  {sourcePos.length > 0 ? (
+                    sourcePos.map((po) => (
+                      <span
+                        key={po}
+                        className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink"
+                      >
+                        {po}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[11px] text-ink-muted">—</span>
+                  )}
+                </span>
+              )}
             </div>
           );
         })}
@@ -258,11 +337,11 @@ export function DocumentLinesExpansion({
 // PO / GRN / PI / DO lists. It is the one-line twin of the drill-down's per-line
 // Assigned-SO cell above: a FLOATING (live MRP) assignment reads as a dashed
 // chip with a trailing "~"; a STATIC one (delivered → DO-locked, a stored
-// raise-link, or a DO's own intrinsic SO) reads as a solid chip. Several SOs
-// collapse to "first + N". The delivery date rides a quiet second line when the
-// primary assignment carries one. `sourceLinked === false` is threaded into the
-// tooltip so the guess-vs-binding distinction (2026-07-29 incident) survives
-// even in the compact column.
+// raise-link, or a DO's own intrinsic SO) reads as a solid chip. EVERY assigned
+// SO renders (owner 2026-07-31 — no "first + N" collapse); they wrap. The
+// primary assignment's delivery date rides inline. `sourceLinked === false` is
+// threaded into the tooltip so the guess-vs-binding distinction (2026-07-29
+// incident) survives even in the compact column.
 // ---------------------------------------------------------------------------
 export function AssignedSoCell({
   assignments,
@@ -275,60 +354,110 @@ export function AssignedSoCell({
 }) {
   const list = assignments ?? [];
   if (list.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
-  const first = list[0];
-  const extra = list.length - 1;
-  const floating = first.locked === false;
-  const title = floating
-    ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
-    : first.source === "delivered"
-      ? "Locked — the goods were delivered against this Sales Order"
-      : sourceLinked === false
-        ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
-        : "Locked — a stored link to this Sales Order";
   const base = "rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold";
-  const tone = floating
-    ? "border border-dashed border-border text-ink-secondary"
-    : "border border-border-subtle bg-surface-2 text-accent-ink";
-  const label = (
-    <>
-      {first.soDocNo}
-      {floating && <span className="text-ink-muted">{" ~"}</span>}
-    </>
-  );
+  // ALL assigned SOs render (owner 2026-07-31 — no "first + N" collapse); the
+  // flex-wrap lays them out. Each chip keeps its own floating(guess) vs
+  // solid(linked) tone + tooltip. The primary's delivery date rides inline.
+  const chipTitle = (a: OriginAssignment): string =>
+    a.locked === false
+      ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
+      : a.source === "delivered"
+        ? "Locked — the goods were delivered against this Sales Order"
+        : sourceLinked === false
+          ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
+          : "Locked — a stored link to this Sales Order";
+  const chipTone = (a: OriginAssignment): string =>
+    a.locked === false
+      ? "border border-dashed border-border text-ink-secondary"
+      : "border border-border-subtle bg-surface-2 text-accent-ink";
   return (
-    <span className="flex min-w-0 flex-col gap-0.5">
-      <span className="flex min-w-0 items-center gap-1">
-        {onOpenSo ? (
+    <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      {list.map((a) => {
+        const label = (
+          <>
+            {a.soDocNo}
+            {a.locked === false && <span className="text-ink-muted">{" ~"}</span>}
+          </>
+        );
+        // Each SO carries its OWN delivery date inline (owner: show every SO with
+        // its date, no collapse). The chip + its date form one wrapping unit.
+        return (
+          <span key={a.soDocNo} className="inline-flex items-center gap-1">
+            {onOpenSo ? (
+              <button
+                type="button"
+                title={chipTitle(a)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenSo(a.soDocNo);
+                }}
+                className={cn(base, chipTone(a), "hover:border-accent hover:text-accent")}
+              >
+                {label}
+              </button>
+            ) : (
+              <span title={chipTitle(a)} className={cn(base, chipTone(a))}>
+                {label}
+              </span>
+            )}
+            {a.deliveryDate && (
+              <span className="whitespace-nowrap font-mono text-[10.5px] text-ink-muted">
+                {formatDate(a.deliveryDate)}
+              </span>
+            )}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DeliveredCell — the COLLAPSED header-row "Delivered" summary for the PO / GRN /
+// PI lists: EVERY Delivery Order that has shipped this purchase document's goods
+// (batch_no = the PO number), with the qty shipped per DO. No "first + N"
+// collapse (owner 2026-07-31) — all DOs render and wrap. A dash when nothing has
+// shipped yet.
+// ---------------------------------------------------------------------------
+export function DeliveredCell({
+  dos,
+  onOpenDo,
+}: {
+  dos: Array<{ doNo: string; qty: number }> | undefined | null;
+  onOpenDo?: (doNo: string) => void;
+}) {
+  const list = dos ?? [];
+  if (list.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
+  const base =
+    "rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-ink-secondary";
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-1">
+      {list.map((d) => {
+        const label = (
+          <>
+            {d.doNo}
+            {d.qty > 0 && <span className="text-ink-muted">{` x${d.qty}`}</span>}
+          </>
+        );
+        return onOpenDo ? (
           <button
             type="button"
-            title={title}
+            key={d.doNo}
+            title="A Delivery Order that shipped this document's goods"
             onClick={(e) => {
               e.stopPropagation();
-              onOpenSo(first.soDocNo);
+              onOpenDo(d.doNo);
             }}
-            className={cn(base, tone, "hover:border-accent hover:text-accent")}
+            className={cn(base, "hover:border-accent hover:text-accent")}
           >
             {label}
           </button>
         ) : (
-          <span title={title} className={cn(base, tone)}>
+          <span key={d.doNo} className={base}>
             {label}
           </span>
-        )}
-        {extra > 0 && (
-          <span
-            className="text-[11px] font-semibold text-ink-muted"
-            title={list.map((a) => a.soDocNo).join(", ")}
-          >
-            +{extra}
-          </span>
-        )}
-      </span>
-      {first.deliveryDate && (
-        <span className="whitespace-nowrap font-mono text-[10.5px] text-ink-muted">
-          {formatDate(first.deliveryDate)}
-        </span>
-      )}
+        );
+      })}
     </span>
   );
 }

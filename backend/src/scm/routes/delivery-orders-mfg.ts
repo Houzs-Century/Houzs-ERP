@@ -911,7 +911,7 @@ async function warehouseCodeMap(
    rows/consumptions, so a fully reversed line still reports the PO(s) it
    originally shipped from (the shipment did happen).
    Returns a Map keyed `${product_code}::${variant_key}` → ordered PO numbers. */
-async function resolveDoLineSourcePos(
+export async function resolveDoLineSourcePos(
   sb: any,
   deliveryOrderId: string,
 ): Promise<Map<string, string[]>> {
@@ -963,6 +963,69 @@ async function resolveDoLineSourcePos(
     out.set(k, [...set].sort());
   }
   return out;
+}
+
+/* LIST rollup of the above: for a PAGE of DOs, the distinct source PO(s) each
+   DO's goods shipped from — Map<delivery_order_id, PO numbers>. The header
+   "Source PO" cell on the DO / SI list renders this. ONE batched movements read
+   + one lots/consumptions pass across every DO id, so the list never does the
+   per-DO N+1. Best-effort: un-batched (plain FIFO / pre-0120) stock → the DO is
+   simply absent from the map (its cell shows a dash). */
+export async function resolveDoSourcePosForDos(
+  sb: any,
+  doIds: Array<string | null | undefined>,
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, Set<string>>();
+  const ids = [...new Set(doIds.filter((x): x is string => Boolean(x)))];
+  if (ids.length === 0) return new Map();
+  const add = (doId: string | null, batch: string | null): void => {
+    if (!doId || !batch) return;
+    const set = out.get(doId) ?? new Set<string>();
+    set.add(batch);
+    out.set(doId, set);
+  };
+  // 1. Batched OUT movements (sofa allocated batch / drop-ship expected batch).
+  for (let i = 0; i < ids.length; i += 300) {
+    const chunk = ids.slice(i, i + 300);
+    if (chunk.length === 0) continue;
+    try {
+      const { data: movs } = await sb.from('inventory_movements')
+        .select('source_doc_id, batch_no')
+        .eq('source_doc_type', 'DO')
+        .eq('movement_type', 'OUT')
+        .in('source_doc_id', chunk)
+        .not('batch_no', 'is', null);
+      for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; batch_no: string | null }>) {
+        add(m.source_doc_id, m.batch_no);
+      }
+    } catch { /* column/table absent — consumption path still contributes */ }
+    // 2. FIFO lot consumptions → consumed lots' batch_no (plain-FIFO categories).
+    try {
+      const { data: cons } = await sb.from('inventory_lot_consumptions')
+        .select('source_doc_id, lot_id')
+        .eq('source_doc_type', 'DO')
+        .in('source_doc_id', chunk);
+      const consRows = (cons ?? []) as Array<{ source_doc_id: string | null; lot_id: string }>;
+      const lotIds = [...new Set(consRows.map((r) => r.lot_id).filter(Boolean))];
+      if (lotIds.length > 0) {
+        const batchByLot = new Map<string, string | null>();
+        for (let k = 0; k < lotIds.length; k += 300) {
+          const lc = lotIds.slice(k, k + 300);
+          const { data: lots } = await sb.from('inventory_lots')
+            .select('id, batch_no').in('id', lc).not('batch_no', 'is', null);
+          for (const l of (lots ?? []) as Array<{ id: string; batch_no: string | null }>) {
+            batchByLot.set(l.id, l.batch_no);
+          }
+        }
+        for (const r of consRows) add(r.source_doc_id, batchByLot.get(r.lot_id) ?? null);
+      }
+    } catch { /* consumption table/column absent — path 1 result stands */ }
+  }
+  const result = new Map<string, string[]>();
+  for (const [doId, set] of out.entries()) {
+    result.set(doId, [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
+  }
+  return result;
 }
 
 /* Storekeeper picking — resolve the physical RACK(s) each DO line's goods sit on.
@@ -2567,6 +2630,12 @@ deliveryOrdersMfg.get('/', async (c) => {
       }
     }
   }
+  /* Source PO(s) each DO's goods shipped from (owner 2026-07-31): a DO/SI is a
+     SALES-side doc, so it shows the durable batch_no = source-PO hard link, not
+     an Assigned SO. ONE batched ledger pass across the page. */
+  const sourcePosByDo = rows.length > 0
+    ? await resolveDoSourcePosForDos(sb, rows.map((r) => r.id))
+    : new Map<string, string[]>();
   /* Finance gate — cost / margin / per-category subtotals reach ONLY a
      finance-viewer; stripped from every row otherwise. */
   const showFinance = canViewScmFinance(c);
@@ -2576,6 +2645,7 @@ deliveryOrdersMfg.get('/', async (c) => {
       has_children: childIds.has(r.id),
       lifecycle_state: lifecycleByDo.get(r.id) ?? 'shipped',
       so_internal_expected_dd: soProcByDoc.get((r.so_doc_no as string | null) ?? '') ?? null,
+      source_pos: sourcePosByDo.get(r.id) ?? [],
       // Transfer-to (display-only, audit R8): SI(s) invoiced / DR(s) returned.
       invoiced_si_nos: sortedNos(invoicedSiByDo.get(r.id)),
       return_nos: sortedNos(returnedDrByDo.get(r.id)),

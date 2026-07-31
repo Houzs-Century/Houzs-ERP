@@ -28,10 +28,11 @@ import { DataTable, type Column } from "../../components/DataTable";
 import {
   DocumentLinesExpansion,
   AssignedSoCell,
+  DeliveredCell,
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
-import { usePoSoCoverage, originsByCode, storedLinkSkus, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
+import { usePoSoCoverage, originsByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -81,6 +82,9 @@ type PiRow = {
       parent PO (resolved pi.grn_id → grn → PO), server-side for the whole page. */
   assigned_sos?: OriginAssignment[];
   assigned_so_linked?: boolean;
+  /** "Delivered" column (owner 2026-07-31) — the DO(s) that shipped the parent
+      PO's goods + qty per DO. EVERY DO renders; empty when nothing shipped. */
+  delivered_dos?: Array<{ doNo: string; qty: number }>;
 };
 
 type PiItem = {
@@ -541,19 +545,24 @@ function PiLinesExpansion({ id }: { id: string }) {
   const covQ = usePoSoCoverage("pi", id);
   const byCode = originsByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
+  const deliveredMap = deliveredByCode(covQ.data);
   const items =
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
-  const lines: DocumentDrillLine[] = items.map((l) => ({
-    itemGroup: l.item_group ?? null,
-    code: l.material_code || l.item_code || null,
-    description: l.description ?? null,
-    description2: l.description2 ?? null,
-    variants: l.variants ?? null,
-    qty: Number(l.qty ?? 0),
-    amountCenti: l.line_total_centi ?? 0,
-    assignedSos: byCode.get((l.material_code || l.item_code || "").trim()) ?? [],
-    sourceLinked: linkedSkus.has((l.material_code || l.item_code || "").trim()),
-  }));
+  const lines: DocumentDrillLine[] = items.map((l) => {
+    const code = (l.material_code || l.item_code || "").trim();
+    return {
+      itemGroup: l.item_group ?? null,
+      code: l.material_code || l.item_code || null,
+      description: l.description ?? null,
+      description2: l.description2 ?? null,
+      variants: l.variants ?? null,
+      qty: Number(l.qty ?? 0),
+      amountCenti: l.line_total_centi ?? 0,
+      assignedSos: byCode.get(code) ?? [],
+      sourceLinked: linkedSkus.has(code),
+      deliveredDos: deliveredMap.get(code) ?? [],
+    };
+  });
   return (
     <div className="flex flex-col gap-2">
       <DocumentLinesExpansion
@@ -563,7 +572,9 @@ function PiLinesExpansion({ id }: { id: string }) {
         lines={lines}
         emptyLabel="No lines on this purchase invoice."
         showAssignment
+        showDelivered
         onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+        onOpenDo={(doNo) => navigate(`/scm/delivery-orders?q=${encodeURIComponent(doNo)}`)}
       />
     </div>
   );
@@ -834,6 +845,21 @@ export function PurchaseInvoicesListV2() {
           assignments={r.assigned_sos}
           sourceLinked={r.assigned_so_linked}
           onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+        />
+      ),
+    },
+    {
+      // Owner 2026-07-31: what has been DELIVERED against this PI's parent PO —
+      // the DO(s) that shipped its goods + qty. EVERY DO renders (no collapse).
+      key: "delivered",
+      label: "Delivered",
+      width: "180px",
+      disableSort: true,
+      getValue: (r) => (r.delivered_dos ?? []).map((d) => d.doNo).join(", "),
+      render: (r) => (
+        <DeliveredCell
+          dos={r.delivered_dos}
+          onOpenDo={(doNo) => navigate(`/scm/delivery-orders?q=${encodeURIComponent(doNo)}`)}
         />
       ),
     },

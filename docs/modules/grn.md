@@ -122,7 +122,11 @@ The `asDraft` flag is the only way to create a draft: `POST /` with
 4. **Assemble** (`:974-980`) — `total_centi` is the **stored header value**, not a
    re-sum of the lines. The comment at `:926-933` explains why: the old per-line
    `qty_accepted * unit_price` sum ignored `discount_centi`, so the list Total
-   drifted from the detail Total.
+   drifted from the detail Total. Each GRN also inherits its parent PO's
+   `assigned_sos` (`resolvePoSoCoverageForPos`) and **`delivered_dos`**
+   (`resolveDeliveredDosForPos`) — the Delivered column = the DO(s) that shipped
+   the parent PO's goods + qty per DO. See
+   `docs/modules/document-traceability.md` §2.5 (owner 2026-07-31).
 
 ### `postGrnAndRollup` (`:338-527`) — the single post chokepoint
 

@@ -385,7 +385,7 @@ poSoCoverage.get('/:type/:id', async (c) => {
     // No PO behind this doc (manual PI, unresolved id, foreign company): honest
     // empty — every line renders a dash in the Assigned SO / delivery columns.
     if (!po) {
-      return c.json({ poNumber: null, poId: null, origins: [] as SkuOrigin[] });
+      return c.json({ poNumber: null, poId: null, origins: [] as SkuOrigin[], delivered: [] as Array<{ itemCode: string; dos: DeliveredDo[] }> });
     }
 
     // The covering PO's own lines: SKUs (matched by material_code) + the exact
@@ -494,7 +494,14 @@ poSoCoverage.get('/:type/:id', async (c) => {
     }
 
     const origins = mergeAssignments(poSkus, doLockRes.bySku, storedOrigin, floating, linkedSkus);
-    return c.json({ poNumber: po.poNumber, poId: po.poId, origins });
+    /* "Delivered" per SKU — the DO(s) that shipped this PO's goods + qty (owner
+       2026-07-31). The forward companion of the delivered-lock above; the drill-
+       down matches it into each line by material_code. */
+    const deliveredBySku = await resolveDeliveredBySkuForPo(sb, c, po.poNumber);
+    const delivered: Array<{ itemCode: string; dos: DeliveredDo[] }> = [...deliveredBySku.entries()]
+      .map(([itemCode, dos]) => ({ itemCode, dos }))
+      .sort((a, b) => a.itemCode.localeCompare(b.itemCode));
+    return c.json({ poNumber: po.poNumber, poId: po.poId, origins, delivered });
   } catch (e) {
     return c.json({ error: 'load_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
   }
@@ -805,6 +812,195 @@ export async function resolvePoSoCoverageForPos(
     const floating = floatingByPo.get(poNum) ?? new Map<string, OriginAssignment[]>();
     const origins = mergeAssignments(skus, doLock, storedOrigin, floating, linkedSkusByPo.get(id) ?? new Set());
     out.set(id, summarizeOrigins(origins));
+  }
+  return out;
+}
+
+// ----------------------------------------------------------------------------
+// "Delivered" — the FORWARD companion of the Assigned-SO delivered-lock: which
+// Delivery Order(s) have SHIPPED a purchase document's goods, and how many units
+// per DO. A DO ships a PO's goods when its OUT carries batch_no = the PO number
+// (sofa / drop-ship) OR it consumed a FIFO lot stamped batch_no = the PO number
+// (plain-FIFO bed frame / mattress / accessories, GRN-stamped per 0120). The
+// exact same batch_no linkage the Assigned-SO reads — read here in the shipping
+// direction. Cancelled DOs are EXCLUDED (a cancelled DO did not deliver).
+// Company-scoped: the DO headers are re-read scopeToCompany'd, so a foreign DO
+// never leaks and its qty never counts.
+// ----------------------------------------------------------------------------
+export type DeliveredDo = { doNo: string; qty: number };
+export type PoDeliveredSummary = { deliveredDos: DeliveredDo[] };
+
+const sortDeliveredDos = (dos: DeliveredDo[]): DeliveredDo[] =>
+  dos.sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true }));
+
+/* Shared ledger read: for a set of PO numbers, resolve (poNumber → (doId → qty
+   shipped)) plus the (poNumber → (doId → (code → qty))) breakdown the single-doc
+   drill-down needs.
+
+   Qty MUST NOT double-count. A sofa/allocated-batch OUT writes BOTH a batched
+   movement (qty) AND a consumption of that same batched lot (qty_consumed), so
+   summing both would report 2x. So consumptions are the PRIMARY qty source (they
+   exist for every category that draws from a lot), and the batched OUT movement
+   only fills the DROP-SHIP gap — a drop-ship OUT ships before receipt against an
+   EXPECTED batch and consumes no lot, so its (po, do, code) bucket has no
+   consumption. Plain-FIFO OUTs are un-batched, so the movement `.in('batch_no',
+   …)` filter never matches them; their consumed lots ARE batched and carry them. */
+async function deliveredLedgerForPoNumbers(
+  sb: any,
+  poNumbers: string[],
+): Promise<{
+  qtyByPoDo: Map<string, Map<string, number>>;
+  qtyByPoDoCode: Map<string, Map<string, Map<string, number>>>;
+  doIds: Set<string>;
+}> {
+  const qtyByPoDo = new Map<string, Map<string, number>>();
+  const qtyByPoDoCode = new Map<string, Map<string, Map<string, number>>>();
+  const doIds = new Set<string>();
+  // (po::do::code) buckets a consumption already accounted for — a batched OUT
+  // movement for the same bucket is then skipped so its qty is not counted twice.
+  const consumedBuckets = new Set<string>();
+  const bump = (poNum: string | null, doId: string | null, code: string | null, qty: number): void => {
+    if (!poNum || !doId) return;
+    const q = Math.abs(Number(qty) || 0);
+    const inner = qtyByPoDo.get(poNum) ?? new Map<string, number>();
+    inner.set(doId, (inner.get(doId) ?? 0) + q);
+    qtyByPoDo.set(poNum, inner);
+    if (code) {
+      const byDo = qtyByPoDoCode.get(poNum) ?? new Map<string, Map<string, number>>();
+      const byCode = byDo.get(doId) ?? new Map<string, number>();
+      byCode.set(code, (byCode.get(code) ?? 0) + q);
+      byDo.set(doId, byCode);
+      qtyByPoDoCode.set(poNum, byDo);
+    }
+    doIds.add(doId);
+  };
+  if (poNumbers.length === 0) return { qtyByPoDo, qtyByPoDoCode, doIds };
+  // 1. Consumptions FIRST (the primary qty source, no double count).
+  try {
+    const { data: lots } = await sb.from('inventory_lots').select('id, batch_no').in('batch_no', poNumbers);
+    const lotPo = new Map<string, string>();
+    for (const l of (lots ?? []) as Array<{ id: string; batch_no: string | null }>) {
+      if (l.id && l.batch_no) lotPo.set(l.id, l.batch_no);
+    }
+    const lotIds = [...lotPo.keys()];
+    for (let k = 0; k < lotIds.length; k += 300) {
+      const chunk = lotIds.slice(k, k + 300);
+      if (chunk.length === 0) continue;
+      const { data: cons } = await sb.from('inventory_lot_consumptions')
+        .select('source_doc_id, lot_id, product_code, qty_consumed')
+        .eq('source_doc_type', 'DO').in('lot_id', chunk);
+      for (const r of (cons ?? []) as Array<{ source_doc_id: string | null; lot_id: string; product_code: string | null; qty_consumed: number | null }>) {
+        const poNum = lotPo.get(r.lot_id) ?? null;
+        if (poNum && r.source_doc_id && r.product_code) {
+          consumedBuckets.add(`${poNum}::${r.source_doc_id}::${r.product_code}`);
+        }
+        bump(poNum, r.source_doc_id, r.product_code, Number(r.qty_consumed ?? 0));
+      }
+    }
+  } catch { /* consumption / lot table absent — movement batches stand alone */ }
+  // 2. Batched OUT movements — only for buckets NO consumption covered (drop-ship).
+  try {
+    const { data: movs } = await sb.from('inventory_movements')
+      .select('source_doc_id, product_code, batch_no, qty')
+      .eq('source_doc_type', 'DO').eq('movement_type', 'OUT').in('batch_no', poNumbers);
+    for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; product_code: string | null; batch_no: string | null; qty: number | null }>) {
+      if (m.batch_no && m.source_doc_id && m.product_code
+        && consumedBuckets.has(`${m.batch_no}::${m.source_doc_id}::${m.product_code}`)) {
+        continue; // already counted via its lot consumption — skip to avoid 2x
+      }
+      bump(m.batch_no, m.source_doc_id, m.product_code, Number(m.qty ?? 0));
+    }
+  } catch { /* movements shape differs — consumption path still contributes */ }
+  return { qtyByPoDo, qtyByPoDoCode, doIds };
+}
+
+/* Non-cancelled do_number for a set of DO ids — company-scoped, batched. A
+   CANCELLED DO is deliberately absent (it did not deliver). */
+async function nonCancelledDoNumbers(
+  sb: any,
+  c: Context<any>,
+  doIds: string[],
+): Promise<Map<string, string>> {
+  const doNoById = new Map<string, string>();
+  for (let k = 0; k < doIds.length; k += 300) {
+    const chunk = doIds.slice(k, k + 300);
+    if (chunk.length === 0) continue;
+    const { data: doHdrs } = await scopeToCompany(
+      sb.from('delivery_orders').select('id, do_number, status'), c,
+    ).in('id', chunk);
+    for (const d of (doHdrs ?? []) as Array<{ id: string; do_number: string | null; status: string | null }>) {
+      if (d.do_number && (d.status ?? '').toUpperCase() !== 'CANCELLED') doNoById.set(d.id, d.do_number);
+    }
+  }
+  return doNoById;
+}
+
+/* LIST rollup: Map<poId, PoDeliveredSummary> — the distinct non-cancelled DO(s)
+   that shipped each PO's goods + qty per DO. Same shape the PO / GRN / PI list
+   header cell renders. */
+export async function resolveDeliveredDosForPos(
+  sb: any,
+  c: Context<any>,
+  poIds: Array<string | null | undefined>,
+): Promise<Map<string, PoDeliveredSummary>> {
+  const out = new Map<string, PoDeliveredSummary>();
+  const ids = [...new Set(poIds.filter((x): x is string => !!x))];
+  if (ids.length === 0) return out;
+  const { data: poHdrs } = await scopeToCompany(
+    sb.from('purchase_orders').select('id, po_number'), c,
+  ).in('id', ids);
+  const poNumberById = new Map<string, string>();
+  for (const h of (poHdrs ?? []) as Array<{ id: string; po_number: string | null }>) {
+    poNumberById.set(h.id, h.po_number ?? '');
+  }
+  const poNumbers = [...new Set([...poNumberById.values()].filter(Boolean))];
+  if (poNumbers.length === 0) return out;
+  const { qtyByPoDo, doIds } = await deliveredLedgerForPoNumbers(sb, poNumbers);
+  if (doIds.size === 0) return out;
+  const doNoById = await nonCancelledDoNumbers(sb, c, [...doIds]);
+  for (const id of poNumberById.keys()) {
+    const poNum = poNumberById.get(id) ?? '';
+    const inner = qtyByPoDo.get(poNum);
+    if (!inner) continue;
+    const dos: DeliveredDo[] = [];
+    for (const [doId, qty] of inner.entries()) {
+      const doNo = doNoById.get(doId);
+      if (!doNo) continue; // foreign / cancelled DO — never counts as delivered
+      dos.push({ doNo, qty });
+    }
+    if (dos.length > 0) out.set(id, { deliveredDos: sortDeliveredDos(dos) });
+  }
+  return out;
+}
+
+/* DRILL-DOWN per-SKU: Map<item_code, DeliveredDo[]> for ONE PO — the DO(s) that
+   shipped each SKU + qty. Feeds the single-doc /po-so-coverage/:type/:id
+   response's `delivered`, matched by SKU into each drill-down line. */
+async function resolveDeliveredBySkuForPo(
+  sb: any,
+  c: Context<any>,
+  poNumber: string,
+): Promise<Map<string, DeliveredDo[]>> {
+  const out = new Map<string, DeliveredDo[]>();
+  if (!poNumber) return out;
+  const { qtyByPoDoCode, doIds } = await deliveredLedgerForPoNumbers(sb, [poNumber]);
+  if (doIds.size === 0) return out;
+  const doNoById = await nonCancelledDoNumbers(sb, c, [...doIds]);
+  const byDo = qtyByPoDoCode.get(poNumber);
+  if (!byDo) return out;
+  // (code → (doNo → qty)) so the same SKU across two DOs shows both.
+  const byCode = new Map<string, Map<string, number>>();
+  for (const [doId, codeQty] of byDo.entries()) {
+    const doNo = doNoById.get(doId);
+    if (!doNo) continue;
+    for (const [code, qty] of codeQty.entries()) {
+      const inner = byCode.get(code) ?? new Map<string, number>();
+      inner.set(doNo, (inner.get(doNo) ?? 0) + qty);
+      byCode.set(code, inner);
+    }
+  }
+  for (const [code, inner] of byCode.entries()) {
+    out.set(code, sortDeliveredDos([...inner.entries()].map(([doNo, qty]) => ({ doNo, qty }))));
   }
   return out;
 }

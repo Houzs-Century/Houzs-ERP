@@ -124,6 +124,12 @@ posting.
    on each row — both list paths. Feeds the SI quick-view drawer (desktop
    `SalesInvoicesListV2` + mobile `MobileModuleList`). There is still no
    `has_children` on an SI because nothing hangs off it.
+   `stampSourcePos` (both list paths) additionally stamps **`source_pos`** per
+   row (SI → `delivery_order_id` → `resolveDoSourcePosForDos`); the SI detail
+   resolves per-line `source_pos` from the SI's DO ledger. An SI is born FROM a
+   Sales Order, so it shows **Source PO** (`batch_no` = source PO), NOT an
+   Assigned SO — see `docs/modules/document-traceability.md` §2.5 (owner
+   2026-07-31). A manual SI with no DO shows "—".
 4. **Finance gate** — `gateSiFinance(rows, canViewScmFinance(c))` (`:213-220`)
    deletes every `SI_FINANCE_KEYS` column (`:205-209`) from every row. Applied on
    both list paths and on the detail (`:787-792`, which also strips

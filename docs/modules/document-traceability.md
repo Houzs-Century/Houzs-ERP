@@ -66,10 +66,41 @@ chip + trailing "~" (title "Floating — live MRP coverage"); **static** (delive
 / raised-from-SO) render a solid chip (title "Locked …"). A line with no
 assignment at any layer renders **"—"**.
 
-Backend: `GET /po-so-coverage/:type/:id` returns `{ poNumber, poId, origins }`
-where `origins: [{ itemCode, assignments: [{ soDocNo, deliveryDate, locked }] }]`,
-matched by SKU (`material_code`). The full relationship graph (SO/DO/SI + returns)
-stays on the Relationship Map modal (`/document-flow/:type/:id`) — unchanged.
+Backend: `GET /po-so-coverage/:type/:id` returns `{ poNumber, poId, origins, delivered }`
+where `origins: [{ itemCode, assignments: [{ soDocNo, deliveryDate, locked }] }]`
+and `delivered: [{ itemCode, dos: [{ doNo, qty }] }]`, matched by SKU
+(`material_code`). The full relationship graph (SO/DO/SI + returns) stays on the
+Relationship Map modal (`/document-flow/:type/:id`) — unchanged.
+
+### 2.5 Doc-side split (2026-07-31) — sales docs show Source PO, purchase docs add Delivered; no "+N" collapse anywhere
+`feat/assigned-so-inline-date`. Owner feedback split the unified "Assigned SO"
+column by document side, and banned any "first + N" summarization:
+
+- **Sales docs (DO, SI) — Assigned SO REMOVED, Source PO ADDED.** A DO/SI is born
+  FROM a Sales Order, so "Assigned SO" is redundant there. Both now show **Source
+  PO** = the PO(s) the shipped/invoiced goods actually came from, the durable
+  `batch_no` = source-PO hard link (OUT movements ∪ consumed FIFO lots), NOT an
+  MRP guess. `MfgDeliveryOrdersListV2` restored the document-flow **From SO** label
+  and its drill-down uses `showSourcePo` (not `showAssignment`); `SalesInvoicesListV2`
+  gained the same Source PO column + drill-down. Backend: the DO list stamps
+  `source_pos` per row via `resolveDoSourcePosForDos` (batched, `delivery-orders-mfg.ts`);
+  the DO detail already returned per-line `source_pos`. The SI list stamps
+  `source_pos` via `stampSourcePos` (SI → `delivery_order_id` → DO ledger); the SI
+  detail resolves per-line `source_pos` via `resolveDoLineSourcePos` matched by
+  `(item_code, variant_key)`. An SI with no `delivery_order_id` (manual invoice)
+  shows "—".
+- **Purchase docs (PO, GRN, PI) — Assigned SO KEPT + Delivered ADDED.** They keep
+  the precedence-resolved Assigned SO and gain a **Delivered** column = the DO(s)
+  that shipped the PO's goods (`batch_no` = this PO) + qty per DO. Backend:
+  `resolveDeliveredDosForPos` (list rollup) + `resolveDeliveredBySkuForPo`
+  (per-SKU, added to the single-doc `delivered` field) in `po-so-coverage.ts`;
+  CANCELLED DOs are EXCLUDED. Each list row carries `delivered_dos`; the drill-down
+  maps it per SKU via `deliveredByCode` and passes `showDelivered`.
+- **No collapse.** `AssignedSoCell`, the Source-PO cells and the new `DeliveredCell`
+  render EVERY chip (they wrap); the "+N" was removed. Each Assigned-SO chip now
+  carries its OWN delivery date inline.
+- `computeMrp` still runs **≤ once per request** on every list endpoint — the new
+  delivered/source-PO resolvers are pure ledger reads and add no MRP call.
 
 ### 2.4 PO "Assigned SO" resolution — precedence over linkages **C → B → A**
 `backend/src/scm/routes/po-so-coverage.ts` (`GET /po-so-coverage/:type/:id`,

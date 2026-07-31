@@ -127,8 +127,14 @@ UUID**; use `houzsUser.id` for the public bigint.
    for the listed PO ids, carrying `grn_number`. It powers both `has_children`
    (the downstream lock) and the "Transfer To (GRN)" column, so the two are one
    round trip.
-4. **Assemble** (`:513-517`) — `has_children` + `transfer_to_grns` stamped per row;
-   response is `{ purchaseOrders }` or `{ purchaseOrders, total, page, pageSize, statusCounts }`.
+4. **Assemble** (`:513-517`) — `has_children` + `transfer_to_grns` +
+   `assigned_sos` / `assigned_so_linked` (`resolvePoSoCoverageForPos`) +
+   **`delivered_dos`** (`resolveDeliveredDosForPos`) stamped per row; response is
+   `{ purchaseOrders }` or `{ purchaseOrders, total, page, pageSize, statusCounts }`.
+   The **Delivered** column = the DO(s) that shipped this PO's goods
+   (`batch_no` = PO number, CANCELLED DOs excluded) + qty per DO; drill-down
+   per-SKU via the single-doc `delivered` field. See
+   `docs/modules/document-traceability.md` §2.5 (owner 2026-07-31).
 
 ### Main mutation paths
 
