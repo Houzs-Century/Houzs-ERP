@@ -340,10 +340,11 @@
 // browser's own navigation reaches the edge 302 (see ON_LEGACY_PROD_HOST). The
 // one-shot cache purge also drops the stale shell. Installed clients redirect on
 // their next navigation / reload.
-// v190 (2026-07-31): cacheFirst now retries code requests with cache:"reload"
-// when the network answers HTML, healing browsers whose own HTTP cache holds
-// an immutable SPA-fallback response under a hashed asset URL. See cacheFirst.
-const VERSION = "houzs-erp-v190-__SW_BUILD_ID__";
+// v191 (2026-07-31): cacheFirst retries a code request that answers HTML —
+// first bypassing the browser HTTP cache, then bypassing the CDN edge via a
+// cache-busting query — so an SPA-fallback response poisoned into ANY cache
+// layer heals itself instead of bricking the route. See cacheFirst.
+const VERSION = "houzs-erp-v191-__SW_BUILD_ID__";
 const SHELL_CACHE = `${VERSION}-shell`;
 const API_CACHE = `${VERSION}-api`;
 
@@ -606,10 +607,28 @@ async function cacheFirst(req) {
     // cache entry, so the next plain fetch is clean too: self-healing, no user
     // action. Only for code requests, only when HTML came back.
     if (code && r && isHtml(r)) {
+      // Retry 1 — bypass THIS BROWSER's HTTP cache.
       try {
         r = await fetch(req.url, { cache: "reload", credentials: "same-origin" });
       } catch {
-        return notAvailable();
+        r = null;
+      }
+      // Retry 2 — bypass the CDN EDGE. A unique query makes a different cache
+      // key, so a poisoned edge entry under the clean URL can't answer. Needed
+      // because a zone-level Cloudflare rule overrides our _headers TTL (assets
+      // come back max-age=14400, not the 300 _headers asks for), so edge poison
+      // would otherwise persist for hours. The response body is what matters —
+      // module specifiers inside it are resolved against the ORIGINAL URL, so
+      // serving it back for `req` is correct and keeps the import graph intact.
+      if (!r || !r.ok || isHtml(r)) {
+        try {
+          r = await fetch(`${req.url}${req.url.includes("?") ? "&" : "?"}swcb=${Date.now()}`, {
+            cache: "reload",
+            credentials: "same-origin",
+          });
+        } catch {
+          return notAvailable();
+        }
       }
       if (!r || !r.ok || isHtml(r)) return notAvailable();
     }
