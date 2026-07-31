@@ -1977,6 +1977,20 @@ export function MobileNewSO({
         /* EXPLICIT draft flag — the backend statuses DRAFT only on
            body.asDraft === true; nulling the dates alone saves CONFIRMED. */
         asDraft: asDraft === true,
+        /* GATE-ONLY, never booked. recordSlipBackedPayments runs AFTER this
+           create, so at CREATE time the backend saw RM0 and the Processing-Date
+           deposit gate refused the save with the money plainly on screen — and
+           the create had to succeed before the payments could ever be posted.
+           Deadlock, identical to the desktop screen (same fix, same PR: the two
+           surfaces share this rule and only one of them being fixed is the
+           recurring bug class in CLAUDE.md). Same filter recordSlipBackedPayments
+           uses, so this can never claim money it is not about to record. */
+        pendingDepositCenti: (() => {
+          const c = pays
+            .filter((p) => p.slipSession && toCenti(p.amount) > 0)
+            .reduce((sum, p) => sum + toCenti(p.amount), 0);
+          return c > 0 ? c : undefined;
+        })(),
         items,
       };
 
