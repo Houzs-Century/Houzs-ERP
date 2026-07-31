@@ -607,8 +607,23 @@ app.get("/me", async (c) => {
   const user = await getUserBySession(c.env, token);
   if (!user) return c.json({ error: "Unauthorized" }, 401);
 
-  // Cheap opportunistic prune — keeps the sessions table small.
-  await pruneExpiredSessions(c.env);
+  // Opportunistic prune — keeps the sessions table small. It is a WRITE, and
+  // /auth/me sits at the head of every page load's critical path: awaiting it
+  // charged one DELETE round trip to every navigation in the app before the
+  // caller saw a byte. Nothing in the response depends on it, so it moves off
+  // the critical path via waitUntil and settles after the response is sent.
+  // A failed prune must not fail an otherwise valid /me either — it is a
+  // housekeeping sweep, and the next request retries it.
+  //
+  // c.executionCtx throws when the runtime did not supply one (some test
+  // harnesses); a floating promise is the correct fallback for fire-and-forget
+  // work, same pattern as the error reporter in index.ts.
+  const prune = pruneExpiredSessions(c.env).catch(() => {});
+  try {
+    c.executionCtx.waitUntil(prune);
+  } catch {
+    void prune;
+  }
 
   // project_finance_viewer: single source of truth (pmsAccess) surfaced to the
   // FE so the Projects "Finances" nav item + view (not tied to one project)

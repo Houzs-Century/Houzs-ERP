@@ -39,6 +39,79 @@ foregrounded; buffered long-task capture at load is unaffected and is what's cit
 
 ---
 
+## 0b. Second pass — measured live on prod 2026-08-01 (logged in, company 2990 HOME)
+
+Method: real navigations against `erp.houzscentury.com`, reading `PerformanceResourceTiming`
+per page. "usable" = when the LAST API call of the page settles.
+
+**The headline: rendering is NOT the bottleneck any more.** Main-thread blocking
+measured **0 ms with 0 long tasks on every page tested** (Overview, Service Cases,
+SO, DO, PO, GRN, PI, SI, Inventory, Projects). The first campaign's windowing +
+mobile-split work did its job. What is left is server latency.
+
+| page | usable | dominant cost |
+|---|---|---|
+| `/assr` | **1983 ms** | shell tax + summary |
+| `/scm/inventory` | 1560 ms | `inventory/products` 781ms + see W6 below |
+| `/scm/purchase-invoices` | 1498 ms | `/api/scm/purchase-invoices` **966 ms** |
+| `/scm/purchase-orders` | 1434 ms | `/api/scm/mfg-purchase-orders` **915 ms** |
+| `/scm/grns` | 1354 ms | `/api/scm/grns` **814 ms** |
+| `/scm/sales-orders` | 840 ms | — |
+| `/projects` | 738 ms | — |
+
+New findings, none of which are in section 1:
+
+- [x] **A1 — `/api/auth/me` awaited a WRITE.** `pruneExpiredSessions` (a
+  `DELETE FROM sessions`) was awaited inside `/me`, which sits at the head of
+  every page load. `sessions(expires_at)` is indexed so it never scanned, but the
+  round trip was charged to every navigation. Moved to `waitUntil`. The app's own
+  `[perf] slow` logger caught `/api/auth/me` at **847 ms** live. FIXED.
+- [x] **A2 — `/api/assr/summary` ran 13 aggregates serially.** One concurrent
+  wave now. FIXED.
+- [x] **A3 — the Service Case list made 4 serial round trips** (2 visibility
+  reads, then COUNT, then the page). Now 2 waves. FIXED.
+- [x] **A4 — `assr_activity` had no index covering the `stage_since` subquery.**
+  Mig 0232. FIXED.
+- [x] **A5 — 500 KB of logo PNGs on first paint.** `logo-wordmark.png` was
+  **12088x3544** for a ~400px render (30x oversampled). Resized + recompressed:
+  500 KB -> 112 KB, alpha kept. FIXED.
+- [ ] **W6 (P0) — desktop `/scm/inventory` renders all 344 rows: 11,963 DOM
+  nodes.** Root cause traced: `DataTable.tsx:288-292` makes row windowing a
+  **no-op for grouped/expandable tables**, and Inventory's balances table is
+  expandable (chevron -> variants). The largest list in the app is exactly the
+  one the W1 windowing work excluded. Mobile is unaffected (same page at a narrow
+  viewport = 1,573 nodes), so `MobileModuleList` windowing is working.
+- [ ] **N1 (P0) — the shell tax.** Every full page load fires 6-8 requests that
+  belong to no page: `auth/me`, `branding`, `companies`, `notifications`,
+  `presence`, `presence/heartbeat`, `announcements/banner`, `inbox`, and they
+  arrive in THREE serial waves (Overview: auth/me at 91ms -> wave 2 at ~494ms ->
+  wave 3 at ~779ms, `assr/summary` settling at 1085ms). One `/api/bootstrap`
+  would collapse both the count and the waterfall. Highest remaining single win;
+  also the highest risk, because every page depends on it.
+- [ ] **N2 — connection cold starts dominate the variance.** The SAME endpoint
+  measured 148 ms and 833 ms (`/api/branding`), 110 ms and 847 ms (`/api/auth/me`)
+  minutes apart. This is the Hyperdrive cold-pool behaviour `db/d1-compat.ts`
+  already documents and retries. Tuning keep-warm is a config question, not a
+  code one.
+- [ ] **N3 — bundle is over its own ceiling.** `total JS (gzip) 1917.5 KB` vs the
+  1800 KB budget in `scripts/check-bundle-size.mjs`; the gate fails on main.
+- Techniques confirmed ALREADY PRESENT (do not re-propose): route hover prefetch
+  (`Sidebar.tsx` -> `lib/prefetch-routes`), `content-visibility: auto`
+  (`DataTable.tsx:2359`), route + mobile `React.lazy`, modulePreload filtering,
+  Rolldown chunk groups, staleTime/gcTime, localStorage query snapshot,
+  cross-tab invalidation, 623 Postgres indexes incl. trigram GIN.
+  NOT present, still available: `queryClient.prefetchQuery` on hover (today the
+  hover prefetches the CHUNK but not the DATA), `useDeferredValue`/
+  `startTransition` for filter input, a Web Worker for xlsx/jspdf export, edge
+  caching for `branding`/`companies`.
+
+**Coverage honesty:** 10 of ~90 routes were measured, and one interaction
+(expanding an SO row — which costs 0 new requests and 0 long tasks; line items
+already ride the list payload). Detail pages, `/new` forms, dropdowns, modals and
+the other ~80 routes are NOT yet measured.
+
+---
+
 ## 0. Shipped this campaign (verified live)
 
 - [x] **mig 0104** — pg_trgm GIN + partial indexes on `scm.mfg_products` + fabric tables.
