@@ -203,7 +203,8 @@ shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
 |------|------|------|
 | Variants complete | `variants_incomplete` | every non-cancelled line's category-mandatory axes filled (`so-variant-rule`) |
 | Colour KIV | `fabric_colour_kiv` | **no line may still be colour-KIV** (series committed via `fabricId`/`fabricLabel`, no `fabricCode` — `isColourKiv` in `variant-summary.ts`). Owner rule 2026-07-24 after SO-2607-016: a Processing Date means every line is a fully-confirmed maintained selection. Fires only when the date is genuinely SET or CHANGED — unrelated edits to an old KIV order, and clearing the date, never block. Also enforced on line-ADD / line-EDIT against an already-dated SO (409). |
-| 30% deposit | `processing_date_unpaid` | ≥30% of order total collected (`order-rules`) |
+| Deposit, PER COMPANY | `processing_date_unpaid` | **Houzs 30%, 2990 50%** of the order total collected (`processingDateThresholdFor` in `order-rules`). Until 2026-07-31 the split existed only in a comment and both constants applied to everyone, so a 2990 order was refused at the Houzs 30%. An unknown/absent company code falls back to the LOOSER 30% on purpose — over-gating stops the shop floor with no signal. |
+| Customer + delivery complete | `processing_date_incomplete` | customer name, delivery address line 1, postcode, delivery date. **No email** (owner 2026-07-31: "不需要email"). Added 2026-07-31 when the Processing Date and Proceed gates were unified — this half used to apply only to Proceed. Measured free: of 63 live dated SOs, zero lacked any of these four; 12 lacked only the email that was dropped. |
 | Date sanity | `processing_date_past` / `delivery_date_past` / `processing_after_delivery` | no fresh past dates (unchanged past dates grandfathered); processing ≤ delivery |
 
 Related short-circuit gates: Processing + Delivery all-or-nothing
@@ -211,6 +212,17 @@ Related short-circuit gates: Processing + Delivery all-or-nothing
 (`processing_date_remove_forbidden`), and the processing-date LOCK once the day
 elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
 writes `internal_expected_dd`.
+
+**ONE gate, one name (owner 2026-07-31).** *"不要又 Processing Date,又 Proceed,
+全系统直接统一一个叫 Processing Date... Processing Date 就是当天 Proceed 的意思。"*
+`meetsProceedGate` in `order-rules` is now the single rule behind ALL of it:
+setting `internal_expected_dd`, the create-time auto-stamp of `proceeded_at`, and
+both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH
+/:docNo` `proceededAt`). `proceeded_at` stays a separate COLUMN because it is a
+timestamp the system writes, not a date a user picks — what was unified is the
+RULE, not the storage. Net effect: the proceed paths LOOSENED by one condition
+(email), the processing-date path TIGHTENED by four (name / address / postcode /
+delivery date), and the threshold became per-company.
 
 ### Selling-price authoring — who may set the line price
 

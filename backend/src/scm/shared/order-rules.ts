@@ -23,12 +23,11 @@ export const PROCEED_PAID_THRESHOLD = 0.5;
  *  can never be conflated again. */
 export const PROCESSING_DATE_PAID_THRESHOLD = 0.30;
 
-/** Inputs to the "ready to Proceed" gate. `paid` / `total` must share a unit
+/** Inputs to the Processing-Date gate. `paid` / `total` must share a unit
  *  (whole-MYR on the POS, centi on the server) — only their ratio is used, so
  *  either side may pass its own representation. */
 export interface ProceedGateInput {
   hasCustomerName: boolean;
-  hasEmail: boolean;
   /** Delivery address line 1 present. A "Fill in later" handover leaves this
    *  (and the postcode) blank, so the gate fails — exactly the case that must
    *  keep an order in Order Placed. */
@@ -37,21 +36,42 @@ export interface ProceedGateInput {
   hasDeliveryDate: boolean;
   paid: number;
   total: number;
+  /** Active company ('HOUZS' | '2990') — picks the deposit fraction. */
+  companyCode?: CompanyCode | string | null;
 }
 
-/** The single source of truth for "may this SO move to Proceed?". Used by BOTH
- *  the POS "Move to Proceed" button (manual) and the server's create handler
- *  (auto-stamp proceeded_at when the handover already arrives complete) so the
- *  two can never drift. Mirrors the four checklist ticks in the POS drawer:
- *  customer info (name + email), delivery address (line 1 + postcode), a
- *  delivery date, and ≥ 50% paid. */
+/** THE gate. One rule, one name — owner 2026-07-31, verbatim: *"不要又 Processing
+ *  Date,又 Proceed,全系统直接统一一个叫 Processing Date... Processing Date 就是当天
+ *  Proceed 的意思。如果分两个的话,会不会很乱?"*
+ *
+ *  It answers ONE question — may this order start production? — and every path
+ *  that used to ask its own version now asks this: setting `internal_expected_dd`
+ *  (the date the user picks), auto-stamping `proceeded_at` at create, and the two
+ *  manual proceed paths. `proceeded_at` remains a separate COLUMN because it is a
+ *  timestamp the system writes, not a date the user picks; what is unified is the
+ *  RULE, not the storage.
+ *
+ *  WHAT CHANGED, and why each way:
+ *   - **Threshold is per company** (HOUZS 30% / 2990 50%). Previously two
+ *     constants, both applied to everyone; see processingDateThresholdFor.
+ *   - **Email is NO LONGER required** (owner 2026-07-31: "不需要email"). It was
+ *     the ONLY completeness condition anything was actually missing —
+ *     check-processing-date-gate-impact.mjs on prod: of 63 live SOs carrying a
+ *     Processing Date, 12 lack an email and ZERO lack a name, address, postcode
+ *     or delivery date. Dropping it is what makes unification cost nothing.
+ *   - **Name / address / postcode / delivery date are now required to set a
+ *     Processing Date**, which they were not before (that gate was money-only).
+ *     Free by the same measurement: all 63 already have them.
+ *
+ *  This LOOSENS the two proceed paths by one condition (an emailless order can
+ *  now proceed) and TIGHTENS the processing-date path by four. Both are the
+ *  owner's stated intent, both measured before shipping. */
 export const meetsProceedGate = (i: ProceedGateInput): boolean =>
   i.hasCustomerName &&
-  i.hasEmail &&
   i.hasAddress &&
   i.hasPostcode &&
   i.hasDeliveryDate &&
-  (i.total <= 0 || i.paid / i.total >= PROCEED_PAID_THRESHOLD);
+  (i.total <= 0 || i.paid / i.total >= processingDateThresholdFor(i.companyCode));
 
 /** May a Processing Date (factory-start / 开工日期) be SET on a Sales Order, given
  *  collection so far? Owner/Loo 2026-06-30 — the Processing Date is production's
