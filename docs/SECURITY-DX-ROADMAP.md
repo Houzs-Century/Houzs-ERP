@@ -62,9 +62,14 @@ background, and daily ERP use is unchanged.
 
 Most of the remaining optimisation (splitting files, bigger refactors, the audit
 log) is currently unsafe to do because there is **no gate and no test bench**
-between a change and the live business: `main` has no branch protection and every
-merge auto-deploys to production. Step 2 (staging bench) + branch protection is the
-foundation that makes everything after it safe to do. Build that before the rest.
+between a change and the live business. **Half of that closed on 2026-07-31**:
+`main` now carries the `main-protection` ruleset, so a PR whose CI ran against a
+stale `main` can no longer merge (verify with
+`gh api repos/hello-houzs/Houzs-ERP/rules/branches/main`; the classic
+`/branches/main/protection` endpoint still answers 404 and will mislead you).
+What is still missing is the other half — every merge still auto-deploys straight
+to production with no staging bench in between. Step 2 is now the whole of this
+foundation, and it is what to build before the rest.
 
 ## What "done" means here
 
