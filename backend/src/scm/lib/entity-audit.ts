@@ -58,7 +58,16 @@ export function isEntityType(v: unknown): v is EntityType {
    the PO-side mirror of the SO trail's 'AMENDMENT_PO_APPROVED' recordSoAudit
    action. It answers "who revised this PO, and to which revision", which UPDATE
    (a field edit) does not. See lib/po-revision.ts applyPoAmendment. */
-export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED'] as const;
+/* RECOUNT_FAILED is the only verb here that records something the system FAILED
+   to do rather than something someone did. It exists because the alternative is
+   the silence that let 2026-07-14..22 happen: eleven GRNs posted, their stock
+   entered inventory, and not one of their POs was ever told — because
+   recomputePoReceived's recount runs AFTER the GRN is already POSTED and its
+   failure path was a console.error into a log nobody reads and nothing retains.
+   By the time an operator noticed (2026-07-31, by opening one order), the only
+   surviving evidence was the drift itself. A row here means the next occurrence
+   names its own GRN, in the trail an investigator already opens. */
+export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED', 'RECOUNT_FAILED'] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /* The Houzs caller, as middleware/auth.ts stashes it. Deliberately structural:
