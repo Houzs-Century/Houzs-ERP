@@ -249,3 +249,62 @@ describe('deposit threshold is per company', () => {
     expect(unpaid(facts(' 2990 ', 300_00))).toHaveLength(1);
   });
 });
+
+/* ONE gate (owner 2026-07-31: "不要又 Processing Date,又 Proceed... Processing
+   Date 就是当天 Proceed 的意思"). Completeness now gates the Processing Date the
+   way it always gated Proceed — MINUS email, which the owner dropped and which
+   was the only field production was actually missing (12 of 63; zero lacked
+   name/address/postcode/delivery date). */
+describe('unified Processing-Date gate: completeness', () => {
+  const base = {
+    procDate: '2026-12-01',
+    delivDate: '2026-12-20',
+    todayMY: '2026-07-31',
+    companyCode: 'HOUZS',
+    deposit: { paidCenti: 1000_00, totalCenti: 1000_00 },
+  };
+  const complete = { hasCustomerName: true, hasAddress: true, hasPostcode: true };
+  const codes = (f: Parameters<typeof collectProcessingGateProblems>[0]) =>
+    collectProcessingGateProblems(f).filter((p) => p.code === 'processing_date_incomplete');
+
+  it('clears when name, address, postcode and delivery date are present', () => {
+    expect(codes({ ...base, completeness: complete })).toHaveLength(0);
+  });
+
+  it('reports EVERY missing field at once, not one at a time', () => {
+    const out = codes({
+      ...base,
+      delivDate: null,
+      completeness: { hasCustomerName: false, hasAddress: false, hasPostcode: false },
+    });
+    expect(out).toHaveLength(4);
+    expect(out.map((p) => p.field).sort()).toEqual(['Address', 'Customer', 'Delivery date', 'Postcode']);
+  });
+
+  it('an email is NOT required — the owner dropped it', () => {
+    /* There is no email input at all; a complete order with no email clears. */
+    expect(codes({ ...base, completeness: complete })).toHaveLength(0);
+  });
+
+  it('does not fire when no Processing Date is being set', () => {
+    expect(codes({
+      ...base,
+      procDate: null,
+      completeness: { hasCustomerName: false, hasAddress: false, hasPostcode: false },
+    })).toHaveLength(0);
+  });
+
+  it('a path that supplies no completeness facts reports none rather than inventing failures', () => {
+    expect(codes({ ...base, completeness: null })).toHaveLength(0);
+    expect(codes({ ...base })).toHaveLength(0);
+  });
+
+  it('completeness and the deposit shortfall are reported TOGETHER, in one response', () => {
+    const all = collectProcessingGateProblems({
+      ...base,
+      deposit: { paidCenti: 0, totalCenti: 1000_00 },
+      completeness: { hasCustomerName: true, hasAddress: false, hasPostcode: true },
+    });
+    expect(all.map((p) => p.code).sort()).toEqual(['processing_date_incomplete', 'processing_date_unpaid']);
+  });
+});

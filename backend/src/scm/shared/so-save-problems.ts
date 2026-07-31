@@ -87,6 +87,18 @@ export type ProcessingGateFacts = {
   /** Active company ('HOUZS' | '2990') — picks the deposit threshold. Absent
    *  falls back to the looser 30%; see processingDateThresholdFor. */
   companyCode?: string | null;
+  /** Customer / delivery completeness, for the UNIFIED gate (owner 2026-07-31:
+   *  Processing Date IS Proceed, one rule). These were required to Proceed but
+   *  NOT to set a Processing Date; now both ask the same question. Email is
+   *  deliberately absent — the owner dropped it, and it was the only field
+   *  anything actually lacked (12 of 63 live orders; zero lacked these four).
+   *  Omit (undefined) on a path that has no customer facts to offer; the gate
+   *  then does not report them rather than inventing a failure. */
+  completeness?: {
+    hasCustomerName: boolean;
+    hasAddress: boolean;
+    hasPostcode: boolean;
+  } | null;
 };
 
 /** Every reason THIS save fails its Processing-Date gates, in the order the
@@ -140,7 +152,27 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
     }
   }
 
-  // 2. 30% deposit — a Processing Date is production's "ready to build" signal,
+  // 1c. Customer + delivery completeness. Unified with the Proceed gate (owner
+  //     2026-07-31) — the Processing Date IS the go-to-production signal, so the
+  //     same facts must be present for either. Only when a date is being SET;
+  //     clearing it, or editing something else on a dated order, never blocks.
+  if (facts.procDate && facts.completeness) {
+    const { hasCustomerName, hasAddress, hasPostcode } = facts.completeness;
+    if (!hasCustomerName) {
+      out.push({ code: 'processing_date_incomplete', message: 'Customer name is required before a Processing Date can be set', field: 'Customer' });
+    }
+    if (!hasAddress) {
+      out.push({ code: 'processing_date_incomplete', message: 'Delivery address line 1 is required before a Processing Date can be set', field: 'Address' });
+    }
+    if (!hasPostcode) {
+      out.push({ code: 'processing_date_incomplete', message: 'Delivery postcode is required before a Processing Date can be set', field: 'Postcode' });
+    }
+    if (!facts.delivDate) {
+      out.push({ code: 'processing_date_incomplete', message: 'A delivery date is required before a Processing Date can be set', field: 'Delivery date' });
+    }
+  }
+
+  // 2. Deposit — a Processing Date is production's "ready to build" signal,
   //    so it can't be set until >=30% is collected. Reported with the concrete
   //    amount + threshold. Mirrors meetsProcessingDatePaymentGate → 400
   //    processing_date_unpaid. Only fires when a date is actually being set.

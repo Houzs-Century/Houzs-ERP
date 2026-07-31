@@ -497,16 +497,22 @@ function soStatusTransitionError(
    PROCEED_PAID_THRESHOLD inside meetsProceedGate). */
 const SO_PROCEED_GATE_RESPONSE = {
   error: 'proceed_gate_unmet',
-  reason: 'This order can only Proceed once it has a customer name, an email, a full delivery address (line 1 and postcode), a delivery date, and at least 50% of the total paid.',
+  reason: 'A Processing Date can only be set once the order has a customer name, a full delivery address (line 1 and postcode), a delivery date, and the deposit its company requires (Houzs 30%, 2990 50%).',
 } as const;
 
 async function soProceedGateBlocked(
   sb: any,
   docNo: string,
+  /* No `email` — the unified gate dropped it (owner 2026-07-31). Left OUT of
+     this shape rather than accepted-and-ignored, so a caller cannot believe it
+     still matters. */
   eff: {
-    customerName?: string | null; email?: string | null;
+    customerName?: string | null;
     address1?: string | null; postcode?: string | null; deliveryDate?: string | null;
   },
+  /* Picks the deposit fraction (Houzs 30% / 2990 50%). Absent falls back to the
+     looser 30% — see processingDateThresholdFor for why never the stricter. */
+  companyCode?: string | null,
 ): Promise<typeof SO_PROCEED_GATE_RESPONSE | null> {
   const [{ data: totRow }, { data: pays }] = await Promise.all([
     sb.from('mfg_sales_orders').select('local_total_centi').eq('doc_no', docNo).maybeSingle(),
@@ -517,12 +523,12 @@ async function soProceedGateBlocked(
     .reduce((s, p) => s + Number(p.amount_centi ?? 0), 0);
   const ok = meetsProceedGate({
     hasCustomerName: !!eff.customerName?.trim(),
-    hasEmail: !!eff.email?.trim(),
     hasAddress: !!eff.address1?.trim(),
     hasPostcode: !!eff.postcode?.trim(),
     hasDeliveryDate: !!eff.deliveryDate?.trim(),
     paid: paidCenti,
     total: totalCenti,
+    companyCode,
   });
   return ok ? null : SO_PROCEED_GATE_RESPONSE;
 }
@@ -4683,12 +4689,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0);
   const autoProceed = meetsProceedGate({
     hasCustomerName: !!customerName?.trim(),
-    hasEmail: typeof body.email === 'string' && !!body.email.trim(),
     hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
     hasPostcode: typeof body.postcode === 'string' && !!body.postcode.trim(),
     hasDeliveryDate: typeof body.customerDeliveryDate === 'string' && !!body.customerDeliveryDate.trim(),
     paid: depositTotalCenti,
     total: grandTotal,
+    companyCode: c.get('companyCode') ?? null,
   });
 
   /* Processing-Date payment gate (Loo 2026-06-30) — a Processing Date is
@@ -4729,13 +4735,20 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     );
     const depositProblems = procDateOnCreate
       ? collectProcessingGateProblems({
-        /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
-           Undefined on the synthetic-context path (:5332) and that is fine —
-           processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
-        companyCode: c.get('companyCode') ?? null,
+          /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
+             Undefined on the synthetic-context path and that is fine —
+             processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
+          companyCode: c.get('companyCode') ?? null,
           procDate: procDateOnCreate,
           delivDate: (body.customerDeliveryDate as string | null | undefined) || null,
           todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
+          /* The SAME facts autoProceed reads a few lines above — one rule
+             (owner 2026-07-31: Processing Date IS Proceed). No email. */
+          completeness: {
+            hasCustomerName: !!customerName?.trim(),
+            hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
+            hasPostcode: typeof body.postcode === 'string' && !!body.postcode.trim(),
+          },
           deposit: { paidCenti: depositTotalCenti + pendingDepositCenti, totalCenti: grandTotal },
         })
       : [];
@@ -5483,10 +5496,10 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
          same ≥50%-paid + full-address rule as CREATE auto-proceed. An already-
          proceeded SO re-entering IN_PRODUCTION is a no-op and is NOT re-gated. */
       const gate = await soProceedGateBlocked(sb, docNo, {
-        customerName: curRow?.debtor_name, email: curRow?.email,
+        customerName: curRow?.debtor_name,
         address1: curRow?.address1, postcode: curRow?.postcode,
         deliveryDate: curRow?.customer_delivery_date,
-      });
+      }, c.get('companyCode') ?? null);
       if (gate) return c.json(gate, 422);
       patch.proceeded_at = new Date().toISOString();
     }
@@ -6565,11 +6578,10 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     };
     const gate = await soProceedGateBlocked(sb, docNo, {
       customerName: effOf('debtor_name'),
-      email: effOf('email'),
       address1: effOf('address1'),
       postcode: effOf('postcode'),
       deliveryDate: effOf('customer_delivery_date'),
-    });
+    }, c.get('companyCode') ?? null);
     if (gate) return c.json(gate, 422);
   }
 
@@ -6623,6 +6635,24 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       origDelivDate: origDeliv,
       variantOffenders,
       kivOffenders,
+      /* Effective header values — the patch value when THIS request sets the
+         field, else the stored one. Identical semantics to the `effOf` in the
+         proceed block above; it cannot be reused because that one is scoped
+         inside `if (updates['proceeded_at'] ...)`, and this gate runs whether or
+         not the request also proceeds. One rule, one set of facts (owner
+         2026-07-31: Processing Date IS Proceed). Email is deliberately absent. */
+      completeness: (() => {
+        const beforeRow = before as unknown as Record<string, unknown> | null;
+        const eff = (snake: string): string => {
+          const v = updates[snake] !== undefined ? updates[snake] : beforeRow?.[snake];
+          return v == null ? '' : String(v).trim();
+        };
+        return {
+          hasCustomerName: !!eff('debtor_name'),
+          hasAddress: !!eff('address1'),
+          hasPostcode: !!eff('postcode'),
+        };
+      })(),
       deposit: depositFacts,
     });
     if (problems.length > 0) return c.json(validationFailedBody(problems), 422);

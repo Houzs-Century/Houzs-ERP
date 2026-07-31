@@ -61,8 +61,10 @@ export function isLocked(
    lock flips at MYT midnight regardless of the device timezone.
 
    Owner 2026-07-16 — the lock now fires on the processing date passing for any
-   non-DRAFT / non-CANCELLED SO. A Processing Date can only be SET on a ≥30%-paid
-   order and IS production's "ready to build" signal, so once it elapses the order
+   non-DRAFT / non-CANCELLED SO. A Processing Date can only be SET on an order that
+   meets its company's deposit rule (Houzs 30%, 2990 50% — owner 2026-07-31) plus
+   customer name + full delivery address + delivery date, and IS production's
+   "ready to build" signal, so once it elapses the order
    is committed whether or not the explicit Proceed (IN_PRODUCTION) toggle was ever
    pressed. The prior rule ALSO required `proceeded_at` (only stamped at
    IN_PRODUCTION), which let a CONFIRMED SO past its processing date stay directly
