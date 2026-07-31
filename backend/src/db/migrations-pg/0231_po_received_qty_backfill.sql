@@ -1,4 +1,9 @@
--- 0230_po_received_qty_backfill.sql
+-- 0231_po_received_qty_backfill.sql
+-- (Renumbered from 0230 on 2026-07-31: #1435 and #1439 were cut from main at
+--  the same time and both claimed 0230, so main went red on the
+--  migrationNumbers ratchet the moment the second one merged. Neither had
+--  reached prod — the applied ledger stops at 0229_venue_canonicalize — so this
+--  file just takes the next free number. Nothing about the SQL changed.)
 -- Owner 2026-07-31: re-run the PO receipt recount over history, because for a
 -- bounded window it never ran at all and 11 fully-received POs are still sitting
 -- in the buyer's outstanding list.
