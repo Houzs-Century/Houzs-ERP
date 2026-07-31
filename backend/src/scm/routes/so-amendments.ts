@@ -28,6 +28,7 @@ import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-r
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
 import { hasHouzsPerm, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
+import { collectProcessingGateProblems } from '../shared/so-save-problems';
 import { recordSoAudit } from '../lib/so-audit';
 import { scopeToCompany, isMirroredDocNo, houzsOwns2990, MIRRORED_SO_READONLY, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import {
@@ -551,7 +552,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
   const headerChanges = amendment.header_changes ?? null;
   if (headerChanges && ('internalExpectedDd' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
     const { data: soDates } = await sb.from('mfg_sales_orders')
-      .select('internal_expected_dd, customer_delivery_date')
+      .select('internal_expected_dd, customer_delivery_date, debtor_name, address1, postcode, local_total_centi')
       .eq('doc_no', amendment.so_doc_no)
       .maybeSingle();
     const cur = (soDates ?? {}) as { internal_expected_dd?: string | null; customer_delivery_date?: string | null };
@@ -570,6 +571,58 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
           'The other half of the paired reschedule was rejected, or the order\'s dates have moved since this ' +
           'was requested — reject this amendment and re-request both dates together.',
       }, 409);
+    }
+
+    /* ── The gate this path used to skip entirely (2026-07-31) ───────────────
+       Approving an amendment can SET internal_expected_dd through
+       header_changes, and until now the only thing checked here was the date
+       ORDER above. So an order could acquire a Processing Date — production's
+       go-ahead — with no deposit and no delivery address, simply by routing the
+       change through the amendment queue instead of the SO screen. That is how
+       10 HOUZS orders came to hold a Processing Date at 0% paid.
+
+       Same predicate the SO create + edit paths run (collectProcessingGateProblems),
+       so the three cannot drift, and deliberately in the SAME block as the
+       date-pair re-check: its comment already calls this "the last write that
+       can still say no", which is exactly what this is.
+
+       Only when the amendment SETS a non-empty date. Clearing it, or an
+       amendment that touches only the delivery date, is untouched — a gate that
+       blocks REMOVING a date would trap an order it was meant to protect. */
+    if (nextProc !== '' && 'internalExpectedDd' in headerChanges) {
+      const soRow = (soDates ?? {}) as {
+        debtor_name?: string | null; address1?: string | null;
+        postcode?: string | null; local_total_centi?: number | null;
+      };
+      const { data: payRows } = await sb.from('mfg_sales_order_payments')
+        .select('amount_centi').eq('so_doc_no', amendment.so_doc_no);
+      const paidCenti = ((payRows ?? []) as Array<{ amount_centi?: number | null }>)
+        .reduce((sum, p) => sum + Number(p.amount_centi ?? 0), 0);
+      const gateProblems = collectProcessingGateProblems({
+        procDate: nextProc,
+        delivDate: nextDeliv || null,
+        todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
+        /* The date already exists on the order or in this amendment; the
+           past-date rules are the submit path's business, not the approver's —
+           passing the effective values as their own originals grandfathers them
+           so approving a legitimately-old reschedule cannot be blocked here. */
+        origProcDate: nextProc,
+        origDelivDate: nextDeliv || null,
+        companyCode: c.get('companyCode') ?? null,
+        completeness: {
+          hasCustomerName: !!String(soRow.debtor_name ?? '').trim(),
+          hasAddress: !!String(soRow.address1 ?? '').trim(),
+          hasPostcode: !!String(soRow.postcode ?? '').trim(),
+        },
+        deposit: { paidCenti, totalCenti: Number(soRow.local_total_centi ?? 0) },
+      });
+      if (gateProblems.length > 0) {
+        return c.json({
+          error: 'validation_failed',
+          reason: 'Approving this would set a Processing Date the order does not yet qualify for.',
+          problems: gateProblems,
+        }, 422);
+      }
     }
   }
 

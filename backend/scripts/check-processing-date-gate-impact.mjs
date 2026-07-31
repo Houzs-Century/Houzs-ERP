@@ -138,6 +138,42 @@ async function main() {
   }
   if (!shown) notice("    none — the unified gate would refuse nothing that exists today.");
 
+  /* (C) The path that had NO gate at all. Approving an SO amendment can set
+     internal_expected_dd through header_changes, and until 2026-07-31 the only
+     check there was proc <= delivery. This counts the OPEN amendments a new gate
+     on that path would refuse, so the fix ships on a number rather than a hope. */
+  notice("================ (C) PENDING AMENDMENTS that set a Processing Date ================");
+  const amds = await sql`
+    SELECT a.id, a.so_doc_no, UPPER(COALESCE(a.status::text,'')) AS status, a.header_changes
+      FROM scm.so_amendments a
+     WHERE a.header_changes IS NOT NULL
+       AND UPPER(COALESCE(a.status::text,'')) NOT IN ('APPLIED','REJECTED','CANCELLED')`;
+  const setsProc = amds.filter((a) => {
+    const h = a.header_changes ?? {};
+    const v = h.internalExpectedDd;
+    return v !== undefined && v !== null && String(v).trim() !== '';
+  });
+  notice(`  open amendments with header changes       : ${amds.length}`);
+  notice(`   - of those, SETTING a Processing Date    : ${setsProc.length}`);
+  if (!setsProc.length) {
+    notice("  none — the new gate on the amendment path refuses nothing that is queued today.");
+  } else {
+    const byDoc = new Map(rows.map((r) => [r.doc_no, r]));
+    let refused = 0;
+    for (const a of setsProc) {
+      const r = byDoc.get(a.so_doc_no);
+      if (!r) { notice(`    ${pad(a.so_doc_no, 20)} (SO carries no Processing Date yet — not in the measured set)`); continue; }
+      const t = THRESH[r.company] ?? 0.30;
+      const why = [];
+      if (!r.nm) why.push("name");
+      if (!r.addr) why.push("address");
+      if (!r.postcode) why.push("postcode");
+      if (ratio(r) < t) why.push(`paid ${Math.round(ratio(r) * 100)}% < ${Math.round(t * 100)}%`);
+      if (why.length) { refused++; notice(`    ${pad(a.so_doc_no, 20)} ${pad(r.company, 6)} WOULD BE REFUSED: ${why.join(", ")}`); }
+    }
+    notice(`  amendments the new gate would refuse      : ${refused} of ${setsProc.length}`);
+  }
+
   notice("=== END — read-only, no rows changed. ===");
 }
 main().then(() => sql.end()).catch((e) => { console.error("GATE_IMPACT_FAIL", e?.message ?? e); process.exit(1); });
