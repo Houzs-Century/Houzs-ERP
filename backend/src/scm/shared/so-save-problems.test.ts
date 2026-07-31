@@ -207,3 +207,45 @@ describe('validationFailedBody', () => {
     expect(body.problems).toHaveLength(2);
   });
 });
+
+/* Per-company deposit threshold (owner 2026-07-31: Houzs 30%, 2990 50%).
+   Before this, both constants applied to every company and a 2990 order was
+   gated at the Houzs 30% — the refusal the owner hit on a 2990 SO. */
+describe('deposit threshold is per company', () => {
+  const facts = (companyCode: string | null, paidCenti: number) => ({
+    procDate: '2026-12-01',
+    delivDate: '2026-12-20',
+    todayMY: '2026-07-31',
+    companyCode,
+    deposit: { paidCenti, totalCenti: 1000_00 },
+  });
+  const unpaid = (f: Parameters<typeof collectProcessingGateProblems>[0]) =>
+    collectProcessingGateProblems(f).filter((p) => p.code === 'processing_date_unpaid');
+
+  it('HOUZS clears at 30%', () => {
+    expect(unpaid(facts('HOUZS', 300_00))).toHaveLength(0);
+  });
+
+  it('2990 does NOT clear at 30% — its rule is 50%', () => {
+    const [p] = unpaid(facts('2990', 300_00));
+    expect(p).toBeDefined();
+    /* The MESSAGE must carry 50%, not the 30% a hard-coded constant would
+       print: a 2990 operator told "30%" while being refused at 50% cannot act
+       on it. */
+    expect(p.message).toContain('50%');
+    expect(p.message).toContain('RM 500');
+  });
+
+  it('2990 clears at 50%', () => {
+    expect(unpaid(facts('2990', 500_00))).toHaveLength(0);
+  });
+
+  it('an unknown or absent company falls back to the LOOSER 30%, never the stricter', () => {
+    expect(unpaid(facts(null, 300_00))).toHaveLength(0);
+    expect(unpaid(facts('SOMETHING-NEW', 300_00))).toHaveLength(0);
+  });
+
+  it('company code is matched case-insensitively and trimmed', () => {
+    expect(unpaid(facts(' 2990 ', 300_00))).toHaveLength(1);
+  });
+});

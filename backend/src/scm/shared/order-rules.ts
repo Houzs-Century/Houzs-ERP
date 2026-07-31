@@ -68,8 +68,43 @@ export const meetsProceedGate = (i: ProceedGateInput): boolean =>
  *  — only their ratio is used. Free order (total ≤ 0, e.g. a Free Item Campaign
  *  giveaway): nothing to collect, so the gate is vacuously met (mirrors
  *  meetsProceedGate, and avoids the 0/0 = NaN a `total > 0` guard would need). */
-export const meetsProcessingDatePaymentGate = (paid: number, total: number): boolean =>
-  total <= 0 || paid / total >= PROCESSING_DATE_PAID_THRESHOLD;
+export const meetsProcessingDatePaymentGate = (
+  paid: number,
+  total: number,
+  companyCode?: CompanyCode | string | null,
+): boolean => total <= 0 || paid / total >= processingDateThresholdFor(companyCode);
+
+/** The companies whose deposit rule differs. Mirrors companyContext's
+ *  `c.get('companyCode')`, which is the only producer of these strings. */
+export type CompanyCode = 'HOUZS' | '2990';
+
+/** The deposit fraction THIS company requires before a Processing Date may be set.
+ *
+ *  Owner 2026-07-31, stated plainly: **Houzs 30%, 2990 50%** — and the Processing
+ *  Date IS the Proceed signal, so one rule governs both.
+ *
+ *  Until now the split existed ONLY in prose. PROCESSING_DATE_PAID_THRESHOLD was
+ *  documented as the Houzs number and PROCEED_PAID_THRESHOLD as "a 2990 rule",
+ *  while `grep -c company` on this file returned ZERO: both constants were applied
+ *  to every company, so a 2990 order was gated at the Houzs 30%. That is what the
+ *  owner hit on 2026-07-31 — a 2990 SO refused with "Deposit RM 0 of RM 1,663
+ *  needed (30%)" where the 2990 rule is 50%.
+ *
+ *  UNKNOWN COMPANY FALLS BACK TO THE LOOSER 30%, deliberately. A future company
+ *  code, or a caller that has not been threaded through yet, must not silently
+ *  start refusing orders — that failure is invisible until someone cannot save.
+ *  Under-gating is recoverable (the money still has to be collected before
+ *  delivery); over-gating blocks the shop floor with no signal.
+ *
+ *  MEASURED BEFORE SHIPPING (check-processing-date-gate-impact.mjs on prod,
+ *  2026-07-31): of 63 live SOs carrying a Processing Date, 51 are 2990 and 12 are
+ *  HOUZS, and moving 2990 to 50% newly refuses **ZERO** of them — no 2990 order
+ *  sits in the 30-49% band. This change is a rule correction with no blast radius,
+ *  which is exactly why it ships alone. */
+export const processingDateThresholdFor = (companyCode?: CompanyCode | string | null): number =>
+  String(companyCode ?? '').trim().toUpperCase() === '2990'
+    ? PROCEED_PAID_THRESHOLD
+    : PROCESSING_DATE_PAID_THRESHOLD;
 
 /** Total physical pieces in an order (for delivery slot allocation). */
 export const pieceCount = (_orderItems: unknown[]): number => {
