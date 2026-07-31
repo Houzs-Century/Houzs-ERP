@@ -208,7 +208,8 @@ Token-gated companions (no session): `/api/track` (customer verify),
    against `complained_date` or `COALESCE(deadline_at, complained_date)`
    (`services/assr.ts:1626-1638`). Absent = unbounded, so the List view is
    unaffected.
-5. **Query** — one `COUNT(*)` + one page. The row SELECT joins `users` three
+5. **Query** — one `COUNT(*)` + one page, issued CONCURRENTLY (they are
+   independent reads over the same predicate). The row SELECT joins `users` three
    times (assignee, creator, second assignee), `creditors`, `companies`, and
    computes `stage_since`, `days_in_stage`, `hours_to_deadline`, `is_breached`
    inline, wrapped in a subselect so `ORDER BY` can use the aliases
@@ -310,7 +311,10 @@ Columns that were added late and are easy to miss (all in `migrations-pg/`):
 Indexes that matter: `idx_assr_stage`, `idx_assr_status`, `idx_assr_assigned`,
 `idx_assr_deadline`, `idx_assr_cases_archived`, `idx_assr_stage_entered`,
 `idx_assr_stage_history_open (assr_id, exited_at)` — all in
-`backend/src/db/migrations-pg/0002_indexes.sql:15-49`; plus trigram GIN on
+`backend/src/db/migrations-pg/0002_indexes.sql:15-49`; plus
+`idx_assr_activity_stage_since (assr_id, action, to_value, created_at)`
+(mig 0232), which backs the per-row `stage_since` correlated subquery used by
+BOTH the list SELECT and the summary's aging aggregate; plus trigram GIN on
 `assr_no` / `customer_name` / `phone` / `complaint_issue` / `doc_no` / `po_no`
 in `0001_search_trgm.sql:32-37`.
 
@@ -332,10 +336,11 @@ Optimized:
 - Search is trigram-indexed on the six hot columns.
 
 Watch as data grows:
-- `/api/assr/summary` runs **~10 independent aggregate queries serially**
-  (`assr.ts:605-700+`) — each re-applies the visibility + company predicates.
-  It is already the slower half of the page load; if it regresses, run the
-  wave concurrently (the pattern the SO list uses, PR #416) before caching it.
+- `/api/assr/summary` runs its **13 independent aggregates as ONE concurrent
+  wave** (`routes/assr.ts`, `Promise.all`) — it used to run them serially, which
+  measured 219ms and was the slower half of the page load. Each still re-applies
+  the visibility + company predicates. Caching is the next lever if it regresses
+  again; do NOT re-serialize it.
 - The list's `days_in_stage` / `stage_since` use a correlated `MAX()` over
   `assr_activity` per row (`services/assr.ts:1678-1696`). `assr_cases.stage_entered_at`
   already carries the same fact since mig 074; the subselect exists for rows

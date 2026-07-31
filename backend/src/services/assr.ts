@@ -1755,12 +1755,6 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
   const perPage = Math.min(f.per_page ?? 50, 200);
   const offset = (page - 1) * perPage;
 
-  const total = await env.DB.prepare(
-    `SELECT COUNT(*) as count FROM assr_cases c ${whereSql}`
-  )
-    .bind(...binds)
-    .first<{ count: number }>();
-
   // stage_since: when the case entered its current stage.
   //   - If there is a stage_change activity to the current stage, use its created_at
   //   - Otherwise fall back to the case's created_at (still in initial stage)
@@ -1822,13 +1816,22 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
     ${whereSql}
   `;
 
-  const rows = await env.DB.prepare(
-    `SELECT * FROM (${baseSelect})
+  // The COUNT and the page itself are independent reads over the same
+  // predicate, so they go out as one wave instead of the count blocking the
+  // rows. Both statements are unchanged; this only removes a serial round trip
+  // from every list load (the pattern PR #416 used on the SO list).
+  const [total, rows] = await Promise.all([
+    env.DB.prepare(`SELECT COUNT(*) as count FROM assr_cases c ${whereSql}`)
+      .bind(...binds)
+      .first<{ count: number }>(),
+    env.DB.prepare(
+      `SELECT * FROM (${baseSelect})
      ${orderBy}
      LIMIT ? OFFSET ?`
-  )
-    .bind(...binds, perPage, offset)
-    .all();
+    )
+      .bind(...binds, perPage, offset)
+      .all(),
+  ]);
 
   const data = rows.results ?? [];
   await attachDeliveryOrders(env, data as any[]);
