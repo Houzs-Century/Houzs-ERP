@@ -33,6 +33,13 @@
 // SQL is written against, and what oversell-retrocost.test.ts exercises. KEEP THE
 // TWO IN LOCKSTEP: any change to fn_reconcile_uncosted_out must change this too.
 //
+// That instruction was in capitals here and was still missed once (migration
+// 0230 narrowed the SQL and left this file untouched, so the test suite went on
+// asserting behaviour production no longer had). It is now ENFORCED rather than
+// requested: oversell-retrocost.test.ts reads the newest migration that defines
+// fn_reconcile_uncosted_out and fails if its guard set is not the guard set
+// planUncostedRetrocost implements. Change one, the test names the other.
+//
 // SQL-ONLY (no lockstep counterpart): the 2026-07-20 enum-coercion hotfix —
 // `UPPER(COALESCE(d.status::text, ''))` in fn_reconcile_uncosted_out (0154) and in
 // its already-live sibling fn_reconcile_dropship_batch (0155) — is a Postgres
@@ -54,6 +61,19 @@ export type RetroOutMovement = {
   createdAt: string;
   /** delivery_orders.is_dropship — drop-ship coverage is owned by 0088. */
   isDropship: boolean;
+  /** Migration 0230 — a line of this OUT's DO commits this movement's batch in
+   *  this variant AND is STRICT-BATCH (a sofa dye lot). Those belong to
+   *  fn_reconcile_dropship_batch alone; costing them from any open lot here
+   *  would mix dye lots.
+   *
+   *  ⚠ NON-strict commitments (mattress / bedframe / accessory) are NOT excluded
+   *  — deliberately. They have no dye lot, and their bound PO can die (cancelled,
+   *  re-raised under a new number, superseded by a transfer or a stock take)
+   *  without any reconcile noticing. If they were excluded, the batch-agnostic
+   *  repair would step over them permanently and their COGS would stay at RM0 —
+   *  a worse version of the very bug 0230 was written to end. Optional so every
+   *  pre-0230 caller and fixture keeps its meaning (undefined = not strict). */
+  strictBatchCommitted?: boolean;
   /** delivery_orders.status — a CANCELLED DO's OUT was already reversed. */
   doStatus: string;
   /** Σ inventory_lot_consumptions.qty_consumed already booked for this movement
@@ -108,6 +128,8 @@ export type RetroPlan = {
  *   - TEMPORAL: only OUTs created strictly before cutoffTs (prior to the receipt)
  *     — the direct defence against diverting a later order's stock.
  *   - is_dropship = false (0088 owns drop-ship) and status <> CANCELLED.
+ *   - NOT a STRICT-BATCH per-line commitment (0230) — a bound sofa OUT is the
+ *     batched reconcile's alone. A bound non-sofa OUT stays eligible here.
  *   - OLDEST-FIRST (created_at, then movementId) so limited stock covers the
  *     earliest short first.
  *   - IDEMPOTENT: shortfall = abs(qty) - alreadyConsumedQty, so a short already
@@ -130,6 +152,7 @@ export function planUncostedRetrocost(
     .filter((m) =>
       m.createdAt < cutoffTs &&
       !m.isDropship &&
+      !m.strictBatchCommitted &&
       (m.doStatus ?? '').toUpperCase() !== 'CANCELLED')
     .sort((a, b) =>
       a.createdAt < b.createdAt ? -1

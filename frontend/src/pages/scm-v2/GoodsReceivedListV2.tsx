@@ -195,7 +195,7 @@ function CardsGrid({ rows, onOpen }: { rows: GrnRow[]; onOpen: (r: GrnRow) => vo
             className="group relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-4 text-left shadow-stone transition-all duration-200 hover:-translate-y-px hover:border-primary/40 hover:shadow-slab focus:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-[12.5px] font-semibold text-ink">{r.grn_number}</span>
+              <span className="font-docno text-[12.5px] font-semibold text-ink">{r.grn_number}</span>
               <Badge tone={st.tone} size="xs">{st.label}</Badge>
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">{supplierNameOf(r)}</div>
@@ -686,10 +686,14 @@ export function GoodsReceivedListV2() {
     {
       key: "grn_number",
       label: "GRN No.",
-      width: "140px",
+      // 166 + font-docno (owner 2026-07-31): a GRN no is one char longer than
+      // the DO/SO shape ("2990-GRN-2607-0001" = 131.5px, i.e. 155.5 with the
+      // px-3 padding), so 140 clipped it — see the
+      // measured DO No. note in MfgDeliveryOrdersListV2.
+      width: "166px",
       alwaysVisible: true,
       getValue: (r) => r.grn_number,
-      render: (r) => <span className="font-mono text-[12.5px] font-semibold text-ink">{r.grn_number}</span>,
+      render: (r) => <span className="font-docno text-[12.5px] font-semibold text-ink">{r.grn_number}</span>,
     },
     {
       key: "received_at",

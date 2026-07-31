@@ -236,7 +236,7 @@ function CardsGrid({ rows, onOpen }: { rows: PoHeaderRow[]; onOpen: (r: PoHeader
             className="group relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-4 text-left shadow-stone transition-all duration-200 hover:-translate-y-px hover:border-primary/40 hover:shadow-slab focus:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-[12.5px] font-semibold text-ink">
+              <span className="font-docno text-[12.5px] font-semibold text-ink">
                 {r.po_number}
               </span>
               <Badge tone={st.tone} size="xs">{st.label}</Badge>
@@ -879,12 +879,17 @@ export function PurchaseOrdersListV2() {
     {
       key: "po_number",
       label: "PO No.",
-      width: "132px",
+      // 180 + font-docno (owner 2026-07-31): 132 clipped a full doc no (see
+      // the measured DO No. note in MfgDeliveryOrdersListV2). Wider than the
+      // 156 used elsewhere because this cell also carries the "_R1" revision
+      // suffix — "2990-PO-2607-001_R12" measures 145px, i.e. 169 with the
+      // px-3 padding.
+      width: "180px",
       alwaysVisible: true,
       // _R suffix (owner 2026-07-27) — a revised PO reads PO-xxx_R1 everywhere.
       getValue: (r) => poDisplayNumber(r.po_number, r.revision),
       render: (r) => (
-        <span className="font-mono text-[12.5px] font-semibold text-ink">{poDisplayNumber(r.po_number, r.revision)}</span>
+        <span className="font-docno text-[12.5px] font-semibold text-ink">{poDisplayNumber(r.po_number, r.revision)}</span>
       ),
     },
     {

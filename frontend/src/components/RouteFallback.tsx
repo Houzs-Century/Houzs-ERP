@@ -47,13 +47,57 @@ const RECOVER_COOLDOWN_MS = 60_000;
 const RECOVER_TIMEOUT_MS = 10_000;
 const CLEANUP_TIMEOUT_MS = 8_000;
 
+declare const __BUILD_ID__: string;
+/** The build this bundle was compiled from — the same define errorReporter
+ *  stamps onto every reported event, so a panel in client_errors can be read
+ *  against the build that produced it. */
+export const CURRENT_BUILD_ID =
+  typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "dev";
+
+/** A remembered recovery attempt: WHEN, and on WHICH build it was made. */
+type RecoverMark = { at: number; buildId: string };
+
+/** Read the stored attempt. Deliberately does NOT catch a storage failure —
+ *  the caller turns that into "must not self-heal". A corrupt/unparsable value
+ *  reads as no attempt (the cooldown's job is to stop loops, not to survive
+ *  garbage). */
+function readRecoverMark(): RecoverMark | null {
+  const raw = sessionStorage.getItem(RECOVER_AT_KEY);
+  if (!raw) return null;
+  // Legacy value: a bare timestamp, written by a build from before the mark
+  // carried a build id. Treat it as an attempt on THIS build so upgrading a
+  // live tab can never hand out an extra reload.
+  if (/^\d+$/.test(raw)) return { at: Number(raw), buildId: CURRENT_BUILD_ID };
+  try {
+    const parsed = JSON.parse(raw) as Partial<RecoverMark> | null;
+    const at = Number(parsed?.at ?? 0);
+    if (!at) return null;
+    return { at, buildId: String(parsed?.buildId ?? CURRENT_BUILD_ID) };
+  } catch {
+    return null;
+  }
+}
+
 /** Whether we may self-heal now. False when we already tried within the
  *  cooldown — or when sessionStorage is unavailable, since without a memory
- *  across reloads an auto-reload would loop forever. */
+ *  across reloads an auto-reload would loop forever.
+ *
+ *  The cooldown is scoped to the BUILD, not just to the clock (owner
+ *  2026-07-31): main deployed several times within an hour, so his tab
+ *  self-healed onto a new bundle and then hit a fresh chunk failure on THAT
+ *  bundle seconds later — inside the 60s window, which spent his one attempt
+ *  and left him on the panel across /scm/purchase-orders, /scm/grns, /projects
+ *  and /assr. A recorded attempt from a DIFFERENT build has already done its
+ *  job (the reload landed a new build), so the next failure is a new fault and
+ *  gets its own attempt. This cannot loop: the build id only changes when a
+ *  reload actually picks up a new deploy, and a repeat failure on the same
+ *  build falls back to the time cooldown. */
 function canHardRecover(): boolean {
   try {
-    const prev = Number(sessionStorage.getItem(RECOVER_AT_KEY) ?? 0);
-    return !prev || Date.now() - prev > RECOVER_COOLDOWN_MS;
+    const mark = readRecoverMark();
+    if (!mark) return true;
+    if (mark.buildId !== CURRENT_BUILD_ID) return true;
+    return Date.now() - mark.at > RECOVER_COOLDOWN_MS;
   } catch {
     return false;
   }
@@ -61,7 +105,10 @@ function canHardRecover(): boolean {
 
 function markHardRecover(): boolean {
   try {
-    sessionStorage.setItem(RECOVER_AT_KEY, String(Date.now()));
+    sessionStorage.setItem(
+      RECOVER_AT_KEY,
+      JSON.stringify({ at: Date.now(), buildId: CURRENT_BUILD_ID } satisfies RecoverMark),
+    );
     return true;
   } catch {
     return false;

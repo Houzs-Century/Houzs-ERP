@@ -330,7 +330,7 @@ function CardsGrid({ rows, onOpen }: { rows: DoRow[]; onOpen: (r: DoRow) => void
             className="group relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-4 text-left shadow-stone transition-all duration-200 hover:-translate-y-px hover:border-primary/40 hover:shadow-slab focus:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-[12.5px] font-semibold text-ink">
+              <span className="font-docno text-[12.5px] font-semibold text-ink">
                 {r.do_number}
               </span>
               <Badge tone={st.tone} size="xs">{st.label}</Badge>
@@ -1022,11 +1022,22 @@ export function MfgDeliveryOrdersListV2() {
     {
       key: "do_number",
       label: "DO No.",
-      width: "132px",
+      // 156, not 132 (owner 2026-07-31, "每次都看不完整"). A px width is a
+      // hard cap here — DataTable pins min/max to it and clips with an
+      // ellipsis — and "2990-DO-2607-001" measured 109.6px at the old
+      // 12.5px/600 system stack, which lands on 133.6 once px-3 adds 24px of
+      // padding: 1.6px over the old 132, so EVERY row truncated. Same owner
+      // call moved doc numbers to `font-docno` (Plex Sans), which measures
+      // 115.3px — 122.8 with a 4-digit tail → 146.8 with padding. 156 clears it.
+      // Widening costs no other column: every column pins its own min/max, so
+      // the table just scrolls 24px further. Houzs numbers are bare
+      // ("DO-2607-001" — companyDocPrefix returns '' for HOUZS), so the 2990
+      // prefix is the worst case.
+      width: "156px",
       alwaysVisible: true,
       getValue: (r) => r.do_number,
       render: (r) => (
-        <span className="font-mono text-[12.5px] font-semibold text-ink">
+        <span className="font-docno text-[12.5px] font-semibold text-ink">
           {r.do_number}
         </span>
       ),

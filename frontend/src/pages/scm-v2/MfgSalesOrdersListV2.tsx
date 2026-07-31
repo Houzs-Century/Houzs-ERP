@@ -383,7 +383,7 @@ function CardsGrid({ rows, onOpen }: { rows: SoRow[]; onOpen: (r: SoRow) => void
             className="group relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-4 text-left shadow-stone transition-all duration-200 hover:-translate-y-px hover:border-primary/40 hover:shadow-slab focus:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-[12.5px] font-semibold text-ink">
+              <span className="font-docno text-[12.5px] font-semibold text-ink">
                 {r.doc_no}
               </span>
               <Badge tone={st.tone} size="xs">{st.label}</Badge>
@@ -1341,11 +1341,13 @@ export function MfgSalesOrdersListV2() {
     {
       key: "doc_no",
       label: "Doc No.",
-      width: "132px",
+      // 156 + font-docno (owner 2026-07-31): 132 clipped a full doc no by a
+      // couple of px — see the measured DO No. note in MfgDeliveryOrdersListV2.
+      width: "156px",
       alwaysVisible: true,
       getValue: (r) => r.doc_no,
       render: (r) => (
-        <span className="font-mono text-[12.5px] font-semibold text-ink">
+        <span className="font-docno text-[12.5px] font-semibold text-ink">
           {r.doc_no}
         </span>
       ),
