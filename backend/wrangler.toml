@@ -203,6 +203,11 @@ dataset = "houzs_erp_metrics"
 #                          docs/error-tracking-options.md.
 #   AUTOCOUNT_API_KEY
 #   DASHBOARD_API_KEY
+#   CONNECT_SERVICE_TOKEN — dedicated service-tier key for Houzs Connect's org
+#                          sync (middleware/auth.ts). Set with `wrangler secret
+#                          put CONNECT_SERVICE_TOKEN`; lets Connect authenticate
+#                          with its own credential so DASHBOARD_API_KEY never
+#                          needs rotating.
 #   GOOGLE_MAPS_API_KEY  — used by the planner geocoder (Phase 2)
 #   RESEND_API_KEY       — transactional email (see src/services/email.ts).
 #                          If unset the email service silently no-ops so
