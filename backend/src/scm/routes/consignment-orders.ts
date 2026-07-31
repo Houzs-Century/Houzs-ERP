@@ -2088,7 +2088,9 @@ consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   return new Response(obj.body, {
     headers: {
       'content-type': contentType,
-      'cache-control': 'private, max-age=3600',
+      // Key is minted per upload with crypto.randomUUID() (:1964), so this url
+      // names one fixed object for its lifetime. Stays `private`.
+      'cache-control': 'private, max-age=31536000, immutable',
     },
   });
 });
