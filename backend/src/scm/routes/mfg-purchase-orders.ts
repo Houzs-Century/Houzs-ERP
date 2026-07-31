@@ -64,6 +64,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { PO_LINE_AUDIT_FIELDS, PO_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { computeMrp } from './mrp';
+import { resolvePoSoCoverageForPos } from './po-so-coverage';
 import type { Env, Variables } from '../env';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
@@ -517,10 +518,17 @@ mfgPurchaseOrders.get('/', async (c) => {
       grnNumbersByPo.set(g.purchase_order_id, arr);
     }
   }
+  /* Collapsed "Assigned SO" column (owner 2026-07-31): resolve each PO's
+     Assigned SO(s) for the whole page in ONE pass — computeMrp runs once, the
+     DO-lock + stored-origin reads are batched. Reuses the SAME precedence engine
+     the per-line drill-down does, so the row and its expansion never disagree. */
+  const assignedByPo = await resolvePoSoCoverageForPos(supabase, c, rows.map((r) => r.id));
   const purchaseOrders = rows.map((r) => ({
     ...r,
     has_children: childIds.has(r.id),
     transfer_to_grns: grnNumbersByPo.get(r.id) ?? [],
+    assigned_sos: assignedByPo.get(r.id)?.assignedSos ?? [],
+    assigned_so_linked: assignedByPo.get(r.id)?.sourceLinked ?? false,
   }));
   if (paginate) return c.json({ purchaseOrders, total, page, pageSize, statusCounts });
   return c.json({ purchaseOrders });

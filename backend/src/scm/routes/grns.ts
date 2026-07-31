@@ -53,6 +53,7 @@ import { escapeForOr } from '../lib/postgrest-search';
 import { recordEntityAudit, assertAuditWritable, auditUnavailableBody, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { resolvePoSoCoverageForPos } from './po-so-coverage';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
 grns.use('*', supabaseAuth);
@@ -1021,13 +1022,25 @@ grns.get('/', async (c) => {
       downstreamByGrn.set(grnId, acc);
     }
   }
-  const grns = rows.map((g) => ({
-    ...g,
-    // Stored header total (= Σ qty*unit − discount). Falls back to 0 if unset.
-    total_centi: (g.total_centi as number | null | undefined) ?? 0,
-    downstream: [...(downstreamByGrn.get(g.id)?.values() ?? [])],
-    ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
-  }));
+  /* Collapsed "Assigned SO" column (owner 2026-07-31): each GRN inherits its
+     parent PO's Assigned SO(s), resolved for the whole page in ONE pass (the
+     SAME precedence engine the drill-down uses). computeMrp runs once. */
+  const assignedByPo = await resolvePoSoCoverageForPos(
+    sb, c, rows.map((g) => (g as { purchase_order_id?: string | null }).purchase_order_id),
+  );
+  const grns = rows.map((g) => {
+    const poId = (g as { purchase_order_id?: string | null }).purchase_order_id ?? null;
+    const summary = poId ? assignedByPo.get(poId) : undefined;
+    return {
+      ...g,
+      // Stored header total (= Σ qty*unit − discount). Falls back to 0 if unset.
+      total_centi: (g.total_centi as number | null | undefined) ?? 0,
+      downstream: [...(downstreamByGrn.get(g.id)?.values() ?? [])],
+      ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
+      assigned_sos: summary?.assignedSos ?? [],
+      assigned_so_linked: summary?.sourceLinked ?? false,
+    };
+  });
   if (paginate) return c.json({ grns, total, page, pageSize, statusCounts });
   return c.json({ grns });
 });

@@ -22,6 +22,7 @@ import { todayMyt } from '../lib/my-time';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { PI_LINE_AUDIT_FIELDS, PI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { resolvePoSoCoverageForPos } from './po-so-coverage';
 
 export const purchaseInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoices.use('*', supabaseAuth);
@@ -476,6 +477,45 @@ const PI_STATUS_BUCKETS: Record<string, string[]> = {
   cancelled: ['CANCELLED'],
 };
 
+/* Collapsed "Assigned SO" column (owner 2026-07-31): a PI inherits its parent
+   PO's Assigned SO(s). Resolve the parent PO through the SAME chain the per-line
+   drill-down uses (pi.grn_id → grns.purchase_order_id → PO), so the list row and
+   its expansion never disagree, then batch the coverage for the whole page in
+   ONE pass (computeMrp runs once). Fail-soft: on any error the rows still return,
+   just without the column populated. */
+async function attachPiAssignedSos(
+  sb: any,
+  c: any,
+  rows: Array<{ id: string; grn_id?: string | null } & Record<string, unknown>>,
+): Promise<Array<Record<string, unknown>>> {
+  try {
+    const grnIds = [...new Set(rows.map((r) => r.grn_id).filter((x): x is string => !!x))];
+    const poByGrn = new Map<string, string>();
+    for (let k = 0; k < grnIds.length; k += 300) {
+      const chunk = grnIds.slice(k, k + 300);
+      if (chunk.length === 0) continue;
+      const { data: grnRows } = await scopeToCompany(
+        sb.from('grns').select('id, purchase_order_id'), c,
+      ).in('id', chunk);
+      for (const g of (grnRows ?? []) as Array<{ id: string; purchase_order_id: string | null }>) {
+        if (g.purchase_order_id) poByGrn.set(g.id, g.purchase_order_id);
+      }
+    }
+    const assignedByPo = await resolvePoSoCoverageForPos(sb, c, [...poByGrn.values()]);
+    return rows.map((r) => {
+      const poId = r.grn_id ? poByGrn.get(r.grn_id) : undefined;
+      const summary = poId ? assignedByPo.get(poId) : undefined;
+      return {
+        ...r,
+        assigned_sos: summary?.assignedSos ?? [],
+        assigned_so_linked: summary?.sourceLinked ?? false,
+      };
+    });
+  } catch {
+    return rows.map((r) => ({ ...r, assigned_sos: [], assigned_so_linked: false }));
+  }
+}
+
 purchaseInvoices.get('/', async (c) => {
   const sb = c.get('supabase');
   // Supplier CONTACT fields ride the list embed — the quick-view drawer's
@@ -502,7 +542,8 @@ purchaseInvoices.get('/', async (c) => {
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
     const { data, error } = await q;
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    return c.json({ purchaseInvoices: data ?? [] });
+    const purchaseInvoices = await attachPiAssignedSos(sb, c, (data ?? []) as Array<{ id: string; grn_id?: string | null }>);
+    return c.json({ purchaseInvoices });
   }
 
   /* --- PAGINATED PATH (opt-in via `page`) --- */
@@ -562,7 +603,8 @@ purchaseInvoices.get('/', async (c) => {
     cancelled: cancelledC.count ?? 0,
   };
 
-  return c.json({ purchaseInvoices: data ?? [], total, page, pageSize, statusCounts });
+  const purchaseInvoices = await attachPiAssignedSos(sb, c, (data ?? []) as Array<{ id: string; grn_id?: string | null }>);
+  return c.json({ purchaseInvoices, total, page, pageSize, statusCounts });
 });
 
 /* ── GET /outstanding-grn-items ─────────────────────────────────────────

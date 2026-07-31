@@ -253,4 +253,84 @@ export function DocumentLinesExpansion({
   );
 }
 
+// ---------------------------------------------------------------------------
+// AssignedSoCell — the COLLAPSED header-row "Assigned SO" summary, shared by the
+// PO / GRN / PI / DO lists. It is the one-line twin of the drill-down's per-line
+// Assigned-SO cell above: a FLOATING (live MRP) assignment reads as a dashed
+// chip with a trailing "~"; a STATIC one (delivered → DO-locked, a stored
+// raise-link, or a DO's own intrinsic SO) reads as a solid chip. Several SOs
+// collapse to "first + N". The delivery date rides a quiet second line when the
+// primary assignment carries one. `sourceLinked === false` is threaded into the
+// tooltip so the guess-vs-binding distinction (2026-07-29 incident) survives
+// even in the compact column.
+// ---------------------------------------------------------------------------
+export function AssignedSoCell({
+  assignments,
+  sourceLinked,
+  onOpenSo,
+}: {
+  assignments: OriginAssignment[] | undefined | null;
+  sourceLinked?: boolean;
+  onOpenSo?: (soDocNo: string) => void;
+}) {
+  const list = assignments ?? [];
+  if (list.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
+  const first = list[0];
+  const extra = list.length - 1;
+  const floating = first.locked === false;
+  const title = floating
+    ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
+    : first.source === "delivered"
+      ? "Locked — the goods were delivered against this Sales Order"
+      : sourceLinked === false
+        ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
+        : "Locked — a stored link to this Sales Order";
+  const base = "rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold";
+  const tone = floating
+    ? "border border-dashed border-border text-ink-secondary"
+    : "border border-border-subtle bg-surface-2 text-accent-ink";
+  const label = (
+    <>
+      {first.soDocNo}
+      {floating && <span className="text-ink-muted">{" ~"}</span>}
+    </>
+  );
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <span className="flex min-w-0 items-center gap-1">
+        {onOpenSo ? (
+          <button
+            type="button"
+            title={title}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenSo(first.soDocNo);
+            }}
+            className={cn(base, tone, "hover:border-accent hover:text-accent")}
+          >
+            {label}
+          </button>
+        ) : (
+          <span title={title} className={cn(base, tone)}>
+            {label}
+          </span>
+        )}
+        {extra > 0 && (
+          <span
+            className="text-[11px] font-semibold text-ink-muted"
+            title={list.map((a) => a.soDocNo).join(", ")}
+          >
+            +{extra}
+          </span>
+        )}
+      </span>
+      {first.deliveryDate && (
+        <span className="whitespace-nowrap font-mono text-[10.5px] text-ink-muted">
+          {formatDate(first.deliveryDate)}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export default DocumentLinesExpansion;

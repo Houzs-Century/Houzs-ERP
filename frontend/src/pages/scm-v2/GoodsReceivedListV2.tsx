@@ -30,10 +30,11 @@ import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
 import {
   DocumentLinesExpansion,
+  AssignedSoCell,
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
-import { usePoSoCoverage, originsByCode, storedLinkSkus } from "../../vendor/scm/lib/flow-queries";
+import { usePoSoCoverage, originsByCode, storedLinkSkus, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -69,6 +70,10 @@ type GrnRow = {
   fully_invoiced?: boolean;
   fully_returned?: boolean;
   line_count?: number;
+  /** Collapsed "Assigned SO" column (owner 2026-07-31) — inherited from the
+      parent PO's coverage, resolved server-side for the whole page. */
+  assigned_sos?: OriginAssignment[];
+  assigned_so_linked?: boolean;
 };
 
 type GrnItem = {
@@ -689,6 +694,23 @@ export function GoodsReceivedListV2() {
       disableSort: true,
       getValue: (r) => poOf(r),
       render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{poOf(r)}</span>,
+    },
+    {
+      // Owner 2026-07-31: the Sales Order(s) the parent PO's supply is assigned
+      // to, inherited onto the GRN. Server-resolved (one pass, same precedence
+      // as the drill-down); dashed "~" chip flags an MRP guess vs a stored link.
+      key: "assigned_so",
+      label: "Assigned SO",
+      width: "168px",
+      disableSort: true,
+      getValue: (r) => (r.assigned_sos ?? []).map((a) => a.soDocNo).join(", "),
+      render: (r) => (
+        <AssignedSoCell
+          assignments={r.assigned_sos}
+          sourceLinked={r.assigned_so_linked}
+          onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+        />
+      ),
     },
     {
       // Owner 2026-07-24: supplier NAME and CODE are separate columns on every
