@@ -272,12 +272,25 @@ export function sofaNoCompleteBatchResponse(
     ? ` Note: ${multiPoCodes.join(', ')} ${multiPoCodes.length === 1 ? 'is' : 'are'} bound to more than one open supplier PO, ` +
       `so drop-ship cannot pick the incoming batch — cancel the extra PO first (drop-ship needs exactly one).`
     : '';
+  /* Owner 2026-07-31: when drop-ship is not offered the operator was told only
+     to "wait until one complete batch is received", which is a dead end if the
+     goods ARE on order and simply not linked. Since PR #1434 a PO line can be
+     pointed at its Sales Order line from the PO screen, so name the lines that
+     have no live PO and say what to do about it. */
+  const noPoCodes = [...new Set(
+    (dropship ?? []).filter((o) => !o.poNumber && !o.multiPo).map((o) => o.itemCode),
+  )];
+  const noPoNote = noPoCodes.length > 0
+    ? ` ${noPoCodes.join(', ')} ${noPoCodes.length === 1 ? 'has' : 'have'} no live supplier PO linked, so there is no incoming ` +
+      `batch to ship against. Link the purchase order line to its Sales Order line (Purchase Order -> the line -> Source Sales Order line), ` +
+      `or raise the PO first.`
+    : '';
   return {
     error: 'sofa_no_batch',
     message:
       `No single production batch on hand can fulfil this whole sofa set, ` +
       `so it can't ship without splitting a dye lot or leaving an orphan. ` +
-      `Wait until one complete batch is received. Affected: ${codes}.` + multiPoNote,
+      `Wait until one complete batch is received. Affected: ${codes}.` + multiPoNote + noPoNote,
     offenders,
     ...(dropship ? { dropship, canDropship } : {}),
   };

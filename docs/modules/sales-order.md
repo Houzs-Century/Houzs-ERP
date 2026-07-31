@@ -122,7 +122,7 @@ FKs are declared `ON DELETE SET NULL`
 
 | Referencing column | Line | What it decides |
 |---|---|---|
-| `purchase_order_items.so_item_id` | `:1747` | whether a shipment can bind its incoming PO — the drop-ship guard (`dropship-batch.ts`) resolves the expected batch through it, MRP reads it, and `recomputeSoPicked` counts `po_qty_picked` from it |
+| `purchase_order_items.so_item_id` | `:1747` | whether a shipment can bind its incoming PO — `resolveExpectedBatchBySoItem` (`dropship-batch.ts`) resolves the expected batch through it, and since 2026-07-31 that resolution decides the binding for EVERY short ship, not only a confirmed drop-ship (see below). `recomputeSoPicked` counts `po_qty_picked` from it |
 | `delivery_order_items.so_item_id` | `:1651` | which SO line a shipped unit served |
 | `sales_invoice_items.so_item_id` | `:1767` | which SO line a billed unit served |
 
@@ -151,6 +151,45 @@ survive, only the link is wiped, which is exactly what makes it invisible.
 
 The 2026-07-31 measurement of the live database: **101 PO lines, only 34 carry
 `so_item_id` — 67 are NULL.**
+
+#### What the link now decides at ship time
+
+Until 2026-07-31 `so_item_id` only mattered if the operator reached the drop-ship
+dialog: a plain "Ship anyway" ignored it, so the shipment bound nothing and the
+GRN could never net it. That is no longer true. A DO line that ships before its
+goods arrive and resolves **exactly one live bound PO** through this column is
+bound to that PO's batch automatically, and the binding is recorded per LINE in
+`delivery_order_items.committed_po_batch_no` (migration 0230). The full decision
+table, and what "resolves" excludes (ambiguous multi-PO, partial short, already
+allocated), lives in **`docs/modules/delivery-order.md` §5**.
+
+Two knock-on effects for anyone working on the SO:
+
+- **The link is now load-bearing for COSTING, not just for a dialog.** A bound
+  line's OUT is stamped with the incoming PO number, so its COGS lands from THAT
+  batch's lot when the GRN posts. Break the link (see the `ON DELETE SET NULL`
+  trap above) and the shipment silently reverts to an unbound oversell.
+- **MRP ATTRIBUTES the committed units to the PO that owes them.** `mrp.ts`
+  subtracts them from that PO's incoming supply and adds the same units back to
+  on-hand stock (the OUT had already taken them off `inventory_balances`). Read
+  that precisely: **net availability does not change and no shortage figure
+  moves** — the balance arithmetic already propagated the negative correctly and
+  already tagged those units `source: 'shortage'` rather than `coverage_po`. What
+  changes is that the commitment stops being a nameless negative in whichever
+  bucket the OUT landed in, so Stock and PO-Outstanding stop being wrong in
+  opposite directions on the SKU row.
+- **A sofa SET must bind ONE purchase order.** One PO IS one batch number, so if
+  two modules of a set resolve two different POs the ship is refused
+  (`sofa_set_po_split`) rather than stamped with two batch numbers. Point every
+  module's PO line at its Source Sales Order line before shipping.
+
+Allocation order is unchanged by any of this and is worth restating, because it
+is easy to assume otherwise: MRP allocates greedily by
+`line_delivery_date ?? customer_delivery_date`, then `doc_no`. An urgent order
+inserted with an earlier delivery date DOES re-shuffle the allocation and DOES
+take stock and PO supply ahead of a later one — the delivery date is the
+mechanism. (The `priority_rank` / `priority_reason` columns exist but have zero
+readers; they are not what drives this.)
 
 ### Processing-Date save gates (aggregated `validation_failed`)
 

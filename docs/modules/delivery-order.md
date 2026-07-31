@@ -173,7 +173,7 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | Table | Role |
 |-------|------|
 | `scm.delivery_orders` | DO header. `do_number`, `so_doc_no`, `debtor_code/name`, `do_date`, `expected_delivery_at`, `customer_delivery_date`, `dispatched_at` / `signed_at` / `delivered_at`, `driver_id/name`, `vehicle`, `m3_total_milli`, address block, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_centi`, `total_cost_centi`, `total_margin_centi`, `line_count`, `warehouse_id`, `is_dropship`, `arrives_em_warehouse_date`, `pod_r2_key`, `signature_data`, `status`, `company_id`. |
-| `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, `line_cost_centi`, `line_margin_centi`, **`ship_cost_centi`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`. |
+| `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, `line_cost_centi`, `line_margin_centi`, **`ship_cost_centi`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads). |
 | `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_centi`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
 | `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key)` by the partial unique index the reversal has to route around (`:4322-4328`). |
@@ -251,6 +251,82 @@ cancelling the PO is blocked while such an OUT is outstanding
 `fn_reverse_dropship_do_out` (batched buckets only), which since 0198 delegates
 to `fn_reverse_do_out(..., p_batched_only := TRUE)` — the same audited body the
 non-drop-ship path uses, so both share one implementation.
+
+### Shipping before the goods arrive — the per-LINE commitment (mig 0230, 2026-07-31)
+
+**Binding is a consequence of the line, not an answer to a dialog.** A DO line
+that ships before its goods land and resolves exactly ONE live bound PO now
+stores that PO number in `delivery_order_items.committed_po_batch_no`, whichever
+guard the operator answered. `is_dropship` keeps the meaning migration 0057 gave
+it — the UI badge.
+
+The decision is a pure function, `planShipCommitments`
+(`backend/src/scm/lib/ship-commitment.ts`), unit-tested as a table:
+
+| Line | Binds? | Why |
+|---|---|---|
+| resolves one live PO, nothing on hand | **yes**, to that PO's number | every shipped unit comes from that PO |
+| resolves no live PO (or >1 — ambiguous, audit H3) | no | there is no incoming batch to name, and a guessed dye lot is worse than none |
+| SOFA with no `allocated_batch_no`, one live PO | **yes** | a sofa OUT is batch-scoped by construction; this is the classic drop-ship |
+| `allocated_batch_no` set | no | the allocator only sets it once a covering batch is PHYSICALLY received — a normal ship |
+| non-sofa with SOME stock on hand (partial short) | no | a batch stamp routes the whole OUT through `fn_consume_fifo_batch`, which sees no lot for a batch that has not arrived, so the units that WERE on hand would stop being costed at ship time. Its shortfall is still repaired by `fn_reconcile_uncosted_out` (0154) |
+| a qty-INCREASE on a line whose earlier units went out in ANOTHER batch bucket | no (`prior_ship_other_batch`) | the resync keys its delta on (warehouse, code, variant, BATCH), so a stamp added now would reverse a costed OUT and re-issue the whole line against goods that have not arrived — the temporal form of the partial short above. Binding to the SAME batch the earlier units carry is not a move, so that still binds |
+| no `so_item_id` (ad-hoc line) / qty 0 | no | nothing to resolve a PO from |
+
+Each binding also records **what kind of batch it is**:
+`committed_batch_strict` is TRUE only for a sofa, whose batch is a dye lot that
+must never be substituted. It is written from the same `isSofa` fact the decision
+used, and it is the ONLY thing that excludes the OUT from the batch-agnostic
+retro-cost — see *Receipt* below. `committed_variant_key` records the bucket, so
+the claim can be scoped to the same variant the OUT loop is scoped to.
+
+Resolved at WRITE time on all FOUR paths — `POST /`, `POST /from-sos`,
+`POST /:id/items` and the `PATCH /:id/items/:itemId` qty-increase — the same
+"decide at create, apply at confirm" model `is_dropship` has always used, so a
+DRAFT DO carries its commitment to Confirm. `resolveDoSofaBatchMap` reads the
+STORED value (source 2 of 3) at every later seam — resync delta, restamp, recost
+— so a PO cancelled or added after the ship can never move the bucket an OUT was
+already stamped with.
+
+**A sofa SET binds ONE purchase order.** Owner, 2026-07-31: *"同一张 batch no 就
+是 PO"* — one PO IS one batch number. The old gate (`allHavePo`) only asked
+whether every module had *a* PO and never whether they were the SAME one, so a
+set resolving two POs shipped stamped with two batch numbers and split the dye
+lot. `planSofaSetPoConflicts` groups the DO's sofa lines by their SO `doc_no` —
+the same set definition `findIncompleteSofaSets` uses — and returns a
+`sofa_set_po_split` 409 naming each module and the PO it resolved. It is examined
+only for sets where this write would COMMIT at least one module, so it cannot
+refuse a shipment that works today, and a module that would go out UN-batched
+alongside a bound sibling counts as a split too (plain FIFO picks its lot).
+
+**Receipt.** `scm.fn_reconcile_dropship_batch` claims an OUT when the source DO
+is not CANCELLED **and** (`is_dropship = TRUE` **or** one of its lines carries
+`committed_po_batch_no` = this batch for this product **and this variant**). Two
+consequences worth stating: a plain "Ship anyway" now nets on receipt, and one
+unresolvable line on a mixed DO no longer denies the netting to the rest — the
+old `allHavePo` header decision was all-or-nothing.
+
+`fn_reconcile_uncosted_out` (0154) gained the mirror exclusion — **for STRICT
+(dye-lot) commitments only.** A committed sofa OUT belongs to the batched
+reconcile, because costing it from whatever lot is open means another dye lot. A
+committed MATTRESS has no dye lot and stays eligible here, deliberately: its
+bound PO can be cancelled, re-raised under a new number, or superseded by an
+inter-warehouse transfer or a stock take, and if the OUT were excluded, no
+reconcile would ever reach it and its COGS would sit at RM0 forever — a worse
+version of the bug 0230 exists to end. A non-sofa binding is therefore belt AND
+braces: the correct GRN nets it at the real batch cost, and any later stock-IN
+repairs it if that GRN never comes. Both functions recompute
+`ABS(qty) - SUM(consumed)` and the GRN post runs the batched one first, so a
+doubly-eligible OUT can neither double-cost nor race.
+
+**Asking once.** `short_stock` (a quantity fact) and `sofa_no_batch` (sofa set
+batch integrity) remain two separate CHECKS — the second bites even when quantity
+is sufficient but split across dye lots. What was collapsed is the QUESTION: the
+`short_stock` 409 now carries `bindings` (the incoming PO + ETA per short line)
+so the one "Ship anyway?" dialog names what will be bound, and
+`vendor/scm/lib/authed-fetch.ts` sets the other flag silently once either has
+been confirmed on the same request. The two guards fire in opposite order on
+`POST /` and `POST /from-sos`, so that collapse works in both directions.
 
 The IN counterpart of a DO is the **Delivery Return** (`/delivery-returns`),
 a separate module.

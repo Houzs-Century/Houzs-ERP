@@ -136,14 +136,30 @@ export async function checkStockAvailability(
   }));
 }
 
+/** An incoming PO a short line WILL be bound to if the operator ships anyway
+ *  (scm/lib/ship-commitment.ts). Advisory payload for the dialog only — the
+ *  binding itself is decided server-side on the confirmed replay, never from
+ *  anything the client sends back. */
+export type ShortStockBinding = { itemCode: string; poNumber: string; eta: string | null };
+
 /** Canonical 409 response body for short-stock rejections. Caller should
- *  c.json(shortStockResponse(shortages), 409). The frontend catches this,
- *  shows a "stock not enough — continue?" dialog with the shortages + the
- *  cross-warehouse alternatives, and retries with confirmShortStock: true. */
-export const shortStockResponse = (shortages: StockShortage[]) => ({
+ *  c.json(shortStockResponse(shortages, bindings), 409). The frontend catches
+ *  this, shows a "stock not enough — continue?" dialog with the shortages, the
+ *  cross-warehouse alternatives and (2026-07-31) the incoming PO each short line
+ *  will bind to, then retries with confirmShortStock: true.
+ *
+ *  `bindings` is why the operator is only asked ONCE. "Ship anyway?" and "ship
+ *  as drop-ship?" were the same question — the goods are not here — and the
+ *  second one existed only to authorise the binding. Naming the incoming PO here
+ *  puts that information in the first dialog, so the answer can carry it. */
+export const shortStockResponse = (
+  shortages: StockShortage[],
+  bindings: ShortStockBinding[] = [],
+) => ({
   error: 'short_stock',
   message:
     `Stock not enough at the selected warehouse for ${shortages.length} line${shortages.length === 1 ? '' : 's'}. ` +
     `Confirm to ship anyway, or switch warehouse / reduce qty first.`,
   shortages,
+  ...(bindings.length > 0 ? { bindings } : {}),
 });

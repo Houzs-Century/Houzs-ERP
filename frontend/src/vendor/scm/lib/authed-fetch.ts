@@ -5,7 +5,8 @@
 // "ship anyway?" retry, and the sofa whole-set hard-block all live in ONE place.
 //
 // The 409 handling is a safe superset: it only triggers on a 409 whose body
-// carries `short_stock` / `sofa_no_batch` / `sofa_partial_set`, which only the
+// carries `short_stock` / `sofa_no_batch` / `sofa_partial_set` /
+// `sofa_set_po_split`, which only the
 // ship/mutation endpoints return — read-only callers never hit it, so adopting
 // this universally changes nothing for them.
 //
@@ -179,6 +180,11 @@ async function confirmShortStock(raw: string): Promise<boolean> {
         needed: number; available: number; short: number;
         alternatives?: Array<{ warehouseCode: string | null; warehouseName: string | null; available: number }>;
       }>;
+      /* 2026-07-31 — the incoming PO each short line will be BOUND to if the
+         operator ships anyway. This is what lets the drop-ship dialog stop
+         being a second question: the binding is named here, in the one dialog
+         that asks whether the goods may leave without having arrived. */
+      bindings?: Array<{ itemCode: string; poNumber: string; eta: string | null }>;
     };
     const lines = (body.shortages ?? []).map((s) => {
       const alts = (s.alternatives ?? []).slice(0, 3)
@@ -187,9 +193,23 @@ async function confirmShortStock(raw: string): Promise<boolean> {
       const altHint = alts ? `\n   Other warehouses: ${alts}` : '';
       return `• ${s.itemCode}\n   At ${s.warehouseName ?? 'this warehouse'}: need ${s.needed}, available ${s.available} (short ${s.short})${altHint}`;
     }).join('\n\n');
+    const byPo = new Map<string, { eta: string | null; codes: Set<string> }>();
+    for (const b of body.bindings ?? []) {
+      const g = byPo.get(b.poNumber) ?? { eta: b.eta, codes: new Set<string>() };
+      if (b.itemCode) g.codes.add(b.itemCode);
+      byPo.set(b.poNumber, g);
+    }
+    const bindNote = byPo.size === 0 ? '' :
+      `\n\nThese lines are already on order and will be booked against the incoming purchase order:\n\n`
+      + [...byPo.entries()].map(([po, g]) => {
+        const eta = g.eta ? `ETA ${g.eta}` : 'ETA not set';
+        return `• PO ${po} (${eta})\n   ${[...g.codes].join(', ')}`;
+      }).join('\n\n')
+      + `\n\nStock goes negative against that batch and nets out — with the real cost —`
+      + ` when the Goods Received Note arrives.`;
     return await serviceConfirm({
       title: 'Stock not enough at the selected warehouse',
-      body: `${lines}\n\nShip anyway? (Stock will go negative.)`,
+      body: `${lines}${bindNote}\n\nShip anyway? (Stock will go negative.)`,
       confirmLabel: 'Ship anyway',
       danger: true,
     });
@@ -271,12 +291,29 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
     for (let guard = 0; mergedBody && guard < 4 && res.status === 409; guard++) {
       const text = await consumeCorrelated(res, () => res.clone().text());
       if (text.includes('"short_stock"') && mergedBody.confirmShortStock !== true) {
-        if (!(await confirmShortStock(text))) break;            // declined → terminal error below
+        /* ASK ONCE (2026-07-31). "Ship as drop-ship?" and "Ship anyway?" are the
+           same question — the goods are not here — and the operator has already
+           answered it in the affirmative on this very request. Re-asking it in
+           the other wording is how a save that the operator already committed to
+           acquires a second chance to be abandoned half-way. The order of the
+           two guards differs between POST / and POST /from-sos, so this has to
+           work in BOTH directions; the other direction is the branch below. */
+        if (mergedBody.dropShip !== true && !(await confirmShortStock(text))) break; // declined → terminal error below
         mergedBody = { ...mergedBody, confirmShortStock: true };
       } else if (
         text.includes('"sofa_no_batch"') && text.includes('"canDropship":true') &&
         mergedBody.dropShip !== true
       ) {
+        /* Already said "ship anyway" on this request: binding the incoming PO is
+           the CONSEQUENCE of that answer, not a further decision. The
+           short-stock dialog named the PO and its ETA (see confirmShortStock's
+           `bindings`), so nothing is being authorised behind the operator's
+           back — the second dialog only ever restated the first. */
+        if (mergedBody.confirmShortStock === true) {
+          mergedBody = { ...mergedBody, dropShip: true };
+          res = await fetchWithTimeout(`${API_URL}${path}`, { ...init, headers, body: JSON.stringify(mergedBody) }, path);
+          continue;
+        }
         /* Declined drop-ship — deliberate operator choice. This used to throw a
            marker (`declined_dropship:"sofa_no_batch"`) that no page anywhere in
            either tree actually handled, so pressing Cancel showed the operator a
@@ -308,6 +345,16 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
     }
     if (text.includes('"sofa_partial_set"')) {
       let msg = "A sofa set must ship whole from one batch — this delivery leaves part of the set behind. Include the rest of the set, or ship none of it.";
+      try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { /* keep fallback */ }
+      throw correlateError(new Error(msg), requestIdFromResponse(res));
+    }
+    /* One PO IS one batch number (owner, 2026-07-31), so a sofa set that resolves
+       two different POs would ship stamped with two batch numbers — a split dye
+       lot. There is no "ship anyway" that makes that correct, so this is a hard
+       stop like the two above: surface the server's message, which names each
+       module and the PO it resolved. */
+    if (text.includes('"sofa_set_po_split"')) {
+      let msg = "A sofa set is one dye lot, so it must ship against one purchase order — its modules resolve different ones. Point them at the same PO, or ship none of it.";
       try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { /* keep fallback */ }
       throw correlateError(new Error(msg), requestIdFromResponse(res));
     }
