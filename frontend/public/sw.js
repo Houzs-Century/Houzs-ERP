@@ -340,7 +340,10 @@
 // browser's own navigation reaches the edge 302 (see ON_LEGACY_PROD_HOST). The
 // one-shot cache purge also drops the stale shell. Installed clients redirect on
 // their next navigation / reload.
-const VERSION = "houzs-erp-v189-__SW_BUILD_ID__";
+// v190 (2026-07-31): cacheFirst now retries code requests with cache:"reload"
+// when the network answers HTML, healing browsers whose own HTTP cache holds
+// an immutable SPA-fallback response under a hashed asset URL. See cacheFirst.
+const VERSION = "houzs-erp-v190-__SW_BUILD_ID__";
 const SHELL_CACHE = `${VERSION}-shell`;
 const API_CACHE = `${VERSION}-api`;
 
@@ -589,8 +592,27 @@ async function cacheFirst(req) {
     return cached;
   }
   try {
-    const r = await fetch(req);
-    if (code && r && isHtml(r)) return notAvailable();
+    let r = await fetch(req);
+    // HTML for a code URL means SOMETHING upstream answered with the SPA
+    // fallback. Before giving up, RETRY bypassing the browser HTTP cache
+    // (owner outage 2026-07-31): during a deploy race the CDN served
+    // index.html under hashed /assets/*.js URLs carrying the year-long
+    // immutable header, so every browser stored HTML in its OWN HTTP cache
+    // under those URLs. `fetch(req)` reads that cache, so this branch fired
+    // forever after and the Projects / ASSR routes never loaded — a 504 that
+    // no reload, cache purge, SW VERSION bump or asset-namespace change could
+    // clear, because the poison was client-side and immutable for a year.
+    // cache:"reload" refetches from the network and REPLACES the poisoned HTTP
+    // cache entry, so the next plain fetch is clean too: self-healing, no user
+    // action. Only for code requests, only when HTML came back.
+    if (code && r && isHtml(r)) {
+      try {
+        r = await fetch(req.url, { cache: "reload", credentials: "same-origin" });
+      } catch {
+        return notAvailable();
+      }
+      if (!r || !r.ok || isHtml(r)) return notAvailable();
+    }
     if (r && r.ok) cache.put(req, r.clone()).catch(() => {});
     return r;
   } catch {

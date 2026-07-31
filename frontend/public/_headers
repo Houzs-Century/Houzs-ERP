@@ -26,10 +26,25 @@
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
-# /assets2/ replaced /assets/ on 2026-07-31 (edge-poison incident — see
-# vite.config.ts build.assetsDir). Same contract: content-hashed, immutable.
+# /assets2/ then /assets3/ replaced /assets/ on 2026-07-31 (edge-poison
+# outage — see vite.config.ts build.assetsDir).
+#
+# ⚠️ NO `immutable`, SHORT max-age — deliberately, and do not "optimise" it
+# back. Cloudflare Pages answers an unknown path with index.html at 200, so a
+# request that lands MID-DEPLOY (before the new hashed file propagates) gets
+# HTML — and the edge then caches that HTML *under the asset URL* with whatever
+# this rule says. With `max-age=31536000, immutable` that poisoned entry is
+# pinned for a YEAR: on 2026-07-31 it took the whole ERP down (every route
+# importing a poisoned chunk failed; no SW purge, VERSION bump or asset
+# rename could clear it, because the bad copy lived at the edge). A 5-minute
+# TTL bounds any repeat to minutes and self-heals with no deploy. The files are
+# content-hashed, so a short TTL costs only cheap revalidations, never
+# staleness.
 /assets2/*
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=300
+
+/assets3/*
+  Cache-Control: public, max-age=300
 
 # Self-hosted web fonts. The woff2 files are fixed upstream builds and the
 # names never get reused, so a year-long immutable cache is correct — same

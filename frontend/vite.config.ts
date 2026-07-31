@@ -183,7 +183,11 @@ export default defineConfig(({ mode }) => {
       // namespace, side-stepping every poisoned URL at once. public/_headers
       // carries the matching /assets2/* immutable rule. Do NOT rename back to
       // "assets" — the poisoned entries live up to a year.
-      assetsDir: "assets2",
+      // assets2 was poisoned within minutes of shipping (a verification fetch
+      // during propagation cached HTML at the edge under the new URLs), so the
+      // namespace moved again. The real durable fix is the SHORT TTL in
+      // public/_headers — read the warning there before touching either.
+      assetsDir: "assets3",
       // Don't <link rel="modulepreload"> the heavy on-demand chunks (jspdf /
       // xlsx / leaflet). They're only ever reached via dynamic import() at a
       // print/export/map click, so preloading them makes a COLD first visit
