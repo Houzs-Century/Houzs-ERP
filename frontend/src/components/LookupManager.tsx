@@ -14,6 +14,7 @@ import { useToast } from "../hooks/useToast";
 import { useDialog } from "../hooks/useDialog";
 import { useReorderable } from "../hooks/useReorderable";
 import { api } from "../api/client";
+import { queryClient } from "../lib/queryClient";
 import { cn } from "../lib/utils";
 
 /**
@@ -80,6 +81,19 @@ export function LookupManager({ apiPath, title, description, extra }: Props) {
     () => api.get(`${apiPath}?include_inactive=1`),
     [apiPath],
   );
+
+  /* An edit here has to reach the FORMS that consume the list, not just this
+     panel. They are different cache entries on purpose: this manager keys on
+     "lookup-manager-options" (see the comment above — five managers on one page
+     collided when they shared a key), while the intake and detail forms in
+     ServiceCases key on the endpoint path itself. So q.reload() refreshes this
+     table and nothing else, and an open form kept serving the pre-edit list.
+     Invalidation ignores staleTime and forces an active refetch, which is also
+     what lets those consumers hold a long staleTime safely. */
+  function refreshShared() {
+    q.reload();
+    void queryClient.invalidateQueries({ queryKey: ["uq", apiPath] });
+  }
   const [name, setName] = useState("");
   const [extraVal, setExtraVal] = useState("");
   const [adding, setAdding] = useState(false);
@@ -87,10 +101,10 @@ export function LookupManager({ apiPath, title, description, extra }: Props) {
   const reorder = useReorderable(q.data?.data ?? [], async (ids) => {
     try {
       await api.put(`${apiPath}/reorder`, { ids });
-      q.reload();
+      refreshShared();
     } catch (e: any) {
       toast.error(e?.message || "Failed to reorder");
-      q.reload();
+      refreshShared();
     }
   });
 
@@ -110,7 +124,7 @@ export function LookupManager({ apiPath, title, description, extra }: Props) {
       await api.post(apiPath, body);
       setName("");
       setExtraVal("");
-      q.reload();
+      refreshShared();
       toast.success(`Added ${trimmed}`);
     } catch (e: any) {
       toast.error(e?.message || "Something went wrong. Please try again.");
@@ -122,7 +136,7 @@ export function LookupManager({ apiPath, title, description, extra }: Props) {
   async function patch(row: LookupRow, body: Partial<LookupRow>) {
     try {
       await api.patch(`${apiPath}/${row.id}`, body);
-      q.reload();
+      refreshShared();
     } catch (e: any) {
       toast.error(e?.message || "Something went wrong. Please try again.");
     }
@@ -152,7 +166,7 @@ export function LookupManager({ apiPath, title, description, extra }: Props) {
     try {
       await api.del(`${apiPath}/${row.id}?hard=1`);
       toast.success("Deleted");
-      q.reload();
+      refreshShared();
     } catch (e: any) {
       toast.error(e?.message || "Something went wrong. Please try again.");
     }

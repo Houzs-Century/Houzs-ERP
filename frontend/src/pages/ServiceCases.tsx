@@ -76,6 +76,19 @@ import {
   useIdentityPreference,
 } from "../hooks/useIdentityPreference";
 import { readAssrListFilter, writeAssrListFilter } from "../lib/assrListFilter";
+
+/* The four /api/assr/lookups/* lists are admin-maintained reference data, not
+   transactional rows. On the 30s global staleTime they were re-fetched on every
+   case open: measured on prod 2026-08-01, opening ASSR/2607-074 cost FOUR
+   lookup calls at 643-670ms each, on top of the case itself.
+
+   Safe because an edit still lands immediately, not eventually: LookupManager
+   (the only writer) now invalidates this exact key after every write, and
+   invalidation ignores staleTime and forces an active refetch. Without that
+   half this number would be the window an admin's edit went unseen — which is
+   why the two changes ship together. 5 minutes matches the reference-data
+   callsites in Team.tsx. */
+const LOOKUP_CACHE = { staleTime: 300_000 } as const;
 import { useServerSort } from "../hooks/useServerSort";
 import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useAuth } from "../auth/AuthContext";
@@ -2433,6 +2446,7 @@ function CreatePanel({
   const issueCategoriesQ = useQuery<{ data: { slug: string; name: string }[] }>("/api/assr/lookups/issue-categories",
     () => api.get("/api/assr/lookups/issue-categories"),
     [],
+    LOOKUP_CACHE,
   );
   const issueCatOptions =
     issueCategoriesQ.data?.data.map((r) => r.name) ?? [];
@@ -2442,6 +2456,7 @@ function CreatePanel({
   const productCategoriesQ = useQuery<{ data: { slug: string; name: string }[] }>("/api/assr/lookups/product-categories",
     () => api.get("/api/assr/lookups/product-categories"),
     [],
+    LOOKUP_CACHE,
   );
   const productCategoryOptions =
     productCategoriesQ.data?.data.map((r) => r.name) ?? [];
@@ -3197,18 +3212,22 @@ function DetailContent({
   const issueCategoriesQ = useQuery<{ data: LookupOpt[] }>("/api/assr/lookups/issue-categories",
     () => api.get("/api/assr/lookups/issue-categories"),
     [],
+    LOOKUP_CACHE,
   );
   const resolutionMethodsQ = useQuery<{ data: LookupOpt[] }>("/api/assr/lookups/resolution-methods",
     () => api.get("/api/assr/lookups/resolution-methods"),
     [],
+    LOOKUP_CACHE,
   );
   const prioritiesQ = useQuery<{ data: LookupOpt[] }>("/api/assr/lookups/priorities",
     () => api.get("/api/assr/lookups/priorities"),
     [],
+    LOOKUP_CACHE,
   );
   const ncrCategoriesQ = useQuery<{ data: LookupOpt[] }>("/api/assr/lookups/ncr-categories",
     () => api.get("/api/assr/lookups/ncr-categories"),
     [],
+    LOOKUP_CACHE,
   );
   const issueOptions = (issueCategoriesQ.data?.data ?? []).map((r) => r.name);
   const resolutionOptions = (resolutionMethodsQ.data?.data ?? []).map((r) => r.slug);
