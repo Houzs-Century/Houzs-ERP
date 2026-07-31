@@ -39,6 +39,88 @@ foregrounded; buffered long-task capture at load is unaffected and is what's cit
 
 ---
 
+## 0a. Second-pass RESULTS — re-measured on prod after every PR shipped
+
+Seven PRs (#1458-#1464), all behaviour-preserving. Measured the same way before
+and after: real navigations, `PerformanceResourceTiming`, company 2990 HOME.
+
+| | before | after |
+|---|---|---|
+| `/assr` usable | 1983 ms | **778 ms** |
+| `/team` usable | 1989 ms | **694 ms** |
+| `/team` slowest avatar | 1147 ms | **41 ms** |
+| `/scm/inventory` DOM nodes | 11,963 | **2,783** |
+| `/scm/inventory` usable | 1560 ms | **896 ms** |
+| `/scm/product-models` usable | 1361 ms | **786 ms** |
+| `/scm/product-models` slowest photo | 665 ms | **24 ms** |
+| `/api/auth/me` | 381-1054 ms | **90 ms** |
+| `/api/assr/summary` | 306 ms | 247 ms |
+| `/api/scm/purchase-invoices` | 893-966 ms | **~670 ms** |
+| `/api/scm/mfg-purchase-orders` | 915 ms | **783 ms** |
+| `/api/scm/grns` | 814 ms | **739 ms** |
+
+### Read this before trusting any single number here
+
+The first post-deploy sample of `/api/scm/purchase-invoices` came back at
+**1481 ms** — worse than before the fix. Four consecutive samples immediately
+after: **677, 691, 646, 660 ms**. The 1481 was a cold connection, and reporting
+it would have manufactured a regression that does not exist.
+
+This is the same variance documented as N2 below (`/api/branding` measured at
+148 ms and 833 ms minutes apart; `/api/auth/me` at 110 ms and 1054 ms). **One
+sample of a Hyperdrive-backed endpoint is not a measurement.** Take three or
+more, and quote the cluster, not the extreme.
+
+### What shipped
+
+| PR | change |
+|---|---|
+| #1458 | `/auth/me` stopped awaiting a DELETE; `/assr/summary` 13 serial aggregates → one wave; the assr list 4 serial round trips → 2; mig 0232 index; logos 500 KB → 112 KB |
+| #1459 | avatars: `immutable` when `?k` matches the current R2 key |
+| #1460 | five photo proxies: same, on keys already proven unique per upload |
+| #1461 | `DataTable` windows expandable tables while collapsed |
+| #1462 | the PO-chain enrichment pair, serial in all three purchase lists → one wave |
+| #1463 | four assr lookup lists cached 5 min, plus the writer-side invalidation that makes that safe |
+| #1464 | inbox + announcements-banner cache FILL moved off the response path |
+
+### Deliberately NOT done, with the reason
+
+- **`scan-so.ts` photo keys** are `scan-jobs/<jobId>/<i>` — positional, not
+  per-object. A re-run can write different bytes under the same key, so that url
+  does not name a fixed object. Excluded from the `immutable` sweep.
+- **Retiring the `stage_since` correlated subquery.** `assr_cases.stage_entered_at`
+  carries the same fact since mig 074, but only for rows written after it. Dropping
+  the subselect would change what older cases display.
+- **`configCache.ts` `bumpConfigVersion`** stayed awaited — it is a correctness
+  barrier, not a cache fill.
+- **The Service Case detail's second fetch of the same case** is CORRECT, not a
+  duplicate: `mark-opened` can advance a case's stage, and the reload is gated on
+  the server answering `advanced: true`. Verified on ASSR/2607-074, which was
+  "Review" in the list and "Verification" after opening.
+- **Hyperdrive keep-warm tuning.** The `*/5` cron pings `SELECT 1`, which warms
+  one connection; requests are served from many isolates/PoPs (this session's
+  traffic came through KUL against an ap-southeast-1 database). Widening it is
+  guessing at pool internals — it needs a measured experiment, not a code change.
+
+### Still open, in rough value order
+
+1. **The shell tax** (N1) — the biggest remaining win and the riskiest.
+2. **`/api/scm/purchase-invoices` runs the LEGACY non-paginated path** — the
+   frontend sends no `page`, so it pulls `limit=500` with three embedded joins.
+   Switching changes the response shape.
+3. **Cold-start variance** (N2) — config, not code.
+4. **`total JS (gzip)` over its 1800 KB ceiling** — hygiene; the INITIAL bundle
+   is 151 KB against a 165 KB ceiling, so this is not user-facing today.
+5. **`_headers` is still being overridden at the zone.** Verified live on
+   2026-08-01: `/sw.js` returns `max-age=14400, must-revalidate` where `_headers`
+   asks for `max-age=0`, and `/assets3/*.js` returns `max-age=14400`. The
+   `must-revalidate` survives and only the number is rewritten — the signature in
+   the existing ⚠️ OPEN owner action. Note a **Cache Rule** outranks the
+   Caching → Configuration setting, so check Rules → Cache Rules too. This also
+   caps the `immutable` headers above at 4 hours rather than a year.
+
+---
+
 ## 0b. Second pass — measured live on prod 2026-08-01 (logged in, company 2990 HOME)
 
 Method: real navigations against `erp.houzscentury.com`, reading `PerformanceResourceTiming`
