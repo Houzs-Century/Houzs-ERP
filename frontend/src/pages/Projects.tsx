@@ -7646,6 +7646,19 @@ function TasklistSections({
     return buckets;
   }, [sections, checklist, sort]);
 
+  // Crew setup/dismantle photos (owner 2026-07-31). Driver/helper uploads land
+  // in project_phase_photos — the Driver App and the mobile Setup & dismantle
+  // card both write there — NOT in the task's own attachments. So the
+  // "Setup Image" / "Dismantle Image" rows read EMPTY on this page while the
+  // photo sat in the Phase Photos block below (e.g. project 371: 4 setup
+  // photos, 0 task files). Merge the phase photos into those two rows so one
+  // file set shows in both places, whichever door the crew uploaded through.
+  const phasePhotosQ = useQuery<{ photos: PhasePhoto[] }>(
+    "/api/projects/:/phase-photos",
+    () => api.get(`/api/projects/${projectId}/phase-photos`),
+    [projectId],
+  );
+
   const attachmentsByItem = useMemo(() => {
     const m = new Map<number, TaskAttachment[]>();
     for (const a of attachments) {
@@ -7653,8 +7666,44 @@ function TasklistSections({
       arr.push(a);
       m.set(a.item_id, arr);
     }
+    // Merged-in phase photos carry a NEGATIVE id: they live in a different
+    // table, so delete / defect-action calls (which take an attachment id)
+    // must not fire on them — the render sites gate on `id > 0`.
+    const photos = phasePhotosQ.data?.photos ?? [];
+    if (photos.length > 0) {
+      // "Setup Image" exists twice (DRIVER + SALES PIC badges); crew photos
+      // belong to the DRIVER one. Dismantle Image is DRIVER-only.
+      const pickRow = (re: RegExp) => {
+        const rows = checklist.filter((it) => re.test((it.title || "").trim()));
+        return rows.find((it) => (it.role_label ?? "").toUpperCase().includes("DRIVER")) ?? rows[0];
+      };
+      for (const [phase, item] of [
+        ["setup", pickRow(/^setup image/i)],
+        ["dismantle", pickRow(/^dismantle image/i)],
+      ] as const) {
+        if (!item) continue;
+        const arr = m.get(item.id) ?? [];
+        const seen = new Set(arr.map((a) => a.r2_key));
+        for (const ph of photos) {
+          if (ph.phase !== phase || !ph.r2_key || seen.has(ph.r2_key)) continue;
+          arr.push({
+            id: -ph.id,
+            item_id: item.id,
+            r2_key: ph.r2_key,
+            file_name: ph.r2_key.split("/").pop() || `${phase} photo`,
+            content_type: ph.content_type,
+            size_bytes: null,
+            uploaded_by: ph.uploaded_by,
+            uploader_name: ph.uploaded_by_name,
+            uploaded_at: ph.uploaded_at,
+            caption: ph.caption,
+          });
+        }
+        m.set(item.id, arr);
+      }
+    }
     return m;
-  }, [attachments]);
+  }, [attachments, checklist, phasePhotosQ.data]);
 
   async function addSection() {
     const name = newSectionName.trim();
@@ -8546,10 +8595,11 @@ function DocRow({
                 <TaskAttachmentRow
                   key={a.id}
                   attachment={a}
-                  canManage={canManage}
+                  /* id < 0 = merged crew phase photo — view/download only. */
+                  canManage={canManage && a.id > 0}
                   showRemark={remarkOpen}
                   itemTitle={item.title}
-                  onDelete={() => removeAtt(a.id)}
+                  onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
                   toast={toast}
                 />
               ))}
@@ -9121,10 +9171,13 @@ function ChecklistRow({
                       <TaskAttachmentRow
                         key={a.id}
                         attachment={a}
-                        canManage={canManage}
+                        /* id < 0 = a crew phase photo merged in from the
+                           phase-photos table — view/download only; deleting it
+                           needs the Phase Photos block, not this row. */
+                        canManage={canManage && a.id > 0}
                         showRemark={expanded}
                         itemTitle={item.title}
-                        onDelete={() => deleteAttachment(a.id)}
+                        onDelete={() => { if (a.id > 0) deleteAttachment(a.id); }}
                         toast={toast}
                       />
                     ))}
