@@ -4698,12 +4698,31 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        isn't priced until now. Single-problem list here, but consistent shape.
        rollbackPwpClaims first: a rejected order must not burn a voucher (matches
        every other bail in this pricing block). */
+    /* GATE-ONLY money, never booked (owner 2026-07-31). The desktop New-SO screen
+       books a manually-added payment through the strict per-payment route AFTER
+       the order exists, so at CREATE time `depositTotalCenti` sees only a
+       receipt-backed deposit (SalesOrderNew.tsx requires `receiptImageKey`) and
+       reads 0 for a hand-entered one. The operator then gets
+       "Deposit RM 0 of RM X needed" with the money plainly on screen, the create
+       422s, and the post-create payment flush never runs — a DEADLOCK: an SO with
+       a Processing Date and a hand-entered deposit could not be saved at all.
+       `pendingDepositCenti` is the total the client is about to post; the client
+       only sends it for drafts that already carry a verified slip session, and it
+       is counted HERE and NOWHERE ELSE — not in deposit_centi, not in autoProceed,
+       not in any ledger — so it cannot double-book and cannot mark an order
+       proceeded against money that has not landed. */
+    const pendingDepositCenti = Math.max(
+      0,
+      typeof body.pendingDepositCenti === 'number' && Number.isFinite(body.pendingDepositCenti)
+        ? Math.trunc(body.pendingDepositCenti)
+        : 0,
+    );
     const depositProblems = procDateOnCreate
       ? collectProcessingGateProblems({
           procDate: procDateOnCreate,
           delivDate: (body.customerDeliveryDate as string | null | undefined) || null,
           todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
-          deposit: { paidCenti: depositTotalCenti, totalCenti: grandTotal },
+          deposit: { paidCenti: depositTotalCenti + pendingDepositCenti, totalCenti: grandTotal },
         })
       : [];
     if (depositProblems.length > 0) {

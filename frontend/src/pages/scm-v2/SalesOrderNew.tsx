@@ -1484,10 +1484,26 @@ export const SalesOrderNew = () => {
         })()
       : {};
 
+    /* The money the create-time Processing-Date gate would otherwise not see.
+       `receiptDepositBody` only carries a deposit that was SCANNED (it needs a
+       receiptImageKey), so a hand-entered payment reached the backend as RM0 and
+       the gate refused the save with the amount plainly on screen — and because
+       the per-payment posts happen AFTER create, the create had to succeed first
+       for the money to ever land. Deadlock.
+       Counted for the GATE ONLY, server-side: it is never booked, so excluding
+       the receipt deposit here just avoids counting the same ringgit twice.
+       Only drafts that already hold a verified slip session are included — the
+       same condition flushPaymentDrafts needs to post them — so this can never
+       claim money the client is not about to record. */
+    const pendingDepositCenti = paymentDrafts
+      .filter((d) => d.amountCenti > 0 && !!d.slipUploadSessionId && d !== receiptDeposit)
+      .reduce((sum, d) => sum + d.amountCenti, 0);
+
     create.mutate(
       {
         idempotencyKey: idemKey,
         ...receiptDepositBody,
+        pendingDepositCenti: pendingDepositCenti > 0 ? pendingDepositCenti : undefined,
         /* DRAFT flow — backend reads `asDraft: true` to create the SO with
            status 'DRAFT' instead of 'CONFIRMED'. Omitted (undefined) for a
            normal Create so the body stays unchanged in that path. */
