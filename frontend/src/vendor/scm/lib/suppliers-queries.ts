@@ -11,6 +11,7 @@ import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
+import type { OriginAssignment } from './flow-queries';
 
 export type SupplierStatus = 'ACTIVE' | 'INACTIVE' | 'BLOCKED';
 export type Currency = 'MYR' | 'RMB' | 'USD' | 'SGD';
@@ -170,6 +171,13 @@ export type PoHeaderRow = {
       un-cancellable (the GRN must be cancelled / deleted first). Convert-to-
       GRN (partial receiving) is NOT gated. Mirrors GRN's has_children. */
   has_children?: boolean;
+  /** Collapsed "Assigned SO" column (owner 2026-07-31) — the distinct Sales
+      Order(s) this PO's supply is assigned to, resolved server-side by the SAME
+      precedence engine the drill-down uses (delivered → DO-lock > stored link >
+      MRP floating). `assigned_so_linked` is true when ANY line carries a stored
+      so_item_id, so the column can mark an MRP-only guess apart from a binding. */
+  assigned_sos?: OriginAssignment[];
+  assigned_so_linked?: boolean;
 };
 
 export type PoItemSummary = {

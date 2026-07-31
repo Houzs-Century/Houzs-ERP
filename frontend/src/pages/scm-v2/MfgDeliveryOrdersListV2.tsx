@@ -33,6 +33,12 @@ import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
+import {
+  DocumentLinesExpansion,
+  AssignedSoCell,
+  type DocumentDrillLine,
+} from "../../components/DocumentLinesExpansion";
+import type { OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -726,75 +732,49 @@ type DoDrillItem = {
   unit_price_centi?: number;
   amount_centi?: number;
   total_centi?: number;
+  /* Intrinsic Assigned SO for this DO line (owner 2026-07-31) — a DO is HARD-
+     linked to its Sales Order, never an MRP guess. The detail endpoint resolves
+     each line's so_item_id → SO doc_no + effective delivery date. */
+  so_doc_no?: string | null;
+  so_delivery_date?: string | null;
 };
 
 function DoLinesExpansion({ doId }: { doId: string }) {
+  const navigate = useNavigate();
   const detailQ = useMfgDeliveryOrderDetail(doId);
   const items =
     ((detailQ.data as { items?: unknown[] } | undefined)?.items as DoDrillItem[]) ??
     [];
-
-  if (detailQ.isLoading) {
-    return (
-      <div className="py-4 text-center text-[12px] text-ink-muted">
-        Loading lines…
-      </div>
-    );
-  }
-  if (items.length === 0) {
-    return (
-      <div className="py-4 text-center text-[12px] text-ink-muted">
-        No lines on this delivery order.
-      </div>
-    );
-  }
-
+  // A DO line's SO is intrinsic and hard-linked (locked, never floating) — feed
+  // it to the shared drill-down as a single STATIC assignment so the DO reads the
+  // SAME "Assigned SO" + delivery date the PO / GRN / PI drill-downs do.
+  const lines: DocumentDrillLine[] = items.map((l) => {
+    const assignedSos: OriginAssignment[] = l.so_doc_no
+      ? [{ soDocNo: l.so_doc_no, deliveryDate: l.so_delivery_date ?? null, locked: true, source: "delivered" }]
+      : [];
+    return {
+      itemGroup: l.item_group ?? null,
+      code: l.item_code || l.product_code || null,
+      description: l.description || l.product_name || null,
+      description2: l.description2 ?? null,
+      variants: l.variants ?? null,
+      qty: Number(l.qty ?? 0),
+      amountCenti: l.amount_centi ?? l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0),
+      assignedSos,
+      sourceLinked: true,
+    };
+  });
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface">
-      <div className="grid grid-cols-[1fr_64px_120px] gap-2 border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
-        <span>Item</span>
-        <span className="text-right">Qty</span>
-        <span className="text-right">Amount</span>
-      </div>
-      {items.map((l, i) => {
-        const amt =
-          l.amount_centi ??
-          l.total_centi ??
-          (l.qty ?? 0) * (l.unit_price_centi ?? 0);
-        // Shared order-line rule (vendor/shared/line-identity.ts): item CODE
-        // as the primary, variant summary as the subtitle — identical to the
-        // SO list drill-down and this page's own quick-view drawer.
-        const { primary, secondary } = orderLineIdentity({
-          code: l.item_code || l.product_code,
-          description: l.description || l.product_name,
-          variant:
-            buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
-            (l.description2 ?? ""),
-        });
-        return (
-          <div
-            key={i}
-            className="grid grid-cols-[1fr_64px_120px] items-start gap-2 border-b border-border-subtle px-4 py-2.5 last:border-b-0"
-          >
-            <div className="min-w-0">
-              <div className="text-[12.5px] font-semibold text-ink">
-                {primary || "—"}
-              </div>
-              {secondary && (
-                <div className="mt-0.5 text-[11px] leading-snug text-ink-secondary">
-                  {secondary}
-                </div>
-              )}
-            </div>
-            <span className="text-right font-money text-[12px] text-ink-secondary">
-              {l.qty ?? 0}
-            </span>
-            <span className="text-right font-money text-[12px] font-semibold text-ink">
-              {fmtRm(amt)}
-            </span>
-          </div>
-        );
-      })}
+    <div className="flex flex-col gap-2">
+      <DocumentLinesExpansion
+        isLoading={detailQ.isLoading}
+        isError={Boolean(detailQ.error)}
+        errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
+        lines={lines}
+        emptyLabel="No lines on this delivery order."
+        showAssignment
+        onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+      />
     </div>
   );
 }
@@ -1068,14 +1048,31 @@ export function MfgDeliveryOrdersListV2() {
       ),
     },
     {
+      // Owner 2026-07-31: unified "Assigned SO" column across PO / GRN / PI / DO.
+      // A DO's SO is intrinsic and hard-linked (never an MRP guess), so it always
+      // renders as a solid, static chip — no dashed "~" guess treatment.
       key: "so_doc_no",
-      label: "From SO",
-      width: "128px",
+      label: "Assigned SO",
+      width: "168px",
       disableSort: true,
       getValue: (r) => r.so_doc_no ?? "",
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">{soOf(r)}</span>
-      ),
+      render: (r) =>
+        r.so_doc_no ? (
+          <AssignedSoCell
+            assignments={[
+              {
+                soDocNo: r.so_doc_no,
+                deliveryDate: r.customer_delivery_date ?? null,
+                locked: true,
+                source: "delivered",
+              },
+            ]}
+            sourceLinked
+            onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+          />
+        ) : (
+          <span className="text-[12px] text-ink-muted">—</span>
+        ),
     },
     {
       /* Transfer-to (audit R8): the SI(s) this DO was invoiced into, mirroring

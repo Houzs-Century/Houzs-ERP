@@ -500,4 +500,313 @@ poSoCoverage.get('/:type/:id', async (c) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// Batched Assigned-SO for a PAGE of Purchase Orders (the collapsed list column)
+//
+// The single-doc handler above answers /po-so-coverage/:type/:id per line. A
+// LIST cannot call it per row: that is an N+1 of network round-trips AND — the
+// real cost — an N+1 of computeMrp, the global MRP engine. This resolves the
+// Assigned SO for a whole page of POs in ONE pass:
+//   - computeMrp runs EXACTLY ONCE; its reverse coverage map is built once.
+//   - the DO-lock ledger reads (movements / lots / consumptions) and the
+//     stored-origin reads are batched with `.in(...)` across every PO number.
+//   - each PO's precedence merge reuses the SAME pure helpers the per-line route
+//     uses (buildDeliveredSoLock / buildStoredOrigins / mergeAssignments), so a
+//     list row and its own drill-down can never disagree.
+//
+// Returns Map<poId, PoAssignedSummary> — the PO-level rollup the header column
+// renders: the distinct SO(s) across all the PO's SKUs (a STATIC assignment wins
+// over a FLOATING one when the same SO shows for two SKUs), and whether ANY of
+// the PO's lines carries a stored so_item_id (so the column can mark an MRP-only
+// guess apart from a real link). Fully company-scoped, same as the route.
+// ----------------------------------------------------------------------------
+export type PoAssignedSummary = { assignedSos: OriginAssignment[]; sourceLinked: boolean };
+
+/* Roll a PO's per-SKU origins up to ONE distinct-SO summary for the list cell. */
+function summarizeOrigins(origins: SkuOrigin[]): PoAssignedSummary {
+  const byDoc = new Map<string, OriginAssignment>();
+  let sourceLinked = false;
+  for (const o of origins) {
+    if (o.storedLink) sourceLinked = true;
+    for (const a of o.assignments) {
+      const prev = byDoc.get(a.soDocNo);
+      // A STATIC (locked) assignment wins over a FLOATING one for the same SO.
+      if (!prev || (prev.locked === false && a.locked)) byDoc.set(a.soDocNo, a);
+    }
+  }
+  return { assignedSos: sortAssignments([...byDoc.values()]), sourceLinked };
+}
+
+export async function resolvePoSoCoverageForPos(
+  sb: any,
+  c: Context<any>,
+  poIds: Array<string | null | undefined>,
+): Promise<Map<string, PoAssignedSummary>> {
+  const out = new Map<string, PoAssignedSummary>();
+  const ids = [...new Set(poIds.filter((x): x is string => !!x))];
+  if (ids.length === 0) return out;
+
+  // PO headers (number + "From SOs:" notes) — company-scoped.
+  const { data: poHdrs } = await scopeToCompany(
+    sb.from('purchase_orders').select('id, po_number, notes'), c,
+  ).in('id', ids);
+  const poNumberById = new Map<string, string>();
+  const notesById = new Map<string, string | null>();
+  for (const h of (poHdrs ?? []) as Array<{ id: string; po_number: string | null; notes: string | null }>) {
+    poNumberById.set(h.id, h.po_number ?? '');
+    notesById.set(h.id, h.notes ?? null);
+  }
+  const validIds = [...poNumberById.keys()];
+  if (validIds.length === 0) return out;
+  const poNumbers = [...new Set([...poNumberById.values()].filter(Boolean))];
+
+  // PO lines — SKUs + so_item_id links, grouped by PO — company-scoped.
+  const { data: poLines } = await scopeToCompany(
+    sb.from('purchase_order_items').select('purchase_order_id, material_code, so_item_id'), c,
+  ).in('purchase_order_id', validIds);
+  const skusByPo = new Map<string, Array<string | null>>();
+  const linkedSkusByPo = new Map<string, Set<string>>();
+  const soItemToPos = new Map<string, Set<string>>();
+  const allSoItemIds = new Set<string>();
+  for (const l of (poLines ?? []) as Array<{ purchase_order_id: string; material_code: string | null; so_item_id: string | null }>) {
+    const arr = skusByPo.get(l.purchase_order_id) ?? [];
+    arr.push(l.material_code);
+    skusByPo.set(l.purchase_order_id, arr);
+    if (l.so_item_id) {
+      allSoItemIds.add(l.so_item_id);
+      const s = soItemToPos.get(l.so_item_id) ?? new Set<string>();
+      s.add(l.purchase_order_id);
+      soItemToPos.set(l.so_item_id, s);
+      const code = (l.material_code ?? '').trim();
+      if (code) {
+        const ls = linkedSkusByPo.get(l.purchase_order_id) ?? new Set<string>();
+        ls.add(code);
+        linkedSkusByPo.set(l.purchase_order_id, ls);
+      }
+    }
+  }
+
+  // ── (b) STORED ORIGIN — candidate SO doc_nos per PO ───────────────────────
+  // b1: exact raise-link (so_item_id → doc_no).
+  const soItemDoc = new Map<string, string>();
+  const soItemArr = [...allSoItemIds];
+  for (let k = 0; k < soItemArr.length; k += 300) {
+    const chunk = soItemArr.slice(k, k + 300);
+    if (chunk.length === 0) continue;
+    const { data: rows } = await scopeToCompany(
+      sb.from('mfg_sales_order_items').select('id, doc_no'), c,
+    ).in('id', chunk);
+    for (const r of (rows ?? []) as Array<{ id: string; doc_no: string | null }>) {
+      if (r.doc_no) soItemDoc.set(r.id, r.doc_no);
+    }
+  }
+  const candidateDocsByPo = new Map<string, Set<string>>();
+  const allCandidateDocs = new Set<string>();
+  for (const id of validIds) candidateDocsByPo.set(id, new Set<string>());
+  for (const [soItemId, pos] of soItemToPos.entries()) {
+    const doc = soItemDoc.get(soItemId);
+    if (!doc) continue;
+    for (const poId of pos) { candidateDocsByPo.get(poId)!.add(doc); allCandidateDocs.add(doc); }
+  }
+  // b2: the PO's "From SOs: …" note (bulk / shared buys), via the shared parser.
+  for (const id of validIds) {
+    for (const tok of parseFromSosNote(notesById.get(id) ?? null)) {
+      candidateDocsByPo.get(id)!.add(tok); allCandidateDocs.add(tok);
+    }
+  }
+  // Validate every candidate against company-owned SOs + carry each one's date + lines.
+  const ddByDoc = new Map<string, string | null>();
+  const validDocs = new Set<string>();
+  const soHeaderByDoc = new Map<string, SoHeaderRow>();
+  const soLinesByDoc = new Map<string, SoLineRow[]>();
+  const candArr = [...allCandidateDocs];
+  for (let k = 0; k < candArr.length; k += 300) {
+    const chunk = candArr.slice(k, k + 300);
+    if (chunk.length === 0) continue;
+    const { data: soHeaders } = await scopeToCompany(
+      sb.from('mfg_sales_orders').select('doc_no, customer_delivery_date, amended_delivery_date'), c,
+    ).in('doc_no', chunk);
+    for (const h of (soHeaders ?? []) as SoHeaderRow[]) {
+      if (!h.doc_no) continue;
+      validDocs.add(h.doc_no);
+      ddByDoc.set(h.doc_no, effectiveDeliveryDate(h));
+      soHeaderByDoc.set(h.doc_no, h);
+    }
+  }
+  const validDocArr = [...validDocs];
+  for (let k = 0; k < validDocArr.length; k += 300) {
+    const chunk = validDocArr.slice(k, k + 300);
+    if (chunk.length === 0) continue;
+    const { data: soLines } = await sb.from('mfg_sales_order_items')
+      .select('doc_no, item_code').in('doc_no', chunk);
+    for (const l of (soLines ?? []) as SoLineRow[]) {
+      if (!l.doc_no) continue;
+      const arr = soLinesByDoc.get(l.doc_no) ?? [];
+      arr.push(l);
+      soLinesByDoc.set(l.doc_no, arr);
+    }
+  }
+
+  // ── (c) MRP FLOATING — computeMrp runs ONCE for the whole page ────────────
+  const floatingByPo = new Map<string, Map<string, OriginAssignment[]>>();
+  try {
+    const mrpResult = await computeMrp(sb, {
+      catFilter: null,
+      whFilter: null,
+      includeUndated: true,
+      companyId: activeCompanyId(c),
+      leadBuffers: await loadLeadBuffers(c.env.DB),
+    });
+    const reverse = mrpReverseCoverage(mrpResult);
+    for (const poNum of poNumbers) {
+      const forPo = reverse.get(poNum) ?? [];
+      if (forPo.length === 0) continue;
+      const byCode = new Map<string, Map<string, string | null>>();
+      for (const a of forPo) {
+        const code = (a.itemCode ?? '').trim();
+        if (!code || !a.soDocNo) continue;
+        const inner = byCode.get(code) ?? new Map<string, string | null>();
+        if (!inner.has(a.soDocNo) || (a.deliveryDate && (inner.get(a.soDocNo) ?? null) === null)) {
+          inner.set(a.soDocNo, a.deliveryDate ?? null);
+        }
+        byCode.set(code, inner);
+      }
+      const m = new Map<string, OriginAssignment[]>();
+      for (const [code, inner] of byCode.entries()) {
+        m.set(code, sortAssignments([...inner.entries()].map(([soDocNo, deliveryDate]) => ({
+          soDocNo, deliveryDate, locked: false, source: 'mrp' as const,
+        }))));
+      }
+      floatingByPo.set(poNum, m);
+    }
+  } catch { /* MRP unavailable — floating stays empty; stored/delivered still show */ }
+
+  // ── (a) DELIVERED → DO-lock — batched across every PO number on the page ──
+  const bucketsByPo = new Map<string, Set<string>>();
+  const doIds = new Set<string>();
+  try {
+    const { data: movs } = await sb.from('inventory_movements')
+      .select('source_doc_id, product_code, variant_key, batch_no')
+      .eq('source_doc_type', 'DO')
+      .eq('movement_type', 'OUT')
+      .in('batch_no', poNumbers);
+    for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; product_code: string | null; variant_key: string | null; batch_no: string | null }>) {
+      if (!m.batch_no || !m.source_doc_id || !m.product_code) continue;
+      const set = bucketsByPo.get(m.batch_no) ?? new Set<string>();
+      set.add(`${m.source_doc_id}::${m.product_code}::${m.variant_key ?? ''}`);
+      bucketsByPo.set(m.batch_no, set);
+      doIds.add(m.source_doc_id);
+    }
+    try {
+      const { data: lots } = await sb.from('inventory_lots')
+        .select('id, batch_no').in('batch_no', poNumbers);
+      const lotPo = new Map<string, string>();
+      for (const l of (lots ?? []) as Array<{ id: string; batch_no: string | null }>) {
+        if (l.id && l.batch_no) lotPo.set(l.id, l.batch_no);
+      }
+      const lotIds = [...lotPo.keys()];
+      for (let k = 0; k < lotIds.length; k += 300) {
+        const chunk = lotIds.slice(k, k + 300);
+        if (chunk.length === 0) continue;
+        const { data: cons } = await sb.from('inventory_lot_consumptions')
+          .select('source_doc_id, product_code, variant_key, lot_id')
+          .eq('source_doc_type', 'DO')
+          .in('lot_id', chunk);
+        for (const r of (cons ?? []) as Array<{ source_doc_id: string | null; product_code: string | null; variant_key: string | null; lot_id: string }>) {
+          const poNum = lotPo.get(r.lot_id);
+          if (!poNum || !r.source_doc_id || !r.product_code) continue;
+          const set = bucketsByPo.get(poNum) ?? new Set<string>();
+          set.add(`${r.source_doc_id}::${r.product_code}::${r.variant_key ?? ''}`);
+          bucketsByPo.set(poNum, set);
+          doIds.add(r.source_doc_id);
+        }
+      }
+    } catch { /* consumption / lot table absent — movement batches stand alone */ }
+  } catch { /* movements table shape differs — DO-lock simply yields nothing */ }
+
+  const doLockByPo = new Map<string, Map<string, OriginAssignment[]>>();
+  if (doIds.size > 0) {
+    const doIdList = [...doIds];
+    const doLines: DoLineRow[] = [];
+    const soDocByDo = new Map<string, string>();
+    for (let k = 0; k < doIdList.length; k += 300) {
+      const chunk = doIdList.slice(k, k + 300);
+      if (chunk.length === 0) continue;
+      const [{ data: doItems }, { data: doHdrs }] = await Promise.all([
+        scopeToCompany(
+          sb.from('delivery_order_items')
+            .select('delivery_order_id, so_item_id, item_code, item_group, variants'), c,
+        ).in('delivery_order_id', chunk),
+        scopeToCompany(
+          sb.from('delivery_orders').select('id, so_doc_no'), c,
+        ).in('id', chunk),
+      ]);
+      for (const r of (doItems ?? []) as DoLineRow[]) doLines.push(r);
+      for (const d of (doHdrs ?? []) as Array<{ id: string; so_doc_no: string | null }>) {
+        if (d.so_doc_no) soDocByDo.set(d.id, d.so_doc_no);
+      }
+    }
+    // so_item_id → SO doc_no (preferred over the DO header fallback).
+    const soDocBySoItem = new Map<string, string>();
+    const dlSoItemIds = [...new Set(doLines.map((l) => l.so_item_id).filter((x): x is string => !!x))];
+    for (let k = 0; k < dlSoItemIds.length; k += 300) {
+      const chunk = dlSoItemIds.slice(k, k + 300);
+      if (chunk.length === 0) continue;
+      const { data: soItems } = await scopeToCompany(
+        sb.from('mfg_sales_order_items').select('id, doc_no'), c,
+      ).in('id', chunk);
+      for (const r of (soItems ?? []) as Array<{ id: string; doc_no: string | null }>) {
+        if (r.doc_no) soDocBySoItem.set(r.id, r.doc_no);
+      }
+    }
+    // Effective dates for the DO-locked SOs — re-validates company scope.
+    const wantedDocs = [...new Set([...soDocBySoItem.values(), ...soDocByDo.values()].filter(Boolean))];
+    const doLockDd = new Map<string, string | null>();
+    const validLockDocs = new Set<string>();
+    for (let k = 0; k < wantedDocs.length; k += 300) {
+      const chunk = wantedDocs.slice(k, k + 300);
+      if (chunk.length === 0) continue;
+      const { data: soHeaders } = await scopeToCompany(
+        sb.from('mfg_sales_orders').select('doc_no, customer_delivery_date, amended_delivery_date'), c,
+      ).in('doc_no', chunk);
+      for (const h of (soHeaders ?? []) as SoHeaderRow[]) {
+        if (!h.doc_no) continue;
+        validLockDocs.add(h.doc_no);
+        doLockDd.set(h.doc_no, effectiveDeliveryDate(h));
+      }
+    }
+    for (const [k, v] of soDocBySoItem) if (!validLockDocs.has(v)) soDocBySoItem.delete(k);
+    for (const [k, v] of soDocByDo) if (!validLockDocs.has(v)) soDocByDo.delete(k);
+    for (const poNum of poNumbers) {
+      const buckets = bucketsByPo.get(poNum);
+      if (!buckets || buckets.size === 0) continue;
+      doLockByPo.set(poNum, buildDeliveredSoLock(buckets, doLines, soDocBySoItem, soDocByDo, doLockDd));
+    }
+  }
+
+  // ── Precedence merge per PO (a > b > c > none), then roll up to the cell ──
+  for (const id of validIds) {
+    const poNum = poNumberById.get(id) ?? '';
+    const skus = skusByPo.get(id) ?? [];
+    const doLock = doLockByPo.get(poNum) ?? new Map<string, OriginAssignment[]>();
+    let storedOrigin = new Map<string, OriginAssignment[]>();
+    const cand = candidateDocsByPo.get(id);
+    if (cand && cand.size > 0) {
+      const hdrs: SoHeaderRow[] = [];
+      const lines: SoLineRow[] = [];
+      for (const doc of cand) {
+        if (!validDocs.has(doc)) continue;
+        const h = soHeaderByDoc.get(doc);
+        if (h) hdrs.push(h);
+        for (const l of soLinesByDoc.get(doc) ?? []) lines.push(l);
+      }
+      if (hdrs.length > 0) storedOrigin = buildStoredOrigins(skus, hdrs, lines);
+    }
+    const floating = floatingByPo.get(poNum) ?? new Map<string, OriginAssignment[]>();
+    const origins = mergeAssignments(skus, doLock, storedOrigin, floating, linkedSkusByPo.get(id) ?? new Set());
+    out.set(id, summarizeOrigins(origins));
+  }
+  return out;
+}
+
 export default poSoCoverage;

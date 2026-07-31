@@ -32,6 +32,7 @@ import { DataTable, type Column } from "../../components/DataTable";
 import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
 import {
   DocumentLinesExpansion,
+  AssignedSoCell,
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
@@ -922,6 +923,23 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => r.expected_at ?? "",
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.expected_at)}</span>
+      ),
+    },
+    {
+      // Owner 2026-07-31: the Sales Order(s) this PO's supply is assigned to, at
+      // a glance. Resolved server-side (one pass, same precedence as the drill-
+      // down); a dashed chip with "~" flags an MRP guess vs a stored link.
+      key: "assigned_so",
+      label: "Assigned SO",
+      width: "168px",
+      disableSort: true,
+      getValue: (r) => (r.assigned_sos ?? []).map((a) => a.soDocNo).join(", "),
+      render: (r) => (
+        <AssignedSoCell
+          assignments={r.assigned_sos}
+          sourceLinked={r.assigned_so_linked}
+          onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+        />
       ),
     },
     {

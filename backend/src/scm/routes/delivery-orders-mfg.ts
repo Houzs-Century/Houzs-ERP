@@ -2586,6 +2586,30 @@ deliveryOrdersMfg.get('/:id', async (c) => {
   const boundPoBySoItem = unresolvedSoIds.length > 0
     ? await resolveExpectedBatchBySoItem(sb, unresolvedSoIds)
     : new Map<string, { poNumber: string }>();
+  /* Per-line Assigned SO (owner 2026-07-31): a DO is HARD-linked to its Sales
+     Order — never an MRP guess — so the drill-down shows each line's intrinsic SO
+     doc_no + that SO's effective delivery date (amended ?? customer), resolved
+     from the line's so_item_id. ONE batched pair of reads; fail-soft to a dash. */
+  const lineSoItemIds = [...new Set(
+    rawItems.map((it) => (it.so_item_id as string | null) ?? null).filter((x): x is string => !!x),
+  )];
+  const soDocBySoItem = new Map<string, string>();
+  const soDeliveryByDoc = new Map<string, string | null>();
+  if (lineSoItemIds.length > 0) {
+    const { data: soItemRows } = await sb.from('mfg_sales_order_items')
+      .select('id, doc_no').in('id', lineSoItemIds);
+    for (const r of (soItemRows ?? []) as Array<{ id: string; doc_no: string | null }>) {
+      if (r.doc_no) soDocBySoItem.set(r.id, r.doc_no);
+    }
+    const docNos = [...new Set([...soDocBySoItem.values()])];
+    if (docNos.length > 0) {
+      const { data: soHdrs } = await sb.from('mfg_sales_orders')
+        .select('doc_no, customer_delivery_date, amended_delivery_date').in('doc_no', docNos);
+      for (const h of (soHdrs ?? []) as Array<{ doc_no: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null }>) {
+        if (h.doc_no) soDeliveryByDoc.set(h.doc_no, h.amended_delivery_date ?? h.customer_delivery_date ?? null);
+      }
+    }
+  }
   const items = rawItems.map((it) => {
     const wid = lineWh.get(it.id) ?? null;
     const variantKey = computeVariantKey(
@@ -2620,6 +2644,12 @@ deliveryOrdersMfg.get('/:id', async (c) => {
       /* Physical rack label(s) the goods are stored on, for storekeeper picking.
          Empty when no rack placement matches (dash) — never guessed. */
       racks: [...racks],
+      /* Intrinsic Assigned SO for this line (DO is hard-linked, never a guess).
+         null when the line carries no so_item_id (ad-hoc / manual DO line). */
+      so_doc_no: it.so_item_id ? (soDocBySoItem.get(it.so_item_id as string) ?? null) : null,
+      so_delivery_date: it.so_item_id
+        ? (soDeliveryByDoc.get(soDocBySoItem.get(it.so_item_id as string) ?? '') ?? null)
+        : null,
     };
   });
   /* Finance gate — the DETAIL leaks cost/margin the same way the list did, so
