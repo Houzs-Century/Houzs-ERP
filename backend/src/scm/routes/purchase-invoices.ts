@@ -502,10 +502,14 @@ async function attachPiAssignedSos(
       }
     }
     const poIds = [...poByGrn.values()];
-    const assignedByPo = await resolvePoSoCoverageForPos(sb, c, poIds);
     /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped the PI's
-       parent PO's goods + qty, via the SAME pi → grn → PO chain. */
-    const deliveredByPo = await resolveDeliveredDosForPos(sb, c, poIds);
+       parent PO's goods + qty, via the SAME pi → grn → PO chain. It reads the
+       SAME poIds as the coverage resolver and neither consumes the other's
+       result, so both go out as one wave instead of back to back. */
+    const [assignedByPo, deliveredByPo] = await Promise.all([
+      resolvePoSoCoverageForPos(sb, c, poIds),
+      resolveDeliveredDosForPos(sb, c, poIds),
+    ]);
     return rows.map((r) => {
       const poId = r.grn_id ? poByGrn.get(r.grn_id) : undefined;
       const summary = poId ? assignedByPo.get(poId) : undefined;
