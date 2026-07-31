@@ -338,7 +338,7 @@ async function reallocateGrnCharges(sb: any, grnId: string): Promise<void> {
    the single chokepoint that writes inventory IN and rolls PO received_qty, so
    an omitted scope here would let one company's confirm commit stock against
    another's GRN. Callers get it from requireActiveCompanyId and refuse first. */
-async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number): Promise<{ ok: true; movementErrors?: string[] } | { ok: false; reason: string; status?: number }> {
+async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number): Promise<{ ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number }> {
   const { data: grnHeader } = await scopeToCompanyId(sb.from('grns')
     .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method')
     .eq('id', grnId), companyId).maybeSingle();
@@ -394,7 +394,40 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
   // this GRN is POSTED, its lines count).
   const touchedPoItemIds = (items ?? [])
     .map((it: { purchase_order_item_id: string | null }) => it.purchase_order_item_id);
-  await recomputePoReceived(sb, touchedPoItemIds);
+  const recount = await recomputePoReceived(sb, touchedPoItemIds);
+  /* THE GAP THIS CLOSES (2026-07-31). Everything above already committed: the
+     GRN is POSTED and the stock IN follows below. If the recount did not run,
+     its POs now under-report what was received — they keep offering the same
+     lines to the convert-to-GRN picker and keep counting as outstanding money —
+     and until today the ONLY trace was a console.error in a log with no
+     retention. That is how eleven receipts (2990-GRN-2607-011..-021) rotted for
+     nine days unnoticed.
+
+     Two durable traces now, neither of which can roll back the receipt:
+       • a row on the GRN's own audit trail, where anyone investigating THIS
+         document already looks;
+       • recountError on the response, alongside movementErrors, which is this
+         file's existing convention for "the post succeeded, a best-effort step
+         after it did not".
+     Detection still does not depend on either: diag-po-receipt-drift compares
+     received_qty against live GRN lines on a schedule and fails loudly, which
+     catches drift from causes nobody predicted — including whatever caused
+     this one, which remains unidentified. */
+  if (!recount.ok) {
+    try {
+      await recordEntityAudit(sb, {
+        entityType: 'GRN',
+        entityId: grnId,
+        entityDocNo: (grnHeader as { grn_number?: string | null } | null)?.grn_number ?? null,
+        action: 'RECOUNT_FAILED',
+        companyId,
+        source: 'postGrnAndRollup',
+        note:
+          `Receipt committed (GRN POSTED + stock IN) but the PO received_qty recount did not run: ` +
+          `${recount.reason ?? 'unknown'}. The linked PO lines under-report until recounted.`,
+      });
+    } catch { /* the trail is the backstop, not another way to lose the receipt */ }
+  }
 
   // ── Inventory IN per item — best effort, doesn't roll back the post. ─
   const movementErrors: string[] = [];
@@ -574,7 +607,11 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
     const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
     await recomputeSoStockAllocation(sb);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn failed:', e); }
-  return { ok: true, movementErrors: movementErrors.length ? movementErrors : undefined };
+  return {
+    ok: true,
+    movementErrors: movementErrors.length ? movementErrors : undefined,
+    recountError: recount.ok ? undefined : (recount.reason ?? 'unknown'),
+  };
 }
 
 const HEADER =
@@ -712,6 +749,12 @@ async function verifyGrnOverReceipt(
   }
 }
 
+/** Outcome of a recount. Mirrors AuditWriteResult in scm/lib/entity-audit.ts —
+ *  same shape for the same reason: a post-commit writer that must not throw, but
+ *  must not pretend it succeeded either. `reason` is for logs and the audit
+ *  trail, never for an operator. */
+export type RecountResult = { ok: boolean; reason?: string };
+
 /* ── Self-heal PO receipt counter (live-count model, mirrors recomputeSoPicked
    in mfg-purchase-orders.ts) ────────────────────────────────────────────────
    For each given purchase_order_item, RECOUNT received_qty from scratch as the
@@ -719,14 +762,30 @@ async function verifyGrnOverReceipt(
    it, then re-evaluate the parent PO's status. This replaces the old scattered
    +/- arithmetic so receive / edit / delete / cancel all converge to the truth
    and the PO line auto-releases the moment its receipts go away. Never
-   resurrects a CANCELLED PO. Best-effort. */
-export async function recomputePoReceived(sb: any, poItemIds: Array<string | null | undefined>) {
+   resurrects a CANCELLED PO. Non-throwing — see the ruling below. */
+export async function recomputePoReceived(
+  sb: any,
+  poItemIds: Array<string | null | undefined>,
+): Promise<RecountResult> {
   const ids = [...new Set(poItemIds.filter((x): x is string => Boolean(x)))];
-  if (ids.length === 0) return;
+  if (ids.length === 0) return { ok: true };
 
-  // Best-effort, never throws (Commander 2026-05-30): the primary write already
-  // committed. If this secondary recount hiccups we log + skip — the live-count
-  // model self-heals on the next operation that touches these PO lines.
+  // Still never throws (Commander 2026-05-30): the primary write already
+  // committed, and a GRN that received stock must not un-receive it because the
+  // recount hiccupped — rolling back a write the operator watched succeed is the
+  // same bug pointing the other way. That is the identical ruling entity-audit.ts
+  // records for its own post-commit writer.
+  //
+  // What changed 2026-07-31 is that it no longer swallows the OUTCOME. The old
+  // comment here claimed "the live-count model self-heals on the next operation
+  // that touches these PO lines" — true only if another operation ever comes.
+  // For 2990-PO-2606-005/008/013/015/016/017/024 and 2607-002/005/006/007 none
+  // did: eleven POs sat with their goods in the warehouse and received_qty
+  // untouched from 2026-07-14 until someone opened one on 07-31, because the
+  // only record of the failure was a console.error in an ephemeral Worker log.
+  // Callers now get the failure back — postGrnAndRollup writes it to the GRN's
+  // own audit trail and returns it in the response — so "self-heals" became a
+  // claim somebody can check instead of a hope.
   try {
     // 1. Recount received_qty per PO item from live GRN lines. Net out goods
     //    sent back to the supplier (returned_qty, migration 0106): a returned
@@ -779,8 +838,18 @@ export async function recomputePoReceived(sb: any, poItemIds: Array<string | nul
       patch.received_at = fully ? (prevReceivedAt ?? new Date().toISOString()) : null;
       await sb.from('purchase_orders').update(patch).eq('id', poId).neq('status', 'CANCELLED');
     }
+    return { ok: true };
   } catch (e) {
-    console.error('[recomputePoReceived] best-effort recount failed', { poItemIds: ids, error: e });
+    /* Say plainly that the receipt already committed — the old line ("best-effort
+       recount failed") read as a shrug, and opaque poItemIds gave an investigator
+       nothing to search prod for. */
+    const reason = e instanceof Error ? e.message : String(e);
+    console.error(
+      '[po-recount-failed] the GRN receipt is already committed but its PO roll-up did NOT run; ' +
+        'these PO lines now UNDER-REPORT what was received until something recounts them',
+      { poItemIds: ids, reason },
+    );
+    return { ok: false, reason };
   }
 }
 
@@ -1560,7 +1629,8 @@ grns.post('/', async (c) => {
   await recordGrnCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
   const movementErrors = postRes && postRes.ok ? postRes.movementErrors : undefined;
-  return c.json({ id: h.id, grnNumber: h.grn_number, movementErrors: movementErrors?.length ? movementErrors : undefined }, 201);
+  const recountError = postRes && postRes.ok ? postRes.recountError : undefined;
+  return c.json({ id: h.id, grnNumber: h.grn_number, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
 });
 
 // ── POST /from-pos ─────────────────────────────────────────────────────
@@ -1763,7 +1833,8 @@ grns.post('/from-pos', async (c) => {
   );
 
   const movementErrors = postRes.ok ? postRes.movementErrors : undefined;
-  return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined }, 201);
+  const recountError = postRes.ok ? postRes.recountError : undefined;
+  return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
 });
 
 export const postGrnHandler = async (c: any) => {
@@ -1857,7 +1928,7 @@ export const postGrnHandler = async (c: any) => {
     ]),
   });
 
-  return c.json({ grn: data, movementErrors: res.movementErrors?.length ? res.movementErrors : undefined });
+  return c.json({ grn: data, movementErrors: res.movementErrors?.length ? res.movementErrors : undefined, recountError: res.recountError });
 };
 grns.patch('/:id/post', postGrnHandler);
 
@@ -1969,7 +2040,7 @@ grns.post('/from-po-items', async (c) => {
   let counter = parseInt(firstNext.slice(`${cp}GRN-${yymm}-`.length), 10) - 1;
 
   const receivedAt = body.receivedDate ?? todayMyt();
-  const created: Array<{ id: string; grnNumber: string; purchaseOrderId: string; poNumber: string; lineCount: number; posted?: boolean; postError?: string; movementErrors?: string[] }> = [];
+  const created: Array<{ id: string; grnNumber: string; purchaseOrderId: string; poNumber: string; lineCount: number; posted?: boolean; postError?: string; movementErrors?: string[]; recountError?: string }> = [];
   // Track any bucket rolled back by the post-insert over-receipt verification so
   // we can surface a 409 with the same error shape the add-line path uses.
   let overReceipt: { poItemId: string; requested: number; remaining: number } | null = null;
@@ -2099,6 +2170,7 @@ grns.post('/from-po-items', async (c) => {
     );
     const postFailReason = postRes.ok ? undefined : postRes.reason;
     const bucketMovementErrors = postRes.ok ? postRes.movementErrors : undefined;
+    const bucketRecountError = postRes.ok ? postRes.recountError : undefined;
     created.push({
       id: h.id, grnNumber: h.grn_number,
       purchaseOrderId: bucket.primaryPoId, poNumber: [...bucket.poNumbers].join(', '),
@@ -2106,6 +2178,7 @@ grns.post('/from-po-items', async (c) => {
       posted: postRes.ok,
       ...(postFailReason ? { postError: postFailReason } : {}),
       ...(bucketMovementErrors?.length ? { movementErrors: bucketMovementErrors } : {}),
+      ...(bucketRecountError ? { recountError: bucketRecountError } : {}),
     });
   }
 
