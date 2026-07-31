@@ -42,7 +42,7 @@ describe("projectAcl — PIC visibility grace window", () => {
     const u = scopedUser();
     const base = { pic_id: 5, brand: "AKEMI" };
     expect(canSeeProject(u, { ...base, end_date: daysAgo(2) })).toBe(true);
-    expect(canSeeProject(u, { ...base, end_date: daysAgo(10) })).toBe(false);
+    expect(canSeeProject(u, { ...base, end_date: daysAgo(PIC_GRACE_DAYS + 3) })).toBe(false);
     expect(canSeeProject(u, { ...base, end_date: null })).toBe(true);
   });
 
