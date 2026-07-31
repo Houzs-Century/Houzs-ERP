@@ -87,6 +87,21 @@ function isDocumentNavigation(request: Request, url: URL): boolean {
   return accept.includes("text/html") && !lastSegment.includes(".");
 }
 
+// A CLOSED LIST, not "anything with a dot", and the difference is a regression
+// this fix nearly shipped. The dotted-path branch below has always ended in
+// `next()`, so a SPA route whose last segment happens to contain a dot
+// (`/customers/john.doe`, a doc number, a slug carrying a domain) fell through
+// to the `_redirects` catch-all and WORKED — by accident, on the very fallback
+// this change exists to stop. Converting every non-.html dotted miss into a 404
+// would have taken those routes down. So only extensions that are unambiguously
+// static files are eligible; anything else keeps the shell exactly as before.
+const STATIC_ASSET_EXTENSION =
+  /\.(?:m?js|cjs|css|map|json|webmanifest|woff2?|ttf|otf|eot|png|jpe?g|gif|svg|ico|webp|avif|mp4|webm|wasm|txt|xml)$/i;
+
+function isHtmlResponse(response: Response): boolean {
+  return /text\/html/i.test(response.headers.get("content-type") ?? "");
+}
+
 export const onRequest = async ({ request, env, next }: PagesContext): Promise<Response> => {
   const url = new URL(request.url);
 
@@ -114,7 +129,27 @@ export const onRequest = async ({ request, env, next }: PagesContext): Promise<R
   // so that broken <img> / fetch() calls show up as 404s instead of HTML.
   const lastSegment = url.pathname.split("/").pop() ?? "";
   if (lastSegment.includes(".")) {
-    return next();
+    const response = await next();
+    // ...but `next()` is NOT the end of the chain. `public/_redirects` is a single
+    // `/*  /index.html  200`, so a MISSING file falls through this Function, misses
+    // on disk, and comes back as the SPA shell with status **200**. Under a code
+    // URL that is the edge-poison outage of 2026-07-31 in one line: the browser
+    // fails the module import ("expected a JavaScript-or-Wasm module script but the
+    // server responded with a MIME type of text/html"), and because the status is
+    // 200 the CDN happily caches that HTML *under the asset's own URL* for the
+    // whole TTL. Deploys have a propagation window where index.html is live and a
+    // hashed chunk is not, so every deploy is a chance to poison a PoP — the
+    // 2026-07-31 11:08 deploy did exactly that, 12 times in 100 seconds, from the
+    // CI runner's PoP. A real 404 cannot be mistaken for a chunk and `no-store`
+    // keeps it out of every cache, so the window closes on its own.
+    // Paths that are legitimately HTML keep the shell.
+    if (STATIC_ASSET_EXTENSION.test(lastSegment) && isHtmlResponse(response)) {
+      return new Response("Not found", {
+        status: 404,
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+    return response;
   }
 
   // Everything else is a SPA route. Serve the shell.

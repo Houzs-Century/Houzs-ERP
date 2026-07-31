@@ -10,7 +10,13 @@ export default defineConfig(async (env) => {
     test: {
       environment: "jsdom",
       globals: false,
-      include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+      // `functions/` is the Cloudflare Pages SPA fallback. It shipped with no
+      // local coverage at all — tsconfig.app.json included only `src`, so
+      // `tsc --noEmit` never read it and vitest never ran anything in it, and
+      // the only thing type-checking it was Cloudflare at deploy time. That gap
+      // is how a routing bug that returns the app shell under every missing
+      // .js URL survived (see BUG-HISTORY 2026-07-31).
+      include: ["src/**/*.test.ts", "src/**/*.test.tsx", "functions/**/*.test.ts"],
     },
   } as UserConfig);
 });
