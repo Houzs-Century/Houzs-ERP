@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChunkReloadBoundary, hardRecover } from "./RouteFallback";
+import { CURRENT_BUILD_ID, ChunkReloadBoundary, hardRecover } from "./RouteFallback";
 
 const { reportClientError } = vi.hoisted(() => ({
   reportClientError: vi.fn(),
@@ -70,7 +70,10 @@ describe("ChunkReloadBoundary", () => {
 
     expect(screen.getByLabelText("Loading page")).toBeTruthy();
     expect(getRegistrations).toHaveBeenCalledTimes(1);
-    expect(Number(sessionStorage.getItem(RECOVER_AT_KEY))).toBe(Date.now());
+    expect(JSON.parse(sessionStorage.getItem(RECOVER_AT_KEY) ?? "{}")).toEqual({
+      at: Date.now(),
+      buildId: CURRENT_BUILD_ID,
+    });
     expect(reportClientError).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -103,7 +106,52 @@ describe("ChunkReloadBoundary", () => {
     expect(reload.mock.invocationCallOrder[0]).toBeGreaterThan(cacheDelete.mock.invocationCallOrder[1]);
   });
 
-  it("uses the cooldown to prevent a stale-chunk reload loop", () => {
+  it("spends the cooldown per build — a failure on a newly landed build recovers again", async () => {
+    // The attempt on record ran on an OLDER build, so it worked: the reload
+    // landed this one. A chunk failing here is a new fault (owner 2026-07-31:
+    // two deploys inside the 60s window left him on the panel), so it gets its
+    // own recovery instead of inheriting the spent cooldown.
+    sessionStorage.setItem(
+      RECOVER_AT_KEY,
+      JSON.stringify({ at: Date.now() - 1_000, buildId: "older-build" }),
+    );
+
+    render(
+      <ChunkReloadBoundary resetKey="/scm/purchase-orders">
+        <ThrowError message="Failed to fetch dynamically imported module" />
+      </ChunkReloadBoundary>,
+    );
+
+    expect(screen.getByLabelText("Loading page")).toBeTruthy();
+    expect(getRegistrations).toHaveBeenCalledTimes(1);
+    expect(reportClientError).not.toHaveBeenCalled();
+    expect(JSON.parse(sessionStorage.getItem(RECOVER_AT_KEY) ?? "{}")).toEqual({
+      at: Date.now(),
+      buildId: CURRENT_BUILD_ID,
+    });
+  });
+
+  it("keeps the cooldown when the recorded attempt is from the same build", () => {
+    sessionStorage.setItem(
+      RECOVER_AT_KEY,
+      JSON.stringify({ at: Date.now() - 1_000, buildId: CURRENT_BUILD_ID }),
+    );
+
+    render(
+      <ChunkReloadBoundary resetKey="/orders">
+        <ThrowError message="Loading chunk 42 failed" />
+      </ChunkReloadBoundary>,
+    );
+
+    expect(screen.getByText("Something went wrong loading this page.")).toBeTruthy();
+    expect(getRegistrations).not.toHaveBeenCalled();
+    expect(reportClientError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Loading chunk 42 failed" }),
+      "stale-chunk-persisted",
+    );
+  });
+
+  it("honours a legacy bare-timestamp mark as a same-build attempt", () => {
     sessionStorage.setItem(RECOVER_AT_KEY, String(Date.now() - 1_000));
 
     render(
