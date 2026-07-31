@@ -115,12 +115,25 @@ app.get("/", async (c) => {
       this_week: thisWeek.length,
     },
   };
-  // Cache for ~60s so repeat loads/polls skip the slow path. Best-effort.
+  // Cache for ~60s so repeat loads/polls skip the slow path. Best-effort, and
+  // NOT awaited: the response does not depend on the write landing, so awaiting
+  // it charged a KV round trip to every cache MISS — the exact requests that
+  // were already the slow ones. Measured on prod 2026-08-01 at 800-822ms on a
+  // cold Overview. waitUntil keeps the write alive past the response; the
+  // floating-promise fallback is for runtimes that supply no executionCtx
+  // (some test harnesses), same pattern as index.ts and /auth/me.
+  const fill = (async () => {
+    try {
+      await c.env.SESSION_CACHE?.put(cacheKey, JSON.stringify(payload), {
+        expirationTtl: 60,
+      });
+    } catch {}
+  })();
   try {
-    await c.env.SESSION_CACHE?.put(cacheKey, JSON.stringify(payload), {
-      expirationTtl: 60,
-    });
-  } catch {}
+    c.executionCtx.waitUntil(fill);
+  } catch {
+    void fill;
+  }
   return c.json(payload);
 });
 

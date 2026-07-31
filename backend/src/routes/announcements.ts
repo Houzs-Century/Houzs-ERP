@@ -675,12 +675,25 @@ app.get("/banner", async (c) => {
     ackedIds,
   };
   if (cacheKey) {
+    // Not awaited — the response does not depend on the write landing, and the
+    // banner is polled from every page, so a KV round trip on each miss was
+    // charged to a request that is already on the slow path. Measured on prod
+    // 2026-08-01: announcements/banner was the slowest call on several routes,
+    // peaking at 527ms. Same waitUntil-with-floating-fallback shape as
+    // routes/inbox.ts and /auth/me.
+    const fill = (async () => {
+      try {
+        await c.env.SESSION_CACHE?.put(cacheKey, JSON.stringify(payload), {
+          expirationTtl: CONFIG_CACHE_TTL_SECONDS.banner,
+        });
+      } catch {
+        /* non-fatal */
+      }
+    })();
     try {
-      await c.env.SESSION_CACHE?.put(cacheKey, JSON.stringify(payload), {
-        expirationTtl: CONFIG_CACHE_TTL_SECONDS.banner,
-      });
+      c.executionCtx.waitUntil(fill);
     } catch {
-      /* non-fatal */
+      void fill;
     }
   }
   c.header("x-config-cache", cacheKey ? "miss" : "bypass");
