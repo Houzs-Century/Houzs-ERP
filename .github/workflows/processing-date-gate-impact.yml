@@ -1,0 +1,55 @@
+name: Processing-date gate impact (read-only)
+
+# Sizes the blast radius BEFORE unifying Processing Date and Proceed.
+#
+# Owner 2026-07-31: "Processing Date 和 Proceed 是一样的... houzs 是 30%, 2990 是
+# 50%... 全系统直接统一一个叫 Processing Date". The code disagrees in two ways with
+# opposite risk profiles, and this measures each one separately so the owner can
+# take the cheap half now and stage the expensive half:
+#
+#   (A) THRESHOLD per company — scm/shared/order-rules.ts calls 50% "a 2990 rule"
+#       that "must NOT gate the Houzs processing date", but `grep -c company` on
+#       that file returns 0, so both constants apply to everyone. Scoping RELAXES
+#       Houzs and TIGHTENS 2990 from 30% to 50%.
+#   (B) COMPLETENESS — the Proceed gate also demands name/email/address/postcode/
+#       delivery date. The processing-date gate is money-only ON PURPOSE today
+#       ("resolve customer details in Proceed"). Adopting them starts refusing
+#       orders that save right now. This is the expensive half.
+#
+# The answer lives only in production, so this is a script plus a manual trigger
+# rather than a SQL snippet pasted to a human (repo rule: build the check, never
+# ask the owner to run a query). Strictly read-only — one SELECT, no writes, no
+# rule change. See backend/scripts/check-processing-date-gate-impact.mjs.
+#
+# Manual trigger only: it is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Own concurrency group — must never queue behind or displace a release.
+concurrency:
+  group: processing-date-gate-impact
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-processing-date-gate-impact.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks.
+          NODE_OPTIONS: --dns-result-order=ipv4first
