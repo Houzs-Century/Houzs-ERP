@@ -30,7 +30,7 @@ import { sendEmail, publicUrl } from "../services/email";
 import { resolveCompanyCode, getBrandingForCompany } from "../services/branding";
 import { AutoCountClient, routeRegion, isAutoCountSyncDisabled } from "../services/autocount";
 import { upsertSalesOrder } from "../services/pull";
-import { requirePermission } from "../middleware/auth";
+import { requirePermission, requireAnyPermission } from "../middleware/auth";
 import { baseKeyOf, isThumbKey, THUMB_MAX_BYTES, thumbKeyFor } from "../services/photoThumbs";
 import {
   houzsCompanyId,
@@ -3116,7 +3116,7 @@ app.patch("/:id/items/:itemId", requirePermission("service_cases.write"), async 
 const ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "mp4", "mov", "webm", "pdf"]);
 const MAX_SIZE = 25 * 1024 * 1024; // 25 MB
 
-app.put("/:id/attachments", requirePermission("service_cases.write"), async (c) => {
+app.put("/:id/attachments", requireAnyPermission(["service_cases.write", "service_cases.create"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const userId = (c as any).get?.("userId") ?? 0;
@@ -3163,7 +3163,7 @@ app.put("/:id/attachments", requirePermission("service_cases.write"), async (c) 
 // at `<r2_key>.thumb`. The frontend uploads it right after the main PUT above;
 // old clients never call this and nothing changes for them. Best-effort by
 // design: a failed thumb never invalidates the already-saved attachment.
-app.put("/:id/attachments/thumb", requirePermission("service_cases.write"), async (c) => {
+app.put("/:id/attachments/thumb", requireAnyPermission(["service_cases.write", "service_cases.create"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
 
