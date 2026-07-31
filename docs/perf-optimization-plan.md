@@ -39,6 +39,175 @@ foregrounded; buffered long-task capture at load is unaffected and is what's cit
 
 ---
 
+## 0b. Second pass — measured live on prod 2026-08-01 (logged in, company 2990 HOME)
+
+Method: real navigations against `erp.houzscentury.com`, reading `PerformanceResourceTiming`
+per page. "usable" = when the LAST API call of the page settles.
+
+**The headline: rendering is NOT the bottleneck any more.** Main-thread blocking
+measured **0 ms with 0 long tasks on every page tested** (Overview, Service Cases,
+SO, DO, PO, GRN, PI, SI, Inventory, Projects). The first campaign's windowing +
+mobile-split work did its job. What is left is server latency.
+
+| page | usable | dominant cost |
+|---|---|---|
+| `/assr` | **1983 ms** | shell tax + summary |
+| `/scm/inventory` | 1560 ms | `inventory/products` 781ms + see W6 below |
+| `/scm/purchase-invoices` | 1498 ms | `/api/scm/purchase-invoices` **966 ms** |
+| `/scm/purchase-orders` | 1434 ms | `/api/scm/mfg-purchase-orders` **915 ms** |
+| `/scm/grns` | 1354 ms | `/api/scm/grns` **814 ms** |
+| `/scm/sales-orders` | 840 ms | — |
+| `/projects` | 738 ms | — |
+
+New findings, none of which are in section 1:
+
+- [x] **A1 — `/api/auth/me` awaited a WRITE.** `pruneExpiredSessions` (a
+  `DELETE FROM sessions`) was awaited inside `/me`, which sits at the head of
+  every page load. `sessions(expires_at)` is indexed so it never scanned, but the
+  round trip was charged to every navigation. Moved to `waitUntil`. The app's own
+  `[perf] slow` logger caught `/api/auth/me` at **847 ms** live. FIXED.
+- [x] **A2 — `/api/assr/summary` ran 13 aggregates serially.** One concurrent
+  wave now. FIXED.
+- [x] **A3 — the Service Case list made 4 serial round trips** (2 visibility
+  reads, then COUNT, then the page). Now 2 waves. FIXED.
+- [x] **A4 — `assr_activity` had no index covering the `stage_since` subquery.**
+  Mig 0232. FIXED.
+- [x] **A5 — 500 KB of logo PNGs on first paint.** `logo-wordmark.png` was
+  **12088x3544** for a ~400px render (30x oversampled). Resized + recompressed:
+  500 KB -> 112 KB, alpha kept. FIXED.
+- [ ] **W6 (P0) — desktop `/scm/inventory` renders all 344 rows: 11,963 DOM
+  nodes.** Root cause traced: `DataTable.tsx:288-292` makes row windowing a
+  **no-op for grouped/expandable tables**, and Inventory's balances table is
+  expandable (chevron -> variants). The largest list in the app is exactly the
+  one the W1 windowing work excluded. Mobile is unaffected (same page at a narrow
+  viewport = 1,573 nodes), so `MobileModuleList` windowing is working.
+- [ ] **N1 (P0) — the shell tax.** Every full page load fires 6-8 requests that
+  belong to no page: `auth/me`, `branding`, `companies`, `notifications`,
+  `presence`, `presence/heartbeat`, `announcements/banner`, `inbox`, and they
+  arrive in THREE serial waves (Overview: auth/me at 91ms -> wave 2 at ~494ms ->
+  wave 3 at ~779ms, `assr/summary` settling at 1085ms). One `/api/bootstrap`
+  would collapse both the count and the waterfall. Highest remaining single win;
+  also the highest risk, because every page depends on it.
+- [ ] **N2 — connection cold starts dominate the variance.** The SAME endpoint
+  measured 148 ms and 833 ms (`/api/branding`), 110 ms and 847 ms (`/api/auth/me`)
+  minutes apart. This is the Hyperdrive cold-pool behaviour `db/d1-compat.ts`
+  already documents and retries. Tuning keep-warm is a config question, not a
+  code one.
+- [ ] **N3 — bundle is over its own ceiling.** `total JS (gzip) 1917.5 KB` vs the
+  1800 KB budget in `scripts/check-bundle-size.mjs`; the gate fails on main.
+- [ ] **N4 (P0) — one image request PER ROW, through the authenticated API.**
+  This is a CLASS, not two incidents. `/team` fires ~20
+  `/api/users/:id/profile-pic` (32 requests on the page, ~1s each behind the
+  browser connection limit); `/scm/product-models` fires **57** requests, most of
+  them `/product-models/:id/photo/:key`. Each costs a DB read plus an R2 GET.
+  The avatar half is fixed (see below); the model-photo half already carries
+  `public, max-age=3600` (`scm/routes/product-models.ts:84`), so it is bounded
+  but still 57 cold requests. The durable answer for both is fewer requests, not
+  longer TTLs: return the bytes' url in the LIST payload, or sprite/batch them.
+  Sweep the other image endpoints for the same shape before adding a third.
+- [x] **N4a — avatars are now cacheable.** `Avatar.tsx` already appended the R2
+  key as `?k=`, and keys carry a `Date.now()` prefix, so a url bearing the
+  CURRENT key names exactly one immutable object. `GET /users/:id/profile-pic`
+  now serves `immutable` for a year when `?k` MATCHES the row's key, and keeps
+  the old 300s when it is absent or stale — pinning a mismatched pair would
+  freeze the new image under the old url. Logic + tests in
+  `backend/src/lib/avatar-cache.ts`. FIXED.
+- [ ] **N5 — `/api/branding` is fetched on every page and cached 300s**
+  (`routes/branding.ts:204`) for a payload that changes almost never. It was the
+  slowest call on five of the 49 routes swept, peaking at 833ms. A longer TTL
+  (it already self-heals in 10 min client-side, see section 0) or an edge cache
+  is the cheap win; G1 says never `Infinity`.
+- Techniques confirmed ALREADY PRESENT (do not re-propose): route hover prefetch
+  (`Sidebar.tsx` -> `lib/prefetch-routes`), `content-visibility: auto`
+  (`DataTable.tsx:2359`), route + mobile `React.lazy`, modulePreload filtering,
+  Rolldown chunk groups, staleTime/gcTime, localStorage query snapshot,
+  cross-tab invalidation, 623 Postgres indexes incl. trigram GIN.
+  NOT present, still available: `queryClient.prefetchQuery` on hover (today the
+  hover prefetches the CHUNK but not the DATA), `useDeferredValue`/
+  `startTransition` for filter input, a Web Worker for xlsx/jspdf export, edge
+  caching for `branding`/`companies`.
+
+### The full sweep — 49 routes, full page load, sorted slowest first
+
+`usable` = when the last API call settles. `block` = main-thread blocking
+(long-task time over 50ms). **Every row measured `block 0ms`.** That is the
+finding: at today's data volumes this app has no rendering problem outside the
+single Inventory row below.
+
+| route | usable | api | slowest call | dom | rows |
+|---|---|---|---|---|---|
+| `/assr` | 1983 | 7 | branding 352 | 1539 | 8 |
+| `/team` | 1989 | **32** | users/:id/profile-pic 1147 | 2932 | 43 |
+| `/scm/inventory` | 1560 | 10 | inventory/products 781 | **11963** | **344** |
+| `/scm/products` | 1570 | 11 | maintenance-config 390 | 2537 | 48 |
+| `/scm/purchase-invoices` | 1498 | 9 | purchase-invoices **966** | 1461 | 2 |
+| `/scm/purchase-orders` | 1434 | 10 | mfg-purchase-orders **915** | 1400 | 2 |
+| `/scm/product-models` | 1361 | **57** | product-models/:id 665 | 2891 | 65 |
+| `/scm/grns` | 1354 | 9 | grns **814** | 1430 | 2 |
+| `/scm/delivery-planning` | 1293 | 12 | delivery-planning 553 | 5374 | 48 |
+| `/scm/warehouses/racks` | 1237 | 11 | auth/me 533 | 955 | 0 |
+| `/scm/consignment-orders` | 1150 | 10 | branding 535 | 1246 | 1 |
+| `/scm/outstanding` | 1086 | 10 | outstanding/summary 595 | 1558 | 50 |
+| `/announcements` | 1068 | 12 | auth/me 501 | 1090 | 0 |
+| `/scm/trips` | 1044 | 12 | delivery-planning 509 | 3047 | 21 |
+| `/system-health` | 1023 | 12 | admin/health/live 519 | 1437 | 44 |
+| `/scm/unbilled-deliveries` | 1016 | 9 | unbilled-deliveries 522 | 1238 | 1 |
+| `/mail-center` | 1005 | 12 | branding 377 | 1098 | 0 |
+| `/settings` | 997 | 9 | branding 508 | 896 | 0 |
+| `/scm/mrp` | 929 | 9 | mrp 429 | 1247 | 19 |
+| `/scm/stock-transfers` | 870 | 10 | staff 365 | 1187 | 1 |
+| `/scm/maintenance` | 861 | 12 | maintenance-config 354 | 2536 | 48 |
+| `/my-cases` | 856 | 9 | assr/my-cases 363 | 2473 | 0 |
+| `/scm/sales-orders` | 840 | 10 | mfg-sales-orders 299 | 2651 | 28 |
+| `/scm/suppliers` | 844 | 9 | notifications 191 | 1219 | 13 |
+| `/scm/hr/commission` | 786 | 10 | hr/commission 295 | 976 | 5 |
+| `/scm/sales-orders/maintenance` | 774 | 15 | announcements/banner 521 | 1011 | 4 |
+| `/scm/lorry-capacity` | 746 | 9 | announcements/banner 527 | 2067 | 27 |
+| `/scm/delivery-orders` | 746 | 10 | staff 212 | 1490 | 1 |
+| `/scm/sales-invoices` | 745 | 10 | sales-invoices 196 | 1519 | 1 |
+| `/projects` | 738 | 13 | projects/summary 201 | 1028 | 0 |
+| `/scm/fleet` | 734 | 12 | announcements/banner 517 | 1968 | 63 |
+| `/sales` | 732 | 11 | branding 301 | 941 | 0 |
+| `/scm/po-amendments` | 711 | 11 | so-amendments 201 | 1041 | 4 |
+| `/scm/delivery-returns` | 706 | 10 | staff 193 | 1408 | 1 |
+| `/scm/consignment-notes` | 699 | 10 | notifications 186 | 1169 | 1 |
+| `/scm/stock-adjustments` | 698 | 11 | staff 186 | 1199 | 1 |
+| `/scm/warehouses` | 676 | 9 | notifications 189 | 1154 | 8 |
+| `/scm/accounting` | 655 | 9 | notifications 446 | 1209 | 6 |
+| `/fleet-health` | 655 | 9 | notifications 176 | 1533 | 27 |
+| `/scm/purchase-returns` | 651 | 9 | notifications 183 | 1241 | 1 |
+| `/scm/fabric-tracking` | 646 | 9 | notifications 180 | 2083 | 47 |
+| `/scm/payment-vouchers` | 628 | 9 | notifications 183 | 1017 | 1 |
+| `/scm/delivery-zones` | 617 | 9 | notifications 184 | 1009 | 1 |
+| `/scm/stock-takes` | 615 | 9 | stock-takes 129 | 1192 | 1 |
+| `/scm/categories` | 615 | 9 | notifications 189 | 1095 | 0 |
+| `/scm/finance` | 527 | 8 | announcements/banner 297 | 926 | 0 |
+| `/scm/procurement` | 448 | 8 | notifications 185 | 963 | 0 |
+| `/` (Overview) | 1085 | 11 | auth/me 381 | 997 | 0 |
+
+### Interactions — SPA navigation does NOT pay the shell tax
+
+Important correction to how the table above reads: those are FULL PAGE LOADS.
+In normal use staff navigate inside the SPA, which skips the 6-8 shell requests
+entirely. Measured on the SO list:
+
+| interaction | new API calls | block | dom |
+|---|---|---|---|
+| expand a row's chevron | 0 (line items ride the list payload) | 0ms | +9 |
+| click a row -> quick view drawer | 1, `mfg-sales-orders/:docNo` **741ms** | 0ms | +97 |
+| drawer -> "Open full page" | 3, 540ms total; **0 lazy chunks** (hover prefetch had it) | 0ms | rebuild |
+
+So the felt cost of a click is ONE endpoint's latency, nothing else. The hover
+route-prefetch is doing its job — a detail page fetches no JS at all.
+Small waste: the drawer and the full page fetch the SAME document under
+different cache keys, so opening one then the other requests it twice.
+
+**Coverage honesty:** 49 of ~90 routes measured plus the three interactions
+above. NOT measured: `/new` create forms, most `/:id` detail pages, dropdown
+menus and modals, and the four `/scm/reports/*` pages.
+
+---
+
 ## 0. Shipped this campaign (verified live)
 
 - [x] **mig 0104** — pg_trgm GIN + partial indexes on `scm.mfg_products` + fabric tables.

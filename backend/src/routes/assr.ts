@@ -638,66 +638,88 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
   const visC = vis("c.");
   const visBare = vis("");
 
-  const totals = await c.env.DB.prepare(
-    `SELECT COUNT(*) as total FROM assr_cases WHERE 1=1${coBare}${visBare.sql}`
-  )
-    .bind(...visBare.binds)
-    .first<{ total: number }>();
+  // These 13 aggregates are independent of one another and depend only on the
+  // predicates resolved above, so they run as ONE concurrent wave instead of 13
+  // serial round trips. They share a Postgres client either way (routes/search.ts
+  // and routes/finance.ts do the same over env.DB), so this only removes
+  // round-trip latency — every statement is byte-identical to its serial form.
+  // Measured serially at ~219ms, the slower half of the Service Cases page load
+  // (docs/modules/service-case.md section 5, which prescribes exactly this fix).
+  const [
+    totals,
+    active,
+    byStage,
+    byStatus,
+    byLocation,
+    byCategory,
+    recent,
+    aging,
+    breach,
+    pendingReview,
+    avgE2E,
+    funnel,
+    csatTrend,
+  ] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as total FROM assr_cases WHERE 1=1${coBare}${visBare.sql}`
+    )
+      .bind(...visBare.binds)
+      .first<{ total: number }>(),
 
-  // Active backlog: cases still in progress (not completed) and not
-  // archived — "how many cases are open right now". Deliberately NOT
-  // period-filtered: the Overview KPI reflects the live workload, not a
-  // rolling window. 'completed' is the only terminal stage (same
-  // definition the breach / aging queries use).
-  const active = await c.env.DB.prepare(
-    `SELECT COUNT(*) as count FROM assr_cases
+    // Active backlog: cases still in progress (not completed) and not
+    // archived — "how many cases are open right now". Deliberately NOT
+    // period-filtered: the Overview KPI reflects the live workload, not a
+    // rolling window. 'completed' is the only terminal stage (same
+    // definition the breach / aging queries use).
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as count FROM assr_cases
       WHERE stage != 'completed' AND archived_at IS NULL${coBare}${visBare.sql}`
-  )
-    .bind(...visBare.binds)
-    .first<{ count: number }>();
+    )
+      .bind(...visBare.binds)
+      .first<{ count: number }>(),
 
-  const byStage = await c.env.DB.prepare(
-    `SELECT stage, COUNT(*) as count FROM assr_cases WHERE 1=1${coBare}${visBare.sql} GROUP BY stage`
-  )
-    .bind(...visBare.binds)
-    .all();
+    c.env.DB.prepare(
+      `SELECT stage, COUNT(*) as count FROM assr_cases WHERE 1=1${coBare}${visBare.sql} GROUP BY stage`
+    )
+      .bind(...visBare.binds)
+      .all(),
 
-  const byStatus = await c.env.DB.prepare(
-    `SELECT status, COUNT(*) as count FROM assr_cases WHERE 1=1${coBare}${visBare.sql} GROUP BY status`
-  )
-    .bind(...visBare.binds)
-    .all();
+    c.env.DB.prepare(
+      `SELECT status, COUNT(*) as count FROM assr_cases WHERE 1=1${coBare}${visBare.sql} GROUP BY status`
+    )
+      .bind(...visBare.binds)
+      .all(),
 
-  const byLocation = await c.env.DB.prepare(
-    `SELECT location, COUNT(*) as count FROM assr_cases
+    c.env.DB.prepare(
+      `SELECT location, COUNT(*) as count FROM assr_cases
      WHERE location IS NOT NULL${coBare}${visBare.sql}
      GROUP BY location ORDER BY count DESC LIMIT 5`
-  )
-    .bind(...visBare.binds)
-    .all();
+    )
+      .bind(...visBare.binds)
+      .all(),
 
-  // Group by issue_category. The intake form now captures this on
-  // every new case (replacing the older service_category-driven flow),
-  // so this gives dispatchers a live view of what's coming in.
-  const byCategory = await c.env.DB.prepare(
-    `SELECT issue_category as name, COUNT(*) as count FROM assr_cases
+    // Group by issue_category. The intake form now captures this on
+    // every new case (replacing the older service_category-driven flow),
+    // so this gives dispatchers a live view of what's coming in.
+    c.env.DB.prepare(
+      `SELECT issue_category as name, COUNT(*) as count FROM assr_cases
      WHERE issue_category IS NOT NULL${coBare}${visBare.sql}
      GROUP BY issue_category ORDER BY count DESC LIMIT 5`
-  )
-    .bind(...visBare.binds)
-    .all();
+    )
+      .bind(...visBare.binds)
+      .all(),
 
-  const recent = await c.env.DB.prepare(
-    `SELECT COUNT(*) as count FROM assr_cases
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as count FROM assr_cases
      WHERE complained_date IS NOT NULL
        AND complained_date >= date('now', '-30 days')${coBare}${visBare.sql}`
-  )
-    .bind(...visBare.binds)
-    .first<{ count: number }>();
+    )
+      .bind(...visBare.binds)
+      .first<{ count: number }>(),
 
-  // Aging: cases still open that have been in their current stage >3 days
-  const aging = await c.env.DB.prepare(
-    `SELECT COUNT(*) as count
+    // Aging: cases still open that have been in their current stage >3 days
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as count
        FROM assr_cases c
       WHERE c.stage != 'completed'
         ${periodAnd}${coC}${visC.sql}
@@ -711,18 +733,18 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
                 c.created_at
               )
             ) > 3`
-  )
-    .bind(...visC.binds)
-    .first<{ count: number }>();
+    )
+      .bind(...visC.binds)
+      .first<{ count: number }>(),
 
-  // SLA breach: open cases whose CURRENT stage has crossed 100% of its
-  // snapshotted per-stage target. Uses the SAME stage-level definition as
-  // the Stage Funnel below (assr_stage_history.target_days + entered_at)
-  // so the KPI tile and the funnel's breach totals reconcile. Previously
-  // this used case-level deadline_at, which diverged from the funnel and
-  // showed a different number on the same page.
-  const breach = await c.env.DB.prepare(
-    `SELECT COUNT(*) as count
+    // SLA breach: open cases whose CURRENT stage has crossed 100% of its
+    // snapshotted per-stage target. Uses the SAME stage-level definition as
+    // the Stage Funnel below (assr_stage_history.target_days + entered_at)
+    // so the KPI tile and the funnel's breach totals reconcile. Previously
+    // this used case-level deadline_at, which diverged from the funnel and
+    // showed a different number on the same page.
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as count
        FROM assr_cases c
        JOIN assr_stage_history h
               ON h.assr_id = c.id AND h.exited_at IS NULL
@@ -731,42 +753,42 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
         ${periodAnd}${coC}${visC.sql}
         AND h.target_days IS NOT NULL AND h.target_days > 0
         AND (julianday('now') - julianday(h.entered_at)) / h.target_days >= 1`
-  )
-    .bind(...visC.binds)
-    .first<{ count: number }>();
+    )
+      .bind(...visC.binds)
+      .first<{ count: number }>(),
 
-  // v3.1 — Pending Review tile
-  const pendingReview = await c.env.DB.prepare(
-    `SELECT COUNT(*) as count FROM assr_cases c
+    // v3.1 — Pending Review tile
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as count FROM assr_cases c
       WHERE c.stage = 'pending_review' AND c.archived_at IS NULL
         ${periodAnd}${coC}${visC.sql}`
-  )
-    .bind(...visC.binds)
-    .first<{ count: number }>();
+    )
+      .bind(...visC.binds)
+      .first<{ count: number }>(),
 
-  // v3.1 — Avg end-to-end lead time (days), completed cases only.
-  // Filter out rows where closed_at < created_at — legacy data has
-  // some rows with a closed_at predating the case created_at (likely
-  // imported from AutoCount with a different timestamp source), and
-  // including them produces a wildly negative average. Window now
-  // honours the dashboard's since_days instead of the old hardcoded 90d.
-  const avgE2E = await c.env.DB.prepare(
-    `SELECT AVG(julianday(closed_at) - julianday(created_at)) AS avg_days
+    // v3.1 — Avg end-to-end lead time (days), completed cases only.
+    // Filter out rows where closed_at < created_at — legacy data has
+    // some rows with a closed_at predating the case created_at (likely
+    // imported from AutoCount with a different timestamp source), and
+    // including them produces a wildly negative average. Window now
+    // honours the dashboard's since_days instead of the old hardcoded 90d.
+    c.env.DB.prepare(
+      `SELECT AVG(julianday(closed_at) - julianday(created_at)) AS avg_days
        FROM assr_cases
       WHERE stage = 'completed'
         AND closed_at IS NOT NULL
         AND julianday(closed_at) > julianday(created_at)
         AND (julianday(closed_at) - julianday(created_at)) < 365
         AND closed_at >= date('now', '-${sinceDays} days')${coBare}${visBare.sql}`
-  )
-    .bind(...visBare.binds)
-    .first<{ avg_days: number | null }>();
+    )
+      .bind(...visBare.binds)
+      .first<{ avg_days: number | null }>(),
 
-  // v3.1 — Stage funnel: count by 9-stage enum, in canonical order,
-  // with breach-aware fill colour (% of cases in this stage that have
-  // crossed 100% of their snapshotted target).
-  const funnel = await c.env.DB.prepare(
-    `SELECT c.stage AS stage,
+    // v3.1 — Stage funnel: count by 9-stage enum, in canonical order,
+    // with breach-aware fill colour (% of cases in this stage that have
+    // crossed 100% of their snapshotted target).
+    c.env.DB.prepare(
+      `SELECT c.stage AS stage,
             COUNT(*) AS total,
             SUM(CASE
                   WHEN h.target_days IS NOT NULL AND h.target_days > 0
@@ -778,13 +800,13 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       WHERE c.archived_at IS NULL
         ${periodAnd}${coC}${visC.sql}
       GROUP BY c.stage`
-  )
-    .bind(...visC.binds)
-    .all<{ stage: string; total: number; breached: number }>();
+    )
+      .bind(...visC.binds)
+      .all<{ stage: string; total: number; breached: number }>(),
 
-  // v3.1 — CSAT 13-week rolling trend (weekly average ratings)
-  const csatTrend = await c.env.DB.prepare(
-    `SELECT strftime('%Y-W%W', closed_at) AS week,
+    // v3.1 — CSAT 13-week rolling trend (weekly average ratings)
+    c.env.DB.prepare(
+      `SELECT strftime('%Y-W%W', closed_at) AS week,
             AVG(satisfaction_rating) AS avg_rating,
             COUNT(satisfaction_rating) AS n
        FROM assr_cases
@@ -793,9 +815,10 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
         AND closed_at >= date('now', '-91 days')${coBare}${visBare.sql}
       GROUP BY week
       ORDER BY week`
-  )
-    .bind(...visBare.binds)
-    .all<{ week: string; avg_rating: number; n: number }>();
+    )
+      .bind(...visBare.binds)
+      .all<{ week: string; avg_rating: number; n: number }>(),
+  ]);
 
   return c.json({
     total: totals?.total || 0,
@@ -841,8 +864,12 @@ function stripCreditorFields(row: Record<string, any> | null | undefined): void 
 
 app.get("/", requireServiceCaseAccess(), async (c) => {
   const assignedToParam = c.req.query("assigned_to");
-  const visibleIds = await assrVisibleUserIds(c);
-  const visibleAgentNames = await assrVisibleAgentNames(c);
+  // Independent reads off the same tier predicate — one wave, not two round
+  // trips, before the list query can even start.
+  const [visibleIds, visibleAgentNames] = await Promise.all([
+    assrVisibleUserIds(c),
+    assrVisibleAgentNames(c),
+  ]);
   const result = await listAssrCases(c.env, {
     visible_to_user_ids: visibleIds,
     visible_agent_names: visibleAgentNames,
