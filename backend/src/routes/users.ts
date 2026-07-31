@@ -11,6 +11,7 @@ import { isSalesDirectorUser } from "../services/pmsAccess";
 import { hasPermission } from "../services/permissions";
 import { checkRateLimit } from "../middleware/rateLimit";
 import { normalizePhone } from "../scm/shared/phone";
+import { avatarCacheControl } from "../lib/avatar-cache";
 import type { Context } from "hono";
 import {
   sendEmail,
@@ -888,7 +889,16 @@ app.get("/:id/profile-pic", async (c) => {
   if (!obj) return c.json({ error: "Image missing" }, 404);
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
-  headers.set("cache-control", "private, max-age=300");
+
+  // Measured 2026-08-01: /team fetches one of these per member (43 of them,
+  // ~1s each behind the connection limit), and at a flat max-age=300 every
+  // visit past five minutes re-fetched all of them. Avatar.tsx already sends
+  // the R2 key as ?k=, so a matching url can safely be pinned — see
+  // lib/avatar-cache.ts for why the equality check is load-bearing.
+  headers.set(
+    "cache-control",
+    avatarCacheControl(c.req.query("k"), row.profile_pic_r2_key),
+  );
   return new Response(obj.body, { headers });
 });
 
