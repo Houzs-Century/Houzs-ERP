@@ -38,9 +38,10 @@ import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { freezeShipCost } from '../lib/fulfillment-costing';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
-import { checkStockAvailability, shortStockResponse } from '../lib/check-stock-availability';
+import { checkStockAvailability, shortStockResponse, type StockShortage } from '../lib/check-stock-availability';
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from '../lib/dropship-batch';
+import { planShipCommitments, type ShipLineFact } from '../lib/ship-commitment';
 import { loadSofaBatchStock, sofaStockKey } from '../lib/sofa-set-coverage';
 import { buildDoReversalRows } from '../lib/do-reversal';
 import { currentDocNoByKey, type CurrentEvent } from '../lib/current-doc';
@@ -339,7 +340,11 @@ const ITEM =
   'id, delivery_order_id, so_item_id, item_code, item_group, description, description2, ' +
   'uom, qty, m3_milli, unit_price_centi, discount_centi, line_total_centi, ' +
   'unit_cost_centi, line_cost_centi, line_margin_centi, variants, notes, ' +
-  'line_delivery_date, line_delivery_date_overridden, rack_id, created_at';
+  'line_delivery_date, line_delivery_date_overridden, rack_id, created_at, ' +
+  /* Mig 0230 — the incoming PO batch this line shipped against before its goods
+     arrived. Surfaced so the DO detail can say which PO a short line is bound to
+     instead of leaving the operator to infer it from the header badge. */
+  'committed_po_batch_no';
 
 const PAYMENT_COLS =
   'id, delivery_order_id, paid_at, method, merchant_provider, installment_months, ' +
@@ -479,15 +484,125 @@ async function recomputeTotals(sb: any, deliveryOrderId: string) {
 
    EXPORTED (Costing B, 2026-06-01) so the recost engine (apps/api/src/lib/
    recost.ts) can re-run it after a PI/GR price correction re-costs the lots. */
+/* ── resolveShipCommitments (2026-07-31) ──────────────────────────────────────
+   THE ONE PLACE a ship decides whether it is binding an incoming PO.
+
+   Owner's rule: "when they pick ship-anyway, that matched PO should be bound and
+   go negative against it." So binding follows the FACT that the line resolves a
+   PO — it is not a second question after the drop-ship dialog, and it is not
+   gated on the DO header's is_dropship flag (which mig 0057 defines as the UI
+   badge). The decision table itself is PURE and unit-tested in
+   scm/lib/ship-commitment.ts; this helper only gathers the four facts it needs:
+
+     · isSofa            — detectSofaSoItemIds (the same detector the cost paths use)
+     · allocatedBatchNo  — mfg_sales_order_items.allocated_batch_no (a RECEIVED batch)
+     · expectedBatchNo   — resolveExpectedBatchBySoItem in 'block' mode, so a line
+                           bound to >1 live PO (audit H3) resolves to null and
+                           binds NOTHING rather than guessing a dye lot
+     · availableQty      — from the shortage list the short-stock guard just
+                           produced, so the binding cannot disagree with the
+                           question the operator was asked
+
+   Returns lineRef -> the binding for the lines that bind (batch + ETA, so the
+   ONE dialog the operator sees can name the incoming PO). Best-effort
+   throughout: any read failure yields no commitments, i.e. exactly today's
+   behaviour (ship, no binding) — a binding lookup must never block a shipment. */
+type ShipCandidateLine = {
+  lineRef: string;
+  soItemId: string | null;
+  itemCode: string;
+  itemGroup: string | null;
+  variantKey: string;
+  qty: number;
+};
+
+type ShipBinding = { itemCode: string; poNumber: string; eta: string | null };
+
+async function resolveShipCommitments(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  lines: ShipCandidateLine[],
+  warehouseId: string | null,
+  shortages: StockShortage[],
+): Promise<Map<string, ShipBinding>> {
+  const out = new Map<string, ShipBinding>();
+  const linked = lines.filter((l) => l.soItemId && Number(l.qty) > 0);
+  if (linked.length === 0) return out;
+  try {
+    const soItemIds = [...new Set(linked.map((l) => l.soItemId as string))];
+
+    const [sofaIds, expected, allocRes] = await Promise.all([
+      detectSofaSoItemIds(sb, linked.map((l) => ({
+        itemCode: l.itemCode, itemGroup: l.itemGroup, soItemId: l.soItemId,
+      }))),
+      /* 'block', not 'latest': a NEW commitment must never be guessed. A line
+         bound to two live POs resolves to null here and ships unbound, which is
+         what the drop-ship offer path already does (audit H3). */
+      resolveExpectedBatchBySoItem(sb, soItemIds, { onMultiPo: 'block' }),
+      sb.from('mfg_sales_order_items').select('id, allocated_batch_no').in('id', soItemIds),
+    ]);
+    const allocated = new Map<string, string | null>(
+      (((allocRes as { data?: Array<{ id: string; allocated_batch_no: string | null }> }).data ?? []))
+        .map((r) => [r.id, r.allocated_batch_no ?? null]),
+    );
+
+    /* The short-stock guard reports only the buckets that are SHORT, with what
+       was on hand. A bucket it did not report is covered, so anything > 0 marks
+       it "stock on hand" for the decision table. */
+    const availableByBucket = new Map<string, number>();
+    for (const s of shortages) availableByBucket.set(`${s.itemCode}::${s.variantKey}`, s.available);
+
+    const facts: ShipLineFact[] = linked.map((l) => ({
+      lineRef: l.lineRef,
+      soItemId: l.soItemId,
+      itemCode: l.itemCode,
+      variantKey: l.variantKey,
+      warehouseId,
+      isSofa: !!l.soItemId && sofaIds.has(l.soItemId),
+      allocatedBatchNo: allocated.get(l.soItemId as string) ?? null,
+      expectedBatchNo: (l.soItemId ? expected.get(l.soItemId)?.poNumber : null) ?? null,
+      availableQty: availableByBucket.get(`${l.itemCode}::${l.variantKey}`) ?? Number(l.qty),
+      shipQty: Number(l.qty),
+    }));
+
+    for (const d of planShipCommitments(facts)) {
+      if (!d.bind || !d.batchNo) continue;
+      out.set(d.lineRef, {
+        itemCode: d.itemCode,
+        poNumber: d.batchNo,
+        eta: (d.soItemId ? expected.get(d.soItemId)?.eta : null) ?? null,
+      });
+    }
+  } catch (e) {
+    /* eslint-disable-next-line no-console */
+    console.error('[ship-commitment] resolve failed (shipping unbound):', e);
+    return new Map();
+  }
+  return out;
+}
+
+/** Distinct incoming-PO bindings, for the "ship anyway?" dialog. */
+const bindingList = (m: Map<string, ShipBinding>): ShipBinding[] => {
+  const byKey = new Map<string, ShipBinding>();
+  for (const b of m.values()) byKey.set(`${b.poNumber}::${b.itemCode}`, b);
+  return [...byKey.values()];
+};
+
 /* ── resolveDoSofaBatchMap (Audit fix C1, 2026-07-13) ─────────────────────────
    SHARED sofa-batch resolution for every inventory seam of a DO — the single
-   "which batch_no does each SO line's movement carry?" answer. Two sources:
+   "which batch_no does each SO line's movement carry?" answer. Three sources,
+   in precedence order:
      1. mfg_sales_order_items.allocated_batch_no — the allocator's lock, set
         once a covering batch is PHYSICALLY received (normal ship).
-     2. Drop-ship (mig 0057) — a drop-ship sofa line ships BEFORE receipt, so
-        the allocator never locked a batch. Resolve the EXPECTED batch (= the
-        bound live PO number) for SOFA lines still missing one, exactly like
-        the first-ship deduction does.
+     2. delivery_order_items.committed_po_batch_no (mig 0230) — the STORED
+        ship-before-arrival commitment, decided at ship time by
+        planShipCommitments. This is the answer for every DO created from
+        2026-07-31 on, sofa or not, and it does not depend on the header flag.
+     3. Drop-ship (mig 0057) — the LEGACY fallback for DOs created before the
+        marker existed: an is_dropship sofa line shipped BEFORE receipt, so the
+        allocator never locked a batch; re-resolve its EXPECTED batch (= the
+        bound live PO number). Kept so an old drop-ship DO keeps resolving the
+        same bucket its OUT was stamped with.
    Previously deductInventoryForDo / restampDoActualCost each had their own
    copy of this logic while resyncInventoryForDo only knew source 1 — so the
    add-line / qty-increase PATCH paths wrote a drop-ship OUT UN-BATCHED (plain
@@ -496,7 +611,10 @@ async function recomputeTotals(sb: any, deliveryOrderId: string) {
    absent columns → fewer batches → un-batched movement (never throws). */
 async function resolveDoSofaBatchMap(
   sb: any,
-  items: Array<{ so_item_id?: string | null; item_code: string; item_group?: string | null }>,
+  items: Array<{
+    so_item_id?: string | null; item_code: string; item_group?: string | null;
+    committed_po_batch_no?: string | null;
+  }>,
   isDropship: boolean,
 ): Promise<Map<string, string>> {
   const batchBySoItem = new Map<string, string>();
@@ -509,6 +627,17 @@ async function resolveDoSofaBatchMap(
       if (r.allocated_batch_no) batchBySoItem.set(r.id, r.allocated_batch_no);
     }
   } catch { /* column absent pre-0121 — no allocator batches */ }
+  /* Source 2 (mig 0230) — the STORED per-line commitment. Decided once, at ship
+     time, by planShipCommitments and written onto the DO line; every later seam
+     (resync delta, restamp, recost) reads that stored answer instead of
+     re-deriving it, so a PO cancelled or added AFTER the ship can never move the
+     bucket an OUT was already stamped with. The allocator's physically-received
+     batch still wins — if it is set, the line was not shipping short. */
+  for (const it of items) {
+    const sid = it.so_item_id ?? null;
+    const committed = it.committed_po_batch_no ?? null;
+    if (sid && committed && !batchBySoItem.has(sid)) batchBySoItem.set(sid, committed);
+  }
   if (isDropship) {
     const missing = new Set(soItemIds.filter((sid) => !batchBySoItem.has(sid)));
     if (missing.size > 0) {
@@ -546,7 +675,7 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
     const isDropship = (doHeader as { is_dropship?: boolean }).is_dropship === true;
 
     const { data: items } = await sb.from('delivery_order_items')
-      .select('id, so_item_id, item_code, qty, item_group, variants, line_total_centi, ship_cost_centi')
+      .select('id, so_item_id, item_code, qty, item_group, variants, line_total_centi, ship_cost_centi, committed_po_batch_no')
       .eq('delivery_order_id', deliveryOrderId);
     if (!items || items.length === 0) return;
 
@@ -854,7 +983,7 @@ async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedB
   }
   const doHeader = doHeaderRes.data;
   const { data: items } = await sb.from('delivery_order_items')
-    .select('id, so_item_id, item_code, description, qty, item_group, variants, rack_id')
+    .select('id, so_item_id, item_code, description, qty, item_group, variants, rack_id, committed_po_batch_no')
     .eq('delivery_order_id', deliveryOrderId);
   const headerWarehouseId = (doHeader as { warehouse_id: string | null } | null)?.warehouse_id ?? null;
   const doNo = (doHeader as { do_number: string } | null)?.do_number ?? deliveryOrderId;
@@ -1165,7 +1294,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
   //    Each line's warehouse comes from its SO line (0118), not a header default,
   //    so a resync delta lands in the SAME warehouse the first ship debited.
   const { data: items } = await sb.from('delivery_order_items')
-    .select('id, so_item_id, item_code, description, qty, item_group, variants')
+    .select('id, so_item_id, item_code, description, qty, item_group, variants, committed_po_batch_no')
     .eq('delivery_order_id', deliveryOrderId);
   const lineWh = await resolveDoLineWarehouses(sb, (items ?? []) as Array<{ id: string; so_item_id?: string | null }>, headerWarehouseId);
 
@@ -2701,21 +2830,43 @@ deliveryOrdersMfg.post('/', async (c) => {
     }
   }
 
-  /* Edge #1+#2 — soft stock check, gated by confirmShortStock. */
-  if (items.length > 0 && !body.confirmShortStock) {
-    const targetWh = (body.warehouseId as string | undefined) ?? (await defaultWarehouseId(sb));
-    if (targetWh) {
-      const stockLines = items.map((it) => ({
+  /* Edge #1+#2 — soft stock check, gated by confirmShortStock.
+     The check now runs even on the CONFIRMED replay, because its answer is what
+     tells the binding decision below how much was actually on hand. It is the
+     one question the operator was asked ("the goods are not here — ship
+     anyway?"); deriving the binding from a second, separately-measured source
+     is how the two would come to disagree. Only the 409 is gated. */
+  const shipWarehouseId = (body.warehouseId as string | undefined) ?? (await defaultWarehouseId(sb));
+  let shortages: StockShortage[] = [];
+  let commitments = new Map<string, ShipBinding>();
+  if (items.length > 0 && shipWarehouseId) {
+    const stockLines = items.map((it) => ({
+      itemCode: String(it.itemCode ?? ''),
+      productName: (it.description as string | null) ?? null,
+      variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
+      qty: Number(it.qty ?? 0),
+    }));
+    shortages = await checkStockAvailability(sb, shipWarehouseId, stockLines);
+    /* Binding follows the fact (mig 0230): a line that ships before its goods
+       arrive and resolves exactly one live bound PO carries that PO's batch,
+       whichever dialog the operator happened to answer. Resolved BEFORE the 409
+       so the single "ship anyway?" dialog can name the incoming PO. */
+    commitments = await resolveShipCommitments(
+      sb,
+      items.map((it, idx) => ({
+        lineRef: String(idx),
+        soItemId: (it.soItemId as string | null) ?? null,
         itemCode: String(it.itemCode ?? ''),
-        productName: (it.description as string | null) ?? null,
+        itemGroup: (it.itemGroup as string | null) ?? null,
         variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
         qty: Number(it.qty ?? 0),
-      }));
-      const shortages = await checkStockAvailability(sb, targetWh, stockLines);
-      if (shortages.length > 0) {
-        markIdempotencyNoWrite(c);
-        return c.json(shortStockResponse(shortages), 409);
-      }
+      })),
+      shipWarehouseId,
+      shortages,
+    );
+    if (shortages.length > 0 && !body.confirmShortStock) {
+      markIdempotencyNoWrite(c);
+      return c.json(shortStockResponse(shortages, bindingList(commitments)), 409);
     }
   }
 
@@ -2852,7 +3003,7 @@ deliveryOrdersMfg.post('/', async (c) => {
   const h = header as unknown as { id: string; do_number: string };
 
   if (items.length > 0) {
-    const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo));
+    const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo, commitments.get(String(lineNo))?.poNumber ?? null));
     const { error: iErr } = await sb.from('delivery_order_items').insert(stampCompany(rows, c));
     if (iErr) { await sb.from('delivery_orders').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
     await recomputeTotals(sb, h.id);
@@ -2972,7 +3123,15 @@ function emptyDate(v: unknown): string | null {
   return s === '' ? null : s;
 }
 
-function buildItemRow(deliveryOrderId: string, it: Record<string, unknown>, lineNo?: number | null) {
+/* `committedPoBatchNo` is NEVER read off the request body — it is passed in by
+   the route from planShipCommitments, so a client cannot claim a binding the
+   ledger has not earned (it decides which receipt gets to net this OUT). */
+function buildItemRow(
+  deliveryOrderId: string,
+  it: Record<string, unknown>,
+  lineNo?: number | null,
+  committedPoBatchNo?: string | null,
+) {
   const qty = Number(it.qty ?? 1);
   const unitPrice = Number(it.unitPriceCenti ?? 0);
   const discount = Number(it.discountCenti ?? 0);
@@ -3015,6 +3174,9 @@ function buildItemRow(deliveryOrderId: string, it: Record<string, unknown>, line
     /* REC P4 (mig 0118) — the SOURCE rack this line ships from. Null = let the
        dispatch chokepoint auto-pick the rack holding this product. */
     rack_id: (it.rackId as string | undefined) || null,
+    /* Mig 0230 — the incoming PO batch this line is shipping AGAINST, when it
+       ships before the goods arrive. */
+    committed_po_batch_no: committedPoBatchNo ?? null,
     ...(typeof lineNo === 'number' ? { line_no: lineNo } : {}),
   };
 }
@@ -3161,21 +3323,41 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
   // Edge #1+#2 — soft stock check at the target warehouse, gated by
   // confirmShortStock. Returns 409 short_stock with cross-warehouse alternatives
   // so the picker can offer "ship anyway / switch warehouse / reduce qty".
-  if (!body.confirmShortStock) {
-    const targetWh = body.warehouseId ?? (await defaultWarehouseId(sb));
-    if (targetWh) {
-      const stockLines = sortedPicks.map((line) => ({
-        itemCode: line.itemCode,
-        productName: line.description,
-        variantKey: computeVariantKey(line.itemGroup ?? null, (line.variants as VariantAttrs | null) ?? null),
-        qty: pickQtyById.get(line.soItemId) ?? 0,
-      }));
-      const shortages = await checkStockAvailability(sb, targetWh, stockLines);
-      if (shortages.length > 0) {
-        markIdempotencyNoWrite(c);
-        return c.json(shortStockResponse(shortages), 409);
-      }
-    }
+  // Runs on the CONFIRMED replay too — its answer feeds the binding decision
+  // below, so both come from the one measurement the operator was shown.
+  const shipWarehouseId = body.warehouseId ?? (await defaultWarehouseId(sb));
+  let shortages: StockShortage[] = [];
+  if (shipWarehouseId) {
+    const stockLines = sortedPicks.map((line) => ({
+      itemCode: line.itemCode,
+      productName: line.description,
+      variantKey: computeVariantKey(line.itemGroup ?? null, (line.variants as VariantAttrs | null) ?? null),
+      qty: pickQtyById.get(line.soItemId) ?? 0,
+    }));
+    shortages = await checkStockAvailability(sb, shipWarehouseId, stockLines);
+  }
+
+  /* Binding follows the fact (mig 0230) — per PICK, not per header flag. This is
+     the path where the all-or-nothing header decision hurt most: a merged DO can
+     span several SOs, and one unresolvable line used to deny the netting to
+     every other line that could have had it. Resolved BEFORE the 409 so the one
+     "ship anyway?" dialog can name the incoming PO. */
+  const commitments = await resolveShipCommitments(
+    sb,
+    sortedPicks.map((line) => ({
+      lineRef: line.soItemId,
+      soItemId: line.soItemId,
+      itemCode: line.itemCode,
+      itemGroup: line.itemGroup ?? null,
+      variantKey: computeVariantKey(line.itemGroup ?? null, (line.variants as VariantAttrs | null) ?? null),
+      qty: pickQtyById.get(line.soItemId) ?? 0,
+    })),
+    shipWarehouseId ?? null,
+    shortages,
+  );
+  if (shortages.length > 0 && !body.confirmShortStock) {
+    markIdempotencyNoWrite(c);
+    return c.json(shortStockResponse(shortages, bindingList(commitments)), 409);
   }
 
   // Pull the FIRST SO's header for the DO header snapshot (address / salesperson
@@ -3298,6 +3480,7 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
       custom_specials: line.customSpecials ?? null,
       line_suffix: line.lineSuffix ?? null,
       special_order_price_sen: line.specialOrderPriceSen ?? 0,
+      committed_po_batch_no: commitments.get(line.soItemId)?.poNumber ?? null,
     };
   });
   const { error: iErr } = await sb.from('delivery_order_items').insert(stampCompany(doRows, c));
@@ -3724,18 +3907,37 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
      via resync; check stock first, gated by confirmShortStock. Skipped on a
      not-yet-shipped DO (no OUT yet — first-ship deduction handles it). */
   const h = header as { id: string; status: string | null; warehouse_id: string | null };
-  if (SHIPPED_STATES.includes((h.status ?? '').toUpperCase()) && !(it as { confirmShortStock?: boolean }).confirmShortStock) {
-    const targetWh = h.warehouse_id ?? (await defaultWarehouseId(sb));
-    if (targetWh) {
-      const stockLines = [{
-        itemCode: String(it.itemCode ?? ''),
-        productName: (it.description as string | null) ?? null,
-        variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
-        qty: Number(it.qty ?? 0),
-      }];
-      const shortages = await checkStockAvailability(sb, targetWh, stockLines);
-      if (shortages.length > 0) return c.json(shortStockResponse(shortages), 409);
-    }
+  const addShipsNow = SHIPPED_STATES.includes((h.status ?? '').toUpperCase());
+  const addWarehouseId = h.warehouse_id ?? (await defaultWarehouseId(sb));
+  let addShortages: StockShortage[] = [];
+  if (addWarehouseId) {
+    const stockLines = [{
+      itemCode: String(it.itemCode ?? ''),
+      productName: (it.description as string | null) ?? null,
+      variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
+      qty: Number(it.qty ?? 0),
+    }];
+    addShortages = await checkStockAvailability(sb, addWarehouseId, stockLines);
+  }
+
+  /* Binding follows the fact (mig 0230). Decided at WRITE time on every path,
+     the same way is_dropship has always been decided at create and applied at
+     confirm — one model, not two. Resolved before the 409 so the dialog names
+     the incoming PO. */
+  const addCommitments = await resolveShipCommitments(sb, [{
+    lineRef: 'add',
+    soItemId: (it.soItemId as string | null) ?? null,
+    itemCode: String(it.itemCode ?? ''),
+    itemGroup: (it.itemGroup as string | null) ?? null,
+    variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
+    qty: Number(it.qty ?? 0),
+  }], addWarehouseId ?? null, addShortages);
+
+  /* Only a line on an ALREADY-SHIPPED DO moves stock on add, so only that case
+     asks the operator. The measurement is taken either way — it is what the
+     binding decision reads, and it must be the same measurement. */
+  if (addShipsNow && addShortages.length > 0 && !(it as { confirmShortStock?: boolean }).confirmShortStock) {
+    return c.json(shortStockResponse(addShortages, bindingList(addCommitments)), 409);
   }
 
   /* Remaining-qty guard (Wei Siang 2026-05-30) — if the added line traces back
@@ -3801,7 +4003,7 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
   const nextLineNo = typeof (maxNoRow as { line_no?: number | null } | null)?.line_no === 'number'
     ? (maxNoRow as { line_no: number }).line_no + 1
     : null;
-  const row = buildItemRow(id, it, nextLineNo);
+  const row = buildItemRow(id, it, nextLineNo, addCommitments.get('add')?.poNumber ?? null);
   const { data, error } = await sb.from('delivery_order_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   /* Drop-ship (mig 0057) — once a drop-shipped line is added, stamp the DO so

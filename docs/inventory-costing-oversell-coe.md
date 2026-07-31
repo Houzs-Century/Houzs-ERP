@@ -2,6 +2,8 @@
 
 **Date:** 2026-07-24
 **Trigger:** Owner reported that some ACCESSORIES were already SHIPPED but the Delivery Order shows NO cost — RM0 — with margin therefore reading as pure profit on those lines. Asked for a read-only audit of the whole inventory-costing pipeline ("this is the most money-sensitive area") before any fix.
+**Status (updated 2026-07-31):** §5 item 3 ("storing the shortfall explicitly") is **CLOSED in the form that mattered** — see §8. A ship-before-arrival now records WHICH incoming PO it is bound to, per LINE, so the receipt-time reconcile can claim it without the header drop-ship flag. §5 item 2 (backfill of the 3 historical movements) stays open; nothing below back-fills anything.
+
 **Status (updated 2026-07-29):** Root cause TRACED and confirmed against the code. Detector shipped 2026-07-24 and RUN 2026-07-29 — measured exposure **3 short-costed OUT movements / 3 units / 2 DOs**. Owner then approved the write-path fix ("都处理"), which SHIPPED 2026-07-29: every stock-IN path now retro-costs prior shorts, not just GRN post (§7). **Backfill of the 3 historical movements is still DEFERRED** to the owner (§5 item 2). This is the per-class COE; the specific RM0 symptom is also logged in `BUG-HISTORY.md`.
 
 ---
@@ -48,7 +50,7 @@ Run: Actions -> **Uncosted COGS check (read-only)** -> Run workflow; the verdict
 
 1. ~~**The fix itself — owner (money-critical costing change).**~~ **RESOLVED 2026-07-29** — owner approved, option (a) shipped. See §7.
 2. **Backfill of already-stranded rows — owner. STILL OPEN.** The detector has now quantified the set: **3 short-costed OUT movements, 3 units, 2 DOs** (`2990-DO-2607-009` TRION-(K); `2990-DO-2607-017` TRION-(K) + 2990 KETTA-FIRM MATT (K)), measured 2026-07-29. The §7 fix is GO-FORWARD ONLY and deliberately did not touch them — retro-costing historical rows is a data repair with its own cost-basis decision, same STAGING-first discipline. Note the fix will repair these three by itself the moment those buckets next receive stock through ANY path, so doing nothing is now a valid option in a way it was not before.
-3. **Storing the shortfall explicitly — owner/eng.** The trigger discards `qty_short`; there is no column flagging an OUT as under-costed, so detection depends on the consumptions-vs-qty join. A persisted shortfall flag would make orphaned RM0 rows self-evident. Design decision, deferred.
+3. ~~**Storing the shortfall explicitly — owner/eng.**~~ **ADDRESSED 2026-07-31, differently than proposed — see §8.** The trigger still discards `qty_short`, and deliberately so: the shortfall stays LEDGER-DERIVED (`ABS(qty) - SUM(qty_consumed)`) because that is what makes every reconcile idempotent and lets a repair fall away by itself. What was actually missing was not a shortfall flag but a BINDING — which incoming PO a short shipment is owed by. That is now `delivery_order_items.committed_po_batch_no` (mig 0230). A short OUT is still detected by the consumptions join; what changed is that it can now say who owes it.
 
 ## 6. Lessons
 
@@ -86,3 +88,72 @@ Owner approved §5 item 1 ("都处理") after the detector returned the numbers.
 **Why `postGrnAndRollup` was deliberately left alone.** There the oversell reconcile must run AFTER `reconcileDropshipBatches`, and its cutoff is captured BEFORE that call. That ordering decides which reconcile gets first claim on the arriving lots, so it is load-bearing; routing it through the helper would have moved the cutoff and inverted the claim order. It calls the same `reconcileUncostedOuts` either way — there is one implementation, two entry shapes.
 
 **Verification honesty.** `npm --prefix backend typecheck` clean and `npm --prefix backend test` green. Those prove the wiring compiles and the pure model still behaves; they do **NOT** prove the trigger/function behaviour — the scm FIFO layer is Supabase Postgres + PL/pgSQL and this repo's vitest harness rebuilds only the D1 side, so no test in this repo executes `fn_reconcile_uncosted_out`. Per the 0154 header the runtime behaviour is validated on STAGING, not here.
+**Superseded 2026-07-31:** that last sentence was true when written and is no longer. `backend/tests-pg/shipCommitment.pg.test.ts` executes BOTH `fn_reconcile_uncosted_out` and `fn_reconcile_dropship_batch` against a real postgres:16 (CI job `backend-postgres`). The lesson recorded in the 2026-07-29 venue entry applies here too: before writing "cannot be verified", check whether the harness already exists.
+
+## 8. Ship-before-arrival binds its incoming PO — 2026-07-31 (owner-approved)
+
+Owner, on how the sofa main flow is meant to work: *"Sofas are bound to a batch
+number. When the sofa hasn't arrived and the supplier ships direct, we raise a
+DO. Before raising the DO you already know which PO this order matched. When they
+pick ship-anyway, that matched PO should be bound and go negative against it.
+Because sofas have batch numbers, when that PO converts to GRN it offsets; when
+it converts to PI, the costing offsets too. So MRP must not budget those SOs and
+POs any more."*
+
+**What was wrong.** The binding hung off the drop-ship DIALOG, not off the fact
+that the line has a resolvable PO. `scm.fn_reconcile_dropship_batch` (0057,
+hardened 0088, enum-fixed 0155) claims an OUT only when the SOURCE DO carries
+`is_dropship = TRUE` — a HEADER flag, set all-or-nothing (`body.dropShip === true`
+**AND** every offending line has a bound PO), and one that migration 0057 itself
+documents as driving *"the UI badge ONLY"*. A plain "Ship anyway" therefore left
+the flag FALSE, so even a batch-stamped OUT was invisible to the reconcile
+forever. Measured on prod 2026-07-30/31 with `check-hard-committed-po.mjs`:
+**3 short OUTs, ALL `is_dropship = N`, none carrying `batch_no`, 0 claimable.**
+
+**The fix — migration 0230, plus a pure decision module.**
+
+| Piece | What |
+|---|---|
+| `scm.delivery_order_items.committed_po_batch_no` | the per-LINE marker: "this line shipped before its goods arrived, against THIS incoming PO's batch" |
+| `planShipCommitments` (`backend/src/scm/lib/ship-commitment.ts`) | the PURE decision table that writes it — see `docs/modules/delivery-order.md` §5 for every row |
+| `fn_reconcile_dropship_batch` | claims on `is_dropship` **OR** a matching per-line marker. A plain "Ship anyway" now nets on receipt, and one unresolvable line on a mixed DO no longer denies netting to the rest |
+| `fn_reconcile_uncosted_out` (0154) | the MIRROR exclusion — it must not retro-cost a line-committed OUT from an arbitrary lot, which for a sofa means another dye lot |
+
+**The header flag was deliberately NOT widened.** Making `is_dropship` mean "any
+short ship" would have put the "Drop-ship — batch not received" badge on ordinary
+oversells and made a document-level flag the arbiter of a line-level fact. The
+claim signal belongs where the decision is made.
+
+**A PARTIAL short is deliberately left unbound.** If some stock IS on hand,
+stamping the batch would route the whole OUT through `fn_consume_fifo_batch`,
+which finds no lot for a batch that has not arrived — so the units that WERE
+available would stop being costed at ship time. Losing real ship-time cost to
+gain a batch stamp is a bad trade. Those shortfalls stay with the §7 oversell
+retro-cost, which is batch-agnostic and runs on every stock-IN path.
+
+**What this does NOT do.** No backfill: the 3 stranded OUTs carry no `batch_no`
+and nobody but the owner can say which PO each belongs to (§5 item 2).
+Go-forward only.
+
+**The MRP half, and the trap in it.** The same change stops MRP offering units a
+shipment already owns — but the deduction is PAIRED with an add-back to on-hand
+stock, and that pairing is the whole correctness argument. A ship-before-arrival
+writes a real OUT, so `scm.inventory_balances` (SUM of IN − OUT, mig 0084) has
+ALREADY deducted those units: the ledger has always carried the commitment, just
+as a nameless negative in whichever bucket the OUT landed in. **Deducting from PO
+supply alone would count it twice and invent a shortage that does not exist.**
+Net availability is therefore unchanged by this change; what changes is that the
+commitment is now attributed to the PO that owes it instead of silently taxing
+whichever Sales Order happens to sort first in the bucket. `applyCommittedSupply`
+guarantees deduction and add-back are the same number in the same bucket, and a
+unit test asserts exactly that invariant.
+
+**Verification.** 24 pure decision cases
+(`backend/src/scm/lib/ship-commitment.test.ts`) and 12 real-Postgres cases
+(`backend/tests-pg/shipCommitment.pg.test.ts`). The pg suite applies migration
+0230 itself, DEMONSTRATES the old behaviour first (no claim signal -> reconcile
+returns 0, cost stays RM0), then walks the full claim: ship 2 short bound to
+`2990-PO-2607-009`, receive 3 at RM1,200 each, reconcile -> 2 consumed, movement
+stamped 240,000 sen, lot down to 1 remaining, and the MRP commitment recomputes
+to zero on its own. Executed locally against a real PostgreSQL 16.4 as well as in
+CI's `backend-postgres` job.

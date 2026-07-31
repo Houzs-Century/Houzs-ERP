@@ -29,6 +29,27 @@
 //     po_qty_picked "lock" is gone — the same SO line is infinitely convertible
 //     to PO from MRP (reference only; see purchase_order_items.from_mrp).
 //
+// 2026-07-31 — POOLED MATCHING STANDS; HARD COMMITMENTS ARE CARVED OUT.
+//   The pooled model above is unchanged for FREE supply. What section 4 now
+//   removes from the pool is the units a shipment ALREADY OWNS: a DO that
+//   shipped before its goods arrived, bound to that PO's batch (see
+//   scm/lib/ship-commitment.ts + migration 0230). Those units are going to be
+//   consumed by scm.fn_reconcile_dropship_batch the moment the GRN posts, so
+//   offering them to a second Sales Order promises stock that is already spoken
+//   for. This is NOT a return of the SO↔PO lock — a committed unit is subtracted
+//   from the pool, never reserved to a particular SO line, and everything left
+//   is still matched by date alone.
+//
+//   ⚠ AND THE SAME UNITS ARE ADDED BACK TO ON-HAND STOCK, which is the part a
+//   reader must not skip. The ship wrote a real OUT movement, so
+//   scm.inventory_balances (SUM of IN - OUT) has ALREADY deducted it — the
+//   ledger has always carried the commitment, just as a nameless negative in
+//   whichever bucket the OUT landed in. Deducting from PO supply WITHOUT the
+//   add-back would subtract it a second time and invent a shortage. Net
+//   availability is therefore unchanged by this change; what changes is that the
+//   commitment now shows against the PO that owes it instead of silently taxing
+//   whichever SO sorts first. See applyCommittedSupply for the invariant.
+//
 // Output mirrors the xls the commander shared:
 //   parent row  (per SKU+warehouse) : Qty Needed / Stock / PO Outstanding / Shortage
 //   child rows  (per SO)            : SO No · Delivery Date · Qty · source tag
@@ -55,6 +76,12 @@ import {
   type LeadBuffers,
 } from '../lib/lead-time';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
+import {
+  applyCommittedSupply,
+  outstandingCommitments,
+  type CommittedShipmentRow,
+  type PoSupplyEntry,
+} from '../lib/ship-commitment';
 import type { Env, Variables } from '../env';
 
 export const mrp = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -136,6 +163,102 @@ const variantKeyOf = (itemGroup: string | null | undefined, variants: unknown): 
 const WH_NONE = 'NOWH';
 const composite = (whId: string | null, code: string, vkey: string): string =>
   `${whId ?? WH_NONE}|${code}|${vkey}`;
+
+/* Load the ship-before-arrival commitments that are still outstanding against
+   the given open PO numbers (= batch numbers, since a GRN stamps batch_no =
+   source PO number, mig 0120).
+
+   BOUNDED BY THE OPEN POs ON PURPOSE. Every normal sofa ship also carries a
+   batch_no, so an unfiltered scan of batched OUT movements would grow with the
+   whole shipment history on a hot read path. Filtering to batches that still
+   have an OPEN PO line keeps the working set to what could possibly matter, and
+   the three follow-up reads are all keyed off that first bounded result — no
+   N+1, four reads total, and none at all when nothing is on order.
+
+   BEST-EFFORT: any read error yields an empty map, i.e. today's behaviour (no
+   deduction, no add-back — the two always move together). A planning page must
+   not 500 because a commitment lookup hiccuped. */
+async function loadCommittedShipments(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  scoped: <Q>(q: Q) => Q,
+  poNumbers: string[],
+): Promise<Map<string, number>> {
+  const batches = [...new Set(poNumbers.filter(Boolean))];
+  if (batches.length === 0) return new Map();
+  try {
+    type MovRow = {
+      id: string; warehouse_id: string | null; product_code: string;
+      variant_key: string | null; batch_no: string | null; qty: number; source_doc_id: string | null;
+    };
+    const movs: MovRow[] = [];
+    for (let i = 0; i < batches.length; i += 300) {
+      const chunk = batches.slice(i, i + 300);
+      const { data, error } = await scoped(sb.from('inventory_movements')
+        .select('id, warehouse_id, product_code, variant_key, batch_no, qty, source_doc_id')
+        .eq('movement_type', 'OUT')
+        .eq('source_doc_type', 'DO')
+        .in('batch_no', chunk));
+      if (error) return new Map();
+      movs.push(...((data ?? []) as MovRow[]));
+    }
+    if (movs.length === 0) return new Map();
+
+    const doIds = [...new Set(movs.map((m) => m.source_doc_id).filter((x): x is string => !!x))];
+    const movIds = movs.map((m) => m.id);
+
+    /* A CANCELLED DO owns nothing — its OUT was reversed (fn_reverse_dropship_do_out,
+       0088) — and is_dropship is the legacy whole-header claim signal the reconcile
+       still honours. Both read here so this deduction and the SQL agree. */
+    const { data: doRows } = await scoped(sb.from('delivery_orders')
+      .select('id, status, is_dropship').in('id', doIds));
+    const doById = new Map(
+      ((doRows ?? []) as Array<{ id: string; status: string | null; is_dropship: boolean | null }>)
+        .map((d) => [d.id, d]),
+    );
+
+    // The per-line claim signal (mig 0230), keyed the same way the SQL keys it.
+    const { data: lineRows } = await scoped(sb.from('delivery_order_items')
+      .select('delivery_order_id, item_code, committed_po_batch_no')
+      .in('delivery_order_id', doIds)
+      .not('committed_po_batch_no', 'is', null));
+    const committedLines = new Set(
+      ((lineRows ?? []) as Array<{ delivery_order_id: string; item_code: string; committed_po_batch_no: string }>)
+        .map((r) => `${r.delivery_order_id}|${r.item_code}|${r.committed_po_batch_no}`),
+    );
+
+    const consumedByMovement = new Map<string, number>();
+    for (let i = 0; i < movIds.length; i += 300) {
+      const chunk = movIds.slice(i, i + 300);
+      const { data: cons } = await sb.from('inventory_lot_consumptions')
+        .select('movement_id, qty_consumed').in('movement_id', chunk);
+      for (const r of (cons ?? []) as Array<{ movement_id: string; qty_consumed: number }>) {
+        consumedByMovement.set(r.movement_id, (consumedByMovement.get(r.movement_id) ?? 0) + Number(r.qty_consumed ?? 0));
+      }
+    }
+
+    const rows: CommittedShipmentRow[] = [];
+    for (const m of movs) {
+      if (!m.batch_no || !m.source_doc_id) continue;
+      const d = doById.get(m.source_doc_id);
+      rows.push({
+        bucketKey: composite(m.warehouse_id ?? null, m.product_code, m.variant_key ?? ''),
+        batchNo: m.batch_no,
+        outQty: Math.abs(Number(m.qty ?? 0)),
+        consumedQty: consumedByMovement.get(m.id) ?? 0,
+        // No header row -> treat as cancelled: never deduct on a document we
+        // could not read (the honest default is "offer the supply").
+        cancelled: !d || (d.status ?? '').toUpperCase() === 'CANCELLED',
+        headerDropship: d?.is_dropship === true,
+        lineCommitted: committedLines.has(`${m.source_doc_id}|${m.product_code}|${m.batch_no}`),
+      });
+    }
+    return outstandingCommitments(rows);
+  } catch {
+    return new Map();
+  }
+}
 
 export type MrpLine = {
   soItemId: string;    // mfg_sales_order_items.id — lets the UI one-click PO this line
@@ -477,6 +600,10 @@ export async function computeMrp(
   const poByKey = new Map<string, PoSupply[]>();
   const poOutstandingByKey = new Map<string, number>();
   const poSupplierIds = new Set<string>();
+  /* Collected FLAT first so the hard-committed deduction can run over the whole
+     set before anything is bucketed — a commitment is owed to a (bucket, PO)
+     pair, and two PO lines can share one. */
+  const poDrafts: PoSupplyEntry[] = [];
   for (const r of (poRaw ?? []) as unknown as PoLineRow[]) {
     if (!r.po || PO_DEAD.has(r.po.status)) continue;
     /* Migration 0180 — ETA is the EFFECTIVE (latest revised) delivery date: the
@@ -503,12 +630,34 @@ export async function computeMrp(
     const poWh = r.warehouse_id ?? r.po.purchase_location_id ?? null;
     if (whFilter && poWh !== whFilter) continue;
     const k = composite(poWh, r.material_code, variantKeyOf(r.item_group, r.variants));
-    const arr = poByKey.get(k) ?? [];
-    arr.push({ poNumber: r.po.po_number, eta, qtyLeft: left, supplierId: r.po.supplier_id ?? null });
-    poByKey.set(k, arr);
-    poOutstandingByKey.set(k, (poOutstandingByKey.get(k) ?? 0) + left);
+    poDrafts.push({
+      bucketKey: k, poNumber: r.po.po_number, eta, qtyLeft: left, supplierId: r.po.supplier_id ?? null,
+    });
     if (r.po.supplier_id) poSupplierIds.add(r.po.supplier_id);
   }
+
+  /* ── 4b. Remove what is already spoken for (2026-07-31) ─────────────────────
+     Units a ship-before-arrival already owns are not supply: the receipt is
+     going to hand them to that shipment (fn_reconcile_dropship_batch), not to a
+     new Sales Order. Deduct them from the PO pool and ADD THE SAME UNITS BACK to
+     the bucket's on-hand figure — the OUT movement already took them off
+     inventory_balances, so deducting alone would count the commitment twice.
+     applyCommittedSupply guarantees the two are the same number in the same
+     bucket; see its contract. */
+  const committed = await loadCommittedShipments(
+    sb, scoped, poDrafts.map((d) => d.poNumber),
+  );
+  const supply = applyCommittedSupply(poDrafts, committed);
+  for (const [bucketKey, addBack] of supply.stockAddBack) {
+    stockByKey.set(bucketKey, (stockByKey.get(bucketKey) ?? 0) + addBack);
+  }
+  for (const e of supply.entries) {
+    const arr = poByKey.get(e.bucketKey) ?? [];
+    arr.push({ poNumber: e.poNumber, eta: e.eta, qtyLeft: e.qtyLeft, supplierId: e.supplierId });
+    poByKey.set(e.bucketKey, arr);
+    poOutstandingByKey.set(e.bucketKey, (poOutstandingByKey.get(e.bucketKey) ?? 0) + e.qtyLeft);
+  }
+
   // Resolve PO supplier ids → names for the read-only covered-line display.
   const supplierNameById = new Map<string, string>();
   if (poSupplierIds.size > 0) {

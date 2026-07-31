@@ -122,7 +122,7 @@ FKs are declared `ON DELETE SET NULL`
 
 | Referencing column | Line | What it decides |
 |---|---|---|
-| `purchase_order_items.so_item_id` | `:1747` | whether a shipment can bind its incoming PO — the drop-ship guard (`dropship-batch.ts`) resolves the expected batch through it, MRP reads it, and `recomputeSoPicked` counts `po_qty_picked` from it |
+| `purchase_order_items.so_item_id` | `:1747` | whether a shipment can bind its incoming PO — `resolveExpectedBatchBySoItem` (`dropship-batch.ts`) resolves the expected batch through it, and since 2026-07-31 that resolution decides the binding for EVERY short ship, not only a confirmed drop-ship (see below). `recomputeSoPicked` counts `po_qty_picked` from it |
 | `delivery_order_items.so_item_id` | `:1651` | which SO line a shipped unit served |
 | `sales_invoice_items.so_item_id` | `:1767` | which SO line a billed unit served |
 
@@ -151,6 +151,28 @@ survive, only the link is wiped, which is exactly what makes it invisible.
 
 The 2026-07-31 measurement of the live database: **101 PO lines, only 34 carry
 `so_item_id` — 67 are NULL.**
+
+#### What the link now decides at ship time
+
+Until 2026-07-31 `so_item_id` only mattered if the operator reached the drop-ship
+dialog: a plain "Ship anyway" ignored it, so the shipment bound nothing and the
+GRN could never net it. That is no longer true. A DO line that ships before its
+goods arrive and resolves **exactly one live bound PO** through this column is
+bound to that PO's batch automatically, and the binding is recorded per LINE in
+`delivery_order_items.committed_po_batch_no` (migration 0230). The full decision
+table, and what "resolves" excludes (ambiguous multi-PO, partial short, already
+allocated), lives in **`docs/modules/delivery-order.md` §5**.
+
+Two knock-on effects for anyone working on the SO:
+
+- **The link is now load-bearing for COSTING, not just for a dialog.** A bound
+  line's OUT is stamped with the incoming PO number, so its COGS lands from THAT
+  batch's lot when the GRN posts. Break the link (see the `ON DELETE SET NULL`
+  trap above) and the shipment silently reverts to an unbound oversell.
+- **MRP stops offering the committed units.** `mrp.ts` subtracts them from that
+  PO's incoming supply and adds the same units back to on-hand stock (the OUT had
+  already taken them off `inventory_balances`) — so a second SO is not promised
+  stock the receipt is going to hand to the first shipment.
 
 ### Processing-Date save gates (aggregated `validation_failed`)
 
