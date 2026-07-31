@@ -103,6 +103,16 @@ export default {
         // Money / financial figures — same stack, kept as its own alias so
         // amount cells can diverge from codes again if needed.
         money: ["system-ui", "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "Roboto", '"Helvetica Neue"', "Arial", "sans-serif"],
+        // Doc numbers on the SCM list columns (SO / DO / SI / PO / GRN / DR /
+        // PR) — owner 2026-07-31 wants ids in the brand face. Its own alias
+        // rather than reusing `mono`, which also dresses eyebrow labels and
+        // should stay on the system stack.
+        //
+        // The tnum caveat on `mono` above does NOT apply here any more: we
+        // self-host Plex Sans 400-700 (public/fonts/fonts.css) and all ten
+        // digits measure 7.5px at 12.5px — the face is tabular by default, so
+        // column alignment holds without font-variant-numeric.
+        docno: ['"IBM Plex Sans"', '"Noto Sans SC"', "system-ui", "-apple-system", 'BlinkMacSystemFont', '"Segoe UI"', "Roboto", "Arial", "sans-serif"],
         serif: ['"IBM Plex Serif"', '"Noto Serif SC"', "Georgia", "serif"],
       },
       letterSpacing: {
