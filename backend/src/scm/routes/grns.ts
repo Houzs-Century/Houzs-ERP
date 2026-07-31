@@ -1095,10 +1095,14 @@ grns.get('/', async (c) => {
      parent PO's Assigned SO(s), resolved for the whole page in ONE pass (the
      SAME precedence engine the drill-down uses). computeMrp runs once. */
   const poIdsForPage = rows.map((g) => (g as { purchase_order_id?: string | null }).purchase_order_id);
-  const assignedByPo = await resolvePoSoCoverageForPos(sb, c, poIdsForPage);
   /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped this GRN's
-     parent PO's goods + qty. Same batched forward linkage as the PO list. */
-  const deliveredByPo = await resolveDeliveredDosForPos(sb, c, poIdsForPage);
+     parent PO's goods + qty. Same batched forward linkage as the PO list.
+     It reads the SAME poIds as the coverage resolver above and neither consumes
+     the other's result, so the two go out as one wave rather than back to back. */
+  const [assignedByPo, deliveredByPo] = await Promise.all([
+    resolvePoSoCoverageForPos(sb, c, poIdsForPage),
+    resolveDeliveredDosForPos(sb, c, poIdsForPage),
+  ]);
   const grns = rows.map((g) => {
     const poId = (g as { purchase_order_id?: string | null }).purchase_order_id ?? null;
     const summary = poId ? assignedByPo.get(poId) : undefined;

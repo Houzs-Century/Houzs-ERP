@@ -522,11 +522,15 @@ mfgPurchaseOrders.get('/', async (c) => {
      Assigned SO(s) for the whole page in ONE pass — computeMrp runs once, the
      DO-lock + stored-origin reads are batched. Reuses the SAME precedence engine
      the per-line drill-down does, so the row and its expansion never disagree. */
-  const assignedByPo = await resolvePoSoCoverageForPos(supabase, c, rows.map((r) => r.id));
   /* "Delivered" column (owner 2026-07-31): the DO(s) that have shipped this PO's
      goods + qty per DO. Batched once for the page, same batch_no linkage the
-     Assigned SO reads, in the shipping direction. */
-  const deliveredByPo = await resolveDeliveredDosForPos(supabase, c, rows.map((r) => r.id));
+     Assigned SO reads, in the shipping direction. It takes the SAME row ids and
+     neither resolver consumes the other's result, so both go out as one wave. */
+  const poIdsForPage = rows.map((r) => r.id);
+  const [assignedByPo, deliveredByPo] = await Promise.all([
+    resolvePoSoCoverageForPos(supabase, c, poIdsForPage),
+    resolveDeliveredDosForPos(supabase, c, poIdsForPage),
+  ]);
   const purchaseOrders = rows.map((r) => ({
     ...r,
     has_children: childIds.has(r.id),
