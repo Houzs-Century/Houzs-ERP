@@ -115,9 +115,29 @@ forever. Measured on prod 2026-07-30/31 with `check-hard-committed-po.mjs`:
 | Piece | What |
 |---|---|
 | `scm.delivery_order_items.committed_po_batch_no` | the per-LINE marker: "this line shipped before its goods arrived, against THIS incoming PO's batch" |
+| `.committed_variant_key` | the bucket the commitment was made in, so the claim is scoped to the same variant the OUT loop is |
+| `.committed_batch_strict` | is that batch a DYE LOT (sofa)? Written from the same `isSofa` fact the decision used; it is the only thing that excludes the OUT from the batch-agnostic retro-cost |
 | `planShipCommitments` (`backend/src/scm/lib/ship-commitment.ts`) | the PURE decision table that writes it — see `docs/modules/delivery-order.md` §5 for every row |
-| `fn_reconcile_dropship_batch` | claims on `is_dropship` **OR** a matching per-line marker. A plain "Ship anyway" now nets on receipt, and one unresolvable line on a mixed DO no longer denies netting to the rest |
-| `fn_reconcile_uncosted_out` (0154) | the MIRROR exclusion — it must not retro-cost a line-committed OUT from an arbitrary lot, which for a sofa means another dye lot |
+| `planSofaSetPoConflicts` (same module) | one PO IS one batch number, so a sofa SET must bind ONE PO; a set resolving two is refused (`sofa_set_po_split`), never resolved to one of them |
+| `fn_reconcile_dropship_batch` | claims on `is_dropship` **OR** a matching per-line marker (batch + product + variant). A plain "Ship anyway" now nets on receipt, and one unresolvable line on a mixed DO no longer denies netting to the rest |
+| `fn_reconcile_uncosted_out` (0154) | the MIRROR exclusion, **for STRICT commitments only** — see the warning below |
+
+**⚠️ THE MIRROR EXCLUSION IS THE PART THAT ALMOST WENT WRONG, AND IT IS WORTH
+READING TWICE.** The first cut excluded EVERY line-committed OUT from
+`fn_reconcile_uncosted_out`, on the argument that *"costing them from an
+arbitrary dye lot is exactly the colour-mixing batch binding exists to prevent"*.
+That sentence is true and it is about SOFA. A mattress has no dye lot. Applied to
+one, the exclusion converted a repairable RM0 into a permanent one: bind MAT-X to
+PO-500, then have PO-500 cancelled — or re-raised under a new number, or
+superseded by an inter-warehouse transfer or a stock take — and
+`fn_reconcile_dropship_batch` never fires for PO-500 while the batch-agnostic
+repair steps over the OUT forever. Before the change, ANY later stock-IN fixed
+it (§7, widened to every IN path on 2026-07-29). **A safety exclusion that
+removes the only remaining repair is not a safety exclusion.** So the SQL keys
+off `committed_batch_strict`: sofa unchanged, non-sofa gets the correct GRN
+netting AND keeps the fallback it always had. The two reconciles both recompute
+`ABS(qty) - SUM(consumed)` and the GRN post runs the batched one first, so double
+eligibility can neither double-cost nor race.
 
 **The header flag was deliberately NOT widened.** Making `is_dropship` mean "any
 short ship" would have put the "Drop-ship — batch not received" badge on ordinary
@@ -148,12 +168,36 @@ whichever Sales Order happens to sort first in the bucket. `applyCommittedSupply
 guarantees deduction and add-back are the same number in the same bucket, and a
 unit test asserts exactly that invariant.
 
-**Verification.** 24 pure decision cases
-(`backend/src/scm/lib/ship-commitment.test.ts`) and 12 real-Postgres cases
-(`backend/tests-pg/shipCommitment.pg.test.ts`). The pg suite applies migration
+**Be precise about what that buys: ATTRIBUTION, not a corrected figure.** No
+shortage number moves, no coverage tag changes and no PO-raising decision
+changes — the arithmetic already propagated the negative correctly and already
+tagged those units `source: 'shortage'` rather than `coverage_po`. What was wrong
+was WHERE the commitment showed: Stock and PO-Outstanding were wrong in opposite
+directions and cancelled out in the total. Commitments the deduction cannot reach
+(PO fully received, dead, or a different warehouse/variant bucket) are now
+returned as `unmatchedCommitments` on the MRP payload and printed by
+`check-hard-committed-po.mjs` — they change no figure, which is exactly why they
+had to stop being silent.
+
+**Verification.** Pure decision cases in
+`backend/src/scm/lib/ship-commitment.test.ts` and real-Postgres cases in
+`backend/tests-pg/shipCommitment.pg.test.ts`. The pg suite applies migration
 0230 itself, DEMONSTRATES the old behaviour first (no claim signal -> reconcile
 returns 0, cost stays RM0), then walks the full claim: ship 2 short bound to
 `2990-PO-2607-009`, receive 3 at RM1,200 each, reconcile -> 2 consumed, movement
 stamped 240,000 sen, lot down to 1 remaining, and the MRP commitment recomputes
-to zero on its own. Executed locally against a real PostgreSQL 16.4 as well as in
-CI's `backend-postgres` job.
+to zero on its own.
+
+It also proves the strict/non-strict split BOTH WAYS, which is the load-bearing
+case: a non-strict committed OUT whose PO never arrives is repaired by a later
+unrelated stock-IN, while the byte-identical STRICT row is left at RM0. The two
+tests differ by one column, so a regression in either direction fails one of
+them. Executed by CI's `backend-postgres` job.
+
+**And the model is now held to the SQL mechanically.** `oversell-retrocost.ts`
+had carried "KEEP THE TWO IN LOCKSTEP" in capitals since 0154, and 0230 broke it
+anyway — the SQL was narrowed and `planUncostedRetrocost` was not, so its tests
+kept passing against behaviour production no longer had.
+`backend/tests/oversellRetrocostLockstep.test.ts` reads the newest migration that
+redefines `fn_reconcile_uncosted_out` (by content, never by number) and fails if
+its guard set or top-level predicate count no longer matches the model's.

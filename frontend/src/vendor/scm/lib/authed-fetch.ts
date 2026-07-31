@@ -5,7 +5,8 @@
 // "ship anyway?" retry, and the sofa whole-set hard-block all live in ONE place.
 //
 // The 409 handling is a safe superset: it only triggers on a 409 whose body
-// carries `short_stock` / `sofa_no_batch` / `sofa_partial_set`, which only the
+// carries `short_stock` / `sofa_no_batch` / `sofa_partial_set` /
+// `sofa_set_po_split`, which only the
 // ship/mutation endpoints return — read-only callers never hit it, so adopting
 // this universally changes nothing for them.
 //
@@ -344,6 +345,16 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
     }
     if (text.includes('"sofa_partial_set"')) {
       let msg = "A sofa set must ship whole from one batch — this delivery leaves part of the set behind. Include the rest of the set, or ship none of it.";
+      try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { /* keep fallback */ }
+      throw correlateError(new Error(msg), requestIdFromResponse(res));
+    }
+    /* One PO IS one batch number (owner, 2026-07-31), so a sofa set that resolves
+       two different POs would ship stamped with two batch numbers — a split dye
+       lot. There is no "ship anyway" that makes that correct, so this is a hard
+       stop like the two above: surface the server's message, which names each
+       module and the PO it resolved. */
+    if (text.includes('"sofa_set_po_split"')) {
+      let msg = "A sofa set is one dye lot, so it must ship against one purchase order — its modules resolve different ones. Point them at the same PO, or ship none of it.";
       try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { /* keep fallback */ }
       throw correlateError(new Error(msg), requestIdFromResponse(res));
     }

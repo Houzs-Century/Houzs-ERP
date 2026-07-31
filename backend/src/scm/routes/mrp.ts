@@ -80,8 +80,10 @@ import {
   applyCommittedSupply,
   outstandingCommitments,
   type CommittedShipmentRow,
+  type OutstandingCommitment,
   type PoSupplyEntry,
 } from '../lib/ship-commitment';
+import { chunkIn } from '../lib/paginate-all';
 import type { Env, Variables } from '../env';
 
 export const mrp = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -175,6 +177,18 @@ const composite = (whId: string | null, code: string, vkey: string): string =>
    the three follow-up reads are all keyed off that first bounded result — no
    N+1, four reads total, and none at all when nothing is on order.
 
+   ⚠ BOUNDED IS NOT THE SAME AS SMALL, AND EVERY READ HERE IS PAGED. PostgREST
+   caps a response at ~1000 rows and reports NO error when it clips — the trap
+   this very file already documents twice (the product-master read in section 2,
+   and so-stock-allocation.ts). All four reads can exceed it: a few hundred open
+   POs is thousands of matching OUTs; a movement can carry several lot
+   consumptions, so 300 movements alone can blow the cap. Truncation is not a
+   rounding error here, it changes the answer in BOTH directions — a lost DO
+   header reads as `cancelled: !d` and DROPS a real commitment, while a lost
+   consumption row understates consumedQty and OVERSTATES the commitment,
+   over-deducting the PO pool and over-adding-back to stock. chunkIn pages every
+   chunk (paginate-all.ts), so none of them can clip.
+
    BEST-EFFORT: any read error yields an empty map, i.e. today's behaviour (no
    deduction, no add-back — the two always move together). A planning page must
    not 500 because a commitment lookup hiccuped. */
@@ -184,7 +198,7 @@ async function loadCommittedShipments(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   scoped: <Q>(q: Q) => Q,
   poNumbers: string[],
-): Promise<Map<string, number>> {
+): Promise<Map<string, OutstandingCommitment>> {
   const batches = [...new Set(poNumbers.filter(Boolean))];
   if (batches.length === 0) return new Map();
   try {
@@ -192,17 +206,15 @@ async function loadCommittedShipments(
       id: string; warehouse_id: string | null; product_code: string;
       variant_key: string | null; batch_no: string | null; qty: number; source_doc_id: string | null;
     };
-    const movs: MovRow[] = [];
-    for (let i = 0; i < batches.length; i += 300) {
-      const chunk = batches.slice(i, i + 300);
-      const { data, error } = await scoped(sb.from('inventory_movements')
+    const { data: movs, error: movErr } = await chunkIn<MovRow>(batches, (batch, from, to) =>
+      scoped(sb.from('inventory_movements')
         .select('id, warehouse_id, product_code, variant_key, batch_no, qty, source_doc_id')
         .eq('movement_type', 'OUT')
         .eq('source_doc_type', 'DO')
-        .in('batch_no', chunk));
-      if (error) return new Map();
-      movs.push(...((data ?? []) as MovRow[]));
-    }
+        .in('batch_no', batch))
+        .order('id')
+        .range(from, to));
+    if (movErr) return new Map();
     if (movs.length === 0) return new Map();
 
     const doIds = [...new Set(movs.map((m) => m.source_doc_id).filter((x): x is string => !!x))];
@@ -210,40 +222,63 @@ async function loadCommittedShipments(
 
     /* A CANCELLED DO owns nothing — its OUT was reversed (fn_reverse_dropship_do_out,
        0088) — and is_dropship is the legacy whole-header claim signal the reconcile
-       still honours. Both read here so this deduction and the SQL agree. */
-    const { data: doRows } = await scoped(sb.from('delivery_orders')
-      .select('id, status, is_dropship').in('id', doIds));
-    const doById = new Map(
-      ((doRows ?? []) as Array<{ id: string; status: string | null; is_dropship: boolean | null }>)
-        .map((d) => [d.id, d]),
-    );
+       still honours. Both read here so this deduction and the SQL agree.
+       A MISSING header is read as cancelled, which is the honest default (offer
+       the supply) but ALSO the reason this read must never be truncated: a
+       clipped page would silently drop real commitments. */
+    type DoRow = { id: string; status: string | null; is_dropship: boolean | null };
+    const { data: doRows, error: doErr } = await chunkIn<DoRow>(doIds, (batch, from, to) =>
+      scoped(sb.from('delivery_orders').select('id, status, is_dropship').in('id', batch))
+        .order('id')
+        .range(from, to));
+    if (doErr) return new Map();
+    const doById = new Map(doRows.map((d) => [d.id, d]));
 
-    // The per-line claim signal (mig 0230), keyed the same way the SQL keys it.
-    const { data: lineRows } = await scoped(sb.from('delivery_order_items')
-      .select('delivery_order_id, item_code, committed_po_batch_no')
-      .in('delivery_order_id', doIds)
-      .not('committed_po_batch_no', 'is', null));
+    /* The per-line claim signal (mig 0230), keyed the same way the SQL keys it —
+       INCLUDING the variant, which the SQL scopes on so two lines of one DO
+       sharing an item_code across different fabrics cannot cross-claim. The key
+       is the STORED committed_variant_key, never a recomputed one: the SQL
+       compares that same stored string, and a second derivation of the variant
+       identity is how the two would come to disagree. */
+    type LineRow = {
+      delivery_order_id: string; item_code: string;
+      committed_po_batch_no: string; committed_variant_key: string | null;
+    };
+    const { data: lineRows, error: lineErr } = await chunkIn<LineRow>(doIds, (batch, from, to) =>
+      scoped(sb.from('delivery_order_items')
+        .select('delivery_order_id, item_code, committed_po_batch_no, committed_variant_key')
+        .in('delivery_order_id', batch)
+        .not('committed_po_batch_no', 'is', null))
+        .order('delivery_order_id')
+        .range(from, to));
+    if (lineErr) return new Map();
     const committedLines = new Set(
-      ((lineRows ?? []) as Array<{ delivery_order_id: string; item_code: string; committed_po_batch_no: string }>)
-        .map((r) => `${r.delivery_order_id}|${r.item_code}|${r.committed_po_batch_no}`),
+      lineRows.map((r) => `${r.delivery_order_id}|${r.item_code}|${r.committed_variant_key ?? ''}|${r.committed_po_batch_no}`),
     );
 
+    type ConsRow = { movement_id: string; qty_consumed: number };
+    const { data: cons, error: consErr } = await chunkIn<ConsRow>(movIds, (batch, from, to) =>
+      sb.from('inventory_lot_consumptions')
+        .select('movement_id, qty_consumed')
+        .in('movement_id', batch)
+        .order('movement_id')
+        .range(from, to));
+    if (consErr) return new Map();
     const consumedByMovement = new Map<string, number>();
-    for (let i = 0; i < movIds.length; i += 300) {
-      const chunk = movIds.slice(i, i + 300);
-      const { data: cons } = await sb.from('inventory_lot_consumptions')
-        .select('movement_id, qty_consumed').in('movement_id', chunk);
-      for (const r of (cons ?? []) as Array<{ movement_id: string; qty_consumed: number }>) {
-        consumedByMovement.set(r.movement_id, (consumedByMovement.get(r.movement_id) ?? 0) + Number(r.qty_consumed ?? 0));
-      }
+    for (const r of cons) {
+      consumedByMovement.set(r.movement_id, (consumedByMovement.get(r.movement_id) ?? 0) + Number(r.qty_consumed ?? 0));
     }
 
     const rows: CommittedShipmentRow[] = [];
     for (const m of movs) {
       if (!m.batch_no || !m.source_doc_id) continue;
       const d = doById.get(m.source_doc_id);
+      const variantKey = m.variant_key ?? '';
       rows.push({
-        bucketKey: composite(m.warehouse_id ?? null, m.product_code, m.variant_key ?? ''),
+        bucketKey: composite(m.warehouse_id ?? null, m.product_code, variantKey),
+        warehouseId: m.warehouse_id ?? null,
+        itemCode: m.product_code,
+        variantKey,
         batchNo: m.batch_no,
         outQty: Math.abs(Number(m.qty ?? 0)),
         consumedQty: consumedByMovement.get(m.id) ?? 0,
@@ -251,7 +286,7 @@ async function loadCommittedShipments(
         // could not read (the honest default is "offer the supply").
         cancelled: !d || (d.status ?? '').toUpperCase() === 'CANCELLED',
         headerDropship: d?.is_dropship === true,
-        lineCommitted: committedLines.has(`${m.source_doc_id}|${m.product_code}|${m.batch_no}`),
+        lineCommitted: committedLines.has(`${m.source_doc_id}|${m.product_code}|${variantKey}|${m.batch_no}`),
       });
     }
     return outstandingCommitments(rows);
@@ -366,18 +401,38 @@ function byDateAsc(a: string | null, b: string | null): number {
   return a < b ? -1 : 1;
 }
 
+/* A shipment that already took the goods, against a PO that has nothing left to
+   hand over: fully received, dead (CANCELLED / DRAFT), or ordered into a
+   different warehouse / variant bucket than the one it shipped from.
+   `applyCommittedSupply` can deduct nothing for these, so they change no figure
+   on this page — which is exactly why they have to be REPORTED rather than
+   dropped. Each row is a real OUT the receipt-time reconcile will never net. */
+export type UnmatchedCommitment = {
+  warehouseId: string | null;
+  warehouseCode: string | null;
+  itemCode: string;
+  variantKey: string;
+  /** = the batch the OUT was stamped with = the PO that owes the units. */
+  poNumber: string;
+  qty: number;
+};
+
 export type MrpResult = {
   asOf: string;
   categories: string[];
   warehouses: unknown[];
   skus: MrpSku[];
   sofaSets: SofaSet[];
+  /** Commitments with no open PO supply left to deduct from — see the type. */
+  unmatchedCommitments: UnmatchedCommitment[];
   totals: {
     skuCount: number;
     shortageSkuCount: number;
     shortageUnits: number;
     sofaSetCount: number;
     sofaSetShortageCount: number;
+    /** Units on unmatchedCommitments — 0 is the healthy reading. */
+    unmatchedCommitmentUnits: number;
   };
 };
 
@@ -648,6 +703,23 @@ export async function computeMrp(
     sb, scoped, poDrafts.map((d) => d.poNumber),
   );
   const supply = applyCommittedSupply(poDrafts, committed);
+  /* Deliberately NOT silent. These are commitments the deduction could not
+     reach: the PO is fully received, went dead, or the shipment sits in a
+     different bucket from the PO line meant to cover it. They alter no figure
+     here, so if they were only "not dropped" nobody would ever see one. */
+  const unmatchedCommitments: UnmatchedCommitment[] = supply.unmatched.map((u) => ({
+    warehouseId: u.warehouseId,
+    warehouseCode: u.warehouseId ? (whById.get(u.warehouseId)?.code ?? null) : null,
+    itemCode: u.itemCode,
+    variantKey: u.variantKey,
+    poNumber: u.batchNo,
+    qty: u.qty,
+  }));
+  if (unmatchedCommitments.length > 0) {
+    /* eslint-disable-next-line no-console */
+    console.warn('[mrp] committed shipments with no open PO supply to deduct from:',
+      unmatchedCommitments.map((u) => `${u.itemCode} x${u.qty} vs ${u.poNumber}`).join('; '));
+  }
   for (const [bucketKey, addBack] of supply.stockAddBack) {
     stockByKey.set(bucketKey, (stockByKey.get(bucketKey) ?? 0) + addBack);
   }
@@ -996,12 +1068,14 @@ export async function computeMrp(
     warehouses: warehouses ?? [],
     skus,
     sofaSets,
+    unmatchedCommitments,
     totals: {
       skuCount: skus.length,
       shortageSkuCount: skus.filter((s) => s.shortage > 0).length,
       shortageUnits: skus.reduce((acc, s) => acc + s.shortage, 0),
       sofaSetCount: sofaSets.length,
       sofaSetShortageCount: sofaSets.filter((s) => s.shortageQty > 0).length,
+      unmatchedCommitmentUnits: unmatchedCommitments.reduce((acc, u) => acc + u.qty, 0),
     },
   };
 }

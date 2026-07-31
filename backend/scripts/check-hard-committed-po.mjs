@@ -49,7 +49,14 @@ async function main() {
            EXISTS (SELECT 1 FROM scm.delivery_order_items di
                     WHERE di.delivery_order_id = d.id
                       AND di.committed_po_batch_no = m.batch_no
-                      AND di.item_code = m.product_code) AS line_committed,
+                      AND di.item_code = m.product_code
+                      AND COALESCE(di.committed_variant_key,'') = COALESCE(m.variant_key,'')) AS line_committed,
+           EXISTS (SELECT 1 FROM scm.delivery_order_items di
+                    WHERE di.delivery_order_id = d.id
+                      AND di.committed_po_batch_no = m.batch_no
+                      AND di.item_code = m.product_code
+                      AND COALESCE(di.committed_variant_key,'') = COALESCE(m.variant_key,'')
+                      AND di.committed_batch_strict = TRUE) AS strict_committed,
            COALESCE((SELECT SUM(c.qty_consumed) FROM scm.inventory_lot_consumptions c
                       WHERE c.movement_id = m.id), 0) AS consumed
       FROM scm.inventory_movements m
@@ -69,6 +76,15 @@ async function main() {
   notice(`   - CLAIMABLE (batch + dropship|line-bound) : ${claimable.length}  (${units(claimable)} units)  -> nets on receipt`);
   notice(`   - STRANDED, batch but NO claim signal     : ${strandedNoSignal.length}  (${units(strandedNoSignal)} units)  -> reconcile skips; oversell retro-cost (0154) may still repair`);
   notice(`   - STRANDED, NO batch_no at all            : ${strandedNoBatch.length}  (${units(strandedNoBatch)} units)  -> plain oversell; only 0154 can repair`);
+  /* Of the claimable ones, which have NO fallback if their PO never arrives?
+     Migration 0230 excludes only STRICT (dye-lot / sofa) commitments from
+     fn_reconcile_uncosted_out. A non-strict commitment is belt AND braces: the
+     correct GRN nets it, and any later stock-IN repairs it if that GRN never
+     comes. A strict one has exactly one way home, so a strict commitment whose
+     PO is dead is a permanent RM0 and the only kind worth alarming on. */
+  const strictClaimable = claimable.filter((r) => r.strict_committed === true);
+  notice(`   - of the claimable, STRICT (dye lot)      : ${strictClaimable.length}  (${units(strictClaimable)} units)  -> batched reconcile ONLY; no 0154 fallback`);
+  notice(`   - of the claimable, non-strict            : ${claimable.length - strictClaimable.length}  (${units(claimable) - units(strictClaimable)} units)  -> batched reconcile, AND 0154 repairs it if the PO never lands`);
   for (const r of [...strandedNoSignal, ...strandedNoBatch].slice(0, 25)) {
     notice(`    ${pad(r.source_doc_no, 20)} ${pad(r.product_code, 22)} ${pad(r.variant_key, 12)} batch=${pad(r.batch_no ?? "(none)", 14)} dropship=${r.is_dropship === true ? "Y" : "N"} lineBound=${r.line_committed === true ? "Y" : "N"} short=${Number(r.out_qty) - Number(r.consumed)} ${String(r.created_at).slice(0, 10)}`);
   }
@@ -115,6 +131,26 @@ async function main() {
     notice("  ^ a residual means the PO was already fully received (the reconcile simply has not");
     notice("    run yet) or the binding points at a PO that is no longer open — worth a look, not");
     notice("    automatically a fault.");
+
+    /* THE UNMATCHED LIST, spelled out. applyCommittedSupply returns exactly this
+       set as `unmatched` and computeMrp now puts it on the MRP payload; printing
+       it here is the same fact from the database side, so the two can be
+       compared. These are shipments no receipt is ever going to net: a STRICT
+       one among them is stuck at RM0 for good. */
+    const unmatched = [];
+    for (const [k, c] of committedByPair) {
+      const left = openByPair.get(k) ?? 0;
+      if (c <= left) continue;
+      const [code, batch] = k.split("::");
+      const anyStrict = claimable.some(
+        (r) => r.product_code === code && r.batch_no === batch && r.strict_committed === true);
+      unmatched.push({ code, batch, qty: c - left, strict: anyStrict });
+    }
+    notice(`  UNMATCHED commitments (no open PO supply) : ${unmatched.length}`);
+    if (!unmatched.length) notice("    none — every commitment has open PO units behind it.");
+    for (const u of unmatched.slice(0, 25)) {
+      notice(`    ${pad(u.code, 24)} ${pad(u.batch, 20)} ${pad(u.qty, 10)} ${u.strict ? "STRICT — no retro-cost fallback, this one stays at RM0" : "non-strict — a later stock-IN will still repair the COGS"}`);
+    }
   }
 
   // (C) the link that decides which path a shipment can take at all.

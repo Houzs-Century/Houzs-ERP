@@ -33,12 +33,40 @@
 --      lot. A per-line commitment marker is the same deliberate signal, only
 --      recorded where the decision is actually made.
 --
---   3. fn_reconcile_uncosted_out (0154) — the mirror exclusion. It deliberately
---      skips drop-ship OUTs so the batched path stays the sole owner of batched
---      coverage; a line-committed OUT must be skipped for the SAME reason.
---      Without this the batch-agnostic oversell retro-cost would race the
---      batched reconcile and cost a committed sofa OUT from ANOTHER dye lot —
---      the exact colour-mixing that batch binding exists to prevent.
+--   3. fn_reconcile_uncosted_out (0154) — the mirror exclusion, and it is
+--      NARROWED TO BATCH-REGIME LINES ONLY. 0154 deliberately skips drop-ship
+--      OUTs so the batched path stays the sole owner of batched coverage, and a
+--      committed SOFA OUT must be skipped for the SAME reason: costing it from
+--      whatever lot is open means another dye lot, the exact colour-mixing the
+--      batch regime exists to prevent.
+--
+--      ⚠ THAT ARGUMENT IS ABOUT DYE LOTS, SO IT STOPS AT THE SOFA. A mattress
+--      has no dye lot. Excluding a committed MATTRESS OUT would have created a
+--      new way to strand COGS at RM0 FOREVER — strictly worse than the bug this
+--      migration exists to fix. The bound PO can die in ways no reconcile can
+--      see: it is CANCELLED, the supplier re-ships under a re-raised number, or
+--      the goods turn up by inter-warehouse transfer or a stock take. In every
+--      one of those, fn_reconcile_dropship_batch never fires for that batch, and
+--      an unconditional exclusion would make the batch-agnostic repair step over
+--      the OUT for good. Before this migration ANY later stock-IN repaired it
+--      (0154, widened to every IN path 2026-07-29).
+--
+--      So the exclusion keys off delivery_order_items.committed_batch_strict,
+--      written at ship time from the SAME isSofa fact the binding decision used
+--      (planShipCommitments -> ShipCommitmentDecision.strictBatch). NO product
+--      lookup here on purpose: "is this a dye lot?" is decided once, in TypeScript,
+--      where detectSofa already lives. A PL/pgSQL re-implementation of that test
+--      would be a THIRD copy of it, and the two that drift would disagree about
+--      money.
+--
+--      Net effect per category:
+--        · sofa      — bound OUT is batched-path-only, exactly as an is_dropship
+--                      sofa OUT has been since 0154. Unchanged.
+--        · non-sofa  — bound OUT can be netted by the correct GRN (new, better)
+--                      AND still repaired by any later stock-IN (as on main).
+--                      Both are idempotent on ABS(qty) - SUM(consumed), and the
+--                      GRN post runs the batched reconcile first, so they can
+--                      neither double-cost nor race.
 --
 -- IDEMPOTENT + LEDGER-DRIVEN, unchanged: both functions recompute the shortfall
 -- as ABS(out.qty) - SUM(qty_consumed) on every call, so a shipment reconciled
@@ -69,13 +97,45 @@ SET search_path = scm, public;
 ALTER TABLE scm.delivery_order_items
   ADD COLUMN IF NOT EXISTS committed_po_batch_no TEXT;
 
+-- The bucket the commitment was made in. STORED, not recomputed: the inventory
+-- variant key is a non-trivial TypeScript function (computeVariantKey, with
+-- fabricCode/colorCode/fabricColor and POS depth/sofaLegHeight aliasing), and
+-- re-deriving it in PL/pgSQL would be a second implementation of a money-path
+-- identity. The ship path already computes it for the short-stock bucket, so it
+-- is written here once and only ever COMPARED afterwards.
+ALTER TABLE scm.delivery_order_items
+  ADD COLUMN IF NOT EXISTS committed_variant_key TEXT;
+
+-- Does the commitment carry a BATCH REGIME (a dye lot that must never be
+-- substituted)? See the header: this, and only this, excludes an OUT from the
+-- batch-agnostic oversell retro-cost.
+ALTER TABLE scm.delivery_order_items
+  ADD COLUMN IF NOT EXISTS committed_batch_strict BOOLEAN NOT NULL DEFAULT FALSE;
+
 COMMENT ON COLUMN scm.delivery_order_items.committed_po_batch_no IS
   'The incoming purchase-order number (= the batch_no the GRN will stamp) that THIS delivery line was shipped against before the goods arrived. Set at ship time by planShipCommitments (scm/lib/ship-commitment.ts) when the line resolves exactly one LIVE bound PO and has nothing on hand to consume; NULL for a normal ship, an ad-hoc line, or a plain oversell with no PO behind it. It is the per-line claim signal scm.fn_reconcile_dropship_batch reads on receipt, and the reason a mixed DO no longer denies netting to the lines that could have had it. delivery_orders.is_dropship stays what migration 0057 declared it to be: the UI badge.';
+
+COMMENT ON COLUMN scm.delivery_order_items.committed_variant_key IS
+  'The inventory variant key (computeVariantKey over the line''s item_group + variants) the commitment was made in, stored at ship time so both reconciles can scope the per-line claim to the SAME (product, variant) bucket the OUT loop is already scoped to. Without it, two lines of one DO carrying the same item_code in DIFFERENT variants could cross-claim each other''s batch. NULL/empty is the unclassified bucket (mattress, accessory), which is what the movement carries too.';
+
+COMMENT ON COLUMN scm.delivery_order_items.committed_batch_strict IS
+  'TRUE when the committed batch is a DYE LOT that must never be substituted - i.e. the line is sofa / batch-regime. Written from the same isSofa fact planShipCommitments used to make the binding, so the SQL never re-derives "is this a sofa". It is the ONLY thing that excludes an OUT from scm.fn_reconcile_uncosted_out: a bound MATTRESS has no dye lot, so any later stock-IN must still be able to repair its COGS exactly as it could before migration 0230 - otherwise a cancelled or re-raised PO would strand it at RM0 forever.';
 
 -- Only committed lines are ever looked up, and they are a small minority.
 CREATE INDEX IF NOT EXISTS idx_doi_committed_po_batch
   ON scm.delivery_order_items (committed_po_batch_no, item_code)
   WHERE committed_po_batch_no IS NOT NULL;
+
+-- The MRP commitment read filters `movement_type + source_doc_type + batch_no
+-- IN (...)`, and it is a HOT path: the MRP page, twice in the SO detail
+-- (mfg-sales-orders.ts computeMrp callsites) and /po-so-coverage. batch_no had
+-- no index at all - inventory_movements carried only (warehouse_id,
+-- product_code), (source_doc_type, source_doc_id), (created_at) and
+-- (company_id) - so every one of those reads was a seq scan over the whole
+-- movement history. batch_no leads because the IN list is the selective term.
+CREATE INDEX IF NOT EXISTS idx_inv_mov_batch_out
+  ON scm.inventory_movements (batch_no, movement_type, source_doc_type)
+  WHERE batch_no IS NOT NULL;
 
 -- 2. Receipt-time drop-ship reconcile — claim on the HEADER flag OR the per-line
 --    commitment. Body identical to 0155 apart from that one EXISTS clause.
@@ -120,6 +180,11 @@ BEGIN
                  WHERE di.delivery_order_id       = d.id
                    AND di.committed_po_batch_no   = p_batch_no
                    AND di.item_code               = p_product_code
+                   /* Scoped to the VARIANT too, for symmetry with the OUT loop
+                      above (which is variant-keyed). Two lines of one DO can
+                      carry the same item_code in different fabrics; without
+                      this they cross-claim each other's batch. */
+                   AND COALESCE(di.committed_variant_key, '') = COALESCE(p_variant_key, '')
               )
             )
        )
@@ -182,7 +247,7 @@ END;
 $fn$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION scm.fn_reconcile_dropship_batch(UUID, TEXT, TEXT, TEXT, UUID) IS
-  'Receipt-time ship-before-arrival reconcile (0057, hardened 0088, enum-cast 0155, per-line claim 0230). For ONE (warehouse, product, variant, batch) bucket, consumes each COMMITTED OUT movement''s outstanding qty from the batch''s newly-received open lots (FIFO, at the lot''s real cost). An OUT is committed when its source DO is not CANCELLED and either the header carries is_dropship = TRUE (0088) or one of its lines carries committed_po_batch_no = this batch for this product (0230) - so a plain "Ship anyway" on a line that resolves an incoming PO nets on receipt, and one unresolvable line on a mixed DO no longer denies netting to the rest. An uncosted NORMAL short-ship (concurrent-DO race) still cannot steal the arriving lots: it carries neither signal. Idempotent + ledger-driven.';
+  'Receipt-time ship-before-arrival reconcile (0057, hardened 0088, enum-cast 0155, per-line claim 0230). For ONE (warehouse, product, variant, batch) bucket, consumes each COMMITTED OUT movement''s outstanding qty from the batch''s newly-received open lots (FIFO, at the lot''s real cost). An OUT is committed when its source DO is not CANCELLED and either the header carries is_dropship = TRUE (0088) or one of its lines carries committed_po_batch_no = this batch for this product AND THIS VARIANT (0230) - so a plain "Ship anyway" on a line that resolves an incoming PO nets on receipt, and one unresolvable line on a mixed DO no longer denies netting to the rest. An uncosted NORMAL short-ship (concurrent-DO race) still cannot steal the arriving lots: it carries neither signal. Idempotent + ledger-driven.';
 
 -- 3. Oversell retro-cost (0154) — the mirror exclusion. Body identical to 0154
 --    apart from the added NOT EXISTS: a line-committed OUT belongs to the
@@ -220,6 +285,12 @@ BEGIN
             AND COALESCE(d.is_dropship, FALSE) = FALSE
             AND UPPER(COALESCE(d.status::text, '')) <> 'CANCELLED'
        )
+       /* The mirror exclusion — STRICT-BATCH LINES ONLY (see the header). A
+          committed SOFA OUT belongs to the batched reconcile, because costing it
+          from an arbitrary lot means another dye lot. A committed MATTRESS OUT
+          has no dye lot to protect and MUST stay repairable here, or a cancelled
+          / re-raised PO would strand its COGS at RM0 for good — which is what
+          this migration exists to stop, not to cause. */
        AND NOT (
          m.batch_no IS NOT NULL
          AND EXISTS (
@@ -227,6 +298,8 @@ BEGIN
             WHERE di.delivery_order_id     = m.source_doc_id
               AND di.committed_po_batch_no = m.batch_no
               AND di.item_code             = m.product_code
+              AND COALESCE(di.committed_variant_key, '') = COALESCE(m.variant_key, '')
+              AND di.committed_batch_strict = TRUE
          )
        )
      ORDER BY m.created_at ASC, m.id ASC
@@ -289,4 +362,4 @@ END;
 $fn$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION scm.fn_reconcile_uncosted_out(UUID, TEXT, TEXT, TIMESTAMPTZ, UUID) IS
-  'Receipt-time retro-cost for oversold (short-shipped) DO OUTs that are NOT bound to an incoming batch (0154, narrowed 0230). For ONE (warehouse, product, variant) bucket it consumes each PRIOR uncosted short OUT''s outstanding qty from the newly-received open lots (plain FIFO, any batch, at the lot''s real cost). Excluded: OUTs on an is_dropship header (0154) and OUTs whose DO carries a per-line committed_po_batch_no equal to the movement''s batch (0230) - both belong to fn_reconcile_dropship_batch, which is batch-scoped, and costing them from an arbitrary dye lot here is exactly the colour-mixing batch binding exists to prevent. Anti coverage-theft: created_at < p_before_ts, oldest first, status <> CANCELLED, company-pinned; idempotent via ledger-recomputed shortfall.';
+  'Receipt-time retro-cost for oversold (short-shipped) DO OUTs that are NOT bound to a DYE LOT (0154, narrowed 0230). For ONE (warehouse, product, variant) bucket it consumes each PRIOR uncosted short OUT''s outstanding qty from the newly-received open lots (plain FIFO, any batch, at the lot''s real cost). Excluded: OUTs on an is_dropship header (0154) and OUTs whose DO carries a per-line commitment for this batch + variant WITH committed_batch_strict = TRUE (0230) - those belong to fn_reconcile_dropship_batch, which is batch-scoped, because costing a sofa from an arbitrary lot is the colour-mixing batch binding exists to prevent. A NON-strict commitment (mattress / bedframe / accessory - no dye lot) is deliberately still eligible here: its bound PO can be cancelled, re-raised under another number, or superseded by a transfer or stock take, and without this fallback its COGS would sit at RM0 forever. Both reconciles recompute ABS(qty) - SUM(consumed), and the GRN post runs the batched one first, so a doubly-eligible OUT can neither double-cost nor race. Anti coverage-theft: created_at < p_before_ts, oldest first, status <> CANCELLED, company-pinned; idempotent via ledger-recomputed shortfall.';

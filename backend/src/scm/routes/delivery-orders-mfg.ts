@@ -41,7 +41,12 @@ import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item
 import { checkStockAvailability, shortStockResponse, type StockShortage } from '../lib/check-stock-availability';
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from '../lib/dropship-batch';
-import { planShipCommitments, type ShipLineFact } from '../lib/ship-commitment';
+import {
+  planShipCommitments,
+  planSofaSetPoConflicts,
+  type ShipLineFact,
+  type SofaSetPoConflict,
+} from '../lib/ship-commitment';
 import { loadSofaBatchStock, sofaStockKey } from '../lib/sofa-set-coverage';
 import { buildDoReversalRows } from '../lib/do-reversal';
 import { currentDocNoByKey, type CurrentEvent } from '../lib/current-doc';
@@ -504,9 +509,13 @@ async function recomputeTotals(sb: any, deliveryOrderId: string) {
                            question the operator was asked
 
    Returns lineRef -> the binding for the lines that bind (batch + ETA, so the
-   ONE dialog the operator sees can name the incoming PO). Best-effort
-   throughout: any read failure yields no commitments, i.e. exactly today's
-   behaviour (ship, no binding) — a binding lookup must never block a shipment. */
+   ONE dialog the operator sees can name the incoming PO), plus any SOFA SET
+   this write would split across two batches — see planSofaSetPoConflicts.
+   Best-effort throughout: any read failure yields no commitments, i.e. exactly
+   today's behaviour (ship, no binding) — a binding lookup must never block a
+   shipment. The set conflict is the one exception, and deliberately so: it is
+   raised only when a binding WAS resolved, so it can never turn a working ship
+   into a refusal. */
 type ShipCandidateLine = {
   lineRef: string;
   soItemId: string | null;
@@ -514,9 +523,30 @@ type ShipCandidateLine = {
   itemGroup: string | null;
   variantKey: string;
   qty: number;
+  /** Units of this DO line already shipped OUT (PATCH qty-increase only). */
+  priorShippedQty?: number;
+  /** The batch those earlier units carry, if any (PATCH qty-increase only). */
+  priorBatchNo?: string | null;
 };
 
-type ShipBinding = { itemCode: string; poNumber: string; eta: string | null };
+type ShipBinding = {
+  itemCode: string;
+  poNumber: string;
+  eta: string | null;
+  /** Mirrors ShipCommitmentDecision.strictBatch — a dye lot that must never be
+   *  substituted. Written to delivery_order_items.committed_batch_strict. */
+  strictBatch: boolean;
+  /** The bucket the commitment was made in, stored so both reconciles can scope
+   *  the per-line claim to the same variant the OUT loop is scoped to. */
+  variantKey: string;
+};
+
+type ShipCommitmentPlan = {
+  bindings: Map<string, ShipBinding>;
+  setConflicts: SofaSetPoConflict[];
+};
+
+const NO_COMMITMENTS: ShipCommitmentPlan = { bindings: new Map(), setConflicts: [] };
 
 async function resolveShipCommitments(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -524,10 +554,10 @@ async function resolveShipCommitments(
   lines: ShipCandidateLine[],
   warehouseId: string | null,
   shortages: StockShortage[],
-): Promise<Map<string, ShipBinding>> {
+): Promise<ShipCommitmentPlan> {
   const out = new Map<string, ShipBinding>();
   const linked = lines.filter((l) => l.soItemId && Number(l.qty) > 0);
-  if (linked.length === 0) return out;
+  if (linked.length === 0) return { bindings: out, setConflicts: [] };
   try {
     const soItemIds = [...new Set(linked.map((l) => l.soItemId as string))];
 
@@ -539,12 +569,14 @@ async function resolveShipCommitments(
          bound to two live POs resolves to null here and ships unbound, which is
          what the drop-ship offer path already does (audit H3). */
       resolveExpectedBatchBySoItem(sb, soItemIds, { onMultiPo: 'block' }),
-      sb.from('mfg_sales_order_items').select('id, allocated_batch_no').in('id', soItemIds),
+      /* doc_no comes along because it IS the sofa set's identity — the same
+         definition findIncompleteSofaSets uses (all the READY sofa lines of one
+         Sales Order). One read, not a second query. */
+      sb.from('mfg_sales_order_items').select('id, doc_no, allocated_batch_no').in('id', soItemIds),
     ]);
-    const allocated = new Map<string, string | null>(
-      (((allocRes as { data?: Array<{ id: string; allocated_batch_no: string | null }> }).data ?? []))
-        .map((r) => [r.id, r.allocated_batch_no ?? null]),
-    );
+    const soRows = ((allocRes as { data?: Array<{ id: string; doc_no: string | null; allocated_batch_no: string | null }> }).data ?? []);
+    const allocated = new Map<string, string | null>(soRows.map((r) => [r.id, r.allocated_batch_no ?? null]));
+    const docNoBySoItem = new Map<string, string | null>(soRows.map((r) => [r.id, r.doc_no ?? null]));
 
     /* The short-stock guard reports only the buckets that are SHORT, with what
        was on hand. A bucket it did not report is covered, so anything > 0 marks
@@ -563,22 +595,44 @@ async function resolveShipCommitments(
       expectedBatchNo: (l.soItemId ? expected.get(l.soItemId)?.poNumber : null) ?? null,
       availableQty: availableByBucket.get(`${l.itemCode}::${l.variantKey}`) ?? Number(l.qty),
       shipQty: Number(l.qty),
+      priorShippedQty: l.priorShippedQty ?? 0,
+      priorBatchNo: l.priorBatchNo ?? null,
     }));
 
-    for (const d of planShipCommitments(facts)) {
+    const decisions = planShipCommitments(facts);
+    const variantByRef = new Map(linked.map((l) => [l.lineRef, l.variantKey]));
+    for (const d of decisions) {
       if (!d.bind || !d.batchNo) continue;
       out.set(d.lineRef, {
         itemCode: d.itemCode,
         poNumber: d.batchNo,
         eta: (d.soItemId ? expected.get(d.soItemId)?.eta : null) ?? null,
+        strictBatch: d.strictBatch,
+        variantKey: variantByRef.get(d.lineRef) ?? '',
       });
     }
+
+    /* ONE PO IS ONE BATCH NUMBER (owner, 2026-07-31), so a sofa SET binds ONE
+       PO. The pre-existing gate only asked whether every module had *a* PO, so
+       two modules resolving two different POs were stamped with two batch
+       numbers and the dye lot was split silently. */
+    const byRef = new Map(decisions.map((d) => [d.lineRef, d]));
+    const setConflicts = planSofaSetPoConflicts(linked.map((l) => ({
+      lineRef: l.lineRef,
+      soDocNo: l.soItemId ? (docNoBySoItem.get(l.soItemId) ?? null) : null,
+      itemCode: l.itemCode,
+      isSofa: !!l.soItemId && sofaIds.has(l.soItemId),
+      allocatedBatchNo: allocated.get(l.soItemId as string) ?? null,
+      boundBatchNo: byRef.get(l.lineRef)?.batchNo ?? null,
+    })));
+    if (setConflicts.length > 0) return { bindings: new Map(), setConflicts };
+
+    return { bindings: out, setConflicts: [] };
   } catch (e) {
     /* eslint-disable-next-line no-console */
     console.error('[ship-commitment] resolve failed (shipping unbound):', e);
-    return new Map();
+    return NO_COMMITMENTS;
   }
-  return out;
 }
 
 /** Distinct incoming-PO bindings, for the "ship anyway?" dialog. */
@@ -587,6 +641,23 @@ const bindingList = (m: Map<string, ShipBinding>): ShipBinding[] => {
   for (const b of m.values()) byKey.set(`${b.poNumber}::${b.itemCode}`, b);
   return [...byKey.values()];
 };
+
+/** 409 for a sofa set whose modules resolve DIFFERENT incoming POs. Refused,
+ *  never silently resolved to one of them: picking a module's PO for the whole
+ *  set would stamp the others with a batch their goods will not arrive under,
+ *  and the operator is the only one who knows which PO is the real one. */
+const sofaSetPoSplitResponse = (conflicts: SofaSetPoConflict[]) => ({
+  error: 'sofa_set_po_split',
+  message:
+    `A sofa set is ONE dye lot, so it must ship against ONE purchase order — these modules resolve different ones: ` +
+    conflicts.map((cf) =>
+      `${cf.soDocNo}: ` + cf.modules
+        .map((m) => `${m.itemCode} -> ${m.batchNo ?? 'no PO'}`)
+        .join(', '),
+    ).join('; ') +
+    `. Point every module of the set at the same purchase order (Purchase Order -> the line -> Source Sales Order line), or ship none of it.`,
+  conflicts,
+});
 
 /* ── resolveDoSofaBatchMap (Audit fix C1, 2026-07-13) ─────────────────────────
    SHARED sofa-batch resolution for every inventory seam of a DO — the single
@@ -2851,7 +2922,7 @@ deliveryOrdersMfg.post('/', async (c) => {
        arrive and resolves exactly one live bound PO carries that PO's batch,
        whichever dialog the operator happened to answer. Resolved BEFORE the 409
        so the single "ship anyway?" dialog can name the incoming PO. */
-    commitments = await resolveShipCommitments(
+    const plan = await resolveShipCommitments(
       sb,
       items.map((it, idx) => ({
         lineRef: String(idx),
@@ -2864,6 +2935,14 @@ deliveryOrdersMfg.post('/', async (c) => {
       shipWarehouseId,
       shortages,
     );
+    /* One PO IS one batch number: refuse a set split across two dye lots rather
+       than pick one of them. Ahead of the short-stock 409 because there is no
+       answer to "ship anyway?" that makes this shipment correct. */
+    if (plan.setConflicts.length > 0) {
+      markIdempotencyNoWrite(c);
+      return c.json(sofaSetPoSplitResponse(plan.setConflicts), 409);
+    }
+    commitments = plan.bindings;
     if (shortages.length > 0 && !body.confirmShortStock) {
       markIdempotencyNoWrite(c);
       return c.json(shortStockResponse(shortages, bindingList(commitments)), 409);
@@ -3003,7 +3082,7 @@ deliveryOrdersMfg.post('/', async (c) => {
   const h = header as unknown as { id: string; do_number: string };
 
   if (items.length > 0) {
-    const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo, commitments.get(String(lineNo))?.poNumber ?? null));
+    const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo, commitments.get(String(lineNo)) ?? null));
     const { error: iErr } = await sb.from('delivery_order_items').insert(stampCompany(rows, c));
     if (iErr) { await sb.from('delivery_orders').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
     await recomputeTotals(sb, h.id);
@@ -3123,14 +3202,14 @@ function emptyDate(v: unknown): string | null {
   return s === '' ? null : s;
 }
 
-/* `committedPoBatchNo` is NEVER read off the request body — it is passed in by
-   the route from planShipCommitments, so a client cannot claim a binding the
-   ledger has not earned (it decides which receipt gets to net this OUT). */
+/* `commitment` is NEVER read off the request body — it is passed in by the route
+   from planShipCommitments, so a client cannot claim a binding the ledger has
+   not earned (it decides which receipt gets to net this OUT). */
 function buildItemRow(
   deliveryOrderId: string,
   it: Record<string, unknown>,
   lineNo?: number | null,
-  committedPoBatchNo?: string | null,
+  commitment?: { poNumber: string; strictBatch: boolean; variantKey: string } | null,
 ) {
   const qty = Number(it.qty ?? 1);
   const unitPrice = Number(it.unitPriceCenti ?? 0);
@@ -3174,9 +3253,15 @@ function buildItemRow(
     /* REC P4 (mig 0118) — the SOURCE rack this line ships from. Null = let the
        dispatch chokepoint auto-pick the rack holding this product. */
     rack_id: (it.rackId as string | undefined) || null,
-    /* Mig 0230 — the incoming PO batch this line is shipping AGAINST, when it
-       ships before the goods arrive. */
-    committed_po_batch_no: committedPoBatchNo ?? null,
+    /* Mig 0230 — the incoming PO batch this line is shipping AGAINST when it
+       ships before the goods arrive, the bucket it was committed in, and whether
+       that batch is a DYE LOT (sofa). The strict flag is what keeps the
+       batch-agnostic oversell retro-cost off a sofa OUT — and, just as
+       deliberately, keeps it available to a mattress OUT whose PO may yet be
+       cancelled or re-raised. */
+    committed_po_batch_no: commitment?.poNumber ?? null,
+    committed_variant_key: commitment ? commitment.variantKey : null,
+    committed_batch_strict: commitment?.strictBatch === true,
     ...(typeof lineNo === 'number' ? { line_no: lineNo } : {}),
   };
 }
@@ -3342,7 +3427,7 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
      span several SOs, and one unresolvable line used to deny the netting to
      every other line that could have had it. Resolved BEFORE the 409 so the one
      "ship anyway?" dialog can name the incoming PO. */
-  const commitments = await resolveShipCommitments(
+  const commitmentPlan = await resolveShipCommitments(
     sb,
     sortedPicks.map((line) => ({
       lineRef: line.soItemId,
@@ -3355,6 +3440,12 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
     shipWarehouseId ?? null,
     shortages,
   );
+  // One PO IS one batch number — a set split across two dye lots is refused.
+  if (commitmentPlan.setConflicts.length > 0) {
+    markIdempotencyNoWrite(c);
+    return c.json(sofaSetPoSplitResponse(commitmentPlan.setConflicts), 409);
+  }
+  const commitments = commitmentPlan.bindings;
   if (shortages.length > 0 && !body.confirmShortStock) {
     markIdempotencyNoWrite(c);
     return c.json(shortStockResponse(shortages, bindingList(commitments)), 409);
@@ -3481,6 +3572,9 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
       line_suffix: line.lineSuffix ?? null,
       special_order_price_sen: line.specialOrderPriceSen ?? 0,
       committed_po_batch_no: commitments.get(line.soItemId)?.poNumber ?? null,
+      committed_variant_key: commitments.has(line.soItemId)
+        ? (commitments.get(line.soItemId)?.variantKey ?? '') : null,
+      committed_batch_strict: commitments.get(line.soItemId)?.strictBatch === true,
     };
   });
   const { error: iErr } = await sb.from('delivery_order_items').insert(stampCompany(doRows, c));
@@ -3924,7 +4018,7 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
      the same way is_dropship has always been decided at create and applied at
      confirm — one model, not two. Resolved before the 409 so the dialog names
      the incoming PO. */
-  const addCommitments = await resolveShipCommitments(sb, [{
+  const addPlan = await resolveShipCommitments(sb, [{
     lineRef: 'add',
     soItemId: (it.soItemId as string | null) ?? null,
     itemCode: String(it.itemCode ?? ''),
@@ -3932,6 +4026,11 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
     variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
     qty: Number(it.qty ?? 0),
   }], addWarehouseId ?? null, addShortages);
+  // One PO IS one batch number — a set split across two dye lots is refused.
+  if (addPlan.setConflicts.length > 0) {
+    return c.json(sofaSetPoSplitResponse(addPlan.setConflicts), 409);
+  }
+  const addCommitments = addPlan.bindings;
 
   /* Only a line on an ALREADY-SHIPPED DO moves stock on add, so only that case
      asks the operator. The measurement is taken either way — it is what the
@@ -4003,7 +4102,7 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
   const nextLineNo = typeof (maxNoRow as { line_no?: number | null } | null)?.line_no === 'number'
     ? (maxNoRow as { line_no: number }).line_no + 1
     : null;
-  const row = buildItemRow(id, it, nextLineNo, addCommitments.get('add')?.poNumber ?? null);
+  const row = buildItemRow(id, it, nextLineNo, addCommitments.get('add') ?? null);
   const { data, error } = await sb.from('delivery_order_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   /* Drop-ship (mig 0057) — once a drop-shipped line is added, stamp the DO so
@@ -4066,11 +4165,15 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
   if (childLock) return c.json(childLock, 409);
 
   const { data: prev } = await sb.from('delivery_order_items')
-    .select('qty, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, so_item_id, line_total_centi, rack_id, line_delivery_date')
+    .select('qty, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, so_item_id, line_total_centi, rack_id, line_delivery_date, committed_po_batch_no, committed_variant_key, committed_batch_strict')
     .eq('id', itemId).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
 
   const qty = it.qty !== undefined ? Number(it.qty) : Number(prev.qty);
+  /* Mig 0230 — a qty INCREASE can bind, just like the three create paths. Filled
+     in by the short-stock block below; null means this edit binds nothing and
+     the line's existing marker (if any) is left exactly as it was. */
+  let patchCommitment: ShipBinding | null = null;
 
   /* Remaining-qty guard (Wei Siang 2026-05-30) — raising the qty of an
      SO-linked line may not push the SO line past its ordered qty. remaining is
@@ -4132,8 +4235,19 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
 
   /* Edge #1+#2 — when qty is being INCREASED on a shipped DO, the delta
      needs more stock OUT. Check that delta against the warehouse, gated by
-     confirmShortStock. Decreases and non-qty edits skip the check. */
-  if (it.qty !== undefined && qty > Number(prev.qty) && !(it as { confirmShortStock?: boolean }).confirmShortStock) {
+     confirmShortStock. Decreases and non-qty edits skip the check.
+
+     ⚠ AND THE DELTA BINDS, mig 0230. This was the FOURTH write path and the one
+     left open: POST /, POST /from-sos and POST /:id/items all bind, so a
+     qty-increase that shipped short went out attached to nothing — the exact
+     hole this change exists to close, surviving on one route. The delta is now
+     put through the SAME pure decision table, the 409 names the incoming PO like
+     the other three, and the marker is stamped on the confirmed replay.
+
+     The check now runs even on the CONFIRMED replay (only the 409 is gated),
+     because its answer is what the binding decision reads — measuring it twice
+     from two places is how the question and the binding come to disagree. */
+  if (it.qty !== undefined && qty > Number(prev.qty)) {
     const { data: doHeader } = await sb.from('delivery_orders').select('status, warehouse_id').eq('id', id).maybeSingle();
     const dh = (doHeader ?? { status: null, warehouse_id: null }) as { status: string | null; warehouse_id: string | null };
     if (SHIPPED_STATES.includes((dh.status ?? '').toUpperCase())) {
@@ -4143,14 +4257,38 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
         const effGroup = (it.itemGroup ?? prev.item_group) as string | null;
         const effVariants = (it.variants ?? prev.variants) as VariantAttrs | null;
         const effCode = (it.itemCode as string | undefined) ?? (prev.item_code as string);
+        const effVariantKey = computeVariantKey(effGroup, effVariants);
         const stockLines = [{
           itemCode: effCode,
           productName: (prev.description as string | null) ?? null,
-          variantKey: computeVariantKey(effGroup, effVariants),
+          variantKey: effVariantKey,
           qty: delta,
         }];
         const shortages = await checkStockAvailability(sb, targetWh, stockLines);
-        if (shortages.length > 0) return c.json(shortStockResponse(shortages), 409);
+        /* priorShippedQty/priorBatchNo are what stop this re-bucketing a line
+           that ALREADY shipped: resyncInventoryForDo keys its delta on
+           (warehouse, code, variant, BATCH), so stamping a batch onto a line
+           whose earlier units went out un-batched would reverse a costed OUT and
+           re-issue the whole line against goods that have not arrived. The pure
+           table refuses that as 'prior_ship_other_batch' — the temporal form of
+           the partial short it already refuses. */
+        const patchPlan = await resolveShipCommitments(sb, [{
+          lineRef: 'patch',
+          soItemId: (prev.so_item_id as string | null) ?? null,
+          itemCode: effCode,
+          itemGroup: effGroup,
+          variantKey: effVariantKey,
+          qty: delta,
+          priorShippedQty: Number(prev.qty ?? 0),
+          priorBatchNo: (prev.committed_po_batch_no as string | null) ?? null,
+        }], targetWh, shortages);
+        if (patchPlan.setConflicts.length > 0) {
+          return c.json(sofaSetPoSplitResponse(patchPlan.setConflicts), 409);
+        }
+        patchCommitment = patchPlan.bindings.get('patch') ?? null;
+        if (shortages.length > 0 && !(it as { confirmShortStock?: boolean }).confirmShortStock) {
+          return c.json(shortStockResponse(shortages, bindingList(patchPlan.bindings)), 409);
+        }
       }
     }
   }
@@ -4199,6 +4337,14 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     ['rackId', 'rack_id'],
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
+  }
+  /* Mig 0230 — stamp the delta's binding. Only ever SET, never cleared: an
+     existing marker records what an earlier shipment already did, and unsetting
+     it would orphan an OUT the receipt is still going to net. */
+  if (patchCommitment) {
+    updates['committed_po_batch_no'] = patchCommitment.poNumber;
+    updates['committed_variant_key'] = patchCommitment.variantKey;
+    updates['committed_batch_strict'] = patchCommitment.strictBatch;
   }
   if (it.lineDeliveryDate !== undefined) updates['line_delivery_date_overridden'] = true;
   if (it.lineDeliveryDateOverridden !== undefined) updates['line_delivery_date_overridden'] = Boolean(it.lineDeliveryDateOverridden);

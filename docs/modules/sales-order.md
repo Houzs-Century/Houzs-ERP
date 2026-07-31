@@ -169,10 +169,27 @@ Two knock-on effects for anyone working on the SO:
   line's OUT is stamped with the incoming PO number, so its COGS lands from THAT
   batch's lot when the GRN posts. Break the link (see the `ON DELETE SET NULL`
   trap above) and the shipment silently reverts to an unbound oversell.
-- **MRP stops offering the committed units.** `mrp.ts` subtracts them from that
-  PO's incoming supply and adds the same units back to on-hand stock (the OUT had
-  already taken them off `inventory_balances`) — so a second SO is not promised
-  stock the receipt is going to hand to the first shipment.
+- **MRP ATTRIBUTES the committed units to the PO that owes them.** `mrp.ts`
+  subtracts them from that PO's incoming supply and adds the same units back to
+  on-hand stock (the OUT had already taken them off `inventory_balances`). Read
+  that precisely: **net availability does not change and no shortage figure
+  moves** — the balance arithmetic already propagated the negative correctly and
+  already tagged those units `source: 'shortage'` rather than `coverage_po`. What
+  changes is that the commitment stops being a nameless negative in whichever
+  bucket the OUT landed in, so Stock and PO-Outstanding stop being wrong in
+  opposite directions on the SKU row.
+- **A sofa SET must bind ONE purchase order.** One PO IS one batch number, so if
+  two modules of a set resolve two different POs the ship is refused
+  (`sofa_set_po_split`) rather than stamped with two batch numbers. Point every
+  module's PO line at its Source Sales Order line before shipping.
+
+Allocation order is unchanged by any of this and is worth restating, because it
+is easy to assume otherwise: MRP allocates greedily by
+`line_delivery_date ?? customer_delivery_date`, then `doc_no`. An urgent order
+inserted with an earlier delivery date DOES re-shuffle the allocation and DOES
+take stock and PO supply ahead of a later one — the delivery date is the
+mechanism. (The `priority_rank` / `priority_reason` columns exist but have zero
+readers; they are not what drives this.)
 
 ### Processing-Date save gates (aggregated `validation_failed`)
 

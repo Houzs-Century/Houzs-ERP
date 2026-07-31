@@ -89,6 +89,9 @@ async function resetFixture(sql: Sql): Promise<void> {
       delivery_order_id uuid REFERENCES scm.delivery_orders(id) ON DELETE CASCADE,
       item_code text,
       qty integer
+      -- committed_po_batch_no / committed_variant_key / committed_batch_strict
+      -- are deliberately absent: the migration's ALTERs have to be what put them
+      -- there, so a broken ALTER fails HERE rather than in a deploy.
     );
 
     CREATE TABLE scm.inventory_movements (
@@ -145,24 +148,38 @@ async function resetFixture(sql: Sql): Promise<void> {
   await sql.unsafe(await commitmentMigrationSql());
 }
 
-type ShipOpts = { isDropship?: boolean; commitLine?: boolean; status?: string; qty?: number };
+type ShipOpts = {
+  isDropship?: boolean; commitLine?: boolean; status?: string; qty?: number;
+  /** mig 0230 - is the committed batch a DYE LOT? Sofa TRUE, mattress FALSE.
+   *  This is the ONLY thing that keeps the batch-agnostic retro-cost off the
+   *  OUT, so it is what the FIX-1 cases below turn on and off. */
+  strict?: boolean;
+  /** The bucket the commitment was made in; must match the movement's. */
+  variantKey?: string;
+  movVariantKey?: string;
+};
 
 /** One "shipped before it arrived" DO: a negative OUT stamped with the incoming
  *  PO's batch, and (optionally) the per-line commitment marker mig 0230 adds. */
 async function shipShort(sql: Sql, opts: ShipOpts = {}): Promise<{ doId: string; movId: string }> {
-  const { isDropship = false, commitLine = true, status = 'DISPATCHED', qty = 1 } = opts;
+  const {
+    isDropship = false, commitLine = true, status = 'DISPATCHED', qty = 1,
+    strict = true, variantKey = VKEY, movVariantKey = variantKey,
+  } = opts;
   const [doRow] = await sql<Array<{ id: string }>>`
     insert into scm.delivery_orders (do_number, status, is_dropship)
     values ('2990-DO-2607-009', ${status}, ${isDropship}) returning id`;
   const doId = doRow!.id;
   await sql`
-    insert into scm.delivery_order_items (delivery_order_id, item_code, qty, committed_po_batch_no)
-    values (${doId}::uuid, ${CODE}, ${qty}, ${commitLine ? BATCH : null})`;
+    insert into scm.delivery_order_items
+      (delivery_order_id, item_code, qty, committed_po_batch_no, committed_variant_key, committed_batch_strict)
+    values (${doId}::uuid, ${CODE}, ${qty}, ${commitLine ? BATCH : null},
+            ${commitLine ? variantKey : null}, ${commitLine ? strict : false})`;
   const [mov] = await sql<Array<{ id: string }>>`
     insert into scm.inventory_movements
       (movement_type, warehouse_id, product_code, variant_key, qty, batch_no,
        source_doc_type, source_doc_id, source_doc_no, total_cost_sen, unit_cost_sen)
-    values ('OUT', ${WH}::uuid, ${CODE}, ${VKEY}, ${qty}, ${BATCH},
+    values ('OUT', ${WH}::uuid, ${CODE}, ${movVariantKey}, ${qty}, ${BATCH},
             'DO', ${doId}::uuid, '2990-DO-2607-009', 0, 0)
     returning id`;
   return { doId, movId: mov!.id };
@@ -178,13 +195,21 @@ async function receive(sql: Sql, qty: number, unitCostSen: number): Promise<stri
   return lot!.id;
 }
 
-const reconcileBatch = (sql: Sql) => sql<Array<{ n: number }>>`
+const reconcileBatch = (sql: Sql, variantKey = VKEY) => sql<Array<{ n: number }>>`
   select scm.fn_reconcile_dropship_batch(
-    ${WH}::uuid, ${CODE}, ${VKEY}, ${BATCH}, ${ACTOR}::uuid) as n`;
+    ${WH}::uuid, ${CODE}, ${variantKey}, ${BATCH}, ${ACTOR}::uuid) as n`;
 
-const reconcileUncosted = (sql: Sql) => sql<Array<{ n: number }>>`
+const reconcileUncosted = (sql: Sql, variantKey = VKEY) => sql<Array<{ n: number }>>`
   select scm.fn_reconcile_uncosted_out(
-    ${WH}::uuid, ${CODE}, ${VKEY}, now(), ${ACTOR}::uuid) as n`;
+    ${WH}::uuid, ${CODE}, ${variantKey}, now(), ${ACTOR}::uuid) as n`;
+
+/** Any UNRELATED stock landing in the bucket: an inter-warehouse transfer, a
+ *  positive stock take, or the GRN of a re-raised PO. Deliberately NOT the
+ *  committed batch - that is exactly what the FIX-1 cases turn on. */
+const receiveUnrelated = (sql: Sql, qty: number, unitCostSen: number, variantKey = VKEY) => sql`
+  insert into scm.inventory_lots
+    (warehouse_id, product_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
+  values (${WH}::uuid, ${CODE}, ${variantKey}, ${qty}, ${qty}, ${unitCostSen}, 'SOME-OTHER-PO')`;
 
 async function movementCost(sql: Sql, movId: string) {
   const [r] = await sql<Array<{ total_cost_sen: number; unit_cost_sen: number }>>`
@@ -195,11 +220,12 @@ async function movementCost(sql: Sql, movId: string) {
 /** The MRP side, built from the same rows the route reads. */
 async function commitmentsFromDb(sql: Sql): Promise<Map<string, number>> {
   const rows = await sql<Array<{
-    bucket: string; batch_no: string; out_qty: number; consumed: number;
+    bucket: string; batch_no: string; warehouse_id: string; product_code: string;
+    variant_key: string; out_qty: number; consumed: number;
     status: string; is_dropship: boolean; line_committed: boolean;
   }>>`
     select (m.warehouse_id::text || '|' || m.product_code || '|' || coalesce(m.variant_key,'')) as bucket,
-           m.batch_no,
+           m.batch_no, m.warehouse_id, m.product_code, coalesce(m.variant_key,'') as variant_key,
            abs(m.qty) as out_qty,
            coalesce((select sum(c.qty_consumed) from scm.inventory_lot_consumptions c
                       where c.movement_id = m.id), 0) as consumed,
@@ -207,12 +233,16 @@ async function commitmentsFromDb(sql: Sql): Promise<Map<string, number>> {
            exists (select 1 from scm.delivery_order_items di
                     where di.delivery_order_id = d.id
                       and di.committed_po_batch_no = m.batch_no
-                      and di.item_code = m.product_code) as line_committed
+                      and di.item_code = m.product_code
+                      and coalesce(di.committed_variant_key,'') = coalesce(m.variant_key,'')) as line_committed
       from scm.inventory_movements m
       join scm.delivery_orders d on d.id = m.source_doc_id
      where m.movement_type = 'OUT' and m.source_doc_type = 'DO' and m.batch_no is not null`;
   const model: CommittedShipmentRow[] = rows.map((r) => ({
     bucketKey: r.bucket,
+    warehouseId: r.warehouse_id,
+    itemCode: r.product_code,
+    variantKey: r.variant_key,
     batchNo: r.batch_no,
     outQty: Number(r.out_qty),
     consumedQty: Number(r.consumed),
@@ -220,7 +250,7 @@ async function commitmentsFromDb(sql: Sql): Promise<Map<string, number>> {
     headerDropship: r.is_dropship === true,
     lineCommitted: r.line_committed === true,
   }));
-  return outstandingCommitments(model);
+  return new Map([...outstandingCommitments(model)].map(([k, v]) => [k, v.qty]));
 }
 
 describePg('ship-before-arrival binding (migrations-pg *_scm_ship_commitment_binding.sql)', () => {
@@ -302,15 +332,12 @@ describePg('ship-before-arrival binding (migrations-pg *_scm_ship_commitment_bin
     expect((await movementCost(admin, plain.movId)).total_cost_sen).toBe(0);
   });
 
-  test('the batch-agnostic oversell retro-cost STEPS OVER a committed OUT', async () => {
+  test('the batch-agnostic retro-cost STEPS OVER a STRICT (sofa) committed OUT', async () => {
     // Without this exclusion 0154 would cost the bound shipment from whatever lot
     // happens to be open — for a sofa, another dye lot. It must leave it to the
     // batched reconcile.
-    const { movId } = await shipShort(admin, { commitLine: true });
-    await admin`
-      insert into scm.inventory_lots
-        (warehouse_id, product_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
-      values (${WH}::uuid, ${CODE}, ${VKEY}, 9, 9, 70_000, 'SOME-OTHER-PO')`;
+    const { movId } = await shipShort(admin, { commitLine: true, strict: true });
+    await receiveUnrelated(admin, 9, 70_000);
     const [{ n }] = await reconcileUncosted(admin);
     expect(Number(n)).toBe(0);
     expect((await movementCost(admin, movId)).total_cost_sen).toBe(0);
@@ -319,10 +346,7 @@ describePg('ship-before-arrival binding (migrations-pg *_scm_ship_commitment_bin
   test('an UNCOMMITTED short OUT is still repaired by the oversell retro-cost', async () => {
     // The 0154 path must keep working for everything this change does not bind.
     const { movId } = await shipShort(admin, { commitLine: false });
-    await admin`
-      insert into scm.inventory_lots
-        (warehouse_id, product_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
-      values (${WH}::uuid, ${CODE}, ${VKEY}, 9, 9, 70_000, 'SOME-OTHER-PO')`;
+    await receiveUnrelated(admin, 9, 70_000);
     const [{ n }] = await reconcileUncosted(admin);
     expect(Number(n)).toBe(1);
     expect((await movementCost(admin, movId)).total_cost_sen).toBe(70_000);
@@ -345,6 +369,99 @@ describePg('ship-before-arrival binding (migrations-pg *_scm_ship_commitment_bin
   test('MRP: a cancelled DO never holds a deduction', async () => {
     await shipShort(admin, { commitLine: true, status: 'CANCELLED' });
     expect((await commitmentsFromDb(admin)).size).toBe(0);
+  });
+
+  /* ── FIX 1 — BINDING A NON-SOFA MUST NOT STRAND ITS COGS ──────────────────
+     The regression this suite exists to rule out. 0230 first excluded EVERY
+     line-committed OUT from fn_reconcile_uncosted_out, on the argument that
+     "costing them from an arbitrary dye lot is exactly the colour-mixing batch
+     binding exists to prevent". That argument is about SOFA. A mattress has no
+     dye lot, and the exclusion turned a repairable RM0 into a permanent one.
+
+     The scenario, end to end: MAT-X, nothing on hand, one live PO-500. Ship 5
+     anyway -> the OUT is stamped PO-500. Then PO-500 dies — cancelled, or the
+     supplier re-ships under a re-raised number, or the goods arrive by
+     inter-warehouse transfer or a stock take. No lot for PO-500 ever exists, so
+     fn_reconcile_dropship_batch can never fire for it. On main that OUT was
+     un-batched and ANY later stock-IN repaired it. It must still be repaired. */
+  test('FIX 1: a NON-STRICT (mattress) committed OUT is repaired by later unrelated stock, even though its PO never arrives', async () => {
+    const { movId } = await shipShort(admin, { commitLine: true, strict: false, qty: 5 });
+
+    // The bound PO is dead: no lot under BATCH will ever open. Prove the batched
+    // reconcile is genuinely a dead end for this OUT before relying on the other.
+    expect(Number((await reconcileBatch(admin))[0]!.n)).toBe(0);
+    expect((await movementCost(admin, movId)).total_cost_sen).toBe(0);
+
+    // Something unrelated replenishes the shelf.
+    await receiveUnrelated(admin, 5, 70_000);
+
+    const [{ n }] = await reconcileUncosted(admin);
+    expect(Number(n)).toBe(5);
+    const cost = await movementCost(admin, movId);
+    expect(cost.total_cost_sen).toBe(350_000);
+    expect(cost.unit_cost_sen).toBe(70_000);
+  });
+
+  test('FIX 1: the SAME shipment marked STRICT is left at RM0 — the flag is the whole difference', async () => {
+    // Identical rows, one field apart. If this ever starts costing, the dye-lot
+    // protection is gone; if the case above ever stops, the mattress is stranded.
+    const { movId } = await shipShort(admin, { commitLine: true, strict: true, qty: 5 });
+    await receiveUnrelated(admin, 5, 70_000);
+    expect(Number((await reconcileUncosted(admin))[0]!.n)).toBe(0);
+    expect((await movementCost(admin, movId)).total_cost_sen).toBe(0);
+  });
+
+  test('FIX 1: a non-strict commitment still nets against its OWN batch when the PO does arrive', async () => {
+    // Widening the retro-cost must not cost the batched path anything: the
+    // correct GRN is still the one that claims it, at the real landed cost.
+    const { movId } = await shipShort(admin, { commitLine: true, strict: false, qty: 2 });
+    await receive(admin, 2, 120_000);
+    expect(Number((await reconcileBatch(admin))[0]!.n)).toBe(2);
+    expect((await movementCost(admin, movId)).total_cost_sen).toBe(240_000);
+
+    // ...and being doubly eligible cannot double-cost it: both functions
+    // recompute ABS(qty) - SUM(consumed), which is now zero.
+    await receiveUnrelated(admin, 9, 70_000);
+    expect(Number((await reconcileUncosted(admin))[0]!.n)).toBe(0);
+    expect((await movementCost(admin, movId)).total_cost_sen).toBe(240_000);
+  });
+
+  /* ── FIX 5 — the per-line claim is scoped to the VARIANT ─────────────────── */
+  test('FIX 5: a commitment in one variant does not let another variant claim the batch', async () => {
+    // One DO, same item_code, two fabrics. Only the BF-01 line is committed; the
+    // BF-99 OUT carries the same batch but no commitment of its own. Before the
+    // variant scoping, the EXISTS matched on (DO, item_code, batch) alone and the
+    // uncommitted variant was claimed on the back of its sibling.
+    const { movId } = await shipShort(admin, {
+      commitLine: true, strict: true, variantKey: 'fabriccode=bf-01', movVariantKey: 'fabriccode=bf-99',
+    });
+    await admin`
+      insert into scm.inventory_lots
+        (warehouse_id, product_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
+      values (${WH}::uuid, ${CODE}, 'fabriccode=bf-99', 5, 5, 90_000, ${BATCH})`;
+    const [{ n }] = await reconcileBatch(admin, 'fabriccode=bf-99');
+    expect(Number(n)).toBe(0);
+    expect((await movementCost(admin, movId)).total_cost_sen).toBe(0);
+  });
+
+  test('FIX 5: the MATCHING variant still claims normally', async () => {
+    const { movId } = await shipShort(admin, {
+      commitLine: true, strict: true, variantKey: 'fabriccode=bf-01', movVariantKey: 'fabriccode=bf-01',
+    });
+    await admin`
+      insert into scm.inventory_lots
+        (warehouse_id, product_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
+      values (${WH}::uuid, ${CODE}, 'fabriccode=bf-01', 5, 5, 90_000, ${BATCH})`;
+    expect(Number((await reconcileBatch(admin, 'fabriccode=bf-01'))[0]!.n)).toBe(1);
+    expect((await movementCost(admin, movId)).total_cost_sen).toBe(90_000);
+  });
+
+  /* ── FIX 7 — the hot-path index ──────────────────────────────────────────── */
+  test('FIX 7: the batch_no index the MRP commitment read depends on exists', async () => {
+    const [{ n }] = await admin<Array<{ n: number }>>`
+      select count(*)::int as n from pg_indexes
+       where schemaname = 'scm' and indexname = 'idx_inv_mov_batch_out'`;
+    expect(Number(n)).toBe(1);
   });
 
   test('re-applying the migration is a no-op (idempotent file)', async () => {
