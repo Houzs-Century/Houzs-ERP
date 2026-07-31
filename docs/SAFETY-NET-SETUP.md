@@ -81,9 +81,17 @@ With the bench in place, the deferred work in `FRAGMENTATION-MAP.md` and
 Until then, only the low-risk, fully-verifiable changes should ship — which is
 exactly the line held so far.
 
-## Quick status (as of 2026-07-23)
+## Quick status (as of 2026-07-31)
 
-- Branch protection on `main`: **NOT set** (`GET /branches/main/protection` → 404).
+- Branch protection on `main`: **DONE 2026-07-31.** The owner created the
+  `main-protection` **ruleset**: `deletion`, `non_fast_forward`, and
+  `required_status_checks` with contexts `backend-typecheck` + `frontend` and
+  `strict_required_status_checks_policy: true` (*Require branches to be up to
+  date before merging*), Repository admin on the bypass list.
+  **Verify with `gh api repos/hello-houzs/Houzs-ERP/rules/branches/main`, NOT
+  with `/branches/main/protection`** — that endpoint reports only CLASSIC
+  protection, so it still answers 404 and reads as "unprotected" when it is not.
+  Part 1 below is kept for the record of what was asked for and why.
 - Staging R2: **shares the production bucket** `houzs-erp` (all four staging
   bindings). Needs the split above.
 - Production R2 versioning: **off** — enable it (Part 2, step 3).

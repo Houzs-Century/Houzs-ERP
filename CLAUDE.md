@@ -47,41 +47,55 @@ than no fact: this file is auto-loaded, so every session believes it. It
 described the database as "D1 SQLite" for over a month after the Postgres
 cutover, and pointed at a migration directory that production does not read.
 
-## ⚠️ `main` has NO branch protection — you are the gate
+## `main` IS protected now — since 2026-07-31
 
-`GET /branches/main/protection` returns **404**. No required checks, no
-"branches must be up to date", no review requirement. Anyone can merge a PR
-whose CI ran against a `main` that has since moved.
+The owner created the `main-protection` **ruleset**. Verify it rather than
+trusting this paragraph — `GET /branches/main/protection` still returns 404
+because that endpoint only reports CLASSIC protection and this is a ruleset:
 
-**On 2026-07-22 that cost three separate incidents in one evening:**
+```
+gh api repos/hello-houzs/Houzs-ERP/rules/branches/main
+```
 
-| what happened | how |
+It currently returns `deletion`, `non_fast_forward`, and `required_status_checks`
+with contexts `backend-typecheck` + `frontend` and
+**`strict_required_status_checks_policy: true`** — that last flag is *Require
+branches to be up to date before merging*, and it is the one that matters.
+Repository admin is on the bypass list as an emergency escape hatch.
+
+**What this now prevents, which used to be yours to catch by hand.** A PR whose
+CI ran against a `main` that has since moved can no longer merge; GitHub makes
+you update the branch, which re-runs CI against the real merge base. That closes
+the mechanism behind every incident this section used to list:
+
+| incident | how it happened |
 |---|---|
-| `main` went red for ~20 min | #918 and #925 were each green against a `main` lacking the other |
-| the backend could not deploy | #1039 merged a `0171` that collided with #912's, and its CI predated #912 |
-| a PR merged with two red checks | nothing stopped it |
+| 2026-07-22: `main` red ~20 min | #918 and #925 were each green against a `main` lacking the other |
+| 2026-07-22: backend could not deploy | #1039 merged a `0171` colliding with #912's; its CI predated #912 |
+| 2026-07-31: backend could not deploy for 2h | #1439 merged a `0230` colliding with #1435's, for exactly the same reason |
 
-So until protection is enabled, **the checks below are the only gate, and they
-are yours to run:**
+The duplicate-migration test would have caught both collisions — it just never
+ran against a tree containing the other branch. Now it has to.
 
-1. **Re-check the CI is green IMMEDIATELY BEFORE merging**, not when you opened
-   the PR. `fail=0`, not "it was green earlier".
-2. **Take migration numbers at MERGE time** by re-listing the tree. A number
-   that was free an hour ago is not a number that is free — one branch was
-   renumbered four times in a day (`0159 → 0165 → 0167 → 0171`).
-3. **Before renaming an applied migration, check whether it has run.**
+**Still yours, because no ruleset checks it:**
+
+1. **Take migration numbers at MERGE time** by re-listing the tree. Being forced
+   up-to-date makes a collision *fail loudly* instead of merging, but you still
+   have to pick a free number — one branch was renumbered four times in a day
+   (`0159 → 0165 → 0167 → 0171`).
+2. **Before renaming an applied migration, check whether it has run.**
    `pg-migrate` tracks by FULL FILENAME, so renaming an applied file makes it a
    new file and its SQL runs a SECOND time against a schema it already changed.
    The deploy log's `APPLIED <file>` line is the record.
-4. **After merging, confirm the backend job said `success`, not `skipped`.**
+3. **After merging, confirm the backend job said `success`, not `skipped`.**
+   Required status checks gate the MERGE; nothing gates the deploy that follows.
+   On 2026-07-31 the backend sat un-deployed for over two hours while `main` was
+   green, because the deploy failed at a step CI does not run.
 
-**The real fix needs repo-admin rights, which the working account does not have**
-(`permissions.admin = false`). Owner: Settings → Branches → add a rule for
-`main` with *Require status checks* + **Require branches to be up to date**, and
-`backend-typecheck` + `frontend` as the contexts. Do NOT require approvals (it
-blocks every automated merge) and do NOT include administrators (keep an
-emergency escape hatch). Avoid `backend-tests (N)` as contexts — the name
-carries the shard index and changes whenever the shard count does.
+**Do NOT add `backend-tests (N)` or `backend` as required contexts.** The shard
+name carries an index that changes with the shard count, and `backend` is a
+roll-up that is legitimately `skipped` on frontend-only PRs — a skipped required
+check leaves the PR pending forever.
 
 ## Read the map before exploring
 
