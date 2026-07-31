@@ -1426,8 +1426,24 @@ export function DataTable<T>({
   // by two spacer <tr>s that reserve the off-screen height so the page scrollbar
   // and sticky header behave exactly as before. Row height is measured from a
   // real row so the spacers can't drift (avoids the HOOKKA getTotalSize lag).
+  // `expandable` used to disqualify a table outright. That excluded the single
+  // largest list in the app: /scm/inventory's balances table is expandable (the
+  // chevron opens per-warehouse / variant detail) and measured 2026-08-01 at
+  // 344 rows in 11,963 DOM nodes, while every windowed table sat near 1,500.
+  //
+  // The exclusion existed for a real reason — an expanded row injects an extra
+  // <tr> of unpredictable height, which breaks the uniform-row-height assumption
+  // the spacers depend on. But that reason only holds WHILE something is
+  // expanded. With nothing expanded, an expandable table's rows are as uniform
+  // as any other table's, so it can window exactly like one.
+  //
+  // So: window while collapsed, and fall back to rendering in full the moment
+  // any row opens. Expanding is then byte-identical to today's behaviour — the
+  // risky state is simply never the windowed one. Collapsing the last row
+  // returns it to the windowed path.
   const canVirtualize =
-    showTable && !effectiveLoading && !error && !groupBy && !expandable &&
+    showTable && !effectiveLoading && !error && !groupBy &&
+    (!expandable || expandedRows.size === 0) &&
     renderList.length > VIRTUAL_ROW_THRESHOLD;
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
   const rowHeightRef = useRef(ROW_HEIGHT_ESTIMATE);
