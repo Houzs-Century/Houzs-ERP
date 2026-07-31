@@ -156,6 +156,38 @@ const distDir = distArg ? distArg : DIST;
 const ASSETS_DIR_NAME = resolveAssetsDirName(distDir);
 const assetsDir = join(distDir, ASSETS_DIR_NAME);
 
+// The asset directory name is owned by vite.config.ts and RESTATED by hand in
+// public/_headers, in two files that cannot see each other. Nothing checked they
+// agreed. On 2026-07-31 the name moved twice inside an hour, and a rename that
+// missed _headers would silently drop every hashed asset onto the platform
+// default cache policy — the condition that made the edge-poison outage as bad
+// as it was, arriving with no error anywhere. Assert it against the SHIPPED
+// dist/_headers, not public/, so this checks the artifact that actually deploys.
+function assertHeadersCoverAssetsDir() {
+  const fail = (lines) => {
+    console.error(`\n[bundle-size] FAILED on: asset cache policy\n${lines.join("\n")}\n`);
+    process.exit(1);
+  };
+  let headers;
+  try {
+    headers = readFileSync(join(distDir, "_headers"), "utf8");
+  } catch {
+    fail([
+      `  dist/_headers is missing.`,
+      `  frontend/public/_headers must reach the build output, or every cache rule in it is inert.`,
+    ]);
+  }
+  if (new RegExp(`^/${ASSETS_DIR_NAME}/\\*\\s*$`, "m").test(headers)) return;
+  const declared = [...headers.matchAll(/^\/(\S+)\/\*\s*$/gm)].map((m) => `/${m[1]}/*`);
+  fail([
+    `  build.assetsDir is "${ASSETS_DIR_NAME}" but _headers has no "/${ASSETS_DIR_NAME}/*" rule.`,
+    `  _headers declares: ${declared.join(", ") || "(none)"}`,
+    `  Add the rule to frontend/public/_headers. Without it the hashed bundles ship`,
+    `  with the platform default cache policy and nothing anywhere reports it.`,
+  ]);
+}
+assertHeadersCoverAssetsDir();
+
 // Absolute ceilings. KB = 1000 bytes (matches Vite's build output, not 1024).
 //
 // These are no longer the primary verdict — GROWTH is (see below). A ceiling
