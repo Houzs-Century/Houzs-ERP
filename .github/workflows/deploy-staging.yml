@@ -13,10 +13,32 @@ name: Deploy (Staging)
 # separate production workflow.
 on:
   push:
-    # Owner 2026-07-04: staging must TRACK prod — every main release also
-    # ships to the staging stack (worker + pages). The legacy push-to-staging
-    # trigger stays for ad-hoc staging-only experiments.
-    branches: [main, staging]
+    # Owner 2026-07-04 had this as [main, staging]: staging must TRACK prod, so
+    # every main release also shipped to the staging stack.
+    #
+    # PAUSED on 2026-07-31 (owner: "暂时不需要staging的"). The Staging
+    # environment's CLOUDFLARE_API_TOKEN has been failing with `Authentication
+    # error [code: 10000]` since it was set on 2026-07-01 — it cannot even list
+    # /accounts — so this workflow had failed EVERY run and taken Staging E2E
+    # (smoke) with it, skipped, every time.
+    #
+    # It is paused rather than left red because a permanently-red workflow is
+    # not free: it trains everyone to ignore red, and on 2026-07-31 that is
+    # exactly why a two-hour production deploy outage went unnoticed while every
+    # dashboard looked normal. Noise that hides signal is a fault of its own.
+    #
+    # TO RESTORE: replace CLOUDFLARE_API_TOKEN in the GitHub **Staging**
+    # environment with a token carrying the same scopes as the working
+    # Production one (Account -> Cloudflare Pages:Edit, Workers Scripts:Edit),
+    # then put `main` back in the list below. Until then `workflow_dispatch`
+    # still lets an operator run a staging deploy by hand to test the new token
+    # without waiting for a merge.
+    #
+    # WORTH RESTORING, not abandoning: docs/SECURITY-DX-ROADMAP.md names the
+    # staging bench as the thing that unblocks everything else, and the deferred
+    # FIFO ledger fix in docs/inventory-ledger-divergence-coe.md is explicitly
+    # STAGING-first, so it cannot start until this works.
+    branches: [staging]
   workflow_dispatch:
     inputs:
       skip_migrate:
