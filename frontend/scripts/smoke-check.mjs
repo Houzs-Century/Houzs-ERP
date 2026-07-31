@@ -104,8 +104,19 @@ async function proveRelease() {
   if (!swResponse.ok || swBody.includes("__SW_BUILD_ID__")) {
     throw new Error(`service worker is unavailable or unstamped (${swResponse.status})`);
   }
-  if (!/max-age=0|no-cache|no-store/i.test(swResponse.headers.get("cache-control") ?? "")) {
-    throw new Error("service worker can be served without revalidation");
+  // _headers asks for `max-age=0, must-revalidate`, but the zone's Browser Cache
+  // TTL rewrites the NUMBER and leaves the rest — live is
+  // `max-age=14400, must-revalidate`. That is the same override that keeps
+  // /assets3/* off its intended 300, and it made this assertion the NEXT
+  // blocker once the `immutable` one above was corrected. `must-revalidate` is
+  // the directive that actually survives, so require any of the four rather than
+  // a max-age the zone will not let through. Note this is a weaker guarantee than
+  // the file asks for; the registration uses updateViaCache "imports" (verified in
+  // a live browser), so the SW SCRIPT still bypasses the HTTP cache on every
+  // update check and its VERSION bump is not delayed by the 4-hour TTL.
+  const swCache = swResponse.headers.get("cache-control") ?? "";
+  if (!/max-age=0|no-cache|no-store|must-revalidate/i.test(swCache)) {
+    throw new Error(`service worker can be served without revalidation (${swCache || "no cache-control"})`);
   }
   const version = swBody.match(/const VERSION = "([^"]+)";/)?.[1];
   if (!version) throw new Error("service worker has no release version");
