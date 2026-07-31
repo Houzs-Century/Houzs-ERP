@@ -107,7 +107,43 @@ import { KB, evaluateAll, formatResult, explainResult, VERDICT, REASON } from ".
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST = join(HERE, "..", "dist");
-const ASSETS = join(DIST, "assets");
+
+// The built asset directory is vite's build.assetsDir, and it is NOT a
+// constant: the 2026-07-31 edge-poison outage moved it "assets" -> "assets2" ->
+// "assets3" inside an hour (see frontend/public/_headers), and this gate — which
+// had "assets" written into it five times — failed every PR with "no build
+// found at .../dist/assets" until the name was chased by hand.
+//
+// So discover it from the build instead of naming it. dist/index.html's own
+// references are the ground truth (they are what the browser fetches); the
+// directory scan is the fallback for a dist whose html we cannot read. Same
+// reasoning as readInitialChunks below: parse what was emitted, never restate
+// build config in a checker.
+function resolveAssetsDirName(dir) {
+  try {
+    const html = readFileSync(join(dir, "index.html"), "utf8");
+    const m = html.match(/(?:src|href)="\/([^/"]+)\/[^"]+\.js"/);
+    if (m) return m[1];
+  } catch {
+    // fall through to the scan
+  }
+  try {
+    const scanned = readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .filter((name) => {
+        try {
+          return readdirSync(join(dir, name)).some((f) => f.endsWith(".js"));
+        } catch {
+          return false;
+        }
+      });
+    if (scanned.length === 1) return scanned[0];
+  } catch {
+    // fall through to the default
+  }
+  return "assets";
+}
 
 function argValue(flag) {
   const i = process.argv.indexOf(flag);
@@ -117,7 +153,8 @@ const jsonOut = argValue("--json");
 const baselinePath = argValue("--baseline");
 const distArg = argValue("--dist");
 const distDir = distArg ? distArg : DIST;
-const assetsDir = join(distDir, "assets");
+const ASSETS_DIR_NAME = resolveAssetsDirName(distDir);
+const assetsDir = join(distDir, ASSETS_DIR_NAME);
 
 // Absolute ceilings. KB = 1000 bytes (matches Vite's build output, not 1024).
 //
@@ -182,11 +219,13 @@ const GROWTH = {
 // silently stopped matching reality (see the 2026-07-18 entry above). Parsing
 // the emitted HTML costs nothing and cannot drift — change the chunking and this
 // follows automatically, which is exactly what the prefix list failed to do.
-function readInitialChunks(dir) {
+function readInitialChunks(dir, assetsName = resolveAssetsDirName(dir)) {
   const html = readFileSync(join(dir, "index.html"), "utf8");
   const names = new Set();
-  // Both the entry script and the preload links point at /assets/<name>.js.
-  for (const m of html.matchAll(/(?:src|href)="\/assets\/([^"]+\.js)"/g)) {
+  // Both the entry script and the preload links point at /<assetsDir>/<name>.js
+  // — the directory is resolved per build, not assumed (see above).
+  const escaped = assetsName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (const m of html.matchAll(new RegExp(`(?:src|href)="/${escaped}/([^"]+\\.js)"`, "g"))) {
     names.add(m[1]);
   }
   return names;
@@ -200,7 +239,11 @@ function chunkKey(name) {
 }
 
 function measure(dir) {
-  const assets = join(dir, "assets");
+  // Resolved per directory, not from the top-level constant: `--dist` and the
+  // baseline build can come from a different commit, and during the assets ->
+  // assets2 -> assets3 moves the PR and its merge base genuinely disagreed.
+  const assetsName = resolveAssetsDirName(dir);
+  const assets = join(dir, assetsName);
   let files;
   try {
     files = readdirSync(assets).filter((f) => f.endsWith(".js"));
@@ -223,12 +266,14 @@ function measure(dir) {
 
   let initialChunks;
   try {
-    initialChunks = readInitialChunks(dir);
+    initialChunks = readInitialChunks(dir, assetsName);
   } catch {
     throw new Error(`no index.html at ${dir} — run \`vite build\` first.`);
   }
   if (initialChunks.size === 0) {
-    throw new Error(`${dir}/index.html references no /assets/*.js — cannot measure first paint.`);
+    throw new Error(
+      `${dir}/index.html references no /${assetsName}/*.js — cannot measure first paint.`,
+    );
   }
 
   for (const chunk of chunks) chunk.initial = initialChunks.has(chunk.name);

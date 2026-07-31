@@ -18,10 +18,36 @@
 
 import { useEffect, useState } from "react";
 
-// Vite emits ONE hashed entry module (e.g. /assets/index-AbC123.js). Its
+// Vite emits ONE hashed entry module (e.g. /assets3/index-AbC123.js). Its
 // filename changes on every build, so it's a free build id.
-function assetHashFrom(src: string): string | null {
-  const m = src.match(/\/assets\/([A-Za-z0-9_.-]+\.js)/);
+//
+// The DIRECTORY is build.assetsDir and it moves: the 2026-07-31 edge-poison
+// outage took it "assets" -> "assets2" -> "assets3" inside an hour, and this
+// hook had "/assets/" written into three places — so the update prompt went
+// silently dead on the very deploy where "a new version is live, reload"
+// mattered most. Match ANY single-segment directory instead of naming it.
+//
+// The pattern is anchored to the WHOLE pathname and allows exactly ONE
+// directory segment, which is what a Vite asset URL looks like. That anchoring
+// is load-bearing: unanchored, it also matches the dev server's
+// /node_modules/.vite/deps/react.js (on its /deps/ segment) and this hook would
+// compare "react.js" against the deployed entry forever.
+const ENTRY_ASSET = /^\/[A-Za-z0-9_-]+\/([A-Za-z0-9_.-]+\.js)$/;
+
+/** Exported for the unit test: the assetsDir-agnostic parse is the whole point
+    of this hook working after a namespace move, and nothing else would catch it
+    going silently dead again. */
+export function assetHashFrom(src: string): string | null {
+  let pathname: string;
+  try {
+    // Accepts both the absolute src the DOM gives us and the root-relative path
+    // parsed out of the served index.html; the base is never used for the
+    // former and irrelevant for the latter.
+    pathname = new URL(src, "http://build-id.invalid").pathname;
+  } catch {
+    return null;
+  }
+  const m = pathname.match(ENTRY_ASSET);
   return m?.[1] ?? null;
 }
 
@@ -30,7 +56,7 @@ function assetHashFrom(src: string): string | null {
     checking is simply skipped, never wrong). */
 function bootBuildId(): string | null {
   const scripts = Array.from(
-    document.querySelectorAll('script[type="module"][src*="/assets/"]'),
+    document.querySelectorAll('script[type="module"][src]'),
   ) as HTMLScriptElement[];
   for (const s of scripts) {
     const h = assetHashFrom(s.src);
@@ -39,12 +65,13 @@ function bootBuildId(): string | null {
   return null;
 }
 
-function latestBuildIdFrom(html: string): string | null {
-  // Match the ENTRY module <script ... src="/assets/xxx.js"> specifically, so
-  // we compare like-for-like with bootBuildId() (NOT a <link modulepreload>,
+/** Exported for the unit test — see assetHashFrom above. */
+export function latestBuildIdFrom(html: string): string | null {
+  // Match the ENTRY module <script ... src="/<assetsDir>/xxx.js"> specifically,
+  // so we compare like-for-like with bootBuildId() (NOT a <link modulepreload>,
   // which would differ from the entry and false-positive every check).
   const m = html.match(
-    /<script[^>]+type=["']module["'][^>]*\bsrc=["'](\/assets\/[A-Za-z0-9_.-]+\.js)["']/i,
+    /<script[^>]+type=["']module["'][^>]*\bsrc=["'](\/[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+\.js)["']/i,
   );
   return m?.[1] ? assetHashFrom(m[1]) : null;
 }
