@@ -30,5 +30,5 @@
       "@tanstack/react-virtual": ["./src/vendor/scm/lib/react-virtual-shim.ts"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "functions"]
 }
