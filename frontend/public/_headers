@@ -26,6 +26,11 @@
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
+# /assets2/ replaced /assets/ on 2026-07-31 (edge-poison incident — see
+# vite.config.ts build.assetsDir). Same contract: content-hashed, immutable.
+/assets2/*
+  Cache-Control: public, max-age=31536000, immutable
+
 # Self-hosted web fonts. The woff2 files are fixed upstream builds and the
 # names never get reused, so a year-long immutable cache is correct — same
 # contract as /assets/*. fonts.css sits under this rule too: any change to

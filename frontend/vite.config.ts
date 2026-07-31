@@ -175,6 +175,15 @@ export default defineConfig(({ mode }) => {
       __BUILD_ID__: JSON.stringify(buildId),
     },
     build: {
+      // 2026-07-31 edge-poison incident: during a deploy race the CDN cached
+      // SPA-fallback HTML under several hashed /assets/*.js URLs (immutable,
+      // 1y) and the SW correctly refused them — Projects/ASSR failed app-wide
+      // while the origin was consistent. Individual hash rotation was
+      // whack-a-mole, so the WHOLE bundle moved to a fresh /assets2/
+      // namespace, side-stepping every poisoned URL at once. public/_headers
+      // carries the matching /assets2/* immutable rule. Do NOT rename back to
+      // "assets" — the poisoned entries live up to a year.
+      assetsDir: "assets2",
       // Don't <link rel="modulepreload"> the heavy on-demand chunks (jspdf /
       // xlsx / leaflet). They're only ever reached via dynamic import() at a
       // print/export/map click, so preloading them makes a COLD first visit
