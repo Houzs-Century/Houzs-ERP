@@ -3023,6 +3023,12 @@ export type SoCreateContext = {
   /* Multi-company (mig 0061): active company from companyContext. Undefined pre-
      migration / cold-start / headless (scan) so the stamping no-ops. */
   get(key: 'companyId'): number | undefined;
+  /* Active company CODE ('HOUZS' | '2990') — picks the Processing-Date deposit
+     threshold (owner 2026-07-31: Houzs 30%, 2990 50%). Undefined on the headless
+     scan path, which captured only the company ID at enqueue; harmless, because
+     that path creates DRAFTS with internal_expected_dd = null and the deposit
+     gate only runs when a Processing Date is actually being set. */
+  get(key: 'companyCode'): string | undefined;
   env: Env;
   json(body: unknown, status?: number): SoCreateOutcome;
   /* Audit-trail source tag for the CREATE entry ("via <source>" in the History
@@ -3144,6 +3150,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       variants: (it.variants as Record<string, unknown> | null) ?? null,
     }));
     const createProblems = collectProcessingGateProblems({
+      /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
+         Undefined on the synthetic-context path (:5332) and that is fine —
+         processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
+      companyCode: c.get('companyCode') ?? null,
       procDate,
       delivDate,
       todayMY,
@@ -4719,6 +4729,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     );
     const depositProblems = procDateOnCreate
       ? collectProcessingGateProblems({
+        /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
+           Undefined on the synthetic-context path (:5332) and that is fine —
+           processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
+        companyCode: c.get('companyCode') ?? null,
           procDate: procDateOnCreate,
           delivDate: (body.customerDeliveryDate as string | null | undefined) || null,
           todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
@@ -6598,6 +6612,10 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        effective + original dates, exactly matching the checks this block used to
        `return` on one at a time. */
     const problems = collectProcessingGateProblems({
+      /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
+         Undefined on the synthetic-context path (:5332) and that is fine —
+         processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
+      companyCode: c.get('companyCode') ?? null,
       procDate: effProc,
       delivDate: effDeliv,
       todayMY,

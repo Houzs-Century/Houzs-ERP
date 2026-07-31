@@ -11,12 +11,13 @@
 // re-expresses the gates the routes already compute as a flat problem list.
 //
 // PRESENTATION ONLY. It changes NOTHING about what counts as valid: the same
-// category-mandatory variant axes (so-variant-rule), the same 30% deposit
-// threshold (order-rules), the same past-date / processing-≤-delivery date
+// category-mandatory variant axes (so-variant-rule), the same deposit threshold
+// (order-rules — per company since 2026-07-31: Houzs 30%, 2990 50%), the same
+// past-date / processing-≤-delivery date
 // rules. It only aggregates + names them. Pure — no I/O, no DB, no Hono.
 // ----------------------------------------------------------------------------
 import { REQUIRED_VARIANT_AXES_BY_CATEGORY } from './so-variant-rule';
-import { meetsProcessingDatePaymentGate, PROCESSING_DATE_PAID_THRESHOLD } from './order-rules';
+import { meetsProcessingDatePaymentGate, processingDateThresholdFor } from './order-rules';
 import { fmtRM } from './format';
 
 /** One machine- + human-readable reason a save was rejected.
@@ -83,6 +84,9 @@ export type ProcessingGateFacts = {
    *  consignment mirror has no deposit gate). The shortfall is reported only
    *  when a processing date is actually being set. */
   deposit?: { paidCenti: number; totalCenti: number } | null;
+  /** Active company ('HOUZS' | '2990') — picks the deposit threshold. Absent
+   *  falls back to the looser 30%; see processingDateThresholdFor. */
+  companyCode?: string | null;
 };
 
 /** Every reason THIS save fails its Processing-Date gates, in the order the
@@ -142,9 +146,14 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
   //    processing_date_unpaid. Only fires when a date is actually being set.
   if (facts.deposit && facts.procDate) {
     const { paidCenti, totalCenti } = facts.deposit;
-    if (!meetsProcessingDatePaymentGate(paidCenti, totalCenti)) {
-      const pct = Math.round(PROCESSING_DATE_PAID_THRESHOLD * 100);
-      const neededCenti = Math.ceil(totalCenti * PROCESSING_DATE_PAID_THRESHOLD);
+    /* Per company (owner 2026-07-31: Houzs 30%, 2990 50%). The threshold is read
+       ONCE and used for the verdict, the percentage in the message and the
+       amount in the message — a 2990 operator refused at 50% must not be told
+       "30%", which is what a hard-coded constant here would print. */
+    const threshold = processingDateThresholdFor(facts.companyCode);
+    if (!meetsProcessingDatePaymentGate(paidCenti, totalCenti, facts.companyCode)) {
+      const pct = Math.round(threshold * 100);
+      const neededCenti = Math.ceil(totalCenti * threshold);
       out.push({
         code: 'processing_date_unpaid',
         // fmtRM takes whole-MYR — the ledger is centi, so divide by 100.
