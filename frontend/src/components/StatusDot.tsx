@@ -108,3 +108,6 @@ export function resolutionLabel(method: string | null): string {
   if (!method) return "—";
   return RESOLUTION_LABEL[method] ?? method;
 }
+/* cache-rotate 2026-07-31: the CDN edge cached a poisoned (HTML) response
+   under this chunk's previous hashed URL during a deploy race — a content
+   change rotates the hash so clients fetch a clean URL. */

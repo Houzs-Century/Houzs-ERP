@@ -73,3 +73,5 @@ export function FilterPills<T extends string>({ options, value, onChange }: Prop
     </div>
   );
 }
+/* cache-rotate 2026-07-31: see StatusDot.tsx — same edge-poisoned-URL
+   incident; comment rotates this chunk's hash to a clean URL. */
