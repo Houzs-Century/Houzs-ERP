@@ -9945,9 +9945,11 @@ mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   return new Response(obj.body, {
     headers: {
       'content-type': contentType,
-      // 1-hour browser cache. Photos are immutable per key (new uploads
-      // get a new uuid), so this is safe.
-      'cache-control': 'private, max-age=3600',
+      // Photos are immutable per key — `so-items/<docNo>/<itemId>/<uuid>.<ext>`
+      // via crypto.randomUUID() (:9793) — so a replaced photo is a different
+      // url. Stays `private` (SO item photos are not public), but the age is
+      // now what the key identity actually supports.
+      'cache-control': 'private, max-age=31536000, immutable',
     },
   });
 });

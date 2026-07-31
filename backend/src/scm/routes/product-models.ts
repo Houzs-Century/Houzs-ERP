@@ -79,9 +79,14 @@ export const modelPhotoProxyHandler = async (c: Context<{ Bindings: Env; Variabl
   return new Response(obj.body, {
     headers: {
       'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
-      // 1-hour browser cache — photos are immutable per key (new uploads
-      // get a fresh UUID), so this is safe.
-      'cache-control': 'public, max-age=3600',
+      // The key IS the identity: upload mints `product-models/<id>/<uuid>.<ext>`
+      // with crypto.randomUUID() (:1084), so a replaced photo is a different
+      // key and therefore a different url — this one can never come to mean
+      // other bytes. That is the same argument the old 1-hour TTL rested on;
+      // an hour was conservatism, not the limit of what it proves. Measured
+      // 2026-08-01: /scm/product-models issues 57 requests, most of them this
+      // proxy, one per row.
+      'cache-control': 'public, max-age=31536000, immutable',
     },
   });
 };
@@ -127,7 +132,10 @@ productModels.get('/:id/photo-gallery/:key', async (c) => {
   return new Response(obj.body, {
     headers: {
       'content-type': contentType,
-      'cache-control': 'public, max-age=3600',
+      // Gallery keys are minted the same way — `product-model-photos/<id>/
+      // <uuid>.<ext>` via crypto.randomUUID() (:1286) — so the url names one
+      // fixed object for its lifetime. See the single-photo proxy above.
+      'cache-control': 'public, max-age=31536000, immutable',
     },
   });
 });

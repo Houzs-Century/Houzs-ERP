@@ -141,9 +141,10 @@ sofaCompartmentPhotos.get('/:code/photo/:key', async (c) => {
     headers: {
       'content-type':  safeType,
       'x-content-type-options': 'nosniff',
-      // 1-hour browser cache — keys are immutable per upload (each upload
-      // gets a fresh UUID), so this is safe.
-      'cache-control': 'public, max-age=3600',
+      // Keys are immutable per upload — crypto.randomUUID() at :206 — so the
+      // url names one fixed object and can be pinned. The hour was
+      // conservatism; the proof already covered a year.
+      'cache-control': 'public, max-age=31536000, immutable',
     },
   });
 });
