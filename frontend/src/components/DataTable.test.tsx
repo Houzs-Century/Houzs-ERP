@@ -939,3 +939,79 @@ describe("DataTable header filter + sort menu", () => {
     expect(rowCount(container)).toBe(6);
   });
 });
+
+/* An expandable table used to be disqualified from row windowing outright,
+   which excluded the biggest list in the app (/scm/inventory: 344 rows,
+   11,963 DOM nodes). It may window WHILE COLLAPSED — the reason for the
+   exclusion, an expanded sub-row of unpredictable height breaking the uniform
+   row-height the spacers assume, only exists once something is open. These pin
+   both halves, because "windows while collapsed" is worthless if the fallback
+   on expand does not actually happen. */
+describe("DataTable windowing with expandable rows", () => {
+  const expandable = {
+    render: (row: Row) => <div data-testid={`detail-${row.id}`}>detail for {row.name}</div>,
+  };
+
+  it("windows a COLLAPSED expandable table instead of rendering every row", () => {
+    setViewport(1280);
+
+    const { container } = render(
+      <DataTable
+        tableId="expandable-collapsed"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        expandable={expandable}
+      />,
+    );
+
+    const rendered = container.querySelectorAll("tr[data-vrow]").length;
+    expect(rendered).toBeGreaterThan(0);
+    expect(rendered).toBeLessThan(rows.length);
+  });
+
+  it("falls back to a FULL render while a row is open, and windows again on collapse", () => {
+    setViewport(1280);
+
+    const { container } = render(
+      <DataTable
+        tableId="expandable-toggle"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        expandable={expandable}
+      />,
+    );
+
+    const windowed = container.querySelectorAll("tr[data-vrow]").length;
+    expect(windowed).toBeLessThan(rows.length);
+
+    fireEvent.click(screen.getAllByLabelText("Expand row")[0]);
+
+    // Every row is realized while one is open — the spacers are gone, so the
+    // expanded sub-row cannot be measured against a stale uniform height.
+    expect(container.querySelectorAll("tr[data-vrow]").length).toBe(rows.length);
+    expect(screen.getByTestId("detail-1")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Collapse row"));
+
+    expect(container.querySelectorAll("tr[data-vrow]").length).toBe(windowed);
+    expect(screen.queryByTestId("detail-1")).toBeNull();
+  });
+
+  it("leaves a SHORT expandable table alone — below the threshold nothing changes", () => {
+    setViewport(1280);
+
+    const { container } = render(
+      <DataTable
+        tableId="expandable-short"
+        rows={rows.slice(0, 10)}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        expandable={expandable}
+      />,
+    );
+
+    expect(container.querySelectorAll("tr[data-vrow]").length).toBe(10);
+  });
+});
