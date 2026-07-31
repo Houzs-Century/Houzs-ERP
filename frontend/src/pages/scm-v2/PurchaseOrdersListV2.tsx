@@ -33,10 +33,11 @@ import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
 import {
   DocumentLinesExpansion,
   AssignedSoCell,
+  DeliveredCell,
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
-import { usePoSoCoverage, originsByCode, storedLinkSkus } from "../../vendor/scm/lib/flow-queries";
+import { usePoSoCoverage, originsByCode, storedLinkSkus, deliveredByCode } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -585,6 +586,7 @@ function PoLinesExpansion({ id }: { id: string }) {
   const covQ = usePoSoCoverage("po", id);
   const byCode = originsByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
+  const deliveredMap = deliveredByCode(covQ.data);
   const items =
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => ({
@@ -597,6 +599,7 @@ function PoLinesExpansion({ id }: { id: string }) {
     amountCenti: l.line_total_centi ?? 0,
     assignedSos: byCode.get((l.material_code ?? "").trim()) ?? [],
     sourceLinked: linkedSkus.has((l.material_code ?? "").trim()),
+    deliveredDos: deliveredMap.get((l.material_code ?? "").trim()) ?? [],
   }));
   return (
     <div className="flex flex-col gap-2">
@@ -607,7 +610,9 @@ function PoLinesExpansion({ id }: { id: string }) {
         lines={lines}
         emptyLabel="No lines on this purchase order."
         showAssignment
+        showDelivered
         onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+        onOpenDo={(doNo) => navigate(`/scm/delivery-orders?q=${encodeURIComponent(doNo)}`)}
       />
     </div>
   );
@@ -939,6 +944,22 @@ export function PurchaseOrdersListV2() {
           assignments={r.assigned_sos}
           sourceLinked={r.assigned_so_linked}
           onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+        />
+      ),
+    },
+    {
+      // Owner 2026-07-31: what has been DELIVERED against this PO — the DO(s) that
+      // shipped its goods (batch_no = this PO) + qty per DO. EVERY DO renders
+      // (no collapse); "—" when nothing has shipped yet.
+      key: "delivered",
+      label: "Delivered",
+      width: "180px",
+      disableSort: true,
+      getValue: (r) => (r.delivered_dos ?? []).map((d) => d.doNo).join(", "),
+      render: (r) => (
+        <DeliveredCell
+          dos={r.delivered_dos}
+          onOpenDo={(doNo) => navigate(`/scm/delivery-orders?q=${encodeURIComponent(doNo)}`)}
         />
       ),
     },

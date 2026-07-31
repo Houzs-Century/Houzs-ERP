@@ -77,6 +77,10 @@ type SiRow = {
   /** Convert-from relation (display-only, audit R8): the readable DO number the
    *  SI was created from, server-resolved from delivery_order_id. */
   do_number?: string | null;
+  /** Source PO(s) the invoiced goods came from (batch_no = source PO on the SI's
+   *  DO's OUT movements ∪ consumed FIFO lots). "—" for un-batched stock. A sales
+   *  invoice shows Source PO, not an Assigned SO (owner 2026-07-31). */
+  source_pos?: string[] | null;
   invoice_date: string;
   due_date: string | null;
   /** SI's own snapshot of the customer delivery date (may be null on rows
@@ -756,7 +760,7 @@ const SORT_COL_MAP: Record<string, string> = {
 function SiLinesExpansion({ id }: { id: string }) {
   const detailQ = useSalesInvoiceDetail(id);
   const items =
-    ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
+    ((detailQ.data as { items?: Array<DrillItemFields & { source_pos?: string[] | null }> } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => ({
     itemGroup: l.item_group ?? null,
     code: l.item_code || l.product_code || null,
@@ -768,6 +772,9 @@ function SiLinesExpansion({ id }: { id: string }) {
       l.amount_centi ??
       l.total_centi ??
       Number(l.qty ?? 0) * (l.unit_price_centi ?? 0),
+    // An SI is invoiced from a DO — show which PO the goods were procured on
+    // (batch_no = source PO), not an Assigned SO (owner 2026-07-31).
+    sourcePos: l.source_pos ?? [],
   }));
   return (
     <DocumentLinesExpansion
@@ -776,6 +783,7 @@ function SiLinesExpansion({ id }: { id: string }) {
       errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
       lines={lines}
       emptyLabel="No lines on this sales invoice."
+      showSourcePo
     />
   );
 }
@@ -1100,6 +1108,38 @@ export function SalesInvoicesListV2() {
       render: (r) => (
         <span className="font-mono text-[12px] text-ink-secondary">{doOf(r)}</span>
       ),
+    },
+    {
+      // Owner 2026-07-31: an SI is born FROM a Sales Order, so "Assigned SO" is
+      // wrong here — the useful fact is which PO the invoiced goods came from
+      // (batch_no = source PO on the SI's DO). EVERY source PO renders (no
+      // collapse); "—" when un-batched (plain FIFO / pre-batch stock).
+      key: "source_pos",
+      label: "Source PO",
+      width: "168px",
+      disableSort: true,
+      getValue: (r) => (r.source_pos ?? []).join(", "),
+      render: (r) => {
+        const pos = r.source_pos ?? [];
+        if (pos.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
+        return (
+          <span className="flex min-w-0 flex-wrap items-center gap-1">
+            {pos.map((po) => (
+              <button
+                key={po}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/scm/purchase-orders?q=${encodeURIComponent(po)}`);
+                }}
+                className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
+              >
+                {po}
+              </button>
+            ))}
+          </span>
+        );
+      },
     },
     {
       key: "debtor_name",

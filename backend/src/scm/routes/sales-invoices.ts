@@ -35,7 +35,7 @@
 
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { normalizePhone, buildVariantSummary, isServiceLine, fmtRM } from '../shared';
+import { normalizePhone, buildVariantSummary, isServiceLine, fmtRM, computeVariantKey } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -50,6 +50,7 @@ import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
+import { resolveDoSourcePosForDos, resolveDoLineSourcePos } from './delivery-orders-mfg';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
@@ -696,6 +697,23 @@ async function stampDoNumber(sb: any, rows: unknown): Promise<void> {
   }
 }
 
+/* Source PO(s) for a page of Sales Invoices (owner 2026-07-31). An SI is born
+   FROM a Delivery Order, so the useful cross-doc anchor is which PO the shipped-
+   then-invoiced goods actually came from — the durable batch_no = source-PO hard
+   link on the SI's DO's OUT movements, NOT an Assigned SO. Resolved SI → DO →
+   ledger, batched once for the page via resolveDoSourcePosForDos, mutates rows in
+   place. An SI with no delivery_order_id (manual invoice) gets an empty list. */
+async function stampSourcePos(sb: any, rows: unknown): Promise<void> {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const list = rows as Array<Record<string, unknown>>;
+  const doIds = [...new Set(list.map((r) => r.delivery_order_id as string | null).filter((d): d is string => !!d))];
+  const byDo = doIds.length > 0 ? await resolveDoSourcePosForDos(sb, doIds) : new Map<string, string[]>();
+  for (const r of list) {
+    const doId = (r.delivery_order_id as string | null) ?? null;
+    r.source_pos = doId ? (byDo.get(doId) ?? []) : [];
+  }
+}
+
 salesInvoices.get('/', async (c) => {
   const sb = c.get('supabase');
   // Row-level "own / downline chain" scope (scm.staff uuids) — see lib/salesScope.ts.
@@ -720,6 +738,7 @@ salesInvoices.get('/', async (c) => {
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     await stampSoDates(sb, data);
     await stampDoNumber(sb, data);
+    await stampSourcePos(sb, data);
     gateSiFinance(data, canViewScmFinance(c));
     return c.json({ salesInvoices: data ?? [] });
   }
@@ -792,6 +811,7 @@ salesInvoices.get('/', async (c) => {
 
   await stampSoDates(sb, data);
   await stampDoNumber(sb, data);
+  await stampSourcePos(sb, data);
   gateSiFinance(data, canViewScmFinance(c));
   return c.json({ salesInvoices: data ?? [], total, page, pageSize, statusCounts });
 });
@@ -840,6 +860,21 @@ salesInvoices.get('/:id', async (c) => {
     gateSiFinance([h.data], false);
     for (const it of items) {
       for (const k of SO_ITEM_FINANCE_KEYS) delete it[k];
+    }
+  }
+  /* Per-line Source PO (owner 2026-07-31): the SI's goods came FROM a Delivery
+     Order — show which PO they were procured on (batch_no = source PO), matched
+     by the SAME (item_code, variant_key) bucket the DO shipped them under.
+     Resolved from the SI's DO ledger; a manual SI with no DO gets a dash. */
+  {
+    const doId = (h.data as { delivery_order_id?: string | null }).delivery_order_id ?? null;
+    const bySku = doId ? await resolveDoLineSourcePos(sb, doId) : new Map<string, string[]>();
+    for (const it of items) {
+      const vk = computeVariantKey(
+        (it.item_group as string | null) ?? null,
+        (it.variants as Record<string, unknown> | null) ?? null,
+      );
+      it.source_pos = bySku.get(`${(it.item_code as string) ?? ''}::${vk}`) ?? [];
     }
   }
   // Stamp each line's supplier fabric code so the on-screen line reads

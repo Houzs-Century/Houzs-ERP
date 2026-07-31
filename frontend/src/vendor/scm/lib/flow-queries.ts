@@ -82,7 +82,18 @@ export type OriginAssignment = {
    while nothing in the database binds it, and reading that as a binding is the
    2026-07-29 incident. Optional so an older backend degrades to "unknown". */
 export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[]; storedLink?: boolean };
-export type PoSoCoverageResp = { poNumber: string | null; poId: string | null; origins: SkuOrigin[] };
+/* "Delivered" — the FORWARD companion of the delivered-lock: which Delivery
+   Order(s) have shipped this purchase doc's goods (batch_no = the PO number) and
+   how many units per DO. Cancelled DOs excluded. Optional so an older backend
+   degrades to "unknown" (no column). */
+export type DeliveredDo = { doNo: string; qty: number };
+export type SkuDelivered = { itemCode: string; dos: DeliveredDo[] };
+export type PoSoCoverageResp = {
+  poNumber: string | null;
+  poId: string | null;
+  origins: SkuOrigin[];
+  delivered?: SkuDelivered[];
+};
 
 export const usePoSoCoverage = (type: 'po' | 'grn' | 'pi' | null, id: string | null) =>
   useQuery({
@@ -101,6 +112,16 @@ export const originsByCode = (resp: PoSoCoverageResp | undefined): Map<string, O
   const m = new Map<string, OriginAssignment[]>();
   for (const o of resp?.origins ?? []) {
     if (o.itemCode) m.set(o.itemCode, o.assignments ?? []);
+  }
+  return m;
+};
+
+/* Build a per-SKU lookup (material_code → delivered DOs) from the response, so a
+   drill-down line can resolve its Delivered cell by item code. Null-safe. */
+export const deliveredByCode = (resp: PoSoCoverageResp | undefined): Map<string, DeliveredDo[]> => {
+  const m = new Map<string, DeliveredDo[]>();
+  for (const d of resp?.delivered ?? []) {
+    if (d.itemCode) m.set(d.itemCode, d.dos ?? []);
   }
   return m;
 };

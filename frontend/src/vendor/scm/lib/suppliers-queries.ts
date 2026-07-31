@@ -178,6 +178,10 @@ export type PoHeaderRow = {
       so_item_id, so the column can mark an MRP-only guess apart from a binding. */
   assigned_sos?: OriginAssignment[];
   assigned_so_linked?: boolean;
+  /** "Delivered" column (owner 2026-07-31) — the Delivery Order(s) that have
+      shipped this PO's goods (batch_no = the PO number) + qty per DO, resolved
+      server-side. EVERY DO renders (no collapse); empty when nothing shipped. */
+  delivered_dos?: Array<{ doNo: string; qty: number }>;
 };
 
 export type PoItemSummary = {
