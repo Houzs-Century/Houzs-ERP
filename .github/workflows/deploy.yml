@@ -253,3 +253,87 @@ jobs:
         env:
           FRONTEND_SMOKE_ATTEMPTS: 20
           FRONTEND_SMOKE_RETRY_MS: 5000
+
+  # A FAILED DEPLOY IS INVISIBLE, AND THAT IS THE PART THAT HURTS.
+  #
+  # Required status checks gate the MERGE. Nothing gates what happens after it.
+  # So a PR can be green, merge cleanly, leave `main` entirely green — and its
+  # code never reaches production, with no signal anywhere. On 2026-07-31 that
+  # happened twice in one day: the backend sat undeployed for over two hours
+  # while every dashboard was green, and later #1447 failed at `wrangler deploy`
+  # on a transient Cloudflare "malformed response from the API" and was only
+  # noticed because someone happened to read the run list. Same shape as the
+  # 2026-07-22 incident in docs/deploy-collision-coe.md.
+  #
+  # So: turn a failed release into a thing with a name. One open issue at a
+  # time, commented on rather than duplicated, closed by hand when the release
+  # is actually out.
+  #
+  # `failure()` ONLY — not `cancelled()`. A cancelled run is the concurrency
+  # queue collapsing a superseded push, which is normal and must not page.
+  notify-failed-release:
+    needs: [changes, backend, frontend]
+    if: >-
+      ${{ always() && github.ref == 'refs/heads/main'
+      && (needs.changes.result == 'failure'
+      || needs.backend.result == 'failure'
+      || needs.frontend.result == 'failure') }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the release-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          BACKEND: ${{ needs.backend.result }}
+          FRONTEND: ${{ needs.frontend.result }}
+          CHANGES: ${{ needs.changes.result }}
+          # From the event, NOT `git log` — this job deliberately has no
+          # checkout (it must be able to run when the build itself is broken).
+          SUBJECT: ${{ github.event.head_commit.message || github.sha }}
+        run: |
+          set -euo pipefail
+          TITLE="Deploy failed on main — code merged but not released"
+          SUBJECT="$(printf '%s' "$SUBJECT" | head -1)"
+
+          # The two failures mean different things and the fix differs, so say
+          # which one it is instead of "the deploy failed".
+          BODY="**\`main\` is green, but this commit is not fully released.**
+
+          | | |
+          |---|---|
+          | commit | \`${SHA}\` |
+          | subject | ${SUBJECT} |
+          | changes | \`${CHANGES}\` |
+          | backend | \`${BACKEND}\` |
+          | frontend | \`${FRONTEND}\` |
+          | run | ${RUN_URL} |
+
+          **What a failure means, per job:**
+
+          - **backend \`failure\`** — the Worker did NOT deploy and pending
+            migrations did NOT apply. Production is running older code. Check
+            whether it failed before or after \`pg-migrate\`; a failure after it
+            means the schema moved without the code.
+          - **frontend \`failure\`** — depends on the step. \`pages deploy\` runs
+            BEFORE \`npm run smoke\`, so a smoke failure means the bundle IS live
+            but failed its own proof, while a wrangler-action failure means it is
+            not live at all. Read the failing step name.
+
+          Re-run the failed job from the run page. Transient Cloudflare API
+          errors (\"Received a malformed response from the API\") are common and
+          usually succeed on a retry — but the release is not out until a run
+          actually goes green. **Close this issue only after that.**"
+
+          EXISTING="$(gh issue list --repo "$REPO" --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "$REPO" --body "$BODY"
+            echo "::warning::Release failed again — commented on issue #${EXISTING}"
+          else
+            # `gh issue create` has no --json; it prints the new issue URL.
+            URL="$(gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY")"
+            echo "::warning::Release failed — opened ${URL}"
+          fi
