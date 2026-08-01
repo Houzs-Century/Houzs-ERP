@@ -128,6 +128,41 @@ try {
      ORDER BY conname`;
   notice(`scm.staff unique/pk constraints: ${uniques.map((u) => u.conname).join(", ")}`);
 
+  // 1d) EXPLAIN every statement the disable and hard-delete paths issue.
+  //     EXPLAIN (without ANALYZE) PARSES and PLANS a statement but executes
+  //     NOTHING -- so it is strictly read-only, yet it still raises the exact
+  //     `relation/column/operator does not exist` errors that index.ts:385
+  //     folds into the operator's generic 500. That makes it the one probe
+  //     that can name the failing statement without a write and without
+  //     wrangler tail. It cannot catch a TRIGGER-raised error (triggers do not
+  //     fire under EXPLAIN), so a clean sweep here points AT the triggers.
+  // Defaults to the account the owner reported (NG PENG CHUEN, users.id=136)
+  // so this needs no new workflow input; override with PROBE_USER_ID.
+  const probeId = Number(process.env.PROBE_USER_ID ?? 136) || null;
+  if (probeId) {
+    const stmts = [
+      ['PATCH disable  ', `UPDATE "users" SET "status" = 'disabled', "status_reason" = NULL WHERE "users"."id" = ${probeId}`],
+      ['revoke sessions', `DELETE FROM "sessions" WHERE "sessions"."user_id" = ${probeId}`],
+      ['drop invites   ', `DELETE FROM "invitations" WHERE "invitations"."email" = 'probe@example.invalid'`],
+      ['clear lorries  ', `UPDATE lorries SET default_driver_user_id = NULL WHERE default_driver_user_id = ${probeId}`],
+      ['project_activty', `DELETE FROM project_activity WHERE user_id = ${probeId}`],
+      ['project_reads  ', `DELETE FROM project_reads WHERE user_id = ${probeId}`],
+      ['point_trans    ', `DELETE FROM point_transactions WHERE user_id = ${probeId} OR counterparty_user_id = ${probeId}`],
+      ['streak_weeks   ', `DELETE FROM user_streak_weeks WHERE user_id = ${probeId}`],
+      ['award_redempt  ', `DELETE FROM award_redemptions WHERE user_id = ${probeId}`],
+      ['hard delete    ', `DELETE FROM "users" WHERE "users"."id" = ${probeId}`],
+    ];
+    notice(`--- EXPLAIN probe (parses + plans only, executes nothing), user id ${probeId} ---`);
+    for (const [label, sqlText] of stmts) {
+      try {
+        await pg.unsafe(`EXPLAIN ${sqlText}`);
+        notice(`  OK    ${label}`);
+      } catch (e) {
+        notice(`  RAISE ${label} -> ${String(e?.message ?? e).slice(0, 300)}`);
+      }
+    }
+  }
+
   // 2b) The OTHER statement a status-only PATCH runs, so a refutation above
   //     does not leave the operator with nowhere to look. PATCH also runs
   //     `DELETE FROM sessions WHERE user_id = $1` through Drizzle; if the live
