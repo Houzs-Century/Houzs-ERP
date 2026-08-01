@@ -277,6 +277,7 @@ async function computeAndStoreGrnAllocation(
   items: AllocItemRow[],
   grnRate: unknown,
   method: ReturnType<typeof normalizeAllocationMethod>,
+  companyId?: number | null,
 ) {
   // CBM basis needs each goods line's product volume (unit_m3_milli). Resolve
   // per material_code in one round trip; default 0 (the allocator falls back to
@@ -284,7 +285,11 @@ async function computeAndStoreGrnAllocation(
   const m3ByCode = new Map<string, number>();
   const codes = [...new Set(items.map((it) => it.material_code).filter(Boolean))];
   if (codes.length > 0) {
-    const { data: prods } = await sb.from('mfg_products').select('code, unit_m3_milli').in('code', codes);
+    // Company-scoped: `code` is shared, and the other company's volume would
+    // shift every goods line's share of the landed charge.
+    let volQ = sb.from('mfg_products').select('code, unit_m3_milli').in('code', codes);
+    if (companyId != null) volQ = volQ.eq('company_id', companyId);
+    const { data: prods } = await volQ;
     for (const p of (prods ?? []) as Array<{ code: string; unit_m3_milli: number | null }>) {
       m3ByCode.set(p.code, Number(p.unit_m3_milli ?? 0));
     }
@@ -319,7 +324,7 @@ async function computeAndStoreGrnAllocation(
 /* Recompute + persist a GRN's landed allocation from its CURRENT lines + header
    (used after the allocation_method / rate is changed on PATCH, before recost).
    Reads everything off the DB so it's self-contained. Best-effort. */
-async function reallocateGrnCharges(sb: any, grnId: string): Promise<void> {
+async function reallocateGrnCharges(sb: any, grnId: string, companyId?: number | null): Promise<void> {
   const { data: head } = await sb.from('grns')
     .select('exchange_rate, allocation_method').eq('id', grnId).maybeSingle();
   const grnRate = (head as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
@@ -327,7 +332,7 @@ async function reallocateGrnCharges(sb: any, grnId: string): Promise<void> {
   const { data: items } = await sb.from('grn_items')
     .select('id, qty_accepted, material_code, unit_price_centi, line_total_centi, item_group, allocated_charge_centi')
     .eq('grn_id', grnId);
-  await computeAndStoreGrnAllocation(sb, (items ?? []) as AllocItemRow[], grnRate, method);
+  await computeAndStoreGrnAllocation(sb, (items ?? []) as AllocItemRow[], grnRate, method, companyId);
 }
 
 /* ── Shared helper: post a GRN, roll up to PO items, write inventory IN ──
@@ -474,7 +479,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
      everywhere ⇒ byte-for-byte identical to the plain-goods path. */
   const method = normalizeAllocationMethod((grnHeader as { allocation_method?: string | null } | null)?.allocation_method);
   const itemRows = (items ?? []) as Array<{ id: string; purchase_order_item_id: string | null; qty_accepted: number; material_code: string; material_name: string | null; unit_price_centi: number | null; line_total_centi?: number | null; item_group?: string | null; variants?: VariantAttrs | null }>;
-  const alloc = await computeAndStoreGrnAllocation(sb, itemRows, grnRate, method);
+  const alloc = await computeAndStoreGrnAllocation(sb, itemRows, grnRate, method, companyId);
   const allocByItemId = new Map(alloc.goods.map((g) => [g.id, g]));
   if (warehouseId && items) {
     // Migration 0120 — stamp each IN with its source PO number as the batch.
@@ -2559,7 +2564,7 @@ grns.patch('/:id', async (c) => {
      method. Best-effort; a no-op for an MYR GRN with no service lines. */
   if (rateChanged || methodChanged) {
     try {
-      await reallocateGrnCharges(sb, id);
+      await reallocateGrnCharges(sb, id, activeCompanyId(c));
       await recostFromGrn(sb, id);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-patch] re-alloc/recost failed:', id, e); }
   }

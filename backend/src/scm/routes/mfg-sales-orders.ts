@@ -3911,14 +3911,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       const memoKey = `${product.base_model ?? ''}|${depth}`;
       let pending = sofaModulePricesMemo.get(memoKey);
       if (!pending) {
-        pending = loadModelSofaModulePrices(sb, product.base_model, depth);
+        pending = loadModelSofaModulePrices(sb, product.base_model, depth, companyId);
         sofaModulePricesMemo.set(memoKey, pending);
       }
       // C2 — COST rows ride the same diet: one load per base_model.
       const costKey = product.base_model ?? '';
       let pendingCost = sofaModuleCostRowsMemo.get(costKey);
       if (!pendingCost) {
-        pendingCost = loadModelSofaModuleCostRows(sb, product.base_model);
+        pendingCost = loadModelSofaModuleCostRows(sb, product.base_model, companyId);
         sofaModuleCostRowsMemo.set(costKey, pendingCost);
       }
       [sofaModulePrices, sofaModuleCostRows] = await Promise.all([pending, pendingCost]);
@@ -5127,7 +5127,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       ? oneShotSofaCode(r.modelCode, r.compartment, remarkSlug(r.remarkText), n)
       : oneShotSimpleCode(r.baseSkuCode, remarkSlug(r.remarkText), n);
     const probe = oneShotReqs.flatMap((r) => [1, 2, 3].map((n) => candidate(r, n)));
-    const { data: existing } = await admin.from('mfg_products').select('code').in('code', probe);
+    // Per-company: a taken code in the OTHER company is not taken here (0233
+    // makes uniqueness per (company_id, code)), and treating it as taken would
+    // skip a perfectly free suffix.
+    let probeQ = admin.from('mfg_products').select('code').in('code', probe);
+    if (companyId != null) probeQ = probeQ.eq('company_id', companyId);
+    const { data: existing } = await probeQ;
     const taken = new Set((existing ?? []).map((x) => (x as { code: string }).code));
     const nowIso = new Date().toISOString();
     const idGen = () => {
@@ -7219,8 +7224,9 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
           sb,
           productLite.base_model,
           String((variantsObj as { depth?: unknown } | null)?.depth ?? '24'),
+          activeCompanyId(c),
         ),
-        loadModelSofaModuleCostRows(sb, productLite.base_model),
+        loadModelSofaModuleCostRows(sb, productLite.base_model, activeCompanyId(c)),
       ])
     : [null, null];
   /* Free Item Campaign (add-line path, Task 4) — body field `freeItemCampaignId`
@@ -7826,8 +7832,9 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
             sb,
             prodLite.base_model,
             String((variantsAfter as { depth?: unknown } | null)?.depth ?? '24'),
+            activeCompanyId(c),
           ),
-          loadModelSofaModuleCostRows(sb, prodLite.base_model),
+          loadModelSofaModuleCostRows(sb, prodLite.base_model, activeCompanyId(c)),
         ])
       : [null, null];
     recomputedPatch = recomputeFromSnapshot(
@@ -8972,7 +8979,7 @@ async function planSofaRewardRevert(
     loadFabricSellingTiers(sb, (leadV.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
     loadSpecialAddons(sb),
-    loadModelSofaModulePrices(sb, splitSofaCode(lead.item_code).baseModel, depth),
+    loadModelSofaModulePrices(sb, splitSofaCode(lead.item_code).baseModel, depth, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
@@ -9154,8 +9161,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     loadFabricSellingTiers(sb, (newVariants.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
     loadSpecialAddons(sb),
-    loadModelSofaModulePrices(sb, prodLite.base_model, depth),
-    loadModelSofaModuleCostRows(sb, prodLite.base_model),
+    loadModelSofaModulePrices(sb, prodLite.base_model, depth, activeCompanyId(c)),
+    loadModelSofaModuleCostRows(sb, prodLite.base_model, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb), // migration 0025 — per-compartment Δ
   ]);

@@ -151,6 +151,18 @@ export async function recomputeSoStockAllocation(
        FIFO and is NOT batched. */
     // Page through — mfg_products is >1000 rows (1141 live), so the default cap
     // would DROP catalog rows → SOFA/SERVICE codes past row 1000 misclassified.
+    /* DELIBERATELY NOT company-scoped, unlike every other by-code product read
+       (2026-08-01 audit). This job recomputes allocation for EVERY SO across
+       both companies — it has no single active company, and its 34 callers
+       include crons and post-write hooks with no request context. Threading a
+       company here would mean either 34 signature changes or an arbitrary
+       choice of "which company" for a cross-company job.
+       Instead the read is made HONEST: `code` is not unique, so a code present
+       in both companies yields two rows, and the sets below take their union.
+       That is correct while the two rows agree on category (true for all 17
+       colliding codes on production: CODY/FENRIR/JAGER bedframes + 2 mattress
+       codes) and WRONG the moment they don't — so a disagreement is logged
+       loudly rather than silently deciding whether a line is a batched sofa. */
     const { data: catRows, error: categoryError } = await paginateAll<{ code: string; category: string | null }>((from, to) =>
       sb.from('mfg_products').select('code, category').order('code').range(from, to));
     if (categoryError) throw new Error(`allocation product load failed: ${categoryError.message}`);
@@ -159,10 +171,19 @@ export async function recomputeSoStockAllocation(
        goods. Collect their codes here (same catalog pull) so the needs walk
        below can skip them by the authoritative category signal too. */
     const serviceCodes = new Set<string>();
+    const catByCode = new Map<string, string>();
+    const conflicting: string[] = [];
     for (const p of (catRows ?? []) as Array<{ code: string; category: string | null }>) {
       const cat = (p.category ?? '').toUpperCase();
+      const seen = catByCode.get(p.code);
+      if (seen !== undefined && seen !== cat) conflicting.push(`${p.code}(${seen}/${cat})`);
+      else catByCode.set(p.code, cat);
       if (cat === 'SOFA') batchedCodes.add(p.code);
       else if (cat === 'SERVICE') serviceCodes.add(p.code);
+    }
+    if (conflicting.length > 0) {
+      // eslint-disable-next-line no-console
+      console.error(`[so-allocation] mfg_products codes disagree on category across companies: ${conflicting.join(', ')} — sofa/service classification is a union and may be wrong for these lines`);
     }
     const isBatchedLine = (item_code: string, item_group: string | null) =>
       batchedCodes.has(item_code) || (item_group ?? '').toUpperCase().includes('SOFA');

@@ -318,7 +318,7 @@ async function loadAndPack(
       const chunk = codeList.slice(i, i + 300);
       if (chunk.length === 0) continue;
       const { data: prodRows } = await paginateAll<{ code: string; category: string | null }>((from, to) =>
-        sb.from('mfg_products').select('code, category').in('code', chunk).range(from, to),
+        scopeToCompany(sb.from('mfg_products').select('code, category').in('code', chunk), c).range(from, to),
       );
       for (const p of (prodRows ?? [])) if (p.category) productCategory.set(p.code, normCategory(p.category));
     }

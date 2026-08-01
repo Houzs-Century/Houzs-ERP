@@ -711,17 +711,26 @@ export async function loadSpecialAddons(sb: any): Promise<SpecialAddonDef[]> {
  *  reject). Built via the shared `sofaModuleSellingPricesFromSkus` at the SAME
  *  (depth, P1) the POS Configurator uses, so the server map is byte-for-byte
  *  what the POS builds and the drift gate can't diverge. */
+/*  `base_model` is no more unique than `code` — it is a plain text grouping on
+ *  the same per-company table, so an unscoped read merges BOTH companies' sofa
+ *  SKUs into one module→price map. That is worse than the by-code bug: the map
+ *  is keyed by module suffix, so the other company's module silently REPLACES
+ *  this one's, and the drift gate then compares the POS's (company-scoped) map
+ *  against a mixed one. Same `companyId` contract as loadProductByCode. */
 export async function loadModelSofaModulePrices(
   sb: any,
   baseModel: string | null | undefined,
   depth: string | null | undefined,
+  companyId?: number | null,
 ): Promise<SofaModulePriceSen | null> {
   if (!baseModel) return null;
-  const { data } = await sb
+  let q = sb
     .from('mfg_products')
     .select('code, sell_price_sen, seat_height_prices')
     .eq('base_model', baseModel)
     .eq('category', 'SOFA');
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data } = await q;
   if (!data) return null;
   return sofaModuleSellingPricesFromSkus(
     (data as Array<{ code: string; sell_price_sen: number | null; seat_height_prices: MfgSeatHeightPrice[] | null }>).map((r) => ({
@@ -745,13 +754,16 @@ export async function loadModelSofaModulePrices(
 export async function loadModelSofaModuleCosts(
   sb: any,
   baseModel: string | null | undefined,
+  companyId?: number | null,
 ): Promise<SofaModulePriceSen | null> {
   if (!baseModel) return null;
-  const { data } = await sb
+  let q = sb
     .from('mfg_products')
     .select('code, base_price_sen')
     .eq('base_model', baseModel)
     .eq('category', 'SOFA');
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data } = await q;
   if (!data) return null;
   return sofaModulePricesFromSkus(
     (data as Array<{ code: string; base_price_sen: number | null }>).map((r) => ({
@@ -771,13 +783,16 @@ export async function loadModelSofaModuleCosts(
 export async function loadModelSofaModuleCostRows(
   sb: any,
   baseModel: string | null | undefined,
+  companyId?: number | null,
 ): Promise<SofaModuleCostRowLite[] | null> {
   if (!baseModel) return null;
-  const { data } = await sb
+  let q = sb
     .from('mfg_products')
     .select('code, base_price_sen, price1_sen, cost_price_sen, seat_height_prices')
     .eq('base_model', baseModel)
     .eq('category', 'SOFA');
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data } = await q;
   if (!data) return null;
   return data as SofaModuleCostRowLite[];
 }
@@ -994,8 +1009,9 @@ export async function recomputeOneLine(
              depth ?? seatHeight so a canonical persisted sofa line loads the
              same module-price grid as a raw POS line. */
           String((item.variants as { depth?: unknown; seatHeight?: unknown } | null | undefined)?.depth ?? (item.variants as { seatHeight?: unknown } | null | undefined)?.seatHeight ?? '24'),
+          companyId,
         ),
-        loadModelSofaModuleCostRows(sb, product.base_model),
+        loadModelSofaModuleCostRows(sb, product.base_model, companyId),
       ])
     : [null, null];
   return recomputeFromSnapshot(item, product, fabric, config, null, sofaModulePrices, sellingTiers, fabricAddonConfig, null, null, null, sofaModuleCostRows, modelOverrides, compartmentOverrides);

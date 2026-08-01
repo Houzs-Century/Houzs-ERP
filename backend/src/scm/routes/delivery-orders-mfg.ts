@@ -554,6 +554,7 @@ async function resolveShipCommitments(
   lines: ShipCandidateLine[],
   warehouseId: string | null,
   shortages: StockShortage[],
+  companyId?: number | null,
 ): Promise<ShipCommitmentPlan> {
   const out = new Map<string, ShipBinding>();
   const linked = lines.filter((l) => l.soItemId && Number(l.qty) > 0);
@@ -564,7 +565,7 @@ async function resolveShipCommitments(
     const [sofaIds, expected, allocRes] = await Promise.all([
       detectSofaSoItemIds(sb, linked.map((l) => ({
         itemCode: l.itemCode, itemGroup: l.itemGroup, soItemId: l.soItemId,
-      }))),
+      })), companyId),
       /* 'block', not 'latest': a NEW commitment must never be guessed. A line
          bound to two live POs resolves to null here and ships unbound, which is
          what the drop-ship offer path already does (audit H3). */
@@ -687,6 +688,15 @@ async function resolveDoSofaBatchMap(
     committed_po_batch_no?: string | null;
   }>,
   isDropship: boolean,
+  /* Threaded for completeness but UNSET by all three of today's callers
+     (restampDoActualCost / deductInventoryForDo / resyncInventoryForDo) — they
+     are inventory-cost helpers that take a DO id and no request context. It
+     degrades to the previous unscoped read, which only feeds the SOFA/SERVICE
+     category classification below: a union across companies, correct while the
+     two rows agree on category (true for all 17 colliding codes on production)
+     and the same accepted risk documented in so-stock-allocation.ts. Pass it
+     the moment one of those helpers learns its company. */
+  companyId?: number | null,
 ): Promise<Map<string, string>> {
   const batchBySoItem = new Map<string, string>();
   const soItemIds = [...new Set(items.map((it) => it.so_item_id ?? null).filter((x): x is string => !!x))];
@@ -715,7 +725,7 @@ async function resolveDoSofaBatchMap(
       const sofaRows = items
         .filter((it) => it.so_item_id && missing.has(it.so_item_id))
         .map((it) => ({ itemCode: it.item_code, itemGroup: it.item_group ?? null, soItemId: it.so_item_id ?? null }));
-      const sofaSoIds = await detectSofaSoItemIds(sb, sofaRows);
+      const sofaSoIds = await detectSofaSoItemIds(sb, sofaRows, companyId);
       if (sofaSoIds.size > 0) {
         /* 'latest' (default) — movement paths must stay deterministic even in
            the rare multi-PO window so a resync delta lands in the SAME bucket
@@ -3034,6 +3044,7 @@ deliveryOrdersMfg.post('/', async (c) => {
       })),
       shipWarehouseId,
       shortages,
+      activeCompanyId(c),
     );
     /* One PO IS one batch number: refuse a set split across two dye lots rather
        than pick one of them. Ahead of the short-stock 409 because there is no
@@ -3091,7 +3102,7 @@ deliveryOrdersMfg.post('/', async (c) => {
       itemCode: String(it.itemCode ?? ''),
       itemGroup: (it.itemGroup as string | null) ?? null,
       soItemId: (it.soItemId as string | null) ?? null,
-    })));
+    })), activeCompanyId(c));
     if (sofaOffenders.length > 0) {
       /* Drop-ship waiver (port of 2990 07c45728) — supplier ships the sofa
          direct, warehouse has no batch. Waive the Type-A no-batch block ONLY
@@ -3110,7 +3121,7 @@ deliveryOrdersMfg.post('/', async (c) => {
     /* Type B — a sofa set must ship WHOLE from one batch. Block a DO that takes
        only part of an SO's sofa set and leaves the rest behind (orphan dye lot).
        NEVER waived by drop-ship — half a set must never ship. */
-    const partial = await findIncompleteSofaSets(sb, items.map((it) => (it.soItemId as string | null) ?? null));
+    const partial = await findIncompleteSofaSets(sb, items.map((it) => (it.soItemId as string | null) ?? null), activeCompanyId(c));
     if (partial.length > 0) {
       markIdempotencyNoWrite(c);
       return c.json(sofaIncompleteSetResponse(partial), 409);
@@ -3484,7 +3495,7 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
       itemCode: line.itemCode,
       itemGroup: line.itemGroup ?? null,
       soItemId: line.soItemId,
-    })));
+    })), activeCompanyId(c));
     if (sofaOffenders.length > 0) {
       /* Drop-ship waiver (mig 0057) — waive Type-A only on confirmed dropShip +
          every affected line bound to a PO (the incoming batch must be known). */
@@ -3498,7 +3509,7 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
     }
     /* Type B — whole sofa set must ship together (no partial set / orphan).
        NEVER waived by drop-ship. */
-    const partial = await findIncompleteSofaSets(sb, sortedPicks.map((line) => line.soItemId));
+    const partial = await findIncompleteSofaSets(sb, sortedPicks.map((line) => line.soItemId), activeCompanyId(c));
     if (partial.length > 0) {
       markIdempotencyNoWrite(c);
       return c.json(sofaIncompleteSetResponse(partial), 409);
@@ -3539,6 +3550,7 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
     })),
     shipWarehouseId ?? null,
     shortages,
+    activeCompanyId(c),
   );
   // One PO IS one batch number — a set split across two dye lots is refused.
   if (commitmentPlan.setConflicts.length > 0) {
@@ -4125,7 +4137,7 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
     itemGroup: (it.itemGroup as string | null) ?? null,
     variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
     qty: Number(it.qty ?? 0),
-  }], addWarehouseId ?? null, addShortages);
+  }], addWarehouseId ?? null, addShortages, activeCompanyId(c));
   // One PO IS one batch number — a set split across two dye lots is refused.
   if (addPlan.setConflicts.length > 0) {
     return c.json(sofaSetPoSplitResponse(addPlan.setConflicts), 409);
@@ -4166,7 +4178,7 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
       itemCode: String(it.itemCode ?? ''),
       itemGroup: (it.itemGroup as string | null) ?? null,
       soItemId: (it.soItemId as string | null) ?? null,
-    }]);
+    }], activeCompanyId(c));
     if (sofaOffenders.length > 0) {
       /* Drop-ship waiver (mig 0057) — waive Type-A only on confirmed dropShip +
          the line bound to a PO (the incoming batch must be known). */
@@ -4186,7 +4198,7 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
       ...((existingDoLines ?? []) as Array<{ so_item_id: string | null }>).map((r) => r.so_item_id),
       (it.soItemId as string | null) ?? null,
     ];
-    const partial = await findIncompleteSofaSets(sb, soIds);
+    const partial = await findIncompleteSofaSets(sb, soIds, activeCompanyId(c));
     if (partial.length > 0) return c.json(sofaIncompleteSetResponse(partial), 409);
   }
 
@@ -4381,7 +4393,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
           qty: delta,
           priorShippedQty: Number(prev.qty ?? 0),
           priorBatchNo: (prev.committed_po_batch_no as string | null) ?? null,
-        }], targetWh, shortages);
+        }], targetWh, shortages, activeCompanyId(c));
         if (patchPlan.setConflicts.length > 0) {
           return c.json(sofaSetPoSplitResponse(patchPlan.setConflicts), 409);
         }
