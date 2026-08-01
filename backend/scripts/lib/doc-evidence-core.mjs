@@ -432,6 +432,79 @@ export function planFifoAttribution({ poLines = [], soLines = [] }) {
 // never written here.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// R4 — the delivered SO lines no DO line points back at (trace check class
+// `no-do-line-link`, 2026-08-01: 10 DELIVERED lines, e.g. 2990-SO-2606-031
+// NTYR pillow). The SO HAS delivery orders, but their lines carry no
+// so_item_id for these SO lines — the old convert path / the import never
+// stamped the link, so the delivered trace dead-ends. Within ONE SO and its
+// own non-cancelled DOs, an unlinked DO line whose item code names EXACTLY ONE
+// still-unlinked SO line is DETERMINED, not guessed (the pairPoLinesToSoLines
+// discipline): no other line of that order could have been the one delivered.
+// Several unlinked DO lines of the same code may all stamp that one SO line
+// (split deliveries), provided their quantity fits. TWO candidate SO lines of
+// one code is a coin flip and refuses — and quantity is deliberately NOT a
+// discriminator (house rule), it only guards the total.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** soLines: the SO's active lines with NO DO line pointing at them
+ *           [{ id, itemCode, qty }]
+ *  doLines: the SO's DOs' lines with so_item_id NULL
+ *           [{ id, doNumber, itemCode, qty }]
+ *  Returns { pairs, ambiguous, qtyIncompatible, unmatchedDoLines }:
+ *    pairs            [{ doLineId, doNumber, soLineId, code, doQty }] — every
+ *                     unlinked DO line of a code stamps the single free SO
+ *                     line carrying it
+ *    ambiguous        [{ code, freeSoLines, unlinkedDoLines }] — >1 candidate
+ *                     SO line; refused, printed for the owner
+ *    qtyIncompatible  [{ code, soLineId, soQty, doQtySum }] — the DO lines
+ *                     claim more units than the SO line ordered; refused
+ *    unmatchedDoLines [{ code, unlinkedDoLines }] — no free SO line at all */
+export function planDoLineLink({ soLines = [], doLines = [] }) {
+  const norm = (s) => String(s ?? "").trim().toUpperCase();
+  const soByCode = new Map();
+  for (const l of soLines) {
+    const code = norm(l.itemCode);
+    if (!code) continue;
+    const arr = soByCode.get(code) ?? [];
+    arr.push(l);
+    soByCode.set(code, arr);
+  }
+  const doByCode = new Map();
+  for (const l of doLines) {
+    const code = norm(l.itemCode);
+    if (!code) continue;
+    const arr = doByCode.get(code) ?? [];
+    arr.push(l);
+    doByCode.set(code, arr);
+  }
+  const pairs = [];
+  const ambiguous = [];
+  const qtyIncompatible = [];
+  const unmatchedDoLines = [];
+  for (const [code, dls] of doByCode.entries()) {
+    const sos = soByCode.get(code) ?? [];
+    if (sos.length === 0) {
+      unmatchedDoLines.push({ code, unlinkedDoLines: dls.length });
+      continue;
+    }
+    if (sos.length > 1) {
+      ambiguous.push({ code, freeSoLines: sos.length, unlinkedDoLines: dls.length });
+      continue;
+    }
+    const so = sos[0];
+    const doQtySum = dls.reduce((a, d) => a + Number(d.qty ?? 0), 0);
+    if (doQtySum > Number(so.qty ?? 0)) {
+      qtyIncompatible.push({ code, soLineId: so.id, soQty: Number(so.qty ?? 0), doQtySum });
+      continue;
+    }
+    for (const d of dls) {
+      pairs.push({ doLineId: d.id, doNumber: d.doNumber ?? null, soLineId: so.id, code, doQty: Number(d.qty ?? 0) });
+    }
+  }
+  return { pairs, ambiguous, qtyIncompatible, unmatchedDoLines };
+}
+
 export function classifySoLineWarehouse({
   companyId,
   mirrorCompanyId = null,

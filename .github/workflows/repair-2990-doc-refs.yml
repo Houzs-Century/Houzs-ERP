@@ -55,6 +55,13 @@ name: Repair 2990 doc references (DRY-RUN gated)
 # (so-mirror.ts drains DELETE-then-INSERT), so they are REPORTED with the
 # exact 2990-side fix and never written here.
 #
+# Part `do-line-link` (2026-08-01, trace-check class no-do-line-link): the
+# DELIVERED SO lines whose SO has DOs but no DO line carries their so_item_id
+# (old convert path / import). Within one SO and its own non-cancelled DOs, an
+# unlinked DO line whose item code names EXACTLY ONE still-unlinked SO line
+# stamps it (split deliveries allowed when the total fits); two candidate SO
+# lines refuse. Completes the delivered trace for those lines.
+#
 # A token is rewritten ONLY when it resolves to nothing as stored, resolves to
 # exactly ONE document when prefixed with the owning row's own company code, and
 # that document belongs to the same company. Doc-number tails collide across
@@ -90,6 +97,7 @@ on:
           - dedupe
           - fifo-attribute
           - so-warehouse
+          - do-line-link
       grns:
         description: "part grn-gap only: comma-separated GRN numbers (default the 3a-implicated one)"
         required: false

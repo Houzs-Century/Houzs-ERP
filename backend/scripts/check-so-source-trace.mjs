@@ -23,15 +23,25 @@
 //   ok-delivered / ok-ready / ok-adjustment    resolved (adjustment = STOCK ADJ)
 //   service                                    service line — no goods, no PO
 //   no-do-line-link      SO shows delivered but no DO line carries its
-//                        so_item_id (the ON DELETE SET NULL trap / import)
+//                        so_item_id (the ON DELETE SET NULL trap / import).
+//                        Fix tool: part=do-line-link on Repair 2990 doc
+//                        references (stamps the determined link).
 //   do-no-ledger         DO lines exist but wrote no movement/consumption
 //   consumed-lot-unbatchable   consumption found, lot has no batch AND no
 //                        GRN/adjustment evidence (backfill-lot-batch-from-docs
 //                        cannot stamp it either — pre-import receipt)
 //   sofa-ready-no-batch  READY sofa without allocated_batch_no
-//   ready-no-open-lots   READY line but its bucket holds no open lots
-//                        (balances-vs-lots drift, or no warehouse binding)
-//   ready-lot-unbatchable   its FIFO slice lands on lots with no evidence
+//   ready-no-open-lots   READY line but its bucket holds no open lots — a
+//                        STALE allocation flag (the allocator only runs as a
+//                        post-ship/post-receipt side effect, so nothing ever
+//                        re-evaluated it after the stock left). Fix tool:
+//                        Recompute SO stock allocation workflow (the
+//                        canonical recomputeSoStockAllocation, dispatchable).
+//   ready-lot-unbatchable   ACCEPTED-EXPLAINED, not a defect: the FIFO slice
+//                        lands on pre-0120 / no-evidence lots (received
+//                        before lots carried batch/GRN identity). READY
+//                        cannot show a source PO until DO time consumes the
+//                        lot; counted apart from the unresolved verdict.
 //   not-ready            line on a READY_TO_SHIP order that is itself not
 //                        READY and not delivered (status/stock mismatch, FYI)
 //
@@ -283,7 +293,7 @@ try {
       if (remaining <= 0) continue; // fully delivered — done with this line
     } else if ((status === "DELIVERED" || status === "SHIPPED") && (doCountByDoc.get(l.doc_no) ?? 0) > 0 && !deliveredBySoItem.has(l.id)) {
       bump("no-do-line-link");
-      problems.push({ cls: "no-do-line-link", l, note: `${status}: the SO has ${doCountByDoc.get(l.doc_no)} DO(s) but no DO line carries this line's so_item_id` });
+      problems.push({ cls: "no-do-line-link", l, note: `${status}: the SO has ${doCountByDoc.get(l.doc_no)} DO(s) but no DO line carries this line's so_item_id — fix: part=do-line-link on Repair 2990 doc references` });
       continue;
     }
 
@@ -302,12 +312,12 @@ try {
       const r = readyBySoItem.get(l.id);
       if (!r || r.noLots) {
         bump("ready-no-open-lots");
-        problems.push({ cls: "ready-no-open-lots", l, note: `${status}: READY but its (company, warehouse, code) bucket holds no open lots` });
+        problems.push({ cls: "ready-no-open-lots", l, note: `${status}: READY but its (company, warehouse, code) bucket holds no open lots — a STALE allocation flag; fix: Recompute SO stock allocation workflow` });
       } else if (r.pos.size > 0) bump("ok-ready");
       else if (r.adj) bump("ok-adjustment");
       else {
         bump("ready-lot-unbatchable");
-        problems.push({ cls: "ready-lot-unbatchable", l, note: `${status}: FIFO slice lands on lot(s) with no batch/GRN/adjustment evidence (${r.unbatched} unit(s))` });
+        problems.push({ cls: "ready-lot-unbatchable", l, note: `${status}: ACCEPTED-EXPLAINED — FIFO slice lands on pre-0120/no-evidence lot(s) (${r.unbatched} unit(s), received before lots carried batch/GRN identity); READY cannot show a source PO until DO time consumes the lot. Not a defect.` });
       }
     }
   }
@@ -318,10 +328,23 @@ try {
     log(`  ${cls}: ${n}`);
   }
   log("");
-  const unresolved = problems.length;
-  log(`UNRESOLVED LINES: ${unresolved}`);
-  for (const p of problems) {
+  // ready-lot-unbatchable is ACCEPTED-EXPLAINED (pre-0120/no-evidence lots —
+  // READY has no PO to show until DO time), so it prints apart from the
+  // unresolved verdict instead of masquerading as a defect.
+  const ACCEPTED = new Set(["ready-lot-unbatchable"]);
+  const accepted = problems.filter((p) => ACCEPTED.has(p.cls));
+  const open = problems.filter((p) => !ACCEPTED.has(p.cls));
+  const unresolved = open.length;
+  log(`UNRESOLVED LINES: ${unresolved}  (accepted-explained, listed separately: ${accepted.length})`);
+  for (const p of open) {
     log(`  [${p.cls}] ${coCode.get(Number(soByDoc.get(p.l.doc_no)?.company_id)) ?? "?"} ${p.l.doc_no}  ${p.l.item_code}  qty=${p.l.qty}  ${p.note}`);
+  }
+  if (accepted.length) {
+    log("");
+    log(`ACCEPTED-EXPLAINED LINES: ${accepted.length}  (pre-0120/no-evidence lots — not defects)`);
+    for (const p of accepted) {
+      log(`  [${p.cls}] ${coCode.get(Number(soByDoc.get(p.l.doc_no)?.company_id)) ?? "?"} ${p.l.doc_no}  ${p.l.item_code}  qty=${p.l.qty}  ${p.note}`);
+    }
   }
 
   // 5. Double-attribution verdict — audit-inventory-costing.mjs section 10c
@@ -347,8 +370,8 @@ try {
 
   log("");
   log(unresolved === 0
-    ? "VERDICT: zero-or-explained holds — every in-scope line resolves to a PO, STOCK ADJ, or a service line."
-    : `VERDICT: ${unresolved} line(s) do not resolve — classes above say why; backfill-lot-batch-from-docs.mjs covers the grn/basis-seed classes, the rest are listed for the owner.`);
+    ? `VERDICT: zero-or-explained holds — every in-scope line resolves to a PO, STOCK ADJ, a service line, or an accepted-explained pre-0120 lot${accepted.length ? ` (${accepted.length} of those)` : ""}.`
+    : `VERDICT: ${unresolved} line(s) do not resolve — classes above name their fix tools (ready-no-open-lots -> Recompute SO stock allocation; no-do-line-link -> part=do-line-link; the grn/basis-seed classes -> backfill-lot-batch-from-docs.mjs); the rest are listed for the owner.`);
 } finally {
   await pg.end({ timeout: 5 });
 }

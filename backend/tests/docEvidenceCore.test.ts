@@ -8,6 +8,7 @@ import {
   byDateAscNullsLast,
   normalizeVariantKeyQuotes,
   isRepairSeeded,
+  planDoLineLink,
 } from "../scripts/lib/doc-evidence-core.mjs";
 import { variantKeyMirror } from "../scripts/lib/ledger-repair-core.mjs";
 import { computeVariantKey } from "../src/scm/shared/variant-key";
@@ -522,6 +523,70 @@ describe("planDocKeyAlignment under quote-doubling — normalized match relabels
       lines: [{ ref: "line 1", key: CANON, conflict: false }],
     });
     expect(out[0].verdict).toBe("consistent");
+  });
+});
+
+describe("planDoLineLink (A9) — the delivered trace completes only where the SO's own documents determine it", () => {
+  test("THE NTYR CASE: one unlinked DO line, one unlinked SO line of the code — determined, stamped", () => {
+    const res = planDoLineLink({
+      soLines: [{ id: "so-l1", itemCode: "NTYR-PILLOW", qty: 1 }],
+      doLines: [{ id: "do-l1", doNumber: "2990-DO-2606-031", itemCode: "NTYR-PILLOW", qty: 1 }],
+    });
+    expect(res.pairs).toEqual([{ doLineId: "do-l1", doNumber: "2990-DO-2606-031", soLineId: "so-l1", code: "NTYR-PILLOW", doQty: 1 }]);
+    expect(res.ambiguous).toEqual([]);
+  });
+
+  test("split deliveries: several unlinked DO lines all stamp the ONE free SO line when their total fits", () => {
+    const res = planDoLineLink({
+      soLines: [{ id: "so-l1", itemCode: "MATT-K", qty: 2 }],
+      doLines: [
+        { id: "do-l1", doNumber: "DO-1", itemCode: "MATT-K", qty: 1 },
+        { id: "do-l2", doNumber: "DO-2", itemCode: "MATT-K", qty: 1 },
+      ],
+    });
+    expect(res.pairs.map((p: { doLineId: string; soLineId: string }) => [p.doLineId, p.soLineId]))
+      .toEqual([["do-l1", "so-l1"], ["do-l2", "so-l1"]]);
+  });
+
+  test("two candidate SO lines of one code is a coin flip — refused, reported", () => {
+    const res = planDoLineLink({
+      soLines: [
+        { id: "so-l1", itemCode: "MATT-K", qty: 1 },
+        { id: "so-l2", itemCode: "MATT-K", qty: 1 },
+      ],
+      doLines: [{ id: "do-l1", doNumber: "DO-1", itemCode: "MATT-K", qty: 1 }],
+    });
+    expect(res.pairs).toEqual([]);
+    expect(res.ambiguous).toEqual([{ code: "MATT-K", freeSoLines: 2, unlinkedDoLines: 1 }]);
+  });
+
+  test("quantity GUARDS, never discriminates: DO lines totalling more than the SO line ordered refuse", () => {
+    const res = planDoLineLink({
+      soLines: [{ id: "so-l1", itemCode: "MATT-K", qty: 1 }],
+      doLines: [
+        { id: "do-l1", doNumber: "DO-1", itemCode: "MATT-K", qty: 1 },
+        { id: "do-l2", doNumber: "DO-2", itemCode: "MATT-K", qty: 1 },
+      ],
+    });
+    expect(res.pairs).toEqual([]);
+    expect(res.qtyIncompatible).toEqual([{ code: "MATT-K", soLineId: "so-l1", soQty: 1, doQtySum: 2 }]);
+  });
+
+  test("a DO line whose code no free SO line carries is left alone, reported", () => {
+    const res = planDoLineLink({
+      soLines: [{ id: "so-l1", itemCode: "SOFA-X", qty: 1 }],
+      doLines: [{ id: "do-l1", doNumber: "DO-1", itemCode: "FREE-GIFT", qty: 1 }],
+    });
+    expect(res.pairs).toEqual([]);
+    expect(res.unmatchedDoLines).toEqual([{ code: "FREE-GIFT", unlinkedDoLines: 1 }]);
+  });
+
+  test("item codes match trimmed and case-insensitive (import spelling drift)", () => {
+    const res = planDoLineLink({
+      soLines: [{ id: "so-l1", itemCode: "ntyr-pillow ", qty: 1 }],
+      doLines: [{ id: "do-l1", doNumber: "DO-1", itemCode: "NTYR-PILLOW", qty: 1 }],
+    });
+    expect(res.pairs).toHaveLength(1);
   });
 });
 
