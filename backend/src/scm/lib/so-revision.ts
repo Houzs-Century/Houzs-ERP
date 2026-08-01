@@ -44,6 +44,7 @@ import {
 } from '../routes/mfg-sales-orders';
 import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope';
 import { todayMyt } from './my-time';
+import { soWarehouseIdForDoc } from './so-warehouse';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
 
@@ -366,6 +367,15 @@ export async function applySoAmendment(
       const unitCost = rec.unit_cost_sen;
       const lineCost = unitCost * qty;
 
+      /* The warehouse follows the SO (owner 2026-07-31): "我们的 item 都不会有仓库,
+         还是跟着 SO 的". This insert used to omit warehouse_id, so an amendment
+         ADD line landed NULL and split its order into a second MRP row under the
+         WH_NONE bucket. Resolved from the SO's OWN header — never from a sibling
+         line, which would pool stock across a warehouse boundary. Fail-soft: an
+         unresolvable header yields null, the previous behaviour, so an amendment
+         is never blocked by a missing state mapping. */
+      const addLineWarehouseId = await soWarehouseIdForDoc(sb, docNo);
+
       // Multi-company (mig 0083/0091): company_id is NOT NULL with a HOUZS
       // DEFAULT — an unstamped insert silently books the line to HOUZS, so the
       // ADD line explicitly inherits the SO header's company.
@@ -391,6 +401,7 @@ export async function applySoAmendment(
         special_order_price_sen: rec.special_order_sen,
         custom_specials:        rec.custom_specials ?? null,
         stock_status:           'PENDING',
+        warehouse_id:           addLineWarehouseId,   // follows the SO — see above
       });
       if (insErr) throw new Error(`applySoAmendment: ADD insert failed: ${insErr.message}`);
       lineChanges.push({ field: `line_added_${itemCode}`, from: null, to: `qty ${qty}` });

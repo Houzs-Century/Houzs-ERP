@@ -735,11 +735,24 @@ documentFlow.get('/:type/:id', async (c) => {
   const poItemMeta = new Map<string, { poId: string; qty: number }>();
   for (const l of (poItemLinks as any[])) poItemMeta.set(l.id, { poId: l.purchase_order_id, qty: Number(l.qty ?? 0) });
 
-  /* (b) Note-recorded links. The note drops the company prefix ("2990-SO-2606-033"
-     is written "SO-2606-033"), so match on the prefix-stripped token. Company-
-     scoped: only the active company's POs are scanned. `noteEdges` collects the
-     SO→PO pairs the note asserts so the value edge is drawn even though these POs
-     carry no so_item_id. */
+  /* (b) Note-recorded links. Notes exist in BOTH shapes and both are real:
+     the writer stamps the SO doc number VERBATIM (mfg-purchase-orders.ts:
+     `From SOs: ${docNos.join(', ')}`), so a 2990 PO raised in Houzs records
+     "2990-SO-2607-016"; but the 2990 IMPORT left its historical notes naming
+     the PRE-IMPORT number "SO-2606-033", because migrate-2990-into-houzs.mjs
+     prefixed doc-number columns and not free text inside `notes`.
+     repair-2990-doc-refs.mjs corrects those it can PROVE, and deliberately
+     leaves the ambiguous ones alone — so both shapes will coexist permanently
+     and this matcher has to accept either.
+
+     Matching only the prefix-stripped token (which is all this did) breaks on a
+     prefixed note: noteMentionsToken forbids an adjacent doc-number character,
+     and the "-" of "2990-" is one, so "SO-2607-016" does NOT match inside
+     "2990-SO-2607-016". Try the FULL doc number first, then the bare tail.
+
+     Both are safe against the colliding-tail hazard for the same reason as
+     before: the scan is `.eq('company_id', cid)`, so a bare token can only ever
+     match a note on a PO in the SAME company as the root SO. */
   const bareTokens = rootSos.map((d) => stripCompanyPrefix(d)).filter(Boolean);
   const noteEdges: Array<{ soDoc: string; poId: string }> = [];
   const notePoIds: string[] = [];
@@ -750,8 +763,12 @@ documentFlow.get('/:type/:id', async (c) => {
       const note = String(p.notes ?? '');
       let matched = false;
       for (let i = 0; i < rootSos.length; i++) {
+        const full = rootSos[i]!;
         const t = bareTokens[i];
-        if (t && noteMentionsToken(note, t)) { noteEdges.push({ soDoc: rootSos[i]!, poId: p.id }); matched = true; }
+        if (noteMentionsToken(note, full) || (t && noteMentionsToken(note, t))) {
+          noteEdges.push({ soDoc: full, poId: p.id });
+          matched = true;
+        }
       }
       if (matched) notePoIds.push(p.id);
     }

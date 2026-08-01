@@ -191,6 +191,53 @@ take stock and PO supply ahead of a later one — the delivery date is the
 mechanism. (The `priority_rank` / `priority_reason` columns exist but have zero
 readers; they are not what drives this.)
 
+### The warehouse follows the SO — where the order's warehouse actually lives
+
+Owner, 2026-07-31: **"我们的 item 都不会有仓库, 还是跟着 SO 的"** — an item never
+carries a warehouse of its own; the warehouse comes from the Sales Order.
+
+**There is NO warehouse FK on `scm.mfg_sales_orders`.** This is the surprising
+part and the reason people look in the wrong place. The header records its
+warehouse as the free-text **`sales_location`**, written by `warehouseLabel()`
+(`lib/warehouse-label.ts` — the warehouse CODE when there is one, else the
+name), which is itself derived from `customer_state` through
+`state_warehouse_mappings`. So the SO's warehouse resolves as:
+
+```
+sales_location  ->  warehouses.code / warehouses.name    (what the SO says)
+customer_state  ->  state_warehouse_mappings             (how it was derived)
+```
+
+recorded value first, derivation only as a fallback. That rule lives in ONE
+place — **`backend/src/scm/lib/so-warehouse.ts`** — and every reader and writer
+goes through it.
+
+`scm.mfg_sales_order_items.warehouse_id` (mig 0118) is the per-line binding MRP,
+inventory balances and auto-allocation all key on. It is **nullable**, and
+several paths leave it null: imported history, the amendment ADD line
+(`lib/so-revision.ts`) and the auto free-gift line
+(`lib/free-gift-reconcile.ts`). Both of those write paths now inherit the SO's
+warehouse (fail-soft — an unresolvable header still yields null, so a missing
+state mapping can never block an amendment or a gift).
+
+**`computeMrp` resolves a null line's warehouse from the SO header** before any
+bucket key, warehouse filter or label is built (`routes/mrp.ts`), so the MRP
+page, the SO detail's coverage and `po-so-coverage`'s reverse map all read one
+answer. Before this, `2990-SO-2607-028`'s two-module LOTTI set rendered as TWO
+rows — `Mrp.tsx`'s `groupBySo` keys on `` `${warehouseId ?? WH_NONE}|${soDocNo}` ``
+— and the split was in the backend's own allocation, not only on screen.
+
+> **Never fall back to a SIBLING LINE's warehouse.** MRP, balances and
+> allocation are strictly per-warehouse, and the `WH_NONE` bucket exists to stop
+> unbound demand pooling stock across that boundary. Borrowing another line's
+> warehouse would silently pool them. Falling back to the SO's OWN header
+> cannot: every line of one order shares one header, which is exactly what makes
+> the warehouse a property of the order.
+
+Also relevant: `apply_so_header_cas` (mig 0173) rebinds `warehouse_id` on the
+order's **NULL lines only** when the header's warehouse changes, while the
+approved-amendment path (`so-revision.ts`) rebinds every non-cancelled line.
+
 ### Processing-Date save gates (aggregated `validation_failed`)
 
 Setting or changing the Processing Date (`internal_expected_dd` — the UI's

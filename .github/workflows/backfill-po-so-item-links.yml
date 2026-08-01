@@ -1,0 +1,63 @@
+name: Backfill PO -> SO item links (DRY-RUN gated)
+
+# Stamps the PROVABLE purchase_order_items.so_item_id links.
+#
+# RUN THIS AFTER "Repair 2990 doc references". Tier 1 joins on
+# inventory_movements.batch_no / inventory_lots.batch_no = purchase_orders
+# .po_number; while the 2990 batches still name pre-import numbers that join
+# misses and Tier 1 finds nothing.
+#
+# Tier 1 = the goods physically shipped (delivered chain -> the DO's real
+# so_item_id). Tier 2 = the PO's "From SOs:" note names exactly ONE valid,
+# company-owned Sales Order. Both write only where the item code pairs 1:1.
+#
+# NOT written, by design: a PO whose note names 2+ SOs (which line served which
+# is recorded nowhere), a line with no evidence at all, and anything MRP-derived
+# (that coverage is floating and evaporates on delivery).
+#
+# DRY-RUN unless apply=1. Idempotent.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      tier:
+        description: "which evidence tier to stamp"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - "1"
+          - "2"
+
+concurrency:
+  group: backfill-po-so-item-links
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-po-so-item-links.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          TIER: ${{ inputs.tier }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

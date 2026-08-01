@@ -141,6 +141,79 @@ Display only — no resolver, no endpoint and no stored value changed.
   `inventory_lots` as `batch_no`, so renaming orphans the costing trail. Fix the
   mint path, and leave history alone.
 
+### 2.7 The 2990 doc-reference repair (2026-08-01) — the DATA answer to 2.6, and the rule that makes it safe
+`fix/doc-ref-repair`. The **Source PO prefix check** was run and 2.6's open
+question is answered: the mixed prefixes are TWO problems, not one.
+
+**What the diagnostic found (production).** Of the 16 live source-PO batches:
+3 prefixed, 1 bare-on-base (correct by design), **0 bare-on-a-non-base company**
+(so there is NO mint gap — that theory is refuted), and **12 matching no
+purchase order at all**. Those 12 are the real defect, and they are an IMPORT
+defect, not a minting one.
+
+**Root cause.** `migrate-2990-into-houzs.mjs` prefixes exactly two things: each
+document table's own doc-number column (`DOCNO_COL`) and a hand-written list of
+doc-number REFERENCE columns (`PREFIX_REF_COLS`, which covers `source_doc_no`).
+Two references are in NEITHER list because they are free text inside another
+column, so they still name PRE-IMPORT document numbers:
+
+| reference | mismatched | dangling |
+|---|---|---|
+| `purchase_orders.notes` -> `From SOs: SO-2606-005` | 44 of 49 tokens | 0 |
+| `inventory_lots.batch_no` + `inventory_movements.batch_no` -> `PO-2606-001` | 24 of 32 batches | 0 |
+
+Every consumer resolves these by string EQUALITY, so the reference matches
+nothing and the UI honestly shows a dash.
+
+**The repair, and the rule that makes it provable.**
+`backend/scripts/repair-2990-doc-refs.mjs` + workflow **Repair 2990 doc
+references (DRY-RUN gated)**. A reference is rewritten ONLY when **(1)** it
+resolves to nothing as stored in its own row's company, **(2)** prefixing it
+with that row's OWN company code resolves it to exactly ONE document, and
+**(3)** that document belongs to the same company. Already-resolving references
+are untouched; anything resolving to 0 or >1 prefixed is untouched and reported
+with the reason. A base-company row has an empty prefix, so the repair is a
+structural no-op there by construction.
+
+This is what 2.6 said was missing: the safety fact ("`PO-2607-002` and
+`2990-PO-2607-002` are both real") does not forbid the repair — it forbids the
+BLANKET one. The rule above resolves the prefixed form inside one company, so it
+can never land on the other namespace's document.
+
+- **`inventory_lots` and `inventory_movements` move in ONE transaction** —
+  `fn_reconcile_dropship_batch` (0088/0155) and batch-scoped FIFO consumption
+  join them on `batch_no`, so a partial rename is a costing fault.
+- **`trg_inventory_movement_fifo` is AFTER INSERT only**, so updating `batch_no`
+  re-runs no allocation, creates and consumes no lot, and moves no value.
+- **Ledger timestamps are not touched** — `updated_at` records when the goods
+  moved, not when a label was corrected.
+- **DRY-RUN by default, `apply=1` to write, idempotent** (a repaired reference
+  resolves, so a re-run plans zero rows). Parts `notes` / `batches` are
+  individually selectable.
+
+**A regression the repair would otherwise have caused.** `document-flow.ts`'s
+relationship-map note edge matched on the prefix-STRIPPED root SO only, and
+`noteMentionsToken` forbids an adjacent doc-number character — so
+`SO-2607-016` does not match inside `2990-SO-2607-016`. Repairing the notes
+would have broken the SO->PO edge for exactly the POs it fixed. It now tries the
+FULL doc number first, then the bare tail. **Both note shapes are permanent**:
+the writer stamps the doc number verbatim, and the repair deliberately leaves
+ambiguous history alone — so any new note reader must accept either.
+
+**Then, and only then, the stored links.**
+`backend/scripts/backfill-po-so-item-links.mjs` + workflow **Backfill PO -> SO
+item links (DRY-RUN gated)**. Tier 1 (the delivered chain, linkage C) is
+suppressed until the batches are repaired, because that join is exactly the one
+that misses. Tier 2 is a `"From SOs:"` note naming exactly ONE valid,
+company-owned SO. Both write only where the item code pairs 1:1 — the rule now
+shared with `link-po-to-so.mjs` via `scripts/lib/po-so-line-pairing.mjs`.
+
+**Never written, by design:** a PO whose note names 2+ SOs (which line served
+which is recorded nowhere), a line with no evidence, and anything MRP-derived
+(layer (c) is FLOATING — it shifts as demand moves and evaporates on delivery,
+so freezing it into a stored link would make a live computation a permanent
+wrong record). All three are counted and listed in the report instead.
+
 ### 2.4 PO "Assigned SO" resolution — precedence over linkages **C → B → A**
 `backend/src/scm/routes/po-so-coverage.ts` (`GET /po-so-coverage/:type/:id`,
 `type ∈ po|grn|pi`), mounted on the coarse SCM read gate beside `/document-flow`
