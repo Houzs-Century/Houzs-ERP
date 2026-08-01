@@ -1,0 +1,62 @@
+name: Inventory quantity + costing audit (read-only)
+
+# Answers the owner's two questions against production, plus the one the
+# 2026-08-01 doc-reference repair made urgent:
+#
+#   0. Did renaming 24 batch_no values (PO-2606-001 -> 2990-PO-2606-001, across
+#      inventory_lots + inventory_movements) disturb the FIFO ledger? The repair
+#      argued from the DDL that trg_inventory_movement_fifo is AFTER INSERT only,
+#      so an UPDATE re-runs no allocation. Section 0 checks that against the LIVE
+#      catalog (pg_trigger.tgtype) and the live rows, because a .sql file in the
+#      repo is not evidence about what production actually has.
+#   1. Is the inventory in/out QUANTITY correct — on-hand reconciliation, lot
+#      conservation, negatives, document-vs-movement agreement, orphans, the
+#      inbound PO->GRN->inventory chain, FIFO lot identity and order, and the
+#      forward trace from a received batch to the DO that consumed it.
+#   2. Is the COSTING captured on GRN / Sales Invoice correct — GRN landed cost
+#      against the recostFromGrn cascade's own answer, COGS on shipment against
+#      the lots actually consumed, the PO->GRN->PI chain, and the gross profit
+#      that falls out of it.
+#
+# STRICTLY READ-ONLY — SELECT only, no DDL, no writes, no transaction, no marker
+# rows, no change to any costing logic. See backend/scripts/audit-inventory-costing.mjs.
+#
+# Manual trigger only: this is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: "rows to print per section (counts and totals are always full)"
+        required: false
+        default: "25"
+
+# Own concurrency group — it touches nothing, and must never queue behind or
+# displace a release (and must not share the deploy's group).
+concurrency:
+  group: inventory-costing-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/audit-inventory-costing.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SAMPLE: ${{ inputs.sample }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks (inventory-integrity-check.yml).
+          NODE_OPTIONS: --dns-result-order=ipv4first
