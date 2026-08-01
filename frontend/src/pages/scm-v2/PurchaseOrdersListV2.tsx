@@ -147,13 +147,12 @@ function GrnNoCell({
 }) {
   const list = grnRefsOf(grns);
   if (list.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
-  /* font-mono, matching AssignedSoCell rather than #1445's font-docno. These two
-     columns sit side by side and are read as a pair, so they must agree; the
-     shared cell is on font-mono, so this follows it. Moving BOTH to the brand
-     face is a reasonable follow-up — it just isn't one this column gets to make
-     unilaterally for the four lists AssignedSoCell serves. */
+  /* font-docno — IBM Plex Sans, the brand face #1445 gave the primary doc-number
+     columns. Owner 2026-08-01 ruled it applies to the CHIPS too, so every
+     doc-number chip in DocumentLinesExpansion (Assigned SO, Delivered, Source PO)
+     moved with this one. Dates and eyebrow labels stay on font-mono. */
   const chip =
-    "w-fit rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink";
+    "w-fit rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink";
   return (
     <span className="flex min-w-0 flex-col gap-0.5">
       {list.map((g) =>

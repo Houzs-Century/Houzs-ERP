@@ -1101,7 +1101,7 @@ export function MfgDeliveryOrdersListV2() {
                   e.stopPropagation();
                   navigate(`/scm/purchase-orders?q=${encodeURIComponent(po)}`);
                 }}
-                className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
+                className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
               >
                 {po}
               </button>
@@ -1129,7 +1129,7 @@ export function MfgDeliveryOrdersListV2() {
             {sis.map((n) => (
               <span
                 key={n}
-                className="rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] font-semibold text-primary-ink"
+                className="rounded bg-primary-soft px-1.5 py-0.5 font-docno text-[11px] font-semibold text-primary-ink"
               >
                 {n}
               </span>
@@ -1137,7 +1137,7 @@ export function MfgDeliveryOrdersListV2() {
             {returns.map((n) => (
               <span
                 key={n}
-                className="rounded bg-warning-bg px-1.5 py-0.5 font-mono text-[11px] font-semibold text-warning-text"
+                className="rounded bg-warning-bg px-1.5 py-0.5 font-docno text-[11px] font-semibold text-warning-text"
                 title="Delivery return"
               >
                 {n}
