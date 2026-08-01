@@ -1,0 +1,79 @@
+name: Repair lorry plates (DRY-RUN gated)
+
+# Canonicalises scm.lorries.plate, and merges the rows that were only ever
+# separate because of a space.
+#
+# EVIDENCE (owner, 2026-08-01, live Fleet Health): `AKF 8100` and `AKF8100` are
+# listed as two lorries, both showing driver "Mohamad Basri". plate is NOT NULL
+# UNIQUE (mig 0053) but the uniqueness is over the RAW string, so a space or a
+# lowercase letter buys a second row for a vehicle that already exists — and the
+# two then accumulate separate compliance, service history, mileage and trips.
+#
+# TWO PARTS, separately runnable because their risk is not comparable:
+#   renames  canonical form is unclaimed -> one UPDATE of one text column.
+#            Reversible, touches no foreign key.
+#   merges   several rows for one vehicle -> every referencing row is re-pointed
+#            and the loser is DELETED. Not reversible.
+#
+# RUN `renames` FIRST and read its output. Then run `merges` with apply=0, read
+# the plan (it names the survivor and every row that would move), and only then
+# apply. The survivor is chosen by the same unit-tested function the dry run
+# reports from, so the plan you review is the plan that applies.
+#
+# The referencing tables are DISCOVERED FROM pg_constraint at run time, never
+# from the migration tree — this repo has already been bitten by a trigger and a
+# column that exist in production and nowhere in the codebase (BUG-HISTORY,
+# 2026-08-01).
+#
+# DRY-RUN unless apply=1. Idempotent: a canonical, unique plate is no work.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      part:
+        description: "which half to run"
+        required: false
+        default: "renames"
+        type: choice
+        options:
+          - renames
+          - merges
+          - all
+      max_rows:
+        description: "rows to print per section"
+        required: false
+        default: "100"
+        type: string
+
+concurrency:
+  group: repair-lorry-plates
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-lorry-plates.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          PART: ${{ inputs.part }}
+          MAX_ROWS: ${{ inputs.max_rows }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

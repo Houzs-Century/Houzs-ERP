@@ -319,3 +319,26 @@ derived life).
 - `backend/src/scm/routes/lorries.ts`, `lorry-service-records.ts` (the sibling master + history)
 - `frontend/src/pages/FleetHealth.tsx` (desktop) · `frontend/src/mobile/MobileMileageCapture.tsx` (mobile driver)
 - `docs/modules/delivery-tms.md`, `docs/modules/warehouses.md`
+
+## Plates are stored CANONICAL (2026-08-01)
+
+`scm.lorries.plate` is `NOT NULL UNIQUE` (mig 0053) but the index compares the RAW
+string, so `AKF 8100` and `AKF8100` were two lorries in production. `normalizePlate`
+(`scm/lib/plate-normalize.ts`) strips everything that is not a letter or digit and
+uppercases the rest; `lorries.ts` POST and PATCH store that form, so no new
+duplicate of this shape can form.
+
+Existing rows are cleaned by **Repair lorry plates (DRY-RUN gated)**
+(`backend/scripts/repair-lorry-plates.mjs`), in two independently-runnable parts:
+
+| Part | What it does | Risk |
+|---|---|---|
+| `renames` | Canonical form is unclaimed -> one UPDATE of one text column | Reversible, touches no FK |
+| `merges` | Several rows for one vehicle -> re-point every referencing row, DELETE the loser | Not reversible |
+
+The survivor is `pickSurvivor` — most-referenced wins (fewest rows move), ties break
+active, then oldest, then id, so a dry run predicts the apply exactly. **Referencing
+tables come from `pg_constraint` at run time, never from the migration tree.**
+
+If you add a table with a `lorry_id` FK, the script picks it up automatically. Do
+NOT hand-maintain a list here.

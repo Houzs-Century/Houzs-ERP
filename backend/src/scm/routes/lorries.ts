@@ -13,6 +13,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { activeCompanyId } from '../lib/companyScope';
+import { normalizePlate } from '../lib/plate-normalize';
 
 export const lorries = new Hono<{ Bindings: Env; Variables: Variables }>();
 lorries.use('*', supabaseAuth);
@@ -129,7 +130,11 @@ lorries.get('/', async (c) => {
 lorries.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const plate = String(body.plate ?? '').trim();
+  /* Plates are stored CANONICAL (letters+digits, uppercase). `AKF 8100` and
+     `AKF8100` were two rows for one lorry in production because the UNIQUE index
+     is over the raw string - normalising on the way in is what stops the next
+     one. See scm/lib/plate-normalize.ts. */
+  const plate = normalizePlate(body.plate as string | null | undefined);
   if (!plate) return c.json({ error: 'plate_required' }, 400);
   const type = String(body.type ?? 'OTHER').trim();
   if (!LORRY_TYPES.has(type)) return c.json({ error: 'invalid_type' }, 400);
@@ -198,7 +203,7 @@ lorries.patch('/:id', async (c) => {
 
   const updates: Record<string, unknown> = {};
   if (body.plate !== undefined) {
-    const plate = String(body.plate).trim();
+    const plate = normalizePlate(body.plate as string | null | undefined);   // canonical on the way in - see POST
     if (!plate) return c.json({ error: 'plate_required' }, 400);
     updates.plate = plate;
   }
