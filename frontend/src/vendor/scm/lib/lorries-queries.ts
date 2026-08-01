@@ -124,6 +124,7 @@ export type NewLorry = {
   widthFt?: number | null;
   heightFt?: number | null;
   // WS4a: the 3PL carrier company this lorry belongs to (null = own fleet).
+  // Setting it forces the row OUTSOURCE server-side (scm/lib/threepl-link.ts).
   threeplCompanyId?: string | null;
 };
 
