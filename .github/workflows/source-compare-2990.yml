@@ -1,0 +1,26 @@
+name: 2990 source-vs-import comparison (read-only)
+
+# Manual, read-only. Compares every imported 2990 document (company code
+# '2990', doc numbers prefixed '2990-') in the Houzs prod DB against the live
+# SOURCE 2990s system, read via the same Supabase service-role REST credentials
+# the Phase-2 importer used. SELECT-only on both sides; no writes.
+on:
+  workflow_dispatch:
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/compare-2990-source.mjs
+        env:
+          SOURCE_SUPABASE_URL: ${{ secrets.SOURCE_SUPABASE_URL }}
+          SOURCE_SERVICE_ROLE_KEY: ${{ secrets.SOURCE_SERVICE_ROLE_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
