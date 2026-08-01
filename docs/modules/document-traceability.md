@@ -215,6 +215,87 @@ SO / DO / SI / GRN must show IDENTICAL source data for the same order.
   double-attribution verdict via the audit-inventory-costing §10c lens
   (expected ZERO). The bar is zero-or-explained.
 
+### 2.9 HEADER ≡ ∪(lines), delivered precedence, and the duplicate-document detector (2026-08-02)
+`fix/header-chip-union`. Three owner screenshots proved the display could still
+disagree with itself; the round closes every independent second derivation and
+adds the read-only tooling that keeps it closed. See `BUG-HISTORY.md` 2026-08-02
+for the three incident entries.
+
+- **THE RULE — a header/list chip set is derived ONLY as the union of that
+  document's OWN physical lines' per-line resolver output** (services excluded;
+  the drill's bound-PO fallback included). Never a second, independent rollup.
+  `2990-DO-2607-017`'s list cell showed a phantom fourth PO because the old
+  `byDo` rollup unioned EVERY ledger row keyed to the DO — including buckets no
+  current item line owns (re-pointed consumptions, drifted variant keys).
+  Implementation: pure `unionLineTraces` + `resolveDoHeaderSources` (DO list) +
+  `resolveSiHeaderSources` (SI list — the SI's OWN invoiced lines, not its DO's
+  whole set) in `scm/lib/source-po-trace.ts`; unit test locks header-equals-
+  union over a mixed sofa/non-sofa/service DO with a phantom orphan bucket.
+  GRN + PI list header cells now roll up the per-SKU coverage/delivered data
+  RESTRICTED to their own line codes (`resolvePoSoCoveragePerSkuForPos` +
+  `resolveDeliveredByCodeForPos` + exported `summarizeOrigins`) — a partial-
+  receipt GRN no longer inherits parent-PO assignments its drill cannot show.
+  The SO drill "Transfer To" needed no change (per-line derived, no independent
+  header). Orphan ledger buckets remain visible to the trace check (section 6),
+  never to a UI cell.
+- **SO list "PO No." = the drill's union.** `source_po_union` + `source_po_adj`
+  per row: SHIPPED/DELIVERED consumed batches (`soLineShippedSources`, now
+  chunked for page-scale id sets) ∪ READY projections (`soLineReadySourcePos`
+  — ONE computeMrp per list load), united per SO by pure `unionSoLineChips`
+  (READY suppressed on fully-shipped lines — the drill's precedence). The
+  legacy convert-time raise-link (`converted_po_nos`) survives as the tooltip
+  ("Raised PO (convert-time link, not a goods source)") when it differs.
+  Desktop column + mobile Orders card (`SourcePosRowMobile`).
+- **"STOCK" tag (owner: surplus must not read as missing data).** A purchase-doc
+  line/header with NO assignment renders a subtle `STOCK` tag instead of a bare
+  dash (`StockTag` / `StockTagMobile`; `AssignedSoCell emptyMeans="stock"` on
+  the PO/GRN/PI lists). MRP layer (c) float-assigns automatically when matching
+  demand appears — nothing is stored.
+- **Paired per-SO sub-table (owner's PO-2606-021 pillow case).** The purchase-doc
+  drill's three parallel stacks (Assigned SO / dates / Delivered) are ONE
+  sub-table now: one row per assigned SO = SO chip | its delivery date | the
+  delivered-DO chips xqty FOR THAT SO | `DELIVERED` / `PENDING` status (an
+  unshipped SO with a future date reads PENDING, never blank). Wire change:
+  `DeliveredDo` carries `soDocNo` (the DO's own `delivery_orders.so_doc_no`) so
+  each chip pairs with its SO row; a delivered DO whose SO is not among the
+  assignments still renders (extra row — pairing must never hide a shipment).
+  Desktop `PairedSoCell` (+ pure `buildPairedSoRows`), mobile
+  `PairedSoRowsMobile`. Header cells keep `ChipOverflow` `+N`.
+- **Delivered precedence in the fifo-attribute backfill (the 023/024 incident).**
+  `planFifoAttribution` treats an SO line as TAKEN when the delivered ledger
+  (consumptions → lot batch → PO) shows it served — regardless of which PO —
+  and a partially-served line demands only its remainder. Corrective part
+  `fifo-attribute-repair` (A10, DRY-RUN gated, `pos` input) re-evaluates
+  EXISTING allocation rows: confirmed unexecuted duplicates get their rows
+  REMOVED + a cancel recommendation printed (owner decision, never executed);
+  served-elsewhere rows flip to STOCK with the incident-format print.
+- **Duplicate-document detector** — `backend/scripts/check-duplicate-documents.mjs`
+  + workflow **Duplicate documents check (read-only)**: all six doc types, both
+  companies, same-counterparty line-MULTISET fingerprint (code+variant+qty+price)
+  within ±3 days, verdicts LIKELY-DUPLICATE / SIBLING-LEGIT (same qty+price,
+  disjoint codes — the ANGGN Q-vs-K shape) / NEEDS-EYES, risk-sorted with
+  per-side execution state. Plus (H) open-demand verification for named POs
+  (defaults 2990-PO-2607-001/-005) and (I) the MRP supply-inflation delta per
+  unexecuted LIKELY-DUPLICATE PO (cancelling self-corrects MRP — dead statuses
+  are excluded from supply; a duplicate-suspect flag on MRP supply rows is a
+  noted follow-up, not built).
+- **Cross-claim invariants in the trace check** (`check-so-source-trace.mjs`
+  sections 6–9 + closing verdict): section 6 DO header-vs-line-union orphans
+  (named-DO detail via `DOS` env, defaults -016/-017); J1 SO line served by >1
+  PO (sofa multi-batch = HARD DEFECT; non-sofa fifo-suspect vs
+  boundary-split-legit); J2 PO line assigned to >1 SO (consolidated splits are
+  LEGIT; conflicts = exceeds-qty / claims-served-demand / stored-vs-delivered);
+  J3 SO line claimed by >1 PO — **expected 0**; closing ONE-TRUTH verdict
+  asserts exactly that.
+- **Dispatch instructions.** Actions → **SO source trace check (read-only)** →
+  Run workflow (optionally `DOS` via the script env when run locally) — read
+  sections 6–9 + the ONE-TRUTH verdict. Actions → **Duplicate documents check
+  (read-only)** → Run workflow (inputs `window_days`, `verify_pos`) — read the
+  PO section's prime-suspect line, (H) and (I). Corrective:
+  **Repair 2990 doc references** → part `fifo-attribute-repair`, dry-run first,
+  `pos` naming the confirmed POs, then `apply=1`; re-run the trace check and
+  expect J3 = 0.
+
 ### 2.7 The 2990 doc-reference repair (2026-08-01) — the DATA answer to 2.6, and the rule that makes it safe
 `fix/doc-ref-repair`. The **Source PO prefix check** was run and 2.6's open
 question is answered: the mixed prefixes are TWO problems, not one.

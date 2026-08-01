@@ -1,0 +1,57 @@
+name: Duplicate documents check (read-only)
+
+# System-wide duplicate-DOCUMENT detector, both companies, all six doc types
+# (PO / GRN / SO / DO / SI / PI). Same-counterparty documents whose line
+# MULTISET (code+variant+qty+price) matches within a few days are printed with
+# per-side execution state and a verdict (LIKELY-DUPLICATE / SIBLING-LEGIT /
+# NEEDS-EYES), risk-sorted: unexecuted duplicates of executed docs first — the
+# 2990-PO-2606-023-vs-024 class, where the unexecuted twin inflates MRP supply
+# and its allocations re-claim already-delivered SO demand.
+#
+# Also prints: (H) open-demand verification for the named stock-replenishment
+# POs (default 2990-PO-2607-001/-005), and (I) the MRP supply-inflation delta
+# per unexecuted LIKELY-DUPLICATE PO (supply with vs without; shortage hidden).
+#
+# Findings feed the OWNER's cancel/keep decisions. SELECTs only; exit 0 for
+# every legitimate answer — the output IS the answer.
+on:
+  workflow_dispatch:
+    inputs:
+      window_days:
+        description: "date proximity window in days"
+        required: false
+        default: "3"
+        type: string
+      verify_pos:
+        description: "(H) comma-separated PO numbers to demand-verify"
+        required: false
+        default: "2990-PO-2607-001,2990-PO-2607-005"
+        type: string
+
+concurrency:
+  group: duplicate-documents-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-duplicate-documents.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          WINDOW_DAYS: ${{ inputs.window_days }}
+          VERIFY_POS: ${{ inputs.verify_pos }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

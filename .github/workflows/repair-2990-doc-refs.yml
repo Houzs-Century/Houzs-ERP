@@ -62,6 +62,16 @@ name: Repair 2990 doc references (DRY-RUN gated)
 # stamps it (split deliveries allowed when the total fits); two candidate SO
 # lines refuse. Completes the delivered trace for those lines.
 #
+# Part `fifo-attribute-repair` (2026-08-02, the 023/024 incident): re-evaluate
+# EXISTING purchase_order_item_allocations against the delivered chain. A PO
+# confirmed an UNEXECUTED duplicate of an executed same-supplier multiset twin
+# has its allocation rows REMOVED entirely and the run prints a cancel
+# recommendation (owner decision — never executed here). Otherwise rows whose
+# so_item_id demand another PO's delivered chain fully served are flipped to
+# so_item_id NULL (STOCK), each printed as
+# `PO-xxxx-yy-NN: SO-zzz -> STOCK (served by ... via DO-...)`. The `pos`
+# input names the target POs.
+#
 # A token is rewritten ONLY when it resolves to nothing as stored, resolves to
 # exactly ONE document when prefixed with the owning row's own company code, and
 # that document belongs to the same company. Doc-number tails collide across
@@ -96,6 +106,7 @@ on:
           - grn-gap
           - dedupe
           - fifo-attribute
+          - fifo-attribute-repair
           - so-warehouse
           - do-line-link
       grns:
@@ -104,7 +115,7 @@ on:
         default: "2990-GRN-2606-001"
         type: string
       pos:
-        description: "part fifo-attribute only: comma-separated PO numbers (default the two contended consolidated POs)"
+        description: "parts fifo-attribute / fifo-attribute-repair: comma-separated PO numbers (default the two contended consolidated POs; the repair part re-evaluates their existing allocations)"
         required: false
         default: "2990-PO-2606-019,2990-PO-2606-023"
         type: string
