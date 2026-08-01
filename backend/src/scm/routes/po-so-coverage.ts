@@ -185,6 +185,77 @@ export function buildStoredOrigins(
   return out;
 }
 
+/* PURE core (mig 0235 — allocation-aware layer (b) links): per PO line, the
+   EFFECTIVE stored so_item link(s).
+
+   A line WITH allocations: the allocations ARE the authoritative finer-grained
+   answer — their non-null so_item_ids replace the line's own single so_item_id
+   entirely (a consolidated line can now name SEVERAL SOs; and where both the
+   old link and allocations exist, allocations win, so nothing double-counts).
+   An all-stock split (every slice so_item_id NULL) therefore yields NO link —
+   the allocations overrule the stale single link by saying "stock".
+
+   A line WITHOUT allocations keeps its so_item_id — the 1:1 fast path,
+   unchanged for every PO raised through From-SO / convert / the line picker.
+
+   Returns both halves layer (b) needs: the effective so_item_ids (the b1
+   candidate docs) and which SKUs are STORED-linked (the storedLink flag the
+   2026-07-29 guess-vs-binding distinction rides on — an allocation IS a stored
+   link, so an allocated SKU counts). */
+export function effectiveStoredLinks(
+  poLines: Array<{ id?: string | null; material_code: string | null; so_item_id: string | null }>,
+  allocationsByItem: Map<string, Array<{ so_item_id: string | null }>>,
+): { soItemIds: string[]; linkedSkus: Set<string> } {
+  const soItemIds = new Set<string>();
+  const linkedSkus = new Set<string>();
+  for (const l of poLines ?? []) {
+    const code = (l.material_code ?? '').trim();
+    const allocs = l.id ? allocationsByItem.get(l.id) ?? [] : [];
+    if (allocs.length > 0) {
+      let linked = false;
+      for (const a of allocs) {
+        if (a.so_item_id) { soItemIds.add(a.so_item_id); linked = true; }
+      }
+      if (linked && code) linkedSkus.add(code);
+    } else if (l.so_item_id) {
+      soItemIds.add(l.so_item_id);
+      if (code) linkedSkus.add(code);
+    }
+  }
+  return { soItemIds: [...soItemIds], linkedSkus };
+}
+
+/* Allocations for a set of PO line ids — the read half of the pure function
+   above. Best-effort + chunked: pre-0235 (or on any read hiccup) the map is
+   empty and every line falls back to its single so_item_id, which is exactly
+   the pre-allocation behaviour. */
+async function loadAllocationLinksForItems(
+  sb: any,
+  itemIds: Array<string | null | undefined>,
+): Promise<Map<string, Array<{ so_item_id: string | null }>>> {
+  const out = new Map<string, Array<{ so_item_id: string | null }>>();
+  const ids = [...new Set(itemIds.filter((x): x is string => !!x))];
+  if (ids.length === 0) return out;
+  try {
+    for (let i = 0; i < ids.length; i += 300) {
+      const chunk = ids.slice(i, i + 300);
+      if (chunk.length === 0) continue;
+      const { data, error } = await sb.from('purchase_order_item_allocations')
+        .select('purchase_order_item_id, so_item_id')
+        .in('purchase_order_item_id', chunk);
+      if (error) return new Map();
+      for (const r of (data ?? []) as Array<{ purchase_order_item_id: string; so_item_id: string | null }>) {
+        const arr = out.get(r.purchase_order_item_id) ?? [];
+        arr.push({ so_item_id: r.so_item_id });
+        out.set(r.purchase_order_item_id, arr);
+      }
+    }
+  } catch {
+    return new Map();
+  }
+  return out;
+}
+
 type DoLineRow = {
   delivery_order_id: string;
   so_item_id: string | null;
@@ -391,26 +462,19 @@ poSoCoverage.get('/:type/:id', async (c) => {
     // The covering PO's own lines: SKUs (matched by material_code) + the exact
     // raise-link (so_item_id) where present.
     const { data: poLines } = await scopeToCompany(
-      sb.from('purchase_order_items').select('material_code, so_item_id'), c,
+      sb.from('purchase_order_items').select('id, material_code, so_item_id'), c,
     ).eq('purchase_order_id', po.poId);
-    const poSkus = ((poLines ?? []) as Array<{ material_code: string | null }>)
-      .map((l) => l.material_code);
-    /* Which SKUs are STORED-linked at the row level. Not the same question as
-       "did the stored-origin layer win": a delivered SKU outranks it, and an
-       MRP-only SKU can show an SO with no stored link at all. */
-    const linkedSkus = new Set(
-      ((poLines ?? []) as Array<{ material_code: string | null; so_item_id: string | null }>)
-        .filter((l) => !!l.so_item_id)
-        .map((l) => (l.material_code ?? '').trim())
-        .filter(Boolean),
-    );
-    const soItemIds = [
-      ...new Set(
-        ((poLines ?? []) as Array<{ so_item_id: string | null }>)
-          .map((l) => l.so_item_id)
-          .filter((x): x is string => !!x),
-      ),
-    ];
+    const lineRows = (poLines ?? []) as Array<{ id: string; material_code: string | null; so_item_id: string | null }>;
+    const poSkus = lineRows.map((l) => l.material_code);
+    /* mig 0235 — allocations, where present for a line, are the AUTHORITATIVE
+       finer-grained links and replace that line's single so_item_id (a
+       consolidated line can name several SOs; where both exist, allocations
+       win — never both, so never a double count). Which SKUs are STORED-linked
+       is still a separate question from "did the stored-origin layer win": a
+       delivered SKU outranks it, and an MRP-only SKU can show an SO with no
+       stored link at all. */
+    const allocationsByItem = await loadAllocationLinksForItems(sb, lineRows.map((l) => l.id));
+    const { soItemIds, linkedSkus } = effectiveStoredLinks(lineRows, allocationsByItem);
 
     // ── (b) STORED ORIGIN candidates (linkage B) ─────────────────────────────
     // (b1) exact raise-link SO doc_nos (2026-07-09+ MRP-linked flow).
@@ -569,27 +633,37 @@ export async function resolvePoSoCoverageForPos(
 
   // PO lines — SKUs + so_item_id links, grouped by PO — company-scoped.
   const { data: poLines } = await scopeToCompany(
-    sb.from('purchase_order_items').select('purchase_order_id, material_code, so_item_id'), c,
+    sb.from('purchase_order_items').select('id, purchase_order_id, material_code, so_item_id'), c,
   ).in('purchase_order_id', validIds);
+  type PoLineLinkRow = { id: string; purchase_order_id: string; material_code: string | null; so_item_id: string | null };
+  const lineRowsByPo = new Map<string, PoLineLinkRow[]>();
   const skusByPo = new Map<string, Array<string | null>>();
-  const linkedSkusByPo = new Map<string, Set<string>>();
-  const soItemToPos = new Map<string, Set<string>>();
-  const allSoItemIds = new Set<string>();
-  for (const l of (poLines ?? []) as Array<{ purchase_order_id: string; material_code: string | null; so_item_id: string | null }>) {
+  for (const l of (poLines ?? []) as PoLineLinkRow[]) {
     const arr = skusByPo.get(l.purchase_order_id) ?? [];
     arr.push(l.material_code);
     skusByPo.set(l.purchase_order_id, arr);
-    if (l.so_item_id) {
-      allSoItemIds.add(l.so_item_id);
-      const s = soItemToPos.get(l.so_item_id) ?? new Set<string>();
-      s.add(l.purchase_order_id);
-      soItemToPos.set(l.so_item_id, s);
-      const code = (l.material_code ?? '').trim();
-      if (code) {
-        const ls = linkedSkusByPo.get(l.purchase_order_id) ?? new Set<string>();
-        ls.add(code);
-        linkedSkusByPo.set(l.purchase_order_id, ls);
-      }
+    const rows = lineRowsByPo.get(l.purchase_order_id) ?? [];
+    rows.push(l);
+    lineRowsByPo.set(l.purchase_order_id, rows);
+  }
+  /* mig 0235 — one batched allocations read for EVERY line on the page, then
+     the same per-line rule the single-doc route applies: allocations, where
+     present, replace that line's single so_item_id (allocations win — no
+     double count); a line without any keeps the 1:1 fast path. */
+  const allocationsByItem = await loadAllocationLinksForItems(
+    sb, ((poLines ?? []) as PoLineLinkRow[]).map((l) => l.id),
+  );
+  const linkedSkusByPo = new Map<string, Set<string>>();
+  const soItemToPos = new Map<string, Set<string>>();
+  const allSoItemIds = new Set<string>();
+  for (const id of validIds) {
+    const eff = effectiveStoredLinks(lineRowsByPo.get(id) ?? [], allocationsByItem);
+    linkedSkusByPo.set(id, eff.linkedSkus);
+    for (const soItemId of eff.soItemIds) {
+      allSoItemIds.add(soItemId);
+      const s = soItemToPos.get(soItemId) ?? new Set<string>();
+      s.add(id);
+      soItemToPos.set(soItemId, s);
     }
   }
 

@@ -263,6 +263,24 @@ export type PoItemRow = {
     warehousePoId: string | null;
     warehouseSoId: string | null;
   } | null;
+  /** Mig 0235 — the line's sub-numbered allocations (consolidated-PO split):
+      which customer (SO line) or STOCK each slice of the line serves. Stamped
+      by GET /:id, seq-ordered; empty array = an unsplit line (the single
+      so_item_id above stays the 1:1 fast path). When any exist they are the
+      authoritative finer-grained answer and layer (b) of the Assigned SO
+      reads THEM instead of so_item_id. */
+  allocations?: PoLineAllocation[];
+};
+
+/** One slice of a PO line (mig 0235): `qty` units for `so_doc_no`'s line, or
+    for STOCK when so_item_id is null. `seq` is 1-based dense; the printable
+    sub-number is `${po_number}-${String(seq).padStart(2, "0")}`. */
+export type PoLineAllocation = {
+  id: string;
+  seq: number;
+  qty: number;
+  so_item_id: string | null;
+  so_doc_no: string | null;
 };
 
 export type PoLineReceipt = { grnNumber: string; qty: number; status: string };
@@ -1027,6 +1045,78 @@ export function useDeletePurchaseOrderItem() {
          'outstanding-so-items']. */
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
     },
+  });
+}
+
+/* ── Per-line SO allocations (mig 0235) — the consolidated-PO split ─────────
+   One PO line serving several customers plus stock, as sub-numbered slices.
+   All three writes invalidate the detail (chips), the coverage read (the
+   Assigned SO cell now lists each allocated SO) and the PO list (its collapsed
+   Assigned SO column reads the same coverage rollup). Deliberately NOT
+   invalidating the From-SO picker: allocations never move po_qty_picked. */
+
+/** SO-line candidates for the allocation editor: every company SO line carrying
+    this item code — including picked/delivered ones (historical consolidated
+    POs are the point). Excludes cancelled lines + cancelled/draft SOs. */
+export type SoLineCandidate = {
+  soItemId: string;
+  soDocNo: string;
+  debtorName: string | null;
+  soStatus: string | null;
+  qty: number;
+  deliveryDate: string | null;
+};
+export function useSoLineCandidates(code: string | null) {
+  return useQuery({
+    queryKey: ['po-so-line-candidates', code ?? ''],
+    queryFn: () => authedFetch<{ items: SoLineCandidate[] }>(
+      `/mfg-purchase-orders/so-line-candidates?code=${encodeURIComponent(code ?? '')}`,
+    ).then((r) => r.items),
+    enabled: Boolean(code),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+  });
+}
+
+const invalidateAllocationReads = (qc: ReturnType<typeof useQueryClient>, poId: string) => {
+  qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail', poId] });
+  qc.invalidateQueries({ queryKey: ['po-so-coverage'] });
+  qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
+};
+
+export function useAddPoLineAllocation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ poId, itemId, ...body }: { poId: string; itemId: string; qty: number; soItemId: string | null }) =>
+      authedFetch<{ allocation: PoLineAllocation; allocations: PoLineAllocation[] }>(
+        `/mfg-purchase-orders/${poId}/items/${itemId}/allocations`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: (_, vars) => invalidateAllocationReads(qc, vars.poId),
+  });
+}
+
+export function useUpdatePoLineAllocation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ poId, itemId, allocationId, ...body }: { poId: string; itemId: string; allocationId: string; qty?: number; soItemId?: string | null }) =>
+      authedFetch<{ ok: true; allocations: PoLineAllocation[] }>(
+        `/mfg-purchase-orders/${poId}/items/${itemId}/allocations/${allocationId}`,
+        { method: 'PATCH', body: JSON.stringify(body) },
+      ),
+    onSuccess: (_, vars) => invalidateAllocationReads(qc, vars.poId),
+  });
+}
+
+export function useDeletePoLineAllocation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ poId, itemId, allocationId }: { poId: string; itemId: string; allocationId: string }) =>
+      authedFetch<{ ok: true; allocations: PoLineAllocation[] }>(
+        `/mfg-purchase-orders/${poId}/items/${itemId}/allocations/${allocationId}`,
+        { method: 'DELETE' },
+      ),
+    onSuccess: (_, vars) => invalidateAllocationReads(qc, vars.poId),
   });
 }
 
