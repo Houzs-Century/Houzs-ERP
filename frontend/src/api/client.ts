@@ -79,6 +79,37 @@ export function onForbidden(fn: ForbiddenListener): () => void {
   return () => forbiddenListeners.delete(fn);
 }
 
+/**
+ * Request telemetry, delivered as a listener for the SAME reason onForbidden is
+ * one: errorReporter already imports `api` from this module (it needs baseUrl
+ * for its POST target), so importing the reporter back would close a cycle that
+ * bites at module-init time. The subscriber registers itself at boot instead.
+ *
+ * This exists because the window-level crash capture is blind to the two things
+ * staff actually report. A slow request still RESOLVES, and a failed one is
+ * turned into a toast — neither reaches `window.onerror`, so System Health
+ * could only ever show crashes, never "it's slow" or "it failed to load".
+ */
+export type RequestTelemetry =
+  | { kind: "slow"; method: string; path: string; ms: number }
+  | { kind: "server-error"; method: string; path: string; status: number }
+  | { kind: "forbidden"; method: string; path: string };
+type TelemetryListener = (event: RequestTelemetry) => void;
+const telemetryListeners = new Set<TelemetryListener>();
+export function onRequestTelemetry(fn: TelemetryListener): () => void {
+  telemetryListeners.add(fn);
+  return () => telemetryListeners.delete(fn);
+}
+function emitTelemetry(event: RequestTelemetry): void {
+  for (const fn of telemetryListeners) {
+    try {
+      fn(event);
+    } catch {
+      // Observability must never be able to fail a request.
+    }
+  }
+}
+
 function extractErrorMessage(body: string): string {
   if (!body) return "";
   try {
@@ -349,6 +380,21 @@ async function handleResponse<T>(
       } else if (import.meta.env?.DEV) {
         console.warn(`[403 suppressed] GET ${path} — gate this query's enabled: ${msg}`);
       }
+      /* Reported for BOTH shapes, and the GET one is the more valuable of the
+         two. A denied write is a user hitting a wall they can see; a denied
+         background GET is a query that should never have fired for this role —
+         the comment above says the fix is to gate its `enabled:`, but in prod
+         that case is silent (DEV-only console), so nobody knows which queries
+         leak for which roles. This is the signal that answers "is it RBAC". */
+      emitTelemetry({ kind: "forbidden", method, path });
+    }
+    if (res.status >= 500) {
+      /* 5xx only. A 4xx is a decision the app already handles — the same
+         reasoning queryClient's retry policy rests on. A 5xx is the server
+         breaking, and it is what a user experiences as "failed to load".
+         503 is deliberately included: it is the cold-start shape System
+         Health's own note calls out, and making it countable is the point. */
+      emitTelemetry({ kind: "server-error", method, path, status: res.status });
     }
     throw new HttpError(
       res.status,
@@ -404,6 +450,7 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
       const responseId = requestIdFromResponse(res);
       if (ms >= SLOW_FETCH_MS) {
         console.warn(`[perf] slow ${method} ${path} - ${ms}ms id=${responseId}`);
+        emitTelemetry({ kind: "slow", method, path, ms });
       }
       return await handleResponse<T>(res, path, method, token);
     } catch (e) {

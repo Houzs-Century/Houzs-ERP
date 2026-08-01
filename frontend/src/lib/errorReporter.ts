@@ -55,7 +55,7 @@
 // so the pipeline is still exercised before production.
 // ---------------------------------------------------------------------------
 
-import { api, requestIdFromError } from "../api/client";
+import { api, requestIdFromError, onRequestTelemetry } from "../api/client";
 import { readAuthToken } from "./authToken";
 import { companyHeader } from "./activeCompany";
 import { correlatedFetch } from "./requestCorrelation";
@@ -205,6 +205,79 @@ export function reportClientError(err: unknown, context?: string): void {
   }
 }
 
+/* ── Request telemetry ────────────────────────────────────────────────────
+   The window-level capture above only sees errors that reach the window: a
+   crash, or a rejection nobody caught. It is blind to the two failures staff
+   actually describe — "it's slow" and "it failed to load" — because the app
+   HANDLES those: a slow request still resolves, and a failed one is turned
+   into a toast. So System Health could only ever show crashes.
+
+   These feed the SAME batched pipeline, which means they inherit its caps.
+   That is the whole reason the messages below are built the way they are.
+
+   SIGNATURE STABILITY IS LOAD-BEARING, NOT COSMETIC. enqueue() rate-limits on
+   `message|route`, so a message carrying a raw duration ("- 923ms") or a raw
+   id ("/api/assr/1435") is unique every single time, PER_SIGNATURE_CAP never
+   bites, and SESSION_CAP is the only thing left between a cold connection pool
+   and 100 reports per user. Bucket the duration, collapse the id. */
+
+/** Collapse the varying segments of an API path: `/api/assr/1435` and
+ *  `/api/scm/grns/<uuid>` both become one signature. */
+export function normalizeApiPath(path: string): string {
+  return path
+    .split("?")[0]
+    .split("#")[0]
+    .split("/")
+    .map((seg) =>
+      /^\d+$/.test(seg) ||
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seg)
+        ? ":id"
+        : seg,
+    )
+    .join("/");
+}
+
+/** Three buckets, so one endpoint can produce at most three signatures. */
+function slowBucket(ms: number): string {
+  if (ms >= 5000) return "5s+";
+  if (ms >= 2000) return "2s+";
+  return "800ms+";
+}
+
+function reportRequest(label: string, method: string, path: string): void {
+  if (!installed || inReporter) return;
+  inReporter = true;
+  try {
+    enqueue(`[${label}] ${method} ${normalizeApiPath(path)}`, undefined);
+  } catch {
+    // A reporter bug is dropped, never surfaced.
+  } finally {
+    inReporter = false;
+  }
+}
+
+/** A request that completed, but slowly. This is what "卡" actually is here —
+ *  main-thread blocking measured 0ms on every route, so the wait is the API. */
+export function reportSlowRequest(method: string, path: string, ms: number): void {
+  reportRequest(`slow ${slowBucket(ms)}`, method, path);
+}
+
+/** 5xx only. A 4xx is a decision the app already handles (the same reasoning
+ *  queryClient's retry policy rests on); a 5xx is the server breaking, and it
+ *  is what a user sees as "failed to load". */
+export function reportServerFailure(method: string, path: string, status: number): void {
+  reportRequest(`api ${status}`, method, path);
+}
+
+/** 403 kept SEPARATE from the 5xx bucket on purpose. One 403 is a correct
+ *  denial and not a fault; a PATTERN of them is a misconfigured permission or
+ *  scope, which is invisible today because the app turns it into a toast and
+ *  moves on. Labelling it lets System Health answer "is this RBAC, or is the
+ *  server broken" instead of leaving both looking like "it doesn't work". */
+export function reportAccessDenied(method: string, path: string): void {
+  reportRequest("rbac 403", method, path);
+}
+
 /**
  * Install the window-level capture (error + unhandledrejection). Call once at
  * boot, before React renders, so even a crash during the first render is
@@ -213,6 +286,16 @@ export function reportClientError(err: unknown, context?: string): void {
 export function installGlobalErrorReporting(): void {
   if (installed || !import.meta.env.PROD) return;
   installed = true;
+
+  /* Subscribe to the request layer. Never unsubscribed — install is
+     idempotent and lives for the page's lifetime, same as the listeners
+     below. */
+  onRequestTelemetry((event) => {
+    if (event.kind === "slow") reportSlowRequest(event.method, event.path, event.ms);
+    else if (event.kind === "server-error")
+      reportServerFailure(event.method, event.path, event.status);
+    else reportAccessDenied(event.method, event.path);
+  });
 
   window.addEventListener("error", (event: Event) => {
     if (inReporter) return;
