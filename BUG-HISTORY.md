@@ -1,3 +1,15 @@
+## 2026-08-02
+
+### [MEDIUM] Every searchable dropdown built its ENTIRE option list into a 280px box, and rebuilt it on every keystroke
+- **Symptom.** Opening a product picker on the SO / PO / GRN / consignment editors stutters, and typing in it stutters again. Worst where the list is longest, which is the product catalogue — the picker used most.
+- **Root cause (traced, not guessed).** `SearchableSelect` (`frontend/src/vendor/scm/components/SearchableSelect.tsx`) rendered `filtered.map(...)` in full into a portalled `<ul>` with `maxHeight: 280` — roughly ten visible rows. Every option became a real `<li>` with inline styles and three handlers, and because `filtered` is a `useMemo` over `search`, the whole list was rebuilt on each keystroke. Twelve pages import this component (`SalesOrderNew`, `SalesOrderDetail`, `PurchaseOrderDetail`, `GrnNew`, the four consignment pairs, `NewDpOrderDrawer`, `PoLineCard`), so every picker in the SCM surface paid it.
+- **How it was found.** HOOKKA fixed the same component on 2026-08-01 (`9c94715f`) with numbers measured on their production: opening a 360-option picker cost a **1,383ms** main-thread task and took the DOM from **906 to 2,354 nodes**, with another **1,024ms** on the next keystroke. Their sofa-combo "lag" turned out to be this picker, not the combo page. Ours is the same code shape.
+- **Fix.** Render one page (`OPTION_PAGE = 60`) and extend by a page as the menu scrolls near its end. **Filtering still runs over the FULL list** — only what reaches the DOM is capped — and a footer states how many options are behind the scroll, so the list never looks complete at 60. The window rewinds on term change and on reopen, adjusted DURING RENDER rather than in an effect, so no frame shows the previous term's scroll depth against the new term's results.
+- **Deliberately NOT copied from HOOKKA.** Their fix carries an `optionSliceCount` that keeps the slice ahead of a keyboard highlight. Our menu has no keyboard navigation, so that half would be dead code — but the reasoning is recorded in the source: if arrow keys are ever added here, the slice must lead the highlight or Enter commits an option that was never rendered.
+- **Test.** `SearchableSelect.test.tsx` — 11 cases. **Mutation-verified twice:** replacing the slice with the full list fails exactly the 4 cases that describe windowing (and none of the 7 that describe behaviour windowing must not break — full-list filtering, picking, short lists, the pure helper); removing the rewind fails exactly the 1 case that describes it. Frontend suite 971 tests / 105 files green, `tsc -b` + `vite build` clean.
+- **NOT proven by test:** the performance claim itself. jsdom has no layout, so the tests assert the rendered node COUNT (60 of 360), which is the mechanism, not the millisecond figure. The 1,383ms number above is HOOKKA's measurement of their instance, not a measurement of ours.
+- **Ref:** #<PR>. `perf/searchable-select-window` 2026-08-02.
+
 ## 2026-08-01
 
 ### [HIGH] The new 3PL fleet form could not add a lorry at all — it offered lorry types the database enum does not have
