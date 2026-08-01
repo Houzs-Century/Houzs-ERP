@@ -182,7 +182,8 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
   // Display-only on mobile (the phone shell doesn't route to the SO).
   assigned?: OriginAssignment[];
   // false = no stored so_item_id behind the chip above; it is an MRP allocation
-  // only. Desktop and mobile say this the same way (one-product rule).
+  // only. Desktop and mobile say this the same way (one-product rule): in the
+  // chip's tooltip, since the owner removed the visible caption (2026-08-01).
   sourceLinked?: boolean;
 }) {
   const q = Number(qty);
@@ -211,18 +212,15 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
                   ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
                   : a.source === "delivered"
                     ? "Locked — this PO's goods were delivered against this Sales Order"
-                    : "Locked — this PO line stores a link to this Sales Order"}
+                    : sourceLinked === false
+                      ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
+                      : "Locked — this PO line stores a link to this Sales Order"}
                 style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: floating ? "#5c6357" : "#0c3f39", background: floating ? "transparent" : "#eef3f1", border: floating ? "1px dashed #b6c6c0" : "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px" }}
               >
                 {a.soDocNo}{a.deliveryDate ? ` · ${dmy(a.deliveryDate)}` : ""}{floating ? " ~" : ""}
               </span>
             );
           }) : <span style={{ fontSize: 11, color: "#9aa093" }}>—</span>}
-          {assigned.length > 0 && sourceLinked === false && (
-            <span style={{ flexBasis: "100%", fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093" }}>
-              MRP guess · not linked
-            </span>
-          )}
         </div>
       )}
     </div>

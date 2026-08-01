@@ -36,6 +36,7 @@ import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
 import {
   DocumentLinesExpansion,
+  sourcePoTitle,
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
@@ -1130,6 +1131,7 @@ export function SalesInvoicesListV2() {
               <button
                 key={po}
                 type="button"
+                title={sourcePoTitle(po)}
                 onClick={(e) => {
                   e.stopPropagation();
                   navigate(`/scm/purchase-orders?q=${encodeURIComponent(po)}`);

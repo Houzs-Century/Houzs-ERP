@@ -1,0 +1,43 @@
+name: Source PO prefix check (read-only)
+
+# Answers "why does the Source PO column mix 2990-PO-… and PO-… ?" without
+# anyone opening a SQL console.
+#
+# The rendering was ruled out in code (the chip is batch_no verbatim, and
+# batch_no is po_number verbatim). Whether the remaining difference is the
+# designed per-company namespace or a mint gap lives only in production, so the
+# check runs where secrets.DATABASE_URL already is.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: source-po-prefix-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-source-po-prefixes.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
