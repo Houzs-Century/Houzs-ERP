@@ -141,6 +141,80 @@ Display only — no resolver, no endpoint and no stored value changed.
   `inventory_lots` as `batch_no`, so renaming orphans the costing trail. Fix the
   mint path, and leave history alone.
 
+### 2.8 The SO source-PO rule (2026-08-01) — READY traces too, ONE resolver for every surface, and the lot-batch backfill
+`feat/so-source-po-trace`. Owner rule, verbatim and now the acceptance bar:
+"我们的 SO 如果已经是 Delivered、Ready to Ship 或者 Shipped 状态，其中的任何一件
+货物都必须能够追溯到是拿什么 PO 进的货。系统里只要显示 Ready，肯定就代表有货；
+既然有货，Inventory 里就绝对会有记录，写明这批货对应的是哪一个 PO。" Plus:
+SO / DO / SI / GRN must show IDENTICAL source data for the same order.
+
+- **ONE resolver: `backend/src/scm/lib/source-po-trace.ts`.** The consumption →
+  lot → batch chain used to live in four near-copies (`soLineShippedSourcePos`
+  / `resolveDoLineSourcePos` / `resolveDoSourcePosForDos` in
+  delivery-orders-mfg.ts, plus po-so-coverage.ts's delivered ledger + two
+  DO-lock bucket builds). All of them now delegate to this lib: forward
+  (`traceDoShipmentSources` + adapters), reverse (`tracePoDeliveredLedger`,
+  which returns the delivered qty maps AND the DO-lock bucket keys from one
+  pass, so Assigned-SO and Delivered can never disagree). The legacy names
+  survive as wrappers with unchanged shapes.
+- **NULL-batch lots CLASSIFY instead of vanishing.** The shared core resolves
+  a NULL-batch lot's source at read time: GRN-sourced → `grns
+  .purchase_order_id` → `po_number` (the same evidence the backfill stamps
+  durably, so the UI heals before the backfill runs); ADJUSTMENT-sourced →
+  counted as adjustment units, surfaced as a **"STOCK ADJ"** chip (free gifts /
+  cancel add-backs are PO-less BY DESIGN — explained, never a blank). DO/SI
+  payloads carry `source_adj`; the SO items carry `shipped_source_adj`.
+- **READY trace (the §3.3 gap, closed).** `soLineReadySourcePos`: sofa lines
+  surface their stored `allocated_batch_no` (mig 0121 — now in the SO `ITEM`
+  select); non-sofa lines project the bucket's OPEN LOTS in the engine's OWN
+  consumption order (`received_at ASC, id ASC` — fn_consume_fifo's ORDER BY),
+  claims walked in the MRP allocation order (delivery date, then doc_no —
+  `sku.lines` array order of the SAME `computeMrp` result the detail already
+  ran, so no second MRP call). Read-time derivation, no writes; it answers
+  "this READY line will draw from PO X" and agrees with what FIFO will consume
+  at DO time by construction. Pure core `projectReadyFifo` pinned by
+  `backend/tests/sourcePoTrace.test.ts`. SO items carry
+  `ready_source_pos: [{ po, qty, kind: 'po'|'adjustment' }]`.
+- **Surfaces (desktop + mobile pair).** The SO side renders through ONE
+  component, `frontend/src/components/SoSourceChips.tsx` (+ `SoStockPill`;
+  the SO list's page-local `drillStock` moved there as `soLineStockPill`):
+  the SO list drill-down, **`SalesOrderDetailV2` — which previously rendered
+  NO Stock / Incoming PO columns at all** (the payload carried the fields; the
+  page dropped them), and the `?edit=1` editor's Transfer-To cell. Mobile
+  twins: `frontend/src/mobile/source-chips.tsx` (`SourcePosRowMobile` /
+  `DeliveredRowMobile` / `soStockPillMobile`) used by `MobileSODetail` (new
+  per-line pill + chips) and `MobileModuleDetail` (DO/SI lines gain Source PO,
+  PO/GRN/PI lines gain Delivered — both previously desktop-only).
+- **Chip rules (owner 2026-08-01).** (1) Delivered chips: a MULTI-DO line
+  always shows each chip's qty — `2990-GRN-2607-020`'s two bare chips read as
+  one unit shipped twice when it is a 2-unit batch split 1+1 (audit 10c:
+  zero double-attribution); single-DO chips keep the no-`x1` rule
+  (`showDeliveredQty`). (2) LIST cells (Assigned SO / Source PO / Delivered)
+  render the first ~4 chips + an in-place `+N` toggle (`ChipOverflow` in
+  DocumentLinesExpansion.tsx) — supersedes the 2026-07-31 "no collapse" rule
+  for LIST cells only ("枕头订500个…UI直接爆开"); drill-down / detail rows
+  still render every chip.
+- **The durable half: `backend/scripts/backfill-lot-batch-from-docs.mjs` +
+  workflow "Backfill lot batch_no from documents (DRY-RUN gated)".** Stamps
+  `inventory_lots.batch_no` from document evidence: class `grn` (lot's GRN →
+  PO; the lot's IN movement stamped in the SAME transaction — the
+  partial-rename fault rule above), class `basis-seed` (the W3 reference-cost
+  lots: their INSERT wrote batch_no NULL — verified in
+  backfill-fifo-divergence.mjs source — but printed the basis doc into
+  `notes`; parsing `(basis GRN|PO <doc> @` recovers the PO. This is what
+  makes **`2990-DO-2607-009`'s TRION-(K)** resolve). ADJUSTMENT lots are
+  classified, never stamped. Refusals: ambiguity, cross-company evidence,
+  conflicting movement batch. Idempotent; per-row prints include WHICH DOs'
+  trace each stamp completes.
+- **The measurement: `backend/scripts/check-so-source-trace.mjs` + workflow
+  "SO source trace check (read-only)".** Every line on every READY_TO_SHIP /
+  SHIPPED / DELIVERED SO (both companies) classified — ok-delivered /
+  ok-ready / ok-adjustment / service, or a named gap (no-do-line-link,
+  do-no-ledger, consumed-lot-unbatchable, sofa-ready-no-batch,
+  ready-no-open-lots, ready-lot-unbatchable). Ends with the owner's
+  double-attribution verdict via the audit-inventory-costing §10c lens
+  (expected ZERO). The bar is zero-or-explained.
+
 ### 2.7 The 2990 doc-reference repair (2026-08-01) — the DATA answer to 2.6, and the rule that makes it safe
 `fix/doc-ref-repair`. The **Source PO prefix check** was run and 2.6's open
 question is answered: the mixed prefixes are TWO problems, not one.

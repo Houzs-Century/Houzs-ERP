@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
+import { SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
@@ -183,6 +184,19 @@ type SoItem = {
   discount_centi: number | null;
   total_centi: number | null;
   line_delivery_date: string | null;
+  /* Per-line stock + source-PO trace (owner 2026-08-01) — stamped by the SAME
+     GET /mfg-sales-orders/:docNo the desktop reads. Mobile renders the stock
+     pill + source chips so the phone answers "which PO are these goods from"
+     exactly like the desktop (one-product rule). */
+  stock_status?: string | null;
+  stock_state?: "stock" | "po" | "shortage" | null;
+  coverage_po?: string | null;
+  coverage_eta?: string | null;
+  shipped_source_pos?: string[];
+  shipped_source_adj?: boolean;
+  ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
+  delivered_qty?: number | null;
+  remaining_qty?: number | null;
 };
 type SoPayment = {
   id: string;
@@ -1018,6 +1032,28 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
                     {secondary ? <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2, overflowWrap: "anywhere" }}>{secondary}</div> : null}
                     {/* UOM only — never the code (see the primary line above). */}
                     {(it.uom ?? "").trim() ? <div className="money" style={{ fontSize: 10, color: "var(--mut2)", marginTop: 3 }}>{it.uom!.trim()}</div> : null}
+                    {/* Stock pill + source-PO trace (owner 2026-08-01) — the
+                        mobile twin of the desktop Stock / Incoming PO columns,
+                        off the SAME detail payload. Shipped batch trail →
+                        STOCK ADJ → READY FIFO projection → incoming coverage. */}
+                    {(() => {
+                      const pill = soStockPillMobile(it);
+                      return (
+                        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 4 }}>
+                          {pill && (
+                            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: pill.fg, background: pill.bg, border: `1px solid ${pill.bd}`, borderRadius: 5, padding: "1px 6px" }}>
+                              {pill.label}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    <SourcePosRowMobile
+                      pos={it.shipped_source_pos ?? []}
+                      adj={it.shipped_source_adj}
+                      ready={(it.delivered_qty ?? 0) > 0 && (it.remaining_qty ?? null) === 0 ? [] : (it.ready_source_pos ?? [])}
+                      incoming={it.stock_state === "po" && it.coverage_po ? { po: it.coverage_po, eta: it.coverage_eta ? dl(it.coverage_eta) : null } : null}
+                    />
                   </div>
                   <div style={{ textAlign: "right", whiteSpace: "nowrap", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
                     <div className="money" style={{ fontSize: 13, fontWeight: 700, color: "#0c3f39" }}>RM {rm(lineTotalCenti(it))}</div>

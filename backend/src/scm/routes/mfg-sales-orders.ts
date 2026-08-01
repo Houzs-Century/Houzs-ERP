@@ -176,12 +176,13 @@ import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer
 import { summariseReadiness } from '../lib/so-readiness';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
-import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSourcePos } from './delivery-orders-mfg';
+import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
+import { soLineReadySourcePos } from '../lib/source-po-trace';
 /* Shared 4-state delivery-planning derivation — the SO list emits planning_state
    (the mobile Orders-list card's status) from the SAME helper the Delivery
    Planning board uses, so the two can never drift. */
 import { derivePlanningState } from './delivery-planning';
-import { computeMrp, mrpLineCoverage } from './mrp';
+import { computeMrp, mrpLineCoverage, type MrpResult } from './mrp';
 import type { Env, Variables } from '../env';
 /* scan-bg-job — the headless createDraftSalesOrder below runs the create core
    without a request-scoped client; it uses the scm-scoped service client. */
@@ -953,6 +954,10 @@ const ITEM =
   'photo_urls, ' +
   /* PR — Commander 2026-05-28: per-line stock fulfillment flag (migration 0091) */
   'stock_status, ' +
+  /* Sofa batch allocator's locked source batch (= source PO number, mig 0121).
+     Read so a READY sofa line can name the PO its goods sit in (owner
+     2026-08-01: READY must always trace to a PO). Non-sofa lines are NULL. */
+  'allocated_batch_no, ' +
   'created_at';
 
 /* ─────────────────────────── Country auto-derive (Task #121) ──────────
@@ -2688,20 +2693,29 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      here keeps the Stock column and the MRP page in lock-step. Best-effort: if
      the allocation fails the page still loads, lines just fall back to Pending. */
   let coverageMap = new Map<string, { source: string; po: string | null; eta: string | null }>();
+  let mrpForReady: MrpResult | null = null;
   try {
     const mrpResult = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
     coverageMap = mrpLineCoverage(mrpResult);
+    mrpForReady = mrpResult;
   } catch {
     coverageMap = new Map();
   }
-  const [remainingMap, deliveriesMap, shippedPosMap] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, readyPosMap] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     /* Traceability — the source PO(s) each line's SHIPPED goods came from,
-       recovered from the DO OUT movements' batch_no. Lets the detail keep
-       showing the incoming/source PO even after the line is delivered (MRP
-       coverage drops off once the demand is satisfied). */
-    soLineShippedSourcePos(sb, itemRows.map((it) => it.id)),
+       recovered from the DO OUT movements' batch_no ∪ consumed lots (the ONE
+       shared resolver, GRN-healed + adjustment-classified). Lets the detail
+       keep showing the incoming/source PO even after the line is delivered
+       (MRP coverage drops off once the demand is satisfied). */
+    soLineShippedSources(sb, itemRows.map((it) => it.id)),
+    /* READY trace (owner 2026-08-01): a READY (allocated, un-shipped) line
+       resolves the PO(s) it WILL draw from — sofa via its stored
+       allocated_batch_no, non-sofa by projecting the SAME FIFO order the
+       engine consumes at DO time over the bucket's open lots, earlier claims
+       first. Read-time derivation, no writes. */
+    soLineReadySourcePos(sb, activeCompanyId(c) ?? null, mrpForReady, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>),
   ]);
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
@@ -2709,7 +2723,8 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     const deliveredQty = deliveries.reduce((s, d) => s + d.qty, 0);
     const cov = coverageMap.get(it.id);
     const covered = cov?.source === 'po';
-    const shippedPos = shippedPosMap.get(it.id) ?? [];
+    const shippedTrace = shippedTraceMap.get(it.id);
+    const shippedPos = shippedTrace?.pos ?? [];
     /* SOFA stock-coverage is decided by the batch-aware allocator (stock_status),
        NOT the MRP SKU-pool: MRP doesn't know about dye-lot batches, so it would
        wrongly report a sofa set as "stock" whenever same-SKU units exist in ANY
@@ -2748,6 +2763,14 @@ mfgSalesOrders.get('/:docNo', async (c) => {
          (plain-FIFO) stock. The detail shows these even after full delivery so
          supplier→shipment traceability survives (falls back to coverage_po). */
       shipped_source_pos: shippedPos,
+      /* Shipped (at least partly) from a PO-less stock ADJUSTMENT lot (free
+         gift / cancel add-back) — the UI renders "STOCK ADJ", never a blank. */
+      shipped_source_adj: (shippedTrace?.adjQty ?? 0) > 0,
+      /* READY trace: the PO(s) this line's allocated on-hand stock sits in —
+         chips [{ po, qty, kind }], kind 'adjustment' → "STOCK ADJ". Sofa =
+         the stored allocated_batch_no; non-sofa = FIFO projection over the
+         bucket's open lots in the engine's own consumption order. */
+      ready_source_pos: readyPosMap.get(it.id) ?? [],
     };
   });
   const totalDelivered = items.reduce((s, it) => s + Number(it.delivered_qty ?? 0), 0);
@@ -2829,16 +2852,19 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   // Coverage from the SAME MRP allocation engine the detail + MRP page use.
   // Best-effort: a failed allocation just drops lines to Pending.
   let coverageMap = new Map<string, { source: string; po: string | null; eta: string | null }>();
+  let mrpForReady: MrpResult | null = null;
   try {
     const mrpResult = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
     coverageMap = mrpLineCoverage(mrpResult);
+    mrpForReady = mrpResult;
   } catch {
     coverageMap = new Map();
   }
-  const [remainingMap, deliveriesMap, shippedPosMap] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, readyPosMap] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
-    soLineShippedSourcePos(sb, itemRows.map((it) => it.id)),
+    soLineShippedSources(sb, itemRows.map((it) => it.id)),
+    soLineReadySourcePos(sb, activeCompanyId(c) ?? null, mrpForReady, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>),
   ]);
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
@@ -2846,7 +2872,8 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
     const deliveredQty = deliveries.reduce((s, d) => s + d.qty, 0);
     const cov = coverageMap.get(it.id);
     const covered = cov?.source === 'po';
-    const shippedPos = shippedPosMap.get(it.id) ?? [];
+    const shippedTrace = shippedTraceMap.get(it.id);
+    const shippedPos = shippedTrace?.pos ?? [];
     // SOFA stock-coverage trusts the batch-aware stock_status; non-sofa trusts
     // the MRP SKU-pool source (identical to the detail's rule).
     const isSofaLine = String((it as { item_group?: string | null }).item_group ?? '').toUpperCase().includes('SOFA');
@@ -2874,6 +2901,8 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       coverage_po: covered ? cov?.po ?? null : null,
       coverage_eta: covered ? cov?.eta ?? null : null,
       shipped_source_pos: shippedPos,
+      shipped_source_adj: (shippedTrace?.adjQty ?? 0) > 0,
+      ready_source_pos: readyPosMap.get(it.id) ?? [],
     };
   });
   gateSoFinance(c, null, items);

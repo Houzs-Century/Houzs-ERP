@@ -1,0 +1,39 @@
+name: SO source trace check (read-only)
+
+# The owner's traceability rule, measured: every line on every READY_TO_SHIP /
+# SHIPPED / DELIVERED Sales Order (both companies) must resolve its source PO —
+# delivered lines through the consumption -> lot -> batch chain (GRN-healed),
+# READY lines through the FIFO projection (sofa: allocated_batch_no). Every
+# line ends in a class; the expectation is zero-or-explained. Also prints the
+# one-line double-attribution verdict (audit-inventory-costing section 10c
+# lens): whether ANY unit is attributed to two DOs (expected: zero).
+#
+# SELECTs only. Exit 0 for every legitimate answer; the output IS the answer.
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: so-source-trace-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-so-source-trace.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

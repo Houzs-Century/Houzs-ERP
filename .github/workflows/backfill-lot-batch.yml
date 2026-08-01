@@ -1,0 +1,62 @@
+name: Backfill lot batch_no from documents (DRY-RUN gated)
+
+# Stamps inventory_lots.batch_no (= source PO number) from document evidence:
+#   grn         lot's own GRN -> purchase_order_id -> po_number (mig 0120's
+#               stamp, applied retroactively; the lot's IN movement is stamped
+#               in the SAME transaction)
+#   basis-seed  W3 reference-cost lots (backfill-fifo-divergence MODE=basis-cost)
+#               whose seed printed its basis doc into the notes — resolves the
+#               basis GRN/PO to a PO number (closes e.g. 2990-DO-2607-009)
+#
+# ADJUSTMENT lots are classified, never stamped (PO-less by design — the UI
+# shows STOCK ADJ). Everything else is listed as unbatchable with its reason.
+# Ambiguity refuses per row; cross-company evidence refuses; a movement already
+# carrying a DIFFERENT batch refuses. Idempotent — a stamped lot plans zero.
+#
+# DRY-RUN unless apply=1. Run "SO source trace check (read-only)" after an
+# APPLY to see the classes close.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      part:
+        description: "which evidence class to stamp"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - grn
+          - basis-seed
+
+concurrency:
+  group: backfill-lot-batch
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-lot-batch-from-docs.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          PART: ${{ inputs.part }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
