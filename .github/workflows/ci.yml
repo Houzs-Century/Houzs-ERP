@@ -3,12 +3,24 @@ name: CI
 # Run on every branch push and every PR, not just main. The old config
 # only fired on main, so a broken typecheck/test could sit on a feature
 # branch undetected until it was merged. Branch CI catches it at push.
+#
+# `merge_group` is what lets this repo run a merge queue, and it has to land
+# BEFORE the queue is switched on. The queue demands the same required checks
+# (backend-typecheck, frontend) against the temporary merge-group ref it builds;
+# a workflow that does not trigger on merge_group never reports them, so every
+# queued PR waits forever on a check that will never run. Shipping the trigger
+# first is inert on its own — with no queue configured GitHub emits no
+# merge_group event, so this line does nothing until the ruleset changes.
 on:
   pull_request:
+  merge_group:
   push:
     branches-ignore:
       - main # main is covered by deploy.yml (which also typechecks + tests)
 
+# github.ref is unique per merge group (refs/heads/gh-readonly-queue/main/...),
+# so queued groups get their own concurrency slot and do not cancel each other
+# or the PR runs they came from.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
