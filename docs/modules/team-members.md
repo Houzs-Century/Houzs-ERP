@@ -101,3 +101,16 @@ position / manager ids exist in the `invitations` table but are NOT selected.
 - **Both surfaces or neither.** Invite/edit/action semantics changed on
   desktop must land in the mobile pair (`MobileModuleList` config +
   `MemberActions`) in the same PR.
+- **Writing `users.name` or `users.status` fires a trigger into `scm.staff`.**
+  Mig 0066's `trg_sync_user_to_staff` is `AFTER INSERT OR UPDATE OF name,
+  status ON public.users` — the only trigger on the table — and it mirrors the
+  member into `scm.staff` so they appear in the SO Salesperson picker. It runs
+  inside the firing statement, so anything it raises rolls the `users` write
+  back and the member does not change. That is exactly how Disable broke
+  (2026-08-01, `BUG-HISTORY.md`): the trigger's INSERT branch generated a
+  `staff_code` already held by another staff row, and `staff_staff_code_unique`
+  is not the constraint its `ON CONFLICT` arbitrates on. Mig 0234 makes the
+  deactivate path a no-op when no staff row is linked and collision-checks the
+  code otherwise. **When you touch name/status, the blast radius includes
+  `scm.staff`** — and the operator only ever sees the generic 500 from
+  `index.ts:385`, so check the trigger before believing the route.
