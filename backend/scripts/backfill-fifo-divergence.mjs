@@ -81,8 +81,28 @@
 //     drift of these buckets is NOT closed here and is reported honestly: the
 //     units really did ship without a receipt under that key.
 //
+//   MODE=doc-relabel (2026-08-01, document-evidence round — owner: "为什么你
+//     不看 SO PO DO GR 去解决呢？"). The residual buckets the ledger-evidence
+//     modes REFUSED (relabel: no-lot-evidence; reconstruct: over-consumed) are
+//     resolved from the DOCUMENT chain instead: an OUT names its DO -> the DO
+//     line carries variants + so_item_id -> the SO line corroborates; an IN /
+//     lot names its GRN -> the GRN line carries variants + purchase_order_item
+//     -> the PO line corroborates. Each side's TRUE variant key is computed
+//     from the document variants (variantKeyMirror === computeVariantKey,
+//     lockstep-tested) and rows are relabelled to the key their OWN paperwork
+//     proves (planDocKeyAlignment, lib/doc-evidence-core.mjs) — with the
+//     citation (doc no + line + variants JSON -> key) printed per row. The
+//     audit-2a over-consumed lots are corrected per document too
+//     (planOverConsumedCorrection): the DO's net documented qty must back
+//     every shipped unit, and the excess consumption re-points to the sibling
+//     receipt the documents prove holds the same goods (donor decremented,
+//     0154 cost convention kept, RM delta reported). ONLY rows whose
+//     documents themselves disagree, or that shipped goods no family receipt
+//     ever covered, land on the final STOCKTAKE list — printed with evidence.
+//     Family conservation is verified in-transaction; dry-run rolls back.
+//
 // Env: DATABASE_URL (or .dev.vars). APPLY=true to commit (default dry-run).
-//      MODE=retro-cost | relabel | basis-cost   (default retro-cost)
+//      MODE=retro-cost | relabel | basis-cost | reconstruct | doc-relabel   (default retro-cost)
 //      BEFORE_TS=<ISO> optional cutoff (default: now) — only OUTs created before it
 //      are eligible, mirroring the function's temporal guard (retro-cost mode).
 //      DOS=<comma-separated DO numbers> — basis-cost mode only, REQUIRED there.
@@ -99,6 +119,11 @@ import {
   classifyLotConservation,
   planSurplusCorrection,
 } from "./lib/ledger-repair-core.mjs";
+import {
+  resolveDocLineKey,
+  planDocKeyAlignment,
+  planOverConsumedCorrection,
+} from "./lib/doc-evidence-core.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -119,8 +144,8 @@ const APPLY = /^(1|true|yes)$/i.test(process.env.APPLY ?? "");
 const BEFORE_TS = process.env.BEFORE_TS || new Date().toISOString();
 const MODE = (process.env.MODE || "retro-cost").trim().toLowerCase();
 const DOS = (process.env.DOS || "").split(",").map((s) => s.trim()).filter(Boolean);
-if (!["retro-cost", "relabel", "basis-cost", "reconstruct"].includes(MODE)) {
-  console.error(`MODE must be retro-cost | relabel | basis-cost | reconstruct (got "${MODE}")`);
+if (!["retro-cost", "relabel", "basis-cost", "reconstruct", "doc-relabel"].includes(MODE)) {
+  console.error(`MODE must be retro-cost | relabel | basis-cost | reconstruct | doc-relabel (got "${MODE}")`);
   process.exit(2);
 }
 if (MODE === "basis-cost" && DOS.length === 0) {
@@ -1163,7 +1188,720 @@ async function runReconstruct() {
 }
 
 
-const entry = MODE === "relabel" ? runRelabel : MODE === "basis-cost" ? runBasisCost : MODE === "reconstruct" ? runReconstruct : main;
+// ─────────────────────────────────────────────────────────────────────────────
+// MODE=doc-relabel (document-evidence round, 2026-08-01) — resolve the
+// residual 1/2a/2b/10a buckets from the DOCUMENT chain the earlier modes never
+// read. See the header block and lib/doc-evidence-core.mjs for the rules; this
+// runner only fetches, prints and executes.
+// ─────────────────────────────────────────────────────────────────────────────
+async function runDocRelabel() {
+  notice("=== FIFO LEDGER DIVERGENCE — DOC-RELABEL (document-evidence resolution of the audit residuals) ===");
+  notice(`mode: ${APPLY ? "APPLY (writes COMMITTED)" : "DRY-RUN (writes exercised per family, then ROLLED BACK — nothing persisted)"}`);
+  notice("Evidence: OUT -> DO line (variants, so_item_id -> SO line) ; IN/lot -> GRN line (variants,");
+  notice("purchase_order_item -> PO line). TRUE keys via computeVariantKey (lockstep mirror). Rows follow the");
+  notice("key their OWN document proves; over-consumed lots re-point their excess to the document-proven");
+  notice("sibling receipt. Documents disagreeing, or shipment with no family receipt, land on the STOCKTAKE");
+  notice("list at the end — nothing there is guessed.");
+  notice("");
+
+  const movSchema = await schemaOf("inventory_movements");
+  const lotSchema = await schemaOf("inventory_lots");
+  const consSchema = await schemaOf("inventory_lot_consumptions");
+  if (!movSchema || !lotSchema || !consSchema) {
+    notice("FATAL — ledger tables not found. Cannot run.");
+    return;
+  }
+  const movCols = await colsOf(movSchema, "inventory_movements");
+  const lotCols = await colsOf(lotSchema, "inventory_lots");
+  const byCompany = movCols.has("company_id") && lotCols.has("company_id");
+  const M = `"${ident(movSchema)}"."inventory_movements"`;
+  const L = `"${ident(lotSchema)}"."inventory_lots"`;
+  const C = `"${ident(consSchema)}"."inventory_lot_consumptions"`;
+  const coSel = byCompany ? "company_id" : "NULL::int AS company_id";
+  const coGrp = byCompany ? ", company_id" : "";
+
+  // ── The residual lenses, verbatim (round-2 lesson: this tool and the audit
+  //    must not be able to disagree on the candidate set).
+  const drift = await pg.unsafe(`
+    WITH mov AS (
+      SELECT ${coSel}, warehouse_id::text AS warehouse_id, product_code,
+             COALESCE(variant_key,'') AS variant_key,
+             SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
+                                    WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty
+                                    ELSE 0 END) AS mov_qty
+        FROM ${M} GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+    ), lot AS (
+      SELECT ${coSel}, warehouse_id::text AS warehouse_id, product_code,
+             COALESCE(variant_key,'') AS variant_key, SUM(qty_remaining) AS lot_qty
+        FROM ${L} GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+    )
+    SELECT COALESCE(mov.company_id, lot.company_id) AS company_id,
+           COALESCE(mov.warehouse_id, lot.warehouse_id) AS warehouse_id,
+           COALESCE(mov.product_code, lot.product_code) AS product_code,
+           COALESCE(mov.variant_key, lot.variant_key) AS variant_key,
+           COALESCE(mov.mov_qty,0) AS mov_qty, COALESCE(lot.lot_qty,0) AS lot_qty
+      FROM mov FULL OUTER JOIN lot
+        ON mov.warehouse_id = lot.warehouse_id AND mov.product_code = lot.product_code
+       AND mov.variant_key = lot.variant_key ${byCompany ? "AND mov.company_id = lot.company_id" : ""}
+     WHERE COALESCE(mov.mov_qty,0) <> COALESCE(lot.lot_qty,0)
+        OR COALESCE(mov.mov_qty,0) < 0
+     ORDER BY product_code, variant_key`);
+  const overLots = await pg.unsafe(`
+    WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
+    SELECT l.id::text AS lot_id, ${byCompany ? "l.company_id" : "NULL::int AS company_id"},
+           l.warehouse_id::text AS warehouse_id, l.product_code,
+           COALESCE(l.variant_key,'') AS variant_key, l.batch_no,
+           l.qty_received, l.qty_remaining, COALESCE(c.consumed,0) AS consumed,
+           l.unit_cost_sen, l.received_at
+      FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
+     WHERE COALESCE(c.consumed,0) > l.qty_received
+     ORDER BY l.received_at, l.id`);
+  notice(`residual lens: drifted-or-negative buckets=${drift.length} (audit 1 + 2b), over-consumed lots=${overLots.length} (audit 2a's refused arm)`);
+  if (drift.length === 0 && overLots.length === 0) {
+    notice("Nothing to resolve — the residual lenses are clean. (Idempotent re-run lands here.)");
+    notice("=== END ===");
+    return;
+  }
+
+  const famKey = (r) => `${r.company_id ?? ""}::${r.warehouse_id}::${r.product_code}`;
+  const families = new Map();
+  for (const r of drift) {
+    const f = families.get(famKey(r)) ?? { companyId: r.company_id, warehouseId: r.warehouse_id, productCode: r.product_code, driftBuckets: [], overLots: [] };
+    f.driftBuckets.push(r);
+    families.set(famKey(r), f);
+  }
+  for (const l of overLots) {
+    const f = families.get(famKey(l)) ?? { companyId: l.company_id, warehouseId: l.warehouseId ?? l.warehouse_id, productCode: l.product_code, driftBuckets: [], overLots: [] };
+    f.warehouseId = f.warehouseId ?? l.warehouse_id;
+    f.overLots.push(l);
+    families.set(famKey(l), f);
+  }
+  notice(`families (company, warehouse, product): ${families.size}`);
+
+  const stocktake = []; // { family, kind, detail } — the honest residue, printed at the end
+  let famPlanned = 0, famRefused = 0;
+  let movRelabels = 0, lotRelabels = 0, consFollow = 0, repointMoves = 0, repointUnits = 0, rmDeltaTotal = 0;
+
+  for (const f of families.values()) {
+    notice("");
+    notice(`----- family ${f.productCode} co=${f.companyId ?? "-"} wh=${f.warehouseId} -----`);
+    for (const b of f.driftBuckets) {
+      notice(`  bucket key="${b.variant_key}": movQty=${b.mov_qty} lotQty=${b.lot_qty} drift=${Number(b.mov_qty) - Number(b.lot_qty)}${Number(b.mov_qty) < 0 ? "  (NEGATIVE on-hand — audit 2b)" : ""}`);
+    }
+    for (const l of f.overLots) {
+      notice(`  over-consumed lot ${l.lot_id} key="${l.variant_key}" batch=${l.batch_no ?? "-"}: received=${l.qty_received} consumed=${l.consumed} remaining=${l.qty_remaining} (audit 2a)`);
+    }
+
+    // ── Family ledger rows.
+    const movs = await pg.unsafe(`
+      SELECT m.id::text AS id, m.movement_type, m.qty, COALESCE(m.variant_key,'') AS variant_key,
+             m.batch_no, m.total_cost_sen, m.unit_cost_sen, m.created_at,
+             m.source_doc_type, m.source_doc_id::text AS source_doc_id, m.source_doc_no,
+             COALESCE(c.cons,0)::int AS consumed, COALESCE(c.cons_cost,0)::bigint AS consumed_cost
+        FROM ${M} m
+        LEFT JOIN (SELECT movement_id, SUM(qty_consumed)::int AS cons, COALESCE(SUM(total_cost_sen),0)::bigint AS cons_cost FROM ${C} GROUP BY movement_id) c
+          ON c.movement_id = m.id
+       WHERE m.warehouse_id::text = $1 AND m.product_code = $2${byCompany ? " AND m.company_id = $3" : ""}
+       ORDER BY m.created_at, m.id`,
+      byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+    const lots = await pg.unsafe(`
+      WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
+      SELECT l.id::text AS id, COALESCE(l.variant_key,'') AS variant_key, l.batch_no,
+             l.qty_received, l.qty_remaining, COALESCE(c.consumed,0)::int AS consumed,
+             l.unit_cost_sen, l.received_at, l.movement_id::text AS movement_id,
+             l.source_doc_type, l.source_doc_id::text AS source_doc_id, l.source_doc_no
+        FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
+       WHERE l.warehouse_id::text = $1 AND l.product_code = $2${byCompany ? " AND l.company_id = $3" : ""}
+       ORDER BY l.received_at, l.id`,
+      byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+    const movById = new Map(movs.map((m) => [m.id, m]));
+
+    // A lot's GRN is its own source doc, else the source doc of the IN movement
+    // that opened it (repair-seeded lots have neither -> no document).
+    const lotGrnId = (l) => {
+      if (String(l.source_doc_type ?? "").toUpperCase() === "GRN" && l.source_doc_id) return l.source_doc_id;
+      const m = l.movement_id ? movById.get(l.movement_id) : null;
+      if (m && String(m.source_doc_type ?? "").toUpperCase() === "GRN" && m.source_doc_id) return m.source_doc_id;
+      return null;
+    };
+
+    // ── Documents named by the family, resolved id-first then number.
+    const doIds = new Set(), doNos = new Set(), grnIds = new Set(), grnNos = new Set();
+    for (const m of movs) {
+      const t = String(m.source_doc_type ?? "").toUpperCase();
+      if (t === "DO") { if (m.source_doc_id) doIds.add(m.source_doc_id); if (m.source_doc_no) doNos.add(m.source_doc_no); }
+      if (t === "GRN") { if (m.source_doc_id) grnIds.add(m.source_doc_id); if (m.source_doc_no) grnNos.add(m.source_doc_no); }
+    }
+    for (const l of lots) {
+      const gid = lotGrnId(l);
+      if (gid) grnIds.add(gid);
+      if (String(l.source_doc_type ?? "").toUpperCase() === "GRN" && l.source_doc_no) grnNos.add(l.source_doc_no);
+    }
+    const dosById = new Map(), dosByNo = new Map();
+    if (doIds.size || doNos.size) {
+      const rows = await pg.unsafe(`
+        SELECT id::text AS id, do_number, company_id, status::text AS status
+          FROM scm.delivery_orders
+         WHERE id::text = ANY($1) OR (do_number = ANY($2)${byCompany ? " AND company_id = $3" : ""})`,
+        byCompany ? [[...doIds], [...doNos], f.companyId] : [[...doIds], [...doNos]]);
+      for (const r of rows) { dosById.set(r.id, r); dosByNo.set(r.do_number, r); }
+    }
+    const grnsById = new Map(), grnsByNo = new Map();
+    if (grnIds.size || grnNos.size) {
+      const rows = await pg.unsafe(`
+        SELECT id::text AS id, grn_number, company_id, status::text AS status
+          FROM scm.grns
+         WHERE id::text = ANY($1) OR (grn_number = ANY($2)${byCompany ? " AND company_id = $3" : ""})`,
+        byCompany ? [[...grnIds], [...grnNos], f.companyId] : [[...grnIds], [...grnNos]]);
+      for (const r of rows) { grnsById.set(r.id, r); grnsByNo.set(r.grn_number, r); }
+    }
+    const resolveDoc = (m) => {
+      const t = String(m.source_doc_type ?? "").toUpperCase();
+      if (t === "DO") return dosById.get(m.source_doc_id) ?? dosByNo.get(m.source_doc_no) ?? null;
+      if (t === "GRN") return grnsById.get(m.source_doc_id) ?? grnsByNo.get(m.source_doc_no) ?? null;
+      return null;
+    };
+
+    // ── Document LINES for this product, with upstream corroboration.
+    const doLinesByDoc = new Map();
+    if (dosById.size || dosByNo.size) {
+      const ids = [...new Set([...[...dosById.values()], ...[...dosByNo.values()]].map((d) => d.id))];
+      const rows = await pg.unsafe(`
+        SELECT di.delivery_order_id::text AS doc_id, di.id::text AS line_id, di.line_no,
+               di.item_code, di.qty, di.variants, di.item_group, di.so_item_id::text AS so_item_id,
+               si.variants AS so_variants, si.item_group AS so_item_group,
+               si.warehouse_id::text AS so_warehouse_id, si.doc_no AS so_doc_no, si.line_no AS so_line_no
+          FROM scm.delivery_order_items di
+          LEFT JOIN scm.mfg_sales_order_items si ON si.id = di.so_item_id
+         WHERE di.delivery_order_id::text = ANY($1) AND di.item_code = $2
+         ORDER BY di.line_no NULLS LAST, di.created_at, di.id`, [ids, f.productCode]);
+      for (const r of rows) {
+        const arr = doLinesByDoc.get(r.doc_id) ?? [];
+        arr.push(r);
+        doLinesByDoc.set(r.doc_id, arr);
+      }
+    }
+    const grnLinesByDoc = new Map();
+    if (grnsById.size || grnsByNo.size) {
+      const ids = [...new Set([...[...grnsById.values()], ...[...grnsByNo.values()]].map((g) => g.id))];
+      const rows = await pg.unsafe(`
+        SELECT gi.grn_id::text AS doc_id, gi.id::text AS line_id,
+               gi.material_code, gi.qty_accepted, COALESCE(gi.returned_qty,0)::int AS returned_qty,
+               gi.variants, gi.item_group, gi.purchase_order_item_id::text AS po_item_id,
+               poi.variants AS po_variants, poi.item_group AS po_item_group, po.po_number
+          FROM scm.grn_items gi
+          LEFT JOIN scm.purchase_order_items poi ON poi.id = gi.purchase_order_item_id
+          LEFT JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
+         WHERE gi.grn_id::text = ANY($1) AND gi.material_code = $2
+         ORDER BY gi.created_at, gi.id`, [ids, f.productCode]);
+      for (const r of rows) {
+        const arr = grnLinesByDoc.get(r.doc_id) ?? [];
+        arr.push(r);
+        grnLinesByDoc.set(r.doc_id, arr);
+      }
+    }
+
+    // Line -> { ref, key, conflict, cite } via the pure rule; the citation
+    // carries the variants JSON so every relabel names its paperwork.
+    const doLineEval = (docNo, r) => {
+      const v = resolveDocLineKey({
+        itemGroup: r.item_group,
+        variants: r.variants,
+        corroborating: r.so_item_id ? { itemGroup: r.so_item_group, variants: r.so_variants } : null,
+      });
+      return {
+        ref: `DO ${docNo} line ${r.line_no ?? r.line_id}`,
+        key: v.key,
+        conflict: v.verdict === "doc-conflict",
+        cite: `DO ${docNo} line ${r.line_no ?? r.line_id} variants ${JSON.stringify(r.variants ?? null)} -> "${v.key}"`
+          + (r.so_item_id ? ` | SO ${r.so_doc_no ?? "?"} line ${r.so_line_no ?? "?"} variants ${JSON.stringify(r.so_variants ?? null)} -> "${v.corroboratingKey}" (${v.verdict})` : " | (no SO line linked)"),
+        soWarehouseId: r.so_warehouse_id ?? null,
+      };
+    };
+    const grnLineEval = (docNo, r) => {
+      const v = resolveDocLineKey({
+        itemGroup: r.item_group,
+        variants: r.variants,
+        corroborating: r.po_item_id ? { itemGroup: r.po_item_group, variants: r.po_variants } : null,
+      });
+      return {
+        ref: `GRN ${docNo} line ${r.line_id}`,
+        key: v.key,
+        conflict: v.verdict === "doc-conflict",
+        cite: `GRN ${docNo} line ${r.line_id} variants ${JSON.stringify(r.variants ?? null)} -> "${v.key}"`
+          + (r.po_item_id ? ` | PO ${r.po_number ?? "?"} line ${r.po_item_id} variants ${JSON.stringify(r.po_variants ?? null)} -> "${v.corroboratingKey}" (${v.verdict})` : " | (no PO line linked)"),
+      };
+    };
+
+    // ── Alignment per document. Blast radius: only rows whose CURRENT bucket
+    //    is in the residual lens may be relabelled — a balanced bucket's rows
+    //    are reported, never moved (moving them would CREATE drift).
+    const lensKeys = new Set(f.driftBuckets.map((b) => String(b.variant_key)));
+    const plannedMovKey = new Map(); // movement id -> final key (relabels only)
+    const plannedLotKey = new Map(); // lot id -> final key
+    const movPlans = []; // { m, newKey, cite }
+    const lotPlans = []; // { l, newKey, cite }
+    const refusals = []; // { kind, id, verdict, detail }
+    const consistentLensOuts = []; // doc-CONFIRMED OUTs in lens buckets — stocktake if their key has no receipt
+
+    const movsByDoc = new Map();
+    for (const m of movs) {
+      const doc = resolveDoc(m);
+      if (!doc) {
+        if (lensKeys.has(m.variant_key)) refusals.push({ kind: "movement", id: m.id, verdict: "no-document", detail: `${m.movement_type} qty=${m.qty} key="${m.variant_key}" ${m.source_doc_type ?? "-"} ${m.source_doc_no ?? "-"} — source document resolves nothing` });
+        continue;
+      }
+      const t = String(m.source_doc_type).toUpperCase();
+      const k = `${t}::${doc.id}`;
+      const g = movsByDoc.get(k) ?? { doc, type: t, rows: [] };
+      g.rows.push(m);
+      movsByDoc.set(k, g);
+    }
+    for (const { doc, type, rows } of movsByDoc.values()) {
+      const rawLines = (type === "DO" ? doLinesByDoc.get(doc.id) : grnLinesByDoc.get(doc.id)) ?? [];
+      const docNo = type === "DO" ? doc.do_number : doc.grn_number;
+      const lines = rawLines.map((r) => (type === "DO" ? doLineEval(docNo, r) : grnLineEval(docNo, r)));
+      const verdicts = planDocKeyAlignment({
+        rows: rows.map((m) => ({ id: m.id, ledgerKey: m.variant_key })),
+        lines,
+      });
+      for (const v of verdicts) {
+        const m = movById.get(v.id);
+        if (v.verdict === "consistent") {
+          // The document CONFIRMS this row's key. If it is an OUT in a lens
+          // bucket, remember it — should its key end up with no family
+          // receipt, the drift is REAL (documented shipment, no receipt
+          // anywhere) and belongs on the stocktake list, reported below.
+          if (lensKeys.has(m.variant_key) && String(m.movement_type).toUpperCase() === "OUT") {
+            consistentLensOuts.push({ m, cite: v.citation?.cite ?? "(document line confirms the stored key)" });
+          }
+          continue;
+        }
+        if (!lensKeys.has(m.variant_key)) {
+          notice(`  (outside-lens, untouched) movement ${m.id} ${m.movement_type} key="${m.variant_key}" on ${docNo}: ${v.verdict}`);
+          continue;
+        }
+        if (v.verdict === "relabel") {
+          // A movement with its OWN consumption trail must not be moved against
+          // it — the relabel mode owns that evidence class. Doc evidence may
+          // only move rows whose trail is absent or agrees.
+          if (Number(m.consumed) > 0) {
+            const consKeys = await pg.unsafe(`
+              SELECT DISTINCT COALESCE(l.variant_key,'') AS k
+                FROM ${C} c JOIN ${L} l ON l.id = c.lot_id WHERE c.movement_id::text = $1`, [m.id]);
+            const keys = consKeys.map((r) => r.k);
+            if (!(keys.length === 1 && keys[0] === v.newKey)) {
+              refusals.push({ kind: "movement", id: m.id, verdict: "ledger-doc-conflict", detail: `doc proves "${v.newKey}" but its consumptions sit under [${keys.join(" | ")}] — ${v.citation?.cite ?? ""}` });
+              continue;
+            }
+          }
+          movPlans.push({ m, newKey: v.newKey, cite: v.citation?.cite ?? "(citation missing)", docStatus: doc.status });
+          plannedMovKey.set(m.id, v.newKey);
+        } else {
+          refusals.push({ kind: "movement", id: m.id, verdict: v.verdict, detail: `${m.movement_type} qty=${m.qty} key="${m.variant_key}" on ${docNo}${v.candidates ? ` candidates [${v.candidates.join(" | ")}]` : ""}${(v.conflictLines ?? []).length ? ` conflicted lines: ${v.conflictLines.map((l) => l.cite).join(" ; ")}` : ""}` });
+        }
+      }
+    }
+
+    const lotsByGrn = new Map();
+    for (const l of lots) {
+      const gid = lotGrnId(l);
+      if (!gid || !grnsById.get(gid)) {
+        if (lensKeys.has(l.variant_key)) refusals.push({ kind: "lot", id: l.id, verdict: "no-document", detail: `key="${l.variant_key}" batch=${l.batch_no ?? "-"} received=${l.qty_received} — no GRN resolves (repair-seeded or import-dropped parent)` });
+        continue;
+      }
+      const g = lotsByGrn.get(gid) ?? { doc: grnsById.get(gid), rows: [] };
+      g.rows.push(l);
+      lotsByGrn.set(gid, g);
+    }
+    for (const { doc, rows } of lotsByGrn.values()) {
+      const rawLines = grnLinesByDoc.get(doc.id) ?? [];
+      const lines = rawLines.map((r) => grnLineEval(doc.grn_number, r));
+      const verdicts = planDocKeyAlignment({
+        rows: rows.map((l) => ({ id: l.id, ledgerKey: l.variant_key })),
+        lines,
+      });
+      for (const v of verdicts) {
+        const l = rows.find((x) => x.id === v.id);
+        if (v.verdict === "consistent") continue;
+        if (!lensKeys.has(l.variant_key)) {
+          notice(`  (outside-lens, untouched) lot ${l.id} key="${l.variant_key}" on GRN ${doc.grn_number}: ${v.verdict}`);
+          continue;
+        }
+        if (v.verdict === "relabel") {
+          // A lot's consumers follow their MOVEMENT's key; relabelling a lot
+          // away from its consumers would break the trigger invariant. Allowed
+          // only when every consumer's FINAL key equals the new key.
+          const consumers = await pg.unsafe(`
+            SELECT DISTINCT c.movement_id::text AS movement_id FROM ${C} c WHERE c.lot_id::text = $1`, [l.id]);
+          const badConsumer = consumers.find((cr) => {
+            const cm = movById.get(cr.movement_id);
+            const finalKey = plannedMovKey.get(cr.movement_id) ?? cm?.variant_key;
+            return finalKey !== v.newKey;
+          });
+          if (badConsumer) {
+            refusals.push({ kind: "lot", id: l.id, verdict: "consumer-key-mismatch", detail: `doc proves "${v.newKey}" but consumer movement ${badConsumer.movement_id} ends under a different key — ${v.citation?.cite ?? ""}` });
+            continue;
+          }
+          lotPlans.push({ l, newKey: v.newKey, cite: v.citation?.cite ?? "(citation missing)" });
+          plannedLotKey.set(l.id, v.newKey);
+        } else {
+          refusals.push({ kind: "lot", id: l.id, verdict: v.verdict, detail: `key="${l.variant_key}" batch=${l.batch_no ?? "-"} on GRN ${doc.grn_number}${v.candidates ? ` candidates [${v.candidates.join(" | ")}]` : ""}` });
+        }
+      }
+    }
+
+    // Receipt-presence guard: an OUT relabelled to a key NOTHING in the family
+    // ever received is a shipment with genuinely no receipt — stocktake, not a
+    // label move.
+    const finalLotKeyOf = (l) => plannedLotKey.get(l.id) ?? l.variant_key;
+    const finalMovKeyOf = (m) => plannedMovKey.get(m.id) ?? m.variant_key;
+    const receiptKeys = new Set([
+      ...lots.filter((l) => Number(l.qty_received) > 0).map((l) => finalLotKeyOf(l)),
+      ...movs.filter((m) => String(m.movement_type).toUpperCase() === "IN").map((m) => finalMovKeyOf(m)),
+    ]);
+    for (let i = movPlans.length - 1; i >= 0; i -= 1) {
+      const p = movPlans[i];
+      const type = String(p.m.movement_type).toUpperCase();
+      if (type === "OUT" && !receiptKeys.has(p.newKey)) {
+        refusals.push({ kind: "movement", id: p.m.id, verdict: "no-receipt-in-family", detail: `OUT qty=${p.m.qty} doc proves "${p.newKey}" but the family never received under that key — ${p.cite}` });
+        plannedMovKey.delete(p.m.id);
+        movPlans.splice(i, 1);
+      }
+    }
+    // Doc-CONFIRMED OUTs whose key has no family receipt: the drift is REAL —
+    // the paperwork documents the shipment and nothing was ever received under
+    // that key anywhere in the family. Report only (basis-cost already covers
+    // the COGS side for named DOs; the QUANTITY story is physical-count
+    // territory, which is exactly what the stocktake list is for).
+    for (const c of consistentLensOuts) {
+      if (!receiptKeys.has(finalMovKeyOf(c.m))) {
+        refusals.push({ kind: "movement", id: c.m.id, verdict: "documented-shipment-no-receipt", detail: `OUT qty=${c.m.qty} ${c.m.source_doc_type} ${c.m.source_doc_no} — the document CONFIRMS key "${c.m.variant_key}" and the family never received under it; ${c.cite}` });
+      }
+    }
+
+    // ── Over-consumed lots (2a arm), corrected from the documents.
+    const repointPlans = [];
+    for (const ol of f.overLots) {
+      const l = lots.find((x) => x.id === ol.lot_id);
+      if (!l) continue;
+      const lotFinalKey = finalLotKeyOf(l);
+      const consRows = await pg.unsafe(`
+        SELECT id::text AS id, movement_id::text AS movement_id, qty_consumed, unit_cost_sen,
+               consumed_at, source_doc_type, source_doc_id::text AS source_doc_id, source_doc_no
+          FROM ${C} WHERE lot_id::text = $1 ORDER BY consumed_at, id`, [l.id]);
+      if (consRows.some((r) => !r.movement_id)) {
+        refusals.push({ kind: "over-consumed", id: l.id, verdict: "orphan-consumptions", detail: "a consumption row names no movement — nothing traceable to re-attribute" });
+        continue;
+      }
+      const consumerIds = [...new Set(consRows.map((r) => r.movement_id))];
+      const consumers = consumerIds.map((id) => movById.get(id)).filter(Boolean);
+      if (consumers.length !== consumerIds.length) {
+        refusals.push({ kind: "over-consumed", id: l.id, verdict: "missing-movement", detail: "a consumption references a movement outside this family or deleted" });
+        continue;
+      }
+      // Single-goods precondition: the lot's document key and every consumer's
+      // final key must agree, or the attribution question is cross-goods and
+      // no donor answers it.
+      const disagree = consumers.filter((m) => finalMovKeyOf(m) !== lotFinalKey);
+      if (disagree.length > 0) {
+        refusals.push({ kind: "over-consumed", id: l.id, verdict: "doc-conflict", detail: `lot's goods "${lotFinalKey}" vs consumer(s) ${disagree.map((m) => `${m.id} "${finalMovKeyOf(m)}"`).join(", ")} — the documents name different items` });
+        continue;
+      }
+      // Per consuming movement: the DO's documented net qty vs the ledger.
+      const movementInputs = [];
+      for (const m of consumers) {
+        const doc = resolveDoc(m);
+        if (!doc || String(m.source_doc_type).toUpperCase() !== "DO") {
+          movementInputs.push({ movementId: m.id, absQty: Math.abs(Number(m.qty)), storedTotalCostSen: Number(m.total_cost_sen ?? 0), consumedCostSen: Number(m.consumed_cost ?? 0), docNetQty: null, ledgerShippedQty: null });
+          continue;
+        }
+        const linesRaw = doLinesByDoc.get(doc.id) ?? [];
+        const lineIds = linesRaw.map((r) => r.line_id);
+        const returned = lineIds.length
+          ? await pg.unsafe(`
+              SELECT COALESCE(SUM(dri.qty_returned),0)::int AS n
+                FROM scm.delivery_return_items dri
+                JOIN scm.delivery_returns dr ON dr.id = dri.delivery_return_id
+               WHERE dri.do_item_id::text = ANY($1)
+                 AND UPPER(COALESCE(dr.status::text,'')) <> 'CANCELLED'`, [lineIds])
+          : [{ n: 0 }];
+        const docNetQty = linesRaw.reduce((a, r) => a + Number(r.qty ?? 0), 0) - Number(returned[0].n);
+        const shipped = await pg.unsafe(`
+          SELECT COALESCE(SUM(ABS(qty)),0)::int AS n FROM ${M}
+           WHERE movement_type = 'OUT' AND source_doc_type = 'DO'
+             AND source_doc_id::text = $1 AND product_code = $2${byCompany ? " AND company_id = $3" : ""}`,
+          byCompany ? [doc.id, f.productCode, f.companyId] : [doc.id, f.productCode]);
+        movementInputs.push({
+          movementId: m.id,
+          absQty: Math.abs(Number(m.qty)),
+          storedTotalCostSen: Number(m.total_cost_sen ?? 0),
+          consumedCostSen: Number(m.consumed_cost ?? 0),
+          docNetQty: linesRaw.length === 0 ? null : docNetQty,
+          ledgerShippedQty: Number(shipped[0].n),
+          docNo: doc.do_number,
+        });
+      }
+      // Donors: sibling lots whose DOCUMENT proves the same goods as this lot.
+      const donors = lots
+        .filter((x) => x.id !== l.id)
+        .map((x) => ({
+          lotId: x.id,
+          qtyRemaining: Number(x.qty_remaining),
+          unitCostSen: Number(x.unit_cost_sen ?? 0),
+          receivedAt: x.received_at?.toISOString?.() ?? String(x.received_at),
+          docKeyMatches: finalLotKeyOf(x) === lotFinalKey,
+          finalKeyMatches: true,
+        }));
+      const plan = planOverConsumedCorrection({
+        lot: { lotId: l.id, qtyReceived: Number(l.qty_received), consumed: Number(l.consumed), qtyRemaining: Number(l.qty_remaining) },
+        consumptions: consRows.map((r) => ({ id: r.id, movementId: r.movement_id, qty: Number(r.qty_consumed), unitCostSen: Number(r.unit_cost_sen ?? 0), consumedAt: r.consumed_at?.toISOString?.() ?? String(r.consumed_at) })),
+        movements: movementInputs,
+        donors,
+      });
+      notice(`  over-consumed lot ${l.id} "${lotFinalKey}": excess=${plan.excess} -> ${plan.verdict}`);
+      for (const mi of movementInputs) {
+        notice(`    consumer ${mi.movementId} |qty|=${mi.absQty} ${mi.docNo ? `DO ${mi.docNo} documented-net=${mi.docNetQty} ledger-shipped=${mi.ledgerShippedQty}` : "(no DO document)"}`);
+      }
+      if (plan.verdict === "repoint") {
+        for (const mv of plan.moves) notice(`    MOVE consumption ${mv.consumptionId} (movement ${mv.movementId}): ${mv.qty} unit(s) ${mv.fromLotId} -> ${mv.toLotId} @ ${mv.newUnitCostSen} sen (was ${mv.oldUnitCostSen})`);
+        for (const dt of plan.donorTakes) notice(`    DONOR lot ${dt.lotId}: qty_remaining -${dt.qty} (its units are what the DO really shipped)`);
+        for (const st of plan.stamps) notice(`    STAMP movement ${st.movementId}: total_cost_sen -> ${st.newTotalCostSen} (delta ${st.deltaSen} sen, reported)`);
+        repointPlans.push({ l, plan, consRows });
+      } else if (plan.verdict !== "conserves") {
+        refusals.push({ kind: "over-consumed", id: l.id, verdict: plan.verdict, detail: JSON.stringify({ excess: plan.excess, overships: plan.overships, donorCapacity: plan.donorCapacity, shortfall: plan.shortfall, conflicts: plan.conflicts }) });
+      }
+    }
+
+    // ── Plan print + projection.
+    notice(`  movement relabels: ${movPlans.length}; lot relabels: ${lotPlans.length}; over-consumed repoints: ${repointPlans.length}; refusals: ${refusals.length}`);
+    for (const p of movPlans) {
+      notice(`  RELABEL movement ${p.m.id} ${p.m.movement_type} qty=${p.m.qty} ${p.m.source_doc_type} ${p.m.source_doc_no}${String(p.docStatus ?? "").toUpperCase() === "CANCELLED" ? " (doc CANCELLED)" : ""}`);
+      notice(`    "${p.m.variant_key}" -> "${p.newKey}"   evidence: ${p.cite}`);
+      if (Number(p.m.consumed) > 0) notice(`    ${p.m.consumed} consumed unit(s) follow (consumption variant_key tracks the movement)`);
+    }
+    for (const p of lotPlans) {
+      notice(`  RELABEL lot ${p.l.id} received=${p.l.qty_received} remaining=${p.l.qty_remaining} batch=${p.l.batch_no ?? "-"}`);
+      notice(`    "${p.l.variant_key}" -> "${p.newKey}"   evidence: ${p.cite}`);
+    }
+    for (const r of refusals) notice(`  REFUSED ${r.kind} ${r.id} (${r.verdict}): ${r.detail}`);
+
+    if (movPlans.length === 0 && lotPlans.length === 0 && repointPlans.length === 0) {
+      notice("  family: nothing provable from the documents — every candidate row is on the refusal list above.");
+      famRefused += 1;
+      for (const r of refusals) stocktake.push({ family: `${f.productCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
+      continue;
+    }
+
+    // Projection: exact per-bucket (movQty, lotQty) after the plan.
+    const projected = new Map();
+    const bump = (key, dMov, dLot) => {
+      const b = projected.get(key) ?? { movQty: 0, lotQty: 0 };
+      b.movQty += dMov; b.lotQty += dLot;
+      projected.set(key, b);
+    };
+    for (const m of movs) {
+      const t = String(m.movement_type).toUpperCase();
+      const signed = t === "IN" ? Number(m.qty) : t === "OUT" ? -Number(m.qty) : Number(m.qty);
+      bump(finalMovKeyOf(m), signed, 0);
+    }
+    for (const l of lots) bump(finalLotKeyOf(l), 0, Number(l.qty_remaining));
+    for (const rp of repointPlans) for (const dt of rp.plan.donorTakes) {
+      const donorLot = lots.find((x) => x.id === dt.lotId);
+      bump(finalLotKeyOf(donorLot), 0, -dt.qty);
+    }
+    notice("  projected family buckets after apply (movQty/lotQty):");
+    for (const [key, b] of [...projected.entries()].sort()) {
+      if (b.movQty === 0 && b.lotQty === 0) continue;
+      notice(`    key="${key}": mov=${b.movQty} lot=${b.lotQty} drift=${b.movQty - b.lotQty}${b.movQty - b.lotQty !== 0 ? "  (uncosted OUTs remain until MODE=retro-cost consumes the now-reachable lots)" : ""}`);
+    }
+
+    // ── Execute per family — one transaction; CAS everywhere; verify the
+    //    observed buckets equal the projection; dry-run rolls back.
+    try {
+      await pg.begin(async (sql) => {
+        for (const p of movPlans) {
+          const u = await sql.unsafe(
+            `UPDATE ${M} SET variant_key = $1 WHERE id::text = $2 AND COALESCE(variant_key,'') = $3`,
+            [p.newKey, p.m.id, p.m.variant_key]);
+          if (u.count !== 1) throw new Error(`movement ${p.m.id} changed since the plan (CAS ${u.count}) — family rolled back; re-run the dry run`);
+          const k = await sql.unsafe(`UPDATE ${C} SET variant_key = $1 WHERE movement_id::text = $2`, [p.newKey, p.m.id]);
+          consFollow += k.count;
+        }
+        for (const p of lotPlans) {
+          const u = await sql.unsafe(
+            `UPDATE ${L} SET variant_key = $1 WHERE id::text = $2 AND COALESCE(variant_key,'') = $3`,
+            [p.newKey, p.l.id, p.l.variant_key]);
+          if (u.count !== 1) throw new Error(`lot ${p.l.id} changed since the plan (CAS ${u.count}) — family rolled back; re-run the dry run`);
+        }
+        for (const rp of repointPlans) {
+          // Group the moves per consumption row: reduce (or fully re-point) the
+          // source row, insert the moved slices on their donors. consumed_at is
+          // COPIED — the move re-attributes the same physical consumption, so
+          // its true date is known (unlike reconstruct, where it was lost).
+          const byRow = new Map();
+          for (const mv of rp.plan.moves) {
+            const arr = byRow.get(mv.consumptionId) ?? [];
+            arr.push(mv);
+            byRow.set(mv.consumptionId, arr);
+          }
+          const insertSlice = async (srcId, mv) => sql.unsafe(`
+              INSERT INTO ${C} (lot_id, warehouse_id, product_code, variant_key, qty_consumed,
+                                unit_cost_sen, total_cost_sen, consumed_at,
+                                source_doc_type, source_doc_id, source_doc_no, movement_id, created_by${byCompany ? ", company_id" : ""})
+              SELECT $1::uuid, warehouse_id, product_code, variant_key, $2, $3, $4, consumed_at,
+                     source_doc_type, source_doc_id, source_doc_no, movement_id, NULL${byCompany ? ", company_id" : ""}
+                FROM ${C} WHERE id::text = $5`,
+            [mv.toLotId, mv.qty, mv.newUnitCostSen, mv.qty * mv.newUnitCostSen, srcId]);
+          for (const [consumptionId, moves] of byRow) {
+            const src = rp.consRows.find((r) => r.id === consumptionId);
+            const srcQty = Number(src.qty_consumed);
+            const totalMove = moves.reduce((a, mv) => a + mv.qty, 0);
+            const remainder = srcQty - totalMove;
+            if (remainder < 0) throw new Error(`consumption ${consumptionId} plans to move ${totalMove} > its qty ${srcQty} — family rolled back`);
+            if (remainder > 0) {
+              // Part of the row stays on the original lot at its original cost;
+              // the moved slices are fresh rows on their donors.
+              const u = await sql.unsafe(
+                `UPDATE ${C} SET qty_consumed = $1, total_cost_sen = $2
+                  WHERE id::text = $3 AND lot_id::text = $4 AND qty_consumed = $5`,
+                [remainder, remainder * Number(src.unit_cost_sen ?? 0), consumptionId, rp.l.id, srcQty]);
+              if (u.count !== 1) throw new Error(`consumption ${consumptionId} changed since the plan (CAS ${u.count}) — family rolled back`);
+              for (const mv of moves) await insertSlice(consumptionId, mv);
+            } else {
+              // The whole row moves: re-point it to the first donor slice (the
+              // row id and consumed_at survive — this is the same physical
+              // consumption, re-attributed), extra slices become fresh rows.
+              const first = moves[0];
+              const u = await sql.unsafe(
+                `UPDATE ${C} SET lot_id = $1::uuid, qty_consumed = $2, unit_cost_sen = $3, total_cost_sen = $4
+                  WHERE id::text = $5 AND lot_id::text = $6 AND qty_consumed = $7`,
+                [first.toLotId, first.qty, first.newUnitCostSen, first.qty * first.newUnitCostSen, consumptionId, rp.l.id, srcQty]);
+              if (u.count !== 1) throw new Error(`consumption ${consumptionId} changed since the plan (CAS ${u.count}) — family rolled back`);
+              for (const mv of moves.slice(1)) await insertSlice(consumptionId, mv);
+            }
+          }
+          for (const dt of rp.plan.donorTakes) {
+            const donorLot = lots.find((x) => x.id === dt.lotId);
+            const u = await sql.unsafe(
+              `UPDATE ${L} SET qty_remaining = qty_remaining - $1 WHERE id::text = $2 AND qty_remaining = $3`,
+              [dt.qty, dt.lotId, Number(donorLot.qty_remaining)]);
+            if (u.count !== 1) throw new Error(`donor lot ${dt.lotId} changed since the plan (CAS ${u.count}) — family rolled back`);
+          }
+          for (const st of rp.plan.stamps) {
+            await sql.unsafe(`
+              UPDATE ${M} m SET total_cost_sen = sub.total, unit_cost_sen = CASE WHEN ABS(m.qty) > 0 THEN sub.total / ABS(m.qty) ELSE 0 END
+                FROM (SELECT COALESCE(SUM(total_cost_sen),0)::int AS total FROM ${C} WHERE movement_id::text = $1) sub
+               WHERE m.id::text = $1`, [st.movementId]);
+          }
+        }
+
+        // ── VERIFY: observed family buckets must equal the projection exactly.
+        const after = await sql.unsafe(`
+          WITH mov AS (
+            SELECT COALESCE(variant_key,'') AS variant_key,
+                   SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
+                                          WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty ELSE 0 END) AS mov_qty
+              FROM ${M} WHERE warehouse_id::text = $1 AND product_code = $2${byCompany ? " AND company_id = $3" : ""}
+             GROUP BY COALESCE(variant_key,'')
+          ), lot AS (
+            SELECT COALESCE(variant_key,'') AS variant_key, SUM(qty_remaining) AS lot_qty
+              FROM ${L} WHERE warehouse_id::text = $1 AND product_code = $2${byCompany ? " AND company_id = $3" : ""}
+             GROUP BY COALESCE(variant_key,'')
+          )
+          SELECT COALESCE(mov.variant_key, lot.variant_key) AS variant_key,
+                 COALESCE(mov.mov_qty,0) AS mov_qty, COALESCE(lot.lot_qty,0) AS lot_qty
+            FROM mov FULL OUTER JOIN lot ON mov.variant_key = lot.variant_key`,
+          byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+        for (const row of after) {
+          const p = projected.get(String(row.variant_key)) ?? { movQty: 0, lotQty: 0 };
+          if (Number(row.mov_qty) !== p.movQty || Number(row.lot_qty) !== p.lotQty) {
+            throw new Error(`bucket "${row.variant_key}" reads mov=${row.mov_qty} lot=${row.lot_qty} but the plan projected mov=${p.movQty} lot=${p.lotQty} — family rolled back`);
+          }
+        }
+        // Corrected + donor lots must conserve on the audit's own arms.
+        const touchedLotIds = [
+          ...repointPlans.map((rp) => rp.l.id),
+          ...repointPlans.flatMap((rp) => rp.plan.donorTakes.map((dt) => dt.lotId)),
+        ];
+        if (touchedLotIds.length) {
+          const bad = await sql.unsafe(`
+            WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
+            SELECT l.id::text AS id FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
+             WHERE l.id::text = ANY($1)
+               AND (l.qty_received - COALESCE(c.consumed,0) <> l.qty_remaining
+                 OR l.qty_remaining < 0 OR COALESCE(c.consumed,0) > l.qty_received OR l.qty_received < 0)`,
+            [touchedLotIds]);
+          if (bad.length > 0) throw new Error(`lot(s) ${bad.map((b) => b.id).join(", ")} do not conserve after the correction — family rolled back`);
+        }
+        // Stamped movements: stored total must equal their consumption sum, and
+        // no movement may consume more than it moved (audit 10c).
+        const movIds = [...new Set(repointPlans.flatMap((rp) => rp.plan.moves.map((mv) => mv.movementId)))];
+        if (movIds.length) {
+          const chk = await sql.unsafe(`
+            WITH c AS (SELECT movement_id, SUM(qty_consumed)::int AS cons, COALESCE(SUM(total_cost_sen),0)::bigint AS cost FROM ${C} GROUP BY movement_id)
+            SELECT m.id::text AS id, ABS(m.qty)::int AS abs_qty, m.total_cost_sen, COALESCE(c.cons,0)::int AS cons, COALESCE(c.cost,0)::bigint AS cost
+              FROM ${M} m LEFT JOIN c ON c.movement_id = m.id WHERE m.id::text = ANY($1)`, [movIds]);
+          for (const r of chk) {
+            if (Number(r.cons) > Number(r.abs_qty)) throw new Error(`movement ${r.id} consumes ${r.cons} > |qty| ${r.abs_qty} after repoint — family rolled back`);
+            if (Number(r.total_cost_sen ?? 0) !== Number(r.cost)) throw new Error(`movement ${r.id} stored cost ${r.total_cost_sen} != consumption sum ${r.cost} after repoint — family rolled back`);
+          }
+        }
+        if (!APPLY) throw { __rollback: true };
+      });
+      notice(APPLY
+        ? "  APPLIED — relabels + repoints committed; the observed family buckets equal the projection."
+        : "  DRY-RUN VERIFIED (then rolled back) — the apply would leave the family exactly on the projection above.");
+      famPlanned += 1;
+      movRelabels += movPlans.length;
+      lotRelabels += lotPlans.length;
+      repointMoves += repointPlans.reduce((a, rp) => a + rp.plan.moves.length, 0);
+      repointUnits += repointPlans.reduce((a, rp) => a + rp.plan.excess, 0);
+      rmDeltaTotal += repointPlans.reduce((a, rp) => a + rp.plan.rmDeltaSen, 0);
+      for (const r of refusals) stocktake.push({ family: `${f.productCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
+    } catch (e) {
+      if (e && e.__rollback) {
+        notice("  DRY-RUN VERIFIED (then rolled back) — the apply would leave the family exactly on the projection above.");
+        famPlanned += 1;
+        movRelabels += movPlans.length;
+        lotRelabels += lotPlans.length;
+        repointMoves += repointPlans.reduce((a, rp) => a + rp.plan.moves.length, 0);
+        repointUnits += repointPlans.reduce((a, rp) => a + rp.plan.excess, 0);
+        rmDeltaTotal += repointPlans.reduce((a, rp) => a + rp.plan.rmDeltaSen, 0);
+        for (const r of refusals) stocktake.push({ family: `${f.productCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
+      } else {
+        warn(`  family FAILED (rolled back, others unaffected): ${e?.message ?? e}`);
+        famRefused += 1;
+        for (const r of refusals) stocktake.push({ family: `${f.productCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
+      }
+    }
+  }
+
+  notice("");
+  notice("================ SUMMARY ================");
+  notice(`  families examined                          : ${families.size}`);
+  notice(`  families ${APPLY ? "repaired" : "that WOULD repair"}                 : ${famPlanned}  (failed/refused wholesale: ${famRefused})`);
+  notice(`  movement relabels (doc-proven)             : ${movRelabels}  (consumption rows following: ${consFollow})`);
+  notice(`  lot relabels (doc-proven)                  : ${lotRelabels}`);
+  notice(`  over-consumed repoints                     : ${repointUnits} unit(s) across ${repointMoves} consumption slice(s)`);
+  notice(`  RM delta from repoint cost stamps          : ${rm(rmDeltaTotal)}  (0 = every donor at the same landed cost)`);
+  notice("");
+  notice("================ STOCKTAKE LIST (documents cannot resolve these — physical count territory) ================");
+  if (stocktake.length === 0) {
+    notice("  EMPTY — every residual row is resolved by its own paperwork.");
+  } else {
+    for (const s of stocktake) notice(`  ${s.family}  ${s.kind} ${s.id}  ${s.verdict}: ${s.detail}`);
+    notice(`  total: ${stocktake.length} row(s). Nothing above was changed; each line prints the exact document evidence that fell short.`);
+  }
+  notice("");
+  notice("NEXT after APPLY: MODE=retro-cost (relabelled OUTs can now consume the real lots), then Restamp DO");
+  notice("actual cost (repointed/re-costed consumptions must flow to DO lines + SIs), then re-run the");
+  notice("integrity check + costing audit — sections 1/2a/2b/10a must shrink to exactly the stocktake list.");
+  notice(APPLY ? "APPLIED — committed." : "DRY-RUN — every family was exercised inside a transaction and rolled back; nothing was written.");
+  notice("=== END ===");
+}
+
+const entry = MODE === "relabel" ? runRelabel : MODE === "basis-cost" ? runBasisCost : MODE === "reconstruct" ? runReconstruct : MODE === "doc-relabel" ? runDocRelabel : main;
 entry()
   .then(() => pg.end({ timeout: 5 }))
   .catch(async (e) => {

@@ -102,14 +102,55 @@
 //       impact (duplicate OUTs double-decrement on-hand — the audit-2b
 //       linkage the owner asked to see either way).
 //
+//   A7  PART=fifo-attribute (2026-08-01, document-evidence round — owner's
+//       stated rule, verbatim: "为什么要手动分配的 你根据FIFO 就没问题了啊？").
+//       The contended consolidated-PO lines the 2026-08-01 backfill REFUSED
+//       (two or more named SOs still wanting the same code) are attributed
+//       automatically by FIFO instead of waiting for a manual split: the named
+//       SOs' free lines sort by (delivery date ASC — line date falling back to
+//       the header promise — then doc_no ASC, the SAME deterministic order
+//       computeMrp allocates in), the PO's unlinked lines by document order
+//       (created_at, id), and a quantity-aware FIFO walk pairs them — a qty-2
+//       line covers a qty-2 demand, a qty-5 line SPLITS, the remainder books
+//       as STOCK. The result is written as purchase_order_item_allocations
+//       rows (mig 0235; so_item_id NULL = stock) — NEVER as so_item_id, so
+//       the provenance stays visibly "allocation" and the existing 1:1 links
+//       keep their meaning. Idempotent: lines already linked or already
+//       carrying allocations are skipped. planFifoAttribution in
+//       lib/doc-evidence-core.mjs holds the rule; POS names the target POs
+//       (default: the two contended ones, 2990-PO-2606-019 + -023).
+//
+//   A8  PART=so-warehouse (2026-08-01, document-evidence round). The
+//       NULL-warehouse SO lines whose HEADER also resolves nothing (the
+//       check-backfillable-gaps section-1 hard core — 54 NULL lines, 24
+//       resolving nothing on the 2026-08-01 run) get warehouse_id stamped
+//       from document evidence, strongest first: (a) the line's own DO OUT
+//       movement — where the goods PHYSICALLY left; (b) whole-SO sibling
+//       agreement — every explicitly-warehoused sibling names ONE warehouse.
+//       NOTE this deliberately does NOT contradict lib/so-warehouse.ts's
+//       "never borrow a sibling's warehouse" read-path rule: that rule guards
+//       against pooling across warehouse boundaries, and a UNANIMOUS SO has
+//       no boundary to pool across — disagreeing siblings still refuse;
+//       (c) the company's single ACTIVE warehouse. Everything else is
+//       reported needs-owner. MIRROR GUARD: company-2990 SO items are
+//       maintained by so-mirror.ts (drain = DELETE-then-INSERT per SO), so a
+//       local stamp would be wiped on the next drain — those rows verdict
+//       mirror-source and are REPORTED with the exact stamp the 2990 SOURCE
+//       database needs, never written here. classifySoLineWarehouse in
+//       lib/doc-evidence-core.mjs holds the rule.
+//
 //   DATABASE_URL   required (env, or .dev.vars for local use)
 //   APPLY=1        write. Anything else is a dry run.
 //   PART           all (default) | notes | batches | consumptions | ids | grn-gap | dedupe
-//                  (`all` = the three original parts; `ids`, `grn-gap` and
-//                  `dedupe` are deliberately DISPATCH-ONLY so the widest-
-//                  reaching writes are each an explicit, single-purpose run)
+//                  | fifo-attribute | so-warehouse
+//                  (`all` = the three original parts; everything later is
+//                  deliberately DISPATCH-ONLY so the widest-reaching writes
+//                  are each an explicit, single-purpose run)
 //   GRNS           part grn-gap only: comma-separated GRN numbers to repair
 //                  (default 2990-GRN-2606-001 — the one 3a implicated)
+//   POS            part fifo-attribute only: comma-separated PO numbers
+//                  (default 2990-PO-2606-019,2990-PO-2606-023 — the 8
+//                  contended lines' POs). Never open-ended.
 //   MAX_ROWS       per-batch row ids to print in the plan (default 200)
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
@@ -127,6 +168,10 @@ import {
   classifyDuplicateMovement,
   projectDedupeBucketImpact,
 } from "./lib/ledger-repair-core.mjs";
+import {
+  planFifoAttribution,
+  classifySoLineWarehouse,
+} from "./lib/doc-evidence-core.mjs";
 import { execIdRestamp, printIdRestampExec, execDedupe } from "./lib/id-restamp-exec.mjs";
 
 const APPLY = process.env.APPLY === "1";
@@ -134,8 +179,10 @@ const PART = (process.env.PART || "all").trim().toLowerCase();
 const MAX_ROWS = Number(process.env.MAX_ROWS || 200);
 const GRNS = (process.env.GRNS || "2990-GRN-2606-001")
   .split(",").map((s) => s.trim()).filter(Boolean);
-if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap", "dedupe"].includes(PART)) {
-  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap | dedupe (got "${PART}")`);
+const POS = (process.env.POS || "2990-PO-2606-019,2990-PO-2606-023")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap", "dedupe", "fifo-attribute", "so-warehouse"].includes(PART)) {
+  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap | dedupe | fifo-attribute | so-warehouse (got "${PART}")`);
   process.exit(2);
 }
 const doNotes = PART === "all" || PART === "notes";
@@ -144,6 +191,8 @@ const doConsumptions = PART === "all" || PART === "consumptions";
 const doIds = PART === "ids";
 const doGrnGap = PART === "grn-gap";
 const doDedupe = PART === "dedupe";
+const doFifoAttribute = PART === "fifo-attribute";
+const doSoWarehouse = PART === "so-warehouse";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -1187,6 +1236,284 @@ async function applyGrnGap(plan) {
   return done;
 }
 
+// ── A7 — PART=fifo-attribute: FIFO attribution for consolidated PO lines ─────
+// (owner rule: identical-product consolidation attributes by FIFO — no manual
+// split). Named POs only (POS env). Writes purchase_order_item_allocations
+// rows; the mig-0235 triggers guard SUM(alloc) <= line qty underneath us.
+const subNo = (poNumber, seq) => `${poNumber}-${String(seq).padStart(2, "0")}`;
+
+async function planFifoAttribute() {
+  log("");
+  log(`=== A7  fifo-attribute — target POs: ${POS.join(", ")} ===`);
+  const pos = await pg`
+    SELECT id::text AS id, po_number, company_id, status::text AS status, notes
+      FROM scm.purchase_orders WHERE po_number = ANY(${POS})`;
+  for (const want of POS) {
+    if (!pos.some((p) => p.po_number === want)) log(`  "${want}" matches NO purchase order — skipped (check the number).`);
+  }
+  if (pos.length === 0) return { plans: [] };
+
+  // The named SOs come from each PO's OWN note (the A1-repaired "From SOs:"
+  // list) — the same evidence tier the pairing backfill used; a token that
+  // does not resolve to a same-company SO is reported and contributes nothing.
+  const allTokens = new Set();
+  for (const p of pos) for (const t of parseFromSosTokens(p.notes)) allTokens.add(t);
+  const soHeaders = allTokens.size
+    ? await pg`
+        SELECT so.doc_no, so.company_id, so.customer_delivery_date
+          FROM scm.mfg_sales_orders so WHERE so.doc_no = ANY(${[...allTokens]})`
+    : [];
+  const headerByDocCo = new Map();
+  for (const h of soHeaders) headerByDocCo.set(`${h.company_id}::${h.doc_no}`, h);
+
+  // One SO line is never double-served: lines already claimed by ANY PO line's
+  // so_item_id or ANY allocation row are taken everywhere.
+  const takenLinks = await pg`
+    SELECT DISTINCT so_item_id FROM scm.purchase_order_items WHERE so_item_id IS NOT NULL`;
+  const takenAllocs = await pg`
+    SELECT DISTINCT so_item_id FROM scm.purchase_order_item_allocations WHERE so_item_id IS NOT NULL`;
+  const taken = new Set([...takenLinks, ...takenAllocs].map((r) => String(r.so_item_id)));
+
+  const plans = [];
+  for (const p of pos) {
+    const cid = Number(p.company_id);
+    log("");
+    log(`  ${p.po_number} (company ${cid}, status ${p.status})`);
+    const tokens = parseFromSosTokens(p.notes);
+    const namedSos = tokens.filter((t) => headerByDocCo.has(`${cid}::${t}`));
+    for (const t of tokens) {
+      if (!namedSos.includes(t)) log(`    note token "${t}" resolves to NO same-company Sales Order — ignored (run part=notes first if it is unprefixed).`);
+    }
+    if (namedSos.length < 2) {
+      log(`    note names ${namedSos.length} resolvable SO(s) — this part exists for CONSOLIDATED POs (2+); the 1:1 backfill owns the rest. Skipped.`);
+      continue;
+    }
+    log(`    named SOs: ${namedSos.join(", ")}`);
+
+    const poLines = await pg`
+      SELECT i.id::text AS id, i.material_code, i.qty, i.so_item_id::text AS so_item_id, i.created_at,
+             COALESCE(a.n, 0)::int AS allocation_count
+        FROM scm.purchase_order_items i
+        LEFT JOIN (SELECT purchase_order_item_id, count(*)::int AS n
+                     FROM scm.purchase_order_item_allocations GROUP BY purchase_order_item_id) a
+          ON a.purchase_order_item_id = i.id
+       WHERE i.purchase_order_id = ${p.id}::uuid
+       ORDER BY i.created_at, i.id`;
+    const soLines = await pg`
+      SELECT si.id::text AS id, si.doc_no, si.item_code, si.qty, si.line_no,
+             si.line_delivery_date, si.cancelled
+        FROM scm.mfg_sales_order_items si
+       WHERE si.doc_no = ANY(${namedSos}) AND si.company_id = ${cid} AND si.cancelled = false
+       ORDER BY si.doc_no, si.line_no NULLS LAST, si.id`;
+
+    const res = planFifoAttribution({
+      poLines: poLines.map((l) => ({
+        id: l.id,
+        itemCode: l.material_code,
+        qty: Number(l.qty),
+        soItemId: l.so_item_id,
+        allocationCount: Number(l.allocation_count),
+        createdAt: l.created_at?.toISOString?.() ?? String(l.created_at),
+      })),
+      soLines: soLines.map((l) => ({
+        id: l.id,
+        doc: l.doc_no,
+        itemCode: l.item_code,
+        qty: Number(l.qty),
+        lineNo: l.line_no,
+        // The MRP demand date rule verbatim: line date, else the header promise.
+        deliveryDate: l.line_delivery_date ?? headerByDocCo.get(`${cid}::${l.doc_no}`)?.customer_delivery_date ?? null,
+        taken: taken.has(l.id),
+      })),
+    });
+
+    log(`    PO lines: ${poLines.length} (already so_item_id-linked: ${res.skippedLinked.length}, already allocated: ${res.skippedAllocated.length}, planned now: ${res.plans.length})`);
+    for (const id of res.skippedLinked) log(`      SKIP line ${id} — carries so_item_id (the 1:1 fast path; not touched)`);
+    for (const id of res.skippedAllocated) log(`      SKIP line ${id} — already has allocations (idempotent re-run)`);
+    let li = 0;
+    for (const plan of res.plans) {
+      li += 1;
+      log(`    line ${plan.poLineId}  ${plan.itemCode}  qty ${plan.lineQty}:`);
+      for (const s of plan.slices) {
+        log(`      ${subNo(p.po_number, s.seq)} -> ${s.soItemId ? `${s.soDoc} (so line ${s.soItemId})` : "STOCK"} (qty ${s.qty})`);
+      }
+      const sum = plan.slices.reduce((a, s) => a + s.qty, 0);
+      if (sum !== plan.lineQty) log(`      !! slice sum ${sum} != line qty ${plan.lineQty} — this plan would be refused at apply`);
+    }
+    for (const u of res.unfilled) log(`    UNFILLED named demand: ${u.soDoc} line ${u.soItemId} ${u.itemCode} qty ${u.qty} — no eligible PO line covers it (reported only)`);
+    if (res.plans.length > 0) plans.push({ po: p, res });
+  }
+  log("");
+  log(`  A7 total: ${plans.reduce((a, x) => a + x.res.plans.length, 0)} PO line(s) across ${plans.length} PO(s) would receive allocations.`);
+  return { plans };
+}
+
+async function applyFifoAttribute(planned) {
+  let lines = 0, rows = 0;
+  for (const { po, res } of planned) {
+    // One transaction per PO; per line a FOR UPDATE lock + live re-check (no
+    // so_item_id, still zero allocations) so a concurrent writer aborts the PO
+    // cleanly rather than double-allocating. The 0235 trigger re-locks the
+    // parent line and enforces SUM(alloc) <= qty underneath us either way.
+    await pg.begin(async (tx) => {
+      for (const plan of res.plans) {
+        const fresh = await tx`
+          SELECT i.qty, i.so_item_id::text AS so_item_id,
+                 (SELECT count(*)::int FROM scm.purchase_order_item_allocations a WHERE a.purchase_order_item_id = i.id) AS alloc_n
+            FROM scm.purchase_order_items i WHERE i.id = ${plan.poLineId}::uuid FOR UPDATE OF i`;
+        if (fresh.length !== 1) throw new Error(`PO line ${plan.poLineId} vanished since the plan — PO rolled back; re-run the dry run`);
+        if (fresh[0].so_item_id != null || Number(fresh[0].alloc_n) !== 0 || Number(fresh[0].qty) !== plan.lineQty) {
+          throw new Error(`PO line ${plan.poLineId} changed since the plan (so_item_id=${fresh[0].so_item_id}, allocations=${fresh[0].alloc_n}, qty=${fresh[0].qty}) — PO rolled back; re-run the dry run`);
+        }
+        for (const s of plan.slices) {
+          await tx`
+            INSERT INTO scm.purchase_order_item_allocations
+              (company_id, purchase_order_item_id, seq, qty, so_item_id, created_by)
+            VALUES (${Number(po.company_id)}, ${plan.poLineId}::uuid, ${s.seq}, ${s.qty}, ${s.soItemId ?? null}::uuid, NULL)`;
+          rows += 1;
+          log(`  APPLIED ${subNo(po.po_number, s.seq)} (line ${plan.poLineId}) -> ${s.soItemId ? s.soDoc : "STOCK"} (qty ${s.qty})`);
+        }
+        lines += 1;
+      }
+    });
+  }
+  return { lines, rows };
+}
+
+// ── A8 — PART=so-warehouse: stamp warehouse_id on the SO lines whose header
+// resolves nothing, from document evidence (DO movement > unanimous siblings >
+// single active warehouse). Mirror-owned rows are reported, never written.
+async function planSoWarehouse(codeById) {
+  log("");
+  log("=== A8  so-warehouse — NULL-warehouse SO lines whose header resolves nothing ===");
+  const mirrorCompanyId = [...codeById.entries()].find(([, code]) => String(code) === "2990")?.[0] ?? null;
+  log(`  mirror company (code 2990, so-mirror-maintained): ${mirrorCompanyId ?? "NOT FOUND — mirror guard inactive"}`);
+
+  // The check-backfillable-gaps section-1 lens, verbatim: live SO lines with
+  // NULL warehouse whose header ALSO resolves nothing (no sales_location
+  // match, no state mapping). Header-resolvable lines are LEAVE-ALONE there
+  // (the read path serves them); this part must not widen that judgement.
+  const rows = await pg`
+    SELECT i.id::text AS id, i.doc_no, i.item_code, i.qty, COALESCE(i.item_group,'') AS item_group,
+           so.company_id, so.status::text AS status, so.sales_location, so.customer_state
+      FROM scm.mfg_sales_order_items i
+      JOIN scm.mfg_sales_orders so ON so.doc_no = i.doc_no
+     WHERE i.warehouse_id IS NULL
+       AND COALESCE(i.cancelled, FALSE) = FALSE
+       AND UPPER(so.status::text) NOT IN ('CANCELLED','CLOSED')
+       AND NOT EXISTS (SELECT 1 FROM scm.warehouses w
+                        WHERE UPPER(TRIM(w.code)) = UPPER(TRIM(COALESCE(so.sales_location,'')))
+                           OR UPPER(TRIM(w.name)) = UPPER(TRIM(COALESCE(so.sales_location,''))))
+       AND NOT EXISTS (SELECT 1 FROM scm.state_warehouse_mappings sw
+                        WHERE UPPER(TRIM(sw.state)) = UPPER(TRIM(COALESCE(so.customer_state, ''))))
+     ORDER BY so.doc_no, i.item_code`;
+  log(`  lines in scope (NULL warehouse + header resolves nothing): ${rows.length}`);
+  if (rows.length === 0) return { plan: [], reported: [] };
+
+  const lineIds = rows.map((r) => r.id);
+  // (a) The line's own DO: where its goods PHYSICALLY left. The DO line links
+  // back via so_item_id; the warehouse lives on the DO's OUT movements.
+  const doEvidence = await pg`
+    SELECT di.so_item_id::text AS so_item_id, m.warehouse_id::text AS warehouse_id,
+           d.do_number, d.status::text AS do_status
+      FROM scm.delivery_order_items di
+      JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+      JOIN scm.inventory_movements m
+        ON m.source_doc_type = 'DO' AND m.source_doc_id = d.id
+       AND m.movement_type = 'OUT' AND m.product_code = di.item_code
+     WHERE di.so_item_id::text = ANY(${lineIds})
+       AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'`;
+  const doWhByLine = new Map();
+  for (const r of doEvidence) {
+    const arr = doWhByLine.get(r.so_item_id) ?? [];
+    arr.push(r);
+    doWhByLine.set(r.so_item_id, arr);
+  }
+  // (b) Sibling lines of the same SOs with an explicit warehouse.
+  const docNos = [...new Set(rows.map((r) => r.doc_no))];
+  const siblings = await pg`
+    SELECT doc_no, warehouse_id::text AS warehouse_id
+      FROM scm.mfg_sales_order_items
+     WHERE doc_no = ANY(${docNos}) AND warehouse_id IS NOT NULL
+       AND COALESCE(cancelled, FALSE) = FALSE`;
+  const sibByDoc = new Map();
+  for (const s of siblings) {
+    const arr = sibByDoc.get(s.doc_no) ?? [];
+    arr.push(s.warehouse_id);
+    sibByDoc.set(s.doc_no, arr);
+  }
+  // (c) Active warehouses per company.
+  const companies = [...new Set(rows.map((r) => Number(r.company_id)))];
+  const whRows = await pg`
+    SELECT id::text AS id, code, name, company_id FROM scm.warehouses
+     WHERE is_active = TRUE AND company_id = ANY(${companies})`;
+  const activeByCompany = new Map();
+  const whName = new Map(whRows.map((w) => [w.id, `${w.code} (${w.name})`]));
+  for (const w of whRows) {
+    const arr = activeByCompany.get(Number(w.company_id)) ?? [];
+    arr.push(w.id);
+    activeByCompany.set(Number(w.company_id), arr);
+  }
+
+  const plan = [];
+  const reported = [];
+  const tally = new Map();
+  for (const r of rows) {
+    const doRows = doWhByLine.get(r.id) ?? [];
+    const v = classifySoLineWarehouse({
+      companyId: Number(r.company_id),
+      mirrorCompanyId,
+      doWarehouseIds: doRows.map((x) => x.warehouse_id),
+      siblingWarehouseIds: sibByDoc.get(r.doc_no) ?? [],
+      activeWarehouseIds: activeByCompany.get(Number(r.company_id)) ?? [],
+    });
+    tally.set(v.verdict, (tally.get(v.verdict) ?? 0) + 1);
+    const evid = v.source === "do-movement"
+      ? `DO ${[...new Set(doRows.map((x) => x.do_number))].join(", ")} OUT movement warehouse`
+      : v.source === "sibling-agreement"
+        ? `every warehoused sibling of ${r.doc_no} names it`
+        : v.source === "single-active-warehouse"
+          ? "the company's only active warehouse"
+          : "";
+    if (v.verdict === "stamp") {
+      log(`  STAMP ${r.doc_no} line ${r.id} (${r.item_code}, co=${r.company_id}): warehouse -> ${whName.get(v.warehouseId) ?? v.warehouseId}  [${v.source}: ${evid}]`);
+      plan.push({ ...r, warehouseId: v.warehouseId, source: v.source });
+    } else if (v.verdict === "mirror-source") {
+      log(`  MIRROR-SOURCE ${r.doc_no} line ${r.id} (${r.item_code}, co=${r.company_id}): the evidence stamps ${whName.get(v.warehouseId) ?? v.warehouseId} [${v.source}: ${evid}],`);
+      log("    but this row is maintained by the 2990 -> Houzs SO mirror (so-mirror.ts drains DELETE-then-INSERT), so a local write");
+      log("    would be silently wiped on the next drain. The fix belongs in the 2990 SOURCE database (same line id, ids mirror verbatim);");
+      log("    until then this line stays read-time-only unresolvable HERE by design.");
+      reported.push({ ...r, verdict: v.verdict, warehouseId: v.warehouseId, source: v.source });
+    } else {
+      log(`  ${v.verdict.toUpperCase()} ${r.doc_no} line ${r.id} (${r.item_code}, co=${r.company_id})${v.warehouseIds ? ` — candidates [${v.warehouseIds.map((w) => whName.get(w) ?? w).join(" | ")}]` : ""}${v.verdict === "needs-owner" ? ` — no DO, no warehoused sibling, ${v.activeWarehouses} active warehouse(s); only a human can pick` : ""}`);
+      reported.push({ ...r, verdict: v.verdict });
+    }
+  }
+  log(`  verdicts: ${[...tally.entries()].map(([k, n]) => `${k}=${n}`).join("  ")}`);
+  log(`  lines to stamp: ${plan.length}; reported (mirror-source / ambiguous / needs-owner): ${reported.length}`);
+  return { plan, reported };
+}
+
+async function applySoWarehouse(plan) {
+  // Independent rows, not the money path — each line stands alone (the
+  // applyNotes discipline): CAS on warehouse_id IS NULL so a concurrently
+  // resolved line is skipped, never clobbered.
+  let done = 0;
+  for (const p of plan) {
+    const res = await pg`
+      UPDATE scm.mfg_sales_order_items
+         SET warehouse_id = ${p.warehouseId}::uuid
+       WHERE id = ${p.id}::uuid AND warehouse_id IS NULL`;
+    if (res.count === 1) {
+      done += 1;
+      log(`  APPLIED ${p.doc_no} line ${p.id}: warehouse_id = ${p.warehouseId} [${p.source}]`);
+    } else {
+      log(`  SKIPPED ${p.doc_no} line ${p.id}: warehouse_id was set since the plan — re-run the dry run.`);
+    }
+  }
+  return done;
+}
+
 try {
   log(`=== repair-2990-doc-refs  mode=${APPLY ? "APPLY" : "DRY-RUN"}  part=${PART} ===`);
   const codeById = await loadCompanies();
@@ -1197,6 +1524,8 @@ try {
   const ids = doIds ? await planIdRestamp(codeById) : { plan: [] };
   const grnGap = doGrnGap ? await planGrnGap() : { plan: [] };
   const dedupe = doDedupe ? await planDedupe(codeById) : { plan: [], ids: { plan: [] } };
+  const fifoAttr = doFifoAttribute ? await planFifoAttribute() : { plans: [] };
+  const soWh = doSoWarehouse ? await planSoWarehouse(codeById) : { plan: [], reported: [] };
 
   log("");
   log("================ summary ================");
@@ -1206,6 +1535,8 @@ try {
   if (doIds) log(`A4 ids          : ${ids.plan.length} (company, type, doc no) group(s) would have dangling source_doc_id restamped`);
   if (doGrnGap) log(`A5 grn-gap      : ${grnGap.plan.length} missing IN movement(s) would be inserted (FIFO trigger opens the lot)`);
   if (doDedupe) log(`A6 dedupe       : ${dedupe.plan.length} duplicate movement(s) (+ their consumptions) would be DELETED, lots restored`);
+  if (doFifoAttribute) log(`A7 fifo-attr    : ${fifoAttr.plans.reduce((a, x) => a + x.res.plans.length, 0)} PO line(s) would receive FIFO allocations (as purchase_order_item_allocations rows)`);
+  if (doSoWarehouse) log(`A8 so-warehouse : ${soWh.plan.length} SO line(s) would have warehouse_id stamped; ${soWh.reported.length} reported (mirror-source / needs-owner)`);
 
   if (!APPLY) {
     log("");
@@ -1233,6 +1564,14 @@ try {
     }
     if (doDedupe) {
       await applyDedupe(dedupe.ids.plan);
+    }
+    if (doFifoAttribute) {
+      const r = await applyFifoAttribute(fifoAttr.plans);
+      log(`A7 APPLIED: ${r.rows} allocation row(s) across ${r.lines} PO line(s), one transaction per PO.`);
+    }
+    if (doSoWarehouse) {
+      const n = await applySoWarehouse(soWh.plan);
+      log(`A8 APPLIED: ${n} SO line(s) stamped (mirror-source rows deliberately untouched — see the plan).`);
     }
     log("Done. Re-run in DRY-RUN to confirm the plan is now empty (the idempotence check).");
   }
