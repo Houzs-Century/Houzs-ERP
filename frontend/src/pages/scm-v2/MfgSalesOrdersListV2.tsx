@@ -1471,7 +1471,7 @@ export function MfgSalesOrdersListV2() {
             {pos.map((n) => (
               <span
                 key={n}
-                className="rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] font-semibold text-primary-ink"
+                className="rounded bg-primary-soft px-1.5 py-0.5 font-docno text-[11px] font-semibold text-primary-ink"
               >
                 {n}
               </span>
