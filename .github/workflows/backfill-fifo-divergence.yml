@@ -53,6 +53,19 @@ name: Backfill FIFO ledger divergence (repair)
 #               receipt. Refused when open lots exist, when a competing older
 #               short would claim the lot, or when the named targets do not
 #               fully consume it (verified in-transaction).
+#   doc-relabel DOCUMENT-EVIDENCE round (2026-08-01, owner: "为什么你不看 SO PO
+#               DO GR 去解决呢？"): the residuals the ledger-evidence modes
+#               refused are resolved from the DOCUMENT chain — OUT -> DO line
+#               (variants, so_item_id -> SO line) ; IN/lot -> GRN line
+#               (variants, purchase_order_item -> PO line). TRUE keys via the
+#               real computeVariantKey (lockstep mirror); rows follow the key
+#               their OWN paperwork proves, citation printed per row; the
+#               audit-2a over-consumed lots re-point their excess consumption
+#               to the document-proven sibling receipt (donor decremented,
+#               cost convention kept, RM delta reported). Documents that
+#               THEMSELVES disagree, or shipment no family receipt covers,
+#               land on the printed STOCKTAKE list. Family conservation
+#               verified in-transaction. Run BEFORE the follow-up retro-cost.
 on:
   workflow_dispatch:
     inputs:
@@ -69,7 +82,7 @@ on:
         required: false
         default: ''
       mode:
-        description: 'retro-cost = consume real lots; reconstruct = W4 phase 1 (rebuild dropped consumption rows); relabel = W4 phase 2 variant-key unify (RM0); basis-cost = W3 reference-cost seed for named DOs'
+        description: 'retro-cost = consume real lots; reconstruct = W4 phase 1 (rebuild dropped consumption rows); relabel = W4 phase 2 variant-key unify (RM0); basis-cost = W3 reference-cost seed for named DOs; doc-relabel = document-evidence resolution of the audit residuals (SO/PO/DO/GRN line variants)'
         required: false
         default: 'retro-cost'
         type: choice
@@ -78,6 +91,7 @@ on:
           - 'reconstruct'
           - 'relabel'
           - 'basis-cost'
+          - 'doc-relabel'
       dos:
         description: 'basis-cost only, REQUIRED there: comma-separated DO numbers (e.g. 2990-DO-2607-009,2990-DO-2607-017)'
         required: false

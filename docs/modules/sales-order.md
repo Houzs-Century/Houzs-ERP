@@ -238,6 +238,24 @@ Also relevant: `apply_so_header_cas` (mig 0173) rebinds `warehouse_id` on the
 order's **NULL lines only** when the header's warehouse changes, while the
 approved-amendment path (`so-revision.ts`) rebinds every non-cancelled line.
 
+**Historical backfill for the header-unresolvable lines (2026-08-01, gated).**
+Part `so-warehouse` on `backend/scripts/repair-2990-doc-refs.mjs` (workflow
+**Repair 2990 doc references**) stamps `warehouse_id` on the lines the read
+path can NEVER resolve — NULL warehouse AND a header where both
+`sales_location` and `customer_state` resolve nothing (the
+check-backfillable-gaps section-1 hard core; 24 lines on the 2026-08-01 run).
+Document-evidence order, single-valued or refused: the line's own DO OUT
+movement (where the goods physically left), else **unanimous** sibling
+agreement, else the company's single active warehouse. The sibling arm does
+NOT breach the callout above: the callout guards against pooling across a
+warehouse boundary, and an SO whose every warehoused line names ONE warehouse
+has no boundary to pool across — disagreeing siblings refuse, and the
+single-warehouse fallback must not rescue them. Company-2990 rows are
+mirror-maintained (`so-mirror.ts` drains DELETE-then-INSERT per SO, wiping
+local stamps), so they verdict `mirror-source` — reported with the exact stamp
+for the 2990 SOURCE database, never written here. Rule:
+`classifySoLineWarehouse`, `backend/scripts/lib/doc-evidence-core.mjs`.
+
 ### Processing-Date save gates (aggregated `validation_failed`)
 
 Setting or changing the Processing Date (`internal_expected_dd` — the UI's

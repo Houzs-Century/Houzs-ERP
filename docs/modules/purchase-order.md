@@ -243,8 +243,10 @@ link entirely). See `docs/modules/document-traceability.md` §2.4.
 no quota — `recomputeSoPicked` still counts ONLY `purchase_order_items
 .so_item_id`, MRP layer (c) and delivered layer (a) are untouched. That is why
 allocation writes are deliberately NOT behind `poHasDownstream` and stay
-allowed on RECEIVED POs (the 8 contended historical lines the owner wants to
-split by hand are all received); only CANCELLED refuses. Known gap, accepted:
+allowed on RECEIVED POs (the 8 contended historical lines are all received;
+originally left for a hand split, now covered by the gated FIFO attribution
+below — owner ruling 2026-08-01, "你根据FIFO 就没问题了啊"); only CANCELLED
+refuses. Known gap, accepted:
 `so-line-relink.ts` (TBC swap) does not carry this table, so a swap on an
 allocated line degrades its slices to STOCK via the FK's ON DELETE SET NULL —
 the UI shows the degradation honestly.
@@ -295,6 +297,22 @@ Deliberately never written, and why:
   floating by design — it shifts as demand moves and evaporates on delivery.
   Freezing it into a stored link would turn a live computation into a permanent,
   wrong record. The script never calls the MRP engine.
+
+**The contended remainder — FIFO attribution as ALLOCATIONS (2026-08-01).**
+The "code two named orders both still want" refusals are closed by the owner's
+stated rule ("为什么要手动分配的 你根据FIFO 就没问题了啊？"): part
+`fifo-attribute` on `repair-2990-doc-refs.mjs` (workflow **Repair 2990 doc
+references**, `pos` input naming the target POs — default the two contended
+ones, `2990-PO-2606-019` + `-023`). The named SOs' free lines sort in
+computeMrp's own deterministic order (delivery date ASC, NULL last, doc_no
+ASC), PO lines in document order, and a quantity-aware FIFO walk pairs them —
+a qty-5 line splits and its remainder books as STOCK. Critically it writes
+`purchase_order_item_allocations` rows, NEVER `so_item_id`: a FIFO inference
+must stay visibly an allocation, because stamped into `so_item_id` it would be
+indistinguishable from a recorded fact — which is the exact reason the tiers
+above refused. Idempotent (linked or already-allocated lines skip); one SO
+line is never double-served (links and allocations both count as taken). Rule:
+`planFifoAttribution`, `backend/scripts/lib/doc-evidence-core.mjs`.
 
 ### The SO-quota counter — `recomputeSoPicked` (`:2352-2398`)
 
