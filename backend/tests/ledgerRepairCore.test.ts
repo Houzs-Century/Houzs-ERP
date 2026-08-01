@@ -8,6 +8,10 @@ import {
   variantKeyMirror,
   deriveGrnLineBasis,
   planFamilyReconstruction,
+  classifyLotConservation,
+  planSurplusCorrection,
+  classifyDuplicateMovement,
+  projectDedupeBucketImpact,
 } from "../scripts/lib/ledger-repair-core.mjs";
 import { toMyrSen } from "../src/scm/lib/fx";
 import { computeVariantKey, type VariantAttrs } from "../src/scm/shared/variant-key";
@@ -425,5 +429,140 @@ describe("planFamilyReconstruction (W4 phase 1) — rebuild dropped consumption 
       lots: [lot("l1", 2, 2, 0, 50, "2026-06-01")],
     });
     expect(v.verdict).toBe("balanced");
+  });
+});
+
+describe("classifyLotConservation (round 3) — one lot against the audit's 2a lens, every arm named", () => {
+  const c = (received: number, consumed: number, remaining: number) =>
+    classifyLotConservation({ qtyReceived: received, consumed, qtyRemaining: remaining });
+
+  test("the round-2 blind spot: SURPLUS — rows exist, remaining never decremented (residual < 0)", () => {
+    const v = c(5, 2, 5);
+    expect(v).toMatchObject({ verdict: "surplus", residual: -2 });
+  });
+
+  test("DEFICIT — rows missing (residual > 0), the original reconstruct shape", () => {
+    expect(c(5, 0, 3)).toMatchObject({ verdict: "deficit", residual: 2 });
+  });
+
+  test("over-consumed (consumed > received) is its own refusal — a decrement cannot conserve it", () => {
+    expect(c(3, 5, 0).verdict).toBe("over-consumed");
+  });
+
+  test("negative remaining / negative received are corrupt quantities, not repair candidates", () => {
+    expect(c(5, 3, -1).verdict).toBe("negative-remaining");
+    expect(c(-1, 0, 0).verdict).toBe("negative-received");
+  });
+
+  test("a conserving lot classifies as conserves — the audit would never have flagged it", () => {
+    expect(c(5, 2, 3).verdict).toBe("conserves");
+  });
+
+  test("EXHAUSTIVE AGREEMENT with the audit's 2a WHERE: flagged iff not conserves", () => {
+    // The audit's four arms, in JS: any of them true <=> our verdict != conserves.
+    for (let received = -1; received <= 4; received++) {
+      for (let consumed = 0; consumed <= 5; consumed++) {
+        for (let remaining = -1; remaining <= 4; remaining++) {
+          const auditFlags = received - consumed !== remaining
+            || remaining < 0 || consumed > received || received < 0;
+          const v = c(received, consumed, remaining);
+          expect(v.verdict !== "conserves", `r=${received} c=${consumed} rem=${remaining}`).toBe(auditFlags);
+        }
+      }
+    }
+  });
+});
+
+describe("planSurplusCorrection (round 3) — restore remaining = received - consumed, only over honest rows", () => {
+  const refs = (over: Partial<{ movementId: string | null; exists: boolean; absQty: number; consumedTotal: number }> = {}) => [{
+    movementId: "m1", exists: true, absQty: 2, consumedTotal: 2, ...over,
+  }];
+
+  test("THE XAMMAR SURPLUS: received 5, consumed 2 by real movements, remaining still 5 -> remaining 3, delta 2", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs() });
+    expect(v).toEqual({ verdict: "correct", newRemaining: 3, delta: 2 });
+  });
+
+  test("a consumption row with NO movement_id is untraceable evidence — refused", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs({ movementId: null }) });
+    expect(v.verdict).toBe("orphan-consumptions");
+  });
+
+  test("a referenced movement that does not exist refuses — the rows point at nothing", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs({ exists: false }) });
+    expect(v).toMatchObject({ verdict: "missing-movement", missing: ["m1"] });
+  });
+
+  test("a movement consuming MORE than it moved refuses — audit 10c says the rows lie", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs({ absQty: 1, consumedTotal: 2 }) });
+    expect(v).toMatchObject({ verdict: "over-attribution", over: ["m1"] });
+  });
+
+  test("consumed beyond received cannot be conserved by a decrement — refused (belt on the classify arm)", () => {
+    const v = planSurplusCorrection({ qtyReceived: 2, consumed: 5, qtyRemaining: 0, referencedMovements: refs({ absQty: 5, consumedTotal: 5 }) });
+    expect(v.verdict).toBe("over-consumed");
+  });
+
+  test("idempotence: after the correction the lot conserves and classify says so", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs() });
+    expect(v.verdict).toBe("correct");
+    expect(classifyLotConservation({ qtyReceived: 5, consumed: 2, qtyRemaining: (v as { newRemaining: number }).newRemaining }).verdict).toBe("conserves");
+  });
+});
+
+describe("classifyDuplicateMovement (part=dedupe) — deletion needs a FULL-ROW twin, not just an index collision", () => {
+  const dup = {
+    companyId: 2, productCode: "XAM-1", variantKey: "", warehouseId: "wh-1",
+    movementType: "OUT", qty: 2,
+  };
+  const twin = (over: Record<string, unknown> = {}) => ({
+    movementId: "real-1", companyId: 2, productCode: "XAM-1", variantKey: "",
+    warehouseId: "wh-1", movementType: "OUT", qty: 2, ...over,
+  });
+
+  test("a counterpart matching all six facts makes the duplicate deletable", () => {
+    expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [twin()] }))
+      .toEqual({ verdict: "delete", matches: ["real-1"] });
+  });
+
+  test("qty or movement_type differing refuses — the index key excludes them, so a collision alone proves nothing", () => {
+    expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [twin({ qty: 5 })] }).verdict).toBe("no-counterpart");
+    expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [twin({ movementType: "IN" })] }).verdict).toBe("no-counterpart");
+  });
+
+  test("company / product / variant / warehouse must all match too", () => {
+    for (const over of [{ companyId: 1 }, { productCode: "OTHER" }, { variantKey: "K" }, { warehouseId: "wh-2" }]) {
+      expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [twin(over)] }).verdict, JSON.stringify(over)).toBe("no-counterpart");
+    }
+  });
+
+  test("no counterparts at all refuses; movement_type compares case-insensitively", () => {
+    expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [] }).verdict).toBe("no-counterpart");
+    expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [twin({ movementType: "out" })] }).verdict).toBe("delete");
+  });
+});
+
+describe("projectDedupeBucketImpact (part=dedupe) — the audit-2b linkage the owner asked to see", () => {
+  test("deleting a duplicate OUT RAISES the bucket's on-hand sum — a negative bucket shrinks toward zero", () => {
+    const current = new Map([["b1", -2]]);
+    const after = projectDedupeBucketImpact(
+      [{ bucketKey: "b1", movementType: "OUT", qty: 2 }],
+      current,
+    );
+    expect(after.get("b1")).toBe(0);
+    expect(current.get("b1")).toBe(-2); // input never mutated
+  });
+
+  test("deleting an IN lowers the sum; ADJUSTMENT reverses its signed qty; multiple deletions accumulate", () => {
+    const after = projectDedupeBucketImpact(
+      [
+        { bucketKey: "b1", movementType: "IN", qty: 3 },
+        { bucketKey: "b1", movementType: "OUT", qty: 1 },
+        { bucketKey: "b2", movementType: "ADJUSTMENT", qty: -2 },
+      ],
+      new Map([["b1", 5], ["b2", -4]]),
+    );
+    expect(after.get("b1")).toBe(3); // 5 - 3 (IN removed) + 1 (OUT removed)
+    expect(after.get("b2")).toBe(-2); // removing a -2 adjustment raises by 2
   });
 });

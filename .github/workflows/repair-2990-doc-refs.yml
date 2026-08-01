@@ -28,6 +28,15 @@ name: Repair 2990 doc references (DRY-RUN gated)
 # bucket and at the landed unit cost its own sibling movement proves. The
 # `grns` input names the target GRNs; anything ambiguous is refused.
 #
+# Part `dedupe` (2026-08-01, owner authorization "继续 全部可以" including
+# removal): DELETE the movement+consumption pairs part `ids` classifies
+# duplicate-of-real — only when the real document carries a FULL-ROW twin
+# (same company, product, variant, warehouse, movement_type, qty). The delete
+# reverses the duplicate's whole ledger effect in one transaction (consumed
+# lots get their qty_remaining restored), prints every deleted row's old
+# values in dry run AND apply, and prints the per-bucket movement-sum impact
+# (duplicate OUTs double-decrement on-hand — the audit-2b linkage).
+#
 # A token is rewritten ONLY when it resolves to nothing as stored, resolves to
 # exactly ONE document when prefixed with the owning row's own company code, and
 # that document belongs to the same company. Doc-number tails collide across
@@ -59,6 +68,7 @@ on:
           - consumptions
           - ids
           - grn-gap
+          - dedupe
       grns:
         description: "part grn-gap only: comma-separated GRN numbers (default the 3a-implicated one)"
         required: false

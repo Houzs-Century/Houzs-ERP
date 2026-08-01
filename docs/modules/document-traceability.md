@@ -262,6 +262,23 @@ somehow still reads short. The movement is timestamped NOW — the unit enters
 FIFO at the repair date; backdating would rewrite the consumption chronology.
 The `grns` workflow input names the targets (default the one 3a implicated).
 
+**Part `dedupe` (2026-08-01, owner authorization "继续 全部可以" including
+removal).** The rows part `ids` classifies `duplicate-of-real` may now be
+DELETED — under a rule STRICTER than the index collision that classified
+them: the real document must carry a FULL-ROW twin, same (company, product,
+variant, warehouse, movement_type, qty), because `uq_inv_mov_do_source` is
+keyed without movement_type and proves nothing about qty
+(`classifyDuplicateMovement`). The delete reverses the duplicate's whole
+ledger effect in ONE transaction — consumptions go with the movement, each
+consumed lot's `qty_remaining` is restored (so audit-2a conservation holds by
+construction), any drift aborts everything. Old values of every deleted row
+print in dry run AND apply, plus the per-bucket movement-sum before -> after
+(duplicate OUTs double-decrement on-hand, so audit-2b negative buckets should
+shrink — the output shows whether they do). Run order: `ids` APPLY first — a
+self-collision's surviving sibling becomes the real twin that licenses
+deleting the other. All of it is pinned by `tests-pg/idRestampExec.pg.test.ts`
+against a real unique index in CI's postgres container.
+
 **Line-basis fallback since the 2026-08-01 live run** (which planned zero:
 the short product had written NO movement at all, so no sibling existed): when
 the sibling rule refuses with `no-sibling`, the insert falls back to the GRN
