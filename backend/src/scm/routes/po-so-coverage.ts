@@ -62,6 +62,7 @@ import { computeVariantKey } from '../shared';
 import { parseFromSosNote } from './document-flow';
 import { computeMrp, mrpReverseCoverage } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
+import { tracePoDeliveredLedger } from '../lib/source-po-trace';
 import type { Env, Variables } from '../env';
 
 export const poSoCoverage = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -352,44 +353,17 @@ async function resolveDeliveredSoLock(
   const empty = { bySku: new Map<string, OriginAssignment[]>(), docNos: [] as string[] };
   if (!poNumber) return empty;
   try {
-    // (do id, product_code, variant_key) buckets whose goods came from THIS PO.
-    const bucketKeys = new Set<string>();
+    // (do id, product_code, variant_key) buckets whose goods came from THIS PO —
+    // batched OUT movements ∪ consumptions of this PO's lots, from the ONE
+    // shared ledger resolver (lib/source-po-trace.ts) the Delivered column also
+    // reads, so the two columns can never disagree.
+    const ledger = await tracePoDeliveredLedger(sb, [poNumber]);
+    const bucketKeys = ledger.bucketsByPo.get(poNumber) ?? new Set<string>();
     const doIds = new Set<string>();
-    const addBucket = (doId: string | null, code: string | null, vk: string | null): void => {
-      if (!doId || !code) return;
-      bucketKeys.add(`${doId}::${code}::${vk ?? ''}`);
-      doIds.add(doId);
-    };
-
-    // Sofa / drop-ship: the DO OUT movement itself carries batch_no = PO number.
-    const { data: movs } = await sb.from('inventory_movements')
-      .select('source_doc_id, product_code, variant_key, batch_no')
-      .eq('source_doc_type', 'DO')
-      .eq('movement_type', 'OUT')
-      .eq('batch_no', poNumber);
-    for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; product_code: string | null; variant_key: string | null }>) {
-      addBucket(m.source_doc_id, m.product_code, m.variant_key);
+    for (const k of bucketKeys) {
+      const doId = k.split('::')[0];
+      if (doId) doIds.add(doId);
     }
-
-    // Plain-FIFO (bed frame / mattress / accessories): the OUT is un-batched, but
-    // the consumed lots ARE batched (GRN stamps batch_no = PO number). Find this
-    // PO's lots, then the DO consumptions of them.
-    try {
-      const { data: lots } = await sb.from('inventory_lots')
-        .select('id').eq('batch_no', poNumber);
-      const lotIds = [...new Set(((lots ?? []) as Array<{ id: string }>).map((l) => l.id).filter(Boolean))];
-      for (let i = 0; i < lotIds.length; i += 300) {
-        const chunk = lotIds.slice(i, i + 300);
-        if (chunk.length === 0) continue;
-        const { data: cons } = await sb.from('inventory_lot_consumptions')
-          .select('source_doc_id, product_code, variant_key')
-          .eq('source_doc_type', 'DO')
-          .in('lot_id', chunk);
-        for (const r of (cons ?? []) as Array<{ source_doc_id: string | null; product_code: string | null; variant_key: string | null }>) {
-          addBucket(r.source_doc_id, r.product_code, r.variant_key);
-        }
-      }
-    } catch { /* consumption / lot table absent — movement batches stand alone */ }
 
     if (doIds.size === 0) return empty;
     const doIdList = [...doIds];
@@ -767,48 +741,21 @@ export async function resolvePoSoCoverageForPos(
     }
   } catch { /* MRP unavailable — floating stays empty; stored/delivered still show */ }
 
-  // ── (a) DELIVERED → DO-lock — batched across every PO number on the page ──
-  const bucketsByPo = new Map<string, Set<string>>();
+  // ── (a) DELIVERED → DO-lock — batched across every PO number on the page,
+  //    from the ONE shared ledger resolver (the same pass the Delivered
+  //    columns read — lib/source-po-trace.ts). ──
+  let bucketsByPo = new Map<string, Set<string>>();
   const doIds = new Set<string>();
   try {
-    const { data: movs } = await sb.from('inventory_movements')
-      .select('source_doc_id, product_code, variant_key, batch_no')
-      .eq('source_doc_type', 'DO')
-      .eq('movement_type', 'OUT')
-      .in('batch_no', poNumbers);
-    for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; product_code: string | null; variant_key: string | null; batch_no: string | null }>) {
-      if (!m.batch_no || !m.source_doc_id || !m.product_code) continue;
-      const set = bucketsByPo.get(m.batch_no) ?? new Set<string>();
-      set.add(`${m.source_doc_id}::${m.product_code}::${m.variant_key ?? ''}`);
-      bucketsByPo.set(m.batch_no, set);
-      doIds.add(m.source_doc_id);
+    const ledger = await tracePoDeliveredLedger(sb, poNumbers);
+    bucketsByPo = ledger.bucketsByPo;
+    for (const set of bucketsByPo.values()) {
+      for (const k of set) {
+        const doId = k.split('::')[0];
+        if (doId) doIds.add(doId);
+      }
     }
-    try {
-      const { data: lots } = await sb.from('inventory_lots')
-        .select('id, batch_no').in('batch_no', poNumbers);
-      const lotPo = new Map<string, string>();
-      for (const l of (lots ?? []) as Array<{ id: string; batch_no: string | null }>) {
-        if (l.id && l.batch_no) lotPo.set(l.id, l.batch_no);
-      }
-      const lotIds = [...lotPo.keys()];
-      for (let k = 0; k < lotIds.length; k += 300) {
-        const chunk = lotIds.slice(k, k + 300);
-        if (chunk.length === 0) continue;
-        const { data: cons } = await sb.from('inventory_lot_consumptions')
-          .select('source_doc_id, product_code, variant_key, lot_id')
-          .eq('source_doc_type', 'DO')
-          .in('lot_id', chunk);
-        for (const r of (cons ?? []) as Array<{ source_doc_id: string | null; product_code: string | null; variant_key: string | null; lot_id: string }>) {
-          const poNum = lotPo.get(r.lot_id);
-          if (!poNum || !r.source_doc_id || !r.product_code) continue;
-          const set = bucketsByPo.get(poNum) ?? new Set<string>();
-          set.add(`${r.source_doc_id}::${r.product_code}::${r.variant_key ?? ''}`);
-          bucketsByPo.set(poNum, set);
-          doIds.add(r.source_doc_id);
-        }
-      }
-    } catch { /* consumption / lot table absent — movement batches stand alone */ }
-  } catch { /* movements table shape differs — DO-lock simply yields nothing */ }
+  } catch { /* ledger unreadable — DO-lock simply yields nothing */ }
 
   const doLockByPo = new Map<string, Map<string, OriginAssignment[]>>();
   if (doIds.size > 0) {
@@ -912,86 +859,10 @@ export type PoDeliveredSummary = { deliveredDos: DeliveredDo[] };
 const sortDeliveredDos = (dos: DeliveredDo[]): DeliveredDo[] =>
   dos.sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true }));
 
-/* Shared ledger read: for a set of PO numbers, resolve (poNumber → (doId → qty
-   shipped)) plus the (poNumber → (doId → (code → qty))) breakdown the single-doc
-   drill-down needs.
-
-   Qty MUST NOT double-count. A sofa/allocated-batch OUT writes BOTH a batched
-   movement (qty) AND a consumption of that same batched lot (qty_consumed), so
-   summing both would report 2x. So consumptions are the PRIMARY qty source (they
-   exist for every category that draws from a lot), and the batched OUT movement
-   only fills the DROP-SHIP gap — a drop-ship OUT ships before receipt against an
-   EXPECTED batch and consumes no lot, so its (po, do, code) bucket has no
-   consumption. Plain-FIFO OUTs are un-batched, so the movement `.in('batch_no',
-   …)` filter never matches them; their consumed lots ARE batched and carry them. */
-async function deliveredLedgerForPoNumbers(
-  sb: any,
-  poNumbers: string[],
-): Promise<{
-  qtyByPoDo: Map<string, Map<string, number>>;
-  qtyByPoDoCode: Map<string, Map<string, Map<string, number>>>;
-  doIds: Set<string>;
-}> {
-  const qtyByPoDo = new Map<string, Map<string, number>>();
-  const qtyByPoDoCode = new Map<string, Map<string, Map<string, number>>>();
-  const doIds = new Set<string>();
-  // (po::do::code) buckets a consumption already accounted for — a batched OUT
-  // movement for the same bucket is then skipped so its qty is not counted twice.
-  const consumedBuckets = new Set<string>();
-  const bump = (poNum: string | null, doId: string | null, code: string | null, qty: number): void => {
-    if (!poNum || !doId) return;
-    const q = Math.abs(Number(qty) || 0);
-    const inner = qtyByPoDo.get(poNum) ?? new Map<string, number>();
-    inner.set(doId, (inner.get(doId) ?? 0) + q);
-    qtyByPoDo.set(poNum, inner);
-    if (code) {
-      const byDo = qtyByPoDoCode.get(poNum) ?? new Map<string, Map<string, number>>();
-      const byCode = byDo.get(doId) ?? new Map<string, number>();
-      byCode.set(code, (byCode.get(code) ?? 0) + q);
-      byDo.set(doId, byCode);
-      qtyByPoDoCode.set(poNum, byDo);
-    }
-    doIds.add(doId);
-  };
-  if (poNumbers.length === 0) return { qtyByPoDo, qtyByPoDoCode, doIds };
-  // 1. Consumptions FIRST (the primary qty source, no double count).
-  try {
-    const { data: lots } = await sb.from('inventory_lots').select('id, batch_no').in('batch_no', poNumbers);
-    const lotPo = new Map<string, string>();
-    for (const l of (lots ?? []) as Array<{ id: string; batch_no: string | null }>) {
-      if (l.id && l.batch_no) lotPo.set(l.id, l.batch_no);
-    }
-    const lotIds = [...lotPo.keys()];
-    for (let k = 0; k < lotIds.length; k += 300) {
-      const chunk = lotIds.slice(k, k + 300);
-      if (chunk.length === 0) continue;
-      const { data: cons } = await sb.from('inventory_lot_consumptions')
-        .select('source_doc_id, lot_id, product_code, qty_consumed')
-        .eq('source_doc_type', 'DO').in('lot_id', chunk);
-      for (const r of (cons ?? []) as Array<{ source_doc_id: string | null; lot_id: string; product_code: string | null; qty_consumed: number | null }>) {
-        const poNum = lotPo.get(r.lot_id) ?? null;
-        if (poNum && r.source_doc_id && r.product_code) {
-          consumedBuckets.add(`${poNum}::${r.source_doc_id}::${r.product_code}`);
-        }
-        bump(poNum, r.source_doc_id, r.product_code, Number(r.qty_consumed ?? 0));
-      }
-    }
-  } catch { /* consumption / lot table absent — movement batches stand alone */ }
-  // 2. Batched OUT movements — only for buckets NO consumption covered (drop-ship).
-  try {
-    const { data: movs } = await sb.from('inventory_movements')
-      .select('source_doc_id, product_code, batch_no, qty')
-      .eq('source_doc_type', 'DO').eq('movement_type', 'OUT').in('batch_no', poNumbers);
-    for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; product_code: string | null; batch_no: string | null; qty: number | null }>) {
-      if (m.batch_no && m.source_doc_id && m.product_code
-        && consumedBuckets.has(`${m.batch_no}::${m.source_doc_id}::${m.product_code}`)) {
-        continue; // already counted via its lot consumption — skip to avoid 2x
-      }
-      bump(m.batch_no, m.source_doc_id, m.product_code, Number(m.qty ?? 0));
-    }
-  } catch { /* movements shape differs — consumption path still contributes */ }
-  return { qtyByPoDo, qtyByPoDoCode, doIds };
-}
+/* The ledger read itself (qty per (po, do) + per (po, do, code) + the DO-lock's
+   bucket keys) lives in lib/source-po-trace.ts (tracePoDeliveredLedger) — ONE
+   shared pass with the double-count guard (consumptions primary, batched OUT
+   movements fill the drop-ship gap only). This file only shapes its output. */
 
 /* Non-cancelled do_number for a set of DO ids — company-scoped, batched. A
    CANCELLED DO is deliberately absent (it did not deliver). */
@@ -1034,7 +905,7 @@ export async function resolveDeliveredDosForPos(
   }
   const poNumbers = [...new Set([...poNumberById.values()].filter(Boolean))];
   if (poNumbers.length === 0) return out;
-  const { qtyByPoDo, doIds } = await deliveredLedgerForPoNumbers(sb, poNumbers);
+  const { qtyByPoDo, doIds } = await tracePoDeliveredLedger(sb, poNumbers);
   if (doIds.size === 0) return out;
   const doNoById = await nonCancelledDoNumbers(sb, c, [...doIds]);
   for (const id of poNumberById.keys()) {
@@ -1062,7 +933,7 @@ async function resolveDeliveredBySkuForPo(
 ): Promise<Map<string, DeliveredDo[]>> {
   const out = new Map<string, DeliveredDo[]>();
   if (!poNumber) return out;
-  const { qtyByPoDoCode, doIds } = await deliveredLedgerForPoNumbers(sb, [poNumber]);
+  const { qtyByPoDoCode, doIds } = await tracePoDeliveredLedger(sb, [poNumber]);
   if (doIds.size === 0) return out;
   const doNoById = await nonCancelledDoNumbers(sb, c, [...doIds]);
   const byDo = qtyByPoDoCode.get(poNumber);

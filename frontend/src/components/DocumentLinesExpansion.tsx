@@ -12,6 +12,7 @@
 // DocumentDrillLine[] before handing them here — this component is purely
 // presentational so no list's field mapping leaks into another's.
 
+import { useState, type ReactNode } from "react";
 import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
 import { ItemGroupPill } from "../vendor/scm/lib/category-badges";
 import type { OriginAssignment } from "../vendor/scm/lib/flow-queries";
@@ -44,6 +45,10 @@ export type DocumentDrillLine = {
   // came from — the durable batch_no = source-PO hard link, not a guess. Empty /
   // absent → the Source PO cell shows a dash (plain FIFO / pre-batch stock).
   sourcePos?: string[];
+  // SALES docs: the line shipped (at least partly) from a PO-less stock
+  // ADJUSTMENT lot (free gift / add-back). Renders a "STOCK ADJ" chip so the
+  // cell is explained rather than blank.
+  sourceAdj?: boolean;
   // PURCHASE docs (PO / GRN / PI): the Delivery Order(s) that have shipped this
   // line's goods (batch_no = this PO) with the qty shipped per DO. Empty / absent
   // → the Delivered cell shows a dash (nothing delivered against this line yet).
@@ -92,6 +97,62 @@ export const sourcePoTitle = (poNo: string): string =>
   /^\d+-/.test(poNo)
     ? `Source purchase order ${poNo} — the "${poNo.split("-")[0]}-" prefix is the company that raised it.`
     : `Source purchase order ${poNo} — no company prefix, so it was raised under the base company (Houzs).`;
+
+/* "STOCK ADJ" — goods that entered stock through a positive ADJUSTMENT (free
+   gift / cancel add-back), which is legitimately PO-less BY DESIGN. The owner's
+   rule is that a READY / delivered line must never show a blank source, so
+   these lines say what they are instead of a dash. */
+export function StockAdjChip() {
+  return (
+    <span
+      title="Stock adjustment — these goods entered stock without a purchase order (free gift / cancel add-back). PO-less by design."
+      className="rounded border border-border-subtle bg-surface-dim px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary"
+    >
+      STOCK ADJ
+    </span>
+  );
+}
+
+/* ChipOverflow — the LIST-cell scale rule (owner 2026-08-01: "枕头订500个…
+   100张SO…UI直接爆开"). A list cell renders the first `limit` chips plus an
+   inline "+N" toggle that EXPANDS IN PLACE to the full list — nothing is
+   hover-only, nothing is hidden without a visible count, and the toggle is a
+   real button so it works on mobile tap. Drill-down / detail rows do NOT use
+   this — they always render the full list (this supersedes the 2026-07-31
+   "no collapse anywhere" rule for LIST cells only; the no-hidden-information
+   intent survives because the expansion is one tap and in place). */
+export function ChipOverflow({ chips, limit = 4 }: { chips: ReactNode[]; limit?: number }) {
+  const [expanded, setExpanded] = useState(false);
+  if (chips.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
+  const shown = expanded ? chips : chips.slice(0, limit);
+  const hidden = chips.length - shown.length;
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-1">
+      {shown}
+      {(hidden > 0 || expanded) && chips.length > limit && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          title={expanded ? "Collapse" : `Show all ${chips.length}`}
+          className="rounded border border-dashed border-border px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary hover:border-accent hover:text-accent"
+        >
+          {expanded ? "less" : `+${hidden}`}
+        </button>
+      )}
+    </span>
+  );
+}
+
+/* One rule for the Delivered chips' quantity suffix (owner 2026-08-01, off the
+   2990-GRN-2607-020 screenshot): a MULTI-DO line must show EVERY qty — two
+   bare chips read as one unit shipped twice, when it is really a 2-unit batch
+   split 1+1 (audit 10c proved zero double-attribution). A single-DO chip keeps
+   the earlier rule: the multiplier only when qty > 1 ("x1" is noise there). */
+export const showDeliveredQty = (qty: number, chipCount: number): boolean =>
+  chipCount > 1 || qty > 1;
 
 // Column widths are driven by which optional columns are on, so the template is
 // built at RUNTIME and applied via an inline style — a dynamically-joined
@@ -288,13 +349,13 @@ export function DocumentLinesExpansion({
                     delivered.map((d) => {
                       const base =
                         "rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary";
-                      // "x1" is noise on a chip that already names one DO
-                      // (owner 2026-08-01: "不要放成 1"). Only a multi-unit
-                      // shipment earns the multiplier.
+                      // Multi-DO lines ALWAYS show each qty (a 1+1 batch split
+                      // must not read as one unit shipped twice); a single-DO
+                      // chip keeps the "no x1 noise" rule (owner 2026-08-01).
                       const label = (
                         <>
                           {d.doNo}
-                          {d.qty > 1 && (
+                          {showDeliveredQty(d.qty, delivered.length) && (
                             <span className="text-ink-muted">{` x${d.qty}`}</span>
                           )}
                         </>
@@ -321,16 +382,19 @@ export function DocumentLinesExpansion({
               )}
               {showSourcePo && (
                 <span className="flex min-w-0 flex-wrap items-center gap-1">
-                  {sourcePos.length > 0 ? (
-                    sourcePos.map((po) => (
-                      <span
-                        key={po}
-                        title={sourcePoTitle(po)}
-                        className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink"
-                      >
-                        {po}
-                      </span>
-                    ))
+                  {sourcePos.length > 0 || l.sourceAdj ? (
+                    <>
+                      {sourcePos.map((po) => (
+                        <span
+                          key={po}
+                          title={sourcePoTitle(po)}
+                          className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink"
+                        >
+                          {po}
+                        </span>
+                      ))}
+                      {l.sourceAdj && <StockAdjChip />}
+                    </>
                   ) : (
                     <span className="text-[11px] text-ink-muted">—</span>
                   )}
@@ -349,11 +413,13 @@ export function DocumentLinesExpansion({
 // PO / GRN / PI / DO lists. It is the one-line twin of the drill-down's per-line
 // Assigned-SO cell above: a FLOATING (live MRP) assignment reads as a dashed
 // chip with a trailing "~"; a STATIC one (delivered → DO-locked, a stored
-// raise-link, or a DO's own intrinsic SO) reads as a solid chip. EVERY assigned
-// SO renders (owner 2026-07-31 — no "first + N" collapse); they wrap. The
-// primary assignment's delivery date rides inline. `sourceLinked === false` is
-// threaded into the tooltip so the guess-vs-binding distinction (2026-07-29
-// incident) survives even in the compact column.
+// raise-link, or a DO's own intrinsic SO) reads as a solid chip. LIST cells
+// render the first few chips + an in-place "+N" toggle (ChipOverflow — owner
+// 2026-08-01 scale ruling, superseding the 2026-07-31 "no collapse" rule for
+// LIST cells; drill-downs still render every chip). The primary assignment's
+// delivery date rides inline. `sourceLinked === false` is threaded into the
+// tooltip so the guess-vs-binding distinction (2026-07-29 incident) survives
+// even in the compact column.
 // ---------------------------------------------------------------------------
 export function AssignedSoCell({
   assignments,
@@ -367,9 +433,6 @@ export function AssignedSoCell({
   const list = assignments ?? [];
   if (list.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
   const base = "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
-  // ALL assigned SOs render (owner 2026-07-31 — no "first + N" collapse); the
-  // flex-wrap lays them out. Each chip keeps its own floating(guess) vs
-  // solid(linked) tone + tooltip. The primary's delivery date rides inline.
   const chipTitle = (a: OriginAssignment): string =>
     a.locked === false
       ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
@@ -382,53 +445,54 @@ export function AssignedSoCell({
     a.locked === false
       ? "border border-dashed border-border text-ink-secondary"
       : "border border-border-subtle bg-surface-2 text-accent-ink";
-  return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
-      {list.map((a) => {
-        const label = (
-          <>
-            {a.soDocNo}
-            {a.locked === false && <span className="text-ink-muted">{" ~"}</span>}
-          </>
-        );
-        // Each SO carries its OWN delivery date inline (owner: show every SO with
-        // its date, no collapse). The chip + its date form one wrapping unit.
-        return (
-          <span key={a.soDocNo} className="inline-flex items-center gap-1">
-            {onOpenSo ? (
-              <button
-                type="button"
-                title={chipTitle(a)}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenSo(a.soDocNo);
-                }}
-                className={cn(base, chipTone(a), "hover:border-accent hover:text-accent")}
-              >
-                {label}
-              </button>
-            ) : (
-              <span title={chipTitle(a)} className={cn(base, chipTone(a))}>
-                {label}
-              </span>
-            )}
-            {a.deliveryDate && (
-              <span className="whitespace-nowrap font-mono text-[10.5px] text-ink-muted">
-                {formatDate(a.deliveryDate)}
-              </span>
-            )}
+  // Each SO carries its OWN delivery date inline; the chip + its date form one
+  // wrapping unit. ChipOverflow applies the list-cell "+N" rule.
+  const chips = list.map((a) => {
+    const label = (
+      <>
+        {a.soDocNo}
+        {a.locked === false && <span className="text-ink-muted">{" ~"}</span>}
+      </>
+    );
+    return (
+      <span key={a.soDocNo} className="inline-flex items-center gap-1">
+        {onOpenSo ? (
+          <button
+            type="button"
+            title={chipTitle(a)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenSo(a.soDocNo);
+            }}
+            className={cn(base, chipTone(a), "hover:border-accent hover:text-accent")}
+          >
+            {label}
+          </button>
+        ) : (
+          <span title={chipTitle(a)} className={cn(base, chipTone(a))}>
+            {label}
           </span>
-        );
-      })}
-    </span>
-  );
+        )}
+        {a.deliveryDate && (
+          <span className="whitespace-nowrap font-mono text-[10.5px] text-ink-muted">
+            {formatDate(a.deliveryDate)}
+          </span>
+        )}
+      </span>
+    );
+  });
+  return <ChipOverflow chips={chips} />;
 }
 
 // ---------------------------------------------------------------------------
 // DeliveredCell — the COLLAPSED header-row "Delivered" summary for the PO / GRN /
-// PI lists: EVERY Delivery Order that has shipped this purchase document's goods
-// (batch_no = the PO number), with the qty shipped per DO. No "first + N"
-// collapse (owner 2026-07-31) — all DOs render and wrap. A dash when nothing has
+// PI lists: every Delivery Order that has shipped this purchase document's goods
+// (batch_no = the PO number), with the qty shipped per DO. A MULTI-DO cell shows
+// each chip's qty even when it is 1 — a 2-unit batch split 1+1 across two DOs
+// must not read as one unit shipped twice (owner 2026-08-01, off the
+// 2990-GRN-2607-020 screenshot; audit 10c proved zero double-attribution). A
+// single-DO chip keeps the "no x1 noise" rule. List cells overflow past a few
+// chips into an in-place "+N" toggle (ChipOverflow). A dash when nothing has
 // shipped yet.
 // ---------------------------------------------------------------------------
 export function DeliveredCell({
@@ -442,37 +506,35 @@ export function DeliveredCell({
   if (list.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
   const base =
     "rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary";
-  return (
-    <span className="flex min-w-0 flex-wrap items-center gap-1">
-      {list.map((d) => {
-        // Same rule as the drill-down above: no "x1" (owner 2026-08-01).
-        const label = (
-          <>
-            {d.doNo}
-            {d.qty > 1 && <span className="text-ink-muted">{` x${d.qty}`}</span>}
-          </>
-        );
-        return onOpenDo ? (
-          <button
-            type="button"
-            key={d.doNo}
-            title="A Delivery Order that shipped this document's goods"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenDo(d.doNo);
-            }}
-            className={cn(base, "hover:border-accent hover:text-accent")}
-          >
-            {label}
-          </button>
-        ) : (
-          <span key={d.doNo} className={base}>
-            {label}
-          </span>
-        );
-      })}
-    </span>
-  );
+  const chips = list.map((d) => {
+    const label = (
+      <>
+        {d.doNo}
+        {showDeliveredQty(d.qty, list.length) && (
+          <span className="text-ink-muted">{` x${d.qty}`}</span>
+        )}
+      </>
+    );
+    return onOpenDo ? (
+      <button
+        type="button"
+        key={d.doNo}
+        title="A Delivery Order that shipped this document's goods"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenDo(d.doNo);
+        }}
+        className={cn(base, "hover:border-accent hover:text-accent")}
+      >
+        {label}
+      </button>
+    ) : (
+      <span key={d.doNo} className={base}>
+        {label}
+      </span>
+    );
+  });
+  return <ChipOverflow chips={chips} />;
 }
 
 export default DocumentLinesExpansion;

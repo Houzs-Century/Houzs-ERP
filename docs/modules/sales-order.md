@@ -71,6 +71,29 @@ PostgREST aggregate over the base table (JS-reduce fallback if aggregates are
 disabled). `?status=OTHER` filters to exactly that catch-all bucket; every real
 status stays an exact match.
 
+### Per-line source-PO trace on the detail payload (owner rule 2026-08-01)
+
+`GET /:docNo` and `GET /:docNo/items` stamp, per line, on top of the existing
+`stock_state` / `coverage_po` / `coverage_eta` / `shipped_source_pos`:
+
+| field | meaning |
+|---|---|
+| `shipped_source_adj` | the delivered goods drew (at least partly) from a PO-less stock ADJUSTMENT lot — UI shows "STOCK ADJ", never a blank |
+| `ready_source_pos` | `[{ po, qty, kind: 'po'\|'adjustment' }]` — the PO(s) a READY (allocated, un-shipped) line WILL draw from: sofa = stored `allocated_batch_no` (mig 0121, now in the `ITEM` select), non-sofa = FIFO projection over the bucket's open lots in the engine's consumption order (received_at ASC, id ASC), earlier claims first, off the SAME `computeMrp` result the handler already ran |
+
+Resolution lives in the ONE shared resolver `scm/lib/source-po-trace.ts`
+(`soLineShippedSources` / `soLineReadySourcePos`) — the same lib the DO / SI /
+GRN surfaces read, so all four show identical source data (owner: "在我的 SO、
+DO、SI 里，应该看到的数据都是一致的"). Render side is also ONE component:
+`frontend/src/components/SoSourceChips.tsx` (+ `SoStockPill`) on the list
+drill-down, `SalesOrderDetailV2` (Stock + Incoming PO columns — added
+2026-08-01; the page previously dropped these payload fields entirely) and the
+`?edit=1` editor; mobile twins in `frontend/src/mobile/source-chips.tsx`
+(`MobileSODetail` line pill + chips). Full write-up:
+`docs/modules/document-traceability.md` §2.8, including the lot-batch backfill
+(`backfill-lot-batch-from-docs.mjs`) and the read-only measurement
+(`check-so-source-trace.mjs`).
+
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
 
 `DELETE /:docNo` (`mfg-sales-orders.ts:5555`) hard-deletes a **DRAFT and nothing
