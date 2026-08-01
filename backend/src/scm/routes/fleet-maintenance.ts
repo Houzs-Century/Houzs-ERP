@@ -213,6 +213,10 @@ type Lorry = {
   plate: string;
   type: string | null;
   is_internal: boolean | null;
+  capacity_m3?: number | null;
+  length_ft?: number | null;
+  width_ft?: number | null;
+  height_ft?: number | null;
   warehouse_id: string | null;
   active: boolean | null;
   model: string | null;
@@ -773,7 +777,7 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
 
   const { data: l, error } = await sb
     .from("lorries")
-    .select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes")
+    .select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes, capacity_m3, length_ft, width_ft, height_ft")
     .eq("id", id)
     .maybeSingle();
   if (error) return c.json({ error: "load_failed", reason: error.message }, 500);
@@ -781,10 +785,14 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
   const lorry = l as Lorry;
 
   const nowIso = new Date().toISOString();
-  const [whR, driversR, vaultR, maintR, svcR, plansR, mileageR, breakdownR, woR, woPartsR, componentsR, compEventsR] = await Promise.all([
+  const [whR, driversR, vaultR, attachR, maintR, svcR, plansR, mileageR, breakdownR, woR, woPartsR, componentsR, compEventsR] = await Promise.all([
     lorry.warehouse_id ? sb.from("warehouses").select("code, name").eq("id", lorry.warehouse_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
     sb.from("drivers").select("vehicle, name").eq("active", true),
     sb.from("lorry_compliance_documents").select("*").eq("lorry_id", id).order("issue_date", { ascending: false }).order("expiry_date", { ascending: false }),
+    /* mig 0238 — the vault's FILES. Read by lorry through the join column so one
+       query covers every document; a failure degrades to "no files", never a 500
+       on the whole drawer. */
+    sb.from("lorry_compliance_attachments").select("id, document_id, r2_key, file_name, mime_type, size_bytes, created_at").order("created_at"),
     sb.from("lorry_maintenance").select("unavailable_from, unavailable_to, reason").eq("lorry_id", id).order("unavailable_from", { ascending: false }),
     sb.from("lorry_service_records").select("service_date, odometer_km, next_service_km, next_service_date, cost_centi, workshop, description").eq("lorry_id", id).order("service_date", { ascending: false }).limit(1),
     sb.from("lorry_maintenance_plans").select("*").eq("lorry_id", id),
@@ -799,7 +807,26 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
   const vaultRows = (vaultR.data ?? []) as VaultRow[];
   const { statusDocs } = currentByType(lorry, vaultRows, today);
   const currentVault = currentDocsByType(vaultRows.map((d) => ({ docType: d.doc_type as ComplianceDocType, expiryDate: d.expiry_date, issueDate: d.issue_date })));
-  const byType: Record<string, { currentId: string | null; flatExpiry: string | null; history: ReturnType<typeof shapeDoc>[] }> = {};
+  /* mig 0238 — attach each renewal's FILES to its history row. Grouped once here
+     rather than per type, so the drawer never has to join two arrays itself. */
+  type AttachRow = { id: string; document_id?: string; documentId?: string; r2_key?: string; r2Key?: string; file_name?: string | null; fileName?: string | null; mime_type?: string | null; mimeType?: string | null; size_bytes?: number | null; sizeBytes?: number | null };
+  const filesByDoc = new Map<string, Array<{ id: string; r2Key: string; fileName: string | null; mimeType: string | null; sizeBytes: number | null }>>();
+  for (const a of ((attachR.data ?? []) as AttachRow[])) {
+    const docId = String(a.documentId ?? a.document_id ?? '');
+    if (!docId) continue;
+    const list = filesByDoc.get(docId) ?? [];
+    list.push({
+      id: a.id,
+      r2Key: String(a.r2Key ?? a.r2_key ?? ''),
+      fileName: a.fileName ?? a.file_name ?? null,
+      mimeType: a.mimeType ?? a.mime_type ?? null,
+      sizeBytes: (a.sizeBytes ?? a.size_bytes ?? null) as number | null,
+    });
+    filesByDoc.set(docId, list);
+  }
+  const withFiles = (d: ReturnType<typeof shapeDoc>) => ({ ...d, files: filesByDoc.get(d.id) ?? [] });
+
+  const byType: Record<string, { currentId: string | null; flatExpiry: string | null; history: Array<ReturnType<typeof shapeDoc> & { files: Array<{ id: string; r2Key: string; fileName: string | null; mimeType: string | null; sizeBytes: number | null }> }> }> = {};
   for (const type of COMPLIANCE_DOC_TYPES) {
     const picked = currentVault.get(type);
     const currentRow = picked
@@ -809,7 +836,7 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     byType[type] = {
       currentId: currentRow?.id ?? null,
       flatExpiry: col ? iso(lorry[col]) : null,
-      history: vaultRows.filter((d) => d.doc_type === type).map((d) => shapeDoc(d, today)),
+      history: vaultRows.filter((d) => d.doc_type === type).map((d) => withFiles(shapeDoc(d, today))),
     };
   }
 
@@ -881,6 +908,13 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
       status,
       statusLabel: VEHICLE_STATUS_LABELS[status],
       canDispatch: canDispatch(status),
+      /* WS3 (mig 0209) has stored the box since it shipped; the drawer never
+         showed it. capacity_m3 is DERIVED from L x W x H by the lorries route. */
+      isInternal: lorry.is_internal !== false,
+      capacityM3: lorry.capacity_m3 ?? null,
+      lengthFt: lorry.length_ft ?? null,
+      widthFt: lorry.width_ft ?? null,
+      heightFt: lorry.height_ft ?? null,
     },
     compliance: byType,
     plans: shapedPlans,
@@ -997,6 +1031,104 @@ fleetMaintenance.post("/vehicles/:id/compliance", requireHouzsPerm("fleet.write"
   }
 
   return c.json({ id: inserted?.id }, 201);
+});
+
+// ── Compliance ATTACHMENTS (mig 0238) ────────────────────────────────────────
+// The vault stored a reference NUMBER and no file, and the drawer had no way to
+// add one - owner, 2026-08-01: "为什么我的 Compliance、Road Tax 这些都是不能 Upload
+// 的呢？". These three endpoints are the missing half. Contract copied from the
+// house pattern (projects.ts /:id/attachments): PUT raw binary with ?ext=&name=,
+// server-minted R2 key, POD_BUCKET, and a streamer for reading it back.
+
+const COMPLIANCE_FILE_EXT = new Set(["pdf", "jpg", "jpeg", "png", "webp", "heic"]);
+const COMPLIANCE_FILE_MAX = 15 * 1024 * 1024; // 15 MB - a scanned road tax, not a video
+const COMPLIANCE_MIME: Record<string, string> = {
+  pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg",
+  png: "image/png", webp: "image/webp", heic: "image/heic",
+};
+
+// PUT /vehicles/:id/compliance/:docId/attachments?ext=pdf&name=roadtax.pdf
+fleetMaintenance.put("/vehicles/:id/compliance/:docId/attachments", requireHouzsPerm("fleet.write"), async (c) => {
+  const lorryId = c.req.param("id");
+  const docId = c.req.param("docId");
+  const sb = c.get("supabase");
+
+  const ext = (c.req.query("ext") || "").toLowerCase();
+  if (!COMPLIANCE_FILE_EXT.has(ext)) {
+    return c.json({ error: "bad_extension", reason: `Attach a PDF or an image (got '${ext || "nothing"}').` }, 400);
+  }
+  const fileName = c.req.query("name") || null;
+
+  /* The document must exist AND belong to the lorry in the path - otherwise a
+     known docId would let a caller hang a file off another lorry's renewal. */
+  const { data: doc, error: docErr } = await sb
+    .from("lorry_compliance_documents").select("id, lorry_id").eq("id", docId).maybeSingle();
+  if (docErr) return c.json({ error: "load_failed", reason: docErr.message }, 500);
+  if (!doc) return c.json({ error: "document_not_found" }, 404);
+  const owner = String((doc as Record<string, unknown>).lorryId ?? (doc as Record<string, unknown>).lorry_id ?? "");
+  if (owner !== lorryId) return c.json({ error: "document_not_on_vehicle" }, 404);
+
+  const body = await c.req.arrayBuffer();
+  if (body.byteLength === 0) return c.json({ error: "empty_file" }, 400);
+  if (body.byteLength > COMPLIANCE_FILE_MAX) {
+    return c.json({ error: "file_too_large", reason: "Max 15MB." }, 400);
+  }
+
+  const contentType = COMPLIANCE_MIME[ext] ?? "application/octet-stream";
+  /* Server-minted: the client never supplies a key, so it cannot point a row at
+     an arbitrary bucket object. */
+  const key = `fleet/compliance/${lorryId}/${docId}/${Date.now()}.${ext}`;
+  await c.env.POD_BUCKET.put(key, body, { httpMetadata: { contentType } });
+
+  const { data: inserted, error } = await sb.from("lorry_compliance_attachments").insert({
+    company_id: activeCompanyId(c) ?? null,
+    document_id: docId,
+    r2_key: key,
+    file_name: fileName,
+    mime_type: contentType,
+    size_bytes: body.byteLength,
+    uploaded_by: c.get("houzsUser")?.id ?? null,
+  }).select("id").single();
+  if (error) return c.json({ error: "insert_failed", reason: error.message }, 500);
+
+  return c.json({ id: inserted?.id, r2Key: key, fileName, mimeType: contentType, sizeBytes: body.byteLength }, 201);
+});
+
+// DELETE /compliance-attachments/:attId - drops the row AND the R2 object.
+fleetMaintenance.delete("/compliance-attachments/:attId", requireHouzsPerm("fleet.write"), async (c) => {
+  const attId = c.req.param("attId");
+  const sb = c.get("supabase");
+
+  const { data: row, error: loadErr } = await sb
+    .from("lorry_compliance_attachments").select("id, r2_key").eq("id", attId).maybeSingle();
+  if (loadErr) return c.json({ error: "load_failed", reason: loadErr.message }, 500);
+  if (!row) return c.json({ error: "attachment_not_found" }, 404);
+
+  const { error } = await sb.from("lorry_compliance_attachments").delete().eq("id", attId);
+  if (error) return c.json({ error: "delete_failed", reason: error.message }, 500);
+
+  /* Row first, object second. If the object delete fails the bucket keeps an
+     unreferenced blob, which is harmless; the reverse order could leave a row
+     pointing at nothing, which the drawer would render as a broken file. */
+  const key = String((row as Record<string, unknown>).r2Key ?? (row as Record<string, unknown>).r2_key ?? "");
+  if (key) { try { await c.env.POD_BUCKET.delete(key); } catch { /* see above */ } }
+
+  return c.json({ ok: true });
+});
+
+// GET /compliance-attachments/:key{.+} - stream it back. The area guard and
+// fleet.read have already run; {.+} captures the slashes in the key.
+fleetMaintenance.get("/compliance-attachments/:key{.+}", requireHouzsPerm("fleet.read"), async (c) => {
+  const key = c.req.param("key");
+  if (!key.startsWith("fleet/compliance/")) return c.json({ error: "not_found" }, 404);
+  const obj = await c.env.POD_BUCKET.get(key);
+  if (!obj) return c.json({ error: "not_found" }, 404);
+  return new Response(obj.body as ReadableStream, {
+    headers: {
+      "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream",
+      "Cache-Control": "private, max-age=3600",
+    },
+  });
 });
 
 // ── POST /vehicles/:id/plans — create OR update the plan for one component ───
