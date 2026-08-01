@@ -1,0 +1,77 @@
+name: Restamp DO actual cost (DRY-RUN gated)
+
+# Ledger-perfection W5a (owner ruling 2026-08-01): after the movement/lot
+# repairs (doc-ref ids, GRN inbound gap, variant relabel, basis-cost seed),
+# re-derive the DO line costs so every shipped DO reads consistent with the
+# now-correct ledger — and, by default, re-copy those costs onto the Sales
+# Invoices that bill them (the same DO -> SI chain production runs after a
+# receipt-time reconcile).
+#
+# REUSE, NOT REPLICATION: APPLY drives the REAL restampDoActualCost
+# (src/scm/routes/delivery-orders-mfg.ts) and restampSiFromDo
+# (src/scm/lib/recost.ts) once per DO — the exact functions every ship /
+# line-edit / recost already runs. Both are idempotent; a second APPLY run
+# changes nothing. DRY-RUN needs only DATABASE_URL (read-only indicator);
+# APPLY additionally needs the PostgREST creds the canonical functions talk
+# through (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY — same secrets as the
+# "Recompute 2990 SO stock allocation" workflow).
+#
+# Companion dispatches for the rest of W5 (documented here so the sequence is
+# one place):
+#   W5b  Actions -> "Recompute 2990 SO stock allocation (DRY-RUN gated)"
+#        apply=1 — the canonical GLOBAL allocator recompute (idempotent).
+#   W5c  Actions -> "Diag PO receipt drift" (also scheduled daily) — verify
+#        received_qty still matches the GRN lines; expected clean (verify-only).
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      dos:
+        description: "Optional comma-separated do_number list to scope to (blank = every shipped non-cancelled DO, both companies)"
+        required: false
+        default: ""
+        type: string
+      only_stale:
+        description: "1 = restamp only DOs the indicator flags (plus any named in dos); 0 = the full sweep"
+        required: false
+        default: "0"
+        type: string
+      include_si:
+        description: "1 (default) = also restampSiFromDo for changed/disagreeing DOs; 0 = DO lines only"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: restamp-do-actual-cost
+  cancel-in-progress: false
+
+jobs:
+  restamp:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/restamp-do-actual-cost.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          APPLY: ${{ inputs.apply }}
+          DOS: ${{ inputs.dos }}
+          ONLY_STALE: ${{ inputs.only_stale }}
+          INCLUDE_SI: ${{ inputs.include_si }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
