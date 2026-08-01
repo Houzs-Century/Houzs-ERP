@@ -571,6 +571,34 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice(`   - with a STORED so_item_id                : ${linked_po_lines}`);
   notice(`   - POs carrying a 'From SOs:' note         : ${note_pos}`);
 
+  /* ── (C2) THE STORED LINK vs THE POOL ─────────────────────────────────── */
+  notice("");
+  notice("  ---- (C2) a STORED link MRP's pooling cannot see ----");
+  notice("  A PO line raised FROM an SO line carries so_item_id, but MRP ignores that link and");
+  notice("  pools by (warehouse, item_code, variant_key). If the PO line's bucket differs from");
+  notice("  its own SO line's bucket, the two never meet: the SO shows a shortage while the PO");
+  notice("  it was literally raised from shows no assigned SO. Same document, two buckets.");
+  const demandById = new Map(demand.map((r) => [r.id, r]));
+  const mismatch = { warehouse: [], variant: [], code: [], soGone: 0 };
+  for (const e of poOpen) {
+    if (!e.so_item_id) continue;
+    const so = demandById.get(e.so_item_id);
+    if (!so) { mismatch.soGone += 1; continue; }
+    const soKey = composite(so.warehouse_id ?? null, so.item_code, computeVariantKey(so.item_group, so.variants));
+    if (soKey === e.bucketKey) continue;
+    const row = { po: e.po_number, code: e.material_code, soDoc: so.doc_no, soKey, poKey: e.bucketKey };
+    if (so.item_code !== e.material_code) mismatch.code.push(row);
+    else if ((so.warehouse_id ?? null) !== (e.poWh ?? null)) mismatch.warehouse.push(row);
+    else mismatch.variant.push(row);
+  }
+  notice(`  open PO lines whose stored SO line is no longer live demand : ${mismatch.soGone}  (shipped/closed — expected)`);
+  notice(`  stored links split by WAREHOUSE : ${mismatch.warehouse.length}  (PO ships to a different warehouse than the SO draws from)`);
+  for (const m of mismatch.warehouse.slice(0, 15)) notice(`      ${pad(m.po, 18)} ${pad(m.code, 24)} SO ${pad(m.soDoc, 18)} soKey=${m.soKey} poKey=${m.poKey}`);
+  notice(`  stored links split by VARIANT   : ${mismatch.variant.length}  (same SKU + warehouse, different fabric/leg/gap key)`);
+  for (const m of mismatch.variant.slice(0, 15)) notice(`      ${pad(m.po, 18)} ${pad(m.code, 24)} SO ${pad(m.soDoc, 18)} soKey=${m.soKey} poKey=${m.poKey}`);
+  notice(`  stored links split by ITEM CODE : ${mismatch.code.length}  (cross-category / substituted SKU)`);
+  for (const m of mismatch.code.slice(0, 15)) notice(`      ${pad(m.po, 18)} ${pad(m.code, 24)} SO ${pad(m.soDoc, 18)} soKey=${m.soKey} poKey=${m.poKey}`);
+
   /* ═══════════════ (D) DOUBLE-ALLOCATION ════════════════════════════════ */
   notice("");
   notice("======== (D) CAN THE SAME UNIT BE PROMISED TWICE? ========");
@@ -580,8 +608,25 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice(`     of its own falls back to the same-warehouse EMPTY-variant PO pool. The R4 fix stops`);
   notice(`     it being added ON TOP of a bucket's own supply — it does NOT stop TWO different`);
   notice(`     variant buckets of the same (warehouse, item) each cloning the SAME legacy pool.`);
-  notice(`     (warehouse,item) groups where >1 variant bucket draws on one legacy pool: ${legacyShared.length}`);
+  notice(`     Each bucket clones the legacy entries (mrp.ts L890 .map(p => ({...p}))), so two clones
+     decrement independently and the SAME physical units cover both.
+     BLAST RADIUS IS NARROW BY CONSTRUCTION: variant_key is '' for MATTRESS and ACCESSORY
+     (ATTRS_BY_GROUP has no attributes for them), so 'vkey !== ""' is false and they never
+     take the fallback. The SOFA path (mrp.ts L1021) does not fold the legacy pool in at
+     all. That leaves BEDFRAME as the only category this can reach.
+     (warehouse,item) groups where >1 variant bucket draws on one legacy pool: ${legacyShared.length}`);
   for (const l of legacyShared.slice(0, 20)) notice(`      ${pad(l.gk, 46)} variants: ${l.vkeys.map((v) => v || "''").join(" ; ")}`);
+  const legacySofaOrphans = [];
+  for (const [k, b] of sofaBuckets) {
+    if (b.vkey === "") continue;
+    if ((poByKey.get(k) ?? []).length > 0) continue;
+    const legacyKey = composite(b.whId, b.code, "");
+    if ((poByKey.get(legacyKey) ?? []).length > 0) legacySofaOrphans.push(k);
+  }
+  notice(`  1b. THE MIRROR IMAGE: sofa buckets with no own PO supply while a legacy '' PO for the`);
+  notice(`      same (warehouse, item) IS open — invisible to the sofa path, so it reads as a`);
+  notice(`      phantom shortage: ${legacySofaOrphans.length}`);
+  for (const k of legacySofaOrphans.slice(0, 15)) notice(`      ${k}`);
   const claimTotals = new Map();
   for (const [poNumber, claims] of poConsumedBy) claimTotals.set(poNumber, claims.reduce((a, c) => a + c.qty, 0));
   const poLeftByNumber = new Map();
