@@ -1,0 +1,50 @@
+name: User check (read-only)
+
+# Answers "does this person actually have an account?" without anyone opening a
+# SQL console.
+#
+# The repo only records who was MEANT to exist -- migrate-2990-staff.mjs is
+# dry-run unless APPLY=1 -- so the answer lives only in production. Asking for it
+# used to cost an owner interruption AND put the production DSN in front of a
+# human for a SELECT. Actions already holds secrets.DATABASE_URL for the deploy,
+# so the lookup runs here and nobody handles the credential.
+#
+# Manual trigger only -- it is a question, not a gate, and a production DB read
+# must never become routine CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: "Email address to look up"
+        required: true
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: user-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-user.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          EMAIL: ${{ inputs.email }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
