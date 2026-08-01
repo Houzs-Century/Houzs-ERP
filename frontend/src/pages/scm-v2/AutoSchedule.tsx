@@ -37,6 +37,8 @@ import {
 } from '../../vendor/scm/lib/delivery-zones-queries';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
 import { useHelpers } from '../../vendor/scm/lib/helpers-queries';
+import { useDriverLeave } from '../../vendor/scm/lib/delivery-zones-queries';
+import { findCrewLeave, crewLeaveLabel, type CrewLeaveRow } from '../../vendor/shared/crew-leave';
 import { useLorries } from '../../vendor/scm/lib/lorries-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -58,6 +60,9 @@ export const AutoSchedule = () => {
   const schedule = useScheduleDelivery();
   const drivers = useDrivers();
   const helpers = useHelpers();
+  // A3 folded leave into the AUTO assigner only; the manual pickers below mark
+  // an on-leave driver/helper per TRIP DATE so the override is informed.
+  const crewLeave = useDriverLeave();
   const lorries = useLorries();
   const notify = useNotify();
   const askConfirm = useConfirm();
@@ -407,6 +412,7 @@ export const AutoSchedule = () => {
                 lorries={(lorries.data ?? []).map((l) => ({ id: l.id, plate: l.plate }))}
                 drivers={(drivers.data ?? []).map((d) => ({ id: d.id, name: d.name }))}
                 helpers={(helpers.data ?? []).map((h) => ({ id: h.id, name: h.name }))}
+                leaveRows={crewLeave.data}
                 onOverride={(patch) => setOverride(t.key, patch)}
                 onApply={() => applyTrip(t)}
                 applyBusy={applyingAssign}
@@ -435,18 +441,28 @@ type LorryOpt = { id: string; plate: string };
 
 const fmtRm = (centi: number): string => `RM ${(centi / 100).toLocaleString('en-MY', { maximumFractionDigits: 0 })}`;
 
-const AssignTripCard = ({ trip, eff, locked, lorries, drivers, helpers, onOverride, onApply, applyBusy }: {
+const AssignTripCard = ({ trip, eff, locked, lorries, drivers, helpers, leaveRows, onOverride, onApply, applyBusy }: {
   trip: AssignedTrip;
   eff: { lorryId: string | null; driverId: string | null; helperId: string | null };
   locked: boolean;
   lorries: LorryOpt[];
   drivers: CrewOpt[];
   helpers: CrewOpt[];
+  leaveRows: CrewLeaveRow[] | undefined;
   onOverride: (patch: { lorryId?: string | null; driverId?: string | null; helperId?: string | null }) => void;
   onApply: () => void;
   applyBusy: boolean;
 }) => {
   const seq = trip.sequence;
+
+  // Leave is per-DATE, and this card owns one date — so the marking is computed
+  // here, not at page level where the proposal spans many days.
+  const driverOpts = drivers.map((d) => ({
+    id: d.id, label: d.name, note: crewLeaveLabel(findCrewLeave(leaveRows, 'driver', d.id, trip.date)),
+  }));
+  const helperOpts = helpers.map((h) => ({
+    id: h.id, label: h.name, note: crewLeaveLabel(findCrewLeave(leaveRows, 'helper', h.id, trip.date)),
+  }));
   // The ordered rows to show: the sequenced route if present, else the plain stops.
   const rows = seq
     ? seq.sequence.map((s) => {
@@ -490,9 +506,9 @@ const AssignTripCard = ({ trip, eff, locked, lorries, drivers, helpers, onOverri
         <AssignSelect label="Lorry" value={eff.lorryId} onChange={(v) => onOverride({ lorryId: v })}
           options={lorries.map((l) => ({ id: l.id, label: l.plate }))} placeholder="— pick a lorry —" />
         <AssignSelect label="Driver" value={eff.driverId} onChange={(v) => onOverride({ driverId: v })}
-          options={drivers.map((d) => ({ id: d.id, label: d.name }))} placeholder="— none —" />
+          options={driverOpts} placeholder="— none —" />
         <AssignSelect label="Helper" value={eff.helperId} onChange={(v) => onOverride({ helperId: v })}
-          options={helpers.map((h) => ({ id: h.id, label: h.name }))} placeholder="— none —" />
+          options={helperOpts} placeholder="— none —" />
         <div style={{ flex: 1 }} />
         <div style={{ display: 'flex', alignItems: 'flex-end' }}>
           <Button variant="primary" size="sm" onClick={onApply} disabled={applyBusy || !eff.lorryId}>
@@ -601,19 +617,29 @@ const OverflowSection = ({ overflow, carriers, pick, onPick, onAssign, assigning
   </div>
 );
 
+/* `note` marks an option without removing it — an on-leave driver stays
+   selectable because the dispatcher has always had the final say. */
 const AssignSelect = ({ label, value, onChange, options, placeholder }: {
   label: string; value: string | null; onChange: (v: string | null) => void;
-  options: { id: string; label: string }[]; placeholder: string;
-}) => (
-  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-    <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{label}</span>
-    <select value={value ?? ''} onChange={(e) => onChange(e.target.value || null)} style={{ ...selStyle, minWidth: 150 }}>
-      <option value="">{placeholder}</option>
-      {value && !options.some((o) => o.id === value) && <option value={value}>(current)</option>}
-      {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-    </select>
-  </label>
-);
+  options: { id: string; label: string; note?: string }[]; placeholder: string;
+}) => {
+  const selectedNote = options.find((o) => o.id === value)?.note;
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{label}</span>
+      <select value={value ?? ''} onChange={(e) => onChange(e.target.value || null)} style={{ ...selStyle, minWidth: 150 }}>
+        <option value="">{placeholder}</option>
+        {value && !options.some((o) => o.id === value) && <option value={value}>(current)</option>}
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>{o.note ? `${o.label} · ${o.note}` : o.label}</option>
+        ))}
+      </select>
+      {selectedNote && (
+        <span style={{ fontSize: 'var(--fs-11)', color: 'var(--c-warning, #b45309)' }}>{selectedNote}</span>
+      )}
+    </label>
+  );
+};
 
 const MiniBadge = ({ tone, children }: { tone: 'warn' | 'danger'; children: ReactNode }) => (
   <span style={{

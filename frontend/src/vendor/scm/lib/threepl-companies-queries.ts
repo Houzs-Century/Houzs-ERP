@@ -10,21 +10,41 @@ import { authedFetch } from './authed-fetch';
 export type ThreePLCompanyRow = {
   id: string;
   name: string;
+  /** SSM registration number. Unique per tenant when present (mig 0237). */
+  registrationNo: string | null;
   contactName: string | null;
   contactPhone: string | null;
+  officePhone: string | null;
+  email: string | null;
+  address: string | null;
   isActive: boolean;
   notes: string | null;
   lorryCount: number;
+  driverCount: number;
+  helperCount: number;
   createdAt?: string | null;
   updatedAt?: string | null;
 };
 
 export type NewThreePLCompany = {
   name: string;
+  registrationNo?: string | null;
   contactName?: string | null;
   contactPhone?: string | null;
+  officePhone?: string | null;
+  email?: string | null;
+  address?: string | null;
   notes?: string | null;
   isActive?: boolean;
+};
+
+/** A carrier's own crew and lorries — read-only (GET /threepl-companies/:id/fleet).
+ *  The rows are created and edited through /drivers, /helpers and /lorries, which
+ *  own the "linked to a 3PL means outsource" rule. */
+export type ThreePLFleet = {
+  drivers: Array<{ id: string; driver_code: string; name: string; phone: string | null; ic_number: string | null; active: boolean }>;
+  helpers: Array<{ id: string; helper_code: string; name: string; contact: string | null; ic_number: string | null; active: boolean }>;
+  lorries: Array<{ id: string; plate: string; type: string | null; capacity_m3: number | null; length_ft: number | null; width_ft: number | null; height_ft: number | null; active: boolean }>;
 };
 
 export type ThreePLCompanyPatch = Partial<NewThreePLCompany> & { id: string };
@@ -37,6 +57,15 @@ export function useThreePLCompanies() {
     queryFn: () =>
       authedFetch<{ companies: ThreePLCompanyRow[] }>('/threepl-companies').then((r) => r.companies),
     staleTime: 60_000,
+  });
+}
+
+export function useThreePLFleet(companyId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'fleet', companyId],
+    queryFn: () => authedFetch<ThreePLFleet>(`/threepl-companies/${companyId}/fleet`),
+    enabled: !!companyId,
+    staleTime: 30_000,
   });
 }
 

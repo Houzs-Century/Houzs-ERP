@@ -34,13 +34,17 @@ import {
 export const threeplCompanies = new Hono<{ Bindings: Env; Variables: Variables }>();
 threeplCompanies.use('*', supabaseAuth);
 
-const COLS = 'id, name, contact_name, contact_phone, is_active, notes, created_at, updated_at';
+const COLS = 'id, name, registration_no, contact_name, contact_phone, office_phone, email, address, is_active, notes, created_at, updated_at';
 
 type Row = {
   id: string;
   name?: string | null;
+  registration_no?: string | null; registrationNo?: string | null;
   contact_name?: string | null;   contactName?: string | null;
   contact_phone?: string | null;  contactPhone?: string | null;
+  office_phone?: string | null;   officePhone?: string | null;
+  email?: string | null;
+  address?: string | null;
   is_active?: boolean | null;     isActive?: boolean | null;
   notes?: string | null;
   created_at?: string | null;     createdAt?: string | null;
@@ -48,19 +52,30 @@ type Row = {
   lorry_count?: number | null;
 };
 
-function rowOut(r: Row, lorryCount = 0) {
+type FleetCounts = { lorryCount: number; driverCount: number; helperCount: number };
+const NO_FLEET: FleetCounts = { lorryCount: 0, driverCount: 0, helperCount: 0 };
+
+function rowOut(r: Row, counts: FleetCounts = NO_FLEET) {
   return {
-    id:           r.id,
-    name:         r.name ?? '',
-    contactName:  r.contactName ?? r.contact_name ?? null,
-    contactPhone: r.contactPhone ?? r.contact_phone ?? null,
-    isActive:     (r.isActive ?? r.is_active ?? true) !== false,
-    notes:        r.notes ?? null,
-    lorryCount,
-    createdAt:    r.createdAt ?? r.created_at ?? null,
-    updatedAt:    r.updatedAt ?? r.updated_at ?? null,
+    id:             r.id,
+    name:           r.name ?? '',
+    registrationNo: r.registrationNo ?? r.registration_no ?? null,
+    contactName:    r.contactName ?? r.contact_name ?? null,
+    contactPhone:   r.contactPhone ?? r.contact_phone ?? null,
+    officePhone:    r.officePhone ?? r.office_phone ?? null,
+    email:          r.email ?? null,
+    address:        r.address ?? null,
+    isActive:       (r.isActive ?? r.is_active ?? true) !== false,
+    notes:          r.notes ?? null,
+    ...counts,
+    createdAt:      r.createdAt ?? r.created_at ?? null,
+    updatedAt:      r.updatedAt ?? r.updated_at ?? null,
   };
 }
+
+/* The carrier-link column, whichever casing the pg driver hands back. */
+const carrierIdOf = (r: Record<string, unknown>): string =>
+  String((r.threeplCompanyId ?? r.threepl_company_id) ?? '');
 
 // ── GET / — list this tenant's 3PL companies, with a per-company lorry count.
 threeplCompanies.get('/', async (c) => {
@@ -72,24 +87,70 @@ threeplCompanies.get('/', async (c) => {
   if (error) return c.json({ error: 'fetch_failed', reason: error.message }, 500);
   const companies = data ?? [];
 
-  // Lorry counts per company — one grouped read, tolerant of an empty set.
-  const counts = new Map<string, number>();
+  // Fleet counts per company — lorries AND crew (mig 0237 linked drivers and
+  // helpers the same way 0210 linked lorries). Three tolerant reads; a failing
+  // one leaves that count at 0 rather than sinking the list.
+  const counts = new Map<string, FleetCounts>();
+  const bump = (id: string, key: keyof FleetCounts) => {
+    if (!id) return;
+    const cur = counts.get(id) ?? { ...NO_FLEET };
+    cur[key] += 1;
+    counts.set(id, cur);
+  };
   if (companies.length > 0) {
-    const { data: lorryRows } = await scopeToCompany(
-      sb.from('lorries').select('threepl_company_id'), c,
-    ).not('threepl_company_id', 'is', null);
-    for (const l of (lorryRows ?? []) as Array<Record<string, unknown>>) {
-      const id = String((l.threeplCompanyId ?? l.threepl_company_id) ?? '');
-      if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
-    }
+    /* The fleet masters are UNIFIED (not company-scoped) but the carrier rows
+       they point at are — so scoping the count read here keeps a tenant from
+       counting another tenant's crew through a shared roster. */
+    const [lorryRows, driverRows, helperRows] = await Promise.all([
+      scopeToCompany(sb.from('lorries').select('threepl_company_id'), c).not('threepl_company_id', 'is', null),
+      scopeToCompany(sb.from('drivers').select('threepl_company_id'), c).not('threepl_company_id', 'is', null),
+      scopeToCompany(sb.from('helpers').select('threepl_company_id'), c).not('threepl_company_id', 'is', null),
+    ]);
+    for (const l of (lorryRows.data ?? []) as Array<Record<string, unknown>>) bump(carrierIdOf(l), 'lorryCount');
+    for (const d of (driverRows.data ?? []) as Array<Record<string, unknown>>) bump(carrierIdOf(d), 'driverCount');
+    for (const h of (helperRows.data ?? []) as Array<Record<string, unknown>>) bump(carrierIdOf(h), 'helperCount');
   }
-  return c.json({ companies: companies.map((r) => rowOut(r, counts.get(r.id) ?? 0)) });
+  return c.json({ companies: companies.map((r) => rowOut(r, counts.get(r.id) ?? NO_FLEET)) });
+});
+
+// ── GET /:id/fleet — the carrier's own crew and lorries, for the company drawer.
+//    Read-only: the rows are created and edited through /drivers, /helpers and
+//    /lorries, which own the outsource rule (scm/lib/threepl-link.ts).
+threeplCompanies.get('/:id/fleet', async (c) => {
+  const id = c.req.param('id');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+
+  const { data: company } = await scopeToCompanyId(
+    sb.from('threepl_companies').select('id'), co.companyId,
+  ).eq('id', id).maybeSingle();
+  if (!company) return c.json(NOT_THIS_COMPANY, 404);
+
+  const [drivers, helpers, lorries] = await Promise.all([
+    sb.from('drivers').select('id, driver_code, name, phone, ic_number, active')
+      .eq('threepl_company_id', id).order('driver_code'),
+    sb.from('helpers').select('id, helper_code, name, contact, ic_number, active')
+      .eq('threepl_company_id', id).order('helper_code'),
+    sb.from('lorries').select('id, plate, type, capacity_m3, length_ft, width_ft, height_ft, active')
+      .eq('threepl_company_id', id).order('plate'),
+  ]);
+  return c.json({
+    drivers: drivers.data ?? [],
+    helpers: helpers.data ?? [],
+    lorries: lorries.data ?? [],
+  });
 });
 
 const createSchema = z.object({
   name:         z.string().trim().min(1).max(120),
   contactName:  z.string().trim().max(120).nullable().optional(),
   contactPhone: z.string().trim().max(40).nullable().optional(),
+  registrationNo: z.string().trim().max(60).nullable().optional(),
+  officePhone:  z.string().trim().max(40).nullable().optional(),
+  email:        z.string().trim().max(160).nullable().optional(),
+  address:      z.string().trim().max(500).nullable().optional(),
+
   notes:        z.string().trim().max(2000).nullable().optional(),
   isActive:     z.boolean().optional(),
 });
@@ -109,15 +170,24 @@ threeplCompanies.post('/', async (c) => {
   const { data, error } = await sb.from('threepl_companies').insert({
     company_id:    co.companyId,
     name:          p.name,
+    registration_no: p.registrationNo ?? null,
     contact_name:  p.contactName ?? null,
     contact_phone: p.contactPhone ?? null,
+    office_phone:  p.officePhone ?? null,
+    email:         p.email ?? null,
+    address:       p.address ?? null,
     notes:         p.notes ?? null,
     is_active:     p.isActive ?? true,
     created_by:    user?.id ?? null,
     updated_by:    user?.id ?? null,
   }).select(COLS).single();
   if (error) {
-    if (error.code === '23505') return c.json({ error: 'duplicate_name', reason: 'A 3PL company with that name already exists.' }, 409);
+    if (error.code === '23505') {
+      const dupReg = /registration/i.test(error.message ?? '');
+      return c.json(dupReg
+        ? { error: 'duplicate_registration', reason: 'A 3PL company with that SSM registration number already exists.' }
+        : { error: 'duplicate_name', reason: 'A 3PL company with that name already exists.' }, 409);
+    }
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
@@ -128,6 +198,11 @@ const patchSchema = z.object({
   name:         z.string().trim().min(1).max(120).optional(),
   contactName:  z.string().trim().max(120).nullable().optional(),
   contactPhone: z.string().trim().max(40).nullable().optional(),
+  registrationNo: z.string().trim().max(60).nullable().optional(),
+  officePhone:  z.string().trim().max(40).nullable().optional(),
+  email:        z.string().trim().max(160).nullable().optional(),
+  address:      z.string().trim().max(500).nullable().optional(),
+
   notes:        z.string().trim().max(2000).nullable().optional(),
   isActive:     z.boolean().optional(),
 });
@@ -147,8 +222,12 @@ threeplCompanies.patch('/:id', async (c) => {
 
   const updates: Record<string, unknown> = {};
   if (p.name !== undefined)         updates.name = p.name;
+  if (p.registrationNo !== undefined) updates.registration_no = p.registrationNo;
   if (p.contactName !== undefined)  updates.contact_name = p.contactName;
   if (p.contactPhone !== undefined) updates.contact_phone = p.contactPhone;
+  if (p.officePhone !== undefined)  updates.office_phone = p.officePhone;
+  if (p.email !== undefined)        updates.email = p.email;
+  if (p.address !== undefined)      updates.address = p.address;
   if (p.notes !== undefined)        updates.notes = p.notes;
   if (p.isActive !== undefined)     updates.is_active = p.isActive;
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
@@ -161,7 +240,12 @@ threeplCompanies.patch('/:id', async (c) => {
     co.companyId,
   ).select(COLS).maybeSingle();
   if (error) {
-    if (error.code === '23505') return c.json({ error: 'duplicate_name', reason: 'A 3PL company with that name already exists.' }, 409);
+    if (error.code === '23505') {
+      const dupReg = /registration/i.test(error.message ?? '');
+      return c.json(dupReg
+        ? { error: 'duplicate_registration', reason: 'A 3PL company with that SSM registration number already exists.' }
+        : { error: 'duplicate_name', reason: 'A 3PL company with that name already exists.' }, 409);
+    }
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }

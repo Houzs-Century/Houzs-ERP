@@ -90,12 +90,24 @@
 // DRY-RUN by default. APPLY=1 to write. Idempotent: a repaired reference
 // resolves, so a re-run classifies it "already-resolves" and plans zero rows.
 //
+//   A6  PART=dedupe (2026-08-01, owner authorization "继续 全部可以"). DELETE
+//       the movement+consumption pairs part=ids classifies duplicate-of-real
+//       — only when the real document carries a FULL-ROW twin (same company,
+//       product, variant, warehouse, movement_type, qty; the index key alone
+//       is not proof — it excludes movement_type). The delete reverses the
+//       duplicate's WHOLE ledger effect in one transaction: consumptions go
+//       with the movement and each consumed lot's qty_remaining is RESTORED,
+//       so 2a conservation holds by construction. Every deleted row's old
+//       values print in dry run AND apply, plus the per-bucket movement-sum
+//       impact (duplicate OUTs double-decrement on-hand — the audit-2b
+//       linkage the owner asked to see either way).
+//
 //   DATABASE_URL   required (env, or .dev.vars for local use)
 //   APPLY=1        write. Anything else is a dry run.
-//   PART           all (default) | notes | batches | consumptions | ids | grn-gap
-//                  (`all` = the three original parts; `ids` and `grn-gap` are
-//                  deliberately DISPATCH-ONLY so the widest-reaching writes are
-//                  each an explicit, single-purpose run)
+//   PART           all (default) | notes | batches | consumptions | ids | grn-gap | dedupe
+//                  (`all` = the three original parts; `ids`, `grn-gap` and
+//                  `dedupe` are deliberately DISPATCH-ONLY so the widest-
+//                  reaching writes are each an explicit, single-purpose run)
 //   GRNS           part grn-gap only: comma-separated GRN numbers to repair
 //                  (default 2990-GRN-2606-001 — the one 3a implicated)
 //   MAX_ROWS       per-batch row ids to print in the plan (default 200)
@@ -109,15 +121,21 @@ import {
   parseFromSosTokens,
   rewriteFromSosNote,
 } from "./lib/doc-ref-repair-core.mjs";
-import { classifyGrnInboundGap, deriveGrnLineBasis } from "./lib/ledger-repair-core.mjs";
+import {
+  classifyGrnInboundGap,
+  deriveGrnLineBasis,
+  classifyDuplicateMovement,
+  projectDedupeBucketImpact,
+} from "./lib/ledger-repair-core.mjs";
+import { execIdRestamp, printIdRestampExec, execDedupe } from "./lib/id-restamp-exec.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const PART = (process.env.PART || "all").trim().toLowerCase();
 const MAX_ROWS = Number(process.env.MAX_ROWS || 200);
 const GRNS = (process.env.GRNS || "2990-GRN-2606-001")
   .split(",").map((s) => s.trim()).filter(Boolean);
-if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap"].includes(PART)) {
-  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap (got "${PART}")`);
+if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap", "dedupe"].includes(PART)) {
+  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap | dedupe (got "${PART}")`);
   process.exit(2);
 }
 const doNotes = PART === "all" || PART === "notes";
@@ -125,6 +143,7 @@ const doBatches = PART === "all" || PART === "batches";
 const doConsumptions = PART === "all" || PART === "consumptions";
 const doIds = PART === "ids";
 const doGrnGap = PART === "grn-gap";
+const doDedupe = PART === "dedupe";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -893,134 +912,116 @@ async function planIdRestamp(codeById) {
   if (plan.length > 0) {
     log("");
     log("  --- collision preview (writes exercised, then ROLLED BACK — nothing persisted) ---");
-    const preview = await execIdRestamp(plan, false);
-    printIdRestampExec(preview, false);
+    const preview = await execIdRestamp(pg, plan, { commit: false });
+    printIdRestampExec(preview, false, log);
   }
   return { plan, tally };
 }
 
-/* Collision-aware executor for the id restamp — ONE transaction, a SAVEPOINT
-   per row (live run 2026-08-01: the first APPLY died on
-   uq_inv_mov_do_source — a dangling movement restamped to the real DO id
-   collided with a movement the real document ALREADY carries. That orphan is
-   an import DUPLICATE of a real movement, not a mis-id: repointing it would
-   double the document's ledger, which is exactly what the unique index —
-   applied straight to prod in PR #674, so its definition is not in this tree —
-   exists to reject.)
-
-   Per movement row: try the UPDATE under a savepoint; a unique-constraint
-   raise (SQLSTATE 23505) rolls back TO THE SAVEPOINT only and files the row
-   under `duplicate-of-real` — reported, never deleted (removal is a separate
-   explicit decision; note the row's dangling id therefore STILL counts in
-   audit section 4, now as a CLASSIFIED finding). Every other row applies.
-   A consumption row FOLLOWS its movement: if its movement was refused as a
-   duplicate, the consumption is skipped with it (`follows-duplicate`) so the
-   pair never disagrees about its parent. Consumption rows of clean movements
-   restamp under the same per-row savepoint (no unique index is known on that
-   table; the savepoint is the belt for one appearing).
-
-   `commit=false` exercises the IDENTICAL writes and rolls the transaction
-   back at the end — the dry run's per-row verdicts are therefore the applied
-   truth, not a prediction. The UPDATEs fire no triggers (audit section 0a:
-   zero UPDATE-firing triggers on the ledger tables). */
-async function execIdRestamp(plan, commit) {
-  const out = { movements: 0, consumptions: 0, duplicates: [], followDuplicates: [], casSkipped: 0 };
-  if (plan.length === 0) return out;
-  try {
-    await pg.begin(async (tx) => {
-      for (const p of plan) {
-        const danglingIds = p.idWrites.filter((w) => w.action === "restamp").map((w) => w.id);
-        const movRows = await tx`
-          SELECT id::text AS id, source_doc_id::text AS doc_id
-            FROM scm.inventory_movements
-           WHERE company_id = ${p.companyId} AND source_doc_type = ${p.docType}
-             AND source_doc_no = ${p.docNo} AND source_doc_id::text = ANY(${danglingIds})
-           ORDER BY id`;
-        const skippedMovementIds = new Set();
-        for (const r of movRows) {
-          await tx.unsafe("SAVEPOINT sp_id_restamp");
-          try {
-            const u = await tx`
-              UPDATE scm.inventory_movements SET source_doc_id = ${p.resolvedDocId}::uuid
-               WHERE id = ${r.id}::uuid AND source_doc_id::text = ${r.doc_id}`;
-            await tx.unsafe("RELEASE SAVEPOINT sp_id_restamp");
-            if (u.count === 1) out.movements += 1;
-            else out.casSkipped += 1;
-          } catch (e) {
-            await tx.unsafe("ROLLBACK TO SAVEPOINT sp_id_restamp");
-            if (e?.code === "23505") {
-              skippedMovementIds.add(r.id);
-              out.duplicates.push({
-                table: "inventory_movements", rowId: r.id, group: `${p.docType} ${p.docNo}`,
-                oldId: r.doc_id, resolvedDocId: p.resolvedDocId,
-                constraint: e.constraint_name ?? "(unique index)",
-              });
-            } else throw e;
-          }
-        }
-        const consRows = await tx`
-          SELECT id::text AS id, source_doc_id::text AS doc_id, movement_id::text AS movement_id
-            FROM scm.inventory_lot_consumptions
-           WHERE company_id = ${p.companyId} AND source_doc_type = ${p.docType}
-             AND source_doc_no = ${p.docNo} AND source_doc_id::text = ANY(${danglingIds})
-           ORDER BY id`;
-        for (const r of consRows) {
-          if (r.movement_id != null && skippedMovementIds.has(r.movement_id)) {
-            out.followDuplicates.push({ rowId: r.id, movementId: r.movement_id, group: `${p.docType} ${p.docNo}` });
-            continue;
-          }
-          await tx.unsafe("SAVEPOINT sp_id_restamp");
-          try {
-            const u = await tx`
-              UPDATE scm.inventory_lot_consumptions SET source_doc_id = ${p.resolvedDocId}::uuid
-               WHERE id = ${r.id}::uuid AND source_doc_id::text = ${r.doc_id}`;
-            await tx.unsafe("RELEASE SAVEPOINT sp_id_restamp");
-            if (u.count === 1) out.consumptions += 1;
-            else out.casSkipped += 1;
-          } catch (e) {
-            await tx.unsafe("ROLLBACK TO SAVEPOINT sp_id_restamp");
-            if (e?.code === "23505") {
-              out.duplicates.push({
-                table: "inventory_lot_consumptions", rowId: r.id, group: `${p.docType} ${p.docNo}`,
-                oldId: r.doc_id, resolvedDocId: p.resolvedDocId,
-                constraint: e.constraint_name ?? "(unique index)",
-              });
-            } else throw e;
-          }
-        }
-      }
-      if (!commit) throw { __rollback: true };
-    });
-  } catch (e) {
-    if (!(e && e.__rollback)) throw e;
-  }
+/* The collision-aware executor lives in lib/id-restamp-exec.mjs so the REAL
+   code — pair-wise savepoints, self-collision classification, the poisoned-
+   transaction probe — runs under tests-pg against a real Postgres with a real
+   unique index (two live APPLY failures, 2026-08-01, are the reason: see the
+   lib header and BUG-HISTORY). The script keeps only the wiring. */
+async function applyIdRestamp(plan) {
+  const out = await execIdRestamp(pg, plan, { commit: true });
+  printIdRestampExec(out, true, log);
   return out;
 }
 
-function printIdRestampExec(out, committed) {
-  const verb = committed ? "" : "WOULD ";
-  log(`  ${verb}restamp: inventory_movements=${out.movements} row(s), inventory_lot_consumptions=${out.consumptions} row(s)`);
-  if (out.duplicates.length) {
-    log(`  duplicate-of-real — restamp REFUSED by the ledger's own unique index (${out.duplicates.length} row(s)); left in place, NOT deleted:`);
-    for (const d of out.duplicates) {
-      log(`    ${d.table} ${d.rowId}  (${d.group}, dangling id ${d.oldId}): restamping to ${d.resolvedDocId} violates ${d.constraint} — the real document already carries this movement; this row is an import DUPLICATE. Removal is a separate, explicit decision; until then it still counts in audit section 4, now classified.`);
+// ── A6 — PART=dedupe: DELETE the duplicate-of-real pairs (owner authorization
+// 2026-08-01, "继续 全部可以"). Only a movement whose restamp collides on the
+// ledger's unique index AND whose real counterpart carries the same
+// (company, product, variant, warehouse, movement_type, qty) — a FULL-ROW
+// twin — is deleted, together with its consumptions, RESTORING each consumed
+// lot's qty_remaining so 2a conservation holds. execDedupe +
+// classifyDuplicateMovement do the work; this wiring prints the evidence and
+// the movement-ledger bucket impact (the owner's 2b question: duplicate OUTs
+// double-decrement on-hand, so negative buckets should shrink).
+async function bucketSums(deletable) {
+  const sums = new Map();
+  for (const c of deletable) {
+    const m = c.movement;
+    const key = `${m.company_id}::${m.warehouse_id}::${m.product_code}::${m.variant_key}`;
+    if (sums.has(key)) continue;
+    const r = await pg`
+      SELECT COALESCE(SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty ELSE qty END), 0)::int AS s
+        FROM scm.inventory_movements
+       WHERE company_id = ${m.company_id} AND warehouse_id::text = ${m.warehouse_id}
+         AND product_code = ${m.product_code} AND COALESCE(variant_key, '') = ${m.variant_key}`;
+    sums.set(key, Number(r[0].s));
+  }
+  return sums;
+}
+
+function printDedupe(res, committed) {
+  const verb = committed ? "DELETED" : "WOULD DELETE";
+  log(`  duplicate candidates found: ${res.candidates.length}  (deletable: ${res.deletable.length}, refused: ${res.refused.length})`);
+  for (const c of res.deletable) {
+    const m = c.movement;
+    log(`  ${verb} movement ${m.id}  (${c.dup.group}) — full-row twin on the real document: ${c.verdict.matches.join(", ")}`);
+    log(`    old values: ${m.movement_type} qty=${m.qty} unit_cost_sen=${m.unit_cost_sen} total_cost_sen=${m.total_cost_sen} co=${m.company_id} wh=${m.warehouse_id} product=${m.product_code} variant="${m.variant_key}" batch=${m.batch_no ?? "-"} source=${m.source_doc_type} ${m.source_doc_no} dangling_id=${m.doc_id} created_at=${m.created_at?.toISOString?.() ?? m.created_at}`);
+    for (const k of c.consumptions) {
+      log(`    ${verb} consumption ${k.id}: qty=${k.qty_consumed} @ ${k.unit_cost_sen} sen (total ${k.total_cost_sen}) from lot ${k.lot_id}${k.lot_exists ? ` — lot qty_remaining ${k.lot_remaining} += ${k.qty_consumed} (RESTORED; the duplicate had double-decremented it)` : " — LOT MISSING, nothing to restore (reported)"}`);
+    }
+    if (c.consumptions.length === 0) log("    (no consumption rows — the duplicate consumed nothing; movement row only)");
+  }
+  for (const c of res.refused) {
+    const m = c.movement;
+    log(`  REFUSED movement ${m.id} (${c.verdict.verdict}) — collides on the index but NO full-row twin (type/qty differ); owner review, not deleted.`);
+    log(`    row: ${m.movement_type} qty=${m.qty} product=${m.product_code} variant="${m.variant_key}"; counterparts on the real doc: ${c.counterparts.map((x) => `${x.id} ${x.movement_type} qty=${x.qty}`).join("; ") || "(none)"}`);
+  }
+}
+
+async function planDedupe(codeById) {
+  log("");
+  log("=== A6  dedupe — remove the duplicate-of-real pairs part=ids classified (owner-authorized) ===");
+  const ids = await planIdRestamp(codeById);
+  log("");
+  log("  --- dedupe plan (detection exercised + rolled back; deletes are planned, not executed) ---");
+  const res = await execDedupe(pg, ids.plan, classifyDuplicateMovement, { commit: false });
+  printDedupe(res, false);
+
+  // The 2b linkage: per affected bucket, movement-ledger on-hand before -> after.
+  if (res.deletable.length > 0) {
+    const sums = await bucketSums(res.deletable);
+    const projected = projectDedupeBucketImpact(
+      res.deletable.map((c) => ({
+        bucketKey: `${c.movement.company_id}::${c.movement.warehouse_id}::${c.movement.product_code}::${c.movement.variant_key}`,
+        movementType: c.movement.movement_type,
+        qty: c.movement.qty,
+      })),
+      sums,
+    );
+    log("");
+    log("  movement-ledger on-hand per affected bucket (the audit-2b linkage — duplicate OUTs double-decrement, so negatives should shrink):");
+    for (const [key, before] of sums) {
+      const after = projected.get(key);
+      const [co, wh, product, ...vk] = key.split("::");
+      log(`    co=${co} ${product} "${vk.join("::")}" wh=${wh}: ${before} -> ${after}${before < 0 ? (after >= before ? "  (negative bucket shrinks/clears)" : "  (UNEXPECTED: negative bucket worsens — review before APPLY)") : ""}`);
+    }
+    const cogsRemoved = res.deletable.reduce((a, c) => a + Number(c.movement.total_cost_sen ?? 0), 0);
+    log(`  COGS carried by the deleted movements (removed with them): ${cogsRemoved} sen; lots restored: ${res.deletable.reduce((a, c) => a + c.consumptions.filter((k) => k.lot_exists).length, 0)} consumption(s) worth`);
+  }
+  return { plan: res.deletable, ids };
+}
+
+async function applyDedupe(idsPlan) {
+  const res = await execDedupe(pg, idsPlan, classifyDuplicateMovement, { commit: true });
+  printDedupe(res, true);
+  log(`  APPLIED: movements deleted=${res.deletedMovements}, consumptions deleted=${res.deletedConsumptions}, lots restored=${res.lotsRestored}, in one transaction.`);
+  // Observed after-state for the 2b linkage.
+  if (res.deletable.length > 0) {
+    const after = await bucketSums(res.deletable);
+    log("  movement-ledger on-hand per affected bucket AFTER (observed):");
+    for (const [key, s] of after) {
+      const [co, wh, product, ...vk] = key.split("::");
+      log(`    co=${co} ${product} "${vk.join("::")}" wh=${wh}: ${s}${s < 0 ? "  (still negative — the remainder is not duplicate-born; see reconstruct/relabel)" : ""}`);
     }
   }
-  if (out.followDuplicates.length) {
-    log(`  consumptions following a duplicate movement (skipped together so the pair keeps one parent): ${out.followDuplicates.length}`);
-    for (const f of out.followDuplicates) log(`    consumption ${f.rowId} follows movement ${f.movementId} (${f.group})`);
-  }
-  if (out.casSkipped) log(`  rows skipped by the compare-and-set (changed since the plan): ${out.casSkipped} — re-run the dry run.`);
+  return res;
 }
 
-async function applyIdRestamp(plan) {
-  const out = await execIdRestamp(plan, true);
-  printIdRestampExec(out, true);
-  return out;
-}
-
-// ── A5 — PART=grn-gap: insert the missing IN movement a posted GRN is short ──
-const GRN_GAP_MARKER = "repair:grn-inbound-gap";
 
 async function planGrnGap() {
   log("");
@@ -1195,6 +1196,7 @@ try {
   const consumptions = doConsumptions ? await planConsumptions(codeById) : { plan: [] };
   const ids = doIds ? await planIdRestamp(codeById) : { plan: [] };
   const grnGap = doGrnGap ? await planGrnGap() : { plan: [] };
+  const dedupe = doDedupe ? await planDedupe(codeById) : { plan: [], ids: { plan: [] } };
 
   log("");
   log("================ summary ================");
@@ -1203,6 +1205,7 @@ try {
   if (doConsumptions) log(`A3 consumptions : ${consumptions.plan.length} (company, type, doc no) group(s) would be repaired on the ledger source refs`);
   if (doIds) log(`A4 ids          : ${ids.plan.length} (company, type, doc no) group(s) would have dangling source_doc_id restamped`);
   if (doGrnGap) log(`A5 grn-gap      : ${grnGap.plan.length} missing IN movement(s) would be inserted (FIFO trigger opens the lot)`);
+  if (doDedupe) log(`A6 dedupe       : ${dedupe.plan.length} duplicate movement(s) (+ their consumptions) would be DELETED, lots restored`);
 
   if (!APPLY) {
     log("");
@@ -1227,6 +1230,9 @@ try {
     if (doGrnGap) {
       const n = await applyGrnGap(grnGap.plan);
       log(`A5 APPLIED: ${n} IN movement(s) inserted through the normal path (lots opened by the trigger).`);
+    }
+    if (doDedupe) {
+      await applyDedupe(dedupe.ids.plan);
     }
     log("Done. Re-run in DRY-RUN to confirm the plan is now empty (the idempotence check).");
   }

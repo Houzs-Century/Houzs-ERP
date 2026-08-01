@@ -21,6 +21,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronRight, MapPin, Lock } from 'lucide-react';
 import { isCorePaymentMethodRow } from '@2990s/shared/payment-methods';
 import { Button } from '../../components/Button';
+import { CollapsibleSection, useOpenSections } from '../../components/CollapsibleSection';
 import { PageHeader } from '../../components/Layout';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useToast } from '../../vendor/scm/components/Toast';
@@ -63,7 +64,20 @@ import {
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
 import styles from './SalesOrderMaintenance.module.css';
 
+/* Owner, 2026-08-01: every maintenance sub-module must be openable and closable.
+   This page has always been a scroll-tower of three unrelated config surfaces;
+   they are the same three, now collapsible. They default to OPEN because that is
+   how the page has always behaved - closing is the new ability, not the new
+   default. */
+const SECTIONS = [
+  { key: 'venues', label: 'Venues' },
+  { key: 'geo', label: 'Geo & Warehouses' },
+  { key: 'dropdowns', label: 'Dropdowns' },
+] as const;
+const ALL_SECTION_KEYS = SECTIONS.map((s) => s.key);
+
 export const SalesOrderMaintenance = () => {
+  const open = useOpenSections(ALL_SECTION_KEYS as unknown as string[]);
   /* The write gate. `scm_config_writer` is the BACKEND's own answer to
      "may you write SCM master data" (services/positionPolicy.userCanWriteScmConfig),
      which scm/lib/houzs-perms.canWriteScmConfig — the gate every write on this
@@ -109,9 +123,16 @@ export const SalesOrderMaintenance = () => {
         className="mb-4 inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-surface p-1 shadow-stone"
         aria-label="Sections"
       >
-        <a href="#venues" className="whitespace-nowrap rounded px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-all duration-150 hover:bg-primary-soft hover:text-primary">Venues</a>
-        <a href="#geo" className="whitespace-nowrap rounded px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-all duration-150 hover:bg-primary-soft hover:text-primary">Geo &amp; Warehouses</a>
-        <a href="#dropdowns" className="whitespace-nowrap rounded px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-all duration-150 hover:bg-primary-soft hover:text-primary">Dropdowns</a>
+        {SECTIONS.map((sec) => (
+          <button
+            key={sec.key}
+            type="button"
+            onClick={() => { open.ensureOpen(sec.key); requestAnimationFrame(() => document.getElementById(sec.key)?.scrollIntoView({ block: 'start' })); }}
+            className="whitespace-nowrap rounded px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-all duration-150 hover:bg-primary-soft hover:text-primary"
+          >
+            {sec.label}
+          </button>
+        ))}
       </nav>
 
       {!canEdit && (
@@ -120,7 +141,7 @@ export const SalesOrderMaintenance = () => {
         </div>
       )}
 
-      <MaintenanceBody canEdit={canEdit} />
+      <MaintenanceBody canEdit={canEdit} open={open} />
     </div>
   );
 };
@@ -159,7 +180,7 @@ const LoadError = ({ what, error }: { what: string; error: unknown }) => (
    - Bottom: Geo registry — Country L1 → State L2 → City L3 drill-down
      (replaces the old flat 2933-row States/Cities/Postcodes table). */
 
-const MaintenanceBody = ({ canEdit }: { canEdit: boolean }) => {
+const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType<typeof useOpenSections> }) => {
   const mappings = useStateWarehouseMappings();
   const warehouses = useWarehouses();
   const localities = useLocalities();
@@ -423,7 +444,9 @@ const MaintenanceBody = ({ canEdit }: { canEdit: boolean }) => {
           Parallel-to-warehouses master list. Sales-side staff get a
           venue_id; every POS-created SO is stamped with the salesperson's
           venue for venue-level reporting. */}
-      <VenuesSection canEdit={canEdit} />
+      <CollapsibleSection id="venues" title="Venues" open={open.isOpen('venues')} onToggle={() => open.toggle('venues')}>
+        <VenuesSection canEdit={canEdit} />
+      </CollapsibleSection>
 
       {/* ── Unified Geo + Warehouse drill-down (Commander 2026-05-27) ──
           Commander folded the separate State→Warehouse table and the Geo
@@ -442,11 +465,7 @@ const MaintenanceBody = ({ canEdit }: { canEdit: boolean }) => {
           L4  — Postcodes in city, columns: Postcode / delete
 
           Each level also has its own Add form at the bottom. */}
-      <div id="geo" className={styles.anchor}>
-        <div className="mb-2.5 flex items-center gap-2.5 border-l-[3px] border-primary pl-2.5 font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-ink">
-          <span>Geo &amp; Warehouses</span>
-        </div>
-      </div>
+      <CollapsibleSection id="geo" title="Geo & Warehouses" open={open.isOpen('geo')} onToggle={() => open.toggle('geo')}>
 
       {/* Warehouse master lives at Inventory → Warehouses — commander
           2026-05-27 "这个 warehouse 是 inventory 那边 create 的 这边 create 不到
@@ -1018,7 +1037,11 @@ const MaintenanceBody = ({ canEdit }: { canEdit: boolean }) => {
           (migration 0081) — replaces the four hardcoded TS consts that
           used to drive customer type / building type / relationship /
           payment method dropdowns. */}
-      <DropdownsSection canEdit={canEdit} />
+      </CollapsibleSection>
+
+      <CollapsibleSection id="dropdowns" title="Dropdowns" open={open.isOpen('dropdowns')} onToggle={() => open.toggle('dropdowns')}>
+        <DropdownsSection canEdit={canEdit} />
+      </CollapsibleSection>
     </div>
   );
 };
@@ -1091,11 +1114,6 @@ const DropdownsSection = ({ canEdit }: { canEdit: boolean }) => {
 
   return (
     <>
-      <div id="dropdowns" className={styles.anchor}>
-        <div className="mb-2.5 flex items-center gap-2.5 border-l-[3px] border-primary pl-2.5 font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-ink">
-          <span>Dropdowns</span>
-        </div>
-      </div>
       <div className={styles.banner}>
         <strong>Dropdowns.</strong> Edit the values commander sees in the
         Customer Type / Building Type / Relationship / Payment Method
@@ -1424,11 +1442,7 @@ const VenuesSection = (_props: { canEdit: boolean }) => {
   const venues = useVenues();
 
   return (
-    <section id="venues" className={styles.anchor}>
-      <div className="mb-2.5 flex items-center gap-2.5 border-l-[3px] border-primary pl-2.5 font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-ink">
-        <MapPin size={12} strokeWidth={2} />
-        <span>Venues · {venues.data?.length ?? 0}</span>
-      </div>
+    <section className={styles.anchor}>
       {/* Venue mastering genuinely lives in Project Maintenance
           (routes/projects.ts /venues; VenueManager in ProjectMaintenance.tsx) —
           ONE source of truth, deliberately not duplicated here. But "maintained

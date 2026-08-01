@@ -96,6 +96,8 @@ import {
   projectRelabelledDrift,
   pickCostBasis,
   planFamilyReconstruction,
+  classifyLotConservation,
+  planSurplusCorrection,
 } from "./lib/ledger-repair-core.mjs";
 
 function resolveUrl() {
@@ -856,8 +858,15 @@ async function runBasisCost() {
 // chronology the audit reads.
 // ─────────────────────────────────────────────────────────────────────────────
 async function runReconstruct() {
-  notice("=== FIFO LEDGER DIVERGENCE — RECONSTRUCT DROPPED CONSUMPTIONS (W4 phase 1) ===");
+  notice("=== FIFO LEDGER DIVERGENCE — RECONSTRUCT (W4 phase 1): the audit-2a candidates, both directions ===");
   notice(`mode: ${APPLY ? "APPLY (writes COMMITTED)" : "DRY-RUN (writes exercised per family, then ROLLED BACK — nothing persisted)"}`);
+  notice("Candidates come from the costing audit's OWN 2a lens, lifted VERBATIM (round-2 lesson: a deficit-only");
+  notice("candidate query reported 'every lot conserves' on the same day the audit counted 13 — the two tools");
+  notice("must never be able to disagree). Per lot, both sides print: the audit's numbers and this tool's");
+  notice("classification. DEFICIT lots (rows missing) pair via planFamilyReconstruction; SURPLUS lots (rows");
+  notice("present, remaining never decremented — the import double-count) restore remaining = received -");
+  notice("consumed, pricing the removed double-counted units as an INVENTORY-VALUE impact (COGS already booked");
+  notice("by the existing rows). Every other arm is refused and reported row by row.");
   notice("");
 
   const movSchema = await schemaOf("inventory_movements");
@@ -874,163 +883,263 @@ async function runReconstruct() {
   const L = `"${ident(lotSchema)}"."inventory_lots"`;
   const C = `"${ident(consSchema)}"."inventory_lot_consumptions"`;
 
-  // Families = distinct (company, warehouse, product) of the 2a-violating lots.
-  const deficitLots = await pg.unsafe(`
-    WITH c AS (SELECT lot_id, SUM(qty_consumed)::int AS consumed FROM ${C} GROUP BY lot_id)
+  // ── Candidates: the audit's 2a WHERE, verbatim (audit-inventory-costing.mjs
+  // section 2 — same CTE, same four arms, same no-cast SUM). Only the SELECT
+  // list is wider, for grouping and printing; the row SET is the audit's.
+  const candidates = await pg.unsafe(`
+    WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
     SELECT l.id::text AS lot_id, ${byCompany ? "l.company_id" : "NULL::int AS company_id"},
            l.warehouse_id::text AS warehouse_id, l.product_code,
            COALESCE(l.variant_key,'') AS variant_key, l.batch_no,
-           l.qty_received, l.qty_remaining, COALESCE(c.consumed,0)::int AS consumed,
+           l.qty_received, l.qty_remaining, COALESCE(c.consumed,0) AS consumed,
+           l.qty_received - COALESCE(c.consumed,0) - l.qty_remaining AS residual,
            l.unit_cost_sen, l.received_at
       FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
-     WHERE l.qty_received - COALESCE(c.consumed,0) - l.qty_remaining > 0
+     WHERE l.qty_received - COALESCE(c.consumed,0) <> l.qty_remaining
+        OR l.qty_remaining < 0
+        OR COALESCE(c.consumed,0) > l.qty_received
+        OR l.qty_received < 0
      ORDER BY l.received_at, l.id`);
-  notice(`lots violating conservation (received - consumed != remaining; the audit-2a lens): ${deficitLots.length}`);
-  if (deficitLots.length === 0) {
-    notice("Nothing to reconstruct — every lot conserves. (Audit 2a / 10a clean.)");
+  notice(`audit-2a candidate lots (VERBATIM lens — this number must equal the audit's 2a count): ${candidates.length}`);
+  if (candidates.length === 0) {
+    notice("Nothing to reconstruct — the audit-2a lens finds no lot. If the audit disagrees, the two runs saw different data (re-run the audit), because the SQL is now the same.");
     notice("=== END ===");
     return;
   }
 
+  const classCounts = new Map();
+  for (const l of candidates) {
+    l.klass = classifyLotConservation({ qtyReceived: l.qty_received, consumed: l.consumed, qtyRemaining: l.qty_remaining });
+    classCounts.set(l.klass.verdict, (classCounts.get(l.klass.verdict) ?? 0) + 1);
+  }
+  notice(`by class: ${[...classCounts.entries()].map(([k, n]) => `${k}=${n}`).join("  ")}`);
+
   const famKey = (r) => `${r.company_id ?? ""}::${r.warehouse_id}::${r.product_code}`;
   const families = new Map();
-  for (const l of deficitLots) {
+  for (const l of candidates) {
     const k = famKey(l);
     const f = families.get(k) ?? { companyId: l.company_id, warehouseId: l.warehouse_id, productCode: l.product_code, lots: [] };
     f.lots.push(l);
     families.set(k, f);
   }
-  notice(`families (company, warehouse, product) to examine: ${families.size}`);
+  notice(`families (company, warehouse, product): ${families.size}`);
 
   let familiesPlanned = 0, familiesRefused = 0, rowsPlanned = 0, rmStamped = 0;
+  let surplusLotsN = 0, surplusUnits = 0, surplusValueSen = 0;
   for (const f of families.values()) {
     notice("");
     notice(`----- family ${f.productCode} co=${f.companyId ?? "-"} wh=${f.warehouseId} -----`);
-    // Movement side: every consuming movement of the family (ANY sibling
-    // variant key — the split is exactly why the keys cannot pre-filter).
-    const movs = await pg.unsafe(`
-      SELECT m.id::text AS id, m.movement_type, m.qty, COALESCE(m.variant_key,'') AS variant_key,
-             m.total_cost_sen, m.created_at, m.source_doc_type, m.source_doc_id::text AS source_doc_id,
-             m.source_doc_no, COALESCE(c.cons,0)::int AS consumed, COALESCE(c.cons_cost,0)::bigint AS consumed_cost
-        FROM ${M} m
-        LEFT JOIN (SELECT movement_id, SUM(qty_consumed)::int AS cons, COALESCE(SUM(total_cost_sen), 0)::bigint AS cons_cost FROM ${C} GROUP BY movement_id) c
-          ON c.movement_id = m.id
-       WHERE (m.movement_type = 'OUT' OR (m.movement_type = 'ADJUSTMENT' AND m.qty < 0))
-         AND m.warehouse_id::text = $1 AND m.product_code = $2${byCompany ? " AND m.company_id = $3" : ""}
-       ORDER BY m.created_at, m.id`,
+
+    // The audit's 10a conservation numbers for this family, reproduced from
+    // the same tables (received == consumed + on hand per variant+batch), so
+    // the owner can cross-check this tool against the audit run directly.
+    const tenA = await pg.unsafe(`
+      WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
+      SELECT COALESCE(l.variant_key,'') AS variant_key, COALESCE(l.batch_no,'(no batch)') AS batch_no,
+             SUM(l.qty_received)::int AS received, SUM(l.qty_remaining)::int AS on_hand,
+             SUM(COALESCE(c.consumed,0))::int AS consumed
+        FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
+       WHERE l.warehouse_id::text = $1 AND l.product_code = $2${byCompany ? " AND l.company_id = $3" : ""}
+       GROUP BY COALESCE(l.variant_key,''), COALESCE(l.batch_no,'(no batch)')
+      HAVING SUM(l.qty_received) <> SUM(COALESCE(c.consumed,0)) + SUM(l.qty_remaining)`,
       byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+    notice(`  audit-10a unbalanced (variant, batch) groups in this family: ${tenA.length}`);
+    for (const t of tenA) notice(`    key="${t.variant_key}" batch=${t.batch_no}: received=${t.received} consumed=${t.consumed} onHand=${t.on_hand} (received - consumed - onHand = ${t.received - t.consumed - t.on_hand})`);
 
-    const plan = planFamilyReconstruction({
-      movements: movs.map((m) => ({
-        movementId: m.id, qty: m.qty, alreadyConsumed: m.consumed,
-        alreadyConsumedCostSen: Number(m.consumed_cost ?? 0),
-        totalCostSen: m.total_cost_sen, createdAt: m.created_at?.toISOString?.() ?? String(m.created_at),
-      })),
-      lots: f.lots.map((l) => ({
-        lotId: l.lot_id, qtyReceived: l.qty_received, qtyRemaining: l.qty_remaining,
-        consumed: l.consumed, unitCostSen: l.unit_cost_sen,
-        receivedAt: l.received_at?.toISOString?.() ?? String(l.received_at),
-      })),
-    });
+    // Per lot: BOTH SIDES — the audit's numbers and this tool's classification.
+    for (const l of f.lots) {
+      notice(`  lot ${l.lot_id}  key="${l.variant_key}" batch=${l.batch_no ?? "-"} @ ${rm(l.unit_cost_sen)}/u`);
+      notice(`    audit 2a: received=${l.qty_received} consumed=${l.consumed} remaining=${l.qty_remaining} residual=${l.residual}  ->  classified ${l.klass.verdict}`);
+    }
 
-    // BOTH sides printed row by row, verdict or not — this output is the
-    // diagnosis the relabel could not give.
-    notice(`  movement shortfalls (${plan.shorts.length}):`);
-    for (const s of plan.shorts) {
-      const m = movs.find((x) => x.id === s.movementId);
-      notice(`    movement ${s.movementId}  ${m?.movement_type} qty=${m?.qty} key="${m?.variant_key}" cost=${rm(m?.total_cost_sen)}  ${m?.source_doc_type ?? "-"} ${m?.source_doc_no ?? "-"}  shortfall=${s.shortfall}`);
+    const deficitLots = f.lots.filter((l) => l.klass.verdict === "deficit");
+    const surplus = f.lots.filter((l) => l.klass.verdict === "surplus");
+    const refusedLots = f.lots.filter((l) => !["deficit", "surplus"].includes(l.klass.verdict));
+    for (const l of refusedLots) {
+      notice(`  REFUSED lot ${l.lot_id} (${l.klass.verdict}) — no provable correction; owner review.`);
     }
-    notice(`  lot deficits (${plan.deficits.length}):`);
-    for (const d of plan.deficits) {
-      const l = f.lots.find((x) => x.lot_id === d.lotId);
-      notice(`    lot ${d.lotId}  key="${l?.variant_key}" batch=${l?.batch_no ?? "-"} recv=${l?.qty_received} cons=${l?.consumed} rem=${l?.qty_remaining} @ ${rm(l?.unit_cost_sen)}/u  deficit=${d.deficit}`);
+
+    // ── DEFICIT side: the missing-rows pairing (unchanged mechanism). ──
+    let deficitPlan = null;
+    if (deficitLots.length > 0) {
+      const movs = await pg.unsafe(`
+        SELECT m.id::text AS id, m.movement_type, m.qty, COALESCE(m.variant_key,'') AS variant_key,
+               m.total_cost_sen, m.created_at, m.source_doc_type, m.source_doc_id::text AS source_doc_id,
+               m.source_doc_no, COALESCE(c.cons,0)::int AS consumed, COALESCE(c.cons_cost,0)::bigint AS consumed_cost
+          FROM ${M} m
+          LEFT JOIN (SELECT movement_id, SUM(qty_consumed)::int AS cons, COALESCE(SUM(total_cost_sen), 0)::bigint AS cons_cost FROM ${C} GROUP BY movement_id) c
+            ON c.movement_id = m.id
+         WHERE (m.movement_type = 'OUT' OR (m.movement_type = 'ADJUSTMENT' AND m.qty < 0))
+           AND m.warehouse_id::text = $1 AND m.product_code = $2${byCompany ? " AND m.company_id = $3" : ""}
+         ORDER BY m.created_at, m.id`,
+        byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+      deficitPlan = {
+        movs,
+        plan: planFamilyReconstruction({
+          movements: movs.map((m) => ({
+            movementId: m.id, qty: m.qty, alreadyConsumed: m.consumed,
+            alreadyConsumedCostSen: Number(m.consumed_cost ?? 0),
+            totalCostSen: m.total_cost_sen, createdAt: m.created_at?.toISOString?.() ?? String(m.created_at),
+          })),
+          lots: deficitLots.map((l) => ({
+            lotId: l.lot_id, qtyReceived: l.qty_received, qtyRemaining: l.qty_remaining,
+            consumed: l.consumed, unitCostSen: l.unit_cost_sen,
+            receivedAt: l.received_at?.toISOString?.() ?? String(l.received_at),
+          })),
+        }),
+      };
+      const plan = deficitPlan.plan;
+      notice(`  DEFICIT side — movement shortfalls (${plan.shorts.length}):`);
+      for (const sh of plan.shorts) {
+        const m = movs.find((x) => x.id === sh.movementId);
+        notice(`    movement ${sh.movementId}  ${m?.movement_type} qty=${m?.qty} key="${m?.variant_key}" cost=${rm(m?.total_cost_sen)}  ${m?.source_doc_type ?? "-"} ${m?.source_doc_no ?? "-"}  shortfall=${sh.shortfall}`);
+      }
+      if (plan.verdict !== "reconstruct") {
+        notice(`  DEFICIT side REFUSED (${plan.verdict})${plan.verdict === "sums-mismatch" ? ` — Sigma(shortfall)=${plan.totalShort} != Sigma(deficit)=${plan.totalDeficit}` : ""}${plan.conflicts ? ` — cost conflicts: ${plan.conflicts.map((cf) => `${cf.movementId} stored ${rm(cf.storedCostSen)} vs existing-rows ${rm(cf.existingConsumedCostSen)} + paired ${rm(cf.pairedCostSen)}`).join("; ")}` : ""}`);
+        deficitPlan = null;
+      } else {
+        notice(`  DEFICIT side PLAN — ${plan.pairs.length} consumption row(s) to reconstruct:`);
+        for (const pr of plan.pairs) notice(`    movement ${pr.movementId} <- lot ${pr.lotId}: qty=${pr.qty} @ ${pr.unitCostSen} sen = ${rm(pr.qty * pr.unitCostSen)}`);
+        for (const st of plan.stamps) notice(`    movement ${st.movementId} cost stamps to ${st.newTotalCostSen} (was covering only its existing rows)`);
+      }
     }
-    if (plan.verdict !== "reconstruct") {
-      notice(`  REFUSED (${plan.verdict})${plan.verdict === "sums-mismatch" ? ` — Sigma(shortfall)=${plan.totalShort} != Sigma(deficit)=${plan.totalDeficit}; the two sides do not describe the same missing rows` : ""}${plan.conflicts ? ` — cost conflicts: ${plan.conflicts.map((cf) => `${cf.movementId} stored ${rm(cf.storedCostSen)} vs existing-rows ${rm(cf.existingConsumedCostSen)} + paired ${rm(cf.pairedCostSen)}`).join("; ")}` : ""}`);
+
+    // ── SURPLUS side: restore remaining = received - consumed, guarded. ──
+    const surplusPlans = [];
+    for (const l of surplus) {
+      const refs = await pg.unsafe(`
+        SELECT k.movement_id::text AS movement_id,
+               SUM(k.qty_consumed)::int AS from_this_lot,
+               (m.id IS NOT NULL) AS mov_exists,
+               COALESCE(ABS(m.qty), 0)::int AS abs_qty,
+               COALESCE(mc.cons, 0)::int AS consumed_total
+          FROM ${C} k
+          LEFT JOIN ${M} m ON m.id = k.movement_id
+          LEFT JOIN (SELECT movement_id, SUM(qty_consumed)::int AS cons FROM ${C} GROUP BY movement_id) mc
+            ON mc.movement_id = k.movement_id
+         WHERE k.lot_id::text = $1
+         GROUP BY k.movement_id, m.id, m.qty, mc.cons`, [l.lot_id]);
+      const v = planSurplusCorrection({
+        qtyReceived: l.qty_received, consumed: l.consumed, qtyRemaining: l.qty_remaining,
+        referencedMovements: refs.map((r) => ({
+          movementId: r.movement_id, exists: r.mov_exists === true,
+          absQty: r.abs_qty, consumedTotal: r.consumed_total,
+        })),
+      });
+      if (v.verdict !== "correct") {
+        notice(`  SURPLUS lot ${l.lot_id} REFUSED (${v.verdict}${v.missing ? `: ${v.missing.join(", ")}` : ""}${v.over ? `: ${v.over.join(", ")}` : ""}) — its consumption rows are not honest evidence; owner review.`);
+        continue;
+      }
+      const valueSen = v.delta * Number(l.unit_cost_sen ?? 0);
+      notice(`  SURPLUS lot ${l.lot_id} PLAN: qty_remaining ${l.qty_remaining} -> ${v.newRemaining} (removes ${v.delta} double-counted unit(s); INVENTORY VALUE -${rm(valueSen)}; COGS unchanged — the rows already booked it)`);
+      notice(`    evidence: ${refs.length} consuming movement(s), all real, none over-attributed (audit 10c lens)`);
+      surplusPlans.push({ lot: l, newRemaining: v.newRemaining, delta: v.delta, valueSen });
+    }
+
+    if (!deficitPlan && surplusPlans.length === 0) {
+      notice("  family: nothing provable — all candidates refused above.");
       familiesRefused += 1;
       continue;
     }
-    notice(`  PLAN — ${plan.pairs.length} consumption row(s) to reconstruct:`);
-    for (const pr of plan.pairs) notice(`    movement ${pr.movementId} <- lot ${pr.lotId}: qty=${pr.qty} @ ${pr.unitCostSen} sen = ${rm(pr.qty * pr.unitCostSen)}`);
-    if (plan.stamps.length) {
-      notice(`  movements whose cost stamps FROM the new rows (stored cost was 0): ${plan.stamps.length}  (RM impact ${rm(plan.rmStampedSen)})`);
-      for (const s of plan.stamps) notice(`    movement ${s.movementId} -> total_cost_sen ${s.newTotalCostSen}`);
-    } else {
-      notice("  every movement's stored cost EQUALS its paired cost — pure re-link, RM impact 0");
-    }
 
-    // Execute per family — commit under APPLY, rolled back for dry-run — with
-    // an in-transaction CAS: the family is re-planned from fresh reads and
-    // must produce the identical pairing, or nothing is written for it.
+    // ── Execute per family — commit under APPLY, rolled back for dry-run,
+    // fresh-read CAS, and the family must read CLEAN on the VERBATIM 2a lens
+    // afterwards (all four arms) except the knowingly-refused lots, or
+    // everything rolls back. ──
     try {
       await pg.begin(async (sql) => {
-        const freshLots = await sql.unsafe(`
-          WITH c AS (SELECT lot_id, SUM(qty_consumed)::int AS consumed FROM ${C} GROUP BY lot_id)
-          SELECT l.id::text AS lot_id, l.qty_received, l.qty_remaining, COALESCE(c.consumed,0)::int AS consumed,
-                 l.unit_cost_sen, l.received_at
-            FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
-           WHERE l.warehouse_id::text = $1 AND l.product_code = $2${byCompany ? " AND l.company_id = $3" : ""}
-             AND l.qty_received - COALESCE(c.consumed,0) - l.qty_remaining > 0
-           ORDER BY l.received_at, l.id FOR UPDATE OF l`,
-          byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
-        const freshMovs = await sql.unsafe(`
-          SELECT m.id::text AS id, m.qty, m.total_cost_sen, m.created_at, COALESCE(c.cons,0)::int AS consumed, COALESCE(c.cons_cost,0)::bigint AS consumed_cost
-            FROM ${M} m
-            LEFT JOIN (SELECT movement_id, SUM(qty_consumed)::int AS cons, COALESCE(SUM(total_cost_sen), 0)::bigint AS cons_cost FROM ${C} GROUP BY movement_id) c
-              ON c.movement_id = m.id
-           WHERE (m.movement_type = 'OUT' OR (m.movement_type = 'ADJUSTMENT' AND m.qty < 0))
-             AND m.warehouse_id::text = $1 AND m.product_code = $2${byCompany ? " AND m.company_id = $3" : ""}
-           ORDER BY m.created_at, m.id`,
-          byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
-        const fresh = planFamilyReconstruction({
-          movements: freshMovs.map((m) => ({ movementId: m.id, qty: m.qty, alreadyConsumed: m.consumed, alreadyConsumedCostSen: Number(m.consumed_cost ?? 0), totalCostSen: m.total_cost_sen, createdAt: m.created_at?.toISOString?.() ?? String(m.created_at) })),
-          lots: freshLots.map((l) => ({ lotId: l.lot_id, qtyReceived: l.qty_received, qtyRemaining: l.qty_remaining, consumed: l.consumed, unitCostSen: l.unit_cost_sen, receivedAt: l.received_at?.toISOString?.() ?? String(l.received_at) })),
-        });
-        if (fresh.verdict !== "reconstruct" || JSON.stringify(fresh.pairs) !== JSON.stringify(plan.pairs)) {
-          throw new Error(`family changed since the plan (fresh verdict ${fresh.verdict}) — nothing written for it; re-run the dry run`);
+        if (deficitPlan) {
+          const freshLots = await sql.unsafe(`
+            WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
+            SELECT l.id::text AS lot_id, l.qty_received, l.qty_remaining, COALESCE(c.consumed,0) AS consumed,
+                   l.unit_cost_sen, l.received_at
+              FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
+             WHERE l.id::text = ANY($1)
+             ORDER BY l.received_at, l.id FOR UPDATE OF l`,
+            [deficitPlan.plan.deficits.map((d) => d.lotId)]);
+          const freshMovs = await sql.unsafe(`
+            SELECT m.id::text AS id, m.qty, m.total_cost_sen, m.created_at, COALESCE(c.cons,0)::int AS consumed, COALESCE(c.cons_cost,0)::bigint AS consumed_cost
+              FROM ${M} m
+              LEFT JOIN (SELECT movement_id, SUM(qty_consumed)::int AS cons, COALESCE(SUM(total_cost_sen),0)::bigint AS cons_cost FROM ${C} GROUP BY movement_id) c
+                ON c.movement_id = m.id
+             WHERE (m.movement_type = 'OUT' OR (m.movement_type = 'ADJUSTMENT' AND m.qty < 0))
+               AND m.warehouse_id::text = $1 AND m.product_code = $2${byCompany ? " AND m.company_id = $3" : ""}
+             ORDER BY m.created_at, m.id`,
+            byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+          const fresh = planFamilyReconstruction({
+            movements: freshMovs.map((m) => ({ movementId: m.id, qty: m.qty, alreadyConsumed: m.consumed, alreadyConsumedCostSen: Number(m.consumed_cost ?? 0), totalCostSen: m.total_cost_sen, createdAt: m.created_at?.toISOString?.() ?? String(m.created_at) })),
+            lots: freshLots.map((l) => ({ lotId: l.lot_id, qtyReceived: l.qty_received, qtyRemaining: l.qty_remaining, consumed: l.consumed, unitCostSen: l.unit_cost_sen, receivedAt: l.received_at?.toISOString?.() ?? String(l.received_at) })),
+          });
+          if (fresh.verdict !== "reconstruct" || JSON.stringify(fresh.pairs) !== JSON.stringify(deficitPlan.plan.pairs)) {
+            throw new Error(`deficit side changed since the plan (fresh verdict ${fresh.verdict}) — family rolled back; re-run the dry run`);
+          }
+          const movById = new Map(deficitPlan.movs.map((m) => [m.id, m]));
+          for (const pr of deficitPlan.plan.pairs) {
+            const m = movById.get(pr.movementId);
+            await sql.unsafe(`
+              INSERT INTO ${C} (
+                lot_id, warehouse_id, product_code, variant_key,
+                qty_consumed, unit_cost_sen, total_cost_sen,
+                source_doc_type, source_doc_id, source_doc_no, movement_id, created_by, company_id
+              ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11::uuid, NULL, $12)`,
+              [pr.lotId, f.warehouseId, f.productCode, m.variant_key,
+                pr.qty, pr.unitCostSen, pr.qty * pr.unitCostSen,
+                m.source_doc_type, m.source_doc_id, m.source_doc_no, pr.movementId,
+                f.companyId]);
+          }
+          for (const st of deficitPlan.plan.stamps) {
+            await sql.unsafe(`
+              UPDATE ${M} m SET total_cost_sen = sub.total, unit_cost_sen = CASE WHEN ABS(m.qty) > 0 THEN sub.total / ABS(m.qty) ELSE 0 END
+                FROM (SELECT COALESCE(SUM(total_cost_sen),0)::int AS total FROM ${C} WHERE movement_id = $1::uuid) sub
+               WHERE m.id = $1::uuid`, [st.movementId]);
+          }
         }
-        const movById = new Map(movs.map((m) => [m.id, m]));
-        const lotById = new Map(f.lots.map((l) => [l.lot_id, l]));
-        for (const pr of plan.pairs) {
-          const m = movById.get(pr.movementId);
-          const l = lotById.get(pr.lotId);
-          await sql.unsafe(`
-            INSERT INTO ${C} (
-              lot_id, warehouse_id, product_code, variant_key,
-              qty_consumed, unit_cost_sen, total_cost_sen,
-              source_doc_type, source_doc_id, source_doc_no, movement_id, created_by, company_id
-            ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11::uuid, NULL, $12)`,
-            [pr.lotId, f.warehouseId, f.productCode, m.variant_key,
-              pr.qty, pr.unitCostSen, pr.qty * pr.unitCostSen,
-              m.source_doc_type, m.source_doc_id, m.source_doc_no, pr.movementId,
-              l.company_id ?? f.companyId]);
+        for (const sp of surplusPlans) {
+          const u = await sql.unsafe(
+            `UPDATE ${L} SET qty_remaining = $1 WHERE id::text = $2 AND qty_remaining = $3`,
+            [sp.newRemaining, sp.lot.lot_id, sp.lot.qty_remaining]);
+          if (u.count !== 1) throw new Error(`surplus lot ${sp.lot.lot_id} changed since the plan (CAS matched ${u.count}) — family rolled back; re-run the dry run`);
         }
-        for (const s of plan.stamps) {
-          await sql.unsafe(`
-            UPDATE ${M} m SET total_cost_sen = sub.total, unit_cost_sen = CASE WHEN ABS(m.qty) > 0 THEN sub.total / ABS(m.qty) ELSE 0 END
-              FROM (SELECT COALESCE(SUM(total_cost_sen),0)::int AS total FROM ${C} WHERE movement_id = $1::uuid) sub
-             WHERE m.id = $1::uuid`, [s.movementId]);
-        }
-        // Verify: the family's 2a lens must read CLEAN now.
+        // The family must now be CLEAN on the audit's verbatim four-arm lens,
+        // apart from the lots this run KNOWINGLY refused above.
         const after = await sql.unsafe(`
-          WITH c AS (SELECT lot_id, SUM(qty_consumed)::int AS consumed FROM ${C} GROUP BY lot_id)
+          WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
           SELECT count(*)::int AS n FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
            WHERE l.warehouse_id::text = $1 AND l.product_code = $2${byCompany ? " AND l.company_id = $3" : ""}
-             AND l.qty_received - COALESCE(c.consumed,0) - l.qty_remaining <> 0`,
+             AND (l.qty_received - COALESCE(c.consumed,0) <> l.qty_remaining
+               OR l.qty_remaining < 0
+               OR COALESCE(c.consumed,0) > l.qty_received
+               OR l.qty_received < 0)`,
           byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
-        if (Number(after[0].n) !== 0) throw new Error(`family still has ${after[0].n} non-conserving lot(s) after reconstruction — rolled back`);
+        const residualLots = Number(after[0].n);
+        const refusedCount = refusedLots.length
+          + surplus.filter((l) => !surplusPlans.some((sp) => sp.lot.lot_id === l.lot_id)).length
+          + (deficitPlan ? 0 : deficitLots.length);
+        if (residualLots !== refusedCount) {
+          throw new Error(`family still has ${residualLots} audit-2a lot(s) after the repair but only ${refusedCount} were knowingly refused — rolled back; the plan does not fully explain the family`);
+        }
         if (!APPLY) throw { __rollback: true };
       });
-      notice(APPLY ? `  APPLIED — ${plan.pairs.length} consumption row(s) written; family conserves.` : "  DRY-RUN VERIFIED (then rolled back) — the apply would leave every lot of this family conserving.");
+      const wrote = (deficitPlan ? deficitPlan.plan.pairs.length : 0);
+      notice(APPLY
+        ? `  APPLIED — ${wrote} consumption row(s) written, ${surplusPlans.length} surplus lot(s) corrected; every non-refused lot of this family conserves on the audit's own lens.`
+        : "  DRY-RUN VERIFIED (then rolled back) — the apply would leave every non-refused lot of this family conserving on the audit's own lens.");
       familiesPlanned += 1;
-      rowsPlanned += plan.pairs.length;
-      rmStamped += plan.rmStampedSen;
+      rowsPlanned += wrote;
+      rmStamped += deficitPlan ? deficitPlan.plan.rmStampedSen : 0;
+      surplusLotsN += surplusPlans.length;
+      surplusUnits += surplusPlans.reduce((a, sp) => a + sp.delta, 0);
+      surplusValueSen += surplusPlans.reduce((a, sp) => a + sp.valueSen, 0);
     } catch (e) {
       if (e && e.__rollback) {
-        notice("  DRY-RUN VERIFIED (then rolled back) — the apply would leave every lot of this family conserving.");
+        const wrote = (deficitPlan ? deficitPlan.plan.pairs.length : 0);
+        notice("  DRY-RUN VERIFIED (then rolled back) — the apply would leave every non-refused lot of this family conserving on the audit's own lens.");
         familiesPlanned += 1;
-        rowsPlanned += plan.pairs.length;
-        rmStamped += plan.rmStampedSen;
+        rowsPlanned += wrote;
+        rmStamped += deficitPlan ? deficitPlan.plan.rmStampedSen : 0;
+        surplusLotsN += surplusPlans.length;
+        surplusUnits += surplusPlans.reduce((a, sp) => a + sp.delta, 0);
+        surplusValueSen += surplusPlans.reduce((a, sp) => a + sp.valueSen, 0);
       } else {
         warn(`  family FAILED (rolled back, others unaffected): ${e?.message ?? e}`);
         familiesRefused += 1;
@@ -1040,16 +1149,19 @@ async function runReconstruct() {
 
   notice("");
   notice("================ SUMMARY ================");
-  notice(`  families ${APPLY ? "reconstructed" : "that WOULD reconstruct"} : ${familiesPlanned}`);
-  notice(`  consumption rows ${APPLY ? "written" : "planned"}          : ${rowsPlanned}`);
-  notice(`  RM stamped onto zero-cost movements       : ${rm(rmStamped)}  (0 = pure re-link)`);
-  notice(`  families refused (evidence does not pair) : ${familiesRefused}`);
+  notice(`  audit-2a candidate lots                    : ${candidates.length}  (must equal the audit's 2a count)`);
+  notice(`  families ${APPLY ? "repaired" : "that WOULD repair"}                : ${familiesPlanned}`);
+  notice(`  consumption rows ${APPLY ? "written" : "planned"} (deficit side): ${rowsPlanned}`);
+  notice(`  RM stamped onto movements whose cost missed them: ${rm(rmStamped)}  (0 = pure re-link)`);
+  notice(`  surplus lots ${APPLY ? "corrected" : "to correct"}               : ${surplusLotsN}  (${surplusUnits} double-counted unit(s) off on-hand; INVENTORY VALUE -${rm(surplusValueSen)}; COGS unchanged)`);
+  notice(`  families refused                           : ${familiesRefused}`);
   notice("");
-  notice("NEXT: run MODE=relabel — the reconstructed rows are the lot evidence it demands; the paired");
-  notice("+/- drift (audit 1 and 2b) closes there, at RM0. Then re-run the integrity check + audit.");
+  notice("NEXT: MODE=relabel (drift pairs close once movements and lots agree), then re-run the integrity");
+  notice("check + the costing audit — sections 2a and 10a must read the SAME zero this tool now reads.");
   notice(APPLY ? "APPLIED — committed." : "DRY-RUN — every family was exercised inside a transaction and rolled back; nothing was written.");
   notice("=== END ===");
 }
+
 
 const entry = MODE === "relabel" ? runRelabel : MODE === "basis-cost" ? runBasisCost : MODE === "reconstruct" ? runReconstruct : main;
 entry()

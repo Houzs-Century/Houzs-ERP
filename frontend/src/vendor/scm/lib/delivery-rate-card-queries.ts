@@ -125,7 +125,9 @@ export function useRateCardMeta() {
 }
 
 export type NewRateCard = {
-  name: string;
+  /** Optional when carrierCompanyId is set — the server names the card after the
+   *  carrier company, so the two can never disagree (mig 0237: one card each). */
+  name?: string;
   carrierLorryId?: string | null;
   carrierCompanyId?: string | null;
   carrierLabel?: string | null;

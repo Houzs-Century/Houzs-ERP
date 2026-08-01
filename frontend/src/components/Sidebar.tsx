@@ -546,7 +546,12 @@ export const NAV_TABS: NavTab[] = [
           // Fleet Health above is the read-only board (you monitor the fleet).
           // Pure header (no `to`); the groupId gives it expand/collapse memory.
           {
+            // 2026-08-01: the header is now a DESTINATION as well as a group.
+            // /scm/delivery-maintenance renders these same six as open/closable
+            // sections (owner: "变成一个模块，就好像 sales order 的 maintenance
+            // 那样子"); the children stay so a deep link still goes straight in.
             label: "Maintenance", icon: SlidersHorizontal, groupId: "scm-transportation-maintenance",
+            to: "/scm/delivery-maintenance",
             anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true,
             children: [
               { to: "/scm/delivery-planning-regions", label: "Regions", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
