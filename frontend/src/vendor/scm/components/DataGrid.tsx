@@ -47,6 +47,18 @@ import {
   writeDataGridLayout,
 } from './dataGridLayoutStorage';
 import { subscribeActiveCompany, getActiveCompanySnapshot } from '../../../lib/activeCompany';
+import {
+  EMPTY_LAYOUT,
+  dataGridTableKey,
+  getTableLayoutsSnapshot,
+  saveCompanyDefault,
+  saveMyLayout,
+  serializeLayout,
+  subscribeTableLayouts,
+  type StoredLayout,
+} from '../../../lib/tableLayouts';
+import { shortCompanyName } from '../../../lib/branding';
+import { LayoutSection, type LayoutPresetOption } from '../../../components/LayoutSection';
 import styles from './DataGrid.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -319,14 +331,90 @@ function DataGridInner<T>({
   // Pre-scoping (unscoped) key — read-only fallback so existing columns carry
   // over on first load; scoped key owns writes, ending the cross-company bleed.
   const legacyStorageKey = activeCompany != null ? storageKey : undefined;
-  const [layout, setLayoutRaw] = useState<Layout>(() => readDataGridLayout(scopedStorageKey, legacyStorageKey));
+  const [storedLayout, setLayoutRaw] = useState<Layout>(() => readDataGridLayout(scopedStorageKey, legacyStorageKey));
+
+  /* ── Account-level layouts (lib/tableLayouts.ts) ──────────────────────────
+     The same store the DataTable lists use, so this grid gets the same two
+     things: the COMPANY's default view (published by an admin from the drawer
+     below) and the USER's own arrangement, hydrated into the very localStorage
+     key read above so a machine they have never arranged still opens right.
+     The 'dg:' prefix on the server key is what keeps the two grids' storage
+     shapes apart on the way back down — see LayoutFamily in the store. */
+  const layoutStore = useSyncExternalStore(
+    subscribeTableLayouts,
+    getTableLayoutsSnapshot,
+    getTableLayoutsSnapshot,
+  );
+  const serverTableKey = useMemo(() => dataGridTableKey(storageKey), [storageKey]);
+
+  /* The company default applies ONLY while nothing is stored locally — the same
+     rule as DataTable: the first pref of any kind ends it for good, which is
+     what lets an admin change a default without moving anyone's columns. Sort
+     is never taken from a default; it is working state, not layout. */
+  const companyDefault = useMemo(() => {
+    const pristine =
+      storedLayout.order.length === 0 &&
+      storedLayout.hidden.length === 0 &&
+      storedLayout.pinned.length === 0 &&
+      storedLayout.groupBy.length === 0 &&
+      Object.keys(storedLayout.widths).length === 0;
+    if (!pristine) return null;
+    const cid = layoutStore.activeCompanyId;
+    if (cid == null) return null;
+    return layoutStore.defaults[String(cid)]?.[serverTableKey] ?? null;
+  }, [storedLayout, layoutStore, serverTableKey]);
+
+  const layout = useMemo<Layout>(
+    () =>
+      companyDefault
+        ? {
+            order: companyDefault.order,
+            hidden: companyDefault.hidden,
+            widths: companyDefault.widths,
+            pinned: companyDefault.pinned,
+            groupBy: companyDefault.groupBy,
+            sort: storedLayout.sort,
+          }
+        : storedLayout,
+    [companyDefault, storedLayout],
+  );
+
+  /* Edits start from what is ON SCREEN, not from the empty stored value — so
+     the first toggle on an inherited company default keeps the rest of that
+     default instead of snapping back to the grid's own. Same "materialise
+     before mutating" rule the pristine defaultHidden overlay already follows. */
+  const effectiveLayoutRef = useRef(layout);
+  effectiveLayoutRef.current = layout;
   const setLayout = useCallback((updater: (l: Layout) => Layout) => {
     setLayoutRaw((prev) => {
-      const next = updater(prev);
+      const next = updater(effectiveLayoutRef.current ?? prev);
       writeDataGridLayout(scopedStorageKey, next);
       return next;
     });
   }, [scopedStorageKey]);
+
+  /* Mirror this grid's layout to the account, debounced in the store. The MOUNT
+     pass is skipped: opening a list must not create a saved layout for a table
+     nobody arranged. What goes up is the STORED value, never the inherited
+     company default — otherwise merely visiting a page would claim that default
+     as the user's own and freeze them out of later changes to it. */
+  const gridSyncRef = useRef<{ key: string; signature: string } | null>(null);
+  useEffect(() => {
+    const mine: StoredLayout = {
+      ...EMPTY_LAYOUT,
+      order: storedLayout.order,
+      hidden: storedLayout.hidden,
+      widths: storedLayout.widths,
+      pinned: storedLayout.pinned,
+      groupBy: storedLayout.groupBy,
+    };
+    const signature = serializeLayout(mine);
+    const previous = gridSyncRef.current;
+    gridSyncRef.current = { key: serverTableKey, signature };
+    if (!previous || previous.key !== serverTableKey) return;
+    if (previous.signature === signature) return;
+    saveMyLayout(serverTableKey, mine);
+  }, [storedLayout, serverTableKey]);
 
   const [search, setSearch] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -555,6 +643,51 @@ function DataGridInner<T>({
   /* "Show all" — every column visible. Materializes the order when the layout
      is still pristine: an empty order + empty hidden would put the layout back
      on the defaults overlay and instantly re-hide every defaultHidden column. */
+  /* ── Layout section (shared with the DataTable drawer) ────────────────────
+     One row per company that has a saved default for THIS grid, so a Houzs
+     user can take 2990's view and back. There are no code-declared seeds here:
+     these lists never had per-company column sets, so every row comes from
+     something an admin actually saved. */
+  const gridLayoutPresets = useMemo<LayoutPresetOption[] | undefined>(() => {
+    const rows: LayoutPresetOption[] = [];
+    const currentSignature = serializeLayout({
+      ...EMPTY_LAYOUT,
+      order: layout.order,
+      hidden: layout.hidden,
+      widths: layout.widths,
+      pinned: layout.pinned,
+      groupBy: layout.groupBy,
+    });
+    for (const co of layoutStore.companies) {
+      const saved = layoutStore.defaults[String(co.id)]?.[serverTableKey];
+      if (!saved) continue;
+      rows.push({
+        id: `company:${co.id}`,
+        label: `${shortCompanyName(co.name)} Layout`,
+        count: Math.max(0, columns.length - saved.hidden.length),
+        isDefault: co.id === layoutStore.activeCompanyId,
+        active: serializeLayout(saved) === currentSignature,
+      });
+    }
+    return rows.length > 0 ? rows : undefined;
+  }, [layoutStore, serverTableKey, layout, columns.length]);
+
+  const applyGridPreset = useCallback((id: string) => {
+    const companyId = Number(id.split(':')[1]);
+    const saved = layoutStore.defaults[String(companyId)]?.[serverTableKey];
+    if (!saved) return;
+    setLayout((l) => ({
+      order: saved.order,
+      hidden: saved.hidden,
+      widths: saved.widths,
+      pinned: saved.pinned,
+      groupBy: saved.groupBy,
+      // Picking a layout must not re-sort the list under the operator.
+      sort: l.sort,
+    }));
+  }, [layoutStore, serverTableKey, setLayout]);
+
+
   const showAllColumns = useCallback(() => {
     setLayout((l) => ({
       ...l,
@@ -608,6 +741,42 @@ function DataGridInner<T>({
     });
     return result;
   }, [columns, layout.order]);
+
+  const [defaultSaveState, setDefaultSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const gridDefaultManager = useMemo(() => {
+    if (!layoutStore.ready || !layoutStore.canManageDefaults) return undefined;
+    const cid = layoutStore.activeCompanyId;
+    if (cid == null) return undefined;
+    const company = layoutStore.companies.find((c) => c.id === cid);
+    if (!company) return undefined;
+    const publish = async (next: StoredLayout) => {
+      setDefaultSaveState('saving');
+      try {
+        await saveCompanyDefault(serverTableKey, next);
+        setDefaultSaveState('saved');
+      } catch {
+        setDefaultSaveState('error');
+      }
+    };
+    return {
+      companyLabel: shortCompanyName(company.name),
+      hasSaved: Boolean(layoutStore.defaults[String(cid)]?.[serverTableKey]),
+      state: defaultSaveState,
+      /* Publishes what is ON SCREEN, materialised. The stored value is the
+         wrong source: an admin happy with what they inherited has nothing
+         stored, and saving that would publish an empty layout. */
+      onSave: () =>
+        void publish({
+          ...EMPTY_LAYOUT,
+          order: resolvedOrder,
+          hidden: [...effectiveHidden],
+          widths: layout.widths,
+          pinned: layout.pinned,
+          groupBy: layout.groupBy,
+        }),
+      onClear: () => void publish(EMPTY_LAYOUT),
+    };
+  }, [layoutStore, serverTableKey, defaultSaveState, resolvedOrder, effectiveHidden, layout]);
 
   const visibleColumns = useMemo(() => {
     const byKey = new Map(columns.map((c) => [c.key, c]));
@@ -1292,6 +1461,18 @@ function DataGridInner<T>({
                     </button>
                   </span>
                 </header>
+                {/* The same Layout block the DataTable drawer shows — company
+                    default layouts, and for an admin the control that publishes
+                    the arrangement on screen as this company's default. Shared
+                    component so the two drawers cannot drift into two
+                    affordances for one feature. */}
+                <div className="px-3 pt-3">
+                  <LayoutSection
+                    presets={gridLayoutPresets}
+                    onApplyPreset={applyGridPreset}
+                    defaultManager={gridDefaultManager}
+                  />
+                </div>
                 {/* Same drawer contract as the DataTable ColumnsPanel (#1235;
                     owner 2026-07-25: "应用到系统所有的table"): CHECKED columns
                     float to the TOP in on-grid order — display == storage, so
@@ -1729,4 +1910,21 @@ function DataGridInner<T>({
    <DataGrid> MUST pass a stable `columns` reference (define at module
    scope or wrap in useMemo) for the memo to actually hit — see the
    listing pages where columns are already memoized. */
-export const DataGrid = memo(DataGridInner) as typeof DataGridInner;
+const DataGridMemo = memo(DataGridInner) as typeof DataGridInner;
+
+/**
+ * Hydration writes the account's saved layout into the very localStorage key
+ * this grid reads ONCE, in its `useState` initialiser — that read-at-mount is
+ * what makes the first paint correct. Remounting on the layout store's epoch is
+ * how a grid already on screen when the boot fetch lands picks it up. The epoch
+ * bumps at most once per session, and only when hydration actually moved
+ * something, so this is a no-op on every warm load. (Mirrors DataTable.)
+ */
+export const DataGrid = (<T,>(props: DataGridProps<T>) => {
+  const { epoch } = useSyncExternalStore(
+    subscribeTableLayouts,
+    getTableLayoutsSnapshot,
+    getTableLayoutsSnapshot,
+  );
+  return <DataGridMemo<T> key={`layout-epoch:${epoch}`} {...props} />;
+}) as typeof DataGridInner;

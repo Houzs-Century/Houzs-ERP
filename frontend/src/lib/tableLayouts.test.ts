@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  EMPTY_LAYOUT,
   __resetTableLayoutsForTest,
   getTableLayoutsSnapshot,
   hydrateTableLayouts,
@@ -28,6 +29,7 @@ const layout = (over: Partial<StoredLayout> = {}): StoredLayout => ({
   shown: [],
   widths: {},
   pinned: [],
+  groupBy: [],
   ...over,
 });
 
@@ -130,7 +132,7 @@ describe("table layout sync", () => {
     respond();
     await hydrateTableLayouts();
 
-    saveMyLayout(TABLE, { order: [], hidden: [], shown: [], widths: {}, pinned: [] });
+    saveMyLayout(TABLE, EMPTY_LAYOUT);
     await vi.runAllTimersAsync();
 
     // An empty row would hydrate as "saved, but empty" — indistinguishable from
@@ -151,7 +153,7 @@ describe("table layout sync", () => {
     );
     expect(getTableLayoutsSnapshot().defaults["2"]?.[TABLE]?.order).toEqual(["company_view"]);
 
-    await saveCompanyDefault(TABLE, { order: [], hidden: [], shown: [], widths: {}, pinned: [] });
+    await saveCompanyDefault(TABLE, EMPTY_LAYOUT);
     expect(mockApi.del).toHaveBeenCalledWith(`/api/table-layouts/${TABLE}/default`);
     expect(getTableLayoutsSnapshot().defaults["2"]?.[TABLE]).toBeUndefined();
   });

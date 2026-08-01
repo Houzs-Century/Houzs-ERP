@@ -31,8 +31,14 @@ const app = new Hono<{ Bindings: Env }>();
  *  settings surfaces (Settings → Branding / Email), so no new role plumbing. */
 const MANAGE_DEFAULTS_PERM = "settings.manage";
 
-/** The layout FAMILY key, e.g. 'sales-orders-v2' or 'c2:sales-order-lines'. */
-const TABLE_KEY_RE = /^[a-z0-9][a-z0-9:_-]{0,63}$/i;
+/**
+ * The layout FAMILY key, e.g. 'sales-orders-v2', or 'dg:dg-suppliers' for a
+ * table still on the vendored SCM DataGrid — whose own storage keys carry dots
+ * ('cn-g.cn-from-order-lines.layout.v1'), hence the '.' here. The 'dg:' prefix
+ * is what tells the frontend which local storage shape a row belongs to; the
+ * server never interprets it.
+ */
+const TABLE_KEY_RE = /^[a-z0-9][a-z0-9.:_-]{0,79}$/i;
 
 /** Bounds. A layout is a handful of column keys, never a document. */
 const MAX_KEYS = 200;
@@ -46,6 +52,10 @@ interface StoredLayout {
   shown: string[];
   widths: Record<string, number>;
   pinned: string[];
+  /** Group-by columns. Only the vendored SCM DataGrid has these, and there they
+   *  ARE part of the layout — grouping a list by supplier changes its shape.
+   *  Sort is deliberately not here: it stays device-local on both grids. */
+  groupBy: string[];
 }
 
 const isKey = (v: unknown): v is string =>
@@ -88,6 +98,7 @@ function sanitizeLayout(raw: unknown): StoredLayout {
     shown: keyList(r.shown),
     widths,
     pinned: keyList(r.pinned),
+    groupBy: keyList(r.groupBy),
   };
 }
 
