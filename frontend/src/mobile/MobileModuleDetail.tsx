@@ -6,7 +6,7 @@ import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "@2990s/shared/phone";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { usePoSoCoverage, originsByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
-import { DeliveredRowMobile, SourcePosRowMobile } from "./source-chips";
+import { PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -189,8 +189,9 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
   sourcePos?: string[];
   sourceAdj?: boolean;
   // Purchase docs (PO / GRN / PI): the DO(s) that shipped this line's goods,
-  // with per-DO qty — the mobile twin of the desktop Delivered column.
-  delivered?: Array<{ doNo: string; qty: number }>;
+  // with per-DO qty + the DO's own SO (soDocNo) so each chip pairs with its
+  // Assigned-SO row — the mobile twin of the desktop per-SO sub-table.
+  delivered?: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
   // false = no stored so_item_id behind the chip above; it is an MRP allocation
   // only. Desktop and mobile say this the same way (one-product rule): in the
   // chip's tooltip, since the owner removed the visible caption (2026-08-01).
@@ -217,34 +218,20 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
         <span>@ {money(unitCenti)}</span>
       </div>
       {assigned && (
-        <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 4 }}>
-          <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093" }}>Assigned SO</span>
-          {assigned.length ? assigned.map((a) => {
-            // Floating (live MRP coverage) → dashed chip + trailing "~"; static
-            // (delivered→DO-locked or raised-from-SO) → solid chip.
-            const floating = a.locked === false;
-            return (
-              <span
-                key={a.soDocNo}
-                title={floating
-                  ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
-                  : a.source === "delivered"
-                    ? "Locked — this PO's goods were delivered against this Sales Order"
-                    : sourceLinked === false
-                      ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
-                      : "Locked — this PO line stores a link to this Sales Order"}
-                style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: floating ? "#5c6357" : "#0c3f39", background: floating ? "transparent" : "#eef3f1", border: floating ? "1px dashed #b6c6c0" : "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px" }}
-              >
-                {a.soDocNo}{a.deliveryDate ? ` · ${dmy(a.deliveryDate)}` : ""}{floating ? " ~" : ""}
-              </span>
-            );
-          }) : <span style={{ fontSize: 11, color: "#9aa093" }}>—</span>}
-        </div>
+        /* Purchase docs — the per-SO PAIRED rows (owner 2026-08-02): one row
+           per assigned SO = [SO chip | date | that SO's delivered DOs xqty |
+           DELIVERED/PENDING]. Empty = the STOCK tag, never a bare dash. The
+           three separate stacks this replaces made "which SO has shipped"
+           unreadable on multi-SO lines (the PO-2606-021 pillow case). */
+        <PairedSoRowsMobile
+          assigned={assigned}
+          delivered={delivered ?? []}
+          sourceLinked={sourceLinked}
+        />
       )}
       {sourcePos !== undefined && (
         <SourcePosRowMobile pos={sourcePos} adj={sourceAdj} showEmpty />
       )}
-      {(delivered?.length ?? 0) > 0 && <DeliveredRowMobile dos={delivered!} />}
       {(allocations?.length ?? 0) > 0 && (
         <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 4 }}>
           <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093" }}>Allocations</span>
