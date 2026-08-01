@@ -259,14 +259,20 @@ const snapshotUnitCostSen = async (
   sb: any,
   itemCode: string,
   explicit: number,
+  c: any,
 ): Promise<number> => {
   if (explicit > 0) return explicit;
   if (!itemCode) return 0;
-  const { data } = await sb
-    .from('mfg_products')
-    .select('cost_price_sen')
-    .eq('code', itemCode)
-    .maybeSingle();
+  /* `code` is shared across companies, so an unscoped maybeSingle() here either
+     snapshots the OTHER company's cost onto this line or errors (PGRST116) into
+     a silent 0. Same scoping the mfg-SO twin already applies. */
+  const { data } = await scopeToCompany(
+    sb
+      .from('mfg_products')
+      .select('cost_price_sen')
+      .eq('code', itemCode),
+    c,
+  ).maybeSingle();
   return Number((data as { cost_price_sen?: number } | null)?.cost_price_sen ?? 0);
 };
 
@@ -416,10 +422,13 @@ consignmentOrders.get('/', async (c) => {
     }
     const productBranding = new Map<string, string>();
     if (mattressCodesToLookup.size > 0) {
-      const { data: prodRows } = await sb
-        .from('mfg_products')
-        .select('code, branding')
-        .in('code', [...mattressCodesToLookup]);
+      const { data: prodRows } = await scopeToCompany(
+        sb
+          .from('mfg_products')
+          .select('code, branding')
+          .in('code', [...mattressCodesToLookup]),
+        c,
+      );
       for (const p of (prodRows ?? []) as Array<{ code: string; branding: string | null }>) {
         if (p.branding && p.branding.trim()) productBranding.set(p.code, p.branding);
       }
@@ -683,10 +692,13 @@ consignmentOrders.post('/', async (c) => {
       const lineCodes = items.map((it) => String(it.itemCode ?? '')).filter(Boolean);
       const metaByCode = new Map<string, { category: string }>();
       if (lineCodes.length > 0) {
-        const { data: meta } = await sb
-          .from('mfg_products')
-          .select('code, category')
-          .in('code', lineCodes);
+        const { data: meta } = await scopeToCompany(
+          sb
+            .from('mfg_products')
+            .select('code, category')
+            .in('code', lineCodes),
+          c,
+        );
         for (const m of (meta ?? []) as Array<{ code: string; category: string }>) {
           metaByCode.set(m.code, { category: m.category });
         }
@@ -801,8 +813,9 @@ consignmentOrders.post('/', async (c) => {
             sb,
             product.base_model,
             String((it.variants as { depth?: unknown } | null)?.depth ?? '24'),
+            activeCompanyId(c),
           ),
-          loadModelSofaModuleCostRows(sb, product.base_model),
+          loadModelSofaModuleCostRows(sb, product.base_model, activeCompanyId(c)),
         ])
       : [null, null];
     const draft: MfgItemForRecompute = {
@@ -829,7 +842,7 @@ consignmentOrders.post('/', async (c) => {
     const itemCode = String(it.itemCode ?? '');
     const unitCost = recomputed && recomputed.unit_cost_sen > 0
       ? recomputed.unit_cost_sen
-      : await snapshotUnitCostSen(sb, itemCode, Number(it.unitCostCenti ?? 0));
+      : await snapshotUnitCostSen(sb, itemCode, Number(it.unitCostCenti ?? 0), c);
     const lineCost = unitCost * qty;
     const group = String(it.itemGroup ?? '').toLowerCase();
     total += lineTotal;
@@ -1568,8 +1581,9 @@ consignmentOrders.post('/:docNo/items', async (c) => {
           sb,
           productLite.base_model,
           String((variantsObj as { depth?: unknown } | null)?.depth ?? '24'),
+          activeCompanyId(c),
         ),
-        loadModelSofaModuleCostRows(sb, productLite.base_model),
+        loadModelSofaModuleCostRows(sb, productLite.base_model, activeCompanyId(c)),
       ])
     : [null, null];
   const recomputed = recomputeFromSnapshot(
@@ -1600,7 +1614,7 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const lineTotal = Math.max(0, (qty * unit) - discount);
   const unitCost = recomputed.unit_cost_sen > 0
     ? recomputed.unit_cost_sen
-    : await snapshotUnitCostSen(sb, itemCodeStr, Number(it.unitCostCenti ?? 0));
+    : await snapshotUnitCostSen(sb, itemCodeStr, Number(it.unitCostCenti ?? 0), c);
   const lineCost = unitCost * qty;
   const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
   const lineDeliveryDate = hasExplicitLineDate
@@ -1726,8 +1740,9 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
             sb,
             prodLite.base_model,
             String((variantsAfter as { depth?: unknown } | null)?.depth ?? '24'),
+            activeCompanyId(c),
           ),
-          loadModelSofaModuleCostRows(sb, prodLite.base_model),
+          loadModelSofaModuleCostRows(sb, prodLite.base_model, activeCompanyId(c)),
         ])
       : [null, null];
     recomputedPatch = recomputeFromSnapshot(
@@ -1773,7 +1788,7 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   } else if (recomputedPatch && recomputedPatch.unit_cost_sen > 0) {
     unitCost = recomputedPatch.unit_cost_sen;
   } else if (itemCodeChanged) {
-    unitCost = await snapshotUnitCostSen(sb, String(it.itemCode ?? ''), 0);
+    unitCost = await snapshotUnitCostSen(sb, String(it.itemCode ?? ''), 0, c);
   } else {
     unitCost = prev.unit_cost_centi;
   }

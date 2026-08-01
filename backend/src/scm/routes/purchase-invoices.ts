@@ -225,6 +225,7 @@ async function reallocatePiCharges(
   sb: any,
   piId: string,
   method: ReturnType<typeof normalizeAllocationMethod> = 'QTY',
+  companyId?: number | null,
 ): Promise<void> {
   try {
     const [headRes, itemsRes] = await Promise.all([
@@ -266,7 +267,11 @@ async function reallocatePiCharges(
     const m3ByCode = new Map<string, number>();
     const codes = [...new Set(visible.map((it) => it.material_code).filter(Boolean))];
     if (codes.length > 0) {
-      const { data: prods } = await sb.from('mfg_products').select('code, unit_m3_milli').in('code', codes);
+      // Company-scoped: `code` is shared, and the other company's volume would
+      // shift every goods line's share of the landed charge.
+      let volQ = sb.from('mfg_products').select('code, unit_m3_milli').in('code', codes);
+      if (companyId != null) volQ = volQ.eq('company_id', companyId);
+      const { data: prods } = await volQ;
       for (const p of (prods ?? []) as Array<{ code: string; unit_m3_milli: number | null }>) {
         m3ByCode.set(p.code, Number(p.unit_m3_milli ?? 0));
       }
@@ -988,7 +993,7 @@ purchaseInvoices.post('/', async (c) => {
      column is inert until the PI is confirmed — recost excludes DRAFT PIs from the
      freight aggregate — so capturing it now is what makes the confirm honour the
      basis the operator actually chose. */
-  await reallocatePiCharges(sb, h.id, normalizeAllocationMethod(body.allocationMethod));
+  await reallocatePiCharges(sb, h.id, normalizeAllocationMethod(body.allocationMethod), activeCompanyId(c));
   if (!asDraft) {
     // Self-heal the GRN invoiced counter so the just-billed lines drop out of the
     // outstanding picker (mirrors /from-grn-items line ~523 + /:id/items).
@@ -1517,7 +1522,7 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
     // Split any PI-native freight before the recost reads it. This path copies GRN
     // lines only, so a service line among them stays GRN-owned (already in the lot)
     // and the pool is 0 — kept for the invariant, not for an expected charge.
-    await reallocatePiCharges(sb, h.id);
+    await reallocatePiCharges(sb, h.id, undefined, activeCompanyId(c));
     // Costing B — push the billed price down to the GRN's lots / DO / SI.
     await recostFromGrn(sb, bucket.grnId);
     created.push({
@@ -1663,7 +1668,7 @@ purchaseInvoices.post('/from-grn', async (c) => {
   // Split any PI-native freight before the recost reads it. This path copies GRN
   // lines only, so a copied service line stays GRN-owned (already capitalised into
   // the lot) and the pool is 0 — kept for the invariant, not for an expected charge.
-  await reallocatePiCharges(sb, h.id);
+  await reallocatePiCharges(sb, h.id, undefined, activeCompanyId(c));
   // Costing B — push the billed price down to the GRN's lots / DO / SI.
   await recostFromGrn(sb, g.id);
 
@@ -1768,7 +1773,7 @@ purchaseInvoices.patch('/:id', async (c) => {
       try { await resyncPiAccounting(sb, inv); } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pi-patch] resync failed:', inv, e); }
     }
     // The freight pool is converted at the PI's rate, so a rate change re-splits it.
-    await reallocatePiCharges(sb, id);
+    await reallocatePiCharges(sb, id, undefined, activeCompanyId(c));
     try { await recostForPi(sb, id); } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pi-patch] recost failed:', id, e); }
   }
   return c.json({ purchaseInvoice: data });
@@ -1897,7 +1902,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
   await recomputePiTotals(sb, piId);
   // The goods basis just changed, so the freight split must be re-derived before
   // the recost reads it (QTY — no column persists the create-time basis).
-  await reallocatePiCharges(sb, piId);
+  await reallocatePiCharges(sb, piId, undefined, activeCompanyId(c));
   // Costing B — a newly added PI line bills a GRN line: re-cost its lots / DO / SI.
   await recostForPi(sb, piId);
   return c.json({ item: data }, 201);
@@ -2019,7 +2024,7 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   await recomputePiTotals(sb, piId);
   // The goods basis (or the freight line itself) may have changed — re-derive the
   // split before the recost reads it (QTY; the create-time basis isn't persisted).
-  await reallocatePiCharges(sb, piId);
+  await reallocatePiCharges(sb, piId, undefined, activeCompanyId(c));
   // Costing B — a PI price EDIT (incl. human-error correction) re-costs the
   // GRN's lots and cascades to every shipped DO + Sales Invoice in real time.
   await recostForPi(sb, piId);
@@ -2081,7 +2086,7 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
     if (l.grn_item_id) await recomputeGrnInvoiced(sb, [l.grn_item_id]);
     // Re-derive the freight split first: the deleted row may BE the freight line,
     // or may have been part of the basis it was spread over.
-    await reallocatePiCharges(sb, piId);
+    await reallocatePiCharges(sb, piId, undefined, activeCompanyId(c));
     // Costing B — removing a PI line drops its authoritative price; re-cost the
     // GRN so the bucket falls back to the GR price (or Pending) and DOs/SIs follow.
     if (l.grn_item_id) {

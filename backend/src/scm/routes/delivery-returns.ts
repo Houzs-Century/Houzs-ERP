@@ -951,7 +951,7 @@ deliveryReturns.post('/', async (c) => {
     const svc = await findServiceLineCodes(sb, items.map((it) => ({
       itemCode: it.itemCode as string | null | undefined,
       itemGroup: it.itemGroup as string | null | undefined,
-    })));
+    })), activeCompanyId(c));
     if (svc.length > 0) return c.json(serviceLinesNotReturnableResponse(svc), 409);
   }
 
@@ -1141,7 +1141,7 @@ const convertDoLinesToReturn = async (c: any) => {
     const svc = await findServiceLineCodes(sb, pickedIds.map((id) => {
       const line = remainingMap.get(id)!;
       return { itemCode: line.itemCode, itemGroup: line.itemGroup };
-    }));
+    }), activeCompanyId(c));
     if (svc.length > 0) return c.json(serviceLinesNotReturnableResponse(svc), 409);
   }
 
@@ -1329,7 +1329,7 @@ deliveryReturns.post('/:id/items', async (c) => {
     const svc = await findServiceLineCodes(sb, [{
       itemCode: it.itemCode as string | null | undefined,
       itemGroup: it.itemGroup as string | null | undefined,
-    }]);
+    }], activeCompanyId(c));
     if (svc.length > 0) return c.json(serviceLinesNotReturnableResponse(svc), 409);
   }
 
@@ -1383,7 +1383,7 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     const svc = await findServiceLineCodes(sb, [{
       itemCode: (it.itemCode ?? prev.item_code) as string | null | undefined,
       itemGroup: (it.itemGroup ?? prev.item_group) as string | null | undefined,
-    }]);
+    }], activeCompanyId(c));
     if (svc.length > 0) return c.json(serviceLinesNotReturnableResponse(svc), 409);
   }
 

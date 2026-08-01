@@ -38,6 +38,7 @@ export async function findSofaLinesWithoutCompleteBatch(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   lines: SofaGuardLine[],
+  companyId?: number | null,
 ): Promise<SofaGuardOffender[]> {
   if (lines.length === 0) return [];
 
@@ -45,8 +46,9 @@ export async function findSofaLinesWithoutCompleteBatch(
   const codes = [...new Set(lines.map((l) => l.itemCode).filter(Boolean))];
   const batchedCodes = new Set<string>();
   if (codes.length > 0) {
-    const { data: catRows } = await sb
-      .from('mfg_products').select('code, category').in('code', codes);
+    let catQ = sb.from('mfg_products').select('code, category').in('code', codes);
+    if (companyId != null) catQ = catQ.eq('company_id', companyId);
+    const { data: catRows } = await catQ;
     for (const p of (catRows ?? []) as Array<{ code: string; category: string | null }>) {
       if ((p.category ?? '').toUpperCase() === 'SOFA') batchedCodes.add(p.code);
     }
@@ -123,13 +125,16 @@ export async function detectSofaSoItemIds(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   rows: Array<{ itemCode: string; itemGroup: string | null; soItemId: string | null }>,
+  companyId?: number | null,
 ): Promise<Set<string>> {
   const out = new Set<string>();
   if (rows.length === 0) return out;
   const codes = [...new Set(rows.map((r) => r.itemCode).filter(Boolean))];
   const sofaCodes = new Set<string>();
   if (codes.length > 0) {
-    const { data: cats } = await sb.from('mfg_products').select('code, category').in('code', codes);
+    let catQ = sb.from('mfg_products').select('code, category').in('code', codes);
+    if (companyId != null) catQ = catQ.eq('company_id', companyId);
+    const { data: cats } = await catQ;
     for (const p of (cats ?? []) as Array<{ code: string; category: string | null }>) {
       if ((p.category ?? '').toUpperCase() === 'SOFA') sofaCodes.add(p.code);
     }
@@ -147,11 +152,14 @@ async function detectSofa(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   rows: Array<{ item_code: string; item_group: string | null }>,
+  companyId?: number | null,
 ): Promise<(r: { item_code: string; item_group: string | null }) => boolean> {
   const codes = [...new Set(rows.map((r) => r.item_code).filter(Boolean))];
   const sofaCodes = new Set<string>();
   if (codes.length > 0) {
-    const { data: cats } = await sb.from('mfg_products').select('code, category').in('code', codes);
+    let catQ = sb.from('mfg_products').select('code, category').in('code', codes);
+    if (companyId != null) catQ = catQ.eq('company_id', companyId);
+    const { data: cats } = await catQ;
     for (const p of (cats ?? []) as Array<{ code: string; category: string | null }>) {
       if ((p.category ?? '').toUpperCase() === 'SOFA') sofaCodes.add(p.code);
     }
@@ -171,6 +179,7 @@ export async function findIncompleteSofaSets(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   soItemIds: Array<string | null | undefined>,
+  companyId?: number | null,
 ): Promise<IncompleteSofaSet[]> {
   const ids = [...new Set(soItemIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return [];
@@ -182,7 +191,7 @@ export async function findIncompleteSofaSets(
     .in('id', ids);
   const provided = (provRows ?? []) as Array<{ id: string; doc_no: string; item_code: string; item_group: string | null }>;
   if (provided.length === 0) return [];
-  const isSofaProv = await detectSofa(sb, provided);
+  const isSofaProv = await detectSofa(sb, provided, companyId);
   const providedSofa = provided.filter(isSofaProv);
   if (providedSofa.length === 0) return [];
   const docs = [...new Set(providedSofa.map((r) => r.doc_no))];
@@ -199,7 +208,7 @@ export async function findIncompleteSofaSets(
     .in('doc_no', docs)
     .eq('stock_status', 'READY');
   const setLines = (setRows ?? []) as Array<{ id: string; doc_no: string; item_code: string; item_group: string | null }>;
-  const isSofaSet = await detectSofa(sb, setLines);
+  const isSofaSet = await detectSofa(sb, setLines, companyId);
   const fullByDoc = new Map<string, Array<{ id: string; item_code: string }>>();
   for (const r of setLines) {
     if (!isSofaSet(r)) continue;

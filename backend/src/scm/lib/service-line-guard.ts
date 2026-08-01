@@ -24,6 +24,7 @@ export type ServiceGuardLine = {
 export async function findServiceLineCodes(
   sb: any,
   lines: ServiceGuardLine[],
+  companyId?: number | null,
 ): Promise<string[]> {
   const offenders = new Set<string>();
   const lookupCodes = new Set<string>();
@@ -36,10 +37,12 @@ export async function findServiceLineCodes(
     }
   }
   if (lookupCodes.size > 0) {
-    const { data } = await sb
+    let q = sb
       .from('mfg_products')
       .select('code, category')
       .in('code', [...lookupCodes]);
+    if (companyId != null) q = q.eq('company_id', companyId);
+    const { data } = await q;
     for (const p of (data ?? []) as Array<{ code: string; category: string | null }>) {
       if (isServiceCategory(p.category)) offenders.add(p.code);
     }

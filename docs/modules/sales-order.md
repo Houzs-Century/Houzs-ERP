@@ -303,8 +303,28 @@ Every by-code read on the order path therefore takes a `companyId`:
 | helper | file |
 |---|---|
 | `loadProductByCode` / `loadProductsByCodes` | `scm/lib/mfg-pricing-recompute.ts` |
+| `loadModelSofaModulePrices` / `…Costs` / `…CostRows` | `scm/lib/mfg-pricing-recompute.ts` |
 | `loadProductAndModel` / `loadProductsAndModels` | `scm/lib/allowed-options-check.ts` |
 | `validateItemCodes` | `scm/lib/validate-item-codes.ts` |
+| `findServiceLineCodes` | `scm/lib/service-line-guard.ts` |
+| `findSofaLinesWithoutCompleteBatch` / `detectSofaSoItemIds` / `findIncompleteSofaSets` | `scm/lib/sofa-batch-guard.ts` |
+| `snapshotUnitCostSen`, GRN + PI landed-charge CBM, delivery-planning / delivery-zones category maps, `scan-so`'s OCR catalogue | in their route files |
+
+**`base_model` is a partial key too.** It is plain text on the same per-company
+table, so the three sofa module loaders merge both companies' SKUs when
+unscoped — and because their result is a module→price map keyed by module
+suffix, the other company's module *replaces* this one's rather than competing
+with it. Every non-`id` predicate on `mfg_products` (`code`, `base_model`,
+`sku_code`, `barcode`) is a partial key; only `id` and a UUID `model_id` stand
+alone.
+
+**Two reads stay unscoped on purpose**, and say so inline:
+`so-stock-allocation.ts` (recomputes every SO across both companies, 34 callers,
+no request context) and `resolveDoSofaBatchMap` (reached only from
+context-free inventory-cost helpers). Both use the catalogue solely to classify
+a code as SOFA / SERVICE, i.e. a union across companies — correct while the two
+rows agree on category, so `so-stock-allocation` logs a disagreement rather than
+silently choosing.
 
 Callers pass `activeCompanyId(c)` — or, inside `createSalesOrderCore` (which has a
 `SoCreateContext`, not a Hono `Context`), its local `companyId`. `null`/`undefined`

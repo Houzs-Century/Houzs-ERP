@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { loadProductByCode, loadProductsByCodes } from './mfg-pricing-recompute';
+import {
+  loadProductByCode, loadProductsByCodes,
+  loadModelSofaModulePrices, loadModelSofaModuleCosts, loadModelSofaModuleCostRows,
+} from './mfg-pricing-recompute';
 import { loadProductAndModel, loadProductsAndModels } from './allowed-options-check';
 import { validateItemCodes } from './validate-item-codes';
 import { checkPwpEligibility, type PwpCodeRow } from './pwp-claim-single';
@@ -131,6 +134,55 @@ describe('the reported failure, end to end', () => {
   it('the right company’s row grants the RM 490 the operator was promised', async () => {
     const right = await loadProductByCode(sb(), 'CODY-(SS)', 2);
     expect(claim(right)).toEqual({ ok: true, grantPwpPrice: 49000, grantSofaComboIds: null });
+  });
+});
+
+/* ── sofa module price maps ─────────────────────────────────────────────────
+   `base_model` is a plain text grouping on the same per-company table, so it is
+   no more unique than `code`. These three loaders build a module→price map for a
+   whole Model; unscoped they merge BOTH companies' sofa SKUs, and because the
+   map is keyed by module suffix the other company's module silently REPLACES
+   this one's. The POS builds its map from the company-scoped catalogue, so the
+   drift gate would then compare two different maps. */
+const SOFA: Row[] = [
+  { _table: 'mfg_products', company_id: 1, code: 'LOTTI-2A(LHF)', category: 'SOFA', base_model: 'lotti',
+    sell_price_sen: 111100, base_price_sen: 50000, price1_sen: null, cost_price_sen: 0, seat_height_prices: null },
+  { _table: 'mfg_products', company_id: 2, code: 'LOTTI-2A(LHF)', category: 'SOFA', base_model: 'lotti',
+    sell_price_sen: 222200, base_price_sen: 90000, price1_sen: null, cost_price_sen: 0, seat_height_prices: null },
+  { _table: 'mfg_products', company_id: 2, code: 'LOTTI-1B(RHF)', category: 'SOFA', base_model: 'lotti',
+    sell_price_sen: 333300, base_price_sen: 70000, price1_sen: null, cost_price_sen: 0, seat_height_prices: null },
+];
+const sofaSb = () => makeSb(SOFA);
+
+describe('sofa module loaders — base_model is not unique either', () => {
+  it('cost rows come back for ONE company only', async () => {
+    const co2 = await loadModelSofaModuleCostRows(sofaSb(), 'lotti', 2);
+    expect(co2?.map((r) => r.code).sort()).toEqual(['LOTTI-1B(RHF)', 'LOTTI-2A(LHF)']);
+    expect(co2?.find((r) => r.code === 'LOTTI-2A(LHF)')?.base_price_sen).toBe(90000);
+
+    const co1 = await loadModelSofaModuleCostRows(sofaSb(), 'lotti', 1);
+    expect(co1?.map((r) => r.code)).toEqual(['LOTTI-2A(LHF)']);
+    expect(co1?.[0]?.base_price_sen).toBe(50000);
+  });
+
+  it('UNSCOPED merges both companies — 3 rows for a 2-module Model', async () => {
+    const both = await loadModelSofaModuleCostRows(sofaSb(), 'lotti');
+    expect(both).toHaveLength(3);
+    // Two rows now claim the same module. Whichever the map builder reads last
+    // wins, and nothing says which — that is the bug, stated as a test.
+    expect(both!.filter((r) => r.code === 'LOTTI-2A(LHF)')).toHaveLength(2);
+  });
+
+  it('the SELLING map differs per company (it is the drift gate’s input)', async () => {
+    const a = await loadModelSofaModulePrices(sofaSb(), 'lotti', '24', 1);
+    const b = await loadModelSofaModulePrices(sofaSb(), 'lotti', '24', 2);
+    expect(JSON.stringify(a)).not.toBe(JSON.stringify(b));
+  });
+
+  it('the COST map is scoped too (Combo auto-cost = Σ module SKU costs)', async () => {
+    const a = await loadModelSofaModuleCosts(sofaSb(), 'lotti', 1);
+    const b = await loadModelSofaModuleCosts(sofaSb(), 'lotti', 2);
+    expect(JSON.stringify(a)).not.toBe(JSON.stringify(b));
   });
 });
 
