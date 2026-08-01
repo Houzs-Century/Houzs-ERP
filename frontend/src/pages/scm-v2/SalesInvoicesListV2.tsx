@@ -37,6 +37,8 @@ import { DataTable, type Column } from "../../components/DataTable";
 import {
   DocumentLinesExpansion,
   sourcePoTitle,
+  ChipOverflow,
+  StockAdjChip,
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
@@ -82,6 +84,9 @@ type SiRow = {
    *  DO's OUT movements ∪ consumed FIFO lots). "—" for un-batched stock. A sales
    *  invoice shows Source PO, not an Assigned SO (owner 2026-07-31). */
   source_pos?: string[] | null;
+  /** Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
+   *  "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
+  source_adj?: boolean;
   invoice_date: string;
   due_date: string | null;
   /** SI's own snapshot of the customer delivery date (may be null on rows
@@ -761,7 +766,7 @@ const SORT_COL_MAP: Record<string, string> = {
 function SiLinesExpansion({ id }: { id: string }) {
   const detailQ = useSalesInvoiceDetail(id);
   const items =
-    ((detailQ.data as { items?: Array<DrillItemFields & { source_pos?: string[] | null }> } | undefined)?.items ?? []);
+    ((detailQ.data as { items?: Array<DrillItemFields & { source_pos?: string[] | null; source_adj?: boolean }> } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => ({
     itemGroup: l.item_group ?? null,
     code: l.item_code || l.product_code || null,
@@ -776,6 +781,7 @@ function SiLinesExpansion({ id }: { id: string }) {
     // An SI is invoiced from a DO — show which PO the goods were procured on
     // (batch_no = source PO), not an Assigned SO (owner 2026-07-31).
     sourcePos: l.source_pos ?? [],
+    sourceAdj: l.source_adj ?? false,
   }));
   return (
     <DocumentLinesExpansion
@@ -1115,8 +1121,10 @@ export function SalesInvoicesListV2() {
     {
       // Owner 2026-07-31: an SI is born FROM a Sales Order, so "Assigned SO" is
       // wrong here — the useful fact is which PO the invoiced goods came from
-      // (batch_no = source PO on the SI's DO). EVERY source PO renders (no
-      // collapse); "—" when un-batched (plain FIFO / pre-batch stock).
+      // (batch_no = source PO on the SI's DO, GRN-healed). "STOCK ADJ" when the
+      // goods entered via a PO-less adjustment; "—" only when the ledger says
+      // nothing. List cells overflow past a few chips into an in-place "+N"
+      // toggle (owner 2026-08-01 scale ruling).
       key: "source_pos",
       label: "Source PO",
       width: "168px",
@@ -1124,25 +1132,25 @@ export function SalesInvoicesListV2() {
       getValue: (r) => (r.source_pos ?? []).join(", "),
       render: (r) => {
         const pos = r.source_pos ?? [];
-        if (pos.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
-        return (
-          <span className="flex min-w-0 flex-wrap items-center gap-1">
-            {pos.map((po) => (
-              <button
-                key={po}
-                type="button"
-                title={sourcePoTitle(po)}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/scm/purchase-orders?q=${encodeURIComponent(po)}`);
-                }}
-                className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
-              >
-                {po}
-              </button>
-            ))}
-          </span>
-        );
+        if (pos.length === 0 && !r.source_adj) return <span className="text-[12px] text-ink-muted">—</span>;
+        const chips = [
+          ...pos.map((po) => (
+            <button
+              key={po}
+              type="button"
+              title={sourcePoTitle(po)}
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/scm/purchase-orders?q=${encodeURIComponent(po)}`);
+              }}
+              className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
+            >
+              {po}
+            </button>
+          )),
+          ...(r.source_adj ? [<StockAdjChip key="adj" />] : []),
+        ];
+        return <ChipOverflow chips={chips} />;
       },
     },
     {

@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
+import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
 import { formatPhone } from '@2990s/shared/phone';
 import { buildVariantSummary, canonicalizeVariants, fmtCenti, fmtDateOrDash, fmtDateTime, fmtMoneyCenti, lineIdentity, missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared'; // Commander 2026-05-28
@@ -382,6 +383,13 @@ type SoItem = {
      batch_no). Populated once shipped; kept visible even after full delivery so
      the operator can trace which supplier PO supplied the shipped goods. */
   shipped_source_pos?: string[];
+  /* Shipped from a PO-less stock ADJUSTMENT lot (free gift / add-back) —
+     rendered as "STOCK ADJ", never a blank (owner 2026-08-01). */
+  shipped_source_adj?: boolean;
+  /* READY trace: the PO(s) this line's allocated on-hand stock sits in (sofa:
+     allocated_batch_no; non-sofa: FIFO projection). */
+  ready_source_pos?: Array<{ po: string | null; qty: number; kind: 'po' | 'adjustment' }>;
+  stock_state?: 'stock' | 'po' | 'shortage' | null;
 };
 
 /* Whole-order inline edit — build a SoLineDraft from a persisted SoItem.
@@ -2113,29 +2121,20 @@ export const SalesOrderDetail = () => {
                   <td data-label="Transfer To">
                     {(() => {
                       const hasDeliveries = it.deliveries && it.deliveries.length > 0;
-                      const shippedPos = it.shipped_source_pos ?? [];
-                      /* Which supplier PO supplied this line's goods (burnt, not
-                         green — so it reads differently from "Stock"/"Fully
-                         delivered"):
-                          · Once (partly/fully) shipped: the ACTUAL source PO(s)
-                            the delivered goods came from (from the DO batch_no).
-                            Shown even after full delivery so the supplier→shipment
-                            trace is never lost (Owner 2026-07-11).
-                          · Still on the way: the incoming/raised PO the MRP
-                            allocation covers the line with, plus its ETA. */
-                      const coverageLabel = shippedPos.length > 0
-                        ? shippedPos.join(', ')
-                        : (it.coverage_po
-                            ? `${it.coverage_po}${it.coverage_eta ? ` · ETA ${fmtDateOrDash(it.coverage_eta)}` : ''}`
-                            : null);
-                      const coverage = coverageLabel
+                      /* Which supplier PO supplied this line's goods — the ONE
+                         shared SO-source renderer (SoSourceChips): shipped
+                         batch trail (survives delivery, Owner 2026-07-11) →
+                         STOCK ADJ → READY FIFO projection → incoming MRP
+                         coverage PO + ETA (owner 2026-08-01: identical data on
+                         every surface). */
+                      const hasTrace = (it.shipped_source_pos?.length ?? 0) > 0
+                        || it.shipped_source_adj
+                        || (it.ready_source_pos?.length ?? 0) > 0
+                        || Boolean(it.coverage_po);
+                      const coverage = hasTrace
                         ? (
-                          <div style={{
-                            display: 'inline-block', marginTop: hasDeliveries ? 3 : 0,
-                            fontSize: 'var(--fs-11)', fontWeight: 600,
-                            whiteSpace: 'nowrap', color: 'var(--c-burnt)',
-                          }}>
-                            {coverageLabel}
+                          <div style={{ display: 'inline-block', marginTop: hasDeliveries ? 3 : 0 }}>
+                            <SoSourceChips line={it} />
                           </div>
                         )
                         : null;

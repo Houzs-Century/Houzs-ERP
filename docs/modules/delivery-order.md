@@ -133,12 +133,17 @@ still need `edit` on `scm.sales.delivery`.
    stamps it on each row as **`so_internal_expected_dd`** — the linked SO's
    "Processing date" shown in the DO quick-view drawer (desktop
    `MfgDeliveryOrdersListV2` + mobile `MobileModuleList`).
-   The list also stamps **`source_pos`** per row via `resolveDoSourcePosForDos`
-   (batched, one ledger pass): a DO is a sales-side doc, so its list + drill-down
-   show the durable **Source PO** (`batch_no` = source PO on the OUT movements ∪
-   consumed FIFO lots), NOT an Assigned SO. The list column labelled "From SO"
+   The list also stamps **`source_pos`** per row via the ONE shared resolver
+   (`scm/lib/source-po-trace.ts`, batched, one ledger pass): a DO is a sales-side
+   doc, so its list + drill-down show the durable **Source PO** (`batch_no` =
+   source PO on the OUT movements ∪ consumed FIFO lots, GRN-healed for NULL-batch
+   lots), NOT an Assigned SO. Since 2026-08-01 each row/line also carries
+   **`source_adj`** — shipped from a PO-less stock ADJUSTMENT lot, rendered as a
+   "STOCK ADJ" chip (never a blank), on desktop AND the mobile detail
+   (`MobileModuleDetail` line rows). The list column labelled "From SO"
    is the document-flow anchor; "Source PO" is the procurement trail. See
-   `docs/modules/document-traceability.md` §2.5 (owner 2026-07-31).
+   `docs/modules/document-traceability.md` §2.5 + §2.8 (owner 2026-07-31 /
+   2026-08-01).
 4. **Finance gate** (`:2322-2333`) — `canViewScmFinance(c)`; when false every
    `DO_FINANCE_KEYS` column (`:317-321`) is deleted from every row. Note
    `local_total_centi` is deliberately NOT in that list: the DO total is visible

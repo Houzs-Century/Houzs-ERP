@@ -834,7 +834,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
     }
     // Canonical chip order (matches desktop): the four audience
     // buckets, then SYSTEM; anything unexpected trails.
-    const ORDER = ["SERVICE", "CUSTOMER", "SUPPLIER", "SALES", "SYSTEM"];
+    const ORDER = ["SYSTEM", "SERVICE", "CUSTOMER", "SUPPLIER", "SALES"];
     const known = ORDER.filter((k) => set.has(k));
     const rest = Array.from(set).filter((k) => !ORDER.includes(k));
     return ["ALL", ...known, ...rest];
@@ -1715,7 +1715,20 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                 {addNote.isError && <div style={{ fontSize: 11, color: RED, marginBottom: 8 }}>Couldn't add the note. Try again.</div>}
                 {shownActivity.length ? shownActivity.map((a, i) => {
                   const cat = String(get(a, "category") ?? "").toUpperCase();
-                  const label = get(a, "note", "toValue", "to_value", "action") ?? "Update";
+                  const act = String(get(a, "action") ?? "");
+                  let label = get(a, "note", "toValue", "to_value", "action") ?? "Update";
+                  // Raw enum keys + UUID storage filenames read as garbage
+                  // (Nico 2026-08-01) — prettify both.
+                  if (act === "stage_change") label = `Status changed to ${prettyStage(String(get(a, "toValue", "to_value") ?? ""))}`;
+                  label = String(label).replace(
+                    /\(?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\.([a-z0-9]+))?\)?/gi,
+                    (_m, ext) => {
+                      const e = String(ext || "").toLowerCase();
+                      if (["mov", "mp4", "webm", "m4v", "avi"].includes(e)) return "(video)";
+                      if (["jpg", "jpeg", "png", "webp", "gif", "heic"].includes(e)) return "(photo)";
+                      return "(file)";
+                    },
+                  );
                   const who = get(a, "userName", "user_name") ?? "System";
                   const badge = catBadge(cat);
                   return (
