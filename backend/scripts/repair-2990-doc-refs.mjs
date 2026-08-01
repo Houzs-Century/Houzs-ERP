@@ -173,6 +173,27 @@
 //           refused + reported.
 //       planAllocationDeliveredRepair in lib/doc-evidence-core.mjs holds the
 //       rule. POS names the target POs (default: the incident pair's suspect).
+//       2026-08-02 addendum (source verdict): 023 was CANCELLED in the source
+//       system (operator re-creation, 9 min before 024) and imported verbatim
+//       — a CANCELLED PO's allocations are removed regardless of the duplicate
+//       gate, NO owner cancel action is needed, and MRP was never inflated
+//       (CANCELLED is PO_DEAD). A non-cancelled status where the verdict says
+//       CANCELLED is reported as IMPORT DRIFT, never changed here.
+//
+//   A11 PART=service-lot-reverse (2026-08-02, SELF-CAUGHT regression of A5).
+//       The grn-gap APPLY on 2990-GRN-2606-001 counted the SVC-TRANS.CHARGES
+//       freight line into accepted qty and INSERTED a phantom 1-unit IN
+//       movement + lot for a SERVICE — the app itself never stocks service
+//       lines (grns.ts posts filter isServiceLine; the source GRN confirms
+//       goods accepted = 500 exactly). This part DELETES that movement + lot
+//       in one transaction, guarded: IN + service-coded product only, lot
+//       untouched (received == remaining) and ZERO consumptions on lot AND
+//       movement — anything else refuses with the facts printed. The planner
+//       (A5) and the costing audit's 3a lens now EXCLUDE service lines, so
+//       the class cannot recur. planServiceLotReversal in
+//       lib/ledger-repair-core.mjs holds the rule.
+//       REVERSE_MOVEMENT_ID / REVERSE_LOT_ID name the rows (defaults: the
+//       incident's 205e9f06... / d264f343...).
 //
 //   DATABASE_URL   required (env, or .dev.vars for local use)
 //   APPLY=1        write. Anything else is a dry run.
@@ -202,6 +223,8 @@ import {
   deriveGrnLineBasis,
   classifyDuplicateMovement,
   projectDedupeBucketImpact,
+  isServiceLineMirror,
+  planServiceLotReversal,
 } from "./lib/ledger-repair-core.mjs";
 import {
   planFifoAttribution,
@@ -220,8 +243,8 @@ const GRNS = (process.env.GRNS || "2990-GRN-2606-001")
   .split(",").map((s) => s.trim()).filter(Boolean);
 const POS = (process.env.POS || "2990-PO-2606-019,2990-PO-2606-023")
   .split(",").map((s) => s.trim()).filter(Boolean);
-if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap", "dedupe", "fifo-attribute", "fifo-attribute-repair", "so-warehouse", "do-line-link"].includes(PART)) {
-  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap | dedupe | fifo-attribute | fifo-attribute-repair | so-warehouse | do-line-link (got "${PART}")`);
+if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap", "dedupe", "fifo-attribute", "fifo-attribute-repair", "so-warehouse", "do-line-link", "service-lot-reverse"].includes(PART)) {
+  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap | dedupe | fifo-attribute | fifo-attribute-repair | so-warehouse | do-line-link | service-lot-reverse (got "${PART}")`);
   process.exit(2);
 }
 const doNotes = PART === "all" || PART === "notes";
@@ -234,6 +257,10 @@ const doFifoAttribute = PART === "fifo-attribute";
 const doFifoAttrRepair = PART === "fifo-attribute-repair";
 const doSoWarehouse = PART === "so-warehouse";
 const doDoLineLink = PART === "do-line-link";
+const doServiceLotReverse = PART === "service-lot-reverse";
+/* A11 targets — the 2990-GRN-2606-001 phantom service receipt (2026-08-02). */
+const REVERSE_MOVEMENT_ID = (process.env.REVERSE_MOVEMENT_ID || "205e9f06-a5a3-4b04-bc60-47ba469cb547").trim();
+const REVERSE_LOT_ID = (process.env.REVERSE_LOT_ID || "d264f343-5657-4318-876f-01bce3d84717").trim();
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -1154,12 +1181,24 @@ async function planGrnGap() {
 
     const byProduct = new Map();
     for (const l of lines) {
+      /* SERVICE lines NEVER enter inventory (grns.ts posts filter
+         isServiceLine) — counting them into accepted qty is exactly how the
+         2026-08-02 regression inserted a phantom SVC-TRANS.CHARGES lot on
+         2990-GRN-2606-001. Excluded here AND in the audit's 3a lens. */
+      if (isServiceLineMirror({ itemGroup: l.item_group, itemCode: l.material_code })) {
+        log(`    line ${l.id} ${l.material_code} (group=${l.item_group ?? "-"}) — SERVICE line, never stocked; EXCLUDED from the gap math.`);
+        continue;
+      }
       const p = byProduct.get(l.material_code) ?? { lineQty: 0, lines: [], buckets: new Map(), marker: false };
       p.lineQty += Math.max(0, Number(l.qty_accepted ?? 0) - Number(l.returned_qty ?? 0));
       p.lines.push(l);
       byProduct.set(l.material_code, p);
     }
     for (const m of movs) {
+      if (isServiceLineMirror({ itemCode: m.product_code })) {
+        log(`    WARNING movement ${m.id} is a SERVICE-coded receipt (${m.product_code}, ${m.movement_type} qty=${m.qty}) — a defect this part must not plan around; reverse it via part=service-lot-reverse.`);
+        continue;
+      }
       const p = byProduct.get(m.product_code) ?? { lineQty: 0, lines: [], buckets: new Map(), marker: false };
       const key = `${m.warehouse_id}::${m.variant_key}::${m.batch_no ?? ""}::${m.company_id}`;
       const b = p.buckets.get(key) ?? {
@@ -1277,6 +1316,79 @@ async function applyGrnGap(plan) {
         throw new Error(`FIFO trigger did not open the expected lot for movement ${inserted[0].id} (got ${JSON.stringify(lot)}) — rolled back`);
       }
       log(`  APPLIED ${p.grnNumber} ${p.productCode}: movement ${inserted[0].id} qty=${p.qty} @ ${p.unitCostSen} sen; lot ${lot[0].id} opened (received=${lot[0].qty_received}, remaining=${lot[0].qty_remaining})`);
+      done += 1;
+    });
+  }
+  return done;
+}
+
+// ── A11 — PART=service-lot-reverse: reverse ONE phantom service-line receipt ─
+// (2026-08-02 self-caught regression: the grn-gap APPLY on 2990-GRN-2606-001
+// counted the SVC-TRANS.CHARGES freight line into accepted qty and inserted a
+// 1-unit IN movement + lot for a SERVICE — which the app never stocks). Guards
+// live in planServiceLotReversal (pure): IN + service-coded product only, lot
+// belongs to the movement's doc+product, UNTOUCHED (received==remaining, zero
+// consumptions on lot AND movement) — anything else refuses with the facts.
+async function planServiceLotReverse() {
+  log("");
+  log(`=== A11 service-lot-reverse — movement ${REVERSE_MOVEMENT_ID}, lot ${REVERSE_LOT_ID} ===`);
+  const movRows = await pg`
+    SELECT m.id::text AS id, m.movement_type, m.product_code, m.qty, m.unit_cost_sen,
+           m.source_doc_type, m.source_doc_id::text AS source_doc_id, m.source_doc_no,
+           m.warehouse_id::text AS warehouse_id, m.company_id, m.notes, m.created_at
+      FROM scm.inventory_movements m WHERE m.id = ${REVERSE_MOVEMENT_ID}::uuid`;
+  const lotRows = await pg`
+    SELECT l.id::text AS id, l.product_code, l.qty_received, l.qty_remaining, l.unit_cost_sen,
+           l.source_doc_type, l.source_doc_id::text AS source_doc_id, l.batch_no,
+           l.movement_id::text AS movement_id, l.received_at
+      FROM scm.inventory_lots l WHERE l.id = ${REVERSE_LOT_ID}::uuid`;
+  const mov = movRows[0] ?? null;
+  const lot = lotRows[0] ?? null;
+  if (mov) log(`  movement: ${mov.movement_type} ${mov.product_code} qty=${mov.qty} @ ${mov.unit_cost_sen} sen  src=${mov.source_doc_type} ${mov.source_doc_no ?? mov.source_doc_id}  wh=${mov.warehouse_id} co=${mov.company_id}  notes=${JSON.stringify(mov.notes ?? null)}`);
+  else log(`  movement ${REVERSE_MOVEMENT_ID}: NOT FOUND`);
+  if (lot) log(`  lot: ${lot.product_code} received=${lot.qty_received} remaining=${lot.qty_remaining} @ ${lot.unit_cost_sen} sen  src=${lot.source_doc_type} ${lot.source_doc_id}  batch=${lot.batch_no ?? "-"}  movement_id=${lot.movement_id ?? "-"}`);
+  else log(`  lot ${REVERSE_LOT_ID}: NOT FOUND`);
+  const [lotCons, movCons] = await Promise.all([
+    pg`SELECT COUNT(*)::int AS n FROM scm.inventory_lot_consumptions WHERE lot_id = ${REVERSE_LOT_ID}::uuid`,
+    pg`SELECT COUNT(*)::int AS n FROM scm.inventory_lot_consumptions WHERE movement_id = ${REVERSE_MOVEMENT_ID}::uuid`,
+  ]);
+  const v = planServiceLotReversal({
+    movement: mov ? {
+      id: mov.id, movementType: mov.movement_type, productCode: mov.product_code,
+      qty: Number(mov.qty), unitCostSen: Number(mov.unit_cost_sen ?? 0),
+      sourceDocType: mov.source_doc_type, sourceDocId: mov.source_doc_id,
+    } : null,
+    lot: lot ? {
+      id: lot.id, productCode: lot.product_code,
+      qtyReceived: Number(lot.qty_received), qtyRemaining: Number(lot.qty_remaining),
+      sourceDocType: lot.source_doc_type, sourceDocId: lot.source_doc_id,
+    } : null,
+    lotConsumptions: Number(lotCons[0]?.n ?? 0),
+    movementConsumptions: Number(movCons[0]?.n ?? 0),
+  });
+  if (v.verdict === "reverse") log(`  PLAN: ${v.print}`);
+  else log(`  REFUSED (${v.verdict}): ${JSON.stringify(v)} — nothing will be deleted; owner review.`);
+  return { plan: v.verdict === "reverse" ? [{ movementId: REVERSE_MOVEMENT_ID, lotId: REVERSE_LOT_ID, print: v.print }] : [] };
+}
+
+async function applyServiceLotReverse(plan) {
+  let done = 0;
+  for (const p of plan) {
+    await pg.begin(async (tx) => {
+      // Re-verify inside the transaction: still zero consumptions, lot untouched.
+      const fresh = await tx`
+        SELECT (SELECT COUNT(*)::int FROM scm.inventory_lot_consumptions WHERE lot_id = ${p.lotId}::uuid) AS lot_cons,
+               (SELECT COUNT(*)::int FROM scm.inventory_lot_consumptions WHERE movement_id = ${p.movementId}::uuid) AS mov_cons,
+               (SELECT qty_received - qty_remaining FROM scm.inventory_lots WHERE id = ${p.lotId}::uuid) AS consumed`;
+      if (Number(fresh[0]?.lot_cons ?? 1) !== 0 || Number(fresh[0]?.mov_cons ?? 1) !== 0 || Number(fresh[0]?.consumed ?? 1) !== 0) {
+        throw new Error(`service-lot-reverse: lot/movement gained consumption since the plan (${JSON.stringify(fresh[0])}) — rolled back; re-run the dry run`);
+      }
+      const delLot = await tx`DELETE FROM scm.inventory_lots WHERE id = ${p.lotId}::uuid`;
+      const delMov = await tx`DELETE FROM scm.inventory_movements WHERE id = ${p.movementId}::uuid`;
+      if (delLot.count !== 1 || delMov.count !== 1) {
+        throw new Error(`service-lot-reverse: expected 1 lot + 1 movement, deleted ${delLot.count}+${delMov.count} — rolled back`);
+      }
+      log(`  APPLIED (deleted): ${p.print}`);
       done += 1;
     });
   }
@@ -1412,6 +1524,9 @@ async function planFifoAttribute() {
     const servedMap = await deliveredServiceBySoItem(soLines.map((l) => l.id));
 
     const res = planFifoAttribution({
+      // Status guard (2026-08-02, the 023 verdict): a CANCELLED/DRAFT PO is
+      // never an attribution target — the pure core refuses and says so.
+      poStatus: p.status,
       poLines: poLines.map((l) => ({
         id: l.id,
         itemCode: l.material_code,
@@ -1433,6 +1548,10 @@ async function planFifoAttribute() {
         servingPos: [...(servedMap.get(l.id)?.servingPos ?? [])],
       })),
     });
+    if (res.refusedPoStatus) {
+      log(`    REFUSED — PO status ${res.refusedPoStatus}: a dead PO supplies nothing and must never receive allocations. Skipped.`);
+      continue;
+    }
 
     log(`    PO lines: ${poLines.length} (already so_item_id-linked: ${res.skippedLinked.length}, already allocated: ${res.skippedAllocated.length}, planned now: ${res.plans.length})`);
     for (const id of res.skippedLinked) log(`      SKIP line ${id} — carries so_item_id (the 1:1 fast path; not touched)`);
@@ -1536,6 +1655,17 @@ async function planFifoAttrRepair() {
          WHERE l.batch_no = ${p.po_number}`,
     ]);
     const selfExecuted = Number(selfGrns[0]?.n ?? 0) > 0 || Number(selfDelivered[0]?.n ?? 0) > 0;
+    /* The 023 source verdict (2026-08-02): the PO was CANCELLED in the source
+       system and imported verbatim. A cancelled PO's allocations are removed
+       regardless of the duplicate gate — and the owner needs NO cancel action.
+       If the status is NOT cancelled where the verdict says it should be,
+       that is import drift: REPORT it (below), never change status here. */
+    const selfCancelled = String(p.status ?? "").toUpperCase() === "CANCELLED";
+    if (p.po_number === "2990-PO-2606-023") {
+      log(selfCancelled
+        ? `    source-verdict check: 2990-PO-2606-023 status=CANCELLED in Houzs — matches the source system's own cancel (operator re-creation, cancelled there; import carried it, same UUID). No owner cancel action needed; MRP was never inflated (CANCELLED is PO_DEAD).`
+        : `    source-verdict check: 2990-PO-2606-023 status=${p.status} — the source system says CANCELLED; this is IMPORT DRIFT. Reported only — this part never changes a document status; owner decision.`);
+    }
     // Duplicate twin: same company + supplier, multiset-identical lines, ±3 days,
     // EXECUTED (received or delivered). The same fingerprint the read-only
     // detector (check-duplicate-documents.mjs) prints.
@@ -1607,6 +1737,7 @@ async function planFifoAttrRepair() {
     const res = planAllocationDeliveredRepair({
       poNumber: p.po_number,
       selfExecuted,
+      selfCancelled,
       duplicateOf,
       lines: [...byLine.entries()].map(([poLineId, allocations]) => ({ poLineId, allocations })),
       served,
@@ -1900,6 +2031,7 @@ try {
   const fifoRepair = doFifoAttrRepair ? await planFifoAttrRepair() : { plans: [] };
   const soWh = doSoWarehouse ? await planSoWarehouse(codeById) : { plan: [], reported: [] };
   const doLink = doDoLineLink ? await planDoLineLinkPart() : { plan: [], report: [] };
+  const svcReverse = doServiceLotReverse ? await planServiceLotReverse() : { plan: [] };
 
   log("");
   log("================ summary ================");
@@ -1913,6 +2045,7 @@ try {
   if (doFifoAttrRepair) log(`A10 fifo-repair : ${fifoRepair.plans.reduce((a, x) => a + x.res.removals.length, 0)} allocation removal(s) + ${fifoRepair.plans.reduce((a, x) => a + x.res.flips.length, 0)} flip(s) to STOCK (delivered-precedence corrective)`);
   if (doSoWarehouse) log(`A8 so-warehouse : ${soWh.plan.length} SO line(s) would have warehouse_id stamped; ${soWh.reported.length} reported (mirror-source / needs-owner)`);
   if (doDoLineLink) log(`A9 do-line-link : ${doLink.plan.length} DO line(s) would have so_item_id stamped (the delivered trace completes); ${doLink.report.length} refused/reported`);
+  if (doServiceLotReverse) log(`A11 svc-reverse : ${svcReverse.plan.length} phantom service receipt(s) (movement + lot) would be DELETED (zero-consumption guarded)`);
 
   if (!APPLY) {
     log("");
@@ -1956,6 +2089,10 @@ try {
     if (doDoLineLink) {
       const n = await applyDoLineLink(doLink.plan);
       log(`A9 APPLIED: ${n} DO line(s) stamped with their determined so_item_id.`);
+    }
+    if (doServiceLotReverse) {
+      const n = await applyServiceLotReverse(svcReverse.plan);
+      log(`A11 APPLIED: ${n} phantom service receipt(s) deleted (movement + lot, one transaction, consumption-guarded).`);
     }
     log("Done. Re-run in DRY-RUN to confirm the plan is now empty (the idempotence check).");
   }

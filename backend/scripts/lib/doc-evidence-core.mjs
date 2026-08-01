@@ -365,7 +365,19 @@ export function planOverConsumedCorrection({ lot, consumptions = [], movements =
  *            already carrying allocations, or already served by the delivered
  *            ledger are untouched and reported.
  *    unfilled  named demand no PO line could cover (reported, not an error). */
-export function planFifoAttribution({ poLines = [], soLines = [] }) {
+export function planFifoAttribution({ poLines = [], soLines = [], poStatus = null }) {
+  /* STATUS GUARD (2026-08-02, the 023 source verdict): a CANCELLED (or DRAFT)
+     PO is never an attribution target — it supplies nothing (mrp.ts PO_DEAD),
+     so writing allocations onto it fabricates claims for goods that will never
+     arrive. The incident PO was cancelled in the SOURCE system and imported
+     verbatim; the backfill attributed it anyway. */
+  const status = String(poStatus ?? "").trim().toUpperCase();
+  if (status === "CANCELLED" || status === "DRAFT") {
+    return {
+      plans: [], skippedLinked: [], skippedAllocated: [], skippedServed: [], unfilled: [],
+      refusedPoStatus: status,
+    };
+  }
   const skippedLinked = poLines.filter((l) => l.soItemId != null).map((l) => l.id);
   const skippedAllocated = poLines
     .filter((l) => l.soItemId == null && Number(l.allocationCount ?? 0) > 0)
@@ -474,6 +486,7 @@ export function planFifoAttribution({ poLines = [], soLines = [] }) {
 export function planAllocationDeliveredRepair({
   poNumber,
   selfExecuted = false,
+  selfCancelled = false,
   duplicateOf = null,
   lines = [],
   served = {},
@@ -482,8 +495,14 @@ export function planAllocationDeliveredRepair({
   const servedOf = (soItemId) => served[soItemId] ?? null;
   const out = { mode: "flips", removals: [], flips: [], keeps: [], partials: [], recommendation: null };
 
+  /* CANCELLED PO (2026-08-02, the 023 source verdict: cancelled in the SOURCE
+     system, imported verbatim): its allocations claim demand for goods that
+     will never arrive — remove them ALL, and the owner needs NO cancel action
+     (already cancelled; MRP was never inflated either — CANCELLED is PO_DEAD,
+     excluded from supply). An executed-then-cancelled PO still removes: the
+     delivered chain, not an allocation row, is what documents what shipped. */
   const confirmedDuplicate = Boolean(duplicateOf && duplicateOf.executed && !selfExecuted);
-  if (confirmedDuplicate) {
+  if (selfCancelled || confirmedDuplicate) {
     out.mode = "remove-all";
     for (const line of lines) {
       for (const a of line.allocations ?? []) {
@@ -500,11 +519,15 @@ export function planAllocationDeliveredRepair({
         });
       }
     }
-    out.recommendation =
-      `${poNumber} is an UNEXECUTED duplicate of ${duplicateOf.poNumber} (same supplier, same line multiset; `
-      + `${duplicateOf.poNumber} received+shipped, ${poNumber} never received). All its allocation rows are removed. `
-      + `RECOMMENDED OWNER DECISION: cancel ${poNumber} — cancelling also removes its phantom incoming supply from MRP `
-      + `(dead statuses are excluded from PO Outstanding). NOT executed here.`;
+    out.recommendation = selfCancelled
+      ? `${poNumber} is CANCELLED${duplicateOf ? ` (duplicate of ${duplicateOf.poNumber} — the source system's own cancel, carried by the import)` : ""}. `
+        + `All its allocation rows are removed — a dead PO must not claim SO demand. `
+        + `NO owner cancel action is needed (already cancelled), and MRP was never inflated by it `
+        + `(CANCELLED is PO_DEAD — excluded from incoming supply).`
+      : `${poNumber} is an UNEXECUTED duplicate of ${duplicateOf.poNumber} (same supplier, same line multiset; `
+        + `${duplicateOf.poNumber} received+shipped, ${poNumber} never received). All its allocation rows are removed. `
+        + `RECOMMENDED OWNER DECISION: cancel ${poNumber} — cancelling also removes its phantom incoming supply from MRP `
+        + `(dead statuses are excluded from PO Outstanding). NOT executed here.`;
     return out;
   }
 

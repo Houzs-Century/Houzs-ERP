@@ -194,15 +194,47 @@ try {
   });
   const poPairs = reportPairs("PO pairs (same company + supplier)", poDocs,
     (d) => `${d.companyId}::${d.partyId}`);
-  // The prime suspect named by the owner — say explicitly whether it confirmed.
-  const suspectPair = poPairs.find((p) =>
-    (p.a.docNo === "2990-PO-2606-023" && p.b.docNo === "2990-PO-2606-024")
-    || (p.a.docNo === "2990-PO-2606-024" && p.b.docNo === "2990-PO-2606-023"));
+  /* The prime suspect named by the owner — checked DIRECTLY at ANY status
+     (the pair scan above excludes CANCELLED docs, and the 2026-08-02 source
+     verdict says 023 was cancelled in the SOURCE system: an operator
+     re-creation 9 minutes before 024, cancelled there, imported verbatim
+     with the same UUID). Expected Houzs status for -023: CANCELLED. */
   log("");
-  log(suspectPair
-    ? `PRIME SUSPECT 2990-PO-2606-023 vs -024: ${suspectPair.verdict} (match ${pct(suspectPair.matchPct)}, gap ${suspectPair.gapDays?.toFixed(1)}d). `
-      + `If confirmed by the owner, -023 is an unexecuted duplicate order: run part=fifo-attribute-repair (removes its allocation rows) and cancel it (owner decision).`
-    : `PRIME SUSPECT 2990-PO-2606-023 vs -024: did NOT pair under the current window/floor — check both documents exist and re-read the criteria.`);
+  {
+    const sus = await pg`
+      SELECT p.id::text AS id, p.po_number, p.po_date::text AS po_date,
+             UPPER(COALESCE(p.status::text,'')) AS status, p.created_at
+        FROM scm.purchase_orders p
+       WHERE p.po_number IN ('2990-PO-2606-023','2990-PO-2606-024')
+       ORDER BY p.po_number`;
+    const s023 = sus.find((r) => r.po_number === "2990-PO-2606-023");
+    const s024 = sus.find((r) => r.po_number === "2990-PO-2606-024");
+    if (!s023 || !s024) {
+      log(`PRIME SUSPECT 2990-PO-2606-023 vs -024: ${!s023 ? "-023 NOT FOUND. " : ""}${!s024 ? "-024 NOT FOUND." : ""}`);
+    } else {
+      const susLines = await pg`
+        SELECT purchase_order_id::text AS doc_id, material_code, item_group, variants, qty, unit_price_centi
+          FROM scm.purchase_order_items WHERE purchase_order_id::text IN (${s023.id}, ${s024.id})`;
+      const keyOf = (docId) => docLineMultisetKey(susLines.filter((l) => l.doc_id === docId).map((l) => ({
+        itemCode: l.material_code,
+        variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
+        qty: Number(l.qty ?? 0),
+        unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+      })));
+      const multisetMatch = keyOf(s023.id) === keyOf(s024.id);
+      const alloc023 = await pg`
+        SELECT COUNT(a.id)::int AS n FROM scm.purchase_order_item_allocations a
+          JOIN scm.purchase_order_items i ON i.id = a.purchase_order_item_id
+         WHERE i.purchase_order_id = ${s023.id}::uuid`;
+      log(`PRIME SUSPECT 2990-PO-2606-023 vs -024: statuses ${s023.status} / ${s024.status}; line multiset ${multisetMatch ? "IDENTICAL" : "DIFFERENT"}; created ${s023.created_at?.toISOString?.() ?? s023.created_at} vs ${s024.created_at?.toISOString?.() ?? s024.created_at}; -023 allocation rows: ${alloc023[0]?.n ?? 0}.`);
+      if (s023.status === "CANCELLED") {
+        log(`  SOURCE VERDICT CONFIRMED: -023 is CANCELLED in Houzs — the source system's own cancel (operator re-creation), carried by the import. NO owner cancel action is needed. Remaining cleanup: its ${alloc023[0]?.n ?? 0} allocation row(s) via part=fifo-attribute-repair (a cancelled PO must not claim SO demand).`);
+        log(`  MRP IMPACT: ZERO — CANCELLED is PO_DEAD (mrp.ts), so -023's lines were never counted as incoming supply. See section (I) below for the explicit confirmation.`);
+      } else {
+        log(`  IMPORT DRIFT: the source system says -023 was CANCELLED there, but Houzs reads ${s023.status}. REPORT ONLY — this check changes nothing; the status correction is the owner's decision (and until then -023 DOES inflate MRP supply — section (I) quantifies it).`);
+      }
+    }
+  }
 
   // ══ GRN ══════════════════════════════════════════════════════════════════
   const grnHdrs = await pg`
@@ -476,11 +508,25 @@ try {
   // ══ (I) MRP supply inflation from LIKELY-DUPLICATE unexecuted POs ════════
   log("");
   log(`--- (I) MRP supply inflation from LIKELY-DUPLICATE unexecuted POs ---`);
+  /* Incident-specific confirmation (2026-08-02 source verdict): 023 first. */
+  {
+    const inc = await pg`
+      SELECT UPPER(COALESCE(status::text,'')) AS status,
+             (SELECT COALESCE(SUM(GREATEST(0, i.qty - COALESCE(i.received_qty,0))),0)::int
+                FROM scm.purchase_order_items i WHERE i.purchase_order_id = p.id) AS open_qty
+        FROM scm.purchase_orders p WHERE p.po_number = '2990-PO-2606-023'`;
+    if (inc.length === 1) {
+      const st = inc[0].status;
+      log(PO_DEAD.has(st)
+        ? `  2990-PO-2606-023: status ${st} -> MRP impact ZERO, confirmed — dead statuses are excluded from incoming supply (mrp.ts PO_DEAD), so its ${inc[0].open_qty} open unit(s) never counted and never will. MRP was NOT inflated by this PO.`
+        : `  2990-PO-2606-023: status ${st} (IMPORT DRIFT — source says CANCELLED) -> its ${inc[0].open_qty} open unit(s) ARE currently counted as incoming supply; the buckets below quantify what that hides.`);
+    }
+  }
   const inflationSuspects = poPairs
     .filter((p) => p.verdict === "LIKELY-DUPLICATE")
     .flatMap((p) => [p.a, p.b].filter((d) => !d.executed && !PO_DEAD.has(d.status)));
   const seen = new Set();
-  if (inflationSuspects.length === 0) log("  none — no unexecuted LIKELY-DUPLICATE PO is feeding MRP supply.");
+  if (inflationSuspects.length === 0) log("  no OTHER unexecuted LIKELY-DUPLICATE PO is feeding MRP supply.");
   for (const s of inflationSuspects) {
     if (seen.has(s.docNo)) continue;
     seen.add(s.docNo);
