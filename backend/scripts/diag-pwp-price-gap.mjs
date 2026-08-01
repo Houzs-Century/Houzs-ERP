@@ -38,10 +38,26 @@
 // (:851) instead. They didn't — they reached Complete order, and only the server
 // refused. Two reads of one code disagreeing is what a duplicate row looks like.
 //
+// AND THE SKU MASTER SHOWS RM 490 FOR THESE SKUS. The POS Products page is not
+// a separate table: since the 2026-07-21 flip the POS builds with
+// VITE_BACKEND_TARGET=houzs (deploy.yml) and every authedFetch goes to
+// erp.houzscentury.com/api/scm with X-Company-Id: 2 — the SAME GET /mfg-products
+// the Houzs SCM Products page uses. One row, two column projections: the POS
+// renders sell_price_sen + pwp_price_sen (selling), the SCM page renders
+// base_price_sen + price1_sen as "Price 2"/"Price 1" (cost) — the 0109 split.
+// So the RM 490 on that screen IS this database, and the SO path still reads 0.
+//
+// WHERE A DUPLICATE CAN HIDE. GET /mfg-products is scopeToCompany'd, ordered by
+// code AND filtered `.eq('status','ACTIVE')`. loadProductsByCodes has NONE of
+// those three. So a duplicate that is another company's row, OR a company-2 row
+// left non-ACTIVE, is invisible in both SKU Masters while remaining perfectly
+// visible to the SO path — which is why both screens can still show a tidy 50.
+//
 // Section A settles it, and it is deliberately NOT restricted to cross-company
 // duplicates: the top-up inserts the source's verbatim `id`, so a one-shot that
 // minted different ids leaves TWO rows for one code under the SAME company, and
-// the unordered read breaks identically. If A is empty, it is H1 after all.
+// the unordered read breaks identically. It reports status per code for the same
+// reason. If A is empty, it is H1 after all.
 //
 // READ-ONLY by default. APPLY=1 additionally fills company-2 rows whose
 // pwp_price_sen is 0 while the 2990 source has a real value — zeros only, so
@@ -99,6 +115,8 @@ async function main() {
            count(*)::int                          AS n_rows,
            count(DISTINCT company_id)::int        AS n_companies,
            array_agg(DISTINCT company_id)         AS companies,
+           array_agg(DISTINCT status::text)       AS statuses,
+           count(*) FILTER (WHERE status = 'ACTIVE')::int AS n_active,
            array_agg(DISTINCT pwp_price_sen)      AS pwp_values,
            array_agg(DISTINCT sell_price_sen)     AS sell_values
     FROM scm.mfg_products
@@ -111,11 +129,13 @@ async function main() {
     const xco = dupes.filter((d) => d.n_companies > 1);
     const inco = dupes.filter((d) => d.n_companies === 1);
     const pwpSplit = dupes.filter((d) => (d.pwp_values ?? []).length > 1);
+    const hidden = dupes.filter((d) => d.n_active < d.n_rows);
     console.log(`  ${dupes.length} duplicated code(s): ${xco.length} across companies, ${inco.length} within one company`);
     console.log(`  ${pwpSplit.length} of them DISAGREE on pwp_price_sen  <-- these reproduce the reject`);
+    console.log(`  ${hidden.length} have a non-ACTIVE row: INVISIBLE in both SKU Masters (GET /mfg-products filters status='ACTIVE'), still picked by the SO path (no status filter)`);
     for (const d of dupes.slice(0, 40)) {
       const flag = (d.pwp_values ?? []).length > 1 ? "  <-- pwp split" : "";
-      console.log(`  ${d.code.padEnd(16)} rows=${d.n_rows} companies=[${d.companies}]  pwp=[${d.pwp_values}]  sell=[${d.sell_values}]${flag}`);
+      console.log(`  ${d.code.padEnd(16)} rows=${d.n_rows} (${d.n_active} ACTIVE) companies=[${d.companies}] status=[${d.statuses}]  pwp=[${d.pwp_values}]  sell=[${d.sell_values}]${flag}`);
     }
     if (dupes.length > 40) console.log(`  … ${dupes.length - 40} more`);
     console.log("  H2 is LIVE — backfilling data will NOT reliably fix these; the loaders must resolve by (company_id, code)");
