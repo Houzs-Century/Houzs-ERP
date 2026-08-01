@@ -31,9 +31,15 @@ import {
 import { cn } from "../lib/utils";
 import { ResetFiltersButton } from "./ResetFiltersButton";
 import { TableSkeleton } from "./Skeleton";
-import { ColumnsPanel, ColumnsPanelButton } from "./ColumnsPanel";
+import {
+  CUSTOM_FIELDS_GROUP,
+  ColumnsButton,
+  ColumnsDrawer,
+  type DrawerColumn,
+} from "./ColumnsDrawer";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import { useSmallViewport } from "../hooks/useSmallViewport";
 import { subscribeActiveCompany, getActiveCompanySnapshot } from "../lib/activeCompany";
 import { shortCompanyName } from "../lib/branding";
 import {
@@ -97,6 +103,13 @@ export interface Column<T> {
    * clicking its header; only the funnel menu is suppressed.
    */
   disableFilter?: boolean;
+  /**
+   * Category this column belongs to in the Columns drawer — "Basic",
+   * "Amounts", "Logistics", … A table that annotates NOTHING renders one flat
+   * list, exactly as before, which is what let the grouped drawer ship to every
+   * list page at once. UDF columns are grouped as "Custom fields" for free.
+   */
+  group?: string;
 }
 
 /**
@@ -159,6 +172,8 @@ interface Props<T> {
    * section is shown.
    */
   layoutPresets?: ColumnLayoutPreset[];
+  /** Document name for the Columns drawer eyebrow, e.g. "Sales Orders". */
+  documentLabel?: string;
   columns: Column<T>[];
   rows: T[] | null;
   loading?: boolean;
@@ -350,13 +365,6 @@ const DEFAULT_COL_WIDTH = 160;
 const VIRTUAL_ROW_THRESHOLD = 30;
 const VIRTUAL_OVERSCAN = 12;
 const ROW_HEIGHT_ESTIMATE = 33; // px; corrected at runtime by measuring a real row
-const SMALL_VIEWPORT_QUERY = "(max-width: 639px)";
-
-function readSmallViewport(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia?.(SMALL_VIEWPORT_QUERY).matches ?? window.innerWidth < 640;
-}
-
 function sanitizeStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((item): item is string => typeof item === "string" && item.length > 0))]
@@ -435,26 +443,6 @@ function useViewportClampedPos(
   }, [anchor, ref]);
   if (!anchor) return null;
   return pos ?? { top: anchor.y, left: anchor.x };
-}
-
-function useSmallViewport(): boolean {
-  const [small, setSmall] = useState(readSmallViewport);
-
-  useEffect(() => {
-    const media = window.matchMedia?.(SMALL_VIEWPORT_QUERY);
-    const update = () => setSmall(media?.matches ?? window.innerWidth < 640);
-    update();
-
-    if (media?.addEventListener) {
-      media.addEventListener("change", update);
-      return () => media.removeEventListener("change", update);
-    }
-
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
-
-  return small;
 }
 
 /**
@@ -583,6 +571,7 @@ function DataTableInner<T>({
   tableId,
   layoutFamily,
   layoutPresets,
+  documentLabel,
   columns,
   rows,
   loading,
@@ -868,6 +857,9 @@ function DataTableInner<T>({
     return udf.fields.map<Column<T>>((field) => ({
       key: `udf:${field.key}`,
       label: field.label,
+      // Every user-defined column belongs to one group by construction — the
+      // page never has to say so.
+      group: CUSTOM_FIELDS_GROUP,
       render: (row: T) => {
         const rowKey = String(getRowKey(row));
         const value = udf.values[rowKey]?.[field.key] ?? null;
@@ -1334,6 +1326,77 @@ function DataTableInner<T>({
     setOrder([]);
     updateWidths({}, true);
     setPinned([]);
+  }
+
+  /* ── Columns drawer ──────────────────────────────────────────────────────
+     One row per movable column, in TABLE order, carrying everything the
+     drawer draws: its group, whether it shows, its effective width and
+     whether it is frozen. Derived — the drawer holds no column state of its
+     own, so every gesture lands on the same prefs a header drag writes. */
+  const drawerColumns = useMemo<DrawerColumn[]>(
+    () =>
+      allColumns
+        .filter((c) => !c.alwaysVisible)
+        .map((c) => ({
+          key: c.key,
+          label: c.label || c.key,
+          group: c.group || "",
+          visible: !effectiveHidden.has(c.key),
+          width: resolveWidth(c),
+          pinned: pinnedSet.has(c.key),
+        })),
+    [allColumns, effectiveHidden, resolveWidth, pinnedSet]
+  );
+
+  /** Every column on. Writes the shown-list explicitly so a `defaultHidden`
+   *  column stays on afterwards rather than snapping back on the next mount. */
+  function showAllColumns() {
+    const movable = allColumns.filter((c) => !c.alwaysVisible);
+    setHiddenList([]);
+    setShownList(movable.filter((c) => c.defaultHidden).map((c) => c.key));
+  }
+
+  /** Back to the active layout: its columns, its order, its widths. */
+  function resetLayout() {
+    resetVisibility();
+    resetOrder();
+  }
+
+  /** True when the columns on screen match no offered layout — the "· edited"
+   *  in the footer. With no layouts to compare against there is nothing to be
+   *  dirty against, so it stays false. */
+  const layoutDirty = Boolean(
+    presetOptions && presetOptions.length > 0 && !presetOptions.some((p) => p.active)
+  );
+
+  /** Download the arrangement as JSON — the drawer's "Export column config".
+   *  Column KEYS and sizes only; no rows, nothing from the data. */
+  function exportColumnConfig() {
+    const payload = {
+      table: baseIdKey,
+      exportedAt: new Date().toISOString(),
+      columns: drawerColumns.map(({ key, label, group, visible, width, pinned }) => ({
+        key,
+        label,
+        group: group || undefined,
+        visible,
+        width,
+        pinned,
+      })),
+    };
+    try {
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
+      );
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `columns-${baseIdKey}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Blob/URL unavailable (very old browser, locked-down webview): the menu
+      // item simply does nothing rather than throwing through the drawer.
+    }
   }
 
   // ── Column resize ──────────────────────────────────────────
@@ -2132,7 +2195,7 @@ function DataTableInner<T>({
             )}
             {mobileView === "cards" ? "Table" : "Cards"}
           </button>
-          <ColumnsPanelButton
+          <ColumnsButton
             visibleCount={visibleCount}
             totalCount={chooserOptions.length}
             onClick={() => setChooserOpen(true)}
@@ -2141,22 +2204,30 @@ function DataTableInner<T>({
         </div>
       </div>
 
-      {/* Columns + UDF side panel */}
-      <ColumnsPanel
-        open={chooserOpen}
+      {/* Columns drawer (design handoff "Direction A", 2026-08-01). Mounted
+          only while open: its hooks (viewport media query, key handler) would
+          otherwise run for every table on the page that nobody has opened. */}
+      {chooserOpen && (
+      <ColumnsDrawer
+        open
         onClose={() => setChooserOpen(false)}
-        options={chooserOptions}
-        presets={presetOptions}
-        onApplyPreset={applyPreset}
-        defaultManager={defaultManager}
-        hidden={effectiveHidden}
+        docLabel={documentLabel}
+        columns={drawerColumns}
         onToggle={toggleColumn}
-        onResetVisibility={resetVisibility}
         onReorder={reorderTo}
-        onResetOrder={resetOrder}
+        onTogglePin={togglePin}
+        onSetWidth={(key, px) => updateWidths((prev) => ({ ...prev, [key]: px }), true)}
+        onShowAll={showAllColumns}
+        onReset={resetLayout}
+        layouts={presetOptions}
+        onApplyLayout={applyPreset}
+        defaultManager={defaultManager}
+        dirty={layoutDirty}
+        onExport={exportColumnConfig}
         udf={udfTable ? udf : undefined}
         udfTableLabel={udfTableLabel || udfTable}
       />
+      )}
 
       {/* ── Table (sm+ always; on `<sm` only when mobileView=table). The
             outer wrapper drops `overflow-hidden` when forced on mobile

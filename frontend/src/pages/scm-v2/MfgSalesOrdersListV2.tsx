@@ -1313,10 +1313,18 @@ export function MfgSalesOrdersListV2() {
     }
   };
 
-  // ── Table columns ─────────────────────────────────────────────────────
+  /* ── Table columns ───────────────────────────────────────────────────────
+     `group` puts each column under a header in the Columns drawer. The design
+     handoff's example listed Basic / Amounts / Logistics / Custom fields for a
+     20-column demo; this list is 44, so two more groups earn their place —
+     stuffing eleven address fields into "Basic" would put the drawer back to
+     the flat scroll the grouping exists to end. Custom fields is automatic
+     (every UDF column joins it). Finance columns are only DECLARED for a
+     finance viewer, so that group simply doesn't exist for anyone else. */
   const columns: Column<SoRow>[] = [
     {
       key: "doc_no",
+      group: "Basic",
       label: "Doc No.",
       // 156 + font-docno (owner 2026-07-31): 132 clipped a full doc no by a
       // couple of px — see the measured DO No. note in MfgDeliveryOrdersListV2.
@@ -1331,6 +1339,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "so_date",
+      group: "Basic",
       label: "Date",
       width: "108px",
       getValue: (r) => r.so_date,
@@ -1340,6 +1349,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "debtor_name",
+      group: "Basic",
       label: "Customer",
       getValue: (r) => r.debtor_name,
       render: (r) => (
@@ -1350,6 +1360,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "salesperson",
+      group: "Basic",
       label: "Salesperson",
       width: "148px",
       // Not in the backend sort whitelist — keep getValue for CSV export but
@@ -1364,6 +1375,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "sales_location",
+      group: "Logistics",
       label: "Location",
       width: "132px",
       disableSort: true,
@@ -1372,6 +1384,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "reference",
+      group: "Basic",
       label: "Reference",
       width: "132px",
       disableSort: true,
@@ -1382,6 +1395,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "branding",
+      group: "Basic",
       label: "Branding",
       width: "112px",
       disableSort: true,
@@ -1397,6 +1411,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "status",
+      group: "Basic",
       label: "Status",
       width: "108px",
       getValue: (r) => r.status,
@@ -1411,6 +1426,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "amount",
+      group: "Amounts",
       label: "Amount",
       width: "128px",
       align: "right",
@@ -1436,6 +1452,7 @@ export function MfgSalesOrdersListV2() {
          (`converted_po_nos`, server-derived). Not default-hidden any more —
          "sales order list 没有显示 PO No" was exactly this column reading empty. */
       key: "po_doc_no",
+      group: "Logistics",
       label: "PO No.",
       width: "150px",
       disableSort: true,
@@ -1459,6 +1476,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "phone",
+      group: "Customer",
       label: "Phone",
       width: "130px",
       defaultHidden: true,
@@ -1470,6 +1488,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "email",
+      group: "Customer",
       label: "Email",
       width: "180px",
       defaultHidden: true,
@@ -1481,6 +1500,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "debtor_code",
+      group: "Customer",
       label: "Customer Code",
       width: "120px",
       defaultHidden: true,
@@ -1492,6 +1512,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "address1",
+      group: "Customer",
       label: "Address 1",
       width: "180px",
       defaultHidden: true,
@@ -1503,6 +1524,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "address2",
+      group: "Customer",
       label: "Address 2",
       width: "180px",
       defaultHidden: true,
@@ -1514,6 +1536,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "city",
+      group: "Customer",
       label: "City",
       width: "130px",
       defaultHidden: true,
@@ -1525,6 +1548,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "postcode",
+      group: "Customer",
       label: "Postcode",
       width: "100px",
       defaultHidden: true,
@@ -1536,6 +1560,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "customer_state",
+      group: "Customer",
       label: "State",
       width: "130px",
       defaultHidden: true,
@@ -1547,6 +1572,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "payment_method",
+      group: "Amounts",
       label: "Payment Method",
       width: "150px",
       defaultHidden: true,
@@ -1563,6 +1589,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "paid",
+      group: "Amounts",
       label: "Paid",
       width: "110px",
       align: "right",
@@ -1575,6 +1602,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "balance",
+      group: "Amounts",
       label: "Balance",
       width: "110px",
       align: "right",
@@ -1591,6 +1619,7 @@ export function MfgSalesOrdersListV2() {
     //    these keys aren't in the backend sort whitelist). Safe for everyone.
     {
       key: "current_doc_no",
+      group: "Basic",
       label: "Current Doc No.",
       width: "140px",
       defaultHidden: true,
@@ -1602,6 +1631,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "venue",
+      group: "Logistics",
       label: "Venue",
       width: "150px",
       defaultHidden: true,
@@ -1613,6 +1643,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "stock_status",
+      group: "Logistics",
       label: "Stock Status",
       width: "150px",
       defaultHidden: true,
@@ -1624,6 +1655,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "processing_date",
+      group: "Logistics",
       label: "Processing Date",
       width: "140px",
       defaultHidden: true,
@@ -1637,6 +1669,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "customer_delivery_date",
+      group: "Logistics",
       label: "Customer Delivery Date",
       width: "160px",
       defaultHidden: true,
@@ -1650,6 +1683,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "note",
+      group: "Basic",
       label: "Note",
       width: "200px",
       defaultHidden: true,
@@ -1661,6 +1695,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "customer_type",
+      group: "Customer",
       label: "Customer Type",
       width: "130px",
       defaultHidden: true,
@@ -1672,6 +1707,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "building_type",
+      group: "Customer",
       label: "Building Type",
       width: "130px",
       defaultHidden: true,
@@ -1683,6 +1719,7 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "customer_country",
+      group: "Customer",
       label: "Country",
       width: "120px",
       defaultHidden: true,
@@ -1700,6 +1737,7 @@ export function MfgSalesOrdersListV2() {
       ? ([
           {
             key: "mattress_sofa_centi",
+            group: "Finance",
             label: "Mattress/Sofa",
             width: "120px",
             align: "right",
@@ -1712,6 +1750,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "bedframe_centi",
+            group: "Finance",
             label: "Bedframe",
             width: "110px",
             align: "right",
@@ -1724,6 +1763,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "accessories_centi",
+            group: "Finance",
             label: "Accessories",
             width: "110px",
             align: "right",
@@ -1736,6 +1776,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "others_centi",
+            group: "Finance",
             label: "Others",
             width: "110px",
             align: "right",
@@ -1748,6 +1789,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "service_centi",
+            group: "Finance",
             label: "Service",
             width: "110px",
             align: "right",
@@ -1760,6 +1802,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "mattress_sofa_cost_centi",
+            group: "Finance",
             label: "Mattress/Sofa Cost",
             width: "140px",
             align: "right",
@@ -1772,6 +1815,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "bedframe_cost_centi",
+            group: "Finance",
             label: "Bedframe Cost",
             width: "130px",
             align: "right",
@@ -1784,6 +1828,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "accessories_cost_centi",
+            group: "Finance",
             label: "Accessories Cost",
             width: "140px",
             align: "right",
@@ -1796,6 +1841,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "others_cost_centi",
+            group: "Finance",
             label: "Others Cost",
             width: "130px",
             align: "right",
@@ -1808,6 +1854,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "service_cost_centi",
+            group: "Finance",
             label: "Service Cost",
             width: "130px",
             align: "right",
@@ -1820,6 +1867,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "total_cost_centi",
+            group: "Finance",
             label: "Total Cost",
             width: "120px",
             align: "right",
@@ -1832,6 +1880,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "total_margin_centi",
+            group: "Finance",
             label: "Margin",
             width: "120px",
             align: "right",
@@ -1844,6 +1893,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "margin_pct_basis",
+            group: "Finance",
             label: "Margin %",
             width: "100px",
             align: "right",
@@ -1856,6 +1906,7 @@ export function MfgSalesOrdersListV2() {
           },
           {
             key: "deposit_centi",
+            group: "Amounts",
             label: "Deposit",
             width: "110px",
             align: "right",
@@ -2142,6 +2193,7 @@ export function MfgSalesOrdersListV2() {
           )}
           <DataTable<SoRow>
             tableId="sales-orders-v2"
+            documentLabel="Sales Orders"
             layoutPresets={layoutPresets}
             rows={rows}
             loading={listLoading}

@@ -681,8 +681,6 @@ describe("DataTable column reorder", () => {
       />,
     );
     fireEvent.click(screen.getByTitle(/^Columns —/));
-    // The drawer opens in table order, so what is listed is what is dragged.
-    expect(screen.getByText("Table order")).toBeTruthy();
 
     // Scope to the drawer's draggable rows — the label text also appears in
     // the table header, so an unscoped getByText would be ambiguous.
@@ -695,7 +693,7 @@ describe("DataTable column reorder", () => {
     expect(headerLabels(container)).toEqual(["Bravo", "Alpha", "Delta", "Charlie"]);
   });
 
-  it("cannot be dragged while the drawer is listing A-Z", () => {
+  it("cannot be dragged while a search is filtering the list", () => {
     setViewport(1280);
     render(
       <DataTable
@@ -706,13 +704,15 @@ describe("DataTable column reorder", () => {
       />,
     );
     fireEvent.click(screen.getByTitle(/^Columns —/));
-    // Table order → A-Z. The grips go with it rather than offering a handle
-    // that can't honour the drop, and every row's draggable turns off.
     expect(document.querySelectorAll("[title='Drag to reorder']").length).toBe(4);
-    fireEvent.click(screen.getByText("Table order"));
 
-    expect(screen.getByText("A-Z")).toBeTruthy();
-    expect(document.querySelectorAll("[title='Drag to reorder']").length).toBe(0);
+    /* The redesign replaced the drawer's A-Z mode with search (handoff
+       2026-08-01) — but the hazard it existed for is the same one: dropping a
+       row into a FILTERED list would land it at a position the operator never
+       pointed at, because the rows either side are hidden. So a filtered list
+       refuses the drag outright rather than offering a handle that lies. */
+    fireEvent.change(screen.getByLabelText("Search columns"), { target: { value: "a" } });
+
     expect(document.querySelectorAll("div[draggable='true']").length).toBe(0);
   });
 });
@@ -786,7 +786,8 @@ describe("DataTable layout presets", () => {
     );
 
     fireEvent.click(screen.getByTitle(/^Columns —/));
-    fireEvent.click(screen.getByRole("button", { name: /Sales Layout/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+    fireEvent.click(screen.getByRole("option", { name: /Sales Layout/ }));
 
     expect(headerLabels(container)).toEqual(["Alpha", "Bravo", "Delta"]);
     // Written as the same prefs a hand-arranged layout writes, so the very next
@@ -807,7 +808,8 @@ describe("DataTable layout presets", () => {
       />,
     );
     fireEvent.click(screen.getByTitle(/^Columns —/));
-    fireEvent.click(screen.getByRole("button", { name: /Sales Layout/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+    fireEvent.click(screen.getByRole("option", { name: /Sales Layout/ }));
     cleanup();
 
     // Remount: the pick must survive rather than reading as "untouched" and
@@ -824,7 +826,7 @@ describe("DataTable layout presets", () => {
     expect(headerLabels(container)).toEqual(["Alpha", "Bravo", "Delta"]);
   });
 
-  it("marks the matching layout active and a hand-edited one Custom", () => {
+  it("names the active layout, and says 'edited' once it no longer matches", () => {
     setViewport(1280);
     render(
       <DataTable
@@ -837,16 +839,25 @@ describe("DataTable layout presets", () => {
     );
     fireEvent.click(screen.getByTitle(/^Columns —/));
 
-    const presetRow = (label: string) => screen.getByRole("button", { name: new RegExp(label) });
-    expect(presetRow("Ops Layout").getAttribute("aria-pressed")).toBe("true");
-    expect(screen.queryByText("Custom")).toBeNull();
+    // The picker line names the layout the table currently matches.
+    const picker = screen.getByRole("button", { name: /^Layout/ });
+    expect(picker.textContent).toContain("Ops Layout");
+    expect(screen.getByText(/of .* shown/).textContent).not.toContain("edited");
 
-    // Hide a column the active preset shows: nothing matches any more, and the
-    // panel says so rather than leaving every row unhighlighted.
+    // …and the popover marks that row as the selected one.
+    fireEvent.click(picker);
+    expect(
+      screen.getByRole("option", { name: /Ops Layout/ }).getAttribute("aria-selected"),
+    ).toBe("true");
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    /* Hide a column the layout shows: the arrangement is now the operator's,
+       not the layout's. The redesign says so in the footer ("· edited") and by
+       dropping the layout name — the old panel's "Custom" chip. */
     fireEvent.click(screen.getAllByRole("button", { name: "Hide column" })[0]!);
 
-    expect(presetRow("Ops Layout").getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByText("Custom")).toBeTruthy();
+    expect(screen.getByText(/of .* shown/).textContent).toContain("edited");
+    expect(screen.getByRole("button", { name: /^Layout/ }).textContent).toContain("Custom");
   });
 });
 
