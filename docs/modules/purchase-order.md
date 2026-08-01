@@ -120,13 +120,15 @@ UUID**; use `houzsUser.id` for the public bigint.
      `PO_STATUS_BUCKETS` (`:292-298`), `q` ilike over `po_number` + `notes` only
      (`:448` — supplier name is an embedded resource and cannot be `ilike`d),
      `from`/`to` on `po_date`, `.range(...)`.
-   - `statusCounts` = six `head:true count:'exact'` queries in one `Promise.all`
+   - `statusCounts` = seven `head:true count:'exact'` queries in one `Promise.all`
      (`:467-474`), over the same company + supplier filter but **without** status,
-     search or paging.
+     search or paging. (Seven, not six: the `outstanding` roll-up is counted
+     separately rather than derived, so the pill and the filter share one source.)
 3. **Enrichment — exactly ONE extra query** (`:496-512`): all non-cancelled GRNs
-   for the listed PO ids, carrying `grn_number`. It powers both `has_children`
-   (the downstream lock) and the "Transfer To (GRN)" column, so the two are one
-   round trip.
+   for the listed PO ids, carrying `id` + `grn_number`. It powers both
+   `has_children` (the downstream lock) and the "GRN No" column, so the two are
+   one round trip. `transfer_to_grns` is `{ id, grnNumber }[]` — the id is what
+   lets the column link to `/scm/grns/:id`.
 4. **Assemble** (`:513-517`) — `has_children` + `transfer_to_grns` +
    `assigned_sos` / `assigned_so_linked` (`resolvePoSoCoverageForPos`) +
    **`delivered_dos`** (`resolveDeliveredDosForPos`) stamped per row; response is
@@ -271,9 +273,12 @@ comment without checking the filename.
 ### Status vocabulary
 
 `VALID_STATUSES` (`:285`): `DRAFT | SUBMITTED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED`.
-Filter-pill buckets (`:292-298`) are all 1:1 but the KEYS differ from the raw
-status: `draft→DRAFT`, `open→SUBMITTED`, `partial→PARTIALLY_RECEIVED`,
-`received→RECEIVED`, `cancelled→CANCELLED`.
+Filter-pill buckets (`:292-298`): five are 1:1 but the KEYS differ from the raw
+status — `draft→DRAFT`, `open→SUBMITTED`, `partial→PARTIALLY_RECEIVED`,
+`received→RECEIVED`, `cancelled→CANCELLED`. `outstanding→SUBMITTED +
+PARTIALLY_RECEIVED` is the one ROLL-UP (owner 2026-07-31): raised but not
+received in full, the pill twin of the Outstanding stat card. It **overlaps**
+open + partial by design, so the pill counts no longer sum to `all`.
 
 `PARTIALLY_RECEIVED` / `RECEIVED` are **not** set by this module — they are
 derived by `recomputePoReceived` in `grns.ts:672-733` from live GRN lines
@@ -380,8 +385,8 @@ Optimized:
 Watch as data grows:
 - The **legacy unpaginated path** still `.limit(500)` (`:413`) and is still used
   by `GrnNew.tsx:156`. Beyond 500 POs that picker silently truncates.
-- `statusCounts` costs six `count:'exact'` queries per paginated request
-  (`:467-474`). They are `head:true` so no rows travel, but they are six index
+- `statusCounts` costs seven `count:'exact'` queries per paginated request
+  (`:467-474`). They are `head:true` so no rows travel, but they are seven index
   scans on every page turn.
 - Free-text search cannot reach supplier name/code (`:444-449`) because those are
   embedded resources. A user searching by supplier gets nothing.

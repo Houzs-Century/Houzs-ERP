@@ -289,12 +289,19 @@ async function poHasOutstandingDropshipOut(
 const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED']);
 /* Filter-pill bucket → the raw purchase_orders.status values it covers. Single
    source of truth for BOTH the status-count queries and the list `status`
-   filter. All five buckets are 1:1 today, but their KEYS differ from the raw
-   status (open→SUBMITTED, partial→PARTIALLY_RECEIVED, received→RECEIVED). The FE
-   sends the BUCKET NAME as `status`; a raw DB status still works
-   (backward-compatible fallback via VALID_STATUSES). */
+   filter. Five buckets are 1:1, but their KEYS differ from the raw status
+   (open→SUBMITTED, partial→PARTIALLY_RECEIVED, received→RECEIVED). The FE sends
+   the BUCKET NAME as `status`; a raw DB status still works (backward-compatible
+   fallback via VALID_STATUSES).
+
+   `outstanding` (owner 2026-07-31) is the one ROLL-UP bucket: raised to a
+   supplier but not yet received in full — i.e. exactly the money the
+   Outstanding stat card sums. It deliberately OVERLAPS open + partial rather
+   than replacing them, so the counts across the pills no longer add up to
+   `all`; that's the point of a roll-up and why it sits right after All. */
 const PO_STATUS_BUCKETS: Record<string, string[]> = {
   draft: ['DRAFT'],
+  outstanding: ['SUBMITTED', 'PARTIALLY_RECEIVED'],
   open: ['SUBMITTED'],
   partial: ['PARTIALLY_RECEIVED'],
   received: ['RECEIVED'],
@@ -407,7 +414,7 @@ mfgPurchaseOrders.get('/', async (c) => {
   let total = 0;
   let page = 0;
   let pageSize = 50;
-  let statusCounts: { all: number; draft: number; open: number; partial: number; received: number; cancelled: number } | undefined;
+  let statusCounts: { all: number; draft: number; outstanding: number; open: number; partial: number; received: number; cancelled: number } | undefined;
 
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
@@ -463,18 +470,20 @@ mfgPurchaseOrders.get('/', async (c) => {
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
 
-    /* Status counts mirror the FE filter-pill buckets (draft / open / partial /
-       received / cancelled) over the SAME company + supplier filters but WITHOUT
-       status / search / pagination. */
+    /* Status counts mirror the FE filter-pill buckets (draft / outstanding /
+       open / partial / received / cancelled) over the SAME company + supplier
+       filters but WITHOUT status / search / pagination. `outstanding` overlaps
+       open + partial by design — see PO_STATUS_BUCKETS. */
     const countBase = () => {
       let cq = supabase.from('purchase_orders').select('*', { count: 'exact', head: true });
       if (supplierId) cq = cq.eq('supplier_id', supplierId);
       cq = scopeToCompany(cq, c);
       return cq;
     };
-    const [allC, draftC, openC, partialC, receivedC, cancelledC] = await Promise.all([
+    const [allC, draftC, outstandingC, openC, partialC, receivedC, cancelledC] = await Promise.all([
       countBase(),
       countBase().in('status', PO_STATUS_BUCKETS.draft),
+      countBase().in('status', PO_STATUS_BUCKETS.outstanding),
       countBase().in('status', PO_STATUS_BUCKETS.open),
       countBase().in('status', PO_STATUS_BUCKETS.partial),
       countBase().in('status', PO_STATUS_BUCKETS.received),
@@ -483,6 +492,7 @@ mfgPurchaseOrders.get('/', async (c) => {
     statusCounts = {
       all: allC.count ?? 0,
       draft: draftC.count ?? 0,
+      outstanding: outstandingC.count ?? 0,
       open: openC.count ?? 0,
       partial: partialC.count ?? 0,
       received: receivedC.count ?? 0,
@@ -497,25 +507,30 @@ mfgPurchaseOrders.get('/', async (c) => {
      this to hide Edit / Cancel from POs that are downstream-locked. */
   const rows = (data ?? []) as Array<{ id: string } & Record<string, unknown>>;
   const childIds = new Set<string>();
-  // Owner 2026-07-02 — "Transfer To (GRN)" list column: collect the non-cancelled
-  // GRN doc-numbers each PO was received into, deduped + stable-ordered. Same one
-  // extra query that already powers has_children — just carry grn_number too.
-  const grnNumbersByPo = new Map<string, string[]>();
+  // Owner 2026-07-02 — "GRN No" list column: collect the non-cancelled GRNs each
+  // PO was received into, deduped + stable-ordered. Same one extra query that
+  // already powers has_children — just carry the GRN identity too.
+  //
+  // Owner 2026-07-31 — carries `id` alongside `grnNumber` now: GRN detail routes
+  // by UUID (/scm/grns/:id), so a number alone can't be linked. Shape widened
+  // rather than duplicated into a parallel id array — nothing consumed the
+  // string[] form.
+  const grnsByPo = new Map<string, Array<{ id: string; grnNumber: string }>>();
   if (rows.length > 0) {
     const ids = rows.map((r) => r.id);
     const { data: grnRows } = await supabase
       .from('grns')
-      .select('purchase_order_id, grn_number')
+      .select('id, purchase_order_id, grn_number')
       .in('purchase_order_id', ids)
       .neq('status', 'CANCELLED')
       .order('grn_number', { ascending: true });
-    for (const g of (grnRows ?? []) as Array<{ purchase_order_id: string | null; grn_number: string | null }>) {
+    for (const g of (grnRows ?? []) as Array<{ id: string; purchase_order_id: string | null; grn_number: string | null }>) {
       if (!g.purchase_order_id) continue;
       childIds.add(g.purchase_order_id);
       if (!g.grn_number) continue;
-      const arr = grnNumbersByPo.get(g.purchase_order_id) ?? [];
-      if (!arr.includes(g.grn_number)) arr.push(g.grn_number);
-      grnNumbersByPo.set(g.purchase_order_id, arr);
+      const arr = grnsByPo.get(g.purchase_order_id) ?? [];
+      if (!arr.some((x) => x.grnNumber === g.grn_number)) arr.push({ id: g.id, grnNumber: g.grn_number });
+      grnsByPo.set(g.purchase_order_id, arr);
     }
   }
   /* Collapsed "Assigned SO" column (owner 2026-07-31): resolve each PO's
@@ -534,7 +549,7 @@ mfgPurchaseOrders.get('/', async (c) => {
   const purchaseOrders = rows.map((r) => ({
     ...r,
     has_children: childIds.has(r.id),
-    transfer_to_grns: grnNumbersByPo.get(r.id) ?? [],
+    transfer_to_grns: grnsByPo.get(r.id) ?? [],
     assigned_sos: assignedByPo.get(r.id)?.assignedSos ?? [],
     assigned_so_linked: assignedByPo.get(r.id)?.sourceLinked ?? false,
     delivered_dos: deliveredByPo.get(r.id)?.deliveredDos ?? [],
