@@ -119,12 +119,26 @@ index, or it is a sequential scan on every keystroke.
 | `0104_perf_indexes_products_fabric.sql` | products description/barcode, fabric |
 | `0108_perf_trgm_so_debtor.sql` | SO debtor_name, phone |
 | `0239_search_trgm_scm_documents.sql` | scm.purchase_orders, grns, delivery_orders, sales_invoices, purchase_invoices |
+| `0240_search_trgm_list_filters.sql` | the module LIST search boxes: scm.suppliers, the SO/DO/SI extras, the consignment trio |
 
 **0239 exists because PR #1269 added five sources without it** and the gap sat
 unnoticed for a week — small tables hide it completely. If you add a source to
 `appendScmHits`, the migration belongs in the SAME PR. Deliberately NOT indexed:
 `roles.name` (a few dozen rows) and the FK embeds `supplier(name)` /
 `purchase_order(po_number)`, which PostgREST cannot filter inside `.or` anyway.
+
+**Do not audit this by hand — the rule is checkable:**
+
+```
+npm --prefix backend run audit:trgm
+```
+
+`backend/scripts/check-trgm-coverage.mjs` diffs every `.or(...ilike...)` column
+in `backend/src/scm` against every `gin_trgm_ops` index in `migrations-pg/`,
+resolving views to their base table. A column that should genuinely stay
+unindexed goes in the script's `ACCEPTED` map **with a reason**. It is not a CI
+gate on purpose: it reads source text rather than a query plan, and a false
+positive must cost a conversation, never a deploy.
 
 ## 5. Rules that will bite you
 
