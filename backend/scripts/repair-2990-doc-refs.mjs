@@ -1,5 +1,5 @@
-// Tier 0 repair: the two 2990-import doc references that name a PRE-IMPORT
-// document number, so string equality fails and the UI shows a dash.
+// Tier 0 repair: 2990-import doc references that name a PRE-IMPORT document,
+// so string equality fails and the UI shows a dash.
 //
 // EVIDENCE (production, 2026-07-31). migrate-2990-into-houzs.mjs prefixed
 // document numbers (DOCNO_COL) and a fixed list of reference columns
@@ -9,6 +9,30 @@
 //   A1  purchase_orders.notes         "From SOs: SO-2606-005"   44 of 49 tokens
 //   A2  inventory_lots.batch_no  +    "PO-2606-001"             24 of 32 batches
 //       inventory_movements.batch_no
+//
+//   A3  inventory_lot_consumptions.source_doc_no + source_doc_id, and the same
+//       pair on inventory_movements (2026-08-01, from the costing audit, run
+//       30694120826): 5 consumed units whose movement names a delivery order
+//       that does not exist (section 10b), 5 movements whose parent document is
+//       missing (section 4), 1 GRN whose line qty disagrees with its IN
+//       movements (section 3a). source_doc_no WAS in PREFIX_REF_COLS, but the
+//       importer copied source_doc_id VERBATIM and inserted parents with
+//       ON CONFLICT DO NOTHING — so a parent dropped or remapped on PK
+//       collision leaves the ledger row pointing at a document id that does not
+//       exist, and rows written before the importer's repair pass can still
+//       carry a bare number. The audit reads the ID (sections 4/10b), so the
+//       number and the id must BOTH end up right; the id is only ever written
+//       from the same resolution the number rule proves (see
+//       classifySourceRef in lib/doc-ref-repair-core.mjs), and an id that
+//       names a DIFFERENT real document refuses the whole group.
+//       Only source_doc_type DO and GRN are in scope — the two types the audit
+//       implicated, with unambiguous parent tables (delivery_orders / grns).
+//       The A3 dry run also reports, read-only: (a) rows whose number RESOLVES
+//       while their id dangles — the shape a repaired-number-with-dropped-
+//       parent import leaves, which this part deliberately does NOT rewrite —
+//       and (b) the audit's 3a GRN line-vs-movement mismatches, with a probe
+//       for movements carrying the GRN's bare pre-import number, so the owner
+//       can see whether 3a is this same class before anything is applied.
 //
 // The safety rule, and why a blanket `'2990-' || col` would corrupt the costing
 // trail, are documented in lib/doc-ref-repair-core.mjs. In one line: a token is
@@ -36,13 +60,14 @@
 //
 //   DATABASE_URL   required (env, or .dev.vars for local use)
 //   APPLY=1        write. Anything else is a dry run.
-//   PART           all (default) | notes | batches
+//   PART           all (default) | notes | batches | consumptions
 //   MAX_ROWS       per-batch row ids to print in the plan (default 200)
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import {
   companyPrefix,
   classifyToken,
+  classifySourceRef,
   parseFromSosTokens,
   rewriteFromSosNote,
 } from "./lib/doc-ref-repair-core.mjs";
@@ -50,12 +75,13 @@ import {
 const APPLY = process.env.APPLY === "1";
 const PART = (process.env.PART || "all").trim().toLowerCase();
 const MAX_ROWS = Number(process.env.MAX_ROWS || 200);
-if (!["all", "notes", "batches"].includes(PART)) {
-  console.error(`PART must be all | notes | batches (got "${PART}")`);
+if (!["all", "notes", "batches", "consumptions"].includes(PART)) {
+  console.error(`PART must be all | notes | batches | consumptions (got "${PART}")`);
   process.exit(2);
 }
 const doNotes = PART === "all" || PART === "notes";
 const doBatches = PART === "all" || PART === "batches";
+const doConsumptions = PART === "all" || PART === "consumptions";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -91,6 +117,9 @@ const printTally = (label, t, unit) => {
   log(`    skipped — owning company mints bare nos   : ${t["no-prefix"]}`);
   log(`    skipped — prefixed form matches NOTHING   : ${t["prefixed-missing"]}`);
   log(`    skipped — prefixed form matches >1 doc    : ${t["prefixed-ambiguous"]}`);
+  if ("doc-id-conflict" in t) {
+    log(`    REFUSED — stored doc id names a DIFFERENT real document : ${t["doc-id-conflict"]}`);
+  }
   log(`    (unit: ${unit})`);
 };
 
@@ -341,17 +370,328 @@ async function applyBatches(plan) {
   });
 }
 
+// ── A3 — inventory_lot_consumptions + inventory_movements source_doc_no/_id ──
+// Only the two doc types the audit implicated, each with an unambiguous parent
+// table. Everything else (PURCHASE_RETURN / DR / STOCK_TRANSFER / STOCK_TAKE)
+// stays out of scope; the audit's section 4 is the discovery tool for those.
+const A3_TYPES = ["DO", "GRN"];
+const A3_LABEL = { DO: "delivery order", GRN: "GRN" };
+
+async function fetchDocsByNumbers(docType, numbers) {
+  if (numbers.length === 0) return [];
+  return docType === "DO"
+    ? pg`SELECT id::text AS id, do_number AS doc_no, company_id, status::text AS status
+           FROM scm.delivery_orders WHERE do_number = ANY(${numbers})`
+    : pg`SELECT id::text AS id, grn_number AS doc_no, company_id, status::text AS status
+           FROM scm.grns WHERE grn_number = ANY(${numbers})`;
+}
+async function fetchExistingDocIds(docType, ids) {
+  if (ids.length === 0) return new Set();
+  const rows = docType === "DO"
+    ? await pg`SELECT id::text AS id FROM scm.delivery_orders WHERE id::text = ANY(${ids})`
+    : await pg`SELECT id::text AS id FROM scm.grns WHERE id::text = ANY(${ids})`;
+  return new Set(rows.map((r) => r.id));
+}
+
+async function planConsumptions(codeById) {
+  // Grouped WITH the distinct stored source_doc_id, because the id is the other
+  // half of the reference: the plan must know, per group, every id the rows
+  // assert, so a row claiming a DIFFERENT real document refuses the group.
+  const consRows = await pg`
+    SELECT company_id, source_doc_type, source_doc_no, source_doc_id::text AS doc_id, count(*)::int AS n
+      FROM scm.inventory_lot_consumptions
+     WHERE source_doc_no IS NOT NULL AND source_doc_type IN ('DO','GRN')
+     GROUP BY company_id, source_doc_type, source_doc_no, source_doc_id`;
+  const movRows = await pg`
+    SELECT company_id, source_doc_type, source_doc_no, source_doc_id::text AS doc_id, count(*)::int AS n
+      FROM scm.inventory_movements
+     WHERE source_doc_no IS NOT NULL AND source_doc_type IN ('DO','GRN')
+     GROUP BY company_id, source_doc_type, source_doc_no, source_doc_id`;
+
+  // Keyed on (company_id, source_doc_type, source_doc_no) — the SAME key the
+  // UPDATE will use, so a planned group and a written group are the same set of
+  // rows by construction (the applyBatches argument, verbatim).
+  const groups = new Map();
+  const bump = (r, field) => {
+    const cid = Number(r.company_id);
+    const key = `${cid}::${r.source_doc_type}::${r.source_doc_no}`;
+    const g = groups.get(key) ?? {
+      companyId: cid,
+      docType: String(r.source_doc_type),
+      docNo: String(r.source_doc_no),
+      consumptions: 0,
+      movements: 0,
+      ids: new Map(), // stored source_doc_id (or null) -> row count across both tables
+    };
+    g[field] += Number(r.n);
+    const idKey = r.doc_id ?? null;
+    g.ids.set(idKey, (g.ids.get(idKey) ?? 0) + Number(r.n));
+    groups.set(key, g);
+  };
+  for (const r of consRows) bump(r, "consumptions");
+  for (const r of movRows) bump(r, "movements");
+
+  log("");
+  log(`=== A3  ledger source_doc refs — distinct (company, type, doc no) groups: ${groups.size} (types: ${A3_TYPES.join(", ")}) ===`);
+  if (groups.size === 0) {
+    await report3aGrnMismatch(codeById);
+    return { plan: [], tally: { ...newTally(), "doc-id-conflict": 0 } };
+  }
+
+  // One round trip per doc type: every number the rule may need (as stored +
+  // prefixed with the owning row's company code), and every stored id.
+  const docsByType = {};
+  const idSetByType = {};
+  for (const t of A3_TYPES) {
+    const wanted = new Set();
+    const storedIds = new Set();
+    for (const g of groups.values()) {
+      if (g.docType !== t) continue;
+      const prefix = companyPrefix(codeById.get(g.companyId));
+      wanted.add(g.docNo);
+      if (prefix) wanted.add(`${prefix}${g.docNo}`);
+      for (const id of g.ids.keys()) if (id != null) storedIds.add(id);
+    }
+    docsByType[t] = await fetchDocsByNumbers(t, [...wanted]);
+    idSetByType[t] = await fetchExistingDocIds(t, [...storedIds]);
+  }
+  const docsByNo = new Map(); // `${type}::${doc_no}` -> [{id, companyId, status}]
+  for (const t of A3_TYPES) {
+    for (const d of docsByType[t]) {
+      const key = `${t}::${d.doc_no}`;
+      const arr = docsByNo.get(key) ?? [];
+      arr.push({ id: d.id, companyId: Number(d.company_id), status: d.status });
+      docsByNo.set(key, arr);
+    }
+  }
+  const inCompany = (t, num, cid) => (docsByNo.get(`${t}::${num}`) ?? []).filter((d) => d.companyId === cid);
+  const otherCompany = (t, num, cid) => (docsByNo.get(`${t}::${num}`) ?? []).filter((d) => d.companyId !== cid);
+
+  const tally = { ...newTally(), "doc-id-conflict": 0 };
+  const plan = [];
+  const skipped = [];
+  const resolvedButDangling = []; // report-only: number resolves, id does not
+  for (const g of [...groups.values()].sort((a, b) => a.docType.localeCompare(b.docType) || a.docNo.localeCompare(b.docNo))) {
+    const prefix = companyPrefix(codeById.get(g.companyId));
+    const prefixed = prefix ? `${prefix}${g.docNo}` : g.docNo;
+    const own = inCompany(g.docType, g.docNo, g.companyId);
+    const prefixedOwn = prefix ? inCompany(g.docType, prefixed, g.companyId) : [];
+    const storedDocIds = [...g.ids.entries()].map(([id, rows]) => ({
+      id,
+      rows,
+      exists: id != null && idSetByType[g.docType].has(id),
+    }));
+    const v = classifySourceRef({
+      token: g.docNo,
+      prefix,
+      ownCompanyMatches: own.length,
+      prefixedOwnCompanyMatches: prefixedOwn.length,
+      foreignMatches: otherCompany(g.docType, g.docNo, g.companyId).length,
+      resolvedDocId: prefixedOwn[0]?.id ?? null,
+      storedDocIds,
+    });
+    tally[v.verdict] += 1;
+    if (v.verdict === "repair") {
+      plan.push({ ...g, newNo: prefixed, resolvedDocId: v.resolvedDocId, resolvedStatus: prefixedOwn[0].status, idWrites: v.idWrites });
+    } else if (v.verdict === "already-resolves") {
+      // The number names a real same-company document — but does the id? A
+      // dangling id here is the dropped/remapped-parent import shape; this part
+      // does not rewrite it (the prefix rule proves nothing about it), so it is
+      // REPORTED for the owner instead of silently passing as healthy.
+      const dangling = storedDocIds.filter((d) => d.id != null && !d.exists);
+      const nulls = storedDocIds.filter((d) => d.id == null);
+      if (dangling.length || nulls.length) {
+        resolvedButDangling.push({ ...g, resolvesToId: own[0].id, dangling, nulls });
+      }
+    } else {
+      skipped.push(
+        `    company ${g.companyId}  ${g.docType} "${g.docNo}"  consumptions=${g.consumptions} movements=${g.movements}  -> ${v.verdict}` +
+          (v.foreignMatches > 0 ? `  (a ${A3_LABEL[g.docType]} with this exact number exists in ANOTHER company)` : "") +
+          (v.verdict === "doc-id-conflict"
+            ? `  [stored ids: ${v.idWrites.map((w) => `${w.id ?? "NULL"}=${w.action}(${w.rows})`).join(", ")}]`
+            : ""),
+      );
+    }
+  }
+
+  printTally("groups", tally, "one (company_id, source_doc_type, source_doc_no) group across both tables");
+  if (skipped.length) {
+    log("  --- groups left alone, with the reason ---");
+    for (const s of skipped) log(s);
+  }
+
+  const danglingGroups = resolvedButDangling.filter((r) => r.dangling.length > 0);
+  const nullOnlyGroups = resolvedButDangling.filter((r) => r.dangling.length === 0);
+  if (resolvedButDangling.length) {
+    log("");
+    log(`  REPORT-ONLY — number resolves but source_doc_id does not (${resolvedButDangling.length} group(s)); NOT repaired by this part:`);
+    log("  (this is the shape a PK-collision-dropped or remapped parent leaves: the importer's repair");
+    log("   pass prefixed the number, but the verbatim-copied id points at nothing. The audit's");
+    log("   sections 4 and 10b count these by ID. Repairing them is an id-heal, not a prefix repair,");
+    log("   and is deliberately left for its own reviewed rule.)");
+    for (const r of danglingGroups.slice(0, MAX_ROWS)) {
+      log(`    company ${r.companyId}  ${r.docType} "${r.docNo}"  resolves to id=${r.resolvesToId}`);
+      for (const d of r.dangling) log(`      stored source_doc_id=${d.id} matches NO ${A3_LABEL[r.docType]} (${d.rows} row(s))`);
+      for (const d of r.nulls) log(`      stored source_doc_id is NULL (${d.rows} row(s))`);
+    }
+    if (danglingGroups.length > MAX_ROWS) log(`    … and ${danglingGroups.length - MAX_ROWS} more dangling-id groups`);
+    if (nullOnlyGroups.length) {
+      const nullRows = nullOnlyGroups.reduce((a, r) => a + r.nulls.reduce((x, d) => x + d.rows, 0), 0);
+      log(`    (plus ${nullOnlyGroups.length} group(s) whose only gap is a NULL source_doc_id — ${nullRows} row(s); listed as a count because a NULL asserts nothing and may predate id stamping)`);
+    }
+  }
+
+  // Per-row old -> new with the resolved document, because this is the costing
+  // trail and a summary line is not evidence.
+  log(`  (company, type, doc no) groups to repair: ${plan.length}`);
+  let consTotal = 0;
+  let movTotal = 0;
+  for (const p of plan) {
+    consTotal += p.consumptions;
+    movTotal += p.movements;
+    log(`    company ${p.companyId}:  ${p.docType}  ${p.docNo}  ->  ${p.newNo}`);
+    log(`      resolved ${A3_LABEL[p.docType]}: id=${p.resolvedDocId} status=${p.resolvedStatus}`);
+    log(`      rows: inventory_lot_consumptions=${p.consumptions}  inventory_movements=${p.movements}`);
+    for (const w of p.idWrites) {
+      log(`      source_doc_id ${w.id ?? "NULL"} (${w.rows} row(s)) -> ${w.action === "keep" ? "kept (already the resolved document)" : `${p.resolvedDocId} (${w.action})`}`);
+    }
+    // Movements ALREADY attached to the resolved document by id: after the
+    // repair these groups' rows join them, so any double-posting risk must be
+    // visible in the plan, not discovered in the next audit run.
+    const attached = await pg`
+      SELECT count(*)::int AS rows,
+             COALESCE(SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty ELSE qty END), 0)::int AS net_qty
+        FROM scm.inventory_movements
+       WHERE source_doc_type = ${p.docType} AND source_doc_id::text = ${p.resolvedDocId}`;
+    log(`      movements already attached to the resolved document by id: rows=${attached[0].rows} netQty=${attached[0].net_qty}`);
+    const cons = await pg`
+      SELECT id, source_doc_id::text AS doc_id, qty_consumed
+        FROM scm.inventory_lot_consumptions
+       WHERE company_id = ${p.companyId} AND source_doc_type = ${p.docType} AND source_doc_no = ${p.docNo}
+       ORDER BY id LIMIT ${MAX_ROWS}`;
+    for (const r of cons) log(`        consumption ${r.id}  qty=${r.qty_consumed}  doc_id=${r.doc_id ?? "NULL"}`);
+    if (p.consumptions > cons.length) log(`        … and ${p.consumptions - cons.length} more consumptions`);
+    const movs = await pg`
+      SELECT id, movement_type, qty, source_doc_id::text AS doc_id
+        FROM scm.inventory_movements
+       WHERE company_id = ${p.companyId} AND source_doc_type = ${p.docType} AND source_doc_no = ${p.docNo}
+       ORDER BY id LIMIT ${MAX_ROWS}`;
+    for (const r of movs) log(`        movement ${r.id}  ${r.movement_type}  qty=${r.qty}  doc_id=${r.doc_id ?? "NULL"}`);
+    if (p.movements > movs.length) log(`        … and ${p.movements - movs.length} more movements`);
+  }
+  log(`  TOTAL rows that would change: inventory_lot_consumptions=${consTotal}  inventory_movements=${movTotal}`);
+
+  await report3aGrnMismatch(codeById);
+  return { plan, tally };
+}
+
+/* The costing audit's 3a finding, reproduced read-only so the owner can see in
+   THIS dry run whether the mismatching GRN is the same bare-reference class.
+   Same definitions as audit-inventory-costing.mjs section 3a: posted GRNs,
+   accepted qty net of returns, movements keyed by source_doc_id. */
+async function report3aGrnMismatch(codeById) {
+  log("");
+  log("  --- audit 3a reproduction: GRN line qty vs its IN movements (read-only report) ---");
+  const rows = await pg`
+    WITH lines AS (
+      SELECT gi.grn_id, SUM(GREATEST(0, COALESCE(gi.qty_accepted, 0) - COALESCE(gi.returned_qty, 0)))::int AS line_qty
+        FROM scm.grn_items gi GROUP BY gi.grn_id
+    ), movs AS (
+      SELECT source_doc_id::text AS doc_id,
+             SUM(CASE WHEN movement_type = 'IN' THEN qty ELSE -qty END)::int AS mov_qty,
+             count(*)::int AS mov_rows
+        FROM scm.inventory_movements
+       WHERE source_doc_type = 'GRN' AND source_doc_id IS NOT NULL
+       GROUP BY source_doc_id
+    )
+    SELECT g.id::text AS id, g.grn_number, g.company_id, g.status::text AS status,
+           COALESCE(l.line_qty, 0) AS line_qty, COALESCE(m.mov_qty, 0) AS mov_qty,
+           COALESCE(m.mov_rows, 0) AS mov_rows
+      FROM scm.grns g
+      LEFT JOIN lines l ON l.grn_id = g.id
+      LEFT JOIN movs m ON m.doc_id = g.id::text
+     WHERE UPPER(g.status::text) NOT IN ('DRAFT','CANCELLED')
+       AND COALESCE(l.line_qty, 0) <> COALESCE(m.mov_qty, 0)
+     ORDER BY g.grn_number`;
+  log(`  posted GRNs whose accepted line qty != IN movement qty (by id): ${rows.length}`);
+  for (const r of rows) {
+    log(`    ${r.grn_number}  company=${r.company_id}  status=${r.status}  lines=${r.line_qty}  movements=${r.mov_qty} (${r.mov_rows} row(s))  delta=${Number(r.line_qty) - Number(r.mov_qty)}  id=${r.id}`);
+    // Probe: do movements exist under this GRN's number instead of its id —
+    // full or bare pre-import form? That is what "same class" looks like.
+    const prefix = companyPrefix(codeById.get(Number(r.company_id)));
+    const bare = prefix && String(r.grn_number).startsWith(prefix) ? String(r.grn_number).slice(prefix.length) : null;
+    const probeNos = bare ? [r.grn_number, bare] : [r.grn_number];
+    const probes = await pg`
+      SELECT id::text AS id, company_id, movement_type, qty, source_doc_no, source_doc_id::text AS doc_id
+        FROM scm.inventory_movements
+       WHERE source_doc_type = 'GRN' AND source_doc_no = ANY(${probeNos})
+       ORDER BY created_at, id`;
+    const probeIds = [...new Set(probes.map((x) => x.doc_id).filter((x) => x != null))];
+    const existing = await fetchExistingDocIds("GRN", probeIds);
+    if (probes.length === 0) {
+      log(`      no movements carry this GRN's number${bare ? ` (or its bare form "${bare}")` : ""} — the gap is NOT a doc-no mislabel; the movements are absent or carry another reference`);
+    }
+    for (const x of probes) {
+      const idNote = x.doc_id == null ? "doc_id=NULL" : existing.has(x.doc_id) ? (x.doc_id === r.id ? "doc_id=THIS GRN" : `doc_id=ANOTHER real GRN (${x.doc_id})`) : `doc_id=${x.doc_id} (DANGLING)`;
+      log(`      movement ${x.id}  company=${x.company_id}  ${x.movement_type}  qty=${x.qty}  source_doc_no="${x.source_doc_no}"  ${idNote}`);
+    }
+  }
+  if (rows.length === 0) log("    none — 3a is clean at plan time");
+}
+
+async function applyConsumptions(plan) {
+  if (plan.length === 0) return { consumptions: 0, movements: 0 };
+  // ONE transaction across BOTH tables — a movement and its consumptions carry
+  // the same source_doc reference (fn_consume_fifo copies the movement's), so a
+  // partial rewrite would leave the OUT and its lot consumptions naming
+  // different documents, which is a costing fault, not a cosmetic one.
+  //
+  // Writing source_doc_id together with source_doc_no is safe by construction:
+  // a group reaches here only when every stored id is NULL, dangling, or
+  // already the resolved id (classifySourceRef refuses anything else), so this
+  // SET restamps nothing that currently asserts a different real document.
+  // The FIFO trigger is AFTER INSERT only (verified against the live catalog by
+  // the costing audit, section 0a: zero UPDATE-firing triggers on the ledger
+  // tables), so these UPDATEs re-run no allocation and move no value.
+  return pg.begin(async (tx) => {
+    let consumptions = 0;
+    let movements = 0;
+    for (const p of plan) {
+      const k = await tx`
+        UPDATE scm.inventory_lot_consumptions
+           SET source_doc_no = ${p.newNo},
+               source_doc_id = ${p.resolvedDocId}::uuid
+         WHERE company_id = ${p.companyId}
+           AND source_doc_type = ${p.docType}
+           AND source_doc_no = ${p.docNo}`;
+      const m = await tx`
+        UPDATE scm.inventory_movements
+           SET source_doc_no = ${p.newNo},
+               source_doc_id = ${p.resolvedDocId}::uuid
+         WHERE company_id = ${p.companyId}
+           AND source_doc_type = ${p.docType}
+           AND source_doc_no = ${p.docNo}`;
+      consumptions += k.count;
+      movements += m.count;
+      log(`  APPLIED company ${p.companyId}: ${p.docType} ${p.docNo} -> ${p.newNo} (doc id ${p.resolvedDocId})  (consumptions ${k.count}, movements ${m.count})`);
+    }
+    return { consumptions, movements };
+  });
+}
+
 try {
   log(`=== repair-2990-doc-refs  mode=${APPLY ? "APPLY" : "DRY-RUN"}  part=${PART} ===`);
   const codeById = await loadCompanies();
 
   const notes = doNotes ? await planNotes(codeById) : { plan: [] };
   const batches = doBatches ? await planBatches(codeById) : { plan: [] };
+  const consumptions = doConsumptions ? await planConsumptions(codeById) : { plan: [] };
 
   log("");
   log("================ summary ================");
-  if (doNotes) log(`A1 notes   : ${notes.plan.length} PO note(s) would be rewritten`);
-  if (doBatches) log(`A2 batches : ${batches.plan.length} (company, batch) pair(s) would be renamed`);
+  if (doNotes) log(`A1 notes        : ${notes.plan.length} PO note(s) would be rewritten`);
+  if (doBatches) log(`A2 batches      : ${batches.plan.length} (company, batch) pair(s) would be renamed`);
+  if (doConsumptions) log(`A3 consumptions : ${consumptions.plan.length} (company, type, doc no) group(s) would be repaired on the ledger source refs`);
 
   if (!APPLY) {
     log("");
@@ -364,6 +704,10 @@ try {
     if (doBatches) {
       const r = await applyBatches(batches.plan);
       log(`A2 APPLIED: inventory_lots=${r.lots} rows, inventory_movements=${r.movements} rows, in one transaction.`);
+    }
+    if (doConsumptions) {
+      const r = await applyConsumptions(consumptions.plan);
+      log(`A3 APPLIED: inventory_lot_consumptions=${r.consumptions} rows, inventory_movements=${r.movements} rows, in one transaction.`);
     }
     log("Done. Re-run in DRY-RUN to confirm the plan is now empty (the idempotence check).");
   }
