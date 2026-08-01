@@ -921,7 +921,10 @@ function DataTableInner<T>({
       out.push({
         id: `company:${co.id}`,
         label: `${shortCompanyName(co.name)} Layout`,
-        hint: seed?.hint,
+        // The seed's hint describes the SEED. Once an admin has saved a real
+        // default it would be describing a layout that no longer exists —
+        // "Sales desk" over the production columns somebody just published.
+        hint: saved ? undefined : seed?.hint,
         layout: saved,
         columns: saved ? undefined : seed?.columns,
         isDefault: co.id === layoutStore.activeCompanyId,
