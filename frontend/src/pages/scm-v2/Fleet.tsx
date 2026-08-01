@@ -80,14 +80,16 @@ const fmtNum = (v: number | string | null): string => {
 // Page — three stacked sections.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const Fleet = () => {
+export const Fleet = ({ embedded = false }: { embedded?: boolean } = {}) => {
   return (
     <div className="space-y-4">
-      <PageHeader
-        eyebrow="Delivery"
-        title="Driver & Helper"
-        description="Open and manage your drivers, helpers, and lorries."
-      />
+      {!embedded && (
+        <PageHeader
+          eyebrow="Delivery"
+          title="Driver & Helper"
+          description="Open and manage your drivers, helpers, and lorries."
+        />
+      )}
 
       <DriversSection />
       <HelpersSection />

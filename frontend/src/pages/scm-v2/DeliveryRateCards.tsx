@@ -52,7 +52,7 @@ const RULE_LABEL: Record<RateRuleType, string> = {
   TRANSFER: 'Transfer',
 };
 
-export const DeliveryRateCards = () => {
+export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const [tab, setTab] = useState<'cards' | 'reconcile'>('cards');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -60,16 +60,18 @@ export const DeliveryRateCards = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        eyebrow="Delivery"
-        title="Delivery Rate Cards"
-        description="Configure a rate card per carrier (own-fleet + each 3PL), verify a 3PL's billed charge against the computed expected cost, and roll the precise delivery cost toward COGS. Cost verification, not customer billing — and it does not touch the FIFO costing path."
-        actions={tab === 'cards' ? (
-          <Button variant="primary" size="md" onClick={() => setCreating(true)}>
-            <Plus {...ICON} /><span>New Card</span>
-          </Button>
-        ) : undefined}
-      />
+      {!embedded && (
+        <PageHeader
+          eyebrow="Delivery"
+          title="Delivery Rate Cards"
+          description="Configure a rate card per carrier (own-fleet + each 3PL), verify a 3PL's billed charge against the computed expected cost, and roll the precise delivery cost toward COGS. Cost verification, not customer billing — and it does not touch the FIFO costing path."
+          actions={tab === 'cards' ? (
+            <Button variant="primary" size="md" onClick={() => setCreating(true)}>
+              <Plus {...ICON} /><span>New Card</span>
+            </Button>
+          ) : undefined}
+        />
+      )}
 
       <div style={{ display: 'flex', gap: 6, borderBottom: '1px solid var(--border, rgba(0,0,0,0.1))' }}>
         {(['cards', 'reconcile'] as const).map((t) => (

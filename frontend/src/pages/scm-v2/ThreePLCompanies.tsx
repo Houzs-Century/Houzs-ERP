@@ -25,7 +25,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-export const ThreePLCompanies = () => {
+export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const companies = useThreePLCompanies();
   const createCo = useCreateThreePLCompany();
   const notify = useNotify();
@@ -49,11 +49,13 @@ export const ThreePLCompanies = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        eyebrow="Delivery"
-        title="3PL Companies"
-        description="Register each outsourced (3PL) carrier company. A solo operator is a one-lorry company. Attach a company's lorries from the lorry drawer (Fleet); the delivery rate card is set per company."
-      />
+      {!embedded && (
+        <PageHeader
+          eyebrow="Delivery"
+          title="3PL Companies"
+          description="Register each outsourced (3PL) carrier company. A solo operator is a one-lorry company. Attach a company's lorries from the lorry drawer (Fleet); the delivery rate card is set per company."
+        />
+      )}
 
       {/* Create */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end', padding: '14px 16px', borderRadius: 10, background: 'var(--bg-subtle, rgba(0,0,0,0.03))' }}>
