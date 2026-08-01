@@ -1,4 +1,4 @@
-Self-hosted web fonts (*.woff2 + fonts.css)
+Self-hosted web fonts (*.woff2 + fonts-v2.css)
 =====================================================
 
 The woff2 files in this directory are the unmodified builds served by the
@@ -16,7 +16,7 @@ License, Version 1.1 (http://scripts.sil.org/OFL):
   Archivo
       Copyright 2019 Omnibus-Type, with Reserved Font Name "Archivo"
 
-fonts.css carries the @font-face declarations (including Google's
+fonts-v2.css carries the @font-face declarations (including Google's
 unicode-range slicing for the CJK families) rewritten to load the files
 above from /fonts/.
 

@@ -238,7 +238,7 @@ export function DocumentLinesExpansion({
                             ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
                             : "Locked — this PO line stores a link to this Sales Order";
                       const base =
-                        "rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold";
+                        "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
                       const tone = floating
                         ? "border border-dashed border-border text-ink-secondary"
                         : "border border-border-subtle bg-surface-2 text-accent-ink";
@@ -287,7 +287,7 @@ export function DocumentLinesExpansion({
                   {delivered.length > 0 ? (
                     delivered.map((d) => {
                       const base =
-                        "rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-ink-secondary";
+                        "rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary";
                       // "x1" is noise on a chip that already names one DO
                       // (owner 2026-08-01: "不要放成 1"). Only a multi-unit
                       // shipment earns the multiplier.
@@ -326,7 +326,7 @@ export function DocumentLinesExpansion({
                       <span
                         key={po}
                         title={sourcePoTitle(po)}
-                        className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink"
+                        className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink"
                       >
                         {po}
                       </span>
@@ -366,7 +366,7 @@ export function AssignedSoCell({
 }) {
   const list = assignments ?? [];
   if (list.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
-  const base = "rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold";
+  const base = "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
   // ALL assigned SOs render (owner 2026-07-31 — no "first + N" collapse); the
   // flex-wrap lays them out. Each chip keeps its own floating(guess) vs
   // solid(linked) tone + tooltip. The primary's delivery date rides inline.
@@ -441,7 +441,7 @@ export function DeliveredCell({
   const list = dos ?? [];
   if (list.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
   const base =
-    "rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-ink-secondary";
+    "rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary";
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1">
       {list.map((d) => {

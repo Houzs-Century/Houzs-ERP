@@ -4,7 +4,7 @@
  * The `@import url(...)` that used to sit here now lives in index.html as a
  * <link>, which starts the fetch a round trip earlier — see the comment there
  * for why, and keep the family list in sync with it. That link now points at
- * self-hosted /fonts/fonts.css (public/fonts/), so nothing is fetched from a
+ * self-hosted /fonts/fonts-v2.css (public/fonts/), so nothing is fetched from a
  * font CDN — which also covers the offline / air-gapped installs that used
  * to have to swap the link out by hand.
  *

@@ -21,7 +21,7 @@
     <meta name="apple-mobile-web-app-title" content="Houzs ERP" />
 
     <!-- The brand web fonts, self-hosted — no external font origin on first
-         paint. /fonts/fonts.css declares the same @font-face set the Google
+         paint. /fonts/fonts-v2.css declares the same @font-face set the Google
          Fonts css2 endpoint used to serve here: IBM Plex Sans 400-700,
          IBM Plex Serif 400-700, IBM Plex Mono 400-600, Noto Sans SC
          400/500/700/900, Noto Serif SC 400-900, Caveat 400/600, Archivo
@@ -29,9 +29,16 @@
          downloads only the small CJK range chunks a page actually renders.
 
          Files live in public/fonts/ and are cached immutable for a year
-         (public/_headers), fonts.css included: any change to the font set
+         (public/_headers), the stylesheet included: any change to the font set
          must ship under NEW file names and repoint this link — an in-place
          edit will not reach returning browsers.
+
+         fonts.css -> fonts-v2.css (2026-08-01) is exactly that rule being
+         obeyed. The set gained an 800 face for IBM Plex Sans so the app's 88
+         font-extrabold headings stop synthesising, and the owner asked that it
+         reach EVERY user, not just first-time visitors. Under the immutable
+         year-long header an in-place edit would have reached nobody who had
+         already loaded the old file. Next change: fonts-v3.css, same drill.
 
          Declared here rather than @import'ed in src/index.css for the same
          reason the external link was: a <link> starts fetching during HTML
@@ -42,7 +49,7 @@
          Keep this in sync with tailwind.config.js fontFamily and the
          --font-script / --font-mark tokens in src/vendor/design-system/
          tokens.css, which is what Caveat and Archivo are here for. -->
-    <link rel="stylesheet" href="/fonts/fonts.css" />
+    <link rel="stylesheet" href="/fonts/fonts-v2.css" />
     <title>Houzs Century ERP</title>
   </head>
   <body>
