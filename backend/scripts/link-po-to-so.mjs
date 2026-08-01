@@ -10,8 +10,13 @@
 // line). Anything ambiguous is reported and skipped — never guessed. Idempotent
 // (already-linked PO lines are left alone). APPLY=1 to write, DRY-RUN otherwise.
 //
+// The pairing rule itself lives in lib/po-so-line-pairing.mjs, shared with
+// backfill-po-so-item-links.mjs so the by-hand link and the bulk backfill can
+// never disagree about what counts as provable.
+//
 // PO_NUMBER=<po_number>  SO_DOC=<so doc no>
 import postgres from "postgres";
+import { pairPoLinesToSoLines } from "./lib/po-so-line-pairing.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -50,28 +55,13 @@ async function main() {
      WHERE so_item_id = ANY(${soIds})`;
   const takenSo = new Set(linked.map((r) => r.so_item_id));
 
-  const byCode = (rows) => {
-    const m = new Map();
-    for (const r of rows) { const a = m.get(r.item_code) ?? []; a.push(r); m.set(r.item_code, a); }
-    return m;
-  };
-  const poByCode = byCode(poLines.filter((l) => !l.so_item_id)); // only unlinked PO lines
-  const soByCode = byCode(soLines.filter((l) => !takenSo.has(l.id))); // only free SO lines
-
-  let willLink = 0, skipped = 0, already = poLines.filter((l) => l.so_item_id).length;
-  const pairs = [];
-  const codes = new Set([...poByCode.keys(), ...soByCode.keys()]);
-  for (const code of codes) {
-    const pos = poByCode.get(code) ?? [];
-    const sos = soByCode.get(code) ?? [];
-    if (pos.length === 1 && sos.length === 1) {
-      pairs.push({ poLineId: pos[0].id, soLineId: sos[0].id, code });
-      willLink++;
-    } else if (pos.length > 0) {
-      log(`  SKIP ${code}: ambiguous (unlinked PO lines ${pos.length}, free SO lines ${sos.length}) — link manually.`);
-      skipped++;
-    }
+  const { pairs, ambiguous, alreadyLinked: already, unmatched } =
+    pairPoLinesToSoLines(poLines, soLines, takenSo);
+  for (const a of [...ambiguous, ...unmatched]) {
+    log(`  SKIP ${a.code}: ambiguous (unlinked PO lines ${a.unlinkedPoLines}, free SO lines ${a.freeSoLines}) — link manually.`);
   }
+  const willLink = pairs.length;
+  const skipped = ambiguous.length + unmatched.length;
 
   log("");
   log(`PO lines: ${poLines.length} (${already} already linked). To link now: ${willLink}. Ambiguous/skipped: ${skipped}.`);

@@ -67,6 +67,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
 import { activeCompanyId } from '../lib/companyScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { resolveLineWarehouseId, type SoWarehouseMasters } from '../lib/so-warehouse';
 import {
   loadLeadTimeBase,
   resolveLeadDays,
@@ -105,7 +106,11 @@ type DemandRow = {
   item_group: string | null;
   variants: Record<string, unknown> | null;
   qty: number;
-  warehouse_id: string | null; // SO line's ship-from warehouse (migration 0118)
+  /* SO line's ship-from warehouse (migration 0118). NULL on lines written by a
+     path that never set it (amendment ADD lines, auto free gifts) and on old
+     imported data — resolved from the SO header before bucketing, see the
+     "warehouse follows the SO" block below. */
+  warehouse_id: string | null;
   line_delivery_date: string | null;
   line_no: number | null;
   created_at: string | null;
@@ -117,6 +122,7 @@ type DemandRow = {
     customer_delivery_date: string | null;
     internal_expected_dd: string | null; // processing date (drives when to order)
     customer_state: string | null;       // staff #8 — show the customer's state (info-only)
+    sales_location: string | null;       // the SO's OWN warehouse of record (lib/so-warehouse.ts)
   } | null;
 };
 
@@ -540,7 +546,7 @@ export async function computeMrp(
     .from('mfg_sales_order_items')
     .select(`
       id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_no, created_at, cancelled,
-      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, internal_expected_dd, customer_state )
+      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, internal_expected_dd, customer_state, sales_location )
     `)
     .eq('cancelled', false))
     .limit(5000);
@@ -621,6 +627,38 @@ export async function computeMrp(
   const whById = new Map<string, { code: string; name: string }>();
   for (const w of (warehouses ?? []) as Array<{ id: string; code: string; name: string }>) {
     whById.set(w.id, { code: w.code, name: w.name });
+  }
+
+  /* ── THE WAREHOUSE FOLLOWS THE SALES ORDER (owner 2026-07-31) ─────────────
+     "我们的 item 都不会有仓库, 还是跟着 SO 的" — a line never carries a warehouse
+     of its own; the warehouse comes from the Sales Order. Several write paths
+     insert a line with warehouse_id NULL (the amendment ADD line, the auto
+     free-gift line), and imported history has them too, so the SAME order split
+     into two MRP rows: the bound lines under their warehouse and the NULL ones
+     under the WH_NONE bucket (Mrp.tsx keys every group on
+     `${warehouseId ?? WH_NONE}|…`).
+
+     Resolved HERE, server-side, so every consumer of computeMrp — the MRP page,
+     the SO detail's coverage, po-so-coverage's reverse map — sees one answer.
+     Papering over it in the UI would leave the backend's own allocation still
+     split across two buckets.
+
+     Only the SO's OWN header is consulted (see lib/so-warehouse.ts): never a
+     SIBLING LINE's warehouse, because that would pool stock across the very
+     warehouse boundary the null bucket exists to keep apart. `warehouses` is
+     already loaded above; only the small state-mapping table is new, and it is
+     read ONCE for the whole computation, not per line. */
+  const soWarehouseMasters: SoWarehouseMasters = {
+    warehouses: (warehouses ?? []) as Array<{ id: string; code: string; name: string }>,
+    stateMappings: ((await scoped(
+      sb.from('state_warehouse_mappings').select('state, warehouse_id'),
+    )).data ?? []) as Array<{ state: string | null; warehouse_id: string | null }>,
+  };
+  /* Stamped onto the row in place — the same enrichment idiom as
+     enrichLinesWithFabricSupplierCode above — so every downstream bucket key,
+     warehouse filter and label reads one resolved value and they cannot drift. */
+  for (const d of demand) {
+    d.warehouse_id = resolveLineWarehouseId(d.warehouse_id, d.so, soWarehouseMasters);
   }
 
   // ── 3. Stock on hand — inventory_balances keyed by (warehouse, code, variant) ──

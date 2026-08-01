@@ -33,6 +33,7 @@ import { loadProductsByCodes, loadModelDefaultGifts } from './mfg-pricing-recomp
 // module-eval time. Same pattern the route already uses with delivery-orders-mfg.
 import { recomputeTotals } from '../routes/mfg-sales-orders';
 import { recordSoAudit, type FieldChange } from './so-audit';
+import { loadSoWarehouseMasters, resolveSoWarehouseId } from './so-warehouse';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -161,14 +162,22 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
       // venue/branding ride along from the SO header).
       const { data: hdr } = await sb
         .from('mfg_sales_orders')
-        .select('debtor_code, debtor_name, agent, venue, branding, company_id')
+        .select('debtor_code, debtor_name, agent, venue, branding, company_id, sales_location, customer_state')
         .eq('doc_no', docNo)
         .maybeSingle();
       const header = (hdr ?? {}) as {
         debtor_code?: string | null; debtor_name?: string | null;
         agent?: string | null; venue?: string | null; branding?: string | null;
         company_id?: number | null;
+        sales_location?: string | null; customer_state?: string | null;
       };
+      /* The warehouse follows the SO (owner 2026-07-31). This insert used to
+         omit warehouse_id, so an auto free-gift line landed NULL and split its
+         order into a second MRP row under the WH_NONE bucket. Resolved from the
+         SO's OWN header — never from a sibling line — via lib/so-warehouse.ts.
+         Fail-soft: an unresolvable header yields null, i.e. exactly the previous
+         behaviour, so a gift line is never blocked by a missing mapping. */
+      const giftWarehouseId = resolveSoWarehouseId(header, await loadSoWarehouseMasters(sb));
 
       // Continue the doc's line numbering (max + 1, incrementing) when the doc
       // is already numbered; pre-0165 docs (max NULL) keep gift lines un-numbered.
@@ -210,6 +219,7 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
           unit_cost_centi:   cost,
           line_cost_centi:   qty * cost,
           line_margin_centi: -(qty * cost),                    // free line: revenue 0 − cost
+          warehouse_id:      giftWarehouseId,                  // follows the SO — see above
           cancelled:         false,
         });
         if (nextLineNo !== null) nextLineNo += 1;
