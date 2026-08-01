@@ -287,14 +287,27 @@ for the three incident entries.
   LEGIT; conflicts = exceeds-qty / claims-served-demand / stored-vs-delivered);
   J3 SO line claimed by >1 PO — **expected 0**; closing ONE-TRUTH verdict
   asserts exactly that.
+- **2026-08-02 addenda (K + L).** K: the grn-gap repair had stocked a SERVICE
+  (phantom SVC-TRANS.CHARGES movement + lot on 2990-GRN-2606-001 — the gap
+  math counted service lines into accepted qty, as did the costing audit's 3a
+  lens). Both now exclude service lines (`isServiceLineMirror`,
+  lockstep-tested), and part **`service-lot-reverse`** deletes the phantom
+  pair under zero-consumption guards (`planServiceLotReversal`). L: the 023
+  source verdict — cancelled in the SOURCE system, imported verbatim — means
+  no owner cancel is needed and MRP was never inflated (`PO_DEAD`); cancelled
+  POs are now refused as attribution targets (`refusedPoStatus`), their
+  existing allocations remove-all without a cancel recommendation, and the
+  detector reads the prime-suspect pair at ANY status, reporting import drift
+  rather than ever writing a status. See BUG-HISTORY 2026-08-02.
 - **Dispatch instructions.** Actions → **SO source trace check (read-only)** →
   Run workflow (optionally `DOS` via the script env when run locally) — read
   sections 6–9 + the ONE-TRUTH verdict. Actions → **Duplicate documents check
   (read-only)** → Run workflow (inputs `window_days`, `verify_pos`) — read the
   PO section's prime-suspect line, (H) and (I). Corrective:
   **Repair 2990 doc references** → part `fifo-attribute-repair`, dry-run first,
-  `pos` naming the confirmed POs, then `apply=1`; re-run the trace check and
-  expect J3 = 0.
+  `pos` naming the confirmed POs, then `apply=1` (a CANCELLED target reads the
+  no-owner-action recommendation); part `service-lot-reverse` for the phantom
+  service receipt; re-run the trace check and expect J3 = 0.
 
 ### 2.7 The 2990 doc-reference repair (2026-08-01) — the DATA answer to 2.6, and the rule that makes it safe
 `fix/doc-ref-repair`. The **Source PO prefix check** was run and 2.6's open
