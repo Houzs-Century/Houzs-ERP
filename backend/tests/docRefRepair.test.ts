@@ -3,6 +3,7 @@ import { parseFromSosNote } from "../src/scm/routes/document-flow";
 import {
   companyPrefix,
   classifyToken,
+  classifySourceRef,
   parseFromSosTokens,
   rewriteFromSosNote,
 } from "../scripts/lib/doc-ref-repair-core.mjs";
@@ -123,6 +124,146 @@ describe("classifyToken — the three-part safety rule", () => {
         foreignMatches: 1,
       }).verdict,
     ).toBe("already-resolves");
+  });
+});
+
+describe("classifySourceRef — A3 ledger source refs: the number rule plus the sibling doc id", () => {
+  // The ledger names its parent twice — source_doc_no AND source_doc_id — and
+  // the import broke them independently (bare numbers; ids copied verbatim
+  // from a database whose parent was sometimes dropped on PK collision). The
+  // number decision is classifyToken's, unchanged; these pin the id half.
+
+  test("repairs a bare DO ref and restamps its dangling id from the SAME resolution", () => {
+    const v = classifySourceRef({
+      token: "DO-2607-003",
+      prefix: "2990-",
+      ownCompanyMatches: 0,
+      prefixedOwnCompanyMatches: 1,
+      resolvedDocId: "new-do-uuid",
+      storedDocIds: [{ id: "old-2990-db-uuid", exists: false, rows: 5 }],
+    });
+    expect(v).toMatchObject({ verdict: "repair", prefixed: "2990-DO-2607-003", resolvedDocId: "new-do-uuid" });
+    expect(v.idWrites).toEqual([{ id: "old-2990-db-uuid", rows: 5, action: "restamp" }]);
+  });
+
+  test("a NULL stored id is stamped, not skipped — the row asserted nothing", () => {
+    const v = classifySourceRef({
+      token: "GRN-2606-010",
+      prefix: "2990-",
+      ownCompanyMatches: 0,
+      prefixedOwnCompanyMatches: 1,
+      resolvedDocId: "grn-uuid",
+      storedDocIds: [{ id: null, exists: false, rows: 2 }],
+    });
+    expect(v.verdict).toBe("repair");
+    expect(v.idWrites).toEqual([{ id: null, rows: 2, action: "stamp" }]);
+  });
+
+  test("a stored id that already IS the resolved document is kept", () => {
+    const v = classifySourceRef({
+      token: "DO-2607-003",
+      prefix: "2990-",
+      ownCompanyMatches: 0,
+      prefixedOwnCompanyMatches: 1,
+      resolvedDocId: "do-uuid",
+      storedDocIds: [{ id: "do-uuid", exists: true, rows: 3 }],
+    });
+    expect(v.verdict).toBe("repair");
+    expect(v.idWrites).toEqual([{ id: "do-uuid", rows: 3, action: "keep" }]);
+  });
+
+  test("THE REFUSAL: a stored id naming a DIFFERENT real document refuses the whole group", () => {
+    // The row's two columns disagree about which real document it belongs to;
+    // rewriting either would be picking sides with no evidence.
+    const v = classifySourceRef({
+      token: "DO-2607-003",
+      prefix: "2990-",
+      ownCompanyMatches: 0,
+      prefixedOwnCompanyMatches: 1,
+      resolvedDocId: "do-uuid-A",
+      storedDocIds: [{ id: "do-uuid-B", exists: true, rows: 1 }],
+    });
+    expect(v.verdict).toBe("doc-id-conflict");
+  });
+
+  test("mixed stored ids: dangling restamped, correct kept, no conflict", () => {
+    const v = classifySourceRef({
+      token: "DO-2607-003",
+      prefix: "2990-",
+      ownCompanyMatches: 0,
+      prefixedOwnCompanyMatches: 1,
+      resolvedDocId: "do-uuid",
+      storedDocIds: [
+        { id: "old-dead-uuid", exists: false, rows: 4 },
+        { id: "do-uuid", exists: true, rows: 2 },
+      ],
+    });
+    expect(v.verdict).toBe("repair");
+    expect(v.idWrites).toEqual([
+      { id: "old-dead-uuid", rows: 4, action: "restamp" },
+      { id: "do-uuid", rows: 2, action: "keep" },
+    ]);
+  });
+
+  test("a number that already resolves passes through untouched — the id is never examined here", () => {
+    // The number-resolves-but-id-dangles shape is REPORTED by the script, not
+    // repaired: the prefix rule proves nothing about that id.
+    const v = classifySourceRef({
+      token: "2990-DO-2607-003",
+      prefix: "2990-",
+      ownCompanyMatches: 1,
+      prefixedOwnCompanyMatches: 0,
+      storedDocIds: [{ id: "dead-uuid", exists: false, rows: 5 }],
+    });
+    expect(v.verdict).toBe("already-resolves");
+    expect(v).not.toHaveProperty("idWrites");
+  });
+
+  test("idempotence: re-running over a repaired group plans nothing", () => {
+    const first = classifySourceRef({
+      token: "DO-2607-003",
+      prefix: "2990-",
+      ownCompanyMatches: 0,
+      prefixedOwnCompanyMatches: 1,
+      resolvedDocId: "do-uuid",
+      storedDocIds: [{ id: null, exists: false, rows: 5 }],
+    });
+    expect(first.verdict).toBe("repair");
+    // Second pass sees the rewritten number (resolves) and the stamped id.
+    expect(
+      classifySourceRef({
+        token: first.prefixed,
+        prefix: "2990-",
+        ownCompanyMatches: 1,
+        prefixedOwnCompanyMatches: 0,
+        storedDocIds: [{ id: "do-uuid", exists: true, rows: 5 }],
+      }).verdict,
+    ).toBe("already-resolves");
+  });
+
+  test("THE COLLIDING TAIL holds for DOs too: a real HOUZS DO-2607-003 neither blocks nor misdirects a 2990 repair", () => {
+    const v = classifySourceRef({
+      token: "DO-2607-003",
+      prefix: "2990-",
+      ownCompanyMatches: 0,
+      prefixedOwnCompanyMatches: 1,
+      foreignMatches: 1,
+      resolvedDocId: "the-2990-do-uuid",
+      storedDocIds: [{ id: null, exists: false, rows: 1 }],
+    });
+    expect(v).toMatchObject({ verdict: "repair", prefixed: "2990-DO-2607-003", resolvedDocId: "the-2990-do-uuid", foreignMatches: 1 });
+  });
+
+  test("a repair verdict with no resolvedDocId throws — never plan a write without the resolved document", () => {
+    expect(() =>
+      classifySourceRef({
+        token: "DO-2607-003",
+        prefix: "2990-",
+        ownCompanyMatches: 0,
+        prefixedOwnCompanyMatches: 1,
+        storedDocIds: [],
+      }),
+    ).toThrow(/resolvedDocId/);
   });
 });
 

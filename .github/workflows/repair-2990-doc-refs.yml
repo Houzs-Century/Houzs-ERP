@@ -6,6 +6,15 @@ name: Repair 2990 doc references (DRY-RUN gated)
 # inventory_movements), so those name PRE-IMPORT numbers and every consumer's
 # string equality fails.
 #
+# Part `consumptions` (2026-08-01, from the costing audit run 30694120826)
+# extends the same rule to the ledger's OWN parent references:
+# source_doc_no + source_doc_id on inventory_lot_consumptions and
+# inventory_movements, doc types DO and GRN only. The id is written only from
+# the same resolution the number rule proves; a stored id naming a DIFFERENT
+# real document refuses the whole group. Its dry run also reports, read-only,
+# the audit's 3a GRN line-vs-movement mismatches and any number-resolves-but-
+# id-dangles rows, so the owner can classify them before anything is applied.
+#
 # A token is rewritten ONLY when it resolves to nothing as stored, resolves to
 # exactly ONE document when prefixed with the owning row's own company code, and
 # that document belongs to the same company. Doc-number tails collide across
@@ -31,6 +40,7 @@ on:
           - all
           - notes
           - batches
+          - consumptions
 
 concurrency:
   group: repair-2990-doc-refs
