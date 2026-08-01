@@ -17,6 +17,7 @@
     "audit:map": "node scripts/gen-codebase-map.mjs --check",
     "gen:route-locator": "node scripts/gen-route-locator.mjs",
     "audit:route-locator": "node scripts/gen-route-locator.mjs --check",
+    "audit:trgm": "node scripts/check-trgm-coverage.mjs",
     "db:reset": "node -e \"console.error('db:reset is disabled: it wiped the remote D1 cold-backup with no guard, one line above db:reset:local. Use db:reset:local for local dev, or db:reset:remote:DANGER if you truly mean to reset the remote D1 (destructive, prod data loss).'); process.exit(1)\"",
     "db:reset:remote:DANGER": "wrangler d1 execute autocount-sync --file=./src/db/schema.sql --remote",
     "db:reset:local": "wrangler d1 execute autocount-sync --local --file=./src/db/schema.sql",

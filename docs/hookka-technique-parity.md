@@ -36,7 +36,7 @@ so the PostgREST 1000-row cap is moot for them. Our SCM layer DOES use PostgREST
 | No materialized views | ✅ same (never adopted) |
 | Web Push | ✅ `BrowserPushSink` + push outbox |
 | `waitUntil` background work | ✅ scan bg-job, email outbox |
-| Field projection (`?fields=minimal`) | ✅ mobile lists use it (HOOKKA doesn't even have this) |
+| Field projection (`?fields=minimal`) | ❌ **NOT DONE — the mobile lists SEND it and no backend route reads it.** See the section below the buckets. |
 
 ---
 
@@ -63,14 +63,26 @@ actually gets slow under real data — not before.
 ## Bucket C — GAP (always-worth-it, NOT done yet → backlog)
 
 These are cheap at any scale and are HOOKKA's incident-hardening. Ranked.
-NOTE (verified 2026-07-14): several items I first listed here turned out to be
-ALREADY DONE or intentional non-gaps in Houzs — corrected below. Verify before
-building.
 
-1. **SW cache keyed to build id (auto), not a manual constant.** Ours is
-   `VERSION = "houzs-erp-v174"` bumped by hand — a deploy that forgets to bump
-   serves a stale shell. HOOKKA derives it from the build `?v`. **P1 (real gap).**
-   Risk: PWA-churn sensitive — do carefully.
+> **Re-verified 2026-08-02 against the tree, and FIVE of the eleven had been
+> done since the last pass — including the one ranked P1.** Each is corrected in
+> place below with the evidence. This is the cost of a status list nothing forces
+> anyone to revisit: the top-priority item was "SW cache keyed to build id",
+> which `public/sw.js` has done for some time
+> (`VERSION = "houzs-erp-v191-__SW_BUILD_ID__"`), so anyone working this backlog
+> top-down would have rebuilt something that already existed.
+>
+> **Rule, so this stops happening: close a GAP here in the SAME PR that closes
+> it in the code.** It is the same rule `CLAUDE.md` already applies to module
+> guides, for the same reason. Where a status can be MEASURED instead of typed,
+> measure it — GAP-10 now has `npm --prefix backend run audit:trgm`, and that
+> command is the answer to "are we covered?", not this table.
+
+1. ~~SW cache keyed to build id (auto), not a manual constant~~ **DONE** —
+   `public/sw.js` reads `VERSION = "houzs-erp-v191-__SW_BUILD_ID__"`, the token
+   replaced by the build, so a deploy that forgets to bump the human part still
+   gets a fresh cache key. This entry claimed a hand-bumped `v174` and was ranked
+   **P1**; it was the most expensive line in this file.
 2. ~~purgeServiceWorkerAndCaches on chunk-load error~~ **ALREADY DONE** —
    `components/RouteFallback.tsx:ChunkReloadBoundary` unregisters every SW + deletes
    every cache before reloading, with a one-shot loop-guard. Only small belt-and-
@@ -85,31 +97,77 @@ building.
    number), which an ever-incrementing atomic counter cannot. The concurrent-create
    race is handled by a unique constraint + `mint()` retry (re-reads the live max).
    Considered tradeoff with an advantage over HOOKKA's counter. **No action.**
-5. **Background pre-cache of build assets on SW install** (weak-wifi: pre-fetch
-   the JS/CSS chunks so a flaky connection doesn't stall first paint; respect
-   Data-Saver). Relevant for phones on-site. **P2.**
-6. **Module-preload filtering** — strip pdf/xlsx chunks from `<link modulepreload>`
-   so cold visits don't eagerly pull ~1MB of never-used JS. One `resolveDependencies`
-   hook in vite.config. **P2.**
-7. **Verified-save readback** — write → cache-busting readback → field-compare
-   before showing success ("green tick but didn't persist"). We dropped the vendored
-   verified-save; mutations are plain PATCH. **P2 (correctness).**
-8. **FE RUM / slow-fetch timing** — warn on any fetch ≥500ms, basic real-user
-   metrics. We have none. **P2 (observability, finds the next slow thing for us).**
+5. ~~Background pre-cache of build assets on SW install~~ **DONE** — `sw.js` has
+   an `install` handler that fetches the asset list `no-store` inside
+   `waitUntil` and `addAll`s it, tolerant of a 404 so one missing URL cannot fail
+   the install.
+6. ~~Module-preload filtering~~ **DONE** — `vite.config.ts` carries
+   `modulePreload.resolveDependencies`, and its comment names this as
+   "HOOKKA's resolveDependencies trick".
+7. ~~Verified-save readback~~ **DONE, not dropped** — `vendor/scm/lib/verified-save.ts`
+   exists, is unit-tested (`api/transportCorrelation.test.ts` covers the
+   server-omits-its-echo case), and `pages/scm-v2/Products.tsx` routes its PATCH
+   through it. This entry said we had dropped it.
+8. ~~FE RUM / slow-fetch timing~~ **DONE** — `api/client.ts` warns on any request
+   over `SLOW_FETCH_MS = 800`; its comment calls it "the 'find the next slow
+   thing' signal — how this whole perf campaign started". This entry said
+   "We have none".
 9. **Extend the localStorage snapshot to more lists** (Projects / Service / Team)
    if they also cold-open with a spinner — same `query-persist.ts`, add to the
    whitelist. **P2.**
-10. **More trgm GIN indexes** on remaining searched columns (customer / supplier /
-    debtor names) — we did products/fabric (0104) only. **P2.**
+10. ~~More trgm GIN indexes on remaining searched columns~~ **DONE 2026-08-02**,
+    and the status is now MEASURED rather than typed. `0239` covered the five
+    document sources global search had been reading unindexed since PR #1269;
+    `0240` covered the module LIST search boxes — supplier code/name/contact,
+    the SO/DO/SI extras (debtor_code, branding, sales_location, driver_name,
+    agent) and the whole consignment trio, which had never been indexed at all.
+    **Do not trust this line — run the check:**
+
+    ```
+    npm --prefix backend run audit:trgm
+    ```
+
+    It diffs every `.or(...ilike...)` column in `backend/src/scm` against every
+    `gin_trgm_ops` index in `migrations-pg/`, resolves views to their base table,
+    and lists anything missing. At the time of writing: 54 searched columns, 52
+    indexed, 2 accepted with a recorded reason, 0 missing. Deliberately not a CI
+    gate (it is a static approximation, and a false positive must cost a
+    conversation, never a deploy).
 11. **Runtime self-applied indexes** — HOOKKA `CREATE INDEX IF NOT EXISTS` on first
     hit of a hot endpoint (deploys don't replay migrations). We auto-apply via
     pg-migrate on deploy instead, so this is **equivalent, not needed.**
 
 ---
 
+## One Bucket A entry is wrong, and it is the interesting one
+
+**`?fields=minimal` field projection — listed as DONE, actually a NO-OP.**
+`frontend/src/mobile/MobileModuleList.tsx` appends `&fields=minimal` to seven SCM
+list endpoints (delivery-orders-mfg, sales-invoices, grns, mfg-purchase-orders,
+delivery-returns, purchase-invoices, purchase-returns), and **no backend code
+reads a `fields` query parameter at all** — `grep -rn "query('fields')" backend/src`
+returns nothing. Every one of those lists returns its full `HEADER` projection;
+`sales_invoices`' is over forty columns including address, emergency contact and
+every money split, at `limit=500`, to a phone.
+
+This is HOOKKA's BUG-2026-07-13-003 ("`?fields=minimal` alone still inlined
+jobCards — the slim didn't slim") in a more complete form: theirs partially
+worked, ours never ran.
+
+**Left unimplemented deliberately, 2026-08-02.** Building it means enumerating,
+per endpoint, every column the mobile config reads — and an attempt to extract
+that automatically already showed why that is risky: the extractor missed one
+config entirely, mistook FK embeds for columns, and could not follow helpers like
+`balanceCenti(r)`. Miss one column and the row renders "—", which is HOOKKA's
+own BUG-2026-07-03-005/-006/-007 class, and it is only visible on a real phone —
+jsdom has no layout, so no test here would catch it. That verification needs the
+owner. **Until then the parameter is a lie in the URL**: either implement the
+projection or delete the parameter, and this file should not claim it works.
+
 ## The short answer to "why not all?"
 - The **always-worth-it** techniques: mostly already adopted (Bucket A). The rest
-  are a concrete backlog (Bucket C, 10 real items).
+  are a concrete backlog (Bucket C, and as of 2026-08-02 only THREE remain real —
+  see the re-verification note above).
 - The **big-data machinery** (Bucket B): deliberately deferred — at ~tens of orders
   it's pure overhead and drags in HOOKKA's own snapshot-staleness bug class. It
   becomes worthwhile as data grows; the first candidate is a server snapshot for
