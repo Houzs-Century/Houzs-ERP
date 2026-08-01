@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "../../components/Layout";
 import { SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
+import { StockAdjChip } from "../../components/DocumentLinesExpansion";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import {
@@ -130,10 +131,19 @@ type SoRow = {
   current_doc_no: string | null;
   stock_remark?: string;
   /** System Purchase Order numbers this SO was converted into (empty when
-   *  none). Server-derived via the SO-line→PO-item→PO chain. Drives the "PO
-   *  No." column — the operator wants the system PO here, not the customer's
-   *  hand-typed po_doc_no (which 2990 never fills). */
+   *  none). Server-derived via the SO-line→PO-item→PO chain. LEGACY raise-link
+   *  since 2026-08-02 — shown in the PO No. column's tooltip when it differs
+   *  from the source union below. */
   converted_po_nos?: string[] | null;
+  /** Union of the per-line source-PO chips the drill shows (owner 2026-08-02,
+   *  "他拿的货是谁的货"): SHIPPED/DELIVERED consumed batches ∪ READY FIFO
+   *  projections, via the ONE shared resolver. Drives the visible PO No.
+   *  chips — an accessories/CS SO fulfilled from stock bought under another
+   *  PO finally names that PO instead of a dash. */
+  source_po_union?: string[] | null;
+  /** Any line shipped/allocated from a PO-less stock ADJUSTMENT — renders a
+   *  "STOCK ADJ" chip so the cell is explained, never blank. */
+  source_po_adj?: boolean;
   internal_expected_dd: string | null;
   customer_delivery_date: string | null;
   // ── Phase 2 FINANCE: cost / margin / per-category subtotals + deposit. The
@@ -1446,30 +1456,50 @@ export function MfgSalesOrdersListV2() {
       /* NB: the key stays "po_doc_no" for historical reasons — it is what
          users (incl. the owner) already have persisted as a shown/ordered
          column, so keeping it means this now-populated column lands where they
-         left it. The CONTENT changed (owner 2026-07-24): it used to show the
-         customer's hand-typed PO # (`po_doc_no`, never filled for 2990); it now
-         shows the SYSTEM Purchase Order(s) this SO was converted into
-         (`converted_po_nos`, server-derived). Not default-hidden any more —
-         "sales order list 没有显示 PO No" was exactly this column reading empty. */
+         left it. The CONTENT changed twice:
+         · owner 2026-07-24 — from the customer's hand-typed PO # (never filled
+           for 2990) to the SYSTEM PO(s) the SO was converted into.
+         · owner 2026-08-02 — from the convert-time raise-link to the UNION of
+           per-line SOURCE-PO chips the drill shows (`source_po_union`: shipped
+           consumed batches ∪ READY projections, the shared resolver). The
+           convert-link lied by omission: accessories/CS SOs fulfilled from
+           stock bought under other POs showed "—" while their drill named the
+           source PO. The legacy raise-link stays in the TOOLTIP when it
+           differs, clearly labelled. */
       key: "po_doc_no",
       group: "Logistics",
       label: "PO No.",
       width: "150px",
       disableSort: true,
-      getValue: (r) => (r.converted_po_nos ?? []).join(", "),
+      getValue: (r) => (r.source_po_union ?? []).join(", "),
       render: (r) => {
-        const pos = r.converted_po_nos ?? [];
-        if (pos.length === 0) return <span className="text-ink-muted">—</span>;
+        const pos = r.source_po_union ?? [];
+        const legacy = r.converted_po_nos ?? [];
+        const legacyExtra = legacy.filter((n) => !pos.includes(n));
+        const legacyTitle = legacyExtra.length > 0
+          ? `Raised PO (convert-time link, not a goods source): ${legacyExtra.join(", ")}`
+          : undefined;
+        if (pos.length === 0 && !r.source_po_adj) {
+          return legacyExtra.length > 0 ? (
+            <span className="text-ink-muted" title={legacyTitle}>
+              —
+            </span>
+          ) : (
+            <span className="text-ink-muted">—</span>
+          );
+        }
         return (
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-1" title={legacyTitle}>
             {pos.map((n) => (
               <span
                 key={n}
+                title={`Source PO ${n} — the goods on this order come from this purchase order (shipped batch or READY allocation).`}
                 className="rounded bg-primary-soft px-1.5 py-0.5 font-docno text-[11px] font-semibold text-primary-ink"
               >
                 {n}
               </span>
             ))}
+            {r.source_po_adj && <StockAdjChip />}
           </div>
         );
       },

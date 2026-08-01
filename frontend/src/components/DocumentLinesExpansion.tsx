@@ -52,7 +52,9 @@ export type DocumentDrillLine = {
   // PURCHASE docs (PO / GRN / PI): the Delivery Order(s) that have shipped this
   // line's goods (batch_no = this PO) with the qty shipped per DO. Empty / absent
   // → the Delivered cell shows a dash (nothing delivered against this line yet).
-  deliveredDos?: Array<{ doNo: string; qty: number }>;
+  // soDocNo (2026-08-02) pairs each DO with its Assigned-SO row in the per-SO
+  // sub-table — a DO belongs to ONE Sales Order (delivery_orders.so_doc_no).
+  deliveredDos?: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
 };
 
 // Permissive superset of the per-line fields the six document detail hooks
@@ -113,6 +115,22 @@ export function StockAdjChip() {
   );
 }
 
+/* "STOCK" — a purchase-doc line with NO assignment is surplus stock, not
+   missing data (owner 2026-08-02, off 2990-PO-2607-001/-005: ANGGN stock
+   replenishment with no open demand read as a bare dash). Subtle by design —
+   it explains the emptiness without competing with real SO chips. MRP layer
+   (c) float-assigns automatically once matching demand appears. */
+export function StockTag() {
+  return (
+    <span
+      title="Stock replenishment — no open Sales Order demand is assigned to this line. MRP will float-assign it automatically when matching demand appears."
+      className="rounded border border-dashed border-border-subtle bg-surface-dim px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-ink-muted"
+    >
+      STOCK
+    </span>
+  );
+}
+
 /* ChipOverflow — the LIST-cell scale rule (owner 2026-08-01: "枕头订500个…
    100张SO…UI直接爆开"). A list cell renders the first `limit` chips plus an
    inline "+N" toggle that EXPANDS IN PLACE to the full list — nothing is
@@ -157,16 +175,164 @@ export const showDeliveredQty = (qty: number, chipCount: number): boolean =>
 // Column widths are driven by which optional columns are on, so the template is
 // built at RUNTIME and applied via an inline style — a dynamically-joined
 // `grid-cols-[...]` class would never be seen by Tailwind's JIT scanner.
-function buildGrid(opts: { assign: boolean; delivered: boolean; sourcePo: boolean }): {
+// `paired` (2026-08-02): Assigned SO + SO Delivery Date + Delivered collapse
+// into ONE per-SO sub-table column (owner's pillow case — three parallel
+// UNALIGNED stacks made "which SO has shipped" unreadable).
+function buildGrid(opts: { assign: boolean; delivered: boolean; sourcePo: boolean; paired: boolean }): {
   cols: string;
   minW: number;
 } {
   const cols = ["92px", "minmax(180px,1fr)", "56px", "104px"];
   let minW = 540;
-  if (opts.assign) { cols.push("minmax(150px,190px)", "120px"); minW += 300; }
-  if (opts.delivered) { cols.push("minmax(150px,200px)"); minW += 200; }
+  if (opts.paired) {
+    cols.push("minmax(340px,1.4fr)");
+    minW += 380;
+  } else {
+    if (opts.assign) { cols.push("minmax(150px,190px)", "120px"); minW += 300; }
+    if (opts.delivered) { cols.push("minmax(150px,200px)"); minW += 200; }
+  }
   if (opts.sourcePo) { cols.push("minmax(140px,190px)"); minW += 200; }
   return { cols: cols.join(" "), minW };
+}
+
+/* ── Per-SO paired rows (2026-08-02, owner's PO-2606-021 pillow screenshot) ──
+   One row per assigned SO: [SO chip | SO delivery date | the delivered-DO
+   chips for THAT SO | status]. Status: DELIVERED once any DO for that SO has
+   shipped this line's goods; PENDING otherwise (an unshipped SO with a future
+   date must read PENDING, never blank). Delivered DOs whose soDocNo matches no
+   assignment still render (an extra row) — pairing must never hide a shipment. */
+type PairedSoRow = {
+  soDocNo: string;
+  deliveryDate: string | null;
+  assignment: OriginAssignment | null;
+  dos: Array<{ doNo: string; qty: number }>;
+};
+
+export function buildPairedSoRows(
+  assigned: OriginAssignment[],
+  delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>,
+): PairedSoRow[] {
+  const rows = new Map<string, PairedSoRow>();
+  for (const a of assigned) {
+    rows.set(a.soDocNo, { soDocNo: a.soDocNo, deliveryDate: a.deliveryDate ?? null, assignment: a, dos: [] });
+  }
+  const orphans: PairedSoRow[] = [];
+  for (const d of delivered) {
+    const key = d.soDocNo ?? "";
+    const hit = key ? rows.get(key) : undefined;
+    if (hit) {
+      hit.dos.push({ doNo: d.doNo, qty: d.qty });
+    } else {
+      let orphan = orphans.find((o) => o.soDocNo === (key || "—"));
+      if (!orphan) {
+        orphan = { soDocNo: key || "—", deliveryDate: null, assignment: null, dos: [] };
+        orphans.push(orphan);
+      }
+      orphan.dos.push({ doNo: d.doNo, qty: d.qty });
+    }
+  }
+  return [...rows.values(), ...orphans];
+}
+
+function PairedSoCell({
+  assigned,
+  delivered,
+  sourceLinked,
+  onOpenSo,
+  onOpenDo,
+}: {
+  assigned: OriginAssignment[];
+  delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
+  sourceLinked?: boolean;
+  onOpenSo?: (soDocNo: string) => void;
+  onOpenDo?: (doNo: string) => void;
+}) {
+  const rows = buildPairedSoRows(assigned, delivered);
+  if (rows.length === 0) return <StockTag />;
+  const chipBase = "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      {rows.map((r) => {
+        const a = r.assignment;
+        const floating = a?.locked === false;
+        const soTitle = !a
+          ? "This Delivery Order's Sales Order is not among this line's assignments — shown so the shipment stays visible."
+          : floating
+            ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
+            : a.source === "delivered"
+              ? "Locked — this line's goods were delivered against this Sales Order"
+              : sourceLinked === false
+                ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
+                : "Locked — a stored link to this Sales Order";
+        const soTone = floating
+          ? "border border-dashed border-border text-ink-secondary"
+          : "border border-border-subtle bg-surface-2 text-accent-ink";
+        const shipped = r.dos.length > 0;
+        const doChipCount = r.dos.length;
+        return (
+          <div key={r.soDocNo} className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {onOpenSo && r.soDocNo !== "—" ? (
+              <button
+                type="button"
+                title={soTitle}
+                onClick={() => onOpenSo(r.soDocNo)}
+                className={cn(chipBase, soTone, "hover:border-accent hover:text-accent")}
+              >
+                {r.soDocNo}
+                {floating && <span className="text-ink-muted">{" ~"}</span>}
+              </button>
+            ) : (
+              <span title={soTitle} className={cn(chipBase, soTone)}>
+                {r.soDocNo}
+                {floating && <span className="text-ink-muted">{" ~"}</span>}
+              </span>
+            )}
+            <span className="whitespace-nowrap font-mono text-[10.5px] text-ink-muted">
+              {r.deliveryDate ? formatDate(r.deliveryDate) : "—"}
+            </span>
+            {r.dos.map((d) => {
+              const label = (
+                <>
+                  {d.doNo}
+                  {showDeliveredQty(d.qty, doChipCount) && (
+                    <span className="text-ink-muted">{` x${d.qty}`}</span>
+                  )}
+                </>
+              );
+              const doBase =
+                "rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary";
+              return onOpenDo ? (
+                <button
+                  type="button"
+                  key={d.doNo}
+                  title="The Delivery Order that shipped this line's goods for this Sales Order"
+                  onClick={() => onOpenDo(d.doNo)}
+                  className={cn(doBase, "hover:border-accent hover:text-accent")}
+                >
+                  {label}
+                </button>
+              ) : (
+                <span key={d.doNo} className={doBase}>
+                  {label}
+                </span>
+              );
+            })}
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider",
+                shipped ? "bg-synced-bg text-synced" : "bg-surface-dim text-ink-muted",
+              )}
+              title={shipped
+                ? "Delivered — at least one Delivery Order has shipped this line's goods for this Sales Order"
+                : "Pending — assigned, nothing shipped for this Sales Order yet (delivery date shown)"}
+            >
+              {shipped ? "DELIVERED" : "PENDING"}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function DocumentLinesExpansion({
@@ -198,10 +364,15 @@ export function DocumentLinesExpansion({
   onOpenSo?: (soDocNo: string) => void;
   onOpenDo?: (doNo: string) => void;
 }) {
+  /* Paired mode (2026-08-02): a purchase doc showing BOTH assignments and
+     deliveries renders them as one per-SO sub-table — never three unaligned
+     stacks. */
+  const paired = showAssignment && showDelivered;
   const { cols: gridCols, minW: minWpx } = buildGrid({
     assign: showAssignment,
     delivered: showDelivered,
     sourcePo: showSourcePo,
+    paired,
   });
   const gridStyle = { gridTemplateColumns: gridCols } as const;
   if (isLoading) {
@@ -237,9 +408,10 @@ export function DocumentLinesExpansion({
           <span>Item</span>
           <span className="text-right">Qty</span>
           <span className="text-right">Amount</span>
-          {showAssignment && <span>Assigned SO</span>}
-          {showAssignment && <span>SO Delivery Date</span>}
-          {showDelivered && <span>Delivered</span>}
+          {paired && <span>Assigned SO · Delivery Date · Delivered · Status</span>}
+          {!paired && showAssignment && <span>Assigned SO</span>}
+          {!paired && showAssignment && <span>SO Delivery Date</span>}
+          {!paired && showDelivered && <span>Delivered</span>}
           {showSourcePo && <span>Source PO</span>}
         </div>
         {lines.map((l, i) => {
@@ -282,7 +454,16 @@ export function DocumentLinesExpansion({
               <span className="text-right font-money text-[12px] font-semibold text-ink">
                 {fmtRm(l.amountCenti)}
               </span>
-              {showAssignment && (
+              {paired && (
+                <PairedSoCell
+                  assigned={assigned}
+                  delivered={delivered}
+                  sourceLinked={l.sourceLinked}
+                  onOpenSo={onOpenSo}
+                  onOpenDo={onOpenDo}
+                />
+              )}
+              {!paired && showAssignment && (
                 <span className="flex min-w-0 flex-col gap-1">
                   <span className="flex min-w-0 flex-wrap gap-1">
                   {assigned.length > 0 ? (
@@ -322,12 +503,12 @@ export function DocumentLinesExpansion({
                       );
                     })
                   ) : (
-                    <span className="text-[11px] text-ink-muted">—</span>
+                    <StockTag />
                   )}
                   </span>
                 </span>
               )}
-              {showAssignment && (
+              {!paired && showAssignment && (
                 <span className="flex min-w-0 flex-col gap-0.5">
                   {assigned.length > 0 ? (
                     assigned.map((a) => (
@@ -343,7 +524,7 @@ export function DocumentLinesExpansion({
                   )}
                 </span>
               )}
-              {showDelivered && (
+              {!paired && showDelivered && (
                 <span className="flex min-w-0 flex-wrap items-center gap-1">
                   {delivered.length > 0 ? (
                     delivered.map((d) => {
@@ -425,13 +606,20 @@ export function AssignedSoCell({
   assignments,
   sourceLinked,
   onOpenSo,
+  emptyMeans = "dash",
 }: {
   assignments: OriginAssignment[] | undefined | null;
   sourceLinked?: boolean;
   onOpenSo?: (soDocNo: string) => void;
+  /* "stock" (purchase docs, 2026-08-02): an empty cell means surplus stock, so
+     it reads "STOCK" instead of a bare dash — no open demand is not missing
+     data. Sales surfaces keep the dash (an ad-hoc DO simply has no SO). */
+  emptyMeans?: "dash" | "stock";
 }) {
   const list = assignments ?? [];
-  if (list.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
+  if (list.length === 0) {
+    return emptyMeans === "stock" ? <StockTag /> : <span className="text-[12px] text-ink-muted">—</span>;
+  }
   const base = "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
   const chipTitle = (a: OriginAssignment): string =>
     a.locked === false

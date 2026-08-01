@@ -151,6 +151,29 @@
 //       recorded nowhere); quantity guards, never discriminates.
 //       planDoLineLink in lib/doc-evidence-core.mjs holds the rule.
 //
+//   A10 PART=fifo-attribute-repair (2026-08-02, the 023/024 incident). The A7
+//       run's taken-set read stored links/allocations ONLY, so SO lines whose
+//       demand ANOTHER PO's delivered chain had already served (consumptions →
+//       lot batch → PO) were re-claimed — never-received 2990-PO-2606-023
+//       carries allocations naming the SAME SOs {036, 029} that received+
+//       shipped -024 delivered (GRN-2607-010/-017 → DO-2607-008/-011/-018).
+//       A7 itself now applies delivered precedence (a served line is TAKEN,
+//       regardless of which PO served it); THIS part re-evaluates the
+//       allocations already written:
+//         * PO confirmed an UNEXECUTED DUPLICATE of an executed same-supplier
+//           multiset twin (lib/duplicate-docs-core.mjs fingerprint, ±3 days)
+//           → REMOVE its allocation rows entirely and RECOMMEND cancelling
+//           the PO (owner decision — never executed here; cancelling also
+//           deflates the phantom MRP incoming supply, dead statuses being
+//           excluded from PO Outstanding).
+//         * otherwise, per SO-linked row: demand fully served by OTHER PO(s)
+//           → flip so_item_id to NULL (STOCK), printed as
+//           `PO-2606-023-NN: SO-036 -> STOCK (served by ... via DO-...)`;
+//           served by THIS PO → kept (documents a delivered fact); partial →
+//           refused + reported.
+//       planAllocationDeliveredRepair in lib/doc-evidence-core.mjs holds the
+//       rule. POS names the target POs (default: the incident pair's suspect).
+//
 //   DATABASE_URL   required (env, or .dev.vars for local use)
 //   APPLY=1        write. Anything else is a dry run.
 //   PART           all (default) | notes | batches | consumptions | ids | grn-gap | dedupe
@@ -182,9 +205,12 @@ import {
 } from "./lib/ledger-repair-core.mjs";
 import {
   planFifoAttribution,
+  planAllocationDeliveredRepair,
   classifySoLineWarehouse,
   planDoLineLink,
 } from "./lib/doc-evidence-core.mjs";
+import { docLineMultisetKey, dateGapDays } from "./lib/duplicate-docs-core.mjs";
+import { variantKeyMirror } from "./lib/ledger-repair-core.mjs";
 import { execIdRestamp, printIdRestampExec, execDedupe } from "./lib/id-restamp-exec.mjs";
 
 const APPLY = process.env.APPLY === "1";
@@ -194,8 +220,8 @@ const GRNS = (process.env.GRNS || "2990-GRN-2606-001")
   .split(",").map((s) => s.trim()).filter(Boolean);
 const POS = (process.env.POS || "2990-PO-2606-019,2990-PO-2606-023")
   .split(",").map((s) => s.trim()).filter(Boolean);
-if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap", "dedupe", "fifo-attribute", "so-warehouse", "do-line-link"].includes(PART)) {
-  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap | dedupe | fifo-attribute | so-warehouse | do-line-link (got "${PART}")`);
+if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap", "dedupe", "fifo-attribute", "fifo-attribute-repair", "so-warehouse", "do-line-link"].includes(PART)) {
+  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap | dedupe | fifo-attribute | fifo-attribute-repair | so-warehouse | do-line-link (got "${PART}")`);
   process.exit(2);
 }
 const doNotes = PART === "all" || PART === "notes";
@@ -205,6 +231,7 @@ const doIds = PART === "ids";
 const doGrnGap = PART === "grn-gap";
 const doDedupe = PART === "dedupe";
 const doFifoAttribute = PART === "fifo-attribute";
+const doFifoAttrRepair = PART === "fifo-attribute-repair";
 const doSoWarehouse = PART === "so-warehouse";
 const doDoLineLink = PART === "do-line-link";
 
@@ -1262,6 +1289,59 @@ async function applyGrnGap(plan) {
 // rows; the mig-0235 triggers guard SUM(alloc) <= line qty underneath us.
 const subNo = (poNumber, seq) => `${poNumber}-${String(seq).padStart(2, "0")}`;
 
+/* DELIVERED-LEDGER service per SO line (the precedence evidence for A7 + A10):
+   so_item_id -> { soQty, servedQty, servingPos:[po numbers], servingDos:[do
+   numbers] }. A line is "served" by the goods that physically LEFT for it —
+   its non-cancelled DO lines whose (do, code) ledger bucket resolves at least
+   one source PO (consumption -> lot batch_no, GRN-healed; ∪ batched OUT
+   movements for the sofa/drop-ship path). servedQty is the DO-line qty (the
+   documented delivered amount), the same definition the app's delivered trace
+   uses; matching is (do, code) — the check-so-source-trace loose-bucket rule. */
+async function deliveredServiceBySoItem(soLineIds) {
+  const out = new Map();
+  if (!soLineIds || soLineIds.length === 0) return out;
+  const doLines = await pg`
+    SELECT di.so_item_id::text AS so_item_id, di.delivery_order_id::text AS do_id,
+           di.item_code, di.qty, d.do_number
+      FROM scm.delivery_order_items di
+      JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+     WHERE di.so_item_id::text = ANY(${soLineIds})
+       AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'`;
+  if (doLines.length === 0) return out;
+  const doIds = [...new Set(doLines.map((r) => r.do_id))];
+  const cons = await pg`
+    SELECT c.source_doc_id::text AS do_id, c.product_code,
+           COALESCE(l.batch_no, p.po_number) AS po
+      FROM scm.inventory_lot_consumptions c
+      JOIN scm.inventory_lots l ON l.id = c.lot_id
+      LEFT JOIN scm.grns g ON UPPER(COALESCE(l.source_doc_type,'')) = 'GRN' AND g.id = l.source_doc_id
+      LEFT JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
+     WHERE c.source_doc_type = 'DO' AND c.source_doc_id::text = ANY(${doIds})`;
+  const movs = await pg`
+    SELECT source_doc_id::text AS do_id, product_code, batch_no AS po
+      FROM scm.inventory_movements
+     WHERE source_doc_type = 'DO' AND movement_type = 'OUT'
+       AND source_doc_id::text = ANY(${doIds}) AND batch_no IS NOT NULL`;
+  const posByDoCode = new Map();
+  for (const r of [...cons, ...movs]) {
+    if (!r.po) continue;
+    const k = `${r.do_id}::${String(r.product_code ?? "").trim().toUpperCase()}`;
+    const set = posByDoCode.get(k) ?? new Set();
+    set.add(r.po);
+    posByDoCode.set(k, set);
+  }
+  for (const dl of doLines) {
+    const pos = posByDoCode.get(`${dl.do_id}::${String(dl.item_code ?? "").trim().toUpperCase()}`);
+    if (!pos || pos.size === 0) continue; // DO line with no ledger evidence — not proof of service
+    const cur = out.get(dl.so_item_id) ?? { servedQty: 0, servingPos: new Set(), servingDos: new Set() };
+    cur.servedQty += Number(dl.qty ?? 0);
+    for (const po of pos) cur.servingPos.add(po);
+    if (dl.do_number) cur.servingDos.add(dl.do_number);
+    out.set(dl.so_item_id, cur);
+  }
+  return out;
+}
+
 async function planFifoAttribute() {
   log("");
   log(`=== A7  fifo-attribute — target POs: ${POS.join(", ")} ===`);
@@ -1325,6 +1405,11 @@ async function planFifoAttribute() {
         FROM scm.mfg_sales_order_items si
        WHERE si.doc_no = ANY(${namedSos}) AND si.company_id = ${cid} AND si.cancelled = false
        ORDER BY si.doc_no, si.line_no NULLS LAST, si.id`;
+    /* DELIVERED PRECEDENCE (2026-08-02): a named SO line whose demand the
+       delivered ledger proves already shipped — from ANY PO — is TAKEN. This is
+       what the 023/024 incident was missing: the stored-link/allocation
+       taken-set cannot see goods that already left under another PO's batch. */
+    const servedMap = await deliveredServiceBySoItem(soLines.map((l) => l.id));
 
     const res = planFifoAttribution({
       poLines: poLines.map((l) => ({
@@ -1344,12 +1429,17 @@ async function planFifoAttribute() {
         // The MRP demand date rule verbatim: line date, else the header promise.
         deliveryDate: l.line_delivery_date ?? headerByDocCo.get(`${cid}::${l.doc_no}`)?.customer_delivery_date ?? null,
         taken: taken.has(l.id),
+        servedQty: servedMap.get(l.id)?.servedQty ?? 0,
+        servingPos: [...(servedMap.get(l.id)?.servingPos ?? [])],
       })),
     });
 
     log(`    PO lines: ${poLines.length} (already so_item_id-linked: ${res.skippedLinked.length}, already allocated: ${res.skippedAllocated.length}, planned now: ${res.plans.length})`);
     for (const id of res.skippedLinked) log(`      SKIP line ${id} — carries so_item_id (the 1:1 fast path; not touched)`);
     for (const id of res.skippedAllocated) log(`      SKIP line ${id} — already has allocations (idempotent re-run)`);
+    for (const s of res.skippedServed ?? []) {
+      log(`      TAKEN (delivered precedence) ${s.soDoc} line ${s.soItemId} ${s.itemCode} qty ${s.qty} — already served by ${s.servingPos.join("+") || "?"}; not re-claimed`);
+    }
     let li = 0;
     for (const plan of res.plans) {
       li += 1;
@@ -1398,6 +1488,165 @@ async function applyFifoAttribute(planned) {
     });
   }
   return { lines, rows };
+}
+
+// ── A10 — PART=fifo-attribute-repair: re-evaluate EXISTING allocations against
+// the delivered chain (the 023/024 corrective). Named POs only (POS env).
+// Dry-run by default; APPLY=1 deletes/flips inside one transaction per PO.
+async function planFifoAttrRepair() {
+  log("");
+  log(`=== A10 fifo-attribute-repair — target POs: ${POS.join(", ")} ===`);
+  const pos = await pg`
+    SELECT id::text AS id, po_number, company_id, supplier_id::text AS supplier_id,
+           po_date, status::text AS status
+      FROM scm.purchase_orders WHERE po_number = ANY(${POS})`;
+  for (const want of POS) {
+    if (!pos.some((p) => p.po_number === want)) log(`  "${want}" matches NO purchase order — skipped (check the number).`);
+  }
+  if (pos.length === 0) return { plans: [] };
+
+  const plans = [];
+  for (const p of pos) {
+    log("");
+    log(`  ${p.po_number} (company ${p.company_id}, status ${p.status})`);
+    // The PO's lines + allocation rows (SO doc resolved for the prints).
+    const lineRows = await pg`
+      SELECT i.id::text AS id, i.material_code, i.item_group, i.variants, i.qty, i.unit_price_centi
+        FROM scm.purchase_order_items i
+       WHERE i.purchase_order_id = ${p.id}::uuid
+       ORDER BY i.created_at, i.id`;
+    const allocRows = await pg`
+      SELECT a.id::text AS id, a.purchase_order_item_id::text AS po_line_id, a.seq, a.qty,
+             a.so_item_id::text AS so_item_id, si.doc_no AS so_doc
+        FROM scm.purchase_order_item_allocations a
+        LEFT JOIN scm.mfg_sales_order_items si ON si.id = a.so_item_id
+       WHERE a.purchase_order_item_id IN
+             (SELECT id FROM scm.purchase_order_items WHERE purchase_order_id = ${p.id}::uuid)
+       ORDER BY a.purchase_order_item_id, a.seq`;
+    if (allocRows.length === 0) {
+      log(`    no allocation rows — nothing to re-evaluate.`);
+      continue;
+    }
+    // Execution state of THIS PO: any non-cancelled GRN, or any delivered ledger row.
+    const [selfGrns, selfDelivered] = await Promise.all([
+      pg`SELECT COUNT(*)::int AS n FROM scm.grns
+          WHERE purchase_order_id = ${p.id}::uuid AND UPPER(COALESCE(status::text,'')) <> 'CANCELLED'`,
+      pg`SELECT COUNT(*)::int AS n FROM scm.inventory_lots l
+          JOIN scm.inventory_lot_consumptions c ON c.lot_id = l.id
+         WHERE l.batch_no = ${p.po_number}`,
+    ]);
+    const selfExecuted = Number(selfGrns[0]?.n ?? 0) > 0 || Number(selfDelivered[0]?.n ?? 0) > 0;
+    // Duplicate twin: same company + supplier, multiset-identical lines, ±3 days,
+    // EXECUTED (received or delivered). The same fingerprint the read-only
+    // detector (check-duplicate-documents.mjs) prints.
+    const selfKey = docLineMultisetKey(lineRows.map((l) => ({
+      itemCode: l.material_code,
+      variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
+      qty: Number(l.qty ?? 0),
+      unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+    })));
+    let duplicateOf = null;
+    if (p.supplier_id) {
+      const twins = await pg`
+        SELECT o.id::text AS id, o.po_number, o.po_date,
+               (SELECT COUNT(*)::int FROM scm.grns g
+                 WHERE g.purchase_order_id = o.id AND UPPER(COALESCE(g.status::text,'')) <> 'CANCELLED') AS grn_n
+          FROM scm.purchase_orders o
+         WHERE o.company_id = ${p.company_id} AND o.supplier_id = ${p.supplier_id}::uuid
+           AND o.id <> ${p.id}::uuid AND UPPER(COALESCE(o.status::text,'')) <> 'CANCELLED'`;
+      for (const t of twins) {
+        const gap = dateGapDays(p.po_date, t.po_date);
+        if (gap == null || gap > 3) continue;
+        const tLines = await pg`
+          SELECT material_code, item_group, variants, qty, unit_price_centi
+            FROM scm.purchase_order_items WHERE purchase_order_id = ${t.id}::uuid`;
+        const tKey = docLineMultisetKey(tLines.map((l) => ({
+          itemCode: l.material_code,
+          variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
+          qty: Number(l.qty ?? 0),
+          unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+        })));
+        if (tKey !== selfKey) continue;
+        const tDelivered = await pg`
+          SELECT COUNT(*)::int AS n FROM scm.inventory_lots l
+            JOIN scm.inventory_lot_consumptions c ON c.lot_id = l.id
+           WHERE l.batch_no = ${t.po_number}`;
+        const executed = Number(t.grn_n ?? 0) > 0 || Number(tDelivered[0]?.n ?? 0) > 0;
+        if (!duplicateOf || (executed && !duplicateOf.executed)) {
+          duplicateOf = { poNumber: t.po_number, executed };
+        }
+      }
+    }
+    log(`    executed(self): ${selfExecuted}; multiset twin: ${duplicateOf ? `${duplicateOf.poNumber} (executed: ${duplicateOf.executed})` : "none"}`);
+
+    // Delivered service for every SO line the allocations name.
+    const soItemIds = [...new Set(allocRows.map((a) => a.so_item_id).filter(Boolean))];
+    const servedMap = await deliveredServiceBySoItem(soItemIds);
+    const soQtyRows = soItemIds.length
+      ? await pg`SELECT id::text AS id, qty FROM scm.mfg_sales_order_items WHERE id::text = ANY(${soItemIds})`
+      : [];
+    const soQtyById = new Map(soQtyRows.map((r) => [r.id, Number(r.qty ?? 0)]));
+    const served = {};
+    for (const id of soItemIds) {
+      const s = servedMap.get(id);
+      if (!s) continue;
+      served[id] = {
+        soQty: soQtyById.get(id) ?? 0,
+        servedQty: s.servedQty,
+        servingPos: [...s.servingPos],
+        servingDos: [...s.servingDos].sort(),
+      };
+    }
+
+    const byLine = new Map();
+    for (const a of allocRows) {
+      const arr = byLine.get(a.po_line_id) ?? [];
+      arr.push({ id: a.id, seq: Number(a.seq), qty: Number(a.qty), soItemId: a.so_item_id, soDoc: a.so_doc });
+      byLine.set(a.po_line_id, arr);
+    }
+    const res = planAllocationDeliveredRepair({
+      poNumber: p.po_number,
+      selfExecuted,
+      duplicateOf,
+      lines: [...byLine.entries()].map(([poLineId, allocations]) => ({ poLineId, allocations })),
+      served,
+    });
+    log(`    mode: ${res.mode} — removals: ${res.removals.length}, flips: ${res.flips.length}, keeps: ${res.keeps.length}, partial (refused): ${res.partials.length}`);
+    for (const r of res.removals) log(`      ${r.print}`);
+    for (const f of res.flips) log(`      ${f.print}`);
+    for (const k of res.keeps) log(`      KEEP allocation ${k.allocationId} — ${k.reason}`);
+    for (const x of res.partials) log(`      PARTIAL (refused, needs-owner) allocation ${x.allocationId} — ${x.soDoc}: served ${x.servedQty}/${x.soQty}`);
+    if (res.recommendation) log(`    RECOMMENDATION: ${res.recommendation}`);
+    if (res.removals.length > 0 || res.flips.length > 0) plans.push({ po: p, res });
+  }
+  log("");
+  log(`  A10 total: ${plans.reduce((a, x) => a + x.res.removals.length, 0)} removal(s) + ${plans.reduce((a, x) => a + x.res.flips.length, 0)} flip(s) across ${plans.length} PO(s).`);
+  return { plans };
+}
+
+async function applyFifoAttrRepair(planned) {
+  let removed = 0, flipped = 0;
+  for (const { po, res } of planned) {
+    await pg.begin(async (tx) => {
+      for (const r of res.removals) {
+        const del = await tx`
+          DELETE FROM scm.purchase_order_item_allocations
+           WHERE id = ${r.allocationId}::uuid AND (so_item_id::text IS NOT DISTINCT FROM ${r.soItemId})`;
+        if (del.count === 1) { removed += 1; log(`  APPLIED ${r.print}`); }
+        else log(`  SKIPPED allocation ${r.allocationId} — changed since the plan; re-run the dry run.`);
+      }
+      for (const f of res.flips) {
+        const upd = await tx`
+          UPDATE scm.purchase_order_item_allocations
+             SET so_item_id = NULL
+           WHERE id = ${f.allocationId}::uuid AND so_item_id::text = ${f.soItemId}`;
+        if (upd.count === 1) { flipped += 1; log(`  APPLIED ${f.print}`); }
+        else log(`  SKIPPED allocation ${f.allocationId} — so_item_id changed since the plan; re-run the dry run.`);
+      }
+    });
+    if (res.recommendation) log(`  RECOMMENDATION (owner decision, NOT executed): ${res.recommendation}`);
+  }
+  return { removed, flipped };
 }
 
 // ── A8 — PART=so-warehouse: stamp warehouse_id on the SO lines whose header
@@ -1648,6 +1897,7 @@ try {
   const grnGap = doGrnGap ? await planGrnGap() : { plan: [] };
   const dedupe = doDedupe ? await planDedupe(codeById) : { plan: [], ids: { plan: [] } };
   const fifoAttr = doFifoAttribute ? await planFifoAttribute() : { plans: [] };
+  const fifoRepair = doFifoAttrRepair ? await planFifoAttrRepair() : { plans: [] };
   const soWh = doSoWarehouse ? await planSoWarehouse(codeById) : { plan: [], reported: [] };
   const doLink = doDoLineLink ? await planDoLineLinkPart() : { plan: [], report: [] };
 
@@ -1660,6 +1910,7 @@ try {
   if (doGrnGap) log(`A5 grn-gap      : ${grnGap.plan.length} missing IN movement(s) would be inserted (FIFO trigger opens the lot)`);
   if (doDedupe) log(`A6 dedupe       : ${dedupe.plan.length} duplicate movement(s) (+ their consumptions) would be DELETED, lots restored`);
   if (doFifoAttribute) log(`A7 fifo-attr    : ${fifoAttr.plans.reduce((a, x) => a + x.res.plans.length, 0)} PO line(s) would receive FIFO allocations (as purchase_order_item_allocations rows)`);
+  if (doFifoAttrRepair) log(`A10 fifo-repair : ${fifoRepair.plans.reduce((a, x) => a + x.res.removals.length, 0)} allocation removal(s) + ${fifoRepair.plans.reduce((a, x) => a + x.res.flips.length, 0)} flip(s) to STOCK (delivered-precedence corrective)`);
   if (doSoWarehouse) log(`A8 so-warehouse : ${soWh.plan.length} SO line(s) would have warehouse_id stamped; ${soWh.reported.length} reported (mirror-source / needs-owner)`);
   if (doDoLineLink) log(`A9 do-line-link : ${doLink.plan.length} DO line(s) would have so_item_id stamped (the delivered trace completes); ${doLink.report.length} refused/reported`);
 
@@ -1693,6 +1944,10 @@ try {
     if (doFifoAttribute) {
       const r = await applyFifoAttribute(fifoAttr.plans);
       log(`A7 APPLIED: ${r.rows} allocation row(s) across ${r.lines} PO line(s), one transaction per PO.`);
+    }
+    if (doFifoAttrRepair) {
+      const r = await applyFifoAttrRepair(fifoRepair.plans);
+      log(`A10 APPLIED: ${r.removed} allocation row(s) removed + ${r.flipped} flipped to STOCK, one transaction per PO.`);
     }
     if (doSoWarehouse) {
       const n = await applySoWarehouse(soWh.plan);

@@ -42,6 +42,14 @@ import { isDirectorUser, isSalesUser } from "../services/pmsAccess";
  * hits we DO have rather than 500-ing the whole search. Existing search
  * behaviour is therefore never broken by the SCM additions.
  *
+ * That degradation is REPORTED, never silent. Every source that fails is named
+ * in `degraded`, and both palettes say so instead of rendering "No matches" —
+ * a search that could not read a table must never look like a table with
+ * nothing in it. (Hookka hit the same class from the other direction: a
+ * timed-out global search rendered "No results" and an existing order looked
+ * deleted. Their fix was the same principle — an honest error state distinct
+ * from an empty one.)
+ *
  * Auth: gated by the global /api/* auth middleware (mounted in
  * src/index.ts). COMPANY scoping IS enforced per source (see the scoping block
  * in the handler) — that is the multi-company isolation boundary. ROW-LEVEL
@@ -54,18 +62,30 @@ const app = new Hono<{ Bindings: Env }>();
 
 const PER_SOURCE_LIMIT = 6;
 
+type HitType =
+  | "project"
+  | "assr_case"
+  | "user"
+  | "sales_order"
+  | "product"
+  | "purchase_order"
+  | "grn"
+  | "delivery_order"
+  | "sales_invoice"
+  | "purchase_invoice";
+
+/**
+ * What the search could not read. Empty on a healthy search; a source lands
+ * here when PostgREST rejected or the promise rejected outright. The client
+ * uses it to distinguish "nothing matched" from "we could not look".
+ */
+export interface GlobalSearchResult {
+  hits: Hit[];
+  degraded: HitType[];
+}
+
 interface Hit {
-  type:
-    | "project"
-    | "assr_case"
-    | "user"
-    | "sales_order"
-    | "product"
-    | "purchase_order"
-    | "grn"
-    | "delivery_order"
-    | "sales_invoice"
-    | "purchase_invoice";
+  type: HitType;
   id: string | number;       // primary key for deep-link
   title: string;             // headline
   subtitle?: string | null;  // contextual line
@@ -106,17 +126,19 @@ function assrCompanySql(c: CompanyScopeCtx): string {
  * an agent) scopes through ONE implementation instead of re-deriving the
  * predicate — the cross-company leak a local copy would invite. Returns match
  * METADATA only (no record contents, no money); every source is company-scoped;
- * never throws on the SCM side.
+ * never throws on the SCM side — a failed SCM source is named in `degraded`
+ * instead, so the caller can tell an empty result from an unread one.
  */
 export async function runGlobalSearch(
   c: CompanyScopeCtx,
   env: Env,
   raw: string,
-): Promise<Hit[]> {
+): Promise<GlobalSearchResult> {
   const pat = searchPattern(raw);
-  if (!pat) return [];
+  if (!pat) return { hits: [], degraded: [] };
 
   const hits: Hit[] = [];
+  const degraded: HitType[] = [];
 
   // Multi-company scoping. Each fragment is "" ONLY when the company context is
   // unresolved (pre-migration / D1 test mirror / cold-start), so legacy
@@ -232,16 +254,17 @@ export async function runGlobalSearch(
   }
 
   // ── SCM sources (Supabase, scm schema) ─────────────────────
-  // Guarded: any failure here degrades gracefully to the public hits above.
-  await appendScmHits(c, env, raw, hits);
+  // Guarded: any failure here degrades to the public hits above, and names the
+  // source it could not read in `degraded`.
+  await appendScmHits(c, env, raw, hits, degraded);
 
-  return hits;
+  return { hits, degraded };
 }
 
 app.get("/", async (c) => {
   const raw = (c.req.query("q") || "").trim();
-  const hits = await runGlobalSearch(c, c.env, raw);
-  return c.json({ q: raw, hits });
+  const { hits, degraded } = await runGlobalSearch(c, c.env, raw);
+  return c.json({ q: raw, hits, degraded });
 });
 
 /**
@@ -250,9 +273,12 @@ app.get("/", async (c) => {
  * Purchase Order, GRN, Delivery Order, Sales Invoice, Purchase Invoice.
  *
  * Never throws — a missing Supabase config or a PostgREST error just yields zero
- * SCM hits so the public-schema search still returns. Each `.or(...)` free-text
- * is passed through escapeForOr() (via searchPattern) so a term with PostgREST
- * grammar chars (`,(){}`) can't corrupt the filter.
+ * SCM hits so the public-schema search still returns. A source that FAILED is
+ * pushed onto `degraded` so the caller can say so; a source that merely matched
+ * nothing is not. An unconfigured Supabase (tests / local) is not degradation —
+ * that deployment has no SCM half to read. Each `.or(...)` free-text is passed
+ * through escapeForOr() (via searchPattern) so a term with PostgREST grammar
+ * chars (`,(){}`) can't corrupt the filter.
  *
  * Every doc source matches ONLY its base-table text columns — supplier name and
  * the PO/GRN source refs are embedded FK resources (not base columns) and so are
@@ -266,6 +292,7 @@ async function appendScmHits(
   env: Env,
   raw: string,
   hits: Hit[],
+  degraded: HitType[],
 ): Promise<void> {
   if (!isSupabaseConfigured(env)) return;
   const wildcard = searchPattern(raw, true);
@@ -274,7 +301,10 @@ async function appendScmHits(
   let sb: ReturnType<typeof getSupabaseService>;
   try {
     sb = getSupabaseService(env);
-  } catch {
+  } catch (e) {
+    // Configured but unbuildable: every SCM source is unreadable, not empty.
+    console.warn("[search] SCM client unavailable:", (e as Error)?.message ?? e);
+    degraded.push(...SCM_SOURCE_TYPES);
     return;
   }
 
@@ -360,136 +390,160 @@ async function appendScmHits(
       .limit(PER_SOURCE_LIMIT),
   ]);
 
-  if (soRes.status === "fulfilled" && !soRes.value.error) {
-    for (const r of (soRes.value.data ?? []) as Array<Record<string, unknown>>) {
-      const docNo = String(r.doc_no ?? "");
-      if (!docNo) continue;
-      hits.push({
-        type: "sales_order",
-        id: docNo,
-        title: docNo,
-        subtitle:
-          [str(r.debtor_name), str(r.branding), str(r.ref)].filter(Boolean).join(" · ") ||
-          str(r.phone),
-        date: str(r.so_date),
-        // Deep-link the SPA straight to the SO detail route
-        // (/scm/sales-orders/:docNo); the mobile palette maps the same doc_no
-        // onto its own so-detail screen.
-        link: `/scm/sales-orders/${encodeURIComponent(docNo)}`,
-      });
-    }
+  for (const r of sourceRows(soRes, "sales_order", degraded)) {
+    const docNo = String(r.doc_no ?? "");
+    if (!docNo) continue;
+    hits.push({
+      type: "sales_order",
+      id: docNo,
+      title: docNo,
+      subtitle:
+        [str(r.debtor_name), str(r.branding), str(r.ref)].filter(Boolean).join(" · ") ||
+        str(r.phone),
+      date: str(r.so_date),
+      // Deep-link the SPA straight to the SO detail route
+      // (/scm/sales-orders/:docNo); the mobile palette maps the same doc_no
+      // onto its own so-detail screen.
+      link: `/scm/sales-orders/${encodeURIComponent(docNo)}`,
+    });
   }
 
-  if (prodRes.status === "fulfilled" && !prodRes.value.error) {
-    for (const r of (prodRes.value.data ?? []) as Array<Record<string, unknown>>) {
-      const code = str(r.code);
-      if (!code) continue;
-      hits.push({
-        type: "product",
-        id: code,
-        title: [code, str(r.name)].filter(Boolean).join(" · ") || code,
-        subtitle: str(r.description),
-        date: null,
-        link: `/scm/products?focus=${encodeURIComponent(code)}`,
-      });
-    }
+  for (const r of sourceRows(prodRes, "product", degraded)) {
+    const code = str(r.code);
+    if (!code) continue;
+    hits.push({
+      type: "product",
+      id: code,
+      title: [code, str(r.name)].filter(Boolean).join(" · ") || code,
+      subtitle: str(r.description),
+      date: null,
+      link: `/scm/products?focus=${encodeURIComponent(code)}`,
+    });
   }
 
   // Purchase Orders — supplier(name) embed drives the subtitle.
-  if (poRes.status === "fulfilled" && !poRes.value.error) {
-    for (const r of (poRes.value.data ?? []) as unknown as Array<Record<string, unknown>>) {
-      const id = str(r.id);
-      const docNo = str(r.po_number);
-      if (!id || !docNo) continue;
-      hits.push({
-        type: "purchase_order",
-        id,
-        title: docNo,
-        subtitle: [embedField(r.supplier, "name"), str(r.notes)].filter(Boolean).join(" · "),
-        date: str(r.po_date),
-        link: `/scm/purchase-orders/${encodeURIComponent(id)}`,
-      });
-    }
+  for (const r of sourceRows(poRes, "purchase_order", degraded)) {
+    const id = str(r.id);
+    const docNo = str(r.po_number);
+    if (!id || !docNo) continue;
+    hits.push({
+      type: "purchase_order",
+      id,
+      title: docNo,
+      subtitle: [embedField(r.supplier, "name"), str(r.notes)].filter(Boolean).join(" · "),
+      date: str(r.po_date),
+      link: `/scm/purchase-orders/${encodeURIComponent(id)}`,
+    });
   }
 
   // GRNs — supplier + source PO number make the subtitle.
-  if (grnRes.status === "fulfilled" && !grnRes.value.error) {
-    for (const r of (grnRes.value.data ?? []) as unknown as Array<Record<string, unknown>>) {
-      const id = str(r.id);
-      const docNo = str(r.grn_number);
-      if (!id || !docNo) continue;
-      const poNo = embedField(r.purchase_order, "po_number");
-      hits.push({
-        type: "grn",
-        id,
-        title: docNo,
-        subtitle:
-          [embedField(r.supplier, "name"), poNo ? `PO ${poNo}` : null, str(r.delivery_note_ref)]
-            .filter(Boolean)
-            .join(" · "),
-        date: str(r.received_at),
-        link: `/scm/grns/${encodeURIComponent(id)}`,
-      });
-    }
+  for (const r of sourceRows(grnRes, "grn", degraded)) {
+    const id = str(r.id);
+    const docNo = str(r.grn_number);
+    if (!id || !docNo) continue;
+    const poNo = embedField(r.purchase_order, "po_number");
+    hits.push({
+      type: "grn",
+      id,
+      title: docNo,
+      subtitle:
+        [embedField(r.supplier, "name"), poNo ? `PO ${poNo}` : null, str(r.delivery_note_ref)]
+          .filter(Boolean)
+          .join(" · "),
+      date: str(r.received_at),
+      link: `/scm/grns/${encodeURIComponent(id)}`,
+    });
   }
 
   // Delivery Orders — customer + source SO ref.
-  if (doRes.status === "fulfilled" && !doRes.value.error) {
-    for (const r of (doRes.value.data ?? []) as Array<Record<string, unknown>>) {
-      const id = str(r.id);
-      const docNo = str(r.do_number);
-      if (!id || !docNo) continue;
-      const soNo = str(r.so_doc_no);
-      hits.push({
-        type: "delivery_order",
-        id,
-        title: docNo,
-        subtitle:
-          [str(r.debtor_name), soNo ? `SO ${soNo}` : null, str(r.ref)].filter(Boolean).join(" · "),
-        date: str(r.do_date),
-        link: `/scm/delivery-orders/${encodeURIComponent(id)}`,
-      });
-    }
+  for (const r of sourceRows(doRes, "delivery_order", degraded)) {
+    const id = str(r.id);
+    const docNo = str(r.do_number);
+    if (!id || !docNo) continue;
+    const soNo = str(r.so_doc_no);
+    hits.push({
+      type: "delivery_order",
+      id,
+      title: docNo,
+      subtitle:
+        [str(r.debtor_name), soNo ? `SO ${soNo}` : null, str(r.ref)].filter(Boolean).join(" · "),
+      date: str(r.do_date),
+      link: `/scm/delivery-orders/${encodeURIComponent(id)}`,
+    });
   }
 
   // Sales Invoices — customer + source SO ref.
-  if (siRes.status === "fulfilled" && !siRes.value.error) {
-    for (const r of (siRes.value.data ?? []) as Array<Record<string, unknown>>) {
-      const id = str(r.id);
-      const docNo = str(r.invoice_number);
-      if (!id || !docNo) continue;
-      const soNo = str(r.so_doc_no);
-      hits.push({
-        type: "sales_invoice",
-        id,
-        title: docNo,
-        subtitle:
-          [str(r.debtor_name), soNo ? `SO ${soNo}` : null, str(r.ref)].filter(Boolean).join(" · "),
-        date: str(r.invoice_date),
-        link: `/scm/sales-invoices/${encodeURIComponent(id)}`,
-      });
-    }
+  for (const r of sourceRows(siRes, "sales_invoice", degraded)) {
+    const id = str(r.id);
+    const docNo = str(r.invoice_number);
+    if (!id || !docNo) continue;
+    const soNo = str(r.so_doc_no);
+    hits.push({
+      type: "sales_invoice",
+      id,
+      title: docNo,
+      subtitle:
+        [str(r.debtor_name), soNo ? `SO ${soNo}` : null, str(r.ref)].filter(Boolean).join(" · "),
+      date: str(r.invoice_date),
+      link: `/scm/sales-invoices/${encodeURIComponent(id)}`,
+    });
   }
 
   // Purchase Invoices — supplier + the supplier's own invoice ref.
-  if (piRes.status === "fulfilled" && !piRes.value.error) {
-    for (const r of (piRes.value.data ?? []) as unknown as Array<Record<string, unknown>>) {
-      const id = str(r.id);
-      const docNo = str(r.invoice_number);
-      if (!id || !docNo) continue;
-      hits.push({
-        type: "purchase_invoice",
-        id,
-        title: docNo,
-        subtitle:
-          [embedField(r.supplier, "name"), str(r.supplier_invoice_ref)]
-            .filter(Boolean)
-            .join(" · "),
-        date: str(r.invoice_date),
-        link: `/scm/purchase-invoices/${encodeURIComponent(id)}`,
-      });
-    }
+  for (const r of sourceRows(piRes, "purchase_invoice", degraded)) {
+    const id = str(r.id);
+    const docNo = str(r.invoice_number);
+    if (!id || !docNo) continue;
+    hits.push({
+      type: "purchase_invoice",
+      id,
+      title: docNo,
+      subtitle:
+        [embedField(r.supplier, "name"), str(r.supplier_invoice_ref)]
+          .filter(Boolean)
+          .join(" · "),
+      date: str(r.invoice_date),
+      link: `/scm/purchase-invoices/${encodeURIComponent(id)}`,
+    });
   }
+}
+
+// Every SCM source, in the order appendScmHits queries them. Used to mark the
+// whole SCM half degraded when the client itself cannot be built.
+const SCM_SOURCE_TYPES = [
+  "sales_order",
+  "product",
+  "purchase_order",
+  "grn",
+  "delivery_order",
+  "sales_invoice",
+  "purchase_invoice",
+] as const satisfies readonly HitType[];
+
+/**
+ * Rows from one settled source, or [] with the source recorded as degraded.
+ *
+ * This exists because the previous shape — `if (res.status === "fulfilled" &&
+ * !res.value.error)` repeated per source — made "this source errored" and "this
+ * source matched nothing" the same observable outcome. Routing both through one
+ * function makes the failure branch impossible to forget when a source is added.
+ */
+function sourceRows(
+  res: PromiseSettledResult<{ data: unknown; error: unknown }>,
+  type: HitType,
+  degraded: HitType[],
+): Array<Record<string, unknown>> {
+  if (res.status === "rejected") {
+    console.warn(`[search] source ${type} rejected:`, res.reason);
+    degraded.push(type);
+    return [];
+  }
+  if (res.value.error) {
+    console.warn(`[search] source ${type} errored:`, res.value.error);
+    degraded.push(type);
+    return [];
+  }
+  return (res.value.data ?? []) as Array<Record<string, unknown>>;
 }
 
 // A to-one FK embed arrives as an object OR (Supabase typegen) a single-element
