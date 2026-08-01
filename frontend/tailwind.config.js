@@ -81,7 +81,18 @@ export default {
         // stack, matching the digits change and 2990's long-standing call.
         // Plex Sans / Noto Sans SC dropped from the lead; CJK falls through
         // to the OS face (YaHei / PingFang).
-        body: ["system-ui", "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "Roboto", '"Helvetica Neue"', "Arial", "sans-serif"],
+        // Owner 2026-08-01, superseding the 2026-07-24 "统一掉 → system stack"
+        // ruling recorded above: "系统里的所有列表字体都同意换成 IBM Plex Sans",
+        // then again after I scoped it to doc numbers only — "需要换成全站列表统
+        // 一字体". So the whole surface is one face again, and the 7-24 note is
+        // kept rather than deleted because it explains what this replaced.
+        //
+        // font-extrabold (800) is covered: public/fonts/fonts-v2.css declares
+        // an 800 face over the same 400-700 variable file, so 88 heading sites
+        // clamp to real 700 outlines instead of synthesising. The -v2 name is
+        // load-bearing — /fonts/* is immutable-cached for a year, so the sheet
+        // had to be renamed for the fix to reach existing users at all.
+        body: ['"IBM Plex Sans"', '"Noto Sans SC"', "system-ui", "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "Roboto", '"Helvetica Neue"', "Arial", "sans-serif"],
         // Nick 2026-07-09 "整个系统页面都要 C 字体": Ink & Petrol admin
         // rhythm wants sans titles, not display serif. Point `font-display`
         // at the same IBM Plex Sans stack as body so every V2 list / detail
@@ -90,7 +101,7 @@ export default {
         // the CSS-module page rhythm we just switched via --font-title.
         // `font-serif` stays on IBM Plex Serif for the rare place that
         // deliberately opts into serif (`className="font-serif"`).
-        display: ["system-ui", "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "Roboto", '"Helvetica Neue"', "Arial", "sans-serif"],
+        display: ['"IBM Plex Sans"', '"Noto Sans SC"', "system-ui", "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "Roboto", '"Helvetica Neue"', "Arial", "sans-serif"],
         // Codes / IDs / eyebrow labels (金额/编号 role) — SYSTEM stack, owner
         // override 2026-07-24: Plex Mono's dotted zero read wrong ("系统的0可以
         // 用第二张照片的0吗"), and our self-hosted Plex subsets carry no plain-
@@ -99,10 +110,16 @@ export default {
         // zero, tnum supported), alignment via font-variant-numeric in
         // index.css. Deliberately SKIPS IBM Plex Sans: it would win the stack
         // but its subset lacks tnum, breaking column alignment.
-        mono: ["system-ui", "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "Roboto", '"Helvetica Neue"', "Arial", "sans-serif"],
+        // Codes / eyebrow labels. Follows `body` so a list is ONE face; the
+        // 7-24 objection that sent this to the system stack was Plex Sans's
+        // missing tnum breaking column alignment, and the self-hosted subset
+        // resolved that (its digits are tabular by construction). Doc numbers
+        // do NOT live here — they are `docno`, and the owner put those on Plex
+        // Mono the same day. See that alias.
+        mono: ['"IBM Plex Sans"', '"Noto Sans SC"', "system-ui", "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "Roboto", '"Helvetica Neue"', "Arial", "sans-serif"],
         // Money / financial figures — same stack, kept as its own alias so
         // amount cells can diverge from codes again if needed.
-        money: ["system-ui", "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "Roboto", '"Helvetica Neue"', "Arial", "sans-serif"],
+        money: ['"IBM Plex Sans"', '"Noto Sans SC"', "system-ui", "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "Roboto", '"Helvetica Neue"', "Arial", "sans-serif"],
         // Doc numbers on the SCM list columns (SO / DO / SI / PO / GRN / DR /
         // PR) and the doc-number chips beside them. Its own alias rather than
         // reusing `mono`, which also dresses eyebrow labels and stays on the
