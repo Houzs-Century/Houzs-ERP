@@ -139,10 +139,22 @@
 //       database needs, never written here. classifySoLineWarehouse in
 //       lib/doc-evidence-core.mjs holds the rule.
 //
+//   A9  PART=do-line-link (2026-08-01, trace-check class `no-do-line-link`:
+//       10 DELIVERED lines whose SO has DOs but no DO line carries their
+//       so_item_id — the old convert path / import never stamped the link, so
+//       the delivered trace dead-ends). Within one (SO, its non-cancelled
+//       DOs): an unlinked DO line whose item code names EXACTLY ONE
+//       still-unlinked SO line is DETERMINED — no other line of that order
+//       could have been the one delivered — and every unlinked DO line of
+//       that code stamps it (split deliveries), provided their total fits the
+//       SO line's qty. Two candidate SO lines refuse (which-served-which is
+//       recorded nowhere); quantity guards, never discriminates.
+//       planDoLineLink in lib/doc-evidence-core.mjs holds the rule.
+//
 //   DATABASE_URL   required (env, or .dev.vars for local use)
 //   APPLY=1        write. Anything else is a dry run.
 //   PART           all (default) | notes | batches | consumptions | ids | grn-gap | dedupe
-//                  | fifo-attribute | so-warehouse
+//                  | fifo-attribute | so-warehouse | do-line-link
 //                  (`all` = the three original parts; everything later is
 //                  deliberately DISPATCH-ONLY so the widest-reaching writes
 //                  are each an explicit, single-purpose run)
@@ -171,6 +183,7 @@ import {
 import {
   planFifoAttribution,
   classifySoLineWarehouse,
+  planDoLineLink,
 } from "./lib/doc-evidence-core.mjs";
 import { execIdRestamp, printIdRestampExec, execDedupe } from "./lib/id-restamp-exec.mjs";
 
@@ -181,8 +194,8 @@ const GRNS = (process.env.GRNS || "2990-GRN-2606-001")
   .split(",").map((s) => s.trim()).filter(Boolean);
 const POS = (process.env.POS || "2990-PO-2606-019,2990-PO-2606-023")
   .split(",").map((s) => s.trim()).filter(Boolean);
-if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap", "dedupe", "fifo-attribute", "so-warehouse"].includes(PART)) {
-  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap | dedupe | fifo-attribute | so-warehouse (got "${PART}")`);
+if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap", "dedupe", "fifo-attribute", "so-warehouse", "do-line-link"].includes(PART)) {
+  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap | dedupe | fifo-attribute | so-warehouse | do-line-link (got "${PART}")`);
   process.exit(2);
 }
 const doNotes = PART === "all" || PART === "notes";
@@ -193,6 +206,7 @@ const doGrnGap = PART === "grn-gap";
 const doDedupe = PART === "dedupe";
 const doFifoAttribute = PART === "fifo-attribute";
 const doSoWarehouse = PART === "so-warehouse";
+const doDoLineLink = PART === "do-line-link";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -1071,6 +1085,12 @@ async function applyDedupe(idsPlan) {
   return res;
 }
 
+// ── A5 — PART=grn-gap: insert the missing IN movement a posted GRN is short ──
+// (Constant restored 2026-08-01: PR #1490's refactor dropped this definition
+// while three usages below survived, so part=grn-gap would die with a
+// ReferenceError on its first movement-carrying GRN. The doc-relabel
+// repair-seeded classification reads the same marker string.)
+const GRN_GAP_MARKER = "repair:grn-inbound-gap";
 
 async function planGrnGap() {
   log("");
@@ -1514,6 +1534,109 @@ async function applySoWarehouse(plan) {
   return done;
 }
 
+// ── A9 — PART=do-line-link: stamp delivery_order_items.so_item_id where the
+// SO's own documents determine it (trace check class `no-do-line-link`,
+// 2026-08-01: 10 DELIVERED lines whose SO has DOs but no DO line points back
+// at them — the old convert path / the import never stamped the link, so the
+// delivered trace dead-ends). Within one (SO, its non-cancelled DOs): an
+// unlinked DO line whose code names EXACTLY ONE still-unlinked SO line is
+// determined, not guessed; ambiguity refuses (planDoLineLink,
+// lib/doc-evidence-core.mjs).
+async function planDoLineLinkPart() {
+  log("");
+  log("=== A9  do-line-link — SO lines no DO line points back at, within their own SO's DOs ===");
+  // The trace check's lens: live delivered/shipped SOs that HAVE DOs, with SO
+  // lines carrying no inbound so_item_id from any of those DOs' lines.
+  const soRows = await pg`
+    SELECT DISTINCT so.doc_no, so.company_id
+      FROM scm.mfg_sales_orders so
+      JOIN scm.delivery_orders d
+        ON d.so_doc_no = so.doc_no AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'
+      JOIN scm.mfg_sales_order_items i
+        ON i.doc_no = so.doc_no AND COALESCE(i.cancelled, FALSE) = FALSE
+     WHERE UPPER(so.status::text) IN ('SHIPPED','DELIVERED')
+       AND NOT EXISTS (
+         SELECT 1 FROM scm.delivery_order_items di
+           JOIN scm.delivery_orders d2 ON d2.id = di.delivery_order_id
+          WHERE di.so_item_id = i.id
+            AND UPPER(COALESCE(d2.status::text,'')) <> 'CANCELLED')
+     ORDER BY so.doc_no`;
+  log(`  SOs with at least one unlinked line and at least one DO: ${soRows.length}`);
+  if (soRows.length === 0) return { plan: [], report: [] };
+
+  const plan = [];
+  const report = [];
+  for (const so of soRows) {
+    // The SO's still-unlinked active lines...
+    const soLines = await pg`
+      SELECT i.id::text AS id, i.item_code, i.qty
+        FROM scm.mfg_sales_order_items i
+       WHERE i.doc_no = ${so.doc_no} AND COALESCE(i.cancelled, FALSE) = FALSE
+         AND NOT EXISTS (
+           SELECT 1 FROM scm.delivery_order_items di
+             JOIN scm.delivery_orders d2 ON d2.id = di.delivery_order_id
+            WHERE di.so_item_id = i.id
+              AND UPPER(COALESCE(d2.status::text,'')) <> 'CANCELLED')
+       ORDER BY i.line_no NULLS LAST, i.id`;
+    // ... vs the SO's DOs' unlinked lines.
+    const doLines = await pg`
+      SELECT di.id::text AS id, d.do_number, di.item_code, di.qty
+        FROM scm.delivery_order_items di
+        JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+       WHERE d.so_doc_no = ${so.doc_no}
+         AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'
+         AND di.so_item_id IS NULL
+       ORDER BY d.do_number, di.line_no NULLS LAST, di.id`;
+    if (soLines.length === 0 || doLines.length === 0) continue;
+    const res = planDoLineLink({
+      soLines: soLines.map((l) => ({ id: l.id, itemCode: l.item_code, qty: Number(l.qty) })),
+      doLines: doLines.map((l) => ({ id: l.id, doNumber: l.do_number, itemCode: l.item_code, qty: Number(l.qty) })),
+    });
+    if (res.pairs.length || res.ambiguous.length || res.qtyIncompatible.length || res.unmatchedDoLines.length) {
+      log(`  ${so.doc_no} (co=${so.company_id}): unlinked SO lines=${soLines.length}, unlinked DO lines=${doLines.length}`);
+    }
+    for (const p of res.pairs) {
+      log(`    STAMP DO line ${p.doLineId} (${p.doNumber}, ${p.code}, qty ${p.doQty}) -> so_item_id ${p.soLineId} — the only unlinked ${p.code} line on ${so.doc_no}`);
+      plan.push({ ...p, docNo: so.doc_no, companyId: Number(so.company_id) });
+    }
+    for (const a of res.ambiguous) {
+      log(`    REFUSED "${a.code}": ${a.freeSoLines} unlinked SO lines vs ${a.unlinkedDoLines} DO line(s) — which was delivered is not recorded; owner review`);
+      report.push({ docNo: so.doc_no, kind: "ambiguous", ...a });
+    }
+    for (const qi of res.qtyIncompatible) {
+      log(`    REFUSED "${qi.code}": DO lines total ${qi.doQtySum} > SO line qty ${qi.soQty} — the documents disagree on quantity; owner review`);
+      report.push({ docNo: so.doc_no, kind: "qty-incompatible", ...qi });
+    }
+    for (const u of res.unmatchedDoLines) {
+      log(`    (no free SO line for "${u.code}" — ${u.unlinkedDoLines} DO line(s) left alone; nothing to pair)`);
+      report.push({ docNo: so.doc_no, kind: "unmatched", ...u });
+    }
+  }
+  log(`  A9 total: ${plan.length} DO line(s) would be stamped; refused/reported: ${report.length}.`);
+  return { plan, report };
+}
+
+async function applyDoLineLink(plan) {
+  // Per-row standalone CAS (the applyNotes discipline): a concurrently linked
+  // DO line is skipped, never clobbered. Stamping so_item_id makes the
+  // delivered-qty engines (soDeliverableRemaining, the allocator, coverage
+  // layer (a)) finally see what physically shipped — which is the point.
+  let done = 0;
+  for (const p of plan) {
+    const res = await pg`
+      UPDATE scm.delivery_order_items
+         SET so_item_id = ${p.soLineId}::uuid
+       WHERE id = ${p.doLineId}::uuid AND so_item_id IS NULL`;
+    if (res.count === 1) {
+      done += 1;
+      log(`  APPLIED ${p.doNumber} line ${p.doLineId} -> so_item_id ${p.soLineId} (${p.code})`);
+    } else {
+      log(`  SKIPPED ${p.doNumber} line ${p.doLineId}: so_item_id was set since the plan — re-run the dry run.`);
+    }
+  }
+  return done;
+}
+
 try {
   log(`=== repair-2990-doc-refs  mode=${APPLY ? "APPLY" : "DRY-RUN"}  part=${PART} ===`);
   const codeById = await loadCompanies();
@@ -1526,6 +1649,7 @@ try {
   const dedupe = doDedupe ? await planDedupe(codeById) : { plan: [], ids: { plan: [] } };
   const fifoAttr = doFifoAttribute ? await planFifoAttribute() : { plans: [] };
   const soWh = doSoWarehouse ? await planSoWarehouse(codeById) : { plan: [], reported: [] };
+  const doLink = doDoLineLink ? await planDoLineLinkPart() : { plan: [], report: [] };
 
   log("");
   log("================ summary ================");
@@ -1537,6 +1661,7 @@ try {
   if (doDedupe) log(`A6 dedupe       : ${dedupe.plan.length} duplicate movement(s) (+ their consumptions) would be DELETED, lots restored`);
   if (doFifoAttribute) log(`A7 fifo-attr    : ${fifoAttr.plans.reduce((a, x) => a + x.res.plans.length, 0)} PO line(s) would receive FIFO allocations (as purchase_order_item_allocations rows)`);
   if (doSoWarehouse) log(`A8 so-warehouse : ${soWh.plan.length} SO line(s) would have warehouse_id stamped; ${soWh.reported.length} reported (mirror-source / needs-owner)`);
+  if (doDoLineLink) log(`A9 do-line-link : ${doLink.plan.length} DO line(s) would have so_item_id stamped (the delivered trace completes); ${doLink.report.length} refused/reported`);
 
   if (!APPLY) {
     log("");
@@ -1572,6 +1697,10 @@ try {
     if (doSoWarehouse) {
       const n = await applySoWarehouse(soWh.plan);
       log(`A8 APPLIED: ${n} SO line(s) stamped (mirror-source rows deliberately untouched — see the plan).`);
+    }
+    if (doDoLineLink) {
+      const n = await applyDoLineLink(doLink.plan);
+      log(`A9 APPLIED: ${n} DO line(s) stamped with their determined so_item_id.`);
     }
     log("Done. Re-run in DRY-RUN to confirm the plan is now empty (the idempotence check).");
   }

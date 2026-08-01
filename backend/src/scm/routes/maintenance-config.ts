@@ -24,6 +24,7 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { canWriteScmConfig } from '../lib/houzs-perms';
 import { todayMyt } from '../lib/my-time';
+import { normalizeConfigInchPools } from '../shared/maintenance-pools';
 import { activeCompanyId, scopeToCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import {
@@ -264,7 +265,10 @@ export const createChangeHandler = async (c: McCtx) => {
       company_id: activeCompanyId(c),
       id,
       scope,
-      config: body.config,
+      // Inch-mark hygiene on save (quote-doubling mint, 2026-08-01): a
+      // hand-keyed `1""` in a height pool would flow verbatim into every
+      // document line and ledger key. Write-side only; history untouched.
+      config: normalizeConfigInchPools(body.config),
       effective_from: effectiveFrom,
       notes: body.notes ?? null,
       created_by: user.id,

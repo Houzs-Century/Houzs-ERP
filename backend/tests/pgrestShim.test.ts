@@ -122,3 +122,75 @@ describe("pgrest-shim — the loud-failure contract", () => {
     expect(() => sb.from('delivery_orders"; DROP TABLE x; --')).toThrow(/unsafe identifier/);
   });
 });
+
+describe("pgrest-shim — 2026-08-01 growth: the recomputeSoStockAllocation surface", () => {
+  test(".not(col,'in','(A,B,C)') — the allocator's status exclusion, one placeholder per value", async () => {
+    const { sql, calls } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    await sb.from("mfg_sales_orders")
+      .select("doc_no, status")
+      .not("status", "in", "(CANCELLED,CLOSED,SHIPPED,DELIVERED,INVOICED,DRAFT)");
+    expect(calls[0].text).toContain('"status" NOT IN ($1, $2, $3, $4, $5, $6)');
+    expect(calls[0].params).toEqual(["CANCELLED", "CLOSED", "SHIPPED", "DELIVERED", "INVOICED", "DRAFT"]);
+  });
+
+  test(".or('a.is.null,b.lt.<ISO>') — the lock-claim disjunction; the ISO value keeps its dots", async () => {
+    const { sql, calls } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    const now = "2026-08-01T12:00:00.000Z";
+    await sb.from("stock_allocation_recompute_lock")
+      .select("lock_key").eq("lock_key", "global").or(`locked_by.is.null,locked_until.lt.${now}`);
+    expect(calls[0].text).toContain('WHERE "lock_key" = $1 AND ("locked_by" IS NULL OR "locked_until" < $2)');
+    expect(calls[0].params).toEqual(["global", now]);
+  });
+
+  test("update().or().select().maybeSingle() — the lock claim RETURNS the row it claimed (or null when it lost)", async () => {
+    const { sql, calls } = fakeSql([{ lock_key: "global" }]);
+    const sb = pgrestShim(sql as never);
+    const res = await sb.from("stock_allocation_recompute_lock")
+      .update({ locked_by: "tok", locked_until: "2026-08-01T12:05:00.000Z" })
+      .eq("lock_key", "global")
+      .or("locked_by.is.null,locked_until.lt.2026-08-01T12:00:00.000Z")
+      .select("lock_key")
+      .maybeSingle();
+    expect(calls[0].text).toBe('UPDATE "scm"."stock_allocation_recompute_lock" SET "locked_by" = $1, "locked_until" = $2 WHERE "lock_key" = $3 AND ("locked_by" IS NULL OR "locked_until" < $4) RETURNING "lock_key"');
+    expect(res).toEqual({ data: { lock_key: "global" }, error: null });
+    // The losing claimant sees data:null, not an error — the allocator's
+    // "another_recompute_in_progress" branch depends on exactly this.
+    const { sql: sql2 } = fakeSql([]);
+    const sb2 = pgrestShim(sql2 as never);
+    const lost = await sb2.from("stock_allocation_recompute_lock")
+      .update({ locked_by: "tok" }).eq("lock_key", "global").select("lock_key").maybeSingle();
+    expect(lost).toEqual({ data: null, error: null });
+  });
+
+  test("a plain update (no .select()) keeps data:null — the flip writes are unchanged", async () => {
+    const { sql, calls } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    const res = await sb.from("mfg_sales_order_items")
+      .update({ stock_status: "PENDING", stock_qty_ready: 0 }).in("id", ["a", "b"]);
+    expect(calls[0].text).toBe('UPDATE "scm"."mfg_sales_order_items" SET "stock_status" = $1, "stock_qty_ready" = $2 WHERE "id" IN ($3, $4)');
+    expect(res).toEqual({ data: null, error: null });
+  });
+
+  test(".insert() — audit rows batch with a UNION column set; a row missing a key inserts NULL", async () => {
+    const { sql, calls } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    await sb.from("mfg_so_audit_log").insert([
+      { so_doc_no: "SO-1", action: "AUTO", company_id: 1 },
+      { so_doc_no: "SO-2", action: "AUTO" },
+    ]);
+    expect(calls[0].text).toBe('INSERT INTO "scm"."mfg_so_audit_log" ("so_doc_no", "action", "company_id") VALUES ($1, $2, $3), ($4, $5, $6)');
+    expect(calls[0].params).toEqual(["SO-1", "AUTO", 1, "SO-2", "AUTO", null]);
+    // Single-object insert works too (mfg_so_status_changes).
+    await sb.from("mfg_so_status_changes").insert({ doc_no: "SO-1", from_status: "CONFIRMED", to_status: "READY_TO_SHIP" });
+    expect(calls[1].text).toContain('INSERT INTO "scm"."mfg_so_status_changes"');
+  });
+
+  test("the .or grammar stays narrow: any op outside is.null / lt is a loud gap", () => {
+    const { sql } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    expect(() => (sb.from("mfg_sales_orders") as never as { or: (s: string) => void }).or("status.eq.READY")).toThrow(/GAP/);
+    expect(sb.__gaps.length).toBe(1);
+  });
+});

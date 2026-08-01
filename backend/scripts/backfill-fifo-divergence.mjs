@@ -123,7 +123,10 @@ import {
   resolveDocLineKey,
   planDocKeyAlignment,
   planOverConsumedCorrection,
+  normalizeVariantKeyQuotes,
+  isRepairSeeded,
 } from "./lib/doc-evidence-core.mjs";
+import { companyPrefix } from "./lib/doc-ref-repair-core.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -1220,6 +1223,12 @@ async function runDocRelabel() {
   const coSel = byCompany ? "company_id" : "NULL::int AS company_id";
   const coGrp = byCompany ? ", company_id" : "";
 
+  // Company codes, for the prefixed-number document resolution fallback (the
+  // doc-ref-repair rule: a bare pre-import number resolves only when prefixed
+  // with the owning company's own code).
+  const companyRows = await pg`SELECT id, code FROM public.companies ORDER BY id`;
+  const codeById = new Map(companyRows.map((r) => [Number(r.id), String(r.code ?? "")]));
+
   // ── The residual lenses, verbatim (round-2 lesson: this tool and the audit
   //    must not be able to disagree on the candidate set).
   const drift = await pg.unsafe(`
@@ -1279,6 +1288,7 @@ async function runDocRelabel() {
   notice(`families (company, warehouse, product): ${families.size}`);
 
   const stocktake = []; // { family, kind, detail } — the honest residue, printed at the end
+  const repairSeeded = []; // repair-seeded rows — expected by design, printed apart from the stocktake list
   let famPlanned = 0, famRefused = 0;
   let movRelabels = 0, lotRelabels = 0, consFollow = 0, repointMoves = 0, repointUnits = 0, rmDeltaTotal = 0;
 
@@ -1295,7 +1305,7 @@ async function runDocRelabel() {
     // ── Family ledger rows.
     const movs = await pg.unsafe(`
       SELECT m.id::text AS id, m.movement_type, m.qty, COALESCE(m.variant_key,'') AS variant_key,
-             m.batch_no, m.total_cost_sen, m.unit_cost_sen, m.created_at,
+             m.batch_no, m.total_cost_sen, m.unit_cost_sen, m.created_at, m.notes,
              m.source_doc_type, m.source_doc_id::text AS source_doc_id, m.source_doc_no,
              COALESCE(c.cons,0)::int AS consumed, COALESCE(c.cons_cost,0)::bigint AS consumed_cost
         FROM ${M} m
@@ -1308,7 +1318,7 @@ async function runDocRelabel() {
       WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
       SELECT l.id::text AS id, COALESCE(l.variant_key,'') AS variant_key, l.batch_no,
              l.qty_received, l.qty_remaining, COALESCE(c.consumed,0)::int AS consumed,
-             l.unit_cost_sen, l.received_at, l.movement_id::text AS movement_id,
+             l.unit_cost_sen, l.received_at, l.movement_id::text AS movement_id, l.notes,
              l.source_doc_type, l.source_doc_id::text AS source_doc_id, l.source_doc_no
         FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
        WHERE l.warehouse_id::text = $1 AND l.product_code = $2${byCompany ? " AND l.company_id = $3" : ""}
@@ -1325,17 +1335,35 @@ async function runDocRelabel() {
       return null;
     };
 
-    // ── Documents named by the family, resolved id-first then number.
+    // ── Documents named by the family, resolved id-first then number, then the
+    //    number PREFIXED with the owning company's code (the doc-ref-repair
+    //    rule: 2990-import ledger rows can still carry a dangling id AND a
+    //    bare pre-import number — the live 2026-08-01 run refused those
+    //    `no-document` because this exact-string lookup missed them). The
+    //    prefixed resolution is READ-ONLY evidence for this mode; the stored
+    //    refs themselves stay for part=consumptions / part=ids to repair.
+    const famPrefix = companyPrefix(codeById.get(Number(f.companyId)));
+    const withPrefix = (no) => (famPrefix && no && !String(no).startsWith(famPrefix) ? `${famPrefix}${no}` : null);
     const doIds = new Set(), doNos = new Set(), grnIds = new Set(), grnNos = new Set();
     for (const m of movs) {
       const t = String(m.source_doc_type ?? "").toUpperCase();
-      if (t === "DO") { if (m.source_doc_id) doIds.add(m.source_doc_id); if (m.source_doc_no) doNos.add(m.source_doc_no); }
-      if (t === "GRN") { if (m.source_doc_id) grnIds.add(m.source_doc_id); if (m.source_doc_no) grnNos.add(m.source_doc_no); }
+      if (t === "DO") {
+        if (m.source_doc_id) doIds.add(m.source_doc_id);
+        if (m.source_doc_no) { doNos.add(m.source_doc_no); const p = withPrefix(m.source_doc_no); if (p) doNos.add(p); }
+      }
+      if (t === "GRN") {
+        if (m.source_doc_id) grnIds.add(m.source_doc_id);
+        if (m.source_doc_no) { grnNos.add(m.source_doc_no); const p = withPrefix(m.source_doc_no); if (p) grnNos.add(p); }
+      }
     }
     for (const l of lots) {
       const gid = lotGrnId(l);
       if (gid) grnIds.add(gid);
-      if (String(l.source_doc_type ?? "").toUpperCase() === "GRN" && l.source_doc_no) grnNos.add(l.source_doc_no);
+      if (String(l.source_doc_type ?? "").toUpperCase() === "GRN" && l.source_doc_no) {
+        grnNos.add(l.source_doc_no);
+        const p = withPrefix(l.source_doc_no);
+        if (p) grnNos.add(p);
+      }
     }
     const dosById = new Map(), dosByNo = new Map();
     if (doIds.size || doNos.size) {
@@ -1357,8 +1385,14 @@ async function runDocRelabel() {
     }
     const resolveDoc = (m) => {
       const t = String(m.source_doc_type ?? "").toUpperCase();
-      if (t === "DO") return dosById.get(m.source_doc_id) ?? dosByNo.get(m.source_doc_no) ?? null;
-      if (t === "GRN") return grnsById.get(m.source_doc_id) ?? grnsByNo.get(m.source_doc_no) ?? null;
+      if (t === "DO") {
+        return dosById.get(m.source_doc_id) ?? dosByNo.get(m.source_doc_no)
+          ?? (withPrefix(m.source_doc_no) ? dosByNo.get(withPrefix(m.source_doc_no)) : null) ?? null;
+      }
+      if (t === "GRN") {
+        return grnsById.get(m.source_doc_id) ?? grnsByNo.get(m.source_doc_no)
+          ?? (withPrefix(m.source_doc_no) ? grnsByNo.get(withPrefix(m.source_doc_no)) : null) ?? null;
+      }
       return null;
     };
 
@@ -1373,7 +1407,8 @@ async function runDocRelabel() {
                si.warehouse_id::text AS so_warehouse_id, si.doc_no AS so_doc_no, si.line_no AS so_line_no
           FROM scm.delivery_order_items di
           LEFT JOIN scm.mfg_sales_order_items si ON si.id = di.so_item_id
-         WHERE di.delivery_order_id::text = ANY($1) AND di.item_code = $2
+         WHERE di.delivery_order_id::text = ANY($1)
+           AND UPPER(TRIM(di.item_code)) = UPPER(TRIM($2))
          ORDER BY di.line_no NULLS LAST, di.created_at, di.id`, [ids, f.productCode]);
       for (const r of rows) {
         const arr = doLinesByDoc.get(r.doc_id) ?? [];
@@ -1392,7 +1427,8 @@ async function runDocRelabel() {
           FROM scm.grn_items gi
           LEFT JOIN scm.purchase_order_items poi ON poi.id = gi.purchase_order_item_id
           LEFT JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
-         WHERE gi.grn_id::text = ANY($1) AND gi.material_code = $2
+         WHERE gi.grn_id::text = ANY($1)
+           AND UPPER(TRIM(gi.material_code)) = UPPER(TRIM($2))
          ORDER BY gi.created_at, gi.id`, [ids, f.productCode]);
       for (const r of rows) {
         const arr = grnLinesByDoc.get(r.doc_id) ?? [];
@@ -1439,16 +1475,21 @@ async function runDocRelabel() {
     const lensKeys = new Set(f.driftBuckets.map((b) => String(b.variant_key)));
     const plannedMovKey = new Map(); // movement id -> final key (relabels only)
     const plannedLotKey = new Map(); // lot id -> final key
-    const movPlans = []; // { m, newKey, cite }
-    const lotPlans = []; // { l, newKey, cite }
-    const refusals = []; // { kind, id, verdict, detail }
+    const movPlans = []; // { m, newKey, cite, normalized }
+    const lotPlans = []; // { l, newKey, cite, normalized }
+    const refusals = []; // { kind, id, verdict, detail } — candidates for the stocktake list
+    const expected = []; // repair-seeded rows: correct by design, reported, NEVER stocktake
     const consistentLensOuts = []; // doc-CONFIRMED OUTs in lens buckets — stocktake if their key has no receipt
 
     const movsByDoc = new Map();
     for (const m of movs) {
       const doc = resolveDoc(m);
       if (!doc) {
-        if (lensKeys.has(m.variant_key)) refusals.push({ kind: "movement", id: m.id, verdict: "no-document", detail: `${m.movement_type} qty=${m.qty} key="${m.variant_key}" ${m.source_doc_type ?? "-"} ${m.source_doc_no ?? "-"} — source document resolves nothing` });
+        if (isRepairSeeded({ movementNotes: m.notes })) {
+          expected.push({ kind: "movement", id: m.id, verdict: "repair-seeded", detail: `${m.movement_type} qty=${m.qty} key="${m.variant_key}" — created by ${String(m.notes ?? "").match(/repair:[a-z-]+/)?.[0] ?? "a repair run"}` });
+        } else if (lensKeys.has(m.variant_key)) {
+          refusals.push({ kind: "movement", id: m.id, verdict: "no-document", detail: `${m.movement_type} qty=${m.qty} key="${m.variant_key}" ${m.source_doc_type ?? "-"} ${m.source_doc_no ?? "-"} — source document resolves nothing (id dangling and number unresolvable even company-prefixed)` });
+        }
         continue;
       }
       const t = String(m.source_doc_type).toUpperCase();
@@ -1477,25 +1518,34 @@ async function runDocRelabel() {
           }
           continue;
         }
-        if (!lensKeys.has(m.variant_key)) {
+        // Blast radius: only lens-bucket rows may relabel — EXCEPT a
+        // quote-normalization relabel (ledger key differs from the document's
+        // canonical key ONLY by the doubled inch mark). The doubled spelling
+        // splits ONE physical bucket in two, so the split must converge
+        // wholesale — a balanced `1""` bucket left behind would keep
+        // retro-cost (exact-key consume) blind to its lots forever.
+        if (!lensKeys.has(m.variant_key) && !(v.verdict === "relabel" && v.normalized)) {
           notice(`  (outside-lens, untouched) movement ${m.id} ${m.movement_type} key="${m.variant_key}" on ${docNo}: ${v.verdict}`);
           continue;
         }
         if (v.verdict === "relabel") {
           // A movement with its OWN consumption trail must not be moved against
           // it — the relabel mode owns that evidence class. Doc evidence may
-          // only move rows whose trail is absent or agrees.
+          // only move rows whose trail is absent or agrees (up to the quote
+          // doubling — the trail lot converges via its own GRN in this same
+          // run; the post-plan edge check below enforces EXACT final
+          // agreement and voids anything that did not converge).
           if (Number(m.consumed) > 0) {
             const consKeys = await pg.unsafe(`
               SELECT DISTINCT COALESCE(l.variant_key,'') AS k
                 FROM ${C} c JOIN ${L} l ON l.id = c.lot_id WHERE c.movement_id::text = $1`, [m.id]);
             const keys = consKeys.map((r) => r.k);
-            if (!(keys.length === 1 && keys[0] === v.newKey)) {
+            if (!(keys.length === 1 && normalizeVariantKeyQuotes(keys[0]) === v.newKey)) {
               refusals.push({ kind: "movement", id: m.id, verdict: "ledger-doc-conflict", detail: `doc proves "${v.newKey}" but its consumptions sit under [${keys.join(" | ")}] — ${v.citation?.cite ?? ""}` });
               continue;
             }
           }
-          movPlans.push({ m, newKey: v.newKey, cite: v.citation?.cite ?? "(citation missing)", docStatus: doc.status });
+          movPlans.push({ m, newKey: v.newKey, cite: v.citation?.cite ?? "(citation missing)", docStatus: doc.status, normalized: v.normalized === true });
           plannedMovKey.set(m.id, v.newKey);
         } else {
           refusals.push({ kind: "movement", id: m.id, verdict: v.verdict, detail: `${m.movement_type} qty=${m.qty} key="${m.variant_key}" on ${docNo}${v.candidates ? ` candidates [${v.candidates.join(" | ")}]` : ""}${(v.conflictLines ?? []).length ? ` conflicted lines: ${v.conflictLines.map((l) => l.cite).join(" ; ")}` : ""}` });
@@ -1507,7 +1557,17 @@ async function runDocRelabel() {
     for (const l of lots) {
       const gid = lotGrnId(l);
       if (!gid || !grnsById.get(gid)) {
-        if (lensKeys.has(l.variant_key)) refusals.push({ kind: "lot", id: l.id, verdict: "no-document", detail: `key="${l.variant_key}" batch=${l.batch_no ?? "-"} received=${l.qty_received} — no GRN resolves (repair-seeded or import-dropped parent)` });
+        // A repair-seeded lot is EXPECTED to resolve no purchase document —
+        // the basis-cost seed has no GRN by design (its notes carry the
+        // repair: marker) and the grn-gap insert's marker sits on its source
+        // movement. Expected, not a defect: reported separately, never on
+        // the stocktake list.
+        const srcMov = l.movement_id ? movById.get(l.movement_id) : null;
+        if (isRepairSeeded({ lotNotes: l.notes, movementNotes: srcMov?.notes })) {
+          expected.push({ kind: "lot", id: l.id, verdict: "repair-seeded", detail: `key="${l.variant_key}" received=${l.qty_received} remaining=${l.qty_remaining} — created by ${String(l.notes ?? srcMov?.notes ?? "").match(/repair:[a-z-]+/)?.[0] ?? "a repair run"}; no GRN exists by design` });
+          continue;
+        }
+        if (lensKeys.has(l.variant_key)) refusals.push({ kind: "lot", id: l.id, verdict: "no-document", detail: `key="${l.variant_key}" batch=${l.batch_no ?? "-"} received=${l.qty_received} — no GRN resolves (import-dropped parent?)` });
         continue;
       }
       const g = lotsByGrn.get(gid) ?? { doc: grnsById.get(gid), rows: [] };
@@ -1524,26 +1584,31 @@ async function runDocRelabel() {
       for (const v of verdicts) {
         const l = rows.find((x) => x.id === v.id);
         if (v.verdict === "consistent") continue;
-        if (!lensKeys.has(l.variant_key)) {
+        // Same lens bypass as movements: quote-normalization relabels converge
+        // the split bucket even where it is balanced (see above).
+        if (!lensKeys.has(l.variant_key) && !(v.verdict === "relabel" && v.normalized)) {
           notice(`  (outside-lens, untouched) lot ${l.id} key="${l.variant_key}" on GRN ${doc.grn_number}: ${v.verdict}`);
           continue;
         }
         if (v.verdict === "relabel") {
           // A lot's consumers follow their MOVEMENT's key; relabelling a lot
           // away from its consumers would break the trigger invariant. Allowed
-          // only when every consumer's FINAL key equals the new key.
+          // when every consumer's FINAL key equals the new key up to the quote
+          // doubling — the consumer converges via its own document in this
+          // same run, and the post-plan edge check enforces EXACT final
+          // agreement, voiding both sides where it did not.
           const consumers = await pg.unsafe(`
             SELECT DISTINCT c.movement_id::text AS movement_id FROM ${C} c WHERE c.lot_id::text = $1`, [l.id]);
           const badConsumer = consumers.find((cr) => {
             const cm = movById.get(cr.movement_id);
             const finalKey = plannedMovKey.get(cr.movement_id) ?? cm?.variant_key;
-            return finalKey !== v.newKey;
+            return normalizeVariantKeyQuotes(finalKey ?? "") !== v.newKey;
           });
           if (badConsumer) {
             refusals.push({ kind: "lot", id: l.id, verdict: "consumer-key-mismatch", detail: `doc proves "${v.newKey}" but consumer movement ${badConsumer.movement_id} ends under a different key — ${v.citation?.cite ?? ""}` });
             continue;
           }
-          lotPlans.push({ l, newKey: v.newKey, cite: v.citation?.cite ?? "(citation missing)" });
+          lotPlans.push({ l, newKey: v.newKey, cite: v.citation?.cite ?? "(citation missing)", normalized: v.normalized === true });
           plannedLotKey.set(l.id, v.newKey);
         } else {
           refusals.push({ kind: "lot", id: l.id, verdict: v.verdict, detail: `key="${l.variant_key}" batch=${l.batch_no ?? "-"} on GRN ${doc.grn_number}${v.candidates ? ` candidates [${v.candidates.join(" | ")}]` : ""}` });
@@ -1551,22 +1616,77 @@ async function runDocRelabel() {
       }
     }
 
+    // ── Post-plan consumption-edge check: after BOTH sides planned, every
+    // consumption edge (movement <-> lot) must agree EXACTLY on final keys.
+    // A planned side whose partner did not converge is VOIDED (refused), and
+    // voiding can re-break the partner, so iterate to a fixed point. This is
+    // what licenses the normalized in-loop guards above: they admit plans on
+    // the promise both sides converge; this check keeps the promise honest.
+    {
+      const plannedMovIds = movPlans.map((p) => p.m.id);
+      const edges = plannedMovIds.length || lotPlans.length
+        ? await pg.unsafe(`
+            SELECT c.movement_id::text AS movement_id, c.lot_id::text AS lot_id,
+                   COALESCE(l.variant_key,'') AS lot_key
+              FROM ${C} c JOIN ${L} l ON l.id = c.lot_id
+             WHERE c.movement_id::text = ANY($1) OR c.lot_id::text = ANY($2)`,
+          [plannedMovIds, lotPlans.map((p) => p.l.id)])
+        : [];
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const e of edges) {
+          const cm = movById.get(e.movement_id);
+          const movFinal = plannedMovKey.get(e.movement_id) ?? cm?.variant_key ?? null;
+          const lotFinal = plannedLotKey.get(e.lot_id) ?? e.lot_key;
+          if (movFinal == null || movFinal === lotFinal) continue;
+          const mi = movPlans.findIndex((p) => p.m.id === e.movement_id);
+          if (mi >= 0) {
+            refusals.push({ kind: "movement", id: e.movement_id, verdict: "edge-not-converged", detail: `planned "${movPlans[mi].newKey}" but consumed lot ${e.lot_id} ends at "${lotFinal}" — both sides voided; resolve the lot's document first` });
+            plannedMovKey.delete(e.movement_id);
+            movPlans.splice(mi, 1);
+            changed = true;
+          }
+          const li2 = lotPlans.findIndex((p) => p.l.id === e.lot_id);
+          if (li2 >= 0) {
+            refusals.push({ kind: "lot", id: e.lot_id, verdict: "edge-not-converged", detail: `planned "${lotPlans[li2].newKey}" but consumer movement ${e.movement_id} ends at "${movFinal}" — both sides voided; resolve the movement's document first` });
+            plannedLotKey.delete(e.lot_id);
+            lotPlans.splice(li2, 1);
+            changed = true;
+          }
+          if (mi < 0 && li2 < 0) {
+            // Neither side is planned (both already voided or never planned) —
+            // nothing further to void on this edge.
+          }
+        }
+      }
+    }
+
     // Receipt-presence guard: an OUT relabelled to a key NOTHING in the family
     // ever received is a shipment with genuinely no receipt — stocktake, not a
-    // label move.
+    // label move. Matching is quote-normalized: a receipt sitting under the
+    // doubled spelling still counts (it converges in this same run when its
+    // document resolves; when it cannot, the warning below says so — the
+    // relabel is still document-true, but retro-cost's exact-key consume will
+    // not reach that receipt until it converges).
     const finalLotKeyOf = (l) => plannedLotKey.get(l.id) ?? l.variant_key;
     const finalMovKeyOf = (m) => plannedMovKey.get(m.id) ?? m.variant_key;
-    const receiptKeys = new Set([
+    const receiptFinalKeys = [
       ...lots.filter((l) => Number(l.qty_received) > 0).map((l) => finalLotKeyOf(l)),
       ...movs.filter((m) => String(m.movement_type).toUpperCase() === "IN").map((m) => finalMovKeyOf(m)),
-    ]);
+    ];
+    const receiptKeys = new Set(receiptFinalKeys);
+    const receiptNormKeys = new Set(receiptFinalKeys.map((k) => normalizeVariantKeyQuotes(k)));
     for (let i = movPlans.length - 1; i >= 0; i -= 1) {
       const p = movPlans[i];
       const type = String(p.m.movement_type).toUpperCase();
-      if (type === "OUT" && !receiptKeys.has(p.newKey)) {
+      if (type !== "OUT") continue;
+      if (!receiptNormKeys.has(normalizeVariantKeyQuotes(p.newKey))) {
         refusals.push({ kind: "movement", id: p.m.id, verdict: "no-receipt-in-family", detail: `OUT qty=${p.m.qty} doc proves "${p.newKey}" but the family never received under that key — ${p.cite}` });
         plannedMovKey.delete(p.m.id);
         movPlans.splice(i, 1);
+      } else if (!receiptKeys.has(p.newKey)) {
+        notice(`  WARNING: OUT ${p.m.id} relabels to "${p.newKey}" whose receipts sit only under a quote-variant spelling that could NOT converge (no document) — retro-cost will not reach them until that receipt's key resolves.`);
       }
     }
     // Doc-CONFIRMED OUTs whose key has no family receipt: the drift is REAL —
@@ -1575,7 +1695,7 @@ async function runDocRelabel() {
     // the COGS side for named DOs; the QUANTITY story is physical-count
     // territory, which is exactly what the stocktake list is for).
     for (const c of consistentLensOuts) {
-      if (!receiptKeys.has(finalMovKeyOf(c.m))) {
+      if (!receiptNormKeys.has(normalizeVariantKeyQuotes(finalMovKeyOf(c.m)))) {
         refusals.push({ kind: "movement", id: c.m.id, verdict: "documented-shipment-no-receipt", detail: `OUT qty=${c.m.qty} ${c.m.source_doc_type} ${c.m.source_doc_no} — the document CONFIRMS key "${c.m.variant_key}" and the family never received under it; ${c.cite}` });
       }
     }
@@ -1674,7 +1794,7 @@ async function runDocRelabel() {
     }
 
     // ── Plan print + projection.
-    notice(`  movement relabels: ${movPlans.length}; lot relabels: ${lotPlans.length}; over-consumed repoints: ${repointPlans.length}; refusals: ${refusals.length}`);
+    notice(`  movement relabels: ${movPlans.length} (${movPlans.filter((p) => p.normalized).length} quote-normalized); lot relabels: ${lotPlans.length} (${lotPlans.filter((p) => p.normalized).length} quote-normalized); over-consumed repoints: ${repointPlans.length}; refusals: ${refusals.length}; repair-seeded (expected): ${expected.length}`);
     for (const p of movPlans) {
       notice(`  RELABEL movement ${p.m.id} ${p.m.movement_type} qty=${p.m.qty} ${p.m.source_doc_type} ${p.m.source_doc_no}${String(p.docStatus ?? "").toUpperCase() === "CANCELLED" ? " (doc CANCELLED)" : ""}`);
       notice(`    "${p.m.variant_key}" -> "${p.newKey}"   evidence: ${p.cite}`);
@@ -1685,9 +1805,11 @@ async function runDocRelabel() {
       notice(`    "${p.l.variant_key}" -> "${p.newKey}"   evidence: ${p.cite}`);
     }
     for (const r of refusals) notice(`  REFUSED ${r.kind} ${r.id} (${r.verdict}): ${r.detail}`);
+    for (const e of expected) notice(`  EXPECTED ${e.kind} ${e.id} (${e.verdict}): ${e.detail}`);
+    for (const e of expected) repairSeeded.push({ family: `${f.productCode} co=${f.companyId} wh=${f.warehouseId}`, ...e });
 
     if (movPlans.length === 0 && lotPlans.length === 0 && repointPlans.length === 0) {
-      notice("  family: nothing provable from the documents — every candidate row is on the refusal list above.");
+      notice(`  family: nothing provable from the documents — every candidate row is on the ${refusals.length ? "refusal" : "expected"} list above.`);
       famRefused += 1;
       for (const r of refusals) stocktake.push({ family: `${f.productCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
       continue;
@@ -1886,6 +2008,12 @@ async function runDocRelabel() {
   notice(`  over-consumed repoints                     : ${repointUnits} unit(s) across ${repointMoves} consumption slice(s)`);
   notice(`  RM delta from repoint cost stamps          : ${rm(rmDeltaTotal)}  (0 = every donor at the same landed cost)`);
   notice("");
+  if (repairSeeded.length > 0) {
+    notice("================ REPAIR-SEEDED (expected by design — NOT the stocktake list) ================");
+    for (const s of repairSeeded) notice(`  ${s.family}  ${s.kind} ${s.id}  ${s.verdict}: ${s.detail}`);
+    notice(`  total: ${repairSeeded.length} row(s) created by earlier gated repairs (basis-cost / grn-gap); their missing purchase document is the design, not a defect.`);
+    notice("");
+  }
   notice("================ STOCKTAKE LIST (documents cannot resolve these — physical count territory) ================");
   if (stocktake.length === 0) {
     notice("  EMPTY — every residual row is resolved by its own paperwork.");
