@@ -7,7 +7,7 @@ import { hasPermission } from "../services/permissions";
 /**
  * Column layouts for the list tables (owner 2026-08-01).
  *
- * Two row kinds in one table (see migrations-pg/0235_table_layouts.sql):
+ * Two row kinds in one table (see migrations-pg/0236_table_layouts.sql):
  *
  *   user_id IS NULL  → this COMPANY's default view, written from the Columns
  *                      panel by a settings.manage admin. Replaces the code

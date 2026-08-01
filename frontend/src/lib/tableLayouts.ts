@@ -1,5 +1,5 @@
 // Server-stored column layouts — the account-level half of the Columns panel
-// (owner 2026-08-01). Backend: routes/tableLayouts.ts, mig 0235 / D1 142.
+// (owner 2026-08-01). Backend: routes/tableLayouts.ts, mig 0236 / D1 142.
 //
 // Two things live here, both fed by ONE boot request:
 //

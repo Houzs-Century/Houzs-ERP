@@ -1,6 +1,6 @@
--- D1 / SQLite parity for PG migration 0235 — server-stored column layouts
+-- D1 / SQLite parity for PG migration 0236 — server-stored column layouts
 -- (company default + per-user, owner 2026-08-01). Test mirror only; prod runs
--- Postgres. Keep the shape in lockstep with 0235_table_layouts.sql.
+-- Postgres. Keep the shape in lockstep with 0236_table_layouts.sql.
 CREATE TABLE IF NOT EXISTS table_layouts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   company_id INTEGER NOT NULL,

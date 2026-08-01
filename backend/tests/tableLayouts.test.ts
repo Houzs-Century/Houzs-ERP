@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { __resetCompanyContextCacheForTest } from "../src/middleware/companyContext";
 
 /* ────────────────────────────────────────────────────────────────────────────
-   TABLE LAYOUTS (routes/tableLayouts.ts, mig 0235 / D1 142).
+   TABLE LAYOUTS (routes/tableLayouts.ts, mig 0236 / D1 142).
 
    Column layouts moved off localStorage so that (1) an admin can set a
    COMPANY-WIDE default view without a deploy, and (2) a user's own arrangement
