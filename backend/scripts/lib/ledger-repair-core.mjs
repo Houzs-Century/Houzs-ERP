@@ -63,6 +63,102 @@ export function classifyGrnInboundGap({ productCode, lineQty, buckets = [] }) {
   };
 }
 
+/** W2 fallback (live run 2026-08-01: the short line had NO sibling movement to
+ *  copy from — `no-sibling`). The GRN line's OWN landed cost is the fallback
+ *  basis: round(unit_price_centi x exchange_rate) — the exact `toMyrSen` path
+ *  grns.ts uses for movements written outside the allocation (warehouse-change
+ *  precedent, grns.ts:2463). MIRROR of lib/fx.ts `toMyrSen`/`safeRate`; the
+ *  lockstep test pins the two together. */
+export function toMyrSenMirror(foreignSen, rate) {
+  const n = Number(rate ?? 1);
+  const safe = Number.isFinite(n) && n > 0 ? n : 1;
+  return Math.round(Number(foreignSen ?? 0) * safe);
+}
+
+/** MIRROR of src/scm/shared/variant-key.ts `computeVariantKey`, needed because
+ *  a line-derived W2 insert must land in the SAME bucket the app would compute
+ *  for that line, and the repair scripts run under plain node (no TS import).
+ *  KEEP IN LOCKSTEP — the ledgerRepairCore test imports the real function and
+ *  fails if the two ever disagree on a matrix of fixtures. */
+export function variantKeyMirror(itemGroup, attrs) {
+  const ATTRS_BY_GROUP = {
+    sofa: ["fabricCode", "seatHeight", "legHeight"],
+    bedframe: ["fabricCode", "gap", "divanHeight", "legHeight", "totalHeight"],
+    mattress: [],
+    accessory: [],
+    others: [],
+    service: [],
+  };
+  const norm = (v) => (v == null ? "" : String(v).trim().toLowerCase());
+  const group = norm(itemGroup);
+  const a = attrs ?? {};
+  const parts = [];
+  for (const k of ATTRS_BY_GROUP[group] ?? []) {
+    const raw = k === "fabricCode"
+      ? (a.fabricCode ?? a.colorCode ?? a.colourCode ?? a.fabricColor)
+      : k === "seatHeight"
+        ? (a.seatHeight ?? a.depth)
+        : k === "legHeight"
+          ? (a.legHeight ?? a.sofaLegHeight)
+          : a[k];
+    const val = norm(raw);
+    if (val) parts.push(`${k.toLowerCase()}=${val}`);
+  }
+  const specials = Array.isArray(a.specials) && a.specials.length > 0
+    ? a.specials
+        .map((s) => (typeof s === "string" ? s : (s?.code ?? s?.label ?? "")))
+        .map(norm)
+        .filter(Boolean)
+        .sort()
+        .join(",")
+    : "";
+  if (specials) parts.push(`special=${specials}`);
+  return parts.join("|");
+}
+
+/** W2 fallback — derive the insert for a short product with NO sibling
+ *  movement, from the GRN's own facts. Everything must be single-valued or the
+ *  product is refused:
+ *    - exactly ONE line for the product (a delta cannot be attributed across
+ *      several lines)
+ *    - warehouse: the single warehouse the GRN's OTHER movements share, else
+ *      the header warehouse; refused when neither exists
+ *    - batch: the single batch the GRN's other movements share, else NULL
+ *      (a plain unbatched lot — printed, not guessed)
+ *    - variant: the line's own variants via the computeVariantKey mirror
+ *    - cost: round(line unit_price_centi x GRN exchange_rate); refused at <= 0
+ *  Verdicts: line-insert | multi-line | no-warehouse | zero-cost */
+export function deriveGrnLineBasis({
+  lines = [],
+  qty,
+  headerWarehouseId = null,
+  exchangeRate = 1,
+  grnMovementWarehouses = [],
+  grnMovementBatches = [],
+  companyId,
+}) {
+  if (lines.length !== 1) return { verdict: "multi-line", lineCount: lines.length };
+  const line = lines[0];
+  const whs = [...new Set(grnMovementWarehouses.filter(Boolean))];
+  const warehouseId = whs.length === 1 ? whs[0] : headerWarehouseId;
+  if (!warehouseId) return { verdict: "no-warehouse" };
+  const unitCostSen = toMyrSenMirror(Number(line.unit_price_centi ?? 0), exchangeRate);
+  if (!(unitCostSen > 0)) return { verdict: "zero-cost", unitCostSen };
+  const batches = [...new Set(grnMovementBatches.filter(Boolean))];
+  return {
+    verdict: "line-insert",
+    insert: {
+      qty,
+      warehouseId,
+      variantKey: variantKeyMirror(line.item_group, line.variants ?? null),
+      batchNo: batches.length === 1 ? batches[0] : null,
+      companyId,
+      unitCostSen,
+    },
+    costSource: `line unit_price_centi ${line.unit_price_centi} x rate ${exchangeRate}`,
+  };
+}
+
 /** W3 — pick the reference cost for units that shipped with NOTHING on hand.
  *  Owner's basis rule: the most recent same-(product, variant) GRN landed unit
  *  cost in the same company; fall back to the product's latest PO line cost if
@@ -132,6 +228,214 @@ export function classifyMovementRelabel({
     return { ...base, verdict: "relabel", newKey: key };
   }
   return { ...base, verdict: "out-of-scope" };
+}
+
+/** part=dedupe (owner authorization 2026-08-01, "继续 全部可以") — decide
+ *  whether a movement that part=ids classified `duplicate-of-real` may be
+ *  DELETED. The index collision alone is NOT enough: uq_inv_mov_do_source is
+ *  documented as keyed WITHOUT movement_type (and says nothing about qty), so
+ *  a collision could pair two rows that describe DIFFERENT physical events.
+ *  The owner's deletion rule requires a FULL-ROW twin: a real counterpart on
+ *  the true doc id carrying the same (company, product_code, variant_key,
+ *  warehouse, movement_type, qty). Anything less is refused and reported.
+ *    delete           exactly this twin exists (>= 1 counterpart matches all
+ *                     six facts) — the row is a provable import duplicate
+ *    no-counterpart   the collision was real but no full-row twin exists —
+ *                     the two rows disagree on type or qty; owner review
+ *  `counterparts` are the REAL document's movements sharing the duplicate's
+ *  bucket; the caller fetches them by (source_doc_id = resolvedDocId) and
+ *  passes the six facts for each. */
+export function classifyDuplicateMovement({ duplicate, counterparts = [] }) {
+  const same = (a, b) => String(a ?? "") === String(b ?? "");
+  const matches = counterparts.filter((c) =>
+    Number(c.companyId) === Number(duplicate.companyId)
+    && same(c.productCode, duplicate.productCode)
+    && same(c.variantKey ?? "", duplicate.variantKey ?? "")
+    && same(c.warehouseId, duplicate.warehouseId)
+    && same(String(c.movementType).toUpperCase(), String(duplicate.movementType).toUpperCase())
+    && Number(c.qty) === Number(duplicate.qty));
+  if (matches.length === 0) return { verdict: "no-counterpart", matches: [] };
+  return { verdict: "delete", matches: matches.map((m) => m.movementId) };
+}
+
+/** part=dedupe — the movement-ledger effect of deleting a set of duplicate
+ *  movements, per (company, warehouse, product, variant) bucket, in the
+ *  scm.inventory_balances signed convention. Deleting an OUT RAISES the
+ *  bucket's on-hand sum by qty (the OUT contributed -qty); deleting an IN
+ *  lowers it. This is what the owner's 2b question needs: duplicate OUTs
+ *  double-decrement on-hand, so their deletion should shrink the negative
+ *  buckets — the dry run prints each affected bucket before -> after so the
+ *  linkage is visible either way. */
+export function projectDedupeBucketImpact(deletions, currentSums) {
+  const after = new Map();
+  for (const [k, v] of currentSums) after.set(k, Number(v));
+  for (const d of deletions) {
+    const type = String(d.movementType).toUpperCase();
+    const signed = type === "IN" ? Number(d.qty) : type === "OUT" ? -Number(d.qty) : Number(d.qty);
+    after.set(d.bucketKey, (after.get(d.bucketKey) ?? 0) - signed);
+  }
+  return after;
+}
+
+/** W4 phase 1, round 3 (live run 2026-08-01) — classify ONE lot against the
+ *  COSTING AUDIT'S OWN 2a lens. Round 2's candidate query used
+ *  `received - consumed - remaining > 0` (deficit only — the missing-rows
+ *  hypothesis) while the audit's 2a is `received - consumed <> remaining` OR
+ *  three more arms — so reconstruct reported "every lot conserves" on the
+ *  same day the audit counted 13. The two tools must never disagree: the
+ *  runner now lifts the audit's WHERE verbatim, and THIS rule names which arm
+ *  a candidate violates and which repair (if any) is provable:
+ *    deficit            received - consumed - remaining > 0 — consumption
+ *                       rows are MISSING; planFamilyReconstruction pairs them
+ *    surplus            residual < 0 with consumed <= received — the rows
+ *                       EXIST but qty_remaining was never decremented (the
+ *                       import double-count); planSurplusCorrection restores
+ *                       the trigger invariant remaining = received - consumed
+ *    over-consumed      consumed > received — no decrement can conserve this
+ *                       lot (remaining would go negative); owner review
+ *    negative-remaining / negative-received — corrupt quantities; owner review
+ *    conserves          not a candidate (the audit would not have flagged it) */
+export function classifyLotConservation({ qtyReceived, consumed, qtyRemaining }) {
+  const received = Number(qtyReceived ?? 0);
+  const cons = Number(consumed ?? 0);
+  const remaining = Number(qtyRemaining ?? 0);
+  const residual = received - cons - remaining;
+  const base = { received, consumed: cons, remaining, residual };
+  if (received < 0) return { ...base, verdict: "negative-received" };
+  if (remaining < 0) return { ...base, verdict: "negative-remaining" };
+  if (cons > received) return { ...base, verdict: "over-consumed" };
+  if (residual > 0) return { ...base, verdict: "deficit" };
+  if (residual < 0) return { ...base, verdict: "surplus" };
+  return { ...base, verdict: "conserves" };
+}
+
+/** W4 phase 1, the SURPLUS repair — a lot whose consumption rows exist but
+ *  whose qty_remaining was never decremented holds the same units twice (once
+ *  consumed, once on hand). The provable correction restores the FIFO
+ *  trigger's own invariant: remaining := received - consumed. Refused unless
+ *  every consumption row is traceable and honest:
+ *    orphan-consumptions  a row with movement_id NULL asserts consumption by
+ *                         nothing traceable
+ *    missing-movement     a row references a movement that does not exist
+ *    over-attribution     a referenced movement's total consumed exceeds its
+ *                         own |qty| (audit 10c — the rows themselves lie)
+ *    over-consumed        consumed > received (no non-negative remaining)
+ *  On "correct": { newRemaining, delta } — delta is the double-counted
+ *  on-hand units removed; the CALLER prices it (delta x unit cost) and prints
+ *  the inventory-value impact. COGS does not move: the consumption rows
+ *  already booked it. */
+export function planSurplusCorrection({ qtyReceived, consumed, qtyRemaining, referencedMovements = [] }) {
+  const received = Number(qtyReceived ?? 0);
+  const cons = Number(consumed ?? 0);
+  const remaining = Number(qtyRemaining ?? 0);
+  const newRemaining = received - cons;
+  if (newRemaining < 0) return { verdict: "over-consumed", newRemaining };
+  if (referencedMovements.some((m) => m.movementId == null)) return { verdict: "orphan-consumptions" };
+  const missing = referencedMovements.filter((m) => !m.exists);
+  if (missing.length > 0) return { verdict: "missing-movement", missing: missing.map((m) => m.movementId) };
+  const over = referencedMovements.filter((m) => Number(m.consumedTotal ?? 0) > Math.abs(Number(m.absQty ?? 0)));
+  if (over.length > 0) return { verdict: "over-attribution", over: over.map((m) => m.movementId) };
+  return { verdict: "correct", newRemaining, delta: remaining - newRemaining };
+}
+
+/** W4 phase 1 (live run 2026-08-01) — RECONSTRUCT the consumption rows the
+ *  2990 import dropped. The relabel's dry run refused every XAMMAR movement
+ *  with `no-lot-evidence`: the OUT movements carry qty and (mostly) cost, the
+ *  lots are ALREADY decremented (audit 2a: received - consumed != remaining;
+ *  10a agrees per batch), but the inventory_lot_consumptions rows LINKING them
+ *  were never imported — so there was no trail for the relabel to follow.
+ *
+ *  This rule rebuilds the link where the family's own arithmetic PROVES it,
+ *  per (company, warehouse, product) family across ALL sibling variant keys:
+ *    movements: OUT / negative-ADJUSTMENT rows with consumption shortfall
+ *               s = ABS(qty) - alreadyConsumed > 0, oldest first
+ *    lots:      rows with conservation deficit d = received - consumed -
+ *               remaining > 0, oldest first
+ *  GUARDS — the family is refused wholesale unless ALL hold:
+ *    1. Sigma(s) === Sigma(d) — the two sides describe the same missing rows
+ *    2. the FIFO pairing walk covers every shortfall exactly
+ *    3. per movement, cost consistency: the paired cost (Sigma take x lot
+ *       unit cost) EQUALS the movement's stored total_cost_sen (pure re-link,
+ *       RM0) OR the movement's cost is 0 (the pairing will stamp it, 0154-
+ *       style, and the RM amount is reported) — any other mismatch refuses
+ *       the family, because the pairing would contradict money already booked.
+ *  Nothing is deleted, no lot quantity moves (remaining is already the truth);
+ *  only the missing consumption rows are written, plus the 0154 cost stamp for
+ *  movements that had none. Drift (movement sum vs lot remaining) is NOT
+ *  closed by this phase — the movements still sit under their old key; run
+ *  MODE=relabel afterwards: with the reconstructed rows it finally has the
+ *  evidence it demands.
+ *
+ *  Returns { verdict: "reconstruct", pairs, stamps, rmStampedSen } or
+ *  { verdict: refusal, ...evidence }. `pairs` are
+ *  { movementId, lotId, qty, unitCostSen }; `stamps` are movements whose
+ *  total/unit cost will be written from their (new) consumption sum. */
+export function planFamilyReconstruction({ movements = [], lots = [] }) {
+  const shorts = movements
+    .map((m) => ({
+      ...m,
+      shortfall: Math.abs(Number(m.qty ?? 0)) - Number(m.alreadyConsumed ?? 0),
+    }))
+    .filter((m) => m.shortfall > 0)
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.movementId < b.movementId ? -1 : 1));
+  const deficits = lots
+    .map((l) => ({
+      ...l,
+      deficit: Number(l.qtyReceived ?? 0) - Number(l.consumed ?? 0) - Number(l.qtyRemaining ?? 0),
+    }))
+    .filter((l) => l.deficit > 0)
+    .sort((a, b) => (a.receivedAt < b.receivedAt ? -1 : a.receivedAt > b.receivedAt ? 1 : a.lotId < b.lotId ? -1 : 1));
+
+  const totalShort = shorts.reduce((a, m) => a + m.shortfall, 0);
+  const totalDeficit = deficits.reduce((a, l) => a + l.deficit, 0);
+  const base = { totalShort, totalDeficit, shorts, deficits };
+  if (totalShort === 0 && totalDeficit === 0) return { ...base, verdict: "balanced" };
+  if (totalShort !== totalDeficit) return { ...base, verdict: "sums-mismatch" };
+
+  // FIFO pairing walk — deterministic, oldest movement takes oldest deficit.
+  const pairs = [];
+  const perMovement = new Map();
+  let li = 0;
+  let remaining = deficits.map((l) => l.deficit);
+  for (const m of shorts) {
+    let need = m.shortfall;
+    let cost = 0;
+    while (need > 0) {
+      while (li < deficits.length && remaining[li] <= 0) li += 1;
+      if (li >= deficits.length) return { ...base, verdict: "pairing-failed" };
+      const take = Math.min(need, remaining[li]);
+      pairs.push({ movementId: m.movementId, lotId: deficits[li].lotId, qty: take, unitCostSen: Number(deficits[li].unitCostSen ?? 0) });
+      cost += take * Number(deficits[li].unitCostSen ?? 0);
+      remaining[li] -= take;
+      need -= take;
+    }
+    perMovement.set(m.movementId, { pairedCostSen: cost, movement: m });
+  }
+
+  // Cost consistency per movement. The 0154 convention is
+  // total_cost_sen === Sigma(its consumptions' cost), so with the EXISTING
+  // rows' cost E and the paired new cost P the only two honest states are:
+  //   stored === E + P  — the import stamped the full cost and dropped only
+  //                       the rows: pure re-link, RM0
+  //   stored === E      — the cost never covered the missing rows: stamp to
+  //                       E + P (0154-style), RM impact = P, reported
+  // Anything else contradicts money already booked and refuses the family.
+  const stamps = [];
+  let rmStampedSen = 0;
+  const conflicts = [];
+  for (const { pairedCostSen, movement } of perMovement.values()) {
+    const stored = Number(movement.totalCostSen ?? 0);
+    const existing = Number(movement.alreadyConsumedCostSen ?? 0);
+    if (stored === existing + pairedCostSen) continue; // pure re-link, RM0
+    if (stored === existing) {
+      stamps.push({ movementId: movement.movementId, newTotalCostSen: existing + pairedCostSen });
+      rmStampedSen += pairedCostSen;
+      continue;
+    }
+    conflicts.push({ movementId: movement.movementId, storedCostSen: stored, existingConsumedCostSen: existing, pairedCostSen });
+  }
+  if (conflicts.length > 0) return { ...base, verdict: "cost-conflict", conflicts };
+  return { ...base, verdict: "reconstruct", pairs, stamps, rmStampedSen };
 }
 
 /** W4 — the whole-family check the dry run prints: given each bucket's CURRENT

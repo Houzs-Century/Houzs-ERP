@@ -55,8 +55,9 @@ const RULE_LABEL: Record<RateRuleType, string> = {
 export const DeliveryRateCards = () => {
   const [tab, setTab] = useState<'cards' | 'reconcile'>('cards');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState<{ carrierCompanyId: string | null } | null>(null);
   const cards = useRateCards();
+  const meta = useRateCardMeta();
 
   return (
     <div className="space-y-4">
@@ -65,7 +66,7 @@ export const DeliveryRateCards = () => {
         title="Delivery Rate Cards"
         description="Configure a rate card per carrier (own-fleet + each 3PL), verify a 3PL's billed charge against the computed expected cost, and roll the precise delivery cost toward COGS. Cost verification, not customer billing — and it does not touch the FIFO costing path."
         actions={tab === 'cards' ? (
-          <Button variant="primary" size="md" onClick={() => setCreating(true)}>
+          <Button variant="primary" size="md" onClick={() => setCreating({ carrierCompanyId: null })}>
             <Plus {...ICON} /><span>New Card</span>
           </Button>
         ) : undefined}
@@ -89,9 +90,11 @@ export const DeliveryRateCards = () => {
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 300px) 1fr', gap: 16, alignItems: 'start' }}>
           <CardList
             cards={cards.data ?? []}
-            isLoading={cards.isLoading}
+            companies={meta.data?.companies ?? []}
+            isLoading={cards.isLoading || meta.isLoading}
             selectedId={selectedId}
             onSelect={setSelectedId}
+            onCreateFor={(carrierCompanyId) => setCreating({ carrierCompanyId })}
           />
           {selectedId
             ? <CardEditor key={selectedId} cardId={selectedId} onDeleted={() => setSelectedId(null)} />
@@ -101,36 +104,89 @@ export const DeliveryRateCards = () => {
         <ReconcileView />
       )}
 
-      {creating && <CreateCardDrawer onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); setSelectedId(id); }} />}
+      {creating && (
+        <CreateCardDrawer
+          initialCarrierCompanyId={creating.carrierCompanyId}
+          onClose={() => setCreating(null)}
+          onCreated={(id) => { setCreating(null); setSelectedId(id); }}
+        />
+      )}
     </div>
   );
 };
 
-// ── Card list ────────────────────────────────────────────────────────────────
-const CardList = ({ cards, isLoading, selectedId, onSelect }: {
-  cards: RateCard[]; isLoading: boolean; selectedId: string | null; onSelect: (id: string) => void;
-}) => (
-  <div style={{ border: '1px solid var(--border, rgba(0,0,0,0.1))', borderRadius: 8, overflow: 'hidden' }}>
-    <div className={styles.headerRow} style={{ padding: '10px 12px' }}>
-      <p className={styles.eyebrow}>{cards.length} cards</p>
-    </div>
-    {isLoading && <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Loading…</div>}
-    {!isLoading && cards.length === 0 && <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>No cards yet.</div>}
-    {cards.map((c) => (
-      <button key={c.id} type="button" onClick={() => onSelect(c.id)}
-        style={{
-          display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', cursor: 'pointer',
-          background: selectedId === c.id ? 'var(--bg-subtle, rgba(37,99,235,0.08))' : 'none',
-          border: 'none', borderTop: '1px solid var(--border, rgba(0,0,0,0.06))', font: 'inherit',
-        }}>
-        <div style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }}>{c.name}</div>
-        <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
-          {c.isOwnFleet ? 'Own fleet' : (c.carrierLabel || '3PL')} · {c.basis} · per {c.aggregation.toLowerCase()} · {c.ruleCount ?? 0} rules{c.isActive ? '' : ' · inactive'}
+// ── Carrier list ────────────────────────────────────────────────
+// Owner's flow (2026-08-01): register the 3PL companies first, then come here to
+// see what each one charges. So the list IS the carrier list — every registered
+// 3PL appears, whether or not it has a card yet, and a carrier with no card is a
+// one-click create rather than something you have to know to add. Own-fleet cost
+// structures keep their own group below.
+const CardList = ({ cards, companies, isLoading, selectedId, onSelect, onCreateFor }: {
+  cards: RateCard[];
+  companies: Array<{ id: string; name: string }>;
+  isLoading: boolean;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onCreateFor: (carrierCompanyId: string | null) => void;
+}) => {
+  const byCompany = new Map<string, RateCard>();
+  for (const c of cards) if (c.carrierCompanyId) byCompany.set(c.carrierCompanyId, c);
+  const ownFleet = cards.filter((c) => !c.carrierCompanyId);
+
+  const summary = (c: RateCard) =>
+    `${c.basis} · per ${c.aggregation.toLowerCase()} · ${c.ruleCount ?? 0} rules${c.isActive ? '' : ' · inactive'}`;
+
+  return (
+    <div style={{ border: '1px solid var(--border, rgba(0,0,0,0.1))', borderRadius: 8, overflow: 'hidden' }}>
+      <div className={styles.headerRow} style={{ padding: '10px 12px' }}>
+        <p className={styles.eyebrow}>{companies.length} carriers</p>
+      </div>
+      {isLoading && <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Loading…</div>}
+      {!isLoading && companies.length === 0 && (
+        <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
+          No 3PL companies registered yet. Register them under Maintenance &rsaquo; 3PL Companies, then price them here.
         </div>
-      </button>
-    ))}
-  </div>
-);
+      )}
+
+      {companies.map((co) => {
+        const card = byCompany.get(co.id);
+        return (
+          <button key={co.id} type="button"
+            onClick={() => (card ? onSelect(card.id) : onCreateFor(co.id))}
+            style={{
+              display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', cursor: 'pointer',
+              background: card && selectedId === card.id ? 'var(--bg-subtle, rgba(37,99,235,0.08))' : 'none',
+              border: 'none', borderTop: '1px solid var(--border, rgba(0,0,0,0.06))', font: 'inherit',
+            }}>
+            <div style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }}>{co.name}</div>
+            <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+              {card ? summary(card) : 'No rate card yet — click to add'}
+            </div>
+          </button>
+        );
+      })}
+
+      {ownFleet.length > 0 && (
+        <>
+          <div className={styles.headerRow} style={{ padding: '10px 12px', borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
+            <p className={styles.eyebrow}>Own fleet</p>
+          </div>
+          {ownFleet.map((c) => (
+            <button key={c.id} type="button" onClick={() => onSelect(c.id)}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', cursor: 'pointer',
+                background: selectedId === c.id ? 'var(--bg-subtle, rgba(37,99,235,0.08))' : 'none',
+                border: 'none', borderTop: '1px solid var(--border, rgba(0,0,0,0.06))', font: 'inherit',
+              }}>
+              <div style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }}>{c.name}</div>
+              <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{summary(c)}</div>
+            </button>
+          ))}
+        </>
+      )}
+    </div>
+  );
+};
 
 // ── Card editor (fields + rules + calculator) ────────────────────────────────
 const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => void }) => {
@@ -402,17 +458,25 @@ const ReconcileView = () => {
 };
 
 // ── Create-card drawer ─────────────────────────────────────────────────────────
-const CreateCardDrawer = ({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) => {
+const CreateCardDrawer = ({ initialCarrierCompanyId, onClose, onCreated }: {
+  initialCarrierCompanyId: string | null;
+  onClose: () => void;
+  onCreated: (id: string) => void;
+}) => {
   const create = useCreateRateCard();
   const meta = useRateCardMeta();
   const notify = useNotify();
-  const [form, setForm] = useState({ name: '', carrierCompanyId: '', basis: 'SET' as 'SET' | 'ITEM', aggregation: 'DROP' as 'DROP' | 'CUSTOMER', isOwnFleet: false });
+  const [form, setForm] = useState({ name: '', carrierCompanyId: initialCarrierCompanyId ?? '', basis: 'SET' as 'SET' | 'ITEM', aggregation: 'DROP' as 'DROP' | 'CUSTOMER', isOwnFleet: false });
   const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => setForm((s) => ({ ...s, [k]: v }));
 
   const submit = () => {
-    if (!form.name.trim()) { notify({ title: 'Name required.', tone: 'error' }); return; }
+    /* A carrier card is NAMED BY ITS COMPANY (server-side), so the name is only
+       asked for — and only required — when there is no company to name it. */
+    if (!form.carrierCompanyId && !form.name.trim()) {
+      notify({ title: 'Pick a 3PL company, or name the card.', tone: 'error' }); return;
+    }
     create.mutate(
-      { name: form.name.trim(), carrierCompanyId: form.carrierCompanyId || null, basis: form.basis, aggregation: form.aggregation, isOwnFleet: form.isOwnFleet },
+      { name: form.carrierCompanyId ? undefined : form.name.trim(), carrierCompanyId: form.carrierCompanyId || null, basis: form.basis, aggregation: form.aggregation, isOwnFleet: form.isOwnFleet },
       { onSuccess: (r) => onCreated(r.card.id), onError: (e) => notify({ title: 'Create failed', body: e instanceof Error ? e.message : 'Error', tone: 'error' }) },
     );
   };
@@ -427,16 +491,23 @@ const CreateCardDrawer = ({ onClose, onCreated }: { onClose: () => void; onCreat
         </header>
         <div className={styles.drawerBody}>
           <label className={styles.field}>
-            <span className={styles.fieldLabel}>Name *</span>
-            <input className={styles.fieldInput} value={form.name} placeholder="e.g. ABC Logistics 3PL" onChange={(e) => set('name', e.target.value)} />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>3PL company (carrier)</span>
+            <span className={styles.fieldLabel}>3PL company (carrier) *</span>
             <select className={styles.fieldInput} value={form.carrierCompanyId} onChange={(e) => set('carrierCompanyId', e.target.value)}>
               <option value="">Own fleet / none</option>
               {(meta.data?.companies ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+            <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+              {form.carrierCompanyId
+                ? 'The card takes the company name. One card per company.'
+                : 'Register carriers under Maintenance > 3PL Companies.'}
+            </span>
           </label>
+          {!form.carrierCompanyId && (
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Name *</span>
+              <input className={styles.fieldInput} value={form.name} placeholder="e.g. Own fleet cost structure" onChange={(e) => set('name', e.target.value)} />
+            </label>
+          )}
           <div className={styles.formGrid}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Charging basis</span>

@@ -186,8 +186,12 @@ deliveryRateCards.get('/', async (c) => {
   return c.json({ cards: cards.map((x) => ({ ...x, ruleCount: countById.get(x.id) ?? 0 })) });
 });
 
+/* Owner, 2026-08-01: a carrier's card IS that company's price list, so the New
+   Rate Card form no longer asks for a name — it asks which 3PL. The name is then
+   the company name, resolved server-side so the two can never disagree. A card
+   with no carrier company (own-fleet / cost-structure) still needs one typed. */
 const cardCreateSchema = z.object({
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).max(120).optional(),
   carrierLorryId: z.string().uuid().nullable().optional(),
   carrierCompanyId: z.string().uuid().nullable().optional(),
   carrierLabel: z.string().trim().max(120).nullable().optional(),
@@ -212,9 +216,20 @@ deliveryRateCards.post('/', async (c) => {
   const p = parsed.data;
   const user = c.get('user') as { id?: string } | null;
   const sb = c.get('supabase');
+
+  let cardName = p.name ?? null;
+  if (p.carrierCompanyId) {
+    const { data: carrier } = await scopeToCompanyId(
+      sb.from('threepl_companies').select('id, name'), co.companyId,
+    ).eq('id', p.carrierCompanyId).maybeSingle();
+    if (!carrier) return c.json({ error: 'carrier_not_found', reason: 'That 3PL company does not exist for this company.' }, 404);
+    cardName = String((carrier as Record<string, unknown>).name ?? '') || cardName;
+  }
+  if (!cardName) return c.json({ error: 'name_required', reason: 'Pick a 3PL company, or give the card a name.' }, 400);
+
   const { data, error } = await rc(sb).from('delivery_rate_cards').insert({
     company_id: co.companyId,
-    name: p.name,
+    name: cardName,
     carrier_lorry_id: p.carrierLorryId ?? null,
     carrier_company_id: p.carrierCompanyId ?? null,
     carrier_label: p.carrierLabel ?? null,
@@ -230,7 +245,12 @@ deliveryRateCards.post('/', async (c) => {
     updated_by: user?.id ?? null,
   }).select(CARD_COLS).single();
   if (error) {
-    if (error.code === '23505') return c.json({ error: 'duplicate_name', reason: 'A card with that name already exists.' }, 409);
+    if (error.code === '23505') {
+      const dupCarrier = /carrier_company/i.test(error.message ?? '');
+      return c.json(dupCarrier
+        ? { error: 'duplicate_carrier', reason: 'That 3PL company already has a rate card. Open it to edit the rates.' }
+        : { error: 'duplicate_name', reason: 'A card with that name already exists.' }, 409);
+    }
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
