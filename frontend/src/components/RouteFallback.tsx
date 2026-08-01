@@ -133,7 +133,16 @@ function isStaleChunkError(err: unknown): boolean {
  * build from the network and registers the current SW. Best-effort; always
  * reloads even if a step throws.
  */
-export async function hardRecover(reload = () => window.location.reload()): Promise<void> {
+/* Guarded because hardRecover is FIRE-AND-FORGET: componentDidCatch starts it
+   without awaiting, so its continuation can land after the caller's environment
+   is gone. In a browser `window` is always there; in a torn-down jsdom it is
+   not, and the bare deref threw `ReferenceError: window is not defined` as an
+   unhandled error attributed to whatever test file was running at the time. */
+const defaultReload = () => {
+  if (typeof window !== "undefined") window.location.reload();
+};
+
+export async function hardRecover(reload = defaultReload): Promise<void> {
   const cleanup = async () => {
     try {
       if ("serviceWorker" in navigator) {
@@ -150,10 +159,17 @@ export async function hardRecover(reload = () => window.location.reload()): Prom
   };
   // Browser APIs can hang indefinitely. Reload anyway before the boundary's
   // watchdog exposes the manual recovery panel; the cooldown prevents loops.
-  await Promise.race([
-    cleanup(),
-    new Promise<void>((resolve) => window.setTimeout(resolve, CLEANUP_TIMEOUT_MS)),
-  ]);
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      cleanup(),
+      new Promise<void>((resolve) => { deadline = setTimeout(resolve, CLEANUP_TIMEOUT_MS); }),
+    ]);
+  } finally {
+    // The deadline has done its job the moment the race settles — when cleanup
+    // wins, leaving it pending is a timer that outlives what scheduled it.
+    if (deadline !== undefined) clearTimeout(deadline);
+  }
   reload();
 }
 
