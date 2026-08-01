@@ -1,3 +1,17 @@
+## 2026-08-01
+
+### [HIGH] 2990's whole SO<->PO history reads as "no Assigned SO / no Delivered" - the import renamed the documents but not the text that references them (DIAGNOSED, NOT FIXED)
+
+- **Symptom.** The owner reported that historical 2990 documents lost their cross-links: `2990-PO-2606-001` / `-002` show no ASSIGNED SO, `2990-GRN-2607-029/028/024/021` show neither ASSIGNED SO nor DELIVERED. He insisted the relationship existed operationally - *"我每一张出货单都可以知道它是拿什么单的"* - which contradicted an earlier conclusion that the data was simply never captured.
+- **He was right. Nothing is missing.** Measured on production (`audit-so-po-linkage.mjs`, run 30681300872): of 47 company-2 POs, **ZERO have no evidence at all** - 41 carry a `From SOs:` note and 14 carry a stored `so_item_id`.
+- **Root cause.** `migrate-2990-into-houzs.mjs` rewrites the DOCUMENT NUMBERS on import (`DOCNO_COL` prefixes `mfg_sales_orders.doc_no` and `purchase_orders.po_number` with `2990-`) and rewrites `source_doc_no` on the ledger tables (`PREFIX_REF_COLS`). It rewrites **nothing else**. Two references that are stored as free TEXT inside other columns were left naming the OLD numbers:
+  - `purchase_orders.notes` - **44 of 49** `From SOs:` tokens read `SO-2606-005` while the SO is now `2990-SO-2606-005`. `parseFromSosNote` extracts the token, the company-scoped `mfg_sales_orders.doc_no` lookup in `po-so-coverage.ts` returns nothing, `validDocs` is empty, and stored-origin layer (b2) yields no assignment. **0 tokens dangle** - every one of them resolves once prefixed.
+  - `inventory_lots.batch_no` / `inventory_movements.batch_no` - **24 of 32** distinct batches read `PO-2606-001` while the PO is now `2990-PO-2606-001`, so the `batch_no = po_number` equality behind the delivered DO-lock (layer a) never matches. **0 batches are unmatchable** either way.
+- **Why it looks like data loss and is not.** The physical trail is intact: **25 of the 26 shipped DOs** carry a batch on their OUT or on the lot they consumed, and 100% of DO lot consumptions come from a batched lot. Only the JOIN is broken. The visible symptom is exactly proportional to the mismatch - only **3** POs currently resolve a delivered SO, against 8 whose batch matches as-is and 24 more that would match after a prefix repair.
+- **Class.** A rename is not complete until every representation of the old name is rewritten - including the ones the schema does not model as references. `PREFIX_REF_COLS` names the columns the importer knew about; `notes` and `batch_no` were not among them, and no foreign key existed to make the omission fail loudly.
+- **Fix.** NOT SHIPPED. This entry records the diagnosis; the tiered repair plan (text repair first, only then any `so_item_id` derivation) is in PR #1466 and is the owner's decision, because `batch_no` is an inventory/money-path column.
+- **Ref:** `audit/so-po-linkage` PR #1466, 2026-08-01. Read-only audit script + workflow; no data written.
+
 ## 2026-07-31
 
 ### [HIGH] The amendment approve path could set a Processing Date with no deposit and no address — the gate had no reach there
