@@ -8,6 +8,8 @@ import {
   variantKeyMirror,
   deriveGrnLineBasis,
   planFamilyReconstruction,
+  classifyLotConservation,
+  planSurplusCorrection,
 } from "../scripts/lib/ledger-repair-core.mjs";
 import { toMyrSen } from "../src/scm/lib/fx";
 import { computeVariantKey, type VariantAttrs } from "../src/scm/shared/variant-key";
@@ -425,5 +427,83 @@ describe("planFamilyReconstruction (W4 phase 1) — rebuild dropped consumption 
       lots: [lot("l1", 2, 2, 0, 50, "2026-06-01")],
     });
     expect(v.verdict).toBe("balanced");
+  });
+});
+
+describe("classifyLotConservation (round 3) — one lot against the audit's 2a lens, every arm named", () => {
+  const c = (received: number, consumed: number, remaining: number) =>
+    classifyLotConservation({ qtyReceived: received, consumed, qtyRemaining: remaining });
+
+  test("the round-2 blind spot: SURPLUS — rows exist, remaining never decremented (residual < 0)", () => {
+    const v = c(5, 2, 5);
+    expect(v).toMatchObject({ verdict: "surplus", residual: -2 });
+  });
+
+  test("DEFICIT — rows missing (residual > 0), the original reconstruct shape", () => {
+    expect(c(5, 0, 3)).toMatchObject({ verdict: "deficit", residual: 2 });
+  });
+
+  test("over-consumed (consumed > received) is its own refusal — a decrement cannot conserve it", () => {
+    expect(c(3, 5, 0).verdict).toBe("over-consumed");
+  });
+
+  test("negative remaining / negative received are corrupt quantities, not repair candidates", () => {
+    expect(c(5, 3, -1).verdict).toBe("negative-remaining");
+    expect(c(-1, 0, 0).verdict).toBe("negative-received");
+  });
+
+  test("a conserving lot classifies as conserves — the audit would never have flagged it", () => {
+    expect(c(5, 2, 3).verdict).toBe("conserves");
+  });
+
+  test("EXHAUSTIVE AGREEMENT with the audit's 2a WHERE: flagged iff not conserves", () => {
+    // The audit's four arms, in JS: any of them true <=> our verdict != conserves.
+    for (let received = -1; received <= 4; received++) {
+      for (let consumed = 0; consumed <= 5; consumed++) {
+        for (let remaining = -1; remaining <= 4; remaining++) {
+          const auditFlags = received - consumed !== remaining
+            || remaining < 0 || consumed > received || received < 0;
+          const v = c(received, consumed, remaining);
+          expect(v.verdict !== "conserves", `r=${received} c=${consumed} rem=${remaining}`).toBe(auditFlags);
+        }
+      }
+    }
+  });
+});
+
+describe("planSurplusCorrection (round 3) — restore remaining = received - consumed, only over honest rows", () => {
+  const refs = (over: Partial<{ movementId: string | null; exists: boolean; absQty: number; consumedTotal: number }> = {}) => [{
+    movementId: "m1", exists: true, absQty: 2, consumedTotal: 2, ...over,
+  }];
+
+  test("THE XAMMAR SURPLUS: received 5, consumed 2 by real movements, remaining still 5 -> remaining 3, delta 2", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs() });
+    expect(v).toEqual({ verdict: "correct", newRemaining: 3, delta: 2 });
+  });
+
+  test("a consumption row with NO movement_id is untraceable evidence — refused", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs({ movementId: null }) });
+    expect(v.verdict).toBe("orphan-consumptions");
+  });
+
+  test("a referenced movement that does not exist refuses — the rows point at nothing", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs({ exists: false }) });
+    expect(v).toMatchObject({ verdict: "missing-movement", missing: ["m1"] });
+  });
+
+  test("a movement consuming MORE than it moved refuses — audit 10c says the rows lie", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs({ absQty: 1, consumedTotal: 2 }) });
+    expect(v).toMatchObject({ verdict: "over-attribution", over: ["m1"] });
+  });
+
+  test("consumed beyond received cannot be conserved by a decrement — refused (belt on the classify arm)", () => {
+    const v = planSurplusCorrection({ qtyReceived: 2, consumed: 5, qtyRemaining: 0, referencedMovements: refs({ absQty: 5, consumedTotal: 5 }) });
+    expect(v.verdict).toBe("over-consumed");
+  });
+
+  test("idempotence: after the correction the lot conserves and classify says so", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs() });
+    expect(v.verdict).toBe("correct");
+    expect(classifyLotConservation({ qtyReceived: 5, consumed: 2, qtyRemaining: (v as { newRemaining: number }).newRemaining }).verdict).toBe("conserves");
   });
 });

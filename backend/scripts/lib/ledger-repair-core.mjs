@@ -230,6 +230,67 @@ export function classifyMovementRelabel({
   return { ...base, verdict: "out-of-scope" };
 }
 
+/** W4 phase 1, round 3 (live run 2026-08-01) — classify ONE lot against the
+ *  COSTING AUDIT'S OWN 2a lens. Round 2's candidate query used
+ *  `received - consumed - remaining > 0` (deficit only — the missing-rows
+ *  hypothesis) while the audit's 2a is `received - consumed <> remaining` OR
+ *  three more arms — so reconstruct reported "every lot conserves" on the
+ *  same day the audit counted 13. The two tools must never disagree: the
+ *  runner now lifts the audit's WHERE verbatim, and THIS rule names which arm
+ *  a candidate violates and which repair (if any) is provable:
+ *    deficit            received - consumed - remaining > 0 — consumption
+ *                       rows are MISSING; planFamilyReconstruction pairs them
+ *    surplus            residual < 0 with consumed <= received — the rows
+ *                       EXIST but qty_remaining was never decremented (the
+ *                       import double-count); planSurplusCorrection restores
+ *                       the trigger invariant remaining = received - consumed
+ *    over-consumed      consumed > received — no decrement can conserve this
+ *                       lot (remaining would go negative); owner review
+ *    negative-remaining / negative-received — corrupt quantities; owner review
+ *    conserves          not a candidate (the audit would not have flagged it) */
+export function classifyLotConservation({ qtyReceived, consumed, qtyRemaining }) {
+  const received = Number(qtyReceived ?? 0);
+  const cons = Number(consumed ?? 0);
+  const remaining = Number(qtyRemaining ?? 0);
+  const residual = received - cons - remaining;
+  const base = { received, consumed: cons, remaining, residual };
+  if (received < 0) return { ...base, verdict: "negative-received" };
+  if (remaining < 0) return { ...base, verdict: "negative-remaining" };
+  if (cons > received) return { ...base, verdict: "over-consumed" };
+  if (residual > 0) return { ...base, verdict: "deficit" };
+  if (residual < 0) return { ...base, verdict: "surplus" };
+  return { ...base, verdict: "conserves" };
+}
+
+/** W4 phase 1, the SURPLUS repair — a lot whose consumption rows exist but
+ *  whose qty_remaining was never decremented holds the same units twice (once
+ *  consumed, once on hand). The provable correction restores the FIFO
+ *  trigger's own invariant: remaining := received - consumed. Refused unless
+ *  every consumption row is traceable and honest:
+ *    orphan-consumptions  a row with movement_id NULL asserts consumption by
+ *                         nothing traceable
+ *    missing-movement     a row references a movement that does not exist
+ *    over-attribution     a referenced movement's total consumed exceeds its
+ *                         own |qty| (audit 10c — the rows themselves lie)
+ *    over-consumed        consumed > received (no non-negative remaining)
+ *  On "correct": { newRemaining, delta } — delta is the double-counted
+ *  on-hand units removed; the CALLER prices it (delta x unit cost) and prints
+ *  the inventory-value impact. COGS does not move: the consumption rows
+ *  already booked it. */
+export function planSurplusCorrection({ qtyReceived, consumed, qtyRemaining, referencedMovements = [] }) {
+  const received = Number(qtyReceived ?? 0);
+  const cons = Number(consumed ?? 0);
+  const remaining = Number(qtyRemaining ?? 0);
+  const newRemaining = received - cons;
+  if (newRemaining < 0) return { verdict: "over-consumed", newRemaining };
+  if (referencedMovements.some((m) => m.movementId == null)) return { verdict: "orphan-consumptions" };
+  const missing = referencedMovements.filter((m) => !m.exists);
+  if (missing.length > 0) return { verdict: "missing-movement", missing: missing.map((m) => m.movementId) };
+  const over = referencedMovements.filter((m) => Number(m.consumedTotal ?? 0) > Math.abs(Number(m.absQty ?? 0)));
+  if (over.length > 0) return { verdict: "over-attribution", over: over.map((m) => m.movementId) };
+  return { verdict: "correct", newRemaining, delta: remaining - newRemaining };
+}
+
 /** W4 phase 1 (live run 2026-08-01) — RECONSTRUCT the consumption rows the
  *  2990 import dropped. The relabel's dry run refused every XAMMAR movement
  *  with `no-lot-evidence`: the OUT movements carry qty and (mostly) cost, the

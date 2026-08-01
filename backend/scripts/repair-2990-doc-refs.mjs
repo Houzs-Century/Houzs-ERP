@@ -110,6 +110,7 @@ import {
   rewriteFromSosNote,
 } from "./lib/doc-ref-repair-core.mjs";
 import { classifyGrnInboundGap, deriveGrnLineBasis } from "./lib/ledger-repair-core.mjs";
+import { execIdRestamp, printIdRestampExec } from "./lib/id-restamp-exec.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const PART = (process.env.PART || "all").trim().toLowerCase();
@@ -893,134 +894,23 @@ async function planIdRestamp(codeById) {
   if (plan.length > 0) {
     log("");
     log("  --- collision preview (writes exercised, then ROLLED BACK — nothing persisted) ---");
-    const preview = await execIdRestamp(plan, false);
-    printIdRestampExec(preview, false);
+    const preview = await execIdRestamp(pg, plan, { commit: false });
+    printIdRestampExec(preview, false, log);
   }
   return { plan, tally };
 }
 
-/* Collision-aware executor for the id restamp — ONE transaction, a SAVEPOINT
-   per row (live run 2026-08-01: the first APPLY died on
-   uq_inv_mov_do_source — a dangling movement restamped to the real DO id
-   collided with a movement the real document ALREADY carries. That orphan is
-   an import DUPLICATE of a real movement, not a mis-id: repointing it would
-   double the document's ledger, which is exactly what the unique index —
-   applied straight to prod in PR #674, so its definition is not in this tree —
-   exists to reject.)
-
-   Per movement row: try the UPDATE under a savepoint; a unique-constraint
-   raise (SQLSTATE 23505) rolls back TO THE SAVEPOINT only and files the row
-   under `duplicate-of-real` — reported, never deleted (removal is a separate
-   explicit decision; note the row's dangling id therefore STILL counts in
-   audit section 4, now as a CLASSIFIED finding). Every other row applies.
-   A consumption row FOLLOWS its movement: if its movement was refused as a
-   duplicate, the consumption is skipped with it (`follows-duplicate`) so the
-   pair never disagrees about its parent. Consumption rows of clean movements
-   restamp under the same per-row savepoint (no unique index is known on that
-   table; the savepoint is the belt for one appearing).
-
-   `commit=false` exercises the IDENTICAL writes and rolls the transaction
-   back at the end — the dry run's per-row verdicts are therefore the applied
-   truth, not a prediction. The UPDATEs fire no triggers (audit section 0a:
-   zero UPDATE-firing triggers on the ledger tables). */
-async function execIdRestamp(plan, commit) {
-  const out = { movements: 0, consumptions: 0, duplicates: [], followDuplicates: [], casSkipped: 0 };
-  if (plan.length === 0) return out;
-  try {
-    await pg.begin(async (tx) => {
-      for (const p of plan) {
-        const danglingIds = p.idWrites.filter((w) => w.action === "restamp").map((w) => w.id);
-        const movRows = await tx`
-          SELECT id::text AS id, source_doc_id::text AS doc_id
-            FROM scm.inventory_movements
-           WHERE company_id = ${p.companyId} AND source_doc_type = ${p.docType}
-             AND source_doc_no = ${p.docNo} AND source_doc_id::text = ANY(${danglingIds})
-           ORDER BY id`;
-        const skippedMovementIds = new Set();
-        for (const r of movRows) {
-          await tx.unsafe("SAVEPOINT sp_id_restamp");
-          try {
-            const u = await tx`
-              UPDATE scm.inventory_movements SET source_doc_id = ${p.resolvedDocId}::uuid
-               WHERE id = ${r.id}::uuid AND source_doc_id::text = ${r.doc_id}`;
-            await tx.unsafe("RELEASE SAVEPOINT sp_id_restamp");
-            if (u.count === 1) out.movements += 1;
-            else out.casSkipped += 1;
-          } catch (e) {
-            await tx.unsafe("ROLLBACK TO SAVEPOINT sp_id_restamp");
-            if (e?.code === "23505") {
-              skippedMovementIds.add(r.id);
-              out.duplicates.push({
-                table: "inventory_movements", rowId: r.id, group: `${p.docType} ${p.docNo}`,
-                oldId: r.doc_id, resolvedDocId: p.resolvedDocId,
-                constraint: e.constraint_name ?? "(unique index)",
-              });
-            } else throw e;
-          }
-        }
-        const consRows = await tx`
-          SELECT id::text AS id, source_doc_id::text AS doc_id, movement_id::text AS movement_id
-            FROM scm.inventory_lot_consumptions
-           WHERE company_id = ${p.companyId} AND source_doc_type = ${p.docType}
-             AND source_doc_no = ${p.docNo} AND source_doc_id::text = ANY(${danglingIds})
-           ORDER BY id`;
-        for (const r of consRows) {
-          if (r.movement_id != null && skippedMovementIds.has(r.movement_id)) {
-            out.followDuplicates.push({ rowId: r.id, movementId: r.movement_id, group: `${p.docType} ${p.docNo}` });
-            continue;
-          }
-          await tx.unsafe("SAVEPOINT sp_id_restamp");
-          try {
-            const u = await tx`
-              UPDATE scm.inventory_lot_consumptions SET source_doc_id = ${p.resolvedDocId}::uuid
-               WHERE id = ${r.id}::uuid AND source_doc_id::text = ${r.doc_id}`;
-            await tx.unsafe("RELEASE SAVEPOINT sp_id_restamp");
-            if (u.count === 1) out.consumptions += 1;
-            else out.casSkipped += 1;
-          } catch (e) {
-            await tx.unsafe("ROLLBACK TO SAVEPOINT sp_id_restamp");
-            if (e?.code === "23505") {
-              out.duplicates.push({
-                table: "inventory_lot_consumptions", rowId: r.id, group: `${p.docType} ${p.docNo}`,
-                oldId: r.doc_id, resolvedDocId: p.resolvedDocId,
-                constraint: e.constraint_name ?? "(unique index)",
-              });
-            } else throw e;
-          }
-        }
-      }
-      if (!commit) throw { __rollback: true };
-    });
-  } catch (e) {
-    if (!(e && e.__rollback)) throw e;
-  }
-  return out;
-}
-
-function printIdRestampExec(out, committed) {
-  const verb = committed ? "" : "WOULD ";
-  log(`  ${verb}restamp: inventory_movements=${out.movements} row(s), inventory_lot_consumptions=${out.consumptions} row(s)`);
-  if (out.duplicates.length) {
-    log(`  duplicate-of-real — restamp REFUSED by the ledger's own unique index (${out.duplicates.length} row(s)); left in place, NOT deleted:`);
-    for (const d of out.duplicates) {
-      log(`    ${d.table} ${d.rowId}  (${d.group}, dangling id ${d.oldId}): restamping to ${d.resolvedDocId} violates ${d.constraint} — the real document already carries this movement; this row is an import DUPLICATE. Removal is a separate, explicit decision; until then it still counts in audit section 4, now classified.`);
-    }
-  }
-  if (out.followDuplicates.length) {
-    log(`  consumptions following a duplicate movement (skipped together so the pair keeps one parent): ${out.followDuplicates.length}`);
-    for (const f of out.followDuplicates) log(`    consumption ${f.rowId} follows movement ${f.movementId} (${f.group})`);
-  }
-  if (out.casSkipped) log(`  rows skipped by the compare-and-set (changed since the plan): ${out.casSkipped} — re-run the dry run.`);
-}
-
+/* The collision-aware executor lives in lib/id-restamp-exec.mjs so the REAL
+   code — pair-wise savepoints, self-collision classification, the poisoned-
+   transaction probe — runs under tests-pg against a real Postgres with a real
+   unique index (two live APPLY failures, 2026-08-01, are the reason: see the
+   lib header and BUG-HISTORY). The script keeps only the wiring. */
 async function applyIdRestamp(plan) {
-  const out = await execIdRestamp(plan, true);
-  printIdRestampExec(out, true);
+  const out = await execIdRestamp(pg, plan, { commit: true });
+  printIdRestampExec(out, true, log);
   return out;
 }
 
-// ── A5 — PART=grn-gap: insert the missing IN movement a posted GRN is short ──
-const GRN_GAP_MARKER = "repair:grn-inbound-gap";
 
 async function planGrnGap() {
   log("");
