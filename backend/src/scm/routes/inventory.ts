@@ -1243,14 +1243,18 @@ inventory.get('/reservations', async (c) => {
   }
 
   // 3. Index READY demand two ways to mirror the allocator's two match paths.
-  type Claim = { docNo: string; soCreatedAt: string | null; qtyReady: number; deliveryDate: string | null };
+  //    `viaBatch` marks a claim the allocator locked to ONE batch (sofa,
+  //    allocated_batch_no) as opposed to a bucket-level QUANTITY claim (every
+  //    other category — so-stock-allocation fills those from a qty bucket and
+  //    FIFO picks the physical lot only at DO time).
+  type Claim = { docNo: string; soCreatedAt: string | null; qtyReady: number; deliveryDate: string | null; viaBatch: boolean };
   const byBatch = new Map<string, Claim[]>();   // key: `${batch_no}|${item_code}`
   const byBucket = new Map<string, Claim[]>();  // key: `${warehouse_id}|${item_code}|${variant_key}`
   for (const r of readyRows) {
     const so = Array.isArray(r.so) ? r.so[0] : r.so;
     const deliveryDate = (so?.amended_delivery_date ?? so?.customer_delivery_date) ?? null;
-    const claim: Claim = { docNo: r.doc_no, soCreatedAt: so?.created_at ?? null, qtyReady: Number(r.stock_qty_ready ?? 0), deliveryDate };
     const bn = r.allocated_batch_no ?? null;
+    const claim: Claim = { docNo: r.doc_no, soCreatedAt: so?.created_at ?? null, qtyReady: Number(r.stock_qty_ready ?? 0), deliveryDate, viaBatch: Boolean(bn) };
     if (bn) {
       const k = `${bn}|${r.item_code}`;
       (byBatch.get(k) ?? byBatch.set(k, []).get(k)!).push(claim);
@@ -1332,12 +1336,23 @@ inventory.get('/reservations', async (c) => {
     console.error('[inventory] reservations MRP assignment failed (degraded to all-free):', e instanceof Error ? e.message : e);
   }
 
-  // 4. One row per open lot, tagged RESERVED (claimed by ≥1 READY SO) or FREE.
+  // 4. One row per open lot, tagged RESERVED (claimed by ≥1 READY SO, or
+  //    MRP-assigned — see the status note below) or FREE.
   const reservations = lots.map((l) => {
     const vk = l.variant_key ?? '';
+    /* Audit D8 (2026-08-01). The old lookup was `l.batch_no ? byBatch : byBucket`
+       — but only SOFA claims ever carry allocated_batch_no, while EVERY
+       GRN-received lot carries batch_no (= the PO number, mig 0120). So a
+       batched non-sofa lot always looked up an empty byBatch and rendered
+       FREE, even while the same row's MRP-derived assigned_qty said otherwise.
+       A batched lot now sees its OWN batch's locked claims PLUS the bucket's
+       batchless QUANTITY claims (FIFO can serve those from any lot of the
+       bucket, this one included). Another batch's locked claims still never
+       reach it, and an unbatched lot keeps the full bucket view it had. */
+    const bucketClaims = byBucket.get(`${l.warehouse_id}|${l.product_code}|${vk}`) ?? [];
     const claims = l.batch_no
-      ? (byBatch.get(`${l.batch_no}|${l.product_code}`) ?? [])
-      : (byBucket.get(`${l.warehouse_id}|${l.product_code}|${vk}`) ?? []);
+      ? [...(byBatch.get(`${l.batch_no}|${l.product_code}`) ?? []), ...bucketClaims.filter((cl) => !cl.viaBatch)]
+      : bucketClaims;
     // Collapse to one entry per SO doc; reserved-since = earliest claiming SO.
     const byDoc = new Map<string, Claim>();
     for (const cl of claims) {
@@ -1379,7 +1394,11 @@ inventory.get('/reservations', async (c) => {
       // Source-based consignment classification — the drawer separates these
       // lots and drops them from OWNED value (never the warehouse flag).
       is_consignment: isConsignment,
-      status: reservedBy.length > 0 ? 'RESERVED' : 'FREE',
+      // Audit D8 — status must never contradict this same row's assigned_qty:
+      // RESERVED when a READY SO hard-claims the lot OR the MRP allocation
+      // assigns any of its units. (No PARTIAL value exists on this contract —
+      // the exact split is already on assigned_qty / free_qty.)
+      status: reservedBy.length > 0 || assignedQty > 0 ? 'RESERVED' : 'FREE',
       reserved_by: reservedBy.map((x) => ({
         doc_no: x.docNo, so_created_at: x.soCreatedAt, qty_ready: x.qtyReady, delivery_date: x.deliveryDate,
       })),

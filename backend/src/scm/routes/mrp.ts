@@ -90,13 +90,45 @@ import type { Env, Variables } from '../env';
 export const mrp = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrp.use('*', supabaseAuth);
 
-/* SO statuses that no longer create demand (already shipped / closed). */
-const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'DRAFT']);
+/* SO statuses that no longer create demand (already shipped / closed).
+   SHIPPED is included (MRP pairing audit D4, 2026-08-01): rank 4 on the SO
+   ladder means the goods have left the building — every other consumer of
+   "does this SO still demand stock" already treats it as done
+   (so-stock-allocation.ts excludes it from allocation, the /inventory/
+   reservations SO_DONE drops its claims, the amendment flow calls it
+   terminal). MRP was the lone outlier, still planning purchases for orders
+   marked shipped. The audit measured ZERO live SHIPPED-status lines still
+   demanding, so aligning changes no current figure. */
+const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'DRAFT', 'SHIPPED']);
 /* PO statuses that no longer supply goods. DRAFT is included: a draft PO is
    not yet committed, so it must NOT count as incoming supply — otherwise a
    draft PO would make an SO line look "covered" and hide a real shortage from
    MRP + the From-SO shortage cap (leak guard, Draft/Confirmed rollout). */
 const PO_DEAD = new Set(['CANCELLED', 'DRAFT']);
+
+/* Row ceiling on the demand and PO-supply reads (audit D3, 2026-08-01). The
+   `.limit(5000)` used to land on EVERY row in an unspecified order with no
+   error when crossed — the plan silently computed over a slice. Both reads now
+   (a) push the status filters into SQL so the cap only ever counts rows that
+   can matter, (b) carry a deterministic ORDER BY so a slice is at least
+   stable, and (c) FAIL LOUDLY when the row count reaches the cap: a truncated
+   plan is a wrong plan, and wrong-but-plausible is the worst failure mode a
+   planning page can have. The audit measured ~100 PO rows / well under the cap
+   on the demand side, so the throw is pure forward-safety today.
+
+   PostgREST filter notes, because the syntax is the trap: the status columns
+   live on the EMBEDDED (aliased, !inner-joined) parent, so the filter path is
+   the alias ('so.status' / 'po.status') and the not-in list uses the quoted
+   form so-delivery-sync.ts already proved in production. A NULL-status header
+   is dropped by `not.in` (NULL never passes a NOT IN) — for demand that is
+   exactly so-stock-allocation.ts's own SQL behaviour, so the two engines now
+   agree on that edge too; the JS-side SO_DONE/PO_DEAD filters below remain the
+   authoritative gate for everything the SQL cannot express. */
+const MRP_LOAD_CAP = 5000;
+const sqlNotInList = (statuses: Iterable<string>): string =>
+  `(${[...statuses].map((s) => `"${s}"`).join(',')})`;
+const SO_DONE_SQL = sqlNotInList(SO_DONE);
+const PO_DEAD_SQL = sqlNotInList(PO_DEAD);
 
 type DemandRow = {
   id: string;
@@ -454,6 +486,12 @@ export async function computeMrp(
   opts: {
     catFilter: string | null;
     whFilter: string | null;
+    /* VISIBILITY of undated demand lines in the returned rows — NOT a demand
+       filter. The allocation always runs over the full active set (undated
+       sorts last), so two callers with different flags still read the SAME
+       allocation; false merely omits the undated rows/sets from the output
+       (audit D6, 2026-08-01 — this is what makes po-so-coverage's "SO->PO and
+       PO->SO can never disagree" claim hold across pages). */
     includeUndated: boolean;
     /* WHICH COMPANY'S BOOKS. REQUIRED — `null` is the explicit "no company
        scoping" (single-company Houzs / pre-migration / cold-start), and it must
@@ -542,22 +580,41 @@ export async function computeMrp(
     );
 
   // ── 1. Demand — outstanding SO lines ──────────────────────────────────
+  // Status filter pushed into SQL (see MRP_LOAD_CAP) so done SOs never spend
+  // the row budget; ORDER BY id so the read is deterministic; length == cap
+  // throws rather than planning on a silent slice.
   const { data: demandRaw, error: demandErr } = await scoped(sb
     .from('mfg_sales_order_items')
     .select(`
       id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_no, created_at, cancelled,
       so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, internal_expected_dd, customer_state, sales_location )
     `)
-    .eq('cancelled', false))
-    .limit(5000);
+    .eq('cancelled', false)
+    .not('so.status', 'in', SO_DONE_SQL))
+    .order('id')
+    .limit(MRP_LOAD_CAP);
   if (demandErr) throw new Error(`mrp_load_failed: ${demandErr.message}`);
+  if (((demandRaw ?? []) as unknown[]).length >= MRP_LOAD_CAP) {
+    throw new Error(`mrp_load_truncated: demand read returned ${MRP_LOAD_CAP} rows (the cap) — the plan would silently ignore every row past it. Raise the cap or page the read.`);
+  }
 
+  /* Undated lines (no line delivery date AND no SO delivery date) are not
+     ready to order, so the MRP page hides them by default — but they are STILL
+     DEMAND, and audit D6 (2026-08-01) proved the old shape of this switch let
+     two screens disagree: excluding them from the ALLOCATION itself meant the
+     page (includeUndated=false) and the SO drill-down / PO Assigned-SO
+     (includeUndated=true) computed over two different demand sets, breaking
+     po-so-coverage.ts's "ONE allocation, both sides" claim. Now there is ONE
+     allocation, always over the FULL active set — undated lines sort LAST
+     (null dates sort after every real date, see byDateAsc), so they can never
+     take supply from a dated line and every dated line's coverage is IDENTICAL
+     under both flag values. `includeUndated` only controls whether undated
+     rows appear in the RESULT (visibility, not math). */
   const demandActive = ((demandRaw ?? []) as unknown as DemandRow[]).filter(
-    (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && r.qty > 0
-      // Undated lines (no line delivery date AND no SO delivery date) are not
-      // ready to order — drop them unless the caller explicitly asks for them.
-      && (includeUndated || Boolean(r.line_delivery_date ?? r.so.customer_delivery_date)),
+    (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && r.qty > 0,
   );
+  const isDatedLine = (r: DemandRow): boolean =>
+    Boolean(r.line_delivery_date ?? r.so?.customer_delivery_date);
 
   // A partially-delivered SO keeps its header status active (the header only
   // flips to DELIVERED once EVERY line is fully covered), so already-delivered
@@ -677,15 +734,25 @@ export async function computeMrp(
   // ── 4. Outstanding PO supply — open PO lines with ETA, keyed by (warehouse, code, variant) ──
   // Each PO line's ship-to warehouse = line warehouse_id, falling back to the PO
   // header's purchase_location_id. No SO↔PO linkage — supply is a pure pool.
-  const { data: poRaw } = await scoped(sb
+  // Dead-PO filter pushed into SQL + deterministic ORDER BY + loud truncation
+  // guard (see MRP_LOAD_CAP). The read error is THROWN now, too: it used to be
+  // silently discarded, and a failed supply read produced a plan with ZERO PO
+  // supply — phantom shortage everywhere, rendered as if it were true.
+  const { data: poRaw, error: poErr } = await scoped(sb
     .from('purchase_order_items')
     .select(`
       material_code, item_group, variants, qty, received_qty, delivery_date,
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
       warehouse_id, so_item_id,
       po:purchase_orders!inner ( po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id, supplier_id )
-    `))
-    .limit(5000);
+    `)
+    .not('po.status', 'in', PO_DEAD_SQL))
+    .order('id')
+    .limit(MRP_LOAD_CAP);
+  if (poErr) throw new Error(`mrp_load_failed: ${poErr.message}`);
+  if (((poRaw ?? []) as unknown[]).length >= MRP_LOAD_CAP) {
+    throw new Error(`mrp_load_truncated: PO supply read returned ${MRP_LOAD_CAP} rows (the cap) — the plan would silently ignore every row past it. Raise the cap or page the read.`);
+  }
   // Commander 2026-05-31 — carry the covering PO's supplier so a covered line
   // can display it read-only (a raised PO's supplier is fixed). Name resolved
   // from the suppliers map below.
@@ -893,7 +960,6 @@ export async function computeMrp(
     let qtyNeeded = 0;
     for (const r of rows) {
       const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered + returned)
-      qtyNeeded += eff;
       let need = eff;
       const fromStock = Math.min(stockLeft, need);
       stockLeft -= fromStock;
@@ -911,6 +977,13 @@ export async function computeMrp(
         need -= take;
         if (front.qtyLeft <= 0) poQueue.shift();
       }
+
+      /* Audit D6 — the allocation above ALWAYS runs (undated rows sort last, so
+         they only ever consume what dated rows left behind); visibility is the
+         only thing the flag controls. A hidden row's consumption stands so the
+         one allocation is identical for every caller. */
+      if (!includeUndated && !isDatedLine(r)) continue;
+      qtyNeeded += eff;
 
       // need>0 → still uncovered (SHORT). need==0 → covered by a pooled PO
       // (poNumber set) or by stock.
@@ -939,6 +1012,11 @@ export async function computeMrp(
         poSupplierName: source === 'po' && poSupplierId ? (supplierNameById.get(poSupplierId) ?? null) : null,
       });
     }
+
+    // Every row of this bucket is hidden (undated demand, caller hides undated):
+    // no visible line means no row — exactly what the old exclude-from-demand
+    // shape produced, minus the divergent allocation.
+    if (lines.length === 0) continue;
 
     const stock = stockByKey.get(k) ?? 0;
     const poOutstanding = (poOutstandingByKey.get(k) ?? 0)
@@ -988,7 +1066,7 @@ export async function computeMrp(
   // sofa demand into per-bucket queues so two sets sharing a fabric+seat+leg
   // bucket compete for one stock pool (the variant key ignores module layout).
   const sstr = (v: unknown): string => (v == null ? '' : String(v).trim());
-  type SofaBucket = { whId: string | null; rows: DemandRow[] };
+  type SofaBucket = { whId: string | null; code: string; vkey: string; rows: DemandRow[] };
   const sofaByKey = new Map<string, SofaBucket>();
   for (const d of demand) {
     /* Audit 2026-06-20 — mirror section 6's catFromGroup fallback (line 468):
@@ -999,15 +1077,16 @@ export async function computeMrp(
     if (sofaCat !== 'SOFA') continue;
     if (whFilter && (d.warehouse_id ?? null) !== whFilter) continue;
     const whId = d.warehouse_id ?? null;
-    const k = composite(whId, d.item_code, variantKeyOf(d.item_group, d.variants));
-    const bucket = sofaByKey.get(k) ?? { whId, rows: [] };
+    const vkey = variantKeyOf(d.item_group, d.variants);
+    const k = composite(whId, d.item_code, vkey);
+    const bucket = sofaByKey.get(k) ?? { whId, code: d.item_code, vkey, rows: [] };
     bucket.rows.push(d);
     sofaByKey.set(k, bucket);
   }
 
   const sofaSets: SofaSet[] = [];
   for (const [k, bucket] of sofaByKey.entries()) {
-    const { whId, rows } = bucket;
+    const { whId, code, vkey, rows } = bucket;
     const wh = whId ? whById.get(whId) : null;
     // Same deterministic tie-break as section 7: equal delivery date → SO doc
     // number ascending, so same-day sofa allocation is stable.
@@ -1018,9 +1097,21 @@ export async function computeMrp(
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
     let stockLeft = stockByKey.get(k) ?? 0;
-    const poQueue: PoSupply[] = [...(poByKey.get(k) ?? [])]
-      .map((p) => ({ ...p }))
-      .sort((a, b) => byDateAsc(a.eta, b.eta));
+    /* Audit D2 (2026-08-01) — the sofa path never folded in the same-warehouse
+       EMPTY-variant legacy PO pool, so an open legacy-'' sofa PO was invisible
+       here and the set read as a phantom shortage (over-ordering the same
+       goods twice). Mirror of section 7's R4-guarded fallback, EXACTLY: the
+       legacy pool answers ONLY when this variant bucket has no PO supply of
+       its own — never on top of it (that is the R4 double-count). The audit
+       measured 0 live (warehouse,item) groups drawing one legacy pool from
+       more than one bucket, so this is forward-safety, not a live repair. */
+    const legacyKey = composite(whId, code, '');
+    const ownPo = poByKey.get(k) ?? [];
+    const useLegacy = vkey !== '' && legacyKey !== k && ownPo.length === 0;
+    const poQueue: PoSupply[] = [
+      ...ownPo,
+      ...(useLegacy ? (poByKey.get(legacyKey) ?? []) : []),
+    ].map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
 
     for (const d of rows) {
       const v = (d.variants ?? {}) as Record<string, unknown>;
@@ -1054,6 +1145,10 @@ export async function computeMrp(
         if (front.qtyLeft <= 0) poQueue.shift();
       }
       const ordered = eff - need;                     // covered by pooled stock+PO
+
+      /* Audit D6 — same rule as section 7: the allocation above always runs;
+         the flag only controls whether the (undated) set is rendered. */
+      if (!includeUndated && !isDatedLine(d)) continue;
 
       sofaSets.push({
         variantKey: variantKeyOf(d.item_group, v),
@@ -1295,8 +1390,11 @@ mrp.get('/', async (c) => {
   const catFilter = category && category !== 'all' ? category.toUpperCase() : null;
   const whFilter = warehouseId && warehouseId !== 'all' ? warehouseId : null;
   // Commander 2026-05-29 — an SO line with NO delivery date means the customer
-  // isn't ready for goods yet, so it shouldn't drive ordering. Exclude undated
-  // demand by default; ?includeUndated=true brings it back for a full view.
+  // isn't ready for goods yet, so it shouldn't drive ordering. HIDE undated
+  // demand by default; ?includeUndated=true shows it. Since audit D6
+  // (2026-08-01) the flag is display-only: the allocation itself always runs
+  // over the full demand set (undated last), so this page, the SO drill-down
+  // and the PO Assigned-SO column read ONE identical allocation.
   const includeUndated = c.req.query('includeUndated') === 'true';
   try {
     const result = await computeMrp(sb, { catFilter, whFilter, includeUndated, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });

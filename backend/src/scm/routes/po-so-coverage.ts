@@ -27,6 +27,11 @@
 //       disagree (ONE allocation, both sides). Matched by SKU, carrying the
 //       covered SO line's delivery date. This is why a PO with matching demand
 //       shows its SO(s) even when it was NOT converted-from-SO.
+//       Since 2026-08-01 (audit D6) the claim holds across EVERY caller, not
+//       just these two: includeUndated is display-only in computeMrp — the
+//       allocation always runs over the full demand set (undated last), so
+//       the MRP page (false) and this route (true) read one identical
+//       allocation and can only differ in which rows they RENDER.
 //   (d) none -> the line renders a dash.
 //
 // #1246 regression this fixes: #1246 dropped (c) and served (b) ONLY, so a PO

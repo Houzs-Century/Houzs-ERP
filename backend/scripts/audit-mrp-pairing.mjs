@@ -82,8 +82,11 @@ const catFromGroup = (g) => {
   return null;
 };
 
-/* ── ported: mrp.ts L94-99 ───────────────────────────────────────────────── */
-const SO_DONE = new Set(["DELIVERED", "INVOICED", "CLOSED", "CANCELLED", "DRAFT"]);
+/* ── ported: mrp.ts SO_DONE / PO_DEAD ────────────────────────────────────────
+   SHIPPED added 2026-08-01 (fix/mrp-consistency-tails, audit D4): the engine now
+   treats a SHIPPED SO as done, matching so-stock-allocation + /inventory/
+   reservations. Keep this replica in lockstep or its figures lie. */
+const SO_DONE = new Set(["DELIVERED", "INVOICED", "CLOSED", "CANCELLED", "DRAFT", "SHIPPED"]);
 const PO_DEAD = new Set(["CANCELLED", "DRAFT"]);
 
 /* ── ported: mrp.ts L171-173 ─────────────────────────────────────────────── */
@@ -210,12 +213,13 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
     if (!seen || p.company_id === companyId) prodByCode.set(p.code, p);
   }
 
-  /* mrp.ts includeUndated=false on the page; the po-so-coverage callers pass
-     TRUE. Audit the page's default and report the undated set separately. */
+  /* Since 2026-08-01 (audit D6 fix) includeUndated is DISPLAY-ONLY in mrp.ts:
+     the engine always allocates the FULL active set, undated rows last (null
+     dates sort after every real date). Replicate that — one allocation — and
+     report the undated slice separately as the page-visibility note. */
   const activeAll = demandRaw.filter((r) => r.item_code && !SO_DONE.has(snorm(r.so_status)) && num(r.qty) > 0);
   const undated = activeAll.filter((r) => !(r.line_delivery_date ?? r.customer_delivery_date));
-  const demandActive = activeAll.filter((r) => Boolean(r.line_delivery_date ?? r.customer_delivery_date));
-  const demand = demandActive.filter((r) => effQtyOf(r) > 0);
+  const demand = activeAll.filter((r) => effQtyOf(r) > 0);
 
   /* warehouse follows the SO — mrp.ts L632-662 */
   let whFromLine = 0, whFromSo = 0, whUnresolved = 0;
@@ -361,21 +365,19 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
       const rows = sortRows(bucket.rows);
       let stockLeft = stockByKey.get(k) ?? 0;
       const ownPo = poByKey.get(k) ?? [];
-      let poQueue;
-      if (isSofa) {
-        poQueue = ownPo.map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
-      } else {
-        /* mrp.ts L884-890 — the legacy '' fallback pool. */
-        const legacyKey = composite(whId, code, "");
-        const useLegacy = vkey !== "" && legacyKey !== k && ownPo.length === 0;
-        if (useLegacy && (poByKey.get(legacyKey) ?? []).length > 0) {
-          const gk = `${whId ?? WH_NONE}|${code}`;
-          const arr = legacyUseByWhCode.get(gk) ?? [];
-          arr.push(vkey); legacyUseByWhCode.set(gk, arr);
-        }
-        poQueue = [...ownPo, ...(useLegacy ? (poByKey.get(legacyKey) ?? []) : [])]
-          .map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
+      /* mrp.ts legacy '' fallback pool — since 2026-08-01 (audit D2 fix) the
+         SOFA path folds it in too, under the SAME R4 guard (only when the
+         bucket has no PO supply of its own, never additive). One rule, both
+         paths; isSofa no longer changes the supply queue. */
+      const legacyKey = composite(whId, code, "");
+      const useLegacy = vkey !== "" && legacyKey !== k && ownPo.length === 0;
+      if (useLegacy && (poByKey.get(legacyKey) ?? []).length > 0) {
+        const gk = `${whId ?? WH_NONE}|${code}`;
+        const arr = legacyUseByWhCode.get(gk) ?? [];
+        arr.push(vkey); legacyUseByWhCode.set(gk, arr);
       }
+      const poQueue = [...ownPo, ...(useLegacy ? (poByKey.get(legacyKey) ?? []) : [])]
+        .map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
       for (const r of rows) {
         const eff = effQtyOf(r);
         let need = eff;
@@ -422,11 +424,10 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   const totalPoOutstanding = [...poOutstandingByKey.values()].reduce((a, v) => a + v, 0);
   const totalOnHandAll = [...stockByKey.values()].reduce((a, v) => a + v, 0);
   notice(`  SO lines loaded (non-cancelled, live SO)   : ${activeAll.length}`);
-  notice(`   - dropped as UNDATED (page default)       : ${undated.length}   (?includeUndated=true brings them back)`);
-  notice("     ⚠ the MRP PAGE passes includeUndated=false; the SO drill-down, the PO 'Assigned SO'");
-  notice("       column and both agents pass TRUE. So the same allocation is computed over two");
-  notice("       different demand sets and the two screens can legitimately disagree by this many lines.");
-  notice(`   - dropped: already fully delivered        : ${demandActive.length - demand.length}`);
+  notice(`   - UNDATED (hidden on the page by default) : ${undated.length}   (display-only since 2026-08-01: they STILL`);
+  notice("     allocate, sorted last — every caller reads ONE identical allocation and the");
+  notice("     includeUndated flag only controls whether these rows are rendered)");
+  notice(`   - dropped: already fully delivered        : ${activeAll.length - demand.length}`);
   notice(`   - dropped as SERVICE (never MRP demand)   : ${serviceSkipped}`);
   notice(`   = PHYSICAL demand lines allocated         : ${results.length}`);
   notice(`  demand units still to fulfil               : ${totalDemand}`);
@@ -445,10 +446,12 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice(`  committed ship-before-arrival deductions    : ${committed.size} (bucket,batch) pairs`);
   notice(`  ... of which UNMATCHED (no open PO left)    : ${unmatchedCommitments.length}`);
   for (const u of unmatchedCommitments.slice(0, 15)) notice(`      ${pad(u.itemCode, 24)} ${pad(u.batchNo, 20)} qty ${u.qty}`);
-  notice("  ---- THE .limit(5000) CEILING (mrp.ts L552 demand, L688 PO supply) ----");
-  notice("  Neither read filters status in SQL and neither carries an ORDER BY, so the cap lands");
-  notice("  on EVERY non-cancelled SO line and EVERY PO line ever written, in an unspecified");
-  notice("  order. Crossing it truncates silently — no error, just a wrong plan.");
+  notice("  ---- THE 5000-ROW CEILING (mrp.ts MRP_LOAD_CAP) ----");
+  notice("  Since 2026-08-01 both reads push their status filters into SQL, carry ORDER BY id,");
+  notice("  and THROW mrp_load_truncated when the returned rows reach the cap — a truncated plan");
+  notice("  now fails loudly instead of silently planning on a slice. The raw table counts below");
+  notice("  are the UPPER BOUND (the engine's SQL filter excludes done/dead statuses), so");
+  notice("  headroom in truth is at least what these show.");
   const [{ so_rows, po_rows }] = await sql`
     SELECT (SELECT COUNT(*)::int FROM scm.mfg_sales_order_items
              WHERE company_id = ${companyId} AND cancelled = FALSE) AS so_rows,
@@ -466,11 +469,13 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   for (const [s, n] of [...byStatus].sort((a, b) => b[1] - a[1])) notice(`    ${pad(s, 20)} ${n} live line(s)`);
   const shippedDemanding = demand.filter((r) => snorm(r.so_status) === "SHIPPED").length;
   const onHoldDemanding = demand.filter((r) => snorm(r.so_status) === "ON_HOLD").length;
-  notice(`  SHIPPED-status lines still demanding : ${shippedDemanding}  -- MRP's SO_DONE (L94) omits SHIPPED,`);
-  notice("                                          so-stock-allocation.ts L112 EXCLUDES it: the two engines disagree.");
+  notice(`  SHIPPED-status lines still demanding : ${shippedDemanding}  -- MUST be 0: SHIPPED is in SO_DONE since`);
+  notice("                                          2026-08-01, matching so-stock-allocation. Non-zero = replica drift.");
   notice(`  ON_HOLD-status lines still demanding : ${onHoldDemanding}  -- a held order still drives purchasing (owner call)`);
   notice(`  SO lines whose delivered sum changes if DRAFT DOs count : ${draftDoDivergence}`);
-  notice("     (MRP excludes DRAFT DOs from delivered; so-stock-allocation.ts L232-237 does not.)");
+  notice("     (BOTH engines exclude DRAFT DOs since 2026-08-01 — soDeliverableRemaining always did,");
+  notice("      so-stock-allocation was aligned by fix/mrp-consistency-tails. This counts the lines a");
+  notice("      draft DO is currently touching, i.e. what the OLD allocator rule would have got wrong.)");
   notice("  ---- warehouse binding (the 'warehouse follows the SO' change) ----");
   notice(`  demand lines with their OWN warehouse_id   : ${whFromLine}`);
   notice(`  demand lines inheriting the SO's warehouse : ${whFromSo}`);
@@ -604,29 +609,30 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice("======== (D) CAN THE SAME UNIT BE PROMISED TWICE? ========");
   notice("  Within one computeMrp pass the pool is a single mutable queue per bucket, so a unit");
   notice("  taken by one SO line is gone for the next. Two things can break that:");
-  notice(`  1. LEGACY '' VARIANT POOL (mrp.ts L884-890). A real-variant bucket with no PO supply`);
-  notice(`     of its own falls back to the same-warehouse EMPTY-variant PO pool. The R4 fix stops`);
-  notice(`     it being added ON TOP of a bucket's own supply — it does NOT stop TWO different`);
-  notice(`     variant buckets of the same (warehouse, item) each cloning the SAME legacy pool.`);
-  notice(`     Each bucket clones the legacy entries (mrp.ts L890 .map(p => ({...p}))), so two clones
+  notice(`  1. LEGACY '' VARIANT POOL. A real-variant bucket with no PO supply of its own falls`);
+  notice(`     back to the same-warehouse EMPTY-variant PO pool. The R4 fix stops it being added`);
+  notice(`     ON TOP of a bucket's own supply — it does NOT stop TWO different variant buckets`);
+  notice(`     of the same (warehouse, item) each cloning the SAME legacy pool.`);
+  notice(`     Each bucket clones the legacy entries (.map(p => ({...p}))), so two clones
      decrement independently and the SAME physical units cover both.
-     BLAST RADIUS IS NARROW BY CONSTRUCTION: variant_key is '' for MATTRESS and ACCESSORY
-     (ATTRS_BY_GROUP has no attributes for them), so 'vkey !== ""' is false and they never
-     take the fallback. The SOFA path (mrp.ts L1021) does not fold the legacy pool in at
-     all. That leaves BEDFRAME as the only category this can reach.
+     BLAST RADIUS: variant_key is '' for MATTRESS and ACCESSORY (ATTRS_BY_GROUP has no
+     attributes for them), so 'vkey !== ""' is false and they never take the fallback.
+     Since 2026-08-01 the SOFA path folds the legacy pool in under the SAME R4 guard
+     (audit D2 fix — a legacy sofa PO used to be invisible there, reading as phantom
+     shortage), so BEDFRAME and SOFA are the two categories this sharing can reach.
      (warehouse,item) groups where >1 variant bucket draws on one legacy pool: ${legacyShared.length}`);
   for (const l of legacyShared.slice(0, 20)) notice(`      ${pad(l.gk, 46)} variants: ${l.vkeys.map((v) => v || "''").join(" ; ")}`);
-  const legacySofaOrphans = [];
+  const legacySofaDraws = [];
   for (const [k, b] of sofaBuckets) {
     if (b.vkey === "") continue;
     if ((poByKey.get(k) ?? []).length > 0) continue;
     const legacyKey = composite(b.whId, b.code, "");
-    if ((poByKey.get(legacyKey) ?? []).length > 0) legacySofaOrphans.push(k);
+    if ((poByKey.get(legacyKey) ?? []).length > 0) legacySofaDraws.push(k);
   }
-  notice(`  1b. THE MIRROR IMAGE: sofa buckets with no own PO supply while a legacy '' PO for the`);
-  notice(`      same (warehouse, item) IS open — invisible to the sofa path, so it reads as a`);
-  notice(`      phantom shortage: ${legacySofaOrphans.length}`);
-  for (const k of legacySofaOrphans.slice(0, 15)) notice(`      ${k}`);
+  notice(`  1b. Sofa buckets with no own PO supply drawing on an open legacy '' PO (the blind`);
+  notice(`      spot closed 2026-08-01 — these used to read as phantom shortage; they are now`);
+  notice(`      covered by the fallback): ${legacySofaDraws.length}`);
+  for (const k of legacySofaDraws.slice(0, 15)) notice(`      ${k}`);
   const claimTotals = new Map();
   for (const [poNumber, claims] of poConsumedBy) claimTotals.set(poNumber, claims.reduce((a, c) => a + c.qty, 0));
   const poLeftByNumber = new Map();
@@ -658,7 +664,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
       JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no AND s.company_id = i.company_id
      WHERE i.company_id = ${companyId} AND i.cancelled = FALSE
        AND UPPER(COALESCE(i.stock_status,'')) IN ('READY','PARTIAL')
-       AND UPPER(COALESCE(s.status::text,'')) NOT IN ('CANCELLED','CLOSED','DELIVERED','INVOICED','DRAFT')`;
+       AND UPPER(COALESCE(s.status::text,'')) NOT IN ('CANCELLED','CLOSED','DELIVERED','INVOICED','DRAFT','SHIPPED')`;
   const readyByCat = new Map(CATS.map((c) => [c, { n: 0, withBatch: 0 }]));
   for (const r of readyRows) {
     const c = catKey(prodByCode.get(r.item_code)?.category ?? catFromGroup(r.item_group));
@@ -749,7 +755,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no AND s.company_id = i.company_id
      WHERE i.company_id = ${companyId} AND i.cancelled = FALSE
-       AND UPPER(COALESCE(s.status::text,'')) NOT IN ('CANCELLED','CLOSED','DELIVERED','INVOICED','DRAFT')
+       AND UPPER(COALESCE(s.status::text,'')) NOT IN ('CANCELLED','CLOSED','DELIVERED','INVOICED','DRAFT','SHIPPED')
      GROUP BY i.doc_no HAVING COUNT(DISTINCT COALESCE(i.warehouse_id::text,'NULL')) > 1`;
   notice(`  live SOs whose LINES carry >1 distinct warehouse_id (incl. NULL): ${sofaWhSplit.length}`);
   notice("   -- before the 2026-07-31 'warehouse follows the SO' change every one of these split");
