@@ -87,20 +87,26 @@ test("fails when the entry chunk TTL is longer than the poison window we accept"
   }, "public, max-age=86400");
 });
 
-test("accepts the zone's current 4-hour ceiling", async () => {
+// 14400 is what the zone served while Browser Cache TTL sat on "4 hours" and
+// rewrote every short max-age. That dropdown moved to "Respect Existing Headers"
+// on 2026-07-31, so this value reappearing means the override is back and the
+// poison window is hours again — a release defect, not an accepted ceiling.
+test("fails when the zone's 4-hour ceiling is back on the entry chunk", async () => {
   await withServer(false, async (baseUrl) => {
     const result = await runSmoke(baseUrl);
-    assert.equal(result.code, 0, result.stderr);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /unbounded or too long/i);
   }, "public, max-age=14400");
 });
 
-// The zone rewrites the max-age and leaves the rest, so live sw.js is
-// `max-age=14400, must-revalidate`. Requiring max-age=0 made this the next
-// blocker behind the immutable one.
-test("accepts the sw cache-control the zone actually serves", async () => {
+// Same override, seen on the service worker: it rewrote the number and left
+// `must-revalidate` behind. The SW script is the only lever that moves a client
+// off a bad shell, so a cacheable copy of it must fail the release.
+test("fails when the sw carries a cacheable max-age", async () => {
   await withServer(false, async (baseUrl) => {
     const result = await runSmoke(baseUrl);
-    assert.equal(result.code, 0, result.stderr);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /without revalidation/i);
   }, ENTRY_CACHE, "public, max-age=14400, must-revalidate");
 });
 
