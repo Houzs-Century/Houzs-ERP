@@ -104,7 +104,7 @@ export const DriverLeave = () => {
       <PageHeader
         eyebrow="Delivery"
         title="Crew Leave"
-        description="Record when a driver or helper is unavailable for delivery. On the covered days the Auto-Schedule assigner skips them, and they drop off the trip assignment picker automatically — you can still hand-pick anyone on the assignment screen."
+        description="Record when a driver or helper is unavailable for delivery. On the covered days the Auto-Schedule assigner will not crew them, and the trip assignment pickers flag them as on leave — you can still hand-pick anyone, the flag is a warning, not a block."
       />
 
       {/* Create */}
@@ -188,7 +188,7 @@ export const DriverLeave = () => {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
         <CalendarOff {...ICON} />
-        <span>On-leave drivers and helpers drop off the trip assignment picker on the covered days — the dispatcher can always override on the assignment screen.</span>
+        <span>On the covered days the auto-assigner will not crew them, and every trip assignment picker shows them marked "on leave" with the reason — the dispatcher can still override.</span>
       </div>
     </div>
   );

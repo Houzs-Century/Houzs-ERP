@@ -31,6 +31,7 @@ import { useDrivers } from "../lib/drivers-queries";
 import { useLorries } from "../lib/lorries-queries";
 import { useWarehouses } from "../lib/inventory-queries";
 import { useDriverLeave } from "../lib/delivery-zones-queries";
+import { findCrewLeave, crewLeaveLabel } from "../../shared/crew-leave";
 import { useScheduleDelivery, type PlanningOrder } from "../lib/delivery-planning-queries";
 import {
   useProposeSchedule,
@@ -107,27 +108,21 @@ export function ScheduleTripDrawer({
   const [driverId, setDriverId] = useState("");
   const [lorryId, setLorryId] = useState("");
 
-  // WS2: on the chosen trip date, a driver on leave drops off the picker (the
-  // same rule the auto-assigner applies). Blank tripDate filters nothing. Leave
-  // rows carry EITHER a driverId or a helperId; only driver rows matter here —
-  // this drawer assigns a driver, not a helper.
-  const onLeaveDriverIds = useMemo(() => {
-    const s = new Set<string>();
-    if (!tripDate) return s;
-    for (const r of crewLeave) {
-      if (r.driverId && r.startDate <= tripDate && tripDate <= r.endDate) s.add(r.driverId);
-    }
-    return s;
-  }, [crewLeave, tripDate]);
+  // On the chosen trip date an on-leave driver is MARKED, not hidden — the
+  // dispatcher keeps the final say (a driver back early from MC still has to be
+  // assignable). Blank tripDate marks nothing. Leave rows carry EITHER a
+  // driverId or a helperId; only driver rows matter here — this drawer assigns
+  // a driver, not a helper.
   const activeDrivers = useMemo(
-    () => drivers.filter((d) => d.active && !onLeaveDriverIds.has(d.id)),
-    [drivers, onLeaveDriverIds],
+    () => drivers.filter((d) => d.active).map((d) => ({
+      ...d, leaveNote: crewLeaveLabel(findCrewLeave(crewLeave, 'driver', d.id, tripDate)),
+    })),
+    [drivers, crewLeave, tripDate],
   );
-  // If the picked driver goes on leave for the chosen date, clear it so a
-  // now-hidden option is not silently kept on the trip.
-  useEffect(() => {
-    if (driverId && onLeaveDriverIds.has(driverId)) setDriverId("");
-  }, [driverId, onLeaveDriverIds]);
+  const pickedDriverLeaveNote = useMemo(
+    () => crewLeaveLabel(findCrewLeave(crewLeave, 'driver', driverId, tripDate)),
+    [crewLeave, driverId, tripDate],
+  );
   const [applying, setApplying] = useState(false);
   const [results, setResults] = useState<Record<string, ApplyResult>>({});
 
@@ -415,8 +410,13 @@ export function ScheduleTripDrawer({
                 className="h-9 w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-ink focus:border-primary focus:outline-none"
               >
                 <option value="">Unassigned</option>
-                {activeDrivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                {activeDrivers.map((d) => (
+                  <option key={d.id} value={d.id}>{d.leaveNote ? `${d.name} · ${d.leaveNote}` : d.name}</option>
+                ))}
               </select>
+              {pickedDriverLeaveNote && (
+                <span className="mt-1 block text-[11px] text-warning-text">{pickedDriverLeaveNote}</span>
+              )}
             </label>
             <label className="block">
               <span className="mb-1 block text-[11.5px] font-semibold text-ink-secondary">Lorry</span>
