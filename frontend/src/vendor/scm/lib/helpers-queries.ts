@@ -23,6 +23,8 @@ export type HelperRow = {
 };
 
 export type NewHelper = {
+  /** Attach to a 3PL carrier. Setting it forces the row OUTSOURCE server-side. */
+  threeplCompanyId?: string | null;
   helperCode: string;
   name: string;
   contact?: string;

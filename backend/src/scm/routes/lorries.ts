@@ -13,6 +13,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { activeCompanyId } from '../lib/companyScope';
+import { carrierLinkForInsert, resolveCarrierLink } from '../lib/threepl-link';
 
 export const lorries = new Hono<{ Bindings: Env; Variables: Variables }>();
 lorries.use('*', supabaseAuth);
@@ -157,15 +158,20 @@ lorries.post('/', async (c) => {
   const widthFt = toNumericOrNull(body.widthFt);
   const heightFt = toNumericOrNull(body.heightFt);
   const derivedM3 = boxCapacityM3(lengthFt, widthFt, heightFt);
+  /* A lorry registered under a 3PL carrier is outsource, whatever was ticked. */
+  const link = carrierLinkForInsert({
+    threeplCompanyId: body.threeplCompanyId as string | null | undefined,
+    ownFlag: body.isInternal === undefined ? undefined : body.isInternal !== false,
+  });
 
   const sb = c.get('supabase');
   const { data, error } = await sb.from('lorries').insert({
     company_id: activeCompanyId(c),
     plate,
     type,
-    is_internal: body.isInternal === false ? false : true,
+    is_internal: link.ownFlag,
     warehouse_id: (body.warehouseId as string) || null,
-    threepl_company_id: (body.threeplCompanyId as string) || null,
+    threepl_company_id: link.carrierId,
     length_ft: lengthFt,
     width_ft: widthFt,
     height_ft: heightFt,
@@ -208,7 +214,6 @@ lorries.patch('/:id', async (c) => {
     updates.type = type;
   }
   if (body.warehouseId !== undefined) updates.warehouse_id = (body.warehouseId as string) || null;
-  if (body.threeplCompanyId !== undefined) updates.threepl_company_id = (body.threeplCompanyId as string) || null;
   if (body.capacityM3 !== undefined) updates.capacity_m3 = toNumericOrNull(body.capacityM3);
   if (body.capacityKg !== undefined) updates.capacity_kg = toNumericOrNull(body.capacityKg);
   // WS3: box dimensions (ft). When the edit carries all three, capacity_m3 is
@@ -223,7 +228,12 @@ lorries.patch('/:id', async (c) => {
     );
   }
   if (body.notes !== undefined) updates.notes = (body.notes as string) || null;
-  if (body.isInternal !== undefined) updates.is_internal = Boolean(body.isInternal);
+  const link = resolveCarrierLink({
+    threeplCompanyId: body.threeplCompanyId as string | null | undefined,
+    ownFlag: body.isInternal === undefined ? undefined : body.isInternal !== false,
+  });
+  if (link.carrierId !== undefined) updates.threepl_company_id = link.carrierId;
+  if (link.ownFlag !== undefined) updates.is_internal = link.ownFlag;
   if (body.active !== undefined) updates.active = Boolean(body.active);
   if (body.model !== undefined) updates.model = (body.model as string) || null;
   for (const [wire, col] of LORRY_DATE_FIELDS) {

@@ -34,6 +34,8 @@ export type DriverRow = {
 };
 
 export type NewDriver = {
+  /** Attach to a 3PL carrier. Setting it forces the row OUTSOURCE server-side. */
+  threeplCompanyId?: string | null;
   driverCode: string;
   name: string;
   phone: string;
