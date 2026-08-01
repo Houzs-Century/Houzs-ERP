@@ -38,7 +38,9 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Desktop delivery zones (A1) | `frontend/src/pages/scm-v2/DeliveryZones.tsx` | Route `/scm/delivery-zones`, nav "Delivery Zones" under Transportation. Owner-editable postcode-prefix -> area-zone map (`scm.delivery_zone_postcodes`, mig 0205). Each row maps a first-two-digit postcode RANGE to one of the 14 zones; the classifier picks the NARROWEST matching range so a fine rule overrides a broad one. Ships with a "using the built-in default" banner + one-click "load the default map". Mirrors the Residence Rules master (DataGrid + inline edit + create drawer). |
 | Desktop auto-schedule (A1) | `frontend/src/pages/scm-v2/AutoSchedule.tsx` | Route `/scm/auto-schedule`, nav "Auto-Schedule" under Transportation. Pick a depot + start date -> the backend derives each PENDING_SCHEDULE order's zone (postcode) + set count (SO lines) and PACKS them into lorry-days under each lorry's capacity ceiling. Renders the REVERSIBLE proposal grouped day -> group -> lorry (fill vs ceiling, partial / over-ceiling badges), an "attention" list for unzoned orders, per-day LOCK/unlock, and "Apply proposed dates" (fans out `useScheduleDelivery` -> `amended_delivery_date`, no lorry assignment). Reads the SAME board (`useDeliveryPlanning` state=PENDING_SCHEDULE) — no parallel queue. **A3:** "Sequence & assign" also surfaces on-leave drivers, a "Max trips / lorry / day" control, and a 3PL-overflow section (carrier picker + captured cost). |
 | Desktop crew leave (A3 / WS2) | `frontend/src/pages/scm-v2/DriverLeave.tsx` | Route `/scm/driver-leave`, nav "Crew Leave" under Transportation. The date-ranged crew-absence master (`scm.driver_leave`, mig 0206 + **0208**) the A2 auto-assigner reads to skip on-leave crew. **WS2:** covers DRIVERS and HELPERS (a Who toggle picks which; storekeepers are in the helper list). Create form (who + from/to + reason) + table (Type/Name) + remove. On the covered days the person also drops off the manual trip picker (`ScheduleTripDrawer` filters `activeDrivers` by leave on the trip date). Mirrors the Residence Rules / Delivery Zones masters. |
+| Desktop delivery maintenance | `frontend/src/pages/scm-v2/DeliveryMaintenance.tsx` | Route `/scm/delivery-maintenance`, nav "Maintenance" under Transportation (the group HEADER is now a destination as well as a group). Renders the six reference-data sub-modules — Regions, Residence Rules, Fleet, Delivery Zones, 3PL Companies, Rate Cards — as open/closable sections. Each section renders THE SAME component its standalone route renders, with `embedded` suppressing that page's own `PageHeader`; there is no second copy. Open sections live in `?open=a,b` (`components/CollapsibleSection.tsx`), so a link to one section is a real link. A closed section is UNMOUNTED, so its queries do not fire. |
 | Desktop 3PL companies (WS4a) | `frontend/src/pages/scm-v2/ThreePLCompanies.tsx` | Route `/scm/threepl-companies`, nav "3PL Companies" under Transportation > Maintenance. The 3PL carrier company master (`scm.threepl_companies`, mig 0210): create/edit/activate/delete + per-company lorry count. Attach a lorry to a company from the lorry drawer (`LorryDetail` "3PL company" selector). Rate card is priced per company (WS4b). |
+| Desktop 3PL companies | `frontend/src/pages/scm-v2/ThreePLCompanies.tsx` | Route `/scm/threepl-companies`, nav "3PL Companies" under Transportation > Maintenance. The 3PL carrier company master (`scm.threepl_companies`, migs 0210 + **0237**). Registers the carrier's PARTICULARS (name, SSM `registration_no`, contact person + phone, `office_phone`, `email`, `address`) and, in an expandable per-company block, its FLEET — lorries (plate + L/W/H), drivers (code/name/phone/IC) and helpers (code/name/contact/IC). Those rows are created through `/lorries`, `/drivers`, `/helpers` carrying `threeplCompanyId`, so they land in the SHARED fleet masters flagged OUTSOURCE. A lorry can still be attached from the lorry drawer instead. Rate card is priced per company. |
 | Mobile run-sheet | `frontend/src/mobile/MobileDeliveryPlanning.tsx:277` | 2,408 lines. Driver job-card run sheet. Carries the Phase-4 `MobileTrackingBanner` in its header. |
 | Mobile POD | `frontend/src/mobile/MobilePOD.tsx:71` | Photo / signature capture. |
 | Mobile GPS capture | `frontend/src/mobile/MobileTrackingBanner.tsx` | Phase-4 driver-capture banner. Self-gating: finds the driver's active trip + runs `useTripLocationCapture`; renders + captures only when a trip is IN_PROGRESS and the page is open. |
@@ -312,7 +314,8 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | GET/POST/PATCH/DELETE | `/delivery-zones`, `/…/:id` | `delivery-zones.ts` | **A1.** The postcode-prefix -> zone map CRUD (mig 0205). GET returns `{ zones, usingDefault, defaultMap, knownZones }`; writes validate `zone` against the 14 canonical zones. Company-scoped |
 | POST | `/delivery-zones/propose` | `delivery-zones.ts` | **A1 auto-propose.** Body `{ soDocNos[], depotWarehouseId?, startDate?, defaultMaxSets?, defaultMaxRevenueCenti? }`. Loads the SOs + their lines, derives each order's zone (postcode) + set count (frame/mattress/sofa), loads the depot's active in-house lorries, and PACKS via the pure `capacity-pack.ts` (shared `loadAndPack` helper). Returns a DISPLAY-ONLY proposal (`days[] · proposals[] · unassigned[]`). Writes NOTHING |
 | POST | `/delivery-zones/sequence-assign` | `delivery-zones.ts` | **A2 sequence + assign / A3 leave + overflow.** Body adds `departTime?` + `maxTripsPerLorryPerDay?`. RE-PACKS (shared `loadAndPack`), crews each group with an AVAILABLE lorry + driver + helper (`fleet-assign.ts`, excluding Module-B non-dispatchable lorries AND on-leave drivers AND (WS2) on-leave helpers), spilling groups the own fleet can't cover to 3PL `overflow[]`, and sequences each trip (geocode cache-first + ONE Distance Matrix call per trip + `sequence-stops.ts`) with residence-rule windows. Returns DISPLAY-ONLY `{ trips[] · excludedLorries[] · excludedDrivers[] · excludedHelpers[] · overflow[] · carriers[] · unassigned[] }`. `GOOGLE_MAPS_API_KEY` unset -> crewed + grouped, no route. Writes NOTHING |
-| GET/POST/PATCH/DELETE | `/threepl-companies` | `threepl-companies.ts` | **WS4a 3PL carrier company master** (`scm.threepl_companies`, mig 0210). Company-scoped, `scm.transportation.drivers` gate. GET returns each company + its `lorryCount`; (company_id, name) UNIQUE -> 409 on dup. DELETE detaches its lorries (FK ON DELETE SET NULL), never deletes them. A lorry attaches via `POST/PATCH /lorries {threeplCompanyId}` |
+| GET/POST/PATCH/DELETE | `/threepl-companies` | `threepl-companies.ts` | **3PL carrier company master** (`scm.threepl_companies`, migs 0210 + 0237). Company-scoped, `scm.transportation.drivers` gate. GET returns each company + `lorryCount` / `driverCount` / `helperCount`. `(company_id, name)` UNIQUE -> 409 `duplicate_name`; `(company_id, registration_no)` UNIQUE where not null -> 409 `duplicate_registration`. DELETE detaches its whole fleet (every FK is ON DELETE SET NULL), never deletes it |
+| GET | `/threepl-companies/:id/fleet` | `threepl-companies.ts` | The carrier's own drivers, helpers and lorries. **Read-only** — the rows are written through `/drivers`, `/helpers`, `/lorries`, which own the outsource rule |
 | GET/POST/DELETE | `/driver-leave` | `driver-leave.ts` | **A3/WS2 crew-leave master.** CRUD over `scm.driver_leave` (mig 0206 + 0208) — the date-ranged absences the A2 assigner reads to skip on-leave crew. Company-scoped, `scm.transportation.drivers` gate. **WS2:** POST takes EXACTLY ONE of `driverId` / `helperId` (XOR, mig 0208 CHECK); rows output both (the unused one `null`); GET filters by either. **INTERNAL drivers only:** a driver POST rejects an external / 3PL driver (`scm.drivers.in_house = false`) with 422 `external_driver` (unknown → 404) via the pure `isInHouseDriver`. Helpers have no external case yet (no in_house column), so a helper POST only checks the helper exists (unknown → 404) |
 | GET/POST/DELETE | `/delivery-zones/locks`, `/…/locks/:id` | `delivery-zones.ts` | **A1.** Reversible day locks (`scm.delivery_day_locks`, mig 0205). POST is idempotent (upsert on `(company, warehouse, date)`); DELETE unlocks |
 | GET | `/lorry-service-records` | `lorry-service-records.ts` | Service history (mig 0121) |
@@ -606,7 +609,8 @@ request (§3).
 | `scm.drivers` | `driver_code`, `name`, `phone`, `ic_number`, `vehicle`, `in_house` (`0053:36`), `active`; `company_id` (`0083:306-307`). Table itself predates this repo's migrations |
 | `scm.helpers` | `0053:38-48`. `helper_code` UNIQUE, `name`, **`contact`** (not `phone`), `ic_number`, `in_house`, `active` |
 | `scm.lorries` | `0053:50-65`. `plate` UNIQUE, `type` (`scm.lorry_type`), `is_internal`, `warehouse_id` (home warehouse = REGION), `capacity_m3`, `capacity_kg`, `active`; extended by `0121:62-86` with `model`, `purchase_*`, `road_tax_expiry`, `insurance_expiry`, `puspakom_expiry`; **WS3 (mig 0209)** with `length_ft`/`width_ft`/`height_ft` NUMERIC(6,2) — `capacity_m3` is DERIVED from them (L x W x H ft x 0.0283168) when all three are set; **WS4a (mig 0210)** with `threepl_company_id` -> `scm.threepl_companies` (NULL = own fleet) |
-| `scm.threepl_companies` | `0210` (WS4a). 3PL carrier COMPANY master, tenant-scoped: `name`, `contact_name`, `contact_phone`, `is_active`, `notes`, audit + `company_id`. UNIQUE `(company_id, name)`. A lorry links via `scm.lorries.threepl_company_id` (ON DELETE SET NULL). The per-company rate card (WS4b) keys on this |
+| `scm.threepl_companies` | `0210` (WS4a) + **`0237`**. 3PL carrier COMPANY master, tenant-scoped: `name`, `contact_name`, `contact_phone`, `is_active`, `notes`, audit + `company_id`; **0237 adds** `registration_no` (SSM), `office_phone`, `email`, `address`. UNIQUE `(company_id, name)` and partial UNIQUE `(company_id, registration_no) WHERE registration_no IS NOT NULL`. Its FLEET links back through `scm.lorries.threepl_company_id` (0210) and `scm.drivers.threepl_company_id` / `scm.helpers.threepl_company_id` (0237) — all ON DELETE SET NULL. The per-company rate card keys on this |
+| `scm.drivers.threepl_company_id`, `scm.helpers.threepl_company_id` | `0237`. The crew -> carrier link, mirroring the lorry one. A row with a carrier is OUTSOURCE (`in_house = false`), enforced by the ROUTES via `scm/lib/threepl-link.ts`, not by a constraint — see below |
 | `scm.lorry_maintenance`, `scm.lorry_service_records` | `0053:110-120`, `0121:99` |
 | `scm.dp_orders` | `0129:30-63`. `dp_no`, `job_type` (`scm.trip_stop_type`), `party_type`, address + `postcode` + `state`, `requested_date`, `trip_id`, `status` |
 | `scm.delivery_planning_regions` / `scm.state_delivery_regions` | `0053:198` / `0053:208`. The region master and the state→region map keyed on a state **name** (`state_key`) |
@@ -1010,3 +1014,47 @@ the FIFO/costing money-path.
 - `docs/generated/route-capability-matrix.csv` — the generated gate per route.
 - `docs/modules/service-case.md` — where the ASSR legs on this board come from.
 - `BUG-HISTORY.md` — read the delivery entries before touching this module.
+## 3PL carriers own a FLEET, in the shared masters (2026-08-01, mig 0237)
+
+Owner's rule, in his words: register the 3PL with its particulars and its fleet,
+and *"3PL 的司机、Helper 以及他的 Fleet ... 就会自动进入到我们系统的 Fleet Module 里面 ...
+系统会自动将其标记为 Outsource"*.
+
+**One set of masters, not two.** A carrier's driver, helper and lorry rows go into
+`scm.drivers` / `scm.helpers` / `scm.lorries` — the same tables as our own crew and
+vehicles — carrying `threepl_company_id` and flagged outsource. A parallel 3PL
+fleet was considered and rejected (owner's call, 2026-08-01): `scm.lorries` has
+been THE fleet master since 0053, `scm.trips.is_outsourced` already derives from
+`lorries.is_internal`, and Module C prices per carrier company. Forking the fleet
+would fork assignment, costing and the rate card at once. Mig 0055 already dropped
+a duplicate `public.lorries` once; this module does not repeat that.
+
+**The outsource flag is owned by the ROUTES, in one place.**
+`backend/src/scm/lib/threepl-link.ts` is a pure, unit-tested pair
+(`resolveCarrierLink` for PATCH, `carrierLinkForInsert` for POST) that
+`drivers.ts`, `helpers.ts` and `lorries.ts` all call. The rule:
+
+- **Attaching a carrier forces outsource**, overriding any in-house flag the
+  caller sent — a form cannot make ABC Logistics' lorry ours by ticking a box.
+- **Detaching (explicit `null`)** clears the link and leaves the flag alone unless
+  the caller sent one — a detached row is not automatically ours again.
+- **Absent** touches neither field.
+
+It is NOT a CHECK constraint or a trigger: a cross-column CHECK would have to pin
+existing rows, and a trigger would be a second writer of a field the routes
+already own. The cost is that a direct SQL write can still disagree; the benefit
+is one testable rule instead of three handlers restating it. 12 unit tests.
+
+**Leave is still not recorded for a 3PL's crew.** `POST /driver-leave` refuses an
+external driver (422 `external_driver`) and that is unchanged — a carrier's
+attendance is their employer's roster, not ours.
+
+**The rate card is per carrier company, one each.** Mig 0237 adds a PARTIAL unique
+index on `(company_id, carrier_company_id) WHERE carrier_company_id IS NOT NULL`,
+so the New Rate Card form no longer asks for a name — pick the 3PL and the server
+names the card after the company, so the two can never disagree. Own-fleet cards
+(`carrier_company_id IS NULL`) are unaffected and may still be many. The Rate Cards
+list is now the CARRIER list: every registered 3PL appears whether or not it has a
+card, and one with no card is a one-click create. A second card for the same
+carrier returns 409 `duplicate_carrier`.
+

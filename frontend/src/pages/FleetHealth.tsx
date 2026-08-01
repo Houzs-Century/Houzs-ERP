@@ -49,6 +49,16 @@ type DocView = {
   daysRemaining: number | null;
   reminderLevel: string;
   tone: Tone;
+  /** mig 0238 - the scans attached to this renewal. */
+  files?: ComplianceFile[];
+};
+
+type ComplianceFile = {
+  id: string;
+  r2Key: string;
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
 };
 
 type NextPlanView = {
@@ -250,7 +260,16 @@ type DashboardPayload = {
 };
 
 type VehicleDetailPayload = {
-  vehicle: VehicleRow & { lastServiceWorkshop?: string | null };
+  vehicle: VehicleRow & {
+    lastServiceWorkshop?: string | null;
+    /* WS3 (mig 0209) has stored the box since it shipped; the drawer never
+       showed it until 2026-08-01. capacity_m3 is derived from L x W x H. */
+    isInternal?: boolean;
+    capacityM3?: number | null;
+    lengthFt?: number | null;
+    widthFt?: number | null;
+    heightFt?: number | null;
+  };
   compliance: Record<DocType, { currentId: string | null; flatExpiry: string | null; history: DocView[] }>;
   plans: PlanView[];
   mileage: MileageView[];
@@ -691,8 +710,15 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
             <span className="font-display text-[18px] font-bold text-ink">{v?.plate ?? "…"}</span>
           </div>
           <div className="mt-1 text-[12px] text-ink-muted">
-            {v ? [v.driverName, v.region ? `${v.region} warehouse` : null, v.mileageKm != null ? `${v.mileageKm.toLocaleString()} km` : null].filter(Boolean).join(" · ") : ""}
+            {v ? [
+              v.driverName,
+              v.region ? `${v.region} warehouse` : null,
+              v.mileageKm != null ? `${v.mileageKm.toLocaleString()} km` : null,
+              v.isInternal === false ? "Outsource" : "In-house",
+              boxLabel(v),
+            ].filter(Boolean).join(" · ") : ""}
           </div>
+          {v && <MissingComplianceNote vehicle={v} compliance={compliance} />}
           {v && (
             <div className="mt-2">
               <Pill tone={STATUS_TONE[v.status]}>{v.statusLabel}</Pill>
@@ -793,6 +819,7 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
                                 {doc.result ? ` · ${doc.result}` : ""}
                                 {doc.result === "FAIL" && doc.reinspectionDeadline ? ` · reinspect by ${doc.reinspectionDeadline}` : ""}
                               </div>
+                              <AttachmentStrip docId={doc.id} files={doc.files ?? []} onChanged={refresh} />
                             </div>
                             <div className="text-right">
                               <div className="tabular-nums text-ink">{doc.expiryDate ?? "—"}</div>
@@ -810,6 +837,7 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
                         ))}
                       </div>
                     )}
+                    <AddRenewalForm lorryId={v.id} docType={t} onSaved={refresh} />
                   </div>
                 );
               })}
@@ -1366,6 +1394,208 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
           </div>
         )
       )}
+    </div>
+  );
+}
+
+/* ── Compliance attachments (mig 0238) ──────────────────────────────────────
+   The vault used to store a reference NUMBER and nothing else, and the drawer
+   had no way to add anything - owner, 2026-08-01: "为什么我的 Compliance、Road Tax
+   这些都是不能 Upload 的呢？". These two components are the missing half: a real
+   renewal form, and the scans hanging off each renewal. */
+
+const ATTACH_ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.heic";
+
+function AttachmentStrip({ docId, files, onChanged }: {
+  docId: string | null;
+  files: ComplianceFile[];
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  if (!docId) return null;
+
+  const open = async (f: ComplianceFile) => {
+    try {
+      const url = await api.fetchBlobUrl(`/api/fleet-maintenance/compliance-attachments/${f.r2Key}`);
+      window.open(url, "_blank", "noopener");
+    } catch { /* the drawer stays usable; the file simply does not open */ }
+  };
+
+  const remove = async (f: ComplianceFile) => {
+    setBusy(true);
+    try {
+      await api.del(`/api/fleet-maintenance/compliance-attachments/${f.id}`);
+      onChanged();
+    } finally { setBusy(false); }
+  };
+
+  if (files.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1.5">
+      {files.map((f) => (
+        <span key={f.id} className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 py-0.5 text-[10.5px]">
+          <button type="button" onClick={() => void open(f)} className="text-primary hover:underline">
+            {f.fileName || "document"}
+          </button>
+          <button type="button" disabled={busy} onClick={() => void remove(f)}
+            className="text-ink-muted hover:text-err" aria-label="Remove attachment">
+            <X size={11} />
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function AddRenewalForm({ lorryId, docType, onSaved }: {
+  lorryId: string;
+  docType: DocType;
+  onSaved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [issueDate, setIssueDate] = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
+  const [documentRef, setDocumentRef] = useState("");
+  const [cost, setCost] = useState("");
+  const [owner, setOwner] = useState("");
+  const [result, setResult] = useState<"" | "PASS" | "FAIL">("");
+  const [reinspect, setReinspect] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const reset = () => {
+    setIssueDate(""); setExpiryDate(""); setDocumentRef(""); setCost("");
+    setOwner(""); setResult(""); setReinspect(""); setFiles([]); setErr(null);
+  };
+
+  const save = async () => {
+    if (!expiryDate) { setErr("An expiry date is what the reminders count down to - it is required."); return; }
+    setBusy(true);
+    setErr(null);
+    try {
+      /* Renewing APPENDS a row; the prior one survives as history (mig 0202). */
+      const created = await api.post<{ id: string }>(
+        `/api/fleet-maintenance/vehicles/${lorryId}/compliance`,
+        {
+          docType,
+          issueDate: issueDate || null,
+          expiryDate,
+          documentRef: documentRef || null,
+          costCenti: cost.trim() === "" ? null : Math.round(Number(cost) * 100),
+          owner: owner || null,
+          ...(docType === "PUSPAKOM" ? { result: result || null, reinspectionDeadline: reinspect || null } : {}),
+        },
+      );
+      /* Files go up one at a time against the row that now exists. A failed
+         upload leaves the renewal itself recorded - losing the dates because a
+         scan failed would be the worse outcome. */
+      for (const f of files) {
+        const ext = (f.name.split(".").pop() || "").toLowerCase();
+        const qs = `?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(f.name)}`;
+        await api.putBinary(
+          `/api/fleet-maintenance/vehicles/${lorryId}/compliance/${created.id}/attachments${qs}`,
+          f, f.type || "application/octet-stream",
+        );
+      }
+      reset();
+      setOpen(false);
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not save the renewal.");
+    } finally { setBusy(false); }
+  };
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        className="mt-2 rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink-secondary transition-colors hover:border-primary/40 hover:text-primary">
+        Add renewal
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-2 rounded-md border border-border bg-surface p-2.5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <RenewalField label="Issue date"><input type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
+        <RenewalField label="Expiry date *"><input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
+        <RenewalField label="Document no"><input type="text" value={documentRef} onChange={(e) => setDocumentRef(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
+        <RenewalField label="Cost (RM)"><input type="number" min="0" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
+        <RenewalField label="Owner"><input type="text" value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="Who renews it" className={RENEWAL_FIELD_CLS} /></RenewalField>
+        {docType === "PUSPAKOM" && (
+          <>
+            <RenewalField label="Result">
+              <select value={result} onChange={(e) => setResult(e.target.value as "" | "PASS" | "FAIL")} className={RENEWAL_FIELD_CLS}>
+                <option value="">—</option><option value="PASS">PASS</option><option value="FAIL">FAIL</option>
+              </select>
+            </RenewalField>
+            {result === "FAIL" && (
+              <RenewalField label="Reinspect by"><input type="date" value={reinspect} onChange={(e) => setReinspect(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
+            )}
+          </>
+        )}
+      </div>
+
+      <RenewalField label="Scans (PDF or image, max 15MB each)">
+        <input type="file" multiple accept={ATTACH_ACCEPT}
+          onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+          className="block w-full text-[11.5px] text-ink-secondary file:mr-2 file:rounded file:border file:border-border file:bg-surface-2 file:px-2 file:py-1 file:text-[11px]" />
+      </RenewalField>
+      {files.length > 0 && (
+        <div className="text-[10.5px] text-ink-muted">{files.length} file(s) will be attached to this renewal.</div>
+      )}
+
+      {err && <div className="text-[11px] text-err">{err}</div>}
+
+      <div className="flex gap-2">
+        <Button variant="primary" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : "Save renewal"}</Button>
+        <Button variant="secondary" onClick={() => { reset(); setOpen(false); }} disabled={busy}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
+const RENEWAL_FIELD_CLS = "h-8 w-full rounded border border-border bg-surface px-2 text-[12px] text-ink focus:border-primary focus:outline-none";
+
+function RenewalField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-0.5 block text-[10.5px] font-semibold uppercase tracking-wider text-ink-muted">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+/* The box (mig 0209) as one label: dimensions when they are on file, otherwise
+   the hand-entered capacity, otherwise nothing rather than "null m3". */
+function boxLabel(v: { lengthFt?: number | null; widthFt?: number | null; heightFt?: number | null; capacityM3?: number | null }): string | null {
+  if (v.lengthFt && v.widthFt && v.heightFt) {
+    const m3 = v.capacityM3 != null ? ` (${v.capacityM3} m3)` : "";
+    return `${v.lengthFt} x ${v.widthFt} x ${v.heightFt} ft${m3}`;
+  }
+  return v.capacityM3 != null ? `${v.capacityM3} m3` : null;
+}
+
+/* Owner, 2026-08-01: an IN-HOUSE lorry must carry its road tax and the rest.
+   This states the gap instead of enforcing it - a hard requirement would block
+   editing the very rows that are incomplete, and the fleet has plenty of those
+   today. An outsourced lorry is the carrier's paperwork, so it is not counted. */
+const REQUIRED_FOR_INHOUSE: DocType[] = ["ROAD_TAX", "INSURANCE", "PUSPAKOM"];
+
+function MissingComplianceNote({ vehicle, compliance }: {
+  vehicle: { isInternal?: boolean };
+  compliance?: Record<DocType, { currentId: string | null; flatExpiry: string | null; history: DocView[] }>;
+}) {
+  if (vehicle.isInternal === false || !compliance) return null;
+  const missing = REQUIRED_FOR_INHOUSE.filter((t) => {
+    const g = compliance[t];
+    return !g || (g.history.length === 0 && !g.flatExpiry);
+  });
+  if (missing.length === 0) return null;
+  return (
+    <div className="mt-2 rounded-md border border-warning-text/30 bg-warning-text/10 px-2.5 py-1.5 text-[11.5px] text-warning-text">
+      In-house lorry with nothing on file for {missing.map((t) => DOC_LABEL[t]).join(", ")}. Add a renewal below.
     </div>
   );
 }

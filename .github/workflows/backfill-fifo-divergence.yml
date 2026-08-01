@@ -24,6 +24,35 @@ name: Backfill FIFO ledger divergence (repair)
 #
 # Manual trigger only, own concurrency group — never queues behind or displaces a
 # release, never scheduled.
+# MODES (2026-08-01, ledger-perfection W3/W4 — see the script header):
+#   retro-cost  the original behaviour: drive fn_reconcile_uncosted_out over
+#               every uncosted-OUT bucket, consuming REAL open lots. Default.
+#   reconstruct W4 PHASE 1, round 3. Candidates are the costing audit's OWN
+#               2a lens lifted VERBATIM (round-2's deficit-only query said
+#               "every lot conserves" on the day the audit counted 13 — the
+#               two tools can no longer disagree; per lot the output prints
+#               the audit's numbers next to the classification). DEFICIT lots
+#               (consumption rows MISSING) pair via family arithmetic (Sigma
+#               shortfall === Sigma deficit, FIFO, per-movement cost honesty).
+#               SURPLUS lots (rows PRESENT, qty_remaining never decremented —
+#               the import double-count) restore remaining = received -
+#               consumed when every consuming movement is real and honest
+#               (10c lens); the removed double-counted units are priced as an
+#               INVENTORY-VALUE impact (COGS unchanged — already booked).
+#               Other arms (over-consumed / negative quantities) are refused
+#               row by row. Run BEFORE relabel.
+#   relabel     W4 phase 2: unify the 2990-import variant-key split. Movements
+#               in DRIFTED buckets whose own consumptions (or own opened lot)
+#               all sit under ONE different key are relabelled to that key,
+#               their consumption rows follow, lots and costs untouched — RM0
+#               by construction. Closes the paired +/- drift (audit 1 + 2b).
+#   basis-cost  W3: for NAMED DOs only (dos input, required), seed a
+#               reference-cost lot (newest same-SKU GRN landed cost, else the
+#               product's latest PO line cost) and drive the SAME 0154
+#               function over it — for shorts with NO stock and no future
+#               receipt. Refused when open lots exist, when a competing older
+#               short would claim the lot, or when the named targets do not
+#               fully consume it (verified in-transaction).
 on:
   workflow_dispatch:
     inputs:
@@ -39,8 +68,22 @@ on:
         description: 'Required for APPLY: type exactly  I HAVE REVIEWED THE DRY-RUN'
         required: false
         default: ''
+      mode:
+        description: 'retro-cost = consume real lots; reconstruct = W4 phase 1 (rebuild dropped consumption rows); relabel = W4 phase 2 variant-key unify (RM0); basis-cost = W3 reference-cost seed for named DOs'
+        required: false
+        default: 'retro-cost'
+        type: choice
+        options:
+          - 'retro-cost'
+          - 'reconstruct'
+          - 'relabel'
+          - 'basis-cost'
+      dos:
+        description: 'basis-cost only, REQUIRED there: comma-separated DO numbers (e.g. 2990-DO-2607-009,2990-DO-2607-017)'
+        required: false
+        default: ''
       before_ts:
-        description: 'Optional ISO cutoff (only OUTs created before it are repaired). Blank = now.'
+        description: 'retro-cost only: optional ISO cutoff (only OUTs created before it are repaired). Blank = now.'
         required: false
         default: ''
 
@@ -80,5 +123,7 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APPLY: ${{ steps.mode.outputs.apply }}
+          MODE: ${{ github.event.inputs.mode }}
+          DOS: ${{ github.event.inputs.dos }}
           BEFORE_TS: ${{ github.event.inputs.before_ts }}
           NODE_OPTIONS: --dns-result-order=ipv4first

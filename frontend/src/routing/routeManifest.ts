@@ -84,6 +84,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/driver-leave",
   "/scm/threepl-companies",
   "/scm/fleet",
+  "/scm/delivery-maintenance",
   "/scm/fleet-day",
   "/scm/fleet-run-sheet",
   "/scm/lorry-capacity",

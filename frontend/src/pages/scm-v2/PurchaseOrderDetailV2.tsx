@@ -30,6 +30,7 @@ import {
   Package,
   FilePenLine,
   Share2,
+  Split,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -68,6 +69,9 @@ import { PoAmendmentCreateModal } from "../../components/scm-v2/PoAmendmentCreat
 // SI/DR maps: same shared 5-node canvas, chain + clicks from the PO hook.
 import { DocumentRelationshipMapModal } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { usePoRelationshipMap } from "./po-relationship-map";
+// Per-line SO allocations (mig 0235) — split a consolidated line across the
+// customers (and stock) it serves; sub-numbered PO-xxxx-yy-01, -02, ...
+import { PoLineAllocationsModal } from "../../components/scm-v2/PoLineAllocationsModal";
 import { cn } from "../../lib/utils";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -398,6 +402,10 @@ function PurchaseOrderDetailV2ReadOnly() {
   // Relationship map modal — open state only; the chain itself comes from
   // usePoRelationshipMap below (after the header row resolves).
   const [relMapOpen, setRelMapOpen] = useState(false);
+  // Allocation editor (mig 0235) — which line's split is open. Deliberately
+  // available at every status except CANCELLED (backend rule): the historical
+  // consolidated lines the owner wants to attribute live on RECEIVED POs.
+  const [allocLineId, setAllocLineId] = useState<string | null>(null);
 
   /* Nick 2026-07-09 — Ship-to warehouse cell was rendering the raw
      `purchase_location_id` UUID because the field only carries the id;
@@ -765,6 +773,63 @@ function PurchaseOrderDetailV2ReadOnly() {
       },
     },
     {
+      /* mig 0235 — the consolidated-PO split: which customer (or STOCK) each
+         slice of this line serves, as sub-numbered chips. The Split button
+         opens the editor; it stays available on RECEIVED POs on purpose (the
+         backend refuses only CANCELLED) — attributing historical consolidated
+         buys by hand is what the editor exists for. When allocations exist
+         they are the authoritative Assigned-SO answer for this line. */
+      key: "allocations",
+      label: "Allocations",
+      width: "230px",
+      getValue: (l) =>
+        (l.allocations ?? [])
+          .map((a) => `${a.seq} ${a.so_doc_no ?? "STOCK"} ${a.qty}`)
+          .join(" "),
+      render: (l) => {
+        const allocs = l.allocations ?? [];
+        const poNo = purchaseOrder?.po_number ?? "";
+        const sub = (seq: number) => `${poNo}-${String(seq).padStart(2, "0")}`;
+        return (
+          <div className="flex min-w-0 flex-wrap items-center gap-1">
+            {allocs.map((a) => (
+              <span
+                key={a.id}
+                title={
+                  a.so_doc_no
+                    ? `${sub(a.seq)} — ${a.qty} of this line for ${a.so_doc_no}`
+                    : `${sub(a.seq)} — ${a.qty} of this line for stock (no customer)`
+                }
+                className={cn(
+                  "rounded border px-1.5 py-0.5 font-mono text-[10.5px] font-semibold",
+                  a.so_doc_no
+                    ? "border-border-subtle bg-surface-2 text-accent-ink"
+                    : "border-dashed border-border text-ink-secondary"
+                )}
+              >
+                {sub(a.seq)}
+                {" -> "}
+                {a.so_doc_no ?? "STOCK"}
+                <span className="text-ink-muted">{` (qty ${a.qty})`}</span>
+              </span>
+            ))}
+            {allocs.length === 0 && <span className="text-[11px] text-ink-muted">—</span>}
+            {(purchaseOrder?.status || "").toUpperCase() !== "CANCELLED" && (
+              <button
+                type="button"
+                onClick={() => setAllocLineId(l.id)}
+                title="Split this line across the Sales Orders it was bought for"
+                aria-label={`Edit allocations for ${l.material_code}`}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary hover:border-primary/50 hover:text-primary"
+              >
+                <Split size={12} />
+              </button>
+            )}
+          </div>
+        );
+      },
+    },
+    {
       key: "unit",
       label: "Unit price",
       width: "108px",
@@ -978,6 +1043,18 @@ function PurchaseOrderDetailV2ReadOnly() {
           poNumber={purchaseOrder.po_number}
           onClose={() => setShowAmendModal(false)}
           onCreated={(amendmentId) => navigate(`/scm/po-amendments/${amendmentId}`)}
+        />
+      )}
+
+      {/* Allocation editor (mig 0235) — split ONE line across its customers +
+          stock. Lives on the read-only V2 page (not the ?edit=1 editor) because
+          it must stay reachable on RECEIVED POs, where the editor is locked. */}
+      {allocLineId && (
+        <PoLineAllocationsModal
+          poId={purchaseOrder.id}
+          poNumber={purchaseOrder.po_number}
+          lineId={allocLineId}
+          onClose={() => setAllocLineId(null)}
         />
       )}
 

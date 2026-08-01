@@ -36,7 +36,7 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
 
 type RowEdit = Partial<{ zone: string; prefixStart: string; prefixEnd: string; label: string }>;
 
-export const DeliveryZones = () => {
+export const DeliveryZones = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const [creating, setCreating] = useState(false);
   const map = useZoneMap();
   const create = useCreateZoneRule();
@@ -229,17 +229,19 @@ export const DeliveryZones = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        eyebrow="Delivery"
-        title="Delivery Zones"
-        description="Map Malaysian postcode ranges to the 14 area zones the auto-scheduler clusters deliveries by. A rule maps the first two digits of a postcode (e.g. 43 = Kajang, 10–14 = Penang). The most specific matching range wins, so you can carve a finer zone (e.g. Puchong out of the 46–47 PJ block) without deleting the broad rule."
-        actions={
-          <Button variant="primary" size="md" onClick={() => setCreating(true)}>
-            <Plus {...ICON} />
-            <span>New Rule</span>
-          </Button>
-        }
-      />
+      {!embedded && (
+        <PageHeader
+          eyebrow="Delivery"
+          title="Delivery Zones"
+          description="Map Malaysian postcode ranges to the 14 area zones the auto-scheduler clusters deliveries by. A rule maps the first two digits of a postcode (e.g. 43 = Kajang, 10–14 = Penang). The most specific matching range wins, so you can carve a finer zone (e.g. Puchong out of the 46–47 PJ block) without deleting the broad rule."
+          actions={
+            <Button variant="primary" size="md" onClick={() => setCreating(true)}>
+              <Plus {...ICON} />
+              <span>New Rule</span>
+            </Button>
+          }
+        />
+      )}
 
       {usingDefault && (
         <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-subtle, rgba(0,0,0,0.04))', fontSize: 'var(--fs-13)' }}>

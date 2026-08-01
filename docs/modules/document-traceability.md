@@ -212,6 +212,85 @@ audit's 3a mismatch per GRN with a bare-number movement probe, and the
 movements already attached to each resolved document by id (double-posting
 visibility). Rule: `classifySourceRef` in `lib/doc-ref-repair-core.mjs`.
 
+**Part `ids` (2026-08-01, ledger-perfection W1) — the id-heal part
+`consumptions` deliberately reported and did not touch.** When a group's
+NUMBER already resolves to exactly ONE same-company document but the stored
+`source_doc_id` matches NOTHING (the verbatim-copied pre-import id of a
+dropped/remapped parent — run 30695536709 showed e.g. `2990-DO-2607-016`
+resolving to a real document while its ledger rows store two ids that resolve
+to nothing), the id is restamped **from that unique number resolution** —
+the prefix rule's mirror image, same burden of proof. `classifyIdRestamp`
+(`lib/doc-ref-repair-core.mjs`): a stored id naming a DIFFERENT real document
+refuses the group (`doc-id-conflict`); a number matching 0 same-company
+documents is part-`consumptions` territory; a number matching >1 has no unique
+resolution and refuses; **NULL ids are counted and never written** (the
+audit's sections 4/10b read only non-NULL ids, and a NULL may legitimately
+predate id stamping). Both tables in one transaction, per-row old -> new in
+the dry run, UPDATE scoped to the exact dangling ids the plan proved. Closes
+audit findings 4 and 10b.
+
+**Collision-aware since the 2026-08-01 live APPLY** (which died on
+`uq_inv_mov_do_source`): the executor takes a SAVEPOINT per row; a
+unique-violation (23505) rolls back to the savepoint and files that row under
+`duplicate-of-real` — the dangling movement is an import DUPLICATE of a
+movement the real document already carries, and repointing it would double the
+document's ledger. Duplicates are reported with the violated constraint's
+name and NEVER deleted (removal is its own explicit decision; the row still
+counts in audit section 4, now classified). A consumption row follows its
+movement — refused together, never split. The dry run EXERCISES the identical
+writes in a rolled-back transaction, so the collision verdicts are applied
+truth, not prediction; catching 23505 (rather than pre-computing the key)
+also survives prod's hand-applied indexes that this tree does not describe.
+
+**Part `grn-gap` (2026-08-01, ledger-perfection W2) — the audit's 3a inbound
+gap itself.** `2990-GRN-2606-001` accepted 501 units net of returns; its ONE
+IN movement booked 500 — one unit never entered either ledger, so on-hand and
+lot value understate reality. The part recomputes the per-product delta LIVE
+(accepted-net-of-returns vs signed GRN movements), prints every line and every
+sibling movement, and plans an INSERT of the missing IN movement **through the
+normal path** — a plain `INSERT INTO inventory_movements`, so the AFTER-INSERT
+FIFO trigger opens the lot exactly as a live GRN post would — into the bucket
+and at the landed unit cost its own sibling movement proves
+(`classifyGrnInboundGap` in `lib/ledger-repair-core.mjs`: exactly one distinct
+(warehouse, variant, batch, company) bucket AND exactly one sibling unit cost,
+or the product is refused). GRN movements carry no `uq_inv_mov_*` unique index
+(check-duplicate-movements section 0 ground truth), so the insert cannot be
+rejected; idempotency is the recomputed delta (a repaired GRN plans zero), a
+compare-and-set re-check inside the APPLY transaction, and a
+`repair:grn-inbound-gap` notes marker that refuses a re-insert if the delta
+somehow still reads short. The movement is timestamped NOW — the unit enters
+FIFO at the repair date; backdating would rewrite the consumption chronology.
+The `grns` workflow input names the targets (default the one 3a implicated).
+
+**Part `dedupe` (2026-08-01, owner authorization "继续 全部可以" including
+removal).** The rows part `ids` classifies `duplicate-of-real` may now be
+DELETED — under a rule STRICTER than the index collision that classified
+them: the real document must carry a FULL-ROW twin, same (company, product,
+variant, warehouse, movement_type, qty), because `uq_inv_mov_do_source` is
+keyed without movement_type and proves nothing about qty
+(`classifyDuplicateMovement`). The delete reverses the duplicate's whole
+ledger effect in ONE transaction — consumptions go with the movement, each
+consumed lot's `qty_remaining` is restored (so audit-2a conservation holds by
+construction), any drift aborts everything. Old values of every deleted row
+print in dry run AND apply, plus the per-bucket movement-sum before -> after
+(duplicate OUTs double-decrement on-hand, so audit-2b negative buckets should
+shrink — the output shows whether they do). Run order: `ids` APPLY first — a
+self-collision's surviving sibling becomes the real twin that licenses
+deleting the other. All of it is pinned by `tests-pg/idRestampExec.pg.test.ts`
+against a real unique index in CI's postgres container.
+
+**Line-basis fallback since the 2026-08-01 live run** (which planned zero:
+the short product had written NO movement at all, so no sibling existed): when
+the sibling rule refuses with `no-sibling`, the insert falls back to the GRN
+line's OWN landed cost — `round(unit_price_centi x exchange_rate)`, the same
+`toMyrSen` path grns.ts uses for movements written outside the allocation —
+with the bucket from single-valued GRN facts (`deriveGrnLineBasis`: exactly
+one line for the product, one warehouse across the GRN's movements else the
+header warehouse, one batch else unbatched, variant from the line's own
+variants via a lockstep mirror of `computeVariantKey` pinned by test to the
+real function). Several lines for the product, no resolvable warehouse, or a
+zero/NULL price still refuse.
+
 **A regression the repair would otherwise have caused.** `document-flow.ts`'s
 relationship-map note edge matched on the prefix-STRIPPED root SO only, and
 `noteMentionsToken` forbids an adjacent doc-number character — so
@@ -245,12 +324,30 @@ Resolution, all set-based and company-scoped:
    `includeUndated`, then `mrpReverseCoverage(result).get(po.poNumber)` — the exact
    reverse of the `mrpLineCoverage` the SO detail reads (§ linkage A). Group by SKU,
    `locked:false`. This is called ONCE per request, NOT per-SKU in a loop.
-3. **(b) stored origin (B):** origin SO doc_nos = the PO lines' `so_item_id` →
-   `mfg_sales_order_items.doc_no` **∪** the PO's "From SOs: …" note (shared
-   `parseFromSosNote`), validated against company-owned `mfg_sales_orders` (the
-   company gate + whole-token check). Pure `buildStoredOrigins(...)` matches by
-   `item_code`, effective date `amended_delivery_date ?? customer_delivery_date`,
-   `locked:true`.
+3. **(b) stored origin (B):** origin SO doc_nos = the PO lines' EFFECTIVE
+   stored links → `mfg_sales_order_items.doc_no` **∪** the PO's "From SOs: …"
+   note (shared `parseFromSosNote`), validated against company-owned
+   `mfg_sales_orders` (the company gate + whole-token check). Pure
+   `buildStoredOrigins(...)` matches by `item_code`, effective date
+   `amended_delivery_date ?? customer_delivery_date`, `locked:true`.
+
+   **"Effective" (mig 0235, allocation-aware).** A consolidated PO line can
+   serve SEVERAL SOs plus stock; `scm.purchase_order_item_allocations` splits
+   it into sub-numbered slices (`PO-2606-001-01`, `-02`, ...), each
+   `(qty, so_item_id | NULL)` — NULL = stock. Pure `effectiveStoredLinks
+   (poLines, allocationsByItem)` resolves per LINE: a line WITH allocations
+   reads the allocations' non-null so_item_ids as THE authoritative links —
+   its own single `so_item_id` is superseded, NOT unioned (where both exist,
+   allocations win, so one line can never double-count; an all-stock split
+   yields no link at all, overruling a stale single link). A line WITHOUT
+   allocations keeps the single `so_item_id` — the 1:1 fast path, unchanged.
+   The same function feeds `storedLink`/`sourceLinked`: an allocation IS a
+   stored link, so an allocated SKU reads as linked (solid chip), and each
+   allocated SO now appears in the Assigned SO cell (multiple SOs per line are
+   finally expressible). Both the single-doc route and the batched list
+   resolver call the ONE pure function, so a list row and its drill-down
+   cannot disagree. Allocations reads are best-effort (absent table → empty →
+   exactly the pre-0235 behaviour). Layers (a)/(c) are untouched.
 4. **(a) delivered DO-lock (C):** `resolveDeliveredSoLock(po.poNumber)` finds the
    `(do, code, variant)` buckets whose goods shipped from THIS PO (OUT movements
    with `batch_no` = PO number ∪ FIFO lot consumptions of this PO's lots), resolves

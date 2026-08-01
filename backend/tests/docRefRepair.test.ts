@@ -4,6 +4,7 @@ import {
   companyPrefix,
   classifyToken,
   classifySourceRef,
+  classifyIdRestamp,
   parseFromSosTokens,
   rewriteFromSosNote,
 } from "../scripts/lib/doc-ref-repair-core.mjs";
@@ -264,6 +265,143 @@ describe("classifySourceRef — A3 ledger source refs: the number rule plus the 
         storedDocIds: [],
       }),
     ).toThrow(/resolvedDocId/);
+  });
+});
+
+describe("classifyIdRestamp — part `ids` (W1): the id-heal for numbers that already resolve", () => {
+  // The shape part `consumptions` deliberately reports and does not touch:
+  // the importer's repair pass fixed the NUMBER, but the verbatim-copied
+  // source_doc_id still names the PRE-IMPORT parent, which no longer exists.
+  // The audit's sections 4 and 10b read the ID, so the finding stands until
+  // the id is restamped — from the number's unique resolution, nothing else.
+
+  test("THE WOUND (run 30695536709): the number resolves, the stored id matches nothing — restamped", () => {
+    const v = classifyIdRestamp({
+      token: "2990-DO-2607-016",
+      ownCompanyMatches: 1,
+      resolvedDocId: "68362d70-real",
+      storedDocIds: [{ id: "6d9ecfd5-preimport", exists: false, rows: 4 }],
+    });
+    expect(v.verdict).toBe("restamp");
+    expect(v.idWrites).toEqual([{ id: "6d9ecfd5-preimport", rows: 4, action: "restamp" }]);
+    expect(v.resolvedDocId).toBe("68362d70-real");
+  });
+
+  test("two distinct dangling ids in one group are both restamped to the one resolution", () => {
+    const v = classifyIdRestamp({
+      token: "2990-DO-2607-016",
+      ownCompanyMatches: 1,
+      resolvedDocId: "real-id",
+      storedDocIds: [
+        { id: "dead-a", exists: false, rows: 4 },
+        { id: "dead-b", exists: false, rows: 2 },
+      ],
+    });
+    expect(v.verdict).toBe("restamp");
+    expect(v.idWrites).toEqual([
+      { id: "dead-a", rows: 4, action: "restamp" },
+      { id: "dead-b", rows: 2, action: "restamp" },
+    ]);
+  });
+
+  test("a NULL stored id is counted but NEVER written — sections 4/10b read only non-NULL ids", () => {
+    const v = classifyIdRestamp({
+      token: "2990-DO-2607-016",
+      ownCompanyMatches: 1,
+      resolvedDocId: "real-id",
+      storedDocIds: [
+        { id: null, exists: false, rows: 3 },
+        { id: "dead-a", exists: false, rows: 1 },
+      ],
+    });
+    expect(v.verdict).toBe("restamp");
+    expect(v.idWrites).toEqual([
+      { id: null, rows: 3, action: "null-report" },
+      { id: "dead-a", rows: 1, action: "restamp" },
+    ]);
+  });
+
+  test("a group whose ids are all NULL or already correct plans nothing", () => {
+    const v = classifyIdRestamp({
+      token: "2990-DO-2607-016",
+      ownCompanyMatches: 1,
+      resolvedDocId: "real-id",
+      storedDocIds: [
+        { id: "real-id", exists: true, rows: 5 },
+        { id: null, exists: false, rows: 2 },
+      ],
+    });
+    expect(v.verdict).toBe("no-dangling-id");
+  });
+
+  test("THE REFUSAL: a stored id naming a DIFFERENT real document refuses the whole group", () => {
+    const v = classifyIdRestamp({
+      token: "2990-DO-2607-016",
+      ownCompanyMatches: 1,
+      resolvedDocId: "real-id",
+      storedDocIds: [
+        { id: "dead-a", exists: false, rows: 4 },
+        { id: "another-real-do", exists: true, rows: 1 },
+      ],
+    });
+    expect(v.verdict).toBe("doc-id-conflict");
+  });
+
+  test("an unresolved number is the PREFIX repair's territory, never healed here", () => {
+    const v = classifyIdRestamp({
+      token: "DO-2607-016",
+      ownCompanyMatches: 0,
+      storedDocIds: [{ id: "dead-a", exists: false, rows: 4 }],
+    });
+    expect(v.verdict).toBe("number-unresolved");
+  });
+
+  test("a number matching TWO same-company documents has no unique resolution — refused", () => {
+    const v = classifyIdRestamp({
+      token: "2990-DO-2607-016",
+      ownCompanyMatches: 2,
+      storedDocIds: [{ id: "dead-a", exists: false, rows: 4 }],
+    });
+    expect(v.verdict).toBe("number-ambiguous");
+  });
+
+  test("a unique resolution without its id throws — never plan a write without the resolved document", () => {
+    expect(() =>
+      classifyIdRestamp({
+        token: "2990-DO-2607-016",
+        ownCompanyMatches: 1,
+        storedDocIds: [{ id: "dead-a", exists: false, rows: 4 }],
+      }),
+    ).toThrow(/resolvedDocId/);
+  });
+
+  test("idempotence: re-running over a restamped group plans nothing", () => {
+    const first = classifyIdRestamp({
+      token: "2990-DO-2607-016",
+      ownCompanyMatches: 1,
+      resolvedDocId: "real-id",
+      storedDocIds: [{ id: "dead-a", exists: false, rows: 4 }],
+    });
+    expect(first.verdict).toBe("restamp");
+    expect(
+      classifyIdRestamp({
+        token: "2990-DO-2607-016",
+        ownCompanyMatches: 1,
+        resolvedDocId: "real-id",
+        storedDocIds: [{ id: "real-id", exists: true, rows: 4 }],
+      }).verdict,
+    ).toBe("no-dangling-id");
+  });
+
+  test("a foreign company's document with the same number neither blocks nor misdirects (informational only)", () => {
+    const v = classifyIdRestamp({
+      token: "2990-DO-2607-016",
+      ownCompanyMatches: 1,
+      foreignMatches: 1,
+      resolvedDocId: "real-id",
+      storedDocIds: [{ id: "dead-a", exists: false, rows: 1 }],
+    });
+    expect(v).toMatchObject({ verdict: "restamp", foreignMatches: 1 });
   });
 });
 

@@ -37,7 +37,7 @@ import { PageHeader } from '../../components/Layout';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-export const DeliveryPlanningRegions = () => {
+export const DeliveryPlanningRegions = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const [creating, setCreating] = useState(false);
   const regions = useDeliveryPlanningRegions();
   const update = useUpdateDeliveryPlanningRegion();
@@ -243,17 +243,19 @@ export const DeliveryPlanningRegions = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        eyebrow="Delivery"
-        title="Delivery Regions"
-        description="The region buckets (tabs) on Delivery Planning, with the areas each one covers. Assign which states fall under each region in SO Maintenance."
-        actions={
-          <Button variant="primary" size="md" onClick={() => setCreating(true)}>
-            <Plus {...ICON} />
-            <span>New Region</span>
-          </Button>
-        }
-      />
+      {!embedded && (
+        <PageHeader
+          eyebrow="Delivery"
+          title="Delivery Regions"
+          description="The region buckets (tabs) on Delivery Planning, with the areas each one covers. Assign which states fall under each region in SO Maintenance."
+          actions={
+            <Button variant="primary" size="md" onClick={() => setCreating(true)}>
+              <Plus {...ICON} />
+              <span>New Region</span>
+            </Button>
+          }
+        />
+      )}
 
       <div className={styles.headerRow}>
         <p className={styles.eyebrow}>{regions.data?.length ?? 0} regions</p>
