@@ -150,6 +150,8 @@ app.get("/", async (c) => {
 
   const defaults: Record<string, Record<string, StoredLayout>> = {};
   const mine: Record<string, { layout: StoredLayout; updatedAt: string | null }> = {};
+  /** tableKey → this user's SAVED layouts (mig 0239), newest name order. */
+  const myLayouts: Record<string, Array<{ id: number; name: string; layout: StoredLayout }>> = {};
 
   // Pre-activation (no companies master) there is nothing to key rows by —
   // return the empty shape and let every table fall back to its code preset,
@@ -160,15 +162,17 @@ app.get("/", async (c) => {
     try {
       const placeholders = ids.map(() => "?").join(", ");
       const rows = await c.env.DB.prepare(
-        `SELECT company_id, user_id, table_key, layout, updated_at
+        `SELECT id, company_id, user_id, name, table_key, layout, updated_at
            FROM table_layouts
           WHERE (user_id IS NULL AND company_id IN (${placeholders}))
              OR (user_id = ? AND company_id = ?)`,
       )
         .bind(...ids, uid, activeCompanyId ?? 0)
         .all<{
+          id: number;
           company_id: number;
           user_id: number | null;
+          name: string | null;
           table_key: string;
           layout: string;
           updated_at: string | null;
@@ -179,9 +183,18 @@ app.get("/", async (c) => {
         if (row.user_id === null) {
           const bucket = (defaults[String(row.company_id)] ??= {});
           bucket[row.table_key] = layout;
-        } else {
+        } else if (row.name == null) {
           mine[row.table_key] = { layout, updatedAt: row.updated_at ?? null };
+        } else {
+          (myLayouts[row.table_key] ??= []).push({
+            id: Number(row.id),
+            name: row.name,
+            layout,
+          });
         }
+      }
+      for (const list of Object.values(myLayouts)) {
+        list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
       }
     } catch {
       // Table absent (migration not applied yet) or a transient DB error. A
@@ -196,6 +209,7 @@ app.get("/", async (c) => {
     canManageDefaults,
     defaults,
     mine,
+    myLayouts,
   });
 });
 
@@ -219,8 +233,10 @@ async function upsert(
     userId === null
       ? `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
           WHERE company_id = ? AND table_key = ? AND user_id IS NULL`
-      : `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
-          WHERE company_id = ? AND table_key = ? AND user_id = ?`,
+      : /* AND name IS NULL — a user's saved layouts live in the same table
+           now (mig 0239); this statement owns only their LIVE arrangement. */
+        `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
+          WHERE company_id = ? AND table_key = ? AND user_id = ? AND name IS NULL`,
   )
     .bind(
       ...(userId === null
@@ -266,7 +282,9 @@ app.delete("/:tableKey", async (c) => {
   const uid = userIdOf(c);
   if (!uid) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
   await c.env.DB.prepare(
-    "DELETE FROM table_layouts WHERE company_id = ? AND table_key = ? AND user_id = ?",
+    // Their LIVE arrangement only — a reset must not take their saved layouts
+    // with it.
+    "DELETE FROM table_layouts WHERE company_id = ? AND table_key = ? AND user_id = ? AND name IS NULL",
   )
     .bind(target.companyId, target.tableKey, uid)
     .run();
@@ -300,6 +318,137 @@ app.delete("/:tableKey/default", requirePermission(MANAGE_DEFAULTS_PERM), async 
   )
     .bind(target.companyId, target.tableKey)
     .run();
+  return c.json({ ok: true });
+});
+
+/* ── Named layouts (mig 0239) ──────────────────────────────────────────────
+   A saved column set the user can switch back to. Switching COPIES it into
+   their live arrangement (the unnamed row), which is why nothing here touches
+   the sync path: a layout is data, not a pointer.
+
+   Owner scoping is absolute — every statement carries `user_id = <caller>`, so
+   an id from another account matches nothing and answers 404 rather than
+   telling the caller it exists. Sharing is deliberately out of scope. */
+
+const MAX_NAME_LEN = 60;
+
+/** Trim, collapse whitespace, refuse control characters. "" when unusable. */
+function cleanName(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const cleaned = raw
+    // Control characters render as nothing, which would let two layouts look
+    // identically named in the picker; whitespace runs collapse for the same
+    // reason. Filtered by code point rather than a regex class so this source
+    // file carries no invisible characters of its own.
+    .split("")
+    .map((ch) => (ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f ? " " : ch))
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.slice(0, MAX_NAME_LEN);
+}
+
+/** GET /api/table-layouts/:tableKey/layouts — this user's saved layouts. */
+app.get("/:tableKey/layouts", async (c) => {
+  const target = readTarget(c);
+  if ("error" in target) return c.json({ error: target.error }, 400);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+  const rows = await c.env.DB.prepare(
+    `SELECT id, name, layout FROM table_layouts
+      WHERE company_id = ? AND table_key = ? AND user_id = ? AND name IS NOT NULL
+      ORDER BY name`,
+  )
+    .bind(target.companyId, target.tableKey, uid)
+    .all<{ id: number; name: string; layout: string }>();
+  return c.json({
+    layouts: (rows.results ?? [])
+      .map((r) => ({ id: Number(r.id), name: r.name, layout: parseLayout(r.layout) }))
+      .filter((r) => r.layout !== null),
+  });
+});
+
+/** POST /api/table-layouts/:tableKey/layouts — save the given columns as a
+ *  new layout. Duplicate is the same call with the source's layout, so there
+ *  is no second endpoint to keep in step with this one. */
+app.post("/:tableKey/layouts", async (c) => {
+  const target = readTarget(c);
+  if ("error" in target) return c.json({ error: target.error }, 400);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  const name = cleanName((body as { name?: unknown }).name);
+  if (!name) return c.json({ error: "Give the layout a name." }, 400);
+  const layout = sanitizeLayout((body as { layout?: unknown }).layout);
+
+  const clash = await c.env.DB.prepare(
+    `SELECT id FROM table_layouts
+      WHERE company_id = ? AND table_key = ? AND user_id = ? AND lower(name) = lower(?)`,
+  )
+    .bind(target.companyId, target.tableKey, uid, name)
+    .first<{ id: number }>();
+  // Checked rather than left to the unique index: "You already have a layout
+  // called X" is an answer; a constraint violation is a 500.
+  if (clash) return c.json({ error: `You already have a layout called “${name}”.` }, 409);
+
+  const inserted = await c.env.DB.prepare(
+    `INSERT INTO table_layouts (company_id, user_id, name, table_key, layout, updated_at, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(target.companyId, uid, name, target.tableKey, JSON.stringify(layout), nowIso(), uid)
+    .run();
+  return c.json({
+    layout: { id: Number(inserted.meta?.last_row_id ?? 0), name, layout },
+  });
+});
+
+/** PATCH /api/table-layouts/:tableKey/layouts/:id — rename. */
+app.patch("/:tableKey/layouts/:id", async (c) => {
+  const target = readTarget(c);
+  if ("error" in target) return c.json({ error: target.error }, 400);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+  const id = Number(c.req.param("id"));
+  if (!Number.isFinite(id) || id <= 0) return c.json({ error: "Invalid layout" }, 400);
+  const body = await c.req.json().catch(() => ({}));
+  const name = cleanName((body as { name?: unknown }).name);
+  if (!name) return c.json({ error: "Give the layout a name." }, 400);
+
+  const clash = await c.env.DB.prepare(
+    `SELECT id FROM table_layouts
+      WHERE company_id = ? AND table_key = ? AND user_id = ? AND lower(name) = lower(?) AND id <> ?`,
+  )
+    .bind(target.companyId, target.tableKey, uid, name, id)
+    .first<{ id: number }>();
+  if (clash) return c.json({ error: `You already have a layout called “${name}”.` }, 409);
+
+  const res = await c.env.DB.prepare(
+    `UPDATE table_layouts SET name = ?, updated_at = ?, updated_by = ?
+      WHERE id = ? AND company_id = ? AND table_key = ? AND user_id = ? AND name IS NOT NULL`,
+  )
+    .bind(name, nowIso(), uid, id, target.companyId, target.tableKey, uid)
+    .run();
+  if (Number(res.meta?.changes ?? 0) === 0) return c.json({ error: "Layout not found" }, 404);
+  return c.json({ ok: true, name });
+});
+
+/** DELETE /api/table-layouts/:tableKey/layouts/:id */
+app.delete("/:tableKey/layouts/:id", async (c) => {
+  const target = readTarget(c);
+  if ("error" in target) return c.json({ error: target.error }, 400);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+  const id = Number(c.req.param("id"));
+  if (!Number.isFinite(id) || id <= 0) return c.json({ error: "Invalid layout" }, 400);
+  const res = await c.env.DB.prepare(
+    // `name IS NOT NULL` so this route can never delete the live arrangement,
+    // whatever id it is handed.
+    `DELETE FROM table_layouts
+      WHERE id = ? AND company_id = ? AND table_key = ? AND user_id = ? AND name IS NOT NULL`,
+  )
+    .bind(id, target.companyId, target.tableKey, uid)
+    .run();
+  if (Number(res.meta?.changes ?? 0) === 0) return c.json({ error: "Layout not found" }, 404);
   return c.json({ ok: true });
 });
 

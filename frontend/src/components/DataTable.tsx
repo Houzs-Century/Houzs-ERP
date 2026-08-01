@@ -44,7 +44,10 @@ import { subscribeActiveCompany, getActiveCompanySnapshot } from "../lib/activeC
 import { shortCompanyName } from "../lib/branding";
 import {
   EMPTY_LAYOUT,
+  createNamedLayout,
+  deleteNamedLayout,
   getTableLayoutsSnapshot,
+  renameNamedLayout,
   saveCompanyDefault,
   saveMyLayout,
   serializeLayout,
@@ -906,6 +909,8 @@ function DataTableInner<T>({
       columns?: string[];
       isDefault: boolean;
       fromServer: boolean;
+      /** Set only for the user's own saved layouts — what CRUD acts on. */
+      savedId?: number;
     }> = [];
     for (const co of layoutStore.companies) {
       const saved = layoutStore.defaults[String(co.id)]?.[baseIdKey];
@@ -922,6 +927,19 @@ function DataTableInner<T>({
         columns: saved ? undefined : seed?.columns,
         isDefault: co.id === layoutStore.activeCompanyId,
         fromServer: Boolean(saved),
+      });
+    }
+    /* The user's OWN saved layouts (mig 0239) — offered after the company
+       rows, and the only ones that can be renamed or deleted. */
+    for (const saved of layoutStore.myLayouts[baseIdKey] ?? []) {
+      out.push({
+        id: `saved:${saved.id}`,
+        label: saved.name,
+        hint: "Saved by you",
+        layout: saved.layout,
+        isDefault: false,
+        fromServer: true,
+        savedId: saved.id,
       });
     }
     // Page presets that aren't about a company (and, when there is no company
@@ -1168,6 +1186,7 @@ function DataTableInner<T>({
         hint: p.hint,
         count: wouldShow.length,
         isDefault: p.isDefault,
+        savedId: p.savedId,
         active:
           wouldShow.length === current.length &&
           wouldShow.every((k, i) => current[i] === k),
@@ -1367,6 +1386,34 @@ function DataTableInner<T>({
    *  dirty against, so it stays false. */
   const layoutDirty = Boolean(
     presetOptions && presetOptions.length > 0 && !presetOptions.some((p) => p.active)
+  );
+
+  /* ── Named layouts (mig 0239) ────────────────────────────────────────────
+     Saving one snapshots the arrangement ON SCREEN, which is the only reading
+     that matches the control's name ("New layout from current columns"). The
+     drawer owns the naming prompt; here we just write. */
+  const saveNamedLayout = useCallback(
+    (name: string) => createNamedLayout(baseIdKey, name, renderedLayout).then(() => undefined),
+    [baseIdKey, renderedLayout]
+  );
+  const duplicateNamedLayout = useCallback(
+    (id: string, name: string) => {
+      const source = resolvedPresets.find((p) => p.id === id);
+      // Duplicating a COMPANY row is allowed on purpose: "start from the 2990
+      // view and tweak it" is the same gesture as duplicating your own.
+      return createNamedLayout(baseIdKey, name, source ? presetLayout(source) : renderedLayout).then(
+        () => undefined
+      );
+    },
+    [baseIdKey, resolvedPresets, presetLayout, renderedLayout]
+  );
+  const renameSavedLayout = useCallback(
+    (savedId: number, name: string) => renameNamedLayout(baseIdKey, savedId, name),
+    [baseIdKey]
+  );
+  const deleteSavedLayout = useCallback(
+    (savedId: number) => deleteNamedLayout(baseIdKey, savedId),
+    [baseIdKey]
   );
 
   /** Download the arrangement as JSON — the drawer's "Export column config".
@@ -2221,6 +2268,10 @@ function DataTableInner<T>({
         onReset={resetLayout}
         layouts={presetOptions}
         onApplyLayout={applyPreset}
+        onSaveLayout={layoutStore.ready ? saveNamedLayout : undefined}
+        onDuplicateLayout={layoutStore.ready ? duplicateNamedLayout : undefined}
+        onRenameLayout={layoutStore.ready ? renameSavedLayout : undefined}
+        onDeleteLayout={layoutStore.ready ? deleteSavedLayout : undefined}
         defaultManager={defaultManager}
         dirty={layoutDirty}
         onExport={exportColumnConfig}

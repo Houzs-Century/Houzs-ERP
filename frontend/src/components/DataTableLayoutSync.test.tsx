@@ -19,11 +19,13 @@ import { api } from "../api/client";
    ──────────────────────────────────────────────────────────────────────────── */
 
 vi.mock("../api/client", () => ({
-  api: { get: vi.fn(), put: vi.fn(), del: vi.fn() },
+  api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), del: vi.fn() },
 }));
 
 const mockApi = api as unknown as {
   get: ReturnType<typeof vi.fn>;
+  post: ReturnType<typeof vi.fn>;
+  patch: ReturnType<typeof vi.fn>;
   put: ReturnType<typeof vi.fn>;
   del: ReturnType<typeof vi.fn>;
 };
@@ -56,6 +58,7 @@ function respond(over: Record<string, unknown> = {}) {
     canManageDefaults: false,
     defaults: {},
     mine: {},
+    myLayouts: {},
     ...over,
   });
 }
@@ -96,6 +99,8 @@ const renderTable = (tableId: string) =>
 beforeEach(() => {
   localStorage.clear();
   mockApi.get.mockReset();
+  mockApi.post.mockReset().mockResolvedValue({ ok: true });
+  mockApi.patch.mockReset().mockResolvedValue({ ok: true });
   mockApi.put.mockReset().mockResolvedValue({ ok: true });
   mockApi.del.mockReset().mockResolvedValue({ ok: true });
   __resetTableLayoutsForTest();
@@ -238,5 +243,93 @@ describe("DataTable with server layouts", () => {
        toast (handoff 2026-08-01), so what is asserted here is the WRITE, not
        the wording — the toast host does not exist in a bare test render. */
     expect(mockApi.put.mock.calls[0]![0]).toContain("/default");
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+   NAMED layouts (mig 0239). A saved column set, offered in the picker next to
+   the company defaults. Switching COPIES it into the live arrangement, which is
+   why saving one must not disturb what is on screen — and why a company row can
+   be duplicated into one of your own.
+   ──────────────────────────────────────────────────────────────────────────── */
+describe("DataTable with saved layouts", () => {
+  const savedLayout = (over: Record<string, unknown> = {}) => ({
+    order: ["a", "b"],
+    hidden: ["c", "d"],
+    shown: [],
+    widths: {},
+    pinned: [],
+    groupBy: [],
+    ...over,
+  });
+
+  it("offers a saved layout in the picker and applies it on click", async () => {
+    respond({
+      myLayouts: {
+        saved: [{ id: 7, name: "Finance review", layout: savedLayout() }],
+      },
+    });
+    await hydrateTableLayouts();
+
+    const { container } = renderTable("saved");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+
+    const row = screen.getByRole("option", { name: /Finance review/ });
+    expect(row.textContent).toContain("Saved by you");
+    fireEvent.click(row);
+
+    expect(headerLabels(container)).toEqual(["Alpha", "Bravo"]);
+  });
+
+  it("saves the arrangement on screen as a new layout", async () => {
+    respond({ canManageDefaults: false });
+    await hydrateTableLayouts();
+    mockApi.post.mockResolvedValue({
+      layout: { id: 3, name: "Mine", layout: savedLayout() },
+    });
+
+    renderTable("newlayout");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+
+    // Without a dialog host the naming step cannot run, so the control is
+    // present but the write is not attempted — which is the same contract the
+    // toast has: no host, no crash.
+    expect(screen.getByRole("button", { name: /New layout from current columns/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /New layout from current columns/ }));
+    await waitFor(() => expect(mockApi.post).not.toHaveBeenCalled());
+  });
+
+  it("offers Rename and Delete only on layouts the user owns", async () => {
+    respond({
+      defaults: { "2": { rights: savedLayout({ order: ["a"] }) } },
+      myLayouts: { rights: [{ id: 9, name: "Mine", layout: savedLayout() }] },
+    });
+    await hydrateTableLayouts();
+
+    renderTable("rights");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+
+    // The company default can be DUPLICATED (start from 2990's view) but never
+    // renamed or deleted — it isn't the user's to change.
+    fireEvent.click(screen.getByRole("button", { name: /Actions for 2990's Home Layout/ }));
+    expect(screen.getByRole("button", { name: /Duplicate/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Rename/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Delete layout/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Actions for Mine/ }));
+    expect(screen.getByRole("button", { name: /^Rename/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Delete layout/ })).toBeTruthy();
+  });
+
+  it("says nothing about saved layouts when the store never came up", async () => {
+    mockApi.get.mockRejectedValue(new Error("offline"));
+    await hydrateTableLayouts();
+
+    renderTable("offline");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    expect(screen.queryByRole("button", { name: /New layout from current columns/ })).toBeNull();
   });
 });

@@ -266,3 +266,113 @@ describe("table layouts", () => {
     expect(Number(rows?.n)).toBe(0);
   });
 });
+
+/* ────────────────────────────────────────────────────────────────────────────
+   NAMED layouts (mig 0239). A saved column set the user can switch back to —
+   data, not a pointer, which is why none of this touches the live-arrangement
+   sync above. What matters: the live row and the saved ones share a table and
+   must never write through each other, names are the user's own namespace, and
+   another account's layout is invisible rather than merely read-only.
+   ──────────────────────────────────────────────────────────────────────────── */
+describe("named layouts", () => {
+  const listMine = async (actor: Actor) =>
+    (await (await req(actor, `/${TABLE}/layouts`)).json<{
+      layouts: Array<{ id: number; name: string; layout: { order: string[] } }>;
+    }>()).layouts;
+
+  test("saving a layout leaves the live arrangement alone, and vice versa", async () => {
+    const user = await seedActor(["sales_orders.read"]);
+
+    await req(user, `/${TABLE}`, { method: "PUT", body: { layout: layout({ order: ["live"] }) } });
+    const created = await req(user, `/${TABLE}/layouts`, {
+      method: "POST",
+      body: { name: "Finance review", layout: layout({ order: ["saved"] }) },
+    });
+    expect(created.status).toBe(200);
+
+    // Two rows, two jobs.
+    expect((await listMine(user))[0]?.layout.order).toEqual(["saved"]);
+    let body = await (await req(user, "")).json<{
+      mine: Record<string, { layout: { order: string[] } }>;
+      myLayouts: Record<string, Array<{ name: string }>>;
+    }>();
+    expect(body.mine[TABLE]?.layout.order).toEqual(["live"]);
+    expect(body.myLayouts[TABLE]?.map((l) => l.name)).toEqual(["Finance review"]);
+
+    // Editing the live arrangement must not write through to the saved one…
+    await req(user, `/${TABLE}`, { method: "PUT", body: { layout: layout({ order: ["moved"] }) } });
+    expect((await listMine(user))[0]?.layout.order).toEqual(["saved"]);
+
+    // …and a reset must not take the saved layouts with it.
+    expect((await req(user, `/${TABLE}`, { method: "DELETE" })).status).toBe(200);
+    body = await (await req(user, "")).json<{
+      mine: Record<string, unknown>;
+      myLayouts: Record<string, Array<{ name: string }>>;
+    }>();
+    expect(body.mine[TABLE]).toBeUndefined();
+    expect(body.myLayouts[TABLE]?.map((l) => l.name)).toEqual(["Finance review"]);
+  });
+
+  test("names are the user's own namespace, case-insensitively", async () => {
+    const user = await seedActor(["sales_orders.read"]);
+    const other = await seedActor(["sales_orders.read"]);
+
+    await req(user, `/${TABLE}/layouts`, { method: "POST", body: { name: "Ops", layout: layout() } });
+    const dupe = await req(user, `/${TABLE}/layouts`, {
+      method: "POST",
+      body: { name: "  ops  ", layout: layout() },
+    });
+    expect(dupe.status).toBe(409);
+
+    // The same name under a different account is not a clash.
+    expect(
+      (await req(other, `/${TABLE}/layouts`, { method: "POST", body: { name: "Ops", layout: layout() } })).status,
+    ).toBe(200);
+    expect((await listMine(other)).map((l) => l.name)).toEqual(["Ops"]);
+  });
+
+  test("rename and delete answer 404 for somebody else's layout", async () => {
+    const owner = await seedActor(["sales_orders.read"]);
+    const stranger = await seedActor(["settings.manage"]);
+    await req(owner, `/${TABLE}/layouts`, { method: "POST", body: { name: "Mine", layout: layout() } });
+    const id = (await listMine(owner))[0]!.id;
+
+    // Not 403: an id that isn't yours should not be confirmed to exist.
+    expect(
+      (await req(stranger, `/${TABLE}/layouts/${id}`, { method: "PATCH", body: { name: "Theirs" } })).status,
+    ).toBe(404);
+    expect((await req(stranger, `/${TABLE}/layouts/${id}`, { method: "DELETE" })).status).toBe(404);
+    expect((await listMine(owner))[0]?.name).toBe("Mine");
+
+    expect(
+      (await req(owner, `/${TABLE}/layouts/${id}`, { method: "PATCH", body: { name: "Renamed" } })).status,
+    ).toBe(200);
+    expect((await listMine(owner))[0]?.name).toBe("Renamed");
+    expect((await req(owner, `/${TABLE}/layouts/${id}`, { method: "DELETE" })).status).toBe(200);
+    expect(await listMine(owner)).toEqual([]);
+  });
+
+  test("a blank or unusable name is refused, not stored", async () => {
+    const user = await seedActor(["sales_orders.read"]);
+    for (const name of ["", "   ", 42, null]) {
+      const res = await req(user, `/${TABLE}/layouts`, { method: "POST", body: { name, layout: layout() } });
+      expect(res.status).toBe(400);
+    }
+    expect(await listMine(user)).toEqual([]);
+  });
+
+  test("the live row cannot be deleted through the layouts route", async () => {
+    const user = await seedActor(["sales_orders.read"]);
+    await req(user, `/${TABLE}`, { method: "PUT", body: { layout: layout({ order: ["live"] }) } });
+    const live = await env.DB.prepare(
+      `SELECT id FROM table_layouts WHERE user_id = ? AND name IS NULL`,
+    )
+      .bind(user.id)
+      .first<{ id: number }>();
+
+    // Handing the live row's id to the named-layout route must miss entirely.
+    expect((await req(user, `/${TABLE}/layouts/${Number(live?.id)}`, { method: "DELETE" })).status).toBe(404);
+    const body = await (await req(user, "")).json<{ mine: Record<string, unknown> }>();
+    expect(body.mine[TABLE]).toBeTruthy();
+  });
+});

@@ -25,6 +25,10 @@ export interface LayoutPresetOption {
   active: boolean;
   /** This company's default — what an untouched table starts on. */
   isDefault: boolean;
+  /** Set only for a layout the USER saved (mig 0239) — the id CRUD acts on.
+   *  Absent for a company default or a page seed, which they cannot rename or
+   *  delete. */
+  savedId?: number;
 }
 
 export interface LayoutDefaultManager {
