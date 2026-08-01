@@ -361,7 +361,12 @@ Resolution, all set-based and company-scoped:
 **SO↔PO symmetry** is guaranteed because the floating layer inverts the SAME
 single `computeMrp` allocation the SO detail reads: `mrpLineCoverage` (SO→PO) and
 `mrpReverseCoverage` (PO→SO) are two directions of one map (unit-proven in
-`poSoOrigin.test.ts`). No second coverage engine was introduced.
+`poSoOrigin.test.ts`). No second coverage engine was introduced. Since
+2026-08-01 (`fix/mrp-consistency-tails`, audit D6) the symmetry holds across
+EVERY caller regardless of `includeUndated`: the flag is display-only — the
+engine always allocates the full demand set (undated lines last), so the MRP
+page (false) and these coverage readers (true) read one identical allocation.
+See `docs/modules/mrp.md`.
 
 **Do NOT touch** DO status derivation / delivery-planning state — the DO-lock only
 READS `delivery_order_items` / `delivery_orders` / inventory lots + movements,
