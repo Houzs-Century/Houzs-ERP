@@ -4817,11 +4817,11 @@ function DetailContent({
               {(
                 [
                   { value: "all" as const, label: "All" },
+                  { value: "system" as const, label: "System" },
                   { value: "service" as const, label: "Service" },
                   { value: "customer" as const, label: "Customer" },
                   { value: "supplier" as const, label: "Supplier" },
                   { value: "sales" as const, label: "Sales" },
-                  { value: "system" as const, label: "System" },
                 ]
               ).map((opt) => {
                 const active = activityFilter === opt.value;
@@ -4878,6 +4878,19 @@ function DetailContent({
               // must stay in the DB — the relay dedups on it). Collapse
               // consecutive ones into a single compact entry and strip
               // the marker for display.
+              // Backend notes embed the R2 storage key — a UUID filename
+              // that reads as garbage (Nico 2026-08-01: 乱码). Swap each
+              // for a friendly kind derived from the extension.
+              const prettifyText = (t: string): string =>
+                t.replace(
+                  /\(?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\.([a-z0-9]+))?\)?/gi,
+                  (_m, ext) => {
+                    const e = String(ext || "").toLowerCase();
+                    if (["mov", "mp4", "webm", "m4v", "avi"].includes(e)) return "(video)";
+                    if (["jpg", "jpeg", "png", "webp", "gif", "heic"].includes(e)) return "(photo)";
+                    return "(file)";
+                  },
+                );
               const photoImportFile = (a: any): string | null => {
                 const m = /^Photo migrated from Google Form history(?::\s*(.*?))?\s*\[gdrive:[^\]]+\]$/.exec(
                   String(a.note || "").trim()
@@ -4934,7 +4947,7 @@ function DetailContent({
                           <>
                             Status changed to{" "}
                             <span className="font-bold">
-                              {stageLabel(a.to_value || "")}
+                              {caseStageLabel(a.to_value || "")}
                             </span>
                           </>
                         );
@@ -5038,6 +5051,7 @@ function DetailContent({
                         }
                         break;
                     }
+                    if (typeof body === "string") body = prettifyText(body);
                     const actorRole = roleOf(a);
                     return (
                       <li key={a.id} className="group relative">
