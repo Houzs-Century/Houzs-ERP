@@ -90,12 +90,24 @@
 // DRY-RUN by default. APPLY=1 to write. Idempotent: a repaired reference
 // resolves, so a re-run classifies it "already-resolves" and plans zero rows.
 //
+//   A6  PART=dedupe (2026-08-01, owner authorization "继续 全部可以"). DELETE
+//       the movement+consumption pairs part=ids classifies duplicate-of-real
+//       — only when the real document carries a FULL-ROW twin (same company,
+//       product, variant, warehouse, movement_type, qty; the index key alone
+//       is not proof — it excludes movement_type). The delete reverses the
+//       duplicate's WHOLE ledger effect in one transaction: consumptions go
+//       with the movement and each consumed lot's qty_remaining is RESTORED,
+//       so 2a conservation holds by construction. Every deleted row's old
+//       values print in dry run AND apply, plus the per-bucket movement-sum
+//       impact (duplicate OUTs double-decrement on-hand — the audit-2b
+//       linkage the owner asked to see either way).
+//
 //   DATABASE_URL   required (env, or .dev.vars for local use)
 //   APPLY=1        write. Anything else is a dry run.
-//   PART           all (default) | notes | batches | consumptions | ids | grn-gap
-//                  (`all` = the three original parts; `ids` and `grn-gap` are
-//                  deliberately DISPATCH-ONLY so the widest-reaching writes are
-//                  each an explicit, single-purpose run)
+//   PART           all (default) | notes | batches | consumptions | ids | grn-gap | dedupe
+//                  (`all` = the three original parts; `ids`, `grn-gap` and
+//                  `dedupe` are deliberately DISPATCH-ONLY so the widest-
+//                  reaching writes are each an explicit, single-purpose run)
 //   GRNS           part grn-gap only: comma-separated GRN numbers to repair
 //                  (default 2990-GRN-2606-001 — the one 3a implicated)
 //   MAX_ROWS       per-batch row ids to print in the plan (default 200)
@@ -109,15 +121,21 @@ import {
   parseFromSosTokens,
   rewriteFromSosNote,
 } from "./lib/doc-ref-repair-core.mjs";
-import { classifyGrnInboundGap } from "./lib/ledger-repair-core.mjs";
+import {
+  classifyGrnInboundGap,
+  deriveGrnLineBasis,
+  classifyDuplicateMovement,
+  projectDedupeBucketImpact,
+} from "./lib/ledger-repair-core.mjs";
+import { execIdRestamp, printIdRestampExec, execDedupe } from "./lib/id-restamp-exec.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const PART = (process.env.PART || "all").trim().toLowerCase();
 const MAX_ROWS = Number(process.env.MAX_ROWS || 200);
 const GRNS = (process.env.GRNS || "2990-GRN-2606-001")
   .split(",").map((s) => s.trim()).filter(Boolean);
-if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap"].includes(PART)) {
-  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap (got "${PART}")`);
+if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap", "dedupe"].includes(PART)) {
+  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap | dedupe (got "${PART}")`);
   process.exit(2);
 }
 const doNotes = PART === "all" || PART === "notes";
@@ -125,6 +143,7 @@ const doBatches = PART === "all" || PART === "batches";
 const doConsumptions = PART === "all" || PART === "consumptions";
 const doIds = PART === "ids";
 const doGrnGap = PART === "grn-gap";
+const doDedupe = PART === "dedupe";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -885,51 +904,131 @@ async function planIdRestamp(codeById) {
        WHERE source_doc_type = ${p.docType} AND source_doc_id::text = ${p.resolvedDocId}`;
     log(`      movements already attached to the resolved document by id: rows=${attached[0].rows} netQty=${attached[0].net_qty}`);
   }
-  log(`  TOTAL rows that would change: inventory_lot_consumptions=${consTotal}  inventory_movements=${movTotal}`);
+  log(`  TOTAL rows in scope: inventory_lot_consumptions=${consTotal}  inventory_movements=${movTotal}`);
+
+  // Exercise the identical writes in a rolled-back transaction, so collisions
+  // with the ledger's own unique indexes (the duplicate-of-real class the
+  // 2026-08-01 live APPLY hit) are part of the PLAN, not a surprise at apply.
+  if (plan.length > 0) {
+    log("");
+    log("  --- collision preview (writes exercised, then ROLLED BACK — nothing persisted) ---");
+    const preview = await execIdRestamp(pg, plan, { commit: false });
+    printIdRestampExec(preview, false, log);
+  }
   return { plan, tally };
 }
 
+/* The collision-aware executor lives in lib/id-restamp-exec.mjs so the REAL
+   code — pair-wise savepoints, self-collision classification, the poisoned-
+   transaction probe — runs under tests-pg against a real Postgres with a real
+   unique index (two live APPLY failures, 2026-08-01, are the reason: see the
+   lib header and BUG-HISTORY). The script keeps only the wiring. */
 async function applyIdRestamp(plan) {
-  if (plan.length === 0) return { consumptions: 0, movements: 0 };
-  // ONE transaction across BOTH tables (the applyConsumptions argument: an OUT
-  // and its lot consumptions carry the same reference and must keep doing so).
-  // The UPDATE is scoped to the exact dangling ids the plan proved — a NULL id
-  // or a kept id is untouchable by construction of the WHERE clause.
-  return pg.begin(async (tx) => {
-    let consumptions = 0;
-    let movements = 0;
-    for (const p of plan) {
-      const danglingIds = p.idWrites.filter((w) => w.action === "restamp").map((w) => w.id);
-      const k = await tx`
-        UPDATE scm.inventory_lot_consumptions
-           SET source_doc_id = ${p.resolvedDocId}::uuid
-         WHERE company_id = ${p.companyId}
-           AND source_doc_type = ${p.docType}
-           AND source_doc_no = ${p.docNo}
-           AND source_doc_id::text = ANY(${danglingIds})`;
-      const m = await tx`
-        UPDATE scm.inventory_movements
-           SET source_doc_id = ${p.resolvedDocId}::uuid
-         WHERE company_id = ${p.companyId}
-           AND source_doc_type = ${p.docType}
-           AND source_doc_no = ${p.docNo}
-           AND source_doc_id::text = ANY(${danglingIds})`;
-      consumptions += k.count;
-      movements += m.count;
-      log(`  APPLIED company ${p.companyId}: ${p.docType} ${p.docNo} dangling ids -> ${p.resolvedDocId}  (consumptions ${k.count}, movements ${m.count})`);
-    }
-    return { consumptions, movements };
-  });
+  const out = await execIdRestamp(pg, plan, { commit: true });
+  printIdRestampExec(out, true, log);
+  return out;
 }
 
-// ── A5 — PART=grn-gap: insert the missing IN movement a posted GRN is short ──
-const GRN_GAP_MARKER = "repair:grn-inbound-gap";
+// ── A6 — PART=dedupe: DELETE the duplicate-of-real pairs (owner authorization
+// 2026-08-01, "继续 全部可以"). Only a movement whose restamp collides on the
+// ledger's unique index AND whose real counterpart carries the same
+// (company, product, variant, warehouse, movement_type, qty) — a FULL-ROW
+// twin — is deleted, together with its consumptions, RESTORING each consumed
+// lot's qty_remaining so 2a conservation holds. execDedupe +
+// classifyDuplicateMovement do the work; this wiring prints the evidence and
+// the movement-ledger bucket impact (the owner's 2b question: duplicate OUTs
+// double-decrement on-hand, so negative buckets should shrink).
+async function bucketSums(deletable) {
+  const sums = new Map();
+  for (const c of deletable) {
+    const m = c.movement;
+    const key = `${m.company_id}::${m.warehouse_id}::${m.product_code}::${m.variant_key}`;
+    if (sums.has(key)) continue;
+    const r = await pg`
+      SELECT COALESCE(SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty ELSE qty END), 0)::int AS s
+        FROM scm.inventory_movements
+       WHERE company_id = ${m.company_id} AND warehouse_id::text = ${m.warehouse_id}
+         AND product_code = ${m.product_code} AND COALESCE(variant_key, '') = ${m.variant_key}`;
+    sums.set(key, Number(r[0].s));
+  }
+  return sums;
+}
+
+function printDedupe(res, committed) {
+  const verb = committed ? "DELETED" : "WOULD DELETE";
+  log(`  duplicate candidates found: ${res.candidates.length}  (deletable: ${res.deletable.length}, refused: ${res.refused.length})`);
+  for (const c of res.deletable) {
+    const m = c.movement;
+    log(`  ${verb} movement ${m.id}  (${c.dup.group}) — full-row twin on the real document: ${c.verdict.matches.join(", ")}`);
+    log(`    old values: ${m.movement_type} qty=${m.qty} unit_cost_sen=${m.unit_cost_sen} total_cost_sen=${m.total_cost_sen} co=${m.company_id} wh=${m.warehouse_id} product=${m.product_code} variant="${m.variant_key}" batch=${m.batch_no ?? "-"} source=${m.source_doc_type} ${m.source_doc_no} dangling_id=${m.doc_id} created_at=${m.created_at?.toISOString?.() ?? m.created_at}`);
+    for (const k of c.consumptions) {
+      log(`    ${verb} consumption ${k.id}: qty=${k.qty_consumed} @ ${k.unit_cost_sen} sen (total ${k.total_cost_sen}) from lot ${k.lot_id}${k.lot_exists ? ` — lot qty_remaining ${k.lot_remaining} += ${k.qty_consumed} (RESTORED; the duplicate had double-decremented it)` : " — LOT MISSING, nothing to restore (reported)"}`);
+    }
+    if (c.consumptions.length === 0) log("    (no consumption rows — the duplicate consumed nothing; movement row only)");
+  }
+  for (const c of res.refused) {
+    const m = c.movement;
+    log(`  REFUSED movement ${m.id} (${c.verdict.verdict}) — collides on the index but NO full-row twin (type/qty differ); owner review, not deleted.`);
+    log(`    row: ${m.movement_type} qty=${m.qty} product=${m.product_code} variant="${m.variant_key}"; counterparts on the real doc: ${c.counterparts.map((x) => `${x.id} ${x.movement_type} qty=${x.qty}`).join("; ") || "(none)"}`);
+  }
+}
+
+async function planDedupe(codeById) {
+  log("");
+  log("=== A6  dedupe — remove the duplicate-of-real pairs part=ids classified (owner-authorized) ===");
+  const ids = await planIdRestamp(codeById);
+  log("");
+  log("  --- dedupe plan (detection exercised + rolled back; deletes are planned, not executed) ---");
+  const res = await execDedupe(pg, ids.plan, classifyDuplicateMovement, { commit: false });
+  printDedupe(res, false);
+
+  // The 2b linkage: per affected bucket, movement-ledger on-hand before -> after.
+  if (res.deletable.length > 0) {
+    const sums = await bucketSums(res.deletable);
+    const projected = projectDedupeBucketImpact(
+      res.deletable.map((c) => ({
+        bucketKey: `${c.movement.company_id}::${c.movement.warehouse_id}::${c.movement.product_code}::${c.movement.variant_key}`,
+        movementType: c.movement.movement_type,
+        qty: c.movement.qty,
+      })),
+      sums,
+    );
+    log("");
+    log("  movement-ledger on-hand per affected bucket (the audit-2b linkage — duplicate OUTs double-decrement, so negatives should shrink):");
+    for (const [key, before] of sums) {
+      const after = projected.get(key);
+      const [co, wh, product, ...vk] = key.split("::");
+      log(`    co=${co} ${product} "${vk.join("::")}" wh=${wh}: ${before} -> ${after}${before < 0 ? (after >= before ? "  (negative bucket shrinks/clears)" : "  (UNEXPECTED: negative bucket worsens — review before APPLY)") : ""}`);
+    }
+    const cogsRemoved = res.deletable.reduce((a, c) => a + Number(c.movement.total_cost_sen ?? 0), 0);
+    log(`  COGS carried by the deleted movements (removed with them): ${cogsRemoved} sen; lots restored: ${res.deletable.reduce((a, c) => a + c.consumptions.filter((k) => k.lot_exists).length, 0)} consumption(s) worth`);
+  }
+  return { plan: res.deletable, ids };
+}
+
+async function applyDedupe(idsPlan) {
+  const res = await execDedupe(pg, idsPlan, classifyDuplicateMovement, { commit: true });
+  printDedupe(res, true);
+  log(`  APPLIED: movements deleted=${res.deletedMovements}, consumptions deleted=${res.deletedConsumptions}, lots restored=${res.lotsRestored}, in one transaction.`);
+  // Observed after-state for the 2b linkage.
+  if (res.deletable.length > 0) {
+    const after = await bucketSums(res.deletable);
+    log("  movement-ledger on-hand per affected bucket AFTER (observed):");
+    for (const [key, s] of after) {
+      const [co, wh, product, ...vk] = key.split("::");
+      log(`    co=${co} ${product} "${vk.join("::")}" wh=${wh}: ${s}${s < 0 ? "  (still negative — the remainder is not duplicate-born; see reconstruct/relabel)" : ""}`);
+    }
+  }
+  return res;
+}
+
 
 async function planGrnGap() {
   log("");
   log(`=== A5  GRN inbound gap — target GRNs: ${GRNS.join(", ")} ===`);
   const grns = await pg`
-    SELECT id::text AS id, grn_number, company_id, status::text AS status, warehouse_id::text AS warehouse_id
+    SELECT id::text AS id, grn_number, company_id, status::text AS status, warehouse_id::text AS warehouse_id,
+           exchange_rate
       FROM scm.grns WHERE grn_number = ANY(${GRNS})`;
   for (const want of GRNS) {
     if (!grns.some((g) => g.grn_number === want)) log(`  "${want}" matches NO GRN — skipped (check the number).`);
@@ -990,7 +1089,36 @@ async function planGrnGap() {
         log(`      movement bucket wh=${b.warehouseId} variant="${b.variantKey}" batch=${b.batchNo ?? "-"} co=${b.companyId}: qty=${b.movQty} unitCosts=[${b.unitCosts.join(", ")}]`);
         for (const r of b.rows) log(`        movement ${r.id}  ${r.movement_type}  qty=${r.qty}  unit_cost_sen=${r.unit_cost_sen}  at ${r.created_at?.toISOString?.() ?? r.created_at}`);
       }
-      if (v.verdict !== "insert") {
+      let ins = null;
+      let costNote = "the sibling movement's landed cost";
+      if (v.verdict === "insert") {
+        ins = v.insert;
+      } else if (v.verdict === "no-sibling") {
+        // Live run 2026-08-01: the short line wrote NO movement at all, so
+        // there is no sibling to copy. Fall back to the LINE'S OWN landed
+        // cost — round(unit_price_centi x GRN exchange_rate), the same
+        // toMyrSen path grns.ts uses — and to the GRN's own single-valued
+        // facts for the bucket (deriveGrnLineBasis: refused when the product
+        // has several lines, no warehouse resolves, or the cost is zero).
+        const d = deriveGrnLineBasis({
+          lines: p.lines,
+          qty: v.delta,
+          headerWarehouseId: g.warehouse_id,
+          exchangeRate: g.exchange_rate ?? 1,
+          grnMovementWarehouses: movs.map((m) => m.warehouse_id),
+          grnMovementBatches: movs.map((m) => m.batch_no),
+          companyId: Number(g.company_id),
+        });
+        if (d.verdict === "line-insert") {
+          ins = d.insert;
+          costNote = `the LINE'S OWN landed cost (${d.costSource})`;
+          log(`      no sibling movement — falling back to the line's own landed cost (${d.costSource})`);
+          if (ins.batchNo == null) log("      (no single batch across the GRN's movements — inserting UNBATCHED; plain-FIFO consumable)");
+        } else {
+          log(`      REFUSED (no-sibling, line-basis ${d.verdict}) — nothing will be inserted for this product; owner review.`);
+          continue;
+        }
+      } else {
         if (v.verdict !== "balanced") log(`      REFUSED (${v.verdict}) — nothing will be inserted for this product; owner review.`);
         continue;
       }
@@ -998,13 +1126,12 @@ async function planGrnGap() {
         log(`      REFUSED — a movement already carries the ${GRN_GAP_MARKER} marker yet the delta still reads ${v.delta}; manual review, not a second insert.`);
         continue;
       }
-      const ins = v.insert;
-      log(`      PLAN: INSERT IN movement qty=${ins.qty} at unit_cost_sen=${ins.unitCostSen} (the sibling movement's landed cost)`);
+      log(`      PLAN: INSERT IN movement qty=${ins.qty} at unit_cost_sen=${ins.unitCostSen} (${costNote})`);
       log(`            bucket: warehouse=${ins.warehouseId} variant="${ins.variantKey}" batch=${ins.batchNo ?? "NULL"} company=${ins.companyId}`);
       log(`            source: GRN ${g.grn_number} (${g.id}); created_at=now — the FIFO trigger opens a ${ins.qty}-unit lot at this cost on insert`);
       plan.push({
         grnId: g.id, grnNumber: g.grn_number, productCode: code,
-        productName: buckets[0].productName ?? p.lines[0]?.material_name ?? code,
+        productName: buckets[0]?.productName ?? p.lines[0]?.material_name ?? code,
         ...ins,
       });
     }
@@ -1069,6 +1196,7 @@ try {
   const consumptions = doConsumptions ? await planConsumptions(codeById) : { plan: [] };
   const ids = doIds ? await planIdRestamp(codeById) : { plan: [] };
   const grnGap = doGrnGap ? await planGrnGap() : { plan: [] };
+  const dedupe = doDedupe ? await planDedupe(codeById) : { plan: [], ids: { plan: [] } };
 
   log("");
   log("================ summary ================");
@@ -1077,6 +1205,7 @@ try {
   if (doConsumptions) log(`A3 consumptions : ${consumptions.plan.length} (company, type, doc no) group(s) would be repaired on the ledger source refs`);
   if (doIds) log(`A4 ids          : ${ids.plan.length} (company, type, doc no) group(s) would have dangling source_doc_id restamped`);
   if (doGrnGap) log(`A5 grn-gap      : ${grnGap.plan.length} missing IN movement(s) would be inserted (FIFO trigger opens the lot)`);
+  if (doDedupe) log(`A6 dedupe       : ${dedupe.plan.length} duplicate movement(s) (+ their consumptions) would be DELETED, lots restored`);
 
   if (!APPLY) {
     log("");
@@ -1101,6 +1230,9 @@ try {
     if (doGrnGap) {
       const n = await applyGrnGap(grnGap.plan);
       log(`A5 APPLIED: ${n} IN movement(s) inserted through the normal path (lots opened by the trigger).`);
+    }
+    if (doDedupe) {
+      await applyDedupe(dedupe.ids.plan);
     }
     log("Done. Re-run in DRY-RUN to confirm the plan is now empty (the idempotence check).");
   }
