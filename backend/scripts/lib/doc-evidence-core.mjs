@@ -51,8 +51,30 @@ const cmpStr = (a, b) => String(a ?? "").localeCompare(String(b ?? ""));
 // R1a — the document-line key, with corroboration.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** VARIANT-KEY QUOTE DOUBLING (live doc-relabel run, 2026-08-01): the residual
+ *  family's keys carry a DOUBLED inch mark — `legheight=1""` where the
+ *  document (and the sibling receipts) say `1"`. The mint is hand-keyed
+ *  option-pool DATA (every editor in this repo and in the 2990 POS is
+ *  pool-driven; no code path appends a quote), imported verbatim, so the same
+ *  physical goods split across two keys that differ only by the doubling.
+ *  Two keys are treated as EQUIVALENT when identical after collapsing any run
+ *  of double-quote marks to a single mark and trimming trailing whitespace.
+ *  The CANONICAL form is the collapsed one — a relabel that matches only
+ *  under this normalization lands on the canonical key, never the doubled
+ *  one, so the split converges instead of persisting under a new spelling.
+ *  computeVariantKey itself is deliberately NOT changed: rewriting its norm()
+ *  would silently re-key every existing bucket. */
+export function normalizeVariantKeyQuotes(key) {
+  return String(key ?? "").replace(/"{2,}/g, '"').replace(/\s+$/, "");
+}
+
 /** Compute ONE document line's TRUE variant key, corroborated by the line it
  *  references upstream (DO line -> its SO line; GRN line -> its PO line).
+ *
+ *  Both sides are quote-normalized (normalizeVariantKeyQuotes) BEFORE any
+ *  comparison, and the returned key IS the canonical (normalized) form — a
+ *  document whose own variants carry the doubling still proves the canonical
+ *  key, it does not propagate the damage.
  *
  *  Empty keys are "unclassified", not a claim (variant-key.ts: legacy rows
  *  carry ''), so a line whose own variants compute '' DEFERS to a non-empty
@@ -66,14 +88,26 @@ const cmpStr = (a, b) => String(a ?? "").localeCompare(String(b ?? ""));
  *                       document); also both-empty (key '')
  *    doc-conflict       both non-empty and different — REFUSE, report both */
 export function resolveDocLineKey({ itemGroup, variants, corroborating = null }) {
-  const ownKey = variantKeyMirror(itemGroup, variants ?? null);
+  const ownKey = normalizeVariantKeyQuotes(variantKeyMirror(itemGroup, variants ?? null));
   if (!corroborating) return { key: ownKey, corroboratingKey: null, verdict: "uncorroborated" };
-  const cKey = variantKeyMirror(corroborating.itemGroup ?? itemGroup, corroborating.variants ?? null);
+  const cKey = normalizeVariantKeyQuotes(variantKeyMirror(corroborating.itemGroup ?? itemGroup, corroborating.variants ?? null));
   if (ownKey !== "" && cKey !== "" && ownKey !== cKey) {
     return { key: ownKey, corroboratingKey: cKey, verdict: "doc-conflict" };
   }
   const key = ownKey !== "" ? ownKey : cKey;
   return { key, corroboratingKey: cKey, verdict: key === "" || (ownKey !== "" && cKey !== "") ? "corroborated" : (ownKey === "" ? "corroborated-by-upstream" : "uncorroborated-upstream-empty") };
+}
+
+/** Repair-seeded lots are EXPECTED to resolve no purchase document: the
+ *  basis-cost seed writes a reference-cost lot with no GRN at all (its own
+ *  notes carry the `repair:uncosted-out-basis` marker) and the grn-gap insert
+ *  writes an IN movement whose notes carry `repair:grn-inbound-gap` (the
+ *  trigger-opened lot copies no notes, so the MOVEMENT's marker is the
+ *  evidence). Classifying them `repair-seeded` instead of `no-document` keeps
+ *  the stocktake list to TRUE unknowns. */
+export function isRepairSeeded({ lotNotes = null, movementNotes = null }) {
+  const has = (v) => String(v ?? "").includes("repair:");
+  return has(lotNotes) || has(movementNotes);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -90,10 +124,20 @@ export function resolveDocLineKey({ itemGroup, variants, corroborating = null })
  *  rows:  [{ id, ledgerKey }]
  *  lines: [{ ref, key, conflict }]  — conflict = resolveDocLineKey said
  *         doc-conflict; such a line can prove nothing (poisoned evidence).
+ *         Line keys arrive CANONICAL (resolveDocLineKey normalizes).
+ *
+ *  QUOTE-DOUBLING equivalence: a ledger key equal to a documented key only
+ *  after normalizeVariantKeyQuotes is NOT `consistent` — it is a `relabel`
+ *  to the document's canonical key, flagged `normalized: true`, so the
+ *  doubled spelling converges instead of surviving as "close enough". The
+ *  claiming logic runs in normalized space throughout: a `1""` row claims
+ *  the `1"` line, so a sibling cannot also take it via the unclaimed path.
  *
  *  Verdicts per row:
- *    consistent         a clean line documents this row's key
- *    relabel            newKey = the single unclaimed documented key; the
+ *    consistent         a clean line documents this row's exact key
+ *    relabel            newKey = the document's canonical key — either this
+ *                       row's key normalized-matches it (normalized: true)
+ *                       or it is the single unclaimed documented key; the
  *                       citation is the line that proves it
  *    no-document        the document has no lines at all for this product
  *    ambiguous-doc-keys >1 unclaimed documented key — which is this row's is
@@ -106,14 +150,33 @@ export function planDocKeyAlignment({ rows = [], lines = [] }) {
   const cleanLines = lines.filter((l) => !l.conflict);
   const conflictLines = lines.filter((l) => l.conflict);
   const lineKeys = new Set(cleanLines.map((l) => l.key ?? ""));
-  const rowKeys = new Set(rows.map((r) => r.ledgerKey ?? ""));
+  const lineByNorm = new Map();
+  for (const l of cleanLines) {
+    const norm = normalizeVariantKeyQuotes(l.key ?? "");
+    if (!lineByNorm.has(norm)) lineByNorm.set(norm, l);
+  }
+  const rowNormKeys = new Set(rows.map((r) => normalizeVariantKeyQuotes(r.ledgerKey ?? "")));
   return rows.map((r) => {
     const ledgerKey = r.ledgerKey ?? "";
     if (lines.length === 0) return { ...r, ledgerKey, verdict: "no-document" };
     if (lineKeys.has(ledgerKey)) {
       return { ...r, ledgerKey, verdict: "consistent", citation: cleanLines.find((l) => (l.key ?? "") === ledgerKey) ?? null };
     }
-    const unclaimed = [...lineKeys].filter((k) => !rowKeys.has(k));
+    const normLine = lineByNorm.get(normalizeVariantKeyQuotes(ledgerKey));
+    if (normLine) {
+      // Same key up to quote doubling: relabel to the document's CANONICAL key.
+      return {
+        ...r,
+        ledgerKey,
+        verdict: "relabel",
+        newKey: normLine.key ?? "",
+        normalized: true,
+        citation: { ...normLine, cite: `key-normalized ("${ledgerKey}" -> "${normLine.key ?? ""}") — ${normLine.cite ?? normLine.ref ?? ""}` },
+      };
+    }
+    // Claiming runs in normalized space: a documented key is unclaimed only
+    // when NO row matches it exactly or up to quote doubling.
+    const unclaimed = [...lineKeys].filter((k) => !rowNormKeys.has(normalizeVariantKeyQuotes(k)));
     if (unclaimed.length === 1) {
       return { ...r, ledgerKey, verdict: "relabel", newKey: unclaimed[0], citation: cleanLines.find((l) => (l.key ?? "") === unclaimed[0]) ?? null };
     }
@@ -368,6 +431,79 @@ export function planFifoAttribution({ poLines = [], soLines = [] }) {
 // `mirror-source`: the exact stamp is REPORTED (for the 2990-side fix) and
 // never written here.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R4 — the delivered SO lines no DO line points back at (trace check class
+// `no-do-line-link`, 2026-08-01: 10 DELIVERED lines, e.g. 2990-SO-2606-031
+// NTYR pillow). The SO HAS delivery orders, but their lines carry no
+// so_item_id for these SO lines — the old convert path / the import never
+// stamped the link, so the delivered trace dead-ends. Within ONE SO and its
+// own non-cancelled DOs, an unlinked DO line whose item code names EXACTLY ONE
+// still-unlinked SO line is DETERMINED, not guessed (the pairPoLinesToSoLines
+// discipline): no other line of that order could have been the one delivered.
+// Several unlinked DO lines of the same code may all stamp that one SO line
+// (split deliveries), provided their quantity fits. TWO candidate SO lines of
+// one code is a coin flip and refuses — and quantity is deliberately NOT a
+// discriminator (house rule), it only guards the total.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** soLines: the SO's active lines with NO DO line pointing at them
+ *           [{ id, itemCode, qty }]
+ *  doLines: the SO's DOs' lines with so_item_id NULL
+ *           [{ id, doNumber, itemCode, qty }]
+ *  Returns { pairs, ambiguous, qtyIncompatible, unmatchedDoLines }:
+ *    pairs            [{ doLineId, doNumber, soLineId, code, doQty }] — every
+ *                     unlinked DO line of a code stamps the single free SO
+ *                     line carrying it
+ *    ambiguous        [{ code, freeSoLines, unlinkedDoLines }] — >1 candidate
+ *                     SO line; refused, printed for the owner
+ *    qtyIncompatible  [{ code, soLineId, soQty, doQtySum }] — the DO lines
+ *                     claim more units than the SO line ordered; refused
+ *    unmatchedDoLines [{ code, unlinkedDoLines }] — no free SO line at all */
+export function planDoLineLink({ soLines = [], doLines = [] }) {
+  const norm = (s) => String(s ?? "").trim().toUpperCase();
+  const soByCode = new Map();
+  for (const l of soLines) {
+    const code = norm(l.itemCode);
+    if (!code) continue;
+    const arr = soByCode.get(code) ?? [];
+    arr.push(l);
+    soByCode.set(code, arr);
+  }
+  const doByCode = new Map();
+  for (const l of doLines) {
+    const code = norm(l.itemCode);
+    if (!code) continue;
+    const arr = doByCode.get(code) ?? [];
+    arr.push(l);
+    doByCode.set(code, arr);
+  }
+  const pairs = [];
+  const ambiguous = [];
+  const qtyIncompatible = [];
+  const unmatchedDoLines = [];
+  for (const [code, dls] of doByCode.entries()) {
+    const sos = soByCode.get(code) ?? [];
+    if (sos.length === 0) {
+      unmatchedDoLines.push({ code, unlinkedDoLines: dls.length });
+      continue;
+    }
+    if (sos.length > 1) {
+      ambiguous.push({ code, freeSoLines: sos.length, unlinkedDoLines: dls.length });
+      continue;
+    }
+    const so = sos[0];
+    const doQtySum = dls.reduce((a, d) => a + Number(d.qty ?? 0), 0);
+    if (doQtySum > Number(so.qty ?? 0)) {
+      qtyIncompatible.push({ code, soLineId: so.id, soQty: Number(so.qty ?? 0), doQtySum });
+      continue;
+    }
+    for (const d of dls) {
+      pairs.push({ doLineId: d.id, doNumber: d.doNumber ?? null, soLineId: so.id, code, doQty: Number(d.qty ?? 0) });
+    }
+  }
+  return { pairs, ambiguous, qtyIncompatible, unmatchedDoLines };
+}
 
 export function classifySoLineWarehouse({
   companyId,

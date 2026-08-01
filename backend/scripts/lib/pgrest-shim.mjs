@@ -11,9 +11,12 @@
 // LOGIC stays canonical and only the TRANSPORT is mimicked.
 //
 // SCOPE — deliberately the exact surface those functions use, nothing more:
-//   from(t).select(cols).eq/.in/.not(col,'is',null)/.order/.limit/.range
+//   from(t).select(cols).eq/.in/.not(col,'is',null)/.not(col,'in','(A,B)')
+//          /.or('a.is.null,b.lt.X')/.order/.limit/.range
 //          .maybeSingle()/.single()          -> { data, error }
-//   from(t).update(obj).eq(...)              -> { data: null, error }
+//   from(t).update(obj).eq(...)[.or(...)][.select(cols).maybeSingle()]
+//                                            -> { data, error } (RETURNING)
+//   from(t).insert(rowOrRows)                -> { data: null, error }
 // Every OTHER method THROWS loudly AND is recorded on shim.__gaps — a caller
 // can assert the gap list is empty after a run, so an unimplemented method can
 // never silently no-op a money write. PostgREST semantics preserved where they
@@ -22,9 +25,25 @@
 // { error: { message } } rather than throwing (the app code checks `.error`),
 // and maybeSingle() returns null data for zero rows.
 //
-// NOT a general client. No embedded selects (`a, rel(b)`), no `.or()`, no
-// `.rpc()`, no inserts/deletes — the day a canonical function needs one, the
-// gap list names it and the shim grows a tested method.
+// 2026-08-01 growth (recompute-so-allocation.mjs — the canonical
+// recomputeSoStockAllocation + advanceSoGeneration + recordSoAudit surface):
+//   .not(col,'in','(A,B,C)')  — PostgREST's parenthesised bare-value list,
+//                               the allocator's status exclusion
+//   .or('a.is.null,b.lt.X')   — EXACTLY the two-op disjunction grammar the
+//                               lock claim and the SO edit-lease CAS use
+//                               (is.null | lt.<value>); anything else gaps
+//   update(...).select(...)   — UPDATE ... RETURNING, honouring maybeSingle,
+//                               because the lock claim and the lease CAS read
+//                               the row they claimed (data:null = not claimed)
+//   .insert(rowOrRows)        — the audit/status-change appends; column set
+//                               is the UNION across rows (a missing key
+//                               inserts NULL, matching PostgREST's behaviour
+//                               for hetero batches close enough for these
+//                               best-effort audit writes)
+//
+// NOT a general client. No embedded selects (`a, rel(b)`), no `.rpc()`, no
+// deletes — the day a canonical function needs one, the gap list names it and
+// the shim grows a tested method.
 const IDENT = /^[a-z_][a-z0-9_]*$/;
 
 export function pgrestShim(sql, schema = "scm") {
@@ -37,7 +56,7 @@ export function pgrestShim(sql, schema = "scm") {
   const from = (table) => {
     q(table);
     const state = {
-      table, mode: "select", cols: "*", updateObj: null,
+      table, mode: "select", cols: "*", updateObj: null, insertRows: null,
       filters: [], order: [], limit: null, offset: null, single: null,
     };
 
@@ -64,19 +83,55 @@ export function pgrestShim(sql, schema = "scm") {
               if (arr.length === 0) return "FALSE"; // PostgREST in.() empty -> no rows
               return `${q(f.col)} IN (${arr.map((x) => p(x)).join(", ")})`;
             }
+            if (f.op === "not-in") {
+              const arr = Array.isArray(f.v) ? f.v : [];
+              if (arr.length === 0) return "TRUE"; // excluding nothing keeps every row
+              return `${q(f.col)} NOT IN (${arr.map((x) => p(x)).join(", ")})`;
+            }
             if (f.op === "not-is-null") return `${q(f.col)} IS NOT NULL`;
             if (f.op === "is-null") return `${q(f.col)} IS NULL`;
+            if (f.op === "or") {
+              // f.v: [{ col, op: 'is-null' | 'lt', v? }] — parsed in .or().
+              const parts = f.v.map((d) => (d.op === "is-null" ? `${q(d.col)} IS NULL` : `${q(d.col)} < ${p(d.v)}`));
+              return `(${parts.join(" OR ")})`;
+            }
             throw new Error(`pgrest-shim: unknown filter op ${f.op}`);
           });
           return wheres.length ? ` WHERE ${wheres.join(" AND ")}` : "";
         };
         const target = `"${schema}".${q(state.table)}`;
 
+        if (state.mode === "insert") {
+          const rows = Array.isArray(state.insertRows) ? state.insertRows : [state.insertRows];
+          if (rows.length === 0) return { data: null, error: null };
+          // Column set = UNION across rows; a row missing a key inserts NULL.
+          const cols = [...new Set(rows.flatMap((r) => Object.keys(r ?? {})))];
+          if (cols.length === 0) return { data: null, error: null };
+          const tuples = rows.map((r) => `(${cols.map((cName) => p(Object.prototype.hasOwnProperty.call(r ?? {}, cName) ? r[cName] : null)).join(", ")})`);
+          await sql.unsafe(`INSERT INTO ${target} (${cols.map((cName) => q(cName)).join(", ")}) VALUES ${tuples.join(", ")}`, params);
+          return { data: null, error: null };
+        }
         if (state.mode === "update") {
           const entries = Object.entries(state.updateObj ?? {});
           if (entries.length === 0) return { data: null, error: null };
           const sets = entries.map(([k, v]) => `${q(k)} = ${p(v)}`).join(", ");
           const where = buildWhere();
+          // The lock claim / lease CAS chain .select(...).maybeSingle() after
+          // update — they must SEE the row they claimed (or null). RETURNING
+          // serves exactly that; an update without .select() keeps data:null.
+          if (state.cols !== "*" || state.single) {
+            const retCols = state.cols === "*" ? "*" : String(state.cols).split(",").map((cName) => q(cName.trim())).join(", ");
+            const rows = await sql.unsafe(`UPDATE ${target} SET ${sets}${where} RETURNING ${retCols}`, params);
+            if (state.single === "maybe") {
+              if (rows.length > 1) return { data: null, error: { message: `maybeSingle: ${rows.length} rows` } };
+              return { data: rows[0] ?? null, error: null };
+            }
+            if (state.single === "single") {
+              if (rows.length !== 1) return { data: null, error: { message: `single: ${rows.length} rows` } };
+              return { data: rows[0], error: null };
+            }
+            return { data: [...rows], error: null };
+          }
           await sql.unsafe(`UPDATE ${target} SET ${sets}${where}`, params);
           return { data: null, error: null };
         }
@@ -119,11 +174,39 @@ export function pgrestShim(sql, schema = "scm") {
     const builder = {
       select(cols) { state.cols = cols ?? "*"; return proxied; },
       update(obj) { state.mode = "update"; state.updateObj = obj; return proxied; },
+      insert(rows) { state.mode = "insert"; state.insertRows = rows; return proxied; },
       eq(col, v) { state.filters.push({ op: "eq", col, v }); return proxied; },
       in(col, arr) { state.filters.push({ op: "in", col, v: arr }); return proxied; },
       not(col, op, v) {
         if (op === "is" && v === null) { state.filters.push({ op: "not-is-null", col }); return proxied; }
+        if (op === "in" && typeof v === "string" && v.startsWith("(") && v.endsWith(")")) {
+          // PostgREST parenthesised bare-value list: not('status','in','(A,B)').
+          const arr = v.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
+          state.filters.push({ op: "not-in", col, v: arr });
+          return proxied;
+        }
         return gap(`not(${col}, ${op}, ${v})`);
+      },
+      or(expr) {
+        // EXACTLY the disjunction grammar the lock claim / lease CAS use:
+        // 'a.is.null,b.lt.<value>' — value may itself contain dots (ISO
+        // timestamps), so only the first two dots delimit. Anything outside
+        // the two supported ops is a loud gap, never a guess.
+        const disjuncts = [];
+        for (const part of String(expr ?? "").split(",")) {
+          const first = part.indexOf(".");
+          const second = part.indexOf(".", first + 1);
+          if (first < 0 || second < 0) return gap(`or(${expr})`);
+          const col = part.slice(0, first);
+          const op = part.slice(first + 1, second);
+          const v = part.slice(second + 1);
+          if (op === "is" && v === "null") disjuncts.push({ col, op: "is-null" });
+          else if (op === "lt") disjuncts.push({ col, op: "lt", v });
+          else return gap(`or(${expr})`);
+        }
+        if (disjuncts.length === 0) return gap(`or(${expr})`);
+        state.filters.push({ op: "or", v: disjuncts });
+        return proxied;
       },
       is(col, v) {
         if (v === null) { state.filters.push({ op: "is-null", col }); return proxied; }

@@ -1,0 +1,62 @@
+name: Recompute SO stock allocation (DRY-RUN gated)
+
+# Dispatchable run of the CANONICAL recomputeSoStockAllocation — the same
+# function every GRN / DO / return triggers as a side effect. Built for the
+# trace check's `ready-no-open-lots` class (2026-08-01: 19 stale READY lines
+# whose bucket holds zero open lots — nothing ever re-evaluated them, because
+# the allocator only fires post-ship/post-receipt and the older
+# recompute-2990-so-allocation workflow needs PostgREST secrets the Actions
+# environment does not carry).
+#
+# Transport: lib/pgrest-shim.mjs over DATABASE_URL (the restamp-do-actual-cost
+# pattern) — the LOGIC stays canonical, only the transport is mimicked, and any
+# unimplemented method aborts non-zero via the shim's gap list.
+#
+# DRY-RUN (default): the canonical function runs inside ONE transaction and is
+# ROLLED BACK — the output prints per-SO-line stock_status old -> new, the SO
+# header flips, and the ready-no-open-lots lens before/after; nothing persists.
+# apply=1 commits the same transaction. Stale READY with no stock flips back to
+# PENDING by the allocator's OWN rules — this workflow adds no logic.
+#
+# Manual trigger only, own concurrency group — never queues behind or displaces
+# a release, never scheduled.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN (rolled back)"
+        required: false
+        default: "0"
+        type: string
+      doc:
+        description: "optional: scope to ONE SO doc_no (blank = global, both companies)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: recompute-so-allocation
+  cancel-in-progress: false
+
+jobs:
+  recompute:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/recompute-so-allocation.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          DOC: ${{ inputs.doc }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
