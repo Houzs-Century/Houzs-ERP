@@ -173,6 +173,37 @@ describe("DataTable with server layouts", () => {
     vi.useRealTimers();
   });
 
+  it("lets an admin publish a default on a list that ships NO seed layout", async () => {
+    // Every list except Sales Orders is this case. Gating the Layout section on
+    // seeds was a chicken-and-egg — no section, so no way to save the first
+    // default, so the section could never appear (owner 2026-08-01: cover every
+    // list). The section now follows the RIGHT to publish, not the seeds.
+    respond({ canManageDefaults: true });
+    await hydrateTableLayouts();
+
+    render(
+      <DataTable
+        tableId="seedless"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+      />,
+    );
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+
+    expect(screen.getByText("2990's Home default")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Save current columns as default/ }));
+
+    await waitFor(() =>
+      expect(mockApi.put).toHaveBeenCalledWith(
+        "/api/table-layouts/seedless/default",
+        expect.anything(),
+      ),
+    );
+    // Saved → the company now HAS a layout to offer, so its row appears.
+    expect(await screen.findByRole("button", { name: /2990's Home Layout/ })).toBeTruthy();
+  });
+
   it("shows the publish control only to an admin, and saves what is on screen", async () => {
     respond({ canManageDefaults: false });
     await hydrateTableLayouts();
