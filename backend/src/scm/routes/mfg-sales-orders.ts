@@ -801,12 +801,12 @@ function unexplainedExtraAddonResponse(
    when replacing `excludeItemId`'s line (null = a pure add) with `newCode`
    INTRODUCES a sofa × (bedframe | mattress) mix that did not exist before —
    a pre-rule SO that already mixes stays editable (grandfathered). */
-async function soMainMixIntroduced(sb: any, docNo: string, excludeItemId: string | null, newCode: string): Promise<boolean> {
+async function soMainMixIntroduced(sb: any, docNo: string, excludeItemId: string | null, newCode: string, companyId?: number | null): Promise<boolean> {
   const { data: lines } = await sb.from('mfg_sales_order_items')
     .select('id, item_code')
     .eq('doc_no', docNo).eq('cancelled', false);
   const rows = ((lines ?? []) as Array<{ id: string; item_code: string }>);
-  const cats = await loadProductsByCodes(sb, rows.map((r) => r.item_code).concat(newCode));
+  const cats = await loadProductsByCodes(sb, rows.map((r) => r.item_code).concat(newCode), companyId);
   const mix = (codeList: string[]): boolean => {
     let sofa = false, bedOrMatt = false;
     for (const code of codeList) {
@@ -3098,7 +3098,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   // Edge #4 — itemCode catalog guard. Reject typos / stale codes before any
   // pricing / variant / inventory work runs.
   if (items.length > 0) {
-    const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined));
+    const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), companyId);
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -3425,7 +3425,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      2 `in()` queries for the whole order instead of 2 × lines — per-line
      loads helped a 6-item order blow the CF Workers subrequest cap.
      First violation across all lines short-circuits the request. */
-  const pmByCode = await loadProductsAndModels(sb, items.map((it) => String(it?.itemCode ?? '')));
+  const pmByCode = await loadProductsAndModels(sb, items.map((it) => String(it?.itemCode ?? '')), companyId);
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (!it) continue;
@@ -3454,7 +3454,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
 
   // Subrequest diet (Loo 2026-06-06) — one `in()` query for every line's
   // product row instead of one query per line.
-  const productRowByCode = await loadProductsByCodes(sb, items.map((it) => String(it.itemCode ?? '')));
+  const productRowByCode = await loadProductsByCodes(sb, items.map((it) => String(it.itemCode ?? '')), companyId);
   const lineProducts = items.map((it) => productRowByCode.get(String(it.itemCode ?? '').trim()) ?? null);
   /* PWP Code Voucher (migration 0130) — code-driven grant + atomic claim. A
      reward line earns its per-SKU pwp_price_sen ONLY if it carries a valid
@@ -4455,7 +4455,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     /* Same Edge #4 contract as goods lines: a SERVICE line's SKU must exist in
        the catalog (seeded by migration 0155). A 409 here means the seed is
        missing — fail loudly rather than booking an off-catalog charge. */
-    const svcCheck = await validateItemCodes(sb, serviceSpecs.map((s) => s.itemCode));
+    const svcCheck = await validateItemCodes(sb, serviceSpecs.map((s) => s.itemCode), companyId);
     if (!svcCheck.ok) {
       await rollbackPwpClaims();
       return c.json(unknownItemCodeResponse(svcCheck.unknown), 409);
@@ -4521,7 +4521,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      BEFORE the header insert so a rejected order leaves nothing behind. */
   {
     const rowCodes = itemRows.map((r) => (r as { item_code?: string | null }).item_code);
-    const rowCheck = await validateItemCodes(sb, rowCodes);
+    const rowCheck = await validateItemCodes(sb, rowCodes, companyId);
     if (!rowCheck.ok) {
       await rollbackPwpClaims();
       return c.json(unknownItemCodeResponse(rowCheck.unknown), 409);
@@ -7091,7 +7091,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
 
   /* Edge #4 — itemCode catalog guard. */
   {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string]);
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -7116,7 +7116,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      violation is rejected — a pre-rule SO that already mixes is left
      editable (grandfathered). */
   {
-    const introduced = await soMainMixIntroduced(sb, docNo, null, it.itemCode as string);
+    const introduced = await soMainMixIntroduced(sb, docNo, null, it.itemCode as string, activeCompanyId(c));
     if (introduced) {
       return c.json({
         error: 'so_sofa_no_other_main',
@@ -7158,7 +7158,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const variantsObj = (it.variants as MfgItemForRecompute['variants']) ?? null;
   /* PR #216 — allowed_options check on add-item. Same shape as POST /. */
   {
-    const { product, model } = await loadProductAndModel(sb, itemCodeStr);
+    const { product, model } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
     const aoErr = checkAllowedOptions(
       product,
       model,
@@ -7202,7 +7202,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   }
   const [cachedConfig, productLite, fabricLite, sofaCombosLite, sellingTiersLite, fabricAddonConfigLite, specialAddonsLite, modelOverridesLite, compartmentOverridesLite] = await Promise.all([
     loadMaintenanceConfig(sb),
-    loadProductByCode(sb, itemCodeStr),
+    loadProductByCode(sb, itemCodeStr, activeCompanyId(c)),
     loadFabricByCode(sb, variantsObj?.fabricCode ?? null),
     loadActiveSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (variantsObj as { fabricId?: string } | null)?.fabricId ?? null),
@@ -7645,7 +7645,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
 
   /* Edge #4 — itemCode catalog guard (only when caller is changing it). */
   if (it.itemCode !== undefined) {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string]);
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -7674,7 +7674,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   /* Composition guard (Loo 2026-06-11) — a product swap must not INTRODUCE a
      sofa × (bedframe | mattress) mix (PR #519 create rule, now on swap too). */
   if (it.itemCode !== undefined) {
-    const introduced = await soMainMixIntroduced(sb, docNo, itemId, it.itemCode as string);
+    const introduced = await soMainMixIntroduced(sb, docNo, itemId, it.itemCode as string, activeCompanyId(c));
     if (introduced) {
       return c.json({
         error: 'so_sofa_no_other_main',
@@ -7761,7 +7761,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
      CHANGES variants or the item code (see above) — a genuine edit picks from
      the CURRENT pool so it still validates; an untouched line is grandfathered. */
   if (variantsChanged || itemCodeChangedOnPatch) {
-    const { product, model } = await loadProductAndModel(sb, itemCodeAfter);
+    const { product, model } = await loadProductAndModel(sb, itemCodeAfter, activeCompanyId(c));
     const aoErr = checkAllowedOptions(
       product,
       model,
@@ -7809,7 +7809,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   if (shouldRecompute && itemCodeAfter) {
     const [cfg, prodLite, fabLite, sofaCombosPatch, sellingTiersPatch, fabricAddonConfigPatch, specialAddonsPatch, modelOverridesPatch, compartmentOverridesPatch] = await Promise.all([
       loadMaintenanceConfig(sb),
-      loadProductByCode(sb, itemCodeAfter),
+      loadProductByCode(sb, itemCodeAfter, activeCompanyId(c)),
       loadFabricByCode(sb, variantsAfter?.fabricCode ?? null),
       loadActiveSofaCombos(sb, c),
       loadFabricSellingTiers(sb, (variantsAfter as { fabricId?: string } | null)?.fabricId ?? null),
@@ -8276,14 +8276,14 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
 
   /* allowed_options gate on the merged shape (same as the generic PATCH). */
   {
-    const { product, model } = await loadProductAndModel(sb, prev.item_code);
+    const { product, model } = await loadProductAndModel(sb, prev.item_code, activeCompanyId(c));
     const aoErr = checkAllowedOptions(product, model, nextVariants as Parameters<typeof checkAllowedOptions>[2]);
     if (aoErr) return c.json({ ...aoErr, itemCode: prev.item_code }, 400);
   }
 
   const [cfg, prodLite, fabPrev, fabNext, tiersPrev, tiersNext, addonCfg, specialDefs, modelOverrides, compartmentOverrides] = await Promise.all([
     loadMaintenanceConfig(sb),
-    loadProductByCode(sb, prev.item_code),
+    loadProductByCode(sb, prev.item_code, activeCompanyId(c)),
     loadFabricByCode(sb, (prevVariants.fabricCode as string | undefined) ?? null),
     loadFabricByCode(sb, (nextVariants.fabricCode as string | undefined) ?? null),
     loadFabricSellingTiers(sb, (prevVariants.fabricId as string | undefined) ?? null),
@@ -8608,7 +8608,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
         );
       };
       if (anchors.length > 0) {
-        const prevProd = await loadProductByCode(sb, prev.item_code);
+        const prevProd = await loadProductByCode(sb, prev.item_code, activeCompanyId(c));
         const { data: lineRows } = await sb.from('mfg_sales_order_items')
           .select('item_code').eq('doc_no', docNo).eq('cancelled', false);
         const liveCodes = new Set(((lineRows ?? []) as Array<{ item_code: string }>).map((r) => r.item_code));
@@ -8674,7 +8674,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   }
 
   /* Composition — a swap must not INTRODUCE a sofa × (bedframe|mattress) mix. */
-  if (await soMainMixIntroduced(sb, docNo, itemId, newCode)) {
+  if (await soMainMixIntroduced(sb, docNo, itemId, newCode, activeCompanyId(c))) {
     return c.json({
       error: 'so_sofa_no_other_main',
       reason: 'A sofa cannot share a Sales Order with a bedframe or mattress.',
@@ -8763,7 +8763,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
       const v: Record<string, unknown> = { ...((line.variants ?? {}) as Record<string, unknown>) };
       delete v.pwp; delete v.pwpCode; delete v.pwpTriggerLabel;
       const [rp, rfab, rtiers] = await Promise.all([
-        loadProductByCode(sb, line.item_code),
+        loadProductByCode(sb, line.item_code, activeCompanyId(c)),
         loadFabricByCode(sb, (v.fabricCode as string | undefined) ?? null),
         loadFabricSellingTiers(sb, (v.fabricId as string | undefined) ?? null),
       ]);
@@ -8966,7 +8966,7 @@ async function planSofaRewardRevert(
   const depth = String(leadV.depth ?? leadV.seatHeight ?? '24');
   const [cfg, prodLite, fabLite, combos, sellingTiers, addonCfg, specialDefs, modulePrices, modelOverridesLead, compartmentOverridesLead] = await Promise.all([
     loadMaintenanceConfig(sb),
-    loadProductByCode(sb, lead.item_code),
+    loadProductByCode(sb, lead.item_code, activeCompanyId(c)),
     loadFabricByCode(sb, (leadV.fabricCode as string | undefined) ?? null),
     loadActiveSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (leadV.fabricId as string | undefined) ?? null),
@@ -9119,7 +9119,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
 
   /* New build validation — must be a real configurator build on a SOFA SKU. */
   {
-    const codeCheck = await validateItemCodes(sb, [newCode]);
+    const codeCheck = await validateItemCodes(sb, [newCode], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
   const newVariants: Record<string, unknown> = { ...((item.variants ?? {}) as Record<string, unknown>) };
@@ -9132,12 +9132,12 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   if (!Array.isArray(newCells) || newCells.length === 0) {
     return c.json({ error: 'sofa_swap_requires_build', reason: 'Configure the sofa (its modules) before confirming the exchange.' }, 400);
   }
-  const prodLite = await loadProductByCode(sb, newCode);
+  const prodLite = await loadProductByCode(sb, newCode, activeCompanyId(c));
   if (!prodLite || String(prodLite.category).toUpperCase() !== 'SOFA') {
     return c.json({ error: 'sofa_swap_only', reason: 'The replacement must be a sofa.' }, 400);
   }
   {
-    const { product, model } = await loadProductAndModel(sb, newCode);
+    const { product, model } = await loadProductAndModel(sb, newCode, activeCompanyId(c));
     const aoErr = checkAllowedOptions(product, model, newVariants as Parameters<typeof checkAllowedOptions>[2]);
     if (aoErr) return c.json({ ...aoErr, itemCode: newCode }, 400);
   }
@@ -9556,7 +9556,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
       const v: Record<string, unknown> = { ...((line.variants ?? {}) as Record<string, unknown>) };
       delete v.pwp; delete v.pwpCode; delete v.pwpTriggerLabel;
       const [rp, rfab, rtiers] = await Promise.all([
-        loadProductByCode(sb, line.item_code),
+        loadProductByCode(sb, line.item_code, activeCompanyId(c)),
         loadFabricByCode(sb, (v.fabricCode as string | undefined) ?? null),
         loadFabricSellingTiers(sb, (v.fabricId as string | undefined) ?? null),
       ]);

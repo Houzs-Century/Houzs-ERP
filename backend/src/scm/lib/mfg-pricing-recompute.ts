@@ -611,31 +611,76 @@ export function recomputeFromSnapshot(
   };
 }
 
-/** Load a single product row from mfg_products by code. */
-export async function loadProductByCode(sb: any, code: string): Promise<ProductRowLite | null> {
+/* ═══════════════════════════════════════════════════════════════════════════
+   PRODUCT LOOKUP BY CODE — `code` IS NOT UNIQUE. PASS THE COMPANY.
+   ═══════════════════════════════════════════════════════════════════════════
+
+   `idx_mfg_products_code` is a plain btree, and both companies keep their own
+   SKU master, so a code can name two different products. On production
+   2026-08-01 SEVENTEEN codes did — CODY / FENRIR / JAGER × (K)(Q)(S)(SK)(SS)
+   plus two mattress codes — HOUZS's manufacturing row and 2990's selling row,
+   and TWELVE of them disagreed on `pwp_price_sen`. Both are legitimate rows;
+   neither can be renamed.
+
+   Unscoped, these two loaders picked between them at the database's whim:
+   `.in()` has no ORDER BY and the Map keeps whichever came back last, and
+   `.eq().maybeSingle()` errors outright on two rows (PGRST116) with the error
+   discarded into `data = null`. That is how a POS order died on
+   `pwp_code_rejected — CODY-(SS): this SKU has no PWP price set (SKU Master)`
+   while the SKU Master, which IS company-scoped, showed RM 490 the whole time.
+   The same wrong row also carries a NULL `sell_price_sen`, so the plain
+   (voucher-free) order fails too — `driftThresholdExceeded` rejects a non-zero
+   client price against a server 0.
+
+   `companyId` follows the house pattern for a read helper that cannot take a
+   Hono Context (validateSoDropdownFields, loadFabricTierAddonConfig): callers
+   pass `activeCompanyId(c)` — or, in createSalesOrderCore, its local
+   `companyId` — and null/undefined DEGRADES to no predicate so a
+   single-company install, a headless job and the tests read exactly as before.
+   Migration 0233 adds UNIQUE (company_id, code), which makes the scoped
+   `.maybeSingle()` below single by construction rather than by luck. */
+
+/** Load a single product row from mfg_products by code, within one company. */
+export async function loadProductByCode(sb: any, code: string, companyId?: number | null): Promise<ProductRowLite | null> {
   if (!code) return null;
-  const { data } = await sb
+  let q = sb
     .from('mfg_products')
     .select('code, category, base_price_sen, price1_sen, cost_price_sen, seat_height_prices, sell_price_sen, pwp_price_sen, model_id, size_code, base_model, branding, default_free_gifts')
-    .eq('code', code)
-    .maybeSingle();
+    .eq('code', code);
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data, error } = await q.maybeSingle();
+  /* Never silent again. Unscoped (or pre-0189) this is where a duplicated code
+     turns into "unknown item code" / a 0 price with nothing in the log to say
+     why — the one symptom that cost a day. Still returns null: callers already
+     handle a miss, and throwing here would fail an order on a diagnostic. */
+  if (error) console.error(`[mfg-pricing] loadProductByCode('${code}', company=${companyId ?? 'unscoped'}) failed:`, error.message ?? error);
   if (!data) return null;
   return data as ProductRowLite;
 }
 
 /** Batched mirror of {@link loadProductByCode} — ONE `in()` query for a whole
- *  order's line codes, keyed by code. Subrequest diet (Loo 2026-06-06): the SO
- *  create path used to issue one product lookup per line and a 6-item order
- *  blew the CF Workers per-request subrequest cap; every per-line read on that
- *  path must stay O(1) in queries. */
-export async function loadProductsByCodes(sb: any, codes: Array<string | null | undefined>): Promise<Map<string, ProductRowLite>> {
+ *  order's line codes, keyed by code, within one company. Subrequest diet (Loo
+ *  2026-06-06): the SO create path used to issue one product lookup per line and
+ *  a 6-item order blew the CF Workers per-request subrequest cap; every per-line
+ *  read on that path must stay O(1) in queries. */
+export async function loadProductsByCodes(sb: any, codes: Array<string | null | undefined>, companyId?: number | null): Promise<Map<string, ProductRowLite>> {
   const uniq = Array.from(new Set(codes.map((c) => (c ?? '').trim()).filter(Boolean)));
   if (uniq.length === 0) return new Map();
-  const { data } = await sb
+  let q = sb
     .from('mfg_products')
     .select('code, category, base_price_sen, price1_sen, cost_price_sen, seat_height_prices, sell_price_sen, pwp_price_sen, model_id, size_code, base_model, branding, default_free_gifts')
     .in('code', uniq);
-  return new Map((((data as ProductRowLite[]) ?? [])).map((r) => [r.code, r]));
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data } = await q;
+  const rows = ((data as ProductRowLite[]) ?? []);
+  /* More rows than codes means a code still resolves to two products in this
+     scope — the Map below would silently keep one. Say so; the pricing that
+     follows is a coin toss until it is fixed. */
+  if (rows.length > uniq.length) {
+    const dupes = [...new Set(rows.map((r) => r.code).filter((c, i, a) => a.indexOf(c) !== i))];
+    console.error(`[mfg-pricing] duplicate mfg_products codes in company=${companyId ?? 'unscoped'}: ${dupes.join(', ')} — pricing picks one arbitrarily`);
+  }
+  return new Map(rows.map((r) => [r.code, r]));
 }
 
 /** Load active Special Add-ons (migration 0134) as pricing defs. The SO recompute
@@ -933,7 +978,7 @@ export async function recomputeOneLine(
 ): Promise<RecomputedLine> {
   const config = cachedConfig ?? await loadMaintenanceConfig(sb);
   const [product, fabric, sellingTiers, fabricAddonConfig, modelOverrides, compartmentOverrides] = await Promise.all([
-    loadProductByCode(sb, item.itemCode),
+    loadProductByCode(sb, item.itemCode, companyId),
     loadFabricByCode(sb, item.variants?.fabricCode ?? null),
     loadFabricSellingTiers(sb, item.variants?.fabricId ?? null),
     loadFabricTierAddonConfig(sb, companyId),

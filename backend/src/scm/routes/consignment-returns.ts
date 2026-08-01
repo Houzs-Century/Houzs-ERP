@@ -685,7 +685,7 @@ consignmentReturns.post('/', async (c) => {
 
   /* itemCode catalog guard. */
   {
-    const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined));
+    const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -786,7 +786,7 @@ consignmentReturns.post('/:id/items', async (c) => {
 
   /* itemCode catalog guard. */
   {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string]);
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -817,7 +817,7 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
 
   /* itemCode catalog guard (only when caller is changing it). */
   if (it.itemCode !== undefined) {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string]);
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 

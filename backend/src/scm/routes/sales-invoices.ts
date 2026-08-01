@@ -894,7 +894,7 @@ salesInvoices.post('/', async (c) => {
   const sb = c.get('supabase'); const user = c.get('user');
 
   if (items.length > 0) {
-    const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined));
+    const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -1520,7 +1520,7 @@ salesInvoices.post('/:id/items', async (c) => {
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
 
   {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string]);
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -1619,7 +1619,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   }
 
   if (it.itemCode !== undefined) {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string]);
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 

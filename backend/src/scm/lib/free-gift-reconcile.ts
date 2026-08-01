@@ -27,6 +27,7 @@ import {
   type TriggerLine,
 } from '../shared';
 import { loadProductsByCodes, loadModelDefaultGifts } from './mfg-pricing-recompute';
+import { activeCompanyId } from './companyScope';
 // recomputeTotals is the route's authoritative header roll-up. The route<->lib
 // reference is a function-level cycle (route imports this file, this file
 // imports recomputeTotals) — safe with esbuild because neither is called at
@@ -65,7 +66,9 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
     //    and load the per-Model default-gift map (keyed by product_models.id).
     //    Both batched — never per-line (CF Workers subrequest cap).
     const [productByCode, modelGiftsById] = await Promise.all([
-      loadProductsByCodes(sb, items.map((it) => it.item_code)),
+      // Company-scoped: a plain `code` matches both companies' SKU masters, and
+      // a gift resolved off the wrong row's model_id is the wrong gift.
+      loadProductsByCodes(sb, items.map((it) => it.item_code), activeCompanyId(c)),
       loadModelDefaultGifts(sb),
     ]);
 
