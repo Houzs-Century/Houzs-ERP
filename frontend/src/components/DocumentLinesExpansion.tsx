@@ -35,8 +35,10 @@ export type DocumentDrillLine = {
   assignedSos?: OriginAssignment[];
   // Does a STORED so_item_id back this line's SKU, or is the Assigned SO above
   // only an MRP allocation? The two used to render identically apart from a
-  // dashed border, and the owner read a guess as a binding (2026-07-29). When
-  // false, the cell says so in words.
+  // dashed border, and the owner read a guess as a binding (2026-07-29). It
+  // carried a visible "MRP guess · not linked" caption until the owner asked for
+  // it gone (2026-08-01); the distinction now lives in the chip's tooltip and in
+  // the dashed-vs-solid tone, so the resolution is unchanged — only the caption.
   sourceLinked?: boolean;
   // SALES docs (DO / SI): the source PO(s) the shipped/invoiced goods actually
   // came from — the durable batch_no = source-PO hard link, not a guess. Empty /
@@ -75,6 +77,21 @@ export type DrillItemFields = {
 
 // Shared centi → RM string, same helper the lists use.
 const fmtRm = (centi: number): string => fmtCenti(centi);
+
+/* A Source-PO chip is the batch_no the ledger stored, which is the source PO's
+   `po_number` VERBATIM — nothing here adds, strips or normalises a prefix, and
+   nothing may start to. Doc numbers are namespaced PER COMPANY
+   (scm/lib/companyScope.ts `companyDocPrefix`): the base company HOUZS mints
+   BARE numbers (`PO-2607-002`) and every other company prefixes with its code
+   (`2990-PO-2607-002`). So the two forms are two namespaces that can BOTH hold
+   the same tail — "unifying" them by stamping `2990-` on a bare number would
+   name a DIFFERENT, possibly real, document on the batch→lot→COGS trail. Owner
+   asked why the column looks inconsistent (2026-08-01); the honest answer is a
+   tooltip, not a rewrite. */
+export const sourcePoTitle = (poNo: string): string =>
+  /^\d+-/.test(poNo)
+    ? `Source purchase order ${poNo} — the "${poNo.split("-")[0]}-" prefix is the company that raised it.`
+    : `Source purchase order ${poNo} — no company prefix, so it was raised under the base company (Houzs).`;
 
 // Column widths are driven by which optional columns are on, so the template is
 // built at RUNTIME and applied via an inline style — a dynamically-joined
@@ -217,7 +234,9 @@ export function DocumentLinesExpansion({
                         ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
                         : a.source === "delivered"
                           ? "Locked — this PO's goods were delivered against this Sales Order"
-                          : "Locked — this PO line stores a link to this Sales Order";
+                          : l.sourceLinked === false
+                            ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
+                            : "Locked — this PO line stores a link to this Sales Order";
                       const base =
                         "rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold";
                       const tone = floating
@@ -245,17 +264,6 @@ export function DocumentLinesExpansion({
                     <span className="text-[11px] text-ink-muted">—</span>
                   )}
                   </span>
-                  {/* The dashed border alone was too quiet: say in words that
-                      nothing in the database binds this line, so nobody reads a
-                      live allocation as a commitment (BUG-HISTORY 2026-07-31). */}
-                  {assigned.length > 0 && l.sourceLinked === false && (
-                    <span
-                      className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted"
-                      title="No stored link on the purchase order line — this is an MRP allocation only. Bind the line to its Sales Order line on the PO's edit screen."
-                    >
-                      MRP guess · not linked
-                    </span>
-                  )}
                 </span>
               )}
               {showAssignment && (
@@ -280,10 +288,13 @@ export function DocumentLinesExpansion({
                     delivered.map((d) => {
                       const base =
                         "rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-ink-secondary";
+                      // "x1" is noise on a chip that already names one DO
+                      // (owner 2026-08-01: "不要放成 1"). Only a multi-unit
+                      // shipment earns the multiplier.
                       const label = (
                         <>
                           {d.doNo}
-                          {d.qty > 0 && (
+                          {d.qty > 1 && (
                             <span className="text-ink-muted">{` x${d.qty}`}</span>
                           )}
                         </>
@@ -314,6 +325,7 @@ export function DocumentLinesExpansion({
                     sourcePos.map((po) => (
                       <span
                         key={po}
+                        title={sourcePoTitle(po)}
                         className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink"
                       >
                         {po}
@@ -433,10 +445,11 @@ export function DeliveredCell({
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1">
       {list.map((d) => {
+        // Same rule as the drill-down above: no "x1" (owner 2026-08-01).
         const label = (
           <>
             {d.doNo}
-            {d.qty > 0 && <span className="text-ink-muted">{` x${d.qty}`}</span>}
+            {d.qty > 1 && <span className="text-ink-muted">{` x${d.qty}`}</span>}
           </>
         );
         return onOpenDo ? (

@@ -35,6 +35,7 @@ import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
 import {
   DocumentLinesExpansion,
+  sourcePoTitle,
   type DocumentDrillLine,
 } from "../../components/DocumentLinesExpansion";
 import { ListPager } from "../../components/ListPager";
@@ -1095,6 +1096,7 @@ export function MfgDeliveryOrdersListV2() {
               <button
                 key={po}
                 type="button"
+                title={sourcePoTitle(po)}
                 onClick={(e) => {
                   e.stopPropagation();
                   navigate(`/scm/purchase-orders?q=${encodeURIComponent(po)}`);

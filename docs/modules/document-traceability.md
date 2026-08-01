@@ -102,6 +102,45 @@ column by document side, and banned any "first + N" summarization:
 - `computeMrp` still runs **≤ once per request** on every list endpoint — the new
   delivered/source-PO resolvers are pure ledger reads and add no MRP call.
 
+### 2.6 Chip polish (2026-08-01) — no "x1", no "MRP guess" caption, and why the PO prefixes stay mixed
+`fix/assigned-so-polish`. Three owner defects off one screenshot of the DO list.
+Display only — no resolver, no endpoint and no stored value changed.
+
+- **No `x1` on a Delivered chip.** `DeliveredCell` and the drill-down's Delivered
+  cell now render the `xN` suffix only when `N > 1` (was `> 0`, so every
+  single-unit shipment printed `x1`). Owner: *"为什么会放成 1? 很难看"*.
+- **The "MRP guess · not linked" caption is GONE** from both surfaces — the
+  drill-down cell in `DocumentLinesExpansion.tsx` and its mobile twin in
+  `MobileModuleDetail.tsx`. **The resolution is untouched**: `sourceLinked` still
+  rides the payload, the dashed-chip + trailing `~` still distinguish a floating
+  MRP allocation from a stored link, and the fact the caption used to state now
+  rides the chip's `title` on BOTH surfaces (the desktop `AssignedSoCell` already
+  did this). So the 2026-07-29 "read a guess as a binding" protection survives as
+  a tooltip and a tone, not as a printed line. The `LINKED` / `LOCKED` wording is
+  tooltip text only — there was never a visible "LOCKED" caption to remove.
+- **Source PO prefixes are DATA, and the labels stay verbatim.** The column mixes
+  `2990-PO-2607-009` and `PO-2607-002`. The chip is
+  `inventory_movements.batch_no` verbatim (`resolveDoSourcePosForDos`), and
+  `batch_no` is `purchase_orders.po_number` verbatim (`resolvePoBatchByItem`,
+  mig 0120) — **nothing on that path adds, strips or normalises a prefix**, so
+  there is no display bug to fix. Doc numbers are namespaced PER COMPANY
+  (`companyDocPrefix`): base company HOUZS mints BARE, every other company
+  prefixes with its code. **Normalising the display would be unsafe**: the two
+  namespaces can both hold the same tail, so stamping `2990-` on a bare chip
+  could name a DIFFERENT real document on the batch → lot → COGS trail. The
+  chips gained a `title` explaining the prefix instead (`sourcePoTitle`, exported
+  from `DocumentLinesExpansion.tsx` and used by the DO + SI list columns).
+- **Which data case it is, is a production question** — answered by
+  `backend/scripts/check-source-po-prefixes.mjs` + the manual
+  **Source PO prefix check (read-only)** workflow. It classifies every live DO
+  OUT batch as prefixed / bare-on-base (correct by design) / **bare-on-a-non-base
+  company (a mint gap — `companyDocPrefix` returns `""` when a reconstructed or
+  headless context carries no `companyCode`)** / orphaned, and lists any bare
+  batch that already has a prefixed twin. **If it reports bare-on-non-base, do
+  NOT rename those POs**: `po_number` is copied into `inventory_movements` and
+  `inventory_lots` as `batch_no`, so renaming orphans the costing trail. Fix the
+  mint path, and leave history alone.
+
 ### 2.4 PO "Assigned SO" resolution — precedence over linkages **C → B → A**
 `backend/src/scm/routes/po-so-coverage.ts` (`GET /po-so-coverage/:type/:id`,
 `type ∈ po|grn|pi`), mounted on the coarse SCM read gate beside `/document-flow`
