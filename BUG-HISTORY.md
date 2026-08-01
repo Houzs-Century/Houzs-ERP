@@ -1,5 +1,14 @@
 ## 2026-08-01
 
+### [HIGH] The new 3PL fleet form could not add a lorry at all — it offered lorry types the database enum does not have
+
+- **Symptom.** Registering a carrier's fleet from 3PL Companies: fill in the plate and dimensions, press **Add lorry**, get *"Could not add — Some of the details weren't accepted."* The lorry is never created, so the whole "a 3PL's fleet joins the Fleet module automatically" flow dead-ends at its first step.
+- **Root cause, traced from the request.** `POST /api/scm/lorries` returned **400**. `lorries.ts` validates `type` against `LORRY_TYPES`, which mirrors the `scm.lorry_type` enum (mig 0053): `LORRY_10FT | LORRY_14FT | LORRY_17FT | LORRY_21FT | VAN | OUTSOURCE | OTHER`. The fleet block added to `ThreePLCompanies.tsx` offered **`LORRY` / `VAN` / `TRUCK`** — invented rather than read. Two of the three values do not exist in the enum, and `LORRY` was the DEFAULT, so the first attempt always failed; only picking "Van" would have worked.
+- **How it got past every gate.** `type: lorryType as never` — the cast silenced the one check that would have caught it. Typecheck, 960 unit tests and the production build were all green, and the read-only UI QA (render the form, confirm the fields exist) passed too. **Only submitting the form against production found it.**
+- **Fix.** Import the SHARED `LORRY_TYPES` + `LORRY_TYPE_LABEL` from `vendor/scm/lib/lorries-queries` — the same pair the Fleet page's own lorry form uses — render the options from it, type the state as `LorryType`, and delete the `as never`. Default is now `LORRY_14FT`. There is one list, and this form no longer has an opinion about it.
+- **The class, for next time.** A hand-written option list against a database enum is a duplicate of that enum, and `as never` is a request for the compiler to stop checking exactly where it was about to help. When a shared constant already exists (it did), using it is not a preference. And: rendering a form is not testing it — a control that renders can still refuse every value it offers.
+- **Ref:** `fix/threepl-fleet-lorry-type` 2026-08-02. Frontend only; no migration. Found by write-path QA on production, not by CI.
+
 ### [MEDIUM] A leaked timer in the chunk-recovery boundary failed `npm test` on a deploy — and SKIPPED a production frontend release
 
 - **Symptom.** Deploy run **30703838987** (commit `91901738`): the `frontend` job failed at `Run npm test` with `ReferenceError: window is not defined`, reported as *"Vitest caught 1 unhandled error"* and attributed to `src/vendor/scm/components/DataGrid.test.tsx` — a file that has nothing to do with it. Because `npm test` failed, the job's `npm run build` and the `wrangler-action` deploy step were **skipped**: the SPA silently did not ship. The next deploy (`30704427626`) shipped it, so nobody saw a broken site — which is precisely what makes this class dangerous.
