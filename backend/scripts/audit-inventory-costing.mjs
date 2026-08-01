@@ -310,19 +310,22 @@ async function main() {
 
     /* 0e. Did anything write a CONSUMPTION outside a movement INSERT? Every
        consumption the trigger books is written in the same statement as its
-       movement, so its created_at should sit on top of the movement's. A
-       consumption materially LATER than its movement was written by a retro-cost
-       repair (fn_reconcile_uncosted_out / recost), which is legitimate and
+       movement, so its write timestamp should sit on top of the movement's.
+       That timestamp is consumed_at — inventory_lot_consumptions has NO
+       created_at (the trigger INSERT names no timestamp, so consumed_at takes
+       its DEFAULT now(), i.e. the row's write time). A consumption materially
+       LATER than its movement was written by a retro-cost repair
+       (fn_reconcile_uncosted_out / recost), which is legitimate and
        documented — but it is also the only shape a rename-induced re-allocation
        could take, so it is enumerated rather than assumed away. */
-    if (C.inventory_lot_consumptions.has("created_at") && C.inventory_movements.has("created_at")) {
+    if (C.inventory_lot_consumptions.has("consumed_at") && C.inventory_movements.has("created_at")) {
       const lateRows = await pg.unsafe(`
         SELECT k.id, k.source_doc_type, k.source_doc_no, k.qty_consumed, k.total_cost_sen,
-               k.created_at AS cons_at, m.created_at AS mov_at,
-               EXTRACT(EPOCH FROM (k.created_at - m.created_at))::bigint AS lag_s
+               k.consumed_at AS cons_at, m.created_at AS mov_at,
+               EXTRACT(EPOCH FROM (k.consumed_at - m.created_at))::bigint AS lag_s
           FROM ${K} k JOIN ${M} m ON m.id = k.movement_id
-         WHERE k.created_at > m.created_at + INTERVAL '60 seconds'
-         ORDER BY k.created_at DESC`);
+         WHERE k.consumed_at > m.created_at + INTERVAL '60 seconds'
+         ORDER BY k.consumed_at DESC`);
       const totalCons = (await pg.unsafe(`SELECT count(*)::int AS n FROM ${K}`))[0].n;
       notice("");
       notice("  consumptions written LATER than their movement (i.e. NOT by the AFTER-INSERT trigger):");
@@ -1079,9 +1082,13 @@ async function main() {
     notice(`  OUT movements that named NO lot at all         : ${outRows.filter((r) => Number(r.cons_qty) === 0).length} of ${outRows.length}`);
 
     // 9c. FIFO ORDER. One lateral per consumption over its own bucket's lots.
+    //     The consumption timeline is ordered by consumed_at — the row's write
+    //     timestamp (DEFAULT now(); the trigger INSERT names no timestamp).
+    //     inventory_lot_consumptions has NO created_at column; only the lots
+    //     and movements tables do.
     const fifoRows = await pg.unsafe(`
       WITH cons AS (
-        SELECT k.id, k.lot_id, k.movement_id, k.qty_consumed, k.created_at,
+        SELECT k.id, k.lot_id, k.movement_id, k.qty_consumed, k.consumed_at,
                l.received_at, COALESCE(l.batch_no,'') AS lot_batch,
                l.product_code, COALESCE(l.variant_key,'') AS vk,
                l.warehouse_id::text AS wh, ${byCompany ? "l.company_id" : "NULL::int AS company_id"},
@@ -1091,7 +1098,7 @@ async function main() {
           JOIN ${L} l ON l.id = k.lot_id
           JOIN ${M} m ON m.id = k.movement_id
       ), all_cons AS (
-        SELECT k.id, k.lot_id, k.qty_consumed, k.created_at FROM ${K} k
+        SELECT k.id, k.lot_id, k.qty_consumed, k.consumed_at FROM ${K} k
       )
       SELECT c.*, older.n_skipped, older.oldest_skipped_at, older.skipped_units
         FROM cons c
@@ -1104,8 +1111,8 @@ async function main() {
                      l2.qty_received - COALESCE((
                        SELECT SUM(a.qty_consumed) FROM all_cons a
                         WHERE a.lot_id = l2.id
-                          AND (a.created_at < c.created_at
-                               OR (a.created_at = c.created_at AND a.id < c.id))), 0) AS avail
+                          AND (a.consumed_at < c.consumed_at
+                               OR (a.consumed_at = c.consumed_at AND a.id < c.id))), 0) AS avail
                 FROM ${L} l2
                WHERE l2.product_code = c.product_code
                  AND COALESCE(l2.variant_key,'') = c.vk
@@ -1119,7 +1126,7 @@ async function main() {
            WHERE x.avail > 0
         ) older
        WHERE older.n_skipped > 0
-       ORDER BY c.created_at`);
+       ORDER BY c.consumed_at`);
     const consWithLot = (await pg.unsafe(`SELECT count(*)::int AS n FROM ${K} k JOIN ${L} l ON l.id = k.lot_id`))[0].n;
     notice("");
     notice(`  consumptions with a resolvable lot scanned     : ${consWithLot}`);

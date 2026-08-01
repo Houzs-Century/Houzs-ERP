@@ -76,6 +76,65 @@ export function classifyToken({
   return { ...base, verdict: "prefixed-ambiguous" };
 }
 
+/** A3 — the ledger's OWN document references: `source_doc_no` (+ its sibling
+ *  `source_doc_id`) on `inventory_lot_consumptions` and `inventory_movements`.
+ *
+ *  The doc-NUMBER decision is exactly `classifyToken` — same rule, same
+ *  verdicts, same colliding-tail safety. What A3 adds is the SIBLING COLUMN:
+ *  a ledger row names its parent twice, once by number and once by id, and the
+ *  import broke them independently (numbers stayed bare; ids were copied
+ *  verbatim from the source database, where the parent was sometimes dropped or
+ *  remapped on PK collision — see migrate-2990-into-houzs.mjs, DANGLING_GUARD
+ *  comment). Repairing the number while leaving a provably-dangling id would
+ *  leave the row asserting two different parents, and the costing audit's
+ *  orphan checks (sections 4 and 10b) read the ID, so the finding would stand.
+ *
+ *  The id is therefore written ONLY from the SAME resolution the number rule
+ *  just proved, and only over ids that assert nothing:
+ *    stamp    — stored id is NULL: write the resolved document's id
+ *    restamp  — stored id matches NO document of the type (dangling): write it
+ *    keep     — stored id IS the resolved document: leave it
+ *  A stored id that names a DIFFERENT REAL document of the type is a CONFLICT:
+ *  the whole group is refused (`verdict: "doc-id-conflict"`) and reported,
+ *  because the row's two columns disagree about which real document it belongs
+ *  to and a repair must never pick sides in that argument.
+ *
+ *  `storedDocIds` is the distinct set of `source_doc_id` values on the affected
+ *  rows: `{ id, exists, rows }` where `exists` says the id matches a document
+ *  of the type (any company — an id is globally unique, so existence is the
+ *  only question). `resolvedDocId` is the id of the single same-company
+ *  document the PREFIXED number matches; it is REQUIRED for a repair verdict —
+ *  a repair without it would plan a write with no evidence, so that is thrown,
+ *  not defaulted. */
+export function classifySourceRef({
+  token,
+  prefix,
+  ownCompanyMatches,
+  prefixedOwnCompanyMatches,
+  foreignMatches = 0,
+  resolvedDocId = null,
+  storedDocIds = [],
+}) {
+  const base = classifyToken({ token, prefix, ownCompanyMatches, prefixedOwnCompanyMatches, foreignMatches });
+  if (base.verdict !== "repair") return base;
+  if (resolvedDocId == null) {
+    throw new Error(`classifySourceRef: repair verdict for "${token}" but no resolvedDocId — refusing to plan a write without the resolved document`);
+  }
+  const idWrites = storedDocIds.map((d) => ({
+    id: d.id ?? null,
+    rows: d.rows ?? 0,
+    action:
+      d.id == null ? "stamp"
+      : !d.exists ? "restamp"
+      : String(d.id) === String(resolvedDocId) ? "keep"
+      : "conflict",
+  }));
+  if (idWrites.some((w) => w.action === "conflict")) {
+    return { ...base, verdict: "doc-id-conflict", resolvedDocId, idWrites };
+  }
+  return { ...base, resolvedDocId, idWrites };
+}
+
 /* The note FORMAT lives in document-flow.ts: the writer is
    `From SOs: ${docNos.join(', ')}` (mfg-purchase-orders.ts:2115) and the only
    structural reader is parseFromSosNote, which trims the note, takes the FIRST
