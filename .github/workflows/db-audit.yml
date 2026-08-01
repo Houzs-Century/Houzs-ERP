@@ -17,6 +17,9 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: node scripts/audit-views.mjs
+      - run: node scripts/audit-so-po-linkage.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: "2"
+          FOCUS_SO: "2990-SO-2607-028"
+          NODE_OPTIONS: --dns-result-order=ipv4first
