@@ -45,7 +45,6 @@ import { resolveDatabaseUrl } from "../db/pg";
 import {
   departments,
   invitations,
-  lorries,
   password_resets,
   positions,
   project_brands,
@@ -1866,7 +1865,17 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
     // Tables that already cascade (project_reads, password_resets,
     // user_brands) are not touched here — SQLite handles them.
     await db.delete(invitations).where(eq(invitations.email, target.email));
-    await c.env.DB.prepare(`UPDATE lorries SET default_driver_user_id = NULL WHERE default_driver_user_id = ?`).bind(id).run();
+    // NO lorries cleanup here. `lorries.default_driver_user_id` does NOT exist
+    // in production — `0000_baseline.sql:126` and `schema.pg.ts:311` both still
+    // declare it, but the live table (public AND scm) has no such column, and
+    // this statement was the ONLY one in this block not wrapped in safeExec.
+    // It therefore raised `column "default_driver_user_id" does not exist` on
+    // EVERY delete, which index.ts:385 folds into the operator's generic
+    // "Something went wrong processing that request." Nothing is lost by
+    // dropping it: the block exists to clear non-cascading FKs before the final
+    // DELETE, and `public.user_companies` (ON DELETE CASCADE) is now the ONLY
+    // foreign key referencing users at all. Driver records live in scm.drivers
+    // and are deactivated by the trg_sync_user_to_tms trigger.
     // Be defensive — only run these if the tables exist on the deployed schema.
     // SQLite's "no such table" errors get swallowed for tables that haven't
     // shipped yet (cron-only / future migrations).
@@ -1912,11 +1921,11 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
   // Soft-delete (default for joined users).
   await db.update(users).set({ status: "disabled" }).where(eq(users.id, id));
 
-  // Clear default_driver on lorries
-  await db
-    .update(lorries)
-    .set({ default_driver_user_id: null })
-    .where(eq(lorries.default_driver_user_id, id));
+  // The lorries default-driver clear that used to sit here is gone for the same
+  // reason as in the hard-delete block above: the column does not exist in
+  // production, so this raised on every soft-delete too. scm.drivers is the
+  // live driver record and trg_sync_user_to_tms deactivates it off this very
+  // status change.
 
   await audit(c, {
     action: "user.disable",
