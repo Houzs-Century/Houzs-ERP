@@ -37,6 +37,24 @@ name: Repair 2990 doc references (DRY-RUN gated)
 # values in dry run AND apply, and prints the per-bucket movement-sum impact
 # (duplicate OUTs double-decrement on-hand — the audit-2b linkage).
 #
+# Part `fifo-attribute` (2026-08-01, document-evidence round — owner rule
+# "为什么要手动分配的 你根据FIFO 就没问题了啊？"): the contended consolidated-PO
+# lines the pairing backfill refused are attributed automatically by FIFO —
+# named SOs' free lines in computeMrp's deterministic order (delivery date
+# ASC, doc_no ASC), PO lines in document order, quantity-aware (a qty-5 line
+# splits; the remainder books as STOCK). Written as
+# purchase_order_item_allocations rows (mig 0235, sub-numbers PO-xxxx-yy-NN)
+# so the provenance is visibly "allocation" — never a fabricated so_item_id.
+# The `pos` input names the target POs; idempotent (allocated lines skip).
+#
+# Part `so-warehouse` (2026-08-01, document-evidence round): the NULL-
+# warehouse SO lines whose header resolves nothing get warehouse_id stamped
+# from document evidence — the line's own DO OUT movement, else unanimous
+# sibling agreement, else the company's single active warehouse; everything
+# else reported needs-owner. Company-2990 rows are mirror-maintained
+# (so-mirror.ts drains DELETE-then-INSERT), so they are REPORTED with the
+# exact 2990-side fix and never written here.
+#
 # A token is rewritten ONLY when it resolves to nothing as stored, resolves to
 # exactly ONE document when prefixed with the owning row's own company code, and
 # that document belongs to the same company. Doc-number tails collide across
@@ -46,8 +64,9 @@ name: Repair 2990 doc references (DRY-RUN gated)
 # DRY-RUN unless apply=1. Idempotent: a repaired reference resolves (and a
 # repaired GRN's delta recomputes to zero), so a re-run plans zero rows. Run
 # the dry run, read the plan, then run again with apply=1. `all` still means
-# the three ORIGINAL parts; `ids` and `grn-gap` are dispatch-only on purpose —
-# the widest-reaching writes each get an explicit, single-purpose run.
+# the three ORIGINAL parts; `ids`, `grn-gap`, `dedupe`, `fifo-attribute` and
+# `so-warehouse` are dispatch-only on purpose — the widest-reaching writes
+# each get an explicit, single-purpose run.
 on:
   workflow_dispatch:
     inputs:
@@ -69,10 +88,17 @@ on:
           - ids
           - grn-gap
           - dedupe
+          - fifo-attribute
+          - so-warehouse
       grns:
         description: "part grn-gap only: comma-separated GRN numbers (default the 3a-implicated one)"
         required: false
         default: "2990-GRN-2606-001"
+        type: string
+      pos:
+        description: "part fifo-attribute only: comma-separated PO numbers (default the two contended consolidated POs)"
+        required: false
+        default: "2990-PO-2606-019,2990-PO-2606-023"
         type: string
 
 concurrency:
@@ -100,6 +126,7 @@ jobs:
           APPLY: ${{ inputs.apply }}
           PART: ${{ inputs.part }}
           GRNS: ${{ inputs.grns }}
+          POS: ${{ inputs.pos }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
           # for the full Happy-Eyeballs reasoning.
           NODE_OPTIONS: --dns-result-order=ipv4first
