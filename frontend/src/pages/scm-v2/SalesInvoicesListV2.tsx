@@ -84,6 +84,9 @@ type SiRow = {
    *  DO's OUT movements ∪ consumed FIFO lots). "—" for un-batched stock. A sales
    *  invoice shows Source PO, not an Assigned SO (owner 2026-07-31). */
   source_pos?: string[] | null;
+  /** Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
+   *  "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
+  source_adj?: boolean;
   invoice_date: string;
   due_date: string | null;
   /** SI's own snapshot of the customer delivery date (may be null on rows

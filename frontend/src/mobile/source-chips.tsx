@@ -64,6 +64,7 @@ export function SourcePosRowMobile({
   adj,
   ready,
   label = "Source PO",
+  incoming = null,
   showEmpty = false,
 }: {
   pos: string[];
