@@ -751,3 +751,61 @@ describe("planAllocationDeliveredRepair — the corrective for already-written a
     expect(res.removals).toHaveLength(0);
   });
 });
+
+// ── L (2026-08-02, the 023 source verdict): CANCELLED POs — never targets,
+// and their existing allocations are removed with no cancel recommendation ───
+describe("planFifoAttribution — dead-status guard (the 023 source verdict)", () => {
+  const poLine = { id: "pl-1", itemCode: "MAKOTO-OLIVE", qty: 5, soItemId: null, allocationCount: 0, createdAt: "2026-06-24" };
+  const soLine = { id: "so-1", doc: "SO-1", itemCode: "MAKOTO-OLIVE", qty: 2, deliveryDate: "2026-07-01", taken: false };
+
+  test("a CANCELLED PO is never an attribution target", () => {
+    const res = planFifoAttribution({ poLines: [poLine], soLines: [soLine], poStatus: "CANCELLED" });
+    expect(res.refusedPoStatus).toBe("CANCELLED");
+    expect(res.plans).toHaveLength(0);
+  });
+
+  test("a DRAFT PO refuses too (it supplies nothing yet)", () => {
+    expect(planFifoAttribution({ poLines: [poLine], soLines: [soLine], poStatus: "draft" }).refusedPoStatus).toBe("DRAFT");
+  });
+
+  test("a live status plans exactly as before (regression guard)", () => {
+    const res = planFifoAttribution({ poLines: [poLine], soLines: [soLine], poStatus: "SUBMITTED" });
+    expect(res.refusedPoStatus).toBeUndefined();
+    expect(res.plans[0].slices[0]).toEqual({ seq: 1, qty: 2, soItemId: "so-1", soDoc: "SO-1" });
+  });
+});
+
+describe("planAllocationDeliveredRepair — CANCELLED PO removes all, no cancel recommendation", () => {
+  const lines = [{
+    poLineId: "pl-1",
+    allocations: [
+      { id: "a1", seq: 1, qty: 1, soItemId: "so-036-l1", soDoc: "2990-SO-2606-036" },
+      { id: "a2", seq: 2, qty: 4, soItemId: null, soDoc: null },
+    ],
+  }];
+
+  test("selfCancelled -> remove-all; the recommendation says no owner cancel is needed and MRP was never inflated", () => {
+    const res = planAllocationDeliveredRepair({
+      poNumber: "2990-PO-2606-023",
+      selfExecuted: false,
+      selfCancelled: true,
+      duplicateOf: { poNumber: "2990-PO-2606-024", executed: true },
+      lines,
+      served: {},
+    });
+    expect(res.mode).toBe("remove-all");
+    expect(res.removals).toHaveLength(2);
+    expect(res.recommendation).toContain("CANCELLED");
+    expect(res.recommendation).toContain("NO owner cancel action");
+    expect(res.recommendation).toContain("PO_DEAD");
+    expect(res.recommendation).not.toContain("RECOMMENDED OWNER DECISION: cancel");
+  });
+
+  test("selfCancelled wins even without a duplicate twin (a dead PO must not claim demand)", () => {
+    const res = planAllocationDeliveredRepair({
+      poNumber: "PO-X", selfExecuted: false, selfCancelled: true, duplicateOf: null, lines, served: {},
+    });
+    expect(res.mode).toBe("remove-all");
+    expect(res.recommendation).toContain("NO owner cancel action");
+  });
+});
