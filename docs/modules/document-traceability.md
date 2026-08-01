@@ -224,12 +224,30 @@ Resolution, all set-based and company-scoped:
    `includeUndated`, then `mrpReverseCoverage(result).get(po.poNumber)` — the exact
    reverse of the `mrpLineCoverage` the SO detail reads (§ linkage A). Group by SKU,
    `locked:false`. This is called ONCE per request, NOT per-SKU in a loop.
-3. **(b) stored origin (B):** origin SO doc_nos = the PO lines' `so_item_id` →
-   `mfg_sales_order_items.doc_no` **∪** the PO's "From SOs: …" note (shared
-   `parseFromSosNote`), validated against company-owned `mfg_sales_orders` (the
-   company gate + whole-token check). Pure `buildStoredOrigins(...)` matches by
-   `item_code`, effective date `amended_delivery_date ?? customer_delivery_date`,
-   `locked:true`.
+3. **(b) stored origin (B):** origin SO doc_nos = the PO lines' EFFECTIVE
+   stored links → `mfg_sales_order_items.doc_no` **∪** the PO's "From SOs: …"
+   note (shared `parseFromSosNote`), validated against company-owned
+   `mfg_sales_orders` (the company gate + whole-token check). Pure
+   `buildStoredOrigins(...)` matches by `item_code`, effective date
+   `amended_delivery_date ?? customer_delivery_date`, `locked:true`.
+
+   **"Effective" (mig 0235, allocation-aware).** A consolidated PO line can
+   serve SEVERAL SOs plus stock; `scm.purchase_order_item_allocations` splits
+   it into sub-numbered slices (`PO-2606-001-01`, `-02`, ...), each
+   `(qty, so_item_id | NULL)` — NULL = stock. Pure `effectiveStoredLinks
+   (poLines, allocationsByItem)` resolves per LINE: a line WITH allocations
+   reads the allocations' non-null so_item_ids as THE authoritative links —
+   its own single `so_item_id` is superseded, NOT unioned (where both exist,
+   allocations win, so one line can never double-count; an all-stock split
+   yields no link at all, overruling a stale single link). A line WITHOUT
+   allocations keeps the single `so_item_id` — the 1:1 fast path, unchanged.
+   The same function feeds `storedLink`/`sourceLinked`: an allocation IS a
+   stored link, so an allocated SKU reads as linked (solid chip), and each
+   allocated SO now appears in the Assigned SO cell (multiple SOs per line are
+   finally expressible). Both the single-doc route and the batched list
+   resolver call the ONE pure function, so a list row and its drill-down
+   cannot disagree. Allocations reads are best-effort (absent table → empty →
+   exactly the pre-0235 behaviour). Layers (a)/(c) are untouched.
 4. **(a) delivered DO-lock (C):** `resolveDeliveredSoLock(po.poNumber)` finds the
    `(do, code, variant)` buckets whose goods shipped from THIS PO (OUT movements
    with `batch_no` = PO number ∪ FIFO lot consumptions of this PO's lots), resolves

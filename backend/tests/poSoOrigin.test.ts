@@ -4,6 +4,7 @@ import {
   buildStoredOrigins,
   buildDeliveredSoLock,
   mergeAssignments,
+  effectiveStoredLinks,
   type OriginAssignment,
 } from "../src/scm/routes/po-so-coverage";
 import {
@@ -88,6 +89,65 @@ describe("buildStoredOrigins (linkage B — the PO's stored raise-link origin, S
 
   test("null-safe on undefined inputs", () => {
     expect(buildStoredOrigins(undefined as never, undefined as never, undefined as never).size).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mig 0235 — effectiveStoredLinks: the allocation-aware layer (b) links. A line
+// WITH allocations reads THEM as the authoritative fine-grained answer (its own
+// single so_item_id is superseded — never both, so never a double count); a
+// line WITHOUT keeps the 1:1 so_item_id fast path. The owner's case: one qty-5
+// MAKOTO line on 2990-PO-2606-023 covering SO-036 x1 + SO-029 x1 + 3 stock.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("effectiveStoredLinks (allocations ∪ so_item_id, allocations win per line)", () => {
+  const line = (id: string, code: string, so: string | null) =>
+    ({ id, material_code: code, so_item_id: so });
+
+  test("a line with NO allocations keeps its single so_item_id (the 1:1 fast path)", () => {
+    const eff = effectiveStoredLinks([line("L1", "BF-15", "so-1")], new Map());
+    expect(eff.soItemIds).toEqual(["so-1"]);
+    expect(eff.linkedSkus.has("BF-15")).toBe(true);
+  });
+
+  test("the consolidated line: allocations name SEVERAL SOs — all become layer (b) links", () => {
+    const allocs = new Map([
+      ["L1", [{ so_item_id: "so-036" }, { so_item_id: "so-029" }, { so_item_id: null }]],
+    ]);
+    const eff = effectiveStoredLinks([line("L1", "MAKOTO-Q", null)], allocs);
+    expect(eff.soItemIds.sort()).toEqual(["so-029", "so-036"]);
+    // An allocation IS a stored link — the SKU counts as stored-linked.
+    expect(eff.linkedSkus.has("MAKOTO-Q")).toBe(true);
+  });
+
+  test("where BOTH exist, allocations WIN — the line's own so_item_id is not unioned in", () => {
+    const allocs = new Map([["L1", [{ so_item_id: "so-NEW" }]]]);
+    const eff = effectiveStoredLinks([line("L1", "BF-15", "so-OLD")], allocs);
+    expect(eff.soItemIds).toEqual(["so-NEW"]); // so-OLD superseded, not double-counted
+  });
+
+  test("an ALL-STOCK split overrules a stale single link — no links, SKU not stored-linked", () => {
+    const allocs = new Map([["L1", [{ so_item_id: null }, { so_item_id: null }]]]);
+    const eff = effectiveStoredLinks([line("L1", "BF-15", "so-OLD")], allocs);
+    expect(eff.soItemIds).toEqual([]);
+    expect(eff.linkedSkus.has("BF-15")).toBe(false);
+  });
+
+  test("mixed lines: each line resolves independently, ids de-dupe across lines", () => {
+    const allocs = new Map([["L1", [{ so_item_id: "so-1" }]]]);
+    const eff = effectiveStoredLinks(
+      [line("L1", "BF-15", "so-ignored"), line("L2", "MAT-7", "so-1"), line("L3", "STK-9", null)],
+      allocs,
+    );
+    expect(eff.soItemIds).toEqual(["so-1"]); // L1 via allocation + L2 via fast path, de-duped
+    expect(eff.linkedSkus.has("BF-15")).toBe(true);
+    expect(eff.linkedSkus.has("MAT-7")).toBe(true);
+    expect(eff.linkedSkus.has("STK-9")).toBe(false);
+  });
+
+  test("null-safe on undefined input", () => {
+    const eff = effectiveStoredLinks(undefined as never, new Map());
+    expect(eff.soItemIds).toEqual([]);
+    expect(eff.linkedSkus.size).toBe(0);
   });
 });
 

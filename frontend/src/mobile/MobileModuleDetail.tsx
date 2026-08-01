@@ -174,7 +174,7 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLinked }: {
+function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLinked, allocations, poNumber }: {
   name: string; sub?: string; qty: unknown; unitCenti: unknown; amountCenti: unknown;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
@@ -185,6 +185,14 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
   // only. Desktop and mobile say this the same way (one-product rule): in the
   // chip's tooltip, since the owner removed the visible caption (2026-08-01).
   sourceLinked?: boolean;
+  // mig 0235 — PO lines only: the line's sub-numbered allocations (which
+  // customer / STOCK each slice of a consolidated purchase serves). Display-
+  // only on mobile, matching the documented precedent (the phone PO surface
+  // has no per-line editor at all); the split editor is the desktop detail's.
+  // Rendered only when the line actually has slices — an unsplit line stays
+  // exactly as it always was.
+  allocations?: Array<{ seq: number; qty: number; so_doc_no: string | null }>;
+  poNumber?: string;
 }) {
   const q = Number(qty);
   const qtyLabel = Number.isFinite(q) ? q : 0;
@@ -221,6 +229,26 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
               </span>
             );
           }) : <span style={{ fontSize: 11, color: "#9aa093" }}>—</span>}
+        </div>
+      )}
+      {(allocations?.length ?? 0) > 0 && (
+        <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 4 }}>
+          <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093" }}>Allocations</span>
+          {allocations!.map((a) => {
+            const subNo = `${poNumber ?? ""}-${String(a.seq).padStart(2, "0")}`;
+            const stock = !a.so_doc_no;
+            return (
+              <span
+                key={a.seq}
+                title={stock
+                  ? `${subNo} — ${a.qty} of this line for stock (no customer)`
+                  : `${subNo} — ${a.qty} of this line for ${a.so_doc_no}`}
+                style={{ fontFamily: "monospace", fontSize: 10.5, fontWeight: 700, color: stock ? "#5c6357" : "#0c3f39", background: stock ? "transparent" : "#eef3f1", border: stock ? "1px dashed #b6c6c0" : "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px" }}
+              >
+                {subNo}{" -> "}{a.so_doc_no ?? "STOCK"} (qty {a.qty})
+              </span>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1433,7 +1461,13 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
                 const l = map.line(it);
                 const code = String(((it?.material_code ?? it?.item_code) ?? "")).trim();
                 const assigned = coverageType ? (originByCode.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} />;
+                /* mig 0235 — PO lines carry their sub-numbered allocations off
+                   the same detail read (display-only twin of the desktop
+                   Allocations column; one-product rule). */
+                const allocations = moduleKey === "mfg-purchase-orders"
+                  ? ((it?.allocations as Array<{ seq: number; qty: number; so_doc_no: string | null }> | undefined) ?? undefined)
+                  : undefined;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} allocations={allocations} poNumber={s(header?.po_number)} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
           </div>
