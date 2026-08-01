@@ -1,8 +1,15 @@
 # Houzs ERP — Architecture & Data Model (system map)
 
-Written 2026-06-13 from a full read of the codebase (backend ~24k LOC, frontend
-~61k LOC, 92 numbered migrations). This is the human map of the system. Pair
-with `UPGRADE-PLAN.md` (what to improve) and `FOUNDATION-PLAN.md` (Hookka audit).
+Written 2026-06-13 from a full read of the codebase. This is the human map of the
+system. Pair with `UPGRADE-PLAN.md` (what to improve) and `FOUNDATION-PLAN.md`
+(Hookka audit).
+
+**No counts live in this file.** File counts, LOC and migration numbers are in
+[`docs/generated/codebase-map-facts.md`](./generated/codebase-map-facts.md),
+computed from the tree. This file carried them until 2026-08-02 and they had
+drifted badly — it still said "92 numbered migrations" when the live tree held
+well over twice that. Per `docs/KNOWLEDGE-SYSTEM.md`, a number that moves on
+every merge must be generated, never typed.
 
 Stack: Cloudflare Workers + Hono (backend) · Supabase Postgres via Hyperdrive
 (data, migrated off D1) · R2 (files) · React 18 + Vite + TS + Tailwind (SPA on
@@ -11,9 +18,9 @@ Cloudflare Pages) · session/Bearer auth · Resend (email) · Google Maps · Aut
 
 ---
 
-## 1. Backend (`backend/src`, ~185 files)
+## 1. Backend (`backend/src`)
 
-**Entry + middleware** (`index.ts`, 277 LOC): Hono app → `cors` → `dbInject`
+**Entry + middleware** (`index.ts`): Hono app → `cors` → `dbInject`
 (swaps `env.DB` for the Postgres shim per request) → public routes
 (`/api/auth`, `/api/survey`, `/api/track`, portals) → `auth` → ~40 authed route
 modules. Cron `scheduled` handler runs through `withPgDb`:
@@ -27,7 +34,7 @@ modules. Cron `scheduled` handler runs through `withPgDb`:
 - `pg.ts` — `getSql()` builds a per-request postgres.js client. Hyperdrive branch:
   `max:1, prepare:false, idle_timeout:0, no connect_timeout` (matches Hookka's
   proven prod config — do not deviate; deviations caused the 06-13 incident).
-- `d1-compat.ts` (396 LOC) — the shim. `?`→`$n` placeholder rewrite + dialect
+- `d1-compat.ts` — the shim. `?`→`$n` placeholder rewrite + dialect
   rewrites (`datetime('now')`, `julianday`, `strftime`, `LIKE`→`ILIKE`, `instr`,
   `char`) so the ~685 legacy `env.DB.prepare(...)` call sites run on Postgres
   unchanged. `.run()` auto-appends `RETURNING *` for `last_row_id`. Slow-query
@@ -71,7 +78,7 @@ GitHub Actions: CI (typecheck+test) + Deploy on main.
 
 ---
 
-## 2. Data model (92 migrations + `schema.pg.ts`), by domain
+## 2. Data model (the migration trees + `schema.pg.ts`), by domain
 
 1. **Auth/access**: `users` (role_id, manager_id, department_id, points), `roles`
    (JSON permissions, `scope_to_pic`, `is_system`), `role_page_access` (mig 073),
@@ -117,11 +124,11 @@ scoping; (4) dual sales model (legacy AutoCount `sales_orders` + modern
 
 ---
 
-## 3. Frontend (`frontend/src`, 145 files, ~61k LOC)
+## 3. Frontend (`frontend/src`)
 
 **Shell**: `main.tsx` (provider stack Toast→Dialog→Auth→AuthGate; public surfaces
 survey/portal/reset split before auth even mounts; PWA register). `App.tsx` —
-**all ~44 pages lazy-loaded** with `Suspense`+`PageSkeleton`+`ChunkReloadBoundary`;
+**every page lazy-loaded** with `Suspense`+`PageSkeleton`+`ChunkReloadBoundary`;
 `Guard`/`PageGuard` permission wrappers; driver-only auto-redirect to `/driver`.
 
 **Data layer**: `api/client.ts` (fetch wrapper, token store, 401/403 listeners,
@@ -134,8 +141,12 @@ P&L+lightbox in ONE file), `ServiceCases.tsx` (4.7k), `Team.tsx` (1.8k),
 `Sales.tsx` (1.7k), `PurchaseOrders.tsx` (1.3k), Logistics/Trips, Overview, plus
 driver + portal pages.
 
-**Components**: `DataTable.tsx` (828 LOC — columns/sort/filter/CSV/UDF/density,
-persisted per tableId, mobile cards; **no row virtualization**), `PnlCalendar`,
+**Components**: `DataTable.tsx` (columns/sort/filter/CSV/UDF/density, persisted per
+tableId, mobile cards; it has grown roughly fourfold since this was written and is
+now large enough to grep rather than read whole). It **does** window its rows now —
+`VIRTUAL_ROW_THRESHOLD` / `VIRTUAL_OVERSCAN`, with `MobileVirtualList` on the phone.
+This paragraph said "no row virtualization" until 2026-08-02, which is worse than a
+stale number: it invites someone to build a thing that already exists. `PnlCalendar`,
 `GlobalSearch` (Cmd+K), `Sidebar` (NAV_TABS perm-gated registry), `MapView`
 (leaflet), `ProjectGantt`, `ProjectChat` (3s poll), `IdeaList`, `Panel`/
 `DetailLayout`, `SignaturePad`, `Skeleton` (Table/List), many primitives.
