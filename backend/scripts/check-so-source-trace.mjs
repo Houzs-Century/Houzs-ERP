@@ -72,9 +72,9 @@ try {
 
   // 1. In-scope SOs + their live lines.
   const sos = await pg`
-    SELECT doc_no, UPPER(status) AS status, company_id, customer_delivery_date
+    SELECT doc_no, UPPER(status::text) AS status, company_id, customer_delivery_date
       FROM scm.mfg_sales_orders
-     WHERE UPPER(status) IN ('READY_TO_SHIP','SHIPPED','DELIVERED')`;
+     WHERE UPPER(status::text) IN ('READY_TO_SHIP','SHIPPED','DELIVERED')`;
   log(`in-scope Sales Orders (READY_TO_SHIP/SHIPPED/DELIVERED): ${sos.length}`);
   const soByDoc = new Map(sos.map((s) => [s.doc_no, s]));
   const docNos = sos.map((s) => s.doc_no);
@@ -86,7 +86,7 @@ try {
 
   const lines = await pg`
     SELECT i.id::text AS id, i.doc_no, i.item_code, i.item_group, i.qty,
-           i.cancelled, UPPER(COALESCE(i.stock_status,'')) AS stock_status,
+           i.cancelled, UPPER(COALESCE(i.stock_status::text,'')) AS stock_status,
            i.allocated_batch_no, i.warehouse_id::text AS warehouse_id,
            i.variants, i.line_delivery_date
       FROM scm.mfg_sales_order_items i
@@ -99,18 +99,18 @@ try {
     ? await pg`
         SELECT di.so_item_id::text AS so_item_id, di.delivery_order_id::text AS delivery_order_id,
                di.item_code, di.item_group, di.variants, di.qty,
-               UPPER(COALESCE(d.status,'')) AS do_status, d.do_number
+               UPPER(COALESCE(d.status::text,'')) AS do_status, d.do_number
           FROM scm.delivery_order_items di
           JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
          WHERE di.so_item_id::text = ANY(${soItemIds})
-           AND UPPER(COALESCE(d.status,'')) <> 'CANCELLED'`
+           AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'`
     : [];
   const doIds = [...new Set(doLines.map((r) => r.delivery_order_id))];
 
   // Also DOC-LEVEL delivery signal (a DO on the SO whose lines lost their link).
   const docDos = await pg`
     SELECT so_doc_no, COUNT(*)::int AS n FROM scm.delivery_orders
-     WHERE so_doc_no = ANY(${docNos}) AND UPPER(COALESCE(status,'')) <> 'CANCELLED'
+     WHERE so_doc_no = ANY(${docNos}) AND UPPER(COALESCE(status::text,'')) <> 'CANCELLED'
      GROUP BY so_doc_no`;
   const doCountByDoc = new Map(docDos.map((r) => [r.so_doc_no, Number(r.n)]));
 
