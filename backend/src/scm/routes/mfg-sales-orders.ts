@@ -177,7 +177,7 @@ import { summariseReadiness } from '../lib/so-readiness';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
-import { soLineReadySourcePos } from '../lib/source-po-trace';
+import { soLineReadySourcePos, unionSoLineChips } from '../lib/source-po-trace';
 /* Shared 4-state delivery-planning derivation — the SO list emits planning_state
    (the mobile Orders-list card's status) from the SAME helper the Delivery
    Planning board uses, so the two can never drift. */
@@ -1410,8 +1410,25 @@ mfgSalesOrders.get('/', async (c) => {
         .in('doc_no', docNos)).data ?? [])();
     /* PO No. column (owner 2026-07-24): the system Purchase Order numbers this
        SO was converted into. Its own SO-line→PO-item→PO chain, independent of
-       every other enrichment above, so it rides the same concurrent wave. */
+       every other enrichment above, so it rides the same concurrent wave.
+       Since 2026-08-02 this is the TOOLTIP-only legacy raise-link — the visible
+       chips come from source_po_union below. */
     const convertedPoProm = soConvertedPoNumbers(sb, docNos);
+    /* Source-PO union (owner 2026-08-02, "他拿的货是谁的货"): the list "PO No."
+       column renders the SAME union of per-line source chips the drill shows —
+       SHIPPED/DELIVERED consumed batches ∪ READY projections — via the shared
+       resolver (lib/source-po-trace.ts). The READY side needs the MRP allocation;
+       ONE computeMrp per list load (the same engine one drill open already
+       costs), fired here so it overlaps the whole enrichment wave. Fail-soft:
+       a failed MRP just drops READY chips, shipped chips still render. */
+    const mrpForListProm: Promise<MrpResult | null> = (async () => {
+      try {
+        return await computeMrp(sb, {
+          catFilter: null, whFilter: null, includeUndated: true,
+          companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB),
+        });
+      } catch { return null; }
+    })();
 
     /* Order deterministically so the FIRST line per doc_no is the earliest
        one created (matches the detail endpoint's `.order('created_at')`). We
@@ -1419,15 +1436,21 @@ mfgSalesOrders.get('/', async (c) => {
        the mattress brand source for the first-item rule below; item_code lets
        us fall back to mfg_products.branding when a mattress line's own branding
        is blank; created_at drives the first-line pick. */
-    const { data: itemRows } = await paginateAll<{ doc_no: string; item_group: string | null; stock_status: string | null; cancelled: boolean; branding: string | null; item_code: string | null; warehouse_id: string | null; created_at: string }>((from, to) => sb
+    const { data: itemRows } = await paginateAll<{ id: string; doc_no: string; item_group: string | null; stock_status: string | null; cancelled: boolean; branding: string | null; item_code: string | null; warehouse_id: string | null; created_at: string; qty: number | null; allocated_batch_no: string | null }>((from, to) => sb
       .from('mfg_sales_order_items')
-      .select('doc_no, item_group, stock_status, cancelled, branding, item_code, warehouse_id, created_at')
+      // id / qty / allocated_batch_no ride along for the source-PO union below
+      // (per-line shipped trace + READY projection — the drill's exact inputs).
+      .select('id, doc_no, item_group, stock_status, cancelled, branding, item_code, warehouse_id, created_at, qty, allocated_batch_no')
       .in('doc_no', docNos)
       .eq('cancelled', false)
       .order('doc_no')
       .order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: true })
       .range(from, to));
+    /* Per-line SHIPPED source trace for the whole page — the same resolver call
+       the drill makes per SO, batched once (chunked internally). Fired now so it
+       overlaps the remaining enrichment reads; awaited at the union below. */
+    const shippedTraceProm = soLineShippedSources(sb, (itemRows ?? []).map((it) => it.id));
     const agg = new Map<string, Map<string, { total: number; ready: number }>>();
     /* Branding auto-derive (Commander 2026-05-28, refined PR #266): the SO list
        grid derives its Branding pill from the SO's FIRST line item — no longer
@@ -1621,10 +1644,15 @@ mfgSalesOrders.get('/', async (c) => {
        nothing remains, 'none' before the first DO. */
     const deliveredTotal = new Map<string, number>();
     const remainingTotal = new Map<string, number>();
+    /* Fully-shipped LINE ids — the union below suppresses READY chips for them,
+       exactly as the drill's SoSourceChips does (shipped trace is the durable
+       answer once a line has fully left). */
+    const fullyShippedItemIds = new Set<string>();
     {
       const deliverableMap = await deliverableProm;
-      for (const line of deliverableMap.values()) {
+      for (const [itemId, line] of deliverableMap.entries()) {
         if (line.remaining > 0) hasUndelivered.add(line.docNo);
+        else if (line.delivered > 0) fullyShippedItemIds.add(itemId);
         deliveredTotal.set(line.docNo, (deliveredTotal.get(line.docNo) ?? 0) + line.delivered);
         remainingTotal.set(line.docNo, (remainingTotal.get(line.docNo) ?? 0) + line.remaining);
       }
@@ -1670,14 +1698,41 @@ mfgSalesOrders.get('/', async (c) => {
     // PO No. — SO doc_no → system PO numbers it was converted into (see wave).
     const convertedPoByDoc = await convertedPoProm;
 
+    /* Source-PO union per SO (defect 2026-08-02-A): shipped trace ∪ READY
+       projection, via the SAME per-line resolvers the drill reads, then the
+       pure per-doc union. Accessories/CS SOs fulfilled from stock bought under
+       other POs finally show "谁的货" instead of a dash. */
+    const sourceUnionByDoc = await (async () => {
+      try {
+        const pageItems = (itemRows ?? []) as Array<{ id: string; doc_no: string; item_group: string | null; item_code: string | null; stock_status: string | null; qty: number | null; allocated_batch_no: string | null }>;
+        const [shippedByItem, readyByItem] = await Promise.all([
+          shippedTraceProm,
+          (async () => soLineReadySourcePos(sb, activeCompanyId(c) ?? null, await mrpForListProm, pageItems))(),
+        ]);
+        return unionSoLineChips(
+          pageItems.map((it) => ({ id: it.id, docNo: it.doc_no })),
+          shippedByItem,
+          readyByItem,
+          fullyShippedItemIds,
+        );
+      } catch {
+        return new Map<string, { pos: string[]; adj: boolean }>();
+      }
+    })();
+
     for (const r of rows) {
       const docNo = r.doc_no ?? '';
       const perGroup = agg.get(docNo);
       (r as Record<string, unknown>).item_categories = [...(cats.get(docNo) ?? [])].sort();
-      /* The PO numbers this SO produced (empty array when none). The FE joins
-         them for the "PO No." column — the column the operator expected to be
-         the system PO, not the customer's hand-typed po_doc_no. */
+      /* The PO numbers this SO produced (LEGACY convert-time raise-link; empty
+         array when none). Kept for the FE tooltip — the VISIBLE chips are
+         source_po_union below (owner 2026-08-02: the list must show the same
+         union of per-line source chips the drill shows). */
       (r as Record<string, unknown>).converted_po_nos = convertedPoByDoc.get(docNo) ?? [];
+      /* Union of per-line source-PO chips (shipped ∪ READY projection) — the
+         drill's exact visible set, rolled up per SO. */
+      (r as Record<string, unknown>).source_po_union = sourceUnionByDoc.get(docNo)?.pos ?? [];
+      (r as Record<string, unknown>).source_po_adj = sourceUnionByDoc.get(docNo)?.adj ?? false;
       (r as Record<string, unknown>).has_children = downstreamDocNos.has(docNo);
       const dDelivered = deliveredTotal.get(docNo) ?? 0;
       const dRemaining = remainingTotal.get(docNo) ?? 0;

@@ -28,7 +28,7 @@ import {
 } from '../../vendor/scm/lib/threepl-companies-queries';
 import { useCreateDriver } from '../../vendor/scm/lib/drivers-queries';
 import { useCreateHelper } from '../../vendor/scm/lib/helpers-queries';
-import { useCreateLorry } from '../../vendor/scm/lib/lorries-queries';
+import { useCreateLorry, LORRY_TYPES, LORRY_TYPE_LABEL, type LorryType } from '../../vendor/scm/lib/lorries-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 
@@ -263,7 +263,10 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
   const createHelper = useCreateHelper();
 
   const [plate, setPlate] = useState('');
-  const [lorryType, setLorryType] = useState('LORRY');
+  /* The REAL scm.lorry_type enum, from the shared list the Fleet page uses.
+     Inventing options here is how this form shipped LORRY/VAN/TRUCK against an
+     enum that has neither LORRY nor TRUCK - every add but Van returned 400. */
+  const [lorryType, setLorryType] = useState<LorryType>('LORRY_14FT');
   const [dims, setDims] = useState({ l: '', w: '', h: '' });
   const [drv, setDrv] = useState({ code: '', name: '', phone: '', ic: '' });
   const [hlp, setHlp] = useState({ code: '', name: '', contact: '', ic: '' });
@@ -275,7 +278,7 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
     if (!plate.trim()) { notify({ title: 'Plate required', tone: 'error' }); return; }
     createLorry.mutate(
       {
-        plate: plate.trim(), type: lorryType as never, threeplCompanyId: companyId,
+        plate: plate.trim(), type: lorryType, threeplCompanyId: companyId,
         lengthFt: num(dims.l), widthFt: num(dims.w), heightFt: num(dims.h),
       },
       { onSuccess: () => { setPlate(''); setDims({ l: '', w: '', h: '' }); void fleet.refetch(); }, onError: fail },
@@ -321,10 +324,8 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
           <>
             <Ctl label="Plate"><Inp value={plate} onChange={setPlate} placeholder="ABC 1234" width={120} /></Ctl>
             <Ctl label="Type">
-              <select value={lorryType} onChange={(e) => setLorryType(e.target.value)} style={{ ...selStyle, width: 110 }}>
-                <option value="LORRY">Lorry</option>
-                <option value="VAN">Van</option>
-                <option value="TRUCK">Truck</option>
+              <select value={lorryType} onChange={(e) => setLorryType(e.target.value as LorryType)} style={{ ...selStyle, width: 130 }}>
+                {LORRY_TYPES.map((t) => <option key={t} value={t}>{LORRY_TYPE_LABEL[t]}</option>)}
               </select>
             </Ctl>
             <Ctl label="L x W x H (ft)">
