@@ -163,6 +163,25 @@ try {
     }
   }
 
+  // 1e) `EXPLAIN UPDATE lorries ...` said the COLUMN is missing, not the
+  //     relation -- so `lorries` resolves to something. Which something decides
+  //     the fix: a dropped column in public.lorries is a different bug from an
+  //     scm.lorries shadowing it on the search_path.
+  const [{ search_path }] = await pg`SHOW search_path`;
+  notice(`search_path: ${search_path}`);
+  const lorryRels = await pg`
+    SELECT n.nspname AS schema, c.relname,
+           (SELECT count(*) FROM pg_attribute a
+             WHERE a.attrelid = c.oid AND a.attname = 'default_driver_user_id'
+               AND NOT a.attisdropped) AS has_col
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relname = 'lorries' AND c.relkind IN ('r','v','m','p')
+     ORDER BY 1`;
+  for (const r of lorryRels) {
+    notice(`  relation ${r.schema}.${r.relname}  default_driver_user_id present: ${r.has_col}`);
+  }
+  notice(`  unqualified 'lorries' resolves to: ${await pg`SELECT 'lorries'::regclass::text AS r`.then((x) => x[0].r).catch((e) => "UNRESOLVED " + e.message)}`);
+
   // 2b) The OTHER statement a status-only PATCH runs, so a refutation above
   //     does not leave the operator with nowhere to look. PATCH also runs
   //     `DELETE FROM sessions WHERE user_id = $1` through Drizzle; if the live
