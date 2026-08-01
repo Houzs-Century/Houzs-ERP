@@ -11,12 +11,24 @@
 // REUSE, NOT REPLICATION (the recompute-2990-so-allocation.mjs discipline).
 // APPLY calls the REAL restampDoActualCost from
 // src/scm/routes/delivery-orders-mfg.ts — the exact function every ship /
-// line-edit / recost already runs — once per in-scope DO, via the same
-// supabase-js client shape the Worker builds. Optionally (INCLUDE_SI=1,
-// default) it then runs the REAL restampSiFromDo (src/scm/lib/recost.ts) for
-// every DO whose lines changed and every DO whose Sales Invoice disagrees —
-// the same DO -> SI chain reconcileUncostedAfterIn runs in production. This
-// script contains NO costing logic of its own.
+// line-edit / recost already runs — once per in-scope DO. Optionally
+// (INCLUDE_SI=1, default) it then runs the REAL restampSiFromDo
+// (src/scm/lib/recost.ts) for every DO whose lines changed and every DO whose
+// Sales Invoice disagrees — the same DO -> SI chain reconcileUncostedAfterIn
+// runs in production. This script contains NO costing logic of its own.
+//
+// TRANSPORT (changed 2026-08-01 after the live APPLY died asking for
+// SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY — the repo's Actions environment
+// carries no PostgREST secrets; only the two 2990 workflows ever referenced
+// them and neither has run with them). The canonical functions now talk
+// through lib/pgrest-shim.mjs — a supabase-js-SHAPED builder over the SAME
+// DATABASE_URL connection, implementing exactly the query surface these
+// functions use and THROWING LOUDLY (plus recording on __gaps) on anything
+// else, so an unimplemented method can never silently skip a money write. The
+// run aborts non-zero if any gap was recorded. The LOGIC stays canonical;
+// only the transport is mimicked — replicating the warehouse resolution +
+// sofa batch map + variant keys in raw SQL is the "subtly-different sweep"
+// this repo's backfills exist to avoid.
 //
 // The real functions have no dry-run mode, so:
 //   DRY-RUN (default): READ-ONLY, DATABASE_URL only. Prints the scope (every
@@ -30,12 +42,12 @@
 //     function and are deliberately not replicated here. Also read-only: the
 //     SI-vs-DO agreement report (sales_invoice_items.do_item_id whose
 //     unit_cost_centi differs from its DO line).
-//   APPLY (APPLY=1): needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY too.
-//     Runs the canonical restamp per DO, reads each DO's lines before/after,
-//     and prints every changed line old -> new — the authoritative record of
+//   APPLY (APPLY=1): DATABASE_URL only (see TRANSPORT above). Runs the
+//     canonical restamp per DO, reads each DO's lines before/after, and
+//     prints every changed line old -> new — the authoritative record of
 //     what moved. Idempotent: a second run changes nothing.
 //
-// Env: DATABASE_URL (always); SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (APPLY).
+// Env: DATABASE_URL (always — the only credential).
 //      APPLY=1        write. Anything else dry-run.
 //      DOS            optional comma-separated do_number list to scope down.
 //      ONLY_STALE=1   APPLY only the DOs the indicator flags (plus DOS names).
@@ -188,20 +200,17 @@ async function main() {
     return;
   }
 
-  // ── APPLY — canonical functions only from here on ──────────────────────────
-  const SUPABASE_URL = process.env.SUPABASE_URL || fromDevVars("SUPABASE_URL");
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || fromDevVars("SUPABASE_SERVICE_ROLE_KEY");
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    console.error("APPLY needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (the PostgREST creds the canonical function talks through).");
-    process.exit(1);
-  }
-  const { createClient } = await import("@supabase/supabase-js");
+  // ── APPLY — canonical functions over the pgrest shim (DATABASE_URL only) ───
   const { restampDoActualCost } = await import("../src/scm/routes/delivery-orders-mfg.ts");
   const { restampSiFromDo } = await import("../src/scm/lib/recost.ts");
-  const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    db: { schema: "scm" },
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const { pgrestShim } = await import("./lib/pgrest-shim.mjs");
+  const sb = pgrestShim(pg, "scm");
+  const assertNoShimGaps = (context) => {
+    if (sb.__gaps.length === 0) return;
+    console.error(`SHIM GAP during ${context} — the canonical function called a method the shim does not implement; aborting so a silent skip can never read as success:`);
+    for (const g of sb.__gaps) console.error(`  ${g}`);
+    process.exit(1);
+  };
 
   const staleIds = new Set(staleInScope.map((s) => s.id));
   const targets = ONLY_STALE ? scope.filter((d) => staleIds.has(d.id) || DOS.includes(d.do_number)) : scope;
@@ -224,6 +233,7 @@ async function main() {
     if (i % 50 === 0) notice(`  ... ${i}/${targets.length}`);
     const before = await readLines(d.id);
     await restampDoActualCost(sb, d.id);
+    assertNoShimGaps(`restampDoActualCost(${d.do_number})`);
     const after = await readLines(d.id);
     const diffs = [];
     for (const [id, b] of before) {
@@ -258,7 +268,10 @@ async function main() {
     ])];
     notice("");
     notice(`SI restamp (restampSiFromDo) for ${siTargets.length} DO(s)...`);
-    for (const doId of siTargets) await restampSiFromDo(sb, doId);
+    for (const doId of siTargets) {
+      await restampSiFromDo(sb, doId);
+      assertNoShimGaps(`restampSiFromDo(${doId})`);
+    }
     const disagreeAfter = await siDisagreement();
     notice(`SI-vs-DO disagreement after: ${disagreeAfter.length} invoice(s) (was ${disagree.length}).`);
     for (const s of disagreeAfter.slice(0, 20)) {

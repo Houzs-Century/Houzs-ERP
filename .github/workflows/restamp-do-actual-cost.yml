@@ -11,10 +11,11 @@ name: Restamp DO actual cost (DRY-RUN gated)
 # (src/scm/routes/delivery-orders-mfg.ts) and restampSiFromDo
 # (src/scm/lib/recost.ts) once per DO — the exact functions every ship /
 # line-edit / recost already runs. Both are idempotent; a second APPLY run
-# changes nothing. DRY-RUN needs only DATABASE_URL (read-only indicator);
-# APPLY additionally needs the PostgREST creds the canonical functions talk
-# through (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY — same secrets as the
-# "Recompute 2990 SO stock allocation" workflow).
+# changes nothing. DATABASE_URL is the ONLY credential: the canonical
+# functions talk through scripts/lib/pgrest-shim.mjs (a supabase-js-shaped
+# builder over the same connection, loud-failing on any unimplemented method)
+# because this repo's Actions environment carries no PostgREST secrets — the
+# 2026-08-01 live APPLY proved it by dying asking for them.
 #
 # Companion dispatches for the rest of W5 (documented here so the sequence is
 # one place):
@@ -68,8 +69,6 @@ jobs:
       - run: npx tsx scripts/restamp-do-actual-cost.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           APPLY: ${{ inputs.apply }}
           DOS: ${{ inputs.dos }}
           ONLY_STALE: ${{ inputs.only_stale }}
