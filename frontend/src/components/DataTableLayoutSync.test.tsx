@@ -283,7 +283,7 @@ describe("DataTable with saved layouts", () => {
   });
 
   it("saves the arrangement on screen as a new layout", async () => {
-    respond({ canManageDefaults: false });
+    respond({ canManageDefaults: false, canManageLayouts: true });
     await hydrateTableLayouts();
     mockApi.post.mockResolvedValue({
       layout: { id: 3, name: "Mine", layout: savedLayout() },
@@ -301,8 +301,9 @@ describe("DataTable with saved layouts", () => {
     await waitFor(() => expect(mockApi.post).not.toHaveBeenCalled());
   });
 
-  it("offers Rename and Delete only on layouts the user owns", async () => {
+  it("lets an admin rename the company default, but never delete it", async () => {
     respond({
+      canManageLayouts: true,
       defaults: { "2": { rights: savedLayout({ order: ["a"] }) } },
       myLayouts: { rights: [{ id: 9, name: "Mine", layout: savedLayout() }] },
     });
@@ -312,16 +313,36 @@ describe("DataTable with saved layouts", () => {
     fireEvent.click(screen.getByTitle(/^Columns —/));
     fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
 
-    // The company default can be DUPLICATED (start from 2990's view) but never
-    // renamed or deleted — it isn't the user's to change.
+    /* The company row can be renamed (the whole company inherits that name)
+       and duplicated (start from 2990's view and tweak it) — but not deleted.
+       Deleting the arrangement everyone inherits is the Clear control in the
+       admin block, not a menu item next to the user's own layouts. */
     fireEvent.click(screen.getByRole("button", { name: /Actions for 2990's Home Layout/ }));
+    expect(screen.getByRole("button", { name: /^Rename/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Duplicate/ })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /^Rename/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Delete layout/ })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /Actions for Mine/ }));
-    expect(screen.getByRole("button", { name: /^Rename/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Delete layout/ })).toBeTruthy();
+  });
+
+  it("shows a non-admin the layouts but none of the management", async () => {
+    // Owner decision 2026-08-02: layout management is the "*" wildcard only.
+    // Everyone else still switches layouts and arranges their own columns.
+    respond({
+      canManageLayouts: false,
+      defaults: { "readonly": savedLayout() },
+      myLayouts: { readonly: [{ id: 4, name: "Mine", layout: savedLayout() }] },
+    });
+    await hydrateTableLayouts();
+
+    renderTable("readonly");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+
+    expect(screen.getByRole("option", { name: /Mine/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /New layout from current columns/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Actions for Mine/ })).toBeNull();
   });
 
   it("says nothing about saved layouts when the store never came up", async () => {

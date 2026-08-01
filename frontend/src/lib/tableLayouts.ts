@@ -92,8 +92,14 @@ export interface TableLayoutsSnapshot {
   activeCompanyId: number | null;
   /** May this user write a company-wide default? (settings.manage) */
   canManageDefaults: boolean;
+  /** May this user create / rename / delete layouts, and name the company
+   *  default? Owner and Super Admin only — the "*" wildcard. */
+  canManageLayouts: boolean;
   /** companyId → tableKey → the company's default layout. */
   defaults: Record<string, Record<string, StoredLayout>>;
+  /** companyId → tableKey → the name an admin gave that default. Absent means
+   *  the picker names it after the company instead. */
+  defaultNames: Record<string, Record<string, string>>;
   /** tableKey → this user's saved layouts, in the active company. */
   myLayouts: Record<string, NamedLayout[]>;
   /** Bumped whenever hydration changed stored prefs, so a mounted table can
@@ -106,7 +112,9 @@ const EMPTY: TableLayoutsSnapshot = {
   companies: [],
   activeCompanyId: null,
   canManageDefaults: false,
+  canManageLayouts: false,
   defaults: {},
+  defaultNames: {},
   myLayouts: {},
   epoch: 0,
 };
@@ -264,7 +272,9 @@ interface LayoutsResponse {
   companies?: LayoutCompany[];
   activeCompanyId?: number | null;
   canManageDefaults?: boolean;
+  canManageLayouts?: boolean;
   defaults?: Record<string, Record<string, StoredLayout>>;
+  defaultNames?: Record<string, Record<string, string>>;
   mine?: Record<string, { layout: StoredLayout; updatedAt: string | null }>;
   myLayouts?: Record<string, Array<{ id: number; name: string; layout: StoredLayout }>>;
 }
@@ -361,6 +371,8 @@ export async function hydrateTableLayouts(): Promise<void> {
       companies: Array.isArray(res.companies) ? res.companies : [],
       activeCompanyId: res.activeCompanyId ?? null,
       canManageDefaults: Boolean(res.canManageDefaults),
+      canManageLayouts: Boolean(res.canManageLayouts),
+      defaultNames: res.defaultNames ?? {},
       myLayouts: normalizeNamed(res.myLayouts),
       defaults: Object.fromEntries(
         Object.entries(res.defaults ?? {}).map(([cid, tables]) => [
@@ -486,6 +498,19 @@ export async function renameNamedLayout(
     tableKey,
     (snapshot.myLayouts[tableKey] ?? []).map((l) => (l.id === id ? { ...l, name } : l)),
   );
+}
+
+/** Name this company's default — what the whole company inherits. An empty
+ *  name clears it, so the picker goes back to naming it after the company. */
+export async function renameCompanyDefault(tableKey: string, name: string): Promise<void> {
+  await api.patch(`/api/table-layouts/${encodeURIComponent(tableKey)}/default`, { name });
+  const cid = snapshot.activeCompanyId;
+  if (cid == null) return;
+  const key = String(cid);
+  const names = { ...(snapshot.defaultNames[key] ?? {}) };
+  if (name.trim()) names[tableKey] = name.trim();
+  else delete names[tableKey];
+  emit({ ...snapshot, defaultNames: { ...snapshot.defaultNames, [key]: names } });
 }
 
 export async function deleteNamedLayout(tableKey: string, id: number): Promise<void> {

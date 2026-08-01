@@ -47,6 +47,7 @@ import {
   createNamedLayout,
   deleteNamedLayout,
   getTableLayoutsSnapshot,
+  renameCompanyDefault,
   renameNamedLayout,
   saveCompanyDefault,
   saveMyLayout,
@@ -911,14 +912,19 @@ function DataTableInner<T>({
       fromServer: boolean;
       /** Set only for the user's own saved layouts — what CRUD acts on. */
       savedId?: number;
+      /** Set only for a company-default row — renaming it goes to /default. */
+      companyId?: number;
     }> = [];
     for (const co of layoutStore.companies) {
       const saved = layoutStore.defaults[String(co.id)]?.[baseIdKey];
       const seed = seedByCode.get(co.code.toUpperCase());
       if (!saved && !seed) continue;
+      const savedName = layoutStore.defaultNames[String(co.id)]?.[baseIdKey];
       out.push({
         id: `company:${co.id}`,
-        label: `${shortCompanyName(co.name)} Layout`,
+        // Named by an admin, or called after the company until one does.
+        label: savedName || `${shortCompanyName(co.name)} Layout`,
+        companyId: co.id,
         // The seed's hint describes the SEED. Once an admin has saved a real
         // default it would be describing a layout that no longer exists —
         // "Sales desk" over the production columns somebody just published.
@@ -1187,6 +1193,7 @@ function DataTableInner<T>({
         count: wouldShow.length,
         isDefault: p.isDefault,
         savedId: p.savedId,
+        companyId: p.companyId,
         active:
           wouldShow.length === current.length &&
           wouldShow.every((k, i) => current[i] === k),
@@ -1407,9 +1414,17 @@ function DataTableInner<T>({
     },
     [baseIdKey, resolvedPresets, presetLayout, renderedLayout]
   );
-  const renameSavedLayout = useCallback(
-    (savedId: number, name: string) => renameNamedLayout(baseIdKey, savedId, name),
-    [baseIdKey]
+  /* One handler, two destinations: a layout the user saved is renamed by id;
+     a COMPANY row has no id of its own — its name lives on the default row, so
+     it goes to /default. The drawer doesn't need to know which. */
+  const renameLayout = useCallback(
+    (id: string, name: string) => {
+      const target = resolvedPresets.find((p) => p.id === id);
+      if (target?.savedId != null) return renameNamedLayout(baseIdKey, target.savedId, name);
+      if (target?.companyId != null) return renameCompanyDefault(baseIdKey, name);
+      return Promise.resolve();
+    },
+    [baseIdKey, resolvedPresets]
   );
   const deleteSavedLayout = useCallback(
     (savedId: number) => deleteNamedLayout(baseIdKey, savedId),
@@ -2268,10 +2283,10 @@ function DataTableInner<T>({
         onReset={resetLayout}
         layouts={presetOptions}
         onApplyLayout={applyPreset}
-        onSaveLayout={layoutStore.ready ? saveNamedLayout : undefined}
-        onDuplicateLayout={layoutStore.ready ? duplicateNamedLayout : undefined}
-        onRenameLayout={layoutStore.ready ? renameSavedLayout : undefined}
-        onDeleteLayout={layoutStore.ready ? deleteSavedLayout : undefined}
+        onSaveLayout={layoutStore.canManageLayouts ? saveNamedLayout : undefined}
+        onDuplicateLayout={layoutStore.canManageLayouts ? duplicateNamedLayout : undefined}
+        onRenameLayout={layoutStore.canManageLayouts ? renameLayout : undefined}
+        onDeleteLayout={layoutStore.canManageLayouts ? deleteSavedLayout : undefined}
         defaultManager={defaultManager}
         dirty={layoutDirty}
         onExport={exportColumnConfig}

@@ -90,7 +90,9 @@ interface Props {
      controls never appear where they can't work. */
   onSaveLayout?: (name: string) => Promise<void>;
   onDuplicateLayout?: (id: string, name: string) => Promise<void>;
-  onRenameLayout?: (savedId: number, name: string) => Promise<void>;
+  /** Renames whichever row the id names — the caller decides whether that is
+   *  a saved layout or the company default. */
+  onRenameLayout?: (id: string, name: string) => Promise<void>;
   onDeleteLayout?: (savedId: number) => Promise<void>;
   defaultManager?: LayoutDefaultManager;
   /** True when the columns no longer match the active layout. */
@@ -631,7 +633,7 @@ export function ColumnsDrawer({
               {[l.hint, `${l.count} columns`].filter(Boolean).join(" · ")}
             </span>
           </span>
-          {(onDuplicateLayout || (l.savedId != null && onRenameLayout)) && (
+          {(onDuplicateLayout || onRenameLayout) && (
             <span
               role="button"
               tabIndex={0}
@@ -665,13 +667,13 @@ export function ColumnsDrawer({
             };
             return (
               <>
-                {target.savedId != null && onRenameLayout && (
+                {onRenameLayout && (
                   <button
                     type="button"
                     onClick={async () => {
                       const name = await promptForName("Rename layout", target.label);
                       close();
-                      if (name) await runLayoutAction(onRenameLayout(target.savedId!, name), "Layout renamed");
+                      if (name) await runLayoutAction(onRenameLayout(target.id, name), "Layout renamed");
                     }}
                     className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
                   >

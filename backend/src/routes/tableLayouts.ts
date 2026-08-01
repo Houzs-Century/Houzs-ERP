@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import type { Env } from "../types";
 import { requirePermission } from "../middleware/auth";
 import { hasPermission } from "../services/permissions";
@@ -30,6 +30,33 @@ const app = new Hono<{ Bindings: Env }>();
 /** Who may write a company-wide default. Same verb as the other admin-wide
  *  settings surfaces (Settings → Branding / Email), so no new role plumbing. */
 const MANAGE_DEFAULTS_PERM = "settings.manage";
+
+/**
+ * Who may MANAGE layouts — create, rename, duplicate, delete a named one, and
+ * name the company default (owner 2026-08-02: 权限只有 super admin 或者 owner
+ * 看得见). That is the "*" wildcard, which in this app is exactly the Owner and
+ * Super Admin roles.
+ *
+ * Deliberately NOT `hasPermission(granted, "layouts.manage")`: that helper
+ * answers true for a wildcard holder on ANY key, so inventing a key would read
+ * as a narrower gate while behaving identically. Asking for the wildcard
+ * itself says what the gate is.
+ */
+function holdsWildcard(granted: ReadonlyArray<string> | ReadonlySet<string> | undefined): boolean {
+  if (!granted) return false;
+  if (Array.isArray(granted)) return granted.includes("*");
+  // Narrowed to the Set branch; TS can't see it through the union alias.
+  return (granted as ReadonlySet<string>).has("*");
+}
+
+const requireLayoutManager: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const user = c.get("user");
+  if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+  if (!holdsWildcard(user.permissions_set ?? user.permissions)) {
+    return c.json({ error: "You don't have permission to manage layouts." }, 403);
+  }
+  await next();
+};
 
 /**
  * The layout FAMILY key, e.g. 'sales-orders-v2', or 'dg:dg-suppliers' for a
@@ -147,9 +174,13 @@ app.get("/", async (c) => {
     user?.permissions_set ?? user?.permissions ?? [],
     MANAGE_DEFAULTS_PERM,
   );
+  const canManageLayouts = holdsWildcard(user?.permissions_set ?? user?.permissions);
 
   const defaults: Record<string, Record<string, StoredLayout>> = {};
   const mine: Record<string, { layout: StoredLayout; updatedAt: string | null }> = {};
+  /** companyId → tableKey → the name an admin gave that company default.
+   *  Absent = the frontend falls back to naming it after the company. */
+  const defaultNames: Record<string, Record<string, string>> = {};
   /** tableKey → this user's SAVED layouts (mig 0239), newest name order. */
   const myLayouts: Record<string, Array<{ id: number; name: string; layout: StoredLayout }>> = {};
 
@@ -183,6 +214,9 @@ app.get("/", async (c) => {
         if (row.user_id === null) {
           const bucket = (defaults[String(row.company_id)] ??= {});
           bucket[row.table_key] = layout;
+          if (row.name) {
+            (defaultNames[String(row.company_id)] ??= {})[row.table_key] = row.name;
+          }
         } else if (row.name == null) {
           mine[row.table_key] = { layout, updatedAt: row.updated_at ?? null };
         } else {
@@ -207,7 +241,9 @@ app.get("/", async (c) => {
     companies: visible,
     activeCompanyId,
     canManageDefaults,
+    canManageLayouts,
     defaults,
+    defaultNames,
     mine,
     myLayouts,
   });
@@ -308,6 +344,33 @@ app.put("/:tableKey/default", requirePermission(MANAGE_DEFAULTS_PERM), async (c)
   return c.json({ ok: true, layout });
 });
 
+/**
+ * PATCH /api/table-layouts/:tableKey/default — name this company's default.
+ *
+ * Unnamed, the picker calls it after the company ("2990's Home Layout"), which
+ * is a label, not a name. Naming it is how the arrangement everyone inherits
+ * gets called what it IS ("Production view"). The row is the same one
+ * PUT /default writes; only the label changes, so nobody's columns move.
+ */
+app.patch("/:tableKey/default", requireLayoutManager, async (c) => {
+  const target = readTarget(c);
+  if ("error" in target) return c.json({ error: target.error }, 400);
+  const body = await c.req.json().catch(() => ({}));
+  const raw = (body as { name?: unknown }).name;
+  // An empty name CLEARS it — back to being called after the company.
+  const name = cleanName(raw);
+  const res = await c.env.DB.prepare(
+    `UPDATE table_layouts SET name = ?, updated_at = ?, updated_by = ?
+      WHERE company_id = ? AND table_key = ? AND user_id IS NULL`,
+  )
+    .bind(name || null, nowIso(), userIdOf(c), target.companyId, target.tableKey)
+    .run();
+  if (Number(res.meta?.changes ?? 0) === 0) {
+    return c.json({ error: "This company has no saved default for that table yet." }, 404);
+  }
+  return c.json({ ok: true, name: name || null });
+});
+
 /** DELETE /api/table-layouts/:tableKey/default — drop this company's default,
  *  falling the table back to the page's own preset. The undo for a bad save. */
 app.delete("/:tableKey/default", requirePermission(MANAGE_DEFAULTS_PERM), async (c) => {
@@ -371,7 +434,7 @@ app.get("/:tableKey/layouts", async (c) => {
 /** POST /api/table-layouts/:tableKey/layouts — save the given columns as a
  *  new layout. Duplicate is the same call with the source's layout, so there
  *  is no second endpoint to keep in step with this one. */
-app.post("/:tableKey/layouts", async (c) => {
+app.post("/:tableKey/layouts", requireLayoutManager, async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
   const uid = userIdOf(c);
@@ -403,7 +466,7 @@ app.post("/:tableKey/layouts", async (c) => {
 });
 
 /** PATCH /api/table-layouts/:tableKey/layouts/:id — rename. */
-app.patch("/:tableKey/layouts/:id", async (c) => {
+app.patch("/:tableKey/layouts/:id", requireLayoutManager, async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
   const uid = userIdOf(c);
@@ -433,7 +496,7 @@ app.patch("/:tableKey/layouts/:id", async (c) => {
 });
 
 /** DELETE /api/table-layouts/:tableKey/layouts/:id */
-app.delete("/:tableKey/layouts/:id", async (c) => {
+app.delete("/:tableKey/layouts/:id", requireLayoutManager, async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
   const uid = userIdOf(c);
