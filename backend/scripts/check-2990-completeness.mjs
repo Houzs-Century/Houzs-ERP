@@ -141,8 +141,12 @@ try {
 
   // ── § Product catalogue by category ────────────────────────────────────
   notice("=== mfg_products by category (per company) ===");
+  // category is the enum mfg_product_category: cast ::text BEFORE the string
+  // default, or Postgres coerces '(null)' INTO the enum and the whole section
+  // dies with 22P02 at plan time — even when no row is NULL (BUG-HISTORY
+  // 2026-07-30, "enum columns treated as text"; same rule as check-po-grouping).
   const prodByCat = await pg`
-    SELECT company_id, COALESCE(category, '(null)') AS category, count(*)::int AS n
+    SELECT company_id, COALESCE(category::text, '(null)') AS category, count(*)::int AS n
       FROM scm.mfg_products
      WHERE company_id IN (${HOUZS}, ${CO2990})
      GROUP BY company_id, category
@@ -207,8 +211,9 @@ try {
 
   // ── § Supplier price coverage (mid-P1 spot-check) ─────────────────────
   notice("=== Supplier price coverage (mfg_products.base_price_sen NULL by category) ===");
+  // Same enum-cast rule as the catalogue section above.
   const priceNull = await pg`
-    SELECT company_id, COALESCE(category, '(null)') AS category,
+    SELECT company_id, COALESCE(category::text, '(null)') AS category,
            count(*) FILTER (WHERE base_price_sen IS NULL)::int AS null_n,
            count(*)::int AS total_n
       FROM scm.mfg_products

@@ -15,14 +15,30 @@ name: Repair 2990 doc references (DRY-RUN gated)
 # the audit's 3a GRN line-vs-movement mismatches and any number-resolves-but-
 # id-dangles rows, so the owner can classify them before anything is applied.
 #
+# Part `ids` (2026-08-01, ledger-perfection W1) is the id-heal for exactly
+# those reported rows: when the NUMBER resolves to exactly ONE same-company
+# document but the stored source_doc_id matches NOTHING (a verbatim-copied
+# pre-import id), the id is restamped from that unique resolution — closing
+# the costing audit's findings 4 and 10b. NULL ids are counted, never written.
+#
+# Part `grn-gap` (2026-08-01, ledger-perfection W2) repairs the audit's 3a
+# finding: a posted GRN that accepted more units than its IN movements booked
+# (2990-GRN-2606-001, 501 vs 500). It INSERTS the missing IN movement through
+# the normal path — the AFTER-INSERT FIFO trigger opens the lot — into the
+# bucket and at the landed unit cost its own sibling movement proves. The
+# `grns` input names the target GRNs; anything ambiguous is refused.
+#
 # A token is rewritten ONLY when it resolves to nothing as stored, resolves to
 # exactly ONE document when prefixed with the owning row's own company code, and
 # that document belongs to the same company. Doc-number tails collide across
 # company namespaces (PO-2607-002 and 2990-PO-2607-002 are both real), so a
 # blanket prefix would repoint a batch at a different real purchase order.
 #
-# DRY-RUN unless apply=1. Idempotent: a repaired reference resolves, so a re-run
-# plans zero rows. Run the dry run, read the plan, then run again with apply=1.
+# DRY-RUN unless apply=1. Idempotent: a repaired reference resolves (and a
+# repaired GRN's delta recomputes to zero), so a re-run plans zero rows. Run
+# the dry run, read the plan, then run again with apply=1. `all` still means
+# the three ORIGINAL parts; `ids` and `grn-gap` are dispatch-only on purpose —
+# the widest-reaching writes each get an explicit, single-purpose run.
 on:
   workflow_dispatch:
     inputs:
@@ -41,6 +57,13 @@ on:
           - notes
           - batches
           - consumptions
+          - ids
+          - grn-gap
+      grns:
+        description: "part grn-gap only: comma-separated GRN numbers (default the 3a-implicated one)"
+        required: false
+        default: "2990-GRN-2606-001"
+        type: string
 
 concurrency:
   group: repair-2990-doc-refs
@@ -66,6 +89,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APPLY: ${{ inputs.apply }}
           PART: ${{ inputs.part }}
+          GRNS: ${{ inputs.grns }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
           # for the full Happy-Eyeballs reasoning.
           NODE_OPTIONS: --dns-result-order=ipv4first
