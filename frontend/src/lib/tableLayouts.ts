@@ -24,6 +24,10 @@
 
 import { api } from "../api/client";
 import { getActiveCompanyId } from "./activeCompany";
+import {
+  readDataGridLayout,
+  writeDataGridLayout,
+} from "../vendor/scm/components/dataGridLayoutStorage";
 
 /** The persisted shape of one table's layout. Filters / sort / card-vs-table
  *  are deliberately NOT here: those are working state, not a layout. */
@@ -33,7 +37,38 @@ export interface StoredLayout {
   shown: string[];
   widths: Record<string, number>;
   pinned: string[];
+  /** Group-by columns — vendored SCM DataGrid only, where grouping a list by
+   *  supplier is part of its shape. Always empty for a DataTable. */
+  groupBy: string[];
 }
+
+export const EMPTY_LAYOUT: StoredLayout = {
+  order: [],
+  hidden: [],
+  shown: [],
+  widths: {},
+  pinned: [],
+  groupBy: [],
+};
+
+/**
+ * Which grid a saved row belongs to, and therefore which localStorage shape it
+ * hydrates into. The app runs TWO table components that persist columns
+ * differently — five `dt:<part>:<key>` entries for DataTable, one JSON blob
+ * under `<storageKey>::c<company>` for the vendored SCM DataGrid. The server
+ * stores one shape for both; the prefix on the table key is what tells them
+ * apart on the way back down, so hydration can never write one component's
+ * shape into the other's key.
+ */
+export type LayoutFamily = "dt" | "dg";
+
+export const DG_PREFIX = "dg:";
+
+/** Server table key for a vendored-DataGrid list. */
+export const dataGridTableKey = (storageKey: string): string => `${DG_PREFIX}${storageKey}`;
+
+const familyOf = (tableKey: string): LayoutFamily =>
+  tableKey.startsWith(DG_PREFIX) ? "dg" : "dt";
 
 export interface LayoutCompany {
   id: number;
@@ -97,6 +132,12 @@ export function layoutIdKey(baseIdKey: string, companyId: number | null): string
   return companyId != null ? `c${companyId}:${baseIdKey}` : baseIdKey;
 }
 
+/** The vendored DataGrid's own rule (see its `scopedStorageKey`) — a different
+ *  shape from DataTable's, which is exactly why the family prefix exists. */
+export function dataGridIdKey(storageKey: string, companyId: number | null): string {
+  return companyId != null ? `${storageKey}::c${companyId}` : storageKey;
+}
+
 const PARTS = ["order", "hidden", "shown", "widths", "pinned"] as const;
 
 /** Marker holding the layout we last pushed for this table. Its absence means
@@ -104,16 +145,44 @@ const PARTS = ["order", "hidden", "shown", "widths", "pinned"] as const;
  *  the server has not seen, which hydration must not overwrite. */
 const syncKey = (idKey: string) => `dt:sync:${idKey}`;
 
-function readLocal(idKey: string): StoredLayout {
+/** Local storage identity for a server table key: which family it belongs to,
+ *  the key that family reads, and the marker key. */
+function localTarget(tableKey: string, companyId: number | null) {
+  if (familyOf(tableKey) === "dg") {
+    const storageKey = tableKey.slice(DG_PREFIX.length);
+    return {
+      family: "dg" as const,
+      idKey: dataGridIdKey(storageKey, companyId),
+      marker: `dt:sync:dg:${dataGridIdKey(storageKey, companyId)}`,
+    };
+  }
+  const idKey = layoutIdKey(tableKey, companyId);
+  return { family: "dt" as const, idKey, marker: syncKey(idKey) };
+}
+
+function readLocal(tableKey: string, companyId: number | null): StoredLayout {
+  const target = localTarget(tableKey, companyId);
+  if (target.family === "dg") {
+    const grid = readDataGridLayout(target.idKey);
+    return {
+      ...EMPTY_LAYOUT,
+      order: grid.order,
+      hidden: grid.hidden,
+      widths: grid.widths,
+      pinned: grid.pinned,
+      groupBy: grid.groupBy,
+    };
+  }
   const read = <T>(part: string, fallback: T): T => {
     try {
-      const raw = localStorage.getItem(`dt:${part}:${idKey}`);
+      const raw = localStorage.getItem(`dt:${part}:${target.idKey}`);
       return raw === null ? fallback : (JSON.parse(raw) as T);
     } catch {
       return fallback;
     }
   };
   return {
+    ...EMPTY_LAYOUT,
     order: read<string[]>("order", []),
     hidden: read<string[]>("hidden", []),
     shown: read<string[]>("shown", []),
@@ -122,10 +191,26 @@ function readLocal(idKey: string): StoredLayout {
   };
 }
 
-function writeLocal(idKey: string, layout: StoredLayout): void {
+function writeLocal(tableKey: string, companyId: number | null, layout: StoredLayout): void {
+  const target = localTarget(tableKey, companyId);
   try {
+    if (target.family === "dg") {
+      /* The grid's own SORT is deliberately preserved: it lives in the same
+         stored blob but is working state, not layout, so a layout arriving from
+         the account must not silently re-sort the list under the operator. */
+      const current = readDataGridLayout(target.idKey);
+      writeDataGridLayout(target.idKey, {
+        order: layout.order,
+        hidden: layout.hidden,
+        widths: layout.widths,
+        pinned: layout.pinned,
+        groupBy: layout.groupBy,
+        sort: current.sort,
+      });
+      return;
+    }
     for (const part of PARTS) {
-      localStorage.setItem(`dt:${part}:${idKey}`, JSON.stringify(layout[part]));
+      localStorage.setItem(`dt:${part}:${target.idKey}`, JSON.stringify(layout[part]));
     }
   } catch {
     // quota / privacy mode — the server copy still exists; this browser just
@@ -139,6 +224,7 @@ export function isEmptyLayout(layout: StoredLayout): boolean {
     layout.hidden.length === 0 &&
     layout.shown.length === 0 &&
     layout.pinned.length === 0 &&
+    layout.groupBy.length === 0 &&
     Object.keys(layout.widths).length === 0
   );
 }
@@ -156,6 +242,7 @@ export function serializeLayout(layout: StoredLayout): string {
     shown: layout.shown,
     widths,
     pinned: layout.pinned,
+    groupBy: layout.groupBy,
   });
 }
 
@@ -185,6 +272,7 @@ function normalize(raw: unknown): StoredLayout {
     shown: list(r.shown),
     widths,
     pinned: list(r.pinned),
+    groupBy: list(r.groupBy),
   };
 }
 
@@ -216,12 +304,12 @@ export async function hydrateTableLayouts(): Promise<void> {
     const repush: Array<[string, StoredLayout]> = [];
 
     for (const [tableKey, entry] of Object.entries(res.mine ?? {})) {
-      const idKey = layoutIdKey(tableKey, companyId);
+      const marker = localTarget(tableKey, companyId).marker;
       const server = normalize(entry?.layout);
-      const local = readLocal(idKey);
+      const local = readLocal(tableKey, companyId);
       const lastPushed = (() => {
         try {
-          return localStorage.getItem(syncKey(idKey));
+          return localStorage.getItem(marker);
         } catch {
           return null;
         }
@@ -233,9 +321,9 @@ export async function hydrateTableLayouts(): Promise<void> {
         continue;
       }
       if (localSerialized === serializeLayout(server)) continue;
-      writeLocal(idKey, server);
+      writeLocal(tableKey, companyId, server);
       try {
-        localStorage.setItem(syncKey(idKey), serializeLayout(server));
+        localStorage.setItem(marker, serializeLayout(server));
       } catch {
         /* best effort */
       }
@@ -278,23 +366,23 @@ const PUSH_DELAY_MS = 1200;
  * never touched it" must read the same on the next machine, or a reset would
  * be undone by the next hydration.
  */
-export function saveMyLayout(baseIdKey: string, layout: StoredLayout): void {
+export function saveMyLayout(tableKey: string, layout: StoredLayout): void {
   if (!snapshot.ready) return;
-  const existing = pushTimers.get(baseIdKey);
+  const existing = pushTimers.get(tableKey);
   if (existing) clearTimeout(existing);
   pushTimers.set(
-    baseIdKey,
+    tableKey,
     setTimeout(() => {
-      pushTimers.delete(baseIdKey);
-      const idKey = layoutIdKey(baseIdKey, getActiveCompanyId());
+      pushTimers.delete(tableKey);
+      const marker = localTarget(tableKey, getActiveCompanyId()).marker;
       const done = () => {
         try {
-          localStorage.setItem(syncKey(idKey), serializeLayout(layout));
+          localStorage.setItem(marker, serializeLayout(layout));
         } catch {
           /* best effort */
         }
       };
-      const path = `/api/table-layouts/${encodeURIComponent(baseIdKey)}`;
+      const path = `/api/table-layouts/${encodeURIComponent(tableKey)}`;
       const request = isEmptyLayout(layout)
         ? api.del(path)
         : api.put(path, { layout });

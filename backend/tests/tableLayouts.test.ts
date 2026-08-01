@@ -238,6 +238,26 @@ describe("table layouts", () => {
     expect(body.defaults["2"]?.[TABLE]?.order).toEqual(["company"]);
   });
 
+  test("a DataGrid table key round-trips, group-by and all", async () => {
+    // The 30 pages still on the vendored SCM DataGrid namespace their rows
+    // 'dg:<storageKey>', and those storage keys carry dots. Both shapes used to
+    // be rejected by the key check, which would have left those lists out.
+    const admin = await seedActor(["settings.manage"]);
+    const key = "dg:cn-g.cn-from-order-lines.layout.v1";
+
+    const res = await req(admin, `/${key}/default`, {
+      method: "PUT",
+      body: { layout: layout({ groupBy: ["supplier"], pinned: ["doc_no"] }) },
+    });
+    expect(res.status).toBe(200);
+
+    const body = await (await req(admin, "")).json<{
+      defaults: Record<string, Record<string, { groupBy: string[]; pinned: string[] }>>;
+    }>();
+    expect(body.defaults["2"]?.[key]?.groupBy).toEqual(["supplier"]);
+    expect(body.defaults["2"]?.[key]?.pinned).toEqual(["doc_no"]);
+  });
+
   test("an unknown table key is refused before anything is written", async () => {
     const user = await seedActor(["sales_orders.read"]);
     const res = await req(user, "/../../etc/passwd", { method: "PUT", body: { layout: layout() } });

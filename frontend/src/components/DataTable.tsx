@@ -37,6 +37,7 @@ import { useLocalStorage } from "../hooks/useLocalStorage";
 import { subscribeActiveCompany, getActiveCompanySnapshot } from "../lib/activeCompany";
 import { shortCompanyName } from "../lib/branding";
 import {
+  EMPTY_LAYOUT,
   getTableLayoutsSnapshot,
   saveCompanyDefault,
   saveMyLayout,
@@ -967,6 +968,7 @@ function DataTableInner<T>({
         // screen you are on, not to the view.
         widths: {},
         pinned: [],
+        groupBy: [],
       };
     },
     [rawColumns],
@@ -1246,6 +1248,9 @@ function DataTableInner<T>({
       shown: shownList,
       widths: storedWidths,
       pinned,
+      // DataTable has no grouping of its own; the field exists for the
+      // vendored DataGrid, which shares this store.
+      groupBy: [],
     }),
     [order, hiddenList, shownList, storedWidths, pinned],
   );
@@ -1296,6 +1301,7 @@ function DataTableInner<T>({
         .map((c) => c.key),
       widths: storedWidths,
       pinned,
+      groupBy: [],
     };
   }, [allColumns, effectiveHidden, storedWidths, pinned]);
 
@@ -1310,7 +1316,7 @@ function DataTableInner<T>({
       state: defaultSaveState,
       onSave: () => writeCompanyDefault(renderedLayout),
       onClear: () =>
-        writeCompanyDefault({ order: [], hidden: [], shown: [], widths: {}, pinned: [] }),
+        writeCompanyDefault(EMPTY_LAYOUT),
     };
   }, [
     layoutStore,

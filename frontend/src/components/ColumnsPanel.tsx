@@ -7,6 +7,11 @@ import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useDialog } from "../hooks/useDialog";
 import { useToast } from "../hooks/useToast";
 import { cn } from "../lib/utils";
+import {
+  LayoutSection,
+  type LayoutDefaultManager,
+  type LayoutPresetOption,
+} from "./LayoutSection";
 
 /**
  * Unified columns panel — replaces the old dropdown "Columns" chooser
@@ -35,19 +40,6 @@ interface Option {
   label: string;
 }
 
-/** One row of the Layout section — a named column set the table can be switched
- *  to in a click. `active` = the table currently matches it exactly. */
-interface PresetOption {
-  id: string;
-  label: string;
-  hint?: string;
-  /** Columns it shows, excluding the always-visible ones. */
-  count: number;
-  active: boolean;
-  /** The layout this company starts on, before anyone customises. */
-  isDefault: boolean;
-}
-
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -55,20 +47,12 @@ interface Props {
    *  order the user has arranged them in. */
   options: Option[];
   /** Named layouts offered above the column list. Omitted → no Layout section. */
-  presets?: PresetOption[];
+  presets?: LayoutPresetOption[];
   onApplyPreset?: (id: string) => void;
   /** Present only for an admin who may publish this company's default view.
    *  Absent for everyone else — including when the layout server is
    *  unreachable, so the control never appears where it can't work. */
-  defaultManager?: {
-    /** Company the save would publish to, e.g. "2990's Home". */
-    companyLabel: string;
-    /** Whether a saved default already exists (enables Clear). */
-    hasSaved: boolean;
-    state: "idle" | "saving" | "saved" | "error";
-    onSave: () => void;
-    onClear: () => void;
-  };
+  defaultManager?: LayoutDefaultManager;
   hidden: Set<string>;
   onToggle: (key: string) => void;
   onResetVisibility: () => void;
@@ -184,125 +168,11 @@ export function ColumnsPanel({
          too much of the working area. Matches the SCM DataGrid columns drawer. */
       width={340}
     >
-      {/* ── Layout presets ─────────────────────────────────────
-          Shown when there is EITHER something to pick or the right to publish
-          a default. Gating on presets alone was a chicken-and-egg: a list that
-          ships no seed layout had no section, so an admin could never save its
-          first company default — which is every list in the app except Sales
-          Orders. (Owner 2026-08-01: "覆盖到系统的所有列表".) */}
-      {((presets && presets.length > 0) || defaultManager) && (
-        <section className="mb-6">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-              Layout
-            </h3>
-            {/* No preset matches ⇒ this is a hand-arranged layout. Saying so
-                stops the highlighted-nothing state from reading as a bug. */}
-            {presets && presets.length > 0 && !presets.some((p) => p.active) && (
-              <span className="rounded bg-surface-2 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
-                Custom
-              </span>
-            )}
-          </div>
-          <div
-            className={cn(
-              "divide-y divide-border-subtle overflow-hidden rounded-md border border-border bg-surface",
-              // No rows yet (nothing seeded, nothing saved) — an empty bordered
-              // box would read as a loading state.
-              (!presets || presets.length === 0) && "hidden"
-            )}
-          >
-            {(presets ?? []).map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => onApplyPreset?.(p.id)}
-                aria-pressed={p.active}
-                className={cn(
-                  "flex w-full items-center gap-2.5 px-2 py-2.5 text-left transition-colors",
-                  p.active ? "bg-primary-soft/40" : "hover:bg-accent-soft/30"
-                )}
-              >
-                <span
-                  className={cn(
-                    "grid h-4 w-4 shrink-0 place-items-center rounded-full border transition-colors",
-                    p.active
-                      ? "border-primary bg-primary text-white"
-                      : "border-border bg-surface"
-                  )}
-                >
-                  {p.active && <Check size={9} strokeWidth={3} />}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className={cn(
-                        "text-[12.5px] text-ink",
-                        p.active && "font-semibold"
-                      )}
-                    >
-                      {p.label}
-                    </span>
-                    {p.isDefault && (
-                      <span className="rounded bg-accent-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-accent-ink">
-                        Default
-                      </span>
-                    )}
-                  </span>
-                  <span className="mt-0.5 block truncate text-[10.5px] text-ink-muted">
-                    {p.hint ? `${p.hint} · ` : ""}
-                    {p.count} columns
-                  </span>
-                </span>
-              </button>
-            ))}
-          </div>
-          <p className="mt-1.5 text-[10px] text-ink-muted">
-            {presets && presets.length > 0
-              ? "Picking a layout replaces the columns below — adjust them afterwards as usual. Your arrangement is saved to your account."
-              : "Your column arrangement is saved to your account, so it follows you to another machine."}
-          </p>
-
-          {/* Admin: publish the CURRENT arrangement as the company default.
-              It reaches only people who have never arranged this table
-              themselves, so nobody's own columns move. */}
-          {defaultManager && (
-            <div className="mt-2 rounded-md border border-dashed border-border bg-bg/60 px-2.5 py-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-                  {defaultManager.companyLabel} default
-                </span>
-                {defaultManager.hasSaved && (
-                  <button
-                    onClick={defaultManager.onClear}
-                    disabled={defaultManager.state === "saving"}
-                    className="text-[10px] text-ink-muted underline-offset-2 hover:text-err hover:underline disabled:opacity-50"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              <Button
-                variant="ghost"
-                onClick={defaultManager.onSave}
-                disabled={defaultManager.state === "saving"}
-                className="mt-1.5 w-full justify-center"
-              >
-                {defaultManager.state === "saving"
-                  ? "Saving…"
-                  : "Save current columns as default"}
-              </Button>
-              <p className="mt-1 text-[10px] text-ink-muted">
-                {defaultManager.state === "saved"
-                  ? "Saved. New users of this company start here."
-                  : defaultManager.state === "error"
-                    ? "Could not save — please try again."
-                    : "Applies to everyone who hasn't arranged this table themselves."}
-              </p>
-            </div>
-          )}
-        </section>
-      )}
+      <LayoutSection
+        presets={presets}
+        onApplyPreset={onApplyPreset}
+        defaultManager={defaultManager}
+      />
 
       {/* ── Columns list ───────────────────────────────────── */}
       <section className="mb-6">
