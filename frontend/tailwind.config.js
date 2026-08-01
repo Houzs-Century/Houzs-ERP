@@ -104,15 +104,26 @@ export default {
         // amount cells can diverge from codes again if needed.
         money: ["system-ui", "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "Roboto", '"Helvetica Neue"', "Arial", "sans-serif"],
         // Doc numbers on the SCM list columns (SO / DO / SI / PO / GRN / DR /
-        // PR) — owner 2026-07-31 wants ids in the brand face. Its own alias
-        // rather than reusing `mono`, which also dresses eyebrow labels and
-        // should stay on the system stack.
+        // PR) and the doc-number chips beside them. Its own alias rather than
+        // reusing `mono`, which also dresses eyebrow labels and stays on the
+        // system stack.
         //
-        // The tnum caveat on `mono` above does NOT apply here any more: we
-        // self-host Plex Sans 400-700 (public/fonts/fonts.css) and all ten
-        // digits measure 7.5px at 12.5px — the face is tabular by default, so
-        // column alignment holds without font-variant-numeric.
-        docno: ['"IBM Plex Sans"', '"Noto Sans SC"', "system-ui", "-apple-system", 'BlinkMacSystemFont', '"Segoe UI"', "Roboto", "Arial", "sans-serif"],
+        // IBM Plex MONO, chosen by the owner 2026-08-01 from a three-way
+        // side-by-side of the same PO numbers at 12.5px/600 (Plex Sans as
+        // shipped by #1445, Segoe UI as it was after 7-24, and this). It is a
+        // deliberate return to the true monospace face 7-24 had dropped — and
+        // the dotted zero that decided 7-24 was in that comparison, blown up to
+        // 40px, so it is chosen WITH that trade, not around it.
+        //
+        // Weights: the self-hosted subset carries 400/500/600 and every one of
+        // the 25 doc-number call sites asks for font-semibold (600) — an exact
+        // hit, so nothing synthesises. Do not raise a doc number to font-bold
+        // (700) without adding the face first; that is the "假加粗" trap the
+        // ASSR print redesign hit.
+        //
+        // Alignment needs no font-variant-numeric here: monospace is tabular by
+        // construction.
+        docno: ['"IBM Plex Mono"', "ui-monospace", "SFMono-Regular", '"Cascadia Mono"', '"Segoe UI Mono"', "Consolas", "monospace"],
         serif: ['"IBM Plex Serif"', '"Noto Serif SC"', "Georgia", "serif"],
       },
       letterSpacing: {
