@@ -135,6 +135,74 @@ export function classifySourceRef({
   return { ...base, resolvedDocId, idWrites };
 }
 
+/** A3 part `ids` — the ID-HEAL for the shape the prefix repair deliberately
+ *  leaves alone and reports: the NUMBER already resolves (the importer's repair
+ *  pass prefixed it, or it was never bare) but the verbatim-copied
+ *  `source_doc_id` points at a document that does not exist — the pre-import id
+ *  of a parent that was dropped or remapped on PK collision. The costing
+ *  audit's orphan checks (sections 4 and 10b) read the ID, so these rows stand
+ *  as findings until the id is healed.
+ *
+ *  THE RULE (the prefix rule's mirror image, same burden of proof):
+ *    1. the number AS STORED resolves to EXACTLY ONE document of its type in
+ *       the row's OWN company, AND
+ *    2. the stored id resolves to NOTHING (no document of the type has it).
+ *  Only then is the id restamped — from that unique number resolution, never
+ *  from anywhere else. Everything else is left alone and reported:
+ *    restamp            — conditions hold; idWrites carries the per-id plan
+ *    no-dangling-id     — every stored id is NULL or already the resolved doc
+ *    number-unresolved  — the number resolves to nothing; that is the PREFIX
+ *                         repair's territory (part `consumptions`), not this
+ *                         rule's — healing the id here would pick a parent the
+ *                         number does not prove
+ *    number-ambiguous   — the number matches >1 same-company document; no
+ *                         unique resolution exists to copy the id from
+ *    doc-id-conflict    — a stored id names a DIFFERENT REAL document of the
+ *                         type: the row's two columns disagree about which real
+ *                         parent it has, and a repair must never pick sides
+ *
+ *  A NULL stored id is deliberately NOT written by this rule (`null-report`):
+ *  the audit findings this closes count only non-NULL ids, a NULL asserts
+ *  nothing, and rows may legitimately predate id stamping. It is counted so
+ *  the dry run surfaces it, and left for its own reviewed decision.
+ *
+ *  `storedDocIds` is the distinct set of `source_doc_id` values on the group's
+ *  rows: `{ id, exists, rows }`, `exists` meaning a document of the type has
+ *  that id in ANY company (ids are globally unique, so existence is the only
+ *  question). `resolvedDocId` is the id of the single same-company document
+ *  the stored number matches; required for a restamp verdict — a plan with no
+ *  resolved document is refused loudly, not defaulted. */
+export function classifyIdRestamp({
+  token,
+  ownCompanyMatches,
+  foreignMatches = 0,
+  resolvedDocId = null,
+  storedDocIds = [],
+}) {
+  const base = { token, foreignMatches };
+  if (ownCompanyMatches === 0) return { ...base, verdict: "number-unresolved" };
+  if (ownCompanyMatches > 1) return { ...base, verdict: "number-ambiguous" };
+  if (resolvedDocId == null) {
+    throw new Error(`classifyIdRestamp: "${token}" resolves to exactly one document but no resolvedDocId was supplied — refusing to plan a write without the resolved document`);
+  }
+  const idWrites = storedDocIds.map((d) => ({
+    id: d.id ?? null,
+    rows: d.rows ?? 0,
+    action:
+      d.id == null ? "null-report"
+      : !d.exists ? "restamp"
+      : String(d.id) === String(resolvedDocId) ? "keep"
+      : "conflict",
+  }));
+  if (idWrites.some((w) => w.action === "conflict")) {
+    return { ...base, verdict: "doc-id-conflict", resolvedDocId, idWrites };
+  }
+  if (!idWrites.some((w) => w.action === "restamp")) {
+    return { ...base, verdict: "no-dangling-id", resolvedDocId, idWrites };
+  }
+  return { ...base, verdict: "restamp", resolvedDocId, idWrites };
+}
+
 /* The note FORMAT lives in document-flow.ts: the writer is
    `From SOs: ${docNos.join(', ')}` (mfg-purchase-orders.ts:2115) and the only
    structural reader is parseFromSosNote, which trims the note, takes the FIRST

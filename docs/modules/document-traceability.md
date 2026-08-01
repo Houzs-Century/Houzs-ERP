@@ -212,6 +212,43 @@ audit's 3a mismatch per GRN with a bare-number movement probe, and the
 movements already attached to each resolved document by id (double-posting
 visibility). Rule: `classifySourceRef` in `lib/doc-ref-repair-core.mjs`.
 
+**Part `ids` (2026-08-01, ledger-perfection W1) — the id-heal part
+`consumptions` deliberately reported and did not touch.** When a group's
+NUMBER already resolves to exactly ONE same-company document but the stored
+`source_doc_id` matches NOTHING (the verbatim-copied pre-import id of a
+dropped/remapped parent — run 30695536709 showed e.g. `2990-DO-2607-016`
+resolving to a real document while its ledger rows store two ids that resolve
+to nothing), the id is restamped **from that unique number resolution** —
+the prefix rule's mirror image, same burden of proof. `classifyIdRestamp`
+(`lib/doc-ref-repair-core.mjs`): a stored id naming a DIFFERENT real document
+refuses the group (`doc-id-conflict`); a number matching 0 same-company
+documents is part-`consumptions` territory; a number matching >1 has no unique
+resolution and refuses; **NULL ids are counted and never written** (the
+audit's sections 4/10b read only non-NULL ids, and a NULL may legitimately
+predate id stamping). Both tables in one transaction, per-row old -> new in
+the dry run, UPDATE scoped to the exact dangling ids the plan proved. Closes
+audit findings 4 and 10b.
+
+**Part `grn-gap` (2026-08-01, ledger-perfection W2) — the audit's 3a inbound
+gap itself.** `2990-GRN-2606-001` accepted 501 units net of returns; its ONE
+IN movement booked 500 — one unit never entered either ledger, so on-hand and
+lot value understate reality. The part recomputes the per-product delta LIVE
+(accepted-net-of-returns vs signed GRN movements), prints every line and every
+sibling movement, and plans an INSERT of the missing IN movement **through the
+normal path** — a plain `INSERT INTO inventory_movements`, so the AFTER-INSERT
+FIFO trigger opens the lot exactly as a live GRN post would — into the bucket
+and at the landed unit cost its own sibling movement proves
+(`classifyGrnInboundGap` in `lib/ledger-repair-core.mjs`: exactly one distinct
+(warehouse, variant, batch, company) bucket AND exactly one sibling unit cost,
+or the product is refused). GRN movements carry no `uq_inv_mov_*` unique index
+(check-duplicate-movements section 0 ground truth), so the insert cannot be
+rejected; idempotency is the recomputed delta (a repaired GRN plans zero), a
+compare-and-set re-check inside the APPLY transaction, and a
+`repair:grn-inbound-gap` notes marker that refuses a re-insert if the delta
+somehow still reads short. The movement is timestamped NOW — the unit enters
+FIFO at the repair date; backdating would rewrite the consumption chronology.
+The `grns` workflow input names the targets (default the one 3a implicated).
+
 **A regression the repair would otherwise have caused.** `document-flow.ts`'s
 relationship-map note edge matched on the prefix-STRIPPED root SO only, and
 `noteMentionsToken` forbids an adjacent doc-number character — so

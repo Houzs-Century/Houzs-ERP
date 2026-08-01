@@ -34,6 +34,38 @@
 //       for movements carrying the GRN's bare pre-import number, so the owner
 //       can see whether 3a is this same class before anything is applied.
 //
+//   A4  PART=ids (2026-08-01, ledger-perfection W1). The id-heal for shape (a)
+//       above, now its own reviewed rule (classifyIdRestamp in
+//       lib/doc-ref-repair-core.mjs): when a group's NUMBER resolves to exactly
+//       ONE same-company document of its type but the stored source_doc_id
+//       matches NOTHING (the verbatim-copied pre-import id of a dropped or
+//       remapped parent), the id is restamped from that unique number
+//       resolution — both tables in one transaction, per-row old -> new in the
+//       dry run. A stored id naming a DIFFERENT real document refuses the
+//       whole group; NULL ids are counted but never written (the audit's
+//       sections 4 and 10b read only non-NULL ids). Evidence: run 30695536709
+//       — e.g. company-2 DO 2990-DO-2607-016 resolves to a real document while
+//       its ledger rows store two ids that resolve to nothing.
+//
+//   A5  PART=grn-gap (2026-08-01, ledger-perfection W2). The 3a inbound gap
+//       itself: a posted GRN whose accepted qty (net of returns) EXCEEDS the
+//       qty its IN movements booked — the missing units never entered the
+//       ledger, so on-hand and lot value understate reality. Evidence:
+//       2990-GRN-2606-001, 501 accepted vs one IN movement of 500. The repair
+//       INSERTS the missing IN movement THROUGH THE NORMAL PATH (a plain
+//       INSERT, so the AFTER-INSERT FIFO trigger opens the lot exactly as a
+//       live GRN post would) into the bucket its OWN sibling movement proves —
+//       exactly one (warehouse, variant, batch, company) group and exactly one
+//       sibling unit cost, or the GRN is refused and reported
+//       (classifyGrnInboundGap in lib/ledger-repair-core.mjs). GRN movements
+//       carry NO uq_inv_mov_* unique index (verified by
+//       check-duplicate-movements.mjs section 0), so the insert cannot be
+//       rejected; idempotency is the live recomputed delta (a repaired GRN
+//       plans zero) plus a notes marker that refuses a re-insert if the delta
+//       somehow still reads short. Movements created now are timestamped now —
+//       the lot enters FIFO at the repair date; backdating would rewrite the
+//       consumption chronology the audit reads.
+//
 // The safety rule, and why a blanket `'2990-' || col` would corrupt the costing
 // trail, are documented in lib/doc-ref-repair-core.mjs. In one line: a token is
 // rewritten ONLY when it currently resolves to nothing, prefixing it with the
@@ -60,7 +92,12 @@
 //
 //   DATABASE_URL   required (env, or .dev.vars for local use)
 //   APPLY=1        write. Anything else is a dry run.
-//   PART           all (default) | notes | batches | consumptions
+//   PART           all (default) | notes | batches | consumptions | ids | grn-gap
+//                  (`all` = the three original parts; `ids` and `grn-gap` are
+//                  deliberately DISPATCH-ONLY so the widest-reaching writes are
+//                  each an explicit, single-purpose run)
+//   GRNS           part grn-gap only: comma-separated GRN numbers to repair
+//                  (default 2990-GRN-2606-001 — the one 3a implicated)
 //   MAX_ROWS       per-batch row ids to print in the plan (default 200)
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
@@ -68,20 +105,26 @@ import {
   companyPrefix,
   classifyToken,
   classifySourceRef,
+  classifyIdRestamp,
   parseFromSosTokens,
   rewriteFromSosNote,
 } from "./lib/doc-ref-repair-core.mjs";
+import { classifyGrnInboundGap } from "./lib/ledger-repair-core.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const PART = (process.env.PART || "all").trim().toLowerCase();
 const MAX_ROWS = Number(process.env.MAX_ROWS || 200);
-if (!["all", "notes", "batches", "consumptions"].includes(PART)) {
-  console.error(`PART must be all | notes | batches | consumptions (got "${PART}")`);
+const GRNS = (process.env.GRNS || "2990-GRN-2606-001")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+if (!["all", "notes", "batches", "consumptions", "ids", "grn-gap"].includes(PART)) {
+  console.error(`PART must be all | notes | batches | consumptions | ids | grn-gap (got "${PART}")`);
   process.exit(2);
 }
 const doNotes = PART === "all" || PART === "notes";
 const doBatches = PART === "all" || PART === "batches";
 const doConsumptions = PART === "all" || PART === "consumptions";
+const doIds = PART === "ids";
+const doGrnGap = PART === "grn-gap";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -527,8 +570,8 @@ async function planConsumptions(codeById) {
     log(`  REPORT-ONLY — number resolves but source_doc_id does not (${resolvedButDangling.length} group(s)); NOT repaired by this part:`);
     log("  (this is the shape a PK-collision-dropped or remapped parent leaves: the importer's repair");
     log("   pass prefixed the number, but the verbatim-copied id points at nothing. The audit's");
-    log("   sections 4 and 10b count these by ID. Repairing them is an id-heal, not a prefix repair,");
-    log("   and is deliberately left for its own reviewed rule.)");
+    log("   sections 4 and 10b count these by ID. Repairing them is an id-heal, not a prefix repair —");
+    log("   that reviewed rule is PART=ids; dispatch it to plan exactly these groups.)");
     for (const r of danglingGroups.slice(0, MAX_ROWS)) {
       log(`    company ${r.companyId}  ${r.docType} "${r.docNo}"  resolves to id=${r.resolvesToId}`);
       for (const d of r.dangling) log(`      stored source_doc_id=${d.id} matches NO ${A3_LABEL[r.docType]} (${d.rows} row(s))`);
@@ -679,6 +722,344 @@ async function applyConsumptions(plan) {
   });
 }
 
+// ── A4 — PART=ids: restamp dangling source_doc_id from the resolving number ──
+// The mirror image of A3: there the NUMBER was broken and the id was written
+// from its repair; here the number already resolves and only the id dangles.
+// Same key (company, type, doc no), same two tables, same one-transaction
+// apply. The rule lives in classifyIdRestamp (lib/doc-ref-repair-core.mjs).
+async function planIdRestamp(codeById) {
+  const consRows = await pg`
+    SELECT company_id, source_doc_type, source_doc_no, source_doc_id::text AS doc_id, count(*)::int AS n
+      FROM scm.inventory_lot_consumptions
+     WHERE source_doc_no IS NOT NULL AND source_doc_type IN ('DO','GRN')
+     GROUP BY company_id, source_doc_type, source_doc_no, source_doc_id`;
+  const movRows = await pg`
+    SELECT company_id, source_doc_type, source_doc_no, source_doc_id::text AS doc_id, count(*)::int AS n
+      FROM scm.inventory_movements
+     WHERE source_doc_no IS NOT NULL AND source_doc_type IN ('DO','GRN')
+     GROUP BY company_id, source_doc_type, source_doc_no, source_doc_id`;
+
+  const groups = new Map();
+  const bump = (r, field) => {
+    const cid = Number(r.company_id);
+    const key = `${cid}::${r.source_doc_type}::${r.source_doc_no}`;
+    const g = groups.get(key) ?? {
+      companyId: cid,
+      docType: String(r.source_doc_type),
+      docNo: String(r.source_doc_no),
+      consumptions: 0,
+      movements: 0,
+      ids: new Map(),
+      // per-table row counts PER stored id, so the plan's totals are exact
+      // even when the per-row listing is capped at MAX_ROWS.
+      idsByTable: { consumptions: new Map(), movements: new Map() },
+    };
+    g[field] += Number(r.n);
+    const idKey = r.doc_id ?? null;
+    g.ids.set(idKey, (g.ids.get(idKey) ?? 0) + Number(r.n));
+    const t = g.idsByTable[field];
+    t.set(idKey, (t.get(idKey) ?? 0) + Number(r.n));
+    groups.set(key, g);
+  };
+  for (const r of consRows) bump(r, "consumptions");
+  for (const r of movRows) bump(r, "movements");
+
+  log("");
+  log(`=== A4  id-heal — distinct (company, type, doc no) groups scanned: ${groups.size} (types: ${A3_TYPES.join(", ")}) ===`);
+  const emptyTally = { restamp: 0, "no-dangling-id": 0, "number-unresolved": 0, "number-ambiguous": 0, "doc-id-conflict": 0 };
+  if (groups.size === 0) return { plan: [], tally: emptyTally };
+
+  // One round trip per doc type: the numbers AS STORED, and every stored id.
+  const docsByType = {};
+  const idSetByType = {};
+  for (const t of A3_TYPES) {
+    const wanted = new Set();
+    const storedIds = new Set();
+    for (const g of groups.values()) {
+      if (g.docType !== t) continue;
+      wanted.add(g.docNo);
+      for (const id of g.ids.keys()) if (id != null) storedIds.add(id);
+    }
+    docsByType[t] = await fetchDocsByNumbers(t, [...wanted]);
+    idSetByType[t] = await fetchExistingDocIds(t, [...storedIds]);
+  }
+  const docsByNo = new Map();
+  for (const t of A3_TYPES) {
+    for (const d of docsByType[t]) {
+      const key = `${t}::${d.doc_no}`;
+      const arr = docsByNo.get(key) ?? [];
+      arr.push({ id: d.id, companyId: Number(d.company_id), status: d.status });
+      docsByNo.set(key, arr);
+    }
+  }
+  const inCompany = (t, num, cid) => (docsByNo.get(`${t}::${num}`) ?? []).filter((d) => d.companyId === cid);
+  const otherCompany = (t, num, cid) => (docsByNo.get(`${t}::${num}`) ?? []).filter((d) => d.companyId !== cid);
+
+  const tally = { ...emptyTally };
+  const plan = [];
+  const refused = [];
+  let nullRowsTotal = 0;
+  for (const g of [...groups.values()].sort((a, b) => a.docType.localeCompare(b.docType) || a.docNo.localeCompare(b.docNo))) {
+    const own = inCompany(g.docType, g.docNo, g.companyId);
+    const storedDocIds = [...g.ids.entries()].map(([id, rows]) => ({
+      id,
+      rows,
+      exists: id != null && idSetByType[g.docType].has(id),
+    }));
+    const v = classifyIdRestamp({
+      token: g.docNo,
+      ownCompanyMatches: own.length,
+      foreignMatches: otherCompany(g.docType, g.docNo, g.companyId).length,
+      resolvedDocId: own.length === 1 ? own[0].id : null,
+      storedDocIds,
+    });
+    tally[v.verdict] += 1;
+    nullRowsTotal += storedDocIds.filter((d) => d.id == null).reduce((a, d) => a + d.rows, 0);
+    if (v.verdict === "restamp") {
+      plan.push({ ...g, resolvedDocId: v.resolvedDocId, resolvedStatus: own[0].status, idWrites: v.idWrites });
+    } else if (v.verdict === "doc-id-conflict" || v.verdict === "number-ambiguous") {
+      refused.push(
+        `    company ${g.companyId}  ${g.docType} "${g.docNo}"  consumptions=${g.consumptions} movements=${g.movements}  -> ${v.verdict}` +
+          (v.verdict === "doc-id-conflict"
+            ? `  [stored ids: ${v.idWrites.map((w) => `${w.id ?? "NULL"}=${w.action}(${w.rows})`).join(", ")}]`
+            : `  [${own.length} same-company documents share this number]`),
+      );
+    }
+    // number-unresolved is PART=consumptions territory and no-dangling-id is
+    // healthy; both are tallied, neither is listed row by row.
+  }
+
+  log("  groups by verdict:");
+  log(`    to restamp (number resolves uniquely, id dangles)  : ${tally.restamp}`);
+  log(`    healthy — no dangling id                           : ${tally["no-dangling-id"]}`);
+  log(`    number unresolved (PART=consumptions territory)    : ${tally["number-unresolved"]}`);
+  log(`    REFUSED — number ambiguous in its own company      : ${tally["number-ambiguous"]}`);
+  log(`    REFUSED — stored id names a DIFFERENT real document: ${tally["doc-id-conflict"]}`);
+  log(`    rows whose stored id is NULL (counted, NEVER written by this part): ${nullRowsTotal}`);
+  if (refused.length) {
+    log("  --- groups refused, with the reason ---");
+    for (const s of refused) log(s);
+  }
+
+  log(`  (company, type, doc no) groups to restamp: ${plan.length}`);
+  let consTotal = 0;
+  let movTotal = 0;
+  for (const p of plan) {
+    const danglingIds = p.idWrites.filter((w) => w.action === "restamp").map((w) => w.id);
+    log(`    company ${p.companyId}:  ${p.docType}  ${p.docNo}`);
+    log(`      number resolves to ${A3_LABEL[p.docType]} id=${p.resolvedDocId} status=${p.resolvedStatus}`);
+    for (const w of p.idWrites) {
+      log(`      stored source_doc_id ${w.id ?? "NULL"} (${w.rows} row(s)) -> ${
+        w.action === "restamp" ? `${p.resolvedDocId} (RESTAMP — stored id matches no ${A3_LABEL[p.docType]})`
+        : w.action === "keep" ? "kept (already the resolved document)"
+        : "left NULL (report-only)"}`);
+    }
+    // Per-row old -> new, both tables — the costing trail deserves row-level
+    // evidence, and the apply UPDATE is scoped to exactly these ids.
+    const cons = await pg`
+      SELECT id, source_doc_id::text AS doc_id, qty_consumed
+        FROM scm.inventory_lot_consumptions
+       WHERE company_id = ${p.companyId} AND source_doc_type = ${p.docType} AND source_doc_no = ${p.docNo}
+         AND source_doc_id::text = ANY(${danglingIds})
+       ORDER BY id LIMIT ${MAX_ROWS}`;
+    for (const r of cons) log(`        consumption ${r.id}  qty=${r.qty_consumed}  doc_id ${r.doc_id} -> ${p.resolvedDocId}`);
+    const movs = await pg`
+      SELECT id, movement_type, qty, source_doc_id::text AS doc_id
+        FROM scm.inventory_movements
+       WHERE company_id = ${p.companyId} AND source_doc_type = ${p.docType} AND source_doc_no = ${p.docNo}
+         AND source_doc_id::text = ANY(${danglingIds})
+       ORDER BY id LIMIT ${MAX_ROWS}`;
+    for (const r of movs) log(`        movement ${r.id}  ${r.movement_type}  qty=${r.qty}  doc_id ${r.doc_id} -> ${p.resolvedDocId}`);
+    const consExact = danglingIds.reduce((a, id) => a + (p.idsByTable.consumptions.get(id) ?? 0), 0);
+    const movExact = danglingIds.reduce((a, id) => a + (p.idsByTable.movements.get(id) ?? 0), 0);
+    if (cons.length < consExact) log(`        … and ${consExact - cons.length} more consumptions (listing capped at MAX_ROWS)`);
+    if (movs.length < movExact) log(`        … and ${movExact - movs.length} more movements (listing capped at MAX_ROWS)`);
+    consTotal += consExact;
+    movTotal += movExact;
+    // Rows already attached to the resolved document by id — the set these
+    // rows JOIN after the restamp, so double-posting risk is visible now.
+    const attached = await pg`
+      SELECT count(*)::int AS rows,
+             COALESCE(SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty ELSE qty END), 0)::int AS net_qty
+        FROM scm.inventory_movements
+       WHERE source_doc_type = ${p.docType} AND source_doc_id::text = ${p.resolvedDocId}`;
+    log(`      movements already attached to the resolved document by id: rows=${attached[0].rows} netQty=${attached[0].net_qty}`);
+  }
+  log(`  TOTAL rows that would change: inventory_lot_consumptions=${consTotal}  inventory_movements=${movTotal}`);
+  return { plan, tally };
+}
+
+async function applyIdRestamp(plan) {
+  if (plan.length === 0) return { consumptions: 0, movements: 0 };
+  // ONE transaction across BOTH tables (the applyConsumptions argument: an OUT
+  // and its lot consumptions carry the same reference and must keep doing so).
+  // The UPDATE is scoped to the exact dangling ids the plan proved — a NULL id
+  // or a kept id is untouchable by construction of the WHERE clause.
+  return pg.begin(async (tx) => {
+    let consumptions = 0;
+    let movements = 0;
+    for (const p of plan) {
+      const danglingIds = p.idWrites.filter((w) => w.action === "restamp").map((w) => w.id);
+      const k = await tx`
+        UPDATE scm.inventory_lot_consumptions
+           SET source_doc_id = ${p.resolvedDocId}::uuid
+         WHERE company_id = ${p.companyId}
+           AND source_doc_type = ${p.docType}
+           AND source_doc_no = ${p.docNo}
+           AND source_doc_id::text = ANY(${danglingIds})`;
+      const m = await tx`
+        UPDATE scm.inventory_movements
+           SET source_doc_id = ${p.resolvedDocId}::uuid
+         WHERE company_id = ${p.companyId}
+           AND source_doc_type = ${p.docType}
+           AND source_doc_no = ${p.docNo}
+           AND source_doc_id::text = ANY(${danglingIds})`;
+      consumptions += k.count;
+      movements += m.count;
+      log(`  APPLIED company ${p.companyId}: ${p.docType} ${p.docNo} dangling ids -> ${p.resolvedDocId}  (consumptions ${k.count}, movements ${m.count})`);
+    }
+    return { consumptions, movements };
+  });
+}
+
+// ── A5 — PART=grn-gap: insert the missing IN movement a posted GRN is short ──
+const GRN_GAP_MARKER = "repair:grn-inbound-gap";
+
+async function planGrnGap() {
+  log("");
+  log(`=== A5  GRN inbound gap — target GRNs: ${GRNS.join(", ")} ===`);
+  const grns = await pg`
+    SELECT id::text AS id, grn_number, company_id, status::text AS status, warehouse_id::text AS warehouse_id
+      FROM scm.grns WHERE grn_number = ANY(${GRNS})`;
+  for (const want of GRNS) {
+    if (!grns.some((g) => g.grn_number === want)) log(`  "${want}" matches NO GRN — skipped (check the number).`);
+  }
+  const plan = [];
+  for (const g of grns) {
+    log(`  ${g.grn_number}  company=${g.company_id}  status=${g.status}  id=${g.id}`);
+    if (["DRAFT", "CANCELLED"].includes(String(g.status).toUpperCase())) {
+      log("    SKIP — not a posted GRN (DRAFT/CANCELLED writes no movements).");
+      continue;
+    }
+    // Per-line accepted (net of returns), with the line facts the owner needs
+    // to see WHICH line is short.
+    const lines = await pg`
+      SELECT gi.id, gi.material_code, gi.material_name, gi.qty_accepted,
+             COALESCE(gi.returned_qty, 0)::int AS returned_qty,
+             gi.unit_price_centi, gi.variants, gi.item_group
+        FROM scm.grn_items gi WHERE gi.grn_id = ${g.id}::uuid ORDER BY gi.material_code, gi.id`;
+    // The GRN's own IN movements, grouped into the DISTINCT buckets + costs
+    // that prove (or refuse) the insert.
+    const movs = await pg`
+      SELECT id::text AS id, movement_type, warehouse_id::text AS warehouse_id, product_code, product_name,
+             COALESCE(variant_key, '') AS variant_key, batch_no, qty, unit_cost_sen, company_id, notes, created_at
+        FROM scm.inventory_movements
+       WHERE source_doc_type = 'GRN' AND source_doc_id = ${g.id}::uuid
+       ORDER BY created_at, id`;
+
+    const byProduct = new Map();
+    for (const l of lines) {
+      const p = byProduct.get(l.material_code) ?? { lineQty: 0, lines: [], buckets: new Map(), marker: false };
+      p.lineQty += Math.max(0, Number(l.qty_accepted ?? 0) - Number(l.returned_qty ?? 0));
+      p.lines.push(l);
+      byProduct.set(l.material_code, p);
+    }
+    for (const m of movs) {
+      const p = byProduct.get(m.product_code) ?? { lineQty: 0, lines: [], buckets: new Map(), marker: false };
+      const key = `${m.warehouse_id}::${m.variant_key}::${m.batch_no ?? ""}::${m.company_id}`;
+      const b = p.buckets.get(key) ?? {
+        warehouseId: m.warehouse_id, variantKey: m.variant_key, batchNo: m.batch_no ?? null,
+        companyId: Number(m.company_id), productName: m.product_name, movQty: 0, unitCosts: new Set(), rows: [],
+      };
+      b.movQty += m.movement_type === "IN" ? Number(m.qty) : -Number(m.qty);
+      b.unitCosts.add(Number(m.unit_cost_sen ?? 0));
+      b.rows.push(m);
+      p.buckets.set(key, b);
+      if ((m.notes ?? "").includes(GRN_GAP_MARKER)) p.marker = true;
+      byProduct.set(m.product_code, p);
+    }
+
+    for (const [code, p] of byProduct) {
+      const buckets = [...p.buckets.values()].map((b) => ({ ...b, unitCosts: [...b.unitCosts] }));
+      const v = classifyGrnInboundGap({ productCode: code, lineQty: p.lineQty, buckets });
+      log(`    product ${code}: accepted-net=${v.lineQty}  movements=${v.movQty}  delta=${v.delta}  -> ${v.verdict}`);
+      for (const l of p.lines) {
+        log(`      line ${l.id}  accepted=${l.qty_accepted} returned=${l.returned_qty}  unit_price_centi=${l.unit_price_centi}  group=${l.item_group ?? "-"}`);
+      }
+      for (const b of buckets) {
+        log(`      movement bucket wh=${b.warehouseId} variant="${b.variantKey}" batch=${b.batchNo ?? "-"} co=${b.companyId}: qty=${b.movQty} unitCosts=[${b.unitCosts.join(", ")}]`);
+        for (const r of b.rows) log(`        movement ${r.id}  ${r.movement_type}  qty=${r.qty}  unit_cost_sen=${r.unit_cost_sen}  at ${r.created_at?.toISOString?.() ?? r.created_at}`);
+      }
+      if (v.verdict !== "insert") {
+        if (v.verdict !== "balanced") log(`      REFUSED (${v.verdict}) — nothing will be inserted for this product; owner review.`);
+        continue;
+      }
+      if (p.marker) {
+        log(`      REFUSED — a movement already carries the ${GRN_GAP_MARKER} marker yet the delta still reads ${v.delta}; manual review, not a second insert.`);
+        continue;
+      }
+      const ins = v.insert;
+      log(`      PLAN: INSERT IN movement qty=${ins.qty} at unit_cost_sen=${ins.unitCostSen} (the sibling movement's landed cost)`);
+      log(`            bucket: warehouse=${ins.warehouseId} variant="${ins.variantKey}" batch=${ins.batchNo ?? "NULL"} company=${ins.companyId}`);
+      log(`            source: GRN ${g.grn_number} (${g.id}); created_at=now — the FIFO trigger opens a ${ins.qty}-unit lot at this cost on insert`);
+      plan.push({
+        grnId: g.id, grnNumber: g.grn_number, productCode: code,
+        productName: buckets[0].productName ?? p.lines[0]?.material_name ?? code,
+        ...ins,
+      });
+    }
+  }
+  log(`  IN movements to insert: ${plan.length}`);
+  return { plan };
+}
+
+async function applyGrnGap(plan) {
+  if (plan.length === 0) return 0;
+  let done = 0;
+  for (const p of plan) {
+    // Guarded compare-and-set against a concurrent post: recompute the delta
+    // inside the transaction; insert only while the gap still exists. The
+    // AFTER-INSERT FIFO trigger opens the lot — the normal path, not a bypass.
+    await pg.begin(async (tx) => {
+      const fresh = await tx`
+        WITH l AS (
+          SELECT SUM(GREATEST(0, COALESCE(qty_accepted, 0) - COALESCE(returned_qty, 0)))::int AS line_qty
+            FROM scm.grn_items WHERE grn_id = ${p.grnId}::uuid AND material_code = ${p.productCode}
+        ), m AS (
+          SELECT COALESCE(SUM(CASE WHEN movement_type = 'IN' THEN qty ELSE -qty END), 0)::int AS mov_qty
+            FROM scm.inventory_movements
+           WHERE source_doc_type = 'GRN' AND source_doc_id = ${p.grnId}::uuid AND product_code = ${p.productCode}
+        )
+        SELECT l.line_qty - m.mov_qty AS delta FROM l, m`;
+      const delta = Number(fresh[0]?.delta ?? 0);
+      if (delta !== p.qty) {
+        log(`  SKIPPED ${p.grnNumber} ${p.productCode}: delta is now ${delta}, plan said ${p.qty} — re-run the dry run.`);
+        return;
+      }
+      const inserted = await tx`
+        INSERT INTO scm.inventory_movements (
+          movement_type, warehouse_id, product_code, product_name, variant_key,
+          qty, unit_cost_sen, source_doc_type, source_doc_id, source_doc_no,
+          batch_no, notes, performed_by, company_id
+        ) VALUES (
+          'IN', ${p.warehouseId}::uuid, ${p.productCode}, ${p.productName}, ${p.variantKey},
+          ${p.qty}, ${p.unitCostSen}, 'GRN', ${p.grnId}::uuid, ${p.grnNumber},
+          ${p.batchNo}, ${`${GRN_GAP_MARKER}: ${p.grnNumber} accepted ${p.qty} more than its IN movements booked (audit 3a); inserted at the sibling movement's landed cost`},
+          NULL, ${p.companyId}
+        ) RETURNING id::text AS id`;
+      const lot = await tx`
+        SELECT id::text AS id, qty_received, qty_remaining, unit_cost_sen
+          FROM scm.inventory_lots WHERE movement_id = ${inserted[0].id}::uuid`;
+      if (lot.length !== 1 || Number(lot[0].qty_remaining) !== p.qty || Number(lot[0].unit_cost_sen) !== p.unitCostSen) {
+        throw new Error(`FIFO trigger did not open the expected lot for movement ${inserted[0].id} (got ${JSON.stringify(lot)}) — rolled back`);
+      }
+      log(`  APPLIED ${p.grnNumber} ${p.productCode}: movement ${inserted[0].id} qty=${p.qty} @ ${p.unitCostSen} sen; lot ${lot[0].id} opened (received=${lot[0].qty_received}, remaining=${lot[0].qty_remaining})`);
+      done += 1;
+    });
+  }
+  return done;
+}
+
 try {
   log(`=== repair-2990-doc-refs  mode=${APPLY ? "APPLY" : "DRY-RUN"}  part=${PART} ===`);
   const codeById = await loadCompanies();
@@ -686,12 +1067,16 @@ try {
   const notes = doNotes ? await planNotes(codeById) : { plan: [] };
   const batches = doBatches ? await planBatches(codeById) : { plan: [] };
   const consumptions = doConsumptions ? await planConsumptions(codeById) : { plan: [] };
+  const ids = doIds ? await planIdRestamp(codeById) : { plan: [] };
+  const grnGap = doGrnGap ? await planGrnGap() : { plan: [] };
 
   log("");
   log("================ summary ================");
   if (doNotes) log(`A1 notes        : ${notes.plan.length} PO note(s) would be rewritten`);
   if (doBatches) log(`A2 batches      : ${batches.plan.length} (company, batch) pair(s) would be renamed`);
   if (doConsumptions) log(`A3 consumptions : ${consumptions.plan.length} (company, type, doc no) group(s) would be repaired on the ledger source refs`);
+  if (doIds) log(`A4 ids          : ${ids.plan.length} (company, type, doc no) group(s) would have dangling source_doc_id restamped`);
+  if (doGrnGap) log(`A5 grn-gap      : ${grnGap.plan.length} missing IN movement(s) would be inserted (FIFO trigger opens the lot)`);
 
   if (!APPLY) {
     log("");
@@ -708,6 +1093,14 @@ try {
     if (doConsumptions) {
       const r = await applyConsumptions(consumptions.plan);
       log(`A3 APPLIED: inventory_lot_consumptions=${r.consumptions} rows, inventory_movements=${r.movements} rows, in one transaction.`);
+    }
+    if (doIds) {
+      const r = await applyIdRestamp(ids.plan);
+      log(`A4 APPLIED: inventory_lot_consumptions=${r.consumptions} rows, inventory_movements=${r.movements} rows, in one transaction.`);
+    }
+    if (doGrnGap) {
+      const n = await applyGrnGap(grnGap.plan);
+      log(`A5 APPLIED: ${n} IN movement(s) inserted through the normal path (lots opened by the trigger).`);
     }
     log("Done. Re-run in DRY-RUN to confirm the plan is now empty (the idempotence check).");
   }
