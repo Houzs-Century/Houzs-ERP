@@ -23,13 +23,25 @@
 //   H2 CODE. The row is fine, but the SO path reads a DIFFERENT row.
 //      `idx_mfg_products_code` is a PLAIN index, not unique, and
 //      loadProductsByCodes() (mfg-pricing-recompute.ts) does a bare
-//      `.in('code', …)` with NO company predicate, then keys a Map by code —
-//      so with the same code under both companies it keeps whichever row
+//      `.in('code', …)` with NO company predicate and NO ORDER BY, then keys a
+//      Map by code — so with more than one row per code it keeps whichever
 //      Postgres returned last. 0187's own header already asserts the natural
 //      key is (company_id, product_code) "the key the SO pricing path already
 //      resolves by" — it doesn't. Fix = scope the loader, NOT a backfill.
 //
-// Section A settles which. If A is empty, it is H1.
+// THE POS ALREADY POINTS AT H2. Configurator.tsx runs the SAME rule client-side
+// (`hasPwpPrice`, :1516) off the COMPANY-SCOPED /pos-pools/mfg-catalog read, and
+// `appliedPwpCode` (:1526) is null unless it passes — both the same-cart toggle
+// and Insert PWP Code. A non-promo code therefore cannot even be ATTACHED to a
+// line unless the POS saw pwp_price_sen > 0 for that exact size; the operator
+// would have got "This size has no PWP price set — set it in SKU Master first."
+// (:851) instead. They didn't — they reached Complete order, and only the server
+// refused. Two reads of one code disagreeing is what a duplicate row looks like.
+//
+// Section A settles it, and it is deliberately NOT restricted to cross-company
+// duplicates: the top-up inserts the source's verbatim `id`, so a one-shot that
+// minted different ids leaves TWO rows for one code under the SAME company, and
+// the unordered read breaks identically. If A is empty, it is H1 after all.
 //
 // READ-ONLY by default. APPLY=1 additionally fills company-2 rows whose
 // pwp_price_sen is 0 while the 2990 source has a real value — zeros only, so
@@ -72,11 +84,16 @@ async function main() {
   if (cid2990 == null) throw new Error("no 2990 company row — wrong DB?");
   console.log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}  source=${src ? "connected" : "NOT SET (sections D/E skipped)"}\n`);
 
-  /* ── A. duplicate codes across companies — the H2 hazard ─────────────────
-     A code that exists under >1 company makes the SO path's unscoped
-     `.in('code', …)` non-deterministic. Rows that also DISAGREE on
-     pwp_price_sen are the ones that reproduce this exact reject. */
-  console.log("=== A. codes present under MORE THAN ONE company (unscoped-read hazard) ===");
+  /* ── A. duplicate codes — the H2 hazard, BOTH flavours ───────────────────
+     `idx_mfg_products_code` is a plain index, so one code may repeat
+     ACROSS companies (the manual one-shot landed under one company, the
+     top-up under another) or WITHIN one (the top-up inserts the source's
+     verbatim `id`, so `ON CONFLICT DO NOTHING` skips nothing when the
+     one-shot minted different ids — a second row for the same code).
+     Both break the SO path's unscoped, unordered `.in('code', …)` -> Map
+     identically: it keeps whichever row Postgres returned last. Rows that
+     also DISAGREE on pwp_price_sen are the ones that reproduce this reject. */
+  console.log("=== A. codes with MORE THAN ONE row (unscoped/unordered-read hazard) ===");
   const dupes = await db`
     SELECT code,
            count(*)::int                          AS n_rows,
@@ -86,18 +103,23 @@ async function main() {
            array_agg(DISTINCT sell_price_sen)     AS sell_values
     FROM scm.mfg_products
     GROUP BY code
-    HAVING count(DISTINCT company_id) > 1
+    HAVING count(*) > 1
     ORDER BY code`;
   if (dupes.length === 0) {
-    console.log("  (none — every code lives under exactly one company; H2 is RULED OUT, cause is H1 data)");
+    console.log("  (none — every code has exactly one row; H2 is RULED OUT, cause is H1 data)");
   } else {
-    const divergent = dupes.filter((d) => (d.pwp_values ?? []).length > 1);
-    console.log(`  ${dupes.length} duplicated code(s); ${divergent.length} of them DISAGREE on pwp_price_sen`);
+    const xco = dupes.filter((d) => d.n_companies > 1);
+    const inco = dupes.filter((d) => d.n_companies === 1);
+    const pwpSplit = dupes.filter((d) => (d.pwp_values ?? []).length > 1);
+    console.log(`  ${dupes.length} duplicated code(s): ${xco.length} across companies, ${inco.length} within one company`);
+    console.log(`  ${pwpSplit.length} of them DISAGREE on pwp_price_sen  <-- these reproduce the reject`);
     for (const d of dupes.slice(0, 40)) {
-      console.log(`  ${d.code}  companies=[${d.companies}]  pwp=[${d.pwp_values}]  sell=[${d.sell_values}]`);
+      const flag = (d.pwp_values ?? []).length > 1 ? "  <-- pwp split" : "";
+      console.log(`  ${d.code.padEnd(16)} rows=${d.n_rows} companies=[${d.companies}]  pwp=[${d.pwp_values}]  sell=[${d.sell_values}]${flag}`);
     }
     if (dupes.length > 40) console.log(`  … ${dupes.length - 40} more`);
-    console.log("  ⚠️ H2 is LIVE — backfilling data will NOT reliably fix these; the loader must be company-scoped.");
+    console.log("  H2 is LIVE — backfilling data will NOT reliably fix these; the loaders must resolve by (company_id, code)");
+    console.log("  and the duplicate rows must be reconciled. Section F deliberately does NOT touch a duplicated code.");
   }
 
   // ── B. the SKUs from the report, every company ──────────────────────────
@@ -132,16 +154,19 @@ async function main() {
     const dest = await db`
       SELECT id, code, category, sell_price_sen, pwp_price_sen
       FROM scm.mfg_products WHERE company_id = ${cid2990} ORDER BY code`;
-    const gap = [], divergent = [], missingOnSrc = [];
+    const dupCodes = new Set(dupes.map((d) => d.code));
+    const gap = [], divergent = [], missingOnSrc = [], gapButDuplicated = [];
     for (const d of dest) {
       const s = srcMap.get(d.code);
       if (!s) { missingOnSrc.push(d); continue; }
       const sp = Number(s.pwp_price_sen ?? 0), dp = Number(d.pwp_price_sen ?? 0);
-      if (dp === 0 && sp > 0) gap.push({ ...d, srcPwp: sp });
+      if (dp === 0 && sp > 0) (dupCodes.has(d.code) ? gapButDuplicated : gap).push({ ...d, srcPwp: sp });
       else if (dp !== sp) divergent.push({ ...d, srcPwp: sp });
     }
     console.log(`\n=== D. company-2 SKUs where Houzs pwp=0 but 2990 has a price (the gap) ===`);
-    console.log(`  dest company-2 rows: ${dest.length}   gap: ${gap.length}   other divergence: ${divergent.length}   not on source: ${missingOnSrc.length}`);
+    console.log(`  dest company-2 rows: ${dest.length}   fillable gap: ${gap.length}   gap on a DUPLICATED code (held back): ${gapButDuplicated.length}   other divergence: ${divergent.length}   not on source: ${missingOnSrc.length}`);
+    for (const g of gapButDuplicated.slice(0, 20)) console.log(`    HELD ${g.code.padEnd(16)} houzs=${rm(g.pwp_price_sen)}  2990=${rm(g.srcPwp)}  (code has >1 row — reconcile the rows first)`);
+    if (gapButDuplicated.length > 20) console.log(`    … ${gapButDuplicated.length - 20} more held`);
     const byCat = new Map();
     for (const g of gap) byCat.set(g.category, (byCat.get(g.category) ?? 0) + 1);
     for (const [cat, n] of [...byCat].sort()) console.log(`    ${String(cat).padEnd(10)} ${n}`);
