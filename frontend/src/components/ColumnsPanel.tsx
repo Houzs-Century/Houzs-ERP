@@ -10,8 +10,13 @@ import { cn } from "../lib/utils";
 
 /**
  * Unified columns panel — replaces the old dropdown "Columns" chooser
- * AND the separate "Fields" (UDF) button. Two sections:
+ * AND the separate "Fields" (UDF) button. Sections:
  *
+ *   0. Layout (only when the page declares presets) — named column sets, one
+ *      click each. Two companies sharing one list page want two different
+ *      working views, and a user of either should be able to take the other's
+ *      (owner 2026-08-01). Applying one just writes the ordinary column prefs,
+ *      so section 1 stays the way to fine-tune it afterwards.
  *   1. Columns — reorderable + show/hide. The list is either in TABLE ORDER
  *      (drag a row by its handle to move it) or A-Z (for finding a column in
  *      a wide table); the header toggle switches between them and only table
@@ -30,12 +35,40 @@ interface Option {
   label: string;
 }
 
+/** One row of the Layout section — a named column set the table can be switched
+ *  to in a click. `active` = the table currently matches it exactly. */
+interface PresetOption {
+  id: string;
+  label: string;
+  hint?: string;
+  /** Columns it shows, excluding the always-visible ones. */
+  count: number;
+  active: boolean;
+  /** The layout this company starts on, before anyone customises. */
+  isDefault: boolean;
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
   /** All column options (excluding alwaysVisible). In storage-order, i.e. the
    *  order the user has arranged them in. */
   options: Option[];
+  /** Named layouts offered above the column list. Omitted → no Layout section. */
+  presets?: PresetOption[];
+  onApplyPreset?: (id: string) => void;
+  /** Present only for an admin who may publish this company's default view.
+   *  Absent for everyone else — including when the layout server is
+   *  unreachable, so the control never appears where it can't work. */
+  defaultManager?: {
+    /** Company the save would publish to, e.g. "2990's Home". */
+    companyLabel: string;
+    /** Whether a saved default already exists (enables Clear). */
+    hasSaved: boolean;
+    state: "idle" | "saving" | "saved" | "error";
+    onSave: () => void;
+    onClear: () => void;
+  };
   hidden: Set<string>;
   onToggle: (key: string) => void;
   onResetVisibility: () => void;
@@ -63,6 +96,9 @@ export function ColumnsPanel({
   open,
   onClose,
   options,
+  presets,
+  onApplyPreset,
+  defaultManager,
   hidden,
   onToggle,
   onResetVisibility,
@@ -148,6 +184,113 @@ export function ColumnsPanel({
          too much of the working area. Matches the SCM DataGrid columns drawer. */
       width={340}
     >
+      {/* ── Layout presets ─────────────────────────────────── */}
+      {presets && presets.length > 0 && (
+        <section className="mb-6">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+              Layout
+            </h3>
+            {/* No preset matches ⇒ this is a hand-arranged layout. Saying so
+                stops the highlighted-nothing state from reading as a bug. */}
+            {!presets.some((p) => p.active) && (
+              <span className="rounded bg-surface-2 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
+                Custom
+              </span>
+            )}
+          </div>
+          <div className="divide-y divide-border-subtle overflow-hidden rounded-md border border-border bg-surface">
+            {presets.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => onApplyPreset?.(p.id)}
+                aria-pressed={p.active}
+                className={cn(
+                  "flex w-full items-center gap-2.5 px-2 py-2.5 text-left transition-colors",
+                  p.active ? "bg-primary-soft/40" : "hover:bg-accent-soft/30"
+                )}
+              >
+                <span
+                  className={cn(
+                    "grid h-4 w-4 shrink-0 place-items-center rounded-full border transition-colors",
+                    p.active
+                      ? "border-primary bg-primary text-white"
+                      : "border-border bg-surface"
+                  )}
+                >
+                  {p.active && <Check size={9} strokeWidth={3} />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "text-[12.5px] text-ink",
+                        p.active && "font-semibold"
+                      )}
+                    >
+                      {p.label}
+                    </span>
+                    {p.isDefault && (
+                      <span className="rounded bg-accent-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-accent-ink">
+                        Default
+                      </span>
+                    )}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[10.5px] text-ink-muted">
+                    {p.hint ? `${p.hint} · ` : ""}
+                    {p.count} columns
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[10px] text-ink-muted">
+            Picking a layout replaces the columns below — adjust them afterwards
+            as usual. Your arrangement is saved to your account.
+          </p>
+
+          {/* Admin: publish the CURRENT arrangement as the company default.
+              It reaches only people who have never arranged this table
+              themselves, so nobody's own columns move. */}
+          {defaultManager && (
+            <div className="mt-2 rounded-md border border-dashed border-border bg-bg/60 px-2.5 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+                  {defaultManager.companyLabel} default
+                </span>
+                {defaultManager.hasSaved && (
+                  <button
+                    onClick={defaultManager.onClear}
+                    disabled={defaultManager.state === "saving"}
+                    className="text-[10px] text-ink-muted underline-offset-2 hover:text-err hover:underline disabled:opacity-50"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                onClick={defaultManager.onSave}
+                disabled={defaultManager.state === "saving"}
+                className="mt-1.5 w-full justify-center"
+              >
+                {defaultManager.state === "saving"
+                  ? "Saving…"
+                  : "Save current columns as default"}
+              </Button>
+              <p className="mt-1 text-[10px] text-ink-muted">
+                {defaultManager.state === "saved"
+                  ? "Saved. New users of this company start here."
+                  : defaultManager.state === "error"
+                    ? "Could not save — please try again."
+                    : "Applies to everyone who hasn't arranged this table themselves."}
+              </p>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* ── Columns list ───────────────────────────────────── */}
       <section className="mb-6">
         <div className="mb-2 flex items-center justify-between">

@@ -39,7 +39,11 @@ import {
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
-import { DataTable, type Column } from "../../components/DataTable";
+import {
+  DataTable,
+  type Column,
+  type ColumnLayoutPreset,
+} from "../../components/DataTable";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -1893,6 +1897,64 @@ export function MfgSalesOrdersListV2() {
       : ([] satisfies Column<SoRow>[])),
   ];
 
+  /* ── Column layouts ──────────────────────────────────────────────────────
+     Houzs and 2990 run their sales desks off the SAME list page but read it for
+     different things — 2990 works the production/delivery pipeline (balance,
+     stock status, the two dates), Houzs works the sale itself (location,
+     reference). Rather than pick one and make the other company re-tick eleven
+     boxes on every new browser, each company gets its own DEFAULT layout and
+     BOTH are offered in the Columns panel, so anyone can take the other's view
+     (owner 2026-08-01). `alwaysVisible` Doc No. is implicit and never listed.
+
+     SEEDS, not the final word: once an admin saves a default from the Columns
+     panel it is stored per company (table_layouts) and takes the matching entry
+     here out of play — moving a column for everyone in 2990 stopped being a
+     deploy. Either way it is a baseline that applies only while a user has no
+     column prefs of their own, so nobody's arrangement is touched. */
+  const layoutPresets = useMemo<ColumnLayoutPreset[]>(() => {
+    const is2990 = branding.companyCode === "2990";
+    return [
+      {
+        id: "so-2990",
+        label: "2990 Layout",
+        hint: "Production & delivery",
+        companyCode: "2990",
+        isDefault: is2990,
+        columns: [
+          "so_date",
+          "debtor_name",
+          "salesperson",
+          "branding",
+          "amount",
+          "balance",
+          "status",
+          "stock_status",
+          "po_doc_no",
+          "processing_date",
+          "customer_delivery_date",
+        ],
+      },
+      {
+        id: "so-houzs",
+        label: "Houzs Layout",
+        hint: "Sales desk",
+        companyCode: "HOUZS",
+        isDefault: !is2990,
+        columns: [
+          "so_date",
+          "debtor_name",
+          "salesperson",
+          "sales_location",
+          "reference",
+          "branding",
+          "status",
+          "amount",
+          "po_doc_no",
+        ],
+      },
+    ];
+  }, [branding.companyCode]);
+
   /* One pill per vocabulary status, each carrying its FULL-set count (see
      SO_STATUS_TABS) via FilterPills' count badge — these are the SERVER's
      statusCounts, never a count of the loaded page. "Other" (legacy/unknown
@@ -2107,6 +2169,7 @@ export function MfgSalesOrdersListV2() {
           )}
           <DataTable<SoRow>
             tableId="sales-orders-v2"
+            layoutPresets={layoutPresets}
             rows={rows}
             loading={listLoading}
             error={error ? (error as Error).message ?? "Failed to load" : null}
