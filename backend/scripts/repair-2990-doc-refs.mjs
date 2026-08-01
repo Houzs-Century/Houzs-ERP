@@ -1071,6 +1071,12 @@ async function applyDedupe(idsPlan) {
   return res;
 }
 
+// ── A5 — PART=grn-gap: insert the missing IN movement a posted GRN is short ──
+// (Constant restored 2026-08-01: PR #1490's refactor dropped this definition
+// while three usages below survived, so part=grn-gap would die with a
+// ReferenceError on its first movement-carrying GRN. The doc-relabel
+// repair-seeded classification reads the same marker string.)
+const GRN_GAP_MARKER = "repair:grn-inbound-gap";
 
 async function planGrnGap() {
   log("");

@@ -6,6 +6,8 @@ import {
   planFifoAttribution,
   classifySoLineWarehouse,
   byDateAscNullsLast,
+  normalizeVariantKeyQuotes,
+  isRepairSeeded,
 } from "../scripts/lib/doc-evidence-core.mjs";
 import { variantKeyMirror } from "../scripts/lib/ledger-repair-core.mjs";
 import { computeVariantKey } from "../src/scm/shared/variant-key";
@@ -428,5 +430,112 @@ describe("byDateAscNullsLast — the shared computeMrp date order", () => {
   test("dates ascend, null sorts last, equal is stable", () => {
     expect(["2026-02-01", null, "2026-01-01"].sort(byDateAscNullsLast)).toEqual(["2026-01-01", "2026-02-01", null]);
     expect(byDateAscNullsLast("a", "a")).toBe(0);
+  });
+});
+
+describe("normalizeVariantKeyQuotes — the quote-doubling equivalence (live run 2026-08-01)", () => {
+  test('THE WOUND: `legheight=1""` collapses to the document\'s `legheight=1"`', () => {
+    expect(normalizeVariantKeyQuotes('fabriccode=ez-008|seatheight=30|legheight=1""'))
+      .toBe('fabriccode=ez-008|seatheight=30|legheight=1"');
+  });
+
+  test("any run of marks collapses to one; trailing whitespace drops; clean keys pass through", () => {
+    expect(normalizeVariantKeyQuotes('legheight=1"""')).toBe('legheight=1"');
+    expect(normalizeVariantKeyQuotes('legheight=1"  ')).toBe('legheight=1"');
+    expect(normalizeVariantKeyQuotes('legheight=1"')).toBe('legheight=1"');
+    expect(normalizeVariantKeyQuotes("")).toBe("");
+    expect(normalizeVariantKeyQuotes(null)).toBe("");
+  });
+
+  test('NO false merge: `1"` and `2"` stay different keys', () => {
+    expect(normalizeVariantKeyQuotes('legheight=1"')).not.toBe(normalizeVariantKeyQuotes('legheight=2"'));
+    expect(normalizeVariantKeyQuotes('legheight=1""')).not.toBe(normalizeVariantKeyQuotes('legheight=2"'));
+  });
+
+  test("idempotent: normalizing a normalized key is a no-op", () => {
+    const once = normalizeVariantKeyQuotes('legheight=1""');
+    expect(normalizeVariantKeyQuotes(once)).toBe(once);
+  });
+});
+
+describe("planDocKeyAlignment under quote-doubling — normalized match relabels to the DOCUMENT's canonical key", () => {
+  const CANON = 'fabriccode=ez-008|seatheight=30|legheight=1"';
+  const DOUBLED = 'fabriccode=ez-008|seatheight=30|legheight=1""';
+
+  test("THE OMMBUC CASE: a ledger row under the doubled key relabels to the document's canonical key, flagged + cited key-normalized", () => {
+    const out = planDocKeyAlignment({
+      rows: [{ id: "m-8e9897ba", ledgerKey: DOUBLED }],
+      lines: [{ ref: "DO line 1", key: CANON, conflict: false, cite: "DO 2990-DO-2607-016 line 1" }],
+    });
+    expect(out[0].verdict).toBe("relabel");
+    expect(out[0].newKey).toBe(CANON);
+    expect(out[0].normalized).toBe(true);
+    expect(out[0].citation?.cite).toContain("key-normalized");
+    expect(out[0].citation?.cite).toContain(DOUBLED);
+    expect(out[0].citation?.cite).toContain(CANON);
+  });
+
+  test("the document itself carrying the doubling still proves the CANONICAL key (resolveDocLineKey normalizes)", () => {
+    const v = resolveDocLineKey({ itemGroup: "sofa", variants: { fabricColor: "EZ-008", seatHeight: "30", legHeight: '1""' } });
+    expect(v.key).toBe(CANON);
+  });
+
+  test('doubled DO line vs clean SO line corroborate (same key after normalization), never doc-conflict', () => {
+    const v = resolveDocLineKey({
+      itemGroup: "sofa",
+      variants: { fabricColor: "EZ-008", seatHeight: "30", legHeight: '1""' },
+      corroborating: { itemGroup: "sofa", variants: { fabricColor: "EZ-008", seatHeight: "30", legHeight: '1"' } },
+    });
+    expect(v.verdict).toBe("corroborated");
+    expect(v.key).toBe(CANON);
+  });
+
+  test('a genuinely different key (`2"`) is NOT rescued by normalization — the unclaimed-line rule still decides', () => {
+    const out = planDocKeyAlignment({
+      rows: [{ id: "m1", ledgerKey: 'legheight=2"' }],
+      lines: [
+        { ref: "line 1", key: 'legheight=1"', conflict: false },
+        { ref: "line 2", key: 'legheight=3"', conflict: false },
+      ],
+    });
+    expect(out[0].verdict).toBe("ambiguous-doc-keys");
+  });
+
+  test("claiming runs in normalized space: the doubled row claims its line, so a sibling cannot take it via the unclaimed path", () => {
+    const out = planDocKeyAlignment({
+      rows: [
+        { id: "m-doubled", ledgerKey: DOUBLED },
+        { id: "m-stranger", ledgerKey: "import-damage" },
+      ],
+      lines: [{ ref: "line 1", key: CANON, conflict: false }],
+    });
+    expect(out.find((r) => r.id === "m-doubled")?.verdict).toBe("relabel");
+    expect(out.find((r) => r.id === "m-doubled")?.newKey).toBe(CANON);
+    // The canonical line is claimed (normalized) by m-doubled, so m-stranger
+    // cannot relabel onto it — it is extra against the paperwork.
+    expect(out.find((r) => r.id === "m-stranger")?.verdict).toBe("extra-vs-doc");
+  });
+
+  test("an exact match still reads consistent — normalization never demotes it", () => {
+    const out = planDocKeyAlignment({
+      rows: [{ id: "m1", ledgerKey: CANON }],
+      lines: [{ ref: "line 1", key: CANON, conflict: false }],
+    });
+    expect(out[0].verdict).toBe("consistent");
+  });
+});
+
+describe("isRepairSeeded — repair-created rows are expected, not stocktake unknowns", () => {
+  test("a basis-cost seeded lot (marker on the LOT's own notes) classifies repair-seeded", () => {
+    expect(isRepairSeeded({ lotNotes: "repair:uncosted-out-basis: reference-cost lot for 2990-DO-2607-009" })).toBe(true);
+  });
+
+  test("a grn-gap lot (marker on its source MOVEMENT's notes) classifies repair-seeded", () => {
+    expect(isRepairSeeded({ lotNotes: null, movementNotes: "repair:grn-inbound-gap: 2990-GRN-2606-001 accepted 1 more" })).toBe(true);
+  });
+
+  test("ordinary notes (or none) do not", () => {
+    expect(isRepairSeeded({ lotNotes: "received via GRN", movementNotes: null })).toBe(false);
+    expect(isRepairSeeded({})).toBe(false);
   });
 });

@@ -107,3 +107,68 @@ export function fillEmptyAllowedOptions<T extends Record<string, unknown>>(
   }
   return next as T;
 }
+
+/* ── Inch-mark hygiene on config SAVE (the quote-doubling mint, 2026-08-01) ──
+ *
+ * The costing audit's residual family carried variant keys with a DOUBLED inch
+ * mark (`legheight=1""` vs the documents' `1"`). Tracing the mint: NO code
+ * path in this repo (or the 2990 POS) appends a quote — every height editor is
+ * a select fed by these option pools — so the doubling was a HAND-KEYED pool
+ * value, copied verbatim into line variants and from there into ledger keys,
+ * splitting one physical bucket in two. This save-side hygiene closes the
+ * only in-repo door the class can walk through: option values in the
+ * inch-bearing pools collapse any run of double-quote marks to one and drop
+ * trailing whitespace, exactly the normalizeVariantKeyQuotes equivalence the
+ * doc-relabel repair uses. Applied on WRITE only — stored history is never
+ * rewritten, and computeVariantKey stays untouched (re-keying history is the
+ * one thing this fix must never do). */
+
+const INCH_POOLS = [
+  'gaps',
+  'legHeights',
+  'sofaLegHeights',
+  'divanHeights',
+  'totalHeights',
+  'sofaSizes',
+] as const;
+
+export const normalizeInchValue = (v: string): string =>
+  v.replace(/"{2,}/g, '"').replace(/\s+$/, '');
+
+/** Normalize the inch-bearing pools of one maintenance config object. Pure:
+ *  returns the SAME reference when nothing changes (so an untouched save stays
+ *  byte-identical), a shallow-copied config otherwise. Entries keep their
+ *  shape (plain string stays a string; {value,...} keeps its flags). Non-pool
+ *  values (notes, labels, prices) are deliberately not walked. */
+export function normalizeConfigInchPools<T>(config: T): T {
+  if (config == null || typeof config !== 'object' || Array.isArray(config)) return config;
+  const obj = config as Record<string, unknown>;
+  let changed = false;
+  const next: Record<string, unknown> = { ...obj };
+  for (const pool of INCH_POOLS) {
+    const list = obj[pool];
+    if (!Array.isArray(list)) continue;
+    let listChanged = false;
+    const mapped = list.map((e) => {
+      if (typeof e === 'string') {
+        const n = normalizeInchValue(e);
+        if (n !== e) listChanged = true;
+        return n;
+      }
+      if (e && typeof e === 'object' && typeof (e as { value?: unknown }).value === 'string') {
+        const val = (e as { value: string }).value;
+        const n = normalizeInchValue(val);
+        if (n !== val) {
+          listChanged = true;
+          return { ...(e as Record<string, unknown>), value: n };
+        }
+      }
+      return e;
+    });
+    if (listChanged) {
+      next[pool] = mapped;
+      changed = true;
+    }
+  }
+  return changed ? (next as T) : config;
+}

@@ -66,6 +66,13 @@ name: Backfill FIFO ledger divergence (repair)
 #               THEMSELVES disagree, or shipment no family receipt covers,
 #               land on the printed STOCKTAKE list. Family conservation
 #               verified in-transaction. Run BEFORE the follow-up retro-cost.
+#               2026-08-01 live-run corrections: keys match under the
+#               QUOTE-DOUBLING equivalence (`1""` == `1"`; relabels land on
+#               the document's canonical key, cited `key-normalized`, and a
+#               split bucket converges wholesale), document numbers resolve
+#               with the company-prefix fallback, and `repair:`-marked rows
+#               (basis-cost seeds / grn-gap inserts) classify `repair-seeded`
+#               — expected, reported apart from the stocktake list.
 on:
   workflow_dispatch:
     inputs:
