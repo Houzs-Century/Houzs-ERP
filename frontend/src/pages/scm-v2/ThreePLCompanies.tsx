@@ -40,7 +40,7 @@ const BLANK = {
 };
 type Particulars = typeof BLANK;
 
-export const ThreePLCompanies = () => {
+export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const companies = useThreePLCompanies();
   const createCo = useCreateThreePLCompany();
   const notify = useNotify();
@@ -76,11 +76,13 @@ export const ThreePLCompanies = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        eyebrow="Delivery"
-        title="3PL Companies"
-        description="Register each outsourced carrier with its company particulars and its fleet. A carrier's lorries, drivers and helpers join the Fleet module automatically, marked Outsource — and its rate card is set per company, on Rate Cards."
-      />
+      {!embedded && (
+        <PageHeader
+          eyebrow="Delivery"
+          title="3PL Companies"
+          description="Register each outsourced carrier with its company particulars and its fleet. A carrier's lorries, drivers and helpers join the Fleet module automatically, marked Outsource — and its rate card is set per company, on Rate Cards."
+        />
+      )}
 
       {/* Register a carrier — particulars only; the fleet goes in after it exists. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end', padding: '14px 16px', borderRadius: 10, background: 'var(--bg-subtle, rgba(0,0,0,0.03))' }}>

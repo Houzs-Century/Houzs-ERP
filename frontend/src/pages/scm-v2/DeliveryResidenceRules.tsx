@@ -48,7 +48,7 @@ type RowEdit = Partial<{
   notes: string;
 }>;
 
-export const DeliveryResidenceRules = () => {
+export const DeliveryResidenceRules = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const [creating, setCreating] = useState(false);
   const rules = useDeliveryResidenceRules();
   const update = useUpdateDeliveryResidenceRule();
@@ -304,17 +304,19 @@ export const DeliveryResidenceRules = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        eyebrow="Delivery"
-        title="Residence Rules"
-        description="Per residence type, how long a delivery takes (service duration, in hours) and any access rules — no-delivery time windows, service-lift booking, gated-community registration. The scheduler will use these; set the values to match your operation."
-        actions={
-          <Button variant="primary" size="md" onClick={() => setCreating(true)}>
-            <Plus {...ICON} />
-            <span>New Type</span>
-          </Button>
-        }
-      />
+      {!embedded && (
+        <PageHeader
+          eyebrow="Delivery"
+          title="Residence Rules"
+          description="Per residence type, how long a delivery takes (service duration, in hours) and any access rules — no-delivery time windows, service-lift booking, gated-community registration. The scheduler will use these; set the values to match your operation."
+          actions={
+            <Button variant="primary" size="md" onClick={() => setCreating(true)}>
+              <Plus {...ICON} />
+              <span>New Type</span>
+            </Button>
+          }
+        />
+      )}
 
       <div className={styles.headerRow}>
         <p className={styles.eyebrow}>{rules.data?.length ?? 0} residence types</p>
