@@ -212,12 +212,24 @@ export async function dispatchAssistantTool(
     const raw = normalizeSearchQuery(input);
     if (!raw) return { query: "", count: 0, hits: [], note: "empty query" };
     let hits: unknown[];
+    let degraded: string[];
     try {
-      hits = await runGlobalSearch(ctx.companyCtx, ctx.env, raw);
+      ({ hits, degraded } = await runGlobalSearch(ctx.companyCtx, ctx.env, raw));
     } catch {
       return { query: raw, count: 0, hits: [], note: "search is unavailable right now" };
     }
-    return shapeSearchResult(ctx, raw, hits);
+    const shaped = shapeSearchResult(ctx, raw, hits);
+    // A source that could not be READ must never be reported as a source with
+    // nothing in it — otherwise the assistant tells the operator their document
+    // does not exist. Same rule the palettes follow.
+    return degraded.length
+      ? {
+          ...shaped,
+          note:
+            `could not search: ${degraded.join(", ")} — these results are incomplete, ` +
+            `do not conclude a record is missing from them`,
+        }
+      : shaped;
   }
 
   if (name === "estimate_ready_date") {
