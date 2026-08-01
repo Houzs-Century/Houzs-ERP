@@ -86,6 +86,11 @@ All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 | GET | `/:id` | `:693` | Header + items + `has_children`. |
 | GET | `/:id/linked` | `:859` | Downstream GRNs / PIs / PRs (three parallel reads). |
 | GET | `/:id/revisions` | `:896` | `po_revisions` snapshots for the Revisions tab. |
+| GET | `/so-line-candidates?code=` | (static, pre-`/:id`) | SO lines carrying this item code, INCLUDING picked/delivered ones — the allocation editor's picker (historical consolidated POs are the point; the shortage view hides exactly those). Excludes cancelled lines + cancelled/draft SOs. |
+| GET | `/:id/items/:itemId/allocations` | | The line's allocations + `lineQty` + `poNumber` (mig 0235). |
+| POST | `/:id/items/:itemId/allocations` | | Add one slice `{ qty, soItemId\|null }` (null = STOCK). seq auto-assigned dense. |
+| PATCH | `/:id/items/:itemId/allocations/:allocationId` | | Edit a slice (`qty?`, `soItemId?` — explicit null → STOCK; absent keeps). |
+| DELETE | `/:id/items/:itemId/allocations/:allocationId` | | Remove a slice + resequence the survivors dense 1..n. |
 | POST | `/` | `:911` | Create (`asDraft: true` → DRAFT, else SUBMITTED). SO-sourced lines (carrying `soItemId`, e.g. the desktop New-PO-from-SO flow) are capped at the SO line's remaining (`qty - po_qty_picked`): over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (pre-write guard, marks idempotency no-write). Manual lines (no `soItemId`) unaffected. |
 | POST | `/from-sos` | `:2139` | Batch convert whole SOs; groups by supplier, can emit N POs. |
 | POST | `/:id/convert-from-so` | `:2694` | Append SO lines onto an existing PO. |
@@ -120,13 +125,15 @@ UUID**; use `houzsUser.id` for the public bigint.
      `PO_STATUS_BUCKETS` (`:292-298`), `q` ilike over `po_number` + `notes` only
      (`:448` — supplier name is an embedded resource and cannot be `ilike`d),
      `from`/`to` on `po_date`, `.range(...)`.
-   - `statusCounts` = six `head:true count:'exact'` queries in one `Promise.all`
+   - `statusCounts` = seven `head:true count:'exact'` queries in one `Promise.all`
      (`:467-474`), over the same company + supplier filter but **without** status,
-     search or paging.
+     search or paging. (Seven, not six: the `outstanding` roll-up is counted
+     separately rather than derived, so the pill and the filter share one source.)
 3. **Enrichment — exactly ONE extra query** (`:496-512`): all non-cancelled GRNs
-   for the listed PO ids, carrying `grn_number`. It powers both `has_children`
-   (the downstream lock) and the "Transfer To (GRN)" column, so the two are one
-   round trip.
+   for the listed PO ids, carrying `id` + `grn_number`. It powers both
+   `has_children` (the downstream lock) and the "GRN No" column, so the two are
+   one round trip. `transfer_to_grns` is `{ id, grnNumber }[]` — the id is what
+   lets the column link to `/scm/grns/:id`.
 4. **Assemble** (`:513-517`) — `has_children` + `transfer_to_grns` +
    `assigned_sos` / `assigned_so_linked` (`resolvePoSoCoverageForPos`) +
    **`delivered_dos`** (`resolveDeliveredDosForPos`) stamped per row; response is
@@ -199,6 +206,59 @@ it, but a hand-typed line never could.
   (`MobileModuleList` / `MobileModuleDetail`) is list + header only and has no
   per-line editor at all.
 
+### Splitting one line across several SOs — allocations (mig 0235)
+
+`so_item_id` is single-valued, and a CONSOLIDATED purchase breaks it: one
+supplier line covering several customers plus stock (live case
+`2990-PO-2606-023` — ONE qty-5 MAKOTO line = SO-036 x1 + SO-029 x1 + 3 stock)
+has NO correct single value, which is exactly why the backfill below refused
+those lines. The owner's chosen fix (2026-08-01) is the sub-table
+`scm.purchase_order_item_allocations`: 1-based sub-numbered slices per line
+(`PO-2606-001-01`, `-02`, ...), each `(qty, so_item_id | NULL)` — NULL = stock.
+
+The rules, all enforced in the write path AND by DB triggers (the app check is
+check-then-insert over PostgREST with no transaction, so the triggers are the
+concurrency backstop — `fn_po_item_alloc_guard` locks the parent line FOR
+UPDATE; `fn_po_item_qty_guard` catches every OTHER qty writer, amendment
+revisions included):
+
+- `qty` is a positive integer and **SUM(slices) <= line qty** — 409
+  `allocation_exceeds_line_qty` carrying `lineQty/allocatedQty/remainingQty`.
+  The line PATCH refuses a qty SHRINK below the allocated sum
+  (`line_qty_below_allocated`).
+- an SO target passes the SAME `soLinkTargetRefusal` gate as the line-level
+  bind (company-owned, not cancelled, `item_code` = the line's
+  `material_code`).
+- `seq` is auto-assigned dense 1..n; DELETE resequences survivors (ascending,
+  so the UNIQUE `(item, seq)` can never collide mid-move).
+
+**Semantics vs the single link.** A line WITHOUT allocations keeps the
+`so_item_id` 1:1 fast path — nothing existing changes. A line WITH allocations:
+they are the AUTHORITATIVE finer-grained answer; `/po-so-coverage` layer (b)
+reads the allocations' so_item_ids INSTEAD of that line's `so_item_id` (never
+both — no double count; an all-stock split therefore overrules a stale single
+link entirely). See `docs/modules/document-traceability.md` §2.4.
+
+**What allocations are NOT.** Attribution metadata only: no stock, no money,
+no quota — `recomputeSoPicked` still counts ONLY `purchase_order_items
+.so_item_id`, MRP layer (c) and delivered layer (a) are untouched. That is why
+allocation writes are deliberately NOT behind `poHasDownstream` and stay
+allowed on RECEIVED POs (the 8 contended historical lines the owner wants to
+split by hand are all received); only CANCELLED refuses. Known gap, accepted:
+`so-line-relink.ts` (TBC swap) does not carry this table, so a swap on an
+allocated line degrades its slices to STOCK via the FK's ON DELETE SET NULL —
+the UI shows the degradation honestly.
+
+**UI.** Desktop: the read-only `PurchaseOrderDetailV2` line table gains an
+**Allocations** column — chips `PO-xxxx-yy-01 -> 2990-SO-xxxx (qty 2)` /
+`... -> STOCK (qty 3)` (solid = customer, dashed = stock) + a Split button per
+line opening `PoLineAllocationsModal` (immediate-mode editor: qty + SO picker
+per slice, picker fed by `/so-line-candidates`; refusals shown verbatim). It
+lives on the V2 READ page, not the `?edit=1` editor, because the editor locks
+on received POs. Mobile: `MobileModuleDetail`'s `LineItem` renders the same
+chips display-only (documented precedent — the phone PO surface has no
+per-line editor). Writes ride the router's `scm.procurement.po` edit gate.
+
 ### Backfilling `so_item_id` on historical lines — the evidence tiers
 
 `backend/scripts/backfill-po-so-item-links.mjs` (workflow **Backfill PO -> SO
@@ -258,6 +318,7 @@ those are what the route actually selects.
 |-------|------|
 | `scm.purchase_orders` | PO header. `po_number` (UNIQUE), `supplier_id`, `status`, `po_date`, `expected_at`, `purchase_location_id` (FK → `warehouses.id`), `currency`, `subtotal_centi` / `tax_centi` / `total_centi`, `submitted_at` / `received_at` / `cancelled_at`, `revision`, `supplier_delivery_date_2..4`, `company_id`. |
 | `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `material_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`. |
+| `scm.purchase_order_item_allocations` | mig 0235 — sub-line slices of ONE PO line across customers + stock: `company_id` (NOT NULL), `purchase_order_item_id` FK CASCADE, `seq` (1-based dense, UNIQUE per line), `qty` (>0, SUM <= line qty via triggers), `so_item_id` FK SET NULL (NULL = stock), `created_by`, `created_at`. Attribution only — no stock/money/quota. |
 | `scm.po_revisions` | Full header+items snapshot per revision, keyed `(po_id, revision)`. Written by `snapshotPo` / `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:595`, `:725`). |
 | `scm.mfg_sales_order_items` | Upstream. `po_qty_picked` is written by this module. |
 | `scm.grns` | Downstream. `purchase_order_id` is the lock's join column. |
@@ -271,9 +332,12 @@ comment without checking the filename.
 ### Status vocabulary
 
 `VALID_STATUSES` (`:285`): `DRAFT | SUBMITTED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED`.
-Filter-pill buckets (`:292-298`) are all 1:1 but the KEYS differ from the raw
-status: `draft→DRAFT`, `open→SUBMITTED`, `partial→PARTIALLY_RECEIVED`,
-`received→RECEIVED`, `cancelled→CANCELLED`.
+Filter-pill buckets (`:292-298`): five are 1:1 but the KEYS differ from the raw
+status — `draft→DRAFT`, `open→SUBMITTED`, `partial→PARTIALLY_RECEIVED`,
+`received→RECEIVED`, `cancelled→CANCELLED`. `outstanding→SUBMITTED +
+PARTIALLY_RECEIVED` is the one ROLL-UP (owner 2026-07-31): raised but not
+received in full, the pill twin of the Outstanding stat card. It **overlaps**
+open + partial by design, so the pill counts no longer sum to `all`.
 
 `PARTIALLY_RECEIVED` / `RECEIVED` are **not** set by this module — they are
 derived by `recomputePoReceived` in `grns.ts:672-733` from live GRN lines
@@ -357,6 +421,7 @@ A rule change to the PO touches both surfaces. The pairs:
 | Detail fields | `pages/scm-v2/PurchaseOrderDetailV2.tsx` (read) + `PurchaseOrderDetail.tsx` (edit) | `mobile/MobileModuleDetail.tsx` config `:354` |
 | Status actions (Confirm / Cancel / Reopen / Delete) | `PurchaseOrderDetailV2.tsx` action bar | `mobile/MobileModuleDetail.tsx:515-532` |
 | SO→PO conversion | `pages/scm-v2/PurchaseOrderFromSo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "po"`) |
+| Line allocations (mig 0235) | `PurchaseOrderDetailV2.tsx` Allocations column + `components/scm-v2/PoLineAllocationsModal.tsx` (editor) | `mobile/MobileModuleDetail.tsx` `LineItem` chips — DISPLAY-ONLY (the phone PO surface has no per-line editor, same precedent as the SO-link picker) |
 | Cache invalidation after a write | the mutation hooks in `vendor/scm/lib/suppliers-queries.ts` | `mobile/sharedInvalidate.ts:71` |
 
 Shared, so a change lands on both at once: the backend route, and the
@@ -380,8 +445,8 @@ Optimized:
 Watch as data grows:
 - The **legacy unpaginated path** still `.limit(500)` (`:413`) and is still used
   by `GrnNew.tsx:156`. Beyond 500 POs that picker silently truncates.
-- `statusCounts` costs six `count:'exact'` queries per paginated request
-  (`:467-474`). They are `head:true` so no rows travel, but they are six index
+- `statusCounts` costs seven `count:'exact'` queries per paginated request
+  (`:467-474`). They are `head:true` so no rows travel, but they are seven index
   scans on every page turn.
 - Free-text search cannot reach supplier name/code (`:444-449`) because those are
   embedded resources. A user searching by supplier gets nothing.

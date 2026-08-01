@@ -1136,7 +1136,7 @@ export function SalesInvoicesListV2() {
                   e.stopPropagation();
                   navigate(`/scm/purchase-orders?q=${encodeURIComponent(po)}`);
                 }}
-                className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
+                className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
               >
                 {po}
               </button>

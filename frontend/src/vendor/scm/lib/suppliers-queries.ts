@@ -182,6 +182,16 @@ export type PoHeaderRow = {
       shipped this PO's goods (batch_no = the PO number) + qty per DO, resolved
       server-side. EVERY DO renders (no collapse); empty when nothing shipped. */
   delivered_dos?: Array<{ doNo: string; qty: number }>;
+  /** "GRN No" column — the non-cancelled Goods Received doc(s) this PO was
+      received into, deduped and ordered by number. Carries the GRN's UUID
+      because the detail route is /scm/grns/:id, not /:grnNumber. Empty on a PO
+      nothing has been received against yet.
+
+      A bare `string` is the PRE-2026-07-31 wire shape (doc number only). Pages
+      and the Worker deploy independently, so a freshly-shipped bundle can talk
+      to a worker that still sends it — the column renders those as plain,
+      un-linkable chips instead of blank ones. */
+  transfer_to_grns?: Array<{ id: string; grnNumber: string } | string>;
 };
 
 export type PoItemSummary = {
@@ -253,6 +263,24 @@ export type PoItemRow = {
     warehousePoId: string | null;
     warehouseSoId: string | null;
   } | null;
+  /** Mig 0235 — the line's sub-numbered allocations (consolidated-PO split):
+      which customer (SO line) or STOCK each slice of the line serves. Stamped
+      by GET /:id, seq-ordered; empty array = an unsplit line (the single
+      so_item_id above stays the 1:1 fast path). When any exist they are the
+      authoritative finer-grained answer and layer (b) of the Assigned SO
+      reads THEM instead of so_item_id. */
+  allocations?: PoLineAllocation[];
+};
+
+/** One slice of a PO line (mig 0235): `qty` units for `so_doc_no`'s line, or
+    for STOCK when so_item_id is null. `seq` is 1-based dense; the printable
+    sub-number is `${po_number}-${String(seq).padStart(2, "0")}`. */
+export type PoLineAllocation = {
+  id: string;
+  seq: number;
+  qty: number;
+  so_item_id: string | null;
+  so_doc_no: string | null;
 };
 
 export type PoLineReceipt = { grnNumber: string; qty: number; status: string };
@@ -535,11 +563,24 @@ export function usePurchaseOrders(opts?: { status?: PoStatus; supplierId?: strin
 // useMfgSalesOrdersPaged). Sending `page` switches /mfg-purchase-orders into
 // its paginated contract ({ purchaseOrders, total, page, pageSize,
 // statusCounts }); the legacy usePurchaseOrders above (no page) still returns
-// the historical unpaginated array. `status` is the RESOLVED
-// purchase_orders.status DB value (UPPERCASE) — the caller maps its filter-pill
-// bucket (draft/open/partial/received/cancelled) to a single DB status first;
-// every PO bucket maps 1:1 so none needs dropping. Unlike the legacy hook this
+// the historical unpaginated array. `status` is the filter-pill BUCKET NAME
+// (draft/outstanding/open/partial/received/cancelled) — the backend resolves it
+// to the raw purchase_orders.status values it covers, so `outstanding` spans
+// SUBMITTED + PARTIALLY_RECEIVED. A raw DB status still works. Unlike the legacy hook this
 // returns the FULL object so the page can read .purchaseOrders + .statusCounts.
+//
+// `outstanding` is OPTIONAL on the wire: a worker deployed before the roll-up
+// bucket landed omits it, and Pages/Worker deploy independently. Callers derive
+// open + partial when it's absent (exact, not a guess) — see PurchaseOrdersListV2.
+export type PoStatusCounts = {
+  all: number;
+  draft: number;
+  outstanding?: number;
+  open: number;
+  partial: number;
+  received: number;
+  cancelled: number;
+};
 export function usePurchaseOrdersPaged(params: { page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string }) {
   const { page, pageSize, status, supplierId, q, sort } = params;
   const usp = new URLSearchParams();
@@ -551,7 +592,7 @@ export function usePurchaseOrdersPaged(params: { page: number; pageSize: number;
   if (sort) usp.set('sort', sort);
   return useQuery({
     queryKey: ['mfg-purchase-orders-paged', page, pageSize, status ?? '', supplierId ?? '', q ?? '', sort ?? ''],
-    queryFn: ({ signal }) => authedFetch<{ purchaseOrders: PoHeaderRow[]; total: number; page: number; pageSize: number; statusCounts: { all: number; draft: number; open: number; partial: number; received: number; cancelled: number } }>(`/mfg-purchase-orders?${usp.toString()}`, { signal }),
+    queryFn: ({ signal }) => authedFetch<{ purchaseOrders: PoHeaderRow[]; total: number; page: number; pageSize: number; statusCounts: PoStatusCounts }>(`/mfg-purchase-orders?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,
     retry: retryUnlessClientError,
@@ -1004,6 +1045,78 @@ export function useDeletePurchaseOrderItem() {
          'outstanding-so-items']. */
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
     },
+  });
+}
+
+/* ── Per-line SO allocations (mig 0235) — the consolidated-PO split ─────────
+   One PO line serving several customers plus stock, as sub-numbered slices.
+   All three writes invalidate the detail (chips), the coverage read (the
+   Assigned SO cell now lists each allocated SO) and the PO list (its collapsed
+   Assigned SO column reads the same coverage rollup). Deliberately NOT
+   invalidating the From-SO picker: allocations never move po_qty_picked. */
+
+/** SO-line candidates for the allocation editor: every company SO line carrying
+    this item code — including picked/delivered ones (historical consolidated
+    POs are the point). Excludes cancelled lines + cancelled/draft SOs. */
+export type SoLineCandidate = {
+  soItemId: string;
+  soDocNo: string;
+  debtorName: string | null;
+  soStatus: string | null;
+  qty: number;
+  deliveryDate: string | null;
+};
+export function useSoLineCandidates(code: string | null) {
+  return useQuery({
+    queryKey: ['po-so-line-candidates', code ?? ''],
+    queryFn: () => authedFetch<{ items: SoLineCandidate[] }>(
+      `/mfg-purchase-orders/so-line-candidates?code=${encodeURIComponent(code ?? '')}`,
+    ).then((r) => r.items),
+    enabled: Boolean(code),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+  });
+}
+
+const invalidateAllocationReads = (qc: ReturnType<typeof useQueryClient>, poId: string) => {
+  qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail', poId] });
+  qc.invalidateQueries({ queryKey: ['po-so-coverage'] });
+  qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
+};
+
+export function useAddPoLineAllocation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ poId, itemId, ...body }: { poId: string; itemId: string; qty: number; soItemId: string | null }) =>
+      authedFetch<{ allocation: PoLineAllocation; allocations: PoLineAllocation[] }>(
+        `/mfg-purchase-orders/${poId}/items/${itemId}/allocations`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: (_, vars) => invalidateAllocationReads(qc, vars.poId),
+  });
+}
+
+export function useUpdatePoLineAllocation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ poId, itemId, allocationId, ...body }: { poId: string; itemId: string; allocationId: string; qty?: number; soItemId?: string | null }) =>
+      authedFetch<{ ok: true; allocations: PoLineAllocation[] }>(
+        `/mfg-purchase-orders/${poId}/items/${itemId}/allocations/${allocationId}`,
+        { method: 'PATCH', body: JSON.stringify(body) },
+      ),
+    onSuccess: (_, vars) => invalidateAllocationReads(qc, vars.poId),
+  });
+}
+
+export function useDeletePoLineAllocation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ poId, itemId, allocationId }: { poId: string; itemId: string; allocationId: string }) =>
+      authedFetch<{ ok: true; allocations: PoLineAllocation[] }>(
+        `/mfg-purchase-orders/${poId}/items/${itemId}/allocations/${allocationId}`,
+        { method: 'DELETE' },
+      ),
+    onSuccess: (_, vars) => invalidateAllocationReads(qc, vars.poId),
   });
 }
 

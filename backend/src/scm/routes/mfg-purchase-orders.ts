@@ -47,6 +47,13 @@ import {
 } from '../lib/lead-time';
 import { groupKeyFor } from '../lib/po-grouping';
 import { findOverConvertOffender } from '../lib/po-over-convert';
+import {
+  planAllocationCreate,
+  planAllocationQtyUpdate,
+  resequenceAfterDelete,
+  allocationSubNumber,
+  type AllocationRow,
+} from '../lib/po-allocations';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { sendEmail, isChannelEnabled } from '../../services/email';
 import { getBrandingForCompany } from '../../services/branding';
@@ -289,12 +296,19 @@ async function poHasOutstandingDropshipOut(
 const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED']);
 /* Filter-pill bucket → the raw purchase_orders.status values it covers. Single
    source of truth for BOTH the status-count queries and the list `status`
-   filter. All five buckets are 1:1 today, but their KEYS differ from the raw
-   status (open→SUBMITTED, partial→PARTIALLY_RECEIVED, received→RECEIVED). The FE
-   sends the BUCKET NAME as `status`; a raw DB status still works
-   (backward-compatible fallback via VALID_STATUSES). */
+   filter. Five buckets are 1:1, but their KEYS differ from the raw status
+   (open→SUBMITTED, partial→PARTIALLY_RECEIVED, received→RECEIVED). The FE sends
+   the BUCKET NAME as `status`; a raw DB status still works (backward-compatible
+   fallback via VALID_STATUSES).
+
+   `outstanding` (owner 2026-07-31) is the one ROLL-UP bucket: raised to a
+   supplier but not yet received in full — i.e. exactly the money the
+   Outstanding stat card sums. It deliberately OVERLAPS open + partial rather
+   than replacing them, so the counts across the pills no longer add up to
+   `all`; that's the point of a roll-up and why it sits right after All. */
 const PO_STATUS_BUCKETS: Record<string, string[]> = {
   draft: ['DRAFT'],
+  outstanding: ['SUBMITTED', 'PARTIALLY_RECEIVED'],
   open: ['SUBMITTED'],
   partial: ['PARTIALLY_RECEIVED'],
   received: ['RECEIVED'],
@@ -407,7 +421,7 @@ mfgPurchaseOrders.get('/', async (c) => {
   let total = 0;
   let page = 0;
   let pageSize = 50;
-  let statusCounts: { all: number; draft: number; open: number; partial: number; received: number; cancelled: number } | undefined;
+  let statusCounts: { all: number; draft: number; outstanding: number; open: number; partial: number; received: number; cancelled: number } | undefined;
 
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
@@ -463,18 +477,20 @@ mfgPurchaseOrders.get('/', async (c) => {
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
 
-    /* Status counts mirror the FE filter-pill buckets (draft / open / partial /
-       received / cancelled) over the SAME company + supplier filters but WITHOUT
-       status / search / pagination. */
+    /* Status counts mirror the FE filter-pill buckets (draft / outstanding /
+       open / partial / received / cancelled) over the SAME company + supplier
+       filters but WITHOUT status / search / pagination. `outstanding` overlaps
+       open + partial by design — see PO_STATUS_BUCKETS. */
     const countBase = () => {
       let cq = supabase.from('purchase_orders').select('*', { count: 'exact', head: true });
       if (supplierId) cq = cq.eq('supplier_id', supplierId);
       cq = scopeToCompany(cq, c);
       return cq;
     };
-    const [allC, draftC, openC, partialC, receivedC, cancelledC] = await Promise.all([
+    const [allC, draftC, outstandingC, openC, partialC, receivedC, cancelledC] = await Promise.all([
       countBase(),
       countBase().in('status', PO_STATUS_BUCKETS.draft),
+      countBase().in('status', PO_STATUS_BUCKETS.outstanding),
       countBase().in('status', PO_STATUS_BUCKETS.open),
       countBase().in('status', PO_STATUS_BUCKETS.partial),
       countBase().in('status', PO_STATUS_BUCKETS.received),
@@ -483,6 +499,7 @@ mfgPurchaseOrders.get('/', async (c) => {
     statusCounts = {
       all: allC.count ?? 0,
       draft: draftC.count ?? 0,
+      outstanding: outstandingC.count ?? 0,
       open: openC.count ?? 0,
       partial: partialC.count ?? 0,
       received: receivedC.count ?? 0,
@@ -497,25 +514,30 @@ mfgPurchaseOrders.get('/', async (c) => {
      this to hide Edit / Cancel from POs that are downstream-locked. */
   const rows = (data ?? []) as Array<{ id: string } & Record<string, unknown>>;
   const childIds = new Set<string>();
-  // Owner 2026-07-02 — "Transfer To (GRN)" list column: collect the non-cancelled
-  // GRN doc-numbers each PO was received into, deduped + stable-ordered. Same one
-  // extra query that already powers has_children — just carry grn_number too.
-  const grnNumbersByPo = new Map<string, string[]>();
+  // Owner 2026-07-02 — "GRN No" list column: collect the non-cancelled GRNs each
+  // PO was received into, deduped + stable-ordered. Same one extra query that
+  // already powers has_children — just carry the GRN identity too.
+  //
+  // Owner 2026-07-31 — carries `id` alongside `grnNumber` now: GRN detail routes
+  // by UUID (/scm/grns/:id), so a number alone can't be linked. Shape widened
+  // rather than duplicated into a parallel id array — nothing consumed the
+  // string[] form.
+  const grnsByPo = new Map<string, Array<{ id: string; grnNumber: string }>>();
   if (rows.length > 0) {
     const ids = rows.map((r) => r.id);
     const { data: grnRows } = await supabase
       .from('grns')
-      .select('purchase_order_id, grn_number')
+      .select('id, purchase_order_id, grn_number')
       .in('purchase_order_id', ids)
       .neq('status', 'CANCELLED')
       .order('grn_number', { ascending: true });
-    for (const g of (grnRows ?? []) as Array<{ purchase_order_id: string | null; grn_number: string | null }>) {
+    for (const g of (grnRows ?? []) as Array<{ id: string; purchase_order_id: string | null; grn_number: string | null }>) {
       if (!g.purchase_order_id) continue;
       childIds.add(g.purchase_order_id);
       if (!g.grn_number) continue;
-      const arr = grnNumbersByPo.get(g.purchase_order_id) ?? [];
-      if (!arr.includes(g.grn_number)) arr.push(g.grn_number);
-      grnNumbersByPo.set(g.purchase_order_id, arr);
+      const arr = grnsByPo.get(g.purchase_order_id) ?? [];
+      if (!arr.some((x) => x.grnNumber === g.grn_number)) arr.push({ id: g.id, grnNumber: g.grn_number });
+      grnsByPo.set(g.purchase_order_id, arr);
     }
   }
   /* Collapsed "Assigned SO" column (owner 2026-07-31): resolve each PO's
@@ -534,7 +556,7 @@ mfgPurchaseOrders.get('/', async (c) => {
   const purchaseOrders = rows.map((r) => ({
     ...r,
     has_children: childIds.has(r.id),
-    transfer_to_grns: grnNumbersByPo.get(r.id) ?? [],
+    transfer_to_grns: grnsByPo.get(r.id) ?? [],
     assigned_sos: assignedByPo.get(r.id)?.assignedSos ?? [],
     assigned_so_linked: assignedByPo.get(r.id)?.sourceLinked ?? false,
     delivered_dos: deliveredByPo.get(r.id)?.deliveredDos ?? [],
@@ -674,6 +696,98 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
   return c.json({ items: outstanding });
 });
 
+/* ── SO-line candidates for the allocation editor (mig 0235) ─────────────────
+   The split-a-line editor needs every company SO LINE carrying the PO line's
+   item code — INCLUDING already-picked and already-delivered ones, because the
+   whole point of allocations is attributing CONSOLIDATED (often historical,
+   RECEIVED) purchases; the outstanding-so-items shortage view above hides
+   exactly those. Excludes only cancelled lines and cancelled/draft SOs (a
+   cancelled line has no demand to attribute; a draft order is not real yet).
+   Read-only; the write-side gate is soLinkTargetRefusal on the allocation
+   writes themselves.
+
+   IMPORTANT (route ordering): STATIC path — must stay registered before the
+   `/:id` param route below, same as /outstanding-so-items (2026-05-28 bug). */
+mfgPurchaseOrders.get('/so-line-candidates', async (c) => {
+  const code = (c.req.query('code') ?? '').trim();
+  if (!code) return c.json({ error: 'code_required' }, 400);
+  const supabase = c.get('supabase');
+  const { data, error } = await scopeToCompany(
+    supabase
+      .from('mfg_sales_order_items')
+      .select(`
+        id, doc_no, item_code, qty, po_qty_picked, cancelled,
+        so:mfg_sales_orders!inner ( doc_no, debtor_name, status, customer_delivery_date, amended_delivery_date )
+      `),
+    c,
+  )
+    .eq('item_code', code)
+    .eq('cancelled', false)
+    .order('doc_no', { ascending: false })
+    .limit(300);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  type CandRow = {
+    id: string; doc_no: string; item_code: string; qty: number; po_qty_picked: number;
+    so: { doc_no: string; debtor_name: string | null; status: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null };
+  };
+  const items = ((data ?? []) as unknown as CandRow[])
+    .filter((r) => {
+      const st = (r.so?.status ?? '').toUpperCase();
+      return st !== 'CANCELLED' && st !== 'DRAFT';
+    })
+    .map((r) => ({
+      soItemId: r.id,
+      soDocNo: r.doc_no,
+      debtorName: r.so?.debtor_name ?? null,
+      soStatus: r.so?.status ?? null,
+      qty: r.qty,
+      deliveryDate: r.so?.amended_delivery_date ?? r.so?.customer_delivery_date ?? null,
+    }));
+  return c.json({ items });
+});
+
+/* ── Allocations read helper (mig 0235) ──────────────────────────────────────
+   Batched: allocations for a set of PO line ids, each with its SO doc_no
+   resolved for display (an allocation with so_item_id NULL is a STOCK slice).
+   Best-effort forward-compat: before mig 0235 lands the table read fails —
+   return an empty map so the detail response simply carries no allocations. */
+async function loadAllocationsForItems(
+  sb: any,
+  poItemIds: string[],
+): Promise<Map<string, Array<AllocationRow & { so_doc_no: string | null }>>> {
+  const out = new Map<string, Array<AllocationRow & { so_doc_no: string | null }>>();
+  if (poItemIds.length === 0) return out;
+  try {
+    const { data, error } = await sb
+      .from('purchase_order_item_allocations')
+      .select('id, purchase_order_item_id, seq, qty, so_item_id')
+      .in('purchase_order_item_id', poItemIds)
+      .order('seq', { ascending: true });
+    if (error) return out;
+    const rows = (data ?? []) as Array<AllocationRow & { purchase_order_item_id: string }>;
+    const soItemIds = [...new Set(rows.map((r) => r.so_item_id).filter((x): x is string => !!x))];
+    const soDocById = new Map<string, string>();
+    for (let i = 0; i < soItemIds.length; i += 300) {
+      const chunk = soItemIds.slice(i, i + 300);
+      if (chunk.length === 0) continue;
+      const { data: soLines } = await sb
+        .from('mfg_sales_order_items').select('id, doc_no').in('id', chunk);
+      for (const r of (soLines ?? []) as Array<{ id: string; doc_no: string | null }>) {
+        if (r.doc_no) soDocById.set(r.id, r.doc_no);
+      }
+    }
+    for (const r of rows) {
+      const arr = out.get(r.purchase_order_item_id) ?? [];
+      arr.push({
+        id: r.id, seq: r.seq, qty: r.qty, so_item_id: r.so_item_id,
+        so_doc_no: r.so_item_id ? soDocById.get(r.so_item_id) ?? null : null,
+      });
+      out.set(r.purchase_order_item_id, arr);
+    }
+  } catch { /* table absent pre-0235 — detail simply carries no allocations */ }
+  return out;
+}
+
 /* Per-line goods-receipt breakdown — which GR(s) each PO line was received into
    (one entry per GRN line), carrying the GR number + net qty + status. The PO
    counterpart of soLineDeliveries: lets the PO list show a "Received" column
@@ -787,8 +901,12 @@ mfgPurchaseOrders.get('/:id', async (c) => {
   const soItemIds = [...new Set(
     itemRows.map((it) => it.so_item_id as string | null | undefined).filter(Boolean),
   )] as string[];
-  const [receiptsMap] = await Promise.all([
+  const [receiptsMap, allocationsMap] = await Promise.all([
     poLineReceipts(supabase, itemRows.map((it) => it.id)),
+    /* mig 0235 — per-line allocations (consolidated-PO splits), each slice
+       carrying its SO doc_no (NULL so_item_id = stock). Feeds the detail
+       chips on both surfaces; empty array on an unallocated line. */
+    loadAllocationsForItems(supabase, itemRows.map((it) => it.id)),
     (async () => {
       try {
         if (soItemIds.length > 0) {
@@ -869,6 +987,7 @@ mfgPurchaseOrders.get('/:id', async (c) => {
     return {
       ...it,
       receipts: receiptsMap.get(it.id) ?? [],
+      allocations: allocationsMap.get(it.id) ?? [],
       so_doc_no: soId ? soDocByItem.get(soId) ?? null : null,
       so_drift,
     };
@@ -2673,6 +2792,29 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
   // Audit (ported from 2990 21163bde) — clamp like the create path (see POST /:id/items).
   const lineTotal = Math.max(0, (qty * unit) - discount);
 
+  /* mig 0235 — a qty SHRINK below the line's allocated sum would break
+     SUM(allocations) <= qty. The DB trigger (fn_po_item_qty_guard) is the
+     backstop; this pre-check turns it into a 409 the operator can act on.
+     Best-effort read: pre-0235 the table is absent — skip, nothing to guard. */
+  if (it.qty !== undefined && Number(qty) < Number(prev.qty ?? 0)) {
+    try {
+      const { data: allocRows, error: allocErr } = await sb
+        .from('purchase_order_item_allocations')
+        .select('qty').eq('purchase_order_item_id', itemId);
+      if (!allocErr) {
+        const allocated = ((allocRows ?? []) as Array<{ qty: number }>)
+          .reduce((s, a) => s + Number(a.qty ?? 0), 0);
+        if (allocated > Number(qty)) {
+          return c.json({
+            error: 'line_qty_below_allocated',
+            message: `This line already has ${allocated} allocated across its sub-numbers — shrink or delete the allocations first, then lower the qty.`,
+            allocatedQty: allocated,
+          }, 409);
+        }
+      }
+    } catch { /* table absent pre-0235 — nothing to guard */ }
+  }
+
   const updates: Record<string, unknown> = {
     qty, unit_price_centi: unit, discount_centi: discount, line_total_centi: lineTotal,
   };
@@ -2827,6 +2969,242 @@ mfgPurchaseOrders.delete('/:id/items/:itemId', async (c) => {
   }
 
   return c.body(null, 204);
+});
+
+/* ── Per-line SO allocations (mig 0235) — the consolidated-PO split ──────────
+   One PO line can serve SEVERAL customers plus stock (2990-PO-2606-023's qty-5
+   MAKOTO line = SO-036 x1 + SO-029 x1 + 3 stock); so_item_id is single-valued
+   and has NO correct value for such a line. Allocations split the line into
+   1-based sub-numbered slices (PO-2606-001-01, -02, ...): each slice is a qty
+   plus either an SO line (soItemId) or STOCK (null).
+
+   Semantics: when a line HAS allocations they are the authoritative
+   finer-grained answer — po-so-coverage layer (b) reads them INSTEAD of the
+   line's so_item_id (never both, so never a double count). A line without
+   allocations keeps the 1:1 so_item_id fast path untouched.
+
+   Deliberately NOT behind poHasDownstream: allocations are attribution
+   metadata (no stock, no money, no po_qty_picked — recomputeSoPicked never
+   reads this table), and the contended historical lines the owner wants to
+   split by hand live on RECEIVED POs. CANCELLED POs are refused — there is
+   nothing real to attribute on a voided purchase.
+
+   Validation: qty is a positive integer; SUM(slice qty) per line never
+   exceeds the line qty (friendly 409 here; DB trigger fn_po_item_alloc_guard
+   is the concurrency backstop); an SO target passes the SAME
+   soLinkTargetRefusal gate as the line-level bind (company-owned, not
+   cancelled, item_code matches). seq is auto-assigned dense 1..n; deletes
+   resequence. Writes need `edit` on scm.procurement.po (the router mount's
+   area guard), exactly like every other PO write here. */
+
+/* Shared parent resolution + company scope for the three allocation writes.
+   Returns the line row (id, qty, material_code) + PO meta, or the refusal. */
+async function resolveAllocationParent(
+  sb: any,
+  c: any,
+  poId: string,
+  itemId: string,
+): Promise<
+  | { ok: true; item: { id: string; qty: number; material_code: string }; poNumber: string | null }
+  | { ok: false; body: Record<string, unknown>; status: 404 | 409 }
+> {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return { ok: false, body: co.refusal, status: 409 };
+  const { data: po } = await scopeToCompanyId(
+    sb.from('purchase_orders').select('id, po_number, status').eq('id', poId), co.companyId,
+  ).maybeSingle();
+  const poRow = po as { id: string; po_number: string | null; status: string | null } | null;
+  if (!poRow) return { ok: false, body: NOT_THIS_COMPANY, status: 404 };
+  if ((poRow.status ?? '').toUpperCase() === 'CANCELLED') {
+    return {
+      ok: false,
+      body: { error: 'po_cancelled', message: 'This purchase order is cancelled — there is nothing to allocate.' },
+      status: 409,
+    };
+  }
+  const { data: item } = await sb.from('purchase_order_items')
+    .select('id, qty, material_code, purchase_order_id')
+    .eq('id', itemId)
+    .maybeSingle();
+  const itemRow = item as { id: string; qty: number; material_code: string; purchase_order_id: string } | null;
+  if (!itemRow || itemRow.purchase_order_id !== poId) {
+    return { ok: false, body: { error: 'line_not_found', message: 'That line is not on this purchase order.' }, status: 404 };
+  }
+  return { ok: true, item: { id: itemRow.id, qty: itemRow.qty, material_code: itemRow.material_code }, poNumber: poRow.po_number };
+}
+
+/* The line's current allocations, seq-ordered — the base every write plans on. */
+async function currentAllocations(sb: any, itemId: string): Promise<AllocationRow[]> {
+  const { data } = await sb.from('purchase_order_item_allocations')
+    .select('id, seq, qty, so_item_id')
+    .eq('purchase_order_item_id', itemId)
+    .order('seq', { ascending: true });
+  return (data ?? []) as AllocationRow[];
+}
+
+/* One audit row per allocation mutation — same UPDATE-on-the-PO vocabulary as
+   the line CRUD (the entity is the PURCHASE ORDER; the slice's identity travels
+   in the note). Best-effort like every audit write here. */
+async function recordAllocationAudit(
+  sb: any,
+  c: any,
+  poId: string,
+  note: string,
+  changes: Array<{ field: string; from: unknown; to: unknown }>,
+): Promise<void> {
+  const meta = await loadPoAuditMeta(sb, poId);
+  await recordEntityAudit(sb, {
+    entityType: 'PURCHASE_ORDER',
+    entityId: poId,
+    entityDocNo: meta.docNo,
+    action: 'UPDATE',
+    actor: c.get('houzsUser'),
+    companyId: meta.companyId ?? activeCompanyId(c),
+    statusSnapshot: meta.status,
+    note,
+    fieldChanges: compactChanges(changes.map((ch) => fieldChange(ch.field, ch.from, ch.to))),
+  });
+}
+
+// GET — the line's allocations (view level via the router's area guard).
+mfgPurchaseOrders.get('/:id/items/:itemId/allocations', async (c) => {
+  const poId = c.req.param('id'); const itemId = c.req.param('itemId');
+  const sb = c.get('supabase');
+  const parent = await resolveAllocationParent(sb, c, poId, itemId);
+  if (!parent.ok) return c.json(parent.body, parent.status);
+  const map = await loadAllocationsForItems(sb, [itemId]);
+  return c.json({ allocations: map.get(itemId) ?? [], lineQty: parent.item.qty, poNumber: parent.poNumber });
+});
+
+// POST — add one slice: { qty, soItemId | null } (null / absent = STOCK).
+mfgPurchaseOrders.post('/:id/items/:itemId/allocations', async (c) => {
+  const poId = c.req.param('id'); const itemId = c.req.param('itemId');
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const sb = c.get('supabase');
+  const user = c.get('user');
+  const parent = await resolveAllocationParent(sb, c, poId, itemId);
+  if (!parent.ok) return c.json(parent.body, parent.status);
+
+  const soItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
+  if (soItemId) {
+    const refusal = await soLinkTargetRefusal(sb, c, soItemId, parent.item.material_code);
+    if (refusal) return c.json(refusal.body, refusal.status);
+  }
+  const existing = await currentAllocations(sb, itemId);
+  const plan = planAllocationCreate(parent.item.qty, existing, body.qty);
+  if (plan.refusal) {
+    return c.json(plan.refusal, plan.refusal.error === 'invalid_qty' ? 400 : 409);
+  }
+  const { data, error } = await sb.from('purchase_order_item_allocations')
+    .insert({
+      company_id: activeCompanyId(c),
+      purchase_order_item_id: itemId,
+      seq: plan.seq,
+      qty: plan.qty,
+      so_item_id: soItemId,
+      created_by: user.id,
+    })
+    .select('id, seq, qty, so_item_id')
+    .single();
+  if (error) {
+    /* 23505 = a concurrent writer took this seq; P0001 = the DB cap guard
+       out-raced the app check. Both are "someone else moved first" — the
+       client refetches and retries with fresh numbers. */
+    const transient = (error.code === '23505') || /allocation_exceeds_line_qty/.test(error.message ?? '');
+    if (transient) {
+      return c.json({ error: 'allocation_conflict', message: "The line's allocations changed underneath this edit — reload and try again." }, 409);
+    }
+    return c.json({ error: 'insert_failed', reason: error.message }, 500);
+  }
+  const created = data as unknown as AllocationRow;
+  await recordAllocationAudit(sb, c, poId, `Line allocation added: ${parent.item.material_code} ${allocationSubNumber(parent.poNumber, created.seq)}`, [
+    { field: 'allocation', from: null, to: `${allocationSubNumber(parent.poNumber, created.seq)} qty ${created.qty}` },
+    { field: 'allocationTarget', from: null, to: soItemId ?? 'STOCK' },
+  ]);
+  const map = await loadAllocationsForItems(sb, [itemId]);
+  return c.json({ allocation: (map.get(itemId) ?? []).find((a) => a.id === created.id) ?? created, allocations: map.get(itemId) ?? [] }, 201);
+});
+
+// PATCH — edit one slice: { qty?, soItemId? } (explicit null soItemId -> STOCK;
+// absent key keeps the stored value — the same partial-PATCH contract as the
+// line edit above).
+mfgPurchaseOrders.patch('/:id/items/:itemId/allocations/:allocationId', async (c) => {
+  const poId = c.req.param('id'); const itemId = c.req.param('itemId'); const allocationId = c.req.param('allocationId');
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const sb = c.get('supabase');
+  const parent = await resolveAllocationParent(sb, c, poId, itemId);
+  if (!parent.ok) return c.json(parent.body, parent.status);
+
+  const existing = await currentAllocations(sb, itemId);
+  const prev = existing.find((a) => a.id === allocationId);
+  if (!prev) return c.json({ error: 'allocation_not_found', message: 'That allocation no longer exists on this line.' }, 404);
+
+  const plan = planAllocationQtyUpdate(parent.item.qty, existing, allocationId, body.qty);
+  if (plan.refusal) {
+    return c.json(plan.refusal, plan.refusal.error === 'invalid_qty' ? 400 : plan.refusal.error === 'allocation_not_found' ? 404 : 409);
+  }
+  const updates: Record<string, unknown> = { qty: plan.qty };
+  const soItemKeySent = body.soItemId !== undefined || body.so_item_id !== undefined;
+  let nextSoItemId = prev.so_item_id;
+  if (soItemKeySent) {
+    nextSoItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
+    if (nextSoItemId) {
+      const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, parent.item.material_code);
+      if (refusal) return c.json(refusal.body, refusal.status);
+    }
+    updates.so_item_id = nextSoItemId;
+  }
+  const { error } = await sb.from('purchase_order_item_allocations')
+    .update(updates).eq('id', allocationId).eq('purchase_order_item_id', itemId);
+  if (error) {
+    if (/allocation_exceeds_line_qty/.test(error.message ?? '')) {
+      return c.json({ error: 'allocation_conflict', message: "The line's allocations changed underneath this edit — reload and try again." }, 409);
+    }
+    return c.json({ error: 'update_failed', reason: error.message }, 500);
+  }
+  const changes: Array<{ field: string; from: unknown; to: unknown }> = [];
+  if (plan.qty !== prev.qty) changes.push({ field: 'allocationQty', from: prev.qty, to: plan.qty });
+  if (soItemKeySent && nextSoItemId !== prev.so_item_id) {
+    changes.push({ field: 'allocationTarget', from: prev.so_item_id ?? 'STOCK', to: nextSoItemId ?? 'STOCK' });
+  }
+  if (changes.length > 0) {
+    await recordAllocationAudit(sb, c, poId, `Line allocation edited: ${parent.item.material_code} ${allocationSubNumber(parent.poNumber, prev.seq)}`, changes);
+  }
+  const map = await loadAllocationsForItems(sb, [itemId]);
+  return c.json({ ok: true, allocations: map.get(itemId) ?? [] });
+});
+
+// DELETE — remove one slice, then close the seq gap (dense 1..n stays true).
+mfgPurchaseOrders.delete('/:id/items/:itemId/allocations/:allocationId', async (c) => {
+  const poId = c.req.param('id'); const itemId = c.req.param('itemId'); const allocationId = c.req.param('allocationId');
+  const sb = c.get('supabase');
+  const parent = await resolveAllocationParent(sb, c, poId, itemId);
+  if (!parent.ok) return c.json(parent.body, parent.status);
+
+  const existing = await currentAllocations(sb, itemId);
+  const doomed = existing.find((a) => a.id === allocationId);
+  if (!doomed) return c.json({ error: 'allocation_not_found', message: 'That allocation no longer exists on this line.' }, 404);
+
+  const { error } = await sb.from('purchase_order_item_allocations')
+    .delete().eq('id', allocationId).eq('purchase_order_item_id', itemId);
+  if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
+
+  /* Close the gap: survivors move DOWN in ascending order, so each UPDATE
+     lands in a seq the delete (or the previous move) just freed and the
+     UNIQUE (item, seq) constraint can never collide mid-resequence. */
+  for (const move of resequenceAfterDelete(existing, allocationId)) {
+    const { error: seqErr } = await sb.from('purchase_order_item_allocations')
+      .update({ seq: move.seq }).eq('id', move.id).eq('purchase_order_item_id', itemId);
+    if (seqErr) break; // leave a gap rather than fail the delete — display-only cosmetics
+  }
+  await recordAllocationAudit(sb, c, poId, `Line allocation removed: ${parent.item.material_code} ${allocationSubNumber(parent.poNumber, doomed.seq)}`, [
+    { field: 'allocation', from: `${allocationSubNumber(parent.poNumber, doomed.seq)} qty ${doomed.qty}`, to: null },
+    { field: 'allocationTarget', from: doomed.so_item_id ?? 'STOCK', to: null },
+  ]);
+  const map = await loadAllocationsForItems(sb, [itemId]);
+  return c.json({ ok: true, allocations: map.get(itemId) ?? [] });
 });
 
 /* ── PR #78 — Convert from Sales Order ─────────────────────────────────

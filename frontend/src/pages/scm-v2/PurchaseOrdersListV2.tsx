@@ -63,8 +63,13 @@ import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+// Filter-pill buckets. Five map 1:1 onto a raw purchase_orders.status;
+// "outstanding" is a ROLL-UP over open + partial (raised, not yet fully
+// received) — the pill twin of the Outstanding stat card. Because it overlaps,
+// the pill counts no longer sum to All; that is intended.
 type StatusTab =
   | "all"
+  | "outstanding"
   | "draft"
   | "open"
   | "partial"
@@ -112,6 +117,67 @@ const statusFor = (
     label: s || "—",
     bucket: "open",
   };
+
+// ─── GRN No cell ────────────────────────────────────────────────────────────
+
+/* A worker predating 2026-07-31 sends bare doc-number strings; the current one
+   sends { id, grnNumber }. Normalise both, and let `id` stay null for the old
+   shape — a chip with nowhere to go should not pretend to be a link. */
+const grnRefsOf = (
+  raw: PoHeaderRow["transfer_to_grns"]
+): Array<{ id: string | null; grnNumber: string }> =>
+  (raw ?? []).map((g) =>
+    typeof g === "string" ? { id: null, grnNumber: g } : { id: g.id, grnNumber: g.grnNumber }
+  );
+
+/* The Goods Received doc(s) this PO was received into. Styled as the sibling of
+   AssignedSoCell one column over — same chip, same one-per-line stacking — so
+   the two "where did this PO go" columns read as one pair. A PO with nothing
+   received yet is the normal case, not a gap: it shows a dash.
+
+   Every GRN is listed. A partially-received PO having more than one GRN is the
+   whole point of the column — 2990-PO-2606-024 has two, and showing one of them
+   plus a "+1" is exactly the view that let its second receipt go unnoticed. */
+function GrnNoCell({
+  grns,
+  onOpenGrn,
+}: {
+  grns: PoHeaderRow["transfer_to_grns"];
+  onOpenGrn: (grnId: string) => void;
+}) {
+  const list = grnRefsOf(grns);
+  if (list.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
+  /* font-docno — IBM Plex Sans, the brand face #1445 gave the primary doc-number
+     columns. Owner 2026-08-01 ruled it applies to the CHIPS too, so every
+     doc-number chip in DocumentLinesExpansion (Assigned SO, Delivered, Source PO)
+     moved with this one. Dates and eyebrow labels stay on font-mono. */
+  const chip =
+    "w-fit rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink";
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5">
+      {list.map((g) =>
+        g.id ? (
+          <button
+            key={g.grnNumber}
+            type="button"
+            title={`Open ${g.grnNumber}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenGrn(g.id as string);
+            }}
+            className={cn(chip, "hover:border-accent hover:text-accent")}
+          >
+            {g.grnNumber}
+          </button>
+        ) : (
+          <span key={g.grnNumber} className={chip}>
+            {g.grnNumber}
+          </span>
+        ),
+      )}
+    </span>
+  );
+}
 
 // ─── Split-menu dropdown ───────────────────────────────────────────────────
 
@@ -644,7 +710,8 @@ export function PurchaseOrdersListV2() {
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves each
   // bucket to the raw status it covers (open→SUBMITTED, partial→PARTIALLY_RECEIVED,
-  // received→RECEIVED, draft/cancelled 1:1). `all` omits the filter.
+  // received→RECEIVED, draft/cancelled 1:1, outstanding→SUBMITTED +
+  // PARTIALLY_RECEIVED). `all` omits the filter.
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error } = usePurchaseOrdersPaged({
@@ -677,6 +744,7 @@ export function PurchaseOrdersListV2() {
   const counts = data?.statusCounts ?? {
     all: 0,
     draft: 0,
+    outstanding: 0,
     open: 0,
     partial: 0,
     received: 0,
@@ -953,6 +1021,23 @@ export function PurchaseOrdersListV2() {
       ),
     },
     {
+      // Owner 2026-07-31 — the RECEIPT side: which GRN(s) this PO actually
+      // landed in. Server-side, deduped, cancelled GRNs excluded. Sits before
+      // Delivered because that is the order the goods move: assigned to an SO,
+      // received on a GRN, then shipped out on a DO.
+      key: "grn_no",
+      label: "GRN No",
+      width: "150px",
+      disableSort: true,
+      getValue: (r) => grnRefsOf(r.transfer_to_grns).map((g) => g.grnNumber).join(", "),
+      render: (r) => (
+        <GrnNoCell
+          grns={r.transfer_to_grns}
+          onOpenGrn={(grnId) => navigate(`/scm/grns/${grnId}`)}
+        />
+      ),
+    },
+    {
       // Owner 2026-07-31: what has been DELIVERED against this PO — the DO(s) that
       // shipped its goods (batch_no = this PO) + qty per DO. EVERY DO renders
       // (no collapse); "—" when nothing has shipped yet.
@@ -994,6 +1079,14 @@ export function PurchaseOrdersListV2() {
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
+    // Roll-up first: "what's still on order" is the working view of this page,
+    // and it reads as a summary of the 1:1 pills that follow it. A worker
+    // predating the bucket omits the key — open + partial IS the same number
+    // off the same server-side aggregate, so derive rather than show nothing.
+    {
+      value: "outstanding",
+      label: `Outstanding · ${counts.outstanding ?? counts.open + counts.partial}`,
+    },
     { value: "draft", label: `Draft · ${counts.draft}` },
     { value: "open", label: `Submitted · ${counts.open}` },
     { value: "partial", label: `Partial · ${counts.partial}` },

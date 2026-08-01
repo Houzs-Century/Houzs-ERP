@@ -188,8 +188,29 @@ can never land on the other namespace's document.
 - **Ledger timestamps are not touched** — `updated_at` records when the goods
   moved, not when a label was corrected.
 - **DRY-RUN by default, `apply=1` to write, idempotent** (a repaired reference
-  resolves, so a re-run plans zero rows). Parts `notes` / `batches` are
-  individually selectable.
+  resolves, so a re-run plans zero rows). Parts `notes` / `batches` /
+  `consumptions` are individually selectable.
+
+**Part `consumptions` (2026-08-01) — the ledger's OWN parent references.** The
+costing audit (run 30694120826) found the same class on `source_doc_no` +
+`source_doc_id` of `inventory_lot_consumptions` and `inventory_movements`: 5
+consumed units naming a delivery order that does not exist (10b), 5 orphan
+movements (4), 1 GRN line-vs-movement mismatch (3a). `source_doc_no` WAS in the
+importer's `PREFIX_REF_COLS`, but pre-repair-pass rows can still be bare, and
+`source_doc_id` was copied **verbatim** while parents inserted with
+`ON CONFLICT DO NOTHING` — a parent dropped/remapped on PK collision leaves a
+dangling id. The part applies the same three-part number rule per
+`(company_id, source_doc_type, source_doc_no)` group (types **DO**/**GRN**
+only), and writes `source_doc_id` **only from the resolution the number rule
+just proved** (stamp NULL / restamp dangling / keep matching); a stored id
+naming a DIFFERENT real document refuses the whole group
+(`doc-id-conflict`). Both tables in one transaction — `fn_consume_fifo` copies
+the movement's reference onto its consumptions, so they must move together.
+The dry run additionally reports, read-only: number-resolves-but-id-dangles
+groups (the dropped-parent shape, deliberately NOT rewritten here), the
+audit's 3a mismatch per GRN with a bare-number movement probe, and the
+movements already attached to each resolved document by id (double-posting
+visibility). Rule: `classifySourceRef` in `lib/doc-ref-repair-core.mjs`.
 
 **A regression the repair would otherwise have caused.** `document-flow.ts`'s
 relationship-map note edge matched on the prefix-STRIPPED root SO only, and
@@ -224,12 +245,30 @@ Resolution, all set-based and company-scoped:
    `includeUndated`, then `mrpReverseCoverage(result).get(po.poNumber)` — the exact
    reverse of the `mrpLineCoverage` the SO detail reads (§ linkage A). Group by SKU,
    `locked:false`. This is called ONCE per request, NOT per-SKU in a loop.
-3. **(b) stored origin (B):** origin SO doc_nos = the PO lines' `so_item_id` →
-   `mfg_sales_order_items.doc_no` **∪** the PO's "From SOs: …" note (shared
-   `parseFromSosNote`), validated against company-owned `mfg_sales_orders` (the
-   company gate + whole-token check). Pure `buildStoredOrigins(...)` matches by
-   `item_code`, effective date `amended_delivery_date ?? customer_delivery_date`,
-   `locked:true`.
+3. **(b) stored origin (B):** origin SO doc_nos = the PO lines' EFFECTIVE
+   stored links → `mfg_sales_order_items.doc_no` **∪** the PO's "From SOs: …"
+   note (shared `parseFromSosNote`), validated against company-owned
+   `mfg_sales_orders` (the company gate + whole-token check). Pure
+   `buildStoredOrigins(...)` matches by `item_code`, effective date
+   `amended_delivery_date ?? customer_delivery_date`, `locked:true`.
+
+   **"Effective" (mig 0235, allocation-aware).** A consolidated PO line can
+   serve SEVERAL SOs plus stock; `scm.purchase_order_item_allocations` splits
+   it into sub-numbered slices (`PO-2606-001-01`, `-02`, ...), each
+   `(qty, so_item_id | NULL)` — NULL = stock. Pure `effectiveStoredLinks
+   (poLines, allocationsByItem)` resolves per LINE: a line WITH allocations
+   reads the allocations' non-null so_item_ids as THE authoritative links —
+   its own single `so_item_id` is superseded, NOT unioned (where both exist,
+   allocations win, so one line can never double-count; an all-stock split
+   yields no link at all, overruling a stale single link). A line WITHOUT
+   allocations keeps the single `so_item_id` — the 1:1 fast path, unchanged.
+   The same function feeds `storedLink`/`sourceLinked`: an allocation IS a
+   stored link, so an allocated SKU reads as linked (solid chip), and each
+   allocated SO now appears in the Assigned SO cell (multiple SOs per line are
+   finally expressible). Both the single-doc route and the batched list
+   resolver call the ONE pure function, so a list row and its drill-down
+   cannot disagree. Allocations reads are best-effort (absent table → empty →
+   exactly the pre-0235 behaviour). Layers (a)/(c) are untouched.
 4. **(a) delivered DO-lock (C):** `resolveDeliveredSoLock(po.poNumber)` finds the
    `(do, code, variant)` buckets whose goods shipped from THIS PO (OUT movements
    with `batch_no` = PO number ∪ FIFO lot consumptions of this PO's lots), resolves

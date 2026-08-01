@@ -905,11 +905,11 @@ function FairDrawer({ docNo, onClose }: { docNo: string | null; onClose: () => v
               {/* linkage chain */}
               <SectionH>Document linkage · SO → DO → Invoice</SectionH>
               <div className="flex flex-wrap items-stretch gap-1.5">
-                <ChainLink label="Sales Order" no={d.linkage.so_no} sub={`Confirmed ${formatDate(d.so_date)}`} done />
+                <ChainLink label="Sales Order" nos={[d.linkage.so_no]} sub={`Confirmed ${formatDate(d.so_date)}`} done />
                 <ChainArrow />
-                <ChainLink label="Delivery Order" no={d.linkage.do_nos[0] ?? '—'} sub={d.linkage.do_nos.length ? (d.linkage.do_nos.length > 1 ? `+${d.linkage.do_nos.length - 1} more` : 'Delivered') : 'Not yet delivered'} done={!!d.linkage.do_nos.length} />
+                <ChainLink label="Delivery Order" nos={d.linkage.do_nos} sub={d.linkage.do_nos.length ? 'Delivered' : 'Not yet delivered'} done={!!d.linkage.do_nos.length} />
                 <ChainArrow />
-                <ChainLink label="Invoice" no={d.linkage.invoice_nos[0] ?? '—'} sub={d.linkage.invoice_nos.length ? (d.linkage.invoice_nos.length > 1 ? `+${d.linkage.invoice_nos.length - 1} more` : 'Invoiced') : 'Not invoiced'} done={!!d.linkage.invoice_nos.length} />
+                <ChainLink label="Invoice" nos={d.linkage.invoice_nos} sub={d.linkage.invoice_nos.length ? 'Invoiced' : 'Not invoiced'} done={!!d.linkage.invoice_nos.length} />
               </div>
 
               {/* order lines */}
@@ -1012,11 +1012,20 @@ function MiniStat({ k, v, tone }: { k: string; v: string; tone?: 'good' | 'bad' 
     </div>
   );
 }
-function ChainLink({ label, no, sub, done }: { label: string; no: string; sub: string; done: boolean }) {
+/* `nos` is an ARRAY because a Sales Order routinely ships on more than one DO
+   and invoices on more than one SI. This card used to render `no={do_nos[0]}`
+   and demote the rest to "+1 more" in the caption — so the second document
+   number never appeared anywhere on screen, and `sub` was carrying two
+   unrelated jobs (the stage's status, and an overflow count). Owner 2026-08-01,
+   on the list columns that did the same thing: 需要应用到所有列表. Every number
+   renders now, one per line, and `sub` goes back to stating status only. */
+function ChainLink({ label, nos, sub, done }: { label: string; nos: string[]; sub: string; done: boolean }) {
   return (
     <div className={`min-w-[118px] flex-1 rounded-lg border px-3 py-2.5 ${done ? 'border-primary/30 bg-primary/5' : 'border-dashed border-border bg-surface-2'}`}>
       <div className="text-[9.5px] font-bold uppercase tracking-brand text-ink-muted">{label}</div>
-      <div className={`${mono} mt-0.5 text-[12.5px] ${done ? 'text-primary-ink' : 'text-ink-muted'}`}>{no}</div>
+      <div className={`${mono} mt-0.5 flex flex-col gap-0.5 text-[12.5px] ${done ? 'text-primary-ink' : 'text-ink-muted'}`}>
+        {nos.length === 0 ? <span>—</span> : nos.map((n) => <span key={n}>{n}</span>)}
+      </div>
       <div className="mt-0.5 text-[10.5px] text-ink-muted">{sub}</div>
     </div>
   );
