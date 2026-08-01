@@ -25,8 +25,8 @@ write the guide as you learn the module, following the shape of
 **COE = Correction of Error** (the industry term, AWS's). `BUG-HISTORY.md` is the
 per-bug ledger; a COE is for the bigger class: an outage, data at risk, a fault that
 recurred, or anything that made the system feel unreliable to staff. Write
-`docs/<subject>-coe.md`, following the two that exist
-(`docs/system-foundation-coe.md`, `docs/api-fetch-hardening-coe.md`):
+`docs/<subject>-coe.md`, following the ones already written — `ls docs/*-coe.md`,
+and read `docs/system-foundation-coe.md` for the canonical shape:
 
 **Date · Trigger** (what staff actually saw, in their words) · **Root cause, traced
 with evidence, never guessed** — name the tool that proved it (`wrangler tail`, a

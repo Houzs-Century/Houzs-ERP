@@ -26,11 +26,20 @@ Read this once. Then you will know where to look, and where to write.
 
 ### Current state, honestly
 
-Every layer above exists except one: **`docs/modules/` holds a single guide
-(`sales-order.md`).** The pattern was started and not continued, so SCM, Service
-Cases, Delivery/TMS, PMS, Announcements and the OCR scan flow have no guide — which
-is precisely why working in them still starts with exploration. That is the largest
-remaining gap in this system, and the one worth closing next.
+Every layer above is in use. The module-guide layer, which this file once called
+the largest remaining gap, has since been filled in across the SCM document flow,
+Service Cases, Delivery/TMS, PMS, Announcements and the OCR scan flow.
+
+**Which modules have a guide is not written here — run `ls docs/modules/`.** That
+is not laziness, it is rule §2 applied to this file: the list changes whenever
+someone writes a guide, and nothing would force this paragraph to keep up. It
+did not keep up. Between 2026-07-21 and 2026-08-02 this section claimed a single
+guide existed while the directory grew past fifteen, so the one document whose
+job is to stop stale hand-written facts was itself the stalest thing in `docs/`.
+
+The remaining gap is therefore not a count but a rule, and it already lives in
+`CLAUDE.md`: **if the module you are about to touch has no guide, writing it is
+the first task, not an optional one.** Follow the shape of an existing guide.
 
 ## 2. The rule that decides where a fact goes
 
