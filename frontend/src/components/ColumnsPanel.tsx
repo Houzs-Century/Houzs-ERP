@@ -184,8 +184,13 @@ export function ColumnsPanel({
          too much of the working area. Matches the SCM DataGrid columns drawer. */
       width={340}
     >
-      {/* ── Layout presets ─────────────────────────────────── */}
-      {presets && presets.length > 0 && (
+      {/* ── Layout presets ─────────────────────────────────────
+          Shown when there is EITHER something to pick or the right to publish
+          a default. Gating on presets alone was a chicken-and-egg: a list that
+          ships no seed layout had no section, so an admin could never save its
+          first company default — which is every list in the app except Sales
+          Orders. (Owner 2026-08-01: "覆盖到系统的所有列表".) */}
+      {((presets && presets.length > 0) || defaultManager) && (
         <section className="mb-6">
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
@@ -193,14 +198,21 @@ export function ColumnsPanel({
             </h3>
             {/* No preset matches ⇒ this is a hand-arranged layout. Saying so
                 stops the highlighted-nothing state from reading as a bug. */}
-            {!presets.some((p) => p.active) && (
+            {presets && presets.length > 0 && !presets.some((p) => p.active) && (
               <span className="rounded bg-surface-2 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
                 Custom
               </span>
             )}
           </div>
-          <div className="divide-y divide-border-subtle overflow-hidden rounded-md border border-border bg-surface">
-            {presets.map((p) => (
+          <div
+            className={cn(
+              "divide-y divide-border-subtle overflow-hidden rounded-md border border-border bg-surface",
+              // No rows yet (nothing seeded, nothing saved) — an empty bordered
+              // box would read as a loading state.
+              (!presets || presets.length === 0) && "hidden"
+            )}
+          >
+            {(presets ?? []).map((p) => (
               <button
                 key={p.id}
                 type="button"
@@ -246,8 +258,9 @@ export function ColumnsPanel({
             ))}
           </div>
           <p className="mt-1.5 text-[10px] text-ink-muted">
-            Picking a layout replaces the columns below — adjust them afterwards
-            as usual. Your arrangement is saved to your account.
+            {presets && presets.length > 0
+              ? "Picking a layout replaces the columns below — adjust them afterwards as usual. Your arrangement is saved to your account."
+              : "Your column arrangement is saved to your account, so it follows you to another machine."}
           </p>
 
           {/* Admin: publish the CURRENT arrangement as the company default.
