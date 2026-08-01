@@ -25,10 +25,18 @@ base.pathname = base.pathname.replace(/\/$/, "");
 const attempts = Math.max(1, Number(process.env.FRONTEND_SMOKE_ATTEMPTS ?? 8));
 const retryDelayMs = Math.max(0, Number(process.env.FRONTEND_SMOKE_RETRY_MS ?? 2_000));
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-// _headers asks for 300s. The zone's Browser Cache TTL currently raises every
-// short max-age to 14400, so that is the ceiling this can assert until the
-// dashboard setting moves to "Respect Existing Headers".
-const MAX_CHUNK_TTL_SECONDS = 14_400;
+// _headers asks for 300s, and as of 2026-07-31 the zone finally delivers it:
+// Browser Cache TTL was sitting on "4 hours" and rewriting every short max-age
+// to 14400 (Cache Rules were empty — that one dropdown was the whole override),
+// and it is now "Respect Existing Headers". Verified live: entry chunk 300,
+// sw.js 0, index.html 0, fonts still a year.
+//
+// The ceiling is 3600 rather than exactly 300 so a deliberate policy tweak
+// (300 -> 600) does not need a second edit here. What it still catches is the
+// thing that matters: a chunk TTL measured in HOURS. If the dashboard setting
+// is ever put back, live goes to 14400 and this goes red — which is the signal
+// we want, not noise to widen away.
+const MAX_CHUNK_TTL_SECONDS = 3_600;
 const get = (path) => fetch(new URL(path, `${base.href}/`), {
   cache: "no-store",
   redirect: "follow",
@@ -104,18 +112,18 @@ async function proveRelease() {
   if (!swResponse.ok || swBody.includes("__SW_BUILD_ID__")) {
     throw new Error(`service worker is unavailable or unstamped (${swResponse.status})`);
   }
-  // _headers asks for `max-age=0, must-revalidate`, but the zone's Browser Cache
-  // TTL rewrites the NUMBER and leaves the rest — live is
-  // `max-age=14400, must-revalidate`. That is the same override that keeps
-  // /assets3/* off its intended 300, and it made this assertion the NEXT
-  // blocker once the `immutable` one above was corrected. `must-revalidate` is
-  // the directive that actually survives, so require any of the four rather than
-  // a max-age the zone will not let through. Note this is a weaker guarantee than
-  // the file asks for; the registration uses updateViaCache "imports" (verified in
-  // a live browser), so the SW SCRIPT still bypasses the HTTP cache on every
-  // update check and its VERSION bump is not delayed by the 4-hour TTL.
+  // _headers asks for `max-age=0, must-revalidate` and the zone now delivers it
+  // (see MAX_CHUNK_TTL_SECONDS above — Browser Cache TTL moved off "4 hours" on
+  // 2026-07-31, live sw.js is `public, must-revalidate, max-age=0`).
+  //
+  // This used to also accept a bare `must-revalidate`, because the zone rewrote
+  // the number to 14400 and left the rest — a deliberately weaker assertion to
+  // get past an override that has since been removed. Back to the real bar: the
+  // SW script is the ONLY lever that moves a client stuck on a bad shell (that
+  // file carries thirteen one-shot VERSION purges), so a cacheable copy of it is
+  // a release defect, not a nit.
   const swCache = swResponse.headers.get("cache-control") ?? "";
-  if (!/max-age=0|no-cache|no-store|must-revalidate/i.test(swCache)) {
+  if (!/max-age=0|no-cache|no-store/i.test(swCache)) {
     throw new Error(`service worker can be served without revalidation (${swCache || "no cache-control"})`);
   }
   const version = swBody.match(/const VERSION = "([^"]+)";/)?.[1];
