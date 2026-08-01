@@ -31,7 +31,7 @@ const dst = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
 const PREFIX = "2990-";
 const strip = (v) => (v != null && String(v).startsWith(PREFIX) ? String(v).slice(PREFIX.length) : v);
-const day = (v) => (v == null ? null : String(v).slice(0, 10));
+const day = (v) => (v == null ? null : v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
 const rm = (c) => (c == null ? "null" : "RM" + (Number(c) / 100).toFixed(2));
 
 async function fetchAllSrc(table) {
@@ -183,10 +183,18 @@ async function main() {
       console.log(`\n[${type.name}] SKIP source read failed: ${e.message}`);
       continue;
     }
-    const dstHeaders = await dst`SELECT * FROM scm.${dst(type.header)} WHERE company_id = ${cid}`;
-    const dstItems = type.joinBy === "doc_no"
-      ? await dst`SELECT * FROM scm.${dst(type.items)} WHERE company_id = ${cid}`
-      : await dst`SELECT i.* FROM scm.${dst(type.items)} i JOIN scm.${dst(type.header)} h ON h.id = i.${dst(type.itemRef)} AND h.company_id = ${cid} WHERE i.company_id = ${cid}`;
+    let dstHeaders, dstItems;
+    try {
+      dstHeaders = await dst`SELECT * FROM scm.${dst(type.header)} WHERE company_id = ${cid}`;
+      // Scope items via the company-2990 header join; item tables do not all
+      // carry their own company_id.
+      dstItems = type.joinBy === "doc_no"
+        ? await dst`SELECT i.* FROM scm.${dst(type.items)} i JOIN scm.${dst(type.header)} h ON h.${dst(type.headerKey)} = i.${dst(type.itemRef)} AND h.company_id = ${cid}`
+        : await dst`SELECT i.* FROM scm.${dst(type.items)} i JOIN scm.${dst(type.header)} h ON h.id = i.${dst(type.itemRef)} AND h.company_id = ${cid}`;
+    } catch (e) {
+      console.log(`\n[${type.name}] SKIP target read failed: ${e.message}`);
+      continue;
+    }
 
     // PO-number lookup for GRN header fingerprint (per side).
     const srcPoById = new Map(), dstPoById = new Map();
