@@ -18,6 +18,7 @@ import {
 } from "../lib/storageIdentity";
 import { clearAllScmHandoffs } from "../lib/scmHandoffStorage";
 import { writeRememberedEmail } from "../lib/rememberedEmail";
+import { hydrateTableLayouts } from "../lib/tableLayouts";
 import type { AccessLevel, AuthUser } from "../types";
 
 /**
@@ -171,6 +172,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [fetchMe, fetchStatus]);
+
+  /* Column layouts live on the server now (this user's own + each company's
+     admin-set default). Fetched ONCE per signed-in session, deliberately NOT
+     awaited by the boot gate: every table still renders from localStorage on
+     the first paint, and hydration only matters on a machine this user hasn't
+     arranged yet. Failure is silent by design — see lib/tableLayouts.ts. */
+  useEffect(() => {
+    if (!state.user) return;
+    void hydrateTableLayouts();
+  }, [state.user?.id]);
 
   // Listen for global 401s — clear token + bounce.
   useEffect(() => {

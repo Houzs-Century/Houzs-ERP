@@ -717,6 +717,139 @@ describe("DataTable column reorder", () => {
   });
 });
 
+describe("DataTable layout presets", () => {
+  /* Two companies read the same list differently (owner 2026-08-01: the 2990
+     Sales Order view vs the Houzs one), so a page can declare named layouts and
+     mark one as this company's default. "Sales Layout" below is deliberately
+     IDENTICAL to what the column flags produce on their own — that is the case
+     where a stored pick could be mistaken for "never customised" and snap back
+     to the other company's default. */
+  const presetCols: Column<Row>[] = [
+    { key: "a", label: "Alpha", render: (r) => r.name },
+    { key: "b", label: "Bravo", render: (r) => r.name },
+    { key: "c", label: "Charlie", defaultHidden: true, render: (r) => r.name },
+    { key: "d", label: "Delta", render: (r) => r.name },
+  ];
+  const presets = [
+    { id: "ops", label: "Ops Layout", isDefault: true, columns: ["b", "c"] },
+    { id: "sales", label: "Sales Layout", columns: ["a", "b", "d"] },
+  ];
+  const headerLabels = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("thead th")).map((th) => th.textContent?.trim());
+
+  it("starts an untouched table on the default preset, not on the column flags", () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable
+        tableId="preset-default"
+        layoutPresets={presets}
+        rows={rows.slice(0, 2)}
+        columns={presetCols}
+        getRowKey={(row) => row.id}
+      />,
+    );
+
+    // Charlie is defaultHidden yet named by the preset → shown; Alpha and Delta
+    // are default-visible yet unnamed → hidden. The preset order wins too.
+    expect(headerLabels(container)).toEqual(["Bravo", "Charlie"]);
+  });
+
+  it("leaves an already-customised table alone", () => {
+    setViewport(1280);
+    // A user who has only ever ticked a column keeps BOTH their set and the
+    // plain column order — a new default must never rearrange it under them.
+    localStorage.setItem("dt:hidden:preset-stored", JSON.stringify(["d"]));
+
+    const { container } = render(
+      <DataTable
+        tableId="preset-stored"
+        layoutPresets={presets}
+        rows={rows.slice(0, 2)}
+        columns={presetCols}
+        getRowKey={(row) => row.id}
+      />,
+    );
+
+    expect(headerLabels(container)).toEqual(["Alpha", "Bravo"]);
+  });
+
+  it("applies a picked layout as ordinary column prefs", () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable
+        tableId="preset-apply"
+        layoutPresets={presets}
+        rows={rows.slice(0, 2)}
+        columns={presetCols}
+        getRowKey={(row) => row.id}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /Sales Layout/ }));
+
+    expect(headerLabels(container)).toEqual(["Alpha", "Bravo", "Delta"]);
+    // Written as the same prefs a hand-arranged layout writes, so the very next
+    // toggle edits it instead of fighting a separate "preset mode".
+    expect(JSON.parse(localStorage.getItem("dt:order:preset-apply")!)).toEqual(["a", "b", "d", "c"]);
+    expect(JSON.parse(localStorage.getItem("dt:hidden:preset-apply")!)).toEqual(["c"]);
+  });
+
+  it("keeps a picked layout that happens to equal the column defaults", () => {
+    setViewport(1280);
+    render(
+      <DataTable
+        tableId="preset-equal"
+        layoutPresets={presets}
+        rows={rows.slice(0, 2)}
+        columns={presetCols}
+        getRowKey={(row) => row.id}
+      />,
+    );
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /Sales Layout/ }));
+    cleanup();
+
+    // Remount: the pick must survive rather than reading as "untouched" and
+    // snapping back to the default preset.
+    const { container } = render(
+      <DataTable
+        tableId="preset-equal"
+        layoutPresets={presets}
+        rows={rows.slice(0, 2)}
+        columns={presetCols}
+        getRowKey={(row) => row.id}
+      />,
+    );
+    expect(headerLabels(container)).toEqual(["Alpha", "Bravo", "Delta"]);
+  });
+
+  it("marks the matching layout active and a hand-edited one Custom", () => {
+    setViewport(1280);
+    render(
+      <DataTable
+        tableId="preset-active"
+        layoutPresets={presets}
+        rows={rows.slice(0, 2)}
+        columns={presetCols}
+        getRowKey={(row) => row.id}
+      />,
+    );
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+
+    const presetRow = (label: string) => screen.getByRole("button", { name: new RegExp(label) });
+    expect(presetRow("Ops Layout").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByText("Custom")).toBeNull();
+
+    // Hide a column the active preset shows: nothing matches any more, and the
+    // panel says so rather than leaving every row unhighlighted.
+    fireEvent.click(screen.getAllByRole("button", { name: "Hide column" })[0]!);
+
+    expect(presetRow("Ops Layout").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByText("Custom")).toBeTruthy();
+  });
+});
+
 describe("DataTable header filter + sort menu", () => {
   // status repeats (Open/Closed); name is unique per row. Both have getValue,
   // so both must expose the funnel now (owner 2026-07-24: every header).

@@ -29,6 +29,7 @@ import roles from "./routes/roles";
 import positions from "./routes/positions";
 import departments from "./routes/departments";
 import companies from "./routes/companies";
+import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
 import presence from "./routes/presence";
 import events from "./routes/events";
@@ -326,6 +327,10 @@ app.route("/api/roles", roles);
 app.route("/api/positions", positions);
 app.route("/api/departments", departments);
 app.route("/api/companies", companies);
+// Column layouts: this user's own (synced across their machines) + each
+// company's admin-set default. Any signed-in user reads and writes their OWN
+// row; the /default writes gate on settings.manage inside the router.
+app.route("/api/table-layouts", tableLayouts);
 app.route("/api/notifications", notifications);
 app.route("/api/presence", presence);
 app.route("/api/events", events);

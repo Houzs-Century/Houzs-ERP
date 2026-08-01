@@ -996,6 +996,11 @@ POST,/api/sync/customer-mirror,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTE
 POST,/api/sync/so-mirror,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,mirrorAuthed,YES,HANDLER_GUARD_REVIEW,backend/src/scm/routes/so-mirror.ts
 POST,/api/sync/staff-mirror,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,mirrorAuthed,YES,HANDLER_GUARD_REVIEW,backend/src/scm/routes/staff-mirror.ts
 POST,/api/sync/warehouse-mirror,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,mirrorAuthed,YES,HANDLER_GUARD_REVIEW,backend/src/scm/routes/warehouse-mirror.ts
+GET,/api/table-layouts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/tableLayouts.ts
+DELETE,/api/table-layouts/:tableKey,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/tableLayouts.ts
+PUT,/api/table-layouts/:tableKey,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/tableLayouts.ts
+DELETE,/api/table-layouts/:tableKey/default,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requirePermission(MANAGE_DEFAULTS_PERM),,YES,DECLARED_GATE,backend/src/routes/tableLayouts.ts
+PUT,/api/table-layouts/:tableKey/default,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requirePermission(MANAGE_DEFAULTS_PERM),,YES,DECLARED_GATE,backend/src/routes/tableLayouts.ts
 POST,/api/totp/disable,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/totp.ts
 POST,/api/totp/enable,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/totp.ts
 POST,/api/totp/setup,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/totp.ts

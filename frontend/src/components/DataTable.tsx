@@ -35,6 +35,15 @@ import { ColumnsPanel, ColumnsPanelButton } from "./ColumnsPanel";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { subscribeActiveCompany, getActiveCompanySnapshot } from "../lib/activeCompany";
+import { shortCompanyName } from "../lib/branding";
+import {
+  getTableLayoutsSnapshot,
+  saveCompanyDefault,
+  saveMyLayout,
+  serializeLayout,
+  subscribeTableLayouts,
+  type StoredLayout,
+} from "../lib/tableLayouts";
 import { useUdf, type UseUdfResult } from "../hooks/useUdf";
 import { downloadCSV, toCSV, type CSVColumn } from "../lib/csv";
 import { SearchScopeHint } from "./SearchScopeHint";
@@ -89,6 +98,45 @@ export interface Column<T> {
   disableFilter?: boolean;
 }
 
+/**
+ * A named column layout — "which columns, in what order" — offered in the
+ * Columns panel (owner 2026-08-01: the 2990 Sales Order list and the Houzs one
+ * are the same table wanting two different working views, and each tenant's
+ * users should be able to pick either).
+ *
+ * A preset is a BASELINE, never a lock: applying one writes the same per-user
+ * `dt:*` prefs a hand-arranged layout writes, so the very next column toggle or
+ * header drag edits it exactly as before. The one marked `isDefault` is what a
+ * user who has never touched this table sees — that is how a company gets its
+ * own default view without a stored pref per person.
+ */
+export interface ColumnLayoutPreset {
+  /** Stable id. Only ever compared, never shown. */
+  id: string;
+  label: string;
+  /** Optional one-liner under the label. */
+  hint?: string;
+  /**
+   * Movable column keys, in display order. `alwaysVisible` columns are implicit
+   * (they are pinned to the front by contract) and must NOT be listed. Keys that
+   * don't exist for this user — a finance-only column for a non-finance viewer —
+   * are dropped, so one preset can be shared across permission levels.
+   */
+  columns: string[];
+  /**
+   * The company this layout belongs to ('HOUZS' | '2990'). Naming one makes
+   * this preset that company's SEED default — used until an admin saves a real
+   * one from the Columns panel, at which point the saved layout takes this
+   * row's place (lib/tableLayouts.ts). Leave unset for a layout that isn't
+   * about a company.
+   */
+  companyCode?: string;
+  /** The layout used when this user has no stored prefs for this table. Only
+   *  consulted where the companies master isn't resolvable (tests,
+   *  single-company installs); otherwise the ACTIVE company decides. */
+  isDefault?: boolean;
+}
+
 interface Props<T> {
   /** Stable identifier used for persisting column visibility, order, sort,
    *  and density per page (localStorage). */
@@ -101,6 +149,15 @@ interface Props<T> {
    * from `getRowKey` and `tableId` remains available to the caller.
    */
   layoutFamily?: string;
+  /**
+   * Named column layouts offered at the top of the Columns panel. The preset
+   * flagged `isDefault` is also the BASELINE this table renders with until the
+   * user stores prefs of their own — so a page can hand each company its own
+   * default view (see ColumnLayoutPreset). Omit for the historical behaviour:
+   * the baseline is then the columns' own `defaultHidden` flags and no preset
+   * section is shown.
+   */
+  layoutPresets?: ColumnLayoutPreset[];
   columns: Column<T>[];
   rows: T[] | null;
   loading?: boolean;
@@ -504,9 +561,27 @@ function DebouncedSearchInput({
   );
 }
 
-export function DataTable<T>({
+/**
+ * Hydration writes the account's saved layout into the same localStorage keys
+ * the table reads ONCE, at mount (useLocalStorage is lazy by design — that is
+ * what makes the first paint correct). Remounting on the store's epoch is how a
+ * table already on screen when the boot fetch lands picks the layout up. The
+ * epoch bumps at most once per session, and only when hydration actually moved
+ * something, so this is a no-op on every warm load.
+ */
+export function DataTable<T>(props: Props<T>) {
+  const { epoch } = useSyncExternalStore(
+    subscribeTableLayouts,
+    getTableLayoutsSnapshot,
+    getTableLayoutsSnapshot,
+  );
+  return <DataTableInner<T> key={`layout-epoch:${epoch}`} {...props} />;
+}
+
+function DataTableInner<T>({
   tableId,
   layoutFamily,
+  layoutPresets,
   columns,
   rows,
   loading,
@@ -548,6 +623,14 @@ export function DataTable<T>({
     subscribeActiveCompany,
     getActiveCompanySnapshot,
     getActiveCompanySnapshot,
+  );
+  /* Server-side layouts: this user's own (synced across their machines) and
+     each company's admin-set default. Inert until the boot fetch lands, so a
+     table behaves exactly as it always did offline or logged out. */
+  const layoutStore = useSyncExternalStore(
+    subscribeTableLayouts,
+    getTableLayoutsSnapshot,
+    getTableLayoutsSnapshot,
   );
   const baseIdKey = layoutFamily || tableId || "_";
   /* When a company is resolved, prefix it. When NONE is (single-company Houzs,
@@ -805,6 +888,110 @@ export function DataTable<T>({
   // Unordered universe of columns (static + UDF).
   const rawColumns = useMemo(() => [...columns, ...udfColumns], [columns, udfColumns]);
 
+  /* Every named layout on offer, in panel order. A COMPANY row wins its slot
+     from the server (an admin's saved default) and falls back to the page's
+     seed preset for that company code until one is saved — so the panel shows
+     both companies' views whichever company you are in, which is the whole ask.
+     Where the companies master isn't resolvable (unit tests, single-company
+     installs, a failed/absent boot fetch) this degrades to exactly the
+     page-declared list, `isDefault` and all. */
+  const resolvedPresets = useMemo(() => {
+    const declared = layoutPresets ?? [];
+    if (declared.length === 0 && layoutStore.companies.length === 0) return [];
+    const seedByCode = new Map(
+      declared
+        .filter((p) => p.companyCode)
+        .map((p) => [p.companyCode!.toUpperCase(), p] as const),
+    );
+    const out: Array<{
+      id: string;
+      label: string;
+      hint?: string;
+      /** Full layout when it came from the server; column list when it is a
+       *  page seed (normalised against the live columns below). */
+      layout?: StoredLayout;
+      columns?: string[];
+      isDefault: boolean;
+      fromServer: boolean;
+    }> = [];
+    for (const co of layoutStore.companies) {
+      const saved = layoutStore.defaults[String(co.id)]?.[baseIdKey];
+      const seed = seedByCode.get(co.code.toUpperCase());
+      if (!saved && !seed) continue;
+      out.push({
+        id: `company:${co.id}`,
+        label: `${shortCompanyName(co.name)} Layout`,
+        // The seed's hint describes the SEED. Once an admin has saved a real
+        // default it would be describing a layout that no longer exists —
+        // "Sales desk" over the production columns somebody just published.
+        hint: saved ? undefined : seed?.hint,
+        layout: saved,
+        columns: saved ? undefined : seed?.columns,
+        isDefault: co.id === layoutStore.activeCompanyId,
+        fromServer: Boolean(saved),
+      });
+    }
+    // Page presets that aren't about a company (and, when there is no company
+    // list at all, the whole declared set) keep their own identity.
+    for (const p of declared) {
+      if (p.companyCode && layoutStore.companies.length > 0) continue;
+      out.push({
+        id: p.id,
+        label: p.label,
+        hint: p.hint,
+        columns: p.columns,
+        isDefault: layoutStore.companies.length > 0 ? false : Boolean(p.isDefault),
+        fromServer: false,
+      });
+    }
+    return out;
+  }, [layoutPresets, layoutStore, baseIdKey]);
+
+  /* Turn a preset into the same shape a saved layout has, so ONE rule renders
+     both: a column list means "show exactly these, in this order" — which for
+     the stored form is an explicit hidden list plus an opt-in for any
+     defaultHidden column it names. */
+  const presetLayout = useCallback(
+    (preset: { layout?: StoredLayout; columns?: string[] }): StoredLayout => {
+      if (preset.layout) return preset.layout;
+      const movable = rawColumns.filter((c) => !c.alwaysVisible);
+      const byKey = new Map(movable.map((c) => [c.key, c]));
+      const wanted = (preset.columns ?? []).filter((k) => byKey.has(k));
+      const wantedSet = new Set(wanted);
+      const rest = movable.map((c) => c.key).filter((k) => !wantedSet.has(k));
+      return {
+        order: [...wanted, ...rest],
+        hidden: rest,
+        shown: wanted.filter((k) => byKey.get(k)?.defaultHidden),
+        // A seed preset carries no sizes or frozen columns: those belong to the
+        // screen you are on, not to the view.
+        widths: {},
+        pinned: [],
+      };
+    },
+    [rawColumns],
+  );
+
+  /* The default layout, but ONLY while this table is untouched — no stored
+     order, no stored visibility. One gate for both dimensions on purpose: a
+     user who has only ever ticked a column would otherwise keep their column
+     SET while the default silently rearranged it. The first pref of any kind
+     ends the baseline for good, which is what makes changing a company default
+     safe: it reaches only the people who never arranged this table.
+
+     Widths and pinning are deliberately NOT imposed here even when the saved
+     default carries them — an admin's 1920px column widths are not a good
+     default on a 13" laptop. Clicking the layout in the panel applies them. */
+  const baselineLayout = useMemo(() => {
+    const untouched =
+      order.length === 0 && hiddenList.length === 0 && shownList.length === 0;
+    if (!untouched) return null;
+    const preset = resolvedPresets.find((p) => p.isDefault);
+    if (!preset) return null;
+    const layout = presetLayout(preset);
+    return { order: layout.order, hidden: new Set(layout.hidden), shown: new Set(layout.shown) };
+  }, [resolvedPresets, presetLayout, order, hiddenList, shownList]);
+
   // Apply persisted order. alwaysVisible columns are pinned at the front
   // in their definition order (not reorderable); everything else follows
   // the user's order, then anything new that isn't yet in the stored
@@ -813,10 +1000,15 @@ export function DataTable<T>({
   const allColumns = useMemo(() => {
     const alwaysFirst = rawColumns.filter((c) => c.alwaysVisible);
     const movable = rawColumns.filter((c) => !c.alwaysVisible);
-    if (!order || order.length === 0) return [...alwaysFirst, ...movable];
+    /* Nothing stored → the default preset's order, when one is in play. Its
+       unlisted columns still land at the end via the loop below, exactly like a
+       stored order that predates a newly added column, so a preset only has to
+       name the columns it actually wants up front. */
+    const effectiveOrder = order && order.length > 0 ? order : baselineLayout?.order ?? [];
+    if (effectiveOrder.length === 0) return [...alwaysFirst, ...movable];
     const byKey = new Map(movable.map((c) => [c.key, c]));
     const ordered: Column<T>[] = [];
-    for (const k of order) {
+    for (const k of effectiveOrder) {
       const col = byKey.get(k);
       if (col) {
         ordered.push(col);
@@ -829,17 +1021,21 @@ export function DataTable<T>({
       if (byKey.has(c.key)) ordered.push(c);
     }
     return [...alwaysFirst, ...ordered];
-  }, [rawColumns, order]);
+  }, [rawColumns, order, baselineLayout]);
 
-  // Effective hidden = userHidden ∪ defaultHidden-not-explicitly-shown.
-  // alwaysVisible columns short-circuit to visible.
+  /* Effective hidden = hidden ∪ defaultHidden-not-explicitly-shown, reading the
+     BASELINE's two lists while it is in play and the user's own otherwise. One
+     rule, two sources — a preset that names a defaultHidden column shows it,
+     exactly as a user ticking that column does. */
   const effectiveHidden = useMemo(() => {
-    const set = new Set(userHidden);
+    const hiddenSource = baselineLayout ? baselineLayout.hidden : userHidden;
+    const shownSource = baselineLayout ? baselineLayout.shown : userShown;
+    const set = new Set(hiddenSource);
     for (const c of allColumns) {
-      if (c.defaultHidden && !userShown.has(c.key)) set.add(c.key);
+      if (c.defaultHidden && !shownSource.has(c.key)) set.add(c.key);
     }
     return set;
-  }, [allColumns, userHidden, userShown]);
+  }, [allColumns, userHidden, userShown, baselineLayout]);
 
   const visibleColumns = useMemo(
     () => allColumns.filter((c) => c.alwaysVisible || !effectiveHidden.has(c.key)),
@@ -946,6 +1142,45 @@ export function DataTable<T>({
     [allColumns]
   );
 
+  /* Preset rows for the panel, each already told whether the table currently
+     MATCHES it. Match is computed from the visible key sequence, never from a
+     stored preset id: a stored id goes stale the moment a column is toggled and
+     would then label a hand-edited layout as one of the presets. */
+  const presetOptions = useMemo(() => {
+    if (resolvedPresets.length === 0) return undefined;
+    const movable = allColumns.filter((c) => !c.alwaysVisible);
+    const known = new Set(movable.map((c) => c.key));
+    const defaultHiddenKeys = new Set(
+      movable.filter((c) => c.defaultHidden).map((c) => c.key),
+    );
+    const current = visibleColumns
+      .filter((c) => !c.alwaysVisible)
+      .map((c) => c.key);
+    return resolvedPresets.map((p) => {
+      // What this layout WOULD render, resolved the same way the table resolves
+      // its own — so "active" means the two agree, not that an id was stored.
+      const layout = presetLayout(p);
+      const hidden = new Set(layout.hidden);
+      const shown = new Set(layout.shown);
+      const ordered = layout.order.filter((k) => known.has(k));
+      const seen = new Set(ordered);
+      const arranged = [...ordered, ...[...known].filter((k) => !seen.has(k))];
+      const wouldShow = arranged.filter(
+        (k) => !hidden.has(k) && !(defaultHiddenKeys.has(k) && !shown.has(k)),
+      );
+      return {
+        id: p.id,
+        label: p.label,
+        hint: p.hint,
+        count: wouldShow.length,
+        isDefault: p.isDefault,
+        active:
+          wouldShow.length === current.length &&
+          wouldShow.every((k, i) => current[i] === k),
+      };
+    });
+  }, [resolvedPresets, presetLayout, allColumns, visibleColumns]);
+
   function toggleColumn(key: string) {
     const col = allColumns.find((c) => c.key === key);
     const isHidden = effectiveHidden.has(key);
@@ -966,6 +1201,125 @@ export function DataTable<T>({
     setHiddenList([]);
     setShownList([]);
   }
+
+  /* Applying a layout writes exactly the prefs a hand-arranged one writes —
+     order + hidden/shown (+ widths/pinned when the saved layout carries them) —
+     so the table never enters a "preset mode" the next column toggle would have
+     to escape from. The hidden list is written in FULL rather than only where it
+     differs from the column flags: a layout that happens to equal the flag
+     defaults would otherwise store two empty lists, read as "untouched", and
+     snap the table to the OTHER company's default — precisely the cross-company
+     pick this feature exists to allow. */
+  function applyPreset(id: string) {
+    const preset = resolvedPresets.find((p) => p.id === id);
+    if (!preset) return;
+    const layout = presetLayout(preset);
+    const known = new Set(allColumns.filter((c) => !c.alwaysVisible).map((c) => c.key));
+    const keep = (keys: string[]) => keys.filter((k) => known.has(k));
+    const ordered = keep(layout.order);
+    const orderedSet = new Set(ordered);
+    setOrder([
+      ...ordered,
+      // Columns the saved layout predates (a newer release added them) go last
+      // rather than vanishing from the order entirely.
+      ...[...known].filter((k) => !orderedSet.has(k)),
+    ]);
+    setShownList(keep(layout.shown));
+    setHiddenList(keep(layout.hidden));
+    // A frozen column this layout hides would hold a slot in the freeze run it
+    // can never fill again.
+    const hiddenSet = new Set(keep(layout.hidden));
+    setPinned(keep(layout.pinned).filter((k) => !hiddenSet.has(k)));
+    if (Object.keys(layout.widths).length > 0) updateWidths(layout.widths, true);
+  }
+
+  /* ── Sync this table's layout to the account ──────────────────────────────
+     The store debounces and no-ops until the boot fetch landed. The MOUNT pass
+     is skipped deliberately: merely opening a list must not create a saved
+     layout for a table the user never arranged — and an all-empty layout is a
+     delete, so a Reset propagates instead of being undone by the next
+     hydration. */
+  const myLayout = useMemo<StoredLayout>(
+    () => ({
+      order,
+      hidden: hiddenList,
+      shown: shownList,
+      widths: storedWidths,
+      pinned,
+    }),
+    [order, hiddenList, shownList, storedWidths, pinned],
+  );
+  const myLayoutSignature = serializeLayout(myLayout);
+  const syncedRef = useRef<{ key: string; signature: string } | null>(null);
+  useEffect(() => {
+    const previous = syncedRef.current;
+    syncedRef.current = { key: baseIdKey, signature: myLayoutSignature };
+    // First render, or this instance switched tables: nothing changed HERE.
+    if (!previous || previous.key !== baseIdKey) return;
+    if (previous.signature === myLayoutSignature) return;
+    saveMyLayout(baseIdKey, myLayout);
+  }, [baseIdKey, myLayoutSignature, myLayout]);
+
+  /* Admin-only: publish the arrangement on screen as this company's default
+     view — the thing that used to be a code constant and a deploy. Reaches
+     only users who have never arranged this table themselves. */
+  const [defaultSaveState, setDefaultSaveState] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const activeCompanyName = useMemo(() => {
+    const co = layoutStore.companies.find((x) => x.id === layoutStore.activeCompanyId);
+    return co ? shortCompanyName(co.name) : "";
+  }, [layoutStore]);
+  const writeCompanyDefault = useCallback(
+    async (layout: StoredLayout) => {
+      setDefaultSaveState("saving");
+      try {
+        await saveCompanyDefault(baseIdKey, layout);
+        setDefaultSaveState("saved");
+      } catch {
+        setDefaultSaveState("error");
+      }
+    },
+    [baseIdKey],
+  );
+  /* What is ON SCREEN, materialised — which is what "save these columns as the
+     default" has to publish. The user's own prefs are the wrong source: an
+     admin who is happy with the layout they inherited has empty prefs, and
+     saving those would publish nothing at all. */
+  const renderedLayout = useMemo<StoredLayout>(() => {
+    const movable = allColumns.filter((c) => !c.alwaysVisible);
+    return {
+      order: movable.map((c) => c.key),
+      hidden: movable.filter((c) => effectiveHidden.has(c.key)).map((c) => c.key),
+      shown: movable
+        .filter((c) => c.defaultHidden && !effectiveHidden.has(c.key))
+        .map((c) => c.key),
+      widths: storedWidths,
+      pinned,
+    };
+  }, [allColumns, effectiveHidden, storedWidths, pinned]);
+
+  const defaultManager = useMemo(() => {
+    if (!layoutStore.ready || !layoutStore.canManageDefaults) return undefined;
+    if (layoutStore.activeCompanyId == null || !activeCompanyName) return undefined;
+    return {
+      companyLabel: activeCompanyName,
+      hasSaved: Boolean(
+        layoutStore.defaults[String(layoutStore.activeCompanyId)]?.[baseIdKey],
+      ),
+      state: defaultSaveState,
+      onSave: () => writeCompanyDefault(renderedLayout),
+      onClear: () =>
+        writeCompanyDefault({ order: [], hidden: [], shown: [], widths: {}, pinned: [] }),
+    };
+  }, [
+    layoutStore,
+    activeCompanyName,
+    baseIdKey,
+    defaultSaveState,
+    renderedLayout,
+    writeCompanyDefault,
+  ]);
 
   function resetOrder() {
     // Resetting order also clears widths + pinned so the table returns to a
@@ -1786,6 +2140,9 @@ export function DataTable<T>({
         open={chooserOpen}
         onClose={() => setChooserOpen(false)}
         options={chooserOptions}
+        presets={presetOptions}
+        onApplyPreset={applyPreset}
+        defaultManager={defaultManager}
         hidden={effectiveHidden}
         onToggle={toggleColumn}
         onResetVisibility={resetVisibility}
