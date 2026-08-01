@@ -9,11 +9,15 @@ name: Backfill PO -> SO item links (DRY-RUN gated)
 #
 # Tier 1 = the goods physically shipped (delivered chain -> the DO's real
 # so_item_id). Tier 2 = the PO's "From SOs:" note names exactly ONE valid,
-# company-owned Sales Order. Both write only where the item code pairs 1:1.
+# company-owned Sales Order. Tier 3 = the CONSOLIDATED PO — the note names
+# several SOs (one supplier order covering several customers), and the item code
+# is unique across the WHOLE named set, so no other named order could have
+# absorbed the line. All three write only where the item code pairs 1:1.
 #
-# NOT written, by design: a PO whose note names 2+ SOs (which line served which
-# is recorded nowhere), a line with no evidence at all, and anything MRP-derived
-# (that coverage is floating and evaporates on delivery).
+# NOT written, by design: a code two of the named orders both still want (the
+# dry-run prints the full candidate table instead), anything discriminated only
+# by quantity, a line with no evidence at all, and anything MRP-derived (that
+# coverage is floating and evaporates on delivery).
 #
 # DRY-RUN unless apply=1. Idempotent.
 on:
@@ -33,6 +37,7 @@ on:
           - all
           - "1"
           - "2"
+          - "3"
 
 concurrency:
   group: backfill-po-so-item-links

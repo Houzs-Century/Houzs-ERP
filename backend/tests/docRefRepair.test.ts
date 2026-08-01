@@ -6,7 +6,7 @@ import {
   parseFromSosTokens,
   rewriteFromSosNote,
 } from "../scripts/lib/doc-ref-repair-core.mjs";
-import { pairPoLinesToSoLines } from "../scripts/lib/po-so-line-pairing.mjs";
+import { pairPoLinesToSoLines, pairPoLinesAcrossSos } from "../scripts/lib/po-so-line-pairing.mjs";
 
 // The 2990 import prefixed document NUMBERS but not the references stored as
 // free text inside another column, so `purchase_orders.notes` and
@@ -206,6 +206,113 @@ describe("pairPoLinesToSoLines — a link is written only when the item code pai
       [{ id: "po1", item_code: "A", so_item_id: "so1" }],
       [{ id: "so1", item_code: "A" }],
       new Set(["so1"]),
+    );
+    expect(res.pairs).toEqual([]);
+    expect(res.alreadyLinked).toBe(1);
+  });
+});
+
+describe("pairPoLinesAcrossSos — TIER 3, the consolidated PO", () => {
+  test("one line per named order: each code unique across the SET, so every line is determined", () => {
+    // The owner's model — one PO to the supplier covering three customers.
+    const res = pairPoLinesAcrossSos(
+      [
+        { id: "po1", item_code: "ANGGN-FIRM(Q)", so_item_id: null },
+        { id: "po2", item_code: "ANGGN-SOFT(K)", so_item_id: null },
+        { id: "po3", item_code: "ARRUS-FIRM(Q)", so_item_id: null },
+      ],
+      [
+        { doc: "SO-1", lines: [{ id: "s1", item_code: "ANGGN-FIRM(Q)" }] },
+        { doc: "SO-2", lines: [{ id: "s2", item_code: "ANGGN-SOFT(K)" }] },
+        { doc: "SO-3", lines: [{ id: "s3", item_code: "ARRUS-FIRM(Q)" }] },
+      ],
+    );
+    expect(res.ambiguous).toEqual([]);
+    expect(res.pairs).toEqual([
+      { poLineId: "po1", soLineId: "s1", code: "ANGGN-FIRM(Q)", soDoc: "SO-1" },
+      { poLineId: "po2", soLineId: "s2", code: "ANGGN-SOFT(K)", soDoc: "SO-2" },
+      { poLineId: "po3", soLineId: "s3", code: "ARRUS-FIRM(Q)", soDoc: "SO-3" },
+    ]);
+  });
+
+  test("two of the named orders want the SAME code — refused, and both are named", () => {
+    const res = pairPoLinesAcrossSos(
+      [{ id: "po1", item_code: "A", so_item_id: null }],
+      [
+        { doc: "SO-1", lines: [{ id: "s1", item_code: "A" }] },
+        { doc: "SO-2", lines: [{ id: "s2", item_code: "A" }] },
+      ],
+    );
+    expect(res.pairs).toEqual([]);
+    expect(res.ambiguous).toEqual([
+      { code: "A", unlinkedPoLines: 1, freeSoLines: 2, soDocs: ["SO-1", "SO-2"] },
+    ]);
+  });
+
+  test("quantity is NOT a discriminator — equal qty does not break a tie", () => {
+    const res = pairPoLinesAcrossSos(
+      [{ id: "po1", item_code: "A", qty: 3, so_item_id: null }],
+      [
+        { doc: "SO-1", lines: [{ id: "s1", item_code: "A", qty: 3 }] },
+        { doc: "SO-2", lines: [{ id: "s2", item_code: "A", qty: 9 }] },
+      ],
+    );
+    expect(res.pairs).toEqual([]);
+    expect(res.ambiguous[0].code).toBe("A");
+  });
+
+  test("a stronger tier's claim frees the tie: the taken SO line leaves the code unique", () => {
+    // Tier 1/2 already bound s1, so only s2 is a candidate and po1 is determined.
+    const res = pairPoLinesAcrossSos(
+      [{ id: "po1", item_code: "A", so_item_id: null }],
+      [
+        { doc: "SO-1", lines: [{ id: "s1", item_code: "A" }] },
+        { doc: "SO-2", lines: [{ id: "s2", item_code: "A" }] },
+      ],
+      new Set(["s1"]),
+    );
+    expect(res.ambiguous).toEqual([]);
+    expect(res.pairs).toEqual([
+      { poLineId: "po1", soLineId: "s2", code: "A", soDoc: "SO-2" },
+    ]);
+  });
+
+  test("two PO lines of one code stay ambiguous even when the set offers two", () => {
+    const res = pairPoLinesAcrossSos(
+      [
+        { id: "po1", item_code: "A", so_item_id: null },
+        { id: "po2", item_code: "A", so_item_id: null },
+      ],
+      [
+        { doc: "SO-1", lines: [{ id: "s1", item_code: "A" }] },
+        { doc: "SO-2", lines: [{ id: "s2", item_code: "A" }] },
+      ],
+    );
+    expect(res.pairs).toEqual([]);
+    expect(res.ambiguous).toEqual([
+      { code: "A", unlinkedPoLines: 2, freeSoLines: 2, soDocs: ["SO-1", "SO-2"] },
+    ]);
+  });
+
+  test("a code no named order carries is unmatched, not paired", () => {
+    const res = pairPoLinesAcrossSos(
+      [{ id: "po1", item_code: "SVC-TRANS.CHARGES", so_item_id: null }],
+      [{ doc: "SO-1", lines: [{ id: "s1", item_code: "A" }] }],
+    );
+    expect(res.pairs).toEqual([]);
+    expect(res.unmatched).toEqual([
+      { code: "SVC-TRANS.CHARGES", unlinkedPoLines: 1, freeSoLines: 0 },
+    ]);
+  });
+
+  test("an already-linked PO line is not re-paired against a different order", () => {
+    const res = pairPoLinesAcrossSos(
+      [{ id: "po1", item_code: "A", so_item_id: "s1" }],
+      [
+        { doc: "SO-1", lines: [{ id: "s1", item_code: "A" }] },
+        { doc: "SO-2", lines: [{ id: "s2", item_code: "A" }] },
+      ],
+      new Set(["s1"]),
     );
     expect(res.pairs).toEqual([]);
     expect(res.alreadyLinked).toBe(1);

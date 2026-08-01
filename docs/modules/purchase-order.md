@@ -199,6 +199,43 @@ it, but a hand-typed line never could.
   (`MobileModuleList` / `MobileModuleDetail`) is list + header only and has no
   per-line editor at all.
 
+### Backfilling `so_item_id` on historical lines — the evidence tiers
+
+`backend/scripts/backfill-po-so-item-links.mjs` (workflow **Backfill PO -> SO
+item links**) stamps the links history never recorded. It is DRY-RUN unless
+`apply=1`, runs in one transaction, and is idempotent — a stamped line is no
+longer unlinked, so a re-run plans zero rows. Run it **after** *Repair 2990 doc
+references*: Tier 1 joins batches to `po_number`, and while the 2990 batches
+still name pre-import numbers that join silently finds nothing.
+
+Three tiers, in precedence order — a weaker inference can never overwrite a
+stronger one, because each tier treats the previous tier's plan as already
+linked and its SO lines as taken:
+
+| Tier | Evidence | What it proves |
+|---|---|---|
+| 1 | **Delivered chain.** A DO consumed a lot stamped `batch_no` = this PO number (or its OUT movement carries it); the SO comes from the DO's real `so_item_id`. | A record of what happened, not an inference. |
+| 2 | **Note names exactly ONE SO.** The `From SOs:` note written at raise time resolves to one valid, company-owned Sales Order. | With one order there is no question which it served. |
+| 3 | **Consolidated PO — code unique across the NAMED SET.** The note names several SOs (one supplier order covering several customers, routine for mattresses). Every free line of every named SO is pooled, then the same 1:1 test runs against the pool. | If exactly one unlinked PO line and one free SO line in the whole set carry the code, no other named order could have absorbed it. |
+
+All three apply the *same* rule from `backend/scripts/lib/po-so-line-pairing.mjs`
+— a link is written only when the item code pairs **1:1** (one still-unlinked PO
+line, one still-free SO line). Tier 3 widens the candidate pool; it does not
+weaken the rule.
+
+Deliberately never written, and why:
+
+- **A code two of the named orders both still want.** Which line served which is
+  recorded nowhere. The dry-run prints the full candidate table so a human can
+  adjudicate; the script refuses.
+- **Anything discriminated only by quantity.** Matching qty-to-qty among
+  same-code candidates is an inference about intent, not a record of one.
+  Quantities are printed for the reader, never acted on.
+- **Anything MRP-derived** (`po-so-coverage` layer (c)). That allocation is
+  floating by design — it shifts as demand moves and evaporates on delivery.
+  Freezing it into a stored link would turn a live computation into a permanent,
+  wrong record. The script never calls the MRP engine.
+
 ### The SO-quota counter — `recomputeSoPicked` (`:2352-2398`)
 
 Live-count, not arithmetic: it re-sums `purchase_order_items.qty` per
