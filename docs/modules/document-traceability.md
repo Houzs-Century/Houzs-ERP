@@ -229,6 +229,19 @@ predate id stamping). Both tables in one transaction, per-row old -> new in
 the dry run, UPDATE scoped to the exact dangling ids the plan proved. Closes
 audit findings 4 and 10b.
 
+**Collision-aware since the 2026-08-01 live APPLY** (which died on
+`uq_inv_mov_do_source`): the executor takes a SAVEPOINT per row; a
+unique-violation (23505) rolls back to the savepoint and files that row under
+`duplicate-of-real` — the dangling movement is an import DUPLICATE of a
+movement the real document already carries, and repointing it would double the
+document's ledger. Duplicates are reported with the violated constraint's
+name and NEVER deleted (removal is its own explicit decision; the row still
+counts in audit section 4, now classified). A consumption row follows its
+movement — refused together, never split. The dry run EXERCISES the identical
+writes in a rolled-back transaction, so the collision verdicts are applied
+truth, not prediction; catching 23505 (rather than pre-computing the key)
+also survives prod's hand-applied indexes that this tree does not describe.
+
 **Part `grn-gap` (2026-08-01, ledger-perfection W2) — the audit's 3a inbound
 gap itself.** `2990-GRN-2606-001` accepted 501 units net of returns; its ONE
 IN movement booked 500 — one unit never entered either ledger, so on-hand and
@@ -248,6 +261,35 @@ compare-and-set re-check inside the APPLY transaction, and a
 somehow still reads short. The movement is timestamped NOW — the unit enters
 FIFO at the repair date; backdating would rewrite the consumption chronology.
 The `grns` workflow input names the targets (default the one 3a implicated).
+
+**Part `dedupe` (2026-08-01, owner authorization "继续 全部可以" including
+removal).** The rows part `ids` classifies `duplicate-of-real` may now be
+DELETED — under a rule STRICTER than the index collision that classified
+them: the real document must carry a FULL-ROW twin, same (company, product,
+variant, warehouse, movement_type, qty), because `uq_inv_mov_do_source` is
+keyed without movement_type and proves nothing about qty
+(`classifyDuplicateMovement`). The delete reverses the duplicate's whole
+ledger effect in ONE transaction — consumptions go with the movement, each
+consumed lot's `qty_remaining` is restored (so audit-2a conservation holds by
+construction), any drift aborts everything. Old values of every deleted row
+print in dry run AND apply, plus the per-bucket movement-sum before -> after
+(duplicate OUTs double-decrement on-hand, so audit-2b negative buckets should
+shrink — the output shows whether they do). Run order: `ids` APPLY first — a
+self-collision's surviving sibling becomes the real twin that licenses
+deleting the other. All of it is pinned by `tests-pg/idRestampExec.pg.test.ts`
+against a real unique index in CI's postgres container.
+
+**Line-basis fallback since the 2026-08-01 live run** (which planned zero:
+the short product had written NO movement at all, so no sibling existed): when
+the sibling rule refuses with `no-sibling`, the insert falls back to the GRN
+line's OWN landed cost — `round(unit_price_centi x exchange_rate)`, the same
+`toMyrSen` path grns.ts uses for movements written outside the allocation —
+with the bucket from single-valued GRN facts (`deriveGrnLineBasis`: exactly
+one line for the product, one warehouse across the GRN's movements else the
+header warehouse, one batch else unbatched, variant from the line's own
+variants via a lockstep mirror of `computeVariantKey` pinned by test to the
+real function). Several lines for the product, no resolvable warehouse, or a
+zero/NULL price still refuse.
 
 **A regression the repair would otherwise have caused.** `document-flow.ts`'s
 relationship-map note edge matched on the prefix-STRIPPED root SO only, and

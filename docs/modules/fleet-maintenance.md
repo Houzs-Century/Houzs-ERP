@@ -136,6 +136,45 @@ mobile shell resolves it to a desktop-only dead-end (no mobile screen in Phase 1
 
 ## 9. Phase 2 — preventive plans + mileage capture
 
+### `scm.lorry_compliance_attachments` — the vault's FILES (mig 0238, 2026-08-01)
+
+The vault stored a reference NUMBER (`document_ref` is text) and no file, and the
+Fleet Health drawer rendered the history read-only — no add form, no file input —
+while its own footer said "Renew a compliance document by adding a new row".
+Owner, 2026-08-01: *"为什么我的 Compliance、Road Tax 这些都是不能 Upload 的呢？"*
+Because it was never built. Mig 0238 and the endpoints below are that half.
+
+`id, company_id, document_id -> lorry_compliance_documents(id) ON DELETE CASCADE,
+r2_key, file_name, mime_type, size_bytes, uploaded_by, created_at`. UNIQUE on
+`r2_key`; index on `(document_id, created_at)`.
+
+**MANY files per renewal, not one column on the document.** A PUSPAKOM report runs
+to several pages and an insurance renewal is cover note + schedule. Four flat
+`file_*` columns would cap it at one and need this table anyway.
+
+**The R2 key is SERVER-MINTED** — `fleet/compliance/<lorryId>/<docId>/<ts>.<ext>`,
+built by the PUT handler. A client never supplies it, so a row can never point at
+an arbitrary bucket object. Bucket is `POD_BUCKET`, the same one project and ASSR
+attachments use; the contract copies `projects.ts /:id/attachments` exactly (PUT
+raw binary, `?ext=&name=`).
+
+| Method | Path | Notes |
+|---|---|---|
+| PUT | `/fleet-maintenance/vehicles/:id/compliance/:docId/attachments?ext=&name=` | `fleet.write`. Verifies the document belongs to the lorry in the path — a known `docId` must not let a caller hang a file off another lorry's renewal. PDF/JPG/PNG/WEBP/HEIC, 15MB |
+| DELETE | `/fleet-maintenance/compliance-attachments/:attId` | `fleet.write`. Row first, R2 object second — a failed object delete leaves a harmless unreferenced blob, the reverse order would leave a row pointing at nothing |
+| GET | `/fleet-maintenance/compliance-attachments/:key{.+}` | `fleet.read`. Streams it. Refuses any key outside the `fleet/compliance/` prefix |
+
+The detail read (`GET /vehicles/:id`) groups the files onto their history rows, so
+the drawer never joins two arrays itself.
+
+**Also surfaced on the drawer, 2026-08-01:** the box dimensions
+(`length_ft`/`width_ft`/`height_ft`, mig 0209 — stored since WS3, never shown) and
+a note when an IN-HOUSE lorry has nothing on file for Road Tax / Insurance /
+PUSPAKOM. That note **states** the gap rather than enforcing it: a hard
+requirement would block editing the very rows that are incomplete, and the live
+fleet has plenty of those. An outsourced lorry is the carrier's paperwork and is
+not counted.
+
 ### 9.1 New tables (migration `0203_scm_lorry_plans_mileage.sql`)
 
 > ⚠️ Migration number is a **placeholder** — re-check and renumber to

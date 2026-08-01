@@ -4,7 +4,17 @@ import {
   pickCostBasis,
   classifyMovementRelabel,
   projectRelabelledDrift,
+  toMyrSenMirror,
+  variantKeyMirror,
+  deriveGrnLineBasis,
+  planFamilyReconstruction,
+  classifyLotConservation,
+  planSurplusCorrection,
+  classifyDuplicateMovement,
+  projectDedupeBucketImpact,
 } from "../scripts/lib/ledger-repair-core.mjs";
+import { toMyrSen } from "../src/scm/lib/fx";
+import { computeVariantKey, type VariantAttrs } from "../src/scm/shared/variant-key";
 
 // The 2026-08 ledger-perfection repairs (W2 inbound gap, W3 basis cost, W4
 // variant-key relabel) write to the money-critical FIFO ledger, so — exactly
@@ -228,5 +238,331 @@ describe("projectRelabelledDrift (W4) — the paired drift closes, and the proje
     projectRelabelledDrift(buckets, [{ fromKey: "k::A", toKey: "k::B", signedQty: -1 }]);
     expect(buckets.get("k::A")).toEqual({ movQty: -1, lotQty: 0 });
     expect(buckets.has("k::B")).toBe(false);
+  });
+});
+
+describe("LOCKSTEP mirrors — the script-side copies must equal the app's real functions", () => {
+  test("toMyrSenMirror === toMyrSen (lib/fx.ts) across the shapes the GRN paths produce", () => {
+    const cases: Array<[number, unknown]> = [
+      [12345, 1], [12345, "1"], [55000, 4.45], [55000, "4.450000"],
+      [0, 3], [999, null], [999, undefined], [999, 0], [999, -2], [999, NaN],
+      [1, 0.5], [7, 3.333333],
+    ];
+    for (const [sen, rate] of cases) {
+      expect(toMyrSenMirror(sen, rate), `sen=${sen} rate=${String(rate)}`).toBe(toMyrSen(sen, rate));
+    }
+  });
+
+  test("variantKeyMirror === computeVariantKey (shared/variant-key.ts) across a fixture matrix", () => {
+    const attrsMatrix: Array<VariantAttrs | null | undefined> = [
+      null,
+      undefined,
+      {},
+      { fabricCode: "FVI-BRONZE" },
+      { colorCode: "GOLD " },
+      { colourCode: "Teal" },
+      { fabricColor: "NAVY" },
+      { fabricCode: "A", colorCode: "B" }, // canonical wins
+      { seatHeight: "18" },
+      { depth: "17" },
+      { seatHeight: "18", depth: "17" },
+      { legHeight: "5" },
+      { sofaLegHeight: "6" },
+      { gap: "2", divanHeight: "10", legHeight: "4", totalHeight: "16" },
+      { specials: ["b", "A", ""] },
+      { specials: [{ code: "X1" }, { label: "y2" }, {}] },
+      { fabricCode: "F", specials: ["s2", "s1"] },
+    ];
+    const groups = ["sofa", "SOFA", " Sofa ", "bedframe", "mattress", "accessory", "others", "service", "", null, undefined, "unknown-group"];
+    for (const g of groups) {
+      for (const a of attrsMatrix) {
+        expect(variantKeyMirror(g as string, a), `group=${String(g)} attrs=${JSON.stringify(a)}`)
+          .toBe(computeVariantKey(g as string, a));
+      }
+    }
+  });
+});
+
+describe("deriveGrnLineBasis (W2 fallback) — the line's own landed cost, single-valued facts or refusal", () => {
+  const line = { unit_price_centi: 55000, item_group: "mattress", variants: null };
+
+  test("THE LIVE WOUND: no sibling movement — the line's own price x rate becomes the basis", () => {
+    const v = deriveGrnLineBasis({
+      lines: [line],
+      qty: 1,
+      headerWarehouseId: "wh-hdr",
+      exchangeRate: 1,
+      grnMovementWarehouses: ["wh-mov", "wh-mov"],
+      grnMovementBatches: ["2990-PO-2606-001", "2990-PO-2606-001"],
+      companyId: 2,
+    });
+    expect(v.verdict).toBe("line-insert");
+    expect(v.insert).toEqual({
+      qty: 1, warehouseId: "wh-mov", variantKey: "", batchNo: "2990-PO-2606-001",
+      companyId: 2, unitCostSen: 55000,
+    });
+  });
+
+  test("a foreign-currency line converts at the GRN's rate (the toMyrSen path)", () => {
+    const v = deriveGrnLineBasis({
+      lines: [{ ...line, unit_price_centi: 10000 }],
+      qty: 2, headerWarehouseId: "wh", exchangeRate: 4.45,
+      grnMovementWarehouses: [], grnMovementBatches: [], companyId: 2,
+    });
+    expect(v.verdict).toBe("line-insert");
+    expect(v.insert.unitCostSen).toBe(44500);
+    expect(v.insert.warehouseId).toBe("wh"); // header fallback when no movements
+    expect(v.insert.batchNo).toBeNull(); // no single batch -> unbatched
+  });
+
+  test("several lines for the product cannot attribute the delta — refused", () => {
+    expect(deriveGrnLineBasis({ lines: [line, line], qty: 1, headerWarehouseId: "wh", exchangeRate: 1, companyId: 2 }).verdict).toBe("multi-line");
+  });
+
+  test("movements across TWO warehouses fall back to the header; no header at all refuses", () => {
+    const two = { lines: [line], qty: 1, exchangeRate: 1, grnMovementWarehouses: ["w1", "w2"], grnMovementBatches: [], companyId: 2 };
+    expect(deriveGrnLineBasis({ ...two, headerWarehouseId: "wh-hdr" }).insert.warehouseId).toBe("wh-hdr");
+    expect(deriveGrnLineBasis({ ...two, headerWarehouseId: null }).verdict).toBe("no-warehouse");
+  });
+
+  test("a zero price is not a basis — refused, same rule as pickCostBasis", () => {
+    expect(deriveGrnLineBasis({ lines: [{ ...line, unit_price_centi: 0 }], qty: 1, headerWarehouseId: "wh", exchangeRate: 1, companyId: 2 }).verdict).toBe("zero-cost");
+  });
+
+  test("the variant key comes from the line's own variants via the lockstep mirror", () => {
+    const v = deriveGrnLineBasis({
+      lines: [{ unit_price_centi: 100, item_group: "sofa", variants: { fabricCode: "FVI", legHeight: "5" } }],
+      qty: 1, headerWarehouseId: "wh", exchangeRate: 1,
+      grnMovementWarehouses: [], grnMovementBatches: [], companyId: 2,
+    });
+    expect(v.insert.variantKey).toBe(computeVariantKey("sofa", { fabricCode: "FVI", legHeight: "5" }));
+  });
+});
+
+describe("planFamilyReconstruction (W4 phase 1) — rebuild dropped consumption rows only when the family proves them", () => {
+  const mov = (id: string, qty: number, consumed: number, cost: number, at: string, consumedCost = 0) => ({
+    movementId: id, qty, alreadyConsumed: consumed, alreadyConsumedCostSen: consumedCost, totalCostSen: cost, createdAt: at,
+  });
+  const lot = (id: string, recv: number, cons: number, rem: number, cost: number, at: string) => ({
+    lotId: id, qtyReceived: recv, consumed: cons, qtyRemaining: rem, unitCostSen: cost, receivedAt: at,
+  });
+
+  test("THE XAMMAR SHAPE: costed OUT with zero consumptions + decremented lot with zero rows — pure re-link at RM0", () => {
+    const v = planFamilyReconstruction({
+      movements: [mov("m1", 2, 0, 166000, "2026-07-01")],
+      lots: [lot("l1", 5, 0, 3, 83000, "2026-06-01")],
+    });
+    expect(v.verdict).toBe("reconstruct");
+    expect(v.pairs).toEqual([{ movementId: "m1", lotId: "l1", qty: 2, unitCostSen: 83000 }]);
+    expect(v.stamps).toEqual([]);
+    expect(v.rmStampedSen).toBe(0);
+  });
+
+  test("a zero-cost movement gets stamped from the reconstructed rows (0154-style) and the RM is reported", () => {
+    const v = planFamilyReconstruction({
+      movements: [mov("m1", 1, 0, 0, "2026-07-01")],
+      lots: [lot("l1", 4, 2, 1, 55000, "2026-06-01")],
+    });
+    expect(v.verdict).toBe("reconstruct");
+    expect(v.stamps).toEqual([{ movementId: "m1", newTotalCostSen: 55000 }]);
+    expect(v.rmStampedSen).toBe(55000);
+  });
+
+  test("sums that do not match refuse the whole family — the two sides describe different histories", () => {
+    const v = planFamilyReconstruction({
+      movements: [mov("m1", 3, 0, 0, "2026-07-01")],
+      lots: [lot("l1", 5, 0, 3, 100, "2026-06-01")],
+    });
+    expect(v.verdict).toBe("sums-mismatch");
+    expect(v.totalShort).toBe(3);
+    expect(v.totalDeficit).toBe(2);
+  });
+
+  test("a stored cost that disagrees with existing + paired refuses — never contradict money already booked", () => {
+    const v = planFamilyReconstruction({
+      movements: [mov("m1", 2, 0, 999, "2026-07-01")],
+      lots: [lot("l1", 5, 1, 2, 83000, "2026-06-01")],
+    });
+    expect(v.verdict).toBe("cost-conflict");
+    expect(v.conflicts).toEqual([{ movementId: "m1", storedCostSen: 999, existingConsumedCostSen: 0, pairedCostSen: 166000 }]);
+  });
+
+  test("FIFO pairing: oldest movement takes oldest deficit, spanning lots when needed", () => {
+    const v = planFamilyReconstruction({
+      movements: [mov("m2", 2, 0, 0, "2026-07-02"), mov("m1", 3, 0, 0, "2026-07-01")],
+      lots: [lot("l2", 2, 0, 0, 200, "2026-06-02"), lot("l1", 3, 0, 0, 100, "2026-06-01")],
+    });
+    expect(v.verdict).toBe("reconstruct");
+    expect(v.pairs).toEqual([
+      { movementId: "m1", lotId: "l1", qty: 3, unitCostSen: 100 },
+      { movementId: "m2", lotId: "l2", qty: 2, unitCostSen: 200 },
+    ]);
+  });
+
+  test("partially-linked movement: residual pairs, and the FULL-cost import shape is a pure re-link", () => {
+    // 5 shipped, 3 already linked at 100/u (existing rows cost 300), stored
+    // total 500 = 300 + the missing 2x100 — the import stamped the full cost
+    // and dropped only the rows.
+    const v = planFamilyReconstruction({
+      movements: [mov("m1", 5, 3, 500, "2026-07-01", 300)],
+      lots: [lot("l1", 5, 3, 0, 100, "2026-06-01")],
+    });
+    expect(v.verdict).toBe("reconstruct");
+    expect(v.pairs).toEqual([{ movementId: "m1", lotId: "l1", qty: 2, unitCostSen: 100 }]);
+    expect(v.stamps).toEqual([]);
+    expect(v.rmStampedSen).toBe(0);
+  });
+
+  test("partially-linked movement whose cost covers only the linked part gets topped up (RM = the paired part)", () => {
+    const v = planFamilyReconstruction({
+      movements: [mov("m1", 5, 3, 300, "2026-07-01", 300)],
+      lots: [lot("l1", 5, 3, 0, 100, "2026-06-01")],
+    });
+    expect(v.verdict).toBe("reconstruct");
+    expect(v.stamps).toEqual([{ movementId: "m1", newTotalCostSen: 500 }]);
+    expect(v.rmStampedSen).toBe(200);
+  });
+
+  test("a fully-conserving family is balanced — nothing to do (idempotence)", () => {
+    const v = planFamilyReconstruction({
+      movements: [mov("m1", 2, 2, 100, "2026-07-01")],
+      lots: [lot("l1", 2, 2, 0, 50, "2026-06-01")],
+    });
+    expect(v.verdict).toBe("balanced");
+  });
+});
+
+describe("classifyLotConservation (round 3) — one lot against the audit's 2a lens, every arm named", () => {
+  const c = (received: number, consumed: number, remaining: number) =>
+    classifyLotConservation({ qtyReceived: received, consumed, qtyRemaining: remaining });
+
+  test("the round-2 blind spot: SURPLUS — rows exist, remaining never decremented (residual < 0)", () => {
+    const v = c(5, 2, 5);
+    expect(v).toMatchObject({ verdict: "surplus", residual: -2 });
+  });
+
+  test("DEFICIT — rows missing (residual > 0), the original reconstruct shape", () => {
+    expect(c(5, 0, 3)).toMatchObject({ verdict: "deficit", residual: 2 });
+  });
+
+  test("over-consumed (consumed > received) is its own refusal — a decrement cannot conserve it", () => {
+    expect(c(3, 5, 0).verdict).toBe("over-consumed");
+  });
+
+  test("negative remaining / negative received are corrupt quantities, not repair candidates", () => {
+    expect(c(5, 3, -1).verdict).toBe("negative-remaining");
+    expect(c(-1, 0, 0).verdict).toBe("negative-received");
+  });
+
+  test("a conserving lot classifies as conserves — the audit would never have flagged it", () => {
+    expect(c(5, 2, 3).verdict).toBe("conserves");
+  });
+
+  test("EXHAUSTIVE AGREEMENT with the audit's 2a WHERE: flagged iff not conserves", () => {
+    // The audit's four arms, in JS: any of them true <=> our verdict != conserves.
+    for (let received = -1; received <= 4; received++) {
+      for (let consumed = 0; consumed <= 5; consumed++) {
+        for (let remaining = -1; remaining <= 4; remaining++) {
+          const auditFlags = received - consumed !== remaining
+            || remaining < 0 || consumed > received || received < 0;
+          const v = c(received, consumed, remaining);
+          expect(v.verdict !== "conserves", `r=${received} c=${consumed} rem=${remaining}`).toBe(auditFlags);
+        }
+      }
+    }
+  });
+});
+
+describe("planSurplusCorrection (round 3) — restore remaining = received - consumed, only over honest rows", () => {
+  const refs = (over: Partial<{ movementId: string | null; exists: boolean; absQty: number; consumedTotal: number }> = {}) => [{
+    movementId: "m1", exists: true, absQty: 2, consumedTotal: 2, ...over,
+  }];
+
+  test("THE XAMMAR SURPLUS: received 5, consumed 2 by real movements, remaining still 5 -> remaining 3, delta 2", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs() });
+    expect(v).toEqual({ verdict: "correct", newRemaining: 3, delta: 2 });
+  });
+
+  test("a consumption row with NO movement_id is untraceable evidence — refused", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs({ movementId: null }) });
+    expect(v.verdict).toBe("orphan-consumptions");
+  });
+
+  test("a referenced movement that does not exist refuses — the rows point at nothing", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs({ exists: false }) });
+    expect(v).toMatchObject({ verdict: "missing-movement", missing: ["m1"] });
+  });
+
+  test("a movement consuming MORE than it moved refuses — audit 10c says the rows lie", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs({ absQty: 1, consumedTotal: 2 }) });
+    expect(v).toMatchObject({ verdict: "over-attribution", over: ["m1"] });
+  });
+
+  test("consumed beyond received cannot be conserved by a decrement — refused (belt on the classify arm)", () => {
+    const v = planSurplusCorrection({ qtyReceived: 2, consumed: 5, qtyRemaining: 0, referencedMovements: refs({ absQty: 5, consumedTotal: 5 }) });
+    expect(v.verdict).toBe("over-consumed");
+  });
+
+  test("idempotence: after the correction the lot conserves and classify says so", () => {
+    const v = planSurplusCorrection({ qtyReceived: 5, consumed: 2, qtyRemaining: 5, referencedMovements: refs() });
+    expect(v.verdict).toBe("correct");
+    expect(classifyLotConservation({ qtyReceived: 5, consumed: 2, qtyRemaining: (v as { newRemaining: number }).newRemaining }).verdict).toBe("conserves");
+  });
+});
+
+describe("classifyDuplicateMovement (part=dedupe) — deletion needs a FULL-ROW twin, not just an index collision", () => {
+  const dup = {
+    companyId: 2, productCode: "XAM-1", variantKey: "", warehouseId: "wh-1",
+    movementType: "OUT", qty: 2,
+  };
+  const twin = (over: Record<string, unknown> = {}) => ({
+    movementId: "real-1", companyId: 2, productCode: "XAM-1", variantKey: "",
+    warehouseId: "wh-1", movementType: "OUT", qty: 2, ...over,
+  });
+
+  test("a counterpart matching all six facts makes the duplicate deletable", () => {
+    expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [twin()] }))
+      .toEqual({ verdict: "delete", matches: ["real-1"] });
+  });
+
+  test("qty or movement_type differing refuses — the index key excludes them, so a collision alone proves nothing", () => {
+    expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [twin({ qty: 5 })] }).verdict).toBe("no-counterpart");
+    expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [twin({ movementType: "IN" })] }).verdict).toBe("no-counterpart");
+  });
+
+  test("company / product / variant / warehouse must all match too", () => {
+    for (const over of [{ companyId: 1 }, { productCode: "OTHER" }, { variantKey: "K" }, { warehouseId: "wh-2" }]) {
+      expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [twin(over)] }).verdict, JSON.stringify(over)).toBe("no-counterpart");
+    }
+  });
+
+  test("no counterparts at all refuses; movement_type compares case-insensitively", () => {
+    expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [] }).verdict).toBe("no-counterpart");
+    expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [twin({ movementType: "out" })] }).verdict).toBe("delete");
+  });
+});
+
+describe("projectDedupeBucketImpact (part=dedupe) — the audit-2b linkage the owner asked to see", () => {
+  test("deleting a duplicate OUT RAISES the bucket's on-hand sum — a negative bucket shrinks toward zero", () => {
+    const current = new Map([["b1", -2]]);
+    const after = projectDedupeBucketImpact(
+      [{ bucketKey: "b1", movementType: "OUT", qty: 2 }],
+      current,
+    );
+    expect(after.get("b1")).toBe(0);
+    expect(current.get("b1")).toBe(-2); // input never mutated
+  });
+
+  test("deleting an IN lowers the sum; ADJUSTMENT reverses its signed qty; multiple deletions accumulate", () => {
+    const after = projectDedupeBucketImpact(
+      [
+        { bucketKey: "b1", movementType: "IN", qty: 3 },
+        { bucketKey: "b1", movementType: "OUT", qty: 1 },
+        { bucketKey: "b2", movementType: "ADJUSTMENT", qty: -2 },
+      ],
+      new Map([["b1", 5], ["b2", -4]]),
+    );
+    expect(after.get("b1")).toBe(3); // 5 - 3 (IN removed) + 1 (OUT removed)
+    expect(after.get("b2")).toBe(-2); // removing a -2 adjustment raises by 2
   });
 });

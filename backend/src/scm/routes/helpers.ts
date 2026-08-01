@@ -14,11 +14,18 @@ import { normalizePhone } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { activeCompanyId } from '../lib/companyScope';
+import { carrierLinkForInsert, resolveCarrierLink } from '../lib/threepl-link';
 
 export const helpers = new Hono<{ Bindings: Env; Variables: Variables }>();
 helpers.use('*', supabaseAuth);
 
-const COLS = 'id, helper_code, name, contact, ic_number, in_house, active, created_at';
+const COLS = 'id, helper_code, name, contact, ic_number, in_house, threepl_company_id, active, created_at';
+
+/* The caller's in_house as a tri-state: absent stays absent (see threepl-link). */
+const ownFlagOf = (body: Record<string, unknown>): boolean | undefined =>
+  body.inHouse === undefined ? undefined : body.inHouse !== false;
+const carrierOf = (body: Record<string, unknown>): string | null | undefined =>
+  body.threeplCompanyId as string | null | undefined;
 
 helpers.get('/', async (c) => {
   const sb = c.get('supabase');
@@ -42,6 +49,8 @@ helpers.post('/', async (c) => {
   if (!name)       return c.json({ error: 'name_required' }, 400);
   /* Store helper contact in E.164 (mirrors drivers.phone). Contact is optional. */
   const normalizedContact = contact ? (normalizePhone(contact) ?? contact) : null;
+  /* A helper registered under a 3PL carrier is outsource, whatever was ticked. */
+  const link = carrierLinkForInsert({ threeplCompanyId: carrierOf(body), ownFlag: ownFlagOf(body) });
 
   const sb = c.get('supabase');
   const { data, error } = await sb.from('helpers').insert({
@@ -50,7 +59,8 @@ helpers.post('/', async (c) => {
     name,
     contact: normalizedContact,
     ic_number: (body.icNumber as string) ?? null,
-    in_house: body.inHouse === false ? false : true,
+    in_house: link.ownFlag,
+    threepl_company_id: link.carrierId,
     active: body.active === false ? false : true,
   }).select(COLS).single();
   if (error) {
@@ -81,7 +91,9 @@ helpers.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
-  if (body.inHouse !== undefined) updates.in_house = Boolean(body.inHouse);
+  const link = resolveCarrierLink({ threeplCompanyId: carrierOf(body), ownFlag: ownFlagOf(body) });
+  if (link.carrierId !== undefined) updates.threepl_company_id = link.carrierId;
+  if (link.ownFlag !== undefined) updates.in_house = link.ownFlag;
   if (body.active !== undefined) updates.active = Boolean(body.active);
 
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
