@@ -1,0 +1,78 @@
+name: Diag PWP price gap ("this SKU has no PWP price set")
+
+# Why a POS order dies with pwp_code_rejected — "this SKU has no PWP price set
+# (SKU Master)" even though the same SKU carries a PWP price on 2990.
+#
+# READ-ONLY at apply=0 (the default): reports duplicate codes across companies
+# (the unscoped-read hazard), the offending SKUs' rows under every company, the
+# vouchers, and a full diff of company-2 PWP prices against the 2990 source.
+# apply=1 additionally fills company-2 rows whose pwp_price_sen is 0 while the
+# source has a real value — zeros only, so it can never lower a price someone
+# has since set by hand. Read the dry-run before running with apply=1.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Destination DB"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - staging
+          - prod
+      apply:
+        description: "Set to 1 to BACKFILL the zeroed PWP prices (else read-only)"
+        required: false
+        default: "0"
+      focus_codes:
+        description: "Comma-separated SKU code prefixes to dump in full"
+        required: false
+        default: "CODY"
+      focus_vouchers:
+        description: "Comma-separated PWP codes to dump"
+        required: false
+        default: "PWP-4599PWWB,PWP-1018CWUU"
+
+jobs:
+  diag-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/diag-pwp-price-gap.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          SOURCE_SUPABASE_URL: ${{ secrets.SOURCE_SUPABASE_URL }}
+          SOURCE_SERVICE_ROLE_KEY: ${{ secrets.SOURCE_SERVICE_ROLE_KEY }}
+          APPLY: ${{ inputs.apply }}
+          FOCUS_CODES: ${{ inputs.focus_codes }}
+          FOCUS_VOUCHERS: ${{ inputs.focus_vouchers }}
+
+  diag-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/diag-pwp-price-gap.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SOURCE_SUPABASE_URL: ${{ secrets.SOURCE_SUPABASE_URL }}
+          SOURCE_SERVICE_ROLE_KEY: ${{ secrets.SOURCE_SERVICE_ROLE_KEY }}
+          APPLY: ${{ inputs.apply }}
+          FOCUS_CODES: ${{ inputs.focus_codes }}
+          FOCUS_VOUCHERS: ${{ inputs.focus_vouchers }}
