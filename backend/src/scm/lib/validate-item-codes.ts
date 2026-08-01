@@ -18,17 +18,29 @@ export type ValidateResult =
   | { ok: false; unknown: string[] };
 
 /**
- * Resolve which of the given itemCodes exist in mfg_products.code.
- * Returns { ok: true } when all are catalog members (or none provided), or
- * { ok: false, unknown: [...] } listing every code that doesn't exist.
+ * Resolve which of the given itemCodes exist in mfg_products.code, WITHIN one
+ * company. Returns { ok: true } when all are catalog members (or none
+ * provided), or { ok: false, unknown: [...] } listing every code that doesn't
+ * exist.
+ *
+ * The company predicate has to move in LOCK-STEP with the pricing loaders
+ * (loadProductByCode / loadProductsByCodes, mfg-pricing-recompute.ts). Both
+ * companies keep their own SKU master, so unscoped this gate admits a code that
+ * exists ONLY in the other company — and the now-scoped pricing read then finds
+ * nothing for it, prices the line at 0 and rejects the order as pricing_drift.
+ * A clean "that item code isn't in this company's catalogue" beats a drift
+ * number nobody can act on. null/undefined degrades to no predicate.
  */
 export async function validateItemCodes(
   sb: any,
   codes: Array<string | null | undefined>,
+  companyId?: number | null,
 ): Promise<ValidateResult> {
   const unique = [...new Set(codes.map((c) => (c ?? '').trim()).filter(Boolean))];
   if (unique.length === 0) return { ok: true };
-  const { data } = await sb.from('mfg_products').select('code').in('code', unique);
+  let q = sb.from('mfg_products').select('code').in('code', unique);
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data } = await q;
   const found = new Set(((data ?? []) as Array<{ code: string }>).map((r) => r.code));
   const unknown = unique.filter((c) => !found.has(c));
   return unknown.length === 0 ? { ok: true } : { ok: false, unknown };

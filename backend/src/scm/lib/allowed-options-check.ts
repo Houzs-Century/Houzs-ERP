@@ -285,18 +285,26 @@ export function checkAllowedOptions(
  *  Keeping the I/O here lets the SO route hand a clean (product, model)
  *  tuple into checkAllowedOptions without the test having to mock two
  *  table builds. */
+/*  `code` is NOT unique — both companies keep their own SKU master and 17 codes
+ *  collided on production 2026-08-01. Unscoped, the `.maybeSingle()` below
+ *  ERRORS on a duplicated code (PGRST116) and the discarded error becomes
+ *  `product = null`, which this gate reads as "allowed" — it stops checking
+ *  rather than stops the line. Callers pass `activeCompanyId(c)`;
+ *  null/undefined degrades to no predicate, as everywhere else. */
 export async function loadProductAndModel(
-  sb:       any,
-  itemCode: string | null | undefined,
+  sb:        any,
+  itemCode:  string | null | undefined,
+  companyId?: number | null,
 ): Promise<{ product: ProductForCheck | null; model: ModelForCheck | null }> {
   const code = (itemCode ?? '').trim();
   if (!code) return { product: null, model: null };
 
-  const { data: productRow } = await sb
+  let pq = sb
     .from('mfg_products')
     .select('code, category, model_id, size_code')
-    .eq('code', code)
-    .maybeSingle();
+    .eq('code', code);
+  if (companyId != null) pq = pq.eq('company_id', companyId);
+  const { data: productRow } = await pq.maybeSingle();
   const product = (productRow ?? null) as ProductForCheck | null;
   if (!product || !product.model_id) return { product, model: null };
 
@@ -318,15 +326,18 @@ export async function loadProductAndModel(
 export async function loadProductsAndModels(
   sb:        any,
   itemCodes: Array<string | null | undefined>,
+  companyId?: number | null,
 ): Promise<Map<string, { product: ProductForCheck | null; model: ModelForCheck | null }>> {
   const out = new Map<string, { product: ProductForCheck | null; model: ModelForCheck | null }>();
   const codes = Array.from(new Set(itemCodes.map((c) => (c ?? '').trim()).filter(Boolean)));
   if (codes.length === 0) return out;
 
-  const { data: productRows } = await sb
+  let pq = sb
     .from('mfg_products')
     .select('code, category, model_id, size_code')
     .in('code', codes);
+  if (companyId != null) pq = pq.eq('company_id', companyId);
+  const { data: productRows } = await pq;
   const products = ((productRows as ProductForCheck[]) ?? []);
 
   const modelIds = Array.from(new Set(products.map((p) => p.model_id).filter(Boolean))) as string[];

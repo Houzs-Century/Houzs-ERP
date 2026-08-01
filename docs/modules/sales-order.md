@@ -290,6 +290,38 @@ not role (Owner ruling, `mfg-sales-orders.ts` `isPosTabletCaller`):
   `isHatchSales` true for `sales` (+ `super_admin`), so the price input is editable
   for salespersons on both surfaces.
 
+### Looking a product up by CODE — always pass the company
+
+`mfg_products.code` is **not unique**. Both companies keep their own SKU master,
+so one code can name two different products: on 2026-08-01 seventeen did —
+`CODY` / `FENRIR` / `JAGER` × `(K)(Q)(S)(SK)(SS)` plus two mattress codes — HOUZS's
+manufacturing row (cost columns, NULL `sell_price_sen`) and 2990's selling row
+(`sell_price_sen` + `pwp_price_sen`). Both are legitimate; neither can be renamed.
+
+Every by-code read on the order path therefore takes a `companyId`:
+
+| helper | file |
+|---|---|
+| `loadProductByCode` / `loadProductsByCodes` | `scm/lib/mfg-pricing-recompute.ts` |
+| `loadProductAndModel` / `loadProductsAndModels` | `scm/lib/allowed-options-check.ts` |
+| `validateItemCodes` | `scm/lib/validate-item-codes.ts` |
+
+Callers pass `activeCompanyId(c)` — or, inside `createSalesOrderCore` (which has a
+`SoCreateContext`, not a Hono `Context`), its local `companyId`. `null`/`undefined`
+degrades to no predicate, matching `validateSoDropdownFields` and
+`loadFabricTierAddonConfig`, so a single-company install, a headless job and the
+unit tests read exactly as before. Migration **0233** adds
+`UNIQUE (company_id, code)` so the scoped `.maybeSingle()` is single by
+construction.
+
+**These move together or not at all.** Scope the pricing read but not
+`validateItemCodes` and a foreign code passes validation, then prices at 0 and
+dies as `pricing_drift`; scope neither and the SO path can price a line off the
+other company's row — which is how an order came to be refused with
+*"this SKU has no PWP price set (SKU Master)"* while the SKU Master, which **is**
+company-scoped, showed RM 490 for that SKU. Tests:
+`scm/lib/product-lookup-company-scope.test.ts`.
+
 ---
 
 ## 3. Backend (list handler)

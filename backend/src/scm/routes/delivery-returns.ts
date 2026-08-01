@@ -940,7 +940,7 @@ deliveryReturns.post('/', async (c) => {
 
   /* Edge #4 — itemCode catalog guard. */
   {
-    const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined));
+    const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -1320,7 +1320,7 @@ deliveryReturns.post('/:id/items', async (c) => {
 
   /* Edge #4 — itemCode catalog guard. */
   {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string]);
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -1364,7 +1364,7 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
 
   /* Edge #4 — itemCode catalog guard (only when caller is changing it). */
   if (it.itemCode !== undefined) {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string]);
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 

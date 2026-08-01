@@ -167,15 +167,18 @@ export async function loadKpiUnitsByDoc(
      nothing extra for this. */
   if (hasCategoryFlag) {
     for (const b of chunk(uniqNonEmpty(lines.map((l) => l.item_code)), 200))
-      for (const [k, v] of await loadProductsByCodes(sb, b)) productByCode.set(k, v as ProductLite);
+      for (const [k, v] of await loadProductsByCodes(sb, b, companyId)) productByCode.set(k, v as ProductLite);
   }
   if (hasFabricFlag) {
-    // These two loaders are shared with the SO recompute and are read here with
-    // the SAME (unscoped) call the billing path makes — deliberately. Scoping
-    // them only here would make the reported Δ diverge from the billed Δ, which
-    // is the one thing this file promises never to do.
+    // These two loaders are shared with the SO recompute and MUST be read here
+    // with the same call the billing path makes, or the reported Δ diverges from
+    // the billed Δ — the one thing this file promises never to do. That used to
+    // mean passing no company; since the billing path now scopes (a plain `code`
+    // matches both companies' SKU masters — 17 collided on production
+    // 2026-08-01), matching it means passing `companyId` HERE TOO. The rule is
+    // unchanged: read exactly what billing reads.
     for (const b of chunk(uniqNonEmpty(fabricFlaggedLines.map((l) => l.item_code)), 200))
-      for (const [k, v] of await loadProductsByCodes(sb, b)) productByCode.set(k, v as ProductLite);
+      for (const [k, v] of await loadProductsByCodes(sb, b, companyId)) productByCode.set(k, v as ProductLite);
     for (const b of chunk(uniqNonEmpty(fabricFlaggedLines.map((l) => fabricIdOf(l.variants) ?? '')), 200))
       for (const [k, v] of await loadFabricSellingTiersByIds(sb, b)) tiersByFabricId.set(k, v);
   }

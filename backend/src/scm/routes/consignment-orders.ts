@@ -642,7 +642,7 @@ consignmentOrders.post('/', async (c) => {
 
   // itemCode catalog guard.
   if (items.length > 0) {
-    const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined));
+    const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -750,7 +750,7 @@ consignmentOrders.post('/', async (c) => {
     if (!it) continue;
     const code = String(it.itemCode ?? '');
     if (!code) continue;
-    const { product, model } = await loadProductAndModel(sb, code);
+    const { product, model } = await loadProductAndModel(sb, code, activeCompanyId(c));
     const err = checkAllowedOptions(
       product,
       model,
@@ -766,7 +766,7 @@ consignmentOrders.post('/', async (c) => {
   const cachedCompartmentOverrides = await loadCompartmentFabricTierOverrides(sb);  // migration 0025 — per-compartment Δ
 
   const lineProducts = await Promise.all(
-    items.map((it) => loadProductByCode(sb, String(it.itemCode ?? ''))),
+    items.map((it) => loadProductByCode(sb, String(it.itemCode ?? ''), activeCompanyId(c))),
   );
 
   /* Resolve the REAL customer identity (find-or-create by name + phone) and
@@ -1525,7 +1525,7 @@ consignmentOrders.post('/:docNo/items', async (c) => {
 
   /* itemCode catalog guard. */
   {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string]);
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -1542,7 +1542,7 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const variantsObj = (it.variants as MfgItemForRecompute['variants']) ?? null;
   /* allowed_options check on add-item. */
   {
-    const { product, model } = await loadProductAndModel(sb, itemCodeStr);
+    const { product, model } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
     const aoErr = checkAllowedOptions(
       product,
       model,
@@ -1552,7 +1552,7 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   }
   const [cachedConfig, productLite, fabricLite, sofaCombosLite, sellingTiersLite, fabricAddonConfigLite, specialAddonsLite, modelOverridesLite, compartmentOverridesLite] = await Promise.all([
     loadMaintenanceConfig(sb),
-    loadProductByCode(sb, itemCodeStr),
+    loadProductByCode(sb, itemCodeStr, activeCompanyId(c)),
     loadFabricByCode(sb, variantsObj?.fabricCode ?? null),
     loadActiveSofaCombos(sb),
     loadFabricSellingTiers(sb, (variantsObj as { fabricId?: string } | null)?.fabricId ?? null),
@@ -1672,7 +1672,7 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
 
   /* itemCode catalog guard (only when caller is changing it). */
   if (it.itemCode !== undefined) {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string]);
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
@@ -1699,7 +1699,7 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   const shouldRecompute = it.variants !== undefined || it.unitPriceCenti !== undefined || it.itemCode !== undefined;
 
   if (it.variants !== undefined || it.itemCode !== undefined) {
-    const { product, model } = await loadProductAndModel(sb, itemCodeAfter);
+    const { product, model } = await loadProductAndModel(sb, itemCodeAfter, activeCompanyId(c));
     const aoErr = checkAllowedOptions(
       product,
       model,
@@ -1710,7 +1710,7 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   if (shouldRecompute && itemCodeAfter) {
     const [cfg, prodLite, fabLite, sofaCombosPatch, sellingTiersPatch, fabricAddonConfigPatch, specialAddonsPatch, modelOverridesPatch, compartmentOverridesPatch] = await Promise.all([
       loadMaintenanceConfig(sb),
-      loadProductByCode(sb, itemCodeAfter),
+      loadProductByCode(sb, itemCodeAfter, activeCompanyId(c)),
       loadFabricByCode(sb, variantsAfter?.fabricCode ?? null),
       loadActiveSofaCombos(sb),
       loadFabricSellingTiers(sb, (variantsAfter as { fabricId?: string } | null)?.fabricId ?? null),
