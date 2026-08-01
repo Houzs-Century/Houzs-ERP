@@ -81,6 +81,45 @@ try {
   notice(`triggers on public.users: ${triggers.length}`);
   for (const t of triggers) notice(`  ${t.tgname}: ${t.def}`);
 
+  // 1b) The BODY of every function those triggers call. This is the part the
+  //     repo cannot answer: the first run of this check found
+  //     `trg_sync_user_to_tms` on public.users, and `sync_user_to_tms` appears
+  //     NOWHERE in the migration tree or anywhere else in the repo -- it was
+  //     applied straight to production. Reasoning about what a `users` write
+  //     does from migrations-pg alone is therefore unsound, which is exactly
+  //     how the first diagnosis went wrong. Print the source of truth.
+  const fns = await pg`
+    SELECT n.nspname || '.' || p.proname AS fqname,
+           pg_get_functiondef(p.oid)     AS def
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE p.oid IN (
+       SELECT t.tgfoid FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace cn ON cn.oid = c.relnamespace
+       WHERE cn.nspname = 'public' AND c.relname = 'users' AND NOT t.tgisinternal
+     )
+     ORDER BY 1`;
+  for (const f of fns) {
+    notice(`--- FUNCTION ${f.fqname} ---`);
+    for (const line of String(f.def).split("\n")) notice(`  ${line}`);
+  }
+
+  // 1c) What a hard delete has to get past. `DELETE /api/users/:id?hard=1`
+  //     cleans a hand-written list of tables first; anything NOT on that list
+  //     with a non-cascading FK blocks the delete.
+  const fks = await pg`
+    SELECT c.conname,
+           cn.nspname || '.' || cl.relname AS from_table,
+           pg_get_constraintdef(c.oid)     AS def
+      FROM pg_constraint c
+      JOIN pg_class cl ON cl.oid = c.conrelid
+      JOIN pg_namespace cn ON cn.oid = cl.relnamespace
+     WHERE c.contype = 'f' AND c.confrelid = 'public.users'::regclass
+     ORDER BY 2, 1`;
+  notice(`FKs referencing public.users: ${fks.length}`);
+  for (const f of fks) notice(`  ${f.from_table}: ${f.def}`);
+
   // 2) The constraint the INSERT branch can trip.
   const uniques = await pg`
     SELECT conname, pg_get_constraintdef(oid) AS def
