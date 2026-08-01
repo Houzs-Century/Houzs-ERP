@@ -281,7 +281,7 @@ try {
                         WHERE m.source_doc_id = d.id AND m.source_doc_type='DO'
                           AND m.movement_type='OUT') AS any_out
         FROM scm.delivery_orders d
-        WHERE d.company_id = ${COMPANY_ID} AND COALESCE(d.status,'') <> 'CANCELLED'
+        WHERE d.company_id = ${COMPANY_ID} AND d.status::text <> 'CANCELLED'
       )
       SELECT count(*)::int AS dos,
              count(*) FILTER (WHERE any_out)::int AS shipped,
@@ -338,7 +338,7 @@ try {
                di.so_item_id
         FROM ship s
         JOIN scm.delivery_orders d ON d.id = s.do_id AND d.company_id = ${COMPANY_ID}
-                                  AND COALESCE(d.status,'') <> 'CANCELLED'
+                                  AND d.status::text <> 'CANCELLED'
         JOIN scm.delivery_order_items di ON di.delivery_order_id = d.id
                                         AND di.item_code = s.product_code
                                         AND di.company_id = ${COMPANY_ID}
@@ -483,7 +483,7 @@ try {
              jsonb_array_length(COALESCE(s.variants->'cells','[]'::jsonb)) AS cells,
              (SELECT COALESCE(sum(di.qty),0) FROM scm.delivery_order_items di
                JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
-              WHERE di.so_item_id = s.id AND COALESCE(d.status,'') <> 'CANCELLED') AS delivered,
+              WHERE di.so_item_id = s.id AND d.status::text <> 'CANCELLED') AS delivered,
              (SELECT count(*)::int FROM scm.purchase_order_items i WHERE i.so_item_id = s.id) AS po_links
       FROM scm.mfg_sales_order_items s
       LEFT JOIN scm.warehouses w ON w.id = s.warehouse_id
@@ -538,7 +538,7 @@ try {
                count(*) FILTER (WHERE COALESCE((
                  SELECT sum(di.qty) FROM scm.delivery_order_items di
                  JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
-                 WHERE di.so_item_id = s.id AND COALESCE(d.status,'') <> 'CANCELLED'), 0) >= s.qty)::int AS done
+                 WHERE di.so_item_id = s.id AND d.status::text <> 'CANCELLED'), 0) >= s.qty)::int AS done
         FROM scm.mfg_sales_order_items s
         WHERE s.company_id = ${COMPANY_ID} AND s.cancelled = false
           AND (s.item_group ILIKE '%SOFA%' OR EXISTS (
@@ -554,6 +554,116 @@ try {
       SELECT code, name, is_active, company_id FROM scm.warehouses
       WHERE company_id = ${COMPANY_ID} ORDER BY code`;
     for (const w of r) out(`  ${String(w.code).padEnd(12)} active=${w.is_active}  ${w.name}`);
+  });
+
+  // ── The hypothesis the note dump above raises ───────────────────────────
+  await section("15. PREFIX MISMATCH: do the surviving references name the OLD doc numbers?", async () => {
+    // The 2990 -> Houzs import renamed the DOCUMENTS (doc_no / po_number gained
+    // a "2990-" prefix) but a reference stored as TEXT inside another column
+    // (the "From SOs:" note, inventory batch_no) was not rewritten with them. If
+    // so, the linkage is fully PRESENT and merely unresolvable by an equality
+    // join - which is a very different finding from "the data is gone".
+    const so = await pg`
+      SELECT count(*)::int AS sos,
+             count(*) FILTER (WHERE doc_no LIKE '2990-%')::int AS prefixed
+      FROM scm.mfg_sales_orders WHERE company_id = ${COMPANY_ID}`;
+    out(`  SO doc_no: ${so[0].sos} total, ${so[0].prefixed} carry the "2990-" prefix`);
+    const po = await pg`
+      SELECT count(*)::int AS pos,
+             count(*) FILTER (WHERE po_number LIKE '2990-%')::int AS prefixed
+      FROM scm.purchase_orders WHERE company_id = ${COMPANY_ID}`;
+    out(`  PO po_number: ${po[0].pos} total, ${po[0].prefixed} carry the "2990-" prefix`);
+
+    const tok = await pg`
+      WITH tok AS (
+        SELECT p.po_number, btrim(t) AS token
+        FROM scm.purchase_orders p,
+             LATERAL regexp_split_to_table(
+               COALESCE((regexp_match(p.notes, 'From SOs?:[[:space:]]*([^\n\r]*)', 'i'))[1], ''), ',') AS t
+        WHERE p.company_id = ${COMPANY_ID} AND p.notes ILIKE '%From SOs%'
+      ), j AS (
+        SELECT token,
+               EXISTS (SELECT 1 FROM scm.mfg_sales_orders s
+                        WHERE s.company_id = ${COMPANY_ID} AND s.doc_no = tok.token) AS asis,
+               EXISTS (SELECT 1 FROM scm.mfg_sales_orders s
+                        WHERE s.company_id = ${COMPANY_ID} AND s.doc_no = '2990-' || tok.token) AS prefixed
+        FROM tok WHERE token <> ''
+      )
+      SELECT count(*)::int AS tokens,
+             count(*) FILTER (WHERE asis)::int AS resolves_now,
+             count(*) FILTER (WHERE NOT asis AND prefixed)::int AS resolves_with_prefix,
+             count(*) FILTER (WHERE NOT asis AND NOT prefixed)::int AS unresolvable
+      FROM j`;
+    const t = tok[0];
+    out(`  "From SOs:" tokens: ${t.tokens}`);
+    out(`    resolve to a company SO AS-IS:            ${t.resolves_now}`);
+    out(`    resolve ONLY after adding the "2990-" prefix: ${t.resolves_with_prefix}   <- silently invisible today`);
+    out(`    resolve neither way (genuinely dangling):  ${t.unresolvable}`);
+
+    const b = await pg`
+      WITH b AS (
+        SELECT DISTINCT batch_no FROM scm.inventory_lots
+         WHERE company_id = ${COMPANY_ID} AND batch_no IS NOT NULL
+        UNION
+        SELECT DISTINCT batch_no FROM scm.inventory_movements
+         WHERE company_id = ${COMPANY_ID} AND batch_no IS NOT NULL
+      )
+      SELECT count(*)::int AS batches,
+             count(*) FILTER (WHERE EXISTS (SELECT 1 FROM scm.purchase_orders p
+                       WHERE p.company_id = ${COMPANY_ID} AND p.po_number = b.batch_no))::int AS asis,
+             count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM scm.purchase_orders p
+                       WHERE p.company_id = ${COMPANY_ID} AND p.po_number = b.batch_no)
+                       AND EXISTS (SELECT 1 FROM scm.purchase_orders p2
+                       WHERE p2.company_id = ${COMPANY_ID} AND p2.po_number = '2990-' || b.batch_no))::int AS prefixed,
+             count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM scm.purchase_orders p
+                       WHERE p.company_id = ${COMPANY_ID} AND p.po_number IN (b.batch_no, '2990-' || b.batch_no)))::int AS unmatched
+      FROM b`;
+    const x = b[0];
+    out(`  distinct batch_no values on lots+movements: ${x.batches}`);
+    out(`    match a company po_number AS-IS:              ${x.asis}`);
+    out(`    match ONLY after adding the "2990-" prefix:   ${x.prefixed}   <- silently invisible today`);
+    out(`    match neither way (free-text / foreign batch):${x.unmatched}`);
+    const samp = await pg`
+      SELECT DISTINCT batch_no FROM scm.inventory_lots
+       WHERE company_id = ${COMPANY_ID} AND batch_no IS NOT NULL
+       ORDER BY batch_no LIMIT 15`;
+    out(`  sample batch_no values: ${samp.map((r) => r.batch_no).join(", ")}`);
+  });
+
+  await section("16. so_revisions.snapshot->poLinks (the amendment-time SO->PO freeze)", async () => {
+    const r = await pg`
+      SELECT count(*)::int AS revisions,
+             count(*) FILTER (WHERE snapshot->'poLinks' IS NOT NULL
+                                AND snapshot->'poLinks' <> '{}'::jsonb)::int AS with_links
+      FROM scm.so_revisions
+      WHERE so_doc_no IN (SELECT doc_no FROM scm.mfg_sales_orders WHERE company_id = ${COMPANY_ID})`;
+    out(`  so_revisions rows for this company: ${r[0].revisions}, carrying a non-empty poLinks: ${r[0].with_links}`);
+  });
+
+  await section("17. Sofa SO set sizes: how many modules, how many still open", async () => {
+    // Directly answers "why does one SO show 1 variant when a sofa is sold as a
+    // set": the MRP shows only lines with qty REMAINING, so a set whose other
+    // modules already shipped (or were cancelled) legitimately renders smaller.
+    const rows = await pg`
+      SELECT s.doc_no,
+             count(*)::int AS lines_all,
+             count(*) FILTER (WHERE s.cancelled)::int AS cancelled,
+             count(*) FILTER (WHERE NOT s.cancelled AND COALESCE((
+               SELECT sum(di.qty) FROM scm.delivery_order_items di
+               JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+               WHERE di.so_item_id = s.id AND d.status::text <> 'CANCELLED'), 0) >= s.qty)::int AS fully_delivered,
+             count(DISTINCT COALESCE(s.warehouse_id::text, 'NULL'))::int AS wh_buckets,
+             min(split_part(s.item_code, '-', 1)) AS model
+      FROM scm.mfg_sales_order_items s
+      WHERE s.company_id = ${COMPANY_ID} AND s.doc_no LIKE '%-SO-2607-%'
+        AND (s.item_group ILIKE '%SOFA%' OR EXISTS (
+              SELECT 1 FROM scm.mfg_products p WHERE p.code = s.item_code AND p.category = 'SOFA'))
+      GROUP BY s.doc_no ORDER BY s.doc_no`;
+    out("  SO                    model        lines cancelled delivered wh_buckets  open_modules");
+    for (const r of rows) {
+      const open = r.lines_all - r.cancelled - r.fully_delivered;
+      out(`  ${String(r.doc_no).padEnd(21)} ${String(r.model).padEnd(12)} ${String(r.lines_all).padStart(5)} ${String(r.cancelled).padStart(9)} ${String(r.fully_delivered).padStart(9)} ${String(r.wh_buckets).padStart(10)} ${String(open).padStart(13)}`);
+    }
   });
 
   out("");
