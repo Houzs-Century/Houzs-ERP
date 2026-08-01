@@ -118,3 +118,13 @@ export function useToast(): ToastContextValue {
   if (!ctx) throw new Error("useToast must be used inside ToastProvider");
   return ctx;
 }
+
+/**
+ * Toasts for a component that must ALSO render outside the provider — a shared
+ * table control mounted bare in a unit test, say. Returns null there rather
+ * than throwing, so "no toast host" degrades to "no toast" instead of to a
+ * crash. Anything that genuinely needs a toast should keep using `useToast`.
+ */
+export function useToastOptional(): ToastContextValue | null {
+  return useContext(ToastContext);
+}

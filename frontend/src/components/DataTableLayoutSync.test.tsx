@@ -126,11 +126,12 @@ describe("DataTable with server layouts", () => {
 
     renderTable("both");
     fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
 
     // 2990 has no saved default yet, so its SEED fills the slot — but the row
     // is still that company's, labelled and marked as this window's default.
-    const houzs = screen.getByRole("button", { name: /Houzs Century Layout/ });
-    const home = screen.getByRole("button", { name: /2990's Home Layout/ });
+    const houzs = screen.getByRole("option", { name: /Houzs Century Layout/ });
+    const home = screen.getByRole("option", { name: /2990's Home Layout/ });
     expect(houzs).toBeTruthy();
     expect(home.textContent).toContain("Default");
 
@@ -167,7 +168,7 @@ describe("DataTable with server layouts", () => {
     );
 
     mockApi.put.mockClear();
-    fireEvent.click(screen.getByTitle("Reset order and visibility"));
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
     await vi.runAllTimersAsync();
     expect(mockApi.del).toHaveBeenCalledWith("/api/table-layouts/push");
     vi.useRealTimers();
@@ -191,8 +192,13 @@ describe("DataTable with server layouts", () => {
     );
     fireEvent.click(screen.getByTitle(/^Columns —/));
 
-    expect(screen.getByText("2990's Home default")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Save current columns as default/ }));
+    // The overflow menu names the company the save publishes to — the admin
+    // sets 2990's default from a 2990 window and Houzs's from a Houzs one.
+    fireEvent.click(screen.getByRole("button", { name: "More column actions" }));
+    expect(screen.getByRole("button", { name: /Save as 2990's Home default/ })).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save as default" }));
 
     await waitFor(() =>
       expect(mockApi.put).toHaveBeenCalledWith(
@@ -200,8 +206,9 @@ describe("DataTable with server layouts", () => {
         expect.anything(),
       ),
     );
-    // Saved → the company now HAS a layout to offer, so its row appears.
-    expect(await screen.findByRole("button", { name: /2990's Home Layout/ })).toBeTruthy();
+    // Saved → the company now HAS a layout to offer, so the picker appears.
+    fireEvent.click(await screen.findByRole("button", { name: /^Layout/ }));
+    expect(screen.getByRole("option", { name: /2990's Home Layout/ })).toBeTruthy();
   });
 
   it("shows the publish control only to an admin, and saves what is on screen", async () => {
@@ -209,7 +216,7 @@ describe("DataTable with server layouts", () => {
     await hydrateTableLayouts();
     renderTable("publish");
     fireEvent.click(screen.getByTitle(/^Columns —/));
-    expect(screen.queryByText(/Save current columns as default/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save as default" })).toBeNull();
 
     cleanup();
     __resetTableLayoutsForTest();
@@ -219,10 +226,7 @@ describe("DataTable with server layouts", () => {
 
     renderTable("publish");
     fireEvent.click(screen.getByTitle(/^Columns —/));
-    // Named after the company it publishes to — the admin sets 2990's default
-    // from a 2990 window and Houzs's from a Houzs one.
-    expect(screen.getByText("2990's Home default")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Save current columns as default/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save as default" }));
 
     await waitFor(() =>
       expect(mockApi.put).toHaveBeenCalledWith(
@@ -230,6 +234,9 @@ describe("DataTable with server layouts", () => {
         expect.anything(),
       ),
     );
-    expect(await screen.findByText(/New users of this company start here/)).toBeTruthy();
+    /* The redesign demoted the confirmation from a card of body copy to a
+       toast (handoff 2026-08-01), so what is asserted here is the WRITE, not
+       the wording — the toast host does not exist in a bare test render. */
+    expect(mockApi.put.mock.calls[0]![0]).toContain("/default");
   });
 });
