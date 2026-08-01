@@ -37,6 +37,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { PageHeader } from "../../components/Layout";
+import { SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import {
@@ -869,27 +870,16 @@ type DrillItem = {
   coverage_po?: string | null; // incoming PO covering this line…
   coverage_eta?: string | null; // …and its effective ETA
   shipped_source_pos?: string[]; // actual source PO(s) once shipped
+  shipped_source_adj?: boolean; // shipped from a PO-less stock adjustment
+  ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   delivered_qty?: number | null;
   remaining_qty?: number | null;
 };
-
-/* 2990-parity stock cell (MfgSalesOrdersList.tsx stockLabelOf + the SO full
-   page's coverage render): fully shipped → DELIVERED; on-hand → READY;
-   partially covered → PARTIAL; else PENDING. SERVICE lines carry no physical
-   stock, so a service is inherently available → always READY (owner 2026-07-24,
-   reversing the earlier "show a dash for service" decision). */
-function drillStock(l: DrillItem): { label: string; cls: string } | null {
-  if ((l.item_group ?? "").toUpperCase().includes("SERVICE"))
-    return { label: "READY", cls: "bg-synced-bg text-synced" };
-  const shipped =
-    (l.delivered_qty ?? 0) > 0 && (l.remaining_qty ?? null) === 0;
-  if (shipped) return { label: "DELIVERED", cls: "bg-surface-dim text-ink-muted" };
-  if (l.stock_state === "stock" || l.stock_status === "READY")
-    return { label: "READY", cls: "bg-synced-bg text-synced" };
-  if (l.stock_status === "PARTIAL")
-    return { label: "PARTIAL", cls: "bg-warning-bg text-warning-text" };
-  return { label: "PENDING", cls: "bg-surface-dim text-ink-muted" };
-}
+/* The stock pill + the Incoming PO/source cell both render through the ONE
+   shared SO-source renderer (components/SoSourceChips.tsx) — the same one the
+   SO detail page and the editor use, so the four surfaces can never drift
+   (owner 2026-08-01). The old page-local drillStock moved there as
+   soLineStockPill. */
 
 function SoLinesExpansion({ docNo }: { docNo: string }) {
   const detailQ = useMfgSalesOrderDetail(docNo);
@@ -942,15 +932,6 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
               buildVariantSummary(l.item_group ?? "", l.variants ?? null) ||
               (l.description2 ?? ""),
           });
-          const stock = drillStock(l);
-          /* Shipped lines show the ACTUAL source PO(s); unshipped show the
-             MRP-covering PO + effective ETA — same rule as the SO full page. */
-          const incoming =
-            (l.shipped_source_pos?.length ?? 0) > 0
-              ? l.shipped_source_pos!.join(", ")
-              : l.coverage_po
-                ? `${l.coverage_po}${l.coverage_eta ? ` · ETA ${fmtDate(l.coverage_eta)}` : ""}`
-                : null;
           return (
             <div
               key={i}
@@ -977,22 +958,14 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
                 {fmtRm(amt)}
               </span>
               <span>
-                {stock ? (
-                  <span className={cn("inline-block rounded-full px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wider", stock.cls)}>
-                    {stock.label}
-                  </span>
-                ) : (
-                  <span className="text-[11px] text-ink-muted">—</span>
-                )}
+                <SoStockPill line={l} />
               </span>
+              {/* Shipped lines show the ACTUAL source PO(s) (batch trail, GRN-
+                  healed); READY lines the FIFO-projected PO(s) / STOCK ADJ;
+                  un-arrived remainder the MRP coverage PO + ETA — the ONE
+                  shared renderer, identical to the SO detail page. */}
               <span className="min-w-0">
-                {incoming ? (
-                  <span className="whitespace-nowrap font-mono text-[11px] font-semibold text-accent-ink">
-                    {incoming}
-                  </span>
-                ) : (
-                  <span className="text-[11px] text-ink-muted">—</span>
-                )}
+                <SoSourceChips line={l} />
               </span>
             </div>
           );

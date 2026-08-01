@@ -50,7 +50,7 @@ import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
-import { resolveDoSourcePosForDos, resolveDoLineSourcePos } from './delivery-orders-mfg';
+import { resolveDoSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
@@ -707,10 +707,15 @@ async function stampSourcePos(sb: any, rows: unknown): Promise<void> {
   if (!Array.isArray(rows) || rows.length === 0) return;
   const list = rows as Array<Record<string, unknown>>;
   const doIds = [...new Set(list.map((r) => r.delivery_order_id as string | null).filter((d): d is string => !!d))];
-  const byDo = doIds.length > 0 ? await resolveDoSourcePosForDos(sb, doIds) : new Map<string, string[]>();
+  const byDo = doIds.length > 0 ? await resolveDoSources(sb, doIds) : new Map<string, { pos: string[]; adjQty: number }>();
   for (const r of list) {
     const doId = (r.delivery_order_id as string | null) ?? null;
-    r.source_pos = doId ? (byDo.get(doId) ?? []) : [];
+    const trace = doId ? byDo.get(doId) : undefined;
+    r.source_pos = trace?.pos ?? [];
+    // Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — the UI
+    // renders "STOCK ADJ" instead of a blank cell (owner: never a dash on
+    // delivered goods).
+    r.source_adj = (trace?.adjQty ?? 0) > 0;
   }
 }
 
@@ -868,13 +873,15 @@ salesInvoices.get('/:id', async (c) => {
      Resolved from the SI's DO ledger; a manual SI with no DO gets a dash. */
   {
     const doId = (h.data as { delivery_order_id?: string | null }).delivery_order_id ?? null;
-    const bySku = doId ? await resolveDoLineSourcePos(sb, doId) : new Map<string, string[]>();
+    const bySku = doId ? await resolveDoLineSources(sb, doId) : new Map<string, { pos: string[]; adjQty: number }>();
     for (const it of items) {
       const vk = computeVariantKey(
         (it.item_group as string | null) ?? null,
         (it.variants as Record<string, unknown> | null) ?? null,
       );
-      it.source_pos = bySku.get(`${(it.item_code as string) ?? ''}::${vk}`) ?? [];
+      const trace = bySku.get(`${(it.item_code as string) ?? ''}::${vk}`);
+      it.source_pos = trace?.pos ?? [];
+      it.source_adj = (trace?.adjQty ?? 0) > 0;
     }
   }
   // Stamp each line's supplier fabric code so the on-screen line reads
