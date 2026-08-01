@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
+import { SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
 import { DataTable, type Column } from "../../components/DataTable";
 import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFamilies";
 import {
@@ -139,6 +140,19 @@ type SoItem = {
   cancelled: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
+  /* Per-line stock + source-PO trace (owner 2026-08-01: a READY/SHIPPED/
+     DELIVERED line must name the PO its goods came from). All stamped by
+     GET /mfg-sales-orders/:docNo — this page previously dropped them on the
+     floor, which is why the detail showed no Stock / Incoming PO at all. */
+  stock_status?: string | null;
+  stock_state?: "stock" | "po" | "shortage" | null;
+  coverage_po?: string | null;
+  coverage_eta?: string | null;
+  shipped_source_pos?: string[];
+  shipped_source_adj?: boolean;
+  ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
+  delivered_qty?: number | null;
+  remaining_qty?: number | null;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -723,6 +737,30 @@ function SalesOrderDetailV2ReadOnly() {
           {fmtMoney(l.total_centi, salesOrder?.currency)}
         </span>
       ),
+    },
+    /* Stock + Incoming PO (owner 2026-08-01) — the SAME per-line readiness +
+       source-PO trace the SO list drill-down shows, through the ONE shared
+       renderer (components/SoSourceChips.tsx). The detail payload has carried
+       these fields all along; this page just never rendered them, so an
+       operator opening the full page lost the trace the drill-down had. */
+    {
+      key: "stock",
+      label: "Stock",
+      width: "96px",
+      getValue: (l) => l.stock_state ?? l.stock_status ?? "",
+      render: (l) => <SoStockPill line={l} />,
+    },
+    {
+      key: "source",
+      label: "Incoming PO",
+      width: "200px",
+      getValue: (l) =>
+        [
+          ...(l.shipped_source_pos ?? []),
+          ...(l.ready_source_pos ?? []).map((r) => r.po ?? "STOCK ADJ"),
+          ...(l.coverage_po ? [l.coverage_po] : []),
+        ].join(", "),
+      render: (l) => <SoSourceChips line={l} />,
     },
   ];
 

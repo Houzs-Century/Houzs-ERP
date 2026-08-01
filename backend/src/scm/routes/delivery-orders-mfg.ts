@@ -26,6 +26,14 @@ import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import {
+  resolveDoLineSources,
+  resolveDoSources,
+  resolveDoLineSourcePosImpl,
+  resolveDoSourcePosForDosImpl,
+  soLineShippedSourcePosImpl,
+} from '../lib/source-po-trace';
+export { soLineShippedSources, resolveDoSources } from '../lib/source-po-trace';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
@@ -915,64 +923,23 @@ async function warehouseCodeMap(
       bug: those lines ship un-batched, but the lots they CONSUMED are batched.
 
    Best-effort: absent batch_no column, un-batched lots (opening balances /
-   adjustments / pre-0120 stock) or negative-stock ships (no lot consumed) →
-   empty set → the caller falls back to the SO line's bound PO, else a dash.
-   Cancelled/reversed DOs carry a reversing IN row per OUT; we only read OUT
-   rows/consumptions, so a fully reversed line still reports the PO(s) it
-   originally shipped from (the shipment did happen).
+   pre-0120 stock) or negative-stock ships (no lot consumed) → empty set → the
+   caller falls back to the SO line's bound PO, else a dash. Cancelled/reversed
+   DOs carry a reversing IN row per OUT; we only read OUT rows/consumptions, so
+   a fully reversed line still reports the PO(s) it originally shipped from
+   (the shipment did happen).
+
+   Since 2026-08-01 the implementation is the ONE shared resolver in
+   lib/source-po-trace.ts (SO / DO / SI / GRN must show identical source data —
+   owner). That core also GRN-heals NULL-batch lots at read time and classifies
+   ADJUSTMENT-sourced units; this legacy-shaped wrapper keeps the string[]
+   contract for existing callers.
    Returns a Map keyed `${product_code}::${variant_key}` → ordered PO numbers. */
 export async function resolveDoLineSourcePos(
   sb: any,
   deliveryOrderId: string,
 ): Promise<Map<string, string[]>> {
-  const byBucket = new Map<string, Set<string>>();
-  const add = (code: string, variantKey: string | null, batch: string | null) => {
-    if (!batch) return;
-    const k = `${code}::${variantKey ?? ''}`;
-    const set = byBucket.get(k) ?? new Set<string>();
-    set.add(batch);
-    byBucket.set(k, set);
-  };
-  // 1. Batched OUT movements (sofa allocated batch / drop-ship expected batch).
-  try {
-    const { data: movs, error } = await sb.from('inventory_movements')
-      .select('product_code, variant_key, batch_no')
-      .eq('source_doc_type', 'DO')
-      .eq('source_doc_id', deliveryOrderId)
-      .eq('movement_type', 'OUT')
-      .not('batch_no', 'is', null);
-    if (!error) {
-      for (const m of (movs ?? []) as Array<{ product_code: string; variant_key: string | null; batch_no: string | null }>) {
-        add(m.product_code, m.variant_key, m.batch_no);
-      }
-    }
-  } catch { /* column/table absent — fall through to the consumption path */ }
-  // 2. FIFO lot consumptions → consumed lots' batch_no (plain-FIFO categories).
-  try {
-    const { data: cons } = await sb.from('inventory_lot_consumptions')
-      .select('lot_id, product_code, variant_key')
-      .eq('source_doc_type', 'DO')
-      .eq('source_doc_id', deliveryOrderId);
-    const consRows = (cons ?? []) as Array<{ lot_id: string; product_code: string; variant_key: string | null }>;
-    const lotIds = [...new Set(consRows.map((r) => r.lot_id).filter(Boolean))];
-    if (lotIds.length > 0) {
-      const { data: lots } = await sb.from('inventory_lots')
-        .select('id, batch_no')
-        .in('id', lotIds)
-        .not('batch_no', 'is', null);
-      const batchByLot = new Map(
-        ((lots ?? []) as Array<{ id: string; batch_no: string | null }>).map((l) => [l.id, l.batch_no]),
-      );
-      for (const r of consRows) {
-        add(r.product_code, r.variant_key, batchByLot.get(r.lot_id) ?? null);
-      }
-    }
-  } catch { /* consumption table/column absent — path 1 result stands */ }
-  const out = new Map<string, string[]>();
-  for (const [k, set] of byBucket.entries()) {
-    out.set(k, [...set].sort());
-  }
-  return out;
+  return resolveDoLineSourcePosImpl(sb, deliveryOrderId);
 }
 
 /* LIST rollup of the above: for a PAGE of DOs, the distinct source PO(s) each
@@ -980,62 +947,13 @@ export async function resolveDoLineSourcePos(
    "Source PO" cell on the DO / SI list renders this. ONE batched movements read
    + one lots/consumptions pass across every DO id, so the list never does the
    per-DO N+1. Best-effort: un-batched (plain FIFO / pre-0120) stock → the DO is
-   simply absent from the map (its cell shows a dash). */
+   simply absent from the map (its cell shows a dash). Delegates to the ONE
+   shared resolver (lib/source-po-trace.ts) since 2026-08-01. */
 export async function resolveDoSourcePosForDos(
   sb: any,
   doIds: Array<string | null | undefined>,
 ): Promise<Map<string, string[]>> {
-  const out = new Map<string, Set<string>>();
-  const ids = [...new Set(doIds.filter((x): x is string => Boolean(x)))];
-  if (ids.length === 0) return new Map();
-  const add = (doId: string | null, batch: string | null): void => {
-    if (!doId || !batch) return;
-    const set = out.get(doId) ?? new Set<string>();
-    set.add(batch);
-    out.set(doId, set);
-  };
-  // 1. Batched OUT movements (sofa allocated batch / drop-ship expected batch).
-  for (let i = 0; i < ids.length; i += 300) {
-    const chunk = ids.slice(i, i + 300);
-    if (chunk.length === 0) continue;
-    try {
-      const { data: movs } = await sb.from('inventory_movements')
-        .select('source_doc_id, batch_no')
-        .eq('source_doc_type', 'DO')
-        .eq('movement_type', 'OUT')
-        .in('source_doc_id', chunk)
-        .not('batch_no', 'is', null);
-      for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; batch_no: string | null }>) {
-        add(m.source_doc_id, m.batch_no);
-      }
-    } catch { /* column/table absent — consumption path still contributes */ }
-    // 2. FIFO lot consumptions → consumed lots' batch_no (plain-FIFO categories).
-    try {
-      const { data: cons } = await sb.from('inventory_lot_consumptions')
-        .select('source_doc_id, lot_id')
-        .eq('source_doc_type', 'DO')
-        .in('source_doc_id', chunk);
-      const consRows = (cons ?? []) as Array<{ source_doc_id: string | null; lot_id: string }>;
-      const lotIds = [...new Set(consRows.map((r) => r.lot_id).filter(Boolean))];
-      if (lotIds.length > 0) {
-        const batchByLot = new Map<string, string | null>();
-        for (let k = 0; k < lotIds.length; k += 300) {
-          const lc = lotIds.slice(k, k + 300);
-          const { data: lots } = await sb.from('inventory_lots')
-            .select('id, batch_no').in('id', lc).not('batch_no', 'is', null);
-          for (const l of (lots ?? []) as Array<{ id: string; batch_no: string | null }>) {
-            batchByLot.set(l.id, l.batch_no);
-          }
-        }
-        for (const r of consRows) add(r.source_doc_id, batchByLot.get(r.lot_id) ?? null);
-      }
-    } catch { /* consumption table/column absent — path 1 result stands */ }
-  }
-  const result = new Map<string, string[]>();
-  for (const [doId, set] of out.entries()) {
-    result.set(doId, [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
-  }
-  return result;
+  return resolveDoSourcePosForDosImpl(sb, doIds);
 }
 
 /* Storekeeper picking — resolve the physical RACK(s) each DO line's goods sit on.
@@ -2099,78 +2017,11 @@ export async function soLineShippedSourcePos(
   sb: any,
   soItemIds: string[],
 ): Promise<Map<string, string[]>> {
-  const out = new Map<string, string[]>();
-  const ids = [...new Set(soItemIds.filter((x): x is string => Boolean(x)))];
-  if (ids.length === 0) return out;
-  try {
-    // SO line → DO line(s): the DO items carry the SKU + variants we bucket by.
-    const { data: doItems } = await sb.from('delivery_order_items')
-      .select('so_item_id, delivery_order_id, item_code, item_group, variants')
-      .in('so_item_id', ids);
-    const doLines = (doItems ?? []) as Array<{
-      so_item_id: string | null; delivery_order_id: string; item_code: string;
-      item_group: string | null; variants: VariantAttrs | null;
-    }>;
-    if (doLines.length === 0) return out;
-    const doIds = [...new Set(doLines.map((r) => r.delivery_order_id).filter(Boolean))];
-    const batchByBucket = new Map<string, Set<string>>();
-    const add = (doId: string, code: string, variantKey: string | null, batch: string | null) => {
-      if (!batch) return;
-      const k = `${doId}::${code}::${variantKey ?? ''}`;
-      const set = batchByBucket.get(k) ?? new Set<string>();
-      set.add(batch);
-      batchByBucket.set(k, set);
-    };
-    // OUT movements for those DOs, keyed by (do, product_code, variant_key) →
-    // batches. Only sofa/drop-ship OUTs carry batch_no (deductInventoryForDo).
-    const { data: movs } = await sb.from('inventory_movements')
-      .select('source_doc_id, product_code, variant_key, batch_no')
-      .eq('source_doc_type', 'DO')
-      .eq('movement_type', 'OUT')
-      .in('source_doc_id', doIds)
-      .not('batch_no', 'is', null);
-    for (const m of (movs ?? []) as Array<{ source_doc_id: string; product_code: string; variant_key: string | null; batch_no: string | null }>) {
-      add(m.source_doc_id, m.product_code, m.variant_key, m.batch_no);
-    }
-    // FIFO lot consumptions for those DOs → the consumed lots' batch_no.
-    // Plain-FIFO categories (bed frame / mattress / accessories) ship with an
-    // un-batched OUT, but the lots they consumed ARE batched (GRN stamps
-    // batch_no = source PO number, 0120) — without this union those lines
-    // lose their source PO the moment they deliver.
-    try {
-      const { data: cons } = await sb.from('inventory_lot_consumptions')
-        .select('source_doc_id, lot_id, product_code, variant_key')
-        .eq('source_doc_type', 'DO')
-        .in('source_doc_id', doIds);
-      const consRows = (cons ?? []) as Array<{ source_doc_id: string; lot_id: string; product_code: string; variant_key: string | null }>;
-      const lotIds = [...new Set(consRows.map((r) => r.lot_id).filter(Boolean))];
-      if (lotIds.length > 0) {
-        const { data: lots } = await sb.from('inventory_lots')
-          .select('id, batch_no')
-          .in('id', lotIds)
-          .not('batch_no', 'is', null);
-        const batchByLot = new Map(
-          ((lots ?? []) as Array<{ id: string; batch_no: string | null }>).map((l) => [l.id, l.batch_no]),
-        );
-        for (const r of consRows) {
-          add(r.source_doc_id, r.product_code, r.variant_key, batchByLot.get(r.lot_id) ?? null);
-        }
-      }
-    } catch { /* consumption table absent — movement batches stand alone */ }
-    const bySoItem = new Map<string, Set<string>>();
-    for (const dl of doLines) {
-      if (!dl.so_item_id) continue;
-      const variantKey = computeVariantKey(dl.item_group ?? null, dl.variants ?? null);
-      const k = `${dl.delivery_order_id}::${dl.item_code}::${variantKey}`;
-      const batches = batchByBucket.get(k);
-      if (!batches || batches.size === 0) continue;
-      const acc = bySoItem.get(dl.so_item_id) ?? new Set<string>();
-      for (const b of batches) acc.add(b);
-      bySoItem.set(dl.so_item_id, acc);
-    }
-    for (const [sid, set] of bySoItem.entries()) out.set(sid, [...set].sort());
-  } catch { /* movement/column absent — no shipped source PO (falls back to raised PO) */ }
-  return out;
+  // Delegates to the ONE shared resolver (lib/source-po-trace.ts, 2026-08-01) —
+  // SO / DO / SI / GRN must read the same ledger the same way. The shared core
+  // additionally GRN-heals NULL-batch lots and classifies ADJUSTMENT-sourced
+  // units; callers wanting that classification use soLineShippedSources.
+  return soLineShippedSourcePosImpl(sb, soItemIds);
 }
 
 /* Per-SO lifecycle state by "latest event wins" (Wei Siang 2026-05-31).
@@ -2642,10 +2493,11 @@ deliveryOrdersMfg.get('/', async (c) => {
   }
   /* Source PO(s) each DO's goods shipped from (owner 2026-07-31): a DO/SI is a
      SALES-side doc, so it shows the durable batch_no = source-PO hard link, not
-     an Assigned SO. ONE batched ledger pass across the page. */
-  const sourcePosByDo = rows.length > 0
-    ? await resolveDoSourcePosForDos(sb, rows.map((r) => r.id))
-    : new Map<string, string[]>();
+     an Assigned SO. ONE batched ledger pass across the page (the shared
+     resolver — GRN-healed, adjustment-classified). */
+  const sourceTraceByDo = rows.length > 0
+    ? await resolveDoSources(sb, rows.map((r) => r.id))
+    : new Map<string, { pos: string[]; adjQty: number }>();
   /* Finance gate — cost / margin / per-category subtotals reach ONLY a
      finance-viewer; stripped from every row otherwise. */
   const showFinance = canViewScmFinance(c);
@@ -2655,7 +2507,8 @@ deliveryOrdersMfg.get('/', async (c) => {
       has_children: childIds.has(r.id),
       lifecycle_state: lifecycleByDo.get(r.id) ?? 'shipped',
       so_internal_expected_dd: soProcByDoc.get((r.so_doc_no as string | null) ?? '') ?? null,
-      source_pos: sourcePosByDo.get(r.id) ?? [],
+      source_pos: sourceTraceByDo.get(r.id)?.pos ?? [],
+      source_adj: (sourceTraceByDo.get(r.id)?.adjQty ?? 0) > 0,
       // Transfer-to (display-only, audit R8): SI(s) invoiced / DR(s) returned.
       invoiced_si_nos: sortedNos(invoicedSiByDo.get(r.id)),
       return_nos: sortedNos(returnedDrByDo.get(r.id)),
@@ -2838,9 +2691,11 @@ deliveryOrdersMfg.get('/:id', async (c) => {
        the ledger: batched OUT movements (sofa/drop-ship) ∪ FIFO lot consumptions
        → the consumed lots' batch_no (= source PO number, GRN-stamped per 0120;
        covers plain-FIFO bed frame/mattress/accessory lines too). Keyed by
-       (product_code, variant_key). Best-effort — no batch → bound-PO fallback
-       below, else a dash. */
-    resolveDoLineSourcePos(sb, id),
+       (product_code, variant_key). The shared resolver also GRN-heals NULL-batch
+       lots and reports ADJUSTMENT-sourced units (source_adj below) so a free
+       gift / add-back line reads "STOCK ADJ", not a dash. Best-effort — nothing
+       resolved → bound-PO fallback below, else a dash. */
+    resolveDoLineSources(sb, id),
   ]);
   const codeMap = await warehouseCodeMap(sb, [...lineWh.values()]);
   /* Storekeeper picking — physical rack(s) each line's goods sit on, scoped to
@@ -2859,7 +2714,11 @@ deliveryOrdersMfg.get('/:id', async (c) => {
         (it.item_group as string | null) ?? null,
         (it.variants as VariantAttrs | null) ?? null,
       );
-      return (sourcePosByBucket.get(`${(it.item_code as string) ?? ''}::${vk}`) ?? []).length === 0;
+      const trace = sourcePosByBucket.get(`${(it.item_code as string) ?? ''}::${vk}`);
+      // An adjustment-shipped line IS resolved (its honest answer is "STOCK
+      // ADJ") — the bound-PO fallback is only for lines the ledger says
+      // nothing about at all.
+      return !trace || (trace.pos.length === 0 && trace.adjQty <= 0);
     })
     .map((it) => (it.so_item_id as string | null) ?? null)
     .filter((x): x is string => Boolean(x));
@@ -2898,8 +2757,9 @@ deliveryOrdersMfg.get('/:id', async (c) => {
     );
     const bucketKey = `${(it.item_code as string) ?? ''}::${variantKey}`;
     const rackKey = `${wid ?? ''}::${(it.item_code as string) ?? ''}::${variantKey}`;
-    const ledgerPos = sourcePosByBucket.get(bucketKey) ?? [];
-    const boundPo = ledgerPos.length === 0 && it.so_item_id
+    const trace = sourcePosByBucket.get(bucketKey) ?? { pos: [], adjQty: 0 };
+    const ledgerPos = trace.pos;
+    const boundPo = ledgerPos.length === 0 && trace.adjQty <= 0 && it.so_item_id
       ? (boundPoBySoItem.get(it.so_item_id as string)?.poNumber ?? null)
       : null;
     /* Rack lookup: exact variant bucket first; when empty, fall back to the ''
@@ -2921,6 +2781,10 @@ deliveryOrdersMfg.get('/:id', async (c) => {
          for lines with no batch AND no bound PO (e.g. service lines, stock
          with no procurement trail). */
       source_pos: ledgerPos.length > 0 ? [...ledgerPos] : (boundPo ? [boundPo] : []),
+      /* This line shipped (at least partly) from a stock ADJUSTMENT lot — a
+         free gift / cancel add-back with no PO behind it by design. The UI
+         renders a "STOCK ADJ" chip so the cell is explained, never blank. */
+      source_adj: trace.adjQty > 0,
       /* Physical rack label(s) the goods are stored on, for storekeeper picking.
          Empty when no rack placement matches (dash) — never guessed. */
       racks: [...racks],

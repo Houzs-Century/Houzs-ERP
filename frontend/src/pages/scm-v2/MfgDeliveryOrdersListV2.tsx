@@ -36,6 +36,8 @@ import { DataTable, type Column } from "../../components/DataTable";
 import {
   DocumentLinesExpansion,
   sourcePoTitle,
+  ChipOverflow,
+  StockAdjChip,
   type DocumentDrillLine,
 } from "../../components/DocumentLinesExpansion";
 import { ListPager } from "../../components/ListPager";
@@ -741,6 +743,9 @@ type DoDrillItem = {
      from the OUT movements ∪ consumed FIFO lots. A DO is a sales-side doc, so it
      shows Source PO, not an Assigned SO. */
   source_pos?: string[] | null;
+  /* Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
+     "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
+  source_adj?: boolean;
 };
 
 function DoLinesExpansion({ doId }: { doId: string }) {
@@ -758,6 +763,7 @@ function DoLinesExpansion({ doId }: { doId: string }) {
     qty: Number(l.qty ?? 0),
     amountCenti: l.amount_centi ?? l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0),
     sourcePos: l.source_pos ?? [],
+    sourceAdj: l.source_adj ?? false,
   }));
   return (
     <div className="flex flex-col gap-2">
@@ -1080,8 +1086,10 @@ export function MfgDeliveryOrdersListV2() {
     },
     {
       // Owner 2026-07-31: which PO the shipped goods actually came from — the
-      // durable batch_no = source-PO hard link, not a guess. EVERY source PO
-      // renders (no collapse); "—" when un-batched (plain FIFO / pre-batch stock).
+      // durable batch_no = source-PO hard link (GRN-healed), not a guess.
+      // "STOCK ADJ" when the goods entered via a PO-less adjustment; "—" only
+      // when the ledger says nothing. List cells overflow past a few chips
+      // into an in-place "+N" toggle (owner 2026-08-01 scale ruling).
       key: "source_pos",
       label: "Source PO",
       width: "168px",
@@ -1089,25 +1097,25 @@ export function MfgDeliveryOrdersListV2() {
       getValue: (r) => (r.source_pos ?? []).join(", "),
       render: (r) => {
         const pos = r.source_pos ?? [];
-        if (pos.length === 0) return <span className="text-[12px] text-ink-muted">—</span>;
-        return (
-          <span className="flex min-w-0 flex-wrap items-center gap-1">
-            {pos.map((po) => (
-              <button
-                key={po}
-                type="button"
-                title={sourcePoTitle(po)}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/scm/purchase-orders?q=${encodeURIComponent(po)}`);
-                }}
-                className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
-              >
-                {po}
-              </button>
-            ))}
-          </span>
-        );
+        if (pos.length === 0 && !r.source_adj) return <span className="text-[12px] text-ink-muted">—</span>;
+        const chips = [
+          ...pos.map((po) => (
+            <button
+              key={po}
+              type="button"
+              title={sourcePoTitle(po)}
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/scm/purchase-orders?q=${encodeURIComponent(po)}`);
+              }}
+              className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink hover:border-accent hover:text-accent"
+            >
+              {po}
+            </button>
+          )),
+          ...(r.source_adj ? [<StockAdjChip key="adj" />] : []),
+        ];
+        return <ChipOverflow chips={chips} />;
       },
     },
     {
