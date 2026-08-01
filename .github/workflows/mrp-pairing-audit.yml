@@ -1,0 +1,30 @@
+name: MRP pairing audit (read-only)
+
+# Owner-triggered. Answers the 2026-07-31 questions about MRP: the demand/supply
+# formula as actually implemented, whether every physical SO line has a
+# counterpart and every open PO line names the SO it covers (both directions,
+# per category), whether a unit can be promised twice, whether READY carries the
+# source PO, and whether a DO really converts a soft match into a hard one.
+#
+# SELECT only — no DDL, no writes, no transaction. The verdict is the output.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: mrp-pairing-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: audit (read-only)
+        working-directory: backend
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
+        run: node scripts/audit-mrp-pairing.mjs
