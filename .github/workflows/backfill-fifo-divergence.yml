@@ -27,11 +27,20 @@ name: Backfill FIFO ledger divergence (repair)
 # MODES (2026-08-01, ledger-perfection W3/W4 — see the script header):
 #   retro-cost  the original behaviour: drive fn_reconcile_uncosted_out over
 #               every uncosted-OUT bucket, consuming REAL open lots. Default.
-#   relabel     W4: unify the 2990-import variant-key split. Movements in
-#               DRIFTED buckets whose own consumptions (or own opened lot) all
-#               sit under ONE different key are relabelled to that key, their
-#               consumption rows follow, lots and costs untouched — RM0 by
-#               construction. Closes the paired +/- drift (audit 1 + 2b).
+#   reconstruct W4 PHASE 1 (2026-08-01: relabel planned ZERO — the import
+#               dropped the consumption ROWS themselves, leaving costed OUTs
+#               and already-decremented lots with no link; audit 2a/10a).
+#               Rebuilds the missing inventory_lot_consumptions rows where the
+#               family's own arithmetic proves them (Sigma shortfall ===
+#               Sigma lot deficit, FIFO pairing, per-movement cost equality —
+#               else the whole family is refused and both sides printed).
+#               Pure re-link at RM0 unless a movement's cost was 0 (stamped
+#               from the new rows, amount reported). Run BEFORE relabel.
+#   relabel     W4 phase 2: unify the 2990-import variant-key split. Movements
+#               in DRIFTED buckets whose own consumptions (or own opened lot)
+#               all sit under ONE different key are relabelled to that key,
+#               their consumption rows follow, lots and costs untouched — RM0
+#               by construction. Closes the paired +/- drift (audit 1 + 2b).
 #   basis-cost  W3: for NAMED DOs only (dos input, required), seed a
 #               reference-cost lot (newest same-SKU GRN landed cost, else the
 #               product's latest PO line cost) and drive the SAME 0154
@@ -55,12 +64,13 @@ on:
         required: false
         default: ''
       mode:
-        description: 'retro-cost = consume real lots; relabel = W4 variant-key unify (RM0); basis-cost = W3 reference-cost seed for named DOs'
+        description: 'retro-cost = consume real lots; reconstruct = W4 phase 1 (rebuild dropped consumption rows); relabel = W4 phase 2 variant-key unify (RM0); basis-cost = W3 reference-cost seed for named DOs'
         required: false
         default: 'retro-cost'
         type: choice
         options:
           - 'retro-cost'
+          - 'reconstruct'
           - 'relabel'
           - 'basis-cost'
       dos:
