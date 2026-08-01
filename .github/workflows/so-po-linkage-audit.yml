@@ -1,0 +1,40 @@
+name: SO/PO linkage audit (read-only)
+
+# Manual, read-only. Counts how much SO <-> PO/GRN/PI <-> DO cross-linkage
+# actually exists in production for a company (default 2 = 2990), so the
+# "historical documents lost their Assigned SO / Delivered" report can be
+# answered with numbers instead of a theory. SELECTs only - no writes, no DDL.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: Company id to audit (2 = 2990)
+        required: false
+        default: '2'
+      focus_so:
+        description: One SO doc no to dump line-by-line
+        required: false
+        default: '2990-SO-2607-028'
+
+# Own group: a diagnostic must never queue behind or displace a release.
+concurrency:
+  group: so-po-linkage-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/audit-so-po-linkage.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          FOCUS_SO: ${{ inputs.focus_so }}
