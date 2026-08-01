@@ -104,6 +104,11 @@ describe("ChunkReloadBoundary", () => {
     expect(cacheDelete).toHaveBeenCalledWith("old-assets");
     expect(reload).toHaveBeenCalledTimes(1);
     expect(reload.mock.invocationCallOrder[0]).toBeGreaterThan(cacheDelete.mock.invocationCallOrder[1]);
+    // Regression: the 8s cleanup DEADLINE must not outlive the race it bounded.
+    // A pending timer here is a timer that fires after its environment is gone
+    // — which is how a CI run reported "window is not defined" from an
+    // unrelated test file, failed `npm test`, and SKIPPED a frontend deploy.
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("spends the cooldown per build — a failure on a newly landed build recovers again", async () => {
