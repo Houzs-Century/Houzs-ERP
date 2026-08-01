@@ -972,6 +972,32 @@ and a **3PL overflow** section: per overflow group a carrier picker (from
 (create form + table + remove). `STAFF_ROUTE_PATTERNS` 131 -> 132, `ROUTE_CONTRACT`
 139 -> 140.
 
+### Leave on the MANUAL pickers (2026-08-01) — marked, never hidden
+
+A3 above folded leave into the AUTO assigner only. The manual pickers then drifted
+apart from it and from each other, which is what the owner hit on 2026-08-01 (see
+`BUG-HISTORY.md`): `ScheduleTripDrawer.tsx` HID an on-leave driver, `AutoSchedule.tsx`'s
+Assign trip card ignored leave entirely, and helpers were unprotected on both.
+
+The rule now, on **every** manual crew picker:
+
+- **Mark, do not hide.** An on-leave option reads `NAME · on leave — <reason>` and the
+  picked-crew warning repeats under the select. The dispatcher can still assign them —
+  a driver back early from MC must stay assignable, and it is what the Crew Leave page
+  has always promised. Only the AUTO assigner refuses to crew an on-leave person.
+- **Drivers and helpers are treated identically** (mig 0208 made leave a crew concept,
+  not a driver one).
+- **Keyed on the row's own date.** `AutoSchedule`'s proposal spans many days, so the
+  marking is computed per Assign-trip card from `trip.date`, not once at page level.
+- **One shared predicate.** `frontend/src/vendor/shared/crew-leave.ts` — `findCrewLeave`
+  / `isCrewOnLeave` / `crewLeaveLabel`, same inclusive-range ISO-string semantics as
+  `scm/lib/driver-availability.ts`, 10 unit tests. Any new crew picker uses it; do not
+  re-derive the date test inline, which is how the two surfaces diverged the first time.
+
+`GET /drivers` and `GET /helpers` still take **no date parameter** — they are the
+unified fleet roster. Leave comes from `GET /driver-leave` (`useDriverLeave`) and is
+applied client-side by the shared predicate.
+
 **Guardrails honoured:** reuses the established schedule path (no parallel
 scheduler); reuses OUTSOURCE lorries (no parallel carrier master); everything
 overridable on screen. `derivePlanningState` untouched; no `delivery_state` in any
