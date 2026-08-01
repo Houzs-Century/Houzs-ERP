@@ -69,7 +69,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
 import { soProcessingLocked } from './mfg-sales-orders';
-import { activeCompanyId, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
+import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -588,10 +588,12 @@ deliveryPlanning.get('/', async (c) => {
       const chunk = codeList.slice(i, i + 300);
       if (chunk.length === 0) continue;
       const { data: prodRows } = await paginateAll<{ code: string; category: string | null; branding: string | null }>((from, to) =>
-        sb.from('mfg_products')
-          .select('code, category, branding')
-          .in('code', chunk)
-          .range(from, to),
+        scopeToCompany(
+          sb.from('mfg_products')
+            .select('code, category, branding')
+            .in('code', chunk),
+          c,
+        ).range(from, to),
       );
       for (const p of (prodRows ?? [])) {
         if (p.category) productCategory.set(p.code, normCategory(p.category));

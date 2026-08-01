@@ -536,7 +536,7 @@ sofaCombos.post('/', async (c) => {
     prices = validatePricesByHeight(body.pricesByHeight);
     if (!prices) return c.json({ error: 'prices_by_height_invalid' }, 400);
   } else if (selling) {
-    const moduleCosts = await loadModelSofaModuleCosts(supabase, baseModel);
+    const moduleCosts = await loadModelSofaModuleCosts(supabase, baseModel, activeCompanyId(c));
     const costSen = sofaComboCostSen(modules, moduleCosts); // sen == combo centi scale
     prices = {};
     for (const h of Object.keys(selling)) prices[h] = costSen > 0 ? costSen : null;

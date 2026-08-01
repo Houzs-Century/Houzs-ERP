@@ -470,19 +470,23 @@ async function loadVenueNames(db: D1Database): Promise<string[]> {
   }
 }
 
-async function loadCatalog(sb: SupabaseClient, db: D1Database): Promise<Catalog> {
+async function loadCatalog(sb: SupabaseClient, db: D1Database, companyId?: number | null): Promise<Catalog> {
   // PostgREST's default 1000-row cap silently truncates the OCR validation
   // catalogue (mfg_products is 1141 ACTIVE SKUs live, my_localities 2933) — a
   // truncated catalogue makes the OCR reject valid SKUs/states as "unknown".
   // Page each list read with .range(); cfgRes stays a single .maybeSingle().
   const [prodRes, fabRes, cfgRes, optRes, locRes, spcRes, modRes, venueNames] = await Promise.all([
-    paginateAll((from, to) => sb
-      .from('mfg_products')
-      .select('code, name, category, base_model')
-      .eq('status', 'ACTIVE')
-      .order('category')
-      .order('code')
-      .range(from, to)),
+    // Company-scoped: the OCR matcher resolves a scanned SKU string against
+    // this list, so the other company's catalogue would let a foreign code onto
+    // a draft SO — which the (now scoped) pricing read then cannot price.
+    paginateAll((from, to) => {
+      let q = sb
+        .from('mfg_products')
+        .select('code, name, category, base_model')
+        .eq('status', 'ACTIVE');
+      if (companyId != null) q = q.eq('company_id', companyId);
+      return q.order('category').order('code').range(from, to);
+    }),
     // Migration 0167 — ACTIVE fabrics only: a deactivated fabric must not
     // re-enter on NEW scanned orders (existing docs keep their stored code).
     paginateAll((from, to) => sb
@@ -768,11 +772,12 @@ async function warmCatalogCache(
   db: D1Database,
   apiKey: string | undefined,
   companyName: string,
+  companyId?: number | null,
 ): Promise<WarmResult> {
   if (!apiKey) return { ok: false, reason: 'no_key' };
   let catalog: Catalog;
   try {
-    catalog = await loadCatalog(sb, db);
+    catalog = await loadCatalog(sb, db, companyId);
   } catch (e) {
     return { ok: false, reason: `catalog_load_failed: ${(e as Error).message}` };
   }
@@ -839,7 +844,12 @@ async function warmCatalogCache(
 // exactly as it does on the request path — the cached prefix stays byte-identical.
 export async function warmCatalogCacheForCron(env: Env): Promise<WarmResult> {
   const branding = await getBranding(env);
-  return warmCatalogCache(getSupabaseService(env), env.DB, env.ANTHROPIC_API_KEY, branding.companyName);
+  /* The keep-warm CRON has no request and so no active company: it warms the
+     UNSCOPED catalogue. That is a prompt-cache HIT-RATE concern only (/extract
+     and the job now send a company-scoped catalogue, so the warmed prefix stops
+     matching once the two companies' catalogues diverge) — never a correctness
+     one. Fixing it needs a per-company warm loop; flagged, not done here.  */
+  return warmCatalogCache(getSupabaseService(env), env.DB, env.ANTHROPIC_API_KEY, branding.companyName, null);
 }
 
 // ===========================================================================
@@ -2383,7 +2393,7 @@ scanSo.get('/slip-image', async (c) => {
 scanSo.post('/warm', async (c) => {
   const sb = c.get('supabase');
   const branding = await getBranding(c.env);
-  const result = await warmCatalogCache(sb, c.env.DB, c.env.ANTHROPIC_API_KEY, branding.companyName);
+  const result = await warmCatalogCache(sb, c.env.DB, c.env.ANTHROPIC_API_KEY, branding.companyName, activeCompanyId(c));
   return c.json(result);
 });
 
@@ -3008,7 +3018,7 @@ scanSo.post('/extract', async (c) => {
   // operator already has on the SKU master screens). env.DB carries the venue
   // master read (public.project_venues — unreachable by the scm client).
   const sb = c.get('supabase');
-  const catalog = await loadCatalog(sb, c.env.DB);
+  const catalog = await loadCatalog(sb, c.env.DB, activeCompanyId(c));
 
   // Company name for the prompt anchor comes from the central Branding config
   // (stable → the cached prefix below stays byte-identical to /warm + cron).
@@ -3932,7 +3942,7 @@ async function runScanJob(
     // EXACT /extract machinery, service-client flavoured (no request scope in
     // waitUntil; catalog reads are the same data RLS shows any signed-in
     // operator — same precedent as warmCatalogCacheForCron).
-    const catalog = await loadCatalog(svc, env.DB);
+    const catalog = await loadCatalog(svc, env.DB, job.companyId);
     const branding = await getBranding(env);
     const cachedPrefix = buildCachedPrefix(catalog, branding.companyName);
     const inj = await loadPromptInjections(svc, job.salesperson);
