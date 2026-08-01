@@ -1,6 +1,7 @@
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
-import { execIdRestamp } from '../scripts/lib/id-restamp-exec.mjs';
+import { execIdRestamp, execDedupe } from '../scripts/lib/id-restamp-exec.mjs';
+import { classifyDuplicateMovement } from '../scripts/lib/ledger-repair-core.mjs';
 
 /* END-TO-END PROOF of the id-restamp executor against REAL Postgres savepoint
  * semantics and a REAL partial unique index — the two things the unit suite
@@ -36,9 +37,12 @@ const D1 = '20000000-0000-0000-0000-000000000001'; // dangling, bucket P1 -> dup
 const D2 = '20000000-0000-0000-0000-000000000002'; // dangling, bucket P2 -> clean
 const D3 = '20000000-0000-0000-0000-000000000003'; // dangling, bucket P3 -> clean (first)
 const D4 = '20000000-0000-0000-0000-000000000004'; // dangling, bucket P3 -> self-collision (second)
+const R4 = '10000000-0000-0000-0000-000000000004'; // real movement, bucket P4, qty 5
+const D6 = '20000000-0000-0000-0000-000000000006'; // dangling, bucket P4, qty 9 -> collides, NOT a twin
 const C1 = '30000000-0000-0000-0000-000000000001'; // consumption of D1 (must roll back with it)
 const C2 = '30000000-0000-0000-0000-000000000002'; // consumption of D2 (commits with it)
 const C5 = '30000000-0000-0000-0000-000000000005'; // standalone consumption (movement_id NULL)
+const LOT1 = '40000000-0000-0000-0000-000000000001'; // the lot D1's consumption decremented
 
 const PLAN = [{
   companyId: 2,
@@ -71,22 +75,36 @@ describePg('execIdRestamp against real Postgres (savepoints + a real partial uni
       CREATE TABLE "${SCHEMA}".inventory_movements (
         id uuid PRIMARY KEY,
         company_id int NOT NULL,
+        movement_type text NOT NULL DEFAULT 'OUT',
+        qty int NOT NULL DEFAULT 1,
+        unit_cost_sen int NOT NULL DEFAULT 0,
+        total_cost_sen int NOT NULL DEFAULT 0,
         source_doc_type text,
         source_doc_no text,
         source_doc_id uuid,
         warehouse_id uuid NOT NULL,
         product_code text NOT NULL,
         variant_key text NOT NULL DEFAULT '',
-        batch_no text
+        batch_no text,
+        created_at timestamptz NOT NULL DEFAULT now()
       )`);
     await admin.unsafe(`
       CREATE TABLE "${SCHEMA}".inventory_lot_consumptions (
         id uuid PRIMARY KEY,
         company_id int NOT NULL,
+        qty_consumed int NOT NULL DEFAULT 1,
+        unit_cost_sen int NOT NULL DEFAULT 0,
+        total_cost_sen int NOT NULL DEFAULT 0,
         source_doc_type text,
         source_doc_no text,
         source_doc_id uuid,
-        movement_id uuid
+        movement_id uuid,
+        lot_id uuid
+      )`);
+    await admin.unsafe(`
+      CREATE TABLE "${SCHEMA}".inventory_lots (
+        id uuid PRIMARY KEY,
+        qty_remaining int NOT NULL DEFAULT 0
       )`);
     /* The documented shape of uq_inv_mov_do_source: partial over DO-source
        rows, keyed WITHOUT movement_type — so two DO rows of one document in
@@ -105,25 +123,28 @@ describePg('execIdRestamp against real Postgres (savepoints + a real partial uni
   });
 
   beforeEach(async () => {
-    await admin.unsafe(`TRUNCATE "${SCHEMA}".inventory_movements, "${SCHEMA}".inventory_lot_consumptions`);
-    const mov = (id: string, docId: string, product: string) =>
+    await admin.unsafe(`TRUNCATE "${SCHEMA}".inventory_movements, "${SCHEMA}".inventory_lot_consumptions, "${SCHEMA}".inventory_lots`);
+    const mov = (id: string, docId: string, product: string, qty = 2) =>
       admin.unsafe(
-        `INSERT INTO "${SCHEMA}".inventory_movements (id, company_id, source_doc_type, source_doc_no, source_doc_id, warehouse_id, product_code)
-         VALUES ($1, 2, 'DO', '2990-DO-TEST-1', $2, $3, $4)`,
-        [id, docId, WH, product],
+        `INSERT INTO "${SCHEMA}".inventory_movements (id, company_id, movement_type, qty, total_cost_sen, source_doc_type, source_doc_no, source_doc_id, warehouse_id, product_code)
+         VALUES ($1, 2, 'OUT', $5, 100, 'DO', '2990-DO-TEST-1', $2, $3, $4)`,
+        [id, docId, WH, product, qty],
       );
-    await mov(R1, REAL, 'P1'); // the real document already carries bucket P1
-    await mov(D1, DEAD1, 'P1'); // import duplicate of R1
+    await mov(R1, REAL, 'P1'); // the real document already carries bucket P1 (OUT qty 2)
+    await mov(D1, DEAD1, 'P1'); // import duplicate of R1 — FULL-ROW twin (same type + qty)
     await mov(D2, DEAD1, 'P2'); // clean restamp
     await mov(D3, DEAD1, 'P3'); // clean restamp (first of the self-colliding pair)
-    await mov(D4, DEAD2, 'P3'); // self-collision with D3 after ITS restamp
-    const cons = (id: string, docId: string, movementId: string | null) =>
+    await mov(D4, DEAD2, 'P3'); // self-collision with D3 after ITS restamp (same qty as D3)
+    await mov(R4, REAL, 'P4', 5); // real bucket-P4 movement with a DIFFERENT qty
+    await mov(D6, DEAD1, 'P4', 9); // collides on the index with R4, but qty differs — NOT a twin
+    await admin.unsafe(`INSERT INTO "${SCHEMA}".inventory_lots (id, qty_remaining) VALUES ($1, 3)`, [LOT1]);
+    const cons = (id: string, docId: string, movementId: string | null, lotId: string | null = null) =>
       admin.unsafe(
-        `INSERT INTO "${SCHEMA}".inventory_lot_consumptions (id, company_id, source_doc_type, source_doc_no, source_doc_id, movement_id)
-         VALUES ($1, 2, 'DO', '2990-DO-TEST-1', $2, $3)`,
-        [id, docId, movementId],
+        `INSERT INTO "${SCHEMA}".inventory_lot_consumptions (id, company_id, qty_consumed, source_doc_type, source_doc_no, source_doc_id, movement_id, lot_id)
+         VALUES ($1, 2, 2, 'DO', '2990-DO-TEST-1', $2, $3, $4)`,
+        [id, docId, movementId, lotId],
       );
-    await cons(C1, DEAD1, D1);
+    await cons(C1, DEAD1, D1, LOT1); // the duplicate's consumption — deleting it must RESTORE LOT1
     await cons(C2, DEAD1, D2);
     await cons(C5, DEAD1, null);
   });
@@ -132,14 +153,14 @@ describePg('execIdRestamp against real Postgres (savepoints + a real partial uni
     const out = await execIdRestamp(admin, PLAN, { commit: false, schema: SCHEMA });
     expect(out.movements).toBe(2); // D2 + D3
     expect(out.consumptions).toBe(2); // C2 (with D2) + C5 (standalone)
-    expect(out.duplicates).toHaveLength(2); // D1 (pre-existing twin) + D4 (self-collision)
+    expect(out.duplicates).toHaveLength(3); // D1 (pre-existing twin) + D4 (self-collision) + D6 (index collision, qty differs)
     const d1 = out.duplicates.find((d: { rowId: string }) => d.rowId === D1);
     const d4 = out.duplicates.find((d: { rowId: string }) => d.rowId === D4);
     expect(d1?.consumptionsFollowing).toBe(1); // C1 rolled back with its movement
     expect(d1?.constraint).toBe('uq_test_mov_do_source');
     expect(d4?.maySelfCollide).toBe(true); // a sibling restamped earlier in this run
     // Nothing persisted:
-    for (const [id, want] of [[D1, DEAD1], [D2, DEAD1], [D3, DEAD1], [D4, DEAD2]] as const) {
+    for (const [id, want] of [[D1, DEAD1], [D2, DEAD1], [D3, DEAD1], [D4, DEAD2], [D6, DEAD1]] as const) {
       expect(await movementDocId(id), id).toBe(want);
     }
     expect(await consumptionDocId(C1)).toBe(DEAD1);
@@ -151,7 +172,7 @@ describePg('execIdRestamp against real Postgres (savepoints + a real partial uni
     const out = await execIdRestamp(admin, PLAN, { commit: true, schema: SCHEMA });
     expect(out.movements).toBe(2);
     expect(out.consumptions).toBe(2);
-    expect(out.duplicates).toHaveLength(2);
+    expect(out.duplicates).toHaveLength(3);
     // Clean rows committed:
     expect(await movementDocId(D2)).toBe(REAL);
     expect(await movementDocId(D3)).toBe(REAL);
@@ -162,7 +183,7 @@ describePg('execIdRestamp against real Postgres (savepoints + a real partial uni
     expect(await movementDocId(D4)).toBe(DEAD2);
     expect(await consumptionDocId(C1)).toBe(DEAD1);
     const count = await admin.unsafe(`SELECT count(*)::int AS n FROM "${SCHEMA}".inventory_movements`);
-    expect((count[0] as { n: number }).n).toBe(5); // nothing deleted
+    expect((count[0] as { n: number }).n).toBe(7); // nothing deleted
   });
 
   test('re-running after APPLY is coherent: restamped rows leave the dangling set; only the classified duplicates remain', async () => {
@@ -170,7 +191,7 @@ describePg('execIdRestamp against real Postgres (savepoints + a real partial uni
     const again = await execIdRestamp(admin, PLAN, { commit: true, schema: SCHEMA });
     expect(again.movements).toBe(0);
     expect(again.consumptions).toBe(0);
-    expect(again.duplicates).toHaveLength(2); // D1 + D4, classified again, still not deleted
+    expect(again.duplicates).toHaveLength(3); // D1 + D4 + D6, classified again, still not deleted
     expect(await movementDocId(D1)).toBe(DEAD1);
     expect(await movementDocId(D4)).toBe(DEAD2);
   });
@@ -183,5 +204,53 @@ describePg('execIdRestamp against real Postgres (savepoints + a real partial uni
     // The movement half of the aborted run must NOT have committed:
     expect(await movementDocId(D2)).toBe(DEAD1);
     expect(await movementDocId(D3)).toBe(DEAD1);
+  });
+
+  /* part=dedupe (owner-authorized removal): the deletion rule is STRICTER than
+   * the index collision — a FULL-ROW twin must exist on the real document.
+   * D1 (twin of R1: same type + qty) deletes, its consumption goes with it and
+   * the consumed lot is RESTORED; D6 (collides with R4 but qty 9 vs 5) refuses;
+   * D4's twin only materialises after part=ids APPLY restamps D3 — the
+   * documented run order ids -> dedupe, pinned here. */
+  test('dedupe dry run: twin deletable, non-twin refused, nothing persisted', async () => {
+    const res = await execDedupe(admin, PLAN, classifyDuplicateMovement, { commit: false, schema: SCHEMA });
+    expect(res.deletable.map((c: { movement: { id: string } }) => c.movement.id)).toEqual([D1]);
+    const refusedIds = res.refused.map((c: { movement: { id: string } }) => c.movement.id).sort();
+    expect(refusedIds).toEqual([D4, D6]); // D4: its twin (D3) is not on the real doc yet; D6: qty differs
+    const d1 = res.deletable[0];
+    expect(d1.consumptions).toHaveLength(1);
+    expect(d1.consumptions[0].lot_exists).toBe(true);
+    // Nothing persisted:
+    expect(await movementDocId(D1)).toBe(DEAD1);
+    const lot = await admin.unsafe(`SELECT qty_remaining FROM "${SCHEMA}".inventory_lots WHERE id = $1`, [LOT1]);
+    expect((lot[0] as { qty_remaining: number }).qty_remaining).toBe(3);
+  });
+
+  test('dedupe APPLY: deletes the pair, RESTORES the lot, leaves refusals untouched — one transaction', async () => {
+    const res = await execDedupe(admin, PLAN, classifyDuplicateMovement, { commit: true, schema: SCHEMA });
+    expect(res.deletedMovements).toBe(1);
+    expect(res.deletedConsumptions).toBe(1);
+    expect(res.lotsRestored).toBe(1);
+    expect(await movementDocId(D1)).toBeNull(); // deleted
+    expect(await consumptionDocId(C1)).toBeNull(); // deleted with it
+    const lot = await admin.unsafe(`SELECT qty_remaining FROM "${SCHEMA}".inventory_lots WHERE id = $1`, [LOT1]);
+    expect((lot[0] as { qty_remaining: number }).qty_remaining).toBe(5); // 3 + the duplicate's 2 restored
+    // Refusals and real rows untouched:
+    expect(await movementDocId(D6)).toBe(DEAD1);
+    expect(await movementDocId(R1)).toBe(REAL);
+    expect(await movementDocId(R4)).toBe(REAL);
+  });
+
+  test('run order ids -> dedupe: the self-collision twin becomes deletable once its sibling is on the real document', async () => {
+    await execIdRestamp(admin, PLAN, { commit: true, schema: SCHEMA }); // D3 lands on REAL
+    const res = await execDedupe(admin, PLAN, classifyDuplicateMovement, { commit: true, schema: SCHEMA });
+    const deleted = res.deletable.map((c: { movement: { id: string } }) => c.movement.id).sort();
+    expect(deleted).toEqual([D1, D4]); // D4's twin is now the restamped D3
+    expect(await movementDocId(D4)).toBeNull();
+    expect(await movementDocId(D3)).toBe(REAL); // the twin that stays
+    expect(res.refused.map((c: { movement: { id: string } }) => c.movement.id)).toEqual([D6]); // still no twin
+    // Idempotence: a second dedupe finds nothing deletable.
+    const again = await execDedupe(admin, PLAN, classifyDuplicateMovement, { commit: true, schema: SCHEMA });
+    expect(again.deletable).toHaveLength(0);
   });
 });

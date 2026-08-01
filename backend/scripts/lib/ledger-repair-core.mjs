@@ -230,6 +230,53 @@ export function classifyMovementRelabel({
   return { ...base, verdict: "out-of-scope" };
 }
 
+/** part=dedupe (owner authorization 2026-08-01, "继续 全部可以") — decide
+ *  whether a movement that part=ids classified `duplicate-of-real` may be
+ *  DELETED. The index collision alone is NOT enough: uq_inv_mov_do_source is
+ *  documented as keyed WITHOUT movement_type (and says nothing about qty), so
+ *  a collision could pair two rows that describe DIFFERENT physical events.
+ *  The owner's deletion rule requires a FULL-ROW twin: a real counterpart on
+ *  the true doc id carrying the same (company, product_code, variant_key,
+ *  warehouse, movement_type, qty). Anything less is refused and reported.
+ *    delete           exactly this twin exists (>= 1 counterpart matches all
+ *                     six facts) — the row is a provable import duplicate
+ *    no-counterpart   the collision was real but no full-row twin exists —
+ *                     the two rows disagree on type or qty; owner review
+ *  `counterparts` are the REAL document's movements sharing the duplicate's
+ *  bucket; the caller fetches them by (source_doc_id = resolvedDocId) and
+ *  passes the six facts for each. */
+export function classifyDuplicateMovement({ duplicate, counterparts = [] }) {
+  const same = (a, b) => String(a ?? "") === String(b ?? "");
+  const matches = counterparts.filter((c) =>
+    Number(c.companyId) === Number(duplicate.companyId)
+    && same(c.productCode, duplicate.productCode)
+    && same(c.variantKey ?? "", duplicate.variantKey ?? "")
+    && same(c.warehouseId, duplicate.warehouseId)
+    && same(String(c.movementType).toUpperCase(), String(duplicate.movementType).toUpperCase())
+    && Number(c.qty) === Number(duplicate.qty));
+  if (matches.length === 0) return { verdict: "no-counterpart", matches: [] };
+  return { verdict: "delete", matches: matches.map((m) => m.movementId) };
+}
+
+/** part=dedupe — the movement-ledger effect of deleting a set of duplicate
+ *  movements, per (company, warehouse, product, variant) bucket, in the
+ *  scm.inventory_balances signed convention. Deleting an OUT RAISES the
+ *  bucket's on-hand sum by qty (the OUT contributed -qty); deleting an IN
+ *  lowers it. This is what the owner's 2b question needs: duplicate OUTs
+ *  double-decrement on-hand, so their deletion should shrink the negative
+ *  buckets — the dry run prints each affected bucket before -> after so the
+ *  linkage is visible either way. */
+export function projectDedupeBucketImpact(deletions, currentSums) {
+  const after = new Map();
+  for (const [k, v] of currentSums) after.set(k, Number(v));
+  for (const d of deletions) {
+    const type = String(d.movementType).toUpperCase();
+    const signed = type === "IN" ? Number(d.qty) : type === "OUT" ? -Number(d.qty) : Number(d.qty);
+    after.set(d.bucketKey, (after.get(d.bucketKey) ?? 0) - signed);
+  }
+  return after;
+}
+
 /** W4 phase 1, round 3 (live run 2026-08-01) — classify ONE lot against the
  *  COSTING AUDIT'S OWN 2a lens. Round 2's candidate query used
  *  `received - consumed - remaining > 0` (deficit only — the missing-rows
