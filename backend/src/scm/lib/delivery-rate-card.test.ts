@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeDeliveryCost,
+  farthestZone,
   type RateCardSpec,
   type RateRuleSpec,
 } from './delivery-rate-card';
@@ -307,5 +308,78 @@ describe('the envelope actually contains everything', () => {
     const r = computeDeliveryCost(spec, { setCount: 1, destinationZone: 'PENANG' }, { perTrip: true });
     expect(r.totalCenti).toBe(90_000);
     expect(r.lines.some((l) => l.ruleType === 'MIN_CHARGE')).toBe(false);
+  });
+});
+
+/**
+ * A multi-zone trip is charged ONCE, for the farthest place.
+ *
+ * Owner, 2026-08-02: "如果是多区行程的话，不是按每个 drop 算，它一定是以最远的地方
+ * 来看。例如柔佛 500、马六甲 300，那我肯定是算柔佛 500，不可能再算近的，只是算一次
+ * 而已，因为它是跑到最远的。"
+ *
+ * What it replaced was worse than "wrong": the reconcile handed over whichever
+ * zone came first out of the query — NOT the first stop on the route — so the
+ * same trip could reconcile to a different number on a re-run.
+ */
+describe('farthestZone — one surcharge, for the farthest place', () => {
+  const rules: RateRuleSpec[] = [
+    { ruleType: 'OUTSTATION', zone: 'JOHOR', amountCenti: 50_000 },
+    { ruleType: 'OUTSTATION', zone: 'MELAKA', amountCenti: 30_000 },
+    { ruleType: 'OUTSTATION', zone: 'NS', amountCenti: 15_000 },
+  ];
+
+  it("picks Johor over Melaka whatever order the drops arrive in", () => {
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: ['MELAKA', 'JOHOR'] })).toBe('JOHOR');
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: ['JOHOR', 'MELAKA'] })).toBe('JOHOR');
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: ['NS', 'MELAKA', 'JOHOR'] })).toBe('JOHOR');
+  });
+
+  it('a single-zone trip is unchanged', () => {
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZone: 'MELAKA' })).toBe('MELAKA');
+  });
+
+  it('an in-town drop cannot win a multi-zone trip by accident', () => {
+    // KL has no rule on this card, so it is worth 0 and loses to Melaka.
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: ['KL', 'MELAKA'] })).toBe('MELAKA');
+  });
+
+  it('blanks and nulls are ignored, not treated as a zone', () => {
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: [null, '', '  ', 'MELAKA'] })).toBe('MELAKA');
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: [] })).toBeNull();
+    expect(farthestZone(rules, 'OUTSTATION', {})).toBeNull();
+  });
+
+  it('resolves per RULE TYPE — the trip fee may rank zones differently', () => {
+    const mixed: RateRuleSpec[] = [
+      { ruleType: 'OUTSTATION', zone: 'JOHOR', amountCenti: 50_000 },
+      { ruleType: 'OUTSTATION_TRIP', zone: 'MELAKA', amountCenti: 90_000 },
+    ];
+    expect(farthestZone(mixed, 'OUTSTATION', { destinationZones: ['MELAKA', 'JOHOR'] })).toBe('JOHOR');
+    expect(farthestZone(mixed, 'OUTSTATION_TRIP', { destinationZones: ['MELAKA', 'JOHOR'] })).toBe('MELAKA');
+  });
+
+  /* The owner's own worked example, end to end:
+     "他平时送一张单是 100 元，送 5 张单就是 500 元。但如果他跑柔佛，我们会额外补贴
+      500 元，那就是 500（补贴）加 5 个 100（单量），总共是 1000 元。"
+     The surcharge is added ONCE on top of the drop total — not once per drop. */
+  it('reproduces the owner example: 5 x RM100 + one RM500 Johor subsidy = RM1,000', () => {
+    const card: RateCardSpec = {
+      basis: 'SET',
+      rules: [
+        // A flat RM100 per charging unit: tier 1 with no later tier prices
+        // every position at 100 (tierAmountForPosition takes the greatest
+        // tier <= n, and there is only one).
+        { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 10_000 },
+        { ruleType: 'OUTSTATION', zone: 'JOHOR', amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION', zone: 'MELAKA', amountCenti: 30_000 },
+      ],
+    };
+    const r = computeDeliveryCost(card, { setCount: 5, destinationZones: ['MELAKA', 'JOHOR'] });
+    expect(r.totalCenti).toBe(100_000);
+
+    const surcharge = r.lines.filter((l) => l.ruleType === 'OUTSTATION');
+    expect(surcharge).toHaveLength(1);            // once, not once per drop
+    expect(surcharge[0]!.amountCenti).toBe(50_000); // Johor, not Melaka
   });
 });

@@ -587,14 +587,21 @@ deliveryRateCards.get('/reconcile', async (c) => {
     const card = (companyId ? cardByCompany.get(companyId) : null) ?? (lorryId ? cardByLorry.get(lorryId) : null) ?? null;
     const billedCenti = Number(t.three_pl_cost_centi ?? 0);
     const soDocs = [...new Set((doIdsByTrip.get(tripId) ?? []).map((d) => soDocByDoId.get(d)).filter((v): v is string => !!v))];
-    // Aggregate the trip's sets across its drops; destination zone from the first drop.
+    /* Aggregate the trip's sets across its drops, and collect EVERY zone it
+       touches. It used to take whichever zone came first out of the query —
+       not the first stop on the route, just the first row — so a
+       Melaka->Johor trip could be charged Melaka's rate, and a re-run could
+       answer differently. The calculator now picks the farthest of them
+       (farthestZone), once, per the owner's rule. */
     let setCount = 0;
-    let destinationZone: string | null = null;
+    const zones: string[] = [];
     for (const doc of soDocs) {
       const lines = linesBySo.get(doc) ?? [];
       setCount += deriveSetCount(lines).sets;
-      if (!destinationZone) destinationZone = zoneBySo.get(doc) ?? null;
+      const z = zoneBySo.get(doc) ?? null;
+      if (z && !zones.includes(z)) zones.push(z);
     }
+    const destinationZone: string | null = zones[0] ?? null;
     const dropCount = soDocs.length;
     let expectedCenti: number | null = null;
     let breakdown: ReturnType<typeof computeDeliveryCost> | null = null;
@@ -603,7 +610,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
       /* perTrip: the FIXED per-trip outstation fee is now emitted INSIDE the
          calculator, before the min/cap/rounding envelope. It used to be added
          here afterwards, which let a capped card bill above its own cap. */
-      breakdown = computeDeliveryCost(spec, { setCount, destinationZone }, { perTrip: true });
+      breakdown = computeDeliveryCost(spec, { setCount, destinationZone, destinationZones: zones }, { perTrip: true });
       expectedCenti = breakdown.totalCenti;
     }
     const deltaCenti = expectedCenti == null ? null : billedCenti - expectedCenti;
