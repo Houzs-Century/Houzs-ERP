@@ -1,0 +1,49 @@
+name: Duplicate IC check (read-only)
+
+# Answers "can we put a UNIQUE index on ic_number yet?" without anyone opening a
+# SQL console.
+#
+# We want the index so one identity document cannot be registered twice. It
+# cannot simply be added: if the live data already holds duplicates, the index
+# fails to build, and a failing migration here blocks every LATER migration
+# (CLAUDE.md records two incidents of exactly that). So the data gets read
+# first, and a human decides what each duplicate actually is.
+#
+# There is concrete reason to expect some: the live driver roster carries
+# "Shakti" three times on one phone number and "Hua" twice.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: duplicate-ic-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # Exits 0 whether or not duplicates are found — "there are duplicates" is
+      # the ANSWER, not a failure. A red job would read as "the check broke".
+      - run: node scripts/check-duplicate-ic.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

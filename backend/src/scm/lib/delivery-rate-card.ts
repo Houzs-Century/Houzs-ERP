@@ -82,6 +82,17 @@ export interface DeliveryFacts {
   sofaCompartments?: readonly number[] | null;
   /** Destination area zone (from the A1 classifier) for the outstation surcharge. */
   destinationZone?: string | null;
+  /**
+   * EVERY zone this trip touches, when it touches more than one.
+   *
+   * Owner, 2026-08-02: "如果是多区行程的话，不是按每个 drop 算，它一定是以最远的
+   * 地方来看... 柔佛 500、马六甲 300，那我肯定是算柔佛 500，不可能再算近的，只是算
+   * 一次而已". One surcharge, for the FARTHEST place.
+   *
+   * When given, it wins over destinationZone. When absent, destinationZone is
+   * used unchanged — the single-drop case is unaffected.
+   */
+  destinationZones?: readonly (string | null | undefined)[] | null;
   disposeCount?: number | null;
   setupCount?: number | null;
   dismantleCount?: number | null;
@@ -121,6 +132,48 @@ function tierAmountForPosition(tiers: readonly RateRuleSpec[], n: number): RateR
     if (pos >= 1 && pos <= n && (best === null || pos > intOf(best.tierPosition))) best = t;
   }
   return best;
+}
+
+/**
+ * Which of a trip's zones to charge for. PURE.
+ *
+ * Owner's rule, 2026-08-02: a multi-zone trip is charged ONCE, for the
+ * FARTHEST place — "柔佛 500、马六甲 300，那我肯定是算柔佛 500，不可能再算近的".
+ *
+ * DISTANCE IS NOT IN THIS SYSTEM. Zones are labels; nothing stores how far
+ * away one is. So "farthest" is read off the only ordering the data actually
+ * carries: the SURCHARGE ITSELF. The zone this card charges most for is the one
+ * it considers farthest, which reproduces the owner's example exactly and needs
+ * no table nobody maintains.
+ *
+ * KNOWN LIMIT, stated rather than hidden: if a NEARER zone were ever priced
+ * higher than a farther one, this picks the nearer. Fixing that properly means
+ * storing a distance or an explicit ordering per zone — worth doing only if
+ * that case turns out to be real.
+ *
+ * A zone with no rule on this card contributes nothing, so an in-town drop on a
+ * multi-zone trip cannot win by accident.
+ */
+export function farthestZone(
+  rules: readonly RateRuleSpec[],
+  ruleType: 'OUTSTATION' | 'OUTSTATION_TRIP',
+  facts: Pick<DeliveryFacts, 'destinationZone' | 'destinationZones'>,
+): string | null {
+  const candidates = (facts.destinationZones && facts.destinationZones.length > 0)
+    ? facts.destinationZones
+    : [facts.destinationZone];
+
+  let best: { zone: string; amount: number } | null = null;
+  for (const raw of candidates) {
+    const z = String(raw ?? '').trim().toUpperCase();
+    if (!z) continue;
+    const rule = rules.find((r) => r.ruleType === ruleType && String(r.zone ?? '').toUpperCase() === z);
+    const amount = rule ? intOf(rule.amountCenti) : 0;
+    /* Ties keep the FIRST seen so the result is deterministic — the whole point
+       is that the same trip must not reconcile differently on a re-run. */
+    if (!best || amount > best.amount) best = { zone: z, amount };
+  }
+  return best ? best.zone : null;
 }
 
 /** How the caller is pricing: one DROP, or a whole TRIP. */
@@ -204,16 +257,20 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     }
   }
 
-  // ── Outstation destination-zone surcharge ─────────────────────────────────
-  if (facts.destinationZone) {
-    const z = String(facts.destinationZone).toUpperCase();
-    const os = rulesOf('OUTSTATION').find((r) => String(r.zone ?? '').toUpperCase() === z);
+  // ── Outstation destination-zone surcharge — ONCE, for the FARTHEST zone ───
+  // The reconcile used to hand over whichever zone came FIRST out of the
+  // query, which is not the first stop on the route — it is arbitrary, so the
+  // same trip could reconcile differently on a re-run. A Melaka->Johor trip
+  // could be charged Melaka's RM300 when the lorry went to Johor.
+  const farZone = farthestZone(rules, 'OUTSTATION', facts);
+  if (farZone) {
+    const os = rulesOf('OUTSTATION').find((r) => String(r.zone ?? '').toUpperCase() === farZone);
     if (os) {
       lines.push({
         ruleType: 'OUTSTATION',
-        label: `Outstation ${z}`,
+        label: `Outstation ${farZone}`,
         amountCenti: intOf(os.amountCenti),
-        detail: { zone: z },
+        detail: { zone: farZone, ...(facts.destinationZones ? { pickedFrom: [...facts.destinationZones] } : {}) },
       });
     }
   }
@@ -243,13 +300,14 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
 
   // ── The fixed per-TRIP outstation fee (once per trip, not per drop) ───────
   if (opts.perTrip) {
-    const tripFee = tripOutstationFeeCenti(rules, facts.destinationZone);
+    const tripZone = farthestZone(rules, 'OUTSTATION_TRIP', facts);
+    const tripFee = tripOutstationFeeCenti(rules, tripZone);
     if (tripFee > 0) {
       lines.push({
         ruleType: 'OUTSTATION_TRIP',
-        label: `Outstation trip ${String(facts.destinationZone).toUpperCase()}`,
+        label: `Outstation trip ${String(tripZone).toUpperCase()}`,
         amountCenti: tripFee,
-        detail: { zone: facts.destinationZone, perTrip: true },
+        detail: { zone: tripZone, perTrip: true },
       });
     }
   }
