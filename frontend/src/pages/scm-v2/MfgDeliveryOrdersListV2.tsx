@@ -62,6 +62,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
 import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
@@ -1047,7 +1048,12 @@ export function MfgDeliveryOrdersListV2() {
       alwaysVisible: true,
       getValue: (r) => r.do_number,
       render: (r) => (
-        <span className="font-docno text-[12.5px] font-semibold text-ink">
+        <span
+          className={cn(
+            "font-docno text-[12.5px] font-semibold text-ink",
+            isCancelledDocStatus(r.status) && "dt-cancel-strike",
+          )}
+        >
           {r.do_number}
         </span>
       ),
@@ -1205,6 +1211,8 @@ export function MfgDeliveryOrdersListV2() {
       key: "status",
       label: "Status",
       width: "116px",
+      // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
+      className: "dt-cancel-keep",
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
@@ -1801,6 +1809,9 @@ export function MfgDeliveryOrdersListV2() {
               error={error ? (error as Error).message ?? "Failed to load" : null}
               columns={columns}
               getRowKey={(r) => r.id}
+              getRowClassName={(r) =>
+                isCancelledDocStatus(r.status) ? "dt-row-cancelled" : undefined
+              }
               onRowClick={(r) => setSelected(r)}
               expandable={{
                 render: (r) => <DoLinesExpansion doId={r.id} />,
