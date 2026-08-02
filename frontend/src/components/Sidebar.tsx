@@ -557,9 +557,14 @@ export const NAV_TABS: NavTab[] = [
              access changes: the same anyPerm / anyAccess pair gated every child
              and still gates this row. */
           {
-            label: "Maintenance", icon: SlidersHorizontal,
+            label: "Maintenance", icon: SlidersHorizontal, groupId: "scm-transportation-maintenance",
             to: "/scm/delivery-maintenance",
             anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true,
+            children: [
+              { to: "/scm/delivery-maintenance?open=coverage-fleet", label: "Coverage & Fleet", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+              { to: "/scm/delivery-maintenance?open=zones", label: "Delivery Zones", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+              { to: "/scm/delivery-maintenance?open=carriers", label: "Carriers & Rates", icon: Handshake, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+            ],
           },
         ],
       },
