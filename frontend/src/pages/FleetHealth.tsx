@@ -1322,8 +1322,11 @@ export function WorkOrdersSection({ vehicleId, plate, workOrders, breakdowns = [
       ) : !importing && (
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => setAdding(true)}>New work order</Button>
+          {/* Scan it or type it — the same editor either way, so the fields mig
+              0241 added (workshop, document number, advisor, per-line UOM and
+              discount) are reachable without an OCR-able document. */}
           <Button variant="secondary" onClick={() => setImporting(true)}>
-            <FileUp size={14} /> Import a workshop document
+            <FileUp size={14} /> Workshop quotation or invoice
           </Button>
         </div>
       )}
