@@ -18,6 +18,11 @@ export interface CarrierLinkInput {
   threeplCompanyId?: string | null;
   /** The caller's own-fleet flag (in_house / is_internal), if they sent one. */
   ownFlag?: boolean;
+  /** The carrier this row is ALREADY linked to, as read from the DB. Only a
+   *  PATCH can supply it; a create has no current row. Without it the rule
+   *  below cannot fire, which is exactly how the Fleet grid's tick-box got
+   *  round it — see the conflict note. */
+  currentCarrierId?: string | null;
 }
 
 /** What to write. A key absent from the result must not be written at all. */
@@ -25,6 +30,27 @@ export interface CarrierLinkPatch {
   carrierId?: string | null;
   /** The own-fleet flag to write — false whenever a carrier is attached. */
   ownFlag?: boolean;
+  /**
+   * Set when the request would leave the row marked OURS while it is still
+   * linked to a carrier. The caller must refuse the write.
+   *
+   * WHY THIS EXISTS. Owner, 2026-08-02, on the Fleet grid's Outsource tick-box.
+   * That control posts `{ id, inHouse }` and nothing else, so threeplCompanyId
+   * was `undefined`, this function only flipped the flag, and a driver
+   * belonging to MSJ TRANSPORT ended up with in_house = true while
+   * threepl_company_id still pointed at MSJ. The 3PL screen's own footer
+   * promises "you cannot mark them in-house while they belong to a 3PL" — that
+   * promise was only ever kept on the paths that sent the carrier id.
+   *
+   * REFUSE, DO NOT AUTO-DETACH. Silently clearing the link would remove the
+   * driver from that carrier's roster because someone ticked a box in a grid,
+   * with nothing on screen saying so. Making them detach first is the same
+   * number of clicks and says what it does.
+   *
+   * A patch carrying `conflict` intentionally carries NO writable key, so a
+   * caller that forgets to check it writes nothing rather than the wrong thing.
+   */
+  conflict?: 'own_flag_while_linked';
 }
 
 /**
@@ -36,13 +62,20 @@ export interface CarrierLinkPatch {
  * - Detaching (explicit null) clears the link and honours the caller's ownFlag
  *   if they sent one — a detached row is not automatically ours again, so with
  *   no ownFlag supplied the flag is left exactly as it was for a human to set.
- * - Absent (undefined) touches neither field.
+ * - Absent (undefined) touches neither field — UNLESS the caller is trying to
+ *   mark a row ours while it is still linked to a carrier, which is refused
+ *   (see CarrierLinkPatch.conflict).
  */
 export function resolveCarrierLink(input: CarrierLinkInput): CarrierLinkPatch {
-  const { threeplCompanyId, ownFlag } = input;
+  const { threeplCompanyId, ownFlag, currentCarrierId } = input;
 
   if (threeplCompanyId === undefined) {
-    return ownFlag === undefined ? {} : { ownFlag };
+    if (ownFlag === undefined) return {};
+    /* Marking it ours while a carrier still owns it is the contradiction the
+       DB cannot express (mig 0237 deliberately wrote no CHECK). Detaching is
+       an explicit `threeplCompanyId: null`, which lands in the branch below. */
+    if (ownFlag === true && currentCarrierId) return { conflict: 'own_flag_while_linked' };
+    return { ownFlag };
   }
   if (threeplCompanyId === null || threeplCompanyId === '') {
     return ownFlag === undefined ? { carrierId: null } : { carrierId: null, ownFlag };
