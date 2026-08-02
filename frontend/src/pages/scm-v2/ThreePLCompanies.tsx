@@ -268,8 +268,8 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
      enum that has neither LORRY nor TRUCK - every add but Van returned 400. */
   const [lorryType, setLorryType] = useState<LorryType>('LORRY_14FT');
   const [dims, setDims] = useState({ l: '', w: '', h: '' });
-  const [drv, setDrv] = useState({ code: '', name: '', phone: '', ic: '' });
-  const [hlp, setHlp] = useState({ code: '', name: '', contact: '', ic: '' });
+  const [drv, setDrv] = useState({ name: '', phone: '', ic: '' });
+  const [hlp, setHlp] = useState({ name: '', contact: '', ic: '' });
 
   const fail = (err: unknown) => notify({ title: 'Could not add', body: err instanceof Error ? err.message : '', tone: 'error' });
   const num = (v: string) => (v.trim() === '' ? null : Number(v));
@@ -286,20 +286,20 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
   };
 
   const addDriver = () => {
-    if (!drv.code.trim() || !drv.name.trim() || !drv.phone.trim()) {
-      notify({ title: 'Code, name and phone are required', tone: 'error' }); return;
+    if (!drv.name.trim() || !drv.phone.trim()) {
+      notify({ title: 'Name and phone are required', tone: 'error' }); return;
     }
     createDriver.mutate(
-      { driverCode: drv.code.trim(), name: drv.name.trim(), phone: drv.phone.trim(), icNumber: drv.ic.trim() || undefined, threeplCompanyId: companyId },
-      { onSuccess: () => { setDrv({ code: '', name: '', phone: '', ic: '' }); void fleet.refetch(); }, onError: fail },
+      { name: drv.name.trim(), phone: drv.phone.trim(), icNumber: drv.ic.trim() || undefined, threeplCompanyId: companyId },
+      { onSuccess: () => { setDrv({ name: '', phone: '', ic: '' }); void fleet.refetch(); }, onError: fail },
     );
   };
 
   const addHelper = () => {
-    if (!hlp.code.trim() || !hlp.name.trim()) { notify({ title: 'Code and name are required', tone: 'error' }); return; }
+    if (!hlp.name.trim()) { notify({ title: 'Name is required', tone: 'error' }); return; }
     createHelper.mutate(
-      { helperCode: hlp.code.trim(), name: hlp.name.trim(), contact: hlp.contact.trim() || undefined, icNumber: hlp.ic.trim() || undefined, threeplCompanyId: companyId },
-      { onSuccess: () => { setHlp({ code: '', name: '', contact: '', ic: '' }); void fleet.refetch(); }, onError: fail },
+      { name: hlp.name.trim(), contact: hlp.contact.trim() || undefined, icNumber: hlp.ic.trim() || undefined, threeplCompanyId: companyId },
+      { onSuccess: () => { setHlp({ name: '', contact: '', ic: '' }); void fleet.refetch(); }, onError: fail },
     );
   };
 
@@ -350,7 +350,6 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
         loading={fleet.isLoading}
         form={
           <>
-            <Ctl label="Code"><Inp value={drv.code} onChange={(v) => setDrv((p) => ({ ...p, code: v }))} placeholder="DRV-xx" width={90} /></Ctl>
             <Ctl label="Name"><Inp value={drv.name} onChange={(v) => setDrv((p) => ({ ...p, name: v }))} width={150} /></Ctl>
             <Ctl label="Phone"><Inp value={drv.phone} onChange={(v) => setDrv((p) => ({ ...p, phone: v }))} placeholder="01x-xxx xxxx" width={130} /></Ctl>
             <Ctl label="IC"><Inp value={drv.ic} onChange={(v) => setDrv((p) => ({ ...p, ic: v }))} width={130} /></Ctl>
@@ -369,7 +368,6 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
         loading={fleet.isLoading}
         form={
           <>
-            <Ctl label="Code"><Inp value={hlp.code} onChange={(v) => setHlp((p) => ({ ...p, code: v }))} placeholder="HLP-xx" width={90} /></Ctl>
             <Ctl label="Name"><Inp value={hlp.name} onChange={(v) => setHlp((p) => ({ ...p, name: v }))} width={150} /></Ctl>
             <Ctl label="Contact"><Inp value={hlp.contact} onChange={(v) => setHlp((p) => ({ ...p, contact: v }))} placeholder="01x-xxx xxxx" width={130} /></Ctl>
             <Ctl label="IC"><Inp value={hlp.ic} onChange={(v) => setHlp((p) => ({ ...p, ic: v }))} width={130} /></Ctl>

@@ -24,6 +24,8 @@ import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll } from '../lib/paginate-all';
+import { normalizePhone } from '../shared/phone';
+import { nextCode, CODE_PREFIX } from '../lib/fleet-code-mint';
 import {
   scopeToCompany,
   scopeToCompanyId,
@@ -34,10 +36,11 @@ import {
 export const threeplCompanies = new Hono<{ Bindings: Env; Variables: Variables }>();
 threeplCompanies.use('*', supabaseAuth);
 
-const COLS = 'id, name, registration_no, contact_name, contact_phone, office_phone, email, address, is_active, notes, created_at, updated_at';
+const COLS = 'id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, is_active, notes, created_at, updated_at';
 
 type Row = {
   id: string;
+  code?: string | null;
   name?: string | null;
   registration_no?: string | null; registrationNo?: string | null;
   contact_name?: string | null;   contactName?: string | null;
@@ -58,6 +61,7 @@ const NO_FLEET: FleetCounts = { lorryCount: 0, driverCount: 0, helperCount: 0 };
 function rowOut(r: Row, counts: FleetCounts = NO_FLEET) {
   return {
     id:             r.id,
+    code:           r.code ?? null,
     name:           r.name ?? '',
     registrationNo: r.registrationNo ?? r.registration_no ?? null,
     contactName:    r.contactName ?? r.contact_name ?? null,
@@ -142,18 +146,39 @@ threeplCompanies.get('/:id/fleet', async (c) => {
   });
 });
 
-const createSchema = z.object({
+/* Owner, 2026-08-02: "我们填入的资料...应该都是 formatted 的". These were bare
+   length caps, so `email` accepted "not an email" and both phones were stored
+   byte-for-byte as typed — while the DRIVER phone in the same drawer was being
+   reshaped to E.164. One form, two behaviours.
+
+   PHONES ARE NORMALISED HERE, NOT MERELY CHECKED. A company office phone is a
+   LANDLINE (03-xxxx xxxx), so the mobile-only isValidMalaysianPhone would have
+   refused every legitimate one; normalizePhone reshapes both landline and
+   mobile and returns null only for something that is not a number at all. */
+const optionalPhone = (label: string) =>
+  z.string().trim().max(40).nullable().optional().superRefine((v, ctx) => {
+    if (v == null || v === '') return;
+    if (!normalizePhone(v)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${label} is not a usable phone number.` });
+  });
+
+const companyFields = {
   name:         z.string().trim().min(1).max(120),
   contactName:  z.string().trim().max(120).nullable().optional(),
-  contactPhone: z.string().trim().max(40).nullable().optional(),
+  contactPhone: optionalPhone('Contact phone'),
   registrationNo: z.string().trim().max(60).nullable().optional(),
-  officePhone:  z.string().trim().max(40).nullable().optional(),
-  email:        z.string().trim().max(160).nullable().optional(),
+  officePhone:  optionalPhone('Office phone'),
+  /* Was max(160) and nothing else, so "ops at carrier dot com" saved happily. */
+  email:        z.string().trim().max(160).email('That is not a valid email address.').nullable().optional()
+                 .or(z.literal('').transform(() => null)),
   address:      z.string().trim().max(500).nullable().optional(),
-
   notes:        z.string().trim().max(2000).nullable().optional(),
   isActive:     z.boolean().optional(),
-});
+};
+
+const createSchema = z.object(companyFields);
+
+/** Store the E.164 form, not what was typed — see the note above. */
+const asPhone = (v: string | null | undefined): string | null => (v ? normalizePhone(v) : null);
 
 // ── POST / — create a 3PL company. (company_id, name) is UNIQUE -> 409 on dup.
 threeplCompanies.post('/', async (c) => {
@@ -167,20 +192,36 @@ threeplCompanies.post('/', async (c) => {
   const user = c.get('user') as { id?: string } | null;
 
   const sb = c.get('supabase');
-  const { data, error } = await sb.from('threepl_companies').insert({
+  const row = {
     company_id:    co.companyId,
     name:          p.name,
     registration_no: p.registrationNo ?? null,
     contact_name:  p.contactName ?? null,
-    contact_phone: p.contactPhone ?? null,
-    office_phone:  p.officePhone ?? null,
+    contact_phone: asPhone(p.contactPhone),
+    office_phone:  asPhone(p.officePhone),
     email:         p.email ?? null,
     address:       p.address ?? null,
     notes:         p.notes ?? null,
     is_active:     p.isActive ?? true,
     created_by:    user?.id ?? null,
     updated_by:    user?.id ?? null,
-  }).select(COLS).single();
+  };
+
+  /* Codes are minted per COMPANY here — unlike drivers/helpers, this table is
+     company-scoped (UNIQUE (company_id, name), and 0242's index is on
+     (company_id, code)). Retry the mint only; a duplicate NAME or SSM is the
+     caller's problem and retrying would spin forever. */
+  let data: unknown = null;
+  let error: { code?: string; message?: string } | null = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const { data: existing } = await sb.from('threepl_companies').select('code').eq('company_id', co.companyId);
+    const code = nextCode(CODE_PREFIX.THREEPL, ((existing ?? []) as Array<{ code?: string | null }>).map((r) => r.code));
+    const res = await sb.from('threepl_companies').insert({ ...row, code }).select(COLS).single();
+    data = res.data; error = res.error;
+    if (!error) break;
+    if (error.code !== '23505') break;
+    if (!/threepl_companies_code/i.test(error.message ?? '')) break; // name / SSM clash — real, do not retry
+  }
   if (error) {
     if (error.code === '23505') {
       const dupReg = /registration/i.test(error.message ?? '');
@@ -194,18 +235,11 @@ threeplCompanies.post('/', async (c) => {
   return c.json({ company: rowOut(data as Row) }, 201);
 });
 
-const patchSchema = z.object({
-  name:         z.string().trim().min(1).max(120).optional(),
-  contactName:  z.string().trim().max(120).nullable().optional(),
-  contactPhone: z.string().trim().max(40).nullable().optional(),
-  registrationNo: z.string().trim().max(60).nullable().optional(),
-  officePhone:  z.string().trim().max(40).nullable().optional(),
-  email:        z.string().trim().max(160).nullable().optional(),
-  address:      z.string().trim().max(500).nullable().optional(),
-
-  notes:        z.string().trim().max(2000).nullable().optional(),
-  isActive:     z.boolean().optional(),
-});
+/* The SAME rules as create, with the name optional. Sharing the field map is
+   the point: a format enforced on create and not on edit is enforced nowhere,
+   which is exactly how the driver phone ended up normalised on one path and
+   stored raw on the other. `code` is deliberately absent — it is minted. */
+const patchSchema = z.object({ ...companyFields, name: companyFields.name.optional() });
 
 // ── PATCH /:id — STRICT company scope (a blind-id WHERE would let tenant A edit
 //    tenant B's company by knowing its UUID).
@@ -224,8 +258,8 @@ threeplCompanies.patch('/:id', async (c) => {
   if (p.name !== undefined)         updates.name = p.name;
   if (p.registrationNo !== undefined) updates.registration_no = p.registrationNo;
   if (p.contactName !== undefined)  updates.contact_name = p.contactName;
-  if (p.contactPhone !== undefined) updates.contact_phone = p.contactPhone;
-  if (p.officePhone !== undefined)  updates.office_phone = p.officePhone;
+  if (p.contactPhone !== undefined) updates.contact_phone = asPhone(p.contactPhone);
+  if (p.officePhone !== undefined)  updates.office_phone = asPhone(p.officePhone);
   if (p.email !== undefined)        updates.email = p.email;
   if (p.address !== undefined)      updates.address = p.address;
   if (p.notes !== undefined)        updates.notes = p.notes;
