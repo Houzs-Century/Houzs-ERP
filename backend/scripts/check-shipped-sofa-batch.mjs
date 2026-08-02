@@ -28,12 +28,11 @@ async function main() {
   // the DO's status. A sofa line is identified by the product's category = SOFA.
   const rows = await sql`
     SELECT d.do_number, d.status::text AS do_status, d.company_id,
-           di.doc_no AS so_doc, c.product_code, l.batch_no,
+           d.so_doc_no AS so_doc, c.product_code, l.batch_no,
            SUM(c.qty_consumed)::numeric AS qty
       FROM scm.inventory_lot_consumptions c
       JOIN scm.inventory_lots l ON l.id = c.lot_id
       JOIN scm.delivery_orders d ON d.id = c.source_doc_id AND c.source_doc_type = 'DO'
-      LEFT JOIN scm.delivery_order_items di ON di.delivery_order_id = d.id AND di.item_code = c.product_code
       JOIN scm.mfg_products p ON p.code = c.product_code AND p.company_id = d.company_id
      WHERE UPPER(COALESCE(p.category::text,'')) = 'SOFA'
        AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'
