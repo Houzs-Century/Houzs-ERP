@@ -1,0 +1,33 @@
+name: WH_NONE state recovery check (read-only)
+
+# Owner 2026-08-02: warehouse follows the SO's STATE. For every SO whose lines
+# resolve to no warehouse, this dumps every location field (state, postcode,
+# city, address) and tries to recover the state -> warehouse from the postcode,
+# so we know which WH_NONE SOs are backfillable and which have no location at all.
+#
+# SELECT only — no writes. The verdict is the output.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: wh-none-state-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-wh-none-state.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
