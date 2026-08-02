@@ -135,7 +135,8 @@ export type NewRateCard = {
   carrierLorryId?: string | null;
   carrierCompanyId?: string | null;
   carrierLabel?: string | null;
-  isOwnFleet?: boolean;
+  /* No isOwnFleet — it is derived from carrierCompanyId server-side and the
+     route ignores it (mig 0246). Own fleet IS "no carrier". */
   basis?: RateBasis;
   aggregation?: RateAggregation;
   minChargeCenti?: number | null;

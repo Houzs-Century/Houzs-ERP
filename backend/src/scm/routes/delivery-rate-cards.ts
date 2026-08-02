@@ -200,7 +200,9 @@ const cardCreateSchema = z.object({
   carrierLorryId: z.string().uuid().nullable().optional(),
   carrierCompanyId: z.string().uuid().nullable().optional(),
   carrierLabel: z.string().trim().max(120).nullable().optional(),
-  isOwnFleet: z.boolean().optional(),
+  /* NO isOwnFleet. It is DERIVED from carrierCompanyId — see below. A card that
+     names a carrier is that carrier's price list; a card that names none is our
+     own cost structure. Accepting the two independently let them contradict. */
   basis: z.enum(['ITEM', 'SET']).optional(),
   aggregation: z.enum(['UNIT', 'DROP', 'CUSTOMER', 'TRIP']).optional(),
   minChargeCenti: z.number().int().min(0).nullable().optional(),
@@ -238,7 +240,7 @@ deliveryRateCards.post('/', async (c) => {
     carrier_lorry_id: p.carrierLorryId ?? null,
     carrier_company_id: p.carrierCompanyId ?? null,
     carrier_label: p.carrierLabel ?? null,
-    is_own_fleet: p.isOwnFleet ?? false,
+    is_own_fleet: (p.carrierCompanyId ?? null) === null,
     basis: p.basis ?? 'SET',
     aggregation: p.aggregation ?? 'UNIT',
     min_charge_centi: p.minChargeCenti ?? null,
@@ -277,9 +279,13 @@ deliveryRateCards.patch('/:id', async (c) => {
   const updates: Record<string, unknown> = {};
   if (p.name !== undefined) updates.name = p.name;
   if (p.carrierLorryId !== undefined) updates.carrier_lorry_id = p.carrierLorryId;
-  if (p.carrierCompanyId !== undefined) updates.carrier_company_id = p.carrierCompanyId;
+  if (p.carrierCompanyId !== undefined) {
+    updates.carrier_company_id = p.carrierCompanyId;
+    // Moved together, always. Writing the carrier without the flag is what let a
+    // card read "MSJ TRANSPORT" and "Own-fleet card" at the same time.
+    updates.is_own_fleet = p.carrierCompanyId === null;
+  }
   if (p.carrierLabel !== undefined) updates.carrier_label = p.carrierLabel;
-  if (p.isOwnFleet !== undefined) updates.is_own_fleet = p.isOwnFleet;
   if (p.basis !== undefined) updates.basis = p.basis;
   if (p.aggregation !== undefined) updates.aggregation = p.aggregation;
   if (p.minChargeCenti !== undefined) updates.min_charge_centi = p.minChargeCenti;

@@ -19,6 +19,8 @@ import { Button } from '@2990s/design-system';
 import { Building2, Plus, Trash2, Pencil, Check, X, ChevronRight, ChevronDown } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
 import { FormCard, FormGrid, FormField, FormInput } from '../../vendor/scm/components/FormCard';
+import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
+import { formatPhone } from '@2990s/shared/phone';
 import styles from './Suppliers.module.css';
 import {
   useThreePLCompanies,
@@ -119,11 +121,16 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
           <FormField label="Contact person">
             <FormInput value={form.contactName} onChange={(e) => set('contactName')(e.target.value)} placeholder="Name" />
           </FormField>
+          {/* The app's own phone control, not a bare text box. Owner, 2026-08-02:
+              "你的 contact number 为什么不是加 60 的?" — because this screen was
+              built with a plain input while Sales Order, Supplier and Team all
+              use PhoneInput. It shows the country (+60 by default), stores E.164,
+              and stops the browser's contact autofill hijacking the field. */}
           <FormField label="Contact phone" hint="Stored as +60…">
-            <FormInput value={form.contactPhone} onChange={(e) => set('contactPhone')(e.target.value)} placeholder="01x-xxx xxxx" />
+            <PhoneInput className={styles.fieldInput} value={form.contactPhone} onChange={set('contactPhone')} />
           </FormField>
           <FormField label="Office phone" hint="A landline is fine.">
-            <FormInput value={form.officePhone} onChange={(e) => set('officePhone')(e.target.value)} placeholder="03-xxxx xxxx" />
+            <PhoneInput className={styles.fieldInput} value={form.officePhone} onChange={set('officePhone')} placeholder="3-1234 5678" />
           </FormField>
           <FormField label="Email">
             <FormInput type="email" value={form.email} onChange={(e) => set('email')(e.target.value)} placeholder="ops@carrier.com" />
@@ -143,25 +150,19 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
             No 3PL companies yet. Register one above, then open it to add its lorries and crew.
           </p>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', color: 'var(--fg-muted)' }}>
-                  <Th></Th><Th>Code</Th><Th>Company</Th><Th>SSM</Th><Th>Contact</Th><Th>Office</Th><Th>Fleet</Th><Th>Active</Th><Th></Th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <CompanyRow
-                    key={r.id}
-                    row={r}
-                    open={open === r.id}
-                    onToggleOpen={() => setOpen((p) => (p === r.id ? null : r.id))}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          /* NOT a table. Owner, 2026-08-02, on this list inside the Rate Cards
+             drawer: "整个都被 squeeze 掉、挤爆了". Nine columns in a 700px panel
+             gave every cell ~70px, so "0 lorries · 1 drivers · 0 helpers" broke
+             across six lines and the whole thing grew a horizontal scrollbar.
+             A wrapping row has no column to starve — the fields reflow instead. */
+          rows.map((r) => (
+            <CompanyRow
+              key={r.id}
+              row={r}
+              open={open === r.id}
+              onToggleOpen={() => setOpen((p) => (p === r.id ? null : r.id))}
+            />
+          ))
         )}
       </div>
 
@@ -218,79 +219,112 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
     del.mutate(row.id, { onError: (err) => notify({ title: 'Could not delete', body: err instanceof Error ? err.message : '', tone: 'error' }) });
   };
 
+  /* Editing reuses the SAME grid the register form above uses. The old inline
+     edit was a <tr> of eight cells under a nine-column header, so every field
+     sat one column left of its own label — Company name under "Code", email
+     under "Fleet", and the address input under "Active". */
   if (editing) {
     return (
-      <tr style={{ borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
-        <Td></Td>
-        <Td><Inp value={form.name} onChange={set('name')} width={170} /></Td>
-        <Td><Inp value={form.registrationNo} onChange={set('registrationNo')} width={140} /></Td>
-        <Td>
-          <div style={{ display: 'flex', gap: 4 }}>
-            <Inp value={form.contactName} onChange={set('contactName')} width={110} />
-            <Inp value={form.contactPhone} onChange={set('contactPhone')} width={120} />
-          </div>
-        </Td>
-        <Td><Inp value={form.officePhone} onChange={set('officePhone')} width={120} /></Td>
-        <Td><Inp value={form.email} onChange={set('email')} width={150} /></Td>
-        <Td><Inp value={form.address} onChange={set('address')} width={160} /></Td>
-        <Td>
-          <div style={{ display: 'inline-flex', gap: 4 }}>
+      <div style={ROW_SHELL}>
+        <div style={{ padding: '12px' }}>
+          <FormGrid>
+            <FormField label="Company name" required span={2}>
+              <FormInput value={form.name} onChange={(e) => set('name')(e.target.value)} />
+            </FormField>
+            <FormField label="SSM / registration no">
+              <FormInput value={form.registrationNo} onChange={(e) => set('registrationNo')(e.target.value)} />
+            </FormField>
+            <FormField label="Code" hint="Allocated once, never re-issued.">
+              <FormInput value={row.code ?? '—'} readOnly disabled />
+            </FormField>
+            <FormField label="Contact person">
+              <FormInput value={form.contactName} onChange={(e) => set('contactName')(e.target.value)} />
+            </FormField>
+            <FormField label="Contact phone">
+              <PhoneInput className={styles.fieldInput} value={form.contactPhone} onChange={set('contactPhone')} />
+            </FormField>
+            <FormField label="Office phone">
+              <PhoneInput className={styles.fieldInput} value={form.officePhone} onChange={set('officePhone')} placeholder="3-1234 5678" />
+            </FormField>
+            <FormField label="Email">
+              <FormInput type="email" value={form.email} onChange={(e) => set('email')(e.target.value)} />
+            </FormField>
+            <FormField label="Registered address" span={4}>
+              <FormInput value={form.address} onChange={(e) => set('address')(e.target.value)} />
+            </FormField>
+          </FormGrid>
+          <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
             <Button variant="primary" size="sm" onClick={save} disabled={update.isPending}><Check {...ICON} /><span>Save</span></Button>
-            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}><X {...ICON} /></Button>
+            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}><X {...ICON} /><span>Cancel</span></Button>
           </div>
-        </Td>
-      </tr>
+        </div>
+      </div>
     );
   }
 
+  const fleet = [
+    `${row.lorryCount} ${row.lorryCount === 1 ? 'lorry' : 'lorries'}`,
+    `${row.driverCount} ${row.driverCount === 1 ? 'driver' : 'drivers'}`,
+    `${row.helperCount} ${row.helperCount === 1 ? 'helper' : 'helpers'}`,
+  ].join(' · ');
+
   return (
-    <>
-      <tr style={{ borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
-        <Td>
-          <button onClick={onToggleOpen} title={open ? 'Collapse' : 'Open fleet'}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>
-            {open ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
-          </button>
-        </Td>
+    <div style={ROW_SHELL}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '10px 12px' }}>
+        <button onClick={onToggleOpen} title={open ? 'Collapse' : 'Open fleet'}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2, flex: '0 0 auto' }}>
+          {open ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
+        </button>
+
         {/* The minted code (mig 0242). It was stored and returned but nowhere
             on screen, which makes an auto-allocated identifier useless — you
             cannot quote a code you cannot see. */}
-        <Td><span className={styles.codeChip}>{row.code ?? '—'}</span></Td>
-        <Td><strong>{row.name}</strong></Td>
-        <Td>{row.registrationNo ?? '—'}</Td>
-        <Td>{row.contactName ? `${row.contactName}${row.contactPhone ? ` · ${row.contactPhone}` : ''}` : (row.contactPhone ?? '—')}</Td>
-        <Td>{row.officePhone ?? '—'}</Td>
-        <Td>
-          <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-            {row.lorryCount} lorries · {row.driverCount} drivers · {row.helperCount} helpers
-          </span>
-        </Td>
-        <Td>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-            <input type="checkbox" checked={row.isActive} disabled={update.isPending}
-              onChange={() => update.mutate({ id: row.id, isActive: !row.isActive }, {
-                onError: (err) => notify({ title: 'Could not update', body: err instanceof Error ? err.message : '', tone: 'error' }),
-              })} />
-            <span style={{ fontSize: 'var(--fs-12)', color: row.isActive ? 'var(--c-secondary-a, inherit)' : 'var(--fg-muted)' }}>{row.isActive ? 'Active' : 'Inactive'}</span>
-          </label>
-        </Td>
-        <Td>
-          <div style={{ display: 'inline-flex', gap: 4 }}>
-            <Button variant="ghost" size="sm" onClick={() => setEditing(true)}><Pencil {...ICON} /><span>Edit</span></Button>
-            <Button variant="ghost" size="sm" onClick={remove} disabled={del.isPending}><Trash2 {...ICON} /></Button>
+        <div style={{ flex: '1 1 190px', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className={styles.codeChip}>{row.code ?? '—'}</span>
+            <strong style={{ fontSize: 'var(--fs-13)' }}>{row.name}</strong>
           </div>
-        </Td>
-      </tr>
+          <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
+            {row.registrationNo ? `SSM ${row.registrationNo}` : 'No SSM on file'} · {fleet}
+          </div>
+        </div>
+
+        <Fact label="Contact" value={row.contactName} sub={row.contactPhone ? formatPhone(row.contactPhone) : null} />
+        <Fact label="Office" value={row.officePhone ? formatPhone(row.officePhone) : null} sub={row.email} />
+
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: '0 0 auto' }}>
+          <input type="checkbox" checked={row.isActive} disabled={update.isPending}
+            onChange={() => update.mutate({ id: row.id, isActive: !row.isActive }, {
+              onError: (err) => notify({ title: 'Could not update', body: err instanceof Error ? err.message : '', tone: 'error' }),
+            })} />
+          <span style={{ fontSize: 'var(--fs-12)', color: row.isActive ? 'var(--c-secondary-a, inherit)' : 'var(--fg-muted)' }}>{row.isActive ? 'Active' : 'Inactive'}</span>
+        </label>
+
+        <div style={{ display: 'inline-flex', gap: 4, flex: '0 0 auto' }}>
+          <Button variant="ghost" size="sm" onClick={() => setEditing(true)}><Pencil {...ICON} /><span>Edit</span></Button>
+          <Button variant="ghost" size="sm" onClick={remove} disabled={del.isPending}><Trash2 {...ICON} /></Button>
+        </div>
+      </div>
+
       {open && (
-        <tr>
-          <td colSpan={9} style={{ padding: '0 12px 14px 40px', background: 'var(--bg-subtle, rgba(0,0,0,0.02))' }}>
-            <CarrierFleet companyId={row.id} companyName={row.name} />
-          </td>
-        </tr>
+        <div style={{ padding: '0 12px 14px 40px', background: 'var(--bg-subtle, rgba(0,0,0,0.02))' }}>
+          <CarrierFleet companyId={row.id} companyName={row.name} />
+        </div>
       )}
-    </>
+    </div>
   );
 };
+
+const ROW_SHELL: CSSProperties = { borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' };
+
+/* One labelled value that shrinks instead of wrapping to six lines. */
+const Fact = ({ label, value, sub }: { label: string; value?: string | null; sub?: string | null }) => (
+  <div style={{ flex: '1 1 150px', minWidth: 0 }}>
+    <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{label}</div>
+    <div style={{ fontSize: 'var(--fs-12)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value || '—'}</div>
+    {sub && <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>}
+  </div>
+);
 
 /* The carrier's own fleet. Everything created here posts threeplCompanyId, so
    the row lands OUTSOURCE — the routes refuse to let it be in-house. */
@@ -385,13 +419,13 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
       <FleetBlock title="Drivers" empty="No drivers registered for this carrier."
         rows={(d?.drivers ?? []).map((x) => ({
           id: x.id, main: x.name,
-          sub: [x.driver_code, x.phone, x.ic_number].filter(Boolean).join(' · '),
+          sub: [x.driver_code, x.phone ? formatPhone(x.phone) : null, x.ic_number].filter(Boolean).join(' · '),
         }))}
         loading={fleet.isLoading}
         form={
           <>
             <Ctl label="Name"><Inp value={drv.name} onChange={(v) => setDrv((p) => ({ ...p, name: v }))} width={150} /></Ctl>
-            <Ctl label="Phone"><Inp value={drv.phone} onChange={(v) => setDrv((p) => ({ ...p, phone: v }))} placeholder="01x-xxx xxxx" width={130} /></Ctl>
+            <Ctl label="Phone"><div style={{ width: 230 }}><PhoneInput className={styles.fieldInput} value={drv.phone} onChange={(v) => setDrv((p) => ({ ...p, phone: v }))} /></div></Ctl>
             <Ctl label="IC"><Inp value={drv.ic} onChange={(v) => setDrv((p) => ({ ...p, ic: v }))} width={130} /></Ctl>
             <Button variant="secondary" size="sm" onClick={addDriver} disabled={createDriver.isPending}>
               <Plus {...ICON} /><span>Add driver</span>
@@ -403,13 +437,13 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
       <FleetBlock title="Helpers" empty="No helpers registered for this carrier."
         rows={(d?.helpers ?? []).map((x) => ({
           id: x.id, main: x.name,
-          sub: [x.helper_code, x.contact, x.ic_number].filter(Boolean).join(' · '),
+          sub: [x.helper_code, x.contact ? formatPhone(x.contact) : null, x.ic_number].filter(Boolean).join(' · '),
         }))}
         loading={fleet.isLoading}
         form={
           <>
             <Ctl label="Name"><Inp value={hlp.name} onChange={(v) => setHlp((p) => ({ ...p, name: v }))} width={150} /></Ctl>
-            <Ctl label="Contact"><Inp value={hlp.contact} onChange={(v) => setHlp((p) => ({ ...p, contact: v }))} placeholder="01x-xxx xxxx" width={130} /></Ctl>
+            <Ctl label="Contact"><div style={{ width: 230 }}><PhoneInput className={styles.fieldInput} value={hlp.contact} onChange={(v) => setHlp((p) => ({ ...p, contact: v }))} /></div></Ctl>
             <Ctl label="IC"><Inp value={hlp.ic} onChange={(v) => setHlp((p) => ({ ...p, ic: v }))} width={130} /></Ctl>
             <Button variant="secondary" size="sm" onClick={addHelper} disabled={createHelper.isPending}>
               <Plus {...ICON} /><span>Add helper</span>
@@ -452,12 +486,6 @@ const FleetBlock = ({ title, rows, empty, loading, form }: {
   </div>
 );
 
-const Th = ({ children }: { children?: ReactNode }) => (
-  <th style={{ padding: '8px 12px', fontWeight: 500 }}>{children}</th>
-);
-const Td = ({ children }: { children?: ReactNode }) => (
-  <td style={{ padding: '8px 12px' }}>{children}</td>
-);
 const Ctl = ({ label, children }: { label: string; children: ReactNode }) => (
   <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
     <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{label}</span>
