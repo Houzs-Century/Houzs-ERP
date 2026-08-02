@@ -1,0 +1,57 @@
+name: Client errors check (read-only)
+
+# What is actually FAILING in the SPA for real users, from client_errors
+# (mig 0151) — the only record of a page that failed to load on someone else's
+# machine at a time nobody was watching.
+#
+# Owner, 2026-08-02: "不要有页面卡顿 或者还 pages load 不过去". Jank is measurable
+# from a browser; a failed load for another user is not. Run this BEFORE
+# optimising anything, so the work targets what broke rather than what the dev
+# machine reproduces.
+#
+# Sections: chunk/asset failures (the "page did not load" shape), other errors
+# by route, occurrences by build_id (a spike on an OLD build is a stale
+# service-worker problem, not new code), and the worst single messages.
+#
+# READ-ONLY — SELECTs only. Safe to run any time.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "lookback window in days"
+        required: false
+        default: "14"
+        type: string
+      limit:
+        description: "rows per section"
+        required: false
+        default: "20"
+        type: string
+
+concurrency:
+  group: check-client-errors
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-client-errors.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DAYS: ${{ inputs.days }}
+          LIMIT: ${{ inputs.limit }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
