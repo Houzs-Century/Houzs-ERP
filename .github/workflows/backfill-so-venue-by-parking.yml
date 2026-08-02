@@ -1,0 +1,42 @@
+name: Backfill SO venue by salesperson parking (DRY-RUN gated)
+
+# Owner 2026-08-02: after parking the 2990 Sales-department reps under the 2990
+# showroom, their EXISTING SOs (raised before the parking) still carry a blank
+# venue, because venue is stamped at CREATE from the binding and nothing re-runs
+# it on an old order. This stamps each blank SO's venue FROM ITS OWN
+# salesperson's showroom parking — parking-aware, never a blanket guess, so an
+# unparked rep's orders stay blank.
+#
+# Default DRY-RUN; apply=1 writes. Own concurrency group, manual only.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: backfill-so-venue-by-parking
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-so-venue-by-parking.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
