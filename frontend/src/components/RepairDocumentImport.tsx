@@ -76,7 +76,28 @@ const money = (centi: number | null | undefined): string =>
 const errText = (e: unknown): string => (e instanceof Error ? e.message : "Something went wrong.");
 
 /** Editable row state — every extracted value is a starting point, not a fact. */
-type RowState = ExtractedLine & { drop: boolean };
+export type RowState = ExtractedLine & { drop: boolean };
+
+/** Editing qty / unit price / discount CLEARS the printed amount.
+ *
+ *  The printed figure wins by default because the vendor's rounding is theirs
+ *  (see workOrderLineCenti, services/fleet-status.ts). But the moment the
+ *  operator corrects one of ITS INPUTS they are overriding the document, and
+ *  keeping the old printed total would freeze the line at a number they just
+ *  disagreed with — correct a misread RM5,600 to RM6,500 and nothing moves.
+ *
+ *  Dropping / renaming / re-sectioning a line does NOT override it: none of
+ *  those change what the line costs. */
+const OVERRIDES_PRINTED: ReadonlyArray<keyof RowState> = ["qty", "unitPriceCenti", "discountPct"];
+
+export function applyRowEdit(row: RowState, patch: Partial<RowState>): RowState {
+  const overrides = OVERRIDES_PRINTED.some((k) => k in patch);
+  const next: RowState = { ...row, ...patch, ...(overrides ? { amountCenti: null } : {}) };
+  next.lineCenti = next.amountCenti != null
+    ? Math.max(0, Math.round(next.amountCenti))
+    : Math.max(0, Math.round((next.qty ?? 0) * (next.unitPriceCenti ?? 0) * (1 - (next.discountPct ?? 0) / 100)));
+  return next;
+}
 
 export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
   vehicleId: string;
@@ -162,19 +183,7 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
   }, [res, plate]);
 
   const setRow = (i: number, patch: Partial<RowState>) =>
-    setRows((prev) => prev.map((r, idx) => {
-      if (idx !== i) return r;
-      const next = { ...r, ...patch };
-      /* An edited qty / price / discount must move the line total, but an
-         explicitly-typed amount still wins — same precedence the server
-         stores (workOrderLineCenti). */
-      if (!("lineCenti" in patch)) {
-        next.lineCenti = next.amountCenti != null
-          ? Math.max(0, Math.round(next.amountCenti))
-          : Math.max(0, Math.round((next.qty ?? 0) * (next.unitPriceCenti ?? 0) * (1 - (next.discountPct ?? 0) / 100)));
-      }
-      return next;
-    }));
+    setRows((prev) => prev.map((r, idx) => (idx === i ? applyRowEdit(r, patch) : r)));
 
   const createWorkshop = async () => {
     if (!res?.document.workshopName || creatingWorkshop) return;
