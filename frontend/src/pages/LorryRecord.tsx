@@ -126,7 +126,14 @@ export function LorryRecord() {
             hint={v.purchasePriceCenti != null ? money(v.purchasePriceCenti) : undefined}
           />
         </div>
-        <p className="mt-3 text-[10.5px] text-ink-muted">Edit these on the lorry master, under Coverage &amp; Fleet.</p>
+        {/* The lorry master stays the SINGLE writer for lorry columns — a second
+            editor over the same fields is how two screens start disagreeing, and
+            it sits behind a different permission (scm.transportation.drivers,
+            not fleet.write). So this is a link, not a duplicate form. */}
+        <p className="mt-3 text-[10.5px] text-ink-muted">
+          Edit these on the lorry master:{" "}
+          <Link to="/scm/fleet" className="text-primary hover:underline">Coverage &amp; Fleet</Link>.
+        </p>
       </Section>
 
       <Section title="Breakdown & incidents" hint="a critical, unresolved case grounds the lorry">

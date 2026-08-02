@@ -616,6 +616,44 @@ could be captured from the driver's phone on day-complete and **nowhere else**.
 The two rules the route enforces are stated before you hit them: a reading below
 the last one is a rollback and is refused; an abnormal jump saves but is flagged.
 
+## 15. What is editable, and what deliberately is not (2026-08-03)
+
+Owner: *"这些数据我要怎么去编辑呢? 所有的内容都是可以编辑并保存的吗?"*. It was not
+a full yes, and the gaps were all the same shape — a PATCH route that had accepted
+the field since Phase 3, with nothing on screen sending it.
+
+| Record | Editable on the record page | Where the write goes |
+|---|---|---|
+| Breakdown case | fault, severity, still-drivable, driver report, towing company + cost, workshop, status | `PATCH /breakdowns/:id` |
+| Work order — header | problem, diagnosis, workshop, their quotation / invoice no, labour, outside service, towing, tax, warranty | `PATCH /work-orders/:id` |
+| Work order — state | the stepper only, one legal transition at a time | `POST /work-orders/:id/transition` |
+| Work order — lines | add / remove | `POST` / `DELETE .../parts` |
+| Preventive plan | every field; the component is the identity so it is fixed while editing | `POST /vehicles/:id/plans` (UPSERT) |
+| Mileage | append a reading | `POST /vehicles/:id/mileage` |
+| Component | log an event, remove | `PATCH /components/:id`, `POST .../events` |
+| Compliance vault | **append only** | `POST /vehicles/:id/compliance` |
+| The lorry's own dates | **not here** — a link to Coverage & Fleet | `PATCH /api/scm/lorries/:id` |
+
+**Two of those are refusals, not omissions.**
+
+The **compliance vault is append-only by design** (§5). Renewing is a new row;
+editing an expiry in place would destroy the audit trail the vault exists to be.
+
+**The lorry master is the single writer for lorry columns.** A second editor over
+`scm.lorries` on this page is how two screens start disagreeing, and it sits
+behind a different permission — `scm.transportation.drivers`, not `fleet.write`.
+So the record page links to Coverage & Fleet instead of duplicating the form.
+
+**Severity is not cosmetic.** A CRITICAL, unresolved case is what grounds a lorry
+(`isCaseGrounding`), so editing severity here can put a lorry back on the road.
+The form says so.
+
+**Header money vs line money.** The four money legs on a work order are added ON
+TOP of the lines. The route refuses a non-zero header `labour_centi` on a work
+order whose lines already carry LABOUR — the invariant that stops the workshop's
+labour being counted twice — and the form states it rather than letting you find
+out by 409.
+
 ## 8. See also
 - `frontend/src/pages/LorryRecord.tsx` (the full record; sections imported from `FleetHealth.tsx`)
 - `backend/scripts/check-work-order-states.mjs` (`audit:work-order-states` — the three copies of the state list)
