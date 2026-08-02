@@ -984,6 +984,10 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     },
     compliance: byType,
     plans: shapedPlans,
+    /* The components a plan may cover, served rather than mirrored. The list and
+       its labels live in fleet-status.ts and the migration's CHECK mirrors them;
+       a THIRD copy in the frontend would be the one nobody updates. */
+    planComponents: PLAN_COMPONENTS.map((value) => ({ value, label: PLAN_COMPONENT_LABELS[value] })),
     mileage: mileageRows.map((m) => ({
       id: m.id,
       readingDate: iso(m.reading_date),

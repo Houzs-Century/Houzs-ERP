@@ -133,7 +133,7 @@ export function LorryRecord() {
       </Section>
 
       <Section title="Work orders" hint="Reported → Diagnosed → Approved → In Repair → Waiting Parts → Completed → Verified">
-        <WorkOrdersSection vehicleId={v.id} plate={v.plate} workOrders={detail.data?.workOrders ?? []} onChanged={refresh} />
+        <WorkOrdersSection vehicleId={v.id} plate={v.plate} workOrders={detail.data?.workOrders ?? []} breakdowns={detail.data?.breakdowns ?? []} onChanged={refresh} />
       </Section>
 
       <Section title="Tyres & components" hint="serial lifecycle · km used + cost/km derived">
@@ -141,7 +141,13 @@ export function LorryRecord() {
       </Section>
 
       <Section title="Preventive maintenance" hint="per component · due on whichever comes first (km or months)">
-        <PlansSection plans={detail.data?.plans ?? []} currentKm={v.mileageKm} />
+        <PlansSection
+          plans={detail.data?.plans ?? []}
+          currentKm={v.mileageKm}
+          vehicleId={v.id}
+          components={detail.data?.planComponents ?? []}
+          onChanged={refresh}
+        />
       </Section>
 
       <Section title="Mileage" hint="the driver captures the odometer on day-complete from the mobile app">

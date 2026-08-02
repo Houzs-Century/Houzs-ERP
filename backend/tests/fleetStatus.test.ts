@@ -460,10 +460,28 @@ describe("breakdownDowntimeHours", () => {
 describe("work-order state machine — canTransitionWorkOrder", () => {
   test("the canonical forward path is legal", () => {
     expect(canTransitionWorkOrder("REPORTED", "DIAGNOSED")).toBe(true);
-    expect(canTransitionWorkOrder("DIAGNOSED", "APPROVED")).toBe(true);
+    expect(canTransitionWorkOrder("DIAGNOSED", "QUOTED")).toBe(true);
+    expect(canTransitionWorkOrder("QUOTED", "APPROVED")).toBe(true);
     expect(canTransitionWorkOrder("APPROVED", "IN_REPAIR")).toBe(true);
     expect(canTransitionWorkOrder("IN_REPAIR", "COMPLETED")).toBe(true);
     expect(canTransitionWorkOrder("COMPLETED", "VERIFIED")).toBe(true);
+  });
+  test("Diagnosed keeps its DIRECT route to Approved (mig 0247)", () => {
+    // Not an oversight. Every work order sitting in DIAGNOSED was created when
+    // this was its only move, and a job small enough to approve on the spot
+    // should not have to fake a quotation to proceed.
+    expect(canTransitionWorkOrder("DIAGNOSED", "APPROVED")).toBe(true);
+  });
+  test("Quoted cannot skip Approved, and nothing reaches Quoted but Diagnosed", () => {
+    expect(canTransitionWorkOrder("QUOTED", "IN_REPAIR")).toBe(false);
+    expect(canTransitionWorkOrder("REPORTED", "QUOTED")).toBe(false);
+    expect(canTransitionWorkOrder("APPROVED", "QUOTED")).toBe(false);
+  });
+  test("a lorry waiting on a price is still on the road", () => {
+    // QUOTED is OPEN but feeds no seam — only IN_REPAIR / WAITING_PARTS ground
+    // dispatch, because those are the states where the lorry is in the shop.
+    expect(isWorkOrderOpen("QUOTED")).toBe(true);
+    expect(workOrderSeam([{ status: "QUOTED" }])).toBe(null);
   });
   test("the In Repair ⇄ Waiting Parts loop is legal both ways", () => {
     expect(canTransitionWorkOrder("IN_REPAIR", "WAITING_PARTS")).toBe(true);
@@ -487,7 +505,7 @@ describe("work-order state machine — canTransitionWorkOrder", () => {
 
 describe("isWorkOrderOpen + workOrderSeam", () => {
   test("open until COMPLETED/VERIFIED", () => {
-    for (const s of ["REPORTED", "DIAGNOSED", "APPROVED", "IN_REPAIR", "WAITING_PARTS"] as WorkOrderState[]) {
+    for (const s of ["REPORTED", "DIAGNOSED", "QUOTED", "APPROVED", "IN_REPAIR", "WAITING_PARTS"] as WorkOrderState[]) {
       expect(isWorkOrderOpen(s)).toBe(true);
     }
     expect(isWorkOrderOpen("COMPLETED")).toBe(false);

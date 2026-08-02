@@ -318,6 +318,29 @@ fitted_km`; `cost_per_km = purchase_price_centi / km_used` (never divide by 0).
   the state machine (illegal jump like `REPORTED → VERIFIED` is rejected).
   `isWorkOrderOpen()`, `workOrderSeam()` (WAITING_PARTS wins over PLANNED),
   `workOrderTotalCenti()`.
+
+  ```
+  Reported → Diagnosed → Quoted → Approved → In Repair → Completed → Verified
+                    └──────────────┘              ⇅
+                    (unquoted jobs)          Waiting Parts → Completed
+  ```
+
+  **`QUOTED` (mig 0247, 2026-08-03)** is where a job waits for the owner to
+  accept the workshop's price. Owner: *"正常不是应该我 report 了这个问题，然后
+  diagnose，然后 for quotation，然后 approve…"*. Before it, a job sat in
+  `DIAGNOSED` whether the quote had arrived or not — while the work order had
+  carried `quotation_no` since mig 0241. **`DIAGNOSED → APPROVED` is kept**: every
+  work order already in `DIAGNOSED` was created when that was its only move, and
+  a job small enough to approve on the spot should not have to fake a quotation.
+  `QUOTED` is OPEN but feeds **no seam** — a lorry waiting on a price is still on
+  the road.
+
+  The list lives in three places by necessity (the machine, the migration CHECK,
+  and the stepper, which needs the ORDER the API never sends).
+  **`npm --prefix backend run audit:work-order-states`** compares all three and
+  runs in `ci.yml`, `deploy.yml` and `deploy-staging.yml`. Mutation-verified:
+  dropping the state from either the stepper or the CHECK fails the job and names
+  which copy drifted.
 - `deriveComponentLife()` — `km_used` / `cost_per_km` / `under_warranty`.
 
 ### 10.3 New routes (`/api/fleet-maintenance`, all gated as shown)
@@ -489,8 +512,55 @@ Edited on the lorry master (`scm-v2/LorryDetail.tsx`, Coverage & Fleet); read
 back through `/api/fleet-maintenance/vehicles/:id` for the record page's Vehicle
 section.
 
+## 13. Three things the schema had and the screen did not (2026-08-03)
+
+Each of these was a column or a route that already existed, with no way to reach
+it from the UI. They are listed together because they are one failure mode.
+
+### Preventive-maintenance plans were creatable only by script
+
+The empty state read *"Seed the default set (backend/scripts/seed-fleet-plans.mjs)
+or add plans via the API"* — instructions to run a Node script, shown to the
+owner. Owner: *"我该怎么去用?"*. `POST /vehicles/:id/plans` and
+`PATCH /plans/:planId` had existed since Phase 2; only the form was missing.
+
+`PlansSection` now takes optional `vehicleId` / `components` / `onChanged`; given
+all three it can add and edit, and without them it still renders read-only. The
+form re-POSTs when editing because **the route UPSERTs on `(lorry, component)`** —
+the component is the identity, so the picker is disabled while editing (changing
+it would move the plan to a different component, not rename this one) and
+components that already have a plan are not offered when adding.
+
+The component list is **served, not mirrored**: `GET /vehicles/:id` now returns
+`planComponents[]` from `PLAN_COMPONENTS` + `PLAN_COMPONENT_LABELS`. The list and
+the migration's CHECK are already two copies; a third in the frontend would be
+the one nobody updates.
+
+### A repair and the breakdown that caused it were unrelated rows
+
+`scm.lorry_work_orders.breakdown_case_id` has existed since mig `0204` and the
+create route has always accepted `breakdownCaseId` — **no UI ever wrote it**.
+Owner: *"它不是应该跟我们的 breakdown 还有 incident 有串联吗?"*.
+
+The New Work Order form now offers the lorry's **open** cases (a resolved case is
+almost always a mis-click, not a late link), and the work-order card shows the
+case it came from. Same class as `aggregation` before mig 0244 and `is_own_fleet`
+before 0246: a column with a UI and no writer.
+
+### One click peeks, two clicks open
+
+Owner: *"1. 单击：弹出一个 shortcut，让我简单看一个简介; 2. 双击：点进去看细节"* —
+the Sales Order interaction, by name. A double click fires click, click, dblclick,
+so the peek is held for 250ms and cancelled when the second click lands;
+otherwise the drawer flashes open and the navigation pulls the page out from
+under it. The timer is cleared on unmount — the suite leaked exactly this kind of
+timer into a torn-down jsdom for a year (`BUG-HISTORY.md`, 2026-08-02).
+
+Keyboard cannot double-click: **Enter** peeks, **Shift+Enter** opens the record.
+
 ## 8. See also
 - `frontend/src/pages/LorryRecord.tsx` (the full record; sections imported from `FleetHealth.tsx`)
+- `backend/scripts/check-work-order-states.mjs` (`audit:work-order-states` — the three copies of the state list)
 - `backend/src/services/fleet-status.ts` + `backend/tests/fleetStatus.test.ts`
 - `backend/scripts/seed-fleet-maintenance.mjs` (Phase 1 vault) · `seed-fleet-plans.mjs` (Phase 2 plans)
 - `backend/src/scm/routes/lorries.ts`, `lorry-service-records.ts` (the sibling master + history)

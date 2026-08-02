@@ -260,6 +260,15 @@
 .hz-m .fld-i::placeholder { color: #9aa093; }
 .hz-m .fld-i:focus { border-color: #16695f; box-shadow: 0 0 0 2px rgba(22,105,95,.15); }
 .hz-m .fld-i:disabled { background: #f4f6f3; color: #767b6e; }
+/* An EMPTY <input type=date> collapses on iOS Safari — the shadow
+   ::-webkit-date-and-time-value has no text to give it a box, so the control
+   renders shorter and narrower than the text inputs beside it. Owner sighting
+   2026-08-03: line 1 (dated) and line 2 (blank) on the same row, visibly
+   different controls. Pinning the shadow value's height and letting it fill the
+   control makes an empty date box the same size as a filled one. */
+.hz-m input[type="date"].fld-i { -webkit-appearance: none; appearance: none; display: block; min-height: 30px; box-sizing: border-box; }
+.hz-m input[type="date"].fld-i::-webkit-date-and-time-value { min-height: 1.3em; width: 100%; text-align: left; margin: 0; }
+.hz-m input[type="date"].fld-i::-webkit-calendar-picker-indicator { margin-left: 0; opacity: .55; }
 .hz-m select.fld-i { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa093' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); background-repeat: no-repeat; background-position: right 8px center; padding-right: 26px; }
 /* The desktop app has a global @media(max-width:639px) rule forcing every form
    control to 16px !important (iOS focus-zoom guard). Inside the mobile app that
