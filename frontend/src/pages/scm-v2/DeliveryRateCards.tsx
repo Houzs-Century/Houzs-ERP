@@ -23,7 +23,7 @@ import {
   useRateCards, useRateCard, useRateCardMeta,
   useCreateRateCard, useUpdateRateCard, useDeleteRateCard,
   useCreateRateRule, useDeleteRateRule, useComputeCost, useReconcile,
-  type RateCard, type RateRule, type RateRuleType, type DeliveryFacts,
+  type RateCard, type RateRule, type RateRuleType, type DeliveryFacts, type RateAggregation,
 } from '../../vendor/scm/lib/delivery-rate-card-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -40,7 +40,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 /* What each charging unit means, in the operator's terms. The positional tiers
    run DOWN this unit — so "Customer" is what makes the second delivery to the
    same doorstep cheaper, and "Trip" is a flat price that ignores the load. */
-const AGGREGATION_HINT: Record<string, string> = {
+const AGGREGATION_HINT: Record<RateAggregation, string> = {
   UNIT: 'Tiers run down the goods — 1st, 2nd, 3rd item on the trip.',
   DROP: 'Tiers run down the delivery orders. Five DOs is five charges, whatever each contains.',
   CUSTOMER: 'Two drops to the same buyer at the same address count once, so the second is cheaper.',
@@ -321,21 +321,30 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
                 ['TRIP', 'Trip (flat, whatever it carries)'],
               ]} />
             <p style={{ margin: '4px 0 0', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', maxWidth: 240 }}>
-              {AGGREGATION_HINT[card.aggregation as keyof typeof AGGREGATION_HINT] ?? AGGREGATION_HINT.UNIT}
+              {AGGREGATION_HINT[card.aggregation] ?? AGGREGATION_HINT.UNIT}
             </p>
           </div>
-          {/* WS4b: a card is priced per 3PL COMPANY (its lorries inherit). "Own
-              fleet / none" leaves it unattached — pair with the own-fleet flag. */}
-          <SelectField label="3PL company (carrier)" value={card.carrierCompanyId ?? ''} onChange={(v) => patch({ carrierCompanyId: v || null })}
-            options={[['', 'Own fleet / none'], ...(meta.data?.companies ?? []).map((c) => [c.id, c.name] as [string, string])]} />
+          {/* WHO the card belongs to is a FACT here, not a control. Owner,
+              2026-08-02: "我都开着这一间公司了，你还给我 3PL company 那边给我去选，
+              那不是有问题吗?" — you reached this card by clicking that carrier in
+              the list beside it, so re-picking it could only ever make the
+              editor disagree with its own heading. The old "Own-fleet card"
+              checkbox was the same mistake twice: own-fleet IS "no carrier", and
+              it is now derived server-side (mig 0246). */}
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Carrier</span>
+            <span style={{ display: 'block', padding: '7px 0', fontSize: 'var(--fs-13)' }}>
+              {card.carrierCompanyId ? card.name : 'Own fleet'}
+            </span>
+            <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+              {card.carrierCompanyId
+                ? 'One card per 3PL company. To price a different carrier, open that carrier.'
+                : 'Our own cost structure, so a 3PL drop and an own-fleet drop compare.'}
+            </span>
+          </label>
           <RMField label="Cap (RM)" value={centiToRM(card.capCenti)} onCommit={(v) => patch({ capCenti: v === '' ? null : rmToCenti(v) })} />
           <SelectField label="Rounding" value={card.rounding} onChange={(v) => patch({ rounding: v })}
             options={[['NONE', 'None'], ['NEAREST_10C', 'Nearest 10 sen'], ['NEAREST_RM', 'Nearest RM']]} />
-          <label className={styles.field} style={{ alignSelf: 'end' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
-              <input type="checkbox" checked={card.isOwnFleet} onChange={(e) => patch({ isOwnFleet: e.target.checked })} /> Own-fleet card
-            </span>
-          </label>
           <label className={styles.field} style={{ alignSelf: 'end' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
               <input type="checkbox" checked={card.isActive} onChange={(e) => patch({ isActive: e.target.checked })} /> Active
@@ -658,7 +667,7 @@ const CreateCardDrawer = ({ initialCarrierCompanyId, onClose, onCreated }: {
   const create = useCreateRateCard();
   const meta = useRateCardMeta();
   const notify = useNotify();
-  const [form, setForm] = useState({ name: '', carrierCompanyId: initialCarrierCompanyId ?? '', basis: 'SET' as 'SET' | 'ITEM', aggregation: 'DROP' as 'DROP' | 'CUSTOMER', isOwnFleet: false });
+  const [form, setForm] = useState({ name: '', carrierCompanyId: initialCarrierCompanyId ?? '', basis: 'SET' as 'SET' | 'ITEM', aggregation: 'UNIT' as RateAggregation });
   const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => setForm((s) => ({ ...s, [k]: v }));
 
   const submit = () => {
@@ -668,7 +677,7 @@ const CreateCardDrawer = ({ initialCarrierCompanyId, onClose, onCreated }: {
       notify({ title: 'Pick a 3PL company, or name the card.', tone: 'error' }); return;
     }
     create.mutate(
-      { name: form.carrierCompanyId ? undefined : form.name.trim(), carrierCompanyId: form.carrierCompanyId || null, basis: form.basis, aggregation: form.aggregation, isOwnFleet: form.isOwnFleet },
+      { name: form.carrierCompanyId ? undefined : form.name.trim(), carrierCompanyId: form.carrierCompanyId || null, basis: form.basis, aggregation: form.aggregation },
       { onSuccess: (r) => onCreated(r.card.id), onError: (e) => notify({ title: 'Create failed', body: e instanceof Error ? e.message : 'Error', tone: 'error' }) },
     );
   };
@@ -707,18 +716,23 @@ const CreateCardDrawer = ({ initialCarrierCompanyId, onClose, onCreated }: {
                 <option value="SET">By set</option><option value="ITEM">By item</option>
               </select>
             </label>
+            {/* All four, matching the editor. This offered only DROP/CUSTOMER
+                and defaulted to DROP, so every card created here started on a
+                setting the calculator does not price the way the label reads —
+                mig 0244 made UNIT the default for exactly that reason. */}
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Aggregation</span>
-              <select className={styles.fieldInput} value={form.aggregation} onChange={(e) => set('aggregation', e.target.value as 'DROP' | 'CUSTOMER')}>
-                <option value="DROP">Per drop</option><option value="CUSTOMER">Per customer</option>
+              <span className={styles.fieldLabel}>Charge per</span>
+              <select className={styles.fieldInput} value={form.aggregation} onChange={(e) => set('aggregation', e.target.value as RateAggregation)}>
+                <option value="UNIT">{form.basis === 'ITEM' ? 'Item' : 'Set'}</option>
+                <option value="DROP">Drop point (per DO)</option>
+                <option value="CUSTOMER">Customer (same address, same day)</option>
+                <option value="TRIP">Trip (flat, whatever it carries)</option>
               </select>
             </label>
           </div>
-          <label className={styles.field}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
-              <input type="checkbox" checked={form.isOwnFleet} onChange={(e) => set('isOwnFleet', e.target.checked)} /> Own-fleet card (cost structure)
-            </span>
-          </label>
+          <p style={{ margin: 0, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+            {AGGREGATION_HINT[form.aggregation] ?? AGGREGATION_HINT.UNIT}
+          </p>
         </div>
         <footer className={styles.drawerFooter}>
           <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>

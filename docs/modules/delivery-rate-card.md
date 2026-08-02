@@ -37,9 +37,9 @@ Two additive tables, scoped per company.
 | **`carrier_company_id` uuid null (mig 0211, WS4b)** | FK `scm.threepl_companies` — the card is now priced PER 3PL COMPANY; every lorry under it inherits. The create/edit "carrier" dropdown lists companies (from `GET /meta`'s `companies[]`). Reconcile resolves `trip.lorry_id -> lorries.threepl_company_id -> carrier_company_id` (falls back to `carrier_lorry_id`) |
 | `carrier_label` text null | free-text carrier when not modelled as a lorry |
 | `min_charge_centi` | still stored, but the **form no longer exposes it** (owner dropped min-charge, WS4b); the calculator honours it if a legacy row has one |
-| `is_own_fleet` bool | the own-fleet cost-structure card |
+| `is_own_fleet` bool | **DERIVED, never sent by a client** — `carrier_company_id IS NULL`, enforced by a CHECK (mig 0246). The routes write it beside the carrier and the create/patch schemas do not accept it |
 | `basis` text | `ITEM` \| `SET` (set = frame+mattress) — what the positional tiers count |
-| `aggregation` text | `DROP` \| `CUSTOMER` |
+| `aggregation` text | `UNIT` \| `DROP` \| `CUSTOMER` \| `TRIP` (mig 0244) — the unit the tier ladder COUNTS. Default `UNIT` |
 | `min_charge_centi` / `cap_centi` bigint null | optional envelope |
 | `rounding` text | `NONE` \| `NEAREST_10C` \| `NEAREST_RM` |
 | `is_active` bool, `notes` text | |
@@ -137,6 +137,29 @@ The Cards tab: pick/create a card, edit its dimensions + rules, and a live
 **cost calculator** prices a set of facts against the card (the worked example
 lands on RM560). The Reconciliation tab: the `/reconcile` table with
 computed-expected vs billed and the flagged delta.
+
+### The carrier is a FACT in the editor, not a control (2026-08-02)
+
+Owner: *"这个 OwnFleet Card 为什么会叫 OwnFleet 呢? 如果是 OwnFleet 的话，当我在
+create 这一个 3PL 的 company 的时候，我就会直接 create 掉了"* and *"我都开着这一间
+公司了，你还给我 3PL company 那边给我去选，那不是有问题吗?"*
+
+The editor used to carry BOTH a "3PL company (carrier)" dropdown and an
+"Own-fleet card" checkbox, on a card you reached by clicking that carrier in the
+list beside it. Two controls, one question, and either could make the card
+disagree with its own heading — MSJ TRANSPORT's card, carrier set, ticked
+"Own-fleet".
+
+- The checkbox is **gone**. Own fleet IS "no carrier"; `is_own_fleet` is derived
+  server-side and constrained (mig 0246). `NewRateCard` no longer carries it.
+- The carrier is **shown, not re-picked**. One card per company is already a
+  partial unique index (mig 0237), and the carrier list IS the card list, so
+  re-selecting here could only ever create a contradiction. To price a different
+  carrier, open that carrier.
+- The create drawer's "Charge per" now offers all four aggregation units and
+  defaults to `UNIT`. It offered only DROP/CUSTOMER and defaulted to DROP, so
+  every card born there started on a setting the calculator does not price the
+  way the label reads.
 
 ## 8. Seed
 
