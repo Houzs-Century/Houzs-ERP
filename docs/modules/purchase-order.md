@@ -99,8 +99,8 @@ All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 | PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. |
 | PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. |
 | POST | `/:id/send-to-supplier` | `:3019` | Email the PO PDF. Fail-closed on the `purchase_order` email channel (`:3032`). |
-| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota. |
-| PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. |
+| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). |
+| PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. |
 | DELETE | `/:id` | `:3345` | Hard delete, **CANCELLED only** (`:3362`). |
 
 Auth note (same as SO): inside `/api/scm/*`, `user.id` is the caller's **scm.staff
