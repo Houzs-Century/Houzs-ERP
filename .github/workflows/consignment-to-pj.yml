@@ -1,0 +1,41 @@
+name: Relocate 2990 consignment to PJ Showroom (DRY-RUN gated)
+
+# Owner 2026-08-02: all 2990 consignment (held-not-owned, from PC Receives) should
+# sit at PJ SHOWROOM; move it off KL / PG / CHINA. CONSIGNMENT ONLY (source_doc_type
+# PC_RECEIVE), company_2 ONLY — owned (GRN) stock is never touched, no money/COGS
+# moves. Rewrites the location consistently across lots, their movements, and the
+# receive docs so the Stock Breakdown and the balance agree.
+#
+# Default DRY-RUN; apply=1 writes. Manual only, own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: consignment-to-pj
+  cancel-in-progress: false
+
+jobs:
+  relocate:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-consignment-to-pj.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
