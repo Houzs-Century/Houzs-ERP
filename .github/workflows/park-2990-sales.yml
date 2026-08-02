@@ -1,0 +1,42 @@
+name: Park unparked 2990 salespeople (DRY-RUN gated)
+
+# Owner 2026-08-02: every 2990 sales rep should be parked under the 2990 showroom
+# so their orders default to its venue. Parks each scm.staff row that is the
+# salesperson on a live 2990 SO yet has no showroom_warehouse_id, under the single
+# flagged 2990 showroom. Never re-parks, never guesses (aborts if zero or several
+# showrooms carry a venue_name). Sets the DEFAULT for FUTURE orders only; run
+# backfill-so-venue-by-parking afterward for existing SOs.
+#
+# Default DRY-RUN; apply=1 writes. Manual only, own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: park-2990-sales
+  cancel-in-progress: false
+
+jobs:
+  park:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/park-unparked-2990-sales.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
