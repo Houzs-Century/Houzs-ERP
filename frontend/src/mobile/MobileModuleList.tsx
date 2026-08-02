@@ -405,8 +405,8 @@ export function MobileModuleList({
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  /* Paged URL for a given page index: keep the endpoint's own params (e.g.
-     fields=minimal) but drop `limit` (the server windows via page/pageSize) and
+  /* Paged URL for a given page index: keep the endpoint's own params but drop
+     `limit` (the server windows via page/pageSize) and
      fold in the debounced search. Sort is left to the server default (each
      handler already orders newest-first) — the configs don't expose the server
      column name, so we omit `sort` rather than send a wrong one. */
@@ -1115,7 +1115,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     title: "Delivery Orders",
     eyebrow: "Logistics",
     placeholder: "Search DO · customer",
-    endpoint: "/delivery-orders-mfg?limit=500&fields=minimal",
+    endpoint: "/delivery-orders-mfg?limit=500",
     listKey: "deliveryOrders",
     primary: (r) => r.debtor_name,
     secondary: (r) => join(r.do_number, r.status, dm(r.do_date)),
@@ -1169,7 +1169,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     title: "Sales Invoices",
     eyebrow: "Finance",
     placeholder: "Search invoice · customer",
-    endpoint: "/sales-invoices?limit=500&fields=minimal",
+    endpoint: "/sales-invoices?limit=500",
     listKey: "salesInvoices",
     primary: (r) => r.debtor_name,
     secondary: (r) => join(r.invoice_number, r.status, dm(r.invoice_date)),
@@ -1220,7 +1220,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     title: "Goods Received",
     eyebrow: "Warehouse",
     placeholder: "Search GRN · supplier · PO",
-    endpoint: "/grns?limit=500&fields=minimal",
+    endpoint: "/grns?limit=500",
     listKey: "grns",
     primary: (r) => r.supplier?.name || r.grn_number,
     secondary: (r) => join(r.grn_number, r.status, dm(r.received_at)),
@@ -1259,7 +1259,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     title: "Purchase Orders",
     eyebrow: "Procurement",
     placeholder: "Search PO · supplier",
-    endpoint: "/mfg-purchase-orders?limit=500&fields=minimal",
+    endpoint: "/mfg-purchase-orders?limit=500",
     listKey: "purchaseOrders",
     primary: (r) => r.supplier?.name || r.po_number,
     secondary: (r) => join(r.po_number, r.status, dm(r.po_date)),
@@ -1576,7 +1576,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     title: "Delivery Returns",
     eyebrow: "Finance",
     placeholder: "Search return · customer",
-    endpoint: "/delivery-returns?limit=500&fields=minimal",
+    endpoint: "/delivery-returns?limit=500",
     listKey: "deliveryReturns",
     primary: (r) => r.debtor_name || r.return_number,
     secondary: (r) => join(r.return_number, r.status, dm(r.return_date)),
@@ -1620,7 +1620,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     title: "Purchase Invoices",
     eyebrow: "Procurement",
     placeholder: "Search PI · supplier",
-    endpoint: "/purchase-invoices?limit=500&fields=minimal",
+    endpoint: "/purchase-invoices?limit=500",
     listKey: "purchaseInvoices",
     primary: (r) => r.supplier?.name || r.invoice_number,
     secondary: (r) => join(r.invoice_number, r.status, dm(r.invoice_date)),
@@ -1672,7 +1672,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     title: "Purchase Returns",
     eyebrow: "Procurement",
     placeholder: "Search return · supplier",
-    endpoint: "/purchase-returns?limit=300&fields=minimal",
+    endpoint: "/purchase-returns?limit=300",
     listKey: "purchaseReturns",
     primary: (r) => r.supplier?.name || r.return_number,
     secondary: (r) => join(r.return_number, r.status, dm(r.return_date)),

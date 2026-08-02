@@ -555,8 +555,12 @@ function embedField(v: unknown, field: string): string | null {
   return str((row as Record<string, unknown>)[field]);
 }
 
-// pg driver camelCases result columns; dual-read camelCase ?? snake_case so a
-// column surfaces whichever way the row arrives (project #1 recurring bug).
+// Dual-read camelCase ?? snake_case. NOTE: this repo's postgres.js client sets
+// NO column transform (db/pg.ts says so explicitly, and deliberately — Houzs
+// reads snake_case everywhere, unlike Hookka whose adapter camelCases every
+// column and who pay for it with a recurring bug class). So the camelCase arm
+// never fires today; it is harmless belt-and-braces, not a requirement. Do not
+// copy this pattern outward believing snake_case reads are unsafe here.
 function pick<T extends Record<string, unknown>>(row: T, snake: string): string | null {
   const camel = snake.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase());
   const v = (row as Record<string, unknown>)[camel] ?? (row as Record<string, unknown>)[snake];
