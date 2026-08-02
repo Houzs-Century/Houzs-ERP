@@ -214,10 +214,13 @@ type DocView = ReturnType<typeof shapeDoc> | ReturnType<typeof flatDoc>;
    and counting them made every fleet KPI (fleet size, cannot-dispatch, monthly
    spend) answer a question nobody asked.
 
-   is_internal is NULLABLE and the whole module already reads NULL as in-house
-   (`is_internal !== false`, see the dashboard's isInternal). A plain
-   .eq("is_internal", true) would therefore DROP every legacy row that never had
-   the flag written — which is most of the fleet. Keep the two readings identical.
+   The three-state predicate is DEFENSIVE PARITY, not a rescue of legacy rows:
+   scm.lorries.is_internal is `BOOLEAN NOT NULL DEFAULT true` (0053:54), so no
+   NULL exists today and .eq("is_internal", true) would behave identically. The
+   reason to write it this way anyway is that every DISPLAY path in this module
+   reads three-state — `is_internal !== false` (the dashboard's isInternal,
+   FleetHealth's MissingComplianceNote) — so if the NOT NULL is ever dropped, the
+   filter and the label still agree instead of silently disagreeing.
 
    Scope: the LIST surfaces only (dashboard + reminders). GET /vehicles/:id is
    deliberately not filtered, so an existing link to an outsourced lorry still
