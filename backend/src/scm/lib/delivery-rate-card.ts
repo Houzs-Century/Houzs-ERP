@@ -32,10 +32,22 @@ export interface RateCardSpec {
   /** Price by ITEM or by SET (set = frame + mattress). Selects which fact the
    *  positional tiers count over. */
   basis: 'ITEM' | 'SET';
-  /** Aggregation unit the tiers count over — per DROP or per CUSTOMER. Carried
-   *  for the caller's fact aggregation; the pure calc prices whatever count it is
-   *  handed. */
-  aggregation?: 'DROP' | 'CUSTOMER';
+  /**
+   * WHAT THE TIER LADDER COUNTS (mig 0244). Owner, 2026-08-02, describing all
+   * three modes as "how much per X":
+   *
+   *   UNIT     — sets or items, per `basis`. The only behaviour this
+   *              calculator ever had; it simply had no name, so every card
+   *              said DROP or CUSTOMER while the code counted sets regardless.
+   *   DROP     — delivery orders. "一张 DO 多少钱" — five drops at RM100 is
+   *              RM500, whatever each drop contains.
+   *   CUSTOMER — distinct (customer + address) that day. The second drop to the
+   *              same doorstep continues down the ladder instead of restarting
+   *              at the first-item price.
+   *   TRIP     — 1. "我 assign 给你一个 trip 就是多少钱" — one trip is one
+   *              charging unit, so tier 1 is the flat trip price.
+   */
+  aggregation?: AggregationUnit;
   /** Optional envelope applied to the summed cost. */
   minChargeCenti?: number | null;
   capCenti?: number | null;
@@ -80,6 +92,12 @@ export interface DeliveryFacts {
   itemCount?: number | null;
   /** One entry per sofa: its compartment count. Each maps to one SOFA_BRACKET. */
   sofaCompartments?: readonly number[] | null;
+  /** Delivery orders on this trip. Read when aggregation is DROP. */
+  dropCount?: number | null;
+  /** Distinct (customer + address) on this trip. Read when aggregation is
+   *  CUSTOMER — two drops to one doorstep are ONE customer, which is the whole
+   *  point of that mode. */
+  customerCount?: number | null;
   /** Destination area zone (from the A1 classifier) for the outstation surcharge. */
   destinationZone?: string | null;
   /**
@@ -132,6 +150,47 @@ function tierAmountForPosition(tiers: readonly RateRuleSpec[], n: number): RateR
     if (pos >= 1 && pos <= n && (best === null || pos > intOf(best.tierPosition))) best = t;
   }
   return best;
+}
+
+/**
+ * What the tier ladder counts. Mig 0244; see RateCardSpec.aggregation.
+ *
+ * Unknown / absent falls back to UNIT — the computation this file has always
+ * done — so a card written before 0244, or one carrying a value a later
+ * migration adds, prices the way it did rather than silently becoming free.
+ */
+export type AggregationUnit = 'UNIT' | 'DROP' | 'CUSTOMER' | 'TRIP';
+export const AGGREGATION_UNITS: ReadonlySet<string> = new Set(['UNIT', 'DROP', 'CUSTOMER', 'TRIP']);
+
+export function chargingUnitCount(
+  card: Pick<RateCardSpec, 'basis' | 'aggregation'>,
+  facts: DeliveryFacts,
+): number {
+  switch (card.aggregation) {
+    case 'TRIP':
+      /* One trip IS the charging unit, so tier 1 is the flat trip price and
+         nothing about the load changes it. A trip that carried nothing still
+         costs a trip. */
+      return 1;
+    case 'DROP':
+      return intOf(facts.dropCount);
+    case 'CUSTOMER':
+      /* Falls back to drops when the caller could not resolve customers — one
+         customer per drop is the pessimistic reading and never under-counts,
+         which for a COST is the safe direction. */
+      return intOf(facts.customerCount) || intOf(facts.dropCount);
+    default:
+      return card.basis === 'ITEM' ? intOf(facts.itemCount) : intOf(facts.setCount);
+  }
+}
+
+export function chargingUnitLabel(card: Pick<RateCardSpec, 'basis' | 'aggregation'>): string {
+  switch (card.aggregation) {
+    case 'TRIP': return 'trip';
+    case 'DROP': return 'drop';
+    case 'CUSTOMER': return 'customer';
+    default: return card.basis === 'ITEM' ? 'item' : 'set';
+  }
 }
 
 /**
@@ -209,11 +268,11 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
   const rulesOf = (t: RateRuleType) => rules.filter((r) => r.ruleType === t);
 
   // ── Charging-unit positional tiers (+ cap/overage) ────────────────────────
-  const unitCount = card.basis === 'ITEM' ? intOf(facts.itemCount) : intOf(facts.setCount);
+  const unitCount = chargingUnitCount(card, facts);
   const tiers = rulesOf('POSITIONAL_TIER');
   const overage = rulesOf('OVERAGE')[0] ?? null;
   const cap = overage ? intOf(overage.tierPosition) : null;
-  const unitLabel = card.basis === 'ITEM' ? 'item' : 'set';
+  const unitLabel = chargingUnitLabel(card);
   const ordinal = (n: number) => (n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`);
   for (let n = 1; n <= unitCount; n++) {
     if (cap !== null && n > cap) {
