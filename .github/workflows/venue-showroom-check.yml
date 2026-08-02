@@ -1,0 +1,33 @@
+name: Venue showroom parking check (read-only)
+
+# Owner 2026-08-02: are the 2990 salespeople parked under a showroom? For every
+# rep who writes a 2990 SO this shows their scm.staff.showroom_warehouse_id, that
+# showroom's venue_name, and their venue fill rate — so an empty venue reads as
+# either "backfillable (rep is parked)" or "by design (rep not parked)".
+#
+# SELECT only — no writes. The verdict is the output.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: venue-showroom-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-venue-showroom-parking.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
