@@ -50,6 +50,7 @@ jobs:
       # pass. Filesystem-based, hence a script and not a unit test — the
       # backend suite runs in workerd and has no filesystem.
       - run: npm run audit:job-types
+      - run: npm run audit:work-order-states
       - run: npm run typecheck
 
   # The backend suite is 112 files and it runs them SERIALLY inside a single

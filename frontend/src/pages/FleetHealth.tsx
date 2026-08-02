@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useSearchParams, Link } from "react-router-dom";
+import { useMemo, useState, useRef, useEffect } from "react";
+import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { Truck, RefreshCw, X, AlertTriangle, ChevronRight, FileUp } from "lucide-react";
 import { PageHeader } from "../components/Layout";
 import { Button } from "../components/Button";
@@ -136,9 +136,13 @@ export type VehicleRow = {
   openProblem?: string | null;
 };
 
+/* A copy of WORK_ORDER_STATES in services/fleet-status.ts, kept in step by
+   `npm run audit:work-order-states`. The stepper needs the ORDER, which the API
+   does not send. */
 const WORK_ORDER_STATES = [
   "REPORTED",
   "DIAGNOSED",
+  "QUOTED",
   "APPROVED",
   "IN_REPAIR",
   "WAITING_PARTS",
@@ -149,6 +153,7 @@ type WorkOrderState = (typeof WORK_ORDER_STATES)[number];
 const WORK_ORDER_STATE_LABEL: Record<WorkOrderState, string> = {
   REPORTED: "Reported",
   DIAGNOSED: "Diagnosed",
+  QUOTED: "Quoted",
   APPROVED: "Approved",
   IN_REPAIR: "In Repair",
   WAITING_PARTS: "Waiting Parts",
@@ -280,6 +285,7 @@ export type VehicleDetailPayload = {
   };
   compliance: Record<DocType, { currentId: string | null; flatExpiry: string | null; history: DocView[] }>;
   plans: PlanView[];
+  planComponents?: { value: string; label: string }[];
   mileage: MileageView[];
   maintenanceWindows: Array<{ from: string | null; to: string | null; reason: string | null }>;
   breakdowns: BreakdownView[];
@@ -414,6 +420,29 @@ export function FleetHealth() {
   const region = params.get("region") ?? "ALL";
   const statusFilter = params.get("status") ?? "ALL";
   const [openId, setOpenId] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  /* Sales Order's interaction, which the owner asked for by name: "单击：弹出一个
+     shortcut，让我简单看一个简介; 双击：点进去看细节".
+
+     A double click fires click, click, dblclick — so opening the drawer on the
+     first click would flash it open and then navigate away underneath it. The
+     peek is held for one double-click interval and cancelled if the second
+     click lands. 250ms is under the platform default (500ms) on purpose: the
+     drawer should not feel laggy, and a slow double click still works because
+     the navigation fires regardless. */
+  const peekTimer = useRef<number | null>(null);
+  const cancelPeek = () => {
+    if (peekTimer.current != null) { window.clearTimeout(peekTimer.current); peekTimer.current = null; }
+  };
+  // The suite had no unmount for a year and leaked exactly this kind of timer
+  // into a torn-down jsdom (BUG-HISTORY, 2026-08-02).
+  useEffect(() => cancelPeek, []);
+  const peek = (id: string) => {
+    cancelPeek();
+    peekTimer.current = window.setTimeout(() => { peekTimer.current = null; setOpenId(id); }, 250);
+  };
+  const openRecord = (id: string) => { cancelPeek(); navigate(`/fleet-health/${id}`); };
 
   const dash = useQuery<DashboardPayload>("/api/fleet-maintenance/dashboard", () => api.get("/api/fleet-maintenance/dashboard"));
 
@@ -566,6 +595,9 @@ export function FleetHealth() {
 
       {/* Fleet board */}
       <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
+        <p className="border-b border-border bg-surface-2/40 px-3.5 py-1.5 text-[10.5px] text-ink-muted">
+          Click a lorry for the quick look. Double-click to open its full record.
+        </p>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[920px] border-collapse text-[13px]">
             <thead>
@@ -601,9 +633,14 @@ export function FleetHealth() {
                     <tr
                       key={v.id}
                       tabIndex={0}
-                      onClick={() => setOpenId(v.id)}
+                      onClick={() => peek(v.id)}
+                      onDoubleClick={() => openRecord(v.id)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") setOpenId(v.id);
+                        // Keyboard cannot double-click: Enter peeks, Shift+Enter
+                        // is the "go in" that the second click is with a mouse.
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        if (e.shiftKey) openRecord(v.id); else setOpenId(v.id);
                       }}
                       className="cursor-pointer border-t border-border transition-colors hover:bg-surface-2 focus:bg-surface-2 focus:outline-none"
                     >
@@ -807,19 +844,162 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
 
 /** Per-component preventive-maintenance plans, each with a due-bar showing how
  *  far through its interval it is (km OR months — whichever is more consumed). */
-export function PlansSection({ plans, currentKm }: { plans: PlanView[]; currentKm: number | null }) {
-  if (plans.length === 0) {
-    return (
-      <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">
-        No preventive-maintenance plans on this lorry yet. Seed the default set (backend/scripts/seed-fleet-plans.mjs) or add plans via the API.
-      </p>
-    );
-  }
+export function PlansSection({ plans, currentKm, vehicleId, components, onChanged }: {
+  plans: PlanView[];
+  currentKm: number | null;
+  /* Optional so the section still renders read-only where there is nothing to
+     write to (the dashboard's own preview). Given all three, it can be edited. */
+  vehicleId?: string;
+  components?: { value: string; label: string }[];
+  onChanged?: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<PlanView | null>(null);
+  const canWrite = !!vehicleId && !!onChanged;
+
   return (
     <div className="space-y-2">
+      {plans.length === 0 && !adding && (
+        <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">
+          {/* This used to read "Seed the default set (backend/scripts/
+              seed-fleet-plans.mjs) or add plans via the API" — an empty state
+              that told the owner to run a Node script. The write routes existed
+              the whole time; only the form was missing. Owner: "我该怎么去用?" */}
+          No preventive-maintenance plans on this lorry yet. A plan is one component and how often it is due —
+          by kilometres, by months, or both, whichever comes first.
+        </p>
+      )}
+
       {plans.map((p) => (
-        <PlanRow key={p.id} p={p} currentKm={currentKm} />
+        <PlanRow key={p.id} p={p} currentKm={currentKm} onEdit={canWrite ? () => { setEditing(p); setAdding(false); } : undefined} />
       ))}
+
+      {canWrite && (adding || editing) && (
+        <PlanForm
+          vehicleId={vehicleId}
+          components={components ?? []}
+          /* Editing an existing plan re-POSTs it: the route UPSERTs on
+             (lorry, component), so the component is the identity and PATCH by
+             id would be a second way to write the same row. */
+          plan={editing}
+          taken={new Set(plans.map((p) => p.component))}
+          onCancel={() => { setAdding(false); setEditing(null); }}
+          onSaved={() => { setAdding(false); setEditing(null); onChanged(); }}
+        />
+      )}
+
+      {canWrite && !adding && !editing && (
+        <Button variant="secondary" onClick={() => setAdding(true)}>Add a plan</Button>
+      )}
+    </div>
+  );
+}
+
+/** Create or edit one plan. The route UPSERTs on (lorry, component), so the
+ *  component picker is disabled while editing — changing it would silently move
+ *  the plan to a different component instead of renaming this one. */
+function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
+  vehicleId: string;
+  components: { value: string; label: string }[];
+  plan: PlanView | null;
+  taken: Set<string>;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const free = components.filter((c) => !taken.has(c.value));
+  const [component, setComponent] = useState(plan?.component ?? free[0]?.value ?? components[0]?.value ?? "");
+  const [intervalKm, setIntervalKm] = useState(plan?.intervalKm != null ? String(plan.intervalKm) : "");
+  const [intervalMonths, setIntervalMonths] = useState(plan?.intervalMonths != null ? String(plan.intervalMonths) : "");
+  const [lastDoneKm, setLastDoneKm] = useState(plan?.lastDoneKm != null ? String(plan.lastDoneKm) : "");
+  const [lastDoneDate, setLastDoneDate] = useState(plan?.lastDoneDate ?? "");
+  const [workshop, setWorkshop] = useState(plan?.workshop ?? "");
+  const [estCost, setEstCost] = useState(plan?.estCostCenti != null ? (plan.estCostCenti / 100).toFixed(2) : "");
+  const [active, setActive] = useState(plan?.active ?? true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const num = (v: string): number | null => {
+    const t = v.trim();
+    if (t === "") return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  };
+  // The route refuses a plan with neither interval — nothing could make it due.
+  const ok = component !== "" && (num(intervalKm) !== null || num(intervalMonths) !== null);
+
+  const save = async () => {
+    if (busy || !ok) return;
+    setBusy(true); setErr(null);
+    try {
+      const rm = estCost.trim() === "" ? null : Number(estCost);
+      await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/plans`, {
+        component,
+        intervalKm: num(intervalKm),
+        intervalMonths: num(intervalMonths),
+        lastDoneKm: num(lastDoneKm),
+        lastDoneDate: lastDoneDate || null,
+        workshop: workshop.trim() || null,
+        estCostCenti: rm != null && Number.isFinite(rm) ? Math.round(rm * 100) : null,
+        active,
+      });
+      onSaved();
+    } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-surface p-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2">
+          <label className={FIELD_LABEL}>Component</label>
+          <select className={FIELD_CLS} value={component} disabled={!!plan} onChange={(e) => setComponent(e.target.value)}>
+            {(plan ? components.filter((c) => c.value === plan.component) : free).map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
+          </select>
+          {!plan && free.length === 0 && (
+            <p className="mt-1 text-[10.5px] text-ink-muted">Every component already has a plan on this lorry. Edit one instead.</p>
+          )}
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Every … km</label>
+          <input className={FIELD_CLS} inputMode="numeric" value={intervalKm} onChange={(e) => setIntervalKm(e.target.value)} placeholder="10000" />
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Every … months</label>
+          <input className={FIELD_CLS} inputMode="numeric" value={intervalMonths} onChange={(e) => setIntervalMonths(e.target.value)} placeholder="6" />
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Last done at (km)</label>
+          <input className={FIELD_CLS} inputMode="numeric" value={lastDoneKm} onChange={(e) => setLastDoneKm(e.target.value)} />
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Last done on</label>
+          <input type="date" className={FIELD_CLS} value={lastDoneDate} onChange={(e) => setLastDoneDate(e.target.value)} />
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Workshop</label>
+          <input className={FIELD_CLS} value={workshop} onChange={(e) => setWorkshop(e.target.value)} placeholder="Optional" />
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Estimated cost (RM)</label>
+          <input className={FIELD_CLS} inputMode="decimal" value={estCost} onChange={(e) => setEstCost(e.target.value)} placeholder="Optional" />
+        </div>
+      </div>
+
+      <p className="mt-2 text-[10.5px] leading-snug text-ink-muted">
+        Give at least one interval. With both, the plan falls due on whichever comes first. Leave
+        &ldquo;last done&rdquo; blank and it reads as never done.
+      </p>
+
+      <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[12px] text-ink">
+        <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Active
+      </label>
+
+      {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+      <div className="mt-3 flex gap-2">
+        <Button variant="primary" onClick={save} disabled={busy || !ok}>{busy ? "Saving…" : plan ? "Save plan" : "Add plan"}</Button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+      </div>
     </div>
   );
 }
@@ -841,7 +1021,7 @@ function planProgress(p: PlanView, currentKm: number | null): number {
   return Math.max(0, Math.min(1, Math.max(...fracs)));
 }
 
-function PlanRow({ p, currentKm }: { p: PlanView; currentKm: number | null }) {
+function PlanRow({ p, currentKm, onEdit }: { p: PlanView; currentKm: number | null; onEdit?: () => void }) {
   const pct = Math.round(planProgress(p, currentKm) * 100);
   const barColor = p.tone === "crit" ? "bg-err" : p.tone === "warn" ? "bg-warning-text" : "bg-synced";
   const interval = [p.intervalKm ? `${p.intervalKm.toLocaleString()} km` : null, p.intervalMonths ? `${p.intervalMonths} mo` : null].filter(Boolean).join(" / ");
@@ -856,7 +1036,12 @@ function PlanRow({ p, currentKm }: { p: PlanView; currentKm: number | null }) {
           {p.componentLabel}
           {!p.active && <span className="ml-2 text-[10px] font-normal text-ink-muted">inactive</span>}
         </span>
-        <Pill tone={p.tone}>{p.overdue ? "Overdue" : p.dueSoon ? "Due soon" : "OK"}</Pill>
+        <span className="flex items-center gap-2">
+          {onEdit && (
+            <button type="button" onClick={onEdit} className="text-[10.5px] text-primary hover:underline">Edit</button>
+          )}
+          <Pill tone={p.tone}>{p.overdue ? "Overdue" : p.dueSoon ? "Due soon" : "OK"}</Pill>
+        </span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/60">
         <div className={cn("h-full rounded-full", barColor)} style={{ width: `${pct}%` }} />
@@ -1042,22 +1227,35 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
 }
 
 /** Maintenance work orders — the state-machine stepper + parts table. */
-export function WorkOrdersSection({ vehicleId, plate, workOrders, onChanged }: { vehicleId: string; plate: string | null; workOrders: WorkOrderView[]; onChanged: () => void }) {
+export function WorkOrdersSection({ vehicleId, plate, workOrders, breakdowns = [], onChanged }: { vehicleId: string; plate: string | null; workOrders: WorkOrderView[]; breakdowns?: BreakdownView[]; onChanged: () => void }) {
   const [adding, setAdding] = useState(false);
   /* Importing a document is the OTHER way to open a work order, not a mode of
      the manual form — the two share nothing but the outcome. */
   const [importing, setImporting] = useState(false);
   const [problem, setProblem] = useState("");
   const [workshop, setWorkshop] = useState("");
+  /* The case this repair came FROM. lorry_work_orders.breakdown_case_id has
+     existed since mig 0204 and the create route has always accepted it — no UI
+     ever wrote it, so every repair and the breakdown that caused it were two
+     unrelated rows. Owner: "它不是应该跟我们的 breakdown 还有 incident 有串联吗?" */
+  const [caseId, setCaseId] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Only cases still open are offered. Attaching a repair to a case that was
+  // resolved weeks ago is almost always a mis-click, not a late link.
+  const openCases = breakdowns.filter((b) => b.status !== "RESOLVED");
 
   const create = async () => {
     if (busy || !problem.trim()) return;
     setBusy(true); setErr(null);
     try {
-      await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/work-orders`, { problem: problem.trim(), workshop: workshop.trim() || undefined });
-      setAdding(false); setProblem(""); setWorkshop(""); onChanged();
+      await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/work-orders`, {
+        problem: problem.trim(),
+        workshop: workshop.trim() || undefined,
+        breakdownCaseId: caseId || undefined,
+      });
+      setAdding(false); setProblem(""); setWorkshop(""); setCaseId(""); onChanged();
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
 
@@ -1067,7 +1265,7 @@ export function WorkOrdersSection({ vehicleId, plate, workOrders, onChanged }: {
         <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">No work orders on this lorry.</p>
       )}
       {workOrders.map((wo) => (
-        <WorkOrderCard key={wo.id} wo={wo} onChanged={onChanged} />
+        <WorkOrderCard key={wo.id} wo={wo} cause={breakdowns.find((b) => b.id === wo.breakdownCaseId)} onChanged={onChanged} />
       ))}
       {importing && (
         <RepairDocumentImport
@@ -1083,6 +1281,22 @@ export function WorkOrdersSection({ vehicleId, plate, workOrders, onChanged }: {
           <input className={FIELD_CLS} value={problem} onChange={(e) => setProblem(e.target.value)} placeholder="What needs fixing" />
           <label className={cn(FIELD_LABEL, "mt-2")}>Workshop</label>
           <input className={FIELD_CLS} value={workshop} onChange={(e) => setWorkshop(e.target.value)} placeholder="Optional" />
+          <label className={cn(FIELD_LABEL, "mt-2")}>Caused by</label>
+          {openCases.length === 0 ? (
+            <p className="text-[11px] text-ink-muted">No open breakdown case on this lorry — this is scheduled or ad-hoc work.</p>
+          ) : (
+            <>
+              <select className={FIELD_CLS} value={caseId} onChange={(e) => setCaseId(e.target.value)}>
+                <option value="">Not from a breakdown</option>
+                {openCases.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {[b.severity, b.faultType || b.driverDescription, b.occurredAt?.slice(0, 10)].filter(Boolean).join(" · ")}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[10.5px] text-ink-muted">Link the repair to the case that caused it, so the downtime and the spend belong to the same incident.</p>
+            </>
+          )}
           {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
           <div className="mt-3 flex gap-2">
             <Button variant="primary" onClick={create} disabled={busy || !problem.trim()}>{busy ? "Saving…" : "Open work order"}</Button>
@@ -1102,10 +1316,10 @@ export function WorkOrdersSection({ vehicleId, plate, workOrders, onChanged }: {
 }
 
 const WO_TONE: Record<WorkOrderState, Tone> = {
-  REPORTED: "info", DIAGNOSED: "info", APPROVED: "info", IN_REPAIR: "warn", WAITING_PARTS: "warn", COMPLETED: "ok", VERIFIED: "ok",
+  REPORTED: "info", DIAGNOSED: "info", QUOTED: "warn", APPROVED: "info", IN_REPAIR: "warn", WAITING_PARTS: "warn", COMPLETED: "ok", VERIFIED: "ok",
 };
 
-function WorkOrderCard({ wo, onChanged }: { wo: WorkOrderView; onChanged: () => void }) {
+function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: BreakdownView; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [addingPart, setAddingPart] = useState(false);
   const [pName, setPName] = useState("");
@@ -1140,6 +1354,11 @@ function WorkOrderCard({ wo, onChanged }: { wo: WorkOrderView; onChanged: () => 
         <span className="text-[12.5px] font-semibold text-ink">{wo.problem || "Work order"}</span>
         <Pill tone={WO_TONE[wo.status]}>{wo.statusLabel}</Pill>
       </div>
+      {cause && (
+        <div className="mt-1 text-[10.5px] text-ink-muted">
+          From breakdown: {[cause.severity, cause.faultType || cause.driverDescription, cause.occurredAt?.slice(0, 10)].filter(Boolean).join(" · ")}
+        </div>
+      )}
       {/* Stepper */}
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {WORK_ORDER_STATES.map((s, i) => {
