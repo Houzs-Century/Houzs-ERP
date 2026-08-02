@@ -91,7 +91,27 @@ helpers.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
-  const link = resolveCarrierLink({ threeplCompanyId: carrierOf(body), ownFlag: ownFlagOf(body) });
+  /* The Fleet grid's Outsource tick-box posts only the flag, so the current
+     link has to come from the row — resolveCarrierLink cannot see it otherwise
+     and the two fields silently disagree (owner, 2026-08-02). */
+  const sbCur = c.get('supabase');
+  const { data: curRow, error: curErr } = await sbCur
+    .from('helpers').select('threepl_company_id').eq('id', id).maybeSingle();
+  if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
+  if (!curRow) return c.json({ error: 'helper_not_found' }, 404);
+
+  const link = resolveCarrierLink({
+    threeplCompanyId: carrierOf(body),
+    ownFlag: ownFlagOf(body),
+
+    currentCarrierId: (curRow.threepl_company_id ?? null) as string | null,
+  });
+  if (link.conflict === 'own_flag_while_linked') {
+    return c.json({
+      error: 'linked_to_carrier',
+      reason: 'This row belongs to a 3PL company. Detach it from the carrier first, then mark it in-house.',
+    }, 409);
+  }
   if (link.carrierId !== undefined) updates.threepl_company_id = link.carrierId;
   if (link.ownFlag !== undefined) updates.in_house = link.ownFlag;
   if (body.active !== undefined) updates.active = Boolean(body.active);
