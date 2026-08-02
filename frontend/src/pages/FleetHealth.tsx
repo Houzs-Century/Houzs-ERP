@@ -596,7 +596,7 @@ export function FleetHealth() {
       {/* Fleet board */}
       <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
         <p className="border-b border-border bg-surface-2/40 px-3.5 py-1.5 text-[10.5px] text-ink-muted">
-          Click a lorry for the quick look. Double-click to open its full record.
+          Click a row for the quick look. Double-click, or click the plate, to open the full record — the plate is a link, so it opens in a new tab too.
         </p>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[920px] border-collapse text-[13px]">
@@ -645,7 +645,23 @@ export function FleetHealth() {
                       className="cursor-pointer border-t border-border transition-colors hover:bg-surface-2 focus:bg-surface-2 focus:outline-none"
                     >
                       <td className="px-3.5 py-3">
-                        <div className="font-semibold text-ink">{v.plate}</div>
+                        {/* A REAL anchor, so the browser's own affordances work:
+                            Cmd/Ctrl-click and middle-click open the record in a
+                            new tab, and right-click offers "Open link in new
+                            tab". Owner, 2026-08-03: "我在第二个页面打开进去是不能
+                            的吗?" — it was not, because the row was a <tr> with
+                            an onClick and there was nothing to open.
+
+                            stopPropagation so the plate does not ALSO fire the
+                            row's peek: a link means "go there", and one click
+                            should not both navigate and open a drawer. */}
+                        <Link
+                          to={`/fleet-health/${v.id}`}
+                          onClick={(e) => { e.stopPropagation(); cancelPeek(); }}
+                          className="font-semibold text-ink hover:text-primary hover:underline"
+                        >
+                          {v.plate}
+                        </Link>
                         <div className="text-[11px] text-ink-muted">
                           {[v.driverName, v.region].filter(Boolean).join(" · ") || "—"}
                         </div>
