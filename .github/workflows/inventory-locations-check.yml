@@ -1,0 +1,34 @@
+name: Inventory by warehouse check (read-only)
+
+# Owner 2026-08-02: where is all the physical stock? Valid 2990 locations are KL
+# WAREHOUSE + the 2990s PJ showroom display (Houzs: C&C DISPLAY); nothing should
+# sit anywhere else. Lists every on-hand lot grouped by warehouse, per company,
+# with the source PO's warehouse so a lot in the wrong place (GR<>PO) shows in one
+# line. Input for the relocation plan; changes nothing.
+#
+# SELECT only. The verdict is the output.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: inventory-locations-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-inventory-locations.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
