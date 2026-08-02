@@ -545,22 +545,21 @@ export const NAV_TABS: NavTab[] = [
           // above stay uncluttered. Fleet lives here (you record a lorry) while
           // Fleet Health above is the read-only board (you monitor the fleet).
           // Pure header (no `to`); the groupId gives it expand/collapse memory.
+          /* ONE row, not a group of six. Owner 2026-08-01: "我们需要把 Sidebar
+             以及它的整个模块——包括 3PL Company 和 Rate Card——统一整合在一个模块里".
+             #1489 made the header a destination but KEPT the six children, so
+             the sidebar looked exactly as it had; this removes them.
+
+             The six ROUTES are untouched and still registered in App.tsx —
+             deep links, bookmarks and the "Open on its own" links inside
+             /scm/delivery-maintenance all keep working. Only the nav rows go,
+             which is the whole of what "one module" asked for. Nothing about
+             access changes: the same anyPerm / anyAccess pair gated every child
+             and still gates this row. */
           {
-            // 2026-08-01: the header is now a DESTINATION as well as a group.
-            // /scm/delivery-maintenance renders these same six as open/closable
-            // sections (owner: "变成一个模块，就好像 sales order 的 maintenance
-            // 那样子"); the children stay so a deep link still goes straight in.
-            label: "Maintenance", icon: SlidersHorizontal, groupId: "scm-transportation-maintenance",
+            label: "Maintenance", icon: SlidersHorizontal,
             to: "/scm/delivery-maintenance",
             anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true,
-            children: [
-              { to: "/scm/delivery-planning-regions", label: "Regions", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-              { to: "/scm/delivery-residence-rules", label: "Residence Rules", icon: Building2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-              { to: "/scm/fleet", label: "Fleet", icon: Truck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-              { to: "/scm/delivery-zones", label: "Delivery Zones", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-              { to: "/scm/threepl-companies", label: "3PL Companies", icon: Handshake, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-              { to: "/scm/delivery-rate-cards", label: "Rate Cards", icon: Calculator, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-            ],
           },
         ],
       },
