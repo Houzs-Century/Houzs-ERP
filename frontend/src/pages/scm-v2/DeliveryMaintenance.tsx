@@ -75,8 +75,8 @@ export const DeliveryMaintenance = () => {
   const PARTS: Part[] = [
     {
       key: 'coverage-fleet',
-      title: 'Regions, Residence Rules & Fleet',
-      hint: 'Who covers which postcodes, how each building type is handled, and the crew and lorries that go.',
+      title: 'Coverage & Fleet',
+      hint: 'Regions, residence rules and the fleet — who covers which postcodes, how each building type is handled, and the crew and lorries that go.',
       surfaces: [
         {
           key: 'regions', title: 'Regions', path: '/scm/delivery-planning-regions',
@@ -108,8 +108,8 @@ export const DeliveryMaintenance = () => {
     },
     {
       key: 'carriers',
-      title: '3PL Companies & Rate Cards',
-      hint: 'Register a carrier, then price it. A rate card is priced per company, so the two belong together.',
+      title: 'Carriers & Rates',
+      hint: '3PL companies and their rate cards. A card is priced per carrier, so register one then price it — the two belong together.',
       surfaces: [
         {
           key: 'threepl', title: '3PL Companies', path: '/scm/threepl-companies',
