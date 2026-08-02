@@ -1,0 +1,33 @@
+name: SO field-completeness check (read-only)
+
+# Owner 2026-08-02: "why is the warehouse/venue/branding/PO empty — is it a bug?"
+# For every live SO this replicates the rule that FILLS each field and labels every
+# empty by WHY, so an expected empty (accessory has no PO; an unbound rep has no
+# venue) is separated from a real gap (a code the catalog brands, left blank).
+#
+# SELECT only — no DDL, no writes, no transaction. The verdict is the output.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: so-completeness-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-so-completeness.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
