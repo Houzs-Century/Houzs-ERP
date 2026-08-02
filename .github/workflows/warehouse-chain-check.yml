@@ -1,0 +1,36 @@
+name: Warehouse chain consistency check (read-only)
+
+# Owner 2026-08-02: across the whole SO -> PO -> GR -> DO chain, is the warehouse
+# consistent and correct at every step? Trigger: an ANGGN-FIRM MATT (K) lot in PJ
+# SHOWROOM while its PO ships to KL WAREHOUSE. Answers:
+#   Q1 PO assigned to an SO + PO line warehouse == SO warehouse
+#   Q2 GR received-into warehouse == PO line warehouse (+ stock-in-showroom flag)
+#   Q3 DO OUT-movement warehouse == SO warehouse
+# and diagnoses the ANGGN chain link by link.
+#
+# SELECT only. The verdict is the output.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: warehouse-chain-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-warehouse-chain.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
