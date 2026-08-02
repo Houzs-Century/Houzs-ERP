@@ -195,6 +195,11 @@ jobs:
       # backend gate. Keep the executable route inventory here so a direct main
       # push cannot deploy an undeclared/stale authorization surface.
       - run: npm run audit:routes
+      # Does the rate card still price every job we can dispatch? Reads the
+      # migrations, so a stale copy of scm.trip_stop_type in the code cannot
+      # pass. Filesystem-based, hence a script and not a unit test — the
+      # backend suite runs in workerd and has no filesystem.
+      - run: npm run audit:job-types
       - run: npm run typecheck
       # `npm test` moved to the backend-tests matrix above; the assertion at the
       # top of this job is what keeps it a gate.

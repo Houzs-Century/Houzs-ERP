@@ -123,15 +123,33 @@ function tierAmountForPosition(tiers: readonly RateRuleSpec[], n: number): RateR
   return best;
 }
 
+/** How the caller is pricing: one DROP, or a whole TRIP. */
+export interface CostOptions {
+  /**
+   * Include the FIXED per-trip outstation fee (OUTSTATION_TRIP rules).
+   *
+   * It used to be bolted on by the reconcile AFTER this function returned,
+   * which put it OUTSIDE the min/cap/rounding envelope — so a card with a
+   * charge cap could still bill above it, and the fee never appeared in the
+   * UI calculator at all because /compute never added it. Pricing a trip and
+   * pricing a drop are the same computation with one extra line; making that
+   * a flag keeps ONE envelope instead of two places that cap.
+   *
+   * Defaults to false, which is the per-DROP reading.
+   */
+  perTrip?: boolean;
+}
+
 /**
  * Price a drop/trip against a rate card. PURE.
  *
  * Order of the itemised lines: charging-unit tiers (+ overage) → sofa brackets →
- * outstation → dispose → setup → dismantle → service/pickup/inspection/transfer,
- * then the min/cap/rounding envelope. The returned `subtotalCenti` is the sum of
- * the priced lines before the envelope; `totalCenti` is after it.
+ * outstation → dispose → setup → dismantle → service/pickup/inspection/transfer
+ * → the per-trip outstation fee when pricing a trip, then the min/cap/rounding
+ * envelope. The returned `subtotalCenti` is the sum of the priced lines before
+ * the envelope; `totalCenti` is after it.
  */
-export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts): CostBreakdown {
+export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, opts: CostOptions = {}): CostBreakdown {
   const lines: CostLine[] = [];
   const rules = card.rules ?? [];
 
@@ -223,6 +241,19 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts): C
     });
   }
 
+  // ── The fixed per-TRIP outstation fee (once per trip, not per drop) ───────
+  if (opts.perTrip) {
+    const tripFee = tripOutstationFeeCenti(rules, facts.destinationZone);
+    if (tripFee > 0) {
+      lines.push({
+        ruleType: 'OUTSTATION_TRIP',
+        label: `Outstation trip ${String(facts.destinationZone).toUpperCase()}`,
+        amountCenti: tripFee,
+        detail: { zone: facts.destinationZone, perTrip: true },
+      });
+    }
+  }
+
   // ── Subtotal → min / cap / rounding envelope ──────────────────────────────
   const subtotalCenti = lines.reduce((s, l) => s + l.amountCenti, 0);
   let total = subtotalCenti;
@@ -242,7 +273,15 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts): C
   const rounding = card.rounding ?? 'NONE';
   if (rounding !== 'NONE' && total > 0) {
     const step = rounding === 'NEAREST_RM' ? 100 : 10;
-    const rounded = Math.round(total / step) * step;
+    let rounded = Math.round(total / step) * step;
+    /* ROUNDING MUST NOT BREACH THE CAP. Half-up rounding after a cap could push
+       the charge back ABOVE the ceiling the card sets — RM499.96 capped at
+       RM500 then rounded to the nearest ringgit came out at RM500, which is
+       fine, but a cap of RM495 with 10-sen rounding on RM494.96 produced
+       RM495.00 and a cap of RM494.95 produced RM495.00 too: over the cap, on a
+       line labelled "cap". A cap that a later step can exceed is not a cap.
+       Round DOWN instead when up would breach it. */
+    if (capCenti != null && rounded > capCenti) rounded = Math.floor(total / step) * step;
     if (rounded !== total) {
       lines.push({ ruleType: 'ROUNDING', label: `Rounding (${rounding === 'NEAREST_RM' ? 'nearest RM' : 'nearest 10 sen'})`, amountCenti: rounded - total, detail: { rounding } });
       total = rounded;

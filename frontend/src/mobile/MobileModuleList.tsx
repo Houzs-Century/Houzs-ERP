@@ -919,8 +919,11 @@ export const FORM_SUPPLIERS: FormSchema = {
   ],
 };
 
-/* drivers — POST /drivers (driverCode+name+phone required), PATCH /drivers/:id.
-   Response wraps as { driver: {...} }; id = driver.id. */
+/* drivers — POST /drivers (name+phone required), PATCH /drivers/:id.
+   Response wraps as { driver: {...} }; id = driver.id.
+   The Driver Code field is GONE (2026-08-02): the server mints DRV-### now, and
+   a required text box for a value the system allocates is how DRV-05 ended up
+   beside DRV-050 with the same person under both. */
 export const FORM_DRIVERS: FormSchema = {
   title: "Driver",
   eyebrow: "Transportation",
@@ -929,7 +932,6 @@ export const FORM_DRIVERS: FormSchema = {
   updatePath: (id) => `/drivers/${encodeURIComponent(id)}`,
   idKey: "id",
   fields: [
-    { key: "driverCode", label: "Driver Code", type: "text", required: true, placeholder: "e.g. DRV-01" },
     { key: "name", label: "Name", type: "text", required: true },
     { key: "phone", label: "Phone", type: "tel", required: true, placeholder: "01X-XXX XXXX" },
     { key: "icNumber", label: "IC Number", type: "text" },

@@ -22,6 +22,7 @@
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import { requireHouzsPerm } from "../lib/houzs-perms";
+import { nextCode, CODE_PREFIX } from "../lib/fleet-code-mint";
 import { activeCompanyId } from "../lib/companyScope";
 import type { Env, Variables } from "../env";
 import {
@@ -1956,18 +1957,13 @@ fleetMaintenance.post("/components/:componentId/events", requireHouzsPerm("fleet
  *  and a Postgres sequence is global. The UNIQUE (company_id, code) index is the
  *  real guard: two racing creates collide there and the loser retries. */
 async function mintWorkshopCode(sb: any, companyId: number | null): Promise<string> {
-  const { data } = await sb
-    .from("workshops")
-    .select("code")
-    .eq("company_id", companyId)
-    .order("code", { ascending: false })
-    .limit(50);
-  let highest = 0;
-  for (const r of (data ?? []) as Array<{ code?: string | null }>) {
-    const m = /^WS-(\d+)$/.exec(String(r.code ?? "").trim().toUpperCase());
-    if (m) highest = Math.max(highest, Number(m[1]));
-  }
-  return `WS-${String(highest + 1).padStart(4, "0")}`;
+  /* Reads EVERY code, not the top 50 by string order: "WS-9" sorts above
+     "WS-10" as text, so an ordered LIMIT would eventually mint a duplicate.
+     nextCode (scm/lib/fleet-code-mint) is the one parser every minted code in
+     this system shares — it reads any padding, which is what stops a second
+     numbering scheme forming the way DRV-05 formed beside DRV-050. */
+  const { data } = await sb.from("workshops").select("code").eq("company_id", companyId);
+  return nextCode(CODE_PREFIX.WORKSHOP, ((data ?? []) as Array<{ code?: string | null }>).map((r) => r.code));
 }
 
 fleetMaintenance.get("/workshops", requireHouzsPerm("fleet.read"), async (c) => {

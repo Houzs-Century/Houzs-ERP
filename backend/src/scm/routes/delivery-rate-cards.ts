@@ -45,7 +45,6 @@ import {
 } from '../lib/companyScope';
 import {
   computeDeliveryCost,
-  tripOutstationFeeCenti,
   type RateCardSpec,
   type RateRuleSpec,
   type RateRuleType,
@@ -448,7 +447,12 @@ deliveryRateCards.post('/:id/compute', async (c) => {
   );
   const cardO = cardOut(card as Row);
   const spec = toCardSpec(cardO, (rules ?? []).map(ruleOut));
-  const breakdown = computeDeliveryCost(spec, parsed.data as DeliveryFacts);
+  /* perTrip: the calculator on the Rate Cards page could NEVER show an
+     OUTSTATION_TRIP line — the rules editor let you create one and this
+     endpoint never applied it, so the figure on screen silently disagreed
+     with what the reconciliation would bill. It prices a trip, like the
+     reconcile does. */
+  const breakdown = computeDeliveryCost(spec, parsed.data as DeliveryFacts, { perTrip: true });
   return c.json({ card: cardO, facts: parsed.data, breakdown });
 });
 
@@ -596,18 +600,10 @@ deliveryRateCards.get('/reconcile', async (c) => {
     let breakdown: ReturnType<typeof computeDeliveryCost> | null = null;
     if (card) {
       const spec = toCardSpec(card, rulesByCard.get(card.id) ?? []);
-      breakdown = computeDeliveryCost(spec, { setCount, destinationZone });
-      // WS4c: the FIXED per-trip outstation fee applies ONCE per trip (not per
-      // drop), so it is added here after the per-drop cost, not inside the pure
-      // per-drop calculator. Reflected as its own line for transparency.
-      const tripFeeCenti = tripOutstationFeeCenti(spec.rules, destinationZone);
-      if (tripFeeCenti > 0) {
-        breakdown = {
-          ...breakdown,
-          lines: [...breakdown.lines, { ruleType: 'OUTSTATION_TRIP', label: `Outstation trip ${String(destinationZone).toUpperCase()}`, amountCenti: tripFeeCenti, detail: { zone: destinationZone, perTrip: true } }],
-          totalCenti: breakdown.totalCenti + tripFeeCenti,
-        };
-      }
+      /* perTrip: the FIXED per-trip outstation fee is now emitted INSIDE the
+         calculator, before the min/cap/rounding envelope. It used to be added
+         here afterwards, which let a capped card bill above its own cap. */
+      breakdown = computeDeliveryCost(spec, { setCount, destinationZone }, { perTrip: true });
       expectedCenti = breakdown.totalCenti;
     }
     const deltaCenti = expectedCenti == null ? null : billedCenti - expectedCenti;
