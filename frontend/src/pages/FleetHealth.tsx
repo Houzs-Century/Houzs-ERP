@@ -164,6 +164,9 @@ const WORK_ORDER_STATE_LABEL: Record<WorkOrderState, string> = {
 type PartView = { id: string; name: string; partNo: string | null; qty: number; unitPriceCenti: number; lineCenti: number; serial: string | null };
 export type WorkOrderView = {
   id: string;
+  /** WO-#### (mig 0248) — OURS. quotationNo is the workshop's own number, off
+   *  their document; it is not unique across vendors and is often absent. */
+  woNo?: string | null;
   status: WorkOrderState;
   statusLabel: string;
   open: boolean;
@@ -171,6 +174,10 @@ export type WorkOrderView = {
   problem: string | null;
   diagnosis: string | null;
   workshop: string | null;
+  /** THEIRS — off the workshop's own document (mig 0241). Shown beside woNo so
+   *  the two are never confused for each other. */
+  quotationNo?: string | null;
+  invoiceNo?: string | null;
   labourCenti: number;
   outsideServiceCenti: number;
   towingCenti: number;
@@ -188,6 +195,8 @@ export type WorkOrderView = {
 
 export type BreakdownView = {
   id: string;
+  /** BD-#### (mig 0248) — ours. */
+  caseNo?: string | null;
   occurredAt: string | null;
   gpsLat: number | null;
   gpsLng: number | null;
@@ -1077,29 +1086,99 @@ function PlanRow({ p, currentKm, onEdit }: { p: PlanView; currentKm: number | nu
 }
 
 /** Recent daily mileage readings — day-complete captures, with flags. */
-export function MileageSection({ readings }: { readings: MileageView[] }) {
-  if (readings.length === 0) {
-    return (
-      <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">
-        No mileage readings yet. The driver captures the odometer on day-complete from the mobile app.
-      </p>
-    );
-  }
+export function MileageSection({ readings, vehicleId, onChanged }: {
+  readings: MileageView[];
+  /* Optional so a read-only caller still renders. Given both, a reading can be
+     taken here — owner, 2026-08-03: "这部分应该用来记录每周的里程。比如我们每一次
+     检测的记录：在什么时间、当时的里程数是多少". The route has always accepted a
+     MANUAL reading; only the form was missing, so the odometer could be captured
+     from the driver's phone and nowhere else. */
+  vehicleId?: string;
+  onChanged?: () => void;
+}) {
+  const canWrite = !!vehicleId && !!onChanged;
+  const [adding, setAdding] = useState(false);
+  const [km, setKm] = useState("");
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const latest = readings.find((r) => r.odometerKm != null)?.odometerKm ?? null;
+
+  const save = async () => {
+    const n = Number(km);
+    if (busy || !Number.isFinite(n)) return;
+    setBusy(true); setErr(null);
+    try {
+      await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/mileage`, {
+        odometerKm: Math.round(n), readingDate: date, source: "MANUAL", note: note.trim() || undefined,
+      });
+      setAdding(false); setKm(""); setNote(""); onChanged?.();
+    } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
+  };
+
   return (
-    <div className="space-y-1">
-      {readings.slice(0, 8).map((r) => (
-        <div key={r.id} className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-2.5 py-1.5 text-[12px]">
-          <span className="flex items-center gap-2.5">
-            <span className="tabular-nums font-semibold text-ink">{r.odometerKm != null ? r.odometerKm.toLocaleString() : "—"} km</span>
-            <span className="text-[10.5px] text-ink-muted">{r.readingDate ?? "—"}</span>
-            <span className="text-[10px] uppercase tracking-brand text-ink-muted">{r.source ?? ""}</span>
-          </span>
-          <span className="flex items-center gap-2">
-            {r.flagged && <Pill tone="warn">Review</Pill>}
-            {r.photoRef && <span className="text-[10.5px] text-ink-muted">photo</span>}
-          </span>
+    <div className="space-y-2">
+      {readings.length === 0 && !adding && (
+        <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">
+          No mileage readings yet. The driver captures the odometer on day-complete from the mobile app, and you can
+          record a weekly check here.
+        </p>
+      )}
+
+      {readings.length > 0 && (
+        <div className="space-y-1">
+          {readings.slice(0, 8).map((r) => (
+            <div key={r.id} className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-2.5 py-1.5 text-[12px]">
+              <span className="flex items-center gap-2.5">
+                <span className="tabular-nums font-semibold text-ink">{r.odometerKm != null ? r.odometerKm.toLocaleString() : "—"} km</span>
+                <span className="text-[10.5px] text-ink-muted">{r.readingDate ?? "—"}</span>
+                <span className="text-[10px] uppercase tracking-brand text-ink-muted">{r.source ?? ""}</span>
+              </span>
+              <span className="flex items-center gap-2">
+                {r.flagged && <Pill tone="warn">Review</Pill>}
+                {r.photoRef && <span className="text-[10.5px] text-ink-muted">photo</span>}
+              </span>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
+
+      {canWrite && adding && (
+        <div className="rounded-lg border border-border bg-surface p-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={FIELD_LABEL}>Odometer (km)</label>
+              <input className={FIELD_CLS} inputMode="numeric" value={km} onChange={(e) => setKm(e.target.value)} placeholder={latest != null ? String(latest) : "e.g. 154300"} />
+            </div>
+            <div>
+              <label className={FIELD_LABEL}>Read on</label>
+              <input type="date" className={FIELD_CLS} value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div className="col-span-2">
+              <label className={FIELD_LABEL}>Note</label>
+              <input className={FIELD_CLS} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional — e.g. weekly check" />
+            </div>
+          </div>
+          {/* Two rules the route enforces, stated before you hit them: a reading
+              below the last one is a rollback and is REFUSED, and an abnormal
+              jump saves but is flagged for a human. */}
+          <p className="mt-2 text-[10.5px] leading-snug text-ink-muted">
+            {latest != null ? `The last reading was ${latest.toLocaleString()} km. ` : ""}
+            An odometer cannot go backwards, so a lower number is refused. A very large jump saves but is flagged for review.
+          </p>
+          {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+          <div className="mt-3 flex gap-2">
+            <Button variant="primary" onClick={save} disabled={busy || km.trim() === ""}>{busy ? "Saving…" : "Record reading"}</Button>
+            <Button variant="secondary" onClick={() => { setAdding(false); setErr(null); }}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {canWrite && !adding && (
+        <Button variant="secondary" onClick={() => setAdding(true)}>Record a reading</Button>
+      )}
     </div>
   );
 }
@@ -1118,6 +1197,63 @@ export function apiErrText(e: unknown): string {
   };
   for (const [k, msg] of Object.entries(known)) if (m.includes(k)) return msg;
   return "Could not save. Please try again.";
+}
+
+/** One record, closed to a single line and opened on demand.
+ *
+ *  Owner, 2026-08-03: "这个卡片或区域应该设计成可以展开和收起... 展开后能看到具体
+ *  信息" and "要确保当资料密密麻麻、数据量很大的时候，界面依然清晰". A lorry with
+ *  nineteen billed lines and four incidents was rendering every field of every
+ *  record at once; the page could only get worse as the fleet aged.
+ *
+ *  CLOSED SHOWS WHAT YOU SCAN FOR: the number, how bad, what it was, when. The
+ *  detail is one click away, never a scroll away. */
+export function RecordCard({ code, badge, title, when, subtitle, tone, defaultOpen = false, children }: {
+  code?: string | null;
+  badge?: React.ReactNode;
+  title: string;
+  when?: string | null;
+  subtitle?: string | null;
+  tone?: "crit" | "plain";
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={cn("rounded-lg border", tone === "crit" ? "border-err/30 bg-err/5" : "border-border bg-surface-2/40")}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+      >
+        <ChevronRight size={14} className={cn("shrink-0 text-ink-muted transition-transform", open && "rotate-90")} />
+        {code && (
+          <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 font-mono text-[10.5px] font-semibold tracking-wide text-ink-secondary">
+            {code}
+          </span>
+        )}
+        {badge}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12.5px] font-semibold text-ink">{title}</span>
+          {subtitle && <span className="block truncate text-[10.5px] text-ink-muted">{subtitle}</span>}
+        </span>
+        {when && <span className="shrink-0 text-[10.5px] text-ink-muted">{when}</span>}
+      </button>
+      {open && <div className="border-t border-border/60 px-3 pb-3 pt-2.5">{children}</div>}
+    </div>
+  );
+}
+
+/** One label + value inside an opened record. A grid of these reads far faster
+ *  than the run-on "a · b · c · d" line it replaces. */
+export function Detail({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{label}</dt>
+      <dd className="truncate text-ink">{value}</dd>
+    </div>
+  );
 }
 
 const SEVERITY_TONE: Record<BreakdownView["severity"], Tone> = { MINOR: "info", MAJOR: "warn", CRITICAL: "crit" };
@@ -1170,25 +1306,34 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
         <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">No breakdown cases on file.</p>
       )}
       {breakdowns.map((b) => (
-        <div key={b.id} className={cn("rounded-lg border p-3", b.grounding ? "border-err/30 bg-err/5" : "border-border bg-surface-2/40")}>
-          <div className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-2 text-[12.5px] font-semibold text-ink">
-              <Pill tone={SEVERITY_TONE[b.severity]}>{b.severity}</Pill>
-              {b.faultType || "Incident"}
-            </span>
-            <span className="text-[10.5px] text-ink-muted">{fmtDateTime(b.occurredAt)}</span>
-          </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-muted">
-            <span>{b.stillDrivable ? "Still drivable" : "Not drivable"}</span>
-            {b.downtimeHours != null && <span className="text-err">Downtime {fmtDowntime(b.downtimeHours)}</span>}
-            {b.towingCompany && <span>Tow: {b.towingCompany}</span>}
-            {b.workshop && <span>Workshop: {b.workshop}</span>}
-            {b.gpsLat != null && b.gpsLng != null && <span>GPS {b.gpsLat.toFixed(4)}, {b.gpsLng.toFixed(4)}</span>}
-          </div>
-          {b.driverDescription && <div className="mt-1 text-[11px] text-ink-secondary">{b.driverDescription}</div>}
-          <div className="mt-2 flex items-center gap-2">
-            <span className="text-[10.5px] uppercase tracking-brand text-ink-muted">{BREAKDOWN_STATUS_LABEL[b.status]}</span>
-            {b.status !== "RESOLVED" && (
+        <RecordCard
+          key={b.id}
+          code={b.caseNo}
+          tone={b.grounding ? "crit" : "plain"}
+          badge={<Pill tone={SEVERITY_TONE[b.severity]}>{b.severity}</Pill>}
+          title={b.faultType || "Incident"}
+          subtitle={[BREAKDOWN_STATUS_LABEL[b.status], b.stillDrivable ? "still drivable" : "not drivable",
+            b.downtimeHours != null ? `downtime ${fmtDowntime(b.downtimeHours)}` : null].filter(Boolean).join(" · ")}
+          when={fmtDateTime(b.occurredAt)}
+          /* An unresolved case is the one you opened the page for. */
+          defaultOpen={b.status !== "RESOLVED"}
+        >
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] sm:grid-cols-3">
+            <Detail label="Occurred" value={fmtDateTime(b.occurredAt)} />
+            <Detail label="Recovered" value={b.recoveryTime ? fmtDateTime(b.recoveryTime) : "still down"} />
+            <Detail label="Downtime" value={b.downtimeHours != null ? fmtDowntime(b.downtimeHours) : "—"} />
+            <Detail label="Towing" value={b.towingCompany ?? "—"} />
+            <Detail label="Workshop" value={b.workshop ?? "—"} />
+            <Detail label="GPS" value={b.gpsLat != null && b.gpsLng != null ? `${b.gpsLat.toFixed(4)}, ${b.gpsLng.toFixed(4)}` : "—"} />
+          </dl>
+          {b.driverDescription && (
+            <p className="mt-2 rounded-md bg-surface px-2.5 py-1.5 text-[11px] text-ink-secondary">{b.driverDescription}</p>
+          )}
+          <div className="mt-2.5 flex items-center gap-2">
+            <span className="text-[10.5px] uppercase tracking-brand text-ink-muted">Status</span>
+            {b.status === "RESOLVED" ? (
+              <span className="text-[11px] text-ink">Resolved</span>
+            ) : (
               <select
                 className="rounded-md border border-border bg-surface px-2 py-1 text-[11px] text-ink"
                 value={b.status}
@@ -1200,7 +1345,7 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
               </select>
             )}
           </div>
-        </div>
+        </RecordCard>
       ))}
 
       {adding ? (
@@ -1367,17 +1512,24 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
     catch { /* ignore */ } finally { setBusy(false); }
   };
 
+  /* Closed, a work order has to answer: which one, how far along, what it was
+     for, whose incident, and how much. Owner, 2026-08-03: "工单页面需要清晰指示
+     它对应的是哪一个 Breakdown 编号，以及具体维修了什么东西". */
+  const partCount = wo.parts?.length ?? 0;
   return (
-    <div className="rounded-lg border border-border bg-surface-2/40 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[12.5px] font-semibold text-ink">{wo.problem || "Work order"}</span>
-        <Pill tone={WO_TONE[wo.status]}>{wo.statusLabel}</Pill>
-      </div>
-      {cause && (
-        <div className="mt-1 text-[10.5px] text-ink-muted">
-          From breakdown: {[cause.severity, cause.faultType || cause.driverDescription, cause.occurredAt?.slice(0, 10)].filter(Boolean).join(" · ")}
-        </div>
-      )}
+    <RecordCard
+      code={wo.woNo}
+      badge={<Pill tone={WO_TONE[wo.status]}>{wo.statusLabel}</Pill>}
+      title={wo.problem || "Work order"}
+      subtitle={[
+        cause ? `from ${cause.caseNo ?? "breakdown"}: ${cause.faultType || cause.driverDescription || "incident"}` : null,
+        partCount ? `${partCount} line${partCount === 1 ? "" : "s"}` : null,
+        wo.totalCenti ? money(wo.totalCenti) : null,
+        wo.quotationNo ? `their ref ${wo.quotationNo}` : wo.invoiceNo ? `their invoice ${wo.invoiceNo}` : null,
+      ].filter(Boolean).join(" · ")}
+      when={wo.reportedAt ? fmtDateTime(wo.reportedAt) : null}
+      defaultOpen={wo.open}
+    >
       {/* Stepper */}
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {WORK_ORDER_STATES.map((s, i) => {
@@ -1447,7 +1599,7 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
           <span className="text-[12px] font-semibold text-ink">Total {money(wo.totalCenti)}</span>
         </div>
       )}
-    </div>
+    </RecordCard>
   );
 }
 
@@ -1550,34 +1702,42 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
   };
 
   return (
-    <div className={cn("rounded-lg border p-3", c.status === "ACTIVE" ? "border-border bg-surface-2/40" : "border-transparent bg-transparent opacity-70")}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-2 text-[12.5px] font-semibold text-ink">
-          {c.componentTypeLabel}
-          {c.position !== "NA" && <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{c.positionLabel}</span>}
-        </span>
-        {c.underWarranty != null && <Pill tone={c.underWarranty ? "ok" : "neutral"}>{c.underWarranty ? "Under warranty" : "Warranty expired"}</Pill>}
-      </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-muted">
-        {c.brand && <span>{[c.brand, c.model, c.size].filter(Boolean).join(" ")}</span>}
-        {c.serial && <span>SN {c.serial}</span>}
-        {c.fittedDate && <span>Fitted {c.fittedDate}{c.fittedKm != null ? ` @ ${c.fittedKm.toLocaleString()} km` : ""}</span>}
-        {c.removedDate && <span>Removed {c.removedDate}{c.removedKm != null ? ` @ ${c.removedKm.toLocaleString()} km` : ""}</span>}
-        {c.treadDepth != null && <span>Tread {c.treadDepth} mm</span>}
-        {c.kmUsed != null && <span className="text-ink-secondary">{c.kmUsed.toLocaleString()} km used</span>}
-        {c.costPerKmCenti != null && <span className="text-ink-secondary">{money(c.costPerKmCenti)}/km</span>}
-      </div>
+    <RecordCard
+      code={c.serial ? `SN ${c.serial}` : null}
+      badge={c.underWarranty != null ? <Pill tone={c.underWarranty ? "ok" : "neutral"}>{c.underWarranty ? "Warranty" : "Expired"}</Pill> : undefined}
+      title={[c.componentTypeLabel, c.position !== "NA" ? c.positionLabel : null].filter(Boolean).join(" · ")}
+      subtitle={[
+        [c.brand, c.model, c.size].filter(Boolean).join(" ") || null,
+        c.kmUsed != null ? `${c.kmUsed.toLocaleString()} km used` : null,
+        c.costPerKmCenti != null ? `${money(c.costPerKmCenti)}/km` : null,
+        c.status === "ACTIVE" ? null : "removed",
+      ].filter(Boolean).join(" · ")}
+      when={c.fittedDate}
+      /* A fitted component is the live one; a removed one is history. */
+      defaultOpen={c.status === "ACTIVE"}
+    >
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] sm:grid-cols-3">
+        <Detail label="Fitted" value={c.fittedDate ? `${c.fittedDate}${c.fittedKm != null ? ` @ ${c.fittedKm.toLocaleString()} km` : ""}` : "—"} />
+        <Detail label="Removed" value={c.removedDate ? `${c.removedDate}${c.removedKm != null ? ` @ ${c.removedKm.toLocaleString()} km` : ""}` : "still fitted"} />
+        <Detail label="Km used" value={c.kmUsed != null ? c.kmUsed.toLocaleString() : "—"} />
+        <Detail label="Cost / km" value={c.costPerKmCenti != null ? money(c.costPerKmCenti) : "—"} />
+        <Detail label="Tread" value={c.treadDepth != null ? `${c.treadDepth} mm` : "—"} />
+        <Detail label="Serial" value={c.serial ?? "—"} />
+      </dl>
       {c.events.length > 0 && (
-        <div className="mt-2 space-y-0.5">
-          {c.events.slice(0, 5).map((e) => (
-            <div key={e.id} className="flex items-center gap-2 text-[10.5px] text-ink-muted">
-              <span className="uppercase tracking-brand">{e.eventType}</span>
-              <span>{e.eventDate}</span>
-              {e.odometerKm != null && <span className="tabular-nums">{e.odometerKm.toLocaleString()} km</span>}
-              {e.toPosition && <span>→ {e.toPosition}</span>}
-              {e.note && <span className="text-ink-secondary">{e.note}</span>}
-            </div>
-          ))}
+        <div className="mt-2.5">
+          <div className="mb-1 text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">History</div>
+          <div className="space-y-0.5">
+            {c.events.slice(0, 5).map((e) => (
+              <div key={e.id} className="flex items-center gap-2 text-[10.5px] text-ink-muted">
+                <span className="uppercase tracking-brand">{e.eventType}</span>
+                <span>{e.eventDate}</span>
+                {e.odometerKm != null && <span className="tabular-nums">{e.odometerKm.toLocaleString()} km</span>}
+                {e.toPosition && <span>&rarr; {e.toPosition}</span>}
+                {e.note && <span className="text-ink-secondary">{e.note}</span>}
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {c.status === "ACTIVE" && (
@@ -1599,7 +1759,7 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
           </div>
         )
       )}
-    </div>
+    </RecordCard>
   );
 }
 

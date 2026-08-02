@@ -52,6 +52,28 @@ describe('nextCode', () => {
   });
 });
 
+describe('the four-wide prefixes (mig 0248)', () => {
+  it('mints BD and WO four wide, matching the migration backfill', () => {
+    expect(nextCode(CODE_PREFIX.BREAKDOWN, [])).toBe('BD-0001');
+    expect(nextCode(CODE_PREFIX.WORK_ORDER, [])).toBe('WO-0001');
+  });
+  it('continues from a backfilled register', () => {
+    expect(nextCode(CODE_PREFIX.WORK_ORDER, ['WO-0001', 'WO-0002'])).toBe('WO-0003');
+  });
+  it('does not widen the three-wide prefixes', () => {
+    expect(nextCode(CODE_PREFIX.DRIVER, [])).toBe('DRV-001');
+    expect(nextCode(CODE_PREFIX.WORKSHOP, [])).toBe('WS-001');
+  });
+  it('reads a differently-padded existing code rather than restarting', () => {
+    // The parser has always been padding-blind; this proves widening the OUTPUT
+    // did not change that, so a hand-made WO-7 cannot reset the register.
+    expect(nextCode(CODE_PREFIX.WORK_ORDER, ['WO-7'])).toBe('WO-0008');
+  });
+  it('past the pad width the number simply gets longer', () => {
+    expect(nextCode(CODE_PREFIX.WORK_ORDER, ['WO-9999'])).toBe('WO-10000');
+  });
+});
+
 describe('isMintedShape', () => {
   it('recognises the shapes we write', () => {
     expect(isMintedShape(CODE_PREFIX.DRIVER, 'DRV-001')).toBe(true);
