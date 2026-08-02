@@ -208,6 +208,26 @@ function flatDoc(docType: ComplianceDocType, expiry: string | null, today: strin
 
 type DocView = ReturnType<typeof shapeDoc> | ReturnType<typeof flatDoc>;
 
+/* Fleet Health is the IN-HOUSE board. Owner, 2026-08-02: "Fleet Health 只看我们
+   in-house 的罗里而已，outsource 的我们是不看的" — a 3PL's road tax, PUSPAKOM,
+   servicing and breakdowns are that carrier's paperwork and that carrier's cost,
+   and counting them made every fleet KPI (fleet size, cannot-dispatch, monthly
+   spend) answer a question nobody asked.
+
+   The three-state predicate is DEFENSIVE PARITY, not a rescue of legacy rows:
+   scm.lorries.is_internal is `BOOLEAN NOT NULL DEFAULT true` (0053:54), so no
+   NULL exists today and .eq("is_internal", true) would behave identically. The
+   reason to write it this way anyway is that every DISPLAY path in this module
+   reads three-state — `is_internal !== false` (the dashboard's isInternal,
+   FleetHealth's MissingComplianceNote) — so if the NOT NULL is ever dropped, the
+   filter and the label still agree instead of silently disagreeing.
+
+   Scope: the LIST surfaces only (dashboard + reminders). GET /vehicles/:id is
+   deliberately not filtered, so an existing link to an outsourced lorry still
+   opens rather than 404ing. */
+const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => any } }, cols: string) =>
+  sb.from("lorries").select(cols).eq("active", true).or("is_internal.is.null,is_internal.eq.true");
+
 type Lorry = {
   id: string;
   plate: string;
@@ -540,7 +560,7 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
 
   const nowIso = new Date().toISOString();
   const [lorriesR, whR, driversR, vaultR, maintR, svcR, plansR, mileageR, breakdownR, woR, woPartsR] = await Promise.all([
-    sb.from("lorries").select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes").eq("active", true).order("plate"),
+    inHouseLorries(sb, "id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes").order("plate"),
     sb.from("warehouses").select("id, code, name"),
     sb.from("drivers").select("vehicle, name").eq("active", true),
     sb.from("lorry_compliance_documents").select("*"),
@@ -939,7 +959,7 @@ fleetMaintenance.get("/reminders", requireHouzsPerm("fleet.read"), async (c) => 
   const sb = c.get("supabase");
   const today = todayMyt();
   const [lorriesR, vaultR] = await Promise.all([
-    sb.from("lorries").select("id, plate, warehouse_id, active, road_tax_expiry, insurance_expiry, puspakom_expiry, type, is_internal, model, notes").eq("active", true),
+    inHouseLorries(sb, "id, plate, warehouse_id, active, road_tax_expiry, insurance_expiry, puspakom_expiry, type, is_internal, model, notes"),
     sb.from("lorry_compliance_documents").select("*"),
   ]);
   if (lorriesR.error || vaultR.error) return c.json({ error: "load_failed", reason: (lorriesR.error || vaultR.error)?.message }, 500);
