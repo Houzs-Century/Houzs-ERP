@@ -1247,6 +1247,17 @@ export function RecordCard({ code, badge, title, when, subtitle, tone, defaultOp
 
 /** One label + value inside an opened record. A grid of these reads far faster
  *  than the run-on "a · b · c · d" line it replaces. */
+/** One field inside an inline edit form. The forms own their own state, so a
+ *  half-typed edit is never sent and Cancel really does discard. */
+export function EditField({ label, span, children }: { label: string; span?: boolean; children: React.ReactNode }) {
+  return (
+    <div className={span ? "col-span-2" : undefined}>
+      <label className={FIELD_LABEL}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
 export function Detail({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
@@ -1329,7 +1340,7 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
           {b.driverDescription && (
             <p className="mt-2 rounded-md bg-surface px-2.5 py-1.5 text-[11px] text-ink-secondary">{b.driverDescription}</p>
           )}
-          <div className="mt-2.5 flex items-center gap-2">
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <span className="text-[10.5px] uppercase tracking-brand text-ink-muted">Status</span>
             {b.status === "RESOLVED" ? (
               <span className="text-[11px] text-ink">Resolved</span>
@@ -1344,6 +1355,11 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
                 ))}
               </select>
             )}
+            {/* Owner, 2026-08-03: "这些数据我要怎么去编辑呢? 所有的内容都是可以
+                编辑并保存的吗?". PATCH /breakdowns/:id has accepted every one of
+                these fields since Phase 3; only the status dropdown was wired,
+                so a typo in the fault was permanent. */}
+            <BreakdownEdit b={b} onChanged={onChanged} />
           </div>
         </RecordCard>
       ))}
@@ -1479,12 +1495,187 @@ export function WorkOrdersSection({ vehicleId, plate, workOrders, breakdowns = [
   );
 }
 
+/** Edit the facts of a breakdown case. Every field here is one the PATCH route
+ *  has always accepted; the screen only ever wired the status dropdown. */
+function BreakdownEdit({ b, onChanged }: { b: BreakdownView; onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [faultType, setFaultType] = useState(b.faultType ?? "");
+  const [severity, setSeverity] = useState(b.severity);
+  const [stillDrivable, setStillDrivable] = useState(b.stillDrivable);
+  const [description, setDescription] = useState(b.driverDescription ?? "");
+  const [towingCompany, setTowingCompany] = useState(b.towingCompany ?? "");
+  const [towingCost, setTowingCost] = useState(b.towingCostCenti != null ? (b.towingCostCenti / 100).toFixed(2) : "");
+  const [workshop, setWorkshop] = useState(b.workshop ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    if (busy) return;
+    setBusy(true); setErr(null);
+    try {
+      const cost = towingCost.trim() === "" ? null : Number(towingCost);
+      await api.patch(`/api/fleet-maintenance/breakdowns/${b.id}`, {
+        faultType: faultType.trim() || null,
+        severity,
+        stillDrivable,
+        driverDescription: description.trim() || null,
+        towingCompany: towingCompany.trim() || null,
+        towingCostCenti: cost != null && Number.isFinite(cost) ? Math.round(cost * 100) : null,
+        workshop: workshop.trim() || null,
+      });
+      setOpen(false); onChanged();
+    } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
+  };
+
+  if (!open) {
+    return <button type="button" onClick={() => setOpen(true)} className="text-[10.5px] font-semibold text-primary hover:underline">Edit</button>;
+  }
+  return (
+    <div className="mt-2 w-full rounded-lg border border-border bg-surface p-3">
+      <div className="grid grid-cols-2 gap-3">
+        <EditField label="Fault" span>
+          <input className={FIELD_CLS} value={faultType} onChange={(e) => setFaultType(e.target.value)} placeholder="e.g. Tyre burst, engine overheat" />
+        </EditField>
+        <EditField label="Severity">
+          <select className={FIELD_CLS} value={severity} onChange={(e) => setSeverity(e.target.value as BreakdownView["severity"])}>
+            <option value="MINOR">Minor</option>
+            <option value="MAJOR">Major</option>
+            <option value="CRITICAL">Critical (grounds lorry)</option>
+          </select>
+        </EditField>
+        <div className="flex items-end pb-1.5">
+          <label className="flex items-center gap-2 text-[11.5px] text-ink-secondary">
+            <input type="checkbox" checked={stillDrivable} onChange={(e) => setStillDrivable(e.target.checked)} />
+            Still drivable
+          </label>
+        </div>
+        <EditField label="Towing company">
+          <input className={FIELD_CLS} value={towingCompany} onChange={(e) => setTowingCompany(e.target.value)} />
+        </EditField>
+        <EditField label="Towing cost (RM)">
+          <input className={FIELD_CLS} inputMode="decimal" value={towingCost} onChange={(e) => setTowingCost(e.target.value)} />
+        </EditField>
+        <EditField label="Workshop" span>
+          <input className={FIELD_CLS} value={workshop} onChange={(e) => setWorkshop(e.target.value)} />
+        </EditField>
+        <EditField label="What the driver reported" span>
+          <input className={FIELD_CLS} value={description} onChange={(e) => setDescription(e.target.value)} />
+        </EditField>
+      </div>
+      {/* Severity is not cosmetic: CRITICAL + unresolved is what grounds the
+          lorry, so changing it here can put a lorry back on the road. */}
+      <p className="mt-2 text-[10.5px] text-ink-muted">
+        A CRITICAL case that is not resolved grounds the lorry, so severity changes what dispatch can use.
+      </p>
+      {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+      <div className="mt-3 flex gap-2">
+        <Button variant="primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</Button>
+        <Button variant="secondary" onClick={() => { setOpen(false); setErr(null); }}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
+/** Edit a work order's HEADER — everything except its state and its lines.
+ *
+ *  The four money legs sit beside the lines and are added to them, so labour
+ *  typed here is labour that does NOT ride a line. The route refuses a non-zero
+ *  header labour on a work order whose lines already carry LABOUR, which is the
+ *  invariant that stops the same cost being counted twice. */
+function WorkOrderEdit({ wo, onSaved, onCancel }: { wo: WorkOrderView; onSaved: () => void; onCancel: () => void }) {
+  const [problem, setProblem] = useState(wo.problem ?? "");
+  const [diagnosis, setDiagnosis] = useState(wo.diagnosis ?? "");
+  const [workshop, setWorkshop] = useState(wo.workshop ?? "");
+  const [quotationNo, setQuotationNo] = useState(wo.quotationNo ?? "");
+  const [invoiceNo, setInvoiceNo] = useState(wo.invoiceNo ?? "");
+  const rm = (c: number | null | undefined) => (c == null || c === 0 ? "" : (c / 100).toFixed(2));
+  const [labour, setLabour] = useState(rm(wo.labourCenti));
+  const [outside, setOutside] = useState(rm(wo.outsideServiceCenti));
+  const [towing, setTowing] = useState(rm(wo.towingCenti));
+  const [tax, setTax] = useState(rm(wo.taxCenti));
+  const [warranty, setWarranty] = useState(wo.warrantyUntil ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const centi = (v: string): number => {
+    const n = Number(v.trim());
+    return v.trim() === "" || !Number.isFinite(n) ? 0 : Math.round(n * 100);
+  };
+
+  const save = async () => {
+    if (busy) return;
+    setBusy(true); setErr(null);
+    try {
+      await api.patch(`/api/fleet-maintenance/work-orders/${wo.id}`, {
+        problem: problem.trim() || null,
+        diagnosis: diagnosis.trim() || null,
+        workshop: workshop.trim() || null,
+        quotationNo: quotationNo.trim() || null,
+        invoiceNo: invoiceNo.trim() || null,
+        labourCenti: centi(labour),
+        outsideServiceCenti: centi(outside),
+        towingCenti: centi(towing),
+        taxCenti: centi(tax),
+        warrantyUntil: warranty || null,
+      });
+      onSaved();
+    } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-2 rounded-lg border border-border bg-surface p-3">
+      <div className="grid grid-cols-2 gap-3">
+        <EditField label="What was done" span>
+          <input className={FIELD_CLS} value={problem} onChange={(e) => setProblem(e.target.value)} />
+        </EditField>
+        <EditField label="Diagnosis" span>
+          <input className={FIELD_CLS} value={diagnosis} onChange={(e) => setDiagnosis(e.target.value)} />
+        </EditField>
+        <EditField label="Workshop">
+          <input className={FIELD_CLS} value={workshop} onChange={(e) => setWorkshop(e.target.value)} />
+        </EditField>
+        <EditField label="Warranty until">
+          <input type="date" className={FIELD_CLS} value={warranty} onChange={(e) => setWarranty(e.target.value)} />
+        </EditField>
+        <EditField label="Their quotation no">
+          <input className={FIELD_CLS} value={quotationNo} onChange={(e) => setQuotationNo(e.target.value)} placeholder="e.g. WJO00403" />
+        </EditField>
+        <EditField label="Their invoice no">
+          <input className={FIELD_CLS} value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
+        </EditField>
+        <EditField label="Labour (RM)">
+          <input className={FIELD_CLS} inputMode="decimal" value={labour} onChange={(e) => setLabour(e.target.value)} />
+        </EditField>
+        <EditField label="Outside service (RM)">
+          <input className={FIELD_CLS} inputMode="decimal" value={outside} onChange={(e) => setOutside(e.target.value)} />
+        </EditField>
+        <EditField label="Towing (RM)">
+          <input className={FIELD_CLS} inputMode="decimal" value={towing} onChange={(e) => setTowing(e.target.value)} />
+        </EditField>
+        <EditField label="Tax (RM)">
+          <input className={FIELD_CLS} inputMode="decimal" value={tax} onChange={(e) => setTax(e.target.value)} />
+        </EditField>
+      </div>
+      <p className="mt-2 text-[10.5px] leading-snug text-ink-muted">
+        These four amounts are added ON TOP of the lines above. If the workshop&rsquo;s labour is already a line, leave
+        Labour at zero — the route refuses the double count rather than silently inflating the total.
+      </p>
+      {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+      <div className="mt-3 flex gap-2">
+        <Button variant="primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</Button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
 const WO_TONE: Record<WorkOrderState, Tone> = {
   REPORTED: "info", DIAGNOSED: "info", QUOTED: "warn", APPROVED: "info", IN_REPAIR: "warn", WAITING_PARTS: "warn", COMPLETED: "ok", VERIFIED: "ok",
 };
 
 function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: BreakdownView; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [addingPart, setAddingPart] = useState(false);
   const [pName, setPName] = useState("");
   const [pQty, setPQty] = useState("1");
@@ -1595,10 +1786,19 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
         </div>
       ) : (
         <div className="mt-2 flex items-center justify-between">
-          <button type="button" onClick={() => setAddingPart(true)} className="text-[10.5px] font-semibold text-primary hover:underline">+ Add part</button>
+          <span className="flex items-center gap-3">
+            <button type="button" onClick={() => setAddingPart(true)} className="text-[10.5px] font-semibold text-primary hover:underline">+ Add part</button>
+            {/* PATCH /work-orders/:id has always accepted the whole header —
+                problem, diagnosis, workshop, their document numbers, advisor,
+                and the four money legs. Nothing on screen sent any of it. */}
+            <button type="button" onClick={() => setEditing((v) => !v)} className="text-[10.5px] font-semibold text-primary hover:underline">
+              {editing ? "Close" : "Edit details"}
+            </button>
+          </span>
           <span className="text-[12px] font-semibold text-ink">Total {money(wo.totalCenti)}</span>
         </div>
       )}
+      {editing && <WorkOrderEdit wo={wo} onSaved={() => { setEditing(false); onChanged(); }} onCancel={() => setEditing(false)} />}
     </RecordCard>
   );
 }
