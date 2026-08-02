@@ -59,14 +59,14 @@ async function main() {
     /* ── Q1: PO assigned to SO + PO warehouse == SO warehouse ─────────────── */
     const poRows = await sql`
       SELECT pi.id AS po_item_id, pi.material_code, pi.warehouse_id AS po_line_wh, pi.so_item_id,
-             po.po_number, po.status::text AS po_status, po.warehouse_id AS po_hdr_wh, po.purchase_location_id
+             po.po_number, po.status::text AS po_status, po.purchase_location_id
         FROM scm.purchase_order_items pi
         JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id
        WHERE pi.company_id = ${companyId} AND UPPER(po.status::text) NOT IN ('CANCELLED','DRAFT')`;
     let poAssigned = 0, poStock = 0, poWhVsSoOk = 0, poWhVsSoMismatch = 0, poIntoShowroom = 0;
     const poMismatch = [], poShowroomRows = [];
     for (const r of poRows) {
-      const poWh = r.po_line_wh ?? r.po_hdr_wh ?? r.purchase_location_id ?? null;
+      const poWh = r.po_line_wh ?? r.purchase_location_id ?? null;
       if (poWh && isShowroom(poWh)) { poIntoShowroom += 1; poShowroomRows.push(r); }
       if (!r.so_item_id) { poStock += 1; continue; }
       poAssigned += 1;
@@ -80,7 +80,7 @@ async function main() {
     notice(`  PO line warehouse != its SO's warehouse : ${poWhVsSoMismatch}`);
     for (const m of poMismatch.slice(0, 15)) notice(`      ${pad(m.po, 18)} ${pad(m.code, 24)} PO@${pad(whLabel(m.poWh), 12)} SO@${whLabel(m.sWh)}`);
     notice(`  PO lines whose warehouse is a SHOWROOM  : ${poIntoShowroom}  <- a showroom is a display point, stock should not be PURCHASED into it`);
-    for (const r of poShowroomRows.slice(0, 15)) notice(`      ${pad(r.po_number, 18)} ${pad(r.material_code, 24)} -> ${whLabel(r.po_line_wh ?? r.po_hdr_wh ?? r.purchase_location_id)}`);
+    for (const r of poShowroomRows.slice(0, 15)) notice(`      ${pad(r.po_number, 18)} ${pad(r.material_code, 24)} -> ${whLabel(r.po_line_wh ?? r.purchase_location_id)}`);
 
     /* ── Q2: GR received-into warehouse == PO line warehouse ──────────────── */
     // Lots from a GRN; batch_no = source PO number. Compare lot warehouse to the
@@ -93,10 +93,10 @@ async function main() {
        WHERE l.company_id = ${companyId} AND UPPER(COALESCE(l.source_doc_type,'')) = 'GRN'`;
     // PO line warehouse by (po_number, product_code)
     const poWhByKey = new Map();
-    for (const r of poRows) poWhByKey.set(`${r.po_number}|${r.material_code}`, r.po_line_wh ?? r.po_hdr_wh ?? r.purchase_location_id ?? null);
+    for (const r of poRows) poWhByKey.set(`${r.po_number}|${r.material_code}`, r.po_line_wh ?? r.purchase_location_id ?? null);
     // also include received/closed POs (poRows is open-only) — pull all for batch match
     const allPoWh = await sql`
-      SELECT po.po_number, pi.material_code, COALESCE(pi.warehouse_id, po.warehouse_id, po.purchase_location_id) AS wh
+      SELECT po.po_number, pi.material_code, COALESCE(pi.warehouse_id, po.purchase_location_id) AS wh
         FROM scm.purchase_order_items pi JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id
        WHERE pi.company_id = ${companyId}`;
     for (const r of allPoWh) if (!poWhByKey.has(`${r.po_number}|${r.material_code}`)) poWhByKey.set(`${r.po_number}|${r.material_code}`, r.wh);
@@ -162,7 +162,7 @@ async function main() {
     notice(`  LOT   ${pad(d.product_code, 26)} in ${pad(whLabel(d.lot_wh), 12)} qty ${d.qty_remaining} <- ${d.grn_number ?? "?"} (GRN wh ${whLabel(d.grn_wh)}) batch ${d.batch_no}`);
     if (d.batch_no) {
       const poLines = await sql`
-        SELECT po.po_number, pi.material_code, COALESCE(pi.warehouse_id, po.warehouse_id, po.purchase_location_id) AS wh, pi.so_item_id
+        SELECT po.po_number, pi.material_code, COALESCE(pi.warehouse_id, po.purchase_location_id) AS wh, pi.so_item_id
           FROM scm.purchase_order_items pi JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id
          WHERE po.po_number = ${d.batch_no} AND pi.material_code = d.product_code`;
       for (const p of poLines) {
