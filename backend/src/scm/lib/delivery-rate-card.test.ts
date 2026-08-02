@@ -3,6 +3,7 @@ import {
   computeDeliveryCost,
   farthestZone,
   type RateCardSpec,
+  type DeliveryFacts,
   type RateRuleSpec,
 } from './delivery-rate-card';
 
@@ -19,7 +20,11 @@ describe('computeDeliveryCost — owner worked example (RM560)', () => {
   // Melaka RM150 + setup RM50 + dismantle RM40 + dispose RM30 = RM560.
   const card: RateCardSpec = {
     basis: 'SET',
-    aggregation: 'DROP',
+    /* UNIT since mig 0244. This fixture reproduces the owner's RM560 worked
+       example, which prices SETS — it said 'DROP' only because the field was
+       inert then and every card said DROP regardless. The value now selects
+       the count, so saying DROP here would price 0 drops at RM0. */
+    aggregation: 'UNIT',
     rules: [
       tier(1, 120),
       tier(2, 80),
@@ -381,5 +386,89 @@ describe('farthestZone — one surcharge, for the farthest place', () => {
     const surcharge = r.lines.filter((l) => l.ruleType === 'OUTSTATION');
     expect(surcharge).toHaveLength(1);            // once, not once per drop
     expect(surcharge[0]!.amountCenti).toBe(50_000); // Johor, not Melaka
+  });
+});
+
+/**
+ * `aggregation` decides WHAT THE LADDER COUNTS (mig 0244).
+ *
+ * Owner, 2026-08-02, describing all three modes in one shape — "how much per X":
+ *   "Per drop point：一张 DO 多少钱?"
+ *   "Per customer：那一天如果是一样的顾客、一样的地址，是多少钱?"
+ *   "整趟的话，那就不看你多少张单了... 我 assign 给你一个 trip 就是多少钱"
+ *
+ * Before this the field was inert — stored, shown, and never read. Every card
+ * said DROP or CUSTOMER while the calculator counted sets regardless.
+ */
+describe('aggregation — what the tier ladder counts', () => {
+  const flat100: RateRuleSpec[] = [{ ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 10_000 }];
+  const facts: DeliveryFacts = { setCount: 9, itemCount: 12, dropCount: 5, customerCount: 3 };
+
+  it('UNIT counts sets — the behaviour that always ran, now with a name', () => {
+    expect(computeDeliveryCost({ basis: 'SET', aggregation: 'UNIT', rules: flat100 }, facts).totalCenti).toBe(90_000);
+  });
+
+  it('UNIT with an ITEM basis counts items', () => {
+    expect(computeDeliveryCost({ basis: 'ITEM', aggregation: 'UNIT', rules: flat100 }, facts).totalCenti).toBe(120_000);
+  });
+
+  it('DROP counts delivery orders, whatever each one contains', () => {
+    expect(computeDeliveryCost({ basis: 'SET', aggregation: 'DROP', rules: flat100 }, facts).totalCenti).toBe(50_000);
+  });
+
+  it('CUSTOMER counts doorsteps — two drops to one address are one charge', () => {
+    expect(computeDeliveryCost({ basis: 'SET', aggregation: 'CUSTOMER', rules: flat100 }, facts).totalCenti).toBe(30_000);
+  });
+
+  it('TRIP counts 1 — the load does not change the price', () => {
+    const card: RateCardSpec = { basis: 'SET', aggregation: 'TRIP', rules: flat100 };
+    expect(computeDeliveryCost(card, facts).totalCenti).toBe(10_000);
+    expect(computeDeliveryCost(card, { ...facts, setCount: 99, dropCount: 40 }).totalCenti).toBe(10_000);
+  });
+
+  it('an absent aggregation still prices — it does not silently become free', () => {
+    expect(computeDeliveryCost({ basis: 'SET', rules: flat100 }, facts).totalCenti).toBe(90_000);
+  });
+
+  it('CUSTOMER falls back to drops when customers could not be resolved', () => {
+    // Never under-counts; for a COST that is the safe direction.
+    const card: RateCardSpec = { basis: 'SET', aggregation: 'CUSTOMER', rules: flat100 };
+    expect(computeDeliveryCost(card, { ...facts, customerCount: null }).totalCenti).toBe(50_000);
+  });
+
+  it('the ladder still tiers — the unit only says what is being counted', () => {
+    const tiers: RateRuleSpec[] = [
+      { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 12_000 },
+      { ruleType: 'POSITIONAL_TIER', tierPosition: 2, amountCenti: 8_000 },
+      { ruleType: 'POSITIONAL_TIER', tierPosition: 3, amountCenti: 6_000 },
+    ];
+    // 5 drops: 120 + 80 + 60 + 60 + 60
+    expect(computeDeliveryCost({ basis: 'SET', aggregation: 'DROP', rules: tiers }, facts).totalCenti).toBe(38_000);
+    // 3 customers: 120 + 80 + 60 — the 2nd doorstep is cheaper, which is the
+    // whole reason the owner asked "第二个东西会不会比较便宜".
+    expect(computeDeliveryCost({ basis: 'SET', aggregation: 'CUSTOMER', rules: tiers }, facts).totalCenti).toBe(26_000);
+  });
+
+  /* The owner's worked example, now expressed the way the card would be set up:
+     "他平时送一张单是 100 元，送 5 张单就是 500 元。但如果他跑柔佛，我们会额外补贴
+      500 元... 总共是 1000 元." */
+  it("reproduces the owner's carrier: per drop RM100 x 5 + one RM500 Johor subsidy", () => {
+    const card: RateCardSpec = {
+      basis: 'SET',
+      aggregation: 'DROP',
+      rules: [
+        ...flat100,
+        { ruleType: 'OUTSTATION', zone: 'JOHOR', amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION', zone: 'MELAKA', amountCenti: 30_000 },
+      ],
+    };
+    const r = computeDeliveryCost(card, {
+      setCount: 9,                       // deliberately NOT 5 — sets must not matter here
+      dropCount: 5,
+      destinationZones: ['MELAKA', 'JOHOR'],
+    });
+    expect(r.totalCenti).toBe(100_000);
+    expect(r.lines.filter((l) => l.ruleType === 'POSITIONAL_TIER')).toHaveLength(5);
+    expect(r.lines.filter((l) => l.ruleType === 'OUTSTATION')).toHaveLength(1);
   });
 });

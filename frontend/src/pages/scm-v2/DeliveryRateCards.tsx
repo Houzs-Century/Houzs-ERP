@@ -37,6 +37,16 @@ import { ThreePLCompanies } from './ThreePLCompanies';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
+/* What each charging unit means, in the operator's terms. The positional tiers
+   run DOWN this unit — so "Customer" is what makes the second delivery to the
+   same doorstep cheaper, and "Trip" is a flat price that ignores the load. */
+const AGGREGATION_HINT: Record<string, string> = {
+  UNIT: 'Tiers run down the goods — 1st, 2nd, 3rd item on the trip.',
+  DROP: 'Tiers run down the delivery orders. Five DOs is five charges, whatever each contains.',
+  CUSTOMER: 'Two drops to the same buyer at the same address count once, so the second is cheaper.',
+  TRIP: 'One charge for the whole trip. Tier 1 is the price; the load does not change it.',
+};
+
 const centiToRM = (c: number | null | undefined) => (c == null ? '' : (c / 100).toFixed(2));
 const rmToCenti = (v: string): number | null => {
   const n = Number(v);
@@ -299,19 +309,19 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
           <SelectField label="Charging basis" value={card.basis} onChange={(v) => patch({ basis: v })}
             options={[['SET', 'By set (frame+mattress)'], ['ITEM', 'By item']]} />
-          {/* NOT WIRED, and now it says so. `aggregation` is stored, validated and
-              displayed, but computeDeliveryCost has never read it (the field is
-              declared in its spec and referenced nowhere else). The reconcile
-              aggregates PER TRIP — sets summed across every drop, run through
-              one tier ladder — which is neither "per drop" nor "per customer".
-              Implementing the distinction changes what a 3PL is owed, so it
-              waits on the owner rather than being guessed at. Until then the
-              control must not read as if it were doing something. */}
+          {/* WIRED since mig 0244 — this is what the tier ladder counts. It was
+              stored, shown and never read for its whole life; every card said
+              "per drop" while the calculator counted sets. */}
           <div>
-            <SelectField label="Aggregation" value={card.aggregation} onChange={(v) => patch({ aggregation: v })}
-              options={[['DROP', 'Per drop point'], ['CUSTOMER', 'Per customer']]} />
-            <p style={{ margin: '4px 0 0', fontSize: 'var(--fs-11)', color: 'var(--c-warning-text, #8a6d00)' }}>
-              Recorded, not yet applied — pricing currently runs once per trip whichever is picked.
+            <SelectField label="Charge per" value={card.aggregation} onChange={(v) => patch({ aggregation: v })}
+              options={[
+                ['UNIT', card.basis === 'ITEM' ? 'Item' : 'Set'],
+                ['DROP', 'Drop point (per DO)'],
+                ['CUSTOMER', 'Customer (same address, same day)'],
+                ['TRIP', 'Trip (flat, whatever it carries)'],
+              ]} />
+            <p style={{ margin: '4px 0 0', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', maxWidth: 240 }}>
+              {AGGREGATION_HINT[card.aggregation as keyof typeof AGGREGATION_HINT] ?? AGGREGATION_HINT.UNIT}
             </p>
           </div>
           {/* WS4b: a card is priced per 3PL COMPANY (its lorries inherit). "Own

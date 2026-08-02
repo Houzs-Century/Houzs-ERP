@@ -45,6 +45,8 @@ import {
 } from '../lib/companyScope';
 import {
   computeDeliveryCost,
+  AGGREGATION_UNITS,
+  type AggregationUnit,
   type RateCardSpec,
   type RateRuleSpec,
   type RateRuleType,
@@ -94,7 +96,11 @@ function cardOut(r: Row) {
     carrierLabel: s(r.carrier_label),
     isOwnFleet: r.is_own_fleet === true,
     basis: (String(r.basis ?? 'SET') === 'ITEM' ? 'ITEM' : 'SET') as 'ITEM' | 'SET',
-    aggregation: (String(r.aggregation ?? 'DROP') === 'CUSTOMER' ? 'CUSTOMER' : 'DROP') as 'DROP' | 'CUSTOMER',
+    /* Anything unrecognised reads as UNIT — the computation that has always
+       run — so a value a later migration adds prices the way it did rather
+       than silently becoming free. Never collapse to DROP: that would now
+       change the count, not just the label. */
+    aggregation: (AGGREGATION_UNITS.has(String(r.aggregation ?? '')) ? String(r.aggregation) : 'UNIT') as AggregationUnit,
     minChargeCenti: n(r.min_charge_centi),
     capCenti: n(r.cap_centi),
     rounding: String(r.rounding ?? 'NONE'),
@@ -196,7 +202,7 @@ const cardCreateSchema = z.object({
   carrierLabel: z.string().trim().max(120).nullable().optional(),
   isOwnFleet: z.boolean().optional(),
   basis: z.enum(['ITEM', 'SET']).optional(),
-  aggregation: z.enum(['DROP', 'CUSTOMER']).optional(),
+  aggregation: z.enum(['UNIT', 'DROP', 'CUSTOMER', 'TRIP']).optional(),
   minChargeCenti: z.number().int().min(0).nullable().optional(),
   capCenti: z.number().int().min(0).nullable().optional(),
   rounding: z.enum(['NONE', 'NEAREST_10C', 'NEAREST_RM']).optional(),
@@ -234,7 +240,7 @@ deliveryRateCards.post('/', async (c) => {
     carrier_label: p.carrierLabel ?? null,
     is_own_fleet: p.isOwnFleet ?? false,
     basis: p.basis ?? 'SET',
-    aggregation: p.aggregation ?? 'DROP',
+    aggregation: p.aggregation ?? 'UNIT',
     min_charge_centi: p.minChargeCenti ?? null,
     cap_centi: p.capCenti ?? null,
     rounding: p.rounding ?? 'NONE',
@@ -558,6 +564,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
   // SO lines (for set count) + SO header (for postcode -> zone).
   const linesBySo = new Map<string, SetLine[]>();
   const zoneBySo = new Map<string, string | null>();
+  const customerKeyBySo = new Map<string, string>();
   if (allSoDocs.size > 0) {
     const { data: lineRows } = await paginateAll<Row>((lo, hi) =>
       scopeToAllowedCompanies(sb.from('mfg_sales_order_items').select('doc_no, item_group, cancelled'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
@@ -569,12 +576,20 @@ deliveryRateCards.get('/reconcile', async (c) => {
       linesBySo.set(doc, arr);
     }
     const { data: soRows } = await paginateAll<Row>((lo, hi) =>
-      scopeToAllowedCompanies(sb.from('mfg_sales_orders').select('doc_no, postcode, address1, address2'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
+      scopeToAllowedCompanies(sb.from('mfg_sales_orders').select('doc_no, postcode, address1, address2, debtor_code, debtor_name'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
     );
     for (const so of soRows ?? []) {
       const doc = String(so.doc_no ?? '');
       const z = zoneForAddress({ postcode: s(so.postcode), address1: s(so.address1), address2: s(so.address2) }, zoneMapRules);
       zoneBySo.set(doc, z.zone);
+      /* The "customer" a per-customer card charges once for: the SAME buyer at
+         the SAME doorstep. Keyed on debtor + normalised address rather than
+         debtor alone, because one buyer with two delivery addresses is two
+         stops and two charges — owner: "一样的顾客、一样的地址". */
+      const who = s(so.debtor_code) || s(so.debtor_name) || doc;
+      const where = [s(so.address1), s(so.address2), s(so.postcode)]
+        .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toUpperCase();
+      customerKeyBySo.set(doc, `${who}@@${where}`);
     }
   }
 
@@ -602,6 +617,9 @@ deliveryRateCards.get('/reconcile', async (c) => {
       if (z && !zones.includes(z)) zones.push(z);
     }
     const destinationZone: string | null = zones[0] ?? null;
+    /* Distinct doorsteps on this trip — what a per-CUSTOMER card charges once
+       for. Two drops to the same buyer at the same address collapse to one. */
+    const customerCount = new Set(soDocs.map((d) => customerKeyBySo.get(d) ?? d)).size;
     const dropCount = soDocs.length;
     let expectedCenti: number | null = null;
     let breakdown: ReturnType<typeof computeDeliveryCost> | null = null;
@@ -610,7 +628,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
       /* perTrip: the FIXED per-trip outstation fee is now emitted INSIDE the
          calculator, before the min/cap/rounding envelope. It used to be added
          here afterwards, which let a capped card bill above its own cap. */
-      breakdown = computeDeliveryCost(spec, { setCount, destinationZone, destinationZones: zones }, { perTrip: true });
+      breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, destinationZone, destinationZones: zones }, { perTrip: true });
       expectedCenti = breakdown.totalCenti;
     }
     const deltaCenti = expectedCenti == null ? null : billedCenti - expectedCenti;
