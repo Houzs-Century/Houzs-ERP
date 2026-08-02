@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Truck, RefreshCw, X, AlertTriangle } from "lucide-react";
+import { Truck, RefreshCw, X, AlertTriangle, FileUp } from "lucide-react";
 import { PageHeader } from "../components/Layout";
 import { Button } from "../components/Button";
 import { StatCard } from "../components/StatCard";
 import { ResizableDetailDrawer } from "../components/ResizableDetailDrawer";
 import { ListSkeleton } from "../components/Skeleton";
+import { RepairDocumentImport } from "../components/RepairDocumentImport";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
@@ -752,7 +753,7 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
               <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Work orders</h3>
               <span className="text-[10.5px] text-ink-muted">Reported → Diagnosed → Approved → In Repair → Waiting Parts → Completed → Verified</span>
             </div>
-            <WorkOrdersSection vehicleId={v.id} workOrders={detail.data?.workOrders ?? []} onChanged={refresh} />
+            <WorkOrdersSection vehicleId={v.id} plate={v.plate} workOrders={detail.data?.workOrders ?? []} onChanged={refresh} />
 
             {/* Tyre & component lifecycle */}
             <div className="mb-2 mt-6 flex items-center gap-2">
@@ -1091,8 +1092,11 @@ function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicleId: str
 }
 
 /** Maintenance work orders — the state-machine stepper + parts table. */
-function WorkOrdersSection({ vehicleId, workOrders, onChanged }: { vehicleId: string; workOrders: WorkOrderView[]; onChanged: () => void }) {
+function WorkOrdersSection({ vehicleId, plate, workOrders, onChanged }: { vehicleId: string; plate: string | null; workOrders: WorkOrderView[]; onChanged: () => void }) {
   const [adding, setAdding] = useState(false);
+  /* Importing a document is the OTHER way to open a work order, not a mode of
+     the manual form — the two share nothing but the outcome. */
+  const [importing, setImporting] = useState(false);
   const [problem, setProblem] = useState("");
   const [workshop, setWorkshop] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1115,6 +1119,14 @@ function WorkOrdersSection({ vehicleId, workOrders, onChanged }: { vehicleId: st
       {workOrders.map((wo) => (
         <WorkOrderCard key={wo.id} wo={wo} onChanged={onChanged} />
       ))}
+      {importing && (
+        <RepairDocumentImport
+          vehicleId={vehicleId}
+          plate={plate}
+          onCancel={() => setImporting(false)}
+          onDone={() => { setImporting(false); onChanged(); }}
+        />
+      )}
       {adding ? (
         <div className="rounded-lg border border-border bg-surface p-3">
           <label className={FIELD_LABEL}>Problem</label>
@@ -1127,8 +1139,13 @@ function WorkOrdersSection({ vehicleId, workOrders, onChanged }: { vehicleId: st
             <Button variant="secondary" onClick={() => { setAdding(false); setErr(null); }}>Cancel</Button>
           </div>
         </div>
-      ) : (
-        <Button variant="secondary" onClick={() => setAdding(true)}>New work order</Button>
+      ) : !importing && (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => setAdding(true)}>New work order</Button>
+          <Button variant="secondary" onClick={() => setImporting(true)}>
+            <FileUp size={14} /> Import a workshop document
+          </Button>
+        </div>
       )}
     </div>
   );
