@@ -68,6 +68,17 @@
 - **The class, for next time.** "Is this demand free?" must be answered by the DELIVERED LEDGER first and stored claims second — goods that left the building outrank any row that says who intended to serve them. And when the same order appears twice, every downstream engine (MRP supply, attribution, coverage) inherits the duplicate unless a detector names it.
 - **Ref:** `fix/header-chip-union` PR, 2026-08-02. Nothing applied from the branch; A10 + detector are dispatch-gated.
 
+## 2026-08-02
+
+### [MEDIUM] GET /api/presence was uncached and polled by every tab of every user — pool pressure that turned into intermittent 500s and 2s+ waits
+
+- **Symptom.** The client-errors check (2026-08-01) surfaced `GET /api/presence` both `[api 500]` (63x, 4 users, still occurring 2026-08-02) and `[slow 2s+]` (54x). presence rides on every page via the who's-online popover, so this was a standing tax on every route.
+- **Root cause, traced.** `presence.ts` GET ran `SELECT ... FROM users JOIN roles WHERE last_seen_at >= ? AND status='active'` on EVERY poll with NO cache. The frontend is already well-tuned (usePresence: 60s cadence, singleton poller, tick-collapsing), so the load floor is one query per USER per minute — all competing for the Hyperdrive connection pool. Under pool pressure some of those reads fail transiently; the ones whose error shape is not matched by `TRANSIENT_CONN_RE` (which would map to a retryable 503) fall through to a 500. So the 500s and the 2s+ waits are the same cause: connection-pool contention from an uncached high-frequency poll.
+- **Why a cache is correct here (not a band-aid).** The away-window row set is IDENTICAL for every caller — the query reads nothing from `me`; `is_self` is derived per request from the returned rows. So the result is genuinely shared and safe to cache once for the whole fleet.
+- **Fix.** A SHARED `SESSION_CACHE` entry (`presence:list:v1`, 15s TTL) holds the row list; the active/away split still re-runs per request against the LIVE `activeCutoff`, so tiering stays correct off cached rows. A KV hit needs no DB connection, so it both collapses ~N DB reads/min into ~4/min regardless of headcount AND removes the pool-exhaustion failure mode that produced the 500s. 15s of staleness is invisible against the 120s active / 900s away windows. `waitUntil` keeps the cache fill off the response path (same shape as announcements/banner). Header `x-presence-cache: hit|miss|bypass` for verification.
+- **Verified.** backend typecheck clean; full backend suite green; live check after deploy — the `x-presence-cache: hit` header and a re-run of the client-errors check showing the presence 500/slow counts stop climbing.
+- **Ref:** `perf/presence-shared-cache` 2026-08-02. Backend only; no migration, no schema change.
+
 ## 2026-08-01
 
 ### [HIGH] The new 3PL fleet form could not add a lorry at all — it offered lorry types the database enum does not have
