@@ -39,7 +39,7 @@ export type ConfigCacheEnv = { SESSION_CACHE?: KVNamespace };
 /** One version counter per cached surface. Adding a family here is the whole
  *  registration step — the TTL table below must get a row (the Record type
  *  enforces it). */
-export type ConfigCacheFamily = "branding" | "maintcfg" | "banner";
+export type ConfigCacheFamily = "branding" | "maintcfg" | "banner" | "presence";
 
 export const CONFIG_CACHE_TTL_SECONDS: Record<ConfigCacheFamily, number> = {
   // Company identity for letterheads + shell chrome. Edited rarely, read on
@@ -53,6 +53,12 @@ export const CONFIG_CACHE_TTL_SECONDS: Record<ConfigCacheFamily, number> = {
   // Per-user banner snapshot. 60s = the same freshness window sessionCache
   // already grants role/department edits, and the frontend polls at 60s.
   banner: 60,
+  // Shared who's-online row list. Short by design: presence must stay live, and
+  // this rides the EDGE-cache tier (caches.default, read-your-write in the same
+  // colo) NOT the KV tier — a 15s KV entry never survives KV's up-to-60s
+  // negative-cache to be read back, so a shared payload this fresh only works on
+  // the edge cache. Verified live: KV at 15s stayed 100% miss.
+  presence: 15,
 };
 
 const VERSION_KEY_PREFIX = "cachev:";

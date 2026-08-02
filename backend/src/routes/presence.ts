@@ -1,5 +1,11 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
+import {
+  CONFIG_CACHE_TTL_SECONDS,
+  configCacheKeyUrl,
+  configCacheMatch,
+  configCachePut,
+} from "../services/configCache";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -75,34 +81,42 @@ app.get("/", async (c) => {
   const activeCutoff = cutoffAt(ACTIVE_WINDOW_SECONDS);
   const awayCutoff = cutoffAt(AWAY_WINDOW_SECONDS);
 
-  // SHARED cache. The away-window row set is IDENTICAL for every caller — the
-  // query does not read `me` at all (is_self is derived per request from the
-  // rows below). presence is polled from every open tab of every user on a 60s
-  // cadence, so uncached this was one users-JOIN-roles query per user per
-  // minute, all competing for the Hyperdrive connection pool; under pressure
-  // some of those turned into the GET /api/presence 500s the client-error check
-  // surfaced (a KV hit needs no DB connection, so it also removes that failure
-  // mode). 15s TTL collapses the whole fleet's polls into ~4 DB reads/min
-  // regardless of headcount, and 15s of staleness is invisible against a 120s
-  // active / 900s away window. The active/away split still re-runs per request
-  // against the LIVE activeCutoff, so a teammate who just went quiet is tiered
-  // correctly off the cached rows — only someone who became active in the last
-  // 15s waits a beat to appear.
-  const PRESENCE_CACHE_KEY = "presence:list:v1";
-  const PRESENCE_CACHE_TTL_SECONDS = 15;
+  // SHARED cache on the EDGE tier (caches.default), NOT KV. The away-window row
+  // set is IDENTICAL for every caller — the query reads nothing from `me`;
+  // is_self is derived per request from the rows below. presence is polled from
+  // every open tab of every user on a 60s cadence, so uncached this was one
+  // users-JOIN-roles query per user per minute, all competing for the Hyperdrive
+  // connection pool; under pressure some turned into the GET /api/presence 500s
+  // the client-error check surfaced.
+  //
+  // Why the edge cache and not KV: a first miss on a KV key is NEGATIVE-cached at
+  // the edge for up to 60s, so a 15s-TTL KV entry is never read back before it
+  // expires (verified live 2026-08-02: KV stayed 100% miss at 3/6/9s). The edge
+  // cache is read-your-write within the same colo, so a short shared TTL actually
+  // hits. Per-colo scope is fine — the win is collapsing concurrent same-colo
+  // polls off the DB pool. The active/away split still re-runs per request
+  // against the LIVE activeCutoff, so tiering stays correct off cached rows; only
+  // someone who became active in the last 15s waits a beat to appear.
   type PresenceRow = {
     id: number; email: string | null; name: string | null; role_id: number | null;
     role_name: string | null; last_seen_at: string | null; last_path?: string | null;
   };
 
+  const cacheKeyUrl = configCacheKeyUrl(
+    new URL(c.req.url).origin,
+    "presence",
+    "scope=all",
+    1, // no version bump: the 15s TTL is the only freshness lever presence needs
+  );
+
   let rowList: PresenceRow[] | null = null;
-  try {
-    const cached = await c.env.SESSION_CACHE?.get(PRESENCE_CACHE_KEY);
-    if (cached) rowList = JSON.parse(cached) as PresenceRow[];
-  } catch {
-    /* fall through to the live query */
+  if (cacheKeyUrl) {
+    const hit = await configCacheMatch(cacheKeyUrl);
+    if (hit) {
+      try { rowList = (await hit.json()) as PresenceRow[]; } catch { rowList = null; }
+    }
   }
-  c.header("x-presence-cache", rowList !== null ? "hit" : (c.env.SESSION_CACHE ? "miss" : "bypass"));
+  c.header("x-presence-cache", rowList !== null ? "hit" : (cacheKeyUrl ? "miss" : "bypass"));
 
   if (rowList === null) {
     const rows = await c.env.DB.prepare(
@@ -117,20 +131,15 @@ app.get("/", async (c) => {
       .bind(awayCutoff)
       .all<PresenceRow>();
     rowList = rows.results ?? [];
-    // Not awaited on the response path — the fill landing is not needed to
-    // answer THIS request. Same waitUntil-with-floating-fallback shape as
-    // announcements/banner and /auth/me.
-    if (c.env.SESSION_CACHE) {
-      const list = rowList;
-      const fill = (async () => {
-        try {
-          await c.env.SESSION_CACHE!.put(PRESENCE_CACHE_KEY, JSON.stringify(list), {
-            expirationTtl: PRESENCE_CACHE_TTL_SECONDS,
-          });
-        } catch {
-          /* non-fatal: the next miss refills */
-        }
-      })();
+    // Off the response path — the fill landing is not needed to answer THIS
+    // request. configCachePut is a colo-local ~ms write; waitUntil keeps even
+    // that off the critical path. Same shape as announcements/banner.
+    if (cacheKeyUrl) {
+      const fill = configCachePut(
+        cacheKeyUrl,
+        JSON.stringify(rowList),
+        CONFIG_CACHE_TTL_SECONDS.presence,
+      );
       try { c.executionCtx.waitUntil(fill); } catch { void fill; }
     }
   }
