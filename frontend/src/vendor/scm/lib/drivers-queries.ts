@@ -36,7 +36,11 @@ export type DriverRow = {
 export type NewDriver = {
   /** Attach to a 3PL carrier. Setting it forces the row OUTSOURCE server-side. */
   threeplCompanyId?: string | null;
-  driverCode: string;
+  /** OPTIONAL since 2026-08-02: the server mints DRV-### when it is absent.
+   *  Still accepted so an import can carry real codes — but no UI sends it,
+   *  and a required text box for a value the system allocates is how DRV-05
+   *  ended up beside DRV-050 with the same driver under both. */
+  driverCode?: string;
   name: string;
   phone: string;
   icNumber?: string;

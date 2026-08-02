@@ -134,6 +134,9 @@ Region + status filters are URL state; region options are derived from the
 warehouses actually present. Registered in `routing/routeManifest.ts` so the
 mobile shell resolves it to a desktop-only dead-end (no mobile screen in Phase 1).
 
+**The drawer is a quick look, not the record** — see section 12. Everything a
+lorry has ever had lives on `/fleet-health/:lorryId`.
+
 ## 9. Phase 2 — preventive plans + mileage capture
 
 ### `scm.lorry_compliance_attachments` — the vault's FILES (mig 0238, 2026-08-01)
@@ -315,6 +318,29 @@ fitted_km`; `cost_per_km = purchase_price_centi / km_used` (never divide by 0).
   the state machine (illegal jump like `REPORTED → VERIFIED` is rejected).
   `isWorkOrderOpen()`, `workOrderSeam()` (WAITING_PARTS wins over PLANNED),
   `workOrderTotalCenti()`.
+
+  ```
+  Reported → Diagnosed → Quoted → Approved → In Repair → Completed → Verified
+                    └──────────────┘              ⇅
+                    (unquoted jobs)          Waiting Parts → Completed
+  ```
+
+  **`QUOTED` (mig 0247, 2026-08-03)** is where a job waits for the owner to
+  accept the workshop's price. Owner: *"正常不是应该我 report 了这个问题，然后
+  diagnose，然后 for quotation，然后 approve…"*. Before it, a job sat in
+  `DIAGNOSED` whether the quote had arrived or not — while the work order had
+  carried `quotation_no` since mig 0241. **`DIAGNOSED → APPROVED` is kept**: every
+  work order already in `DIAGNOSED` was created when that was its only move, and
+  a job small enough to approve on the spot should not have to fake a quotation.
+  `QUOTED` is OPEN but feeds **no seam** — a lorry waiting on a price is still on
+  the road.
+
+  The list lives in three places by necessity (the machine, the migration CHECK,
+  and the stepper, which needs the ORDER the API never sends).
+  **`npm --prefix backend run audit:work-order-states`** compares all three and
+  runs in `ci.yml`, `deploy.yml` and `deploy-staging.yml`. Mutation-verified:
+  dropping the state from either the stepper or the CHECK fails the job and names
+  which copy drifted.
 - `deriveComponentLife()` — `km_used` / `cost_per_km` / `under_warranty`.
 
 ### 10.3 New routes (`/api/fleet-maintenance`, all gated as shown)
@@ -430,7 +456,111 @@ including the dropped-line case and the vendors who print no line amounts at
 all. `backend/tests/fleetStatus.test.ts` reproduces its RM22,208.50 through the
 stored line model.
 
+## 12. The drawer is a quick look; the record is a page (2026-08-02)
+
+Owner: *"这个 Fleet Health 不可能只是在右边展示... 它应该要支持展开... 要不然界面
+会显得非常乱. 例如 Compliance 这些资料，就不需要在刚点开的时候直接显示在右边.
+包括我的 New Work Order 和 Import Work Shop Document 都不需要在这边. 它应该只需要
+看得到现在的 Mileage，以及下一次什么时候要去维修."*
+
+The drawer had accumulated every phase's section — vault with per-document
+renewal history and file attachments, work orders, tyres, plans, mileage history
+— in a side panel you scrolled for a page and a half.
+
+**The split is by QUESTION, not by size.**
+
+| Surface | Answers | Carries |
+|---|---|---|
+| Drawer (`FleetHealth.tsx`) | *Can I use this lorry today?* | out-of-service / open-problem banner, current mileage, next service, breakdowns, a link to the record |
+| Page (`LorryRecord.tsx`, `/fleet-health/:lorryId`) | *What is this lorry's history?* | vehicle dates, breakdowns, work orders, components, plans, mileage, the full compliance vault |
+
+**New Work Order** and **Import Workshop Document** moved to the page with the
+work-order section they belong to. They are not duplicated in the drawer.
+
+**The page IMPORTS the sections; it does not re-implement them.** ~32
+declarations in `FleetHealth.tsx` gained `export` for this (`PlansSection`,
+`MileageSection`, `BreakdownSection`, `WorkOrdersSection`, `ComponentsSection`,
+`AttachmentStrip`, `AddRenewalForm`, `MissingComplianceNote`, `Pill`, `money`,
+`boxLabel`, `DOC_TYPES`, `DOC_LABEL`, `STATUS_TONE`, and the payload types).
+Copying them by hand is how one copy quietly loses a fix. Both surfaces read the
+same `GET /api/fleet-maintenance/vehicles/:id`, so there is one payload shape.
+
+Gated exactly as `/fleet-health` is (`fleet.read`); registered in
+`routing/routeManifest.ts` (desktop-only, like its parent).
+
+### The four dates a lorry's life is measured from (mig `0245`)
+
+Owner: *"每一辆罗里都要有以下这些日期：1. 生产日期 2. 注册 (Register) 日期
+3. 第一天上班的日期"*. `scm.lorries.purchase_date` (mig 0121) already existed and
+is **none of those three**.
+
+| Column | Answers | Why it is not one of the others |
+|---|---|---|
+| `manufacture_date` | how OLD the vehicle is | depreciation, and whether a part is still made for it |
+| `registration_date` | the JPJ registration | road tax / insurance / PUSPAKOM cycles anchor here, not to our purchase |
+| `in_service_date` | first day it worked FOR US | the denominator for cost-per-day — bought in March, idle until June, is not three months of use |
+| `purchase_date` (0121) | when WE bought it | already present |
+
+**All nullable, no backfill, and no ordering CHECK.** Nothing in the system can
+infer any of them, and a guessed date silently becomes the basis of an age or a
+cost-per-day figure nobody can trace. `manufacture <= registration <= in_service`
+is tempting and wrong: a reconditioned import is registered here long after it
+was built elsewhere, and a lorry can start work before its transfer paperwork
+clears. The UI states the intent instead of the database refusing the row.
+
+Edited on the lorry master (`scm-v2/LorryDetail.tsx`, Coverage & Fleet); read
+back through `/api/fleet-maintenance/vehicles/:id` for the record page's Vehicle
+section.
+
+## 13. Three things the schema had and the screen did not (2026-08-03)
+
+Each of these was a column or a route that already existed, with no way to reach
+it from the UI. They are listed together because they are one failure mode.
+
+### Preventive-maintenance plans were creatable only by script
+
+The empty state read *"Seed the default set (backend/scripts/seed-fleet-plans.mjs)
+or add plans via the API"* — instructions to run a Node script, shown to the
+owner. Owner: *"我该怎么去用?"*. `POST /vehicles/:id/plans` and
+`PATCH /plans/:planId` had existed since Phase 2; only the form was missing.
+
+`PlansSection` now takes optional `vehicleId` / `components` / `onChanged`; given
+all three it can add and edit, and without them it still renders read-only. The
+form re-POSTs when editing because **the route UPSERTs on `(lorry, component)`** —
+the component is the identity, so the picker is disabled while editing (changing
+it would move the plan to a different component, not rename this one) and
+components that already have a plan are not offered when adding.
+
+The component list is **served, not mirrored**: `GET /vehicles/:id` now returns
+`planComponents[]` from `PLAN_COMPONENTS` + `PLAN_COMPONENT_LABELS`. The list and
+the migration's CHECK are already two copies; a third in the frontend would be
+the one nobody updates.
+
+### A repair and the breakdown that caused it were unrelated rows
+
+`scm.lorry_work_orders.breakdown_case_id` has existed since mig `0204` and the
+create route has always accepted `breakdownCaseId` — **no UI ever wrote it**.
+Owner: *"它不是应该跟我们的 breakdown 还有 incident 有串联吗?"*.
+
+The New Work Order form now offers the lorry's **open** cases (a resolved case is
+almost always a mis-click, not a late link), and the work-order card shows the
+case it came from. Same class as `aggregation` before mig 0244 and `is_own_fleet`
+before 0246: a column with a UI and no writer.
+
+### One click peeks, two clicks open
+
+Owner: *"1. 单击：弹出一个 shortcut，让我简单看一个简介; 2. 双击：点进去看细节"* —
+the Sales Order interaction, by name. A double click fires click, click, dblclick,
+so the peek is held for 250ms and cancelled when the second click lands;
+otherwise the drawer flashes open and the navigation pulls the page out from
+under it. The timer is cleared on unmount — the suite leaked exactly this kind of
+timer into a torn-down jsdom for a year (`BUG-HISTORY.md`, 2026-08-02).
+
+Keyboard cannot double-click: **Enter** peeks, **Shift+Enter** opens the record.
+
 ## 8. See also
+- `frontend/src/pages/LorryRecord.tsx` (the full record; sections imported from `FleetHealth.tsx`)
+- `backend/scripts/check-work-order-states.mjs` (`audit:work-order-states` — the three copies of the state list)
 - `backend/src/services/fleet-status.ts` + `backend/tests/fleetStatus.test.ts`
 - `backend/scripts/seed-fleet-maintenance.mjs` (Phase 1 vault) · `seed-fleet-plans.mjs` (Phase 2 plans)
 - `backend/src/scm/routes/lorries.ts`, `lorry-service-records.ts` (the sibling master + history)

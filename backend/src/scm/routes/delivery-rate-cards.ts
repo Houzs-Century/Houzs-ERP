@@ -45,7 +45,8 @@ import {
 } from '../lib/companyScope';
 import {
   computeDeliveryCost,
-  tripOutstationFeeCenti,
+  AGGREGATION_UNITS,
+  type AggregationUnit,
   type RateCardSpec,
   type RateRuleSpec,
   type RateRuleType,
@@ -95,7 +96,11 @@ function cardOut(r: Row) {
     carrierLabel: s(r.carrier_label),
     isOwnFleet: r.is_own_fleet === true,
     basis: (String(r.basis ?? 'SET') === 'ITEM' ? 'ITEM' : 'SET') as 'ITEM' | 'SET',
-    aggregation: (String(r.aggregation ?? 'DROP') === 'CUSTOMER' ? 'CUSTOMER' : 'DROP') as 'DROP' | 'CUSTOMER',
+    /* Anything unrecognised reads as UNIT — the computation that has always
+       run — so a value a later migration adds prices the way it did rather
+       than silently becoming free. Never collapse to DROP: that would now
+       change the count, not just the label. */
+    aggregation: (AGGREGATION_UNITS.has(String(r.aggregation ?? '')) ? String(r.aggregation) : 'UNIT') as AggregationUnit,
     minChargeCenti: n(r.min_charge_centi),
     capCenti: n(r.cap_centi),
     rounding: String(r.rounding ?? 'NONE'),
@@ -195,9 +200,11 @@ const cardCreateSchema = z.object({
   carrierLorryId: z.string().uuid().nullable().optional(),
   carrierCompanyId: z.string().uuid().nullable().optional(),
   carrierLabel: z.string().trim().max(120).nullable().optional(),
-  isOwnFleet: z.boolean().optional(),
+  /* NO isOwnFleet. It is DERIVED from carrierCompanyId — see below. A card that
+     names a carrier is that carrier's price list; a card that names none is our
+     own cost structure. Accepting the two independently let them contradict. */
   basis: z.enum(['ITEM', 'SET']).optional(),
-  aggregation: z.enum(['DROP', 'CUSTOMER']).optional(),
+  aggregation: z.enum(['UNIT', 'DROP', 'CUSTOMER', 'TRIP']).optional(),
   minChargeCenti: z.number().int().min(0).nullable().optional(),
   capCenti: z.number().int().min(0).nullable().optional(),
   rounding: z.enum(['NONE', 'NEAREST_10C', 'NEAREST_RM']).optional(),
@@ -233,9 +240,9 @@ deliveryRateCards.post('/', async (c) => {
     carrier_lorry_id: p.carrierLorryId ?? null,
     carrier_company_id: p.carrierCompanyId ?? null,
     carrier_label: p.carrierLabel ?? null,
-    is_own_fleet: p.isOwnFleet ?? false,
+    is_own_fleet: (p.carrierCompanyId ?? null) === null,
     basis: p.basis ?? 'SET',
-    aggregation: p.aggregation ?? 'DROP',
+    aggregation: p.aggregation ?? 'UNIT',
     min_charge_centi: p.minChargeCenti ?? null,
     cap_centi: p.capCenti ?? null,
     rounding: p.rounding ?? 'NONE',
@@ -272,9 +279,13 @@ deliveryRateCards.patch('/:id', async (c) => {
   const updates: Record<string, unknown> = {};
   if (p.name !== undefined) updates.name = p.name;
   if (p.carrierLorryId !== undefined) updates.carrier_lorry_id = p.carrierLorryId;
-  if (p.carrierCompanyId !== undefined) updates.carrier_company_id = p.carrierCompanyId;
+  if (p.carrierCompanyId !== undefined) {
+    updates.carrier_company_id = p.carrierCompanyId;
+    // Moved together, always. Writing the carrier without the flag is what let a
+    // card read "MSJ TRANSPORT" and "Own-fleet card" at the same time.
+    updates.is_own_fleet = p.carrierCompanyId === null;
+  }
   if (p.carrierLabel !== undefined) updates.carrier_label = p.carrierLabel;
-  if (p.isOwnFleet !== undefined) updates.is_own_fleet = p.isOwnFleet;
   if (p.basis !== undefined) updates.basis = p.basis;
   if (p.aggregation !== undefined) updates.aggregation = p.aggregation;
   if (p.minChargeCenti !== undefined) updates.min_charge_centi = p.minChargeCenti;
@@ -448,7 +459,12 @@ deliveryRateCards.post('/:id/compute', async (c) => {
   );
   const cardO = cardOut(card as Row);
   const spec = toCardSpec(cardO, (rules ?? []).map(ruleOut));
-  const breakdown = computeDeliveryCost(spec, parsed.data as DeliveryFacts);
+  /* perTrip: the calculator on the Rate Cards page could NEVER show an
+     OUTSTATION_TRIP line — the rules editor let you create one and this
+     endpoint never applied it, so the figure on screen silently disagreed
+     with what the reconciliation would bill. It prices a trip, like the
+     reconcile does. */
+  const breakdown = computeDeliveryCost(spec, parsed.data as DeliveryFacts, { perTrip: true });
   return c.json({ card: cardO, facts: parsed.data, breakdown });
 });
 
@@ -554,6 +570,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
   // SO lines (for set count) + SO header (for postcode -> zone).
   const linesBySo = new Map<string, SetLine[]>();
   const zoneBySo = new Map<string, string | null>();
+  const customerKeyBySo = new Map<string, string>();
   if (allSoDocs.size > 0) {
     const { data: lineRows } = await paginateAll<Row>((lo, hi) =>
       scopeToAllowedCompanies(sb.from('mfg_sales_order_items').select('doc_no, item_group, cancelled'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
@@ -565,12 +582,20 @@ deliveryRateCards.get('/reconcile', async (c) => {
       linesBySo.set(doc, arr);
     }
     const { data: soRows } = await paginateAll<Row>((lo, hi) =>
-      scopeToAllowedCompanies(sb.from('mfg_sales_orders').select('doc_no, postcode, address1, address2'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
+      scopeToAllowedCompanies(sb.from('mfg_sales_orders').select('doc_no, postcode, address1, address2, debtor_code, debtor_name'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
     );
     for (const so of soRows ?? []) {
       const doc = String(so.doc_no ?? '');
       const z = zoneForAddress({ postcode: s(so.postcode), address1: s(so.address1), address2: s(so.address2) }, zoneMapRules);
       zoneBySo.set(doc, z.zone);
+      /* The "customer" a per-customer card charges once for: the SAME buyer at
+         the SAME doorstep. Keyed on debtor + normalised address rather than
+         debtor alone, because one buyer with two delivery addresses is two
+         stops and two charges — owner: "一样的顾客、一样的地址". */
+      const who = s(so.debtor_code) || s(so.debtor_name) || doc;
+      const where = [s(so.address1), s(so.address2), s(so.postcode)]
+        .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toUpperCase();
+      customerKeyBySo.set(doc, `${who}@@${where}`);
     }
   }
 
@@ -583,31 +608,33 @@ deliveryRateCards.get('/reconcile', async (c) => {
     const card = (companyId ? cardByCompany.get(companyId) : null) ?? (lorryId ? cardByLorry.get(lorryId) : null) ?? null;
     const billedCenti = Number(t.three_pl_cost_centi ?? 0);
     const soDocs = [...new Set((doIdsByTrip.get(tripId) ?? []).map((d) => soDocByDoId.get(d)).filter((v): v is string => !!v))];
-    // Aggregate the trip's sets across its drops; destination zone from the first drop.
+    /* Aggregate the trip's sets across its drops, and collect EVERY zone it
+       touches. It used to take whichever zone came first out of the query —
+       not the first stop on the route, just the first row — so a
+       Melaka->Johor trip could be charged Melaka's rate, and a re-run could
+       answer differently. The calculator now picks the farthest of them
+       (farthestZone), once, per the owner's rule. */
     let setCount = 0;
-    let destinationZone: string | null = null;
+    const zones: string[] = [];
     for (const doc of soDocs) {
       const lines = linesBySo.get(doc) ?? [];
       setCount += deriveSetCount(lines).sets;
-      if (!destinationZone) destinationZone = zoneBySo.get(doc) ?? null;
+      const z = zoneBySo.get(doc) ?? null;
+      if (z && !zones.includes(z)) zones.push(z);
     }
+    const destinationZone: string | null = zones[0] ?? null;
+    /* Distinct doorsteps on this trip — what a per-CUSTOMER card charges once
+       for. Two drops to the same buyer at the same address collapse to one. */
+    const customerCount = new Set(soDocs.map((d) => customerKeyBySo.get(d) ?? d)).size;
     const dropCount = soDocs.length;
     let expectedCenti: number | null = null;
     let breakdown: ReturnType<typeof computeDeliveryCost> | null = null;
     if (card) {
       const spec = toCardSpec(card, rulesByCard.get(card.id) ?? []);
-      breakdown = computeDeliveryCost(spec, { setCount, destinationZone });
-      // WS4c: the FIXED per-trip outstation fee applies ONCE per trip (not per
-      // drop), so it is added here after the per-drop cost, not inside the pure
-      // per-drop calculator. Reflected as its own line for transparency.
-      const tripFeeCenti = tripOutstationFeeCenti(spec.rules, destinationZone);
-      if (tripFeeCenti > 0) {
-        breakdown = {
-          ...breakdown,
-          lines: [...breakdown.lines, { ruleType: 'OUTSTATION_TRIP', label: `Outstation trip ${String(destinationZone).toUpperCase()}`, amountCenti: tripFeeCenti, detail: { zone: destinationZone, perTrip: true } }],
-          totalCenti: breakdown.totalCenti + tripFeeCenti,
-        };
-      }
+      /* perTrip: the FIXED per-trip outstation fee is now emitted INSIDE the
+         calculator, before the min/cap/rounding envelope. It used to be added
+         here afterwards, which let a capped card bill above its own cap. */
+      breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, destinationZone, destinationZones: zones }, { perTrip: true });
       expectedCenti = breakdown.totalCenti;
     }
     const deltaCenti = expectedCenti == null ? null : billedCenti - expectedCenti;

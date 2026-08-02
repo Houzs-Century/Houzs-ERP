@@ -32,10 +32,22 @@ export interface RateCardSpec {
   /** Price by ITEM or by SET (set = frame + mattress). Selects which fact the
    *  positional tiers count over. */
   basis: 'ITEM' | 'SET';
-  /** Aggregation unit the tiers count over — per DROP or per CUSTOMER. Carried
-   *  for the caller's fact aggregation; the pure calc prices whatever count it is
-   *  handed. */
-  aggregation?: 'DROP' | 'CUSTOMER';
+  /**
+   * WHAT THE TIER LADDER COUNTS (mig 0244). Owner, 2026-08-02, describing all
+   * three modes as "how much per X":
+   *
+   *   UNIT     — sets or items, per `basis`. The only behaviour this
+   *              calculator ever had; it simply had no name, so every card
+   *              said DROP or CUSTOMER while the code counted sets regardless.
+   *   DROP     — delivery orders. "一张 DO 多少钱" — five drops at RM100 is
+   *              RM500, whatever each drop contains.
+   *   CUSTOMER — distinct (customer + address) that day. The second drop to the
+   *              same doorstep continues down the ladder instead of restarting
+   *              at the first-item price.
+   *   TRIP     — 1. "我 assign 给你一个 trip 就是多少钱" — one trip is one
+   *              charging unit, so tier 1 is the flat trip price.
+   */
+  aggregation?: AggregationUnit;
   /** Optional envelope applied to the summed cost. */
   minChargeCenti?: number | null;
   capCenti?: number | null;
@@ -80,8 +92,25 @@ export interface DeliveryFacts {
   itemCount?: number | null;
   /** One entry per sofa: its compartment count. Each maps to one SOFA_BRACKET. */
   sofaCompartments?: readonly number[] | null;
+  /** Delivery orders on this trip. Read when aggregation is DROP. */
+  dropCount?: number | null;
+  /** Distinct (customer + address) on this trip. Read when aggregation is
+   *  CUSTOMER — two drops to one doorstep are ONE customer, which is the whole
+   *  point of that mode. */
+  customerCount?: number | null;
   /** Destination area zone (from the A1 classifier) for the outstation surcharge. */
   destinationZone?: string | null;
+  /**
+   * EVERY zone this trip touches, when it touches more than one.
+   *
+   * Owner, 2026-08-02: "如果是多区行程的话，不是按每个 drop 算，它一定是以最远的
+   * 地方来看... 柔佛 500、马六甲 300，那我肯定是算柔佛 500，不可能再算近的，只是算
+   * 一次而已". One surcharge, for the FARTHEST place.
+   *
+   * When given, it wins over destinationZone. When absent, destinationZone is
+   * used unchanged — the single-drop case is unaffected.
+   */
+  destinationZones?: readonly (string | null | undefined)[] | null;
   disposeCount?: number | null;
   setupCount?: number | null;
   dismantleCount?: number | null;
@@ -124,25 +153,126 @@ function tierAmountForPosition(tiers: readonly RateRuleSpec[], n: number): RateR
 }
 
 /**
+ * What the tier ladder counts. Mig 0244; see RateCardSpec.aggregation.
+ *
+ * Unknown / absent falls back to UNIT — the computation this file has always
+ * done — so a card written before 0244, or one carrying a value a later
+ * migration adds, prices the way it did rather than silently becoming free.
+ */
+export type AggregationUnit = 'UNIT' | 'DROP' | 'CUSTOMER' | 'TRIP';
+export const AGGREGATION_UNITS: ReadonlySet<string> = new Set(['UNIT', 'DROP', 'CUSTOMER', 'TRIP']);
+
+export function chargingUnitCount(
+  card: Pick<RateCardSpec, 'basis' | 'aggregation'>,
+  facts: DeliveryFacts,
+): number {
+  switch (card.aggregation) {
+    case 'TRIP':
+      /* One trip IS the charging unit, so tier 1 is the flat trip price and
+         nothing about the load changes it. A trip that carried nothing still
+         costs a trip. */
+      return 1;
+    case 'DROP':
+      return intOf(facts.dropCount);
+    case 'CUSTOMER':
+      /* Falls back to drops when the caller could not resolve customers — one
+         customer per drop is the pessimistic reading and never under-counts,
+         which for a COST is the safe direction. */
+      return intOf(facts.customerCount) || intOf(facts.dropCount);
+    default:
+      return card.basis === 'ITEM' ? intOf(facts.itemCount) : intOf(facts.setCount);
+  }
+}
+
+export function chargingUnitLabel(card: Pick<RateCardSpec, 'basis' | 'aggregation'>): string {
+  switch (card.aggregation) {
+    case 'TRIP': return 'trip';
+    case 'DROP': return 'drop';
+    case 'CUSTOMER': return 'customer';
+    default: return card.basis === 'ITEM' ? 'item' : 'set';
+  }
+}
+
+/**
+ * Which of a trip's zones to charge for. PURE.
+ *
+ * Owner's rule, 2026-08-02: a multi-zone trip is charged ONCE, for the
+ * FARTHEST place — "柔佛 500、马六甲 300，那我肯定是算柔佛 500，不可能再算近的".
+ *
+ * DISTANCE IS NOT IN THIS SYSTEM. Zones are labels; nothing stores how far
+ * away one is. So "farthest" is read off the only ordering the data actually
+ * carries: the SURCHARGE ITSELF. The zone this card charges most for is the one
+ * it considers farthest, which reproduces the owner's example exactly and needs
+ * no table nobody maintains.
+ *
+ * KNOWN LIMIT, stated rather than hidden: if a NEARER zone were ever priced
+ * higher than a farther one, this picks the nearer. Fixing that properly means
+ * storing a distance or an explicit ordering per zone — worth doing only if
+ * that case turns out to be real.
+ *
+ * A zone with no rule on this card contributes nothing, so an in-town drop on a
+ * multi-zone trip cannot win by accident.
+ */
+export function farthestZone(
+  rules: readonly RateRuleSpec[],
+  ruleType: 'OUTSTATION' | 'OUTSTATION_TRIP',
+  facts: Pick<DeliveryFacts, 'destinationZone' | 'destinationZones'>,
+): string | null {
+  const candidates = (facts.destinationZones && facts.destinationZones.length > 0)
+    ? facts.destinationZones
+    : [facts.destinationZone];
+
+  let best: { zone: string; amount: number } | null = null;
+  for (const raw of candidates) {
+    const z = String(raw ?? '').trim().toUpperCase();
+    if (!z) continue;
+    const rule = rules.find((r) => r.ruleType === ruleType && String(r.zone ?? '').toUpperCase() === z);
+    const amount = rule ? intOf(rule.amountCenti) : 0;
+    /* Ties keep the FIRST seen so the result is deterministic — the whole point
+       is that the same trip must not reconcile differently on a re-run. */
+    if (!best || amount > best.amount) best = { zone: z, amount };
+  }
+  return best ? best.zone : null;
+}
+
+/** How the caller is pricing: one DROP, or a whole TRIP. */
+export interface CostOptions {
+  /**
+   * Include the FIXED per-trip outstation fee (OUTSTATION_TRIP rules).
+   *
+   * It used to be bolted on by the reconcile AFTER this function returned,
+   * which put it OUTSIDE the min/cap/rounding envelope — so a card with a
+   * charge cap could still bill above it, and the fee never appeared in the
+   * UI calculator at all because /compute never added it. Pricing a trip and
+   * pricing a drop are the same computation with one extra line; making that
+   * a flag keeps ONE envelope instead of two places that cap.
+   *
+   * Defaults to false, which is the per-DROP reading.
+   */
+  perTrip?: boolean;
+}
+
+/**
  * Price a drop/trip against a rate card. PURE.
  *
  * Order of the itemised lines: charging-unit tiers (+ overage) → sofa brackets →
- * outstation → dispose → setup → dismantle → service/pickup/inspection/transfer,
- * then the min/cap/rounding envelope. The returned `subtotalCenti` is the sum of
- * the priced lines before the envelope; `totalCenti` is after it.
+ * outstation → dispose → setup → dismantle → service/pickup/inspection/transfer
+ * → the per-trip outstation fee when pricing a trip, then the min/cap/rounding
+ * envelope. The returned `subtotalCenti` is the sum of the priced lines before
+ * the envelope; `totalCenti` is after it.
  */
-export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts): CostBreakdown {
+export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, opts: CostOptions = {}): CostBreakdown {
   const lines: CostLine[] = [];
   const rules = card.rules ?? [];
 
   const rulesOf = (t: RateRuleType) => rules.filter((r) => r.ruleType === t);
 
   // ── Charging-unit positional tiers (+ cap/overage) ────────────────────────
-  const unitCount = card.basis === 'ITEM' ? intOf(facts.itemCount) : intOf(facts.setCount);
+  const unitCount = chargingUnitCount(card, facts);
   const tiers = rulesOf('POSITIONAL_TIER');
   const overage = rulesOf('OVERAGE')[0] ?? null;
   const cap = overage ? intOf(overage.tierPosition) : null;
-  const unitLabel = card.basis === 'ITEM' ? 'item' : 'set';
+  const unitLabel = chargingUnitLabel(card);
   const ordinal = (n: number) => (n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`);
   for (let n = 1; n <= unitCount; n++) {
     if (cap !== null && n > cap) {
@@ -186,16 +316,20 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts): C
     }
   }
 
-  // ── Outstation destination-zone surcharge ─────────────────────────────────
-  if (facts.destinationZone) {
-    const z = String(facts.destinationZone).toUpperCase();
-    const os = rulesOf('OUTSTATION').find((r) => String(r.zone ?? '').toUpperCase() === z);
+  // ── Outstation destination-zone surcharge — ONCE, for the FARTHEST zone ───
+  // The reconcile used to hand over whichever zone came FIRST out of the
+  // query, which is not the first stop on the route — it is arbitrary, so the
+  // same trip could reconcile differently on a re-run. A Melaka->Johor trip
+  // could be charged Melaka's RM300 when the lorry went to Johor.
+  const farZone = farthestZone(rules, 'OUTSTATION', facts);
+  if (farZone) {
+    const os = rulesOf('OUTSTATION').find((r) => String(r.zone ?? '').toUpperCase() === farZone);
     if (os) {
       lines.push({
         ruleType: 'OUTSTATION',
-        label: `Outstation ${z}`,
+        label: `Outstation ${farZone}`,
         amountCenti: intOf(os.amountCenti),
-        detail: { zone: z },
+        detail: { zone: farZone, ...(facts.destinationZones ? { pickedFrom: [...facts.destinationZones] } : {}) },
       });
     }
   }
@@ -223,6 +357,20 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts): C
     });
   }
 
+  // ── The fixed per-TRIP outstation fee (once per trip, not per drop) ───────
+  if (opts.perTrip) {
+    const tripZone = farthestZone(rules, 'OUTSTATION_TRIP', facts);
+    const tripFee = tripOutstationFeeCenti(rules, tripZone);
+    if (tripFee > 0) {
+      lines.push({
+        ruleType: 'OUTSTATION_TRIP',
+        label: `Outstation trip ${String(tripZone).toUpperCase()}`,
+        amountCenti: tripFee,
+        detail: { zone: tripZone, perTrip: true },
+      });
+    }
+  }
+
   // ── Subtotal → min / cap / rounding envelope ──────────────────────────────
   const subtotalCenti = lines.reduce((s, l) => s + l.amountCenti, 0);
   let total = subtotalCenti;
@@ -242,7 +390,15 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts): C
   const rounding = card.rounding ?? 'NONE';
   if (rounding !== 'NONE' && total > 0) {
     const step = rounding === 'NEAREST_RM' ? 100 : 10;
-    const rounded = Math.round(total / step) * step;
+    let rounded = Math.round(total / step) * step;
+    /* ROUNDING MUST NOT BREACH THE CAP. Half-up rounding after a cap could push
+       the charge back ABOVE the ceiling the card sets — RM499.96 capped at
+       RM500 then rounded to the nearest ringgit came out at RM500, which is
+       fine, but a cap of RM495 with 10-sen rounding on RM494.96 produced
+       RM495.00 and a cap of RM494.95 produced RM495.00 too: over the cap, on a
+       line labelled "cap". A cap that a later step can exceed is not a cap.
+       Round DOWN instead when up would breach it. */
+    if (capCenti != null && rounded > capCenti) rounded = Math.floor(total / step) * step;
     if (rounded !== total) {
       lines.push({ ruleType: 'ROUNDING', label: `Rounding (${rounding === 'NEAREST_RM' ? 'nearest RM' : 'nearest 10 sen'})`, amountCenti: rounded - total, detail: { rounding } });
       total = rounded;

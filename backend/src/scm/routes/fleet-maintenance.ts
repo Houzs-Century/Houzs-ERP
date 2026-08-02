@@ -22,6 +22,7 @@
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import { requireHouzsPerm } from "../lib/houzs-perms";
+import { nextCode, CODE_PREFIX } from "../lib/fleet-code-mint";
 import { activeCompanyId } from "../lib/companyScope";
 import type { Env, Variables } from "../env";
 import {
@@ -835,7 +836,7 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
 
   const { data: l, error } = await sb
     .from("lorries")
-    .select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes, capacity_m3, length_ft, width_ft, height_ft")
+    .select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes, capacity_m3, length_ft, width_ft, height_ft, manufacture_date, registration_date, in_service_date, purchase_date, purchase_price_centi")
     .eq("id", id)
     .maybeSingle();
   if (error) return c.json({ error: "load_failed", reason: error.message }, 500);
@@ -969,6 +970,13 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
       /* WS3 (mig 0209) has stored the box since it shipped; the drawer never
          showed it. capacity_m3 is DERIVED from L x W x H by the lorries route. */
       isInternal: lorry.is_internal !== false,
+      /* Mig 0245 — the lorry's own lifecycle, distinct from purchase_date.
+         Surfaced on the full record page, not the quick-look drawer. */
+      manufactureDate: iso((lorry as Record<string, unknown>).manufacture_date as string | null),
+      registrationDate: iso((lorry as Record<string, unknown>).registration_date as string | null),
+      inServiceDate: iso((lorry as Record<string, unknown>).in_service_date as string | null),
+      purchaseDate: iso((lorry as Record<string, unknown>).purchase_date as string | null),
+      purchasePriceCenti: ((lorry as Record<string, unknown>).purchase_price_centi as number | null) ?? null,
       capacityM3: lorry.capacity_m3 ?? null,
       lengthFt: lorry.length_ft ?? null,
       widthFt: lorry.width_ft ?? null,
@@ -976,6 +984,10 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     },
     compliance: byType,
     plans: shapedPlans,
+    /* The components a plan may cover, served rather than mirrored. The list and
+       its labels live in fleet-status.ts and the migration's CHECK mirrors them;
+       a THIRD copy in the frontend would be the one nobody updates. */
+    planComponents: PLAN_COMPONENTS.map((value) => ({ value, label: PLAN_COMPONENT_LABELS[value] })),
     mileage: mileageRows.map((m) => ({
       id: m.id,
       readingDate: iso(m.reading_date),
@@ -1956,18 +1968,13 @@ fleetMaintenance.post("/components/:componentId/events", requireHouzsPerm("fleet
  *  and a Postgres sequence is global. The UNIQUE (company_id, code) index is the
  *  real guard: two racing creates collide there and the loser retries. */
 async function mintWorkshopCode(sb: any, companyId: number | null): Promise<string> {
-  const { data } = await sb
-    .from("workshops")
-    .select("code")
-    .eq("company_id", companyId)
-    .order("code", { ascending: false })
-    .limit(50);
-  let highest = 0;
-  for (const r of (data ?? []) as Array<{ code?: string | null }>) {
-    const m = /^WS-(\d+)$/.exec(String(r.code ?? "").trim().toUpperCase());
-    if (m) highest = Math.max(highest, Number(m[1]));
-  }
-  return `WS-${String(highest + 1).padStart(4, "0")}`;
+  /* Reads EVERY code, not the top 50 by string order: "WS-9" sorts above
+     "WS-10" as text, so an ordered LIMIT would eventually mint a duplicate.
+     nextCode (scm/lib/fleet-code-mint) is the one parser every minted code in
+     this system shares — it reads any padding, which is what stops a second
+     numbering scheme forming the way DRV-05 formed beside DRV-050. */
+  const { data } = await sb.from("workshops").select("code").eq("company_id", companyId);
+  return nextCode(CODE_PREFIX.WORKSHOP, ((data ?? []) as Array<{ code?: string | null }>).map((r) => r.code));
 }
 
 fleetMaintenance.get("/workshops", requireHouzsPerm("fleet.read"), async (c) => {

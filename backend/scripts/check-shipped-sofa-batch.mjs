@@ -36,7 +36,7 @@ async function main() {
       JOIN scm.mfg_products p ON p.code = c.product_code AND p.company_id = d.company_id
      WHERE UPPER(COALESCE(p.category::text,'')) = 'SOFA'
        AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'
-     GROUP BY d.do_number, d.status, d.company_id, di.doc_no, c.product_code, l.batch_no`;
+     GROUP BY d.do_number, d.status, d.company_id, d.so_doc_no, c.product_code, l.batch_no`;
 
   notice(`shipped SOFA consumption rows: ${rows.length}`);
   const nullBatch = rows.filter((r) => !r.batch_no);

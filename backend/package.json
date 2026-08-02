@@ -14,6 +14,8 @@
     "test:scale-contract": "node --test tests/scaleTargetGuard.node.mjs tests/scaleRealSchemaContract.node.mjs tests/scaleRouteDrift.node.mjs tests/routeMatrixDrift.node.mjs",
     "perf:scale": "node scripts/scale-harness.mjs",
     "audit:routes": "node scripts/generate-route-capability-matrix.mjs --check",
+    "audit:job-types": "node scripts/check-job-type-parity.mjs",
+    "audit:work-order-states": "node scripts/check-work-order-states.mjs",
     "audit:map": "node scripts/gen-codebase-map.mjs --check",
     "gen:route-locator": "node scripts/gen-route-locator.mjs",
     "audit:route-locator": "node scripts/gen-route-locator.mjs --check",

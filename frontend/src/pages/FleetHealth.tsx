@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Truck, RefreshCw, X, AlertTriangle, FileUp } from "lucide-react";
+import { useMemo, useState, useRef, useEffect } from "react";
+import { useSearchParams, Link, useNavigate } from "react-router-dom";
+import { Truck, RefreshCw, X, AlertTriangle, ChevronRight, FileUp } from "lucide-react";
 import { PageHeader } from "../components/Layout";
 import { Button } from "../components/Button";
 import { StatCard } from "../components/StatCard";
@@ -24,9 +24,9 @@ import { cn } from "../lib/utils";
 // pills follow the app's tone vocabulary. No dark standalone theme.
 // ---------------------------------------------------------------------------
 
-const DOC_TYPES = ["PUSPAKOM", "ROAD_TAX", "INSURANCE", "APAD", "CROSS_BORDER"] as const;
-type DocType = (typeof DOC_TYPES)[number];
-const DOC_LABEL: Record<DocType, string> = {
+export const DOC_TYPES = ["PUSPAKOM", "ROAD_TAX", "INSURANCE", "APAD", "CROSS_BORDER"] as const;
+export type DocType = (typeof DOC_TYPES)[number];
+export const DOC_LABEL: Record<DocType, string> = {
   PUSPAKOM: "PUSPAKOM",
   ROAD_TAX: "Road Tax / LKM",
   INSURANCE: "Insurance",
@@ -34,9 +34,9 @@ const DOC_LABEL: Record<DocType, string> = {
   CROSS_BORDER: "Cross-border",
 };
 
-type Tone = "crit" | "warn" | "ok" | "info" | "neutral";
+export type Tone = "crit" | "warn" | "ok" | "info" | "neutral";
 
-type DocView = {
+export type DocView = {
   id: string | null;
   docType: DocType;
   documentRef: string | null;
@@ -73,7 +73,7 @@ type NextPlanView = {
   overdue: boolean;
 };
 
-type PlanView = {
+export type PlanView = {
   id: string;
   component: string;
   componentLabel: string;
@@ -94,7 +94,7 @@ type PlanView = {
   tone: Tone;
 };
 
-type MileageView = {
+export type MileageView = {
   id: string;
   readingDate: string | null;
   odometerKm: number | null;
@@ -104,7 +104,7 @@ type MileageView = {
   note: string | null;
 };
 
-type VehicleRow = {
+export type VehicleRow = {
   id: string;
   plate: string;
   region: string | null;
@@ -136,9 +136,13 @@ type VehicleRow = {
   openProblem?: string | null;
 };
 
+/* A copy of WORK_ORDER_STATES in services/fleet-status.ts, kept in step by
+   `npm run audit:work-order-states`. The stepper needs the ORDER, which the API
+   does not send. */
 const WORK_ORDER_STATES = [
   "REPORTED",
   "DIAGNOSED",
+  "QUOTED",
   "APPROVED",
   "IN_REPAIR",
   "WAITING_PARTS",
@@ -149,6 +153,7 @@ type WorkOrderState = (typeof WORK_ORDER_STATES)[number];
 const WORK_ORDER_STATE_LABEL: Record<WorkOrderState, string> = {
   REPORTED: "Reported",
   DIAGNOSED: "Diagnosed",
+  QUOTED: "Quoted",
   APPROVED: "Approved",
   IN_REPAIR: "In Repair",
   WAITING_PARTS: "Waiting Parts",
@@ -157,7 +162,7 @@ const WORK_ORDER_STATE_LABEL: Record<WorkOrderState, string> = {
 };
 
 type PartView = { id: string; name: string; partNo: string | null; qty: number; unitPriceCenti: number; lineCenti: number; serial: string | null };
-type WorkOrderView = {
+export type WorkOrderView = {
   id: string;
   status: WorkOrderState;
   statusLabel: string;
@@ -181,7 +186,7 @@ type WorkOrderView = {
   parts: PartView[];
 };
 
-type BreakdownView = {
+export type BreakdownView = {
   id: string;
   occurredAt: string | null;
   gpsLat: number | null;
@@ -204,7 +209,7 @@ type BreakdownView = {
 };
 
 type ComponentEventView = { id: string; eventType: string; eventDate: string | null; odometerKm: number | null; toPosition: string | null; costCenti: number | null; note: string | null };
-type ComponentView = {
+export type ComponentView = {
   id: string;
   componentType: string;
   componentTypeLabel: string;
@@ -260,12 +265,19 @@ type DashboardPayload = {
   vehicles: VehicleRow[];
 };
 
-type VehicleDetailPayload = {
+export type VehicleDetailPayload = {
   vehicle: VehicleRow & {
     lastServiceWorkshop?: string | null;
     /* WS3 (mig 0209) has stored the box since it shipped; the drawer never
        showed it until 2026-08-01. capacity_m3 is derived from L x W x H. */
     isInternal?: boolean;
+    /* Mig 0245 — four dates that answer four different questions and are
+       routinely confused. Surfaced on the full record page. */
+    manufactureDate?: string | null;
+    registrationDate?: string | null;
+    inServiceDate?: string | null;
+    purchaseDate?: string | null;
+    purchasePriceCenti?: number | null;
     capacityM3?: number | null;
     lengthFt?: number | null;
     widthFt?: number | null;
@@ -273,6 +285,7 @@ type VehicleDetailPayload = {
   };
   compliance: Record<DocType, { currentId: string | null; flatExpiry: string | null; history: DocView[] }>;
   plans: PlanView[];
+  planComponents?: { value: string; label: string }[];
   mileage: MileageView[];
   maintenanceWindows: Array<{ from: string | null; to: string | null; reason: string | null }>;
   breakdowns: BreakdownView[];
@@ -280,7 +293,7 @@ type VehicleDetailPayload = {
   components: ComponentView[];
 };
 
-const STATUS_TONE: Record<VehicleStatus, Tone> = {
+export const STATUS_TONE: Record<VehicleStatus, Tone> = {
   AVAILABLE: "ok",
   SERVICE_DUE: "warn",
   PLANNED_MAINTENANCE: "info",
@@ -298,14 +311,14 @@ const TONE_PILL: Record<Tone, string> = {
   neutral: "text-ink-muted bg-ink-muted/10 border-border",
 };
 
-function fmtDays(days: number | null): string {
+export function fmtDays(days: number | null): string {
   if (days === null) return "no date on file";
   if (days < 0) return `expired ${-days}d ago`;
   if (days === 0) return "expires today";
   return `in ${days}d`;
 }
 
-function money(centi: number | null): string {
+export function money(centi: number | null): string {
   if (centi === null) return "—";
   return "RM " + (centi / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -319,7 +332,7 @@ function fmtDowntime(hours: number | null): string {
   return h > 0 ? `${d}d ${h}h` : `${d}d`;
 }
 
-function fmtDateTime(iso: string | null): string {
+export function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return iso;
@@ -327,7 +340,7 @@ function fmtDateTime(iso: string | null): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
 }
 
-function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
+export function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   return (
     <span className={cn("inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-semibold", TONE_PILL[tone])}>
       <span className={cn("h-1.5 w-1.5 rounded-full", tone === "crit" ? "bg-err" : tone === "warn" ? "bg-warning-text" : tone === "ok" ? "bg-synced" : tone === "info" ? "bg-primary" : "bg-ink-muted")} />
@@ -352,7 +365,7 @@ function ExpiryCell({ doc }: { doc: DocView | undefined }) {
 }
 
 /** The days/km remaining for the most-urgent plan, in words. */
-function fmtPlanRemaining(p: { kmRemaining: number | null; daysRemaining: number | null; overdue: boolean }): string {
+export function fmtPlanRemaining(p: { kmRemaining: number | null; daysRemaining: number | null; overdue: boolean }): string {
   const parts: string[] = [];
   if (p.kmRemaining !== null) parts.push(p.kmRemaining < 0 ? `${(-p.kmRemaining).toLocaleString()} km over` : `${p.kmRemaining.toLocaleString()} km`);
   if (p.daysRemaining !== null) parts.push(p.daysRemaining < 0 ? `${-p.daysRemaining}d over` : `${p.daysRemaining}d`);
@@ -383,7 +396,7 @@ function NextServiceCell({ v }: { v: VehicleRow }) {
 /** What is wrong right now, in words — derived facts. The backend supplies the
  *  breakdown / work-order problem (the most urgent operational fault); fall back
  *  to the compliance / out-of-service / service-due reasons derived here. */
-function openProblem(v: VehicleRow): string | null {
+export function openProblem(v: VehicleRow): string | null {
   if (v.openProblem) return v.openProblem;
   if (v.status === "OUT_OF_SERVICE") return v.outOfServiceReason || "Out of service";
   if (v.status === "COMPLIANCE_BLOCKED") {
@@ -407,6 +420,29 @@ export function FleetHealth() {
   const region = params.get("region") ?? "ALL";
   const statusFilter = params.get("status") ?? "ALL";
   const [openId, setOpenId] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  /* Sales Order's interaction, which the owner asked for by name: "单击：弹出一个
+     shortcut，让我简单看一个简介; 双击：点进去看细节".
+
+     A double click fires click, click, dblclick — so opening the drawer on the
+     first click would flash it open and then navigate away underneath it. The
+     peek is held for one double-click interval and cancelled if the second
+     click lands. 250ms is under the platform default (500ms) on purpose: the
+     drawer should not feel laggy, and a slow double click still works because
+     the navigation fires regardless. */
+  const peekTimer = useRef<number | null>(null);
+  const cancelPeek = () => {
+    if (peekTimer.current != null) { window.clearTimeout(peekTimer.current); peekTimer.current = null; }
+  };
+  // The suite had no unmount for a year and leaked exactly this kind of timer
+  // into a torn-down jsdom (BUG-HISTORY, 2026-08-02).
+  useEffect(() => cancelPeek, []);
+  const peek = (id: string) => {
+    cancelPeek();
+    peekTimer.current = window.setTimeout(() => { peekTimer.current = null; setOpenId(id); }, 250);
+  };
+  const openRecord = (id: string) => { cancelPeek(); navigate(`/fleet-health/${id}`); };
 
   const dash = useQuery<DashboardPayload>("/api/fleet-maintenance/dashboard", () => api.get("/api/fleet-maintenance/dashboard"));
 
@@ -559,6 +595,9 @@ export function FleetHealth() {
 
       {/* Fleet board */}
       <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
+        <p className="border-b border-border bg-surface-2/40 px-3.5 py-1.5 text-[10.5px] text-ink-muted">
+          Click a row for the quick look. Double-click, or click the plate, to open the full record — the plate is a link, so it opens in a new tab too.
+        </p>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[920px] border-collapse text-[13px]">
             <thead>
@@ -594,14 +633,35 @@ export function FleetHealth() {
                     <tr
                       key={v.id}
                       tabIndex={0}
-                      onClick={() => setOpenId(v.id)}
+                      onClick={() => peek(v.id)}
+                      onDoubleClick={() => openRecord(v.id)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") setOpenId(v.id);
+                        // Keyboard cannot double-click: Enter peeks, Shift+Enter
+                        // is the "go in" that the second click is with a mouse.
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        if (e.shiftKey) openRecord(v.id); else setOpenId(v.id);
                       }}
                       className="cursor-pointer border-t border-border transition-colors hover:bg-surface-2 focus:bg-surface-2 focus:outline-none"
                     >
                       <td className="px-3.5 py-3">
-                        <div className="font-semibold text-ink">{v.plate}</div>
+                        {/* A REAL anchor, so the browser's own affordances work:
+                            Cmd/Ctrl-click and middle-click open the record in a
+                            new tab, and right-click offers "Open link in new
+                            tab". Owner, 2026-08-03: "我在第二个页面打开进去是不能
+                            的吗?" — it was not, because the row was a <tr> with
+                            an onClick and there was nothing to open.
+
+                            stopPropagation so the plate does not ALSO fire the
+                            row's peek: a link means "go there", and one click
+                            should not both navigate and open a drawer. */}
+                        <Link
+                          to={`/fleet-health/${v.id}`}
+                          onClick={(e) => { e.stopPropagation(); cancelPeek(); }}
+                          className="font-semibold text-ink hover:text-primary hover:underline"
+                        >
+                          {v.plate}
+                        </Link>
                         <div className="text-[11px] text-ink-muted">
                           {[v.driverName, v.region].filter(Boolean).join(" · ") || "—"}
                         </div>
@@ -674,7 +734,7 @@ function FilterChip({ label, tone, active, onClick }: { label: string; tone?: To
   );
 }
 
-function statusLabel(status: string): string {
+export function statusLabel(status: string): string {
   const map: Record<string, string> = {
     AVAILABLE: "Available",
     SERVICE_DUE: "Service Due",
@@ -733,122 +793,65 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
         {detail.loading && <ListSkeleton />}
-        {v && compliance && (
-          <>
+        {v && (
+          <div className="space-y-4">
+            {/* THE DRAWER ANSWERS ONE QUESTION: can I use this lorry today.
+                Owner, 2026-08-02 — "它应该只需要看得到现在的 Mileage，以及下一次
+                什么时候要去维修，有一些基础功能就行了... 要不然界面会显得非常乱".
+                The compliance vault, work orders, the workshop-document import,
+                tyres, plans and mileage history all moved to /fleet-health/:id.
+                Reporting a breakdown stays: it is the one thing that is urgent
+                while you are standing at the lorry. */}
             {v.outOfService && (
-              <p className="mb-4 rounded-md border border-err/25 bg-err/10 px-3 py-2 text-[12px] text-err">
+              <p className="rounded-md border border-err/25 bg-err/10 px-3 py-2 text-[12px] text-err">
                 Out of service{v.outOfServiceReason ? ` — ${v.outOfServiceReason}` : ""}.
               </p>
             )}
+            {openProblem(v) && !v.outOfService && (
+              <p className="rounded-md border border-warning-text/25 bg-warning-text/10 px-3 py-2 text-[12px] text-warning-text">
+                {openProblem(v)}
+              </p>
+            )}
 
-            {/* Breakdown & incidents */}
-            <div className="mb-2 flex items-center gap-2">
-              <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Breakdown &amp; incidents</h3>
-              <span className="text-[10.5px] text-ink-muted">a critical, unresolved case grounds the lorry</span>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg border border-border bg-surface-2/40 p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Mileage</div>
+                <div className="mt-1 text-[16px] font-semibold tabular-nums text-ink">
+                  {v.mileageKm != null ? v.mileageKm.toLocaleString() : "—"}
+                  <span className="ml-1 text-[11px] font-normal text-ink-muted">km</span>
+                </div>
+                <div className="text-[10.5px] text-ink-muted">
+                  {v.mileageDate ? `read ${v.mileageDate}` : "no reading yet"}
+                  {v.mileageFlagged ? " · flagged" : ""}
+                </div>
+              </div>
+              <div className="rounded-lg border border-border bg-surface-2/40 p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Next service</div>
+                <div className="mt-1"><NextServiceCell v={v} /></div>
+              </div>
             </div>
-            <BreakdownSection vehicleId={v.id} breakdowns={detail.data?.breakdowns ?? []} onChanged={refresh} />
 
-            {/* Maintenance work orders */}
-            <div className="mb-2 mt-6 flex items-center gap-2">
-              <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Work orders</h3>
-              <span className="text-[10.5px] text-ink-muted">Reported → Diagnosed → Approved → In Repair → Waiting Parts → Completed → Verified</span>
-            </div>
-            <WorkOrdersSection vehicleId={v.id} plate={v.plate} workOrders={detail.data?.workOrders ?? []} onChanged={refresh} />
-
-            {/* Tyre & component lifecycle */}
-            <div className="mb-2 mt-6 flex items-center gap-2">
-              <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Tyres &amp; components</h3>
-              <span className="text-[10.5px] text-ink-muted">serial lifecycle · km used + cost/km derived</span>
-            </div>
-            <ComponentsSection vehicleId={v.id} currentKm={v.mileageKm} components={detail.data?.components ?? []} onChanged={refresh} />
-
-            {/* Preventive maintenance — per-component plans with due-bars */}
-            <div className="mt-6" />
-
-            <div className="mb-2 flex items-center gap-2">
-              <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Preventive maintenance</h3>
-              <span className="text-[10.5px] text-ink-muted">per component · due on whichever comes first (km or months)</span>
-            </div>
-            <PlansSection plans={detail.data?.plans ?? []} currentKm={v.mileageKm} />
-
-            {/* Mileage — daily odometer readings (day-complete capture) */}
-            <div className="mb-2 mt-6 flex items-center gap-2">
-              <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Mileage</h3>
-              <span className="text-[10.5px] text-ink-muted">
-                {v.mileageKm != null ? `${v.mileageKm.toLocaleString()} km` : "no reading"}
-                {v.mileageDate ? ` · ${v.mileageDate}` : ""}
-                {v.mileageSource === "service" ? " · from service record" : ""}
+            <Link
+              to={`/fleet-health/${v.id}`}
+              className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2.5 text-[12px] text-ink transition-colors hover:border-primary/40 hover:bg-primary-soft"
+            >
+              <span>
+                <span className="font-semibold">Open the full record</span>
+                <span className="ml-2 text-[11px] text-ink-muted">
+                  compliance, work orders, tyres, plans, mileage history
+                </span>
               </span>
-            </div>
-            <MileageSection readings={detail.data?.mileage ?? []} />
+              <ChevronRight size={15} className="text-ink-muted" />
+            </Link>
 
-            <div className="mb-2 mt-6 flex items-center gap-2">
-              <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Compliance vault</h3>
-              <span className="text-[10.5px] text-ink-muted">current document + renewal history (append-only)</span>
+            <div>
+              <div className="mb-2 flex items-center gap-2">
+                <h3 className="font-display text-[11px] font-bold uppercase tracking-brand text-primary">Breakdown &amp; incidents</h3>
+                <span className="text-[10.5px] text-ink-muted">a critical, unresolved case grounds the lorry</span>
+              </div>
+              <BreakdownSection vehicleId={v.id} breakdowns={detail.data?.breakdowns ?? []} onChanged={refresh} />
             </div>
-
-            <div className="space-y-4">
-              {DOC_TYPES.map((t) => {
-                const group = compliance[t];
-                const history = group?.history ?? [];
-                const currentId = group?.currentId ?? null;
-                return (
-                  <div key={t} className="rounded-lg border border-border bg-surface-2/40 p-3">
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className="text-[12.5px] font-semibold text-ink">{DOC_LABEL[t]}</span>
-                      {history.length === 0 && <span className="text-[11px] text-ink-muted">No document on file</span>}
-                    </div>
-                    {history.length > 0 && (
-                      <div className="space-y-1.5">
-                        {history.map((doc) => (
-                          <div
-                            key={doc.id ?? `${doc.docType}-${doc.expiryDate}`}
-                            className={cn(
-                              "flex items-center justify-between gap-3 rounded-md border px-2.5 py-1.5 text-[12px]",
-                              doc.id === currentId ? "border-border bg-surface" : "border-transparent bg-transparent opacity-70",
-                            )}
-                          >
-                            <div>
-                              <div className="text-ink">
-                                {doc.documentRef || DOC_LABEL[t]}
-                                {doc.id === currentId && <span className="ml-2 rounded bg-primary-soft px-1.5 py-0.5 text-[9.5px] font-semibold uppercase text-primary">Current</span>}
-                              </div>
-                              <div className="text-[10.5px] text-ink-muted">
-                                {doc.issueDate ? `Issued ${doc.issueDate}` : "No issue date"}
-                                {doc.owner ? ` · ${doc.owner}` : ""}
-                                {doc.costCenti != null ? ` · ${money(doc.costCenti)}` : ""}
-                                {doc.result ? ` · ${doc.result}` : ""}
-                                {doc.result === "FAIL" && doc.reinspectionDeadline ? ` · reinspect by ${doc.reinspectionDeadline}` : ""}
-                              </div>
-                              <AttachmentStrip docId={doc.id} files={doc.files ?? []} onChanged={refresh} />
-                            </div>
-                            <div className="text-right">
-                              <div className="tabular-nums text-ink">{doc.expiryDate ?? "—"}</div>
-                              <div
-                                className={cn(
-                                  "text-[10.5px]",
-                                  doc.tone === "crit" ? "text-err" : doc.tone === "warn" ? "text-warning-text" : "text-ink-muted",
-                                )}
-                              >
-                                {doc.result === "FAIL" ? "FAILED · " : ""}
-                                {fmtDays(doc.daysRemaining)}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <AddRenewalForm lorryId={v.id} docType={t} onSaved={refresh} />
-                  </div>
-                );
-              })}
-            </div>
-
-            <p className="mt-5 text-[11px] text-ink-muted">
-              Renew a compliance document by adding a new row (never overwrite) — the history above is the audit trail. Mileage is
-              captured daily by the driver on day-complete. Work-order totals and active breakdowns feed the fleet KPIs.
-            </p>
-          </>
+          </div>
         )}
       </div>
     </ResizableDetailDrawer>
@@ -857,19 +860,162 @@ function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose:
 
 /** Per-component preventive-maintenance plans, each with a due-bar showing how
  *  far through its interval it is (km OR months — whichever is more consumed). */
-function PlansSection({ plans, currentKm }: { plans: PlanView[]; currentKm: number | null }) {
-  if (plans.length === 0) {
-    return (
-      <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">
-        No preventive-maintenance plans on this lorry yet. Seed the default set (backend/scripts/seed-fleet-plans.mjs) or add plans via the API.
-      </p>
-    );
-  }
+export function PlansSection({ plans, currentKm, vehicleId, components, onChanged }: {
+  plans: PlanView[];
+  currentKm: number | null;
+  /* Optional so the section still renders read-only where there is nothing to
+     write to (the dashboard's own preview). Given all three, it can be edited. */
+  vehicleId?: string;
+  components?: { value: string; label: string }[];
+  onChanged?: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<PlanView | null>(null);
+  const canWrite = !!vehicleId && !!onChanged;
+
   return (
     <div className="space-y-2">
+      {plans.length === 0 && !adding && (
+        <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">
+          {/* This used to read "Seed the default set (backend/scripts/
+              seed-fleet-plans.mjs) or add plans via the API" — an empty state
+              that told the owner to run a Node script. The write routes existed
+              the whole time; only the form was missing. Owner: "我该怎么去用?" */}
+          No preventive-maintenance plans on this lorry yet. A plan is one component and how often it is due —
+          by kilometres, by months, or both, whichever comes first.
+        </p>
+      )}
+
       {plans.map((p) => (
-        <PlanRow key={p.id} p={p} currentKm={currentKm} />
+        <PlanRow key={p.id} p={p} currentKm={currentKm} onEdit={canWrite ? () => { setEditing(p); setAdding(false); } : undefined} />
       ))}
+
+      {canWrite && (adding || editing) && (
+        <PlanForm
+          vehicleId={vehicleId}
+          components={components ?? []}
+          /* Editing an existing plan re-POSTs it: the route UPSERTs on
+             (lorry, component), so the component is the identity and PATCH by
+             id would be a second way to write the same row. */
+          plan={editing}
+          taken={new Set(plans.map((p) => p.component))}
+          onCancel={() => { setAdding(false); setEditing(null); }}
+          onSaved={() => { setAdding(false); setEditing(null); onChanged(); }}
+        />
+      )}
+
+      {canWrite && !adding && !editing && (
+        <Button variant="secondary" onClick={() => setAdding(true)}>Add a plan</Button>
+      )}
+    </div>
+  );
+}
+
+/** Create or edit one plan. The route UPSERTs on (lorry, component), so the
+ *  component picker is disabled while editing — changing it would silently move
+ *  the plan to a different component instead of renaming this one. */
+function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
+  vehicleId: string;
+  components: { value: string; label: string }[];
+  plan: PlanView | null;
+  taken: Set<string>;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const free = components.filter((c) => !taken.has(c.value));
+  const [component, setComponent] = useState(plan?.component ?? free[0]?.value ?? components[0]?.value ?? "");
+  const [intervalKm, setIntervalKm] = useState(plan?.intervalKm != null ? String(plan.intervalKm) : "");
+  const [intervalMonths, setIntervalMonths] = useState(plan?.intervalMonths != null ? String(plan.intervalMonths) : "");
+  const [lastDoneKm, setLastDoneKm] = useState(plan?.lastDoneKm != null ? String(plan.lastDoneKm) : "");
+  const [lastDoneDate, setLastDoneDate] = useState(plan?.lastDoneDate ?? "");
+  const [workshop, setWorkshop] = useState(plan?.workshop ?? "");
+  const [estCost, setEstCost] = useState(plan?.estCostCenti != null ? (plan.estCostCenti / 100).toFixed(2) : "");
+  const [active, setActive] = useState(plan?.active ?? true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const num = (v: string): number | null => {
+    const t = v.trim();
+    if (t === "") return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  };
+  // The route refuses a plan with neither interval — nothing could make it due.
+  const ok = component !== "" && (num(intervalKm) !== null || num(intervalMonths) !== null);
+
+  const save = async () => {
+    if (busy || !ok) return;
+    setBusy(true); setErr(null);
+    try {
+      const rm = estCost.trim() === "" ? null : Number(estCost);
+      await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/plans`, {
+        component,
+        intervalKm: num(intervalKm),
+        intervalMonths: num(intervalMonths),
+        lastDoneKm: num(lastDoneKm),
+        lastDoneDate: lastDoneDate || null,
+        workshop: workshop.trim() || null,
+        estCostCenti: rm != null && Number.isFinite(rm) ? Math.round(rm * 100) : null,
+        active,
+      });
+      onSaved();
+    } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-surface p-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2">
+          <label className={FIELD_LABEL}>Component</label>
+          <select className={FIELD_CLS} value={component} disabled={!!plan} onChange={(e) => setComponent(e.target.value)}>
+            {(plan ? components.filter((c) => c.value === plan.component) : free).map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
+          </select>
+          {!plan && free.length === 0 && (
+            <p className="mt-1 text-[10.5px] text-ink-muted">Every component already has a plan on this lorry. Edit one instead.</p>
+          )}
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Every … km</label>
+          <input className={FIELD_CLS} inputMode="numeric" value={intervalKm} onChange={(e) => setIntervalKm(e.target.value)} placeholder="10000" />
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Every … months</label>
+          <input className={FIELD_CLS} inputMode="numeric" value={intervalMonths} onChange={(e) => setIntervalMonths(e.target.value)} placeholder="6" />
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Last done at (km)</label>
+          <input className={FIELD_CLS} inputMode="numeric" value={lastDoneKm} onChange={(e) => setLastDoneKm(e.target.value)} />
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Last done on</label>
+          <input type="date" className={FIELD_CLS} value={lastDoneDate} onChange={(e) => setLastDoneDate(e.target.value)} />
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Workshop</label>
+          <input className={FIELD_CLS} value={workshop} onChange={(e) => setWorkshop(e.target.value)} placeholder="Optional" />
+        </div>
+        <div>
+          <label className={FIELD_LABEL}>Estimated cost (RM)</label>
+          <input className={FIELD_CLS} inputMode="decimal" value={estCost} onChange={(e) => setEstCost(e.target.value)} placeholder="Optional" />
+        </div>
+      </div>
+
+      <p className="mt-2 text-[10.5px] leading-snug text-ink-muted">
+        Give at least one interval. With both, the plan falls due on whichever comes first. Leave
+        &ldquo;last done&rdquo; blank and it reads as never done.
+      </p>
+
+      <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[12px] text-ink">
+        <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Active
+      </label>
+
+      {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
+      <div className="mt-3 flex gap-2">
+        <Button variant="primary" onClick={save} disabled={busy || !ok}>{busy ? "Saving…" : plan ? "Save plan" : "Add plan"}</Button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+      </div>
     </div>
   );
 }
@@ -891,7 +1037,7 @@ function planProgress(p: PlanView, currentKm: number | null): number {
   return Math.max(0, Math.min(1, Math.max(...fracs)));
 }
 
-function PlanRow({ p, currentKm }: { p: PlanView; currentKm: number | null }) {
+function PlanRow({ p, currentKm, onEdit }: { p: PlanView; currentKm: number | null; onEdit?: () => void }) {
   const pct = Math.round(planProgress(p, currentKm) * 100);
   const barColor = p.tone === "crit" ? "bg-err" : p.tone === "warn" ? "bg-warning-text" : "bg-synced";
   const interval = [p.intervalKm ? `${p.intervalKm.toLocaleString()} km` : null, p.intervalMonths ? `${p.intervalMonths} mo` : null].filter(Boolean).join(" / ");
@@ -906,7 +1052,12 @@ function PlanRow({ p, currentKm }: { p: PlanView; currentKm: number | null }) {
           {p.componentLabel}
           {!p.active && <span className="ml-2 text-[10px] font-normal text-ink-muted">inactive</span>}
         </span>
-        <Pill tone={p.tone}>{p.overdue ? "Overdue" : p.dueSoon ? "Due soon" : "OK"}</Pill>
+        <span className="flex items-center gap-2">
+          {onEdit && (
+            <button type="button" onClick={onEdit} className="text-[10.5px] text-primary hover:underline">Edit</button>
+          )}
+          <Pill tone={p.tone}>{p.overdue ? "Overdue" : p.dueSoon ? "Due soon" : "OK"}</Pill>
+        </span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/60">
         <div className={cn("h-full rounded-full", barColor)} style={{ width: `${pct}%` }} />
@@ -926,7 +1077,7 @@ function PlanRow({ p, currentKm }: { p: PlanView; currentKm: number | null }) {
 }
 
 /** Recent daily mileage readings — day-complete captures, with flags. */
-function MileageSection({ readings }: { readings: MileageView[] }) {
+export function MileageSection({ readings }: { readings: MileageView[] }) {
   if (readings.length === 0) {
     return (
       <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">
@@ -955,10 +1106,10 @@ function MileageSection({ readings }: { readings: MileageView[] }) {
 
 // ── Phase 3 drawer sections ──────────────────────────────────────────────────
 
-const FIELD_CLS = "w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink focus:border-primary focus:outline-none";
-const FIELD_LABEL = "mb-1 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted";
+export const FIELD_CLS = "w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink focus:border-primary focus:outline-none";
+export const FIELD_LABEL = "mb-1 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted";
 
-function apiErrText(e: unknown): string {
+export function apiErrText(e: unknown): string {
   const m = e instanceof Error ? e.message : "";
   const known: Record<string, string> = {
     illegal_transition: "That step is not allowed from the current state.",
@@ -973,7 +1124,7 @@ const SEVERITY_TONE: Record<BreakdownView["severity"], Tone> = { MINOR: "info", 
 const BREAKDOWN_STATUS_LABEL: Record<BreakdownView["status"], string> = { OPEN: "Open", TOWING: "Towing", IN_WORKSHOP: "In workshop", RESOLVED: "Resolved" };
 
 /** Breakdown & incident cases — report a new one, advance status / resolve. */
-function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicleId: string; breakdowns: BreakdownView[]; onChanged: () => void }) {
+export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicleId: string; breakdowns: BreakdownView[]; onChanged: () => void }) {
   const [adding, setAdding] = useState(false);
   const [faultType, setFaultType] = useState("");
   const [severity, setSeverity] = useState<BreakdownView["severity"]>("MAJOR");
@@ -1092,22 +1243,35 @@ function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicleId: str
 }
 
 /** Maintenance work orders — the state-machine stepper + parts table. */
-function WorkOrdersSection({ vehicleId, plate, workOrders, onChanged }: { vehicleId: string; plate: string | null; workOrders: WorkOrderView[]; onChanged: () => void }) {
+export function WorkOrdersSection({ vehicleId, plate, workOrders, breakdowns = [], onChanged }: { vehicleId: string; plate: string | null; workOrders: WorkOrderView[]; breakdowns?: BreakdownView[]; onChanged: () => void }) {
   const [adding, setAdding] = useState(false);
   /* Importing a document is the OTHER way to open a work order, not a mode of
      the manual form — the two share nothing but the outcome. */
   const [importing, setImporting] = useState(false);
   const [problem, setProblem] = useState("");
   const [workshop, setWorkshop] = useState("");
+  /* The case this repair came FROM. lorry_work_orders.breakdown_case_id has
+     existed since mig 0204 and the create route has always accepted it — no UI
+     ever wrote it, so every repair and the breakdown that caused it were two
+     unrelated rows. Owner: "它不是应该跟我们的 breakdown 还有 incident 有串联吗?" */
+  const [caseId, setCaseId] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Only cases still open are offered. Attaching a repair to a case that was
+  // resolved weeks ago is almost always a mis-click, not a late link.
+  const openCases = breakdowns.filter((b) => b.status !== "RESOLVED");
 
   const create = async () => {
     if (busy || !problem.trim()) return;
     setBusy(true); setErr(null);
     try {
-      await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/work-orders`, { problem: problem.trim(), workshop: workshop.trim() || undefined });
-      setAdding(false); setProblem(""); setWorkshop(""); onChanged();
+      await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/work-orders`, {
+        problem: problem.trim(),
+        workshop: workshop.trim() || undefined,
+        breakdownCaseId: caseId || undefined,
+      });
+      setAdding(false); setProblem(""); setWorkshop(""); setCaseId(""); onChanged();
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
 
@@ -1117,7 +1281,7 @@ function WorkOrdersSection({ vehicleId, plate, workOrders, onChanged }: { vehicl
         <p className="rounded-md border border-border bg-surface-2/40 px-3 py-2.5 text-[11.5px] text-ink-muted">No work orders on this lorry.</p>
       )}
       {workOrders.map((wo) => (
-        <WorkOrderCard key={wo.id} wo={wo} onChanged={onChanged} />
+        <WorkOrderCard key={wo.id} wo={wo} cause={breakdowns.find((b) => b.id === wo.breakdownCaseId)} onChanged={onChanged} />
       ))}
       {importing && (
         <RepairDocumentImport
@@ -1133,6 +1297,22 @@ function WorkOrdersSection({ vehicleId, plate, workOrders, onChanged }: { vehicl
           <input className={FIELD_CLS} value={problem} onChange={(e) => setProblem(e.target.value)} placeholder="What needs fixing" />
           <label className={cn(FIELD_LABEL, "mt-2")}>Workshop</label>
           <input className={FIELD_CLS} value={workshop} onChange={(e) => setWorkshop(e.target.value)} placeholder="Optional" />
+          <label className={cn(FIELD_LABEL, "mt-2")}>Caused by</label>
+          {openCases.length === 0 ? (
+            <p className="text-[11px] text-ink-muted">No open breakdown case on this lorry — this is scheduled or ad-hoc work.</p>
+          ) : (
+            <>
+              <select className={FIELD_CLS} value={caseId} onChange={(e) => setCaseId(e.target.value)}>
+                <option value="">Not from a breakdown</option>
+                {openCases.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {[b.severity, b.faultType || b.driverDescription, b.occurredAt?.slice(0, 10)].filter(Boolean).join(" · ")}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[10.5px] text-ink-muted">Link the repair to the case that caused it, so the downtime and the spend belong to the same incident.</p>
+            </>
+          )}
           {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
           <div className="mt-3 flex gap-2">
             <Button variant="primary" onClick={create} disabled={busy || !problem.trim()}>{busy ? "Saving…" : "Open work order"}</Button>
@@ -1142,8 +1322,11 @@ function WorkOrdersSection({ vehicleId, plate, workOrders, onChanged }: { vehicl
       ) : !importing && (
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => setAdding(true)}>New work order</Button>
+          {/* Scan it or type it — the same editor either way, so the fields mig
+              0241 added (workshop, document number, advisor, per-line UOM and
+              discount) are reachable without an OCR-able document. */}
           <Button variant="secondary" onClick={() => setImporting(true)}>
-            <FileUp size={14} /> Import a workshop document
+            <FileUp size={14} /> Workshop quotation or invoice
           </Button>
         </div>
       )}
@@ -1152,10 +1335,10 @@ function WorkOrdersSection({ vehicleId, plate, workOrders, onChanged }: { vehicl
 }
 
 const WO_TONE: Record<WorkOrderState, Tone> = {
-  REPORTED: "info", DIAGNOSED: "info", APPROVED: "info", IN_REPAIR: "warn", WAITING_PARTS: "warn", COMPLETED: "ok", VERIFIED: "ok",
+  REPORTED: "info", DIAGNOSED: "info", QUOTED: "warn", APPROVED: "info", IN_REPAIR: "warn", WAITING_PARTS: "warn", COMPLETED: "ok", VERIFIED: "ok",
 };
 
-function WorkOrderCard({ wo, onChanged }: { wo: WorkOrderView; onChanged: () => void }) {
+function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: BreakdownView; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [addingPart, setAddingPart] = useState(false);
   const [pName, setPName] = useState("");
@@ -1190,6 +1373,11 @@ function WorkOrderCard({ wo, onChanged }: { wo: WorkOrderView; onChanged: () => 
         <span className="text-[12.5px] font-semibold text-ink">{wo.problem || "Work order"}</span>
         <Pill tone={WO_TONE[wo.status]}>{wo.statusLabel}</Pill>
       </div>
+      {cause && (
+        <div className="mt-1 text-[10.5px] text-ink-muted">
+          From breakdown: {[cause.severity, cause.faultType || cause.driverDescription, cause.occurredAt?.slice(0, 10)].filter(Boolean).join(" · ")}
+        </div>
+      )}
       {/* Stepper */}
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {WORK_ORDER_STATES.map((s, i) => {
@@ -1265,7 +1453,7 @@ function WorkOrderCard({ wo, onChanged }: { wo: WorkOrderView; onChanged: () => 
 
 /** Tyre & component lifecycle — serial cards with derived km/cost, fit + remove +
  *  event logging. */
-function ComponentsSection({ vehicleId, currentKm, components, onChanged }: { vehicleId: string; currentKm: number | null; components: ComponentView[]; onChanged: () => void }) {
+export function ComponentsSection({ vehicleId, currentKm, components, onChanged }: { vehicleId: string; currentKm: number | null; components: ComponentView[]; onChanged: () => void }) {
   const [adding, setAdding] = useState(false);
   const [type, setType] = useState("TYRE");
   const [position, setPosition] = useState("NA");
@@ -1423,7 +1611,7 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
 
 const ATTACH_ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.heic";
 
-function AttachmentStrip({ docId, files, onChanged }: {
+export function AttachmentStrip({ docId, files, onChanged }: {
   docId: string | null;
   files: ComplianceFile[];
   onChanged: () => void;
@@ -1464,7 +1652,7 @@ function AttachmentStrip({ docId, files, onChanged }: {
   );
 }
 
-function AddRenewalForm({ lorryId, docType, onSaved }: {
+export function AddRenewalForm({ lorryId, docType, onSaved }: {
   lorryId: string;
   docType: DocType;
   onSaved: () => void;
@@ -1586,7 +1774,7 @@ function RenewalField({ label, children }: { label: string; children: React.Reac
 
 /* The box (mig 0209) as one label: dimensions when they are on file, otherwise
    the hand-entered capacity, otherwise nothing rather than "null m3". */
-function boxLabel(v: { lengthFt?: number | null; widthFt?: number | null; heightFt?: number | null; capacityM3?: number | null }): string | null {
+export function boxLabel(v: { lengthFt?: number | null; widthFt?: number | null; heightFt?: number | null; capacityM3?: number | null }): string | null {
   if (v.lengthFt && v.widthFt && v.heightFt) {
     const m3 = v.capacityM3 != null ? ` (${v.capacityM3} m3)` : "";
     return `${v.lengthFt} x ${v.widthFt} x ${v.heightFt} ft${m3}`;
@@ -1600,7 +1788,7 @@ function boxLabel(v: { lengthFt?: number | null; widthFt?: number | null; height
    today. An outsourced lorry is the carrier's paperwork, so it is not counted. */
 const REQUIRED_FOR_INHOUSE: DocType[] = ["ROAD_TAX", "INSURANCE", "PUSPAKOM"];
 
-function MissingComplianceNote({ vehicle, compliance }: {
+export function MissingComplianceNote({ vehicle, compliance }: {
   vehicle: { isInternal?: boolean };
   compliance?: Record<DocType, { currentId: string | null; flatExpiry: string | null; history: DocView[] }>;
 }) {

@@ -25,7 +25,8 @@ export type HelperRow = {
 export type NewHelper = {
   /** Attach to a 3PL carrier. Setting it forces the row OUTSOURCE server-side. */
   threeplCompanyId?: string | null;
-  helperCode: string;
+  /** OPTIONAL since 2026-08-02 — the server mints HLP-###. See NewDriver. */
+  helperCode?: string;
   name: string;
   contact?: string;
   icNumber?: string;

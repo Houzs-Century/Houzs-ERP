@@ -567,6 +567,7 @@ export function breakdownDowntimeHours(
 export type WorkOrderState =
   | "REPORTED"
   | "DIAGNOSED"
+  | "QUOTED"
   | "APPROVED"
   | "IN_REPAIR"
   | "WAITING_PARTS"
@@ -576,6 +577,7 @@ export type WorkOrderState =
 export const WORK_ORDER_STATES: readonly WorkOrderState[] = [
   "REPORTED",
   "DIAGNOSED",
+  "QUOTED",
   "APPROVED",
   "IN_REPAIR",
   "WAITING_PARTS",
@@ -586,6 +588,7 @@ export const WORK_ORDER_STATES: readonly WorkOrderState[] = [
 export const WORK_ORDER_STATE_LABELS: Record<WorkOrderState, string> = {
   REPORTED: "Reported",
   DIAGNOSED: "Diagnosed",
+  QUOTED: "Quoted",
   APPROVED: "Approved",
   IN_REPAIR: "In Repair",
   WAITING_PARTS: "Waiting Parts",
@@ -595,14 +598,20 @@ export const WORK_ORDER_STATE_LABELS: Record<WorkOrderState, string> = {
 
 /**
  * The allowed transitions. The canonical path is linear
- * (Reported → Diagnosed → Approved → In Repair → Completed → Verified) with the
- * one real-world loop: In Repair ⇄ Waiting Parts (the workshop stalls on a part,
- * then resumes), and Waiting Parts may close straight to Completed once the part
- * lands and the job is done. VERIFIED is terminal.
+ * (Reported → Diagnosed → Quoted → Approved → In Repair → Completed → Verified)
+ * with the one real-world loop: In Repair ⇄ Waiting Parts (the workshop stalls
+ * on a part, then resumes), and Waiting Parts may close straight to Completed
+ * once the part lands and the job is done. VERIFIED is terminal.
+ *
+ * QUOTED (mig 0247) is where a job waits for the owner to accept the workshop's
+ * price. DIAGNOSED keeps its DIRECT edge to APPROVED: every work order already
+ * sitting in DIAGNOSED was created when that was its only move, and a small job
+ * approved on the spot should not have to fake a quotation to proceed.
  */
 export const WORK_ORDER_TRANSITIONS: Record<WorkOrderState, readonly WorkOrderState[]> = {
   REPORTED: ["DIAGNOSED"],
-  DIAGNOSED: ["APPROVED"],
+  DIAGNOSED: ["QUOTED", "APPROVED"],
+  QUOTED: ["APPROVED"],
   APPROVED: ["IN_REPAIR"],
   IN_REPAIR: ["WAITING_PARTS", "COMPLETED"],
   WAITING_PARTS: ["IN_REPAIR", "COMPLETED"],

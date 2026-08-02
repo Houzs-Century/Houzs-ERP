@@ -264,17 +264,15 @@ const CreateDriverDrawer = ({ onClose }: { onClose: () => void }) => {
   const create = useCreateDriver();
   const notify = useNotify();
   const [form, setForm] = useState({
-    driverCode: '', name: '', phone: '', icNumber: '', vehicle: '',
+    name: '', phone: '', icNumber: '', vehicle: '',
   });
   const [inHouse, setInHouse] = useState(true);
   const set = <K extends keyof typeof form>(k: K, v: string) => setForm((s) => ({ ...s, [k]: v }));
 
   const submit = () => {
-    if (!form.driverCode.trim()) { notify({ title: 'Code required.', tone: 'error' }); return; }
     if (!form.name.trim()) { notify({ title: 'Name required.', tone: 'error' }); return; }
     if (!form.phone.trim()) { notify({ title: 'Phone required.', tone: 'error' }); return; }
     create.mutate({
-      driverCode: form.driverCode.trim(),
       name: form.name.trim(),
       phone: form.phone.trim(),
       icNumber: form.icNumber.trim() || undefined,
@@ -294,7 +292,6 @@ const CreateDriverDrawer = ({ onClose }: { onClose: () => void }) => {
         </header>
         <div className={styles.drawerBody}>
           <div className={styles.formGrid}>
-            <Field label="Code *" value={form.driverCode} onChange={(v) => set('driverCode', v)} placeholder="DRV-01" />
             <Field label="Name *" value={form.name} onChange={(v) => set('name', v)} />
             <Field label="Phone *" value={form.phone} onChange={(v) => set('phone', v)} placeholder="+60 12-345-6789" />
             <Field label="IC Number" value={form.icNumber} onChange={(v) => set('icNumber', v)} />
@@ -434,16 +431,14 @@ const CreateHelperDrawer = ({ onClose }: { onClose: () => void }) => {
   const create = useCreateHelper();
   const notify = useNotify();
   const [form, setForm] = useState({
-    helperCode: '', name: '', contact: '', icNumber: '',
+    name: '', contact: '', icNumber: '',
   });
   const [inHouse, setInHouse] = useState(true);
   const set = <K extends keyof typeof form>(k: K, v: string) => setForm((s) => ({ ...s, [k]: v }));
 
   const submit = () => {
-    if (!form.helperCode.trim()) { notify({ title: 'Code required.', tone: 'error' }); return; }
     if (!form.name.trim()) { notify({ title: 'Name required.', tone: 'error' }); return; }
     create.mutate({
-      helperCode: form.helperCode.trim(),
       name: form.name.trim(),
       contact: form.contact.trim() || undefined,
       icNumber: form.icNumber.trim() || undefined,
@@ -462,7 +457,6 @@ const CreateHelperDrawer = ({ onClose }: { onClose: () => void }) => {
         </header>
         <div className={styles.drawerBody}>
           <div className={styles.formGrid}>
-            <Field label="Code *" value={form.helperCode} onChange={(v) => set('helperCode', v)} placeholder="HLP-01" />
             <Field label="Name *" value={form.name} onChange={(v) => set('name', v)} />
             <Field label="Contact" value={form.contact} onChange={(v) => set('contact', v)} placeholder="+60 12-345-6789" />
             <Field label="IC Number" value={form.icNumber} onChange={(v) => set('icNumber', v)} />

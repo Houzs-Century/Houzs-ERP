@@ -45,6 +45,11 @@ const COLS = [
   // WS4a (mig 0210) — the 3PL carrier company this lorry belongs to (NULL = own
   // fleet / not attached).
   'threepl_company_id',
+  /* Mig 0245 — the three dates a lorry's life is measured from, none of which
+     is purchase_date: when it was BUILT, when it was REGISTERED with JPJ (what
+     the road-tax / insurance / PUSPAKOM cycles anchor to), and the first day it
+     worked FOR US (the denominator for cost-per-day). */
+  'manufacture_date', 'registration_date', 'in_service_date',
 ].join(', ');
 
 const CAPACITY_LAYERS = new Set(['SETS', 'REVENUE', 'BOTH']);
@@ -108,6 +113,9 @@ function toIntOrNull(v: unknown): { ok: true; value: number | null } | { ok: fal
    2026-07-16). Every entry here is genuine operator-entered data. */
 const LORRY_DATE_FIELDS: [wire: string, col: string][] = [
   ['purchaseDate', 'purchase_date'],
+  ['manufactureDate', 'manufacture_date'],
+  ['registrationDate', 'registration_date'],
+  ['inServiceDate', 'in_service_date'],
   ['roadTaxExpiry', 'road_tax_expiry'],
   ['insuranceExpiry', 'insurance_expiry'],
   ['puspakomExpiry', 'puspakom_expiry'],

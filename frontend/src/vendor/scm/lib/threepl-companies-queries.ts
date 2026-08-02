@@ -9,6 +9,9 @@ import { authedFetch } from './authed-fetch';
 
 export type ThreePLCompanyRow = {
   id: string;
+  /** Minted 3PL-### (mig 0242). Null only on a row that predates the backfill
+   *  AND was never re-saved — seeing one is a bug, not an empty field. */
+  code: string | null;
   name: string;
   /** SSM registration number. Unique per tenant when present (mig 0237). */
   registrationNo: string | null;
