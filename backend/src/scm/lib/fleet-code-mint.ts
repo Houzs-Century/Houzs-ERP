@@ -23,10 +23,17 @@
 // hiding that here would make one of them wrong silently.
 // ---------------------------------------------------------------------------
 
-/** How wide the numeric part is padded. Three matches the widest form already
- *  in production (DRV-050); a number past 999 simply gets longer rather than
- *  wrapping or truncating. */
+/** How wide the numeric part is padded by default. Three matches the widest
+ *  form already in production (DRV-050); a number past 999 simply gets longer
+ *  rather than wrapping or truncating. */
 const PAD = 3;
+
+/** Per-prefix width where it differs from PAD. Breakdown cases and work orders
+ *  (mig 0248) are four wide: a fleet accumulates work orders for a decade, and
+ *  the migration's backfill LPADs to four — the two MUST agree or the minter
+ *  would produce WO-051 beside a backfilled WO-0051 and the "highest existing"
+ *  read would still be right while the register looked like two schemes. */
+const PAD_BY_PREFIX: Record<string, number> = { BD: 4, WO: 4 };
 
 /**
  * PURE. The next code for a prefix, given every code already in use.
@@ -44,7 +51,7 @@ export function nextCode(prefix: string, existing: readonly (string | null | und
     const n = Number(m[1]);
     if (Number.isSafeInteger(n) && n > highest) highest = n;
   }
-  return `${prefix}-${String(highest + 1).padStart(PAD, '0')}`;
+  return `${prefix}-${String(highest + 1).padStart(PAD_BY_PREFIX[prefix.toUpperCase()] ?? PAD, '0')}`;
 }
 
 /**
@@ -63,4 +70,9 @@ export const CODE_PREFIX = {
   HELPER: 'HLP',
   THREEPL: '3PL',
   WORKSHOP: 'WS',
+  /* mig 0248. Four digits, unlike the three above: a lorry breaks down a few
+     times a year but a fleet accumulates work orders for a decade, and the
+     parser reads any padding so widening later would be safe anyway. */
+  BREAKDOWN: 'BD',
+  WORK_ORDER: 'WO',
 } as const;

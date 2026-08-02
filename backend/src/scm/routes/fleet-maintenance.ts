@@ -353,6 +353,7 @@ function planInputs(rows: PlanRow[]): MaintenancePlanInput[] {
 type BreakdownRow = {
   id: string;
   lorry_id: string;
+  case_no?: string | null;
   occurred_at: string | null;
   gps_lat: number | null;
   gps_lng: number | null;
@@ -374,6 +375,7 @@ type BreakdownRow = {
 function shapeBreakdown(row: BreakdownRow, nowIso: string) {
   return {
     id: row.id,
+    caseNo: row.case_no ?? null,
     occurredAt: row.occurred_at,
     gpsLat: row.gps_lat,
     gpsLng: row.gps_lng,
@@ -426,6 +428,7 @@ type WorkOrderRow = {
   breakdown_case_id: string | null;
   component_id: string | null;
   notes: string | null;
+  wo_no?: string | null;
 };
 
 type WorkOrderPartRow = {
@@ -477,6 +480,10 @@ function shapeWorkOrder(row: WorkOrderRow, parts: WorkOrderPartRow[]) {
   const state = row.status as WorkOrderState;
   return {
     id: row.id,
+    /* OURS (mig 0248). quotationNo below is the WORKSHOP'S number, off their
+       document — it is not unique across vendors and a repair with no document
+       has none, so it cannot be the record's identity. */
+    woNo: row.wo_no ?? null,
     status: state,
     statusLabel: WORK_ORDER_STATE_LABELS[state] ?? row.status,
     open: isWorkOrderOpen(state),
@@ -1435,6 +1442,7 @@ fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"
     .insert({
       company_id: activeCompanyId(c) ?? null,
       lorry_id: lorryId,
+      case_no: await mintRecordNo(sb, "lorry_breakdown_cases", "case_no", CODE_PREFIX.BREAKDOWN, activeCompanyId(c) ?? null),
       occurred_at: occurredAt.value ?? new Date().toISOString(),
       gps_lat: lat.value,
       gps_lng: lng.value,
@@ -1593,6 +1601,7 @@ fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write
     .insert({
       company_id: activeCompanyId(c) ?? null,
       lorry_id: lorryId,
+      wo_no: await mintRecordNo(sb, "lorry_work_orders", "wo_no", CODE_PREFIX.WORK_ORDER, activeCompanyId(c) ?? null),
       status: "REPORTED",
       problem: (body.problem as string)?.trim() || null,
       diagnosis: (body.diagnosis as string)?.trim() || null,
@@ -1975,6 +1984,16 @@ async function mintWorkshopCode(sb: any, companyId: number | null): Promise<stri
      numbering scheme forming the way DRV-05 formed beside DRV-050. */
   const { data } = await sb.from("workshops").select("code").eq("company_id", companyId);
   return nextCode(CODE_PREFIX.WORKSHOP, ((data ?? []) as Array<{ code?: string | null }>).map((r) => r.code));
+}
+
+/** BD-#### / WO-#### (mig 0248). Same shape as mintWorkshopCode and for the
+ *  same reasons: read EVERY number (string order puts WO-9 above WO-10), let the
+ *  shared parser decide what comes next, and let the partial UNIQUE index be the
+ *  real guard so two racing creates cannot both win. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function mintRecordNo(sb: any, table: string, column: string, prefix: string, companyId: number | null): Promise<string> {
+  const { data } = await sb.from(table).select(column).eq("company_id", companyId);
+  return nextCode(prefix, ((data ?? []) as Array<Record<string, string | null>>).map((r) => r[column]));
 }
 
 fleetMaintenance.get("/workshops", requireHouzsPerm("fleet.read"), async (c) => {

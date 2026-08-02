@@ -558,6 +558,64 @@ timer into a torn-down jsdom for a year (`BUG-HISTORY.md`, 2026-08-02).
 
 Keyboard cannot double-click: **Enter** peeks, **Shift+Enter** opens the record.
 
+## 14. Records you can name, and a page that folds (2026-08-03)
+
+### BD-#### and WO-#### (mig `0248`)
+
+Owner: *"每一个 Breakdown Incident 应该带出一个唯一的编号"* and *"你的 Works Order
+也应该有一个编号... 需要清晰指示它对应的是哪一个 Breakdown 编号"*.
+
+Both tables had only a UUID. The number on screen — `WJO00403` — is the
+**workshop's own** quotation number, read off their document by the OCR
+(`quotation_no`, mig 0241). It belongs to the vendor, it is not unique across
+vendors, and a repair with no document has none. There was no way to refer to
+one of our own records except by pointing at it.
+
+| | |
+|---|---|
+| Minting | `scm/lib/fleet-code-mint.ts`, the same minter behind DRV / HLP / 3PL / WS. `PAD_BY_PREFIX` makes BD and WO **four** wide — a fleet accumulates work orders for a decade — and the migration's backfill LPADs to four to match. The two MUST agree or the register would read as two schemes. |
+| Backfill | Per company by `(created_at, id)`, oldest first, so it reads like a register and re-running on a clone gives the same answer. |
+| Uniqueness | Nullable column + **partial** unique index per company, exactly as mig 0242 did for `threepl_companies`. |
+| Not a sequence | A Postgres sequence lives outside the app's own allocation rule and could not be reasoned about beside the other four codes. A lorry breaks down a few times a year, not a few times a second. |
+
+`woNo` and `quotationNo` are both surfaced, and deliberately labelled as ours and
+theirs — confusing the two is how a repair gets attributed to the wrong vendor.
+
+### The page folds instead of sprawling
+
+Owner: *"这个卡片或区域应该设计成可以展开和收起"*, *"要确保当资料密密麻麻、数据量
+很大的时候，界面依然清晰"*, and on the Vehicle block, *"字太多、提示词也太多了"*.
+
+`RecordCard` (exported from `FleetHealth.tsx`) is the one collapsible shell for
+breakdowns, work orders and components. **Closed shows what you scan for** — the
+number, a status badge, what it was, when — and the detail is one click away
+rather than a scroll away. What opens by default is the rule, not a preference:
+
+| Record | Open by default when |
+|---|---|
+| Breakdown | not `RESOLVED` — the case you opened the page for |
+| Work order | still `open` (anything before COMPLETED) |
+| Component | `ACTIVE` — a removed one is history |
+
+Inside, `Detail` renders a label/value grid. It replaces the run-on
+"a · b · c · d · e" line, which was unreadable the moment a record had more than
+three facts.
+
+The Vehicle block lost a sentence of explanation under every date plus a
+paragraph under the row. That reasoning lives in mig 0245 and in section 12 —
+which is where reasoning belongs; the screen shows the dates.
+
+### Mileage can be recorded on screen
+
+Owner: *"这部分应该用来记录每周的里程。比如我们每一次检测的记录：在什么时间、当时的
+里程数是多少"*.
+
+`POST /vehicles/:id/mileage` has always accepted `source: "MANUAL"` — the odometer
+could be captured from the driver's phone on day-complete and **nowhere else**.
+`MileageSection` now takes optional `vehicleId` / `onChanged` and grows a form.
+The two rules the route enforces are stated before you hit them: a reading below
+the last one is a rollback and is refused; an abnormal jump saves but is flagged.
+
 ## 8. See also
 - `frontend/src/pages/LorryRecord.tsx` (the full record; sections imported from `FleetHealth.tsx`)
 - `backend/scripts/check-work-order-states.mjs` (`audit:work-order-states` — the three copies of the state list)

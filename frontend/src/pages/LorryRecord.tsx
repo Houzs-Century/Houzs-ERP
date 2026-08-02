@@ -47,11 +47,11 @@ const Section = ({ title, hint, children }: { title: string; hint?: string; chil
   </section>
 );
 
-const DateFact = ({ label, value, hint }: { label: string; value: string | null; hint: string }) => (
+const DateFact = ({ label, value, hint }: { label: string; value: string | null; hint?: string }) => (
   <div>
     <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{label}</div>
     <div className={cn("mt-0.5 text-[13px] tabular-nums", value ? "text-ink" : "text-ink-muted")}>{value ?? "—"}</div>
-    <div className="mt-0.5 text-[10.5px] leading-snug text-ink-muted">{hint}</div>
+    {hint && <div className="mt-0.5 text-[10.5px] text-ink-muted">{hint}</div>}
   </div>
 );
 
@@ -110,22 +110,23 @@ export function LorryRecord() {
 
       {/* The lorry's own lifecycle. Four dates that answer four different
           questions and are routinely confused for each other — mig 0245. */}
-      <Section title="Vehicle" hint="dates the lorry's life is measured from">
+      {/* Four dates, four labels, nothing else. Owner, 2026-08-03: "字太多、提示词
+          也太多了，导致整个界面很乱" — this block used to carry a sentence of
+          explanation under every value plus a paragraph under the row. The
+          reasoning lives in mig 0245 and the module guide, which is where
+          reasoning belongs; the screen shows the dates. */}
+      <Section title="Vehicle" hint="the dates a lorry's life is measured from">
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <DateFact label="Manufactured" value={v.manufactureDate ?? null}
-            hint="How old the vehicle is. Drives depreciation and parts availability." />
-          <DateFact label="Registered" value={v.registrationDate ?? null}
-            hint="The JPJ registration — what road tax, insurance and PUSPAKOM cycles anchor to." />
-          <DateFact label="In service" value={v.inServiceDate ?? null}
-            hint="First day it worked for us. The denominator for cost-per-day." />
-          <DateFact label="Purchased" value={v.purchaseDate ?? null}
-            hint={v.purchasePriceCenti != null ? `We bought it for ${money(v.purchasePriceCenti)}.` : "When we bought it."} />
+          <DateFact label="Manufactured" value={v.manufactureDate ?? null} />
+          <DateFact label="Registered" value={v.registrationDate ?? null} />
+          <DateFact label="In service" value={v.inServiceDate ?? null} />
+          <DateFact
+            label="Purchased"
+            value={v.purchaseDate ?? null}
+            hint={v.purchasePriceCenti != null ? money(v.purchasePriceCenti) : undefined}
+          />
         </div>
-        <p className="mt-3 text-[10.5px] leading-snug text-ink-muted">
-          These are not the same date and the system never guesses one from another — a reconditioned import is
-          registered here long after it was built, and a lorry can start work before its transfer paperwork clears.
-          Edit them on the lorry master under Coverage &amp; Fleet.
-        </p>
+        <p className="mt-3 text-[10.5px] text-ink-muted">Edit these on the lorry master, under Coverage &amp; Fleet.</p>
       </Section>
 
       <Section title="Breakdown & incidents" hint="a critical, unresolved case grounds the lorry">
@@ -150,8 +151,8 @@ export function LorryRecord() {
         />
       </Section>
 
-      <Section title="Mileage" hint="the driver captures the odometer on day-complete from the mobile app">
-        <MileageSection readings={detail.data?.mileage ?? []} />
+      <Section title="Mileage" hint="the driver captures it on day-complete; record the weekly check here">
+        <MileageSection readings={detail.data?.mileage ?? []} vehicleId={v.id} onChanged={refresh} />
       </Section>
 
       <Section title="Compliance vault" hint="current document + renewal history (append-only)">
