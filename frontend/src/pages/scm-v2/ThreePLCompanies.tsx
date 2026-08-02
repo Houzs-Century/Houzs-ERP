@@ -19,6 +19,7 @@ import { Button } from '@2990s/design-system';
 import { Building2, Plus, Trash2, Pencil, Check, X, ChevronRight, ChevronDown } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
 import { FormCard, FormGrid, FormField, FormInput } from '../../vendor/scm/components/FormCard';
+import styles from './Suppliers.module.css';
 import {
   useThreePLCompanies,
   useThreePLFleet,
@@ -146,7 +147,7 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
               <thead>
                 <tr style={{ textAlign: 'left', color: 'var(--fg-muted)' }}>
-                  <Th></Th><Th>Company</Th><Th>SSM</Th><Th>Contact</Th><Th>Office</Th><Th>Fleet</Th><Th>Active</Th><Th></Th>
+                  <Th></Th><Th>Code</Th><Th>Company</Th><Th>SSM</Th><Th>Contact</Th><Th>Office</Th><Th>Fleet</Th><Th>Active</Th><Th></Th>
                 </tr>
               </thead>
               <tbody>
@@ -251,6 +252,10 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
             {open ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
           </button>
         </Td>
+        {/* The minted code (mig 0242). It was stored and returned but nowhere
+            on screen, which makes an auto-allocated identifier useless — you
+            cannot quote a code you cannot see. */}
+        <Td><span className={styles.codeChip}>{row.code ?? '—'}</span></Td>
         <Td><strong>{row.name}</strong></Td>
         <Td>{row.registrationNo ?? '—'}</Td>
         <Td>{row.contactName ? `${row.contactName}${row.contactPhone ? ` · ${row.contactPhone}` : ''}` : (row.contactPhone ?? '—')}</Td>
@@ -278,7 +283,7 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
       </tr>
       {open && (
         <tr>
-          <td colSpan={8} style={{ padding: '0 12px 14px 40px', background: 'var(--bg-subtle, rgba(0,0,0,0.02))' }}>
+          <td colSpan={9} style={{ padding: '0 12px 14px 40px', background: 'var(--bg-subtle, rgba(0,0,0,0.02))' }}>
             <CarrierFleet companyId={row.id} companyName={row.name} />
           </td>
         </tr>
