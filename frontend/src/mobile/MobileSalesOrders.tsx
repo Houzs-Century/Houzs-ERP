@@ -577,7 +577,9 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                       line). doc_no + brand pill stay whole (flex:none); only the
                       ref ellipsises if truly long, so the pill never crams it. */}
                   <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, marginTop: 5, fontSize: 11.5, color: "var(--mut)" }}>
-                    <span className="money" style={{ fontWeight: 700, color: "var(--brand-d)", flex: "none" }}>{r.doc_no}</span>
+                    {/* Struck through when cancelled — same doc-number-only strike as
+                        the desktop lists' dt-cancel-strike (owner 2026-08-02). */}
+                    <span className="money" style={{ fontWeight: 700, color: "var(--brand-d)", flex: "none", ...(cancelled ? { textDecoration: "line-through", textDecorationThickness: 1 } : null) }}>{r.doc_no}</span>
                     {brand !== "—" && <BrandPill brand={brand} />}
                     {r.customer_so_no && <><span style={{ opacity: .4, flex: "none" }}>·</span><span className="money" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.customer_so_no}</span></>}
                   </div>
