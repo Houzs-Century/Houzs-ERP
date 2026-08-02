@@ -10,6 +10,20 @@ export default defineConfig(async (env) => {
     test: {
       environment: "jsdom",
       globals: false,
+      // Registers afterEach(cleanup) so RTL unmounts each rendered tree, running
+      // its effect cleanups and clearing timers those effects scheduled. Under
+      // globals:false, RTL does NOT auto-register this, so without it every
+      // render() stays mounted for the whole process and a leaked timer fires
+      // after teardown as "window is not defined". See src/test-setup.ts and the
+      // leaked-timer entries in BUG-HISTORY.
+      setupFiles: ["./src/test-setup.ts"],
+      // Default is 5000ms. Several component tests legitimately run 4.5-6s under
+      // CI load (jsdom + a large render + fake-timer flushes), so they brush the
+      // default and fail at random — a SEPARATE flake class from the leaked
+      // timer above, same visible symptom (CI red, frontend release skipped).
+      // 15s gives real headroom without hiding a genuinely hung test.
+      testTimeout: 15000,
+      hookTimeout: 15000,
       // `functions/` is the Cloudflare Pages SPA fallback. It shipped with no
       // local coverage at all — tsconfig.app.json included only `src`, so
       // `tsc --noEmit` never read it and vitest never ran anything in it, and
