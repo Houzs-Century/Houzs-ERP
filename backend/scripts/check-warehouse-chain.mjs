@@ -151,34 +151,39 @@ async function main() {
     notice(`  Q3 DO->SO warehouse mismatches : ${doMismatch}`);
   }
 
-  /* ── DIAGNOSIS: the ANGGN-FIRM MATT (K) chain the owner flagged ─────────── */
+  /* ── DIAGNOSIS: walk the chain for EVERY lot sitting in a showroom OR whose
+        warehouse disagrees with its PO — both the 2990 ANGGN (showroom) and the
+        Houzs AKEMI/TRION (C&C DISPLAY) cases the owner flagged. ─────────────── */
   notice("");
-  notice("======== DIAGNOSIS: 2990 ANGGN-FIRM MATT (K) — where does PJ SHOWROOM enter? ========");
+  notice("======== DIAGNOSIS: LOT <- GRN <- PO line <- SO line, for showroom / mismatched lots ========");
   const diag = await sql`
-    SELECT l.product_code, l.warehouse_id AS lot_wh, l.batch_no, l.qty_remaining, g.grn_number, g.warehouse_id AS grn_wh
+    SELECT l.company_id, l.product_code, l.warehouse_id AS lot_wh, l.batch_no, l.qty_remaining,
+           g.grn_number, g.warehouse_id AS grn_wh, g.received_at
       FROM scm.inventory_lots l LEFT JOIN scm.grns g ON g.id = l.source_doc_id
-     WHERE l.product_code ILIKE '%ANGGN-FIRM MATT (K)%' AND l.qty_remaining > 0`;
+     WHERE l.qty_remaining > 0 AND l.batch_no IS NOT NULL
+       AND (l.warehouse_id IN (SELECT id FROM scm.warehouses WHERE is_showroom = true OR type = 'showroom')
+            OR l.product_code ILIKE '%ANGGN%' OR l.product_code ILIKE '%AKEMI%' OR l.product_code ILIKE '%TRION%')
+     ORDER BY l.company_id, l.product_code`;
   for (const d of diag) {
-    notice(`  LOT   ${pad(d.product_code, 26)} in ${pad(whLabel(d.lot_wh), 12)} qty ${d.qty_remaining} <- ${d.grn_number ?? "?"} (GRN wh ${whLabel(d.grn_wh)}) batch ${d.batch_no}`);
-    if (d.batch_no) {
-      const poLines = await sql`
-        SELECT po.po_number, pi.material_code, COALESCE(pi.warehouse_id, po.purchase_location_id) AS wh, pi.so_item_id
-          FROM scm.purchase_order_items pi JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id
-         WHERE po.po_number = ${d.batch_no} AND pi.material_code = d.product_code`;
-      for (const p of poLines) {
-        notice(`  PO    ${pad(p.po_number, 20)} line wh = ${whLabel(p.wh)}  so_item_id=${p.so_item_id ?? "(stock)"}`);
-        if (p.so_item_id) {
-          const [so] = await sql`
-            SELECT i.doc_no, i.warehouse_id AS line_wh, s.sales_location, s.customer_state, s.salesperson_id
-              FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders s ON s.doc_no=i.doc_no AND s.company_id=i.company_id
-             WHERE i.id = ${p.so_item_id}`;
-          if (so) notice(`  SO    ${pad(so.doc_no, 20)} line wh = ${pad(whLabel(so.line_wh), 12)} sales_location=${JSON.stringify(so.sales_location)} state=${JSON.stringify(so.customer_state)}`);
-        }
+    notice(`  LOT   [co${d.company_id}] ${pad(d.product_code, 26)} in ${pad(whLabel(d.lot_wh), 12)} qty ${d.qty_remaining} <- ${d.grn_number ?? "?"} (GRN wh ${whLabel(d.grn_wh)}, recd ${d.received_at ? String(d.received_at).slice(0, 10) : "?"}) batch ${d.batch_no}`);
+    const poLines = await sql`
+      SELECT po.po_number, COALESCE(pi.warehouse_id, po.purchase_location_id) AS wh, pi.warehouse_id AS line_wh, po.purchase_location_id, pi.so_item_id
+        FROM scm.purchase_order_items pi JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id
+       WHERE po.po_number = ${d.batch_no} AND pi.material_code = ${d.product_code}`;
+    for (const p of poLines) {
+      notice(`  PO    ${pad(p.po_number, 20)} line wh=${pad(whLabel(p.line_wh), 12)} hdr ship-to=${pad(whLabel(p.purchase_location_id), 12)} so_item_id=${p.so_item_id ?? "(stock)"}`);
+      if (p.so_item_id) {
+        const [so] = await sql`
+          SELECT i.doc_no, i.warehouse_id AS line_wh, s.sales_location, s.customer_state
+            FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders s ON s.doc_no=i.doc_no AND s.company_id=i.company_id
+           WHERE i.id = ${p.so_item_id}`;
+        if (so) notice(`  SO    ${pad(so.doc_no, 20)} line wh=${pad(whLabel(so.line_wh), 12)} sales_location=${JSON.stringify(so.sales_location)} state=${JSON.stringify(so.customer_state)}`);
       }
     }
   }
-  notice("  Reading: follow the warehouse up the chain — LOT <- GRN <- PO line <- SO line. The");
-  notice("  first level that already says PJ SHOWROOM is where the wrong warehouse was introduced.");
+  notice("  Reading: follow the warehouse UP the chain. If SO/PO already say the showroom, the wrong");
+  notice("  warehouse was chosen at ORDER time. If SO/PO say KL but the LOT is elsewhere, the GR");
+  notice("  received into the wrong warehouse (a pre-2026-07-02 GRN, before the receiving-warehouse fix).");
 
   notice("");
   notice("=== END — read-only, nothing written. ===");
