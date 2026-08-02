@@ -9,6 +9,7 @@ import { Panel, PanelSection } from "../components/Panel";
 import { StatusDot } from "../components/StatusDot";
 import { Avatar } from "../components/Avatar";
 import { useQuery } from "../hooks/useQuery";
+import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "../hooks/useToast";
 import { useDialog } from "../hooks/useDialog";
 import { Skeleton, ListSkeleton } from "../components/Skeleton";
@@ -3093,6 +3094,7 @@ function EditMemberPanel({
     [],
     { staleTime: 300_000 },
   );
+  const qc = useQueryClient();
   const scmStaff = useQuery<{ staff: ScmStaffRow[] }>(
     "/api/scm/staff",
     () => api.get("/api/scm/staff"),
@@ -3241,6 +3243,13 @@ function EditMemberPanel({
             showroomWarehouseId: showroomId || null,
           });
           setShowroomDirty(false);
+          /* The /api/scm/staff list feeds this panel's showroom dropdown and has
+             a 5-min staleTime, so without an explicit invalidation the NEXT open
+             re-seeds the control from the pre-save cache and the parking reads as
+             "Not parked" even though it persisted (owner 2026-08-02: saved
+             successfully, reverted on reopen). Invalidate so every reader
+             refetches the row we just wrote. */
+          void qc.invalidateQueries({ queryKey: ["uq", "/api/scm/staff"] });
         } catch (e: any) {
           toast.error(e?.message || "Saved the member, but the showroom could not be set");
           setBusy(false);
