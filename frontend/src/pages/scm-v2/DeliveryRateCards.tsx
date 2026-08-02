@@ -16,6 +16,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Plus, X, Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
@@ -28,6 +29,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { ThreePLCompanies } from './ThreePLCompanies';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -52,22 +54,37 @@ const RULE_LABEL: Record<RateRuleType, string> = {
   TRANSFER: 'Transfer',
 };
 
-/* onCreateCompany, owner 2026-08-01: "用户在 Rate Card 页面进行点选时，数据需要从
+/* The 3PL entry point, owner 2026-08-01: "用户在 Rate Card 页面进行点选时，数据需要从
    3PL Company 那边读取，因此 Rate Card 的右上角需要新增一个可以 Create 3PL Company
-   的功能". A rate card is priced PER CARRIER, so the carrier list here IS the 3PL
-   master — and until this, an empty list could only be answered by leaving the
-   page. The host supplies the action (Delivery Maintenance opens its own 3PL
-   block, which sits in the same part); when absent, the standalone route keeps
-   its link out. The page never owns a second copy of the create form. */
-export const DeliveryRateCards = ({ embedded = false, onCreateCompany }: {
+   的功能", and 2026-08-02 on where it belongs: "3PL 的入口在rates 的右上角 点开".
+   A rate card is priced PER CARRIER, so the carrier list here IS the 3PL master —
+   an empty list used to be answerable only by leaving the page. It opens as a
+   DRAWER over this page rather than as a second collapsible below it, because
+   the owner rejected folds on this screen ("carriers 根本都不需要dropdown").
+
+   The drawer renders the SAME ThreePLCompanies component its own route renders,
+   so there is no second copy of the create form to drift. */
+/* The carrier list on this page comes from /delivery-rate-cards/meta, a DIFFERENT
+   query from the one useCreateThreePLCompany invalidates — and it holds for five
+   minutes. Without this, registering a carrier in the drawer and then trying to
+   price it would show a list that does not contain it. */
+const COMPANY_LIST_KEY = ['delivery-rate-card-meta'];
+export const DeliveryRateCards = ({ embedded = false }: {
   embedded?: boolean;
-  onCreateCompany?: () => void;
 } = {}) => {
   const [tab, setTab] = useState<'cards' | 'reconcile'>('cards');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState<{ carrierCompanyId: string | null } | null>(null);
+  const [companiesOpen, setCompaniesOpen] = useState(false);
   const cards = useRateCards();
   const meta = useRateCardMeta();
+  const qc = useQueryClient();
+
+  const onCreateCompany = () => setCompaniesOpen(true);
+  const closeCompanies = () => {
+    setCompaniesOpen(false);
+    qc.invalidateQueries({ queryKey: COMPANY_LIST_KEY });
+  };
 
   return (
     <div className="space-y-4">
@@ -78,11 +95,9 @@ export const DeliveryRateCards = ({ embedded = false, onCreateCompany }: {
           description="Configure a rate card per carrier (own-fleet + each 3PL), verify a 3PL's billed charge against the computed expected cost, and roll the precise delivery cost toward COGS. Cost verification, not customer billing — and it does not touch the FIFO costing path."
           actions={tab === 'cards' ? (
             <div className="flex items-center gap-2">
-              {onCreateCompany && (
-                <Button variant="secondary" size="md" onClick={onCreateCompany}>
-                  <Plus {...ICON} /><span>New 3PL Company</span>
-                </Button>
-              )}
+              <Button variant="secondary" size="md" onClick={onCreateCompany}>
+                <Plus {...ICON} /><span>New 3PL Company</span>
+              </Button>
               <Button variant="primary" size="md" onClick={() => setCreating({ carrierCompanyId: null })}>
                 <Plus {...ICON} /><span>New Card</span>
               </Button>
@@ -107,11 +122,9 @@ export const DeliveryRateCards = ({ embedded = false, onCreateCompany }: {
             — this row IS the top-right of the screen in that layout. */}
         {embedded && tab === 'cards' && (
           <div className="ml-auto flex items-center gap-2 pb-1.5">
-            {onCreateCompany && (
-              <Button variant="secondary" size="sm" onClick={onCreateCompany}>
-                <Plus {...ICON} /><span>New 3PL Company</span>
-              </Button>
-            )}
+            <Button variant="secondary" size="sm" onClick={onCreateCompany}>
+              <Plus {...ICON} /><span>New 3PL Company</span>
+            </Button>
             <Button variant="primary" size="sm" onClick={() => setCreating({ carrierCompanyId: null })}>
               <Plus {...ICON} /><span>New Card</span>
             </Button>
@@ -145,9 +158,32 @@ export const DeliveryRateCards = ({ embedded = false, onCreateCompany }: {
           onCreated={(id) => { setCreating(null); setSelectedId(id); }}
         />
       )}
+
+      {companiesOpen && <ThreePLDrawer onClose={closeCompanies} />}
     </div>
   );
 };
+
+// ── 3PL companies drawer ──────────────────────────────────────────────────────
+/* The 3PL master, opened from the top right of this page. It is the standalone
+   ThreePLCompanies screen verbatim (`embedded` only drops its PageHeader, which
+   the drawer header replaces), so registering a carrier here and registering it
+   at /scm/threepl-companies are the same code path. Closing invalidates the
+   carrier list — see COMPANY_LIST_KEY above for why that is not automatic. */
+const ThreePLDrawer = ({ onClose }: { onClose: () => void }) => (
+  <>
+    <div className={styles.backdrop} onClick={onClose} />
+    <aside className={styles.drawer}>
+      <header className={styles.drawerHeader}>
+        <h2 className={styles.drawerTitle}>3PL Companies</h2>
+        <button type="button" className={styles.iconBtn} onClick={onClose}><X {...ICON} /></button>
+      </header>
+      <div className={styles.drawerBody}>
+        <ThreePLCompanies embedded />
+      </div>
+    </aside>
+  </>
+);
 
 // ── Carrier list ────────────────────────────────────────────────
 // Owner's flow (2026-08-01): register the 3PL companies first, then come here to

@@ -23,6 +23,8 @@ import {
   isWorkOrderOpen,
   workOrderSeam,
   workOrderTotalCenti,
+  workOrderLineCenti,
+  type WorkOrderLineInput,
   WORK_ORDER_STATES,
   WORK_ORDER_TRANSITIONS,
   deriveComponentLife,
@@ -531,6 +533,69 @@ describe("workOrderTotalCenti — labour + parts + outside + towing + tax", () =
   });
   test("fractional part quantities round to whole cents", () => {
     expect(workOrderTotalCenti({ parts: [{ qty: 1.5, unitPriceCenti: 333 }] })).toBe(500); // 499.5 → 500
+  });
+});
+
+describe("workOrderLineCenti — the shape a workshop invoice actually prints", () => {
+  test("a per-line discount percent comes off the line", () => {
+    // 4 x RM1,100 at 15% -> RM3,740.00 (WJO00403 line 4, verbatim).
+    expect(workOrderLineCenti({ qty: 4, unitPriceCenti: 110_000, discountPct: 15 })).toBe(374_000);
+  });
+  test("no discount field means no discount, never a silent 100% off", () => {
+    expect(workOrderLineCenti({ qty: 15, unitPriceCenti: 2_600 })).toBe(39_000);
+    expect(workOrderLineCenti({ qty: 1, unitPriceCenti: 28_000, discountPct: null })).toBe(28_000);
+  });
+  test("the PRINTED amount wins over the computation — the vendor's rounding is theirs", () => {
+    const line = { qty: 3, unitPriceCenti: 10_000, discountPct: 33.33, amountCenti: 20_000 };
+    expect(workOrderLineCenti(line)).toBe(20_000); // not 20_001
+  });
+  test("a nonsense discount is clamped, not trusted", () => {
+    expect(workOrderLineCenti({ qty: 1, unitPriceCenti: 10_000, discountPct: 250 })).toBe(0);
+    expect(workOrderLineCenti({ qty: 1, unitPriceCenti: 10_000, discountPct: -50 })).toBe(10_000);
+    expect(workOrderLineCenti({ qty: 1, unitPriceCenti: 10_000, discountPct: Number.NaN })).toBe(10_000);
+  });
+  test("a negative printed amount is floored at zero, not carried", () => {
+    expect(workOrderLineCenti({ amountCenti: -5_000 })).toBe(0);
+  });
+
+  /* The whole document, end to end. If this drifts, the line model no longer
+     reproduces a real invoice and the record would silently disagree with the
+     paper it was scanned from. T FORCE AUTO SERVICES quotation WJO00403,
+     lorry VQE9058, 15/7/2026. */
+  test("reproduces T FORCE quotation WJO00403 to the sen", () => {
+    const rm = (v: number) => Math.round(v * 100);
+    const parts: WorkOrderLineInput[] = [
+      { qty: 1, unitPriceCenti: rm(280) },
+      { qty: 1, unitPriceCenti: rm(280) },
+      { qty: 1, unitPriceCenti: rm(5_600), discountPct: 15 },
+      { qty: 4, unitPriceCenti: rm(1_100), discountPct: 15 },
+      { qty: 1, unitPriceCenti: rm(7_500), discountPct: 15 },
+      { qty: 1, unitPriceCenti: rm(1_500), discountPct: 15 },
+      { qty: 1, unitPriceCenti: rm(320), discountPct: 15 },
+      { qty: 1, unitPriceCenti: rm(480), discountPct: 15 },
+      { qty: 1, unitPriceCenti: rm(390), discountPct: 15 },
+      { qty: 1, unitPriceCenti: rm(400), discountPct: 15 },
+      { qty: 1, unitPriceCenti: rm(210), discountPct: 15 },
+      { qty: 1, unitPriceCenti: rm(290), discountPct: 15 },
+      { qty: 1, unitPriceCenti: rm(230), discountPct: 15 },
+      { qty: 1, unitPriceCenti: rm(230), discountPct: 15 },
+      { qty: 15, unitPriceCenti: rm(26) },
+      { qty: 1, unitPriceCenti: rm(48) },
+      { qty: 1, unitPriceCenti: rm(48) },
+      { qty: 1, unitPriceCenti: rm(45) },
+    ];
+    const labour: WorkOrderLineInput[] = [{ qty: 1, unitPriceCenti: rm(2_800) }];
+
+    // Spot-check the lines the document prints an amount for.
+    expect(workOrderLineCenti(parts[2]!)).toBe(rm(4_760));
+    expect(workOrderLineCenti(parts[4]!)).toBe(rm(6_375));
+    expect(workOrderLineCenti(parts[8]!)).toBe(rm(331.5));
+
+    expect(parts.reduce((s, p) => s + workOrderLineCenti(p), 0)).toBe(rm(19_408.5));
+
+    // Labour billed as its own SECTION of lines, with the header scalar left at
+    // its default — the two shapes must never both be filled (mig 0241).
+    expect(workOrderTotalCenti({ parts: [...parts, ...labour] })).toBe(rm(22_208.5));
   });
 });
 

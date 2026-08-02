@@ -527,11 +527,10 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/auto-schedule", label: "Auto-Schedule", icon: Wand2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/trips", label: "Trips", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/fleet-day", label: "Fleet Map", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          // Fleet operations — the fleet-wide health/compliance board (pulled up
-          // from a former top-level item so it sits with the other daily fleet
-          // views) plus capacity and leave. Fleet Health keeps its own fleet.read
-          // gate; the lorry/driver REGISTRY (/scm/fleet) moved into Maintenance below.
-          { to: "/fleet-health", label: "Fleet Health", icon: Wrench, perm: "fleet.read", hideForSalesRep: true },
+          // Fleet operations — capacity and leave. Fleet Health moved DOWN into
+          // Maintenance (2026-08-02): it is reference-data upkeep on the in-house
+          // lorries, not a daily dispatch view. The lorry/driver REGISTRY
+          // (/scm/fleet) is in Maintenance too.
           { to: "/scm/lorry-capacity", label: "Lorry Capacity", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/driver-leave", label: "Crew Leave", icon: CalendarOff, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           /* "Drivers" (/scm/drivers) retired 2026-07-17 — it duplicated the Drivers
@@ -545,25 +544,37 @@ export const NAV_TABS: NavTab[] = [
           // above stay uncluttered. Fleet lives here (you record a lorry) while
           // Fleet Health above is the read-only board (you monitor the fleet).
           // Pure header (no `to`); the groupId gives it expand/collapse memory.
-          /* ONE row, not a group of six. Owner 2026-08-01: "我们需要把 Sidebar
-             以及它的整个模块——包括 3PL Company 和 Rate Card——统一整合在一个模块里".
-             #1489 made the header a destination but KEPT the six children, so
-             the sidebar looked exactly as it had; this removes them.
+          /* SIX rows become THREE, and each one goes to a real page. Owner
+             2026-08-01: "我们需要把 Sidebar 以及它的整个模块——包括 3PL Company 和
+             Rate Card——统一整合在一个模块里", then 2026-08-02 on what the three
+             should LAND on: "我要原本的UI" and "delivery zones和carriers 根本都不
+             需要dropdown啊 就那么少的info".
 
-             The six ROUTES are untouched and still registered in App.tsx —
-             deep links, bookmarks and the "Open on its own" links inside
-             /scm/delivery-maintenance all keep working. Only the nav rows go,
-             which is the whole of what "one module" asked for. Nothing about
-             access changes: the same anyPerm / anyAccess pair gated every child
-             and still gates this row. */
+             So consolidation happened where three screens really are one thing
+             (Regions + Residence Rules + Fleet -> /scm/delivery-maintenance,
+             "Coverage & Fleet"), and the other two keep their own original
+             pages. 3PL Companies is not a row: it opens from the top right of
+             Rate Cards, because a rate card is priced per carrier.
+
+             Every target is a route App.tsx already registers with the SAME
+             `scm.transportation.drivers` guard these rows carry, so nothing
+             about access moves. Do NOT point a child at a bare ?open= variant
+             of another page — that is what made all three land on one screen. */
           {
             label: "Maintenance", icon: SlidersHorizontal, groupId: "scm-transportation-maintenance",
             to: "/scm/delivery-maintenance",
             anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true,
             children: [
-              { to: "/scm/delivery-maintenance?open=coverage-fleet", label: "Coverage & Fleet", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-              { to: "/scm/delivery-maintenance?open=zones", label: "Delivery Zones", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-              { to: "/scm/delivery-maintenance?open=carriers", label: "Carriers & Rates", icon: Handshake, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+              { to: "/scm/delivery-maintenance", label: "Coverage & Fleet", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+              { to: "/scm/delivery-zones", label: "Delivery Zones", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+              { to: "/scm/delivery-rate-cards", label: "Carriers & Rates", icon: Handshake, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+              /* Fleet Health joined Maintenance 2026-08-02 (owner: "你把 Fleet
+                 Health 加进去 Maintenance 的地方"). It keeps its OWN gate —
+                 `fleet.read`, not the scm.transportation.drivers area key the
+                 three rows above share — because compliance and workshop spend
+                 are read by people who do not dispatch. A row's gate travels
+                 with the row, not with the group it is filed under. */
+              { to: "/fleet-health", label: "Fleet Health", icon: Wrench, perm: "fleet.read", hideForSalesRep: true },
             ],
           },
         ],
