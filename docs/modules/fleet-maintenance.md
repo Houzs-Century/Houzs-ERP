@@ -352,11 +352,91 @@ derived life).
   description, best-effort GPS + scene photo) alongside the day-complete mileage
   capture. No new menu row (the existing Fleet Mileage surface is extended).
 
+## 11. The repair record — workshop master, billed lines, and OCR (mig 0241)
+
+Owner, 2026-08-02, holding a real document (T FORCE AUTO SERVICES quotation
+`WJO00403`, lorry VQE9058, RM22,208.50): every repair that costs money is one
+record, and it must carry what the paper carries.
+
+**`scm.workshops` is a new master.** The repair vendor used to be a free-text
+`workshop` string on FOUR unrelated tables (work orders, breakdown cases,
+maintenance plans, service records), so "what did we spend at this workshop"
+was not a question the schema could answer. It is NOT filed under
+`scm.suppliers` — that master feeds purchase orders, GRNs, the DP
+supplier-pickup picker and the supplier portal, and a workshop is none of
+those. Same reasoning `0210` used for `scm.threepl_companies`.
+
+Codes are **minted, never typed** — `WS-0001` per company, `mintWorkshopCode`.
+The `UNIQUE (company_id, code)` index is the real guard; a racing create loses
+there and retries the mint. (The driver roster is what hand-typed codes look
+like after a year: `DRV-001..007` beside `DRV-05`/`DRV-050`, one person three
+times.)
+
+**The header gained the vendor's own document numbers.** `quote_refs` /
+`invoice_refs` hold R2 FILE KEYS — there was nowhere to put "WJO00403". One
+repair carries BOTH numbers over its life (quotation at DIAGNOSED/APPROVED,
+invoice at COMPLETED/VERIFIED), so `quotation_no` and `invoice_no` are two
+columns on ONE record, not two records. Plus `advisor` (the workshop's, not
+ours) and `document_date` (what the paper prints, which is not `reported_at`).
+
+**Lines now have the four columns a real invoice prints**: `section`
+(PART / LABOUR), `uom`, `discount_pct`, `amount_centi`.
+
+- The discount is a **percentage, per line** — WJO00403 carries 15% on 14 of
+  its 19 lines and none on the other 5.
+- `amount_centi` is the **printed** amount and it WINS over the computation.
+  The vendor's rounding is theirs; a record that quietly disagrees with the
+  paper is worse than one that repeats it. NULL means "not printed, compute
+  it", and `workOrderLineCenti` takes
+  `amount ?? round(qty x unit x (1 - disc/100))`.
+
+**LABOUR HAS TWO SHAPES AND THEY MUST NOT BOTH BE FILLED.** Pre-0241 rows put
+labour in the header scalar `labour_centi`; new records put it in
+LABOUR-section lines. `workOrderTotalCenti` sums both, so filling both counts
+labour twice. A CHECK cannot express "not both" without pinning existing rows,
+so **the parts route is the single writer that enforces it** — adding a LABOUR
+line to a record whose `labour_centi > 0` is a 409 `labour_already_on_header`.
+
+### OCR — `POST /api/scm/scan-lorry-invoice/extract`
+
+`backend/src/scm/routes/scan-lorry-invoice.ts`. A **minimal sibling** of
+`scan-payment.ts`, not a second `scan-so.ts`: one synchronous call, no
+`scan_jobs` row, no queue, no reaper, no learning loop. scan-so needs all that
+because a rep photographs a stack of slips on bad signal; a workshop invoice is
+one document uploaded at a desk with someone watching the screen.
+
+**It writes NOTHING.** It returns what the paper says and the operator confirms
+it into a work order as a separate, explicit step. An OCR pass that silently
+books a five-figure repair is not something anyone asked for.
+
+**PDFs go straight in** — Anthropic takes a `document` content block, so there
+is no rasteriser here and none is needed. The document that prompted this is a
+PDF with a text layer; a phone photo of a paper invoice takes the same path as
+an image block.
+
+**It resolves no ids.** The workshop is returned as a NAME, the vehicle as a
+PLATE. Matching those to `scm.workshops` and `scm.lorries` is the review
+screen's job, because an OCR pass must never invent a foreign key.
+
+**The reconciliation is the point.** The response carries
+`totals.reconciles` — the sum of the extracted lines against the grand total
+the model read from a DIFFERENT part of the page. An extraction that drops one
+line of nineteen looks entirely plausible and is wrong by RM6,375; this is what
+catches it. `null` means the document printed no total, which is **not** the
+same as "checked and agreed" — do not render it as a tick.
+
+Tests: `backend/tests/scanLorryInvoice.test.ts` replays WJO00403 end to end,
+including the dropped-line case and the vendors who print no line amounts at
+all. `backend/tests/fleetStatus.test.ts` reproduces its RM22,208.50 through the
+stored line model.
+
 ## 8. See also
 - `backend/src/services/fleet-status.ts` + `backend/tests/fleetStatus.test.ts`
 - `backend/scripts/seed-fleet-maintenance.mjs` (Phase 1 vault) · `seed-fleet-plans.mjs` (Phase 2 plans)
 - `backend/src/scm/routes/lorries.ts`, `lorry-service-records.ts` (the sibling master + history)
 - `frontend/src/pages/FleetHealth.tsx` (desktop) · `frontend/src/mobile/MobileMileageCapture.tsx` (mobile driver)
+- `backend/src/scm/routes/scan-lorry-invoice.ts` + `backend/tests/scanLorryInvoice.test.ts` (repair-document OCR)
+- `docs/modules/scan-to-so.md` (the full background pipeline this deliberately does NOT copy)
 - `docs/modules/delivery-tms.md`, `docs/modules/warehouses.md`
 
 ## Plates are stored CANONICAL (2026-08-01)

@@ -648,17 +648,49 @@ export interface WorkOrderTotalInput {
   outsideServiceCenti?: number | null;
   towingCenti?: number | null;
   taxCenti?: number | null;
-  parts?: readonly { qty?: number | null; unitPriceCenti?: number | null }[];
+  parts?: readonly WorkOrderLineInput[];
 }
 
-/** The derived work-order total: labour + parts + outside service + towing + tax.
- *  Never stored (see the migration header) — it cannot drift from the legs. */
+/** One billed line of a repair, in the shape a workshop invoice prints it. */
+export interface WorkOrderLineInput {
+  qty?: number | null;
+  unitPriceCenti?: number | null;
+  /** Per-line discount PERCENT. Workshop invoices discount per line, not per
+   *  document — WJO00403 carries 15% on 14 of its 19 lines and none on the
+   *  other 5. Absent / invalid means no discount, never a silent 100%. */
+  discountPct?: number | null;
+  /** The amount PRINTED on the document. When present it WINS: the vendor's
+   *  own rounding is theirs, and a stored record that quietly disagrees with
+   *  the paper is worse than one that repeats it. Null means not printed. */
+  amountCenti?: number | null;
+}
+
+const num = (v: unknown): number =>
+  typeof v === "number" && Number.isFinite(v) ? v : 0;
+
+/** What one line costs: the printed amount if there is one, else
+ *  `qty x unit price x (1 - discount%)`.
+ *
+ *  Verified against T FORCE quotation WJO00403 line by line — e.g. 4 x RM1,100
+ *  at 15% prints RM3,740.00, and the 19 lines sum to its RM22,208.50 total. */
+export function workOrderLineCenti(line: WorkOrderLineInput): number {
+  if (line.amountCenti != null && Number.isFinite(line.amountCenti)) {
+    return Math.max(0, Math.round(line.amountCenti));
+  }
+  const gross = num(line.qty) * num(line.unitPriceCenti);
+  const pct = Math.min(100, Math.max(0, num(line.discountPct)));
+  return Math.max(0, Math.round(gross * (1 - pct / 100)));
+}
+
+/** The derived work-order total: lines + labour + outside service + towing + tax.
+ *  Never stored (see the migration header) — it cannot drift from the legs.
+ *
+ *  `labourCenti` is the HEADER scalar, which pre-dates LABOUR-section lines
+ *  (mig 0241). The two must never both be filled for one record — the route is
+ *  the single writer that enforces it — so summing both here is correct and
+ *  costs nothing while the scalar defaults to 0. */
 export function workOrderTotalCenti(wo: WorkOrderTotalInput): number {
-  const partsCenti = (wo.parts ?? []).reduce((sum, p) => {
-    const qty = typeof p.qty === "number" && Number.isFinite(p.qty) ? p.qty : 0;
-    const unit = typeof p.unitPriceCenti === "number" && Number.isFinite(p.unitPriceCenti) ? p.unitPriceCenti : 0;
-    return sum + Math.round(qty * unit);
-  }, 0);
+  const partsCenti = (wo.parts ?? []).reduce((sum, p) => sum + workOrderLineCenti(p), 0);
   return (
     Math.round(wo.labourCenti ?? 0) +
     partsCenti +

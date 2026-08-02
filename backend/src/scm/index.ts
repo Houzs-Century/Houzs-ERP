@@ -66,6 +66,7 @@ import { venues } from "./routes/venues";
 import { reports } from "./routes/reports";
 import { scanSo } from "./routes/scan-so";
 import { scanPayment } from "./routes/scan-payment";
+import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
 import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
@@ -509,6 +510,14 @@ scm.route("/delivery-messages", deliveryMessages);
 // AR receivables reconciliation (read-only preview) — finance-side read, mounted
 // under the coarse scm.access gate like the other cross-area read helpers.
 scm.route("/ar", arReconciliation);
+/* Workshop quotation / invoice OCR for the fleet repair record (mig 0241).
+   Extraction-only and WRITE-FREE: it returns what the paper says and the
+   operator confirms it into a work order as a separate, explicit step — an OCR
+   pass must never book a five-figure repair on its own. Same Transportation
+   area key as the rest of the fleet masters. ANTHROPIC_API_KEY is optional;
+   /extract answers 503 anthropic_key_missing when it is absent. */
+scm.use("/scan-lorry-invoice/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/scan-lorry-invoice", scanLorryInvoice);
 scm.use("/lorry-capacity/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/lorry-capacity", lorryCapacity);
 scm.use("/helpers/*", scmAreaGuard("scm.transportation.drivers"));
