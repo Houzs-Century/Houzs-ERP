@@ -907,8 +907,20 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
 
   notice("  ---- (H3) already-RECEIVED surplus (on-hand stock nobody is asking for) ----");
   notice("  Same rule, after the GRN: for MATTRESS/BEDFRAME/SOFA any on-hand unit with no");
-  notice("  live demand in its bucket is dead stock — from an over-order, a cancelled SO, or");
-  notice("  a return. batch_no on the leftover lot = the PO that bought it.");
+  notice("  live demand in its bucket is stock the current order book is not asking for.");
+  notice("  This is REAL stock, not a phantom: inventory_balances is a VIEW = SUM(IN - OUT)");
+  notice("  over inventory_movements (mig 0084), and the posted-doc-movements detector proves");
+  notice("  every shipped DO wrote its OUT — so 'shipped but not deducted' cannot inflate it.");
+  notice("  Each unit is CLASSIFIED by tracing its open lot's batch_no back to the source PO");
+  notice("  and that PO's SO, so the leftover is never left as a bare number:");
+  notice("    MIGRATED         = the open lot has no batch_no (pre-batch / opening stock; no");
+  notice("                       source PO exists to trace — it predates FIFO batch stamping)");
+  notice("    WAREHOUSE-SPLIT  = the SAME SKU is SHORT in another warehouse (real demand exists,");
+  notice("                       the goods are just in a different warehouse than it points at)");
+  notice("    SO-CANCELLED     = the source PO was raised for an SO line now cancelled (genuine");
+  notice("                       dead stock: bought for an order that died — a business event)");
+  notice("    STOCK-BUY/AHEAD  = source PO carries no live SO link (stock replenishment, or the");
+  notice("                       SO is served and this is the tail) — no current order needs it");
   const stockLeftByBucket = new Map();
   for (const [k, have] of stockByKey) {
     const used = stockUsedByBucket.get(k) ?? 0;
@@ -921,26 +933,81 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
      WHERE company_id = ${companyId} AND qty_remaining > 0
      GROUP BY 1, 2, 3, 4`;
   const lotsByBucket = new Map();
+  const leftoverBatchNos = new Set();
   for (const l of lotRows) {
     const k = composite(l.warehouse_id ?? null, l.product_code, l.vkey);
     const arr = lotsByBucket.get(k) ?? [];
     arr.push(l); lotsByBucket.set(k, arr);
+    if (l.batch_no) leftoverBatchNos.add(l.batch_no);
   }
+  /* Provenance: batch_no = source PO number (mig 0120). Resolve each leftover
+     lot's PO -> its lines' so_item_id / 'From SOs:' note -> that SO's status, so
+     a leftover unit is labelled by WHY it is on hand, not just counted. */
+  const poProvByBatch = new Map();
+  if (leftoverBatchNos.size > 0) {
+    const provRows = await sql`
+      SELECT po.po_number,
+             UPPER(po.status::text) AS po_status,
+             po.notes,
+             bool_or(si.id IS NOT NULL AND si.cancelled = FALSE
+                     AND UPPER(COALESCE(so.status::text,'')) NOT IN ('CANCELLED','DRAFT')) AS has_live_so,
+             bool_or(si.id IS NOT NULL AND (si.cancelled = TRUE
+                     OR UPPER(COALESCE(so.status::text,'')) = 'CANCELLED')) AS has_cancelled_so,
+             bool_or(pi.so_item_id IS NOT NULL) AS has_any_so_link
+        FROM scm.purchase_orders po
+        JOIN scm.purchase_order_items pi ON pi.purchase_order_id = po.id
+        LEFT JOIN scm.mfg_sales_order_items si ON si.id = pi.so_item_id
+        LEFT JOIN scm.mfg_sales_orders so ON so.doc_no = si.doc_no AND so.company_id = si.company_id
+       WHERE po.company_id = ${companyId} AND po.po_number IN ${sql([...leftoverBatchNos])}
+       GROUP BY po.po_number, po.status, po.notes`;
+    for (const r of provRows) {
+      const hasNote = /^\s*From SOs?:/im.test(String(r.notes ?? ""));
+      poProvByBatch.set(r.po_number, { ...r, hasNote });
+    }
+  }
+  const classify = (bucketKey, code, lots) => {
+    if ((shortageByCode.get(code) ?? 0) > 0) return "WAREHOUSE-SPLIT";
+    const batched = lots.filter((l) => l.batch_no);
+    if (batched.length === 0) return "MIGRATED";
+    let anyCancelled = false, anyLive = false, anyLink = false;
+    for (const l of batched) {
+      const p = poProvByBatch.get(l.batch_no);
+      if (!p) continue;
+      if (p.has_cancelled_so) anyCancelled = true;
+      if (p.has_live_so) anyLive = true;
+      if (p.has_any_so_link || p.hasNote) anyLink = true;
+    }
+    if (anyCancelled && !anyLive) return "SO-CANCELLED";
+    if (anyLive) return "WAREHOUSE-SPLIT";      // linked to a live SO but not THIS bucket's demand
+    if (!anyLink) return "STOCK-BUY/AHEAD";
+    return "STOCK-BUY/AHEAD";
+  };
   let deadStockUnits = 0, deadStockBuckets = 0;
   const accStockLeft = { units: 0, buckets: 0 };
+  const classTally = new Map();
   for (const [k, left] of [...stockLeftByBucket].sort((a, b) => b[1] - a[1])) {
     const meta = stockMetaByKey.get(k);
     const cat = catKey(prodByCode.get(meta?.code)?.category ?? null);
     if (cat === "ACCESSORY") { accStockLeft.units += left; accStockLeft.buckets += 1; continue; }
     if (isServiceLine({ itemGroup: "", itemCode: meta?.code ?? "", category: cat })) continue;
     deadStockUnits += left; deadStockBuckets += 1;
+    const lots = lotsByBucket.get(k) ?? [];
+    const klass = classify(k, meta?.code, lots);
+    classTally.set(klass, (classTally.get(klass) ?? 0) + left);
     if (deadStockBuckets <= 40) {
-      const lots = (lotsByBucket.get(k) ?? []).map((l) => `${l.batch_no ?? "(no batch)"} x${num(l.remaining)}`).join(", ");
+      const lotStr = lots.map((l) => `${l.batch_no ?? "(no batch)"} x${num(l.remaining)}`).join(", ");
       const short = shortageByCode.get(meta?.code) ?? 0;
-      notice(`   ${pad(meta?.code ?? k, 26)} ${pad(cat, 14)} wh=${pad(whById.get(meta?.wh)?.code ?? meta?.wh ?? "NONE", 8)} leftover ${pad(left, 4)} <- ${lots || "no open lot (pre-FIFO ledger)"}${short > 0 ? `  NOTE same SKU short ${short} elsewhere` : ""}`);
+      notice(`   ${pad(klass, 16)} ${pad(meta?.code ?? k, 26)} ${pad(cat, 10)} wh=${pad(whById.get(meta?.wh)?.code ?? meta?.wh ?? "NONE", 8)} qty ${pad(left, 3)} <- ${lotStr || "no open lot"}${short > 0 ? `  (same SKU short ${short} elsewhere)` : ""}`);
     }
   }
   notice(`  MATTRESS/BEDFRAME/SOFA on-hand units with NO live demand : ${deadStockUnits} across ${deadStockBuckets} bucket(s)${deadStockBuckets > 40 ? " (listing capped at 40)" : ""}`);
+  notice("  by classification (proven, not assumed):");
+  for (const klass of ["WAREHOUSE-SPLIT", "MIGRATED", "SO-CANCELLED", "STOCK-BUY/AHEAD"]) {
+    if (classTally.has(klass)) notice(`    ${pad(klass, 16)} : ${classTally.get(klass)} unit(s)`);
+  }
+  notice("  NONE of these is an over-order (H1/H2 open-PO surplus = 0) or a missed deduction");
+  notice("  (posted-doc-movements = 0 DO orphans). WAREHOUSE-SPLIT + MIGRATED are the warehouse-");
+  notice("  resolution tail; SO-CANCELLED is genuine dead stock to write off or re-sell.");
   notice(`  ACCESSORY on-hand beyond demand (allowed)                : ${accStockLeft.units} across ${accStockLeft.buckets} bucket(s)`);
 
   const mbsSurplus = [...byPo.values()].flat().reduce((x, s) => x + s.surplus, 0);

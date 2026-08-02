@@ -36,7 +36,7 @@ so the PostgREST 1000-row cap is moot for them. Our SCM layer DOES use PostgREST
 | No materialized views | ✅ same (never adopted) |
 | Web Push | ✅ `BrowserPushSink` + push outbox |
 | `waitUntil` background work | ✅ scan bg-job, email outbox |
-| Field projection (`?fields=minimal`) | ❌ **NOT DONE — the mobile lists SEND it and no backend route reads it.** See the section below the buckets. |
+| Field projection (`?fields=minimal`) | ❌ **NOT DONE, and evaluated + declined 2026-08-02** — the parameter has been deleted rather than left claiming something the server never did. Numbers in the section below the buckets. |
 
 ---
 
@@ -112,9 +112,22 @@ These are cheap at any scale and are HOOKKA's incident-hardening. Ranked.
    over `SLOW_FETCH_MS = 800`; its comment calls it "the 'find the next slow
    thing' signal — how this whole perf campaign started". This entry said
    "We have none".
-9. **Extend the localStorage snapshot to more lists** (Projects / Service / Team)
-   if they also cold-open with a spinner — same `query-persist.ts`, add to the
-   whitelist. **P2.**
+9. **Extend the localStorage snapshot to more lists** (Projects / Service / Team).
+   Mechanically possible — all three use react-query heavily. **But this is not
+   a whitelist edit, and the reason is written in `lib/query-persist.ts`
+   itself:** the payment-ledger keys once slipped past the sub-resource guard,
+   so a payment ledger *of unknown age* was rehydrated as query `data`,
+   indistinguishable from a fresh read — and `MobilePOD` turns exactly that into
+   the balance a driver collects, so a settled balance could be re-presented as
+   outstanding (`fix/pod-balance`, 2026-07-17).
+
+   So the bar for adding an entity is: **prove a stale snapshot of it cannot be
+   acted on as if fresh.** Projects carries a Finances view, Service Cases carry
+   status, Team carries permissions — each needs that argument made, one at a
+   time, before it goes in the whitelist. **P2, and the cost is the argument,
+   not the code.** Verify the spinner is real first: this buys a cold-open
+   snapshot, so a list that already opens fast gains nothing and takes on the
+   staleness risk for free.
 10. ~~More trgm GIN indexes on remaining searched columns~~ **DONE 2026-08-02**,
     and the status is now MEASURED rather than typed. `0239` covered the five
     document sources global search had been reading unindexed since PR #1269;
@@ -139,9 +152,9 @@ These are cheap at any scale and are HOOKKA's incident-hardening. Ranked.
 
 ---
 
-## One Bucket A entry is wrong, and it is the interesting one
+## One Bucket A entry was wrong, and it is the interesting one
 
-**`?fields=minimal` field projection — listed as DONE, actually a NO-OP.**
+**`?fields=minimal` field projection — was listed as DONE, was actually a NO-OP.**
 `frontend/src/mobile/MobileModuleList.tsx` appends `&fields=minimal` to seven SCM
 list endpoints (delivery-orders-mfg, sales-invoices, grns, mfg-purchase-orders,
 delivery-returns, purchase-invoices, purchase-returns), and **no backend code
@@ -154,15 +167,33 @@ This is HOOKKA's BUG-2026-07-13-003 ("`?fields=minimal` alone still inlined
 jobCards — the slim didn't slim") in a more complete form: theirs partially
 worked, ours never ran.
 
-**Left unimplemented deliberately, 2026-08-02.** Building it means enumerating,
-per endpoint, every column the mobile config reads — and an attempt to extract
-that automatically already showed why that is risky: the extractor missed one
-config entirely, mistook FK embeds for columns, and could not follow helpers like
-`balanceCenti(r)`. Miss one column and the row renders "—", which is HOOKKA's
-own BUG-2026-07-03-005/-006/-007 class, and it is only visible on a real phone —
-jsdom has no layout, so no test here would catch it. That verification needs the
-owner. **Until then the parameter is a lie in the URL**: either implement the
-projection or delete the parameter, and this file should not claim it works.
+**Evaluated and declined, 2026-08-02 — the parameter is now DELETED** rather than
+left as a lie in the URL.
+
+The first reasoning for declining was wrong and is worth recording, because the
+error is easy to repeat: it assumed the work meant enumerating, per endpoint,
+every column the mobile config KEEPS, and that missing one could only be caught
+on a real device. Enumerating the columns to **DROP** is the safe direction —
+over-keeping costs bytes, over-dropping blanks a row — and "no code reads this
+column" is statically provable, because every field read under
+`frontend/src/mobile` is a literal name (the one dynamic access,
+`MobileScan.tsx`'s `cur[orderId]`, is not a row field).
+
+So it was measured properly. Across the seven endpoints: **238 HEADER columns,
+34 provably unread** (zero hits for both spellings anywhere under
+`frontend/src/mobile`, which covers `MobileModuleDetail` — it reuses the
+already-loaded list row rather than refetching). That is 14%, and about twenty of
+those thirty-four are the `*_centi` cost/margin columns, which
+`canViewScmFinance` **already strips from the wire** for anyone who is not a
+finance viewer (`SI_/DO_/DR_FINANCE_KEYS` are deleted per row). Net real saving
+for a typical mobile user: **around 6%.**
+
+Six percent does not justify a projection mechanism that has to be maintained
+per endpoint forever, especially since `MobileModuleDetail`'s `safeCall`
+swallows accessor throws and returns `""` — a wrong projection would surface as
+a silently blank field, not an error.
+
+**If this is revisited**, the honest lever is `limit=500`, not the column set.
 
 ## The short answer to "why not all?"
 - The **always-worth-it** techniques: mostly already adopted (Bucket A). The rest

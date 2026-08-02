@@ -1,6 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { SearchableSelect, nextOptionWindow } from "./SearchableSelect";
+
+// Unmount is handled by the global afterEach(cleanup) in src/test-setup.ts.
+// This file must NOT clear document.body by hand: the menu is portalled to
+// body, and racing innerHTML="" against RTL's own node removal throws
+// NotFoundError once auto-cleanup is registered.
 
 // A product-catalogue-sized list — the case that made this windowing necessary.
 const many = Array.from({ length: 360 }, (_, i) => ({
@@ -24,10 +29,6 @@ function renderedOptions(): HTMLElement[] {
     /^Product \d+$/.test(li.textContent ?? ""),
   ) as HTMLElement[];
 }
-
-afterEach(() => {
-  document.body.innerHTML = "";
-});
 
 describe("nextOptionWindow", () => {
   test("extends by one page and stops at the end", () => {

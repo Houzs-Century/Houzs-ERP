@@ -1,0 +1,53 @@
+name: Repair dead-PO allocations (DRY-RUN gated)
+
+# Removes STRANDED mig-0235 allocation sub-lines (PO-xxxx-yy-NN) on cancelled or
+# draft POs. Found by the MRP pairing audit section (H0): a cancelled PO must own
+# NO attribution, yet allocation rows survived cancellation before the same-day
+# cancel-handler fix cleared them. Allocations move no stock and no money
+# (mig-0235 table comment), so this can only tidy the reverse-coverage surface —
+# never a balance, COGS, or ledger row.
+#
+# DRY-RUN (default): prints every row it WOULD delete, grouped by PO, inside a
+# transaction it then ROLLS BACK — nothing persists. apply=1 + the confirmation
+# phrase commits the same DELETE.
+#
+# Manual trigger only, own concurrency group — never queues behind or displaces a
+# release, never scheduled.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN (rolled back)"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'must be exactly: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-dead-po-allocations
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-dead-po-allocations.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}

@@ -3779,11 +3779,29 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
   try {
     const { data: lines } = await supabase
       .from('purchase_order_items')
-      .select('so_item_id')
+      .select('id, so_item_id')
       .eq('purchase_order_id', id);
+    const lineRows = (lines ?? []) as Array<{ id: string; so_item_id: string | null }>;
     // The PO is now CANCELLED, so recomputeSoPicked recounts every affected SO
     // line excluding this PO's lines — releasing them back to the picker.
-    await recomputeSoPicked(supabase, ((lines ?? []) as Array<{ so_item_id: string | null }>).map((l) => l.so_item_id));
+    await recomputeSoPicked(supabase, lineRows.map((l) => l.so_item_id));
+
+    /* 2026-08-02 (over-order audit H0) — the quota release above frees the SO
+       lines, but the finer-grained mig-0235 allocation sub-lines (PO-xxxx-yy-NN)
+       were left stranded: a CANCELLED PO kept rows still naming a live SO, so its
+       reverse-coverage surface would attribute goods it will never deliver. The
+       owner's rule is explicit — "cancelled POs are never attribution targets" —
+       so clear this PO's allocations here, the same transition that releases the
+       quota. The coarse so_item_id on the line survives (reopen re-claims quota
+       and falls back to the 1:1 link); a consolidated split, if ever needed
+       again after a reopen, is re-entered in the allocation editor. */
+    const poItemIds = lineRows.map((l) => l.id).filter(Boolean);
+    if (poItemIds.length > 0) {
+      await supabase
+        .from('purchase_order_item_allocations')
+        .delete()
+        .in('purchase_order_item_id', poItemIds);
+    }
   } catch { /* best-effort — PO already cancelled, don't fail on counter recount */ }
 
   const { data: after } = await scopeToCompanyId(supabase
