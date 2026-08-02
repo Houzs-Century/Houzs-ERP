@@ -52,7 +52,17 @@ const RULE_LABEL: Record<RateRuleType, string> = {
   TRANSFER: 'Transfer',
 };
 
-export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } = {}) => {
+/* onCreateCompany, owner 2026-08-01: "用户在 Rate Card 页面进行点选时，数据需要从
+   3PL Company 那边读取，因此 Rate Card 的右上角需要新增一个可以 Create 3PL Company
+   的功能". A rate card is priced PER CARRIER, so the carrier list here IS the 3PL
+   master — and until this, an empty list could only be answered by leaving the
+   page. The host supplies the action (Delivery Maintenance opens its own 3PL
+   block, which sits in the same part); when absent, the standalone route keeps
+   its link out. The page never owns a second copy of the create form. */
+export const DeliveryRateCards = ({ embedded = false, onCreateCompany }: {
+  embedded?: boolean;
+  onCreateCompany?: () => void;
+} = {}) => {
   const [tab, setTab] = useState<'cards' | 'reconcile'>('cards');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState<{ carrierCompanyId: string | null } | null>(null);
@@ -67,14 +77,21 @@ export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } =
           title="Delivery Rate Cards"
           description="Configure a rate card per carrier (own-fleet + each 3PL), verify a 3PL's billed charge against the computed expected cost, and roll the precise delivery cost toward COGS. Cost verification, not customer billing — and it does not touch the FIFO costing path."
           actions={tab === 'cards' ? (
-            <Button variant="primary" size="md" onClick={() => setCreating({ carrierCompanyId: null })}>
-              <Plus {...ICON} /><span>New Card</span>
-            </Button>
+            <div className="flex items-center gap-2">
+              {onCreateCompany && (
+                <Button variant="secondary" size="md" onClick={onCreateCompany}>
+                  <Plus {...ICON} /><span>New 3PL Company</span>
+                </Button>
+              )}
+              <Button variant="primary" size="md" onClick={() => setCreating({ carrierCompanyId: null })}>
+                <Plus {...ICON} /><span>New Card</span>
+              </Button>
+            </div>
           ) : undefined}
         />
       )}
 
-      <div style={{ display: 'flex', gap: 6, borderBottom: '1px solid var(--border, rgba(0,0,0,0.1))' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border, rgba(0,0,0,0.1))' }}>
         {(['cards', 'reconcile'] as const).map((t) => (
           <button key={t} type="button" onClick={() => setTab(t)}
             style={{
@@ -86,6 +103,20 @@ export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } =
             {t === 'cards' ? 'Rate Cards' : 'Reconciliation'}
           </button>
         ))}
+        {/* Embedded there is no PageHeader, so the tab strip carries the actions
+            — this row IS the top-right of the screen in that layout. */}
+        {embedded && tab === 'cards' && (
+          <div className="ml-auto flex items-center gap-2 pb-1.5">
+            {onCreateCompany && (
+              <Button variant="secondary" size="sm" onClick={onCreateCompany}>
+                <Plus {...ICON} /><span>New 3PL Company</span>
+              </Button>
+            )}
+            <Button variant="primary" size="sm" onClick={() => setCreating({ carrierCompanyId: null })}>
+              <Plus {...ICON} /><span>New Card</span>
+            </Button>
+          </div>
+        )}
       </div>
 
       {tab === 'cards' ? (
@@ -97,6 +128,7 @@ export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } =
             selectedId={selectedId}
             onSelect={setSelectedId}
             onCreateFor={(carrierCompanyId) => setCreating({ carrierCompanyId })}
+            onCreateCompany={onCreateCompany}
           />
           {selectedId
             ? <CardEditor key={selectedId} cardId={selectedId} onDeleted={() => setSelectedId(null)} />
@@ -123,13 +155,14 @@ export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } =
 // 3PL appears, whether or not it has a card yet, and a carrier with no card is a
 // one-click create rather than something you have to know to add. Own-fleet cost
 // structures keep their own group below.
-const CardList = ({ cards, companies, isLoading, selectedId, onSelect, onCreateFor }: {
+const CardList = ({ cards, companies, isLoading, selectedId, onSelect, onCreateFor, onCreateCompany }: {
   cards: RateCard[];
   companies: Array<{ id: string; name: string }>;
   isLoading: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCreateFor: (carrierCompanyId: string | null) => void;
+  onCreateCompany?: () => void;
 }) => {
   const byCompany = new Map<string, RateCard>();
   for (const c of cards) if (c.carrierCompanyId) byCompany.set(c.carrierCompanyId, c);
@@ -146,7 +179,20 @@ const CardList = ({ cards, companies, isLoading, selectedId, onSelect, onCreateF
       {isLoading && <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Loading…</div>}
       {!isLoading && companies.length === 0 && (
         <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
-          No 3PL companies registered yet. Register them under Maintenance &rsaquo; 3PL Companies, then price them here.
+          No 3PL companies registered yet — a rate card is priced per carrier, so there is nothing to price until one exists.
+          {onCreateCompany && (
+            <>
+              {' '}
+              <button
+                type="button"
+                onClick={onCreateCompany}
+                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'var(--c-primary-a, #2563eb)', textDecoration: 'underline' }}
+              >
+                Register one now
+              </button>
+              .
+            </>
+          )}
         </div>
       )}
 
