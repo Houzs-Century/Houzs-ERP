@@ -315,7 +315,7 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
   ]},
   { group: "Logistics", items: [
     { to: "/scm/delivery-planning", label: "Delivery Planning" },
-    { to: "/scm/fleet", label: "Fleet" },
+    { to: "/scm/fleet", label: "Fleet", gateVia: "/scm/delivery-maintenance" },
     /* KEPT, unlike the retired DESKTOP /scm/drivers page — mobile is NOT the
        same shape and the owner's "fleet 里面也是有 driver" is not true here.
        Mobile's "fleet" module is LORRIES ONLY (MODULE_CONFIGS.fleet — title
@@ -330,20 +330,23 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
        supply this row's permission — is gone with that page, and `allowed()`
        now fails CLOSED for a path with no nav match ("matches.length === 0 ?
        false"). Without this the row would silently VANISH for the drivers cohort
-       too. /scm/fleet carries the byte-identical gate the /scm/drivers entry had
-       (anyPerm ["*","scm.access"] + anyAccess ["scm.transportation.drivers"] +
-       hideForSalesRep), so this preserves today's behaviour exactly. */
-    { to: "/scm/drivers", label: "Drivers", gateVia: "/scm/fleet" },
+       too. /scm/delivery-maintenance carries the byte-identical gate the
+       /scm/drivers entry had (anyPerm ["*","scm.access"] + anyAccess
+       ["scm.transportation.drivers"] + hideForSalesRep), so this preserves
+       today's behaviour exactly. It replaced /scm/fleet here on 2026-08-01 when
+       the six Transportation reference rows collapsed into that one nav entry —
+       the gate is the same pair, only the surviving path changed. */
+    { to: "/scm/drivers", label: "Drivers", gateVia: "/scm/delivery-maintenance" },
     /* Helpers — the delivery-crew master (scm.helpers, mig 0053). Same shape as
        the Drivers row above and for the same reason: mobile's "Fleet" module is
        LORRIES ONLY, so this is the only helper surface on a phone, not a
        duplicate. `gateVia` because /scm/helpers is a mobile-only path with no
        NAV_TABS entry, and `allowed()` fails CLOSED for an unmatched path — without
-       it the row would vanish for everyone. /scm/fleet carries the gate the
-       backend applies to /api/scm/helpers/* (scmAreaGuard
+       it the row would vanish for everyone. /scm/delivery-maintenance carries
+       the gate the backend applies to /api/scm/helpers/* (scmAreaGuard
        "scm.transportation.drivers"), so the two agree. */
-    { to: "/scm/helpers", label: "Helpers", gateVia: "/scm/fleet" },
-    { to: "/scm/delivery-planning-regions", label: "Regions" },
+    { to: "/scm/helpers", label: "Helpers", gateVia: "/scm/delivery-maintenance" },
+    { to: "/scm/delivery-planning-regions", label: "Regions", gateVia: "/scm/delivery-maintenance" },
     /* Fleet Mileage — the Phase-2 driver action (mark day complete + odometer +
        photo). Points at /fleet-health, which on a phone mounts the mileage
        capture screen (destinationScreen), and gates on that path's own NAV_TABS
