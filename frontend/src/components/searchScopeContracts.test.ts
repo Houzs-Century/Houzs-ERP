@@ -54,8 +54,11 @@ describe("list search scope contracts", () => {
 
   test("reports mobile module endpoint caps instead of implying global search", () => {
     const contents = source("mobile/MobileModuleList.tsx");
-    expect(contents).toContain('endpoint: "/delivery-returns?limit=500&');
-    expect(contents).toContain('endpoint: "/purchase-returns?limit=300&');
+    // The cap is what this test is about. Assert it CLOSED, not with a trailing
+    // `&`: that only passed because a second param happened to follow, so
+    // removing an unrelated query param broke a test about limits.
+    expect(contents).toContain('endpoint: "/delivery-returns?limit=500"');
+    expect(contents).toContain('endpoint: "/purchase-returns?limit=300"');
     expect(contents).toContain("loadedLimit={loadedSearchLimit}");
   });
 
