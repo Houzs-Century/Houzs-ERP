@@ -545,25 +545,30 @@ export const NAV_TABS: NavTab[] = [
           // above stay uncluttered. Fleet lives here (you record a lorry) while
           // Fleet Health above is the read-only board (you monitor the fleet).
           // Pure header (no `to`); the groupId gives it expand/collapse memory.
-          /* ONE row, not a group of six. Owner 2026-08-01: "我们需要把 Sidebar
-             以及它的整个模块——包括 3PL Company 和 Rate Card——统一整合在一个模块里".
-             #1489 made the header a destination but KEPT the six children, so
-             the sidebar looked exactly as it had; this removes them.
+          /* SIX rows become THREE, and each one goes to a real page. Owner
+             2026-08-01: "我们需要把 Sidebar 以及它的整个模块——包括 3PL Company 和
+             Rate Card——统一整合在一个模块里", then 2026-08-02 on what the three
+             should LAND on: "我要原本的UI" and "delivery zones和carriers 根本都不
+             需要dropdown啊 就那么少的info".
 
-             The six ROUTES are untouched and still registered in App.tsx —
-             deep links, bookmarks and the "Open on its own" links inside
-             /scm/delivery-maintenance all keep working. Only the nav rows go,
-             which is the whole of what "one module" asked for. Nothing about
-             access changes: the same anyPerm / anyAccess pair gated every child
-             and still gates this row. */
+             So consolidation happened where three screens really are one thing
+             (Regions + Residence Rules + Fleet -> /scm/delivery-maintenance,
+             "Coverage & Fleet"), and the other two keep their own original
+             pages. 3PL Companies is not a row: it opens from the top right of
+             Rate Cards, because a rate card is priced per carrier.
+
+             Every target is a route App.tsx already registers with the SAME
+             `scm.transportation.drivers` guard these rows carry, so nothing
+             about access moves. Do NOT point a child at a bare ?open= variant
+             of another page — that is what made all three land on one screen. */
           {
             label: "Maintenance", icon: SlidersHorizontal, groupId: "scm-transportation-maintenance",
             to: "/scm/delivery-maintenance",
             anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true,
             children: [
-              { to: "/scm/delivery-maintenance?open=coverage-fleet", label: "Coverage & Fleet", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-              { to: "/scm/delivery-maintenance?open=zones", label: "Delivery Zones", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-              { to: "/scm/delivery-maintenance?open=carriers", label: "Carriers & Rates", icon: Handshake, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+              { to: "/scm/delivery-maintenance", label: "Coverage & Fleet", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+              { to: "/scm/delivery-zones", label: "Delivery Zones", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+              { to: "/scm/delivery-rate-cards", label: "Carriers & Rates", icon: Handshake, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
             ],
           },
         ],
