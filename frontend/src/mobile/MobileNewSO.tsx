@@ -2241,10 +2241,10 @@ export function MobileNewSO({
                       Owner 2026-07-16 — UNLESS the order is amendment-eligible:
                       then both dates are editable and go out as an amendment
                       request for approval instead of saving directly. */}
-                  <Field label="Processing Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("procDate", procDate)}>
+                  <Field label="Processing Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("procDate", procDate)} onClear={procDate && !scheduleDatesLocked ? () => setProcDate("") : undefined}>
                     <input className="fld-i" type="date" value={procDate} disabled={scheduleDatesLocked} min={procLocked ? undefined : today} onChange={(e) => setProcDate(e.target.value)} />
                   </Field>
-                  <Field label="Delivery Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("delivDate", delivDate)}>
+                  <Field label="Delivery Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("delivDate", delivDate)} onClear={delivDate && !scheduleDatesLocked ? () => setDelivDate("") : undefined}>
                     <input className="fld-i" type="date" value={delivDate} disabled={scheduleDatesLocked} min={today} onChange={(e) => setDelivDate(e.target.value)} />
                   </Field>
                 </div>
@@ -2728,12 +2728,25 @@ function soHeaderPatchFrom(v: SoHeaderPatchInput): Record<string, unknown> {
 
 // ---- Sub-components ---------------------------------------------------------
 
-function Field({ label, error, scanned, style, children }: { label: string; error?: boolean; scanned?: boolean; style?: React.CSSProperties; children: React.ReactNode }) {
+function Field({ label, error, scanned, onClear, style, children }: { label: string; error?: boolean; scanned?: boolean; onClear?: () => void; style?: React.CSSProperties; children: React.ReactNode }) {
   return (
     <label className="fld" style={style}>
       <span className="fld-l" style={{ display: "flex", alignItems: "center", gap: 6, ...(error ? { color: "#b23a3a" } : null) }}>
         {label}
         {scanned && <ScannedTag />}
+        {/* A native date input has no way back once a value is set — the iOS
+            wheel cannot land on "nothing". Owner, 2026-08-03: "当他不小心选了一个
+            日期，它不能 reset 的吗?". A label-level Clear costs no row width, which
+            the three-across line row has none of. */}
+        {onClear && (
+          <span
+            role="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClear(); }}
+            style={{ marginLeft: "auto", color: "#9aa093", fontSize: 9, fontWeight: 700, letterSpacing: ".04em", cursor: "pointer", padding: "0 2px" }}
+          >
+            CLEAR
+          </span>
+        )}
       </span>
       {children}
     </label>
@@ -2954,7 +2967,7 @@ function LineCard({
               onChange={(e) => onChange({ price: e.target.value })}
             />
           </Field>
-          <Field label="Delivery date" style={{ flex: 1.1 }}>
+          <Field label="Delivery date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
             <input className="fld-i" type="date" value={line.ddate} onChange={(e) => onDdateChange(e.target.value)} />
           </Field>
         </div>
@@ -3530,7 +3543,7 @@ function PayCard({ pay, staff, onChange, onRemove }: { pay: Payment; staff: Arra
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 9, alignItems: "flex-end" }}>
-          <Field label="Date" style={{ flex: 1.1 }}>
+          <Field label="Date" style={{ flex: 1.1 }} onClear={pay.date ? () => onChange({ date: "" }) : undefined}>
             <input className="fld-i" type="date" value={pay.date} onChange={(e) => onChange({ date: e.target.value })} />
           </Field>
           <Field label="Amount" style={{ flex: 1.1 }}>
