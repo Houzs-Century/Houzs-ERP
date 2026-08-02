@@ -18,6 +18,7 @@ import { useState, type ReactNode, type CSSProperties } from 'react';
 import { Button } from '@2990s/design-system';
 import { Building2, Plus, Trash2, Pencil, Check, X, ChevronRight, ChevronDown } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
+import { FormCard, FormGrid, FormField, FormInput } from '../../vendor/scm/components/FormCard';
 import {
   useThreePLCompanies,
   useThreePLFleet,
@@ -84,20 +85,54 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
         />
       )}
 
-      {/* Register a carrier — particulars only; the fleet goes in after it exists. */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end', padding: '14px 16px', borderRadius: 10, background: 'var(--bg-subtle, rgba(0,0,0,0.03))' }}>
-        <Ctl label="Company name"><Inp value={form.name} onChange={set('name')} placeholder="e.g. ABC Logistics Sdn Bhd" width={220} /></Ctl>
-        <Ctl label="SSM / registration no"><Inp value={form.registrationNo} onChange={set('registrationNo')} placeholder="e.g. 202301012345" width={170} /></Ctl>
-        <Ctl label="Contact person"><Inp value={form.contactName} onChange={set('contactName')} placeholder="Name" width={150} /></Ctl>
-        <Ctl label="Contact phone"><Inp value={form.contactPhone} onChange={set('contactPhone')} placeholder="01x-xxx xxxx" width={140} /></Ctl>
-        <Ctl label="Office phone"><Inp value={form.officePhone} onChange={set('officePhone')} placeholder="03-xxxx xxxx" width={140} /></Ctl>
-        <Ctl label="Email"><Inp value={form.email} onChange={set('email')} placeholder="ops@carrier.com" width={180} /></Ctl>
-        <Ctl label="Address"><Inp value={form.address} onChange={set('address')} placeholder="Registered address" width={240} /></Ctl>
-        <Button variant="primary" size="md" onClick={submit} disabled={createCo.isPending}>
-          <Plus {...ICON} />
-          <span>{createCo.isPending ? 'Saving…' : 'Add company'}</span>
-        </Button>
-      </div>
+      {/* Sales Order's card + four-column grid (owner 2026-08-02: "应该要像我们
+          Sales Order 那样子的 UI"). It replaces a wrap-flex of hand-sized inputs
+          that queued the fields in whatever order they happened to fit — the
+          company's identity sat beside its phone number with nothing between
+          them, and Address (the longest value) got the narrowest box on the row.
+
+          Grouped the way the paperwork is: WHO the company is, then HOW to
+          reach them. The formats that are now enforced server-side are stated
+          under the fields rather than hidden in a placeholder that vanishes the
+          moment you type. */}
+      <FormCard
+        title="Register a 3PL company"
+        actions={
+          <Button variant="primary" size="sm" onClick={submit} disabled={createCo.isPending}>
+            <Plus {...ICON} />
+            <span>{createCo.isPending ? 'Saving…' : 'Add company'}</span>
+          </Button>
+        }
+      >
+        <FormGrid>
+          <FormField label="Company name" required span={2}>
+            <FormInput value={form.name} onChange={(e) => set('name')(e.target.value)} placeholder="e.g. ABC Logistics Sdn Bhd" />
+          </FormField>
+          <FormField label="SSM / registration no" hint="Unique when given — two carriers cannot share one.">
+            <FormInput value={form.registrationNo} onChange={(e) => set('registrationNo')(e.target.value)} placeholder="e.g. 202301012345" />
+          </FormField>
+          <FormField label="Code" hint="Allocated on save — 3PL-001, 3PL-002…">
+            <FormInput value="Assigned automatically" readOnly disabled />
+          </FormField>
+
+          <FormField label="Contact person">
+            <FormInput value={form.contactName} onChange={(e) => set('contactName')(e.target.value)} placeholder="Name" />
+          </FormField>
+          <FormField label="Contact phone" hint="Stored as +60…">
+            <FormInput value={form.contactPhone} onChange={(e) => set('contactPhone')(e.target.value)} placeholder="01x-xxx xxxx" />
+          </FormField>
+          <FormField label="Office phone" hint="A landline is fine.">
+            <FormInput value={form.officePhone} onChange={(e) => set('officePhone')(e.target.value)} placeholder="03-xxxx xxxx" />
+          </FormField>
+          <FormField label="Email">
+            <FormInput type="email" value={form.email} onChange={(e) => set('email')(e.target.value)} placeholder="ops@carrier.com" />
+          </FormField>
+
+          <FormField label="Registered address" span={4}>
+            <FormInput value={form.address} onChange={(e) => set('address')(e.target.value)} placeholder="Registered address" />
+          </FormField>
+        </FormGrid>
+      </FormCard>
 
       <div style={{ borderRadius: 10, border: '1px solid var(--border, rgba(0,0,0,0.12))', overflow: 'hidden' }}>
         {companies.isLoading ? (
