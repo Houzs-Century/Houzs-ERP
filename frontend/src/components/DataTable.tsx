@@ -2727,9 +2727,14 @@ function DataTableInner<T>({
                         })}
                       </tr>
                       {/* Inline expanded sub-row (opt-in `expandable`). Spans
-                          the full width; renders the caller's drill-down. */}
+                          the full width; renders the caller's drill-down.
+                          Carries the parent row's getRowClassName class so a
+                          state the page paints on the row (e.g. the muted
+                          cancelled-row treatment) covers the drill-down too —
+                          a full-strength expansion under a faded row would
+                          read as live lines on a dead document. */}
                       {isExpanded && expandable && (
-                        <tr className="bg-surface-dim/20">
+                        <tr className={cn("bg-surface-dim/20", customClass)}>
                           <td
                             colSpan={totalColSpan}
                             className="border-b border-border-subtle px-5 py-3 text-[13px] text-ink"

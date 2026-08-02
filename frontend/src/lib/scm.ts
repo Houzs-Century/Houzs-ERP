@@ -43,6 +43,18 @@ export function fmtCenti(centi: number | null | undefined, currency = "MYR"): st
   return `${sym}${fmtAmt(centi)}`;
 }
 
+/** True when an SCM document status means "cancelled", whatever the casing.
+ *  The backends are not consistent: PO/GRN/PI store SCREAMING_CASE
+ *  ("CANCELLED"), SO/DO come back in any case, and legacy SO rows carry the
+ *  bare verb "cancel" (see MfgSalesOrdersListV2's STATUS_TONE). The list
+ *  pages use this ONE predicate for the muted cancelled-row treatment
+ *  (index.css `dt-row-cancelled`) so the SCM lists cannot drift apart on
+ *  what counts as cancelled. */
+export function isCancelledDocStatus(status: string | null | undefined): boolean {
+  const s = (status ?? "").trim().toUpperCase();
+  return s === "CANCELLED" || s === "CANCEL";
+}
+
 /** SCM document/master statuses share a small colour vocabulary. Returns
  *  Tailwind classes for a status pill (semantic tokens from tailwind.config). */
 export function scmStatusClasses(status: string | null | undefined): string {

@@ -1159,3 +1159,36 @@ describe("DataTable windowing with expandable rows", () => {
     expect(container.querySelectorAll("tr[data-vrow]").length).toBe(10);
   });
 });
+
+/* The cancelled-row treatment (owner 2026-08-02) mutes a row AND its
+   drill-down: the class from getRowClassName must land on the expanded
+   sub-<tr> too, or the expansion under a faded row pops back to full
+   strength — live-looking lines on a dead document. */
+describe("DataTable getRowClassName with expandable rows", () => {
+  it("puts the row class on the expanded sub-row as well", () => {
+    setViewport(1280);
+
+    const { container } = render(
+      <DataTable
+        tableId="rowclass-expansion"
+        rows={rows.slice(0, 3)}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        getRowClassName={(row) => (row.id === 1 ? "dt-row-cancelled" : undefined)}
+        expandable={{
+          render: (row) => <div data-testid={`detail-${row.id}`}>detail for {row.name}</div>,
+        }}
+      />,
+    );
+
+    expect(container.querySelectorAll("tr.dt-row-cancelled").length).toBe(1);
+
+    fireEvent.click(screen.getAllByLabelText("Expand row")[0]);
+
+    // The data row AND its expansion row carry the class; other rows never do.
+    expect(container.querySelectorAll("tr.dt-row-cancelled").length).toBe(2);
+    expect(screen.getByTestId("detail-1").closest("tr")?.className).toContain(
+      "dt-row-cancelled",
+    );
+  });
+});

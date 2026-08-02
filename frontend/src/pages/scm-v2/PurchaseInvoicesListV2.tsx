@@ -52,6 +52,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -803,7 +804,14 @@ export function PurchaseInvoicesListV2() {
       alwaysVisible: true,
       getValue: (r) => r.invoice_number,
       render: (r) => (
-        <span className="font-mono text-[12.5px] font-semibold text-ink">{r.invoice_number}</span>
+        <span
+          className={cn(
+            "font-mono text-[12.5px] font-semibold text-ink",
+            isCancelledDocStatus(r.status) && "dt-cancel-strike",
+          )}
+        >
+          {r.invoice_number}
+        </span>
       ),
     },
     {
@@ -890,6 +898,8 @@ export function PurchaseInvoicesListV2() {
       key: "status",
       label: "Status",
       width: "132px",
+      // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
+      className: "dt-cancel-keep",
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
@@ -1082,6 +1092,9 @@ export function PurchaseInvoicesListV2() {
                 error={error ? (error as Error).message ?? "Failed to load" : null}
                 columns={columns}
                 getRowKey={(r) => r.id}
+                getRowClassName={(r) =>
+                  isCancelledDocStatus(r.status) ? "dt-row-cancelled" : undefined
+                }
                 onRowClick={(r) => setSelected(r)}
                 expandable={{
                   render: (r) => <PiLinesExpansion id={r.id} />,
