@@ -210,3 +210,102 @@ describe('tripOutstationFeeCenti (WS4c) — fixed per-trip outstation', () => {
     expect(r.totalCenti).toBe(RM(120));
   });
 });
+
+/**
+ * A cap that a later step can exceed is not a cap.
+ *
+ * Two ways the envelope leaked before 2026-08-02, both silent and both
+ * money-affecting:
+ *
+ *  1. ROUNDING ran after CAP, and half-up rounding could push the total back
+ *     over the ceiling on the very line labelled "Charge cap".
+ *  2. The FIXED per-trip outstation fee was added by the reconcile AFTER this
+ *     function returned, so it sat outside the envelope entirely — a capped
+ *     card billed cap + fee. It also meant the UI calculator could never show
+ *     an OUTSTATION_TRIP line, so the screen disagreed with the invoice.
+ */
+describe('the envelope actually contains everything', () => {
+  const card = (extra: Partial<RateCardSpec> = {}): RateCardSpec => ({
+    basis: 'SET',
+    rules: [{ ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 49_496 }],
+    ...extra,
+  });
+
+  it('rounding rounds DOWN rather than breaching the cap', () => {
+    // 494.96 capped at 494.95 -> 494.95; nearest-10-sen would round UP to
+    // 495.00, which is over the cap.
+    const r = computeDeliveryCost(
+      card({ capCenti: 49_495, rounding: 'NEAREST_10C' }),
+      { setCount: 1 },
+    );
+    expect(r.totalCenti).toBeLessThanOrEqual(49_495);
+    expect(r.totalCenti).toBe(49_490);
+  });
+
+  it('rounding still rounds normally when it does not breach the cap', () => {
+    const r = computeDeliveryCost(card({ capCenti: 100_000, rounding: 'NEAREST_10C' }), { setCount: 1 });
+    expect(r.totalCenti).toBe(49_500); // 494.96 -> 495.00, well under the cap
+  });
+
+  it('no cap means rounding behaves exactly as before', () => {
+    const r = computeDeliveryCost(card({ rounding: 'NEAREST_RM' }), { setCount: 1 });
+    expect(r.totalCenti).toBe(49_500);
+  });
+
+  it('the per-trip outstation fee is INSIDE the cap', () => {
+    const spec = card({
+      capCenti: 60_000,
+      rules: [
+        { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION_TRIP', zone: 'PENANG', amountCenti: 40_000 },
+      ],
+    });
+    const r = computeDeliveryCost(spec, { setCount: 1, destinationZone: 'PENANG' }, { perTrip: true });
+    // 500 + 400 = 900, capped at 600. Before the fix this billed 1000.
+    expect(r.totalCenti).toBe(60_000);
+    expect(r.lines.some((l) => l.ruleType === 'OUTSTATION_TRIP')).toBe(true);
+    expect(r.lines.some((l) => l.ruleType === 'CAP')).toBe(true);
+  });
+
+  it('per-drop pricing does NOT apply the per-trip fee', () => {
+    const spec = card({
+      rules: [
+        { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION_TRIP', zone: 'PENANG', amountCenti: 40_000 },
+      ],
+    });
+    const perDrop = computeDeliveryCost(spec, { setCount: 1, destinationZone: 'PENANG' });
+    expect(perDrop.totalCenti).toBe(50_000);
+    expect(perDrop.lines.some((l) => l.ruleType === 'OUTSTATION_TRIP')).toBe(false);
+  });
+
+  it('a per-trip fee for a DIFFERENT zone is not applied', () => {
+    const spec = card({
+      rules: [
+        { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION_TRIP', zone: 'PENANG', amountCenti: 40_000 },
+      ],
+    });
+    const r = computeDeliveryCost(spec, { setCount: 1, destinationZone: 'JOHOR' }, { perTrip: true });
+    expect(r.totalCenti).toBe(50_000);
+  });
+
+  it('the per-trip fee counts toward the MINIMUM charge too', () => {
+    /* The minimum sits BETWEEN the two readings on purpose. At RM700:
+         fee inside the envelope -> 500 + 400 = 900, already over, no top-up.
+         fee outside             -> 500 topped to 700, then +400 = 1100.
+       A minimum above both (e.g. RM1000) would produce RM1000 either way and
+       the test would pass while the bug was present — which is what the first
+       draft of this test did. */
+    const spec = card({
+      minChargeCenti: 70_000,
+      rules: [
+        { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION_TRIP', zone: 'PENANG', amountCenti: 40_000 },
+      ],
+    });
+    const r = computeDeliveryCost(spec, { setCount: 1, destinationZone: 'PENANG' }, { perTrip: true });
+    expect(r.totalCenti).toBe(90_000);
+    expect(r.lines.some((l) => l.ruleType === 'MIN_CHARGE')).toBe(false);
+  });
+});

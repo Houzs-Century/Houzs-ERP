@@ -262,7 +262,10 @@ export function useUpdateDeliveryFields() {
    the value a user PICKS is byte-identical to what the board SHOWS — they can no
    longer drift (owner: the dropdown type must equal the type we normally show). */
 export const DP_JOB_TYPES = [
-  'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP',
+  /* INSPECTION has been on scm.trip_stop_type since mig 0165. It was missing
+     here, so an inspection DP order rendered through the defensive prettifier
+     rather than the canonical label. */
+  'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION',
 ] as const;
 export type DpJobType = (typeof DP_JOB_TYPES)[number];
 
@@ -273,6 +276,7 @@ export const DP_JOB_TYPE_LABEL: Record<DpJobType, string> = {
   SETUP: 'Setup',
   DISMANTLE: 'Dismantle',
   SUPPLIER_PICKUP: 'Supplier Pickup',
+  INSPECTION: 'Inspection',
 };
 
 /* The job types the New-DP-Order drawer OFFERS to create. DELIVERY / PICKUP /
@@ -283,6 +287,16 @@ export const DP_JOB_TYPE_LABEL: Record<DpJobType, string> = {
    DP_JOB_TYPES (the full set) is still used to LABEL any existing/legacy dp_order
    the board renders. */
 export const DP_CREATABLE_JOB_TYPES = ['SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP'] as const;
+
+/* INSPECTION is deliberately NOT here, even though 2026-08-02 added it to
+   DP_JOB_TYPES so it labels correctly. The three types above are safe to create
+   because their source sets project_id / supplier_id — NOT so_doc_no, which is
+   what the board's union guard filters on
+   (delivery-planning.ts: `.is('so_doc_no', null)...`). sourceMeta gives
+   INSPECTION the DEFAULT source kind, 'so', so a created one would set
+   so_doc_no and vanish from the board — the exact data sink #1416 closed.
+   Making it creatable means first giving it a source kind that does not, and
+   proving the row still renders. Not done here. */
 
 /* The label the board / dropdown show for a DP job type. Reads the canonical map;
    falls back to a Title-Cased prettify for any value not in the set (defensive —

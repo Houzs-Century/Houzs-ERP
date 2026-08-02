@@ -132,7 +132,11 @@ async function denyIfNotOwnDpJob(
   return c.json({ error: NOT_YOUR_JOB }, 403);
 }
 
-const JOB_TYPES = ['DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP'] as const;
+/* Every value on scm.trip_stop_type. INSPECTION joined that enum in mig 0165
+   and never reached this list, so a DP order could not be created for a job the
+   database, the board's Type filter and the rate card all understand. Kept in
+   step by `npm run audit:job-types`. */
+const JOB_TYPES = ['DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION'] as const;
 
 const createSchema = z.object({
   jobType: z.enum(JOB_TYPES),
