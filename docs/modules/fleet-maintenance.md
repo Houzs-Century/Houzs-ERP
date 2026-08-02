@@ -134,6 +134,9 @@ Region + status filters are URL state; region options are derived from the
 warehouses actually present. Registered in `routing/routeManifest.ts` so the
 mobile shell resolves it to a desktop-only dead-end (no mobile screen in Phase 1).
 
+**The drawer is a quick look, not the record** — see section 12. Everything a
+lorry has ever had lives on `/fleet-health/:lorryId`.
+
 ## 9. Phase 2 — preventive plans + mileage capture
 
 ### `scm.lorry_compliance_attachments` — the vault's FILES (mig 0238, 2026-08-01)
@@ -430,7 +433,64 @@ including the dropped-line case and the vendors who print no line amounts at
 all. `backend/tests/fleetStatus.test.ts` reproduces its RM22,208.50 through the
 stored line model.
 
+## 12. The drawer is a quick look; the record is a page (2026-08-02)
+
+Owner: *"这个 Fleet Health 不可能只是在右边展示... 它应该要支持展开... 要不然界面
+会显得非常乱. 例如 Compliance 这些资料，就不需要在刚点开的时候直接显示在右边.
+包括我的 New Work Order 和 Import Work Shop Document 都不需要在这边. 它应该只需要
+看得到现在的 Mileage，以及下一次什么时候要去维修."*
+
+The drawer had accumulated every phase's section — vault with per-document
+renewal history and file attachments, work orders, tyres, plans, mileage history
+— in a side panel you scrolled for a page and a half.
+
+**The split is by QUESTION, not by size.**
+
+| Surface | Answers | Carries |
+|---|---|---|
+| Drawer (`FleetHealth.tsx`) | *Can I use this lorry today?* | out-of-service / open-problem banner, current mileage, next service, breakdowns, a link to the record |
+| Page (`LorryRecord.tsx`, `/fleet-health/:lorryId`) | *What is this lorry's history?* | vehicle dates, breakdowns, work orders, components, plans, mileage, the full compliance vault |
+
+**New Work Order** and **Import Workshop Document** moved to the page with the
+work-order section they belong to. They are not duplicated in the drawer.
+
+**The page IMPORTS the sections; it does not re-implement them.** ~32
+declarations in `FleetHealth.tsx` gained `export` for this (`PlansSection`,
+`MileageSection`, `BreakdownSection`, `WorkOrdersSection`, `ComponentsSection`,
+`AttachmentStrip`, `AddRenewalForm`, `MissingComplianceNote`, `Pill`, `money`,
+`boxLabel`, `DOC_TYPES`, `DOC_LABEL`, `STATUS_TONE`, and the payload types).
+Copying them by hand is how one copy quietly loses a fix. Both surfaces read the
+same `GET /api/fleet-maintenance/vehicles/:id`, so there is one payload shape.
+
+Gated exactly as `/fleet-health` is (`fleet.read`); registered in
+`routing/routeManifest.ts` (desktop-only, like its parent).
+
+### The four dates a lorry's life is measured from (mig `0245`)
+
+Owner: *"每一辆罗里都要有以下这些日期：1. 生产日期 2. 注册 (Register) 日期
+3. 第一天上班的日期"*. `scm.lorries.purchase_date` (mig 0121) already existed and
+is **none of those three**.
+
+| Column | Answers | Why it is not one of the others |
+|---|---|---|
+| `manufacture_date` | how OLD the vehicle is | depreciation, and whether a part is still made for it |
+| `registration_date` | the JPJ registration | road tax / insurance / PUSPAKOM cycles anchor here, not to our purchase |
+| `in_service_date` | first day it worked FOR US | the denominator for cost-per-day — bought in March, idle until June, is not three months of use |
+| `purchase_date` (0121) | when WE bought it | already present |
+
+**All nullable, no backfill, and no ordering CHECK.** Nothing in the system can
+infer any of them, and a guessed date silently becomes the basis of an age or a
+cost-per-day figure nobody can trace. `manufacture <= registration <= in_service`
+is tempting and wrong: a reconditioned import is registered here long after it
+was built elsewhere, and a lorry can start work before its transfer paperwork
+clears. The UI states the intent instead of the database refusing the row.
+
+Edited on the lorry master (`scm-v2/LorryDetail.tsx`, Coverage & Fleet); read
+back through `/api/fleet-maintenance/vehicles/:id` for the record page's Vehicle
+section.
+
 ## 8. See also
+- `frontend/src/pages/LorryRecord.tsx` (the full record; sections imported from `FleetHealth.tsx`)
 - `backend/src/services/fleet-status.ts` + `backend/tests/fleetStatus.test.ts`
 - `backend/scripts/seed-fleet-maintenance.mjs` (Phase 1 vault) · `seed-fleet-plans.mjs` (Phase 2 plans)
 - `backend/src/scm/routes/lorries.ts`, `lorry-service-records.ts` (the sibling master + history)
