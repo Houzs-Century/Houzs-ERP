@@ -8,6 +8,9 @@
 //   (5) every physical category (accessories / mattress / bedframe / sofa) must
 //       trace to its soft-matched PO, in BOTH directions.
 //   plus: "当开了 DO 就变成硬匹配了".
+//   and (2026-08-02): "我们不会订超过我们需要的货物 — 除了 accessories;
+//   mattress / bedframe / sofa 都不会。全部 PO cancel 了之后 MRP running 的
+//   规则要对" — measured in section (H).
 //
 // ⚠ THIS SCRIPT REPLICATES computeMrp — IT DOES NOT CALL IT. The engine lives in
 // a Cloudflare Worker behind PostgREST; a CI node process cannot invoke it. So
@@ -235,9 +238,11 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
     SELECT product_code, warehouse_id, variant_key, qty
       FROM scm.inventory_balances WHERE company_id = ${companyId}`;
   const stockByKey = new Map();
+  const stockMetaByKey = new Map();
   for (const b of balances) {
     const k = composite(b.warehouse_id ?? null, b.product_code, b.variant_key ?? "");
     stockByKey.set(k, (stockByKey.get(k) ?? 0) + num(b.qty));
+    if (!stockMetaByKey.has(k)) stockMetaByKey.set(k, { wh: b.warehouse_id ?? null, code: b.product_code, vkey: b.variant_key ?? "" });
   }
 
   /* ── 4. PO SUPPLY — mrp.ts §4 (L677-730) ──────────────────────────────── */
@@ -305,6 +310,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   /* applyCommittedSupply — ship-commitment.ts L345-372 */
   const supplyEntries = [];
   const stockAddBack = new Map();
+  const committedByPoItem = new Map();      // poItemId -> units a ship-before-arrival DO already owns (H)
   const pool = new Map([...committed].map(([k, v]) => [k, { ...v }]));
   for (const e of poDrafts) {
     const k = `${e.bucketKey}|${e.poNumber}`;
@@ -312,6 +318,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
     if (!owed || owed.qty <= 0) { if (e.qtyLeft > 0) supplyEntries.push(e); continue; }
     const take = Math.min(owed.qty, e.qtyLeft);
     owed.qty -= take;
+    if (take > 0) committedByPoItem.set(e.poItemId, (committedByPoItem.get(e.poItemId) ?? 0) + take);
     if (take > 0) stockAddBack.set(e.bucketKey, (stockAddBack.get(e.bucketKey) ?? 0) + take);
     const left = e.qtyLeft - take;
     if (left > 0) supplyEntries.push({ ...e, qtyLeft: left });
@@ -356,6 +363,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   /* ── 7. GREEDY ALLOCATION — mrp.ts §7 (L856-967) ──────────────────────── */
   const results = [];                       // one per demand line
   const poConsumedBy = new Map();           // poNumber -> [{soItemId, qty, bucketKey}]
+  const claimedByPoItem = new Map();        // poItemId -> units demand soft-claims (H)
   const legacyShared = [];                  // double-allocation evidence
   const legacyUseByWhCode = new Map();      // `${wh}|${code}` -> [vkeys using the legacy pool]
 
@@ -390,7 +398,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
           if (!front) break;
           const take = Math.min(front.qtyLeft, need);
           if (poNumber == null) { poNumber = front.poNumber; poEta = front.eta; }
-          takenFrom.push({ poNumber: front.poNumber, qty: take });
+          takenFrom.push({ poNumber: front.poNumber, poItemId: front.poItemId, qty: take });
           front.qtyLeft -= take; need -= take;
           if (front.qtyLeft <= 0) poQueue.shift();
         }
@@ -399,6 +407,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
           const arr = poConsumedBy.get(t.poNumber) ?? [];
           arr.push({ soItemId: r.id, soDocNo: r.doc_no, qty: t.qty, bucketKey: k });
           poConsumedBy.set(t.poNumber, arr);
+          if (t.poItemId) claimedByPoItem.set(t.poItemId, (claimedByPoItem.get(t.poItemId) ?? 0) + t.qty);
         }
         results.push({
           row: r, cat: catOf(r), isSofa, bucketKey: k,
@@ -761,6 +770,186 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice("   -- before the 2026-07-31 'warehouse follows the SO' change every one of these split");
   notice("      into two MRP rows; the resolver now folds the NULL side onto the SO's warehouse.");
   for (const s of sofaWhSplit.slice(0, 15)) notice(`      ${pad(s.doc_no, 20)} ${s.wh_variants} distinct warehouse values`);
+
+  /* ═══════════════ (H) OVER-ORDER — the owner's purchasing rule ═════════ */
+  notice("");
+  notice("======== (H) OVER-ORDER — did we buy more than we need? ========");
+  notice("  Owner's rule (2026-08-02): purchases NEVER exceed demand for MATTRESS /");
+  notice("  BEDFRAME / SOFA — only ACCESSORY may be bought for stock. And a CANCELLED");
+  notice("  PO must be fully OUT of the running formula.");
+  notice("  ---- (H0) the cancel rule, asserted on today's rows ----");
+  notice(`  dead-PO lines (CANCELLED/DRAFT) excluded from the supply pool : ${poDead}  (structural: PO_DEAD filter)`);
+  notice("  goods ALREADY received on a since-cancelled PO stay in stock — correct: the");
+  notice("  IN movement is physical history; cancellation only kills the un-received rest.");
+  const deadLinked = [];
+  for (const r of poRaw) {
+    if (!PO_DEAD.has(snorm(r.po_status)) || !r.so_item_id) continue;
+    if (demandById.has(r.so_item_id)) deadLinked.push(r);
+  }
+  notice(`  dead-PO lines whose stored so_item_id points at LIVE demand   : ${deadLinked.length}`);
+  notice("     (harmless to MRP — a dead PO never supplies — but the demand these lines once");
+  notice("      covered is back on the market: MRP must re-pair it or purchasing must re-order.)");
+  for (const r of deadLinked.slice(0, 15)) {
+    const so = demandById.get(r.so_item_id);
+    notice(`      ${pad(r.po_number, 18)} ${pad(r.material_code, 26)} qty ${pad(num(r.qty), 5)} -> live SO ${so?.doc_no}`);
+  }
+  const deadAllocs = await sql`
+    SELECT po.po_number, a.qty, si.doc_no, si.cancelled,
+           UPPER(COALESCE(s.status::text,'')) AS so_status
+      FROM scm.purchase_order_item_allocations a
+      JOIN scm.purchase_order_items pi ON pi.id = a.purchase_order_item_id
+      JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id
+      LEFT JOIN scm.mfg_sales_order_items si ON si.id = a.so_item_id
+      LEFT JOIN scm.mfg_sales_orders s ON s.doc_no = si.doc_no AND s.company_id = si.company_id
+     WHERE pi.company_id = ${companyId}
+       AND UPPER(po.status::text) IN ('CANCELLED','DRAFT')
+       AND a.so_item_id IS NOT NULL`;
+  const deadAllocsLive = deadAllocs.filter((a) => !a.cancelled && !SO_DONE.has(a.so_status));
+  notice(`  allocation sub-lines on dead POs still claiming a live SO     : ${deadAllocsLive.length}  (expected 0 — cancelled POs are never attribution targets)`);
+  for (const a of deadAllocsLive.slice(0, 10)) notice(`      ${pad(a.po_number, 18)} qty ${pad(num(a.qty), 5)} -> ${a.doc_no}`);
+
+  notice("  ---- (H1) surplus per category (open PO units nobody is asking for) ----");
+  const allocRows = await sql`
+    SELECT a.purchase_order_item_id, a.seq, a.qty, a.so_item_id
+      FROM scm.purchase_order_item_allocations a
+      JOIN scm.purchase_order_items pi ON pi.id = a.purchase_order_item_id
+      JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id
+     WHERE pi.company_id = ${companyId}
+       AND UPPER(po.status::text) NOT IN ('CANCELLED','DRAFT')`;
+  const allocsByPoItem = new Map();
+  for (const a of allocRows) {
+    const arr = allocsByPoItem.get(a.purchase_order_item_id) ?? [];
+    arr.push(a); allocsByPoItem.set(a.purchase_order_item_id, arr);
+  }
+  const shortageByCode = new Map();
+  for (const r of results) {
+    if (r.shortage > 0) shortageByCode.set(r.row.item_code, (shortageByCode.get(r.row.item_code) ?? 0) + r.shortage);
+  }
+  const surplusLines = [];
+  const overClaimedLines = [];
+  const catTotals = new Map(CATS.map((c) => [c, { openUnits: 0, spoken: 0, surplus: 0, lines: 0 }]));
+  for (const e of poOpen) {
+    const cat = catKey(prodByCode.get(e.material_code)?.category ?? catFromGroup(e.item_group));
+    if (isServiceLine({ itemGroup: e.item_group, itemCode: e.material_code, category: cat })) continue;
+    const committedTake = committedByPoItem.get(e.po_item_id) ?? 0;
+    const claimed = claimedByPoItem.get(e.po_item_id) ?? 0;
+    const surplus = e.left - committedTake - claimed;
+    const t = catTotals.get(cat);
+    t.openUnits += e.left;
+    t.spoken += Math.min(e.left, committedTake + claimed);
+    if (surplus < -1e-9) { overClaimedLines.push({ e, cat, committedTake, claimed }); continue; }
+    if (surplus > 1e-9) {
+      t.surplus += surplus; t.lines += 1;
+      surplusLines.push({ e, cat, committedTake, claimed, surplus });
+    }
+  }
+  notice(`  ${pad("category", 16)} ${pad("openUnits", 10)} ${pad("spokenFor", 10)} ${pad("SURPLUS", 9)} verdict`);
+  for (const c of CATS) {
+    const t = catTotals.get(c);
+    if (!t.openUnits) continue;
+    const verdict = c === "ACCESSORY" ? "stock purchases ALLOWED (owner policy)"
+      : c === "(uncategorised)" ? (t.surplus > 0 ? "unknown category — classify the product, then judge" : "OK")
+      : t.surplus > 0 ? "VIOLATES the never-over-order rule — documents below" : "OK — every unit spoken for";
+    notice(`  ${pad(c, 16)} ${pad(t.openUnits, 10)} ${pad(t.spoken, 10)} ${pad(t.surplus, 9)} ${verdict}`);
+  }
+  notice(`  lines soft-claimed BEYOND their qty (legacy double-clone evidence, expect 0): ${overClaimedLines.length}`);
+
+  notice("  ---- (H2) document by document — every over-ordered PO ----");
+  notice("  reason codes: STOCK-SLICE = an allocation sub-line explicitly declares 'for stock';");
+  notice("  SO-DONE = the linked SO already completed/cancelled (goods served from elsewhere),");
+  notice("  the remainder is now unspoken-for; BUCKET-SPLIT = the same SKU is SHORT in another");
+  notice("  warehouse/variant bucket (a pairing bug, NOT a true over-order); NO-DEMAND = nothing");
+  notice("  in the system asks for these units.");
+  const soStateIds = new Set();
+  for (const s of surplusLines) {
+    if (s.e.so_item_id) soStateIds.add(s.e.so_item_id);
+    for (const a of allocsByPoItem.get(s.e.po_item_id) ?? []) if (a.so_item_id) soStateIds.add(a.so_item_id);
+  }
+  const soStateById = new Map();
+  if (soStateIds.size > 0) {
+    for (const r of await sql`
+      SELECT i.id, i.doc_no, i.cancelled, UPPER(COALESCE(s.status::text,'')) AS so_status
+        FROM scm.mfg_sales_order_items i
+        JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no AND s.company_id = i.company_id
+       WHERE i.id IN ${sql([...soStateIds])}`) soStateById.set(r.id, r);
+  }
+  const reasonOf = (s) => {
+    const allocs = allocsByPoItem.get(s.e.po_item_id) ?? [];
+    const stockQty = allocs.filter((a) => !a.so_item_id).reduce((x, a) => x + num(a.qty), 0);
+    if (stockQty >= s.surplus - 1e-9 && allocs.length > 0) return "STOCK-SLICE (declared)";
+    const links = [s.e.so_item_id, ...allocs.map((a) => a.so_item_id)].filter(Boolean);
+    const doneLinks = links.map((id) => soStateById.get(id))
+      .filter((r) => r && (r.cancelled || SO_DONE.has(r.so_status)));
+    const short = shortageByCode.get(s.e.material_code) ?? 0;
+    if (doneLinks.length > 0) {
+      const d = doneLinks[0];
+      return `SO-DONE (${d.doc_no} ${d.cancelled ? "line-cancelled" : d.so_status})${short > 0 ? ` + same SKU short ${short} elsewhere` : ""}`;
+    }
+    if (short > 0) return `BUCKET-SPLIT? same SKU short ${short} in another bucket`;
+    return "NO-DEMAND";
+  };
+  const byPo = new Map();
+  for (const s of surplusLines) {
+    if (s.cat === "ACCESSORY") continue;
+    const arr = byPo.get(s.e.po_number) ?? [];
+    arr.push(s); byPo.set(s.e.po_number, arr);
+  }
+  notice(`  over-ordered PO documents (MATTRESS/BEDFRAME/SOFA/uncategorised): ${byPo.size}`);
+  for (const [poNo, lines] of [...byPo].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const tot = lines.reduce((x, s) => x + s.surplus, 0);
+    notice(`   ${pad(poNo, 20)} surplus ${tot} unit(s) across ${lines.length} line(s)`);
+    for (const s of lines.slice(0, 12)) {
+      notice(`      ${pad(s.e.material_code, 26)} ${pad(s.cat, 11)} qty ${pad(num(s.e.qty), 4)} recvd ${pad(num(s.e.received_qty), 4)} open ${pad(s.e.left, 4)} claimed ${pad(s.committedTake + s.claimed, 4)} SURPLUS ${pad(s.surplus, 4)} ${reasonOf(s)}`);
+    }
+  }
+  const accSurplus = surplusLines.filter((x) => x.cat === "ACCESSORY");
+  notice(`  ACCESSORY surplus (allowed by policy): ${accSurplus.reduce((x, s) => x + s.surplus, 0)} unit(s) on ${new Set(accSurplus.map((s) => s.e.po_number)).size} PO(s) — informational, NOT violations`);
+
+  notice("  ---- (H3) already-RECEIVED surplus (on-hand stock nobody is asking for) ----");
+  notice("  Same rule, after the GRN: for MATTRESS/BEDFRAME/SOFA any on-hand unit with no");
+  notice("  live demand in its bucket is dead stock — from an over-order, a cancelled SO, or");
+  notice("  a return. batch_no on the leftover lot = the PO that bought it.");
+  const stockLeftByBucket = new Map();
+  for (const [k, have] of stockByKey) {
+    const used = stockUsedByBucket.get(k) ?? 0;
+    if (have - used > 1e-9) stockLeftByBucket.set(k, have - used);
+  }
+  const lotRows = await sql`
+    SELECT batch_no, product_code, warehouse_id, COALESCE(variant_key,'') AS vkey,
+           SUM(qty_remaining)::numeric AS remaining
+      FROM scm.inventory_lots
+     WHERE company_id = ${companyId} AND qty_remaining > 0
+     GROUP BY 1, 2, 3, 4`;
+  const lotsByBucket = new Map();
+  for (const l of lotRows) {
+    const k = composite(l.warehouse_id ?? null, l.product_code, l.vkey);
+    const arr = lotsByBucket.get(k) ?? [];
+    arr.push(l); lotsByBucket.set(k, arr);
+  }
+  let deadStockUnits = 0, deadStockBuckets = 0;
+  const accStockLeft = { units: 0, buckets: 0 };
+  for (const [k, left] of [...stockLeftByBucket].sort((a, b) => b[1] - a[1])) {
+    const meta = stockMetaByKey.get(k);
+    const cat = catKey(prodByCode.get(meta?.code)?.category ?? null);
+    if (cat === "ACCESSORY") { accStockLeft.units += left; accStockLeft.buckets += 1; continue; }
+    if (isServiceLine({ itemGroup: "", itemCode: meta?.code ?? "", category: cat })) continue;
+    deadStockUnits += left; deadStockBuckets += 1;
+    if (deadStockBuckets <= 40) {
+      const lots = (lotsByBucket.get(k) ?? []).map((l) => `${l.batch_no ?? "(no batch)"} x${num(l.remaining)}`).join(", ");
+      const short = shortageByCode.get(meta?.code) ?? 0;
+      notice(`   ${pad(meta?.code ?? k, 26)} ${pad(cat, 14)} wh=${pad(whById.get(meta?.wh)?.code ?? meta?.wh ?? "NONE", 8)} leftover ${pad(left, 4)} <- ${lots || "no open lot (pre-FIFO ledger)"}${short > 0 ? `  NOTE same SKU short ${short} elsewhere` : ""}`);
+    }
+  }
+  notice(`  MATTRESS/BEDFRAME/SOFA on-hand units with NO live demand : ${deadStockUnits} across ${deadStockBuckets} bucket(s)${deadStockBuckets > 40 ? " (listing capped at 40)" : ""}`);
+  notice(`  ACCESSORY on-hand beyond demand (allowed)                : ${accStockLeft.units} across ${accStockLeft.buckets} bucket(s)`);
+
+  const mbsSurplus = [...byPo.values()].flat().reduce((x, s) => x + s.surplus, 0);
+  notice("  ---- (H) verdict ----");
+  notice(`  open-PO over-order units (MATTRESS/BEDFRAME/SOFA/uncat) : ${mbsSurplus} on ${byPo.size} PO document(s)`);
+  notice(`  received dead-stock units (same categories)             : ${deadStockUnits}`);
+  notice(`  cancel-rule violations (allocation on dead PO -> live SO): ${deadAllocsLive.length}`);
+  notice("  Every listed line carries a reason code; treat BUCKET-SPLIT entries as pairing");
+  notice("  BUGS to fix, and the rest as purchasing/data decisions with the PO named.");
 }
 
 main().then(() => sql.end()).catch((e) => {
