@@ -5797,6 +5797,10 @@ function ProjectDetailContent({
   );
   const [transitioning, setTransitioning] = useState(false);
   const [addItemOpen, setAddItemOpen] = useState(false);
+  // Archive / Restore split-dropdown (owner 2026-07-29): one control that
+  // exposes BOTH actions, so Restore (unarchive) is discoverable even from a
+  // project that isn't archived — no more "the Restore button isn't there".
+  const [archiveMenuOpen, setArchiveMenuOpen] = useState(false);
 
   const p = detail.data?.project;
 
@@ -5915,40 +5919,56 @@ function ProjectDetailContent({
       actions={
         p ? (
           <div className="flex flex-wrap items-center gap-1.5">
-            {p.archived_at ? (
-              <HeaderButton
-                variant="ghost"
-                onClick={async () => {
-                  try {
-                    await api.post(`/api/projects/${id}/unarchive`);
-                    toast.success("Restored");
-                    detail.reload();
-                    onUpdated();
-                  } catch (e: any) {
-                    toast.error(e?.message || "Something went wrong. Please try again.");
-                  }
-                }}
-              >
-                Restore
+            <div className="relative">
+              <HeaderButton variant="ghost" onClick={() => setArchiveMenuOpen((o) => !o)}>
+                {p.archived_at ? "Restore" : "Archive"} <ChevronDown size={12} />
               </HeaderButton>
-            ) : (
-              <HeaderButton
-                variant="ghost"
-                onClick={async () => {
-                  if (!(await dialog.confirm("Archive this project?"))) return;
-                  try {
-                    await api.post(`/api/projects/${id}/archive`);
-                    toast.success("Archived");
-                    detail.reload();
-                    onUpdated();
-                  } catch (e: any) {
-                    toast.error(e?.message || "Something went wrong. Please try again.");
-                  }
-                }}
-              >
-                Archive
-              </HeaderButton>
-            )}
+              {archiveMenuOpen && (
+                <>
+                  {/* click-outside backdrop */}
+                  <div className="fixed inset-0 z-30" onClick={() => setArchiveMenuOpen(false)} />
+                  <div className="absolute right-0 z-40 mt-1 min-w-[150px] rounded-md border border-border bg-surface py-1 text-[12px] shadow-lg">
+                    <button
+                      className="flex w-full items-center px-3 py-1.5 text-left hover:bg-bg/60 disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!!p.archived_at}
+                      title={p.archived_at ? "Already archived" : undefined}
+                      onClick={async () => {
+                        setArchiveMenuOpen(false);
+                        if (!(await dialog.confirm("Archive this project?"))) return;
+                        try {
+                          await api.post(`/api/projects/${id}/archive`);
+                          toast.success("Archived");
+                          detail.reload();
+                          onUpdated();
+                        } catch (e: any) {
+                          toast.error(e?.message || "Something went wrong. Please try again.");
+                        }
+                      }}
+                    >
+                      Archive
+                    </button>
+                    <button
+                      className="flex w-full items-center px-3 py-1.5 text-left hover:bg-bg/60 disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!p.archived_at}
+                      title={!p.archived_at ? "Only an archived project can be restored" : undefined}
+                      onClick={async () => {
+                        setArchiveMenuOpen(false);
+                        try {
+                          await api.post(`/api/projects/${id}/unarchive`);
+                          toast.success("Restored");
+                          detail.reload();
+                          onUpdated();
+                        } catch (e: any) {
+                          toast.error(e?.message || "Something went wrong. Please try again.");
+                        }
+                      }}
+                    >
+                      Restore
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <HeaderButton
               variant="ghost"
               onClick={async () => {
