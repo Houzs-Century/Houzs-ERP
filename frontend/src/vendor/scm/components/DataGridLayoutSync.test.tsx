@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { DataGrid, type DataGridColumn } from "./DataGrid";
 import {
   __resetTableLayoutsForTest,
@@ -135,8 +135,9 @@ describe("DataGrid with server layouts", () => {
 
     renderGrid();
     fireEvent.click(screen.getByRole("button", { name: /Columns/i }));
-    expect(screen.getByText("2990's Home default")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Save current columns as default/ }));
+    /* Same drawer the DataTable lists use now (owner 2026-08-02: 需要应用到全
+       系统 column panel), so the control is the footer's, not a card's. */
+    fireEvent.click(screen.getByRole("button", { name: "Save as default" }));
 
     await waitFor(() =>
       expect(mockApi.put).toHaveBeenCalledWith(
@@ -157,7 +158,42 @@ describe("DataGrid with server layouts", () => {
 
     renderGrid();
     fireEvent.click(screen.getByRole("button", { name: /Columns/i }));
-    expect(screen.queryByText(/Save current columns as default/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save as default" })).toBeNull();
     expect(screen.queryByText("Layout")).toBeNull();
+  });
+});
+
+/* The vendored grid now mounts the SAME drawer as every DataTable list (owner
+   2026-08-02: 需要应用到全系统 column panel). What that buys these 30 pages is
+   worth pinning: the drawer's own affordances, on this grid's layout state. */
+describe("DataGrid on the shared columns drawer", () => {
+  it("searches, groups and edits width — the grid's own drawer had none of it", async () => {
+    respond();
+    await hydrateTableLayouts();
+    renderGrid();
+    fireEvent.click(screen.getByRole("button", { name: /Columns/i }));
+
+    // Scoped to the drawer: the grid's own header sort buttons carry the same
+    // column names.
+    const drawer = within(screen.getByRole("dialog", { name: "Columns" }));
+    fireEvent.change(screen.getByLabelText("Search columns"), { target: { value: "cit" } });
+    expect(drawer.getByRole("button", { name: "City" })).toBeTruthy();
+    expect(drawer.queryByRole("button", { name: "Name" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Search columns"), { target: { value: "" } });
+
+    // A toggle still lands on the grid immediately.
+    fireEvent.click(drawer.getByRole("button", { name: "City" }));
+    expect(headers(document.body as HTMLElement)).toEqual(["Name"]);
+  });
+
+  it("keeps the drawer free of management for a non-admin", async () => {
+    respond({ canManageLayouts: false, myLayouts: { [SERVER_KEY]: [{ id: 2, name: "Ops", layout: { ...emptyish } }] } });
+    await hydrateTableLayouts();
+    renderGrid();
+    fireEvent.click(screen.getByRole("button", { name: /Columns/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+
+    expect(screen.getByRole("option", { name: /Ops/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /New layout from current columns/ })).toBeNull();
   });
 });

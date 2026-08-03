@@ -195,7 +195,10 @@ describe("columns drawer", () => {
     expect(screen.queryByRole("dialog", { name: "Columns" })).toBeNull();
   });
 
-  it("stays a flat list for a table that annotates no groups", () => {
+  it("groups a table that annotates nothing, by inferring from the columns", () => {
+    // Owner 2026-08-02: 全部 column 都要像 sales order column 那样分类. A page
+    // no longer has to annotate anything — lib/columnGroups infers it, and an
+    // explicit `group` still wins where a page did the sorting by hand.
     render(
       <DataTable
         tableId="flat"
@@ -206,10 +209,29 @@ describe("columns drawer", () => {
     );
     openDrawer();
 
-    // No group chrome at all — an un-annotated table looks the way it always
-    // did, which is what let this ship to every list page at once.
-    expect(screen.queryByText("Basic")).toBeNull();
+    expect(screen.getByText("Basic")).toBeTruthy();
+    expect(screen.getByText("Amounts")).toBeTruthy();
+    expect(screen.getByText("Logistics")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Carrier" })).toBeTruthy();
+  });
+
+  it("draws no group header when everything lands in one group", () => {
+    render(
+      <DataTable
+        tableId="onegroup"
+        rows={rows}
+        columns={[
+          { key: "amount", label: "Amount", render: (r: Row) => r.name },
+          { key: "balance", label: "Balance", render: (r: Row) => r.name },
+        ]}
+        getRowKey={(row) => row.id}
+      />,
+    );
+    openDrawer();
+
+    // One group is no grouping — the header would say only "everything below".
+    expect(screen.queryByText("Amounts")).toBeNull();
+    expect(screen.getByRole("button", { name: "Amount" })).toBeTruthy();
   });
 });
 

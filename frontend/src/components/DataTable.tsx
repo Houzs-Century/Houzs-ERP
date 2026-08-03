@@ -37,14 +37,21 @@ import {
   ColumnsDrawer,
   type DrawerColumn,
 } from "./ColumnsDrawer";
+import { withSingleActive } from "./LayoutSection";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useSmallViewport } from "../hooks/useSmallViewport";
+import { inferColumnGroup } from "../lib/columnGroups";
 import { subscribeActiveCompany, getActiveCompanySnapshot } from "../lib/activeCompany";
 import { shortCompanyName } from "../lib/branding";
 import {
   EMPTY_LAYOUT,
+  createNamedLayout,
+  deleteNamedLayout,
   getTableLayoutsSnapshot,
+  renameCompanyDefault,
+  renameNamedLayout,
+  updateNamedLayout,
   saveCompanyDefault,
   saveMyLayout,
   serializeLayout,
@@ -906,14 +913,21 @@ function DataTableInner<T>({
       columns?: string[];
       isDefault: boolean;
       fromServer: boolean;
+      /** Set only for the user's own saved layouts — what CRUD acts on. */
+      savedId?: number;
+      /** Set only for a company-default row — renaming it goes to /default. */
+      companyId?: number;
     }> = [];
     for (const co of layoutStore.companies) {
       const saved = layoutStore.defaults[String(co.id)]?.[baseIdKey];
       const seed = seedByCode.get(co.code.toUpperCase());
       if (!saved && !seed) continue;
+      const savedName = layoutStore.defaultNames[String(co.id)]?.[baseIdKey];
       out.push({
         id: `company:${co.id}`,
-        label: `${shortCompanyName(co.name)} Layout`,
+        // Named by an admin, or called after the company until one does.
+        label: savedName || `${shortCompanyName(co.name)} Layout`,
+        companyId: co.id,
         // The seed's hint describes the SEED. Once an admin has saved a real
         // default it would be describing a layout that no longer exists —
         // "Sales desk" over the production columns somebody just published.
@@ -922,6 +936,19 @@ function DataTableInner<T>({
         columns: saved ? undefined : seed?.columns,
         isDefault: co.id === layoutStore.activeCompanyId,
         fromServer: Boolean(saved),
+      });
+    }
+    /* The user's OWN saved layouts (mig 0239) — offered after the company
+       rows, and the only ones that can be renamed or deleted. */
+    for (const saved of layoutStore.myLayouts[baseIdKey] ?? []) {
+      out.push({
+        id: `saved:${saved.id}`,
+        label: saved.name,
+        hint: "Saved by you",
+        layout: saved.layout,
+        isDefault: false,
+        fromServer: true,
+        savedId: saved.id,
       });
     }
     // Page presets that aren't about a company (and, when there is no company
@@ -1150,7 +1177,7 @@ function DataTableInner<T>({
     const current = visibleColumns
       .filter((c) => !c.alwaysVisible)
       .map((c) => c.key);
-    return resolvedPresets.map((p) => {
+    const rows = resolvedPresets.map((p) => {
       // What this layout WOULD render, resolved the same way the table resolves
       // its own — so "active" means the two agree, not that an id was stored.
       const layout = presetLayout(p);
@@ -1168,11 +1195,14 @@ function DataTableInner<T>({
         hint: p.hint,
         count: wouldShow.length,
         isDefault: p.isDefault,
+        savedId: p.savedId,
+        companyId: p.companyId,
         active:
           wouldShow.length === current.length &&
           wouldShow.every((k, i) => current[i] === k),
       };
     });
+    return withSingleActive(rows);
   }, [resolvedPresets, presetLayout, allColumns, visibleColumns]);
 
   function toggleColumn(key: string) {
@@ -1340,7 +1370,10 @@ function DataTableInner<T>({
         .map((c) => ({
           key: c.key,
           label: c.label || c.key,
-          group: c.group || "",
+          /* Explicit beats inferred: a page that sorted its columns by hand
+             (Sales Orders) keeps that sort; every other list gets the shared
+             classifier rather than one flat scroll. */
+          group: c.group || inferColumnGroup(c.key, c.label || c.key) || "",
           visible: !effectiveHidden.has(c.key),
           width: resolveWidth(c),
           pinned: pinnedSet.has(c.key),
@@ -1367,6 +1400,57 @@ function DataTableInner<T>({
    *  dirty against, so it stays false. */
   const layoutDirty = Boolean(
     presetOptions && presetOptions.length > 0 && !presetOptions.some((p) => p.active)
+  );
+
+  /* ── Named layouts (mig 0239) ────────────────────────────────────────────
+     Saving one snapshots the arrangement ON SCREEN, which is the only reading
+     that matches the control's name ("New layout from current columns"). The
+     drawer owns the naming prompt; here we just write. */
+  const saveNamedLayout = useCallback(
+    (name: string) => createNamedLayout(baseIdKey, name, renderedLayout).then(() => undefined),
+    [baseIdKey, renderedLayout]
+  );
+  const duplicateNamedLayout = useCallback(
+    (id: string, name: string) => {
+      const source = resolvedPresets.find((p) => p.id === id);
+      // Duplicating a COMPANY row is allowed on purpose: "start from the 2990
+      // view and tweak it" is the same gesture as duplicating your own.
+      return createNamedLayout(baseIdKey, name, source ? presetLayout(source) : renderedLayout).then(
+        () => undefined
+      );
+    },
+    [baseIdKey, resolvedPresets, presetLayout, renderedLayout]
+  );
+  /* One handler, two destinations: a layout the user saved is renamed by id;
+     a COMPANY row has no id of its own — its name lives on the default row, so
+     it goes to /default. The drawer doesn't need to know which. */
+  const renameLayout = useCallback(
+    (id: string, name: string) => {
+      const target = resolvedPresets.find((p) => p.id === id);
+      if (target?.savedId != null) return renameNamedLayout(baseIdKey, target.savedId, name);
+      if (target?.companyId != null) return renameCompanyDefault(baseIdKey, name);
+      return Promise.resolve();
+    },
+    [baseIdKey, resolvedPresets]
+  );
+  /* "Edit this layout" (owner 2026-08-02: default layout 需要可以 edit) — one
+     handler, two destinations again: a saved layout is replaced by id, the
+     COMPANY row goes through the same publish path the footer button uses. */
+  const updateLayout = useCallback(
+    (id: string) => {
+      const target = resolvedPresets.find((p) => p.id === id);
+      if (target?.savedId != null) {
+        return updateNamedLayout(baseIdKey, target.savedId, renderedLayout);
+      }
+      if (target?.companyId != null) return saveCompanyDefault(baseIdKey, renderedLayout);
+      return Promise.resolve();
+    },
+    [baseIdKey, resolvedPresets, renderedLayout]
+  );
+
+  const deleteSavedLayout = useCallback(
+    (savedId: number) => deleteNamedLayout(baseIdKey, savedId),
+    [baseIdKey]
   );
 
   /** Download the arrangement as JSON — the drawer's "Export column config".
@@ -2221,6 +2305,11 @@ function DataTableInner<T>({
         onReset={resetLayout}
         layouts={presetOptions}
         onApplyLayout={applyPreset}
+        onSaveLayout={layoutStore.canManageLayouts ? saveNamedLayout : undefined}
+        onDuplicateLayout={layoutStore.canManageLayouts ? duplicateNamedLayout : undefined}
+        onRenameLayout={layoutStore.canManageLayouts ? renameLayout : undefined}
+        onDeleteLayout={layoutStore.canManageLayouts ? deleteSavedLayout : undefined}
+        onUpdateLayout={layoutStore.canManageLayouts ? updateLayout : undefined}
         defaultManager={defaultManager}
         dirty={layoutDirty}
         onExport={exportColumnConfig}
