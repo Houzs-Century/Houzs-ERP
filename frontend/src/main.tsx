@@ -20,6 +20,7 @@ import { consumeCompanyUrlSeed } from "./lib/activeCompany";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { tokenStore } from "./api/client";
+import { restoreNativeSession } from "./lib/nativeSession";
 import { canonicalRedirectUrl } from "./lib/canonicalHost";
 import { useAppSurface } from "./routing/appSurface";
 
@@ -184,6 +185,18 @@ function RootApp() {
     </AuthProvider>
   );
 }
+
+/* Native biometric session restore (flag-gated, default OFF — see
+   lib/nativeSession.ts). Awaited BEFORE mount so the first authed request
+   already carries the restored token, rather than firing unauthenticated and
+   bouncing the user to a login screen they did not need.
+
+   The safety property that makes an await here acceptable on the boot path:
+   restoreNativeSession can only ADD a token, never remove or replace one, and
+   it never throws. Off the app, or with the flag off, it returns on its first
+   line — so the web boot is unchanged, synchronous in effect, and cannot be
+   made slower by a Keychain that is not there. */
+await restoreNativeSession();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
