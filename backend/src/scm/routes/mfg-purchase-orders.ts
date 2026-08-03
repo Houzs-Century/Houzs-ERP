@@ -2470,6 +2470,149 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   return c.json({ purchaseOrder: data });
 });
 
+/* ── Bulk supplier-revised date across SEVERAL POs (owner 2026-08-03) ────────
+   A supplier who pushes one delivery date usually pushes it for every order in
+   flight, which meant opening each PO and (before the sibling PR) each line.
+   This sets ONE revised-date slot on a picked set of POs in one call.
+
+   Two deliberate differences from the header PATCH above:
+     • the line write is UNCONDITIONAL (no `.is(col, null)`), because the whole
+       point is the SECOND revision, when every line already carries the first
+       one and the null-guarded cascade therefore moves nothing;
+     • it is opt-in per call (`applyToLines`), so a caller can move only the
+       header when the lines are individually managed.
+
+   Per-PO isolation is the contract: a PO that is downstream-locked, or not in
+   the active company, is REPORTED and skipped — one bad pick never costs the
+   operator the rest of the batch. Every updated PO still writes its own audit
+   row, exactly as the single PATCH does. */
+const SUPPLIER_DATE_SLOT_COL = {
+  2: 'supplier_delivery_date_2',
+  3: 'supplier_delivery_date_3',
+  4: 'supplier_delivery_date_4',
+} as const;
+type SupplierDateSlot = keyof typeof SUPPLIER_DATE_SLOT_COL;
+
+/* Cap the batch. The handler walks POs sequentially (each needs its own lock
+   check + audit row), so an unbounded list is a request that never returns. */
+const BULK_SUPPLIER_DATE_MAX = 100;
+
+/* Request validation, split out so it can be tested without a Hono context or
+   a database. Rejects with the exact {status, payload} the handler returns. */
+export type BulkSupplierDateRequest = {
+  slot: SupplierDateSlot;
+  col: (typeof SUPPLIER_DATE_SLOT_COL)[SupplierDateSlot];
+  date: string;
+  poIds: string[];
+  applyToLines: boolean;
+};
+
+export function parseBulkSupplierDateBody(
+  body: Record<string, unknown>,
+): { ok: true; req: BulkSupplierDateRequest }
+  | { ok: false; status: 400; payload: { error: string; reason: string } } {
+  const slot = Number(body.slot) as SupplierDateSlot;
+  if (!(slot in SUPPLIER_DATE_SLOT_COL)) {
+    return { ok: false, status: 400, payload: { error: 'invalid_slot', reason: 'slot must be 2, 3 or 4.' } };
+  }
+
+  /* Both halves matter: the shape check rejects "2026-8-3" / free text, and the
+     parse check rejects a well-shaped impossible day like 2026-02-31. */
+  const date = typeof body.date === 'string' ? body.date.trim() : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))
+      || !date.startsWith(new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10))) {
+    return { ok: false, status: 400, payload: { error: 'invalid_date', reason: 'date must be a calendar date (YYYY-MM-DD).' } };
+  }
+
+  const poIds = Array.isArray(body.poIds)
+    ? [...new Set(body.poIds.filter((v): v is string => typeof v === 'string' && v.trim() !== '').map((v) => v.trim()))]
+    : [];
+  if (poIds.length === 0) {
+    return { ok: false, status: 400, payload: { error: 'no_purchase_orders', reason: 'Pick at least one purchase order.' } };
+  }
+  if (poIds.length > BULK_SUPPLIER_DATE_MAX) {
+    return {
+      ok: false,
+      status: 400,
+      payload: {
+        error: 'too_many_purchase_orders',
+        reason: `Up to ${BULK_SUPPLIER_DATE_MAX} purchase orders per batch — you sent ${poIds.length}.`,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    req: {
+      slot,
+      col: SUPPLIER_DATE_SLOT_COL[slot],
+      date,
+      poIds,
+      // Default ON: the operator picked POs to move the date on, and leaving
+      // the lines behind is what made this tedious in the first place.
+      applyToLines: body.applyToLines === undefined ? true : Boolean(body.applyToLines),
+    },
+  };
+}
+
+mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const sb = c.get('supabase');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const parsed = parseBulkSupplierDateBody(body);
+  if (!parsed.ok) return c.json(parsed.payload, parsed.status);
+  const { slot, col, date, poIds, applyToLines } = parsed.req;
+
+  const updated: Array<{ id: string; poNumber: string | null }> = [];
+  const skipped: Array<{ id: string; poNumber: string | null; reason: string }> = [];
+
+  for (const id of poIds) {
+    const { data: beforeRow } = await scopeToCompanyId(
+      sb.from('purchase_orders').select(PO_AUDIT_SELECT).eq('id', id), co.companyId,
+    ).maybeSingle();
+    if (!beforeRow) { skipped.push({ id, poNumber: null, reason: 'Not found in this company.' }); continue; }
+    const before = beforeRow as unknown as Record<string, unknown>;
+    const poNumber = (before.po_number as string | null) ?? null;
+
+    const childLock = await poHasDownstream(sb, id);
+    if (childLock) { skipped.push({ id, poNumber, reason: childLock.message }); continue; }
+
+    const { error } = await scopeToCompanyId(
+      sb.from('purchase_orders').update({ [col]: date, updated_at: new Date().toISOString() }).eq('id', id),
+      co.companyId,
+    );
+    if (error) { skipped.push({ id, poNumber, reason: error.message }); continue; }
+
+    if (applyToLines) {
+      // Unconditional on purpose — see the header note above.
+      const { error: lineErr } = await scopeToCompanyId(
+        sb.from('purchase_order_items').update({ [col]: date }).eq('purchase_order_id', id),
+        co.companyId,
+      );
+      /* The header already moved, so a line failure is reported rather than
+         swallowed: the operator has to know this PO is half-applied. */
+      if (lineErr) { skipped.push({ id, poNumber, reason: `Header updated but lines failed: ${lineErr.message}` }); continue; }
+    }
+
+    await recordEntityAudit(sb, {
+      entityType: 'PURCHASE_ORDER',
+      entityId: id,
+      entityDocNo: poNumber,
+      action: 'UPDATE',
+      actor: c.get('houzsUser'),
+      companyId: (before.company_id as number | null) ?? activeCompanyId(c),
+      statusSnapshot: (before.status as string | null) ?? null,
+      fieldChanges: diffFields(before, { [`supplierDeliveryDate${slot}`]: date }, PO_AUDIT_FIELDS),
+    });
+    updated.push({ id, poNumber });
+  }
+
+  return c.json({ slot, date, applyToLines, updated, skipped });
+});
+
 /* ── PR #41 — PO line items: add / edit / delete ───────────────────────
    Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
    recomputeTotals (mfg-sales-orders.ts), which carries the full rationale.
