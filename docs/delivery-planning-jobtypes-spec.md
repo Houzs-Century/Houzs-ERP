@@ -124,7 +124,7 @@ Add the missing 7th type as a Model‑A ASSR leg.
 - **Fix the data sink.** `DELIVERY`/`PICKUP`/`SERVICE` DP orders carrying a source ref vanish under the union guard (`delivery-planning.ts:1123`). Simplest fix: **remove those three from the `NewDpOrderDrawer` create dropdown** (they're already covered by native SO/DO/ASSR rows), leaving the drawer to `SETUP`/`DISMANTLE`/`SUPPLIER_PICKUP` (+ optional manual `INSPECTION`). Keep the enum full; only the create UI narrows.
 - **ASSR trip/crew wiring.** Today ASSR legs (pickup/delivery/inspection) set a date only — **no trip/crew, so they don't consume fleet capacity** (`delivery-planning.ts:1560‑1561`). Extend the ASSR schedule path to find‑or‑create a trip + append a stop (as SO/DO already do), so the board is a true single fleet schedule. This is the biggest lever toward Nico's "one fleet, one schedule" and could be pulled earlier if capacity accuracy matters.
 - **Drawer picker/prefill.** Replace the raw‑id text box with a searchable picker (SO / supplier / project) + live party preview (`NewDpOrderDrawer.tsx` currently takes a free‑text id, no prefill).
-- **(Optional) DP‑Order list page.** `GET /api/scm/dp-orders` has no consumer; a simple list makes unscheduled/hidden DP orders reachable outside the board.
+- **(Optional) DP‑Order list page.** ✅ SHIPPED 2026‑07‑30: `/scm/dp-orders` (`frontend/src/pages/scm-v2/DpOrders.tsx`, nav "DP Orders" under Transportation) — the flat `dp_orders` registry over `GET /dp-orders`, every status including union‑guard‑hidden and cancelled rows, with Schedule/Cancel/New reusing the board's drawers.
 
 ---
 

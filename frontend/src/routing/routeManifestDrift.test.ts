@@ -44,8 +44,9 @@ const allMobile: MobileDestination[] = [
 
 describe("executable route contract", () => {
   it("matches every canonical staff page mounted by App.tsx, with no extras", () => {
-    // 139 since 2026-08-02: /fleet-health/:lorryId, one lorry's full record.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(139);
+    // 140 since 2026-08-03: /scm/dp-orders, the DP Order list.
+    // (139 since 2026-08-02: /fleet-health/:lorryId, one lorry's full record.)
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(140);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -65,8 +66,8 @@ describe("executable route contract", () => {
       .filter((path) => path !== "*");
     expect([...new Set(["/survey/:token", ...mountedPublic])].sort())
       .toEqual([...PUBLIC_ROUTE_PATTERNS].sort());
-    // 147 since 2026-08-02 — see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(147);
+    // 148 since 2026-08-03 — see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(148);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
