@@ -137,14 +137,39 @@ describe("columns drawer", () => {
     expect(JSON.parse(localStorage.getItem("dt:widths:width")!)).toEqual({ date: 400 });
   });
 
-  it("freezes and unfreezes a column from its row", () => {
-    renderTable("freeze");
+  it("cycles a column none → left → right → none, never both", () => {
+    const { container } = renderTable("freeze");
     openDrawer();
 
     fireEvent.click(screen.getAllByTitle("Freeze to the left")[0]!);
     expect(JSON.parse(localStorage.getItem("dt:pinned:freeze")!)).toEqual(["date"]);
-    fireEvent.click(screen.getByTitle("Unfreeze column"));
+
+    fireEvent.click(screen.getByTitle(/^Frozen left/));
+    // MOVED, not added — frozen to both edges is not a table anyone can render.
     expect(JSON.parse(localStorage.getItem("dt:pinned:freeze")!)).toEqual([]);
+    expect(JSON.parse(localStorage.getItem("dt:pinnedr:freeze")!)).toEqual(["date"]);
+    // A right-frozen column renders LAST, whatever its place in the order.
+    expect(headerLabels(container)).toEqual(["Customer", "Total", "Carrier", "Date"]);
+
+    fireEvent.click(screen.getByTitle(/^Frozen right/));
+    expect(JSON.parse(localStorage.getItem("dt:pinnedr:freeze")!)).toEqual([]);
+    expect(headerLabels(container)).toEqual(["Date", "Customer", "Total", "Carrier"]);
+  });
+
+  it("sticks a right-frozen column to the right edge, with a divider on its left", () => {
+    const { container } = renderTable("stickright");
+    openDrawer();
+    fireEvent.click(screen.getAllByTitle("Freeze to the left")[0]!);
+    fireEvent.click(screen.getByTitle(/^Frozen left/));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+
+    const head = [...container.querySelectorAll<HTMLElement>("thead th")];
+    const last = head[head.length - 1]!;
+    expect(last.style.position).toBe("sticky");
+    // Offset from the RIGHT edge: nothing is frozen outside it, so zero.
+    expect(last.style.right).toBe("0px");
+    expect(last.className).toContain("border-l");
+    expect(last.style.left).toBe("");
   });
 
   it("Show all reveals even a defaultHidden column, and says so in the footer", () => {

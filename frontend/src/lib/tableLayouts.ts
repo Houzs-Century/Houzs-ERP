@@ -37,6 +37,10 @@ export interface StoredLayout {
   shown: string[];
   widths: Record<string, number>;
   pinned: string[];
+  /** Columns frozen to the RIGHT edge (owner 2026-08-03). A second list rather
+   *  than a reshaped `pinned`: every stored layout and every browser already
+   *  holds the flat one. */
+  pinnedRight: string[];
   /** Group-by columns — vendored SCM DataGrid only, where grouping a list by
    *  supplier is part of its shape. Always empty for a DataTable. */
   groupBy: string[];
@@ -48,6 +52,7 @@ export const EMPTY_LAYOUT: StoredLayout = {
   shown: [],
   widths: {},
   pinned: [],
+  pinnedRight: [],
   groupBy: [],
 };
 
@@ -158,7 +163,7 @@ export function dataGridIdKey(storageKey: string, companyId: number | null): str
   return companyId != null ? `${storageKey}::c${companyId}` : storageKey;
 }
 
-const PARTS = ["order", "hidden", "shown", "widths", "pinned"] as const;
+const PARTS = ["order", "hidden", "shown", "widths", "pinned", "pinnedr"] as const;
 
 /** Marker holding the layout we last pushed for this table. Its absence means
  *  "never pushed"; a mismatch against localStorage means there are local edits
@@ -208,6 +213,7 @@ function readLocal(tableKey: string, companyId: number | null): StoredLayout {
     shown: read<string[]>("shown", []),
     widths: read<Record<string, number>>("widths", {}),
     pinned: read<string[]>("pinned", []),
+    pinnedRight: read<string[]>("pinnedr", []),
   };
 }
 
@@ -230,7 +236,8 @@ function writeLocal(tableKey: string, companyId: number | null, layout: StoredLa
       return;
     }
     for (const part of PARTS) {
-      localStorage.setItem(`dt:${part}:${target.idKey}`, JSON.stringify(layout[part]));
+      const value = part === "pinnedr" ? layout.pinnedRight : layout[part];
+      localStorage.setItem(`dt:${part}:${target.idKey}`, JSON.stringify(value));
     }
   } catch {
     // quota / privacy mode — the server copy still exists; this browser just
@@ -244,6 +251,7 @@ export function isEmptyLayout(layout: StoredLayout): boolean {
     layout.hidden.length === 0 &&
     layout.shown.length === 0 &&
     layout.pinned.length === 0 &&
+    layout.pinnedRight.length === 0 &&
     layout.groupBy.length === 0 &&
     Object.keys(layout.widths).length === 0
   );
@@ -262,6 +270,7 @@ export function serializeLayout(layout: StoredLayout): string {
     shown: layout.shown,
     widths,
     pinned: layout.pinned,
+    pinnedRight: layout.pinnedRight,
     groupBy: layout.groupBy,
   });
 }
@@ -308,6 +317,7 @@ function normalize(raw: unknown): StoredLayout {
     shown: list(r.shown),
     widths,
     pinned: list(r.pinned),
+    pinnedRight: list(r.pinnedRight),
     groupBy: list(r.groupBy),
   };
 }

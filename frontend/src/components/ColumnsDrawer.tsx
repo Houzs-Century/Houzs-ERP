@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  ArrowLeftToLine,
+  ArrowRightToLine,
   Check,
   ChevronDown,
   Columns3,
@@ -11,7 +13,6 @@ import {
   Plus,
   Trash2,
   MoreVertical,
-  PinOff,
   Search,
   Star,
   X,
@@ -65,7 +66,8 @@ export interface DrawerColumn {
   visible: boolean;
   /** Effective width in px (user override or the column's own default). */
   width: number;
-  pinned: boolean;
+  /** Which edge it is frozen to, if any. */
+  pinned: "left" | "right" | null;
 }
 
 interface Props {
@@ -360,13 +362,18 @@ export function ColumnsDrawer({
         >
           {highlight(col.label, query.trim())}
         </button>
-        {/* Pin: LEFT ⇄ none. Right-freeze is a table-rendering change and ships
-            separately — offering it here before the table honours it would be
-            a control that lies. */}
+        {/* Freeze: none → left → right → none. One button, because the three
+            states are one axis — a column is frozen to an edge or it isn't. */}
         <button
           type="button"
           onClick={() => onTogglePin(col.key)}
-          title={col.pinned ? "Unfreeze column" : "Freeze to the left"}
+          title={
+            col.pinned === "left"
+              ? "Frozen left — click to freeze right"
+              : col.pinned === "right"
+                ? "Frozen right — click to unfreeze"
+                : "Freeze to the left"
+          }
           className={cn(
             "flex items-center gap-[3px] rounded-md px-[5px] py-[3px] text-[9px] font-semibold uppercase tracking-[0.08em] transition-opacity",
             col.pinned
@@ -374,8 +381,14 @@ export function ColumnsDrawer({
               : "text-ink-muted opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100"
           )}
         >
-          {col.pinned ? <PinOff size={10} /> : <Columns3 size={10} />}
-          {col.pinned ? "Left" : ""}
+          {col.pinned === "left" ? (
+            <ArrowLeftToLine size={10} />
+          ) : col.pinned === "right" ? (
+            <ArrowRightToLine size={10} />
+          ) : (
+            <Columns3 size={10} />
+          )}
+          {col.pinned === "left" ? "Left" : col.pinned === "right" ? "Right" : ""}
         </button>
         {editingWidth === col.key ? (
           <input
