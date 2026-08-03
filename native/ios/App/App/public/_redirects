@@ -1,0 +1,12 @@
+# SPA fallback — any unknown path (other than actual static assets)
+# renders the React shell so client-side routing can pick up
+# /track, /portal/case/:token, /survey/:token, etc.
+#
+# NOTE: API calls are NOT forwarded from here. Cloudflare Pages
+# `_redirects` with status 200 cannot rewrite to external URLs
+# (like the separate Worker domain) — it silently falls back to
+# the SPA and returns HTML to JSON fetches, which breaks callers.
+# Instead the frontend talks to the Worker using its absolute URL
+# configured via VITE_API_URL (frontend/.env.production). CORS is
+# enabled on the Worker so cross-origin requests just work.
+/*  /index.html  200

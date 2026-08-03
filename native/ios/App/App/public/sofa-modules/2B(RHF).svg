@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 110" width="160" height="110">
+  <title>2990s Sofa Module — 2B-RHF — Bench on RIGHT, no arm on left (2 seats)</title>
+  <desc>Top-down plan view. Mirror of 2B-LHF. 2 seats + RIGHT side bench/chaise + LEFT side open seat edge (NO armrest).</desc>
+  <g transform="translate(20,20)">
+    <!-- Body outline (cream) -->
+    <rect x="0" y="0" width="120" height="70" rx="3" fill="#F0E6D6" stroke="#2C2C2A" stroke-width="1.4"/>
+    <!-- Backrest covers ONLY the 2-seat portion (left side) -->
+    <rect x="0" y="0" width="98" height="11" fill="#D9C2A0" stroke="#2C2C2A" stroke-width="0.8"/>
+    <!-- RIGHT bench/chaise cushion — wide soft pillow, full body height -->
+    <rect x="98" y="2" width="20" height="66" rx="5" fill="#D9C2A0" stroke="#2C2C2A" stroke-width="0.8"/>
+    <!-- NO armrest on the left -->
+    <!-- Seat-to-seat dashed divider -->
+    <line x1="49" y1="11" x2="49" y2="70" stroke="#2C2C2A" stroke-width="0.5" stroke-dasharray="2,2"/>
+  </g>
+</svg>

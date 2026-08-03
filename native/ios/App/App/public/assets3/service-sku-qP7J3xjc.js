@@ -1,0 +1,1 @@
+var e=e=>(e??``).trim().toUpperCase();function t(t){return e(t).includes(`SERVICE`)}function n(t){return e(t)===`SERVICE`}function r(t){let n=e(t);return n.length>4&&n.startsWith(`SVC-`)}function i(e){return t(e.itemGroup)||n(e.category)||r(e.itemCode)}export{i as t};

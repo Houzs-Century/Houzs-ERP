@@ -1,0 +1,1 @@
+function e(e,t,n,r){if(!e||!n||!r)return null;for(let i of e)if((t===`driver`?i.driverId:i.helperId)===n&&i.startDate<=r&&r<=i.endDate)return{from:i.startDate,to:i.endDate,reason:i.reason};return null}function t(e){return e?e.reason?`on leave — ${e.reason}`:`on leave`:``}export{e as n,t};
