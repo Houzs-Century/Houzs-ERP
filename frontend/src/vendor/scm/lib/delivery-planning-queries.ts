@@ -386,6 +386,51 @@ export function useScheduleDpOrder() {
   });
 }
 
+/* ── DP Orders list (GET /dp-orders) ──────────────────────────────────────────
+   The raw dp_orders registry, straight off the table (snake_case, newest first,
+   backend-capped at 500). This is the /scm/dp-orders LIST page's feed — distinct
+   from the board union, which deliberately SUPPRESSES any dp_order carrying a
+   source ref (the anti-double-count guard) and shows nothing once a job is
+   cancelled. The list is where those hidden/terminal rows stay reachable.
+
+   Query key extends the board's ['delivery-planning'] prefix ON PURPOSE: every
+   existing create / cancel / schedule mutation invalidates that prefix, so the
+   list refreshes with zero changes to the mutations. */
+export type DpOrderRow = {
+  id: string;
+  dp_no: string | null;
+  job_type: string;
+  party_type: string;
+  so_doc_no: string | null;
+  do_id: string | null;
+  assr_case_id: number | null;
+  supplier_id: string | null;
+  project_id: number | null;
+  party_name: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  address1: string | null;
+  address2: string | null;
+  address3: string | null;
+  address4: string | null;
+  city: string | null;
+  postcode: string | null;
+  state: string | null;
+  requested_date: string | null;
+  trip_id: string | null;
+  trip_stop_id: string | null;
+  status: string;
+  remark: string | null;
+  created_at: string;
+  updated_at: string;
+};
+export function useDpOrders() {
+  return useQuery({
+    queryKey: ['delivery-planning', 'dp-orders'],
+    queryFn: () => authedFetch<{ dpOrders: DpOrderRow[] }>(`/dp-orders`),
+  });
+}
+
 /* ── WhatsApp (Seampify) sends — the board's "Send Message" action ────────────
    One WhatsApp per CUSTOMER PHONE bundling all their selected orders (the
    sheet-era BulkSend shape). The backend groups by phone; the caller just posts

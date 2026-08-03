@@ -32,12 +32,21 @@ import styles from '../../../pages/scm-v2/Suppliers.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
+/* The exact subset of a board row this drawer reads. Structural, so BOTH
+   callers fit without adapters: the board passes its full PlanningOrder, and
+   the /scm/dp-orders list synthesizes one from a raw dp_orders row. */
+export type ScheduleDpOrderTarget = Pick<
+  PlanningOrder,
+  'so_doc_no' | 'dp_job_type' | 'debtor_name' | 'address'
+  | 'effective_delivery_date' | 'customer_delivery_date'
+>;
+
 /* The DP order's id rides on the synthetic `DP:<id>` row key (the board stamps it
    as so_doc_no so the DataGrid has a stable rowKey) — same extraction the board's
    cancel action uses. */
-const dpIdOf = (o: PlanningOrder): string => String(o.so_doc_no ?? '').replace(/^DP:/, '');
+const dpIdOf = (o: ScheduleDpOrderTarget): string => String(o.so_doc_no ?? '').replace(/^DP:/, '');
 
-export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: PlanningOrder; onClose: () => void }) => {
+export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrderTarget; onClose: () => void }) => {
   const schedule = useScheduleDpOrder();
   const notify = useNotify();
   const { data: lorries = [] } = useLorries();

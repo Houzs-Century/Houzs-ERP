@@ -110,6 +110,7 @@ const ScmStockCardV2 = lazy(() => import("./pages/scm-v2/StockCard").then((m) =>
 const ScmSupplierDetailV2 = lazy(() => import("./pages/scm-v2/SupplierDetail").then((m) => ({ default: m.SupplierDetail })));
 // Delivery Planning + TMS (Stage 3 — ported 2026-06-28 from 2990).
 const ScmDeliveryPlanningV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanning").then((m) => ({ default: m.DeliveryPlanning })));
+const ScmDpOrdersV2 = lazy(() => import("./pages/scm-v2/DpOrders").then((m) => ({ default: m.DpOrders })));
 const ScmTrips = lazy(() => import("./pages/scm-v2/Trips").then((m) => ({ default: m.Trips })));
 const ScmDeliveryPlanningRegionsV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanningRegions").then((m) => ({ default: m.DeliveryPlanningRegions })));
 const ScmDeliveryResidenceRulesV2 = lazy(() => import("./pages/scm-v2/DeliveryResidenceRules").then((m) => ({ default: m.DeliveryResidenceRules })));
@@ -663,6 +664,7 @@ export default function App() {
             but has no importer. Do not re-add this route. */}
         {/* Delivery Planning + TMS Stage 3 — all under the existing scm.transportation.drivers area. */}
         <Route path="/scm/delivery-planning"         element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/dp-orders"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDpOrdersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/trips"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmTrips /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-planning-regions" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningRegionsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-residence-rules"  element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryResidenceRulesV2 /></Scm2990Shell></ScmGuard>} />
