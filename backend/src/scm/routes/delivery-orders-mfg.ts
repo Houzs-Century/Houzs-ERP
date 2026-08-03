@@ -46,7 +46,7 @@ import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { freezeShipCost } from '../lib/fulfillment-costing';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
-import { checkStockAvailability, shortStockResponse, type StockShortage } from '../lib/check-stock-availability';
+import { checkStockAvailability, shortStockResponse, stockCheckableLines, type StockShortage } from '../lib/check-stock-availability';
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from '../lib/dropship-batch';
 import {
@@ -918,18 +918,27 @@ async function resolveDoLineWarehouses(
    routes/purchase-returns.ts, which had to solve exactly this for batched
    purchase returns spanning warehouses.
 
-   Lines whose warehouse cannot be resolved are skipped — the OUT skips them
-   too, so the check stays aligned with what will actually be written. */
+   SERVICE LINES ARE NOT GOODS and are skipped for the same reason. A delivery
+   fee or a dispose/lift add-on has no stock and never produces an inventory
+   movement (shared/service-sku.ts, P1 §4.6 — deductInventoryForDo and
+   resyncInventoryForDo both `continue` past them). Measuring them against
+   inventory_balances therefore always reports "need 1, available 0": Nico's DO
+   for 2990-SO-2606-034 was blocked on SVC-DISPOSE-SOFA and SVC-DELIVERY-CROSS
+   being "short" at BALAKONG (2026-08-03), which no amount of stock could ever
+   satisfy — the only way past was "Ship anyway", on lines that never move stock.
+
+   Lines whose warehouse cannot be resolved are skipped too — the OUT skips
+   them, so the check stays aligned with what will actually be written. */
 async function checkDoStockAvailability(
   sb: any,
   lines: Array<{
-    lineRef: string; soItemId: string | null; itemCode: string;
+    lineRef: string; soItemId: string | null; itemCode: string; itemGroup?: string | null;
     productName: string | null; variantKey: string; qty: number;
   }>,
   headerWarehouseId: string | null,
   companyId: number | undefined,
 ): Promise<StockShortage[]> {
-  const active = lines.filter((l) => Number(l.qty) > 0);
+  const active = stockCheckableLines(lines);
   if (active.length === 0) return [];
   const lineWh = await resolveDoLineWarehouses(
     sb,
@@ -3001,6 +3010,7 @@ deliveryOrdersMfg.post('/', async (c) => {
     lineRef: String(idx),
     soItemId: (it.soItemId as string | null) ?? null,
     itemCode: String(it.itemCode ?? ''),
+    itemGroup: (it.itemGroup as string | null) ?? null,
     productName: (it.description as string | null) ?? null,
     variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
     qty: Number(it.qty ?? 0),
@@ -3520,6 +3530,7 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
     lineRef: line.soItemId,
     soItemId: line.soItemId,
     itemCode: line.itemCode,
+    itemGroup: line.itemGroup ?? null,
     productName: line.description,
     variantKey: computeVariantKey(line.itemGroup ?? null, (line.variants as VariantAttrs | null) ?? null),
     qty: pickQtyById.get(line.soItemId) ?? 0,
@@ -4129,7 +4140,13 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
     activeCompanyId(c),
   )).get('add') ?? null;
   let addShortages: StockShortage[] = [];
-  if (addWarehouseId) {
+  /* A SERVICE line has no stock and never writes an OUT (shared/service-sku.ts,
+     P1 §4.6), so checking it always reads "need 1, available 0". */
+  const addIsService = isServiceLine({
+    itemGroup: (it.itemGroup as string | null) ?? null,
+    itemCode: (it.itemCode as string | null) ?? null,
+  });
+  if (addWarehouseId && !addIsService) {
     const stockLines = [{
       itemCode: String(it.itemCode ?? ''),
       productName: (it.description as string | null) ?? null,
@@ -4396,7 +4413,11 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
           variantKey: effVariantKey,
           qty: delta,
         }];
-        const shortages = await checkStockAvailability(sb, targetWh, stockLines);
+        /* SERVICE lines have no stock and write no OUT — the delta on one can
+           never be short (shared/service-sku.ts, P1 §4.6). */
+        const shortages = isServiceLine({ itemGroup: effGroup, itemCode: effCode })
+          ? []
+          : await checkStockAvailability(sb, targetWh, stockLines);
         /* priorShippedQty/priorBatchNo are what stop this re-bucketing a line
            that ALREADY shipped: resyncInventoryForDo keys its delta on
            (warehouse, code, variant, BATCH), so stamping a batch onto a line
