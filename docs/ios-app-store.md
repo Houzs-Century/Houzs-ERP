@@ -171,25 +171,71 @@ against each other:
 | Offline | none | possible |
 
 The first is what an earlier draft of this document assumed without saying so.
-The second is more likely to pass review and is probably right, but it means
-accepting that every ERP release the phone surface depends on becomes a
-submission. **Decide this before writing the shell, not after.**
 
-### Phase 3 — earn the 4.2 pass (real work, not packaging)
+**The phase 3 requirements largely settle it.** Once the native layer owns
+background location, the Keychain and push, the app is not a wrapper whichever
+way the web content is served — so the remaining question is only about release
+cadence. The honest resolution is that the earlier framing confused two different
+things:
 
-A shell around a website gets rejected. The features that make it a genuine app —
-and which are useful regardless — are already half-present in this codebase:
+- **ERP DATA** is served from the API and is live either way. Bundling changes
+  nothing about it.
+- **UI CODE** is what a bundle freezes. Only a change to the phone-facing screens
+  needs a new build and a new review.
 
-| Native capability | Why Apple accepts it | State here |
+So bundle it. The phone surface is a small part of this repo and it does not
+change weekly, while a remote `server.url` buys instant UI updates at the cost of
+the review posture and of any offline capability. **Still worth confirming with
+the owner before the shell is written**, because it is his release cadence.
+
+### Phase 3 — the native subsystems (this is the real work)
+
+**Owner's requirement, 2026-08-03:** *"我要可以用到指纹解锁、面部解锁，然后他们的
+ESS 是 permanent 的"* and *"地点access permanent camera等等"*.
+
+That list settles Guideline 4.2 — four native capabilities is comfortably past
+"minimum functionality" — but it also means **this is no longer a wrapper with a
+few plugin calls.** Background location has to keep running when the WebView is
+gone, the Keychain and the biometric gate are native storage, and push needs APNs
+certificates. These are native subsystems, and the scope should be understood as
+such before anyone commits a date.
+
+| Capability | Why Apple accepts it | What it actually fixes here |
 |---|---|---|
-| **Push notifications** | Cannot be done properly in iOS Safari | Not built. The app polls (see CLAUDE.md, "No WebSockets yet") |
-| **Camera** | Hardware access | The mobile mileage capture and OCR upload already take photos — through the web file input, would move to the native plugin |
-| **Offline** | Works without a network | `sw.js` exists; genuine offline capture does not |
-| **Biometric unlock** | Face ID / Touch ID | Not built |
+| **Background location** | A website cannot do it, at all | `MobileTrackingBanner`'s own comment: tracking *"stops when the trip completes or the page is backgrounded"*. A driver locking their phone stops the GPS feed today. This is a hole in a shipped feature, not a new want |
+| **Biometric unlock + Keychain** | Hardware-backed secure storage | The auth token lives in **localStorage** (`lib/authToken.ts:65`). A lost phone is a logged-in session. Moving it to the iOS Keychain behind Face ID / Touch ID is a real security gain |
+| **Push notifications** | Not properly available in iOS Safari | `GET /reminders` already computes the payload (§6) and nothing sends it. The app polls — see CLAUDE.md, "No WebSockets yet" |
+| **Camera** | Hardware access | The mileage capture and the OCR upload go through a web file input today |
 
-Push notifications are the strongest single argument to a reviewer, and the fleet
-module already has the computation a push would ride on (`GET /reminders` — see
-`docs/modules/fleet-maintenance.md` §6).
+**Background location is the strongest single argument to a reviewer**, and the
+only one of the four that is impossible rather than merely awkward on the web.
+
+#### Two risks that come WITH these features
+
+1. **Apple reviews "Always" location hard.** Fleet and delivery is a recognised
+   legitimate use, so it passes — but it needs an explicit purpose string and the
+   reviewer will ask what it is for. Budget a round of questions.
+2. **PDPA (Malaysia).** Continuous location tracking of staff needs clear
+   consent; tracking **external partners' drivers** — who are another company's
+   employees, not ours — is more sensitive again. This needs a written consent
+   clause in the carrier agreement. Not a legal opinion, but the gap is too large
+   to leave unwritten.
+
+#### What an app does NOT give you
+
+Owner asked for it *"后台控制、操控啥的都比较方便，set permission 那些"*. Worth
+being exact, because it affects the decision:
+
+**Installing an app grants no additional authority over users.** Permissions are
+server-side (`backend/src/services/permissions.ts`) and identical whether the ERP
+is opened in Safari or in the app. What the app adds is **device capability**, not
+**authorisation**.
+
+Remote wipe, forced install, or restricting what a device may run is **MDM** — a
+separate product with its own licence cost. And it cannot be applied to a 3PL
+partner's personal phone: nobody enrols their own handset in another company's
+device management. For external partners, server-side ACL is the only control
+there will ever be, app or no app.
 
 ### Phase 4 — submission ([owner], with my help on everything but the credentials)
 
@@ -225,7 +271,7 @@ the long pole and nothing technical unblocks it.
 |---|---|---|---|
 | 1 | **owner** | D-U-N-S number for Houzs Century, then Apple Developer Program (organisation), then Apple Business Manager, then link the two | everything |
 | 2 | **owner** | Generate an App Store Connect API key and paste it into GitHub secrets (I never see it). Local Xcode is optional and not on the critical path | CI builds |
-| 3 | **me** | Push notifications — the 4.2 answer, and the thing `GET /reminders` has been computing with nowhere to send it | review, not the build |
+| 3 | **me** | The four native subsystems — background location, biometric + Keychain session, push, camera. This is the bulk of the work and the actual 4.2 answer | review, not the build |
 | 4 | **me** | Capacitor shell + the macOS Actions workflow, native camera for the OCR upload, App Store Connect metadata, privacy answers, screenshots | needs 1 for signing |
 | 5 | **owner** | Submit; provide a working demo account on production | needs 1–4 |
 
@@ -244,9 +290,10 @@ is mine, including the CI that does the actual building.
 
 Recorded so it is not mistaken for a solved problem:
 
-1. **Guideline 4.2 is the real risk and no amount of tooling removes it.** Every
-   account, key and pipeline can be perfect and a bare wrapper still gets
-   rejected. This is what phase 3 is for.
+1. **Guideline 4.2 is largely answered** by the phase 3 requirements — four
+   native capabilities, one of them impossible on the web. What replaces it as
+   the top risk is the **"Always" location justification** and the **PDPA consent
+   position** for tracking partner drivers.
 2. **The bundled-vs-remote question above is undecided**, and it changes how
    often you have to submit for the rest of the app's life.
 3. **The redemption-code mechanics here come from Apple's documentation, not from
