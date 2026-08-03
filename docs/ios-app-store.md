@@ -133,13 +133,32 @@ Channel: **Custom App via Apple Business Manager, redemption-code link.**
 
 ### Phase 1 — accounts (days to weeks, [owner])
 
-1. **Apple Developer Program**, organisation enrollment — USD 99/year.
-   Requires a **D-U-N-S number** for Houzs Century (free from Dun & Bradstreet,
-   typically 5 business days), your legal entity name exactly as registered, and
-   authority to bind the company. Enrollment review takes a few days.
-2. **Apple Business Manager** account for Houzs Century, and link it to the
-   Developer account. This is what makes private distribution possible.
-3. In App Store Connect, create the app record and note its **Team ID** and
+**0. The company Apple ID comes FIRST.** Verified by opening the page on
+2026-08-03: `developer.apple.com/enroll/duns-lookup/` redirects straight to
+`idmsa.apple.com` — **the D-U-N-S lookup itself is behind an Apple sign-in.** An
+earlier version of this document had the Apple ID as step 2, which would have had
+the owner sitting at a lookup form he could not reach.
+
+Create it on a **company-domain address** (`it@houzscentury.com`), never a
+personal Apple ID or a Gmail: this identity becomes the **Account Holder**, the
+single owner of the developer account, and moving it later is painful. Turn on
+two-factor authentication — Apple requires it.
+
+1. **D-U-N-S number** — free, requested through Apple's own lookup page once
+   signed in (it both searches and requests). Up to 5 business days. The legal
+   name and address must match the SSM certificate **exactly**; a mismatch is the
+   most common cause of a wasted week.
+2. **Apple Developer Program**, organisation enrollment — USD 99/year. Choose
+   **Organization**, not Individual — the choice cannot be changed later. Requires
+   the D-U-N-S, the legal entity name, and a declaration that you have authority
+   to bind the company. Review takes a day to about a week, and **Apple often
+   telephones the company's publicly listed number to verify** — make sure
+   somebody there is expecting the call.
+3. **Apple Business Manager** account for Houzs Century (`business.apple.com`,
+   free, same D-U-N-S), then link it to the Developer account under Settings →
+   Apps and Books. This is what makes Custom App distribution and redemption
+   codes possible.
+4. In App Store Connect, create the app record and note its **Team ID** and
    **bundle identifier** (suggest `com.houzscentury.erp`).
 
 Nothing technical can proceed to submission before this exists.
