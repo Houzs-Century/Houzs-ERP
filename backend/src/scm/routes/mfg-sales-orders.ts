@@ -76,6 +76,7 @@ import { warehouseLabel } from '../lib/warehouse-label';
 import { canonicalizeMyState } from '../lib/canonical-state';
 import { deriveLineBrandingFromProduct } from '../lib/derive-line-branding';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
 import {
   scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isMirroredDocNo, mintsIntoMirroredNamespace, houzsOwns2990,
@@ -4117,6 +4118,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const catOf = (g: string): 'SOFA' | 'BEDFRAME' | 'MATTRESS' | 'ACCESSORY' =>
     g.includes('sofa') ? 'SOFA' : g.includes('bedframe') ? 'BEDFRAME' : g.includes('mattress') ? 'MATTRESS' : 'ACCESSORY';
 
+  /* Size-variant description guard (2026-08-03) — a mattress/bedframe line
+     whose description is verbatim ANOTHER size's SKU name is corrected to the
+     booked SKU's own name. See lib/size-variant-description for the failure it
+     exists for (2990-PO-2608-005 printed King dimensions on Queen/Single/
+     Super-single lines) and why the rule is this narrow. */
+  const sizeSkuMap = await loadSizeSkuMap(sb, items.map((it) => String(it.itemCode ?? '')), c);
+
   /* Task #114 — snapshot unit cost from mfg_products when client didn't.
      Build itemRows sequentially with Promise.all so the cost lookup runs
      in parallel across lines but each row still has its own awaited cost. */
@@ -4192,7 +4200,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       agent: (body.agent as string) ?? null,
       item_group: it.itemGroup ?? 'others',
       item_code: it.itemCode,
-      description: (it.description as string) ?? null,
+      description: correctedSizeDescription(itemCode, it.description as string | null, sizeSkuMap)
+        ?? ((it.description as string) ?? null),
       /* Commander 2026-05-28 — "Description 2" is the auto-combined variant
          summary (the long attribute string). Server-generated from the line's
          variants so it stays the single source of truth. */
@@ -7483,6 +7492,9 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     ? recomputed.unit_cost_sen
     : await snapshotUnitCostSen(sb, itemCodeStr, Number(it.unitCostCenti ?? 0), c);
   const lineCost = unitCost * qty;
+  /* Same size-variant description guard the create path runs — an added line
+     must not be able to smuggle in another size's SKU name either. */
+  const sizeSkuMap = await loadSizeSkuMap(sb, [itemCodeStr], c);
   /* PR-E — same inheritance rule as POST /. Explicit per-line value wins
      (and flips overridden=true unless the client says otherwise);
      otherwise fall back to header.customer_delivery_date with
@@ -7516,7 +7528,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     agent: header.agent,
     item_group: it.itemGroup ?? 'others',
     item_code: it.itemCode,
-    description: (it.description as string) ?? null,
+    description: correctedSizeDescription(itemCodeStr, it.description as string | null, sizeSkuMap)
+      ?? ((it.description as string) ?? null),
     uom: (it.uom as string) ?? 'UNIT',
     qty,
     unit_price_centi: unit,
