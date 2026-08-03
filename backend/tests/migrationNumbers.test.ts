@@ -71,6 +71,39 @@ function numbered(glob: Record<string, unknown>): Map<string, string[]> {
   return byNo;
 }
 
+/**
+ * The next number nobody has taken in this directory, zero-padded to the width
+ * the directory already uses.
+ *
+ * Named in the failure message on purpose. Three collisions in three days
+ * (0235, 0239, 0240) all had the same shape: a branch open for an hour races
+ * every other branch for the next number, and "pick the next free number
+ * instead" makes you go and work out what that is — from a listing that has
+ * moved since you last looked. Printing it turns a five-minute detour into a
+ * rename.
+ */
+function nextFreeNumber(glob: Record<string, unknown>): string {
+  const taken = new Set(numbered(glob).keys());
+  const width = Math.max(...[...taken].map((n) => n.length), 4);
+  let next = 0;
+  for (const no of taken) next = Math.max(next, Number(no));
+  return String(next + 1).padStart(width, "0");
+}
+
+describe("the next-free-number hint", () => {
+  test("names a number nobody has taken, padded like its neighbours", () => {
+    const glob = { "a/0007_x.sql": 1, "a/0008_y.sql": 1, "a/0008_z.sql": 1 };
+    expect(nextFreeNumber(glob)).toBe("0009");
+  });
+
+  test("keeps counting past the clash rather than offering it back", () => {
+    // The naive answer to "0008 is taken twice" is "use 0008" — which is the
+    // collision again. The hint has to be the number after the HIGHEST.
+    const glob = { "a/0008_x.sql": 1, "a/0008_y.sql": 1, "a/0012_z.sql": 1 };
+    expect(nextFreeNumber(glob)).toBe("0013");
+  });
+});
+
 describe("migration numbering", () => {
   for (const [dir, glob] of Object.entries(MIGRATION_GLOBS)) {
     test(`${dir}: the listing is non-empty (guards against a vacuous pass)`, () => {
@@ -95,8 +128,16 @@ describe("migration numbering", () => {
       // demanding zero would fail every deploy and rewriting history to satisfy a
       // test would be worse than the mess. Adding a number that is already taken
       // fails here; the historical ones are frozen as accepted.
-      expect(dupes, `NEW duplicate migration number in ${dir} — pick the next free number instead`)
-        .toEqual(KNOWN_DUPLICATES[dir]);
+      const clashes = dupes.filter((no) => !KNOWN_DUPLICATES[dir].includes(no));
+      expect(
+        dupes,
+        clashes.length > 0
+          ? `${dir}: ${clashes.join(", ")} is taken twice — rename your file to ` +
+            `${nextFreeNumber(glob)}_*.sql. Rename ONLY (do not edit the body): ` +
+            `pg-migrate spots a rename by checksum, and an edited body reads to it ` +
+            `as an orphaned tracker row plus an unknown file to apply.`
+          : `NEW duplicate migration number in ${dir} — pick the next free number instead`,
+      ).toEqual(KNOWN_DUPLICATES[dir]);
     });
   }
 });
