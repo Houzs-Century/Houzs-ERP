@@ -354,3 +354,26 @@ describe("DataTable with saved layouts", () => {
     expect(screen.queryByRole("button", { name: /New layout from current columns/ })).toBeNull();
   });
 });
+
+describe("layout picker selection", () => {
+  it("ticks exactly one row when two layouts hold the same columns", async () => {
+    /* Seen on prod's Delivery Planning (2026-08-02): both company layouts
+       ticked at once, because a company had copied the other's view and
+       "matches what is on screen" was true of both. Two filled radios is a
+       picker nobody can read. */
+    const same = { order: ["a", "b"], hidden: ["c", "d"], shown: [], widths: {}, pinned: [], groupBy: [] };
+    respond({ defaults: { "1": { twins: same }, "2": { twins: same } } });
+    await hydrateTableLayouts();
+
+    renderTable("twins");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+
+    const selected = screen
+      .getAllByRole("option")
+      .filter((row) => row.getAttribute("aria-selected") === "true");
+    expect(selected).toHaveLength(1);
+    // The tie goes to THIS company's default — the one the table is actually on.
+    expect(selected[0]!.textContent).toContain("2990's Home Layout");
+  });
+});

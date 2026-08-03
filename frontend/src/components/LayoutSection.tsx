@@ -162,3 +162,19 @@ export function LayoutSection({ presets, onApplyPreset, defaultManager }: Props)
     </section>
   );
 }
+
+/**
+ * Exactly one row may read as selected.
+ *
+ * Two layouts can hold the SAME columns — the commonest case being a company
+ * that copied the other's view — and "matches what is on screen" is then true
+ * of both. A picker with two filled radios is a picker that cannot be read, so
+ * the tie is broken in favour of this company's default, then the first row.
+ * (Seen on prod's Delivery Planning, 2026-08-02: both company layouts ticked.)
+ */
+export function withSingleActive(rows: LayoutPresetOption[]): LayoutPresetOption[] {
+  const matches = rows.filter((r) => r.active);
+  if (matches.length < 2) return rows;
+  const winner = matches.find((r) => r.isDefault) ?? matches[0]!;
+  return rows.map((r) => (r.active && r !== winner ? { ...r, active: false } : r));
+}

@@ -64,7 +64,7 @@ import {
 } from '../../../lib/tableLayouts';
 import { shortCompanyName } from '../../../lib/branding';
 import { inferColumnGroup } from '../../../lib/columnGroups';
-import type { LayoutPresetOption } from '../../../components/LayoutSection';
+import { withSingleActive, type LayoutPresetOption } from '../../../components/LayoutSection';
 import { ColumnsDrawer, type DrawerColumn } from '../../../components/ColumnsDrawer';
 import styles from './DataGrid.module.css';
 
@@ -692,7 +692,7 @@ function DataGridInner<T>({
         savedId: saved.id,
       });
     }
-    return rows.length > 0 ? rows : undefined;
+    return rows.length > 0 ? withSingleActive(rows) : undefined;
   }, [layoutStore, serverTableKey, layout, columns.length]);
 
   const applyGridPreset = useCallback((id: string) => {

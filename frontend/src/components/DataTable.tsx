@@ -37,6 +37,7 @@ import {
   ColumnsDrawer,
   type DrawerColumn,
 } from "./ColumnsDrawer";
+import { withSingleActive } from "./LayoutSection";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useSmallViewport } from "../hooks/useSmallViewport";
@@ -1176,7 +1177,7 @@ function DataTableInner<T>({
     const current = visibleColumns
       .filter((c) => !c.alwaysVisible)
       .map((c) => c.key);
-    return resolvedPresets.map((p) => {
+    const rows = resolvedPresets.map((p) => {
       // What this layout WOULD render, resolved the same way the table resolves
       // its own — so "active" means the two agree, not that an id was stored.
       const layout = presetLayout(p);
@@ -1201,6 +1202,7 @@ function DataTableInner<T>({
           wouldShow.every((k, i) => current[i] === k),
       };
     });
+    return withSingleActive(rows);
   }, [resolvedPresets, presetLayout, allColumns, visibleColumns]);
 
   function toggleColumn(key: string) {
