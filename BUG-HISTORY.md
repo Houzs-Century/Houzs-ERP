@@ -1,3 +1,15 @@
+## 2026-08-04
+
+### [HIGH] Two invoices raised at the same moment could bill one delivery twice — the only conversion without a post-insert race guard
+- **Symptom.** Owner, 2026-08-04, on converting an already-converted line: *"你不能把已经被 convert 去开 DO 的东西再拿去开... 如果你开了两张，那不是就扣了两次库存吗?"* and then *"to SI PI 等等也是"*. Nothing visibly broken — the danger is a window, not a screen. Two Sales Invoices raised against the same delivered goods within the same instant each pass the remaining-to-invoice check and both insert, and the customer is billed twice for one delivery.
+- **Root cause (traced, not guessed).** `checkSiOverRemaining` is READ-BEFORE-WRITE: it reads `remaining_to_invoice = delivered − invoiced − returned`, finds it sufficient, and the caller inserts. Two concurrent callers read the same figure, both pass, both insert. Every sibling conversion already closes that window — `from-sos` does it inline ("Edge #E", rollback + 409 `race_conflict`), `grns.ts` has `verifyGrnOverReceipt`, `purchase-invoices.ts` has `verifyGrnLinesNotOverInvoiced` whose comment describes the identical failure. **DO -> SI was the one path without it**, on both create routes (`POST /` and `POST /from-dos`).
+- **Fix.** After the invoice lines are committed, re-derive remaining for the picked DO lines and roll the whole invoice back (lines, then header) with a 409 when any has gone negative. `findOverInvoicedDoItems` is the pure comparator, extracted so the money-path guard is unit testable without booting the route.
+- **Why "< 0" is the whole test.** A just-inserted SI line counts toward `invoiced` immediately, so re-reading already subtracts our own quantity: `>= 0` was within cap, negative is over by exactly that much. Same shape `from-sos` uses — deliberately one idea, not two. A MISSING id is ignored rather than treated as an offence: absence means the line had no open figure at all (which the pre-check already refused), and rolling back a legitimate invoice on a thin read would be worse than the race.
+- **Rollback is safe at this exact point.** Revenue is posted further down the handler, so there is no ledger entry to reverse — only the two rows just written. Same reason `from-sos` can roll back: it runs before `deductInventoryForDo`.
+- **Test.** `do-line-remaining.overinvoice.test.ts`, 6 cases. **Mutation-verified:** neutering the comparison fails 3 of them.
+- **I got this wrong twice before getting it right, and the reason is worth recording.** I first reported that BOTH `from-sos` and the SI path lacked the guard. `from-sos` has had one all along — I had grepped for the PURCHASE side's vocabulary (`verify`, `post-insert`, `re-sum`) instead of reading the handler, and its guard is named "Edge #E" / `overcommitted`. **Searching one module for another module's naming is not a search.** What found the truth was reading each handler from its insert to its next write.
+- **Ref:** #<PR>. `fix/convert-race-guards` 2026-08-04.
+
 ## 2026-08-03
 
 ### [MEDIUM] The driver's "Mark arrived" button did not mark arrival
