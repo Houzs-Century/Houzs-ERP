@@ -30,7 +30,10 @@ import "./mobile.css";
    pipeline: uploadSlipFull → { r2Key }) and its key is persisted as
    PATCH /:id/status { podKey } → delivery_orders.pod_r2_key. The customer
    SIGNATURE (base64 PNG) is persisted as { signatureData } →
-   delivery_orders.signature_data. GPS stays client-side (no server column). */
+   delivery_orders.signature_data. The delivery LOCATION (lat/lng + accuracy +
+   the reading's own timestamp) persists as { podLat, podLng, podAccuracyM,
+   podLocatedAt } -> delivery_orders.pod_* (mig 0249). It used to be captured
+   here and discarded; it is the answer to "where was this actually delivered". */
 
 type DoHeader = {
   id: string;
@@ -122,7 +125,7 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
   const sigRef = useRef<HTMLCanvasElement | null>(null);
   const [hasSignature, setHasSignature] = useState(false);
   const [sigClearNonce, setSigClearNonce] = useState(0);
-  const [gps, setGps] = useState<{ lat: number; lng: number } | null>(null);
+  const [gps, setGps] = useState<{ lat: number; lng: number; accuracyM: number | null; atIso: string } | null>(null);
   const [gpsState, setGpsState] = useState<"idle" | "asking" | "ok" | "denied">("idle");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -170,6 +173,12 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
           status: "DELIVERED",
           ...(sig ? { signatureData: sig } : {}),
           ...(podKey ? { podKey } : {}),
+          /* Mig 0249. This reading was taken and thrown away on every delivery
+             since this screen shipped — the header used to end "GPS stays
+             client-side (no server column)". Sent only when the driver actually
+             captured one; a denial or an indoor dead spot must never block a
+             delivery from closing. */
+          ...(gps ? { podLat: gps.lat, podLng: gps.lng, podAccuracyM: gps.accuracyM ?? undefined, podLocatedAt: gps.atIso } : {}),
         }),
       });
       await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
@@ -197,7 +206,17 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
     setGpsState("asking");
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setGps({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          /* Kept because two coordinates look equally authoritative whether they
+             came from GPS on a clear street or a wifi guess inside a warehouse.
+             The radius is what tells them apart. */
+          accuracyM: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null,
+          /* The reading's OWN time, not the moment the driver finishes the
+             paperwork — those can be minutes apart. */
+          atIso: new Date(pos.timestamp || Date.now()).toISOString(),
+        });
         setGpsState("ok");
       },
       () => setGpsState("denied"),
@@ -351,7 +370,7 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
               </span>
             </div>
 
-            {/* Delivery location — GPS captured locally (no server field yet). */}
+            {/* Delivery location — saved with the POD since mig 0249. */}
             <div className="fld-l" style={{ margin: "18px 0 8px" }}>Delivery location</div>
             <div style={{ background: "var(--card)", border: "1px solid var(--line-card)", borderRadius: 13, padding: "13px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <span className="tnum" style={{ fontSize: 12, color: gpsState === "ok" ? "var(--ink)" : "var(--mut)", minWidth: 0 }}>

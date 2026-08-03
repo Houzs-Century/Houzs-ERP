@@ -4562,7 +4562,10 @@ deliveryOrdersMfg.delete('/:id/payments/:paymentId', async (c) => {
 // ── Status transition + inventory deduction / reversal ────────────────────
 export const patchDeliveryOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
-  let body: { status?: string; signatureData?: string; podKey?: string }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  let body: {
+    status?: string; signatureData?: string; podKey?: string;
+    podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
+  }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
   /* Audit gap #4 — reject an unknown status value outright. Historically the
      handler wrote body.status verbatim, so a typo / lowercase value (the SI #77
@@ -4631,6 +4634,9 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
 
   const now = new Date().toISOString();
   const ts: Record<string, string> = { updated_at: now };
+  // Numeric columns cannot live in `ts` (typed Record<string, string>); merged
+  // into the same update below.
+  const tsNum: Record<string, number> = {};
   if (body.status === 'DISPATCHED') ts.dispatched_at = now;
   if (body.status === 'SIGNED')     ts.signed_at = now;
   if (body.status === 'DELIVERED')  ts.delivered_at = now;
@@ -4641,6 +4647,30 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      an existing POD. */
   if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
   if (typeof body.podKey === 'string' && body.podKey) ts.pod_r2_key = body.podKey;
+
+  /* WHERE the delivery happened (mig 0249). The phone has been taking this
+     reading and discarding it since the POD screen shipped — MobilePOD's own
+     header said "GPS stays client-side (no server column)".
+
+     Written as a PAIR or not at all: one coordinate without the other is not a
+     place, and half a fix stored is worse than none because it reads as data.
+     A range violation is DROPPED rather than 409'd — a bad sensor reading must
+     never be the reason a driver cannot close a delivery. */
+  const lat = typeof body.podLat === 'number' && Number.isFinite(body.podLat) ? body.podLat : null;
+  const lng = typeof body.podLng === 'number' && Number.isFinite(body.podLng) ? body.podLng : null;
+  if (lat !== null && lng !== null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+    tsNum.pod_lat = lat;
+    tsNum.pod_lng = lng;
+    /* Accuracy rides along because two coordinates look equally authoritative
+       whether they came from GPS on a clear street or a wifi guess indoors. */
+    if (typeof body.podAccuracyM === 'number' && Number.isFinite(body.podAccuracyM) && body.podAccuracyM >= 0) {
+      tsNum.pod_accuracy_m = body.podAccuracyM;
+    }
+    /* Separate from delivered_at: the fix can be minutes older than the
+       paperwork, and a stale reading passing as "the delivery moment" is worse
+       than an honest gap. */
+    ts.pod_located_at = typeof body.podLocatedAt === 'string' && body.podLocatedAt ? body.podLocatedAt : now;
+  }
 
   /* Over-delivery guard on FIRST ship (pre-ship -> shipped). The create path
      caps this (Audit gap #3, the asDraft-gated recheck) but a DRAFT DO SKIPS
@@ -4679,7 +4709,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   let data: { id: string; status: string } | null;
   if (body.status === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: body.status, ...ts })
+      .update({ status: body.status, ...ts, ...tsNum })
       .eq('id', id), co.companyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
@@ -4691,7 +4721,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   } else {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: body.status, ...ts }).eq('id', id), co.companyId).select('id, status').single();
+      .update({ status: body.status, ...ts, ...tsNum }).eq('id', id), co.companyId).select('id, status').single();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as { id: string; status: string };
   }
