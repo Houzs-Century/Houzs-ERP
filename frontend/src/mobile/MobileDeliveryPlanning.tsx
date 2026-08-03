@@ -1312,6 +1312,29 @@ function StopDetail({
     },
   });
 
+  /* "Arrived" — stamps delivery_orders.arrival_at with the CURRENT time.
+     
+     The column, and the "Arrived" pill that reads it, both already existed. The
+     only writer was a datetime field in the office's edit drawer — somebody
+     typing a time after the fact — so a driver never stamped one and the pill
+     only ever lit up once the delivery was already done. The button above,
+     despite reading "Mark arrived", posts IN_TRANSIT, which is DEPARTURE.
+     
+     Owner, 2026-08-03: "肯定是要让顾客知道目前司机在哪里了、到达了没有". A customer
+     cannot be told "he has arrived" from a field nobody fills in. */
+  const arrive = useMutation({
+    mutationFn: () => {
+      if (!doId) throw new Error("no_do");
+      return authedFetch<{ deliveryOrder: unknown }>(
+        `/delivery-orders-mfg/${encodeURIComponent(doId)}`,
+        { method: "PATCH", body: JSON.stringify({ arrivalAt: new Date().toISOString() }) },
+      );
+    },
+    onSuccess: async () => {
+      await invalidate();
+    },
+  });
+
   // "POD complete" → DELIVERED (stamps delivered_at).
   const complete = useMutation({
     mutationFn: () => {
@@ -1372,6 +1395,15 @@ function StopDetail({
     start.mutate();
   };
 
+  /* Step 2's own handler. It used to call onStart — so "Mark arrived" re-posted
+     IN_TRANSIT and never stamped arrival_at, which is why the Arrived pill only
+     ever lit up once the delivery was already done. */
+  const onArrive = async () => {
+    if (!canOperateDo) return;
+    if (!(await requireDo())) return;
+    arrive.mutate();
+  };
+
   const onComplete = async () => {
     if (!canOperateDo) return;
     if (!(await requireDo())) return;
@@ -1384,7 +1416,7 @@ function StopDetail({
     complete.mutate();
   };
 
-  const busy = start.isPending || complete.isPending;
+  const busy = start.isPending || arrive.isPending || complete.isPending;
   const goToDo = () => onOpen?.(order.so_doc_no);
   const [editingFields, setEditingFields] = useState(false);
 
@@ -1904,9 +1936,9 @@ function StopDetail({
               />
             ) : started && canOperateDo ? (
               <TrackButton
-                onClick={onStart}
+                onClick={onArrive}
                 busy={busy}
-                label="Mark arrived"
+                label={arrive.isPending ? "Marking…" : "Mark arrived"}
                 icon="pin"
               />
             ) : null}

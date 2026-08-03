@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 87 110" width="87" height="110">
+  <title>2990s Sofa Module — 1NA — 1 Seater, No Arms</title>
+  <desc>Top-down plan view. 1 seat with backrest at top, NO armrests on either side.</desc>
+  <g transform="translate(20,20)">
+    <rect x="0" y="0" width="47" height="70" rx="3" fill="#F0E6D6" stroke="#2C2C2A" stroke-width="1.4"/>
+    <rect x="0" y="0" width="47" height="11" fill="#D9C2A0" stroke="#2C2C2A" stroke-width="0.8"/>
+  </g>
+</svg>

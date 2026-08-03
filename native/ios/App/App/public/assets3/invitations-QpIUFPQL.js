@@ -1,0 +1,1 @@
+function e(e){let t=new Date(e.expires_at).getTime()-Date.now();return t<0?`expired`:t<1728e5?`expiring`:`pending`}function t(e){return e.invite_url||`${window.location.origin}/#invite=${e.token}`}export{t as n,e as t};
