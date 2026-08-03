@@ -788,7 +788,11 @@ function DataGridInner<T>({
         group: c.group || inferColumnGroup(c.key, c.label || c.key) || "",
         visible: !effectiveHidden.has(c.key),
         width: layout.widths[c.key] ?? c.width ?? 140,
-        pinned: layout.pinned.includes(c.key),
+        /* This grid freezes to the LEFT only; the drawer's three-state cycle
+           degrades to left ⇄ none here rather than offering a Right the grid
+           would not honour. Bringing right-freeze to the vendored grid is its
+           own change. */
+        pinned: layout.pinned.includes(c.key) ? ('left' as const) : null,
       })),
     [columns, effectiveHidden, layout.widths, layout.pinned],
   );

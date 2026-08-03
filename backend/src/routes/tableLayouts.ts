@@ -79,6 +79,9 @@ interface StoredLayout {
   shown: string[];
   widths: Record<string, number>;
   pinned: string[];
+  /** Columns frozen to the RIGHT edge. A second list rather than a reshaped
+   *  `pinned`: every stored layout already holds the flat one. */
+  pinnedRight: string[];
   /** Group-by columns. Only the vendored SCM DataGrid has these, and there they
    *  ARE part of the layout — grouping a list by supplier changes its shape.
    *  Sort is deliberately not here: it stays device-local on both grids. */
@@ -125,6 +128,7 @@ function sanitizeLayout(raw: unknown): StoredLayout {
     shown: keyList(r.shown),
     widths,
     pinned: keyList(r.pinned),
+    pinnedRight: keyList(r.pinnedRight),
     groupBy: keyList(r.groupBy),
   };
 }
