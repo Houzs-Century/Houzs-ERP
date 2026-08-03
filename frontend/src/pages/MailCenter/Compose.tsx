@@ -58,6 +58,26 @@ type MailAddress = {
 // Conservative single-@ shape check — mirrors the backend's EMAIL_RE.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/* A typed recipient field -> a clean list. Mirrors recipientList() in
+   backend/src/services/email.ts: comma or semicolon separated, trimmed,
+   de-duplicated case-insensitively. The backend normalises again — this is for
+   the inline validation, not a trust boundary. */
+const parseRecipients = (raw: string): string[] => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(/[,;]/)) {
+    const addr = part.trim();
+    if (!addr) continue;
+    const key = addr.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(addr);
+  }
+  return out;
+};
+const firstInvalid = (raw: string): string | null =>
+  parseRecipients(raw).find((a) => !EMAIL_RE.test(a)) ?? null;
+
 type ComposeResponse = {
   ok?: boolean;
   threadId?: string;
@@ -129,6 +149,11 @@ export function ComposeDialog({
   // Explicit From override the operator picked (empty = follow the default).
   const [fromOverride, setFromOverride] = useState("");
   const [to, setTo] = useState("");
+  /* Cc/Bcc start hidden — most mail is to one person, and two empty fields on
+     every compose is the cost of a feature used sometimes. */
+  const [cc, setCc] = useState("");
+  const [bcc, setBcc] = useState("");
+  const [showCopies, setShowCopies] = useState(false);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [touchedTo, setTouchedTo] = useState(false);
@@ -176,8 +201,12 @@ export function ComposeDialog({
     userDefaultFrom ||
     activeAddresses[0]?.address ||
     "";
-  const toValid = EMAIL_RE.test(to.trim());
+  const toList = parseRecipients(to);
+  const ccList = parseRecipients(cc);
+  const bccList = parseRecipients(bcc);
+  const toValid = toList.length > 0 && !firstInvalid(to);
   const toError = touchedTo && to.trim().length > 0 && !toValid;
+  const copyError = firstInvalid(cc) ?? firstInvalid(bcc);
   const canSend =
     !sending &&
     !noMailbox &&
@@ -294,7 +323,9 @@ export function ComposeDialog({
         "/api/mail-center/compose",
         {
           fromAddress,
-          to: to.trim(),
+          to: toList,
+          ...(ccList.length ? { cc: ccList } : {}),
+          ...(bccList.length ? { bcc: bccList } : {}),
           subject: subject.trim(),
           text: body,
           ...(files.length > 0
@@ -397,15 +428,28 @@ export function ComposeDialog({
                 )}
               </div>
 
-              {/* To */}
+              {/* To — a LIST. `type="email"` is deliberately not used: the browser
+                  rejects a comma-separated value outright, which is what made
+                  this field single-recipient in the first place. */}
               <div className="space-y-1">
-                <label className="text-xs font-medium text-ink-muted">To</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-ink-muted">To</label>
+                  {!showCopies && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCopies(true)}
+                      className="text-[11px] font-medium text-primary hover:underline"
+                    >
+                      Cc / Bcc
+                    </button>
+                  )}
+                </div>
                 <input
-                  type="email"
+                  type="text"
                   value={to}
                   onChange={(e) => setTo(e.target.value)}
                   onBlur={() => setTouchedTo(true)}
-                  placeholder="customer@example.com"
+                  placeholder="customer@example.com, someone@else.com"
                   disabled={sending}
                   aria-invalid={toError}
                   className={
@@ -417,10 +461,50 @@ export function ComposeDialog({
                 />
                 {toError && (
                   <p className="text-[11px] text-err">
-                    Enter a valid email address.
+                    {firstInvalid(to)
+                      ? `Not a valid email address: ${firstInvalid(to)}`
+                      : "Enter a valid email address."}
+                  </p>
+                )}
+                {toList.length > 1 && !toError && (
+                  <p className="text-[11px] text-ink-muted">
+                    {toList.length} recipients. Separate them with a comma.
                   </p>
                 )}
               </div>
+
+              {/* Cc / Bcc — one send carrying everyone, never one send each. */}
+              {showCopies && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-ink-muted">Cc</label>
+                    <input
+                      type="text"
+                      value={cc}
+                      onChange={(e) => setCc(e.target.value)}
+                      placeholder="visible to everyone"
+                      disabled={sending}
+                      className="h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-ink-muted">Bcc</label>
+                    <input
+                      type="text"
+                      value={bcc}
+                      onChange={(e) => setBcc(e.target.value)}
+                      placeholder="hidden from the others"
+                      disabled={sending}
+                      className="h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
+                    />
+                  </div>
+                  {copyError && (
+                    <p className="text-[11px] text-err sm:col-span-2">
+                      Not a valid email address: {copyError}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Subject */}
               <div className="space-y-1">

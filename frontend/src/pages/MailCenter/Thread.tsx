@@ -239,6 +239,11 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
   const messages = data?.messages ?? [];
 
   const [replyText, setReplyText] = useState("");
+  /* Reply-all. Off by default: replying to everyone who was Cc'd is sometimes
+     right and sometimes an embarrassment, so it is a deliberate choice each
+     time rather than a remembered preference. The backend rebuilds the list
+     from the newest inbound message's To + Cc, minus our own mailbox. */
+  const [replyAll, setReplyAll] = useState(false);
   const [sending, setSending] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [assigning, setAssigning] = useState(false);
@@ -443,6 +448,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
     try {
       await api.post(`${url}/reply`, {
         text,
+        ...(replyAll ? { replyAll: true } : {}),
         ...(replyFrom ? { fromAddress: replyFrom } : {}),
         ...(files.length > 0
           ? {
@@ -454,6 +460,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
           : {}),
       });
       setReplyText("");
+      setReplyAll(false);
       setFiles([]);
       setAttachError(null);
       toast.success("Reply sent.");
@@ -909,13 +916,28 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                     <Paperclip className="h-4 w-4" />
                     Attach
                   </button>
+                  {/* Reply-all. Until now a reply went to ONE address and there
+                      was no way to add anyone — an email that Cc'd three people
+                      was answered to one of them, silently. */}
+                  <label
+                    title="Also reply to everyone who was on the last message, except this mailbox"
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:text-ink"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={replyAll}
+                      disabled={sending}
+                      onChange={(e) => setReplyAll(e.target.checked)}
+                    />
+                    Reply all
+                  </label>
                   <button
                     disabled={sending || !replyText.trim()}
                     onClick={handleSend}
                     className="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary px-3 py-1.5 text-[12px] font-bold text-white hover:bg-primary-ink disabled:opacity-50"
                   >
                     {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                    Send reply
+                    {replyAll ? "Send to all" : "Send reply"}
                   </button>
                 </div>
               </div>

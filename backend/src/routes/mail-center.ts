@@ -27,7 +27,7 @@ import type { Context } from "hono";
 import type { Env } from "../types";
 import type { AuthUser } from "../services/auth";
 import { hasPermission } from "../services/permissions";
-import { sendEmail } from "../services/email";
+import { recipientList, sendEmail } from "../services/email";
 import { getBranding, getBrandingForCompany } from "../services/branding";
 import { validateMailAttachments } from "../lib/mail-attachments";
 import { isSalesDirectorUser } from "../services/pmsAccess";
@@ -1886,6 +1886,12 @@ app.post("/threads/:id/reply", async (c) => {
     text?: string;
     html?: string;
     fromAddress?: string;
+    /* Reply-all and manual recipients. Both optional: omit them and this route
+       behaves exactly as it did — a plain reply to the thread's counterparty. */
+    replyAll?: boolean;
+    to?: string | string[];
+    cc?: string | string[];
+    bcc?: string | string[];
     attachments?: Array<{ filename: string; contentBase64: string }>;
   };
   const body: ReplyBody = await c.req
@@ -1917,12 +1923,62 @@ app.post("/threads/:id/reply", async (c) => {
     return c.json({ error: "Thread not found" }, 404);
   }
 
-  const to = (thread.counterparty_email ?? "").trim();
+  const mailbox = (thread.mailbox_address ?? "").trim();
+
+  /* WHO THE REPLY GOES TO.
+  
+     Until now this was one address — thread.counterparty_email — and there was
+     no way to add anyone. An email that CC'd three people was answered to
+     exactly one of them, silently: the other three never saw the answer and
+     nothing on screen said so. Owner, 2026-08-03: "然后那些人回复我的话，我要怎么
+     回复他? 怎么在上面回复他们?"
+  
+     The addresses were never missing. email_messages has stored to_addresses and
+     cc_addresses since mig 0039 — inbound Cc has been captured all along and
+     simply never read back.
+  
+     Precedence: an explicit `to` from the caller wins; else reply-all builds the
+     list from the newest INBOUND message; else the counterparty, as before. */
+  const explicitTo = recipientList(body.to);
+  let toList = explicitTo;
+  let ccList = recipientList(body.cc);
+
+  if (toList.length === 0 || (body.replyAll && recipientList(body.cc).length === 0)) {
+    const lastInbound = await c.env.DB.prepare(
+      `SELECT from_address, to_addresses, cc_addresses FROM email_messages
+        WHERE thread_id = ? AND direction = 'inbound'
+        ORDER BY COALESCE(received_at, created_at) DESC LIMIT 1`,
+    )
+      .bind(id)
+      .first<{ from_address: string | null; to_addresses: string | null; cc_addresses: string | null }>();
+
+    if (toList.length === 0) {
+      toList = recipientList(lastInbound?.from_address ?? thread.counterparty_email ?? "");
+    }
+    if (body.replyAll && ccList.length === 0 && lastInbound) {
+      /* Everyone else who was on it, MINUS our own mailbox and minus whoever is
+         already on To — replying to ourselves loops mail back into the thread it
+         came from, and a duplicate across fields makes the provider deliver
+         twice. Bcc is not reconstructed: it was blind, and guessing at it would
+         expose a recipient the sender chose to hide. */
+      const onTo = new Set(toList.map((a) => a.toLowerCase()));
+      const mine = new Set([mailbox.toLowerCase(), ...scope.addresses.map((a) => a.toLowerCase())]);
+      ccList = [
+        ...recipientList(parseJsonArray(lastInbound.to_addresses)),
+        ...recipientList(parseJsonArray(lastInbound.cc_addresses)),
+      ].filter((a) => !onTo.has(a.toLowerCase()) && !mine.has(a.toLowerCase()));
+    }
+  }
+
+  const bccList = recipientList(body.bcc);
+  const to = toList.join(", ");
   if (!to) {
     return c.json({ error: "thread has no counterparty email to reply to" }, 400);
   }
-
-  const mailbox = (thread.mailbox_address ?? "").trim();
+  const badReplyAddress = [...toList, ...ccList, ...bccList].find((a) => !EMAIL_RE.test(a));
+  if (badReplyAddress) {
+    return c.json({ error: `not a valid email address: ${badReplyAddress}` }, 400);
+  }
 
   // Resolve the From: an explicit fromAddress is honoured only when the caller
   // may send from it (admin = any; non-admin = a mailbox in scope OR their own
@@ -1947,6 +2003,8 @@ app.post("/threads/:id/reply", async (c) => {
   // cron-drained retry renders the same identity.
   const result = await sendEmail(c.env, {
     to,
+    cc: ccList.join(", ") || null,
+    bcc: bccList.join(", ") || null,
     subject,
     html: htmlBody,
     text: text || undefined,
@@ -1979,16 +2037,20 @@ app.post("/threads/:id/reply", async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO email_messages
        (id, thread_id, direction, from_address, from_name,
-        to_addresses, subject, text_body, html_body, sent_at, received_at,
+        to_addresses, cc_addresses, subject, text_body, html_body, sent_at, received_at,
         sent_by_user_id, sent_by_name, provider_message_id, created_at${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
+     VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
   )
     .bind(
       messageId,
       id,
       fromAddress || null,
       fromName || null,
-      JSON.stringify([to]),
+      /* The full lists, so the thread shows who actually received this and the
+         NEXT reply-all reads them back. Bcc is not stored: it was blind, and a
+         thread anyone on the mailbox can open is the wrong place to record it. */
+      JSON.stringify(toList),
+      JSON.stringify(ccList),
       subject,
       text || null,
       htmlBody,
@@ -2024,7 +2086,11 @@ app.post("/compose", async (c) => {
 
   type ComposeBody = {
     fromAddress?: string;
-    to?: string;
+    /* string | string[] — the single string every caller sent before this still
+       works, and a comma/semicolon list is what a human pastes. */
+    to?: string | string[];
+    cc?: string | string[];
+    bcc?: string | string[];
     subject?: string;
     text?: string;
     attachments?: Array<{ filename: string; contentBase64: string }>;
@@ -2034,7 +2100,10 @@ app.post("/compose", async (c) => {
     .catch(() => ({}) as ComposeBody);
 
   const fromAddress = (body.fromAddress ?? "").trim();
-  const to = (body.to ?? "").trim();
+  const toList = recipientList(body.to);
+  const ccList = recipientList(body.cc);
+  const bccList = recipientList(body.bcc);
+  const to = toList.join(", ");
   const subject = (body.subject ?? "").trim();
   const text = (body.text ?? "").trim();
   const attachments = body.attachments ?? [];
@@ -2042,8 +2111,15 @@ app.post("/compose", async (c) => {
   if (!fromAddress) {
     return c.json({ error: "fromAddress is required" }, 400);
   }
-  if (!EMAIL_RE.test(to)) {
+  /* Validate EVERY address, and name the bad one. The old check ran the
+     single-address regex over the whole field, so a list failed with "a valid
+     recipient is required" and no clue which entry was wrong. */
+  if (toList.length === 0) {
     return c.json({ error: "a valid recipient (to) is required" }, 400);
+  }
+  const badAddress = [...toList, ...ccList, ...bccList].find((a) => !EMAIL_RE.test(a));
+  if (badAddress) {
+    return c.json({ error: `not a valid email address: ${badAddress}` }, 400);
   }
   if (!subject) {
     return c.json({ error: "subject is required" }, 400);
@@ -2126,14 +2202,21 @@ app.post("/compose", async (c) => {
        (id, thread_id, direction, from_address, from_name,
         to_addresses, cc_addresses, subject, text_body, html_body, sent_at,
         sent_by_user_id, sent_by_name, provider_message_id, created_at${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, 'outbound', ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
+     VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
   )
     .bind(
       messageId,
       threadId,
       fromAddress,
       fromName || null,
-      JSON.stringify([to]),
+      /* The FULL recipient lists, not just the first address. This row is what
+         the thread view renders and what a reply-all reads back — a message
+         stored as one recipient makes everyone else invisible in the history
+         and drops them from every later reply. Bcc is deliberately NOT stored:
+         it is blind, and a thread anyone on the mailbox can open is the wrong
+         place to record who was quietly copied. */
+      JSON.stringify(toList),
+      JSON.stringify(ccList),
       subject,
       text,
       htmlBody,
