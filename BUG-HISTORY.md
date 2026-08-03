@@ -1,3 +1,13 @@
+## 2026-08-04
+
+### [MEDIUM] The DO list named a Sales Order it had not shipped — a merged delivery hid its other sources
+- **Symptom.** Owner, 2026-08-04: *"为什么一张SO可以开两张DO？？"*. Two delivery orders both showed `2990-SO-2606-019` in the **From SO** column, same customer, same delivery date, same source-PO chips. It reads as the same Sales Order being shipped twice — a double-deduction of stock.
+- **It was not.** The read-only split check (`Document split check`, #1577) run against production returned: that SO's six lines are each covered **exactly once**, by **one** delivery order. The second DO consumed none of its quantity. Nothing to clean up — the data was right the whole time.
+- **Root cause (traced, not guessed).** The column renders `delivery_orders.so_doc_no`, which is a header LABEL, not a line-level link. `from-sos` sets it to the **FIRST pick's SO** (`ref` gets "Merged from …" when the picks span several). So a DO merging lines from several Sales Orders displays one of them and hides the rest — and a DO whose lines belong to other SOs still shows that name. Two DOs then appear to ship one SO while sharing no quantity at all.
+- **Fix.** `resolveDoSourceSos` derives the SOs from the DO's own lines (`so_item_id` → `mfg_sales_order_items.doc_no`) and the list renders those, falling back to the header label when a DO has no linked lines (an ad-hoc DO legitimately has only the header, and a blank cell would be a different lie). This is the SAME correction `resolveDoHeaderSources` already applied to the Source PO column beside it — whose comment reads "Header ≡ ∪(lines) by construction". One idea, applied to the other anchor.
+- **Why this class matters more than an ordinary display bug.** The screen looked wrong **precisely when the data was right**, which sends someone hunting for a stock bug that does not exist. It cost a production check and three rounds of investigation to establish that nothing was broken.
+- **Ref:** #<PR>. `fix/do-list-real-source-sos` 2026-08-04.
+
 ## 2026-08-03
 
 ### [LOW] Clicking a project file to VIEW it downloaded it instead — for every file R2 held without a content type

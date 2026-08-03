@@ -94,6 +94,10 @@ type DoRow = {
    *  pre-batch) stock. A DO is a sales-side doc, so it shows Source PO, not an
    *  Assigned SO (owner 2026-07-31). */
   source_pos?: string[] | null;
+  /* The SOs this DO's LINES draw on. so_doc_no above is only the header LABEL
+     (from-sos copies the first pick's SO), so a merged DO named one source and
+     hid the rest. */
+  source_sos?: string[] | null;
   /** Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
    *  "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
@@ -747,6 +751,10 @@ type DoDrillItem = {
      from the OUT movements ∪ consumed FIFO lots. A DO is a sales-side doc, so it
      shows Source PO, not an Assigned SO. */
   source_pos?: string[] | null;
+  /* The SOs this DO's LINES draw on. so_doc_no above is only the header LABEL
+     (from-sos copies the first pick's SO), so a merged DO named one source and
+     hid the rest. */
+  source_sos?: string[] | null;
   /* Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
      "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
@@ -1076,22 +1084,38 @@ export function MfgDeliveryOrdersListV2() {
       label: "From SO",
       width: "150px",
       disableSort: true,
-      getValue: (r) => r.so_doc_no ?? "",
-      render: (r) =>
-        r.so_doc_no ? (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/scm/sales-orders/${encodeURIComponent(r.so_doc_no!)}`);
-            }}
-            className="font-mono text-[12px] font-semibold text-ink-secondary hover:text-accent hover:underline"
-          >
-            {r.so_doc_no}
-          </button>
+      /* 2026-08-04: show the SOs this DO's LINES actually draw on, not the
+         header label. so_doc_no is set by from-sos to the FIRST pick's SO, so a
+         DO merging several SOs displayed one and hid the rest — and two DOs
+         then looked like they shipped the same Sales Order while sharing no
+         quantity at all. Owner: "为什么一张SO可以开两张DO？？"; the read-only
+         split check proved that SO was delivered exactly once.
+
+         Falls back to the header label when a DO has no linked lines (an ad-hoc
+         DO legitimately has only the header), so no cell goes blank. */
+      getValue: (r) => (r.source_sos?.length ? r.source_sos.join(" ") : r.so_doc_no ?? ""),
+      render: (r) => {
+        const sos = r.source_sos?.length ? r.source_sos : (r.so_doc_no ? [r.so_doc_no] : []);
+        return sos.length > 0 ? (
+          <span className="flex flex-wrap gap-1">
+            {sos.map((no: string) => (
+              <button
+                key={no}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/scm/sales-orders/${encodeURIComponent(no)}`);
+                }}
+                className="font-mono text-[12px] font-semibold text-ink-secondary hover:text-accent hover:underline"
+              >
+                {no}
+              </button>
+            ))}
+          </span>
         ) : (
           <span className="text-[12px] text-ink-muted">—</span>
-        ),
+        );
+      },
     },
     {
       // Owner 2026-07-31: which PO the shipped goods actually came from — the
