@@ -3248,9 +3248,17 @@ function checklistReviewVisible(
   const status = (item.status ?? "").toLowerCase();
   const reviewStatus = (item.review_status ?? "").toLowerCase();
   const canApprove = !item.required_perm || holdsChecklistApproval(permissions, item.required_perm);
-  if (item.required_perm) return canApprove && reviewStatus !== "approved" && status !== "done";
-  const reviewable = REVIEWABLE_TITLE_RE.test((item.title ?? "").trim());
   const awaitingReview = reviewStatus === "pending_review" || reviewStatus === "amended";
+  // A FRESH submission re-opens the decision even on an item already marked
+  // done (owner 2026-07-31). `submit` only sets review_status — it never
+  // clears `done` (services/projects.ts submitChecklistForReview) — so
+  // re-uploading a replacement onto an approved doc used to leave the approver
+  // with no buttons at all. The awaitingReview arm is what makes a re-upload
+  // reviewable again; the second arm still covers never-yet-decided docs.
+  if (item.required_perm) {
+    return canApprove && (awaitingReview || (reviewStatus !== "approved" && status !== "done"));
+  }
+  const reviewable = REVIEWABLE_TITLE_RE.test((item.title ?? "").trim());
   return reviewable && awaitingReview && canApprove;
 }
 
