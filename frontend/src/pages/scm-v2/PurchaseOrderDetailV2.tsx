@@ -67,7 +67,7 @@ import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { PoAmendmentCreateModal } from "../../components/scm-v2/PoAmendmentCreateModal";
 // Relationship map (owner 2026-07-27) — the purchase-side twin of the SO/DO/
 // SI/DR maps: same shared 5-node canvas, chain + clicks from the PO hook.
-import { DocumentRelationshipMapModal } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { usePoRelationshipMap } from "./po-relationship-map";
 // Per-line SO allocations (mig 0235) — split a consolidated line across the
 // customers (and stock) it serves; sub-numbered PO-xxxx-yy-01, -02, ...
@@ -437,6 +437,9 @@ function PurchaseOrderDetailV2ReadOnly() {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
   } = usePoRelationshipMap(purchaseOrder);
 
   useSetBreadcrumbs([
@@ -1330,6 +1333,17 @@ function PurchaseOrderDetailV2ReadOnly() {
         }}
         rowLabels={{ primary: "Purchase chain", secondary: "After goods receipt" }}
         amendmentsLabel="Related amendments (Sales Order & this PO)"
+      />
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          setRelMapOpen(false);
+          pickChainChoice(d);
+        }}
       />
     </div>
   );

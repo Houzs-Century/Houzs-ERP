@@ -105,7 +105,11 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
   // order) stay un-batched (plain FIFO).
   const batchNo = (header as { pc_order_no: string | null }).pc_order_no ?? null;
   // Single HEADER warehouse for all lines (the form's "Receive Into").
-  const warehouseId = (header as { warehouse_id: string | null }).warehouse_id ?? (await defaultWarehouseId(sb));
+  const warehouseId = (header as { warehouse_id: string | null }).warehouse_id
+    /* Per-company default (2026-08-03) — the old lookup was company-blind and
+       let alphabetical `code` order pick across every company's is_default
+       warehouses, so it resolved to 2990's Guangzhou warehouse for Houzs too. */
+    ?? (await defaultWarehouseId(sb, (header as { company_id?: number | null }).company_id ?? undefined));
 
   // 1. TARGET net IN per bucket = sum of current lines (empty if cancelled).
   type Bucket = { product_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number };

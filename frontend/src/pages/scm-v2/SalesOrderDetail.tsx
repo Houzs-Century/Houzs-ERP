@@ -81,7 +81,7 @@ import { formatDate } from '../../lib/utils';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import { PaymentsTable, type PaymentDraft } from '../../vendor/scm/components/PaymentsTable';
 import { completePaymentRetryDraft, consumePaymentRetryNavigationState, readPaymentRetryHandoff, readPaymentRetryNavigationState } from '../../lib/paymentRetryHandoff';
-import { DocumentRelationshipMapModal } from '../../components/scm-v2/DocumentRelationshipMapModal';
+import { DocumentRelationshipMapModal, DocumentChoiceDialog } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useSoRelationshipMap } from './so-relationship-map';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { usePrompt } from '../../vendor/scm/components/PromptDialog';
@@ -659,6 +659,9 @@ export const SalesOrderDetail = () => {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
   } = useSoRelationshipMap(header);
   const [saveError, setSaveError] = useState<string | null>(null);
   const customerCardRef = useRef<CustomerCardHandle | null>(null);
@@ -2362,6 +2365,17 @@ export const SalesOrderDetail = () => {
         amendments={chainAmendments}
         onAmendmentClick={(a) => {
           if (onChainAmendmentClick(a)) setRelMapOpen(false);
+        }}
+      />
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          setRelMapOpen(false);
+          pickChainChoice(d);
         }}
       />
     </div>

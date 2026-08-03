@@ -183,13 +183,17 @@ async function recomputeTotals(sb: any, returnId: string) {
      2. linked CN header's warehouse_id
      3. the return header's warehouse_id (free-entry lines — allowed here, since
         "no DO, no return" is RELAXED for consignment)
-     4. the global default warehouse
+     4. the return's OWN company's default warehouse
    Returns map of item id → warehouse_id (null when even the fallbacks are
    absent — the caller skips that line). */
 async function resolveReturnLineWarehouses(
   sb: any,
   items: Array<{ id: string; consignment_do_item_id?: string | null }>,
   headerWarehouseId: string | null,
+  /* The return's company (2026-08-03) — step 4 is per company. It used to be a
+     company-blind draw decided by alphabetical `code` order across every
+     company's is_default rows. */
+  companyId: number | undefined,
 ): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
   const cnItemIds = [...new Set(items
@@ -227,7 +231,7 @@ async function resolveReturnLineWarehouses(
     }
   }
 
-  const fallback = headerWarehouseId ?? (await defaultWarehouseId(sb));
+  const fallback = headerWarehouseId ?? (await defaultWarehouseId(sb, companyId));
   for (const it of items) {
     const meta = it.consignment_do_item_id ? cnLineMeta.get(it.consignment_do_item_id) : undefined;
     const fromSo = meta?.soItemId ? (soWh.get(meta.soItemId) ?? null) : null;
@@ -283,7 +287,12 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
       .select('id, consignment_do_item_id, item_code, description, qty_returned, unit_cost_centi, item_group, variants')
       .eq('consignment_delivery_return_id', returnId);
     const headerWarehouseId = (header as { warehouse_id: string | null }).warehouse_id ?? null;
-    const lineWh = await resolveReturnLineWarehouses(sb, (items ?? []) as Array<{ id: string; consignment_do_item_id?: string | null }>, headerWarehouseId);
+    const lineWh = await resolveReturnLineWarehouses(
+      sb,
+      (items ?? []) as Array<{ id: string; consignment_do_item_id?: string | null }>,
+      headerWarehouseId,
+      (header as { company_id?: number | null }).company_id ?? undefined,
+    );
     const distinctWh = [...new Set(((items ?? []) as Array<{ id: string }>).map((it) => lineWh.get(it.id)).filter((x): x is string => !!x))];
     const batchByWh = new Map<string, Map<string, string | null>>();
     const costByWh = new Map<string, Map<string, number>>();
@@ -603,7 +612,7 @@ consignmentReturns.get('/:id', async (c) => {
   if (!h.data) return c.json({ error: 'not_found' }, 404);
   const rawItems = (i.data ?? []) as unknown as Array<{ id: string; consignment_do_item_id?: string | null } & Record<string, unknown>>;
   const headerWh = (h.data as { warehouse_id?: string | null }).warehouse_id ?? null;
-  const lineWh = await resolveReturnLineWarehouses(sb, rawItems, headerWh);
+  const lineWh = await resolveReturnLineWarehouses(sb, rawItems, headerWh, activeCompanyId(c));
   const codeMap = await warehouseCodeMap(sb, [...lineWh.values()]);
   const items = rawItems.map((it) => {
     const wid = lineWh.get(it.id) ?? null;

@@ -28,6 +28,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, type FlowNode, type FlowEdge } from '../../vendor/scm/lib/flow-queries';
 import type { ChainNode, AmendmentChip } from '../../components/scm-v2/DocumentRelationshipMapModal';
+import { useDocChoice, type DocChoiceApi } from './doc-choice';
 
 export type PoRelationshipHeader = {
   id: string;
@@ -124,9 +125,13 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
   onNodeClick: (n: ChainNode) => boolean;
   amendments: AmendmentChip[];
   onAmendmentClick: (a: AmendmentChip) => boolean;
-} {
+} & DocChoiceApi {
   const navigate = useNavigate();
   const notify = useNotify();
+  /* Several documents in one slot open a chooser whose every row clicks through
+     (2026-08-03) — naming them and pointing at a list the doc no cannot be
+     searched in left the operator copying numbers by hand. */
+  const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const { can, pageAccess } = useAuth();
 
   const poId = header?.id ?? null;
@@ -239,13 +244,17 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
           navigate(`/scm/sales-orders/${encodeURIComponent(docNo)}`);
           return true;
         }
-        /* Several SOs, one slot — the SO list searches its own refs, not a PO
-           number, so name them instead (the GRN idiom). */
-        void notify({
+        /* Several SOs, one slot. The SO list searches its own refs, not a PO
+           number, so "go find them" landed nowhere — each SO is a row that opens
+           it. Graph so-nodes and note tokens are both doc numbers, so both route
+           the same way. */
+        openChoice({
           title: 'Raised from more than one sales order',
-          body:
-            `This PO covers ${soLabels.join(', ')}. ` +
-            `Open Sales Orders to view them.`,
+          intro: 'This PO covers several Sales Orders. Pick one to open it.',
+          docs: (soNodes.length > 0
+            ? soNodes.map((so) => ({ id: so.id, label: so.label, sub: so.status }))
+            : noteSos.map((doc) => ({ id: doc, label: doc, sub: null as string | null }))
+          ).map((d) => ({ ...d, to: `/scm/sales-orders/${encodeURIComponent(d.id)}` })),
         });
         return false;
       }
@@ -263,11 +272,10 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
           navigate(`/scm/grns/${grnNodes[0]!.id}`);
           return true;
         }
-        void notify({
+        openChoice({
           title: 'Received on more than one GRN',
-          body:
-            `This PO's goods were received on ${grnNodes.map((g) => g.label).join(', ')}. ` +
-            `Open Goods Received to view them.`,
+          intro: "This PO's goods arrived across several Goods Received notes. Pick one to open it.",
+          docs: grnNodes.map((g) => ({ id: g.id, label: g.label, sub: g.status, to: `/scm/grns/${g.id}` })),
         });
         return false;
       }
@@ -285,11 +293,10 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
           navigate(`/scm/purchase-invoices/${piNodes[0]!.id}`);
           return true;
         }
-        void notify({
+        openChoice({
           title: 'Billed on more than one invoice',
-          body:
-            `The supplier billed this PO on ${piNodes.map((p) => p.label).join(', ')}. ` +
-            `Open Purchase Invoices to view them.`,
+          intro: 'The supplier billed this PO across several Purchase Invoices. Pick one to open it.',
+          docs: piNodes.map((p) => ({ id: p.id, label: p.label, sub: p.status, to: `/scm/purchase-invoices/${p.id}` })),
         });
         return false;
       }
@@ -307,18 +314,17 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
           navigate(`/scm/purchase-returns/${prNodes[0]!.id}`);
           return true;
         }
-        void notify({
+        openChoice({
           title: 'Returned on more than one document',
-          body:
-            `Goods from this PO were returned on ${prNodes.map((p) => p.label).join(', ')}. ` +
-            `Open Purchase Returns to view them.`,
+          intro: 'Goods from this PO went back on several Purchase Returns. Pick one to open it.',
+          docs: prNodes.map((p) => ({ id: p.id, label: p.label, sub: p.status, to: `/scm/purchase-returns/${p.id}` })),
         });
         return false;
       }
       return false;
     },
-    [navigate, notify, soLabels, soNodes, noteSos, grnNodes, piNodes, prNodes, canOpenSo, canOpenGrn, canOpenPi, canOpenPr],
+    [navigate, notify, openChoice, soLabels, soNodes, noteSos, grnNodes, piNodes, prNodes, canOpenSo, canOpenGrn, canOpenPi, canOpenPr],
   );
 
-  return { nodes, onNodeClick, amendments, onAmendmentClick };
+  return { nodes, onNodeClick, amendments, onAmendmentClick, choice, openChoice, closeChoice, pickChoice };
 }
