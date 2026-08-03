@@ -279,7 +279,7 @@ Two things about the native branch that are deliberate:
   ceiling on main. The types are a hand-written mirror of the plugin's
   `definitions.d.ts`.
 
-#### `simulated` — a faked position is recorded, not refused (mig 0250)
+#### `simulated` — a faked position is recorded, not refused (mig 0253)
 
 The native watcher reports `simulated: true` when a fix came from a
 mock-location app rather than the GPS chip. A browser cannot tell, and always

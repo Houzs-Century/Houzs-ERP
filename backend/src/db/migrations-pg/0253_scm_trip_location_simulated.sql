@@ -1,4 +1,4 @@
--- 0250 — flag a position that came from a mock-location app.
+-- 0253 — flag a position that came from a mock-location app.
 --
 -- WHY. The native background watcher (@capacitor-community/background-geolocation)
 -- reports `simulated: true` when a fix was produced by software rather than by
@@ -22,7 +22,15 @@
 -- a guess. New browser pings keep the default for the same reason.
 --
 -- HOUSE STYLE. Additive, idempotent, schema-qualified. RE-CHECK THE NUMBER AT
--- MERGE — 0250 was next free above 0249.
+-- MERGE — RENUMBERED FROM 0250 on 2026-08-03: main gained its own 0250, 0251 and
+-- 0252 from parallel branches while this one was open, and a duplicate NUMBER is
+-- the one thing pg-migrate cannot survive (it tracks by full filename, so gaps
+-- and out-of-order merges are fine and collisions are not). Caught by re-listing
+-- the tree before merge, which is why that rule exists.
+--
+-- Safe to rename because it has NOT been applied anywhere: pg-migrate records
+-- applied files by filename, so renaming one that has already run would make it
+-- a new file and run its SQL a second time.
 
 SET search_path = scm, public;
 

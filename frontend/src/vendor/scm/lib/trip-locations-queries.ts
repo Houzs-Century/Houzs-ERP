@@ -90,7 +90,7 @@ export function usePostTripLocation() {
       authedFetch<{ ok: boolean; accepted?: boolean; reason?: string }>(`/trips/${p.tripId}/location`, {
         method: 'POST',
         /* `simulated` only ever arrives from the native watcher — a browser has
-           no way to tell a mock-location app from a real fix. See mig 0250. */
+           no way to tell a mock-location app from a real fix. See mig 0253. */
         body: JSON.stringify({ lat: p.lat, lng: p.lng, accuracy: p.accuracy ?? null, recorded_at: p.recorded_at, simulated: p.simulated }),
       }),
   });

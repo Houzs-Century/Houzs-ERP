@@ -1039,7 +1039,7 @@ trips.post('/:id/location', async (c) => {
     lng:         v.ping.lng,
     accuracy_m:  v.ping.accuracyM,
     recorded_at: v.ping.recordedAt,
-    /* Mig 0250. Only the native watcher can tell a mock-location app from the
+    /* Mig 0253. Only the native watcher can tell a mock-location app from the
        GPS chip; a browser always sends nothing here and the column defaults to
        false, which is a true statement about a browser ping rather than a
        guess. Recorded, never rejected: refusing a simulated fix would leave a
