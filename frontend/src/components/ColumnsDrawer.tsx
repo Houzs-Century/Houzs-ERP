@@ -292,6 +292,10 @@ export function ColumnsDrawer({
           if (!dragKey) return;
           const from = columns.find((c) => c.key === dragKey);
           if (!from || from.group !== col.group) return;
+          // Nor across freeze sides: the table renders the left run, the
+          // scrolling middle and the right run as three blocks, so a drop
+          // between them would rewrite the order and change nothing on screen.
+          if (from.pinned !== col.pinned) return;
           e.preventDefault();
           if (overKey !== col.key) setOverKey(col.key);
         }}
@@ -303,6 +307,7 @@ export function ColumnsDrawer({
           if (!from || from === col.key) return;
           const source = columns.find((c) => c.key === from);
           if (!source || source.group !== col.group) return;
+          if (source.pinned !== col.pinned) return;
           onReorder(from, col.key);
         }}
         onDragEnd={() => {

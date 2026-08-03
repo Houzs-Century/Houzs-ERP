@@ -208,6 +208,60 @@ describe("columns drawer", () => {
     expect(headerLabels(container)).toEqual(["Customer", "Date", "Total", "Carrier"]);
   });
 
+  it("stacks two right-frozen columns by width, counted from the right edge", () => {
+    const { container } = renderTable("stack");
+    openDrawer();
+    // Freeze Total (120px) and Carrier right; Carrier is last in table order.
+    const freezeRight = (label: string) => {
+      const row = Array.from(document.querySelectorAll<HTMLElement>("[data-column-row]")).find(
+        (el) => el.textContent?.includes(label),
+      )!;
+      fireEvent.click(row.querySelector<HTMLElement>("[title='Freeze to the left']")!);
+      fireEvent.click(row.querySelector<HTMLElement>("[title^='Frozen left']")!);
+    };
+    freezeRight("Total");
+    freezeRight("Carrier");
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+
+    const head = [...container.querySelectorAll<HTMLElement>("thead th")];
+    const last = head[head.length - 1]!;
+    const secondLast = head[head.length - 2]!;
+    // The outermost sits at 0; the one inside it is offset by the OUTER one's
+    // width — accumulated from the right, not from the left.
+    expect(last.style.right).toBe("0px");
+    expect(secondLast.style.right).not.toBe("0px");
+    expect(Number.parseInt(secondLast.style.right, 10)).toBeGreaterThan(0);
+  });
+
+  it("refuses a header drop across freeze sides, both ways", () => {
+    const { container } = renderTable("crossdrop");
+    openDrawer();
+    const row = (label: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-column-row]")).find(
+        (el) => el.textContent?.includes(label),
+      )!;
+    // Freeze Date to the RIGHT, leave Customer unfrozen (same Basic group).
+    fireEvent.click(row("Date").querySelector<HTMLElement>("[title='Freeze to the left']")!);
+    fireEvent.click(row("Date").querySelector<HTMLElement>("[title^='Frozen left']")!);
+
+    const before = headerLabels(container);
+    const drag = (from: Element, to: Element) => {
+      const dataTransfer = { effectAllowed: "", setData: vi.fn(), getData: vi.fn() };
+      fireEvent.dragStart(from, { dataTransfer });
+      fireEvent.dragOver(to, { dataTransfer });
+      fireEvent.drop(to, { dataTransfer });
+      fireEvent.dragEnd(from, { dataTransfer });
+    };
+
+    /* A right-frozen column and an unfrozen one are BOTH "not left-pinned", so
+       a guard that asked only that would let this through — rewriting the
+       stored order while the column stayed in the right run. */
+    drag(row("Date"), row("Customer"));
+    expect(headerLabels(container)).toEqual(before);
+    drag(row("Customer"), row("Date"));
+    expect(headerLabels(container)).toEqual(before);
+  });
+
   it("becomes a bottom sheet on a phone, with an Apply that only closes", () => {
     setViewport(375);
     renderTable("sheet");

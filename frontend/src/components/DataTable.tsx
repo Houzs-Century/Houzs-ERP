@@ -1665,11 +1665,20 @@ function DataTableInner<T>({
      then still render in the old place — a gesture that silently does nothing
      is worse than one that visibly declines. Within a group, order is honoured
      verbatim, so those drops are allowed. */
+  /** Which edge a column is frozen to — the thing a drop may not cross. */
+  const freezeSideOf = (key: string) =>
+    pinnedSet.has(key) ? "left" : pinnedRightSet.has(key) ? "right" : "none";
+
   const canDropHeader = (c: Column<T>) =>
     !!dragCol &&
     dragCol !== c.key &&
     canDragHeader(c) &&
-    pinnedSet.has(dragCol) === pinnedSet.has(c.key);
+    /* SIDE, not "is it left-pinned": with right-freeze, an unfrozen column and
+       a right-frozen one both answer false to pinnedSet.has, so comparing that
+       would let a right-frozen header be dropped into the scrolling middle —
+       rewriting the stored order while the column stayed put, which is the
+       silent no-op this guard exists to prevent. */
+    freezeSideOf(dragCol) === freezeSideOf(c.key);
 
   function endHeaderDrag() {
     setDragCol(null);
