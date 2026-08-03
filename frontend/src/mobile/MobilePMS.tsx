@@ -2629,18 +2629,19 @@ function SetupDismantle({
   const scheduleShots = photos.filter((ph): ph is PhasePhoto & { r2_key: string } => ph.phase === "schedule" && !!ph.r2_key);
   const schedRef = useRef<HTMLInputElement | null>(null);
   const [schedView, setSchedView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
-  // Remark-first-before-upload (owner 2026-07-27), same flow as the Defect List:
-  // prompt for a required remark, then the file picker; the screenshot uploads
-  // carrying that remark (stored as the phase-photo caption).
+  // Remark-then-upload (owner 2026-07-27; made OPTIONAL 2026-08-03 per owner —
+  // no longer blocks the file picker): prompt for an optional remark, then the
+  // file picker; the screenshot carries that remark as its caption. Blank = no
+  // caption. Cancelling the dialog leaves the picker closed.
   const pendingSchedCaptionRef = useRef<string | undefined>(undefined);
   const startScheduleUpload = async () => {
     const remark = await prompt({
       title: "Remark for this schedule",
-      placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm (required)",
-      validate: (v) => (v.trim() ? null : "Please write a remark before uploading."),
+      placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm (optional)",
+      confirmLabel: "Choose file…",
     });
-    if (remark == null || !remark.trim()) return;
-    pendingSchedCaptionRef.current = remark.trim();
+    if (remark == null) return; // cancelled
+    pendingSchedCaptionRef.current = remark.trim() || undefined;
     schedRef.current?.click();
   };
   const uploadSchedule = async (file: File, caption?: string) => {
