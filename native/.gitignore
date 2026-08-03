@@ -1,0 +1,8 @@
+# Capacitor copies the SPA's build output here on every `cap sync`. It is
+# generated, it is 28 MB, and committing it would put a second stale copy of the
+# frontend in the repo.
+ios/App/App/public/
+
+node_modules/
+ios/App/build/
+ios/DerivedData/

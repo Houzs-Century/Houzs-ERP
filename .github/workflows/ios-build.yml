@@ -1,0 +1,77 @@
+# Compile the iOS shell. UNSIGNED, on purpose.
+#
+# WHY THIS EXISTS BEFORE THERE IS AN APPLE ACCOUNT. Houzs has no Apple Developer
+# enrolment yet (see docs/ios-app-store.md — the D-U-N-S alone is a multi-day
+# wait). Without this, every line of native code written in the meantime would be
+# code that has never been compiled, sitting in the repo looking finished.
+#
+# `CODE_SIGNING_ALLOWED=NO` builds every native source file and every Capacitor
+# plugin without a certificate, a provisioning profile or a Team ID. It proves
+# the thing builds. It does not produce anything installable, and it is not meant
+# to — signing and upload arrive with the enrolment.
+#
+# MANUAL + PATH-FILTERED. iOS work is not on the critical path of a normal ERP
+# change, and a macOS runner costs about ten times a Linux one. This runs when
+# the shell or the workflow itself changes, and on demand.
+
+name: iOS shell build (unsigned)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'native/**'
+      - '.github/workflows/ios-build.yml'
+
+# Its own group: a diagnostic build must never queue behind — or displace — a
+# release. Same rule the read-only DB checks follow.
+concurrency:
+  group: ios-shell-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The shell has no web assets of its own — it bundles the SPA's build
+      # output, so a broken frontend build is a broken app build. Failing here
+      # rather than shipping a shell around a stale `dist` is the point.
+      - name: Build the SPA
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+
+      - name: Install the shell's dependencies
+        run: npm --prefix native ci
+
+      - name: Sync the web build into the iOS project
+        run: npm --prefix native run sync
+
+      # Capacitor 8 uses Swift Package Manager, not CocoaPods — nothing to
+      # `pod install`. Resolving here keeps the failure legible when a plugin's
+      # package cannot be fetched.
+      - name: Resolve Swift packages
+        working-directory: native/ios/App
+        run: xcodebuild -resolvePackageDependencies -project App.xcodeproj -scheme App
+
+      - name: Build (unsigned)
+        working-directory: native/ios/App
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project App.xcodeproj \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build \
+            | tail -40

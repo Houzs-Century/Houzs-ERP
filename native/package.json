@@ -1,0 +1,22 @@
+{
+  "name": "houzs-erp-native",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "sync": "cap sync ios",
+    "copy": "cap copy ios",
+    "open": "cap open ios"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "Native iOS shell for the Houzs ERP mobile surface",
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.0"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/ios": "^8.5.0"
+  },
+  "private": true
+}
