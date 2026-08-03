@@ -101,6 +101,15 @@ export const DpOrders = () => {
             body: `Remove it from the trip manually: ${res.stopRemoved.reason ?? 'unknown error'}.`,
             tone: 'error',
           });
+        } else if (res?.lorryUnblocked?.failed) {
+          // The mirror of the stop-left-behind case: a cancelled service that
+          // kept its availability window holds a perfectly free lorry off the
+          // board, and nothing else would ever say so.
+          notify({
+            title: 'Cancelled, but the lorry is still blocked',
+            body: `Clear its unavailable window in Fleet Maintenance: ${res.lorryUnblocked.reason ?? 'unknown error'}.`,
+            tone: 'error',
+          });
         } else {
           notify({ title: 'DP order cancelled' });
         }

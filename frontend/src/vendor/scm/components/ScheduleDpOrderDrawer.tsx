@@ -82,6 +82,16 @@ export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrd
               body: `The job got its DP number but was NOT added to the trip: ${res.tripStop.reason ?? 'unknown error'}. Add it to the trip manually.`,
               tone: 'error',
             });
+          /* A lorry service whose availability window failed to write is the
+             more dangerous half-success of the two: the job looks scheduled
+             while the lorry it takes in still shows as bookable that day. Say
+             so, and name the manual fix. */
+          } else if (res?.lorryBlocked?.failed) {
+            notify({
+              title: `Scheduled ${res.dp_no ?? ''}`.trim(),
+              body: `The job is scheduled, but the lorry was NOT marked unavailable: ${res.lorryBlocked.reason ?? 'unknown error'}. Block it by hand in Fleet Maintenance, or the board will keep offering it that day.`,
+              tone: 'error',
+            });
           } else {
             notify({
               title: 'Job scheduled',

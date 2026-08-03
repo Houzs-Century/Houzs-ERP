@@ -294,7 +294,12 @@ export const DP_JOB_TYPE_LABEL: Record<DpJobType, string> = {
    sink). The drawer's real job is the "extra" fleet jobs with no native document.
    DP_JOB_TYPES (the full set) is still used to LABEL any existing/legacy dp_order
    the board renders. */
-export const DP_CREATABLE_JOB_TYPES = ['SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP'] as const;
+export const DP_CREATABLE_JOB_TYPES = ['SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'LORRY_SERVICE'] as const;
+
+/* LORRY_SERVICE is safe to create for the same reason the other three are: its
+   source sets workshop_id / lorry_id (mig 0251) and never so_doc_no, so the
+   board's union guard does not filter it out. Verified against a created row,
+   not assumed — see the INSPECTION note below for the failure this avoids. */
 
 /* INSPECTION is deliberately NOT here, even though 2026-08-02 added it to
    DP_JOB_TYPES so it labels correctly. The three types above are safe to create
@@ -328,6 +333,11 @@ export type DpOrderCreate = {
   supplierId?: string;
   projectId?: number;
   assrCaseId?: number;
+  /* LORRY_SERVICE (migs 0250/0251): the lorry being SERVICED — the job's subject,
+     and the one taken off the road when this is scheduled — plus the workshop it
+     goes to, which is the party the address snapshot comes from. */
+  lorryId?: string;
+  workshopId?: string;
   requestedDate?: string;
   remark?: string;
   overrides?: Record<string, string | null>;
@@ -346,7 +356,12 @@ export function useCancelDpOrder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      authedFetch<{ stopRemoved?: { failed?: boolean; reason?: string } }>(
+      authedFetch<{
+        stopRemoved?: { failed?: boolean; reason?: string };
+        /* LORRY_SERVICE only: giving the lorry back. A failure here keeps a free
+           lorry off the board indefinitely, so it is reported like stopRemoved. */
+        lorryUnblocked?: { removed?: boolean; failed?: boolean; reason?: string };
+      }>(
         `/dp-orders/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) },
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
@@ -368,6 +383,12 @@ export type ScheduleDpOrderResult = {
   dpOrder: unknown;
   dp_no: string | null;
   tripStop: { id: string | null; failed: boolean; reason?: string };
+  /* LORRY_SERVICE only: the availability window that takes the serviced lorry
+     off the road for that day. Reported, never silent — a failure here leaves a
+     lorry looking bookable on the day it sits in a workshop, so the caller must
+     say so out loud (same rule as tripStop.failed). Absent for every other job
+     type, and for a service job whose subject lorry was never set. */
+  lorryBlocked?: { blocked: boolean; failed: boolean; reason?: string };
 };
 export function useScheduleDpOrder() {
   const qc = useQueryClient();

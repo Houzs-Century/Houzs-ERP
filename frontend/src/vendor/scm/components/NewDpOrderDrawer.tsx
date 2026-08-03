@@ -33,6 +33,7 @@ import {
   type DpOrderCreate,
 } from '../lib/delivery-planning-queries';
 import { useSuppliers, useSupplierDetail } from '../lib/suppliers-queries';
+import { useLorries } from '../lib/lorries-queries';
 import { SearchableSelect } from './SearchableSelect';
 import { useNotify } from './NotifyDialog';
 // App-level client for the PMS project list (/api/projects lives outside the
@@ -48,12 +49,13 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
    in its Type chip — so this dropdown can never drift from what's shown elsewhere. */
 
 /* What the SOURCE reference means for each type, and the field it maps to. */
-function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: string; kind: 'so' | 'supplier' | 'project' | 'assr' | 'none' } {
+function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: string; kind: 'so' | 'supplier' | 'project' | 'assr' | 'workshop' | 'none' } {
   switch (jobType) {
     case 'SUPPLIER_PICKUP': return { label: 'Supplier', hint: 'supplier id — party auto-fills from the supplier master', kind: 'supplier' };
     case 'SETUP':
     case 'DISMANTLE': return { label: 'Project / venue', hint: 'PMS project id — venue + PIC auto-fill', kind: 'project' };
     case 'SERVICE': return { label: 'Service case', hint: 'service case id — customer auto-fills', kind: 'assr' };
+    case 'LORRY_SERVICE': return { label: 'Workshop', hint: 'workshop id — name, contact + address auto-fill from the workshop master', kind: 'workshop' };
     default: return { label: 'Sales order', hint: 'SO No. — customer auto-fills (optional)', kind: 'so' };
   }
 }
@@ -68,6 +70,22 @@ type ProjectPickRow = {
   state: string | null;
 };
 
+/* The slice of the workshop master this picker needs — mig 0241, served by
+   GET /api/fleet-maintenance/workshops as { workshops } in camelCase. That
+   master is deliberately NOT scm.suppliers ("a workshop you send a lorry to is
+   none of those"), so it needs its own picker rather than reusing the supplier
+   one. */
+type WorkshopPickRow = {
+  id: string;
+  code: string | null;
+  name: string | null;
+  contactName: string | null;
+  contactPhone: string | null;
+  officePhone: string | null;
+  address: string | null;
+  isActive: boolean;
+};
+
 export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   const create = useCreateDpOrder();
   const notify = useNotify();
@@ -75,6 +93,11 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   const [form, setForm] = useState({
     jobType: 'SETUP' as DpOrderCreate['jobType'],
     source: '',
+    /* LORRY_SERVICE only — the lorry being serviced. It is a SECOND reference,
+       not the source: the source (workshop) supplies the party, this supplies
+       the job's subject and is the lorry taken off the road when the job is
+       scheduled. Every other job type leaves it empty. */
+    lorryId: '',
     partyName: '', contactName: '', contactPhone: '',
     address1: '', address2: '', address3: '', address4: '',
     city: '', postcode: '', state: '',
@@ -108,6 +131,33 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       label: `${p.code ?? p.id} — ${p.name ?? ''}${p.venue ? ` · ${p.venue}` : ''}`,
     })),
     [projectsQ.data],
+  );
+
+  /* Workshops + lorries — LORRY_SERVICE only. The workshop master lives outside
+     the /api/scm mount (same app-import precedent as the project list above) and
+     is gated on fleet.read, so a position without the fleet pages gets isError
+     and the free-text fallback rather than a dead picker. */
+  const workshopsQ = useQuery<{ workshops: WorkshopPickRow[] }>({
+    queryKey: ['dp-workshop-pick'],
+    queryFn: () => api.get<{ workshops: WorkshopPickRow[] }>('/api/fleet-maintenance/workshops'),
+    enabled: src.kind === 'workshop',
+    staleTime: 60_000,
+  });
+  /* Only lorries that can still be sent anywhere. An inactive one is off the
+     fleet entirely — raising a service job for it would block nothing. */
+  const lorriesQ = useLorries({ fleet: 'internal' });
+
+  const workshopOptions = useMemo(
+    () => (workshopsQ.data?.workshops ?? [])
+      .filter((w) => w.isActive)
+      .map((w) => ({ value: w.id, label: `${w.name ?? w.code ?? w.id}${w.code ? ` (${w.code})` : ''}` })),
+    [workshopsQ.data],
+  );
+  const lorryOptions = useMemo(
+    () => (lorriesQ.data ?? [])
+      .filter((l) => l.active !== false)
+      .map((l) => ({ value: l.id, label: l.plate })),
+    [lorriesQ.data],
   );
 
   /* Supplier prefill — the DETAIL row (the list view predates the structured
@@ -153,6 +203,24 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     }));
   };
 
+  /* Workshop prefill — straight off the picked LIST row; unlike the supplier
+     master there is no richer detail view to wait for. Field precedence mirrors
+     backend dp-party.ts snapshotFromWorkshop exactly (named contact first, the
+     office line second), so what the operator previews is what gets stored. */
+  const pickWorkshop = (id: string) => {
+    const w = (workshopsQ.data?.workshops ?? []).find((r) => r.id === id);
+    setForm((s) => ({
+      ...s,
+      source: id,
+      partyName: (w?.name ?? '').trim(),
+      contactName: (w?.contactName ?? '').trim(),
+      contactPhone: (w?.contactPhone ?? w?.officePhone ?? '').trim(),
+      address1: (w?.address ?? '').trim(),
+      address2: '', address3: '', address4: '',
+      city: '', postcode: '', state: '',
+    }));
+  };
+
   const submit = () => {
     const body: DpOrderCreate = { jobType: form.jobType };
     const ref = form.source.trim();
@@ -160,8 +228,13 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       if (src.kind === 'supplier') body.supplierId = ref;
       else if (src.kind === 'project') body.projectId = Number(ref) || undefined;
       else if (src.kind === 'assr') body.assrCaseId = Number(ref) || undefined;
+      else if (src.kind === 'workshop') body.workshopId = ref;
       else if (src.kind === 'so') body.soDocNo = ref;
     }
+    /* The serviced lorry rides alongside the source, not instead of it: the
+       workshop is the party, this is the job's subject. Sent for LORRY_SERVICE
+       only, so switching type can never smuggle a stale lorry onto a setup job. */
+    if (form.jobType === 'LORRY_SERVICE' && form.lorryId) body.lorryId = form.lorryId;
     if (form.requestedDate) body.requestedDate = form.requestedDate;
     if (form.remark.trim()) body.remark = form.remark.trim();
 
@@ -195,6 +268,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   const sourceControl =
     src.kind === 'supplier' && !suppliersQ.isError ? 'supplier-picker'
     : src.kind === 'project' && !projectsQ.isError ? 'project-picker'
+    : src.kind === 'workshop' && !workshopsQ.isError ? 'workshop-picker'
     : 'text';
 
   return (
@@ -221,6 +295,9 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                   ...s,
                   jobType,
                   source: '',
+                  // Same reasoning for the serviced lorry: it only means
+                  // anything on a LORRY_SERVICE, so it clears with the rest.
+                  lorryId: '',
                   partyName: '', contactName: '', contactPhone: '',
                   address1: '', address2: '', address3: '', address4: '',
                   city: '', postcode: '', state: '',
@@ -251,6 +328,15 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 className={styles.searchInput}
                 ariaLabel="Project / venue"
               />
+            ) : sourceControl === 'workshop-picker' ? (
+              <SearchableSelect
+                value={form.source}
+                onChange={pickWorkshop}
+                options={workshopOptions}
+                placeholder={workshopsQ.isLoading ? 'Loading workshops…' : 'Search workshop by name or code…'}
+                className={styles.searchInput}
+                ariaLabel="Workshop"
+              />
             ) : (
               <input className={styles.searchInput} style={inputStyle} placeholder={src.hint}
                 value={form.source} onChange={(e) => set('source', e.target.value)} />
@@ -262,11 +348,41 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
             )}
           </label>
 
+          {/* The lorry being serviced. LORRY_SERVICE only, and the one field on
+              this drawer that is genuinely REQUIRED: without it the job knows
+              which workshop it is going to but not which vehicle, and nothing
+              comes off the road when it is scheduled. */}
+          {form.jobType === 'LORRY_SERVICE' && (
+            <label style={fieldRow}>
+              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
+                Lorry going in <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}>— required</span>
+              </div>
+              {lorriesQ.isError ? (
+                <input className={styles.searchInput} style={inputStyle}
+                  placeholder="lorry id — the fleet list could not be loaded"
+                  value={form.lorryId} onChange={(e) => set('lorryId', e.target.value)} />
+              ) : (
+                <SearchableSelect
+                  value={form.lorryId}
+                  onChange={(id) => set('lorryId', id)}
+                  options={lorryOptions}
+                  placeholder={lorriesQ.isLoading ? 'Loading lorries…' : 'Search by plate…'}
+                  className={styles.searchInput}
+                  ariaLabel="Lorry going in"
+                />
+              )}
+              <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>
+                Scheduling this job takes that lorry off the road for the day —
+                it stops being offered on the board and counts as a repair day.
+              </div>
+            </label>
+          )}
+
           <div className={styles.eyebrow} style={{ margin: 'var(--space-2) 0', color: 'var(--c-burnt)' }}>
             Party — auto-fills from the {src.label.toLowerCase()}; edit any field to override
           </div>
           <label style={fieldRow}>
-            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>{src.kind === 'supplier' ? 'Supplier' : src.kind === 'project' ? 'Venue' : 'Customer'} name</div>
+            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>{src.kind === 'supplier' ? 'Supplier' : src.kind === 'project' ? 'Venue' : src.kind === 'workshop' ? 'Workshop' : 'Customer'} name</div>
             <input className={styles.searchInput} style={inputStyle} value={form.partyName} onChange={(e) => set('partyName', e.target.value)} />
           </label>
           <div style={row2}>
@@ -316,7 +432,10 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
           <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" size="md" onClick={submit} disabled={create.isPending}>
+          {/* A lorry service with no lorry is not a job anyone can act on, so
+              the button says no rather than the server rejecting it later. */}
+          <Button variant="primary" size="md" onClick={submit}
+            disabled={create.isPending || (form.jobType === 'LORRY_SERVICE' && !form.lorryId.trim())}>
             {create.isPending ? 'Creating…' : 'Create DP Order'}
           </Button>
         </div>
