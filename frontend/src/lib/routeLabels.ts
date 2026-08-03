@@ -86,6 +86,7 @@ const SCM_SEGMENT_LABELS: Record<string, [string, string]> = {
   // Transportation
   "drivers": ["Drivers", "Driver"],
   "delivery-planning": ["Delivery Planning", "Delivery Planning"],
+  "dp-orders": ["DP Orders", "DP Order"],
   "delivery-planning-regions": ["Delivery Planning Regions", "Delivery Planning Regions"],
   "fleet": ["Fleet", "Fleet"],
   "lorry-capacity": ["Lorry Capacity", "Lorry Capacity"],

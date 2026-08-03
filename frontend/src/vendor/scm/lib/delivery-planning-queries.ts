@@ -266,6 +266,10 @@ export const DP_JOB_TYPES = [
      here, so an inspection DP order rendered through the defensive prettifier
      rather than the canonical label. */
   'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION',
+  /* Job types 8 and 9, from the owner's 2026-08-03 list (mig 0250). Listed here
+     so the board LABELS them; what the create drawer offers is
+     DP_CREATABLE_JOB_TYPES below, which they join with their pickers. */
+  'TRANSFER', 'LORRY_SERVICE',
 ] as const;
 export type DpJobType = (typeof DP_JOB_TYPES)[number];
 
@@ -277,6 +281,10 @@ export const DP_JOB_TYPE_LABEL: Record<DpJobType, string> = {
   DISMANTLE: 'Dismantle',
   SUPPLIER_PICKUP: 'Supplier Pickup',
   INSPECTION: 'Inspection',
+  /* The owner's own words for these two ("Transfer item", "Lorry service"), not
+     a Title-Cased enum value — the label is what he reads on the board. */
+  TRANSFER: 'Transfer Item',
+  LORRY_SERVICE: 'Lorry Service',
 };
 
 /* The job types the New-DP-Order drawer OFFERS to create. DELIVERY / PICKUP /
@@ -375,6 +383,51 @@ export function useScheduleDpOrder() {
       qc.invalidateQueries({ queryKey: ['scm-trips'] });
       qc.invalidateQueries({ queryKey: ['scm-trip'] });
     },
+  });
+}
+
+/* ── DP Orders list (GET /dp-orders) ──────────────────────────────────────────
+   The raw dp_orders registry, straight off the table (snake_case, newest first,
+   backend-capped at 500). This is the /scm/dp-orders LIST page's feed — distinct
+   from the board union, which deliberately SUPPRESSES any dp_order carrying a
+   source ref (the anti-double-count guard) and shows nothing once a job is
+   cancelled. The list is where those hidden/terminal rows stay reachable.
+
+   Query key extends the board's ['delivery-planning'] prefix ON PURPOSE: every
+   existing create / cancel / schedule mutation invalidates that prefix, so the
+   list refreshes with zero changes to the mutations. */
+export type DpOrderRow = {
+  id: string;
+  dp_no: string | null;
+  job_type: string;
+  party_type: string;
+  so_doc_no: string | null;
+  do_id: string | null;
+  assr_case_id: number | null;
+  supplier_id: string | null;
+  project_id: number | null;
+  party_name: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  address1: string | null;
+  address2: string | null;
+  address3: string | null;
+  address4: string | null;
+  city: string | null;
+  postcode: string | null;
+  state: string | null;
+  requested_date: string | null;
+  trip_id: string | null;
+  trip_stop_id: string | null;
+  status: string;
+  remark: string | null;
+  created_at: string;
+  updated_at: string;
+};
+export function useDpOrders() {
+  return useQuery({
+    queryKey: ['delivery-planning', 'dp-orders'],
+    queryFn: () => authedFetch<{ dpOrders: DpOrderRow[] }>(`/dp-orders`),
   });
 }
 
