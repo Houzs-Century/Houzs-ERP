@@ -26,7 +26,8 @@ export type StatusDocType =
   | 'po' | 'grn' | 'pi' | 'pr'
   | 'so' | 'do' | 'si' | 'dr'
   | 'stockTransfer' | 'stockTake'
-  | 'soAmendment' | 'soAmendmentLane' | 'poAmendment' | 'pv';
+  | 'soAmendment' | 'soAmendmentLane' | 'poAmendment' | 'pv'
+  | 'dpOrder';
 
 type Entry = { label: string; tone: StatusTone };
 
@@ -147,11 +148,21 @@ const PV: Record<string, Entry> = {
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
 };
 
+// DP Order (delivery-planning job, mig 0129). PENDING_SCHEDULE is the whole
+// reason the DP Orders list exists (awaiting a lorry + date to mint its DP
+// number); SCHEDULED is the terminal happy path; CANCELLED closes it.
+const DP_ORDER: Record<string, Entry> = {
+  PENDING_SCHEDULE: { label: 'Pending Schedule', tone: 'pending' },
+  SCHEDULED:        { label: 'Scheduled',        tone: 'success' },
+  CANCELLED:        { label: 'Cancelled',        tone: 'danger' },
+};
+
 const MAPS: Record<StatusDocType, Record<string, Entry>> = {
   po: PO, grn: GRN, pi: PI, pr: PR,
   so: SO, do: DO, si: SI, dr: DR,
   stockTransfer: STOCK_TRANSFER, stockTake: STOCK_TAKE,
   soAmendment: SO_AMENDMENT, soAmendmentLane: SO_AMENDMENT_LANE, poAmendment: PO_AMENDMENT, pv: PV,
+  dpOrder: DP_ORDER,
 };
 
 const titleCase = (raw: string): string =>

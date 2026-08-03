@@ -5797,6 +5797,10 @@ function ProjectDetailContent({
   );
   const [transitioning, setTransitioning] = useState(false);
   const [addItemOpen, setAddItemOpen] = useState(false);
+  // Archive / Restore split-dropdown (owner 2026-07-29): one control that
+  // exposes BOTH actions, so Restore (unarchive) is discoverable even from a
+  // project that isn't archived — no more "the Restore button isn't there".
+  const [archiveMenuOpen, setArchiveMenuOpen] = useState(false);
 
   const p = detail.data?.project;
 
@@ -5915,40 +5919,56 @@ function ProjectDetailContent({
       actions={
         p ? (
           <div className="flex flex-wrap items-center gap-1.5">
-            {p.archived_at ? (
-              <HeaderButton
-                variant="ghost"
-                onClick={async () => {
-                  try {
-                    await api.post(`/api/projects/${id}/unarchive`);
-                    toast.success("Restored");
-                    detail.reload();
-                    onUpdated();
-                  } catch (e: any) {
-                    toast.error(e?.message || "Something went wrong. Please try again.");
-                  }
-                }}
-              >
-                Restore
+            <div className="relative">
+              <HeaderButton variant="ghost" onClick={() => setArchiveMenuOpen((o) => !o)}>
+                {p.archived_at ? "Restore" : "Archive"} <ChevronDown size={12} />
               </HeaderButton>
-            ) : (
-              <HeaderButton
-                variant="ghost"
-                onClick={async () => {
-                  if (!(await dialog.confirm("Archive this project?"))) return;
-                  try {
-                    await api.post(`/api/projects/${id}/archive`);
-                    toast.success("Archived");
-                    detail.reload();
-                    onUpdated();
-                  } catch (e: any) {
-                    toast.error(e?.message || "Something went wrong. Please try again.");
-                  }
-                }}
-              >
-                Archive
-              </HeaderButton>
-            )}
+              {archiveMenuOpen && (
+                <>
+                  {/* click-outside backdrop */}
+                  <div className="fixed inset-0 z-30" onClick={() => setArchiveMenuOpen(false)} />
+                  <div className="absolute right-0 z-40 mt-1 min-w-[150px] rounded-md border border-border bg-surface py-1 text-[12px] shadow-lg">
+                    <button
+                      className="flex w-full items-center px-3 py-1.5 text-left hover:bg-bg/60 disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!!p.archived_at}
+                      title={p.archived_at ? "Already archived" : undefined}
+                      onClick={async () => {
+                        setArchiveMenuOpen(false);
+                        if (!(await dialog.confirm("Archive this project?"))) return;
+                        try {
+                          await api.post(`/api/projects/${id}/archive`);
+                          toast.success("Archived");
+                          detail.reload();
+                          onUpdated();
+                        } catch (e: any) {
+                          toast.error(e?.message || "Something went wrong. Please try again.");
+                        }
+                      }}
+                    >
+                      Archive
+                    </button>
+                    <button
+                      className="flex w-full items-center px-3 py-1.5 text-left hover:bg-bg/60 disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!p.archived_at}
+                      title={!p.archived_at ? "Only an archived project can be restored" : undefined}
+                      onClick={async () => {
+                        setArchiveMenuOpen(false);
+                        try {
+                          await api.post(`/api/projects/${id}/unarchive`);
+                          toast.success("Restored");
+                          detail.reload();
+                          onUpdated();
+                        } catch (e: any) {
+                          toast.error(e?.message || "Something went wrong. Please try again.");
+                        }
+                      }}
+                    >
+                      Restore
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <HeaderButton
               variant="ghost"
               onClick={async () => {
@@ -10904,9 +10924,10 @@ function ScheduleRef({
   const [remarkDraft, setRemarkDraft] = useState(remark ?? "");
   useEffect(() => setRemarkDraft(remark ?? ""), [remark]);
   const fileRef = useRef<HTMLInputElement>(null);
-  // Remark-first-before-upload (owner 2026-07-27), same flow as the Defect List:
-  // Upload prompts for a required remark, then the file picker; the screenshot
-  // uploads carrying that remark (stored as the phase-photo caption).
+  // Remark-then-upload (owner 2026-07-27; made OPTIONAL 2026-08-03 per owner —
+  // no longer blocks the file picker). Upload offers an optional remark, then
+  // the file picker; the screenshot carries that remark as its caption. Blank
+  // remark = no caption. Cancelling the dialog leaves the picker closed.
   const pendingCaptionRef = useRef<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const photos = useQuery<{ photos: PhasePhoto[] }>(
@@ -10918,14 +10939,13 @@ function ScheduleRef({
   const startUpload = async () => {
     const remark = await dialog.prompt({
       title: "Remark for this schedule",
-      message: "Write a remark before uploading (required).",
+      message: "Add a remark for this screenshot (optional).",
       placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm",
-      required: true,
       multiline: true,
       confirmLabel: "Choose file…",
     });
-    if (remark == null || !remark.trim()) return;
-    pendingCaptionRef.current = remark.trim();
+    if (remark == null) return; // cancelled — leave the picker closed
+    pendingCaptionRef.current = remark.trim() || undefined;
     fileRef.current?.click();
   };
   const upload = async (file: File, caption?: string) => {

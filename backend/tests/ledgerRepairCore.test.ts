@@ -566,3 +566,93 @@ describe("projectDedupeBucketImpact (part=dedupe) — the audit-2b linkage the o
     expect(after.get("b2")).toBe(-2); // removing a -2 adjustment raises by 2
   });
 });
+
+// ── K (2026-08-02, SELF-CAUGHT regression): service lines never enter
+// inventory, and the phantom they minted gets a guarded reversal ─────────────
+import { isServiceLineMirror, planServiceLotReversal } from "../scripts/lib/ledger-repair-core.mjs";
+import { isServiceLine } from "../src/scm/shared/service-sku";
+
+describe("isServiceLineMirror — lockstep with the real isServiceLine", () => {
+  const cases = [
+    { itemGroup: "service", itemCode: "SVC-TRANS.CHARGES" },
+    { itemGroup: "Service Charge", itemCode: "X" },
+    { itemGroup: null, itemCode: "SVC-DELIVERY" },
+    { itemGroup: null, itemCode: "svc-lift" },
+    { itemGroup: "mattress", itemCode: "MAT-001" },
+    { itemGroup: null, itemCode: "SVC-" },              // bare prefix — NOT a service code
+    { itemGroup: "accessories", itemCode: "NTYR-PILLOW" },
+    { itemGroup: null, itemCode: null },
+    { itemGroup: "others", itemCode: "SVCX" },           // no dash — not the prefix
+  ] as const;
+
+  test("mirror agrees with src/scm/shared/service-sku isServiceLine on the whole matrix", () => {
+    for (const c of cases) {
+      expect(isServiceLineMirror(c), JSON.stringify(c)).toBe(isServiceLine(c));
+    }
+  });
+
+  test("the incident line classifies service (the grn-gap planner now excludes it)", () => {
+    expect(isServiceLineMirror({ itemGroup: null, itemCode: "SVC-TRANS.CHARGES" })).toBe(true);
+  });
+
+  test("category signal counts too (mirror of the strongest signal)", () => {
+    expect(isServiceLineMirror({ itemGroup: null, itemCode: "FREIGHT-1", category: "SERVICE" }))
+      .toBe(isServiceLine({ itemGroup: null, itemCode: "FREIGHT-1", category: "SERVICE" }));
+  });
+});
+
+describe("planServiceLotReversal — the phantom SVC receipt reversal, guarded", () => {
+  const movement = {
+    id: "205e9f06-a5a3-4b04-bc60-47ba469cb547",
+    movementType: "IN", productCode: "SVC-TRANS.CHARGES",
+    qty: 1, unitCostSen: 187500,
+    sourceDocType: "GRN", sourceDocId: "grn-1",
+  };
+  const lot = {
+    id: "d264f343-5657-4318-876f-01bce3d84717",
+    productCode: "SVC-TRANS.CHARGES",
+    qtyReceived: 1, qtyRemaining: 1,
+    sourceDocType: "GRN", sourceDocId: "grn-1",
+  };
+
+  test("the incident shape reverses, with old values in the print", () => {
+    const v = planServiceLotReversal({ movement, lot, lotConsumptions: 0, movementConsumptions: 0 });
+    expect(v.verdict).toBe("reverse");
+    expect(v.print).toContain("205e9f06");
+    expect(v.print).toContain("d264f343");
+    expect(v.print).toContain("qty=1");
+    expect(v.print).toContain("187500");
+  });
+
+  test("ANY consumption refuses — a consumed lot cannot be deleted", () => {
+    expect(planServiceLotReversal({ movement, lot, lotConsumptions: 1, movementConsumptions: 0 }).verdict).toBe("consumed");
+    expect(planServiceLotReversal({ movement, lot, lotConsumptions: 0, movementConsumptions: 2 }).verdict).toBe("consumed");
+    expect(planServiceLotReversal({
+      movement, lot: { ...lot, qtyRemaining: 0 }, lotConsumptions: 0, movementConsumptions: 0,
+    }).verdict).toBe("consumed");
+  });
+
+  test("a GOODS movement refuses — this part only reverses the service defect", () => {
+    expect(planServiceLotReversal({
+      movement: { ...movement, productCode: "MAKOTO-OLIVE" }, lot: { ...lot, productCode: "MAKOTO-OLIVE" },
+      lotConsumptions: 0, movementConsumptions: 0,
+    }).verdict).toBe("not-service");
+    expect(planServiceLotReversal({
+      movement: { ...movement, movementType: "OUT" }, lot,
+      lotConsumptions: 0, movementConsumptions: 0,
+    }).verdict).toBe("not-service");
+  });
+
+  test("a lot from a different document or product refuses (lot-mismatch)", () => {
+    expect(planServiceLotReversal({
+      movement, lot: { ...lot, sourceDocId: "grn-2" }, lotConsumptions: 0, movementConsumptions: 0,
+    }).verdict).toBe("lot-mismatch");
+  });
+
+  test("missing rows refuse (not-found), stating which side is missing", () => {
+    const v = planServiceLotReversal({ movement: null, lot, lotConsumptions: 0, movementConsumptions: 0 });
+    expect(v.verdict).toBe("not-found");
+    expect(v.movementFound).toBe(false);
+    expect(v.lotFound).toBe(true);
+  });
+});

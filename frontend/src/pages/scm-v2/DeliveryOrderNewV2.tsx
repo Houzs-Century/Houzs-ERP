@@ -64,7 +64,7 @@ import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { cn } from "../../lib/utils";
-import { useStaffLookup } from "../../hooks/useStaffLookup";
+import { useStaffLookup, UUID_RE } from "../../hooks/useStaffLookup";
 import { useStateWarehouseMappings } from "../../vendor/scm/lib/state-warehouse-queries";
 import { splitE164, combineE164 } from "../../vendor/shared/phone";
 
@@ -673,6 +673,25 @@ export function DeliveryOrderNewV2() {
     setFlash(`Prefilled from ${soDocNo}`);
   }, [soSource.data, soDocNo, editId]);
 
+  /* A RAW UUID MUST NEVER SIT IN THE SALESPERSON FIELD — it is not just ugly,
+     it gets SAVED: the create below writes this value to the DO's `agent`.
+     The prefill above resolves the name through nameOf, but it fires the moment
+     the SO source lands, which is often BEFORE the /staff roster does — and its
+     dep array deliberately omits `nameOf`, because re-running the whole prefill
+     would clobber edits the operator has already typed. So when the roster is
+     the slower of the two, nameOf falls through to its fallback and the field
+     keeps the SO's raw salesperson uuid (Nico, 2026-08-03, on 2990-SO-2606-034).
+     That is one way rows come to "fill agent with the raw id instead of leaving
+     it null" — the note useStaffLookup itself carries.
+     Re-resolve THIS ONE FIELD when the roster arrives, and only while it still
+     holds a uuid, so nothing the operator typed is touched. */
+  useEffect(() => {
+    const raw = salesperson.trim();
+    if (!UUID_RE.test(raw)) return;
+    const resolved = nameOf(null, raw, "");
+    if (resolved) setSalesperson(resolved);
+  }, [salesperson, nameOf]);
+
   // Lines fallback — only when the line-level picker didn't hand a stash over.
   // Sourced from the SO's still-undeliverable remainder (cross-company, same as
   // the header), so a bare ?fromSo= on a mirrored 2990 SO carries its lines too.
@@ -975,8 +994,19 @@ export function DeliveryOrderNewV2() {
 
   return (
     <div className="pb-20">
-      {/* Sticky form header */}
-      <div className="sticky top-0 z-10 -mx-4 border-b border-border bg-bg/95 px-4 py-4 backdrop-blur-sm sm:-mx-6 sm:px-6">
+      {/* Sticky form header + document flow.
+          Owner 2026-08-03: the flow strip is frozen WITH the action bar, so the
+          operator can see which SO this DO hangs off (and reach Create/Cancel)
+          from anywhere down a long form. Keep them in ONE sticky box — two
+          stacked sticky boxes would each pin at top:0 and overlap. */}
+      {/* top-12 / lg:top-[52px] z-20 is the house offset for a page-level sticky
+          (Layout.tsx, DetailLayout, AmendmentDetailV2, PoAmendmentDetailV2): the
+          workspace tab strip in TopNavbar is itself `sticky top-0 z-30 h-[52px]`
+          inside this same scroll container. This box was `top-0 z-10`, so it
+          parked UNDER that strip and the strip painted over its first 52px —
+          exactly the title row and the Cancel / Save as Draft / Create buttons.
+          Freezing more content only made that clearer. */}
+      <div className="sticky top-12 lg:top-[52px] z-20 -mx-4 border-b border-border bg-bg/95 px-4 py-4 backdrop-blur-sm sm:-mx-6 sm:px-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
             <button
@@ -1081,13 +1111,15 @@ export function DeliveryOrderNewV2() {
             </Button>
           </div>
         </div>
+
+        {/* Document flow — frozen with the header (see note above) */}
+        <div className="mt-4">
+          <DocumentFlowStrip soDocNo={soDocNo || null} />
+        </div>
       </div>
 
       {/* Body */}
       <div className="flex flex-col gap-5 py-6">
-        {/* Document flow */}
-        <DocumentFlowStrip soDocNo={soDocNo || null} />
-
         {/* Customer info */}
         <SectionCard title="Customer info">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_340px]">

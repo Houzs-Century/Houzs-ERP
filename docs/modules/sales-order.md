@@ -94,6 +94,19 @@ drill-down, `SalesOrderDetailV2` (Stock + Incoming PO columns — added
 (`backfill-lot-batch-from-docs.mjs`) and the read-only measurement
 (`check-so-source-trace.mjs`).
 
+**LIST "PO No." column (owner 2026-08-02, SURFACE CHANGE).** The list stamps
+`source_po_union` + `source_po_adj` per row — the UNION of the per-line source
+chips the drill shows (shipped consumed batches ∪ READY projections, pure
+`unionSoLineChips` over the same two resolvers; READY suppressed on
+fully-shipped lines; ONE `computeMrp` per list load). The visible chips read
+THAT, because the previous content (`converted_po_nos`, the convert-time
+raise-link) lied by omission: an accessories/CS SO fulfilled from stock bought
+under other POs raises no PO of its own and showed "—" while its drill named
+the source PO. `converted_po_nos` still rides the payload as the tooltip
+("Raised PO (convert-time link, not a goods source)") when it differs. Mobile
+Orders card renders the same union via `SourcePosRowMobile` (row omitted when
+empty — card idiom).
+
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
 
 `DELETE /:docNo` (`mfg-sales-orders.ts:5555`) hard-deletes a **DRAFT and nothing

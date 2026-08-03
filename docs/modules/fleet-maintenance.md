@@ -134,6 +134,9 @@ Region + status filters are URL state; region options are derived from the
 warehouses actually present. Registered in `routing/routeManifest.ts` so the
 mobile shell resolves it to a desktop-only dead-end (no mobile screen in Phase 1).
 
+**The drawer is a quick look, not the record** — see section 12. Everything a
+lorry has ever had lives on `/fleet-health/:lorryId`.
+
 ## 9. Phase 2 — preventive plans + mileage capture
 
 ### `scm.lorry_compliance_attachments` — the vault's FILES (mig 0238, 2026-08-01)
@@ -315,6 +318,29 @@ fitted_km`; `cost_per_km = purchase_price_centi / km_used` (never divide by 0).
   the state machine (illegal jump like `REPORTED → VERIFIED` is rejected).
   `isWorkOrderOpen()`, `workOrderSeam()` (WAITING_PARTS wins over PLANNED),
   `workOrderTotalCenti()`.
+
+  ```
+  Reported → Diagnosed → Quoted → Approved → In Repair → Completed → Verified
+                    └──────────────┘              ⇅
+                    (unquoted jobs)          Waiting Parts → Completed
+  ```
+
+  **`QUOTED` (mig 0247, 2026-08-03)** is where a job waits for the owner to
+  accept the workshop's price. Owner: *"正常不是应该我 report 了这个问题，然后
+  diagnose，然后 for quotation，然后 approve…"*. Before it, a job sat in
+  `DIAGNOSED` whether the quote had arrived or not — while the work order had
+  carried `quotation_no` since mig 0241. **`DIAGNOSED → APPROVED` is kept**: every
+  work order already in `DIAGNOSED` was created when that was its only move, and
+  a job small enough to approve on the spot should not have to fake a quotation.
+  `QUOTED` is OPEN but feeds **no seam** — a lorry waiting on a price is still on
+  the road.
+
+  The list lives in three places by necessity (the machine, the migration CHECK,
+  and the stepper, which needs the ORDER the API never sends).
+  **`npm --prefix backend run audit:work-order-states`** compares all three and
+  runs in `ci.yml`, `deploy.yml` and `deploy-staging.yml`. Mutation-verified:
+  dropping the state from either the stepper or the CHECK fails the job and names
+  which copy drifted.
 - `deriveComponentLife()` — `km_used` / `cost_per_km` / `under_warranty`.
 
 ### 10.3 New routes (`/api/fleet-maintenance`, all gated as shown)
@@ -352,11 +378,291 @@ derived life).
   description, best-effort GPS + scene photo) alongside the day-complete mileage
   capture. No new menu row (the existing Fleet Mileage surface is extended).
 
+## 11. The repair record — workshop master, billed lines, and OCR (mig 0241)
+
+Owner, 2026-08-02, holding a real document (T FORCE AUTO SERVICES quotation
+`WJO00403`, lorry VQE9058, RM22,208.50): every repair that costs money is one
+record, and it must carry what the paper carries.
+
+**`scm.workshops` is a new master.** The repair vendor used to be a free-text
+`workshop` string on FOUR unrelated tables (work orders, breakdown cases,
+maintenance plans, service records), so "what did we spend at this workshop"
+was not a question the schema could answer. It is NOT filed under
+`scm.suppliers` — that master feeds purchase orders, GRNs, the DP
+supplier-pickup picker and the supplier portal, and a workshop is none of
+those. Same reasoning `0210` used for `scm.threepl_companies`.
+
+Codes are **minted, never typed** — `WS-0001` per company, `mintWorkshopCode`.
+The `UNIQUE (company_id, code)` index is the real guard; a racing create loses
+there and retries the mint. (The driver roster is what hand-typed codes look
+like after a year: `DRV-001..007` beside `DRV-05`/`DRV-050`, one person three
+times.)
+
+**The header gained the vendor's own document numbers.** `quote_refs` /
+`invoice_refs` hold R2 FILE KEYS — there was nowhere to put "WJO00403". One
+repair carries BOTH numbers over its life (quotation at DIAGNOSED/APPROVED,
+invoice at COMPLETED/VERIFIED), so `quotation_no` and `invoice_no` are two
+columns on ONE record, not two records. Plus `advisor` (the workshop's, not
+ours) and `document_date` (what the paper prints, which is not `reported_at`).
+
+**Lines now have the four columns a real invoice prints**: `section`
+(PART / LABOUR), `uom`, `discount_pct`, `amount_centi`.
+
+- The discount is a **percentage, per line** — WJO00403 carries 15% on 14 of
+  its 19 lines and none on the other 5.
+- `amount_centi` is the **printed** amount and it WINS over the computation.
+  The vendor's rounding is theirs; a record that quietly disagrees with the
+  paper is worse than one that repeats it. NULL means "not printed, compute
+  it", and `workOrderLineCenti` takes
+  `amount ?? round(qty x unit x (1 - disc/100))`.
+
+**LABOUR HAS TWO SHAPES AND THEY MUST NOT BOTH BE FILLED.** Pre-0241 rows put
+labour in the header scalar `labour_centi`; new records put it in
+LABOUR-section lines. `workOrderTotalCenti` sums both, so filling both counts
+labour twice. A CHECK cannot express "not both" without pinning existing rows,
+so **the parts route is the single writer that enforces it** — adding a LABOUR
+line to a record whose `labour_centi > 0` is a 409 `labour_already_on_header`.
+
+### OCR — `POST /api/scm/scan-lorry-invoice/extract`
+
+`backend/src/scm/routes/scan-lorry-invoice.ts`. A **minimal sibling** of
+`scan-payment.ts`, not a second `scan-so.ts`: one synchronous call, no
+`scan_jobs` row, no queue, no reaper, no learning loop. scan-so needs all that
+because a rep photographs a stack of slips on bad signal; a workshop invoice is
+one document uploaded at a desk with someone watching the screen.
+
+**It writes NOTHING.** It returns what the paper says and the operator confirms
+it into a work order as a separate, explicit step. An OCR pass that silently
+books a five-figure repair is not something anyone asked for.
+
+**PDFs go straight in** — Anthropic takes a `document` content block, so there
+is no rasteriser here and none is needed. The document that prompted this is a
+PDF with a text layer; a phone photo of a paper invoice takes the same path as
+an image block.
+
+**It resolves no ids.** The workshop is returned as a NAME, the vehicle as a
+PLATE. Matching those to `scm.workshops` and `scm.lorries` is the review
+screen's job, because an OCR pass must never invent a foreign key.
+
+**The reconciliation is the point.** The response carries
+`totals.reconciles` — the sum of the extracted lines against the grand total
+the model read from a DIFFERENT part of the page. An extraction that drops one
+line of nineteen looks entirely plausible and is wrong by RM6,375; this is what
+catches it. `null` means the document printed no total, which is **not** the
+same as "checked and agreed" — do not render it as a tick.
+
+Tests: `backend/tests/scanLorryInvoice.test.ts` replays WJO00403 end to end,
+including the dropped-line case and the vendors who print no line amounts at
+all. `backend/tests/fleetStatus.test.ts` reproduces its RM22,208.50 through the
+stored line model.
+
+## 12. The drawer is a quick look; the record is a page (2026-08-02)
+
+Owner: *"这个 Fleet Health 不可能只是在右边展示... 它应该要支持展开... 要不然界面
+会显得非常乱. 例如 Compliance 这些资料，就不需要在刚点开的时候直接显示在右边.
+包括我的 New Work Order 和 Import Work Shop Document 都不需要在这边. 它应该只需要
+看得到现在的 Mileage，以及下一次什么时候要去维修."*
+
+The drawer had accumulated every phase's section — vault with per-document
+renewal history and file attachments, work orders, tyres, plans, mileage history
+— in a side panel you scrolled for a page and a half.
+
+**The split is by QUESTION, not by size.**
+
+| Surface | Answers | Carries |
+|---|---|---|
+| Drawer (`FleetHealth.tsx`) | *Can I use this lorry today?* | out-of-service / open-problem banner, current mileage, next service, breakdowns, a link to the record |
+| Page (`LorryRecord.tsx`, `/fleet-health/:lorryId`) | *What is this lorry's history?* | vehicle dates, breakdowns, work orders, components, plans, mileage, the full compliance vault |
+
+**New Work Order** and **Import Workshop Document** moved to the page with the
+work-order section they belong to. They are not duplicated in the drawer.
+
+**The page IMPORTS the sections; it does not re-implement them.** ~32
+declarations in `FleetHealth.tsx` gained `export` for this (`PlansSection`,
+`MileageSection`, `BreakdownSection`, `WorkOrdersSection`, `ComponentsSection`,
+`AttachmentStrip`, `AddRenewalForm`, `MissingComplianceNote`, `Pill`, `money`,
+`boxLabel`, `DOC_TYPES`, `DOC_LABEL`, `STATUS_TONE`, and the payload types).
+Copying them by hand is how one copy quietly loses a fix. Both surfaces read the
+same `GET /api/fleet-maintenance/vehicles/:id`, so there is one payload shape.
+
+Gated exactly as `/fleet-health` is (`fleet.read`); registered in
+`routing/routeManifest.ts` (desktop-only, like its parent).
+
+### The four dates a lorry's life is measured from (mig `0245`)
+
+Owner: *"每一辆罗里都要有以下这些日期：1. 生产日期 2. 注册 (Register) 日期
+3. 第一天上班的日期"*. `scm.lorries.purchase_date` (mig 0121) already existed and
+is **none of those three**.
+
+| Column | Answers | Why it is not one of the others |
+|---|---|---|
+| `manufacture_date` | how OLD the vehicle is | depreciation, and whether a part is still made for it |
+| `registration_date` | the JPJ registration | road tax / insurance / PUSPAKOM cycles anchor here, not to our purchase |
+| `in_service_date` | first day it worked FOR US | the denominator for cost-per-day — bought in March, idle until June, is not three months of use |
+| `purchase_date` (0121) | when WE bought it | already present |
+
+**All nullable, no backfill, and no ordering CHECK.** Nothing in the system can
+infer any of them, and a guessed date silently becomes the basis of an age or a
+cost-per-day figure nobody can trace. `manufacture <= registration <= in_service`
+is tempting and wrong: a reconditioned import is registered here long after it
+was built elsewhere, and a lorry can start work before its transfer paperwork
+clears. The UI states the intent instead of the database refusing the row.
+
+Edited on the lorry master (`scm-v2/LorryDetail.tsx`, Coverage & Fleet); read
+back through `/api/fleet-maintenance/vehicles/:id` for the record page's Vehicle
+section.
+
+## 13. Three things the schema had and the screen did not (2026-08-03)
+
+Each of these was a column or a route that already existed, with no way to reach
+it from the UI. They are listed together because they are one failure mode.
+
+### Preventive-maintenance plans were creatable only by script
+
+The empty state read *"Seed the default set (backend/scripts/seed-fleet-plans.mjs)
+or add plans via the API"* — instructions to run a Node script, shown to the
+owner. Owner: *"我该怎么去用?"*. `POST /vehicles/:id/plans` and
+`PATCH /plans/:planId` had existed since Phase 2; only the form was missing.
+
+`PlansSection` now takes optional `vehicleId` / `components` / `onChanged`; given
+all three it can add and edit, and without them it still renders read-only. The
+form re-POSTs when editing because **the route UPSERTs on `(lorry, component)`** —
+the component is the identity, so the picker is disabled while editing (changing
+it would move the plan to a different component, not rename this one) and
+components that already have a plan are not offered when adding.
+
+The component list is **served, not mirrored**: `GET /vehicles/:id` now returns
+`planComponents[]` from `PLAN_COMPONENTS` + `PLAN_COMPONENT_LABELS`. The list and
+the migration's CHECK are already two copies; a third in the frontend would be
+the one nobody updates.
+
+### A repair and the breakdown that caused it were unrelated rows
+
+`scm.lorry_work_orders.breakdown_case_id` has existed since mig `0204` and the
+create route has always accepted `breakdownCaseId` — **no UI ever wrote it**.
+Owner: *"它不是应该跟我们的 breakdown 还有 incident 有串联吗?"*.
+
+The New Work Order form now offers the lorry's **open** cases (a resolved case is
+almost always a mis-click, not a late link), and the work-order card shows the
+case it came from. Same class as `aggregation` before mig 0244 and `is_own_fleet`
+before 0246: a column with a UI and no writer.
+
+### One click peeks, two clicks open
+
+Owner: *"1. 单击：弹出一个 shortcut，让我简单看一个简介; 2. 双击：点进去看细节"* —
+the Sales Order interaction, by name. A double click fires click, click, dblclick,
+so the peek is held for 250ms and cancelled when the second click lands;
+otherwise the drawer flashes open and the navigation pulls the page out from
+under it. The timer is cleared on unmount — the suite leaked exactly this kind of
+timer into a torn-down jsdom for a year (`BUG-HISTORY.md`, 2026-08-02).
+
+Keyboard cannot double-click: **Enter** peeks, **Shift+Enter** opens the record.
+
+## 14. Records you can name, and a page that folds (2026-08-03)
+
+### BD-#### and WO-#### (mig `0248`)
+
+Owner: *"每一个 Breakdown Incident 应该带出一个唯一的编号"* and *"你的 Works Order
+也应该有一个编号... 需要清晰指示它对应的是哪一个 Breakdown 编号"*.
+
+Both tables had only a UUID. The number on screen — `WJO00403` — is the
+**workshop's own** quotation number, read off their document by the OCR
+(`quotation_no`, mig 0241). It belongs to the vendor, it is not unique across
+vendors, and a repair with no document has none. There was no way to refer to
+one of our own records except by pointing at it.
+
+| | |
+|---|---|
+| Minting | `scm/lib/fleet-code-mint.ts`, the same minter behind DRV / HLP / 3PL / WS. `PAD_BY_PREFIX` makes BD and WO **four** wide — a fleet accumulates work orders for a decade — and the migration's backfill LPADs to four to match. The two MUST agree or the register would read as two schemes. |
+| Backfill | Per company by `(created_at, id)`, oldest first, so it reads like a register and re-running on a clone gives the same answer. |
+| Uniqueness | Nullable column + **partial** unique index per company, exactly as mig 0242 did for `threepl_companies`. |
+| Not a sequence | A Postgres sequence lives outside the app's own allocation rule and could not be reasoned about beside the other four codes. A lorry breaks down a few times a year, not a few times a second. |
+
+`woNo` and `quotationNo` are both surfaced, and deliberately labelled as ours and
+theirs — confusing the two is how a repair gets attributed to the wrong vendor.
+
+### The page folds instead of sprawling
+
+Owner: *"这个卡片或区域应该设计成可以展开和收起"*, *"要确保当资料密密麻麻、数据量
+很大的时候，界面依然清晰"*, and on the Vehicle block, *"字太多、提示词也太多了"*.
+
+`RecordCard` (exported from `FleetHealth.tsx`) is the one collapsible shell for
+breakdowns, work orders and components. **Closed shows what you scan for** — the
+number, a status badge, what it was, when — and the detail is one click away
+rather than a scroll away. What opens by default is the rule, not a preference:
+
+| Record | Open by default when |
+|---|---|
+| Breakdown | not `RESOLVED` — the case you opened the page for |
+| Work order | still `open` (anything before COMPLETED) |
+| Component | `ACTIVE` — a removed one is history |
+
+Inside, `Detail` renders a label/value grid. It replaces the run-on
+"a · b · c · d · e" line, which was unreadable the moment a record had more than
+three facts.
+
+The Vehicle block lost a sentence of explanation under every date plus a
+paragraph under the row. That reasoning lives in mig 0245 and in section 12 —
+which is where reasoning belongs; the screen shows the dates.
+
+### Mileage can be recorded on screen
+
+Owner: *"这部分应该用来记录每周的里程。比如我们每一次检测的记录：在什么时间、当时的
+里程数是多少"*.
+
+`POST /vehicles/:id/mileage` has always accepted `source: "MANUAL"` — the odometer
+could be captured from the driver's phone on day-complete and **nowhere else**.
+`MileageSection` now takes optional `vehicleId` / `onChanged` and grows a form.
+The two rules the route enforces are stated before you hit them: a reading below
+the last one is a rollback and is refused; an abnormal jump saves but is flagged.
+
+## 15. What is editable, and what deliberately is not (2026-08-03)
+
+Owner: *"这些数据我要怎么去编辑呢? 所有的内容都是可以编辑并保存的吗?"*. It was not
+a full yes, and the gaps were all the same shape — a PATCH route that had accepted
+the field since Phase 3, with nothing on screen sending it.
+
+| Record | Editable on the record page | Where the write goes |
+|---|---|---|
+| Breakdown case | fault, severity, still-drivable, driver report, towing company + cost, workshop, status | `PATCH /breakdowns/:id` |
+| Work order — header | problem, diagnosis, workshop, their quotation / invoice no, labour, outside service, towing, tax, warranty | `PATCH /work-orders/:id` |
+| Work order — state | the stepper only, one legal transition at a time | `POST /work-orders/:id/transition` |
+| Work order — lines | add / remove | `POST` / `DELETE .../parts` |
+| Preventive plan | every field; the component is the identity so it is fixed while editing | `POST /vehicles/:id/plans` (UPSERT) |
+| Mileage | append a reading | `POST /vehicles/:id/mileage` |
+| Component | log an event, remove | `PATCH /components/:id`, `POST .../events` |
+| Compliance vault | **append only** | `POST /vehicles/:id/compliance` |
+| The lorry's own dates | **not here** — a link to Coverage & Fleet | `PATCH /api/scm/lorries/:id` |
+
+**Two of those are refusals, not omissions.**
+
+The **compliance vault is append-only by design** (§5). Renewing is a new row;
+editing an expiry in place would destroy the audit trail the vault exists to be.
+
+**The lorry master is the single writer for lorry columns.** A second editor over
+`scm.lorries` on this page is how two screens start disagreeing, and it sits
+behind a different permission — `scm.transportation.drivers`, not `fleet.write`.
+So the record page links to Coverage & Fleet instead of duplicating the form.
+
+**Severity is not cosmetic.** A CRITICAL, unresolved case is what grounds a lorry
+(`isCaseGrounding`), so editing severity here can put a lorry back on the road.
+The form says so.
+
+**Header money vs line money.** The four money legs on a work order are added ON
+TOP of the lines. The route refuses a non-zero header `labour_centi` on a work
+order whose lines already carry LABOUR — the invariant that stops the workshop's
+labour being counted twice — and the form states it rather than letting you find
+out by 409.
+
 ## 8. See also
+- `frontend/src/pages/LorryRecord.tsx` (the full record; sections imported from `FleetHealth.tsx`)
+- `backend/scripts/check-work-order-states.mjs` (`audit:work-order-states` — the three copies of the state list)
 - `backend/src/services/fleet-status.ts` + `backend/tests/fleetStatus.test.ts`
 - `backend/scripts/seed-fleet-maintenance.mjs` (Phase 1 vault) · `seed-fleet-plans.mjs` (Phase 2 plans)
 - `backend/src/scm/routes/lorries.ts`, `lorry-service-records.ts` (the sibling master + history)
 - `frontend/src/pages/FleetHealth.tsx` (desktop) · `frontend/src/mobile/MobileMileageCapture.tsx` (mobile driver)
+- `backend/src/scm/routes/scan-lorry-invoice.ts` + `backend/tests/scanLorryInvoice.test.ts` (repair-document OCR)
+- `docs/modules/scan-to-so.md` (the full background pipeline this deliberately does NOT copy)
 - `docs/modules/delivery-tms.md`, `docs/modules/warehouses.md`
 
 ## Plates are stored CANONICAL (2026-08-01)

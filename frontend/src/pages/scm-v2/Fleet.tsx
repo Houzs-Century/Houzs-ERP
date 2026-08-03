@@ -25,7 +25,7 @@
 // sibling SCM surface still carries the same shape; do not "restore" the claim.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
@@ -107,7 +107,29 @@ const DriversSection = () => {
   const [creating, setCreating] = useState(false);
   const drivers = useDrivers({ includeInactive });
   const update = useUpdateDriver();
-  const updateMutate = update.mutate;
+  const notify = useNotify();
+
+  /* This toggle used to fire and forget. When the server started refusing to
+     mark a 3PL's driver in-house (409 linked_to_carrier — the row would
+     otherwise carry in_house=true beside a live threepl_company_id), an
+     unhandled rejection meant the tick simply sprang back with no explanation.
+     Say why. */
+  const updateMutate = useCallback<typeof update.mutate>((vars, opts) => {
+    update.mutate(vars, {
+      ...opts,
+      onError: (err, ...rest) => {
+        const msg = err instanceof Error ? err.message : '';
+        notify(/linked_to_carrier|3PL company/i.test(msg)
+          ? {
+              title: 'This driver belongs to a 3PL company',
+              body: 'Detach them from the carrier first, then mark them in-house.',
+              tone: 'error',
+            }
+          : { title: 'Could not save', body: msg || 'Something went wrong.', tone: 'error' });
+        opts?.onError?.(err, ...rest);
+      },
+    });
+  }, [update, notify]);
 
   /* Shared DataGrid columns — sort / per-column filter / column show-hide /
      reorder / pin / persisted layout. The Active toggle stays an inline
@@ -242,17 +264,15 @@ const CreateDriverDrawer = ({ onClose }: { onClose: () => void }) => {
   const create = useCreateDriver();
   const notify = useNotify();
   const [form, setForm] = useState({
-    driverCode: '', name: '', phone: '', icNumber: '', vehicle: '',
+    name: '', phone: '', icNumber: '', vehicle: '',
   });
   const [inHouse, setInHouse] = useState(true);
   const set = <K extends keyof typeof form>(k: K, v: string) => setForm((s) => ({ ...s, [k]: v }));
 
   const submit = () => {
-    if (!form.driverCode.trim()) { notify({ title: 'Code required.', tone: 'error' }); return; }
     if (!form.name.trim()) { notify({ title: 'Name required.', tone: 'error' }); return; }
     if (!form.phone.trim()) { notify({ title: 'Phone required.', tone: 'error' }); return; }
     create.mutate({
-      driverCode: form.driverCode.trim(),
       name: form.name.trim(),
       phone: form.phone.trim(),
       icNumber: form.icNumber.trim() || undefined,
@@ -272,7 +292,6 @@ const CreateDriverDrawer = ({ onClose }: { onClose: () => void }) => {
         </header>
         <div className={styles.drawerBody}>
           <div className={styles.formGrid}>
-            <Field label="Code *" value={form.driverCode} onChange={(v) => set('driverCode', v)} placeholder="DRV-01" />
             <Field label="Name *" value={form.name} onChange={(v) => set('name', v)} />
             <Field label="Phone *" value={form.phone} onChange={(v) => set('phone', v)} placeholder="+60 12-345-6789" />
             <Field label="IC Number" value={form.icNumber} onChange={(v) => set('icNumber', v)} />
@@ -412,16 +431,14 @@ const CreateHelperDrawer = ({ onClose }: { onClose: () => void }) => {
   const create = useCreateHelper();
   const notify = useNotify();
   const [form, setForm] = useState({
-    helperCode: '', name: '', contact: '', icNumber: '',
+    name: '', contact: '', icNumber: '',
   });
   const [inHouse, setInHouse] = useState(true);
   const set = <K extends keyof typeof form>(k: K, v: string) => setForm((s) => ({ ...s, [k]: v }));
 
   const submit = () => {
-    if (!form.helperCode.trim()) { notify({ title: 'Code required.', tone: 'error' }); return; }
     if (!form.name.trim()) { notify({ title: 'Name required.', tone: 'error' }); return; }
     create.mutate({
-      helperCode: form.helperCode.trim(),
       name: form.name.trim(),
       contact: form.contact.trim() || undefined,
       icNumber: form.icNumber.trim() || undefined,
@@ -440,7 +457,6 @@ const CreateHelperDrawer = ({ onClose }: { onClose: () => void }) => {
         </header>
         <div className={styles.drawerBody}>
           <div className={styles.formGrid}>
-            <Field label="Code *" value={form.helperCode} onChange={(v) => set('helperCode', v)} placeholder="HLP-01" />
             <Field label="Name *" value={form.name} onChange={(v) => set('name', v)} />
             <Field label="Contact" value={form.contact} onChange={(v) => set('contact', v)} placeholder="+60 12-345-6789" />
             <Field label="IC Number" value={form.icNumber} onChange={(v) => set('icNumber', v)} />

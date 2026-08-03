@@ -121,10 +121,10 @@
   vertical-align: middle;
 }
 .skuRowShort {
-  background: rgba(22, 105, 95, 0.05);
-  box-shadow: inset 3px 0 0 #16695f;
+  background: rgba(22, 105, 95, 0.08);
+  box-shadow: inset 3px 0 0 #08352e;
 }
-.skuRowShort:hover { background: rgba(22, 105, 95, 0.1); }
+.skuRowShort:hover { background: rgba(22, 105, 95, 0.13); }
 
 .codeCell { font-weight: 700; white-space: nowrap; }
 .descCell { color: #767b6e; }
@@ -158,10 +158,10 @@
   vertical-align: middle;
 }
 .variantRowShort {
-  background: rgba(22, 105, 95, 0.06);
-  box-shadow: inset 3px 0 0 rgba(22, 105, 95, 0.45);
+  background: rgba(22, 105, 95, 0.08);
+  box-shadow: inset 3px 0 0 rgba(8, 53, 46, 0.85);
 }
-.variantRowShort:hover { background: rgba(22, 105, 95, 0.11); }
+.variantRowShort:hover { background: rgba(22, 105, 95, 0.13); }
 .variantDescCell {
   display: flex;
   align-items: center;
@@ -202,7 +202,13 @@
   font-weight: 700;
   white-space: nowrap;
 }
-.shortNum { color: #16695f; font-weight: 800; }
+/* Shortage = the actionable "must order" number. Owner 2026-08-03 wanted the
+   SAME petrol hue, just deeper so it stands out ("一样颜色的,只是加深一点,让它显得明显").
+   The mid-petrol #16695f read too light against the white column to spot at a
+   glance; deepened to a dark petrol #08352e — higher contrast on white = more
+   obvious — same bold weight. Hue unchanged (not red), only darker.
+   The row highlights below take the same deepening. No solid fill (rejected 2026-05-29). */
+.shortNum { color: #08352e; font-weight: 800; }
 
 .supplierCell span {
   display: inline-flex;
@@ -260,7 +266,7 @@
   border-top: 1px solid #d6d9d2;
   color: #11140f;
 }
-.childShort { background: rgba(22, 105, 95, 0.07); }
+.childShort { background: rgba(22, 105, 95, 0.09); }
 
 /* ── Coverage pills ────────────────────────────────────────────────── */
 .tag {

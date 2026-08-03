@@ -16,20 +16,36 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Plus, X, Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useRateCards, useRateCard, useRateCardMeta,
   useCreateRateCard, useUpdateRateCard, useDeleteRateCard,
   useCreateRateRule, useDeleteRateRule, useComputeCost, useReconcile,
-  type RateCard, type RateRule, type RateRuleType, type DeliveryFacts,
+  type RateCard, type RateRule, type RateRuleType, type DeliveryFacts, type RateAggregation,
 } from '../../vendor/scm/lib/delivery-rate-card-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import {
+  RULE_LABEL, RULE_CATEGORY, CATEGORY_LABEL, CATEGORY_HINT,
+  RATE_RULE_CATEGORIES, rulesByCategory, type RateRuleCategory, type RateRuleTypeT,
+} from '../../vendor/scm/lib/rate-rule-taxonomy';
+import { ThreePLCompanies } from './ThreePLCompanies';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
+
+/* What each charging unit means, in the operator's terms. The positional tiers
+   run DOWN this unit — so "Customer" is what makes the second delivery to the
+   same doorstep cheaper, and "Trip" is a flat price that ignores the load. */
+const AGGREGATION_HINT: Record<RateAggregation, string> = {
+  UNIT: 'Tiers run down the goods — 1st, 2nd, 3rd item on the trip.',
+  DROP: 'Tiers run down the delivery orders. Five DOs is five charges, whatever each contains.',
+  CUSTOMER: 'Two drops to the same buyer at the same address count once, so the second is cheaper.',
+  TRIP: 'One charge for the whole trip. Tier 1 is the price; the load does not change it.',
+};
 
 const centiToRM = (c: number | null | undefined) => (c == null ? '' : (c / 100).toFixed(2));
 const rmToCenti = (v: string): number | null => {
@@ -37,27 +53,42 @@ const rmToCenti = (v: string): number | null => {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
 };
 
-const RULE_LABEL: Record<RateRuleType, string> = {
-  POSITIONAL_TIER: 'Positional tier',
-  OVERAGE: 'Cap overage',
-  SOFA_BRACKET: 'Sofa bracket',
-  OUTSTATION: 'Outstation zone (per order)',
-  OUTSTATION_TRIP: 'Outstation trip (fixed, per trip)',
-  DISPOSE: 'Dispose',
-  SETUP: 'Setup',
-  DISMANTLE: 'Dismantle',
-  SERVICE: 'Service',
-  PICKUP: 'Pickup',
-  INSPECTION: 'Inspection',
-  TRANSFER: 'Transfer',
-};
+/* Labels, categories and their order now come from the SHARED taxonomy, which
+   `npm run audit:job-types` keeps in step with the backend, the rule_type CHECK
+   and scm.trip_stop_type. The local copy that used to live here had no
+   SUPPLIER_PICKUP and no notion of grouping. */
 
-export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } = {}) => {
+/* The 3PL entry point, owner 2026-08-01: "用户在 Rate Card 页面进行点选时，数据需要从
+   3PL Company 那边读取，因此 Rate Card 的右上角需要新增一个可以 Create 3PL Company
+   的功能", and 2026-08-02 on where it belongs: "3PL 的入口在rates 的右上角 点开".
+   A rate card is priced PER CARRIER, so the carrier list here IS the 3PL master —
+   an empty list used to be answerable only by leaving the page. It opens as a
+   DRAWER over this page rather than as a second collapsible below it, because
+   the owner rejected folds on this screen ("carriers 根本都不需要dropdown").
+
+   The drawer renders the SAME ThreePLCompanies component its own route renders,
+   so there is no second copy of the create form to drift. */
+/* The carrier list on this page comes from /delivery-rate-cards/meta, a DIFFERENT
+   query from the one useCreateThreePLCompany invalidates — and it holds for five
+   minutes. Without this, registering a carrier in the drawer and then trying to
+   price it would show a list that does not contain it. */
+const COMPANY_LIST_KEY = ['delivery-rate-card-meta'];
+export const DeliveryRateCards = ({ embedded = false }: {
+  embedded?: boolean;
+} = {}) => {
   const [tab, setTab] = useState<'cards' | 'reconcile'>('cards');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState<{ carrierCompanyId: string | null } | null>(null);
+  const [companiesOpen, setCompaniesOpen] = useState(false);
   const cards = useRateCards();
   const meta = useRateCardMeta();
+  const qc = useQueryClient();
+
+  const onCreateCompany = () => setCompaniesOpen(true);
+  const closeCompanies = () => {
+    setCompaniesOpen(false);
+    qc.invalidateQueries({ queryKey: COMPANY_LIST_KEY });
+  };
 
   return (
     <div className="space-y-4">
@@ -67,14 +98,19 @@ export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } =
           title="Delivery Rate Cards"
           description="Configure a rate card per carrier (own-fleet + each 3PL), verify a 3PL's billed charge against the computed expected cost, and roll the precise delivery cost toward COGS. Cost verification, not customer billing — and it does not touch the FIFO costing path."
           actions={tab === 'cards' ? (
-            <Button variant="primary" size="md" onClick={() => setCreating({ carrierCompanyId: null })}>
-              <Plus {...ICON} /><span>New Card</span>
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="md" onClick={onCreateCompany}>
+                <Plus {...ICON} /><span>New 3PL Company</span>
+              </Button>
+              <Button variant="primary" size="md" onClick={() => setCreating({ carrierCompanyId: null })}>
+                <Plus {...ICON} /><span>New Card</span>
+              </Button>
+            </div>
           ) : undefined}
         />
       )}
 
-      <div style={{ display: 'flex', gap: 6, borderBottom: '1px solid var(--border, rgba(0,0,0,0.1))' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border, rgba(0,0,0,0.1))' }}>
         {(['cards', 'reconcile'] as const).map((t) => (
           <button key={t} type="button" onClick={() => setTab(t)}
             style={{
@@ -86,6 +122,18 @@ export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } =
             {t === 'cards' ? 'Rate Cards' : 'Reconciliation'}
           </button>
         ))}
+        {/* Embedded there is no PageHeader, so the tab strip carries the actions
+            — this row IS the top-right of the screen in that layout. */}
+        {embedded && tab === 'cards' && (
+          <div className="ml-auto flex items-center gap-2 pb-1.5">
+            <Button variant="secondary" size="sm" onClick={onCreateCompany}>
+              <Plus {...ICON} /><span>New 3PL Company</span>
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => setCreating({ carrierCompanyId: null })}>
+              <Plus {...ICON} /><span>New Card</span>
+            </Button>
+          </div>
+        )}
       </div>
 
       {tab === 'cards' ? (
@@ -97,6 +145,7 @@ export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } =
             selectedId={selectedId}
             onSelect={setSelectedId}
             onCreateFor={(carrierCompanyId) => setCreating({ carrierCompanyId })}
+            onCreateCompany={onCreateCompany}
           />
           {selectedId
             ? <CardEditor key={selectedId} cardId={selectedId} onDeleted={() => setSelectedId(null)} />
@@ -113,9 +162,32 @@ export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } =
           onCreated={(id) => { setCreating(null); setSelectedId(id); }}
         />
       )}
+
+      {companiesOpen && <ThreePLDrawer onClose={closeCompanies} />}
     </div>
   );
 };
+
+// ── 3PL companies drawer ──────────────────────────────────────────────────────
+/* The 3PL master, opened from the top right of this page. It is the standalone
+   ThreePLCompanies screen verbatim (`embedded` only drops its PageHeader, which
+   the drawer header replaces), so registering a carrier here and registering it
+   at /scm/threepl-companies are the same code path. Closing invalidates the
+   carrier list — see COMPANY_LIST_KEY above for why that is not automatic. */
+const ThreePLDrawer = ({ onClose }: { onClose: () => void }) => (
+  <>
+    <div className={styles.backdrop} onClick={onClose} />
+    <aside className={styles.drawer}>
+      <header className={styles.drawerHeader}>
+        <h2 className={styles.drawerTitle}>3PL Companies</h2>
+        <button type="button" className={styles.iconBtn} onClick={onClose}><X {...ICON} /></button>
+      </header>
+      <div className={styles.drawerBody}>
+        <ThreePLCompanies embedded />
+      </div>
+    </aside>
+  </>
+);
 
 // ── Carrier list ────────────────────────────────────────────────
 // Owner's flow (2026-08-01): register the 3PL companies first, then come here to
@@ -123,13 +195,14 @@ export const DeliveryRateCards = ({ embedded = false }: { embedded?: boolean } =
 // 3PL appears, whether or not it has a card yet, and a carrier with no card is a
 // one-click create rather than something you have to know to add. Own-fleet cost
 // structures keep their own group below.
-const CardList = ({ cards, companies, isLoading, selectedId, onSelect, onCreateFor }: {
+const CardList = ({ cards, companies, isLoading, selectedId, onSelect, onCreateFor, onCreateCompany }: {
   cards: RateCard[];
   companies: Array<{ id: string; name: string }>;
   isLoading: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCreateFor: (carrierCompanyId: string | null) => void;
+  onCreateCompany?: () => void;
 }) => {
   const byCompany = new Map<string, RateCard>();
   for (const c of cards) if (c.carrierCompanyId) byCompany.set(c.carrierCompanyId, c);
@@ -146,7 +219,20 @@ const CardList = ({ cards, companies, isLoading, selectedId, onSelect, onCreateF
       {isLoading && <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Loading…</div>}
       {!isLoading && companies.length === 0 && (
         <div style={{ padding: 16, color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
-          No 3PL companies registered yet. Register them under Maintenance &rsaquo; 3PL Companies, then price them here.
+          No 3PL companies registered yet — a rate card is priced per carrier, so there is nothing to price until one exists.
+          {onCreateCompany && (
+            <>
+              {' '}
+              <button
+                type="button"
+                onClick={onCreateCompany}
+                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'var(--c-primary-a, #2563eb)', textDecoration: 'underline' }}
+              >
+                Register one now
+              </button>
+              .
+            </>
+          )}
         </div>
       )}
 
@@ -223,20 +309,42 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
           <SelectField label="Charging basis" value={card.basis} onChange={(v) => patch({ basis: v })}
             options={[['SET', 'By set (frame+mattress)'], ['ITEM', 'By item']]} />
-          <SelectField label="Aggregation" value={card.aggregation} onChange={(v) => patch({ aggregation: v })}
-            options={[['DROP', 'Per drop point'], ['CUSTOMER', 'Per customer']]} />
-          {/* WS4b: a card is priced per 3PL COMPANY (its lorries inherit). "Own
-              fleet / none" leaves it unattached — pair with the own-fleet flag. */}
-          <SelectField label="3PL company (carrier)" value={card.carrierCompanyId ?? ''} onChange={(v) => patch({ carrierCompanyId: v || null })}
-            options={[['', 'Own fleet / none'], ...(meta.data?.companies ?? []).map((c) => [c.id, c.name] as [string, string])]} />
+          {/* WIRED since mig 0244 — this is what the tier ladder counts. It was
+              stored, shown and never read for its whole life; every card said
+              "per drop" while the calculator counted sets. */}
+          <div>
+            <SelectField label="Charge per" value={card.aggregation} onChange={(v) => patch({ aggregation: v })}
+              options={[
+                ['UNIT', card.basis === 'ITEM' ? 'Item' : 'Set'],
+                ['DROP', 'Drop point (per DO)'],
+                ['CUSTOMER', 'Customer (same address, same day)'],
+                ['TRIP', 'Trip (flat, whatever it carries)'],
+              ]} />
+            <p style={{ margin: '4px 0 0', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', maxWidth: 240 }}>
+              {AGGREGATION_HINT[card.aggregation] ?? AGGREGATION_HINT.UNIT}
+            </p>
+          </div>
+          {/* WHO the card belongs to is a FACT here, not a control. Owner,
+              2026-08-02: "我都开着这一间公司了，你还给我 3PL company 那边给我去选，
+              那不是有问题吗?" — you reached this card by clicking that carrier in
+              the list beside it, so re-picking it could only ever make the
+              editor disagree with its own heading. The old "Own-fleet card"
+              checkbox was the same mistake twice: own-fleet IS "no carrier", and
+              it is now derived server-side (mig 0246). */}
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Carrier</span>
+            <span style={{ display: 'block', padding: '7px 0', fontSize: 'var(--fs-13)' }}>
+              {card.carrierCompanyId ? card.name : 'Own fleet'}
+            </span>
+            <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+              {card.carrierCompanyId
+                ? 'One card per 3PL company. To price a different carrier, open that carrier.'
+                : 'Our own cost structure, so a 3PL drop and an own-fleet drop compare.'}
+            </span>
+          </label>
           <RMField label="Cap (RM)" value={centiToRM(card.capCenti)} onCommit={(v) => patch({ capCenti: v === '' ? null : rmToCenti(v) })} />
           <SelectField label="Rounding" value={card.rounding} onChange={(v) => patch({ rounding: v })}
             options={[['NONE', 'None'], ['NEAREST_10C', 'Nearest 10 sen'], ['NEAREST_RM', 'Nearest RM']]} />
-          <label className={styles.field} style={{ alignSelf: 'end' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
-              <input type="checkbox" checked={card.isOwnFleet} onChange={(e) => patch({ isOwnFleet: e.target.checked })} /> Own-fleet card
-            </span>
-          </label>
           <label className={styles.field} style={{ alignSelf: 'end' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
               <input type="checkbox" checked={card.isActive} onChange={(e) => patch({ isActive: e.target.checked })} /> Active
@@ -246,7 +354,7 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
       </section>
 
       <RulesEditor cardId={cardId} rules={rules} zones={meta.data?.zones ?? []} />
-      <CalculatorPanel cardId={cardId} basis={card.basis} zones={meta.data?.zones ?? []} />
+      <CalculatorPanel cardId={cardId} basis={card.basis} zones={meta.data?.zones ?? []} rules={rules} />
     </div>
   );
 };
@@ -290,7 +398,30 @@ const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule
     return 'each occurrence';
   };
 
-  const sorted = useMemo(() => [...rules].sort((a, b) => a.ruleType.localeCompare(b.ruleType) || (a.tierPosition ?? 0) - (b.tierPosition ?? 0) || (a.bracketMin ?? 0) - (b.bracketMin ?? 0)), [rules]);
+  /* Grouped by CATEGORY, not sorted alphabetically. The old ordering put
+     DISMANTLE, DISPOSE, INSPECTION, OUTSTATION, OVERAGE, PICKUP,
+     POSITIONAL_TIER... in one flat run, so the three rules that price a
+     delivery sat apart from each other and outstation sat between a sofa
+     bracket and a service call. */
+  const grouped = useMemo(() => {
+    const order = new Map<RateRuleCategory, number>(RATE_RULE_CATEGORIES.map((cat, i) => [cat, i]));
+    const byCat = new Map<RateRuleCategory, RateRule[]>();
+    for (const r of rules) {
+      /* An unknown rule type falls into Delivery rather than vanishing — a rule
+         the operator can see and delete beats one that silently disappears. */
+      const cat: RateRuleCategory = RULE_CATEGORY[r.ruleType as keyof typeof RULE_CATEGORY] ?? 'DELIVERY';
+      (byCat.get(cat) ?? byCat.set(cat, []).get(cat)!).push(r);
+    }
+    return [...byCat.entries()]
+      .sort((a, b) => (order.get(a[0]) ?? 99) - (order.get(b[0]) ?? 99))
+      .map(([category, list]) => ({
+        category,
+        rules: list.sort((a, b) =>
+          (a.tierPosition ?? 0) - (b.tierPosition ?? 0)
+          || (a.bracketMin ?? 0) - (b.bracketMin ?? 0)
+          || a.ruleType.localeCompare(b.ruleType)),
+      }));
+  }, [rules]);
 
   const needsPosition = form.ruleType === 'POSITIONAL_TIER' || form.ruleType === 'OVERAGE';
   const needsBracket = form.ruleType === 'SOFA_BRACKET';
@@ -306,8 +437,17 @@ const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule
             <th style={{ padding: '4px 8px', textAlign: 'right' }}>Amount (RM)</th><th />
           </tr>
         </thead>
-        <tbody>
-          {sorted.map((r) => (
+        {grouped.map(({ category, rules: list }) => (
+        <tbody key={category}>
+          <tr>
+            <td colSpan={4} style={{ padding: '10px 8px 4px', fontSize: 'var(--fs-11)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--fg-muted)' }}>
+              {CATEGORY_LABEL[category]}
+              <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, marginLeft: 8 }}>
+                {CATEGORY_HINT[category]}
+              </span>
+            </td>
+          </tr>
+          {list.map((r) => (
             <tr key={r.id} style={{ borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
               <td style={{ padding: '6px 8px' }}>{RULE_LABEL[r.ruleType]}</td>
               <td style={{ padding: '6px 8px', color: 'var(--fg-muted)' }}>{describe(r)}</td>
@@ -319,13 +459,27 @@ const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule
               </td>
             </tr>
           ))}
-          {rules.length === 0 && <tr><td colSpan={4} style={{ padding: 12, color: 'var(--fg-muted)' }}>No rules yet — add one below.</td></tr>}
         </tbody>
+        ))}
+        {rules.length === 0 && (
+          <tbody><tr><td colSpan={4} style={{ padding: 12, color: 'var(--fg-muted)' }}>No rules yet — add one below.</td></tr></tbody>
+        )}
       </table>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'flex-end', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border, rgba(0,0,0,0.1))' }}>
-        <SelectField label="Rule type" value={form.ruleType} onChange={(v) => set('ruleType', v as RateRuleType)}
-          options={(Object.keys(RULE_LABEL) as RateRuleType[]).map((k) => [k, RULE_LABEL[k]])} />
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--fg-muted)' }}>Rule type</span>
+          {/* optgroup, so a twelve-item flat list stops making the operator
+              read every option to find the one for the job they are pricing. */}
+          <select value={form.ruleType} onChange={(e) => set('ruleType', e.target.value as RateRuleType)}
+            style={{ padding: '6px 8px', fontSize: 'var(--fs-13)', borderRadius: 6, border: '1px solid var(--border, rgba(0,0,0,0.15))', background: 'var(--bg, #fff)', color: 'var(--fg, #111)' }}>
+            {rulesByCategory().map(({ category, types }) => (
+              <optgroup key={category} label={CATEGORY_LABEL[category]}>
+                {types.map((t) => <option key={t} value={t}>{RULE_LABEL[t]}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        </label>
         {needsPosition && <RMLikeInput label={form.ruleType === 'OVERAGE' ? 'Cap N' : 'Position (3=3rd+)'} value={form.tierPosition} onChange={(v) => set('tierPosition', v)} width={110} />}
         {needsBracket && <RMLikeInput label="Comp min" value={form.bracketMin} onChange={(v) => set('bracketMin', v)} width={90} />}
         {needsBracket && <RMLikeInput label="Comp max (blank=+)" value={form.bracketMax} onChange={(v) => set('bracketMax', v)} width={130} />}
@@ -337,8 +491,34 @@ const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule
   );
 };
 
+/* Which calculator input feeds which rule, in the same four groups as the rules
+   table. `rule: null` means the input is not gated on one rule — the set/item
+   count feeds the tier ladder and the zone feeds both outstation kinds, so
+   dimming either on a single rule's absence would be wrong. */
+type CalcKey = 'count' | 'sofa' | 'zone' | 'dispose' | 'setup' | 'dismantle' | 'service' | 'pickup' | 'inspection' | 'transfer';
+const CALC_GROUPS: Array<{ category: RateRuleCategory; fields: Array<{ key: CalcKey; label: string; rule: RateRuleTypeT | null }> }> = [
+  { category: 'DELIVERY', fields: [
+    { key: 'count', label: 'Sets', rule: null },
+    { key: 'sofa', label: 'Sofa comps (e.g. 3,6)', rule: 'SOFA_BRACKET' },
+    { key: 'dispose', label: 'Dispose', rule: 'DISPOSE' },
+  ] },
+  { category: 'SITE_WORK', fields: [
+    { key: 'setup', label: 'Setup', rule: 'SETUP' },
+    { key: 'dismantle', label: 'Dismantle', rule: 'DISMANTLE' },
+  ] },
+  { category: 'SERVICE_CALL', fields: [
+    { key: 'service', label: 'Service', rule: 'SERVICE' },
+    { key: 'pickup', label: 'Pickup', rule: 'PICKUP' },
+    { key: 'inspection', label: 'Inspection', rule: 'INSPECTION' },
+    { key: 'transfer', label: 'Transfer', rule: 'TRANSFER' },
+  ] },
+  { category: 'OUTSTATION', fields: [
+    { key: 'zone', label: 'Destination zone', rule: null },
+  ] },
+];
+
 // ── Cost calculator (live) ────────────────────────────────────────────────────
-const CalculatorPanel = ({ cardId, basis, zones }: { cardId: string; basis: string; zones: string[] }) => {
+const CalculatorPanel = ({ cardId, basis, zones, rules }: { cardId: string; basis: string; zones: string[]; rules: RateRule[] }) => {
   const compute = useComputeCost(cardId);
   const [facts, setFacts] = useState<{ count: string; sofa: string; zone: string; dispose: string; setup: string; dismantle: string; service: string; pickup: string; inspection: string; transfer: string }>(
     { count: '2', sofa: '3', zone: '', dispose: '1', setup: '1', dismantle: '1', service: '', pickup: '', inspection: '', transfer: '' },
@@ -358,6 +538,9 @@ const CalculatorPanel = ({ cardId, basis, zones }: { cardId: string; basis: stri
     compute.mutate(body);
   };
 
+  /* Which rule types this card actually carries — drives the dimming. */
+  const present = useMemo(() => new Set(rules.map((r) => r.ruleType as string)), [rules]);
+
   const breakdown = compute.data?.breakdown;
 
   return (
@@ -366,18 +549,34 @@ const CalculatorPanel = ({ cardId, basis, zones }: { cardId: string; basis: stri
       <p style={{ margin: '0 0 12px', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
         Price a drop against this card. Sofas are priced by their compartment bracket (comma-separated per sofa), separately from the {basis === 'ITEM' ? 'item' : 'set'} tiers.
       </p>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
-        <RMLikeInput label={basis === 'ITEM' ? 'Items' : 'Sets'} value={facts.count} onChange={(v) => set('count', v)} />
-        <RMLikeInput label="Sofa comps (e.g. 3,6)" value={facts.sofa} onChange={(v) => set('sofa', v)} />
-        <SelectField label="Destination zone" value={facts.zone} onChange={(v) => set('zone', v)} options={[['', 'In-town'], ...zones.map((z) => [z, z] as [string, string])]} />
-        <RMLikeInput label="Dispose" value={facts.dispose} onChange={(v) => set('dispose', v)} />
-        <RMLikeInput label="Setup" value={facts.setup} onChange={(v) => set('setup', v)} />
-        <RMLikeInput label="Dismantle" value={facts.dismantle} onChange={(v) => set('dismantle', v)} />
-        <RMLikeInput label="Service" value={facts.service} onChange={(v) => set('service', v)} />
-        <RMLikeInput label="Pickup" value={facts.pickup} onChange={(v) => set('pickup', v)} />
-        <RMLikeInput label="Inspection" value={facts.inspection} onChange={(v) => set('inspection', v)} />
-        <RMLikeInput label="Transfer" value={facts.transfer} onChange={(v) => set('transfer', v)} />
-      </div>
+      {/* Grouped by the SAME categories as the rules above, and an input whose
+          rule this card does not carry is DIMMED with the reason. Ten
+          equal-weight boxes gave no clue that typing in one of them would
+          change nothing — the card has no rule to price it, so the figure comes
+          back identical and the operator has no way to know why. */}
+      {CALC_GROUPS.map(({ category, fields }) => {
+        const anyPriced = fields.some((f) => f.rule === null || present.has(f.rule));
+        return (
+          <div key={category} style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--fg-muted)', marginBottom: 4 }}>
+              {CATEGORY_LABEL[category]}
+              {!anyPriced && <span style={{ textTransform: 'none', letterSpacing: 0, marginLeft: 8 }}>— this card has no rules here, so these stay at zero</span>}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+              {fields.map((f) => {
+                const priced = f.rule === null || present.has(f.rule);
+                return (
+                  <div key={f.key} style={{ opacity: priced ? 1 : 0.45 }} title={priced ? undefined : `This card has no ${RULE_LABEL[f.rule!]} rule, so this input cannot change the total.`}>
+                    {f.key === 'zone'
+                      ? <SelectField label="Destination zone" value={facts.zone} onChange={(v) => set('zone', v)} options={[['', 'In-town'], ...zones.map((z) => [z, z] as [string, string])]} />
+                      : <RMLikeInput label={f.key === 'count' ? (basis === 'ITEM' ? 'Items' : 'Sets') : f.label} value={facts[f.key]} onChange={(v) => set(f.key, v)} />}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
       <div style={{ marginTop: 12 }}>
         <Button variant="primary" size="md" onClick={run} disabled={compute.isPending}>{compute.isPending ? 'Computing…' : 'Compute cost'}</Button>
       </div>
@@ -468,7 +667,7 @@ const CreateCardDrawer = ({ initialCarrierCompanyId, onClose, onCreated }: {
   const create = useCreateRateCard();
   const meta = useRateCardMeta();
   const notify = useNotify();
-  const [form, setForm] = useState({ name: '', carrierCompanyId: initialCarrierCompanyId ?? '', basis: 'SET' as 'SET' | 'ITEM', aggregation: 'DROP' as 'DROP' | 'CUSTOMER', isOwnFleet: false });
+  const [form, setForm] = useState({ name: '', carrierCompanyId: initialCarrierCompanyId ?? '', basis: 'SET' as 'SET' | 'ITEM', aggregation: 'UNIT' as RateAggregation });
   const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => setForm((s) => ({ ...s, [k]: v }));
 
   const submit = () => {
@@ -478,7 +677,7 @@ const CreateCardDrawer = ({ initialCarrierCompanyId, onClose, onCreated }: {
       notify({ title: 'Pick a 3PL company, or name the card.', tone: 'error' }); return;
     }
     create.mutate(
-      { name: form.carrierCompanyId ? undefined : form.name.trim(), carrierCompanyId: form.carrierCompanyId || null, basis: form.basis, aggregation: form.aggregation, isOwnFleet: form.isOwnFleet },
+      { name: form.carrierCompanyId ? undefined : form.name.trim(), carrierCompanyId: form.carrierCompanyId || null, basis: form.basis, aggregation: form.aggregation },
       { onSuccess: (r) => onCreated(r.card.id), onError: (e) => notify({ title: 'Create failed', body: e instanceof Error ? e.message : 'Error', tone: 'error' }) },
     );
   };
@@ -517,18 +716,23 @@ const CreateCardDrawer = ({ initialCarrierCompanyId, onClose, onCreated }: {
                 <option value="SET">By set</option><option value="ITEM">By item</option>
               </select>
             </label>
+            {/* All four, matching the editor. This offered only DROP/CUSTOMER
+                and defaulted to DROP, so every card created here started on a
+                setting the calculator does not price the way the label reads —
+                mig 0244 made UNIT the default for exactly that reason. */}
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Aggregation</span>
-              <select className={styles.fieldInput} value={form.aggregation} onChange={(e) => set('aggregation', e.target.value as 'DROP' | 'CUSTOMER')}>
-                <option value="DROP">Per drop</option><option value="CUSTOMER">Per customer</option>
+              <span className={styles.fieldLabel}>Charge per</span>
+              <select className={styles.fieldInput} value={form.aggregation} onChange={(e) => set('aggregation', e.target.value as RateAggregation)}>
+                <option value="UNIT">{form.basis === 'ITEM' ? 'Item' : 'Set'}</option>
+                <option value="DROP">Drop point (per DO)</option>
+                <option value="CUSTOMER">Customer (same address, same day)</option>
+                <option value="TRIP">Trip (flat, whatever it carries)</option>
               </select>
             </label>
           </div>
-          <label className={styles.field}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
-              <input type="checkbox" checked={form.isOwnFleet} onChange={(e) => set('isOwnFleet', e.target.checked)} /> Own-fleet card (cost structure)
-            </span>
-          </label>
+          <p style={{ margin: 0, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+            {AGGREGATION_HINT[form.aggregation] ?? AGGREGATION_HINT.UNIT}
+          </p>
         </div>
         <footer className={styles.drawerFooter}>
           <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>

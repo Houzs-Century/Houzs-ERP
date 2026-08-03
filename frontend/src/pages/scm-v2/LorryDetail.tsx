@@ -84,6 +84,12 @@ const lorryExpiry = (l: LorryRow, k: ComplianceKind): string | null =>
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+export /** A date column the LorryRow type does not declare yet (mig 0245). */
+const fmtDateField = (l: unknown, col: string): string => {
+  const v = (l as Record<string, unknown>)[col];
+  return typeof v === 'string' && v ? formatDate(v) : '—';
+};
+
 export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () => void }) => {
   const records = useLorryServiceRecords(lorry.id);
   const [adding, setAdding] = useState(false);
@@ -354,6 +360,12 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     model: lorry.model ?? '',
+    /* Mig 0245 — four DIFFERENT dates. A reconditioned import is registered
+       here years after it was built, and a lorry can start work before its
+       transfer paperwork clears, so none of them can be inferred from another. */
+    manufactureDate: (lorry as Record<string, unknown>).manufacture_date as string ?? '',
+    registrationDate: (lorry as Record<string, unknown>).registration_date as string ?? '',
+    inServiceDate: (lorry as Record<string, unknown>).in_service_date as string ?? '',
     purchaseDate: lorry.purchase_date ?? '',
     price: lorry.purchase_price_centi != null ? String(lorry.purchase_price_centi / 100) : '',
     roadTaxExpiry: lorry.road_tax_expiry ?? '',
@@ -369,6 +381,9 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
     update.mutate({
       id: lorry.id,
       model: form.model.trim() || null,
+      manufactureDate: form.manufactureDate || null,
+      registrationDate: form.registrationDate || null,
+      inServiceDate: form.inServiceDate || null,
       purchaseDate: form.purchaseDate || null,
       // RM → cents. Math.round because 1234.56 * 100 is 123455.99999 in binary
       // floating point and a truncation would quietly lose a sen per lorry.
@@ -391,6 +406,9 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
         </div>
         <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-3)', margin: 0 }}>
           <Fact label="Model" value={lorry.model || '—'} />
+          <Fact label="Manufactured" value={fmtDateField(lorry, 'manufacture_date')} />
+          <Fact label="Registered" value={fmtDateField(lorry, 'registration_date')} />
+          <Fact label="In service" value={fmtDateField(lorry, 'in_service_date')} />
           <Fact label="Purchased" value={lorry.purchase_date ? formatDate(lorry.purchase_date) : '—'} />
           <Fact label="Purchase price" value={lorry.purchase_price_centi != null ? fmtCenti(lorry.purchase_price_centi) : '—'} />
         </dl>
@@ -405,6 +423,9 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
       </div>
       <div className={styles.formGrid}>
         <Field label="Model" value={form.model} onChange={(v) => set('model', v)} placeholder="e.g. Isuzu NPR 3.0" />
+        <Field label="Manufactured" type="date" value={form.manufactureDate} onChange={(v) => set('manufactureDate', v)} />
+        <Field label="Registered (JPJ)" type="date" value={form.registrationDate} onChange={(v) => set('registrationDate', v)} />
+        <Field label="First day in service" type="date" value={form.inServiceDate} onChange={(v) => set('inServiceDate', v)} />
         <Field label="Purchase date" type="date" value={form.purchaseDate} onChange={(v) => set('purchaseDate', v)} />
         <Field label="Purchase price (RM)" value={form.price} onChange={(v) => set('price', v)} placeholder="e.g. 128000" />
         {/* The expiry dates are typed from the document, never computed from the

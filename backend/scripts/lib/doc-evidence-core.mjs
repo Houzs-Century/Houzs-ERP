@@ -342,17 +342,42 @@ export function planOverConsumedCorrection({ lot, consumptions = [], movements =
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** poLines: [{ id, itemCode, qty, soItemId, allocationCount, createdAt }]
- *  soLines: [{ id, doc, itemCode, qty, deliveryDate, lineNo, taken }] — the
- *           note-named SOs' active lines; taken = already claimed by ANY
- *           so_item_id link or allocation row anywhere (never double-served).
- *  Returns { plans, skippedLinked, skippedAllocated, unfilled }:
+ *  soLines: [{ id, doc, itemCode, qty, deliveryDate, lineNo, taken, servedQty,
+ *           servingPos }] — the note-named SOs' active lines; taken = already
+ *           claimed by ANY so_item_id link or allocation row anywhere (never
+ *           double-served).
+ *
+ *  DELIVERED PRECEDENCE (2026-08-02, off 2990-PO-2606-023): servedQty = units
+ *  of this line the DELIVERED LEDGER proves already shipped (consumptions →
+ *  lot batch → PO), REGARDLESS of which PO served them — a stored link or
+ *  allocation row is not the only claim; goods that already LEFT are the
+ *  hardest claim there is. A fully-served line is excluded from the free pool
+ *  (reported in skippedServed with the serving POs); a partially-served line
+ *  only demands its unserved remainder. The 023 incident: the taken-set
+ *  checked stored links/allocations only, so SO lines PO-2606-024 had already
+ *  delivered were re-claimed by never-received PO-2606-023's allocations.
+ *
+ *  Returns { plans, skippedLinked, skippedAllocated, skippedServed, unfilled }:
  *    plans   [{ poLineId, itemCode, lineQty, slices: [{ seq, qty, soItemId,
  *            soDoc }] }] — Sigma(slice qty) === lineQty ALWAYS (the remainder
  *            slice is soItemId null = stock), seq 1-based dense.
- *    skipped*  idempotence: lines already linked (so_item_id) or already
- *            carrying allocations are untouched and reported.
+ *    skipped*  idempotence + precedence: lines already linked (so_item_id),
+ *            already carrying allocations, or already served by the delivered
+ *            ledger are untouched and reported.
  *    unfilled  named demand no PO line could cover (reported, not an error). */
-export function planFifoAttribution({ poLines = [], soLines = [] }) {
+export function planFifoAttribution({ poLines = [], soLines = [], poStatus = null }) {
+  /* STATUS GUARD (2026-08-02, the 023 source verdict): a CANCELLED (or DRAFT)
+     PO is never an attribution target — it supplies nothing (mrp.ts PO_DEAD),
+     so writing allocations onto it fabricates claims for goods that will never
+     arrive. The incident PO was cancelled in the SOURCE system and imported
+     verbatim; the backfill attributed it anyway. */
+  const status = String(poStatus ?? "").trim().toUpperCase();
+  if (status === "CANCELLED" || status === "DRAFT") {
+    return {
+      plans: [], skippedLinked: [], skippedAllocated: [], skippedServed: [], unfilled: [],
+      refusedPoStatus: status,
+    };
+  }
   const skippedLinked = poLines.filter((l) => l.soItemId != null).map((l) => l.id);
   const skippedAllocated = poLines
     .filter((l) => l.soItemId == null && Number(l.allocationCount ?? 0) > 0)
@@ -361,8 +386,17 @@ export function planFifoAttribution({ poLines = [], soLines = [] }) {
     .filter((l) => l.soItemId == null && Number(l.allocationCount ?? 0) === 0)
     .slice()
     .sort((a, b) => byDateAscNullsLast(a.createdAt, b.createdAt) || cmpStr(a.id, b.id));
+  // Delivered precedence: a line the ledger proves fully served is NOT free.
+  const skippedServed = soLines
+    .filter((l) => !l.taken && Number(l.servedQty ?? 0) >= Number(l.qty ?? 0) && Number(l.qty ?? 0) > 0)
+    .map((l) => ({
+      soItemId: l.id, soDoc: l.doc, itemCode: l.itemCode,
+      qty: Number(l.qty ?? 0), servedQty: Number(l.servedQty ?? 0),
+      servingPos: [...(l.servingPos ?? [])],
+    }));
+  const servedIds = new Set(skippedServed.map((s) => s.soItemId));
   const free = soLines
-    .filter((l) => !l.taken)
+    .filter((l) => !l.taken && !servedIds.has(l.id))
     .slice()
     .sort((a, b) =>
       byDateAscNullsLast(a.deliveryDate, b.deliveryDate)
@@ -379,7 +413,8 @@ export function planFifoAttribution({ poLines = [], soLines = [] }) {
     const supply = eligible.filter((l) => norm(l.itemCode) === code);
     const demands = free
       .filter((l) => norm(l.itemCode) === code)
-      .map((l) => ({ ...l, need: Math.max(0, Number(l.qty ?? 0)) }));
+      // A partially-served line demands only its UNSERVED remainder.
+      .map((l) => ({ ...l, need: Math.max(0, Number(l.qty ?? 0) - Number(l.servedQty ?? 0)) }));
     let di = 0;
     for (const s of supply) {
       let cap = Math.max(0, Number(s.qty ?? 0));
@@ -410,9 +445,120 @@ export function planFifoAttribution({ poLines = [], soLines = [] }) {
   for (const d of free) {
     const c = norm(d.itemCode);
     if (!c || supplyCodes.has(c)) continue;
-    if (Number(d.qty ?? 0) > 0) unfilled.push({ soDoc: d.doc, soItemId: d.id, itemCode: d.itemCode, qty: Number(d.qty ?? 0) });
+    const remaining = Math.max(0, Number(d.qty ?? 0) - Number(d.servedQty ?? 0));
+    if (remaining > 0) unfilled.push({ soDoc: d.doc, soItemId: d.id, itemCode: d.itemCode, qty: remaining });
   }
-  return { plans, skippedLinked, skippedAllocated, unfilled };
+  return { plans, skippedLinked, skippedAllocated, skippedServed, unfilled };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R5 — corrective re-evaluation of EXISTING allocations against the delivered
+// chain (2026-08-02, the 023/024 incident). The fifo-attribute run claimed SO
+// lines whose demand ANOTHER PO's delivered chain had already served, because
+// its taken-set read stored links/allocations only. This plans the correction:
+//
+//   remove-all  the PO is a CONFIRMED unexecuted duplicate of an executed twin
+//               (same-supplier multiset match; the caller passes the detector's
+//               verdict) — every allocation row on it is an inference about an
+//               order that should not exist; remove them ALL (restores the
+//               pre-attribution state) and RECOMMEND cancelling the PO. The
+//               cancellation itself is the OWNER'S decision — never executed
+//               here.
+//   flips       otherwise, per SO-linked allocation row: demand fully served
+//               by OTHER PO(s) → flip so_item_id to NULL (STOCK); served by
+//               THIS PO → consistent (keep — the row documents a delivered
+//               fact); partially served → refuse + report (needs-owner);
+//               no delivered evidence → keep.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** poNumber:  the PO under repair.
+ *  selfExecuted: does THIS PO have any execution (GRN received / delivered)?
+ *  duplicateOf: null, or { poNumber, executed } — the detector's multiset twin.
+ *  lines: [{ poLineId, itemCode, lineQty,
+ *            allocations: [{ id, seq, qty, soItemId, soDoc }] }]
+ *  served: { [soItemId]: { soQty, servedQty, servingPos: [poNo], servingDos: [doNo] } }
+ *  Returns { mode, removals, flips, keeps, partials, recommendation }:
+ *    removals [{ allocationId, poLineId, seq, qty, soItemId, soDoc, print }]
+ *    flips    [{ allocationId, poLineId, seq, soItemId, soDoc, print }]
+ *    keeps    [{ allocationId, reason }]  (reason: 'stock-slice' |
+ *             'served-by-this-po' | 'no-delivered-evidence')
+ *    partials [{ allocationId, soDoc, servedQty, soQty }] — refused, reported */
+export function planAllocationDeliveredRepair({
+  poNumber,
+  selfExecuted = false,
+  selfCancelled = false,
+  duplicateOf = null,
+  lines = [],
+  served = {},
+}) {
+  const sub = (seq) => `${poNumber}-${String(seq).padStart(2, "0")}`;
+  const servedOf = (soItemId) => served[soItemId] ?? null;
+  const out = { mode: "flips", removals: [], flips: [], keeps: [], partials: [], recommendation: null };
+
+  /* CANCELLED PO (2026-08-02, the 023 source verdict: cancelled in the SOURCE
+     system, imported verbatim): its allocations claim demand for goods that
+     will never arrive — remove them ALL, and the owner needs NO cancel action
+     (already cancelled; MRP was never inflated either — CANCELLED is PO_DEAD,
+     excluded from supply). An executed-then-cancelled PO still removes: the
+     delivered chain, not an allocation row, is what documents what shipped. */
+  const confirmedDuplicate = Boolean(duplicateOf && duplicateOf.executed && !selfExecuted);
+  if (selfCancelled || confirmedDuplicate) {
+    out.mode = "remove-all";
+    for (const line of lines) {
+      for (const a of line.allocations ?? []) {
+        const s = a.soItemId ? servedOf(a.soItemId) : null;
+        const servedNote = a.soItemId
+          ? (s && Number(s.servedQty ?? 0) > 0
+            ? ` (demand served by ${(s.servingPos ?? []).join("+") || "?"} via ${(s.servingDos ?? []).join(", ") || "?"})`
+            : " (demand not yet served — MRP floating coverage will still show it)")
+          : "";
+        out.removals.push({
+          allocationId: a.id, poLineId: line.poLineId, seq: a.seq, qty: a.qty,
+          soItemId: a.soItemId ?? null, soDoc: a.soDoc ?? null,
+          print: `${sub(a.seq)}: ${a.soItemId ? `${a.soDoc} -> REMOVED` : "STOCK slice REMOVED"}${servedNote}`,
+        });
+      }
+    }
+    out.recommendation = selfCancelled
+      ? `${poNumber} is CANCELLED${duplicateOf ? ` (duplicate of ${duplicateOf.poNumber} — the source system's own cancel, carried by the import)` : ""}. `
+        + `All its allocation rows are removed — a dead PO must not claim SO demand. `
+        + `NO owner cancel action is needed (already cancelled), and MRP was never inflated by it `
+        + `(CANCELLED is PO_DEAD — excluded from incoming supply).`
+      : `${poNumber} is an UNEXECUTED duplicate of ${duplicateOf.poNumber} (same supplier, same line multiset; `
+        + `${duplicateOf.poNumber} received+shipped, ${poNumber} never received). All its allocation rows are removed. `
+        + `RECOMMENDED OWNER DECISION: cancel ${poNumber} — cancelling also removes its phantom incoming supply from MRP `
+        + `(dead statuses are excluded from PO Outstanding). NOT executed here.`;
+    return out;
+  }
+
+  for (const line of lines) {
+    for (const a of line.allocations ?? []) {
+      if (!a.soItemId) { out.keeps.push({ allocationId: a.id, reason: "stock-slice" }); continue; }
+      const s = servedOf(a.soItemId);
+      if (!s || Number(s.servedQty ?? 0) <= 0) {
+        out.keeps.push({ allocationId: a.id, reason: "no-delivered-evidence" });
+        continue;
+      }
+      const servedByThisPo = (s.servingPos ?? []).includes(poNumber);
+      if (servedByThisPo) {
+        out.keeps.push({ allocationId: a.id, reason: "served-by-this-po" });
+        continue;
+      }
+      if (Number(s.servedQty ?? 0) >= Number(s.soQty ?? 0) && Number(s.soQty ?? 0) > 0) {
+        out.flips.push({
+          allocationId: a.id, poLineId: line.poLineId, seq: a.seq,
+          soItemId: a.soItemId, soDoc: a.soDoc ?? null,
+          print: `${sub(a.seq)}: ${a.soDoc ?? a.soItemId} -> STOCK (served by ${(s.servingPos ?? []).join("+") || "?"} via ${(s.servingDos ?? []).join(", ") || "?"})`,
+        });
+      } else {
+        out.partials.push({
+          allocationId: a.id, soDoc: a.soDoc ?? null,
+          servedQty: Number(s.servedQty ?? 0), soQty: Number(s.soQty ?? 0),
+        });
+      }
+    }
+  }
+  return out;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

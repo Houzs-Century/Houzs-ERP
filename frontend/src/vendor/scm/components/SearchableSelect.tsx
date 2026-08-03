@@ -16,6 +16,29 @@ import { createPortal } from "react-dom";
 
 export type SearchableSelectOption = { value: string; label: string };
 
+/**
+ * How many options reach the DOM at once. The menu is 280px tall — about ten
+ * visible rows — so rendering the whole list builds thousands of pixels of <li>
+ * inside it and rebuilds them on every keystroke. One page, extended on scroll.
+ *
+ * HOOKKA measured the identical component on their prod (2026-08-01): opening a
+ * 360-option product picker cost a 1,383ms main-thread task and took the DOM
+ * from 906 to 2,354 nodes, with another 1,024ms on the next keystroke.
+ */
+const OPTION_PAGE = 60;
+
+/** Extend the window by one page, never past the end. Pure, so it is testable
+ *  without a DOM. (Our menu has no keyboard navigation, so unlike HOOKKA's
+ *  version this does not need to lead a highlight index — if arrow keys are
+ *  ever added here, the slice must also stay ahead of the highlight or Enter
+ *  will commit an option that was never rendered.) */
+export function nextOptionWindow(current: number, total: number, step = OPTION_PAGE): number {
+  if (total <= 0) return 0;
+  const safeCurrent = Math.max(0, Math.floor(current));
+  const safeStep = Math.max(1, Math.floor(step));
+  return Math.min(total, safeCurrent + safeStep);
+}
+
 export function SearchableSelect({
   value,
   onChange,
@@ -51,6 +74,7 @@ export function SearchableSelect({
   );
 
   // Client-side filter: empty search → every option (short lists still work).
+  // FILTERING stays over the full list; only what reaches the DOM is capped.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return options;
@@ -58,6 +82,19 @@ export function SearchableSelect({
       (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
     );
   }, [options, search]);
+
+  // How many of `filtered` are rendered. Rewound whenever the term or the open
+  // state changes — DURING RENDER, not in an effect, so no frame ever shows the
+  // previous term's scroll depth against the new term's results.
+  const [shown, setShown] = useState(OPTION_PAGE);
+  const windowKey = `${open ? "o" : "c"}:${search}`;
+  const [lastWindowKey, setLastWindowKey] = useState(windowKey);
+  if (windowKey !== lastWindowKey) {
+    setLastWindowKey(windowKey);
+    setShown(OPTION_PAGE);
+  }
+  const visible = filtered.length > shown ? filtered.slice(0, shown) : filtered;
+  const hiddenCount = filtered.length - visible.length;
 
   // Pin the portalled menu under the input, tracking scroll/resize (escapes
   // the card's overflow:hidden clip — same idiom as the SKU/fabric pickers).
@@ -121,9 +158,18 @@ export function SearchableSelect({
               borderRadius: 8,
               boxShadow: "0 10px 28px rgba(17, 20, 15, 0.14)",
             }}
+            onScroll={(e) => {
+              if (hiddenCount === 0) return;
+              const el = e.currentTarget;
+              // One page ahead of the viewport, so the extension lands before
+              // the operator reaches the bottom.
+              if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
+                setShown((s) => nextOptionWindow(s, filtered.length));
+              }
+            }}
           >
             {filtered.length > 0 ? (
-              filtered.map((o) => {
+              visible.map((o) => {
                 const isSel = o.value === value;
                 return (
                   <li
@@ -163,6 +209,22 @@ export function SearchableSelect({
             ) : (
               <li style={{ padding: "6px 10px", color: "var(--fg-muted, #888)", fontSize: "var(--fs-13, 13px)" }}>
                 No match{search.trim() ? ` for "${search.trim()}"` : ""}.
+              </li>
+            )}
+            {hiddenCount > 0 && (
+              // Without this the list looks complete at 60 and the operator
+              // types a term they could have scrolled to.
+              <li
+                aria-live="polite"
+                style={{
+                  padding: "6px 10px",
+                  color: "var(--fg-muted, #888)",
+                  fontSize: "var(--fs-12, 12px)",
+                  borderTop: "1px solid var(--line, #dcdcd2)",
+                  marginTop: 2,
+                }}
+              >
+                {hiddenCount} more — keep scrolling, or type to narrow.
               </li>
             )}
           </ul>,

@@ -55,6 +55,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
 type GrnRow = {
@@ -693,7 +694,16 @@ export function GoodsReceivedListV2() {
       width: "166px",
       alwaysVisible: true,
       getValue: (r) => r.grn_number,
-      render: (r) => <span className="font-docno text-[12.5px] font-semibold text-ink">{r.grn_number}</span>,
+      render: (r) => (
+        <span
+          className={cn(
+            "font-docno text-[12.5px] font-semibold text-ink",
+            isCancelledDocStatus(r.status) && "dt-cancel-strike",
+          )}
+        >
+          {r.grn_number}
+        </span>
+      ),
     },
     {
       key: "received_at",
@@ -724,6 +734,7 @@ export function GoodsReceivedListV2() {
           assignments={r.assigned_sos}
           sourceLinked={r.assigned_so_linked}
           onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+          emptyMeans="stock"
         />
       ),
     },
@@ -776,6 +787,8 @@ export function GoodsReceivedListV2() {
       key: "status",
       label: "Status",
       width: "120px",
+      // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
+      className: "dt-cancel-keep",
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
@@ -907,6 +920,9 @@ export function GoodsReceivedListV2() {
                 error={error ? (error as Error).message ?? "Failed to load" : null}
                 columns={columns}
                 getRowKey={(r) => r.id}
+                getRowClassName={(r) =>
+                  isCancelledDocStatus(r.status) ? "dt-row-cancelled" : undefined
+                }
                 onRowClick={(r) => setSelected(r)}
                 expandable={{
                   render: (r) => <GrnLinesExpansion id={r.id} />,

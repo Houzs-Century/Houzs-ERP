@@ -262,7 +262,14 @@ export function useUpdateDeliveryFields() {
    the value a user PICKS is byte-identical to what the board SHOWS — they can no
    longer drift (owner: the dropdown type must equal the type we normally show). */
 export const DP_JOB_TYPES = [
-  'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP',
+  /* INSPECTION has been on scm.trip_stop_type since mig 0165. It was missing
+     here, so an inspection DP order rendered through the defensive prettifier
+     rather than the canonical label. */
+  'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION',
+  /* Job types 8 and 9, from the owner's 2026-08-03 list (mig 0250). Listed here
+     so the board LABELS them; what the create drawer offers is
+     DP_CREATABLE_JOB_TYPES below, which they join with their pickers. */
+  'TRANSFER', 'LORRY_SERVICE',
 ] as const;
 export type DpJobType = (typeof DP_JOB_TYPES)[number];
 
@@ -273,6 +280,11 @@ export const DP_JOB_TYPE_LABEL: Record<DpJobType, string> = {
   SETUP: 'Setup',
   DISMANTLE: 'Dismantle',
   SUPPLIER_PICKUP: 'Supplier Pickup',
+  INSPECTION: 'Inspection',
+  /* The owner's own words for these two ("Transfer item", "Lorry service"), not
+     a Title-Cased enum value — the label is what he reads on the board. */
+  TRANSFER: 'Transfer Item',
+  LORRY_SERVICE: 'Lorry Service',
 };
 
 /* The job types the New-DP-Order drawer OFFERS to create. DELIVERY / PICKUP /
@@ -282,7 +294,23 @@ export const DP_JOB_TYPE_LABEL: Record<DpJobType, string> = {
    sink). The drawer's real job is the "extra" fleet jobs with no native document.
    DP_JOB_TYPES (the full set) is still used to LABEL any existing/legacy dp_order
    the board renders. */
-export const DP_CREATABLE_JOB_TYPES = ['SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP'] as const;
+export const DP_CREATABLE_JOB_TYPES = ['SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'LORRY_SERVICE', 'TRANSFER'] as const;
+
+/* LORRY_SERVICE and TRANSFER are safe to create for the same reason the other
+   three are: their sources set workshop_id / lorry_id / stock_transfer_id /
+   warehouse_id (mig 0251) and never so_doc_no, so the board's union guard does
+   not filter them out. Verified against created rows, not assumed — see the
+   INSPECTION note below for the failure this avoids. */
+
+/* INSPECTION is deliberately NOT here, even though 2026-08-02 added it to
+   DP_JOB_TYPES so it labels correctly. The three types above are safe to create
+   because their source sets project_id / supplier_id — NOT so_doc_no, which is
+   what the board's union guard filters on
+   (delivery-planning.ts: `.is('so_doc_no', null)...`). sourceMeta gives
+   INSPECTION the DEFAULT source kind, 'so', so a created one would set
+   so_doc_no and vanish from the board — the exact data sink #1416 closed.
+   Making it creatable means first giving it a source kind that does not, and
+   proving the row still renders. Not done here. */
 
 /* The label the board / dropdown show for a DP job type. Reads the canonical map;
    falls back to a Title-Cased prettify for any value not in the set (defensive —
@@ -306,6 +334,17 @@ export type DpOrderCreate = {
   supplierId?: string;
   projectId?: number;
   assrCaseId?: number;
+  /* LORRY_SERVICE (migs 0250/0251): the lorry being SERVICED — the job's subject,
+     and the one taken off the road when this is scheduled — plus the workshop it
+     goes to, which is the party the address snapshot comes from. */
+  lorryId?: string;
+  workshopId?: string;
+  /* TRANSFER (migs 0250/0251): the stock-transfer document being driven, when
+     there is one, and the DESTINATION warehouse — which is the party, and the
+     address the fleet actually goes to. The owner asked for both paths: pick a
+     transfer, or enter an ad-hoc move with no document. */
+  stockTransferId?: string;
+  warehouseId?: string;
   requestedDate?: string;
   remark?: string;
   overrides?: Record<string, string | null>;
@@ -324,7 +363,12 @@ export function useCancelDpOrder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      authedFetch<{ stopRemoved?: { failed?: boolean; reason?: string } }>(
+      authedFetch<{
+        stopRemoved?: { failed?: boolean; reason?: string };
+        /* LORRY_SERVICE only: giving the lorry back. A failure here keeps a free
+           lorry off the board indefinitely, so it is reported like stopRemoved. */
+        lorryUnblocked?: { removed?: boolean; failed?: boolean; reason?: string };
+      }>(
         `/dp-orders/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) },
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
@@ -346,6 +390,12 @@ export type ScheduleDpOrderResult = {
   dpOrder: unknown;
   dp_no: string | null;
   tripStop: { id: string | null; failed: boolean; reason?: string };
+  /* LORRY_SERVICE only: the availability window that takes the serviced lorry
+     off the road for that day. Reported, never silent — a failure here leaves a
+     lorry looking bookable on the day it sits in a workshop, so the caller must
+     say so out loud (same rule as tripStop.failed). Absent for every other job
+     type, and for a service job whose subject lorry was never set. */
+  lorryBlocked?: { blocked: boolean; failed: boolean; reason?: string };
 };
 export function useScheduleDpOrder() {
   const qc = useQueryClient();
@@ -361,6 +411,51 @@ export function useScheduleDpOrder() {
       qc.invalidateQueries({ queryKey: ['scm-trips'] });
       qc.invalidateQueries({ queryKey: ['scm-trip'] });
     },
+  });
+}
+
+/* ── DP Orders list (GET /dp-orders) ──────────────────────────────────────────
+   The raw dp_orders registry, straight off the table (snake_case, newest first,
+   backend-capped at 500). This is the /scm/dp-orders LIST page's feed — distinct
+   from the board union, which deliberately SUPPRESSES any dp_order carrying a
+   source ref (the anti-double-count guard) and shows nothing once a job is
+   cancelled. The list is where those hidden/terminal rows stay reachable.
+
+   Query key extends the board's ['delivery-planning'] prefix ON PURPOSE: every
+   existing create / cancel / schedule mutation invalidates that prefix, so the
+   list refreshes with zero changes to the mutations. */
+export type DpOrderRow = {
+  id: string;
+  dp_no: string | null;
+  job_type: string;
+  party_type: string;
+  so_doc_no: string | null;
+  do_id: string | null;
+  assr_case_id: number | null;
+  supplier_id: string | null;
+  project_id: number | null;
+  party_name: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  address1: string | null;
+  address2: string | null;
+  address3: string | null;
+  address4: string | null;
+  city: string | null;
+  postcode: string | null;
+  state: string | null;
+  requested_date: string | null;
+  trip_id: string | null;
+  trip_stop_id: string | null;
+  status: string;
+  remark: string | null;
+  created_at: string;
+  updated_at: string;
+};
+export function useDpOrders() {
+  return useQuery({
+    queryKey: ['delivery-planning', 'dp-orders'],
+    queryFn: () => authedFetch<{ dpOrders: DpOrderRow[] }>(`/dp-orders`),
   });
 }
 

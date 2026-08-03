@@ -604,3 +604,208 @@ describe("isRepairSeeded — repair-created rows are expected, not stocktake unk
     expect(isRepairSeeded({})).toBe(false);
   });
 });
+
+// ── DELIVERED PRECEDENCE (2026-08-02, the 023/024 incident) ─────────────────
+// planFifoAttribution used to treat an SO line as free unless a stored link or
+// allocation row claimed it — invisible to it: goods that had ALREADY SHIPPED
+// under another PO's batch. 2990-PO-2606-023 (never received) thereby claimed
+// the same SO lines received+shipped -024 had delivered. These tests pin the
+// precedence: the delivered ledger outranks FIFO attribution, regardless of
+// which PO did the serving.
+import { planAllocationDeliveredRepair } from "../scripts/lib/doc-evidence-core.mjs";
+
+describe("planFifoAttribution — delivered precedence (2026-08-02)", () => {
+  const poLine = { id: "pl-1", itemCode: "MAKOTO-OLIVE", qty: 5, soItemId: null, allocationCount: 0, createdAt: "2026-06-24" };
+
+  test("a fully-served SO line is TAKEN even with no stored link or allocation (the 023 defect)", () => {
+    const res = planFifoAttribution({
+      poLines: [poLine],
+      soLines: [
+        { id: "so-036-l1", doc: "2990-SO-2606-036", itemCode: "MAKOTO-OLIVE", qty: 1, deliveryDate: "2026-07-01", taken: false, servedQty: 1, servingPos: ["2990-PO-2606-024"] },
+        { id: "so-029-l1", doc: "2990-SO-2606-029", itemCode: "MAKOTO-OLIVE", qty: 1, deliveryDate: "2026-07-02", taken: false, servedQty: 1, servingPos: ["2990-PO-2606-024"] },
+      ],
+    });
+    // Nothing to attribute: both demands served — the whole line books as STOCK.
+    expect(res.skippedServed.map((s) => s.soDoc)).toEqual(["2990-SO-2606-036", "2990-SO-2606-029"]);
+    expect(res.plans).toHaveLength(1);
+    expect(res.plans[0].slices).toEqual([{ seq: 1, qty: 5, soItemId: null, soDoc: null }]);
+  });
+
+  test("served REGARDLESS of which PO — even this PO's own delivered goods are not re-claimed", () => {
+    const res = planFifoAttribution({
+      poLines: [poLine],
+      soLines: [
+        { id: "so-1", doc: "SO-1", itemCode: "MAKOTO-OLIVE", qty: 2, deliveryDate: null, taken: false, servedQty: 2, servingPos: ["2990-PO-2606-023"] },
+      ],
+    });
+    expect(res.skippedServed).toHaveLength(1);
+    expect(res.plans[0].slices).toEqual([{ seq: 1, qty: 5, soItemId: null, soDoc: null }]);
+  });
+
+  test("a PARTIALLY served line demands only its unserved remainder", () => {
+    const res = planFifoAttribution({
+      poLines: [poLine],
+      soLines: [
+        { id: "so-1", doc: "SO-1", itemCode: "MAKOTO-OLIVE", qty: 3, deliveryDate: "2026-07-01", taken: false, servedQty: 2, servingPos: ["PO-X"] },
+      ],
+    });
+    expect(res.skippedServed).toHaveLength(0);
+    expect(res.plans[0].slices).toEqual([
+      { seq: 1, qty: 1, soItemId: "so-1", soDoc: "SO-1" },
+      { seq: 2, qty: 4, soItemId: null, soDoc: null },
+    ]);
+  });
+
+  test("no served evidence — behaviour unchanged (regression guard)", () => {
+    const res = planFifoAttribution({
+      poLines: [poLine],
+      soLines: [
+        { id: "so-1", doc: "SO-1", itemCode: "MAKOTO-OLIVE", qty: 2, deliveryDate: "2026-07-01", taken: false },
+      ],
+    });
+    expect(res.plans[0].slices).toEqual([
+      { seq: 1, qty: 2, soItemId: "so-1", soDoc: "SO-1" },
+      { seq: 2, qty: 3, soItemId: null, soDoc: null },
+    ]);
+  });
+});
+
+describe("planAllocationDeliveredRepair — the corrective for already-written allocations", () => {
+  const served = {
+    "so-036-l1": { soQty: 1, servedQty: 1, servingPos: ["2990-PO-2606-024"], servingDos: ["2990-DO-2607-008"] },
+    "so-029-l1": { soQty: 1, servedQty: 1, servingPos: ["2990-PO-2606-024"], servingDos: ["2990-DO-2607-011"] },
+  };
+  const lines = [{
+    poLineId: "pl-1",
+    allocations: [
+      { id: "a1", seq: 1, qty: 1, soItemId: "so-036-l1", soDoc: "2990-SO-2606-036" },
+      { id: "a2", seq: 2, qty: 1, soItemId: "so-029-l1", soDoc: "2990-SO-2606-029" },
+      { id: "a3", seq: 3, qty: 3, soItemId: null, soDoc: null },
+    ],
+  }];
+
+  test("flips rows whose demand another PO's delivered chain fully served, with the incident's print shape", () => {
+    const res = planAllocationDeliveredRepair({
+      poNumber: "2990-PO-2606-023",
+      selfExecuted: false,
+      duplicateOf: null,
+      lines,
+      served,
+    });
+    expect(res.mode).toBe("flips");
+    expect(res.flips.map((f) => f.allocationId)).toEqual(["a1", "a2"]);
+    expect(res.flips[0].print).toBe(
+      "2990-PO-2606-023-01: 2990-SO-2606-036 -> STOCK (served by 2990-PO-2606-024 via 2990-DO-2607-008)",
+    );
+    // The stock slice is untouched.
+    expect(res.keeps).toEqual([{ allocationId: "a3", reason: "stock-slice" }]);
+  });
+
+  test("keeps a row whose demand THIS PO's own chain served (it documents a delivered fact)", () => {
+    const res = planAllocationDeliveredRepair({
+      poNumber: "2990-PO-2606-024",
+      selfExecuted: true,
+      duplicateOf: null,
+      lines: [{ poLineId: "pl-1", allocations: [{ id: "a1", seq: 1, qty: 1, soItemId: "so-036-l1", soDoc: "2990-SO-2606-036" }] }],
+      served,
+    });
+    expect(res.flips).toHaveLength(0);
+    expect(res.keeps).toEqual([{ allocationId: "a1", reason: "served-by-this-po" }]);
+  });
+
+  test("partial service refuses (needs-owner), never flips", () => {
+    const res = planAllocationDeliveredRepair({
+      poNumber: "PO-B",
+      selfExecuted: false,
+      duplicateOf: null,
+      lines: [{ poLineId: "pl-1", allocations: [{ id: "a1", seq: 1, qty: 2, soItemId: "so-p", soDoc: "SO-P" }] }],
+      served: { "so-p": { soQty: 3, servedQty: 2, servingPos: ["PO-A"], servingDos: ["DO-1"] } },
+    });
+    expect(res.flips).toHaveLength(0);
+    expect(res.partials).toEqual([{ allocationId: "a1", soDoc: "SO-P", servedQty: 2, soQty: 3 }]);
+  });
+
+  test("a CONFIRMED unexecuted duplicate of an executed twin removes ALL rows and recommends the cancel (owner decision)", () => {
+    const res = planAllocationDeliveredRepair({
+      poNumber: "2990-PO-2606-023",
+      selfExecuted: false,
+      duplicateOf: { poNumber: "2990-PO-2606-024", executed: true },
+      lines,
+      served,
+    });
+    expect(res.mode).toBe("remove-all");
+    expect(res.removals).toHaveLength(3); // SO slices AND the stock slice
+    expect(res.recommendation).toContain("cancel 2990-PO-2606-023");
+    expect(res.recommendation).toContain("NOT executed here");
+  });
+
+  test("an EXECUTED PO is never treated as the removable duplicate, twin or not", () => {
+    const res = planAllocationDeliveredRepair({
+      poNumber: "2990-PO-2606-024",
+      selfExecuted: true,
+      duplicateOf: { poNumber: "2990-PO-2606-023", executed: false },
+      lines: [{ poLineId: "pl-1", allocations: [{ id: "a1", seq: 1, qty: 1, soItemId: null, soDoc: null }] }],
+      served: {},
+    });
+    expect(res.mode).toBe("flips");
+    expect(res.removals).toHaveLength(0);
+  });
+});
+
+// ── L (2026-08-02, the 023 source verdict): CANCELLED POs — never targets,
+// and their existing allocations are removed with no cancel recommendation ───
+describe("planFifoAttribution — dead-status guard (the 023 source verdict)", () => {
+  const poLine = { id: "pl-1", itemCode: "MAKOTO-OLIVE", qty: 5, soItemId: null, allocationCount: 0, createdAt: "2026-06-24" };
+  const soLine = { id: "so-1", doc: "SO-1", itemCode: "MAKOTO-OLIVE", qty: 2, deliveryDate: "2026-07-01", taken: false };
+
+  test("a CANCELLED PO is never an attribution target", () => {
+    const res = planFifoAttribution({ poLines: [poLine], soLines: [soLine], poStatus: "CANCELLED" });
+    expect(res.refusedPoStatus).toBe("CANCELLED");
+    expect(res.plans).toHaveLength(0);
+  });
+
+  test("a DRAFT PO refuses too (it supplies nothing yet)", () => {
+    expect(planFifoAttribution({ poLines: [poLine], soLines: [soLine], poStatus: "draft" }).refusedPoStatus).toBe("DRAFT");
+  });
+
+  test("a live status plans exactly as before (regression guard)", () => {
+    const res = planFifoAttribution({ poLines: [poLine], soLines: [soLine], poStatus: "SUBMITTED" });
+    expect(res.refusedPoStatus).toBeUndefined();
+    expect(res.plans[0].slices[0]).toEqual({ seq: 1, qty: 2, soItemId: "so-1", soDoc: "SO-1" });
+  });
+});
+
+describe("planAllocationDeliveredRepair — CANCELLED PO removes all, no cancel recommendation", () => {
+  const lines = [{
+    poLineId: "pl-1",
+    allocations: [
+      { id: "a1", seq: 1, qty: 1, soItemId: "so-036-l1", soDoc: "2990-SO-2606-036" },
+      { id: "a2", seq: 2, qty: 4, soItemId: null, soDoc: null },
+    ],
+  }];
+
+  test("selfCancelled -> remove-all; the recommendation says no owner cancel is needed and MRP was never inflated", () => {
+    const res = planAllocationDeliveredRepair({
+      poNumber: "2990-PO-2606-023",
+      selfExecuted: false,
+      selfCancelled: true,
+      duplicateOf: { poNumber: "2990-PO-2606-024", executed: true },
+      lines,
+      served: {},
+    });
+    expect(res.mode).toBe("remove-all");
+    expect(res.removals).toHaveLength(2);
+    expect(res.recommendation).toContain("CANCELLED");
+    expect(res.recommendation).toContain("NO owner cancel action");
+    expect(res.recommendation).toContain("PO_DEAD");
+    expect(res.recommendation).not.toContain("RECOMMENDED OWNER DECISION: cancel");
+  });
+
+  test("selfCancelled wins even without a duplicate twin (a dead PO must not claim demand)", () => {
+    const res = planAllocationDeliveredRepair({
+      poNumber: "PO-X", selfExecuted: false, selfCancelled: true, duplicateOf: null, lines, served: {},
+    });
+    expect(res.mode).toBe("remove-all");
+    expect(res.recommendation).toContain("NO owner cancel action");
+  });
+});

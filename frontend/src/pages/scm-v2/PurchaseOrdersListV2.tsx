@@ -59,6 +59,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -957,7 +958,14 @@ export function PurchaseOrdersListV2() {
       // _R suffix (owner 2026-07-27) — a revised PO reads PO-xxx_R1 everywhere.
       getValue: (r) => poDisplayNumber(r.po_number, r.revision),
       render: (r) => (
-        <span className="font-docno text-[12.5px] font-semibold text-ink">{poDisplayNumber(r.po_number, r.revision)}</span>
+        <span
+          className={cn(
+            "font-docno text-[12.5px] font-semibold text-ink",
+            isCancelledDocStatus(r.status) && "dt-cancel-strike",
+          )}
+        >
+          {poDisplayNumber(r.po_number, r.revision)}
+        </span>
       ),
     },
     {
@@ -1017,6 +1025,7 @@ export function PurchaseOrdersListV2() {
           assignments={r.assigned_sos}
           sourceLinked={r.assigned_so_linked}
           onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+          emptyMeans="stock"
         />
       ),
     },
@@ -1057,6 +1066,8 @@ export function PurchaseOrdersListV2() {
       key: "status",
       label: "Status",
       width: "144px",
+      // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
+      className: "dt-cancel-keep",
       getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
@@ -1265,6 +1276,9 @@ export function PurchaseOrdersListV2() {
                 error={error ? (error as Error).message ?? "Failed to load" : null}
                 columns={columns}
                 getRowKey={(r) => r.id}
+                getRowClassName={(r) =>
+                  isCancelledDocStatus(r.status) ? "dt-row-cancelled" : undefined
+                }
                 onRowClick={(r) => setSelected(r)}
                 expandable={{
                   render: (r) => <PoLinesExpansion id={r.id} />,

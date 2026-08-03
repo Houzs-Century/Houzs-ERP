@@ -100,6 +100,10 @@ export const DeliveryPlanning = () => {
       const res = await cancelDp.mutateAsync(id);
       if (res?.stopRemoved?.failed) {
         notify({ title: 'Cancelled, but the trip stop stayed', body: res.stopRemoved.reason ?? 'Remove it from the trip manually.', tone: 'error' });
+      } else if (res?.lorryUnblocked?.failed) {
+        // A cancelled lorry service that kept its availability window holds a
+        // free lorry off the board, and nothing else would ever report it.
+        notify({ title: 'Cancelled, but the lorry is still blocked', body: `Clear its unavailable window in Fleet Maintenance: ${res.lorryUnblocked.reason ?? 'unknown error'}.`, tone: 'error' });
       } else {
         notify({ title: 'Job cancelled', body: 'It is off the board and off its trip.' });
       }

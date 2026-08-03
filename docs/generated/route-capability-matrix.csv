@@ -195,6 +195,9 @@ PATCH,/api/fleet-maintenance/work-orders/:woId,AUTHENTICATED_MIDDLEWARE,COMPANY_
 POST,/api/fleet-maintenance/work-orders/:woId/parts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 DELETE,/api/fleet-maintenance/work-orders/:woId/parts/:partId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 POST,/api/fleet-maintenance/work-orders/:woId/transition,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
+GET,/api/fleet-maintenance/workshops,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
+POST,/api/fleet-maintenance/workshops,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
+PATCH,/api/fleet-maintenance/workshops/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 GET,/api/fleet/staff,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesView(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/fleet.ts
 GET,/api/inbox,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/inbox.ts
 GET,/api/logs,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""logs.read"")",,NO,DECLARED_GATE,backend/src/routes/logs.ts
@@ -867,6 +870,7 @@ DELETE,/api/scm/sales-invoices/:id/payments/:paymentId,AUTHENTICATED_MIDDLEWARE,
 PATCH,/api/scm/sales-invoices/:id/status,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.invoices"", { readInheritsFrom: ""scm.sales.orders"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/sales-invoices.ts
 POST,/api/scm/sales-invoices/from-dos,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.invoices"", { readInheritsFrom: ""scm.sales.orders"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/sales-invoices.ts
 GET,/api/scm/sales-invoices/invoiceable-do-lines,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.invoices"", { readInheritsFrom: ""scm.sales.orders"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/sales-invoices.ts
+POST,/api/scm/scan-lorry-invoice/extract,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-lorry-invoice.ts
 POST,/api/scm/scan-payment/extract,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-payment.ts
 POST,/api/scm/scan-so/enqueue,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-so.ts
 POST,/api/scm/scan-so/extract,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-so.ts

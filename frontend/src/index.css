@@ -343,3 +343,48 @@ textarea:focus-visible {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0);   }
 }
+
+/* ──────────────────────────────────────────────────────────
+   Cancelled-document rows (owner 2026-08-02: a cancelled doc must read as
+   obviously dead in every SCM list — "如果是 cancel 的可不可以变灰色").
+
+   The row's CONTENT fades to 55% while the Status cell (`dt-cancel-keep`,
+   set by each list page on its Status column) keeps full strength — WHY the
+   row is grey must stay readable. Hover lifts the content back to 85% so a
+   muted row is still consultable. Opacity-only: the Ink & Petrol values
+   underneath are untouched, and the fade sits on the cells' CHILDREN, not
+   the <td> itself, so cell/sticky backgrounds stay opaque (a translucent
+   pinned cell would let content scrolling beneath it bleed through).
+
+   Applied via DataTable's getRowClassName; the drill-down sub-<tr> inherits
+   the class from its parent row inside DataTable, so expanded lines under a
+   cancelled row mute with it. */
+tr.dt-row-cancelled > td > * {
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+tr.dt-row-cancelled:hover > td > * {
+  opacity: 0.85;
+}
+tr.dt-row-cancelled > td.dt-cancel-keep > *,
+tr.dt-row-cancelled:hover > td.dt-cancel-keep > * {
+  opacity: 1;
+}
+
+/* Same treatment on DataTable's stacked-card branch (<sm): label/value cells
+   and the struck doc-number title fade; the Status cell keeps full strength. */
+[data-mobile-card].dt-row-cancelled dt,
+[data-mobile-card].dt-row-cancelled dd,
+[data-mobile-card].dt-row-cancelled .dt-cancel-strike {
+  opacity: 0.55;
+}
+[data-mobile-card].dt-row-cancelled dd.dt-cancel-keep {
+  opacity: 1;
+}
+
+/* The cancelled DOC NUMBER (only — not every cell) is additionally struck
+   through, thin, in whatever ink it already renders. */
+.dt-cancel-strike {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}

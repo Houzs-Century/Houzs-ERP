@@ -22,6 +22,7 @@
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import { requireHouzsPerm } from "../lib/houzs-perms";
+import { nextCode, CODE_PREFIX } from "../lib/fleet-code-mint";
 import { activeCompanyId } from "../lib/companyScope";
 import type { Env, Variables } from "../env";
 import {
@@ -58,6 +59,8 @@ import {
   isWorkOrderOpen,
   workOrderSeam,
   workOrderTotalCenti,
+  workOrderLineCenti,
+  type WorkOrderLineInput,
   COMPONENT_TYPES,
   type ComponentType,
   COMPONENT_POSITIONS,
@@ -208,6 +211,26 @@ function flatDoc(docType: ComplianceDocType, expiry: string | null, today: strin
 
 type DocView = ReturnType<typeof shapeDoc> | ReturnType<typeof flatDoc>;
 
+/* Fleet Health is the IN-HOUSE board. Owner, 2026-08-02: "Fleet Health 只看我们
+   in-house 的罗里而已，outsource 的我们是不看的" — a 3PL's road tax, PUSPAKOM,
+   servicing and breakdowns are that carrier's paperwork and that carrier's cost,
+   and counting them made every fleet KPI (fleet size, cannot-dispatch, monthly
+   spend) answer a question nobody asked.
+
+   The three-state predicate is DEFENSIVE PARITY, not a rescue of legacy rows:
+   scm.lorries.is_internal is `BOOLEAN NOT NULL DEFAULT true` (0053:54), so no
+   NULL exists today and .eq("is_internal", true) would behave identically. The
+   reason to write it this way anyway is that every DISPLAY path in this module
+   reads three-state — `is_internal !== false` (the dashboard's isInternal,
+   FleetHealth's MissingComplianceNote) — so if the NOT NULL is ever dropped, the
+   filter and the label still agree instead of silently disagreeing.
+
+   Scope: the LIST surfaces only (dashboard + reminders). GET /vehicles/:id is
+   deliberately not filtered, so an existing link to an outsourced lorry still
+   opens rather than 404ing. */
+const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => any } }, cols: string) =>
+  sb.from("lorries").select(cols).eq("active", true).or("is_internal.is.null,is_internal.eq.true");
+
 type Lorry = {
   id: string;
   plate: string;
@@ -330,6 +353,7 @@ function planInputs(rows: PlanRow[]): MaintenancePlanInput[] {
 type BreakdownRow = {
   id: string;
   lorry_id: string;
+  case_no?: string | null;
   occurred_at: string | null;
   gps_lat: number | null;
   gps_lng: number | null;
@@ -351,6 +375,7 @@ type BreakdownRow = {
 function shapeBreakdown(row: BreakdownRow, nowIso: string) {
   return {
     id: row.id,
+    caseNo: row.case_no ?? null,
     occurredAt: row.occurred_at,
     gpsLat: row.gps_lat,
     gpsLng: row.gps_lng,
@@ -382,6 +407,11 @@ type WorkOrderRow = {
   problem: string | null;
   diagnosis: string | null;
   workshop: string | null;
+  workshop_id?: string | null;
+  quotation_no?: string | null;
+  invoice_no?: string | null;
+  advisor?: string | null;
+  document_date?: string | null;
   labour_centi: number | null;
   outside_service_centi: number | null;
   towing_centi: number | null;
@@ -398,31 +428,62 @@ type WorkOrderRow = {
   breakdown_case_id: string | null;
   component_id: string | null;
   notes: string | null;
+  wo_no?: string | null;
 };
 
 type WorkOrderPartRow = {
   id: string;
   work_order_id: string;
+  section?: string | null;
   name: string;
   part_no: string | null;
+  uom?: string | null;
   qty: number | null;
   unit_price_centi: number | null;
+  discount_pct?: number | null;
+  amount_centi?: number | null;
+  line_no?: number | null;
   serial: string | null;
 };
+
+/** Every column the line model needs, in ONE place — the dashboard and the
+ *  vehicle detail both read this table and must not drift apart. */
+const WO_PART_COLS =
+  "id, work_order_id, section, name, part_no, uom, qty, unit_price_centi, discount_pct, amount_centi, line_no, serial";
+
+/** DB row -> the calculator's line shape. The single conversion point, so a
+ *  discount can never be dropped on one read path and honoured on another. */
+const partToLine = (p: WorkOrderPartRow): WorkOrderLineInput => ({
+  qty: p.qty,
+  unitPriceCenti: p.unit_price_centi,
+  discountPct: p.discount_pct,
+  amountCenti: p.amount_centi,
+});
 
 function shapeWorkOrder(row: WorkOrderRow, parts: WorkOrderPartRow[]) {
   const shapedParts = parts.map((p) => ({
     id: p.id,
+    section: (p.section ?? "PART") as "PART" | "LABOUR",
     name: p.name,
     partNo: p.part_no,
+    uom: p.uom ?? null,
     qty: p.qty ?? 0,
     unitPriceCenti: p.unit_price_centi ?? 0,
-    lineCenti: Math.round((p.qty ?? 0) * (p.unit_price_centi ?? 0)),
+    discountPct: p.discount_pct ?? 0,
+    lineNo: p.line_no ?? null,
+    /* The printed amount when the document had one, else qty x unit x (1-disc).
+       This used to be a bare qty x unit, which silently overcharged every
+       discounted line — 14 of the 19 on the invoice that prompted mig 0241. */
+    lineCenti: workOrderLineCenti(partToLine(p)),
     serial: p.serial,
   }));
   const state = row.status as WorkOrderState;
   return {
     id: row.id,
+    /* OURS (mig 0248). quotationNo below is the WORKSHOP'S number, off their
+       document — it is not unique across vendors and a repair with no document
+       has none, so it cannot be the record's identity. */
+    woNo: row.wo_no ?? null,
     status: state,
     statusLabel: WORK_ORDER_STATE_LABELS[state] ?? row.status,
     open: isWorkOrderOpen(state),
@@ -430,6 +491,11 @@ function shapeWorkOrder(row: WorkOrderRow, parts: WorkOrderPartRow[]) {
     problem: row.problem,
     diagnosis: row.diagnosis,
     workshop: row.workshop,
+    workshopId: row.workshop_id ?? null,
+    quotationNo: row.quotation_no ?? null,
+    invoiceNo: row.invoice_no ?? null,
+    advisor: row.advisor ?? null,
+    documentDate: iso(row.document_date ?? null),
     labourCenti: row.labour_centi ?? 0,
     outsideServiceCenti: row.outside_service_centi ?? 0,
     towingCenti: row.towing_centi ?? 0,
@@ -439,7 +505,7 @@ function shapeWorkOrder(row: WorkOrderRow, parts: WorkOrderPartRow[]) {
       outsideServiceCenti: row.outside_service_centi,
       towingCenti: row.towing_centi,
       taxCenti: row.tax_centi,
-      parts: shapedParts.map((p) => ({ qty: p.qty, unitPriceCenti: p.unitPriceCenti })),
+      parts: parts.map(partToLine),
     }),
     warrantyUntil: iso(row.warranty_until),
     invoiceRefs: row.invoice_refs ?? [],
@@ -540,7 +606,7 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
 
   const nowIso = new Date().toISOString();
   const [lorriesR, whR, driversR, vaultR, maintR, svcR, plansR, mileageR, breakdownR, woR, woPartsR] = await Promise.all([
-    sb.from("lorries").select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes").eq("active", true).order("plate"),
+    inHouseLorries(sb, "id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes").order("plate"),
     sb.from("warehouses").select("id, code, name"),
     sb.from("drivers").select("vehicle, name").eq("active", true),
     sb.from("lorry_compliance_documents").select("*"),
@@ -552,7 +618,7 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     sb.from("lorry_breakdown_cases").select("*").neq("status", "RESOLVED").order("occurred_at", { ascending: false }),
     // All work orders: open ones feed the WO seam; those completed this month feed spend.
     sb.from("lorry_work_orders").select("*"),
-    sb.from("lorry_work_order_parts").select("id, work_order_id, name, part_no, qty, unit_price_centi, serial"),
+    sb.from("lorry_work_order_parts").select(WO_PART_COLS),
   ]);
   const firstErr = lorriesR.error || whR.error || driversR.error || vaultR.error || maintR.error || svcR.error || plansR.error || mileageR.error || breakdownR.error || woR.error || woPartsR.error;
   if (firstErr) return c.json({ error: "load_failed", reason: firstErr.message }, 500);
@@ -621,7 +687,7 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
         outsideServiceCenti: w.outside_service_centi,
         towingCenti: w.towing_centi,
         taxCenti: w.tax_centi,
-        parts: (partsByWo.get(w.id) ?? []).map((p) => ({ qty: p.qty, unitPriceCenti: p.unit_price_centi })),
+        parts: (partsByWo.get(w.id) ?? []).map(partToLine),
       });
       woMonthSpend.set(w.lorry_id, (woMonthSpend.get(w.lorry_id) ?? 0) + total);
     }
@@ -777,7 +843,7 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
 
   const { data: l, error } = await sb
     .from("lorries")
-    .select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes, capacity_m3, length_ft, width_ft, height_ft")
+    .select("id, plate, type, is_internal, warehouse_id, active, model, road_tax_expiry, insurance_expiry, puspakom_expiry, notes, capacity_m3, length_ft, width_ft, height_ft, manufacture_date, registration_date, in_service_date, purchase_date, purchase_price_centi")
     .eq("id", id)
     .maybeSingle();
   if (error) return c.json({ error: "load_failed", reason: error.message }, 500);
@@ -799,7 +865,7 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     sb.from("lorry_mileage_readings").select("id, lorry_id, reading_date, odometer_km, source, photo_ref, flagged, note").eq("lorry_id", id).order("reading_date", { ascending: false }).order("created_at", { ascending: false }).limit(30),
     sb.from("lorry_breakdown_cases").select("*").eq("lorry_id", id).order("occurred_at", { ascending: false }).limit(50),
     sb.from("lorry_work_orders").select("*").eq("lorry_id", id).order("reported_at", { ascending: false }).limit(50),
-    sb.from("lorry_work_order_parts").select("id, work_order_id, name, part_no, qty, unit_price_centi, serial"),
+    sb.from("lorry_work_order_parts").select(WO_PART_COLS),
     sb.from("lorry_components").select("*").eq("lorry_id", id).order("status").order("component_type"),
     sb.from("lorry_component_events").select("*").order("event_date", { ascending: false }),
   ]);
@@ -911,6 +977,13 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
       /* WS3 (mig 0209) has stored the box since it shipped; the drawer never
          showed it. capacity_m3 is DERIVED from L x W x H by the lorries route. */
       isInternal: lorry.is_internal !== false,
+      /* Mig 0245 — the lorry's own lifecycle, distinct from purchase_date.
+         Surfaced on the full record page, not the quick-look drawer. */
+      manufactureDate: iso((lorry as Record<string, unknown>).manufacture_date as string | null),
+      registrationDate: iso((lorry as Record<string, unknown>).registration_date as string | null),
+      inServiceDate: iso((lorry as Record<string, unknown>).in_service_date as string | null),
+      purchaseDate: iso((lorry as Record<string, unknown>).purchase_date as string | null),
+      purchasePriceCenti: ((lorry as Record<string, unknown>).purchase_price_centi as number | null) ?? null,
       capacityM3: lorry.capacity_m3 ?? null,
       lengthFt: lorry.length_ft ?? null,
       widthFt: lorry.width_ft ?? null,
@@ -918,6 +991,10 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     },
     compliance: byType,
     plans: shapedPlans,
+    /* The components a plan may cover, served rather than mirrored. The list and
+       its labels live in fleet-status.ts and the migration's CHECK mirrors them;
+       a THIRD copy in the frontend would be the one nobody updates. */
+    planComponents: PLAN_COMPONENTS.map((value) => ({ value, label: PLAN_COMPONENT_LABELS[value] })),
     mileage: mileageRows.map((m) => ({
       id: m.id,
       readingDate: iso(m.reading_date),
@@ -939,7 +1016,7 @@ fleetMaintenance.get("/reminders", requireHouzsPerm("fleet.read"), async (c) => 
   const sb = c.get("supabase");
   const today = todayMyt();
   const [lorriesR, vaultR] = await Promise.all([
-    sb.from("lorries").select("id, plate, warehouse_id, active, road_tax_expiry, insurance_expiry, puspakom_expiry, type, is_internal, model, notes").eq("active", true),
+    inHouseLorries(sb, "id, plate, warehouse_id, active, road_tax_expiry, insurance_expiry, puspakom_expiry, type, is_internal, model, notes"),
     sb.from("lorry_compliance_documents").select("*"),
   ]);
   if (lorriesR.error || vaultR.error) return c.json({ error: "load_failed", reason: (lorriesR.error || vaultR.error)?.message }, 500);
@@ -1365,6 +1442,7 @@ fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"
     .insert({
       company_id: activeCompanyId(c) ?? null,
       lorry_id: lorryId,
+      case_no: await mintRecordNo(sb, "lorry_breakdown_cases", "case_no", CODE_PREFIX.BREAKDOWN, activeCompanyId(c) ?? null),
       occurred_at: occurredAt.value ?? new Date().toISOString(),
       gps_lat: lat.value,
       gps_lng: lng.value,
@@ -1507,6 +1585,8 @@ fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write
   if (!warranty.ok) return c.json({ error: "invalid_warranty_until" }, 400);
   const est = tsOrNull(body.estComplete);
   if (!est.ok) return c.json({ error: "invalid_est_complete" }, 400);
+  const docDate = dateOrNull(body.documentDate);
+  if (!docDate.ok) return c.json({ error: "invalid_document_date" }, 400);
   const invoiceRefs = refsOrNull(body.invoiceRefs);
   const quoteRefs = refsOrNull(body.quoteRefs);
   const photoRefs = refsOrNull(body.photoRefs);
@@ -1521,10 +1601,20 @@ fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write
     .insert({
       company_id: activeCompanyId(c) ?? null,
       lorry_id: lorryId,
+      wo_no: await mintRecordNo(sb, "lorry_work_orders", "wo_no", CODE_PREFIX.WORK_ORDER, activeCompanyId(c) ?? null),
       status: "REPORTED",
       problem: (body.problem as string)?.trim() || null,
       diagnosis: (body.diagnosis as string)?.trim() || null,
+      /* `workshop` (free text) and `workshop_id` (the 0241 master) coexist on
+         purpose: every pre-0241 row has only the string, and the string is also
+         what an OCR pass produces before anyone has matched it to a master row.
+         The master link is the one that aggregates spend. */
       workshop: (body.workshop as string)?.trim() || null,
+      workshop_id: (body.workshopId as string)?.trim() || null,
+      quotation_no: (body.quotationNo as string)?.trim() || null,
+      invoice_no: (body.invoiceNo as string)?.trim() || null,
+      advisor: (body.advisor as string)?.trim() || null,
+      document_date: docDate.value,
       labour_centi: money.labour_centi,
       outside_service_centi: money.outside_service_centi,
       towing_centi: money.towing_centi,
@@ -1567,6 +1657,15 @@ fleetMaintenance.patch("/work-orders/:woId", requireHouzsPerm("fleet.write"), as
   if ("problem" in body) patch.problem = (body.problem as string)?.trim() || null;
   if ("diagnosis" in body) patch.diagnosis = (body.diagnosis as string)?.trim() || null;
   if ("workshop" in body) patch.workshop = (body.workshop as string)?.trim() || null;
+  if ("workshopId" in body) patch.workshop_id = (body.workshopId as string)?.trim() || null;
+  if ("quotationNo" in body) patch.quotation_no = (body.quotationNo as string)?.trim() || null;
+  if ("invoiceNo" in body) patch.invoice_no = (body.invoiceNo as string)?.trim() || null;
+  if ("advisor" in body) patch.advisor = (body.advisor as string)?.trim() || null;
+  if ("documentDate" in body) {
+    const v = dateOrNull(body.documentDate);
+    if (!v.ok) return c.json({ error: "invalid_document_date" }, 400);
+    patch.document_date = v.value;
+  }
   if ("notes" in body) patch.notes = (body.notes as string)?.trim() || null;
   if ("warrantyUntil" in body) {
     const v = dateOrNull(body.warrantyUntil);
@@ -1638,20 +1737,48 @@ fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"
   if (!qty.ok || (qty.value !== null && qty.value <= 0)) return c.json({ error: "invalid_qty" }, 400);
   const unit = numOrNull(body.unitPriceCenti);
   if (!unit.ok) return c.json({ error: "invalid_unit_price" }, 400);
+  /* A workshop invoice discounts PER LINE, not per document, and prints its own
+     line total. Both are optional: a line with neither is the pre-0241 shape and
+     still prices as qty x unit. */
+  const discount = numOrNull(body.discountPct);
+  if (!discount.ok || (discount.value !== null && (discount.value < 0 || discount.value > 100))) {
+    return c.json({ error: "invalid_discount_pct" }, 400);
+  }
+  const amount = numOrNull(body.amountCenti);
+  if (!amount.ok || (amount.value !== null && amount.value < 0)) return c.json({ error: "invalid_amount" }, 400);
+  const lineNo = numOrNull(body.lineNo);
+  if (!lineNo.ok) return c.json({ error: "invalid_line_no" }, 400);
+  const section = String(body.section ?? "PART").toUpperCase();
+  if (section !== "PART" && section !== "LABOUR") return c.json({ error: "invalid_section" }, 400);
 
-  const { data: wo, error: woErr } = await sb.from("lorry_work_orders").select("id").eq("id", woId).maybeSingle();
+  const { data: wo, error: woErr } = await sb.from("lorry_work_orders").select("id, labour_centi").eq("id", woId).maybeSingle();
   if (woErr) return c.json({ error: "load_failed", reason: woErr.message }, 500);
   if (!wo) return c.json({ error: "work_order_not_found" }, 404);
+
+  /* The one rule the DB cannot express (mig 0241): labour lives EITHER in the
+     header scalar OR in LABOUR-section lines, never both, or the total counts
+     it twice. The route is the single writer, so it is enforced here. */
+  if (section === "LABOUR" && Number(wo.labour_centi ?? 0) > 0) {
+    return c.json({
+      error: "labour_already_on_header",
+      reason: "This record already carries labour in labourCenti. Clear it before adding labour lines, or keep using the header figure.",
+    }, 409);
+  }
 
   const { data: inserted, error } = await sb
     .from("lorry_work_order_parts")
     .insert({
       company_id: activeCompanyId(c) ?? null,
       work_order_id: woId,
+      section,
       name,
       part_no: (body.partNo as string)?.trim() || null,
+      uom: (body.uom as string)?.trim()?.toUpperCase() || null,
       qty: qty.value ?? 1,
       unit_price_centi: unit.value ?? 0,
+      discount_pct: discount.value ?? 0,
+      amount_centi: amount.value,
+      line_no: lineNo.value,
       serial: (body.serial as string)?.trim() || null,
       created_by: c.get("houzsUser")?.id ?? null,
     })
@@ -1834,6 +1961,130 @@ fleetMaintenance.post("/components/:componentId/events", requireHouzsPerm("fleet
     return c.json({ error: "insert_failed", reason: error.message }, 500);
   }
   return c.json({ id: inserted?.id }, 201);
+});
+
+// ── Workshops (mig 0241) ─────────────────────────────────────────────────────
+// The repair vendor as a MASTER ROW rather than a free-text string on four
+// unrelated tables. Owner, 2026-08-02: a repair record must carry "维修商信息：
+// 地址、Email、SSM 注册号". None of that has anywhere to live in a TEXT column,
+// and neither does "what did we spend at this workshop".
+
+/** Mint the next WS-#### for a company. Owner: codes are generated, never typed
+ *  — the driver roster is what hand-typed codes look like after a year
+ *  (DRV-001..007 alongside DRV-05/DRV-050, same person three times).
+ *
+ *  Highest-existing + 1 rather than a sequence, because the code is per COMPANY
+ *  and a Postgres sequence is global. The UNIQUE (company_id, code) index is the
+ *  real guard: two racing creates collide there and the loser retries. */
+async function mintWorkshopCode(sb: any, companyId: number | null): Promise<string> {
+  /* Reads EVERY code, not the top 50 by string order: "WS-9" sorts above
+     "WS-10" as text, so an ordered LIMIT would eventually mint a duplicate.
+     nextCode (scm/lib/fleet-code-mint) is the one parser every minted code in
+     this system shares — it reads any padding, which is what stops a second
+     numbering scheme forming the way DRV-05 formed beside DRV-050. */
+  const { data } = await sb.from("workshops").select("code").eq("company_id", companyId);
+  return nextCode(CODE_PREFIX.WORKSHOP, ((data ?? []) as Array<{ code?: string | null }>).map((r) => r.code));
+}
+
+/** BD-#### / WO-#### (mig 0248). Same shape as mintWorkshopCode and for the
+ *  same reasons: read EVERY number (string order puts WO-9 above WO-10), let the
+ *  shared parser decide what comes next, and let the partial UNIQUE index be the
+ *  real guard so two racing creates cannot both win. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function mintRecordNo(sb: any, table: string, column: string, prefix: string, companyId: number | null): Promise<string> {
+  const { data } = await sb.from(table).select(column).eq("company_id", companyId);
+  return nextCode(prefix, ((data ?? []) as Array<Record<string, string | null>>).map((r) => r[column]));
+}
+
+fleetMaintenance.get("/workshops", requireHouzsPerm("fleet.read"), async (c) => {
+  const sb = c.get("supabase");
+  const { data, error } = await sb
+    .from("workshops")
+    .select("id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, notes, is_active")
+    .eq("company_id", activeCompanyId(c) ?? null)
+    .order("name");
+  if (error) return c.json({ error: "load_failed", reason: error.message }, 500);
+  return c.json({
+    workshops: (data ?? []).map((w: Record<string, unknown>) => ({
+      id: w.id,
+      code: w.code,
+      name: w.name,
+      registrationNo: w.registration_no ?? null,
+      contactName: w.contact_name ?? null,
+      contactPhone: w.contact_phone ?? null,
+      officePhone: w.office_phone ?? null,
+      email: w.email ?? null,
+      address: w.address ?? null,
+      notes: w.notes ?? null,
+      isActive: w.is_active !== false,
+    })),
+  });
+});
+
+fleetMaintenance.post("/workshops", requireHouzsPerm("fleet.write"), async (c) => {
+  const sb = c.get("supabase");
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+
+  const name = String(body.name ?? "").trim();
+  if (!name) return c.json({ error: "name_required" }, 400);
+
+  const companyId = activeCompanyId(c) ?? null;
+  const row = {
+    company_id: companyId,
+    name,
+    registration_no: (body.registrationNo as string)?.trim() || null,
+    contact_name: (body.contactName as string)?.trim() || null,
+    contact_phone: (body.contactPhone as string)?.trim() || null,
+    office_phone: (body.officePhone as string)?.trim() || null,
+    email: (body.email as string)?.trim() || null,
+    address: (body.address as string)?.trim() || null,
+    notes: (body.notes as string)?.trim() || null,
+  };
+
+  /* Retry the MINT, not the whole create: the only thing that can race is the
+     code, and re-reading the highest is exactly what resolves it. */
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const code = await mintWorkshopCode(sb, companyId);
+    const { data, error } = await sb.from("workshops").insert({ ...row, code }).select("id, code").single();
+    if (!error) return c.json({ id: data?.id, code: data?.code }, 201);
+    if (error.code !== "23505") return c.json({ error: "insert_failed", reason: error.message }, 500);
+    /* 23505 on the NAME or the SSM is the caller's problem, not a race — only a
+       code collision is worth retrying. */
+    if (!String(error.message ?? "").includes("workshops_code_uq")) {
+      return c.json({ error: "duplicate_workshop", reason: error.message }, 409);
+    }
+  }
+  return c.json({ error: "code_mint_failed", reason: "could not allocate a workshop code" }, 500);
+});
+
+fleetMaintenance.patch("/workshops/:id", requireHouzsPerm("fleet.write"), async (c) => {
+  const sb = c.get("supabase");
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: "invalid_json" }, 400); }
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  for (const [k, col] of [
+    ["name", "name"], ["registrationNo", "registration_no"], ["contactName", "contact_name"],
+    ["contactPhone", "contact_phone"], ["officePhone", "office_phone"], ["email", "email"],
+    ["address", "address"], ["notes", "notes"],
+  ] as const) {
+    if (k in body) patch[col] = (body[k] as string)?.trim() || null;
+  }
+  if ("isActive" in body) patch.is_active = Boolean(body.isActive);
+  /* `code` is minted, never edited — the whole point of generating it. */
+  if (patch.name === null) return c.json({ error: "name_required" }, 400);
+
+  const { data, error } = await sb
+    .from("workshops").update(patch)
+    .eq("id", c.req.param("id")).eq("company_id", activeCompanyId(c) ?? null)
+    .select("id").maybeSingle();
+  if (error) {
+    if (error.code === "23505") return c.json({ error: "duplicate_workshop", reason: error.message }, 409);
+    return c.json({ error: "update_failed", reason: error.message }, 500);
+  }
+  if (!data) return c.json({ error: "workshop_not_found" }, 404);
+  return c.json({ id: data.id });
 });
 
 export default fleetMaintenance;

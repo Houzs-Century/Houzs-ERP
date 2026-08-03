@@ -53,7 +53,7 @@ import { escapeForOr } from '../lib/postgrest-search';
 import { recordEntityAudit, assertAuditWritable, auditUnavailableBody, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
-import { resolvePoSoCoverageForPos, resolveDeliveredDosForPos } from './po-so-coverage';
+import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
 grns.use('*', supabaseAuth);
@@ -438,7 +438,10 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
   const movementErrors: string[] = [];
   const grnNo = (grnHeader as { grn_number: string } | null)?.grn_number ?? grnId;
   let warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-    ?? (await defaultWarehouseId(sb));
+    /* Per-company default (2026-08-03) — this used to be a company-blind draw
+       across every company's is_default warehouses, decided by alphabetical
+       `code` order, so Houzs receipts could land in 2990's Guangzhou warehouse. */
+    ?? (await defaultWarehouseId(sb, companyId));
   /* Owner 2026-07-02 — AUTHORITATIVE receiving warehouse = the source PO line's
      bound warehouse. The warehouse binds at the SO/PO line and must flow into the
      GRN's stock movements (per-warehouse model, no cross-warehouse pooling). A
@@ -1063,19 +1066,30 @@ grns.get('/', async (c) => {
   // Owner 2026-07-02 — "Transfer To" list column: map each grn_item → its GRN so
   // the per-line downstream (PI/PR) can be rolled up to a per-GRN doc-number set.
   const grnByItem = new Map<string, string>();
+  /* Each GRN's OWN line codes — the Assigned-SO / Delivered header cells below
+     roll up ONLY these SKUs (header ≡ ∪(drill lines), 2026-08-02): a partial-
+     receipt GRN must not inherit its parent PO's assignments for SKUs it never
+     received. */
+  const codesByGrn = new Map<string, Set<string>>();
   if (ids.length > 0) {
-    const { data: lineRows, error: lineErr } = await paginateAll<{ id: string; grn_id: string; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>((from, to) => sb
+    const { data: lineRows, error: lineErr } = await paginateAll<{ id: string; grn_id: string; material_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>((from, to) => sb
       .from('grn_items')
-      .select('id, grn_id, qty_accepted, invoiced_qty, returned_qty')
+      .select('id, grn_id, material_code, qty_accepted, invoiced_qty, returned_qty')
       .in('grn_id', ids)
       .order('id')
       .range(from, to));
     if (lineErr) return c.json({ error: 'load_failed', reason: lineErr.message }, 500);
-    for (const li of (lineRows ?? []) as Array<{ id: string; grn_id: string; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>) {
+    for (const li of (lineRows ?? []) as Array<{ id: string; grn_id: string; material_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>) {
       const arr = linesByGrn.get(li.grn_id) ?? [];
       arr.push({ qty_accepted: li.qty_accepted, invoiced_qty: li.invoiced_qty, returned_qty: li.returned_qty });
       linesByGrn.set(li.grn_id, arr);
       if (li.id) grnByItem.set(li.id, li.grn_id);
+      const code = (li.material_code ?? '').trim();
+      if (code) {
+        const set = codesByGrn.get(li.grn_id) ?? new Set<string>();
+        set.add(code);
+        codesByGrn.set(li.grn_id, set);
+      }
     }
   }
   // Per-GRN downstream: aggregate the per-line PI/PR breakdown into one deduped
@@ -1096,30 +1110,48 @@ grns.get('/', async (c) => {
       downstreamByGrn.set(grnId, acc);
     }
   }
-  /* Collapsed "Assigned SO" column (owner 2026-07-31): each GRN inherits its
-     parent PO's Assigned SO(s), resolved for the whole page in ONE pass (the
-     SAME precedence engine the drill-down uses). computeMrp runs once. */
+  /* Collapsed "Assigned SO" column (owner 2026-07-31): resolved from the SAME
+     per-SKU precedence engine the drill-down uses — computeMrp runs once —
+     then rolled up over THIS GRN'S OWN line codes only (header ≡ ∪(drill
+     lines), 2026-08-02): the drill matches assignments into the GRN's lines by
+     material_code, so a partial-receipt GRN's header must not show parent-PO
+     assignments its lines cannot explain. */
   const poIdsForPage = rows.map((g) => (g as { purchase_order_id?: string | null }).purchase_order_id);
-  /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped this GRN's
-     parent PO's goods + qty. Same batched forward linkage as the PO list.
-     It reads the SAME poIds as the coverage resolver above and neither consumes
-     the other's result, so the two go out as one wave rather than back to back. */
-  const [assignedByPo, deliveredByPo] = await Promise.all([
-    resolvePoSoCoverageForPos(sb, c, poIdsForPage),
-    resolveDeliveredDosForPos(sb, c, poIdsForPage),
+  /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped the goods —
+     per CODE, filtered the same way. One wave, same poIds. */
+  const [originsByPo, deliveredByPoCode] = await Promise.all([
+    resolvePoSoCoveragePerSkuForPos(sb, c, poIdsForPage),
+    resolveDeliveredByCodeForPos(sb, c, poIdsForPage),
   ]);
   const grns = rows.map((g) => {
     const poId = (g as { purchase_order_id?: string | null }).purchase_order_id ?? null;
-    const summary = poId ? assignedByPo.get(poId) : undefined;
+    const grnCodes = codesByGrn.get(g.id) ?? new Set<string>();
+    const origins = (poId ? originsByPo.get(poId) ?? [] : [])
+      .filter((o) => grnCodes.has(o.itemCode));
+    const summary = summarizeOrigins(origins);
+    // Delivered: distinct DOs across the GRN's own codes (qty summed per DO).
+    const doAgg = new Map<string, DeliveredDo>();
+    if (poId) {
+      const byCode = deliveredByPoCode.get(poId);
+      if (byCode) {
+        for (const code of grnCodes) {
+          for (const d of byCode.get(code) ?? []) {
+            const prev = doAgg.get(d.doNo);
+            if (prev) prev.qty += d.qty;
+            else doAgg.set(d.doNo, { ...d });
+          }
+        }
+      }
+    }
     return {
       ...g,
       // Stored header total (= Σ qty*unit − discount). Falls back to 0 if unset.
       total_centi: (g.total_centi as number | null | undefined) ?? 0,
       downstream: [...(downstreamByGrn.get(g.id)?.values() ?? [])],
       ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
-      assigned_sos: summary?.assignedSos ?? [],
-      assigned_so_linked: summary?.sourceLinked ?? false,
-      delivered_dos: poId ? (deliveredByPo.get(poId)?.deliveredDos ?? []) : [],
+      assigned_sos: summary.assignedSos,
+      assigned_so_linked: summary.sourceLinked,
+      delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
     };
   });
   if (paginate) return c.json({ grns, total, page, pageSize, statusCounts });
@@ -2328,7 +2360,7 @@ grns.patch('/:id/cancel', async (c) => {
 
   // (a) Inventory OUT per line — negate the original GRN IN. Best-effort.
   try {
-    const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb));
+    const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     if (warehouseId) {
       /* Migration 0120 — the original IN stamped batch_no = source PO number so a
          sofa set's components share a dye lot. The reversing OUT must consume that
@@ -2742,7 +2774,7 @@ grns.post('/:id/items', async (c) => {
       const { data: grnHeader } = await sb.from('grns')
         .select('grn_number, warehouse_id, exchange_rate').eq('id', grnId).maybeSingle();
       const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-        ?? (await defaultWarehouseId(sb));
+        ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
       // Migration 0082 — convert the line's own-currency unit price to MYR at the
       // GRN's rate (no-op for an MYR GRN).
       const addLineRate = (grnHeader as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
@@ -2932,7 +2964,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   if (inventoryChange) {
     const { data: grnHead } = await sb.from('grns').select('grn_number, warehouse_id, exchange_rate').eq('id', grnId).maybeSingle();
     editWarehouseId = (grnHead as { warehouse_id: string | null } | null)?.warehouse_id
-      ?? (await defaultWarehouseId(sb));
+      ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     editGrnNo = (grnHead as { grn_number: string } | null)?.grn_number ?? grnId;
     // Migration 0082 — convert the line unit price to MYR at the GRN's rate.
     editRate = (grnHead as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
@@ -3111,7 +3143,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
     if ((lg.qty_accepted ?? 0) > 0) {
       const { data: grnHead } = await sb.from('grns').select('warehouse_id').eq('id', grnId).maybeSingle();
       const warehouseId = (grnHead as { warehouse_id: string | null } | null)?.warehouse_id
-        ?? (await defaultWarehouseId(sb));
+        ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
       const consumedLock = await grnReverseWouldGoNegative(sb, warehouseId, [lg]);
       if (consumedLock) return c.json(consumedLock, 409);
     }
@@ -3169,7 +3201,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
         const { data: grnHeader } = await sb.from('grns')
           .select('grn_number, warehouse_id').eq('id', grnId).maybeSingle();
         const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-          ?? (await defaultWarehouseId(sb));
+          ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
         if (warehouseId) {
           const variantKey = computeVariantKey(l.item_group, l.variants ?? null);
           // Carry THIS line's own dye-lot batch (= its source PO number) so the

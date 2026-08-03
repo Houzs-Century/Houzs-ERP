@@ -2225,8 +2225,12 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
          cannot make a shortage look covered; and recomputeSoPicked excludes
          DRAFT lines, so it cannot lock the SO quota either. Nothing is
          committed until a human confirms it. */
-      status: asDraft ? 'DRAFT' : 'SUBMITTED',
-      submitted_at: asDraft ? null : new Date().toISOString(),
+      /* Owner 2026-08-02 — a bucket with no resolved warehouse (its SO line had
+         none) must NOT land as a live SUBMITTED PO: a warehouse-less PO receives
+         into the wrong place. Force it to DRAFT so it stays inert until someone
+         sets the warehouse; confirm/submit then re-check via poWarehouseGap. */
+      status: (asDraft || !headerPurchaseLocationId) ? 'DRAFT' : 'SUBMITTED',
+      submitted_at: (asDraft || !headerPurchaseLocationId) ? null : new Date().toISOString(),
       currency: bucket.currency,
       subtotal_centi: subtotal,
       tax_centi: 0,
@@ -3429,6 +3433,33 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
 // back unchanged or 409s. An audit row here would record an edit that did not
 // happen, which is worse than no row — the log's value is that its entries are
 // all real.
+/* Owner 2026-08-02 — a PO with no ship-to WAREHOUSE cannot go live. The
+   receiving warehouse flows from the PO (grns.ts:442), so a warehouse-less PO
+   receives into the default/China landing and its goods end up in the wrong
+   place (the AKEMI/TRION-into-C&C-DISPLAY class). Block it at the source: a PO
+   is missing its warehouse when the header purchase_location_id is blank AND at
+   least one line has no warehouse_id of its own. Returns the offending line
+   codes so the operator knows what to fix. */
+async function poWarehouseGap(
+  sb: Variables['supabase'],
+  poId: string,
+): Promise<{ missing: true; codes: string[] } | { missing: false }> {
+  const { data: hdr } = await sb.from('purchase_orders').select('purchase_location_id').eq('id', poId).maybeSingle();
+  const headerWh = (hdr as { purchase_location_id: string | null } | null)?.purchase_location_id ?? null;
+  if (headerWh) return { missing: false }; // header default covers every line
+  const { data: lines } = await sb.from('purchase_order_items').select('material_code, warehouse_id').eq('purchase_order_id', poId);
+  const bad = ((lines ?? []) as Array<{ material_code: string | null; warehouse_id: string | null }>)
+    .filter((l) => !l.warehouse_id);
+  if (bad.length === 0) return { missing: false };
+  return { missing: true, codes: bad.map((l) => l.material_code ?? '?') };
+}
+const PO_WAREHOUSE_REQUIRED = (codes: string[]) => ({
+  error: 'purchase_location_id_required',
+  message:
+    'This PO has no ship-to warehouse, so its goods would be received into the wrong place. Set the ship-to warehouse (or each line\'s warehouse) before it can go live.',
+  lines: codes.slice(0, 20),
+});
+
 mfgPurchaseOrders.patch('/:id/submit', async (c) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
@@ -3442,6 +3473,8 @@ mfgPurchaseOrders.patch('/:id/submit', async (c) => {
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
   const row = data as { id: string; status: string; submitted_at: string | null };
   if (row.status === 'SUBMITTED') return c.json({ purchaseOrder: row });
+  const gap = await poWarehouseGap(supabase, id);
+  if (gap.missing) return c.json(PO_WAREHOUSE_REQUIRED(gap.codes), 409);
   return c.json({ error: 'cannot_submit', message: `PO is ${row.status}` }, 409);
 });
 
@@ -3474,6 +3507,11 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
   if (curStatus !== 'DRAFT') {
     return c.json({ error: 'cannot_confirm', message: `Only a draft PO can be confirmed (this is ${curStatus})` }, 409);
   }
+
+  /* Owner 2026-08-02 — a warehouse-less PO cannot become live supply / GRN-
+     receivable: the receive would land its goods in the wrong warehouse. */
+  const gap = await poWarehouseGap(supabase, id);
+  if (gap.missing) return c.json(PO_WAREHOUSE_REQUIRED(gap.codes), 409);
 
   const { error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
@@ -3779,11 +3817,29 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
   try {
     const { data: lines } = await supabase
       .from('purchase_order_items')
-      .select('so_item_id')
+      .select('id, so_item_id')
       .eq('purchase_order_id', id);
+    const lineRows = (lines ?? []) as Array<{ id: string; so_item_id: string | null }>;
     // The PO is now CANCELLED, so recomputeSoPicked recounts every affected SO
     // line excluding this PO's lines — releasing them back to the picker.
-    await recomputeSoPicked(supabase, ((lines ?? []) as Array<{ so_item_id: string | null }>).map((l) => l.so_item_id));
+    await recomputeSoPicked(supabase, lineRows.map((l) => l.so_item_id));
+
+    /* 2026-08-02 (over-order audit H0) — the quota release above frees the SO
+       lines, but the finer-grained mig-0235 allocation sub-lines (PO-xxxx-yy-NN)
+       were left stranded: a CANCELLED PO kept rows still naming a live SO, so its
+       reverse-coverage surface would attribute goods it will never deliver. The
+       owner's rule is explicit — "cancelled POs are never attribution targets" —
+       so clear this PO's allocations here, the same transition that releases the
+       quota. The coarse so_item_id on the line survives (reopen re-claims quota
+       and falls back to the 1:1 link); a consolidated split, if ever needed
+       again after a reopen, is re-entered in the allocation editor. */
+    const poItemIds = lineRows.map((l) => l.id).filter(Boolean);
+    if (poItemIds.length > 0) {
+      await supabase
+        .from('purchase_order_item_allocations')
+        .delete()
+        .in('purchase_order_item_id', poItemIds);
+    }
   } catch { /* best-effort — PO already cancelled, don't fail on counter recount */ }
 
   const { data: after } = await scopeToCompanyId(supabase

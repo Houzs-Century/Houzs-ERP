@@ -86,7 +86,10 @@ export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[]; sto
    Order(s) have shipped this purchase doc's goods (batch_no = the PO number) and
    how many units per DO. Cancelled DOs excluded. Optional so an older backend
    degrades to "unknown" (no column). */
-export type DeliveredDo = { doNo: string; qty: number };
+/* soDocNo (2026-08-02): the Sales Order the DO belongs to — pairs each
+   delivered chip with its Assigned-SO row in the drill's per-SO sub-table.
+   Optional so an older backend degrades to unpaired chips. */
+export type DeliveredDo = { doNo: string; qty: number; soDocNo?: string | null };
 export type SkuDelivered = { itemCode: string; dos: DeliveredDo[] };
 export type PoSoCoverageResp = {
   poNumber: string | null;

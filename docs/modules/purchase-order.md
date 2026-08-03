@@ -96,11 +96,11 @@ All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 | POST | `/:id/convert-from-so` | `:2694` | Append SO lines onto an existing PO. |
 | PATCH | `/:id` | `:2219` | Header edit. |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2400` / `:2504` / `:2619` | Line CRUD. |
-| PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. |
-| PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. |
+| PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. Also 409 `purchase_location_id_required` if the PO has no ship-to warehouse (2026-08-02). |
+| PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. Blocked 409 `purchase_location_id_required` (via `poWarehouseGap`) if the header `purchase_location_id` is blank AND any line has no `warehouse_id` — a warehouse-less PO can't go live because its GR would receive into the wrong warehouse (owner 2026-08-02). |
 | POST | `/:id/send-to-supplier` | `:3019` | Email the PO PDF. Fail-closed on the `purchase_order` email channel (`:3032`). |
-| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota. |
-| PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. |
+| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). |
+| PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. |
 | DELETE | `/:id` | `:3345` | Hard delete, **CANCELLED only** (`:3362`). |
 
 Auth note (same as SO): inside `/api/scm/*`, `user.id` is the caller's **scm.staff
@@ -140,8 +140,18 @@ UUID**; use `houzsUser.id` for the public bigint.
    `{ purchaseOrders }` or `{ purchaseOrders, total, page, pageSize, statusCounts }`.
    The **Delivered** column = the DO(s) that shipped this PO's goods
    (`batch_no` = PO number, CANCELLED DOs excluded) + qty per DO; drill-down
-   per-SKU via the single-doc `delivered` field. See
-   `docs/modules/document-traceability.md` §2.5 (owner 2026-07-31).
+   per-SKU via the single-doc `delivered` field, whose chips carry `soDocNo`
+   since 2026-08-02 — the drill renders a PAIRED per-SO sub-table (one row per
+   assigned SO: SO chip | delivery date | that SO's delivered DOs xqty |
+   DELIVERED/PENDING) instead of three parallel stacks; a line/header with no
+   assignment reads a subtle **"STOCK"** tag, never a bare dash (surplus stock
+   — MRP layer (c) float-assigns automatically when matching demand appears).
+   Duplicate ORDERS (same supplier + identical line multiset within days —
+   the 2990-PO-2606-023/-024 incident) are the province of the read-only
+   **Duplicate documents check** workflow; an unexecuted duplicate inflates MRP
+   incoming supply until cancelled. See
+   `docs/modules/document-traceability.md` §2.5 + §2.9 (owner 2026-07-31 /
+   2026-08-02).
 
 ### Main mutation paths
 

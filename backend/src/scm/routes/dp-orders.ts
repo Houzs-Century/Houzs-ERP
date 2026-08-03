@@ -25,9 +25,11 @@ import {
 } from '../lib/companyScope';
 import {
   partyTypeFor, emptySnapshot, snapshotFromSo, snapshotFromSupplier,
-  snapshotFromProject, snapshotFromAssr, type DpJobType, type DpPartySnapshot,
+  snapshotFromProject, snapshotFromAssr, snapshotFromWarehouse, snapshotFromWorkshop,
+  snapshotFromWorkshopName, type DpJobType, type DpPartySnapshot,
 } from '../lib/dp-party';
 import { mintNextDpNo, plateForLorry } from '../lib/dp-no-mint';
+import { dpLorryBlockReason } from '../lib/dp-lorry-block';
 import { normalizePhone } from '../shared/phone';
 import {
   resolveDeliveryScope, scopeMatchesAssignment,
@@ -132,7 +134,15 @@ async function denyIfNotOwnDpJob(
   return c.json({ error: NOT_YOUR_JOB }, 403);
 }
 
-const JOB_TYPES = ['DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP'] as const;
+/* Every value on scm.trip_stop_type. INSPECTION joined that enum in mig 0165
+   and never reached this list, so a DP order could not be created for a job the
+   database, the board's Type filter and the rate card all understand. Kept in
+   step by `npm run audit:job-types`. */
+const JOB_TYPES = [
+  'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION',
+  // Job types 8 and 9 (mig 0250, owner's 2026-08-03 list).
+  'TRANSFER', 'LORRY_SERVICE',
+] as const;
 
 const createSchema = z.object({
   jobType: z.enum(JOB_TYPES),
@@ -143,6 +153,15 @@ const createSchema = z.object({
   assrCaseId: z.number().int().optional(),
   supplierId: z.string().uuid().optional(),
   projectId: z.number().int().optional(),
+  // TRANSFER: the transfer document being driven, and/or the destination
+  // warehouse directly (an ad-hoc move has no document — owner asked for both
+  // paths). LORRY_SERVICE: the lorry being serviced, plus the workshop it is
+  // going to, either picked directly or read off a work order. Columns: mig 0251.
+  stockTransferId: z.string().uuid().optional(),
+  warehouseId: z.string().uuid().optional(),
+  lorryId: z.string().uuid().optional(),
+  workshopId: z.string().uuid().optional(),
+  workOrderId: z.string().uuid().optional(),
   requestedDate: z.string().optional(), // YYYY-MM-DD
   remark: z.string().optional(),
   // Manual overrides — applied ON TOP of the auto-filled snapshot so the operator
@@ -190,6 +209,46 @@ async function resolveSnapshot(
     ).bind(p.assrCaseId).first<Record<string, unknown>>();
     if (a) return snapshotFromAssr(a);
   }
+  /* TRANSFER — the party is the DESTINATION. An explicit warehouseId wins (the
+     operator picked where the fleet is going); otherwise resolve the transfer
+     document's to_warehouse_id. A transfer whose destination row has been
+     deleted falls through to the empty snapshot rather than a half-filled one. */
+  if (p.warehouseId || p.stockTransferId) {
+    let warehouseId = p.warehouseId ?? null;
+    if (!warehouseId && p.stockTransferId) {
+      const { data: tr } = await sb.from('stock_transfers')
+        .select('to_warehouse_id').eq('id', p.stockTransferId).maybeSingle();
+      warehouseId = (tr as { to_warehouse_id?: string } | null)?.to_warehouse_id ?? null;
+    }
+    if (warehouseId) {
+      const { data } = await sb.from('warehouses')
+        .select('code, name, location, city, postcode, state')
+        .eq('id', warehouseId).maybeSingle();
+      if (data) return snapshotFromWarehouse(data as Record<string, unknown>);
+    }
+  }
+  /* LORRY_SERVICE — the party is the WORKSHOP. Picked directly, or read off the
+     work order this trip serves. An older work order may name its workshop only
+     as free text (mig 0241 deliberately left workshop_id unbackfilled), so that
+     name still becomes the party rather than nothing. */
+  if (p.workshopId || p.workOrderId) {
+    let workshopId = p.workshopId ?? null;
+    let workshopText: unknown = null;
+    if (!workshopId && p.workOrderId) {
+      const { data: wo } = await sb.from('lorry_work_orders')
+        .select('workshop_id, workshop').eq('id', p.workOrderId).maybeSingle();
+      const row = wo as { workshop_id?: string | null; workshop?: string | null } | null;
+      workshopId = row?.workshop_id ?? null;
+      workshopText = row?.workshop ?? null;
+    }
+    if (workshopId) {
+      const { data } = await sb.from('workshops')
+        .select('code, name, contact_name, contact_phone, office_phone, address')
+        .eq('id', workshopId).maybeSingle();
+      if (data) return snapshotFromWorkshop(data as Record<string, unknown>);
+    }
+    if (workshopText) return snapshotFromWorkshopName(workshopText);
+  }
   return emptySnapshot(jobType);
 }
 
@@ -221,6 +280,11 @@ dpOrders.post('/', async (c) => {
     assr_case_id: p.assrCaseId ?? null,
     supplier_id: p.supplierId ?? null,
     project_id: p.projectId ?? null,
+    stock_transfer_id: p.stockTransferId ?? null,
+    warehouse_id: p.warehouseId ?? null,
+    lorry_id: p.lorryId ?? null,
+    workshop_id: p.workshopId ?? null,
+    work_order_id: p.workOrderId ?? null,
     party_name: merged.party_name ?? null,
     contact_name: merged.contact_name ?? null,
     // Defensive E.164 normalisation at the DB write chokepoint. contact_phone
@@ -376,7 +440,32 @@ dpOrders.post('/:id/cancel', async (c) => {
       stopRemoved = { removed: false, failed: true, reason: String((e as Error)?.message ?? e).slice(0, 140) };
     }
   }
-  return c.json({ dpOrder: data, stopRemoved });
+
+  /* Give the lorry back. A cancelled service that left its availability window
+     behind would keep a perfectly free lorry off the board indefinitely — the
+     mirror of the stop-left-behind problem above, and just as invisible.
+
+     Matched on the EXACT reason this job wrote (dp-lorry-block.ts), so it can
+     only ever remove its own window: never a hand-entered repair, never another
+     job's, never the Repair Days dashboard's. A job cancelled before it was
+     scheduled has no dp_no and wrote no window — nothing to undo. */
+  let lorryUnblocked: { removed: boolean; failed: boolean; reason?: string } = { removed: false, failed: false };
+  const dc = data as Record<string, unknown>;
+  const cancelledLorryId = (dc.lorry_id ?? (dc as { lorryId?: string | null }).lorryId) as string | null ?? null;
+  const cancelledDpNo = (dc.dp_no ?? (dc as { dpNo?: string | null }).dpNo) as string | null ?? null;
+  if (String(dc.job_type ?? '') === 'LORRY_SERVICE' && cancelledLorryId && cancelledDpNo) {
+    try {
+      const del = await sb.from('lorry_maintenance').delete()
+        .eq('lorry_id', cancelledLorryId)
+        .eq('reason', dpLorryBlockReason(cancelledDpNo));
+      lorryUnblocked = del.error
+        ? { removed: false, failed: true, reason: del.error.message }
+        : { removed: true, failed: false };
+    } catch (e) {
+      lorryUnblocked = { removed: false, failed: true, reason: String((e as Error)?.message ?? e).slice(0, 140) };
+    }
+  }
+  return c.json({ dpOrder: data, stopRemoved, lorryUnblocked });
 });
 
 const scheduleSchema = z.object({
@@ -467,7 +556,44 @@ dpOrders.post('/:id/schedule', async (c) => {
       tripStop = { id: null, failed: true, reason: `trip_stop wiring failed: ${String((e as Error)?.message ?? e).slice(0, 140)}` };
     }
   }
-  return c.json({ dpOrder: data, dp_no: dpNo, tripStop });
+
+  /* A scheduled LORRY_SERVICE takes its subject lorry OFF THE ROAD for that day.
+     Write the availability window both readers already consult (fleet-availability
+     "is this lorry out today", lorry-capacity's repair days) so the board stops
+     offering a lorry that is at a workshop — see dp-lorry-block.ts for why the
+     reason string carries the DP number.
+
+     NOTE the two different lorries: p.lorryId is the lorry PERFORMING the job
+     (it drives to the workshop and mints the DP plate letters); d.lorry_id is
+     the lorry BEING SERVICED, which is the one that becomes unavailable. They
+     are usually the same vehicle — a lorry drives itself in — but a towed one
+     is not, and blocking the wrong plate would be worse than blocking none.
+
+     Best-effort like the trip-stop wiring above (the schedule already committed)
+     and REPORTED the same way: a silent failure here would leave a lorry looking
+     available on the day it is in the workshop. */
+  let lorryBlocked: { blocked: boolean; failed: boolean; reason?: string } = { blocked: false, failed: false };
+  const d0 = data as Record<string, unknown>;
+  const subjectLorryId = (d0.lorry_id ?? (d0 as { lorryId?: string | null }).lorryId) as string | null ?? null;
+  if (String(d0.job_type ?? '') === 'LORRY_SERVICE' && subjectLorryId) {
+    try {
+      const user = c.get('user') as { id?: string } | null;
+      const ins = await sb.from('lorry_maintenance').insert({
+        company_id: activeCompanyId(c) ?? null,
+        lorry_id: subjectLorryId,
+        unavailable_from: p.tripDate,
+        unavailable_to: p.tripDate,
+        reason: dpLorryBlockReason(dpNo),
+        created_by: user?.id ?? null,
+      });
+      lorryBlocked = ins.error
+        ? { blocked: false, failed: true, reason: ins.error.message }
+        : { blocked: true, failed: false };
+    } catch (e) {
+      lorryBlocked = { blocked: false, failed: true, reason: String((e as Error)?.message ?? e).slice(0, 140) };
+    }
+  }
+  return c.json({ dpOrder: data, dp_no: dpNo, tripStop, lorryBlocked });
 });
 
 export default dpOrders;

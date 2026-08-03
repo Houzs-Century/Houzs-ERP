@@ -28,7 +28,7 @@ import { todayMyt } from '../lib/my-time';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import {
   resolveDoLineSources,
-  resolveDoSources,
+  resolveDoHeaderSources,
   resolveDoLineSourcePosImpl,
   resolveDoSourcePosForDosImpl,
   soLineShippedSourcePosImpl,
@@ -46,7 +46,7 @@ import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { freezeShipCost } from '../lib/fulfillment-costing';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
-import { checkStockAvailability, shortStockResponse, type StockShortage } from '../lib/check-stock-availability';
+import { checkStockAvailability, shortStockResponse, stockCheckableLines, type StockShortage } from '../lib/check-stock-availability';
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from '../lib/dropship-batch';
 import {
@@ -751,10 +751,10 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
   try {
     /* Forward-compat (mig 0057): is_dropship column may not exist yet — retry without it. */
     let hdrRes = await sb.from('delivery_orders')
-      .select('status, warehouse_id, is_dropship').eq('id', deliveryOrderId).maybeSingle();
+      .select('status, warehouse_id, is_dropship, company_id').eq('id', deliveryOrderId).maybeSingle();
     if (hdrRes.error && (hdrRes.error.message ?? '').includes('is_dropship')) {
       hdrRes = await sb.from('delivery_orders')
-        .select('status, warehouse_id').eq('id', deliveryOrderId).maybeSingle();
+        .select('status, warehouse_id, company_id').eq('id', deliveryOrderId).maybeSingle();
     }
     const doHeader = hdrRes.data;
     if (!doHeader) return;
@@ -769,7 +769,8 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
     if (!items || items.length === 0) return;
 
     const lineWh = await resolveDoLineWarehouses(
-      sb, items as Array<{ id: string; so_item_id?: string | null }>, headerWarehouseId);
+      sb, items as Array<{ id: string; so_item_id?: string | null }>, headerWarehouseId,
+      (doHeader as { company_id?: number | null }).company_id ?? undefined);
 
     /* Sofa batch per so_item — same shared resolution the ship used
        (allocated_batch_no + drop-ship expected batch), so the bucket key here
@@ -860,15 +861,23 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
    Resolution order per DO line:
      1. the linked SO line's warehouse_id (so_item_id → mfg_sales_order_items)
      2. the DO header's warehouse_id (ad-hoc lines with no so_item_id)
-     3. the global default warehouse (last-resort fallback)
+     3. the DO's OWN company's default warehouse (last-resort fallback)
 
    Returns a map of delivery_order_items.id → warehouse_id (or null when even
    the fallbacks are absent — the caller skips those lines so a wrong warehouse
-   is never guessed). */
+   is never guessed).
+
+   The `id` field is only a correlation key, so this also serves lines that do
+   not exist yet: the pre-flight stock check passes synthetic ids and the request
+   body's soItemId, and gets back exactly the warehouses the OUT will use. */
 async function resolveDoLineWarehouses(
   sb: any,
   items: Array<{ id: string; so_item_id?: string | null }>,
   headerWarehouseId: string | null,
+  /* The DO's company (2026-08-03) — step 3 is per company. It used to be a
+     company-blind draw across every company's is_default warehouses, decided by
+     alphabetical `code` order. */
+  companyId: number | undefined,
 ): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
   const soItemIds = [...new Set(items
@@ -882,12 +891,90 @@ async function resolveDoLineWarehouses(
       soWh.set(r.id, r.warehouse_id ?? null);
     }
   }
-  const fallback = headerWarehouseId ?? (await defaultWarehouseId(sb));
+  const fallback = headerWarehouseId ?? (await defaultWarehouseId(sb, companyId));
   for (const it of items) {
     const fromSo = it.so_item_id ? (soWh.get(it.so_item_id) ?? null) : null;
     out.set(it.id, fromSo ?? fallback);
   }
   return out;
+}
+
+/* ── checkDoStockAvailability (2026-08-03) ────────────────────────────────────
+   THE PRE-FLIGHT CHECK MUST ASK ABOUT THE WAREHOUSE THE GOODS ACTUALLY LEAVE.
+
+   The ship paths used to measure every line against ONE warehouse:
+   `body.warehouseId ?? defaultWarehouseId(sb)`. The New Delivery Order form
+   never sends warehouseId, and that default was a company-blind draw that
+   resolved to 2990's GUANGZHOU WAREHOUSE — so a Balakong sales order was
+   checked against Guangzhou, reported "short 1, available 0" on stock that was
+   sitting in KL, and pushed the operator into "Ship anyway" (Nico, 2026-08-03,
+   2990-SO-2606-034). Meanwhile the OUT itself resolved per line via
+   resolveDoLineWarehouses and correctly drew from Balakong: the dialog and the
+   movement were measuring two different buildings.
+
+   So resolve each line's warehouse with the SAME helper the OUT uses, group the
+   requests per warehouse and run the shared checkStockAvailability once per
+   warehouse, combining the shortages. Mirrors checkPrStockAvailability in
+   routes/purchase-returns.ts, which had to solve exactly this for batched
+   purchase returns spanning warehouses.
+
+   SERVICE LINES ARE NOT GOODS and are skipped for the same reason. A delivery
+   fee or a dispose/lift add-on has no stock and never produces an inventory
+   movement (shared/service-sku.ts, P1 §4.6 — deductInventoryForDo and
+   resyncInventoryForDo both `continue` past them). Measuring them against
+   inventory_balances therefore always reports "need 1, available 0": Nico's DO
+   for 2990-SO-2606-034 was blocked on SVC-DISPOSE-SOFA and SVC-DELIVERY-CROSS
+   being "short" at BALAKONG (2026-08-03), which no amount of stock could ever
+   satisfy — the only way past was "Ship anyway", on lines that never move stock.
+
+   Lines whose warehouse cannot be resolved are skipped too — the OUT skips
+   them, so the check stays aligned with what will actually be written. */
+async function checkDoStockAvailability(
+  sb: any,
+  lines: Array<{
+    lineRef: string; soItemId: string | null; itemCode: string; itemGroup?: string | null;
+    productName: string | null; variantKey: string; qty: number;
+  }>,
+  headerWarehouseId: string | null,
+  companyId: number | undefined,
+): Promise<StockShortage[]> {
+  const active = stockCheckableLines(lines);
+  if (active.length === 0) return [];
+  const lineWh = await resolveDoLineWarehouses(
+    sb,
+    active.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })),
+    headerWarehouseId,
+    companyId,
+  );
+  const byWh = new Map<string, Array<{ itemCode: string; productName: string | null; variantKey: string; qty: number }>>();
+  for (const l of active) {
+    const wh = lineWh.get(l.lineRef) ?? null;
+    if (!wh) continue;
+    const arr = byWh.get(wh) ?? [];
+    arr.push({ itemCode: l.itemCode, productName: l.productName, variantKey: l.variantKey, qty: Number(l.qty) });
+    byWh.set(wh, arr);
+  }
+  const shortages: StockShortage[] = [];
+  for (const [wh, reqs] of byWh) shortages.push(...(await checkStockAvailability(sb, wh, reqs)));
+  return shortages;
+}
+
+/* The ONE warehouse the commitment planner is told about. Binding a short line
+   to an incoming PO is a per-document decision (resolveShipCommitments takes a
+   single warehouse), so hand it the warehouse most of this shipment leaves
+   from — the explicit header value when there is one, else the most common
+   resolved line warehouse. Ties break on first-seen, which is the sorted line
+   order, so the answer is stable across a retry. */
+function primaryWarehouseOf(lineWarehouses: Array<string | null>): string | null {
+  const counts = new Map<string, number>();
+  for (const wh of lineWarehouses) {
+    if (!wh) continue;
+    counts.set(wh, (counts.get(wh) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [wh, n] of counts) if (n > bestN) { best = wh; bestN = n; }
+  return best;
 }
 
 /* warehouseCodeMap (Agent D 2026-05-31, TASK #32) — resolve a set of
@@ -1054,7 +1141,9 @@ async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedB
 
   // Per-line warehouse — each line ships from its SO line's warehouse (0118),
   // not a single DO-header default. Stock never crosses warehouses.
-  const lineWh = await resolveDoLineWarehouses(sb, items as Array<{ id: string; so_item_id?: string | null }>, headerWarehouseId);
+  const lineWh = await resolveDoLineWarehouses(
+    sb, items as Array<{ id: string; so_item_id?: string | null }>, headerWarehouseId,
+    (doHeader as { company_id?: number | null } | null)?.company_id ?? undefined);
 
   /* Stage 3 (Commander 2026-05-31) — SOFA ships as a whole colour-matched set
      from ONE batch (= one dye lot). The allocator locked that batch onto the SO
@@ -1358,7 +1447,9 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
   const { data: items } = await sb.from('delivery_order_items')
     .select('id, so_item_id, item_code, description, qty, item_group, variants, committed_po_batch_no')
     .eq('delivery_order_id', deliveryOrderId);
-  const lineWh = await resolveDoLineWarehouses(sb, (items ?? []) as Array<{ id: string; so_item_id?: string | null }>, headerWarehouseId);
+  const lineWh = await resolveDoLineWarehouses(
+    sb, (items ?? []) as Array<{ id: string; so_item_id?: string | null }>, headerWarehouseId,
+    (doHeader as { company_id?: number | null }).company_id ?? undefined);
 
   /* Sofa batch per so_item — same SHARED resolution the first ship used
      (allocated_batch_no + drop-ship expected batch, audit C1). batch_no JOINS
@@ -1777,6 +1868,28 @@ export async function soDeliverableRemaining(
     .range(from, to));
   const rawLines = (soItems ?? []) as Array<Record<string, unknown> & { id: string; doc_no: string; item_code: string; qty: number }>;
   if (rawLines.length === 0) return out;
+
+  /* THE CUSTOMER IS A PROPERTY OF THE SALES ORDER, NOT OF ITS LINES.
+     mfg_sales_order_items carries its own debtor_code/debtor_name copy, and
+     those copies DRIFT: on 2990-SO-2606-034 the two sofa lines say "The Wei
+     chin", the delivery line says "Teh Wei chin" and the disposal line says
+     nothing at all — while the header says "Teh Wei chin" for all of them.
+     Reading the line copy made the same-customer rule split ONE sales order into
+     three customers: the picker greyed out half of 2606-034 the moment the
+     operator ticked a sofa, and POST /from-sos would have rejected all four
+     lines as `mixed_customers` (Nico, 2026-08-03; two SOs in prod carry this
+     drift). Stamp the HEADER's debtor on every line — one order, one customer. */
+  const headerDebtor = new Map<string, { code: string | null; name: string | null }>();
+  {
+    const { data: soHeads } = await sb
+      .from('mfg_sales_orders')
+      .select('doc_no, debtor_code, debtor_name')
+      .in('doc_no', [...new Set(rawLines.map((l) => l.doc_no))]);
+    for (const h of (soHeads ?? []) as Array<{ doc_no: string; debtor_code: string | null; debtor_name: string | null }>) {
+      headerDebtor.set(h.doc_no, { code: h.debtor_code ?? null, name: h.debtor_name ?? null });
+    }
+  }
+
   /* buildKey values are per-SO ('build-1', …) — the walk MUST run per doc;
      keyed across docs it would mix two SOs' builds into one group. */
   const orderByDoc = new Map<string, typeof rawLines>();
@@ -1858,8 +1971,10 @@ export async function soDeliverableRemaining(
     out.set(l.id, {
       soItemId: l.id,
       docNo: l.doc_no,
-      debtorCode: (l.debtor_code as string | null) ?? null,
-      debtorName: (l.debtor_name as string | null) ?? null,
+      /* Header first (see the drift note above); the line copy only fills in for
+         an SO whose header row could not be read. */
+      debtorCode: headerDebtor.get(l.doc_no)?.code ?? (l.debtor_code as string | null) ?? null,
+      debtorName: headerDebtor.get(l.doc_no)?.name ?? (l.debtor_name as string | null) ?? null,
       itemCode: l.item_code as string,
       itemGroup: (l.item_group as string | null) ?? null,
       description: (l.description as string | null) ?? null,
@@ -2494,9 +2609,15 @@ deliveryOrdersMfg.get('/', async (c) => {
   /* Source PO(s) each DO's goods shipped from (owner 2026-07-31): a DO/SI is a
      SALES-side doc, so it shows the durable batch_no = source-PO hard link, not
      an Assigned SO. ONE batched ledger pass across the page (the shared
-     resolver — GRN-healed, adjustment-classified). */
+     resolver — GRN-healed, adjustment-classified).
+     2026-08-02 (2990-DO-2607-017): derived as the UNION OF THE DO'S OWN LINES'
+     traces (resolveDoHeaderSources), never the raw byDo ledger rollup — the old
+     rollup surfaced orphan ledger buckets (re-pointed consumptions / drifted
+     variant keys) as phantom chips no item line could explain. Header ≡ ∪(lines)
+     by construction now; the orphan buckets stay visible to the read-only check
+     (check-so-source-trace.mjs), not to this cell. */
   const sourceTraceByDo = rows.length > 0
-    ? await resolveDoSources(sb, rows.map((r) => r.id))
+    ? await resolveDoHeaderSources(sb, rows.map((r) => r.id))
     : new Map<string, { pos: string[]; adjQty: number }>();
   /* Finance gate — cost / margin / per-category subtotals reach ONLY a
      finance-viewer; stripped from every row otherwise. */
@@ -2685,7 +2806,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
   const rawItems = (i.data ?? []) as unknown as Array<{ id: string; so_item_id?: string | null } & Record<string, unknown>>;
   const headerWh = (h.data as { warehouse_id?: string | null }).warehouse_id ?? null;
   const [lineWh, downstreamMap, sourcePosByBucket] = await Promise.all([
-    resolveDoLineWarehouses(sb, rawItems, headerWh),
+    resolveDoLineWarehouses(sb, rawItems, headerWh, activeCompanyId(c)),
     doLineDownstream(sb, rawItems.map((it) => it.id)),
     /* Traceability — resolve which source PO(s) supplied each shipped line, from
        the ledger: batched OUT movements (sofa/drop-ship) ∪ FIFO lot consumptions
@@ -2881,17 +3002,32 @@ deliveryOrdersMfg.post('/', async (c) => {
      one question the operator was asked ("the goods are not here — ship
      anyway?"); deriving the binding from a second, separately-measured source
      is how the two would come to disagree. Only the 409 is gated. */
-  const shipWarehouseId = (body.warehouseId as string | undefined) ?? (await defaultWarehouseId(sb));
+  /* Per-line warehouses, resolved the same way the OUT will resolve them (SO
+     line → header → this company's default). The check follows the goods; only
+     the commitment planner still wants a single representative warehouse. */
+  const headerWarehouseId = (body.warehouseId as string | undefined) ?? null;
+  const stockLines = items.map((it, idx) => ({
+    lineRef: String(idx),
+    soItemId: (it.soItemId as string | null) ?? null,
+    itemCode: String(it.itemCode ?? ''),
+    itemGroup: (it.itemGroup as string | null) ?? null,
+    productName: (it.description as string | null) ?? null,
+    variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
+    qty: Number(it.qty ?? 0),
+  }));
+  const lineWarehouses = await resolveDoLineWarehouses(
+    sb,
+    stockLines.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })),
+    headerWarehouseId,
+    activeCompanyId(c),
+  );
+  const shipWarehouseId = headerWarehouseId
+    ?? primaryWarehouseOf([...lineWarehouses.values()])
+    ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
   let shortages: StockShortage[] = [];
   let commitments = new Map<string, ShipBinding>();
   if (items.length > 0 && shipWarehouseId) {
-    const stockLines = items.map((it) => ({
-      itemCode: String(it.itemCode ?? ''),
-      productName: (it.description as string | null) ?? null,
-      variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
-      qty: Number(it.qty ?? 0),
-    }));
-    shortages = await checkStockAvailability(sb, shipWarehouseId, stockLines);
+    shortages = await checkDoStockAvailability(sb, stockLines, headerWarehouseId, activeCompanyId(c));
     /* Binding follows the fact (mig 0230): a line that ships before its goods
        arrive and resolves exactly one live bound PO carries that PO's batch,
        whichever dialog the operator happened to answer. Resolved BEFORE the 409
@@ -3385,17 +3521,32 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
   // so the picker can offer "ship anyway / switch warehouse / reduce qty".
   // Runs on the CONFIRMED replay too — its answer feeds the binding decision
   // below, so both come from the one measurement the operator was shown.
-  const shipWarehouseId = body.warehouseId ?? (await defaultWarehouseId(sb));
-  let shortages: StockShortage[] = [];
-  if (shipWarehouseId) {
-    const stockLines = sortedPicks.map((line) => ({
-      itemCode: line.itemCode,
-      productName: line.description,
-      variantKey: computeVariantKey(line.itemGroup ?? null, (line.variants as VariantAttrs | null) ?? null),
-      qty: pickQtyById.get(line.soItemId) ?? 0,
-    }));
-    shortages = await checkStockAvailability(sb, shipWarehouseId, stockLines);
-  }
+  /* Per-line warehouses, resolved the same way the OUT will resolve them. A
+     merged DO can span several SOs — and therefore several warehouses — so the
+     check is grouped per warehouse; only the commitment planner below still
+     wants one representative warehouse. */
+  const headerWarehouseId = (body.warehouseId as string | undefined) ?? null;
+  const stockLines = sortedPicks.map((line) => ({
+    lineRef: line.soItemId,
+    soItemId: line.soItemId,
+    itemCode: line.itemCode,
+    itemGroup: line.itemGroup ?? null,
+    productName: line.description,
+    variantKey: computeVariantKey(line.itemGroup ?? null, (line.variants as VariantAttrs | null) ?? null),
+    qty: pickQtyById.get(line.soItemId) ?? 0,
+  }));
+  const lineWarehouses = await resolveDoLineWarehouses(
+    sb,
+    stockLines.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })),
+    headerWarehouseId,
+    activeCompanyId(c),
+  );
+  const shipWarehouseId = headerWarehouseId
+    ?? primaryWarehouseOf([...lineWarehouses.values()])
+    ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
+  const shortages: StockShortage[] = await checkDoStockAvailability(
+    sb, stockLines, headerWarehouseId, activeCompanyId(c),
+  );
 
   /* Binding follows the fact (mig 0230) — per PICK, not per header flag. This is
      the path where the all-or-nothing header decision hurt most: a merged DO can
@@ -3978,9 +4129,24 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
      not-yet-shipped DO (no OUT yet — first-ship deduction handles it). */
   const h = header as { id: string; status: string | null; warehouse_id: string | null };
   const addShipsNow = SHIPPED_STATES.includes((h.status ?? '').toUpperCase());
-  const addWarehouseId = h.warehouse_id ?? (await defaultWarehouseId(sb));
+  /* The added line ships from ITS OWN SO line's warehouse — the same order the
+     OUT uses (SO line → DO header → this company's default). Header-first was
+     the old order here, and with a company-blind default behind it the check
+     could measure a warehouse the movement would never touch. */
+  const addWarehouseId = (await resolveDoLineWarehouses(
+    sb,
+    [{ id: 'add', so_item_id: (it.soItemId as string | null) ?? null }],
+    h.warehouse_id ?? null,
+    activeCompanyId(c),
+  )).get('add') ?? null;
   let addShortages: StockShortage[] = [];
-  if (addWarehouseId) {
+  /* A SERVICE line has no stock and never writes an OUT (shared/service-sku.ts,
+     P1 §4.6), so checking it always reads "need 1, available 0". */
+  const addIsService = isServiceLine({
+    itemGroup: (it.itemGroup as string | null) ?? null,
+    itemCode: (it.itemCode as string | null) ?? null,
+  });
+  if (addWarehouseId && !addIsService) {
     const stockLines = [{
       itemCode: String(it.itemCode ?? ''),
       productName: (it.description as string | null) ?? null,
@@ -4227,7 +4393,14 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     const { data: doHeader } = await sb.from('delivery_orders').select('status, warehouse_id').eq('id', id).maybeSingle();
     const dh = (doHeader ?? { status: null, warehouse_id: null }) as { status: string | null; warehouse_id: string | null };
     if (SHIPPED_STATES.includes((dh.status ?? '').toUpperCase())) {
-      const targetWh = dh.warehouse_id ?? (await defaultWarehouseId(sb));
+      /* The delta leaves the line's OWN warehouse (SO line → DO header → this
+         company's default), matching resyncInventoryForDo. */
+      const targetWh = (await resolveDoLineWarehouses(
+        sb,
+        [{ id: 'delta', so_item_id: (prev.so_item_id as string | null) ?? null }],
+        dh.warehouse_id ?? null,
+        activeCompanyId(c),
+      )).get('delta') ?? null;
       if (targetWh) {
         const delta = qty - Number(prev.qty);
         const effGroup = (it.itemGroup ?? prev.item_group) as string | null;
@@ -4240,7 +4413,11 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
           variantKey: effVariantKey,
           qty: delta,
         }];
-        const shortages = await checkStockAvailability(sb, targetWh, stockLines);
+        /* SERVICE lines have no stock and write no OUT — the delta on one can
+           never be short (shared/service-sku.ts, P1 §4.6). */
+        const shortages = isServiceLine({ itemGroup: effGroup, itemCode: effCode })
+          ? []
+          : await checkStockAvailability(sb, targetWh, stockLines);
         /* priorShippedQty/priorBatchNo are what stop this re-bucketing a line
            that ALREADY shipped: resyncInventoryForDo keys its delta on
            (warehouse, code, variant, BATCH), so stamping a batch onto a line
@@ -4556,7 +4733,10 @@ deliveryOrdersMfg.delete('/:id/payments/:paymentId', async (c) => {
 // ── Status transition + inventory deduction / reversal ────────────────────
 export const patchDeliveryOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
-  let body: { status?: string; signatureData?: string; podKey?: string }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  let body: {
+    status?: string; signatureData?: string; podKey?: string;
+    podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
+  }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
   /* Audit gap #4 — reject an unknown status value outright. Historically the
      handler wrote body.status verbatim, so a typo / lowercase value (the SI #77
@@ -4625,6 +4805,9 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
 
   const now = new Date().toISOString();
   const ts: Record<string, string> = { updated_at: now };
+  // Numeric columns cannot live in `ts` (typed Record<string, string>); merged
+  // into the same update below.
+  const tsNum: Record<string, number> = {};
   if (body.status === 'DISPATCHED') ts.dispatched_at = now;
   if (body.status === 'SIGNED')     ts.signed_at = now;
   if (body.status === 'DELIVERED')  ts.delivered_at = now;
@@ -4635,6 +4818,30 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      an existing POD. */
   if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
   if (typeof body.podKey === 'string' && body.podKey) ts.pod_r2_key = body.podKey;
+
+  /* WHERE the delivery happened (mig 0249). The phone has been taking this
+     reading and discarding it since the POD screen shipped — MobilePOD's own
+     header said "GPS stays client-side (no server column)".
+
+     Written as a PAIR or not at all: one coordinate without the other is not a
+     place, and half a fix stored is worse than none because it reads as data.
+     A range violation is DROPPED rather than 409'd — a bad sensor reading must
+     never be the reason a driver cannot close a delivery. */
+  const lat = typeof body.podLat === 'number' && Number.isFinite(body.podLat) ? body.podLat : null;
+  const lng = typeof body.podLng === 'number' && Number.isFinite(body.podLng) ? body.podLng : null;
+  if (lat !== null && lng !== null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+    tsNum.pod_lat = lat;
+    tsNum.pod_lng = lng;
+    /* Accuracy rides along because two coordinates look equally authoritative
+       whether they came from GPS on a clear street or a wifi guess indoors. */
+    if (typeof body.podAccuracyM === 'number' && Number.isFinite(body.podAccuracyM) && body.podAccuracyM >= 0) {
+      tsNum.pod_accuracy_m = body.podAccuracyM;
+    }
+    /* Separate from delivered_at: the fix can be minutes older than the
+       paperwork, and a stale reading passing as "the delivery moment" is worse
+       than an honest gap. */
+    ts.pod_located_at = typeof body.podLocatedAt === 'string' && body.podLocatedAt ? body.podLocatedAt : now;
+  }
 
   /* Over-delivery guard on FIRST ship (pre-ship -> shipped). The create path
      caps this (Audit gap #3, the asDraft-gated recheck) but a DRAFT DO SKIPS
@@ -4673,7 +4880,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   let data: { id: string; status: string } | null;
   if (body.status === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: body.status, ...ts })
+      .update({ status: body.status, ...ts, ...tsNum })
       .eq('id', id), co.companyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
@@ -4685,7 +4892,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   } else {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: body.status, ...ts }).eq('id', id), co.companyId).select('id, status').single();
+      .update({ status: body.status, ...ts, ...tsNum }).eq('id', id), co.companyId).select('id, status').single();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as { id: string; status: string };
   }

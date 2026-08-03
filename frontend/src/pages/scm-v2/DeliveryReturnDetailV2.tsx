@@ -70,6 +70,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useDrRelationshipMap } from "./sales-doc-relationship-map";
 import {
   DocumentRelationshipMapModal,
+  DocumentChoiceDialog,
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
@@ -604,8 +605,13 @@ export function DeliveryReturnDetailV2() {
         : null,
     [deliveryReturn],
   );
-  const { nodes: chainNodes, onNodeClick: onChainNodeClick } =
-    useDrRelationshipMap(relMapHeader);
+  const {
+    nodes: chainNodes,
+    onNodeClick: onChainNodeClick,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
+  } = useDrRelationshipMap(relMapHeader);
 
   const doMarkInspected = () => {
     if (!deliveryReturn) return;
@@ -1257,6 +1263,17 @@ export function DeliveryReturnDetailV2() {
           // TRUE = the click navigated away, so close the map; a notice keeps it
           // open (renders over the map).
           if (onChainNodeClick(n)) setRelMapOpen(false);
+        }}
+      />
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          setRelMapOpen(false);
+          pickChainChoice(d);
         }}
       />
     </div>
