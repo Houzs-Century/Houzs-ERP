@@ -90,12 +90,33 @@ route Apple's own guideline points at for an app like this.
 
 ## 3. What is blocked, and on whom
 
-**Blocked on this machine.** `xcode-select -p` returns
-`/Library/Developer/CommandLineTools`. There is **no Xcode**, no CocoaPods, no
-simulators. An iOS app cannot be built, run or uploaded from here. Installing
-Capacitor would produce an `ios/` directory that nothing on this Mac can compile
-— which is why it has not been added yet. Adding an unbuildable native project to
-the repo would be worse than not adding one.
+**CORRECTED, 2026-08-03.** An earlier version of this document said the work was
+"blocked on this machine" because there is no Xcode here. That was too absolute
+and the owner was right to push on it.
+
+`xcode-select -p` does return `/Library/Developer/CommandLineTools` — no Xcode,
+no CocoaPods, no simulators, so nothing can be built *locally*. But local is not
+the only place a build can happen:
+
+**GitHub Actions `macos-15` runners ship with Xcode.** With **fastlane** plus an
+**App Store Connect API key** (a `.p8` file), CI can sign, archive and upload
+straight to App Store Connect — no local Xcode, and no interactive two-factor
+prompt, which is the thing that normally forces a human at a keyboard.
+
+That is a better fit than a local build anyway, because **this repo already works
+that way**. The API key becomes three GitHub secrets —
+`APP_STORE_CONNECT_API_KEY_ID`, `..._ISSUER_ID`, `..._KEY` — exactly the shape
+`secrets.DATABASE_URL` already has. Signing certificates go through
+`fastlane match`, which keeps them encrypted in a private repo the runner checks
+out.
+
+**The credential boundary stays exactly where it was, and it is a good one.** You
+generate the key in App Store Connect and paste it into GitHub secrets yourself.
+I never see it, the same way I never see the database DSN.
+
+Installing Xcode locally is still worth doing eventually — iterating on a native
+plugin against CI alone is slow — but it is **not on the critical path** and it
+should not hold anything up.
 
 **Blocked on you, and not delegable.** Every step below marked **[owner]** needs
 your Apple ID, your company's legal details, or a payment card. I do not handle
@@ -123,15 +144,14 @@ Channel: **Custom App via Apple Business Manager, redemption-code link.**
 
 Nothing technical can proceed to submission before this exists.
 
-### Phase 2 — the native shell (I can do this, once Xcode exists)
+### Phase 2 — the native shell (mine; CI builds it, not this Mac)
 
-Capacitor is the right wrapper for a Vite SPA — it is a thin native host with a
-plugin bridge, and the web build stays exactly what it is today.
+Capacitor is the right wrapper for a Vite SPA — a thin native host with a plugin
+bridge, leaving the web build as it is today.
 
-Prerequisites on the build machine: **Xcode** (from the Mac App Store, ~10 GB),
-then `xcode-select --switch /Applications/Xcode.app`, then CocoaPods.
+Built on a `macos-15` GitHub Actions runner with fastlane. Local Xcode optional.
 
-Then, roughly:
+Roughly:
 
 ```bash
 npm --prefix frontend i -D @capacitor/cli
@@ -140,9 +160,20 @@ npx --prefix frontend cap init "Houzs ERP" com.houzscentury.erp --web-dir=dist
 npx --prefix frontend cap add ios
 ```
 
-The app would point at the deployed origin rather than bundling a stale build, so
-a release still ships the way it does today and the shell is only re-submitted
-when the native layer changes.
+**AN OPEN QUESTION, NOT YET DECIDED.** There are two shapes and they trade off
+against each other:
+
+| | Point at the live site (`server.url`) | Bundle the web build |
+|---|---|---|
+| ERP changes ship | instantly, as today | need a new build **and a new review** |
+| Guideline 4.2 | worse — it is visibly a wrapper | better — the app has real content |
+| Apple's attitude | dislikes remote `server.url` in App Store builds | the normal shape |
+| Offline | none | possible |
+
+The first is what an earlier draft of this document assumed without saying so.
+The second is more likely to pass review and is probably right, but it means
+accepting that every ERP release the phone surface depends on becomes a
+submission. **Decide this before writing the shell, not after.**
 
 ### Phase 3 — earn the 4.2 pass (real work, not packaging)
 
@@ -193,9 +224,9 @@ the long pole and nothing technical unblocks it.
 | # | Who | What | Blocks |
 |---|---|---|---|
 | 1 | **owner** | D-U-N-S number for Houzs Century, then Apple Developer Program (organisation), then Apple Business Manager, then link the two | everything |
-| 2 | **owner** | Install Xcode from the Mac App Store on the build machine (~10 GB, needs your Apple ID) | any build at all |
+| 2 | **owner** | Generate an App Store Connect API key and paste it into GitHub secrets (I never see it). Local Xcode is optional and not on the critical path | CI builds |
 | 3 | **me** | Push notifications — the 4.2 answer, and the thing `GET /reminders` has been computing with nowhere to send it | review, not the build |
-| 4 | **me** | Capacitor shell, native camera for the OCR upload, App Store Connect metadata, privacy answers, screenshots | needs 2 |
+| 4 | **me** | Capacitor shell + the macOS Actions workflow, native camera for the OCR upload, App Store Connect metadata, privacy answers, screenshots | needs 1 for signing |
 | 5 | **owner** | Submit; provide a working demo account on production | needs 1–4 |
 
 **Ship the PWA to everyone now, regardless.** It costs nothing, it needs no
@@ -207,4 +238,19 @@ tracks 1 and 2 take. If it turns out to be enough, you have lost nothing.
 Enrolling requires **creating/signing into an Apple account, entering a password,
 and entering a payment card**. I do not do any of those three for anyone, so that
 part is yours — it is a few minutes at a keyboard. Everything either side of it
-is mine.
+is mine, including the CI that does the actual building.
+
+### What is still genuinely uncertain
+
+Recorded so it is not mistaken for a solved problem:
+
+1. **Guideline 4.2 is the real risk and no amount of tooling removes it.** Every
+   account, key and pipeline can be perfect and a bare wrapper still gets
+   rejected. This is what phase 3 is for.
+2. **The bundled-vs-remote question above is undecided**, and it changes how
+   often you have to submit for the rest of the app's life.
+3. **The redemption-code mechanics here come from Apple's documentation, not from
+   having done it.** The per-country scoping and per-licence batching are real
+   but their exact friction is unverified.
+4. **Whether the 3PL partners want another app at all**, rather than a link, is
+   a question for them.
