@@ -1,0 +1,50 @@
+name: Document split check (read-only)
+
+# Answers "is this SO/PO split into several children a PARTIAL fulfilment or a
+# DUPLICATE?" without anyone opening a SQL console.
+#
+# Owner, 2026-08-04, on two DOs cut from one SO and two GRNs against one PO:
+# "为什么一张SO可以开两张DO？？" / "GR 也是". Both are legal by design, and the
+# LIST screen cannot tell the two apart — the source-document chips there are the
+# TRACE, not the quantities, so two partial deliveries drawing on the same POs
+# display identically to a duplicate.
+#
+# Manual trigger only. It is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      doc:
+        description: 'Sales Order or Purchase Order number, e.g. 2990-SO-2606-019'
+        required: true
+        type: string
+
+# Deliberately NOT the deploy's group: this touches nothing and must never queue
+# behind — or displace — a release.
+concurrency:
+  group: doc-splits-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-doc-splits.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
