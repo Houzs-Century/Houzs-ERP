@@ -199,8 +199,15 @@ export type DataGridProps<T> = {
     selectedKeys: Set<string>;
     onToggle: (key: string) => void;
     /** Toggle all visible rows. `keys` = the keys currently shown; `allSelected`
-        = whether they are all already selected (so the parent clears vs selects). */
+        = whether they are all already selected (so the parent clears vs selects).
+        Keys vetoed by `isDisabled` are NOT included — the header checkbox must
+        never tick a row the operator cannot tick by hand. */
     onToggleAll: (keys: string[], allSelected: boolean) => void;
+    /** Optional per-row veto (2026-08-03). A row whose key returns true renders a
+        disabled checkbox and drops out of the header checkbox's set. Used by the
+        DO-from-SO picker, where picking one customer locks out every other
+        customer's lines (one Delivery Order ships to ONE customer). */
+    isDisabled?: (key: string) => boolean;
   };
   /**
    * Compact mode for grids embedded inside another grid's expansion row
@@ -1261,7 +1268,9 @@ function DataGridInner<T>({
                     type="checkbox"
                     aria-label="Select row"
                     checked={selectable.selectedKeys.has(key)}
+                    disabled={selectable.isDisabled?.(key) ?? false}
                     onChange={() => selectable.onToggle(key)}
+                    style={selectable.isDisabled?.(key) ? { cursor: 'not-allowed' } : undefined}
                   />
                 </td>
               );
@@ -1603,7 +1612,11 @@ function DataGridInner<T>({
                 const isSorted = layout.sort?.key === col.key;
                 const arrow = isSorted ? (layout.sort!.dir === 'asc' ? 'A' : 'V') : '';
                 if (col.key === '__select__' && selectable) {
-                  const keys = sortedRows.map(rowKey);
+                  /* The header checkbox acts on WHAT THE OPERATOR SEES — the
+                     post-search, post-filter, post-sort rows — minus any row
+                     the per-row veto has disabled. Ticking it must never reach
+                     a row that is off-screen behind a search term. */
+                  const keys = sortedRows.map(rowKey).filter((k) => !(selectable.isDisabled?.(k) ?? false));
                   const allSel = keys.length > 0 && keys.every((k) => selectable.selectedKeys.has(k));
                   const someSel = !allSel && keys.some((k) => selectable.selectedKeys.has(k));
                   return (

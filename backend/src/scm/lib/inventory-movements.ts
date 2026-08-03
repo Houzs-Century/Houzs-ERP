@@ -214,14 +214,39 @@ export async function writeMovements(
 }
 
 /**
- * Resolve the default warehouse id (the one flagged is_default = true).
+ * Resolve a company's default warehouse id (the one flagged is_default = true).
  * Used as a fallback when a document doesn't carry its own warehouse_id
  * — e.g. legacy GRN rows back-filled to KL.
+ *
+ * `companyId` IS REQUIRED, and that is the whole point of this signature.
+ *
+ * Until 2026-08-03 this was `.eq('is_default', true).order('code').limit(1)`
+ * with no company filter at all — a company-blind draw across every company's
+ * warehouses, decided silently by alphabetical order of `code`. The hazard was
+ * written down in routes/warehouse-mirror.ts (which forces is_default = false on
+ * mirrored rows precisely so 2990's default cannot enter Houzs's draw), but the
+ * batch importer never forced it, so prod carried company 2's
+ * `CHINA WAREHOUSE / GUANGZHOU WAREHOUSE` with is_default = true. "CHINA" sorts
+ * before company 1's "HQ", so EVERY fallback in the system — GRN, DO, delivery
+ * return, consignment — resolved to the Guangzhou warehouse, for both companies.
+ * Nico hit it as "stock not enough at GUANGZHOU WAREHOUSE" on a KL sales order
+ * whose own lines were correctly stamped BALAKONG.
+ *
+ * Taking the company as a required argument makes that class of bug a compile
+ * error rather than a silent wrong-warehouse post: a caller with no company in
+ * hand cannot reach this function by accident. Returns null when the company has
+ * no default flagged — callers already treat null as "no warehouse resolved" and
+ * skip rather than guess.
  */
-export async function defaultWarehouseId(sb: any): Promise<string | null> {
+export async function defaultWarehouseId(
+  sb: any,
+  companyId: number | undefined,
+): Promise<string | null> {
+  if (companyId === undefined) return null;
   const { data } = await sb.from('warehouses')
     .select('id')
     .eq('is_default', true)
+    .eq('company_id', companyId)
     .order('code', { ascending: true })
     .limit(1)
     .maybeSingle();

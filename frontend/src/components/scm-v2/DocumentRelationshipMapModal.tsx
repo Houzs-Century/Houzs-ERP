@@ -116,6 +116,76 @@ export function ModalOverlay({
   );
 }
 
+// ─── Multi-document chooser ────────────────────────────────────────────────
+//
+// One slot on the chain can stand for SEVERAL real documents — an order
+// purchased on two POs, received on two GRNs, billed on two invoices. Those
+// used to open a notice that merely NAMED the doc numbers and told the operator
+// to go find them in a list ("This order is purchased on 2990-PO-2606-017,
+// 2990-PO-2606-016. Open Purchase Orders to view them."). The map's whole job is
+// to be the way in, and the list it pointed at cannot even search by the source
+// doc no, so the operator was left copying numbers by hand (Nico, 2026-08-03:
+// "我要可以直接点开，不要只是给我单号").
+//
+// Every document named is now a row you click straight through to.
+
+export type DocChoice = {
+  id: string;
+  label: string;
+  /** Optional second line — status, date, whatever names the row apart. */
+  sub?: string | null;
+  /** Route to open when this row is picked. */
+  to: string;
+};
+
+export type DocChoicePrompt = {
+  title: string;
+  intro: string;
+  docs: DocChoice[];
+};
+
+export function DocumentChoiceDialog({
+  prompt,
+  onClose,
+  onPick,
+}: {
+  prompt: DocChoicePrompt | null;
+  onClose: () => void;
+  onPick: (doc: DocChoice) => void;
+}) {
+  // Keep the overlay mounted through its close transition, like the map modal.
+  if (!prompt) return null;
+  return (
+    <ModalOverlay open onClose={onClose} title={prompt.title} icon={<Share2 size={16} />}>
+      <div className="mb-3 text-[12.5px] leading-relaxed text-ink-secondary">
+        {prompt.intro}
+      </div>
+      <div className="flex flex-col gap-2">
+        {prompt.docs.map((d) => (
+          <button
+            key={d.id}
+            type="button"
+            onClick={() => onPick(d)}
+            className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 text-left transition-all hover:-translate-y-px hover:border-primary/40 hover:shadow-slab"
+          >
+            <span className="min-w-0">
+              <span className="block truncate font-mono text-[13px] font-bold text-primary-ink">
+                {d.label}
+              </span>
+              {d.sub && (
+                <span className="mt-0.5 block truncate text-[11px] text-ink-muted">{d.sub}</span>
+              )}
+            </span>
+            <span aria-hidden className="shrink-0 text-[13px] text-ink-muted">
+              &rsaquo;
+            </span>
+          </button>
+        ))}
+      </div>
+    </ModalOverlay>
+  );
+}
+
 // ─── Relationship-map modal (5-node graph on a dotted canvas) ──────────────
 
 export function DocumentRelationshipMapModal({

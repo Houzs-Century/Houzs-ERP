@@ -20,7 +20,7 @@ import { useStaff } from "../vendor/scm/lib/admin-queries";
    null; the previous helper returned that verbatim without giving the
    id → name map a chance. Skip UUID-shaped agents so the lookup path
    runs and a real name lands. */
-const UUID_RE =
+export const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function useStaffLookup() {

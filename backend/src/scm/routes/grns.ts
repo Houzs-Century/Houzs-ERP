@@ -438,7 +438,10 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
   const movementErrors: string[] = [];
   const grnNo = (grnHeader as { grn_number: string } | null)?.grn_number ?? grnId;
   let warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-    ?? (await defaultWarehouseId(sb));
+    /* Per-company default (2026-08-03) — this used to be a company-blind draw
+       across every company's is_default warehouses, decided by alphabetical
+       `code` order, so Houzs receipts could land in 2990's Guangzhou warehouse. */
+    ?? (await defaultWarehouseId(sb, companyId));
   /* Owner 2026-07-02 — AUTHORITATIVE receiving warehouse = the source PO line's
      bound warehouse. The warehouse binds at the SO/PO line and must flow into the
      GRN's stock movements (per-warehouse model, no cross-warehouse pooling). A
@@ -2357,7 +2360,7 @@ grns.patch('/:id/cancel', async (c) => {
 
   // (a) Inventory OUT per line — negate the original GRN IN. Best-effort.
   try {
-    const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb));
+    const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     if (warehouseId) {
       /* Migration 0120 — the original IN stamped batch_no = source PO number so a
          sofa set's components share a dye lot. The reversing OUT must consume that
@@ -2771,7 +2774,7 @@ grns.post('/:id/items', async (c) => {
       const { data: grnHeader } = await sb.from('grns')
         .select('grn_number, warehouse_id, exchange_rate').eq('id', grnId).maybeSingle();
       const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-        ?? (await defaultWarehouseId(sb));
+        ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
       // Migration 0082 — convert the line's own-currency unit price to MYR at the
       // GRN's rate (no-op for an MYR GRN).
       const addLineRate = (grnHeader as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
@@ -2961,7 +2964,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   if (inventoryChange) {
     const { data: grnHead } = await sb.from('grns').select('grn_number, warehouse_id, exchange_rate').eq('id', grnId).maybeSingle();
     editWarehouseId = (grnHead as { warehouse_id: string | null } | null)?.warehouse_id
-      ?? (await defaultWarehouseId(sb));
+      ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     editGrnNo = (grnHead as { grn_number: string } | null)?.grn_number ?? grnId;
     // Migration 0082 — convert the line unit price to MYR at the GRN's rate.
     editRate = (grnHead as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
@@ -3140,7 +3143,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
     if ((lg.qty_accepted ?? 0) > 0) {
       const { data: grnHead } = await sb.from('grns').select('warehouse_id').eq('id', grnId).maybeSingle();
       const warehouseId = (grnHead as { warehouse_id: string | null } | null)?.warehouse_id
-        ?? (await defaultWarehouseId(sb));
+        ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
       const consumedLock = await grnReverseWouldGoNegative(sb, warehouseId, [lg]);
       if (consumedLock) return c.json(consumedLock, 409);
     }
@@ -3198,7 +3201,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
         const { data: grnHeader } = await sb.from('grns')
           .select('grn_number, warehouse_id').eq('id', grnId).maybeSingle();
         const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-          ?? (await defaultWarehouseId(sb));
+          ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
         if (warehouseId) {
           const variantKey = computeVariantKey(l.item_group, l.variants ?? null);
           // Carry THIS line's own dye-lot batch (= its source PO number) so the

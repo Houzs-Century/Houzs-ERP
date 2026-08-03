@@ -33,6 +33,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, type FlowNode } from '../../vendor/scm/lib/flow-queries';
 import type { ChainNode } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useCustomerPoNotice } from './so-relationship-map';
+import { useDocChoice, type DocChoiceApi } from './doc-choice';
 
 const flowNodesOf = (data: { nodes: FlowNode[] } | undefined, type: FlowNode['type']) =>
   (data?.nodes ?? []).filter((n) => n.type === type && !n.isAnchor);
@@ -131,9 +132,13 @@ export function buildDoChainNodes(
 export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
   nodes: ChainNode[];
   onNodeClick: (n: ChainNode) => boolean;
-} {
+} & DocChoiceApi {
   const navigate = useNavigate();
   const notify = useNotify();
+  /* Several documents in one slot open a chooser whose every row clicks through
+     (2026-08-03) — naming them and pointing at a list that cannot be searched by
+     this doc no left the operator copying numbers by hand. */
+  const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
   const canOpenGrn = useCanOpenGrn();
 
@@ -158,12 +163,16 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
         return false;
       }
       if (n.type === 'Sales Invoice' && siNodes.length > 0) {
-        navigate(
-          siNodes.length === 1
-            ? `/scm/sales-invoices/${siNodes[0]!.id}`
-            : `/scm/sales-invoices?q=${encodeURIComponent(header?.do_number ?? '')}`,
-        );
-        return true;
+        if (siNodes.length === 1) {
+          navigate(`/scm/sales-invoices/${siNodes[0]!.id}`);
+          return true;
+        }
+        openChoice({
+          title: 'Billed on more than one invoice',
+          intro: 'This delivery was invoiced across several Sales Invoices. Pick one to open it.',
+          docs: siNodes.map((d) => ({ id: d.id, label: d.label, sub: d.status, to: `/scm/sales-invoices/${d.id}` })),
+        });
+        return false;
       }
       if (n.type === 'GRN' && grnNodes.length > 0) {
         if (!canOpenGrn) {
@@ -179,11 +188,10 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
           navigate(`/scm/grns/${grnNodes[0]!.id}`);
           return true;
         }
-        void notify({
+        openChoice({
           title: 'Received on more than one GRN',
-          body:
-            `This order's goods were received on ${grnNodes.map((g) => g.label).join(', ')}. ` +
-            `Open Goods Received to view them.`,
+          intro: "This order's goods arrived across several Goods Received notes. Pick one to open it.",
+          docs: grnNodes.map((g) => ({ id: g.id, label: g.label, sub: g.status, to: `/scm/grns/${g.id}` })),
         });
         return false;
       }
@@ -192,10 +200,10 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
       }
       return false;
     },
-    [navigate, notify, showCustomerPo, header?.so_doc_no, header?.do_number, soNodes, grnNodes, siNodes, canOpenGrn],
+    [navigate, notify, openChoice, showCustomerPo, header?.so_doc_no, header?.do_number, soNodes, grnNodes, siNodes, canOpenGrn],
   );
 
-  return { nodes, onNodeClick };
+  return { nodes, onNodeClick, choice, openChoice, closeChoice, pickChoice };
 }
 
 // ── Sales Invoice chain — Customer PO ▶ Sales Order ▶ Delivery Order ▶
@@ -276,9 +284,10 @@ export function buildSiChainNodes(
 export function useSiRelationshipMap(header: SiRelationshipHeader | null): {
   nodes: ChainNode[];
   onNodeClick: (n: ChainNode) => boolean;
-} {
+} & DocChoiceApi {
   const navigate = useNavigate();
   const notify = useNotify();
+  const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
 
   const flow = useDocumentFlow('si', header?.id ?? null);
@@ -302,12 +311,16 @@ export function useSiRelationshipMap(header: SiRelationshipHeader | null): {
         return false;
       }
       if (n.type === 'Delivery Order' && doNodes.length > 0) {
-        navigate(
-          doNodes.length === 1
-            ? `/scm/delivery-orders/${doNodes[0]!.id}`
-            : `/scm/delivery-orders?q=${encodeURIComponent(header?.invoice_number ?? '')}`,
-        );
-        return true;
+        if (doNodes.length === 1) {
+          navigate(`/scm/delivery-orders/${doNodes[0]!.id}`);
+          return true;
+        }
+        openChoice({
+          title: 'Shipped on more than one DO',
+          intro: 'This invoice covers several Delivery Orders. Pick one to open it.',
+          docs: doNodes.map((d) => ({ id: d.id, label: d.label, sub: d.status, to: `/scm/delivery-orders/${d.id}` })),
+        });
+        return false;
       }
       if (n.type === 'Payments' && paymentNodes.length > 0) {
         void notify({
@@ -324,10 +337,10 @@ export function useSiRelationshipMap(header: SiRelationshipHeader | null): {
       }
       return false;
     },
-    [navigate, notify, showCustomerPo, header?.so_doc_no, header?.invoice_number, soNodes, doNodes, paymentNodes],
+    [navigate, notify, openChoice, showCustomerPo, header?.so_doc_no, header?.invoice_number, soNodes, doNodes, paymentNodes],
   );
 
-  return { nodes, onNodeClick };
+  return { nodes, onNodeClick, choice, openChoice, closeChoice, pickChoice };
 }
 
 // ── Delivery Return chain — Customer PO ▶ Sales Order ▶ Delivery Order ▶
@@ -403,9 +416,10 @@ export function buildDrChainNodes(
 export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
   nodes: ChainNode[];
   onNodeClick: (n: ChainNode) => boolean;
-} {
+} & DocChoiceApi {
   const navigate = useNavigate();
   const notify = useNotify();
+  const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
 
   const flow = useDocumentFlow('dr', header?.id ?? null);
@@ -425,35 +439,47 @@ export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
           navigate(`/scm/sales-orders/${encodeURIComponent(soNodes[0]!.id)}`);
           return true;
         }
-        void notify({
+        openChoice({
           title: 'Returns against more than one sales order',
-          body: `This return covers ${soNodes.map((so) => so.label).join(', ')}.`,
+          intro: 'This return covers several Sales Orders. Pick one to open it.',
+          docs: soNodes.map((so) => ({
+            id: so.id, label: so.label, sub: so.status,
+            to: `/scm/sales-orders/${encodeURIComponent(so.id)}`,
+          })),
         });
         return false;
       }
       if (n.type === 'Delivery Order' && doNodes.length > 0) {
-        navigate(
-          doNodes.length === 1
-            ? `/scm/delivery-orders/${doNodes[0]!.id}`
-            : `/scm/delivery-orders?q=${encodeURIComponent(header?.return_number ?? '')}`,
-        );
-        return true;
+        if (doNodes.length === 1) {
+          navigate(`/scm/delivery-orders/${doNodes[0]!.id}`);
+          return true;
+        }
+        openChoice({
+          title: 'Returned against more than one DO',
+          intro: 'This return covers several Delivery Orders. Pick one to open it.',
+          docs: doNodes.map((d) => ({ id: d.id, label: d.label, sub: d.status, to: `/scm/delivery-orders/${d.id}` })),
+        });
+        return false;
       }
       if (n.type === 'Sales Invoice' && siNodes.length > 0) {
-        navigate(
-          siNodes.length === 1
-            ? `/scm/sales-invoices/${siNodes[0]!.id}`
-            : `/scm/sales-invoices?q=${encodeURIComponent(header?.return_number ?? '')}`,
-        );
-        return true;
+        if (siNodes.length === 1) {
+          navigate(`/scm/sales-invoices/${siNodes[0]!.id}`);
+          return true;
+        }
+        openChoice({
+          title: 'Billed on more than one invoice',
+          intro: 'The order behind this return was invoiced across several Sales Invoices. Pick one to open it.',
+          docs: siNodes.map((d) => ({ id: d.id, label: d.label, sub: d.status, to: `/scm/sales-invoices/${d.id}` })),
+        });
+        return false;
       }
       if (n.type === 'Customer PO' && n.state === 'done') {
         showCustomerPo(n.doc);
       }
       return false;
     },
-    [navigate, notify, showCustomerPo, header?.return_number, soNodes, doNodes, siNodes],
+    [navigate, notify, openChoice, showCustomerPo, header?.return_number, soNodes, doNodes, siNodes],
   );
 
-  return { nodes, onNodeClick };
+  return { nodes, onNodeClick, choice, openChoice, closeChoice, pickChoice };
 }
