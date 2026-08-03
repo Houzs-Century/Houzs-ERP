@@ -29,6 +29,7 @@ import {
   snapshotFromWorkshopName, type DpJobType, type DpPartySnapshot,
 } from '../lib/dp-party';
 import { mintNextDpNo, plateForLorry } from '../lib/dp-no-mint';
+import { dpLorryBlockReason } from '../lib/dp-lorry-block';
 import { normalizePhone } from '../shared/phone';
 import {
   resolveDeliveryScope, scopeMatchesAssignment,
@@ -439,7 +440,32 @@ dpOrders.post('/:id/cancel', async (c) => {
       stopRemoved = { removed: false, failed: true, reason: String((e as Error)?.message ?? e).slice(0, 140) };
     }
   }
-  return c.json({ dpOrder: data, stopRemoved });
+
+  /* Give the lorry back. A cancelled service that left its availability window
+     behind would keep a perfectly free lorry off the board indefinitely — the
+     mirror of the stop-left-behind problem above, and just as invisible.
+
+     Matched on the EXACT reason this job wrote (dp-lorry-block.ts), so it can
+     only ever remove its own window: never a hand-entered repair, never another
+     job's, never the Repair Days dashboard's. A job cancelled before it was
+     scheduled has no dp_no and wrote no window — nothing to undo. */
+  let lorryUnblocked: { removed: boolean; failed: boolean; reason?: string } = { removed: false, failed: false };
+  const dc = data as Record<string, unknown>;
+  const cancelledLorryId = (dc.lorry_id ?? (dc as { lorryId?: string | null }).lorryId) as string | null ?? null;
+  const cancelledDpNo = (dc.dp_no ?? (dc as { dpNo?: string | null }).dpNo) as string | null ?? null;
+  if (String(dc.job_type ?? '') === 'LORRY_SERVICE' && cancelledLorryId && cancelledDpNo) {
+    try {
+      const del = await sb.from('lorry_maintenance').delete()
+        .eq('lorry_id', cancelledLorryId)
+        .eq('reason', dpLorryBlockReason(cancelledDpNo));
+      lorryUnblocked = del.error
+        ? { removed: false, failed: true, reason: del.error.message }
+        : { removed: true, failed: false };
+    } catch (e) {
+      lorryUnblocked = { removed: false, failed: true, reason: String((e as Error)?.message ?? e).slice(0, 140) };
+    }
+  }
+  return c.json({ dpOrder: data, stopRemoved, lorryUnblocked });
 });
 
 const scheduleSchema = z.object({
@@ -530,7 +556,44 @@ dpOrders.post('/:id/schedule', async (c) => {
       tripStop = { id: null, failed: true, reason: `trip_stop wiring failed: ${String((e as Error)?.message ?? e).slice(0, 140)}` };
     }
   }
-  return c.json({ dpOrder: data, dp_no: dpNo, tripStop });
+
+  /* A scheduled LORRY_SERVICE takes its subject lorry OFF THE ROAD for that day.
+     Write the availability window both readers already consult (fleet-availability
+     "is this lorry out today", lorry-capacity's repair days) so the board stops
+     offering a lorry that is at a workshop — see dp-lorry-block.ts for why the
+     reason string carries the DP number.
+
+     NOTE the two different lorries: p.lorryId is the lorry PERFORMING the job
+     (it drives to the workshop and mints the DP plate letters); d.lorry_id is
+     the lorry BEING SERVICED, which is the one that becomes unavailable. They
+     are usually the same vehicle — a lorry drives itself in — but a towed one
+     is not, and blocking the wrong plate would be worse than blocking none.
+
+     Best-effort like the trip-stop wiring above (the schedule already committed)
+     and REPORTED the same way: a silent failure here would leave a lorry looking
+     available on the day it is in the workshop. */
+  let lorryBlocked: { blocked: boolean; failed: boolean; reason?: string } = { blocked: false, failed: false };
+  const d0 = data as Record<string, unknown>;
+  const subjectLorryId = (d0.lorry_id ?? (d0 as { lorryId?: string | null }).lorryId) as string | null ?? null;
+  if (String(d0.job_type ?? '') === 'LORRY_SERVICE' && subjectLorryId) {
+    try {
+      const user = c.get('user') as { id?: string } | null;
+      const ins = await sb.from('lorry_maintenance').insert({
+        company_id: activeCompanyId(c) ?? null,
+        lorry_id: subjectLorryId,
+        unavailable_from: p.tripDate,
+        unavailable_to: p.tripDate,
+        reason: dpLorryBlockReason(dpNo),
+        created_by: user?.id ?? null,
+      });
+      lorryBlocked = ins.error
+        ? { blocked: false, failed: true, reason: ins.error.message }
+        : { blocked: true, failed: false };
+    } catch (e) {
+      lorryBlocked = { blocked: false, failed: true, reason: String((e as Error)?.message ?? e).slice(0, 140) };
+    }
+  }
+  return c.json({ dpOrder: data, dp_no: dpNo, tripStop, lorryBlocked });
 });
 
 export default dpOrders;
