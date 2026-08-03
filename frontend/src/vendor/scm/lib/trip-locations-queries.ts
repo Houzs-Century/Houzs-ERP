@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { hasBackgroundLocation, startBackgroundWatch } from './native-location';
 import type { TripRow } from './trips-queries';
 
 /* Polling cadence. The driver posts every DRIVER_POST_MS (~25s, inside the
@@ -85,10 +86,12 @@ export function useMyActiveTrip() {
    rather than throwing, so a single bad fix never breaks the capture loop. */
 export function usePostTripLocation() {
   return useMutation({
-    mutationFn: (p: { tripId: string; lat: number; lng: number; accuracy?: number | null; recorded_at?: string }) =>
+    mutationFn: (p: { tripId: string; lat: number; lng: number; accuracy?: number | null; recorded_at?: string; simulated?: boolean }) =>
       authedFetch<{ ok: boolean; accepted?: boolean; reason?: string }>(`/trips/${p.tripId}/location`, {
         method: 'POST',
-        body: JSON.stringify({ lat: p.lat, lng: p.lng, accuracy: p.accuracy ?? null, recorded_at: p.recorded_at }),
+        /* `simulated` only ever arrives from the native watcher — a browser has
+           no way to tell a mock-location app from a real fix. See mig 0250. */
+        body: JSON.stringify({ lat: p.lat, lng: p.lng, accuracy: p.accuracy ?? null, recorded_at: p.recorded_at, simulated: p.simulated }),
       }),
   });
 }
@@ -155,6 +158,48 @@ export function useTripLocationCapture(opts: { tripId: string | null; enabled: b
   useEffect(() => {
     // Not tracking: enabled off, no trip, or SSR/no-API. Report and bail.
     if (!enabled || !tripId) { setState({ status: 'off', lastSentAt: null, lastError: null }); return; }
+
+    /* NATIVE PATH (the app). The web branch below stops on Page Visibility,
+       which is correct for a browser tab and is exactly the hole this replaces:
+       a driver who pockets their phone vanishes from the map. The native
+       watcher keeps running with the screen locked, so there is NO visibility
+       listener here and no interval heartbeat — the plugin's distanceFilter
+       decides when a fix is worth sending, which is also what keeps the battery
+       cost low enough that drivers leave it on.
+
+       Everything downstream is unchanged: the same mutation, the same endpoint,
+       the same accepted/rejected handling. Only the source of the fix differs. */
+    if (hasBackgroundLocation()) {
+      setState((st) => ({ ...st, status: 'requesting' }));
+      const handle = startBackgroundWatch({
+        distanceFilterM: 30,
+        onError: (message) => setState((st) => ({ ...st, status: 'error', lastError: message })),
+        onFix: (fix) => {
+          postRef.current.mutate(
+            {
+              tripId,
+              lat: fix.latitude,
+              lng: fix.longitude,
+              accuracy: Number.isFinite(fix.accuracy) ? fix.accuracy : null,
+              recorded_at: new Date(fix.time ?? Date.now()).toISOString(),
+              /* A mock-location app reports a perfect fix from anywhere. The
+                 plugin can tell; a browser cannot. Recorded rather than
+                 rejected — refusing it silently would leave a gap that looks
+                 like lost signal, and the point is to be able to SEE it. */
+              simulated: fix.simulated === true,
+            },
+            {
+              onSuccess: (r) => {
+                if (r?.accepted) setState((st) => ({ ...st, status: 'tracking', lastSentAt: Date.now(), lastError: null }));
+              },
+              onError: (e) => setState((st) => ({ ...st, lastError: e instanceof Error ? e.message : 'post failed' })),
+            },
+          );
+        },
+      });
+      return () => handle.stop();
+    }
+
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
       setState({ status: 'unavailable', lastSentAt: null, lastError: null });
       return;
