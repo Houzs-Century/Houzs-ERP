@@ -66,5 +66,31 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- Background location. The run-sheet's own tracking hook records that it
+	     "stops when the page is backgrounded" — a driver locking their phone
+	     stops the GPS feed, which is the hole this app exists to close. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
+	<!-- Apple reviews an Always request hard and the reviewer reads THIS string.
+	     It has to say who is tracked, when, and why - not "for a better
+	     experience". Delivery and fleet is a recognised legitimate use; a vague
+	     purpose string is what gets it refused. -->
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>While you are on a delivery run, Houzs ERP shares your location with dispatch and with the customer waiting for that delivery, so they can see where the lorry is and when it will arrive. Tracking runs only during an assigned trip and stops when the trip is completed.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Houzs ERP records where a delivery was completed as proof of delivery, and shows dispatch where the lorry is during an assigned trip.</string>
+	<!-- Required alongside the Always key on iOS 11+. -->
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>While you are on a delivery run, Houzs ERP shares your location with dispatch and with the customer waiting for that delivery. Tracking runs only during an assigned trip.</string>
+	<!-- The POD photo and the workshop-document scan. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Houzs ERP uses the camera to photograph proof of delivery, odometer readings and workshop documents.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Houzs ERP can save a delivery or document photo to your library.</string>
+	<!-- Face ID unlock for the saved session. -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Houzs ERP uses Face ID to unlock your saved sign-in, so you do not have to type your password on every shift.</string>
 </dict>
 </plist>
