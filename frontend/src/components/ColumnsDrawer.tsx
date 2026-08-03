@@ -215,6 +215,9 @@ export function ColumnsDrawer({
   }, [columns, query]);
 
   const nothingMatches = groups.length === 0;
+  /* One group is no grouping: a five-column list would gain a header that
+     says only "everything below". Headers earn their space from CONTRAST. */
+  const showGroupHeaders = groups.length > 1;
 
   function commitWidth(key: string) {
     const parsed = Number.parseInt(widthDraft, 10);
@@ -425,7 +428,7 @@ export function ColumnsDrawer({
       const isCustom = group.name === CUSTOM_FIELDS_GROUP;
       return (
         <div key={group.name}>
-          {group.name !== UNGROUPED && (
+          {group.name !== UNGROUPED && showGroupHeaders && (
             <div
               role="button"
               tabIndex={0}

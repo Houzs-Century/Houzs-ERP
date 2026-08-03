@@ -40,6 +40,7 @@ import {
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useSmallViewport } from "../hooks/useSmallViewport";
+import { inferColumnGroup } from "../lib/columnGroups";
 import { subscribeActiveCompany, getActiveCompanySnapshot } from "../lib/activeCompany";
 import { shortCompanyName } from "../lib/branding";
 import {
@@ -1367,7 +1368,10 @@ function DataTableInner<T>({
         .map((c) => ({
           key: c.key,
           label: c.label || c.key,
-          group: c.group || "",
+          /* Explicit beats inferred: a page that sorted its columns by hand
+             (Sales Orders) keeps that sort; every other list gets the shared
+             classifier rather than one flat scroll. */
+          group: c.group || inferColumnGroup(c.key, c.label || c.key) || "",
           visible: !effectiveHidden.has(c.key),
           width: resolveWidth(c),
           pinned: pinnedSet.has(c.key),

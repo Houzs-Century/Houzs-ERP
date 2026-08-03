@@ -63,6 +63,7 @@ import {
   type StoredLayout,
 } from '../../../lib/tableLayouts';
 import { shortCompanyName } from '../../../lib/branding';
+import { inferColumnGroup } from '../../../lib/columnGroups';
 import type { LayoutPresetOption } from '../../../components/LayoutSection';
 import { ColumnsDrawer, type DrawerColumn } from '../../../components/ColumnsDrawer';
 import styles from './DataGrid.module.css';
@@ -776,7 +777,8 @@ function DataGridInner<T>({
       columns.map((c) => ({
         key: c.key,
         label: c.label || c.key,
-        group: c.group || "",
+        // Explicit beats inferred — same rule as the DataTable lists.
+        group: c.group || inferColumnGroup(c.key, c.label || c.key) || "",
         visible: !effectiveHidden.has(c.key),
         width: layout.widths[c.key] ?? c.width ?? 140,
         pinned: layout.pinned.includes(c.key),
