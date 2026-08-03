@@ -105,10 +105,24 @@ if (dbJobs.size === 0) {
 for (const j of dbJobs) if (!codeJobs.has(j)) problems.push(`scm.trip_stop_type has '${j}', DISPATCHABLE_JOB_TYPES does not.`);
 for (const j of codeJobs) if (!dbJobs.has(j)) problems.push(`DISPATCHABLE_JOB_TYPES has '${j}', scm.trip_stop_type does not.`);
 
-// 2. Every dispatchable job can be priced.
+/* 2. Every dispatchable job can be priced — unless the taxonomy names it as one
+      we bill to nobody (NON_BILLABLE_JOB_TYPES, e.g. LORRY_SERVICE: the workshop
+      bills US). The exemption list is READ FROM THE TAXONOMY, not repeated here,
+      so the test in that folder and this script cannot grant different ones. An
+      unparseable/absent list degrades to "no exemptions" — stricter, never
+      looser. */
+const exempt = constArray(src, 'NON_BILLABLE_JOB_TYPES') ?? new Set();
 const priced = new Set([...jobOfRule.values()].filter(Boolean));
 for (const j of dbJobs) {
-  if (!priced.has(j)) problems.push(`Job type '${j}' can be dispatched but NO rate rule prices it — that work would be done for free.`);
+  if (priced.has(j) || exempt.has(j)) continue;
+  problems.push(`Job type '${j}' can be dispatched but NO rate rule prices it — that work would be done for free.`);
+}
+/* 2b. An exemption for a job type that no longer exists is a stale excuse, and
+       one for a job that IS priced hides a real rule behind a "we don't bill
+       this" note. Both mean the list was left behind by a schema change. */
+for (const j of exempt) {
+  if (!dbJobs.has(j)) problems.push(`NON_BILLABLE_JOB_TYPES exempts '${j}', which scm.trip_stop_type does not have.`);
+  else if (priced.has(j)) problems.push(`NON_BILLABLE_JOB_TYPES says '${j}' is not billable, but a rate rule prices it. Drop the exemption or the rule.`);
 }
 
 // 3. No rule claims a job type that does not exist.

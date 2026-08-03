@@ -25,7 +25,8 @@ import {
 } from '../lib/companyScope';
 import {
   partyTypeFor, emptySnapshot, snapshotFromSo, snapshotFromSupplier,
-  snapshotFromProject, snapshotFromAssr, type DpJobType, type DpPartySnapshot,
+  snapshotFromProject, snapshotFromAssr, snapshotFromWarehouse, snapshotFromWorkshop,
+  snapshotFromWorkshopName, type DpJobType, type DpPartySnapshot,
 } from '../lib/dp-party';
 import { mintNextDpNo, plateForLorry } from '../lib/dp-no-mint';
 import { normalizePhone } from '../shared/phone';
@@ -136,7 +137,11 @@ async function denyIfNotOwnDpJob(
    and never reached this list, so a DP order could not be created for a job the
    database, the board's Type filter and the rate card all understand. Kept in
    step by `npm run audit:job-types`. */
-const JOB_TYPES = ['DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION'] as const;
+const JOB_TYPES = [
+  'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION',
+  // Job types 8 and 9 (mig 0250, owner's 2026-08-03 list).
+  'TRANSFER', 'LORRY_SERVICE',
+] as const;
 
 const createSchema = z.object({
   jobType: z.enum(JOB_TYPES),
@@ -147,6 +152,15 @@ const createSchema = z.object({
   assrCaseId: z.number().int().optional(),
   supplierId: z.string().uuid().optional(),
   projectId: z.number().int().optional(),
+  // TRANSFER: the transfer document being driven, and/or the destination
+  // warehouse directly (an ad-hoc move has no document — owner asked for both
+  // paths). LORRY_SERVICE: the lorry being serviced, plus the workshop it is
+  // going to, either picked directly or read off a work order. Columns: mig 0251.
+  stockTransferId: z.string().uuid().optional(),
+  warehouseId: z.string().uuid().optional(),
+  lorryId: z.string().uuid().optional(),
+  workshopId: z.string().uuid().optional(),
+  workOrderId: z.string().uuid().optional(),
   requestedDate: z.string().optional(), // YYYY-MM-DD
   remark: z.string().optional(),
   // Manual overrides — applied ON TOP of the auto-filled snapshot so the operator
@@ -194,6 +208,46 @@ async function resolveSnapshot(
     ).bind(p.assrCaseId).first<Record<string, unknown>>();
     if (a) return snapshotFromAssr(a);
   }
+  /* TRANSFER — the party is the DESTINATION. An explicit warehouseId wins (the
+     operator picked where the fleet is going); otherwise resolve the transfer
+     document's to_warehouse_id. A transfer whose destination row has been
+     deleted falls through to the empty snapshot rather than a half-filled one. */
+  if (p.warehouseId || p.stockTransferId) {
+    let warehouseId = p.warehouseId ?? null;
+    if (!warehouseId && p.stockTransferId) {
+      const { data: tr } = await sb.from('stock_transfers')
+        .select('to_warehouse_id').eq('id', p.stockTransferId).maybeSingle();
+      warehouseId = (tr as { to_warehouse_id?: string } | null)?.to_warehouse_id ?? null;
+    }
+    if (warehouseId) {
+      const { data } = await sb.from('warehouses')
+        .select('code, name, location, city, postcode, state')
+        .eq('id', warehouseId).maybeSingle();
+      if (data) return snapshotFromWarehouse(data as Record<string, unknown>);
+    }
+  }
+  /* LORRY_SERVICE — the party is the WORKSHOP. Picked directly, or read off the
+     work order this trip serves. An older work order may name its workshop only
+     as free text (mig 0241 deliberately left workshop_id unbackfilled), so that
+     name still becomes the party rather than nothing. */
+  if (p.workshopId || p.workOrderId) {
+    let workshopId = p.workshopId ?? null;
+    let workshopText: unknown = null;
+    if (!workshopId && p.workOrderId) {
+      const { data: wo } = await sb.from('lorry_work_orders')
+        .select('workshop_id, workshop').eq('id', p.workOrderId).maybeSingle();
+      const row = wo as { workshop_id?: string | null; workshop?: string | null } | null;
+      workshopId = row?.workshop_id ?? null;
+      workshopText = row?.workshop ?? null;
+    }
+    if (workshopId) {
+      const { data } = await sb.from('workshops')
+        .select('code, name, contact_name, contact_phone, office_phone, address')
+        .eq('id', workshopId).maybeSingle();
+      if (data) return snapshotFromWorkshop(data as Record<string, unknown>);
+    }
+    if (workshopText) return snapshotFromWorkshopName(workshopText);
+  }
   return emptySnapshot(jobType);
 }
 
@@ -225,6 +279,11 @@ dpOrders.post('/', async (c) => {
     assr_case_id: p.assrCaseId ?? null,
     supplier_id: p.supplierId ?? null,
     project_id: p.projectId ?? null,
+    stock_transfer_id: p.stockTransferId ?? null,
+    warehouse_id: p.warehouseId ?? null,
+    lorry_id: p.lorryId ?? null,
+    workshop_id: p.workshopId ?? null,
+    work_order_id: p.workOrderId ?? null,
     party_name: merged.party_name ?? null,
     contact_name: merged.contact_name ?? null,
     // Defensive E.164 normalisation at the DB write chokepoint. contact_phone

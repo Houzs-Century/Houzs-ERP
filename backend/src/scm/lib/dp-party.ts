@@ -10,10 +10,22 @@
 //   DELIVERY / PICKUP / SERVICE → CUSTOMER  (SO header, or the service case)
 //   SUPPLIER_PICKUP             → SUPPLIER   (scm.suppliers — single-line address)
 //   SETUP / DISMANTLE           → VENUE      (public.projects; PIC from public.users)
+//   INSPECTION                  → CUSTOMER   (an ASSR leg, like SERVICE/PICKUP)
+//   TRANSFER                    → WAREHOUSE  (scm.warehouses — the DESTINATION)
+//   LORRY_SERVICE               → WORKSHOP   (scm.workshops, mig 0241)
+//
+// The last two joined scm.trip_stop_type in mig 0250 (owner 2026-08-03, the
+// nine-job-type list). They are the first whose party is one of OUR OWN places
+// rather than a counterparty — a transfer ends at a warehouse we own, a lorry
+// service at the workshop we send it to — so party_type records that instead of
+// filing them under CUSTOMER, which would make "who was this job for" a lie in
+// every report that groups by party.
 // ---------------------------------------------------------------------------
 
-export type DpJobType = 'DELIVERY' | 'PICKUP' | 'SERVICE' | 'SETUP' | 'DISMANTLE' | 'SUPPLIER_PICKUP';
-export type DpPartyType = 'CUSTOMER' | 'SUPPLIER' | 'VENUE';
+export type DpJobType =
+  | 'DELIVERY' | 'PICKUP' | 'SERVICE' | 'SETUP' | 'DISMANTLE' | 'SUPPLIER_PICKUP'
+  | 'INSPECTION' | 'TRANSFER' | 'LORRY_SERVICE';
+export type DpPartyType = 'CUSTOMER' | 'SUPPLIER' | 'VENUE' | 'WAREHOUSE' | 'WORKSHOP';
 
 export interface DpPartySnapshot {
   party_type: DpPartyType;
@@ -35,7 +47,9 @@ export function partyTypeFor(jobType: DpJobType): DpPartyType {
     case 'SUPPLIER_PICKUP': return 'SUPPLIER';
     case 'SETUP':
     case 'DISMANTLE': return 'VENUE';
-    default: return 'CUSTOMER'; // DELIVERY / PICKUP / SERVICE
+    case 'TRANSFER': return 'WAREHOUSE';
+    case 'LORRY_SERVICE': return 'WORKSHOP';
+    default: return 'CUSTOMER'; // DELIVERY / PICKUP / SERVICE / INSPECTION
   }
 }
 
@@ -110,6 +124,56 @@ export function snapshotFromAssr(row: Record<string, unknown>): DpPartySnapshot 
     city: null, postcode: null,
     state: s(row.location),
   };
+}
+
+/** From an scm.warehouses row — the DESTINATION of a TRANSFER job.
+ *
+ *  The warehouse master keeps its original free-text `location` ("Address /
+ *  area") alongside the canonical city / postcode / state columns mig 0180
+ *  added; location is the only street line there is, so it maps to address1.
+ *  party_name prefers the human `name` and falls back to `code`, because some
+ *  rows are only ever referred to by code (KL WAREHOUSE). The master carries no
+ *  contact person or phone — leaving those null is the honest answer; the
+ *  operator can type one on the order. */
+export function snapshotFromWarehouse(row: Record<string, unknown>): DpPartySnapshot {
+  return {
+    party_type: 'WAREHOUSE',
+    party_name: s(row.name) ?? s(row.code),
+    contact_name: null,
+    contact_phone: null,
+    address1: s(row.location), address2: null, address3: null, address4: null,
+    city: s(row.city), postcode: s(row.postcode),
+    state: s(row.state),
+  };
+}
+
+/** From an scm.workshops row (mig 0241) — where a LORRY_SERVICE job is going.
+ *
+ *  The workshop master has ONE free-text `address` (like scm.suppliers before
+ *  0131 structured it), so it maps to address1 with nothing to split into 2-4.
+ *  contact_phone prefers the named contact's phone, then the office line — the
+ *  same "person first, switchboard second" precedence snapshotFromSupplier uses
+ *  for phone/mobile. */
+export function snapshotFromWorkshop(row: Record<string, unknown>): DpPartySnapshot {
+  return {
+    party_type: 'WORKSHOP',
+    party_name: s(row.name) ?? s(row.code),
+    contact_name: s(row.contact_name),
+    contact_phone: s(row.contact_phone) ?? s(row.office_phone),
+    address1: s(row.address), address2: null, address3: null, address4: null,
+    city: null, postcode: null, state: null,
+  };
+}
+
+/** From a work order whose workshop was never linked to the master.
+ *
+ *  scm.lorry_work_orders carries a free-text `workshop` string, and mig 0241
+ *  deliberately did NOT backfill workshop_id from it ("inventing the mapping
+ *  would fabricate spend attribution"). So a DP order raised off an older work
+ *  order can know the workshop's NAME and nothing else — which is still worth
+ *  putting on the job rather than showing the driver a blank party. */
+export function snapshotFromWorkshopName(name: unknown): DpPartySnapshot {
+  return { ...emptySnapshot('LORRY_SERVICE'), party_name: s(name) };
 }
 
 /** An empty snapshot of the right party type — for a manual DP order with no

@@ -266,6 +266,10 @@ export const DP_JOB_TYPES = [
      here, so an inspection DP order rendered through the defensive prettifier
      rather than the canonical label. */
   'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION',
+  /* Job types 8 and 9, from the owner's 2026-08-03 list (mig 0250). Listed here
+     so the board LABELS them; what the create drawer offers is
+     DP_CREATABLE_JOB_TYPES below, which they join with their pickers. */
+  'TRANSFER', 'LORRY_SERVICE',
 ] as const;
 export type DpJobType = (typeof DP_JOB_TYPES)[number];
 
@@ -277,6 +281,10 @@ export const DP_JOB_TYPE_LABEL: Record<DpJobType, string> = {
   DISMANTLE: 'Dismantle',
   SUPPLIER_PICKUP: 'Supplier Pickup',
   INSPECTION: 'Inspection',
+  /* The owner's own words for these two ("Transfer item", "Lorry service"), not
+     a Title-Cased enum value — the label is what he reads on the board. */
+  TRANSFER: 'Transfer Item',
+  LORRY_SERVICE: 'Lorry Service',
 };
 
 /* The job types the New-DP-Order drawer OFFERS to create. DELIVERY / PICKUP /
