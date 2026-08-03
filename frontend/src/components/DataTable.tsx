@@ -49,6 +49,7 @@ import {
   getTableLayoutsSnapshot,
   renameCompanyDefault,
   renameNamedLayout,
+  updateNamedLayout,
   saveCompanyDefault,
   saveMyLayout,
   serializeLayout,
@@ -1426,6 +1427,21 @@ function DataTableInner<T>({
     },
     [baseIdKey, resolvedPresets]
   );
+  /* "Edit this layout" (owner 2026-08-02: default layout 需要可以 edit) — one
+     handler, two destinations again: a saved layout is replaced by id, the
+     COMPANY row goes through the same publish path the footer button uses. */
+  const updateLayout = useCallback(
+    (id: string) => {
+      const target = resolvedPresets.find((p) => p.id === id);
+      if (target?.savedId != null) {
+        return updateNamedLayout(baseIdKey, target.savedId, renderedLayout);
+      }
+      if (target?.companyId != null) return saveCompanyDefault(baseIdKey, renderedLayout);
+      return Promise.resolve();
+    },
+    [baseIdKey, resolvedPresets, renderedLayout]
+  );
+
   const deleteSavedLayout = useCallback(
     (savedId: number) => deleteNamedLayout(baseIdKey, savedId),
     [baseIdKey]
@@ -2287,6 +2303,7 @@ function DataTableInner<T>({
         onDuplicateLayout={layoutStore.canManageLayouts ? duplicateNamedLayout : undefined}
         onRenameLayout={layoutStore.canManageLayouts ? renameLayout : undefined}
         onDeleteLayout={layoutStore.canManageLayouts ? deleteSavedLayout : undefined}
+        onUpdateLayout={layoutStore.canManageLayouts ? updateLayout : undefined}
         defaultManager={defaultManager}
         dirty={layoutDirty}
         onExport={exportColumnConfig}

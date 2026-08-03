@@ -94,6 +94,9 @@ interface Props {
    *  a saved layout or the company default. */
   onRenameLayout?: (id: string, name: string) => Promise<void>;
   onDeleteLayout?: (savedId: number) => Promise<void>;
+  /** Replace the named layout's columns with what is on screen. Works for the
+   *  company default too — the caller routes it. */
+  onUpdateLayout?: (id: string) => Promise<void>;
   defaultManager?: LayoutDefaultManager;
   /** True when the columns no longer match the active layout. */
   dirty?: boolean;
@@ -138,6 +141,7 @@ export function ColumnsDrawer({
   onDuplicateLayout,
   onRenameLayout,
   onDeleteLayout,
+  onUpdateLayout,
   defaultManager,
   dirty,
   udf,
@@ -667,6 +671,21 @@ export function ColumnsDrawer({
             };
             return (
               <>
+                {onUpdateLayout && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      close();
+                      await runLayoutAction(
+                        onUpdateLayout(target.id),
+                        `“${target.label}” now matches these columns`,
+                      );
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
+                  >
+                    <Check size={13} /> Update with current columns
+                  </button>
+                )}
                 {onRenameLayout && (
                   <button
                     type="button"

@@ -495,6 +495,37 @@ app.patch("/:tableKey/layouts/:id", requireLayoutManager, async (c) => {
   return c.json({ ok: true, name });
 });
 
+/**
+ * PUT /api/table-layouts/:tableKey/layouts/:id — replace a saved layout's
+ * COLUMNS with what is on screen (owner 2026-08-02: default layout 需要可以
+ * edit). Renaming is PATCH; this is the other half — without it a layout could
+ * only ever be created, and "fix the one I already have" meant delete-and-
+ * recreate under the same name.
+ *
+ * The company default's equivalent is PUT /:tableKey/default, which already
+ * existed — so both kinds of layout can now be edited in place.
+ */
+app.put("/:tableKey/layouts/:id", requireLayoutManager, async (c) => {
+  const target = readTarget(c);
+  if ("error" in target) return c.json({ error: target.error }, 400);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+  const id = Number(c.req.param("id"));
+  if (!Number.isFinite(id) || id <= 0) return c.json({ error: "Invalid layout" }, 400);
+  const body = await c.req.json().catch(() => ({}));
+  const layout = sanitizeLayout((body as { layout?: unknown }).layout);
+  const res = await c.env.DB.prepare(
+    // `name IS NOT NULL` so this can never overwrite the live arrangement,
+    // whatever id it is handed.
+    `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
+      WHERE id = ? AND company_id = ? AND table_key = ? AND user_id = ? AND name IS NOT NULL`,
+  )
+    .bind(JSON.stringify(layout), nowIso(), uid, id, target.companyId, target.tableKey, uid)
+    .run();
+  if (Number(res.meta?.changes ?? 0) === 0) return c.json({ error: "Layout not found" }, 404);
+  return c.json({ ok: true, layout });
+});
+
 /** DELETE /api/table-layouts/:tableKey/layouts/:id */
 app.delete("/:tableKey/layouts/:id", requireLayoutManager, async (c) => {
   const target = readTarget(c);

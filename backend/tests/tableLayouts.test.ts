@@ -419,6 +419,38 @@ describe("named layouts", () => {
     expect(body.defaultNames["2"]?.[TABLE]).toBeUndefined();
   });
 
+  test("a saved layout can be edited in place, and the live row never is", async () => {
+    const manager = await seedManager();
+    await req(manager, `/${TABLE}/layouts`, { method: "POST", body: { name: "Ops", layout: layout() } });
+    const id = (await listMine(manager))[0]!.id;
+    await req(manager, `/${TABLE}`, { method: "PUT", body: { layout: layout({ order: ["live"] }) } });
+
+    expect(
+      (await req(manager, `/${TABLE}/layouts/${id}`, {
+        method: "PUT",
+        body: { layout: layout({ order: ["edited"] }) },
+      })).status,
+    ).toBe(200);
+
+    expect((await listMine(manager))[0]?.layout.order).toEqual(["edited"]);
+    // Editing a saved layout is not editing what is on screen.
+    const body = await (await req(manager, "")).json<{ mine: Record<string, { layout: { order: string[] } }> }>();
+    expect(body.mine[TABLE]?.layout.order).toEqual(["live"]);
+
+    // And the live row's id is not addressable through this route either.
+    const live = await env.DB.prepare(
+      `SELECT id FROM table_layouts WHERE user_id = ? AND name IS NULL`,
+    )
+      .bind(manager.id)
+      .first<{ id: number }>();
+    expect(
+      (await req(manager, `/${TABLE}/layouts/${Number(live?.id)}`, {
+        method: "PUT",
+        body: { layout: layout({ order: ["hijack"] }) },
+      })).status,
+    ).toBe(404);
+  });
+
   test("the live row cannot be deleted through the layouts route", async () => {
     const user = await seedManager();
     await req(user, `/${TABLE}`, { method: "PUT", body: { layout: layout({ order: ["live"] }) } });

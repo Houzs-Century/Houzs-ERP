@@ -488,6 +488,21 @@ export async function createNamedLayout(
   return created;
 }
 
+/** Replace a saved layout's COLUMNS with the given ones — the other half of
+ *  rename. Without it a layout could only be created, and "fix the one I
+ *  already have" meant delete-and-recreate under the same name. */
+export async function updateNamedLayout(
+  tableKey: string,
+  id: number,
+  layout: StoredLayout,
+): Promise<void> {
+  await api.put(`/api/table-layouts/${encodeURIComponent(tableKey)}/layouts/${id}`, { layout });
+  putMyLayouts(
+    tableKey,
+    (snapshot.myLayouts[tableKey] ?? []).map((l) => (l.id === id ? { ...l, layout } : l)),
+  );
+}
+
 export async function renameNamedLayout(
   tableKey: string,
   id: number,
