@@ -688,13 +688,23 @@ export const api = {
    * Fetches a protected asset (e.g. R2-backed POD photo) as a blob URL,
    * because <img src> can't pass the Authorization header.
    */
-  async fetchBlobUrl(path: string): Promise<string> {
+  async fetchBlobUrl(path: string, typeHint?: string | null): Promise<string> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
     }, BINARY_GET_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
-    return consumeCorrelated(res, async () => URL.createObjectURL(await res.blob()));
+    return consumeCorrelated(res, async () => {
+      let blob = await res.blob();
+      // R2 hands back files it stored without a content type as
+      // application/octet-stream, and window.open()/an <iframe> on such a blob
+      // DOWNLOADS a PDF instead of rendering it. When the caller knows the real
+      // type (from the file extension), re-type the blob so an inline view views.
+      if (typeHint && (!blob.type || blob.type === "application/octet-stream")) {
+        blob = blob.slice(0, blob.size, typeHint);
+      }
+      return URL.createObjectURL(blob);
+    });
   },
 
   /**

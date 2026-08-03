@@ -50,6 +50,7 @@ export function MediaLightbox({
   const item = items[index];
   const isImage = !!item && (item.content_type || "").startsWith("image/");
   const isVideo = !!item && (item.content_type || "").startsWith("video/");
+  const isPdf = !!item && ((item.content_type || "").includes("pdf") || /\.pdf$/i.test(item.r2_key));
   const [url, setUrl] = useState<string | null>(null);
 
   const go = useCallback(
@@ -85,7 +86,9 @@ export function MediaLightbox({
     setUrl(null);
     let revoked = false;
     api
-      .fetchBlobUrl(`${baseUrl}/${item.r2_key}`)
+      // Re-type octet-stream blobs from the item's known MIME so a PDF renders
+      // inline in the <iframe> below instead of triggering a download.
+      .fetchBlobUrl(`${baseUrl}/${item.r2_key}`, item.content_type)
       .then((u) => {
         if (!revoked) setUrl(u);
         else URL.revokeObjectURL(u);
@@ -206,6 +209,18 @@ export function MediaLightbox({
               Loading…
             </div>
           )
+        ) : isPdf ? (
+          url ? (
+            <iframe
+              src={url}
+              title={item.caption || "PDF"}
+              className="h-[88vh] w-[92vw] max-w-[1000px] rounded bg-white shadow-2xl"
+            />
+          ) : (
+            <div className="flex h-64 w-64 items-center justify-center rounded bg-white/5 text-white/60">
+              Loading…
+            </div>
+          )
         ) : (
           <div className="flex flex-col items-center gap-4 rounded-xl bg-white/5 px-10 py-12 text-white">
             <FileText size={60} className="text-white/70" />
@@ -220,10 +235,9 @@ export function MediaLightbox({
                 href={url}
                 target="_blank"
                 rel="noreferrer"
-                download={item.caption || undefined}
                 className="inline-flex items-center gap-2 rounded-md bg-white/10 px-4 py-2 text-[13px] font-semibold uppercase tracking-wide text-white transition-colors hover:bg-white/20"
               >
-                <Download size={15} /> Open
+                <FileText size={15} /> Open
               </a>
             )}
           </div>
