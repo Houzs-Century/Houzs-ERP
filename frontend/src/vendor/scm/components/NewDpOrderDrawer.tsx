@@ -34,6 +34,8 @@ import {
 } from '../lib/delivery-planning-queries';
 import { useSuppliers, useSupplierDetail } from '../lib/suppliers-queries';
 import { useLorries } from '../lib/lorries-queries';
+import { useStockTransfers } from '../lib/stock-queries';
+import { useWarehouses } from '../lib/inventory-queries';
 import { SearchableSelect } from './SearchableSelect';
 import { useNotify } from './NotifyDialog';
 // App-level client for the PMS project list (/api/projects lives outside the
@@ -49,13 +51,14 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
    in its Type chip — so this dropdown can never drift from what's shown elsewhere. */
 
 /* What the SOURCE reference means for each type, and the field it maps to. */
-function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: string; kind: 'so' | 'supplier' | 'project' | 'assr' | 'workshop' | 'none' } {
+function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: string; kind: 'so' | 'supplier' | 'project' | 'assr' | 'workshop' | 'transfer' | 'none' } {
   switch (jobType) {
     case 'SUPPLIER_PICKUP': return { label: 'Supplier', hint: 'supplier id — party auto-fills from the supplier master', kind: 'supplier' };
     case 'SETUP':
     case 'DISMANTLE': return { label: 'Project / venue', hint: 'PMS project id — venue + PIC auto-fill', kind: 'project' };
     case 'SERVICE': return { label: 'Service case', hint: 'service case id — customer auto-fills', kind: 'assr' };
     case 'LORRY_SERVICE': return { label: 'Workshop', hint: 'workshop id — name, contact + address auto-fill from the workshop master', kind: 'workshop' };
+    case 'TRANSFER': return { label: 'Stock transfer', hint: 'transfer id — the destination warehouse auto-fills from the document', kind: 'transfer' };
     default: return { label: 'Sales order', hint: 'SO No. — customer auto-fills (optional)', kind: 'so' };
   }
 }
@@ -98,6 +101,11 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
        the job's subject and is the lorry taken off the road when the job is
        scheduled. Every other job type leaves it empty. */
     lorryId: '',
+    /* TRANSFER only — the DESTINATION warehouse. Like the lorry above it is a
+       second reference rather than the source: the transfer document (if any)
+       says what is being moved, this says where the fleet is driving to, and it
+       is the party the address comes from. */
+    warehouseId: '',
     partyName: '', contactName: '', contactPhone: '',
     address1: '', address2: '', address3: '', address4: '',
     city: '', postcode: '', state: '',
@@ -158,6 +166,27 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       .filter((l) => l.active !== false)
       .map((l) => ({ value: l.id, label: l.plate })),
     [lorriesQ.data],
+  );
+
+  /* Transfers + warehouses — TRANSFER only. POSTED transfers only: a cancelled
+     document describes a move that is not happening, and sending a lorry for it
+     is the mistake this filter exists to prevent. */
+  const transfersQ = useStockTransfers({ status: 'POSTED' });
+  const warehousesQ = useWarehouses();
+
+  const transferOptions = useMemo(
+    () => (transfersQ.data ?? []).map((t) => ({
+      value: t.id,
+      label: `${t.transfer_no} — ${t.from_warehouse?.code ?? '?'} → ${t.to_warehouse?.code ?? '?'}${t.transfer_date ? ` · ${t.transfer_date}` : ''}`,
+    })),
+    [transfersQ.data],
+  );
+  const warehouseOptions = useMemo(
+    () => (warehousesQ.data ?? []).map((w) => ({
+      value: w.id,
+      label: `${w.code}${w.name && w.name !== w.code ? ` — ${w.name}` : ''}`,
+    })),
+    [warehousesQ.data],
   );
 
   /* Supplier prefill — the DETAIL row (the list view predates the structured
@@ -221,6 +250,35 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     }));
   };
 
+  /* Warehouse prefill — mirrors backend dp-party.ts snapshotFromWarehouse field
+     for field: the master's free-text `location` is the only street line there
+     is, the name falls back to the code, and there is no contact to invent. */
+  const applyWarehouse = (id: string, prev: typeof form): typeof form => {
+    const w = (warehousesQ.data ?? []).find((r) => r.id === id);
+    return {
+      ...prev,
+      warehouseId: id,
+      partyName: (w?.name ?? w?.code ?? '').trim(),
+      contactName: '', contactPhone: '',
+      address1: (w?.location ?? '').trim(),
+      address2: '', address3: '', address4: '',
+      city: (w?.city ?? '').trim(),
+      postcode: (w?.postcode ?? '').trim(),
+      state: (w?.state ?? '').trim(),
+    };
+  };
+  const pickWarehouse = (id: string) => setForm((s) => applyWarehouse(id, s));
+
+  /* Picking a transfer document fills the destination FROM the document, then
+     the party from that destination — the same two steps the server takes when
+     only stockTransferId is sent. The operator can still change the warehouse
+     afterwards; whatever is on screen is what gets stored. */
+  const pickTransfer = (id: string) => {
+    const t = (transfersQ.data ?? []).find((r) => r.id === id);
+    const dest = t?.to_warehouse_id ?? '';
+    setForm((s) => (dest ? applyWarehouse(dest, { ...s, source: id }) : { ...s, source: id }));
+  };
+
   const submit = () => {
     const body: DpOrderCreate = { jobType: form.jobType };
     const ref = form.source.trim();
@@ -229,8 +287,14 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       else if (src.kind === 'project') body.projectId = Number(ref) || undefined;
       else if (src.kind === 'assr') body.assrCaseId = Number(ref) || undefined;
       else if (src.kind === 'workshop') body.workshopId = ref;
+      else if (src.kind === 'transfer') body.stockTransferId = ref;
       else if (src.kind === 'so') body.soDocNo = ref;
     }
+    /* The destination rides alongside the transfer document, not instead of it:
+       an ad-hoc move has a warehouse and no document, and a document-backed one
+       records where the fleet was actually sent even if the document's
+       destination is edited later. */
+    if (form.jobType === 'TRANSFER' && form.warehouseId) body.warehouseId = form.warehouseId;
     /* The serviced lorry rides alongside the source, not instead of it: the
        workshop is the party, this is the job's subject. Sent for LORRY_SERVICE
        only, so switching type can never smuggle a stale lorry onto a setup job. */
@@ -269,6 +333,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     src.kind === 'supplier' && !suppliersQ.isError ? 'supplier-picker'
     : src.kind === 'project' && !projectsQ.isError ? 'project-picker'
     : src.kind === 'workshop' && !workshopsQ.isError ? 'workshop-picker'
+    : src.kind === 'transfer' && !transfersQ.isError ? 'transfer-picker'
     : 'text';
 
   return (
@@ -298,6 +363,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                   // Same reasoning for the serviced lorry: it only means
                   // anything on a LORRY_SERVICE, so it clears with the rest.
                   lorryId: '',
+                  warehouseId: '',
                   partyName: '', contactName: '', contactPhone: '',
                   address1: '', address2: '', address3: '', address4: '',
                   city: '', postcode: '', state: '',
@@ -336,6 +402,15 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 placeholder={workshopsQ.isLoading ? 'Loading workshops…' : 'Search workshop by name or code…'}
                 className={styles.searchInput}
                 ariaLabel="Workshop"
+              />
+            ) : sourceControl === 'transfer-picker' ? (
+              <SearchableSelect
+                value={form.source}
+                onChange={pickTransfer}
+                options={transferOptions}
+                placeholder={transfersQ.isLoading ? 'Loading transfers…' : 'Search by transfer no or warehouse…'}
+                className={styles.searchInput}
+                ariaLabel="Stock transfer"
               />
             ) : (
               <input className={styles.searchInput} style={inputStyle} placeholder={src.hint}
@@ -378,11 +453,41 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
             </label>
           )}
 
+          {/* Where the goods are going. TRANSFER only, and required for the same
+              reason the lorry is on a service job: a move with no destination
+              has no address, so the driver has nowhere to be sent. Picking a
+              transfer document fills this in; an ad-hoc move sets it directly. */}
+          {form.jobType === 'TRANSFER' && (
+            <label style={fieldRow}>
+              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
+                Destination warehouse <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}>— required</span>
+              </div>
+              {warehousesQ.isError ? (
+                <input className={styles.searchInput} style={inputStyle}
+                  placeholder="warehouse id — the warehouse list could not be loaded"
+                  value={form.warehouseId} onChange={(e) => set('warehouseId', e.target.value)} />
+              ) : (
+                <SearchableSelect
+                  value={form.warehouseId}
+                  onChange={pickWarehouse}
+                  options={warehouseOptions}
+                  placeholder={warehousesQ.isLoading ? 'Loading warehouses…' : 'Search by code or name…'}
+                  className={styles.searchInput}
+                  ariaLabel="Destination warehouse"
+                />
+              )}
+              <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>
+                The warehouse master carries no contact — fill one in below if the
+                driver needs someone to call on arrival.
+              </div>
+            </label>
+          )}
+
           <div className={styles.eyebrow} style={{ margin: 'var(--space-2) 0', color: 'var(--c-burnt)' }}>
             Party — auto-fills from the {src.label.toLowerCase()}; edit any field to override
           </div>
           <label style={fieldRow}>
-            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>{src.kind === 'supplier' ? 'Supplier' : src.kind === 'project' ? 'Venue' : src.kind === 'workshop' ? 'Workshop' : 'Customer'} name</div>
+            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>{src.kind === 'supplier' ? 'Supplier' : src.kind === 'project' ? 'Venue' : src.kind === 'workshop' ? 'Workshop' : src.kind === 'transfer' ? 'Warehouse' : 'Customer'} name</div>
             <input className={styles.searchInput} style={inputStyle} value={form.partyName} onChange={(e) => set('partyName', e.target.value)} />
           </label>
           <div style={row2}>
@@ -432,10 +537,13 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
           <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
-          {/* A lorry service with no lorry is not a job anyone can act on, so
-              the button says no rather than the server rejecting it later. */}
+          {/* A lorry service with no lorry, or a transfer with no destination,
+              is not a job anyone can act on — so the button says no rather than
+              the server rejecting it later. */}
           <Button variant="primary" size="md" onClick={submit}
-            disabled={create.isPending || (form.jobType === 'LORRY_SERVICE' && !form.lorryId.trim())}>
+            disabled={create.isPending
+              || (form.jobType === 'LORRY_SERVICE' && !form.lorryId.trim())
+              || (form.jobType === 'TRANSFER' && !form.warehouseId.trim())}>
             {create.isPending ? 'Creating…' : 'Create DP Order'}
           </Button>
         </div>

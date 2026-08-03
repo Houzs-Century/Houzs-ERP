@@ -294,12 +294,13 @@ export const DP_JOB_TYPE_LABEL: Record<DpJobType, string> = {
    sink). The drawer's real job is the "extra" fleet jobs with no native document.
    DP_JOB_TYPES (the full set) is still used to LABEL any existing/legacy dp_order
    the board renders. */
-export const DP_CREATABLE_JOB_TYPES = ['SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'LORRY_SERVICE'] as const;
+export const DP_CREATABLE_JOB_TYPES = ['SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'LORRY_SERVICE', 'TRANSFER'] as const;
 
-/* LORRY_SERVICE is safe to create for the same reason the other three are: its
-   source sets workshop_id / lorry_id (mig 0251) and never so_doc_no, so the
-   board's union guard does not filter it out. Verified against a created row,
-   not assumed — see the INSPECTION note below for the failure this avoids. */
+/* LORRY_SERVICE and TRANSFER are safe to create for the same reason the other
+   three are: their sources set workshop_id / lorry_id / stock_transfer_id /
+   warehouse_id (mig 0251) and never so_doc_no, so the board's union guard does
+   not filter them out. Verified against created rows, not assumed — see the
+   INSPECTION note below for the failure this avoids. */
 
 /* INSPECTION is deliberately NOT here, even though 2026-08-02 added it to
    DP_JOB_TYPES so it labels correctly. The three types above are safe to create
@@ -338,6 +339,12 @@ export type DpOrderCreate = {
      goes to, which is the party the address snapshot comes from. */
   lorryId?: string;
   workshopId?: string;
+  /* TRANSFER (migs 0250/0251): the stock-transfer document being driven, when
+     there is one, and the DESTINATION warehouse — which is the party, and the
+     address the fleet actually goes to. The owner asked for both paths: pick a
+     transfer, or enter an ad-hoc move with no document. */
+  stockTransferId?: string;
+  warehouseId?: string;
   requestedDate?: string;
   remark?: string;
   overrides?: Record<string, string | null>;
