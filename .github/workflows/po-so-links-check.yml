@@ -1,0 +1,44 @@
+name: PO to SO link check (read-only)
+
+# Does the PO agree with the SO about who they belong to?
+#
+# Owner, 2026-08-04: "当 MRP 分配了之后，你要看一下我们的 PO，确认它分配去的 SO 是
+# 哪一张，同时也要确认 SO 对应去的 PO 是哪一张，确保两边都是对的".
+#
+# The two directions are built by DIFFERENT code — po-so-coverage.ts merges the
+# stored link, a delivered-SO lock and live MRP coverage for PO -> SO, while
+# mfg-sales-orders.ts builds its own SO -> PO. This checks the one fact both
+# must honour: the stored purchase_order_items.so_item_id.
+#
+# The MRP half is deliberately NOT checked. A floating allocation moves as demand
+# moves, the UI marks it as a guess, and the owner has said soft match is fine.
+#
+# Manual trigger only. It is a question, not a gate.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: po-so-links-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-po-so-links.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
