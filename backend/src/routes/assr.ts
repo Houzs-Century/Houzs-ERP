@@ -1716,7 +1716,7 @@ app.post(
     complained_date?: string | null;
     ref_no?: string | null;
     customer_email?: string | null;
-    service_category?: string | null;
+    service_category?: string | string[] | null;
     assigned_to?: number | null;
   }>();
 
@@ -1827,7 +1827,11 @@ app.post(
     complained_date: trimOrNull(body.complained_date),
     ref_no: trimOrNull(body.ref_no),
     customer_email: trimOrNull(body.customer_email),
-    service_category: trimOrNull(body.service_category),
+    // Multi-select: pass an array straight through (createAssrCase resolves
+    // it against the lookup); trim only the legacy single-string form.
+    service_category: Array.isArray(body.service_category)
+      ? body.service_category
+      : trimOrNull(body.service_category),
     assigned_to: assignedTo,
     created_by: userId,
     // Owner 2026-07-20: 2990 raises Service Cases on the merged platform too.

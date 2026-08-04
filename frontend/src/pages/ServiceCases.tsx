@@ -2375,6 +2375,59 @@ function SoNoSearchEdit({
   );
 }
 
+/* Product Category is multi-select since 2026-08 — a complaint can be
+   mattress AND bedframe on the same case. Chips rather than <select
+   multiple>: the list is five items and ctrl-click-to-multi-select is
+   undiscoverable. Values the lookup doesn't know (legacy free text) render
+   as chips too, so reopening a case never silently drops one. */
+function CategoryChips({
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  options: string[];
+  value: string[];
+  onChange: (next: string[]) => void;
+  disabled?: boolean;
+}) {
+  const extras = value.filter((v) => !options.includes(v));
+  const toggle = (n: string) =>
+    onChange(value.includes(n) ? value.filter((x) => x !== n) : [...value, n]);
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {[...options, ...extras].map((n) => {
+        const on = value.includes(n);
+        return (
+          <button
+            key={n}
+            type="button"
+            disabled={disabled}
+            aria-pressed={on}
+            onClick={() => toggle(n)}
+            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              on
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-surface text-ink-muted hover:border-primary/40 hover:text-ink"
+            }`}
+          >
+            {n}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** "Bedframe, Mattress" -> ["Bedframe","Mattress"]. The API keeps sending
+ *  the flat string on the case row for every read-only surface. */
+function splitCategories(v: string | null | undefined): string[] {
+  return (v ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 function CreatePanel({
   onClose,
   onCreated,
@@ -2435,7 +2488,7 @@ function CreatePanel({
   // picked SO's own customer reference (below) but stays editable.
   const [refNo, setRefNo] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
-  const [serviceCategory, setServiceCategory] = useState("");
+  const [serviceCategories, setServiceCategories] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
@@ -2662,7 +2715,7 @@ function CreatePanel({
         // complete. The backend also trims/whitelists these defensively.
         ref_no: refNo.trim() || null,
         customer_email: customerEmail.trim() || null,
-        service_category: serviceCategory.trim() || null,
+        service_category: serviceCategories.length ? serviceCategories : null,
       });
 
       // Upload any staged defect photos/videos as "complaint" attachments.
@@ -3039,23 +3092,11 @@ function CreatePanel({
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
               Product Category
             </div>
-            <select
-              value={serviceCategory}
-              onChange={(e) => setServiceCategory(e.target.value)}
-              className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="">— select —</option>
-              {/* Keep a legacy/unknown value selectable so reopening the
-                  form never silently drops it. */}
-              {serviceCategory && !productCategoryOptions.includes(serviceCategory) && (
-                <option value={serviceCategory}>{serviceCategory}</option>
-              )}
-              {productCategoryOptions.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
+            <CategoryChips
+              options={productCategoryOptions}
+              value={serviceCategories}
+              onChange={setServiceCategories}
+            />
           </div>
         </div>
       </PanelSection>
@@ -3219,6 +3260,13 @@ function DetailContent({
     [],
     LOOKUP_CACHE,
   );
+  const detailProductCategoriesQ = useQuery<{ data: LookupOpt[] }>("/api/assr/lookups/product-categories",
+    () => api.get("/api/assr/lookups/product-categories"),
+    [],
+    LOOKUP_CACHE,
+  );
+  const detailProductCategoryOptions =
+    detailProductCategoriesQ.data?.data.map((r) => r.name) ?? [];
   const prioritiesQ = useQuery<{ data: LookupOpt[] }>("/api/assr/lookups/priorities",
     () => api.get("/api/assr/lookups/priorities"),
     [],
@@ -3846,12 +3894,22 @@ function DetailContent({
             )}
             {/* Product attributes */}
             <div className="mt-1 space-y-2.5 border-t border-border-subtle/50 pt-2.5">
-              <InlineEdit
-                label="Product Category"
-                value={c.service_category}
-                onSave={(v) => patch({ service_category: v })}
-                placeholder="e.g. Mattress / Bed frame"
-              />
+              <div>
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+                  Product Category
+                </div>
+                {/* Multi-select, saved on every toggle. The detail payload
+                    carries the list; fall back to splitting the flat string
+                    so a case fetched from a cached/older response still
+                    shows its chips. */}
+                <CategoryChips
+                  options={detailProductCategoryOptions}
+                  value={
+                    detail.data?.service_categories ?? splitCategories(c.service_category)
+                  }
+                  onChange={(next) => patch({ service_category: next })}
+                />
+              </div>
             </div>
             {showAddItem && (() => {
               // Hide items already on the case so users only see what's
