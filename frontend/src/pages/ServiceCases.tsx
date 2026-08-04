@@ -873,6 +873,9 @@ function CasesView({
       defaultHidden: true,
       render: (r) => r.service_category || "—",
       getValue: (r) => r.service_category,
+      // Multi-select: a case can be "Bedframe, Mattress". Ticking Bedframe
+      // in the funnel must surface it, so the filter sees the parts.
+      getFilterValues: (r) => splitCategories(r.service_category),
     },
     {
       key: "issue_category",
