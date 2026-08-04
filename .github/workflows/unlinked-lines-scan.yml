@@ -1,0 +1,47 @@
+name: Unlinked-line scan (read-only)
+
+# How widespread is the 2990-DO-2607-005 defect?
+#
+# That DO names 2990-SO-2606-019 on its header, is DISPATCHED, and none of its
+# six lines carry an so_item_id — so it deducted stock while counting toward no
+# Sales Order line, which is why the over-delivery guard never saw it and why
+# the same pillow went out twice (DO-005 on 13/07, DO-017 on 23/07).
+#
+# doc-splits-check.yml answers that question for ONE document you already
+# suspect. This one sweeps the whole database for the same shape, on both the
+# delivery side and the goods-receipt side, and says which of them a sibling
+# document already covers — the ones that are genuinely double movements.
+#
+# Manual trigger only, like every production read here. It is a question, not a
+# gate.
+on:
+  workflow_dispatch:
+
+# Its own group, and cancel-in-progress FALSE: asking a second time must not
+# throw away the first answer. (doc-splits-check.yml learned that the hard way —
+# a check on an SO was cancelled mid-run by a check on a PO.)
+concurrency:
+  group: unlinked-lines-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/scan-unlinked-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
