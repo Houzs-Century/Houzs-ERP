@@ -208,12 +208,18 @@ async function recomputeTotals(sb: any, noteId: string) {
    Per-line ship-from warehouse for the loaner OUT. A note line ships from its
    linked consignment-SO line's warehouse when set (consignment_so_item_id →
    consignment_sales_order_items.warehouse_id), else the note header's warehouse,
-   else the global default. Returns map of item id → warehouse_id (null when even
-   the fallbacks are absent — the caller skips that line). */
+   else the note's OWN company's default. Returns map of item id → warehouse_id
+   (null when even the fallbacks are absent — the caller skips that line). */
 async function resolveNoteLineWarehouses(
   sb: any,
   items: Array<{ id: string; consignment_so_item_id?: string | null }>,
   headerWarehouseId: string | null,
+  /* The note's company (2026-08-03). The last-resort default warehouse is per
+     company; it used to be a company-blind draw that resolved to whichever
+     company's is_default row sorted first by code. Read it off the DOCUMENT,
+     not the request — this helper also runs from the headless resync path, and
+     a note's ship-from warehouse is a fact about the note. */
+  companyId: number | undefined,
 ): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
   const soItemIds = [...new Set(items
@@ -227,7 +233,7 @@ async function resolveNoteLineWarehouses(
       soWh.set(r.id, r.warehouse_id ?? null);
     }
   }
-  const fallback = headerWarehouseId ?? (await defaultWarehouseId(sb));
+  const fallback = headerWarehouseId ?? (await defaultWarehouseId(sb, companyId));
   for (const it of items) {
     const fromSo = it.consignment_so_item_id ? (soWh.get(it.consignment_so_item_id) ?? null) : null;
     out.set(it.id, fromSo ?? fallback);
@@ -282,7 +288,12 @@ async function resyncNoteInventory(sb: any, noteId: string, performedBy: string 
     const { data: items } = await sb.from('consignment_delivery_order_items')
       .select('id, consignment_so_item_id, item_code, description, qty, item_group, variants')
       .eq('consignment_delivery_order_id', noteId);
-    const lineWh = await resolveNoteLineWarehouses(sb, (items ?? []) as Array<{ id: string; consignment_so_item_id?: string | null }>, (header as { warehouse_id: string | null }).warehouse_id ?? null);
+    const lineWh = await resolveNoteLineWarehouses(
+      sb,
+      (items ?? []) as Array<{ id: string; consignment_so_item_id?: string | null }>,
+      (header as { warehouse_id: string | null }).warehouse_id ?? null,
+      (header as { company_id?: number | null }).company_id ?? undefined,
+    );
     const distinctWh = [...new Set(((items ?? []) as Array<{ id: string }>).map((it) => lineWh.get(it.id)).filter((x): x is string => !!x))];
     const batchByWh = new Map<string, Map<string, string | null>>();
     for (const wh of distinctWh) batchByWh.set(wh, await resolveWarehouseLotBatches(sb, wh));
@@ -629,7 +640,7 @@ consignmentNotes.get('/:id', async (c) => {
   };
   const rawItems = (i.data ?? []) as unknown as Array<{ id: string; consignment_so_item_id?: string | null } & Record<string, unknown>>;
   const headerWh = (h.data as { warehouse_id?: string | null }).warehouse_id ?? null;
-  const lineWh = await resolveNoteLineWarehouses(sb, rawItems, headerWh);
+  const lineWh = await resolveNoteLineWarehouses(sb, rawItems, headerWh, activeCompanyId(c));
   const codeMap = await warehouseCodeMap(sb, [...lineWh.values()]);
   const items = rawItems.map((it) => {
     const wid = lineWh.get(it.id) ?? null;

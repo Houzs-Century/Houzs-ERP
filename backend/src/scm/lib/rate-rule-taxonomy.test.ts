@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   RATE_RULE_TYPES, RULE_CATEGORY, RULE_LABEL, RULE_JOB_TYPE,
   RATE_RULE_CATEGORIES, rulesByCategory, pricedJobTypes, DISPATCHABLE_JOB_TYPES,
+  NON_BILLABLE_JOB_TYPES,
   type RateRuleType,
 } from './rate-rule-taxonomy';
 /**
@@ -24,8 +25,19 @@ import {
 describe('the rate card prices the jobs we dispatch', () => {
   it('every dispatchable job type can be priced by some rule', () => {
     const priced = new Set(pricedJobTypes());
-    const unbillable = DISPATCHABLE_JOB_TYPES.filter((j) => !priced.has(j));
+    const exempt = new Set<string>(NON_BILLABLE_JOB_TYPES);
+    const unbillable = DISPATCHABLE_JOB_TYPES.filter((j) => !priced.has(j) && !exempt.has(j));
     expect(unbillable).toEqual([]);
+  });
+
+  it('an exemption is never also priced — one or the other, never both', () => {
+    // Otherwise "we do not bill this" and a live rate rule would sit side by
+    // side, and which one is true depends on who reads which file.
+    const priced = new Set(pricedJobTypes());
+    for (const j of NON_BILLABLE_JOB_TYPES) {
+      expect(priced.has(j), `${j} is exempt from pricing but a rule prices it`).toBe(false);
+      expect(DISPATCHABLE_JOB_TYPES).toContain(j);
+    }
   });
 
   it('the names are the DP names, not a parallel vocabulary', () => {
@@ -68,11 +80,18 @@ describe('the taxonomy is complete', () => {
 });
 
 describe('the add-ons are absent by decision, not by oversight', () => {
-  it('DISPOSE and TRANSFER are deliberately not job types', () => {
-    // They ride whatever job carried them. Recorded so the next reader does not
+  it('DISPOSE is deliberately not a job type', () => {
+    // It rides whatever job carried it. Recorded so the next reader does not
     // "fix" it by inventing a DISPOSE trip stop.
     expect(RULE_JOB_TYPE.DISPOSE).toBeNull();
-    expect(RULE_JOB_TYPE.TRANSFER).toBeNull();
+  });
+
+  it('TRANSFER stopped being an add-on and now names its job type', () => {
+    // Mig 0243 read TRANSFER as a line on whatever job carried it. The owner's
+    // 2026-08-03 job-type list made "Transfer item" a job the fleet is
+    // dispatched to do (mig 0250), so the rule of the same name points at it.
+    expect(RULE_JOB_TYPE.TRANSFER).toBe('TRANSFER');
+    expect(DISPATCHABLE_JOB_TYPES).toContain('TRANSFER');
   });
 
   it('the delivery group prices DELIVERY through three cooperating rules', () => {

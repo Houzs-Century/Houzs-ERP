@@ -15,6 +15,7 @@ import { recostFromGrn } from '../lib/recost';
 import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurrency } from '../lib/fx';
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
+import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -438,7 +439,10 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
   const movementErrors: string[] = [];
   const grnNo = (grnHeader as { grn_number: string } | null)?.grn_number ?? grnId;
   let warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-    ?? (await defaultWarehouseId(sb));
+    /* Per-company default (2026-08-03) — this used to be a company-blind draw
+       across every company's is_default warehouses, decided by alphabetical
+       `code` order, so Houzs receipts could land in 2990's Guangzhou warehouse. */
+    ?? (await defaultWarehouseId(sb, companyId));
   /* Owner 2026-07-02 — AUTHORITATIVE receiving warehouse = the source PO line's
      bound warehouse. The warehouse binds at the SO/PO line and must flow into the
      GRN's stock movements (per-warehouse model, no cross-warehouse pooling). A
@@ -1534,6 +1538,27 @@ grns.post('/', async (c) => {
     if (x) return c.json(x.blocked, 409);
   }
 
+  /* The other half of "lines with no purchase_order_item_id are uncapped"
+     (Wei Siang 2026-08-04, "包括 GR 那边也是"). Uncapped is right for a free
+     receipt; it is not right for receiving THIS PO's own material without
+     ticking the PO line off, because the stock goes in while the PO's
+     received_qty does not move — so the same delivery can be received twice.
+     Refused only when the named PO already orders that material. */
+  {
+    const unlinked = await findUnlinkedPoLines(
+      sb,
+      (body.purchaseOrderId as string | undefined) ?? null,
+      null,
+      items.map((it, idx) => ({
+        lineRef: String(idx),
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qtyAccepted ?? it.qtyReceived ?? 0),
+        soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
+      })),
+    );
+    if (unlinked.length > 0) return c.json(unlinkedPoLinesResponse(unlinked), 409);
+  }
+
   const headerWarehouseId = await resolveReceiveWarehouse(
     sb,
     (body.warehouseId as string | undefined) ?? null,
@@ -2357,7 +2382,7 @@ grns.patch('/:id/cancel', async (c) => {
 
   // (a) Inventory OUT per line — negate the original GRN IN. Best-effort.
   try {
-    const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb));
+    const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     if (warehouseId) {
       /* Migration 0120 — the original IN stamped batch_no = source PO number so a
          sofa set's components share a dye lot. The reversing OUT must consume that
@@ -2629,6 +2654,25 @@ grns.post('/:id/items', async (c) => {
      NaN). On a GRN this is worse than a bad total: qty_received also drives the
      over-receipt headroom check and the inventory movement, so a NaN qty writes
      a NaN into stock. */
+  /* The add-a-line half of the same back door as the create path: receiving
+     THIS PO's own material with no purchase_order_item_id takes the stock in
+     while the PO's received_qty stays put, so it can be received again. */
+  {
+    const { data: grnPo } = await sb.from('grns').select('purchase_order_id').eq('id', grnId).maybeSingle();
+    const unlinked = await findUnlinkedPoLines(
+      sb,
+      (grnPo as { purchase_order_id?: string | null } | null)?.purchase_order_id ?? null,
+      null,
+      [{
+        lineRef: 'add',
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qtyAccepted ?? it.qtyReceived ?? it.qty ?? 0),
+        soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
+      }],
+    );
+    if (unlinked.length > 0) return c.json(unlinkedPoLinesResponse(unlinked), 409);
+  }
+
   const parsedAdd = parseLineNumbers({
     qty: { value: it.qty, fallback: 1 },
     unitPriceCenti: { value: it.unitPriceCenti },
@@ -2771,7 +2815,7 @@ grns.post('/:id/items', async (c) => {
       const { data: grnHeader } = await sb.from('grns')
         .select('grn_number, warehouse_id, exchange_rate').eq('id', grnId).maybeSingle();
       const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-        ?? (await defaultWarehouseId(sb));
+        ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
       // Migration 0082 — convert the line's own-currency unit price to MYR at the
       // GRN's rate (no-op for an MYR GRN).
       const addLineRate = (grnHeader as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
@@ -2961,7 +3005,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   if (inventoryChange) {
     const { data: grnHead } = await sb.from('grns').select('grn_number, warehouse_id, exchange_rate').eq('id', grnId).maybeSingle();
     editWarehouseId = (grnHead as { warehouse_id: string | null } | null)?.warehouse_id
-      ?? (await defaultWarehouseId(sb));
+      ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     editGrnNo = (grnHead as { grn_number: string } | null)?.grn_number ?? grnId;
     // Migration 0082 — convert the line unit price to MYR at the GRN's rate.
     editRate = (grnHead as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
@@ -3140,7 +3184,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
     if ((lg.qty_accepted ?? 0) > 0) {
       const { data: grnHead } = await sb.from('grns').select('warehouse_id').eq('id', grnId).maybeSingle();
       const warehouseId = (grnHead as { warehouse_id: string | null } | null)?.warehouse_id
-        ?? (await defaultWarehouseId(sb));
+        ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
       const consumedLock = await grnReverseWouldGoNegative(sb, warehouseId, [lg]);
       if (consumedLock) return c.json(consumedLock, 409);
     }
@@ -3198,7 +3242,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
         const { data: grnHeader } = await sb.from('grns')
           .select('grn_number, warehouse_id').eq('id', grnId).maybeSingle();
         const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-          ?? (await defaultWarehouseId(sb));
+          ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
         if (warehouseId) {
           const variantKey = computeVariantKey(l.item_group, l.variants ?? null);
           // Carry THIS line's own dye-lot batch (= its source PO number) so the

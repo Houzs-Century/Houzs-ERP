@@ -80,6 +80,7 @@ import {
 import { useAuth } from "../../auth/AuthContext";
 import {
   DocumentRelationshipMapModal,
+  DocumentChoiceDialog,
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
@@ -753,8 +754,13 @@ export function SalesInvoiceDetailV2() {
         : null,
     [salesInvoice],
   );
-  const { nodes: chainNodes, onNodeClick: onChainNodeClick } =
-    useSiRelationshipMap(relMapHeader);
+  const {
+    nodes: chainNodes,
+    onNodeClick: onChainNodeClick,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
+  } = useSiRelationshipMap(relMapHeader);
 
   // Open the in-place payments editor (seeded from persisted rows) and scroll it
   // into view. Replaces the old dead `?tab=payments&record=1` navigation —
@@ -1673,6 +1679,17 @@ export function SalesInvoiceDetailV2() {
           // TRUE = the click navigated away, so close the map; a notice keeps it
           // open (renders over the map).
           if (onChainNodeClick(n)) setRelMapOpen(false);
+        }}
+      />
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          setRelMapOpen(false);
+          pickChainChoice(d);
         }}
       />
     </div>

@@ -63,6 +63,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useDoRelationshipMap } from "./sales-doc-relationship-map";
 import {
   DocumentRelationshipMapModal,
+  DocumentChoiceDialog,
   ModalOverlay,
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { cn } from "../../lib/utils";
@@ -830,8 +831,13 @@ export function DeliveryOrderDetailV2() {
         : null,
     [deliveryOrder],
   );
-  const { nodes: chainNodes, onNodeClick: onChainNodeClick } =
-    useDoRelationshipMap(relMapHeader);
+  const {
+    nodes: chainNodes,
+    onNodeClick: onChainNodeClick,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
+  } = useDoRelationshipMap(relMapHeader);
 
   // Back always returns to the Delivery Orders list (owner 2026-07-24: every
   // details page's back button goes to its relevant list, not wherever
@@ -1519,6 +1525,17 @@ export function DeliveryOrderDetailV2() {
           // The hook returns TRUE when the click navigated away, so the map
           // closes; an in-app notice keeps it open (renders over the map).
           if (onChainNodeClick(n)) closeModal();
+        }}
+      />
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          closeModal();
+          pickChainChoice(d);
         }}
       />
       <PrintPdfModal

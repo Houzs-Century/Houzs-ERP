@@ -1,0 +1,1 @@
+import{yt as e}from"./index-EqsS6l7o.js";var t=e=>e===`admin`||e===`super_admin`,n=e=>e===`sales`||e===`super_admin`;function r(){let{can:t}=e();return{staff:{id:null,role:t(`*`)?`super_admin`:`sales`,name:null,staffCode:null,venueId:null}}}export{n,r,t};

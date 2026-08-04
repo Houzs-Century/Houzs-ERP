@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  ArrowLeftToLine,
+  ArrowRightToLine,
   Check,
   ChevronDown,
   Columns3,
+  Copy,
   Download,
   GripVertical,
+  Pencil,
+  Plus,
+  Trash2,
   MoreVertical,
-  PinOff,
   Search,
   Star,
   X,
@@ -16,6 +21,7 @@ import { Button, IconButton, SearchInput } from "./Button";
 import { EmptyState } from "./EmptyState";
 import { CustomFieldsSection } from "./CustomFieldsSection";
 import { useToastOptional } from "../hooks/useToast";
+import { useDialogOptional } from "../hooks/useDialog";
 import { useSmallViewport } from "../hooks/useSmallViewport";
 import { cn } from "../lib/utils";
 import type { UseUdfResult } from "../hooks/useUdf";
@@ -60,7 +66,8 @@ export interface DrawerColumn {
   visible: boolean;
   /** Effective width in px (user override or the column's own default). */
   width: number;
-  pinned: boolean;
+  /** Which edge it is frozen to, if any. */
+  pinned: "left" | "right" | null;
 }
 
 interface Props {
@@ -81,6 +88,17 @@ interface Props {
   /** Named layouts for the picker (company defaults today). */
   layouts?: LayoutPresetOption[];
   onApplyLayout?: (id: string) => void;
+  /* Layout CRUD (mig 0239). Absent when the layout server isn't up, so the
+     controls never appear where they can't work. */
+  onSaveLayout?: (name: string) => Promise<void>;
+  onDuplicateLayout?: (id: string, name: string) => Promise<void>;
+  /** Renames whichever row the id names — the caller decides whether that is
+   *  a saved layout or the company default. */
+  onRenameLayout?: (id: string, name: string) => Promise<void>;
+  onDeleteLayout?: (savedId: number) => Promise<void>;
+  /** Replace the named layout's columns with what is on screen. Works for the
+   *  company default too — the caller routes it. */
+  onUpdateLayout?: (id: string) => Promise<void>;
   defaultManager?: LayoutDefaultManager;
   /** True when the columns no longer match the active layout. */
   dirty?: boolean;
@@ -121,6 +139,11 @@ export function ColumnsDrawer({
   onReset,
   layouts,
   onApplyLayout,
+  onSaveLayout,
+  onDuplicateLayout,
+  onRenameLayout,
+  onDeleteLayout,
+  onUpdateLayout,
   defaultManager,
   dirty,
   udf,
@@ -129,9 +152,12 @@ export function ColumnsDrawer({
 }: Props) {
   const isSmallViewport = useSmallViewport();
   const toast = useToastOptional();
+  const dialog = useDialogOptional();
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [popover, setPopover] = useState<null | "layout" | "more">(null);
+  /** Which layout row has its ⋮ menu open. The list stays visible behind it. */
+  const [rowMenu, setRowMenu] = useState<string | null>(null);
   const [editingWidth, setEditingWidth] = useState<string | null>(null);
   const [widthDraft, setWidthDraft] = useState("");
   const [dragKey, setDragKey] = useState<string | null>(null);
@@ -191,6 +217,9 @@ export function ColumnsDrawer({
   }, [columns, query]);
 
   const nothingMatches = groups.length === 0;
+  /* One group is no grouping: a five-column list would gain a header that
+     says only "everything below". Headers earn their space from CONTRAST. */
+  const showGroupHeaders = groups.length > 1;
 
   function commitWidth(key: string) {
     const parsed = Number.parseInt(widthDraft, 10);
@@ -203,6 +232,31 @@ export function ColumnsDrawer({
     setPopover(null);
     onExport?.();
     toast?.success("Column config exported");
+  }
+
+  /* Naming goes through the app dialog rather than an inline field: the
+     popover is 6px of padding around a list, and a text input in a row that
+     also carries a radio and a ⋮ is a row that does three things. Without a
+     dialog host (a bare test render) the action simply doesn't run. */
+  async function promptForName(title: string, defaultValue: string) {
+    if (!dialog) return null;
+    const name = await dialog.prompt({
+      title,
+      placeholder: "e.g. Finance review",
+      defaultValue,
+      required: true,
+      confirmLabel: "Save",
+    });
+    return name?.trim() ? name.trim() : null;
+  }
+
+  async function runLayoutAction(work: Promise<void>, done: string) {
+    try {
+      await work;
+      toast?.success(done);
+    } catch (e) {
+      toast?.error((e as { message?: string })?.message || "Could not save the layout.");
+    }
   }
 
   const activeLayout = layouts?.find((l) => l.active);
@@ -238,6 +292,10 @@ export function ColumnsDrawer({
           if (!dragKey) return;
           const from = columns.find((c) => c.key === dragKey);
           if (!from || from.group !== col.group) return;
+          // Nor across freeze sides: the table renders the left run, the
+          // scrolling middle and the right run as three blocks, so a drop
+          // between them would rewrite the order and change nothing on screen.
+          if (from.pinned !== col.pinned) return;
           e.preventDefault();
           if (overKey !== col.key) setOverKey(col.key);
         }}
@@ -249,6 +307,7 @@ export function ColumnsDrawer({
           if (!from || from === col.key) return;
           const source = columns.find((c) => c.key === from);
           if (!source || source.group !== col.group) return;
+          if (source.pinned !== col.pinned) return;
           onReorder(from, col.key);
         }}
         onDragEnd={() => {
@@ -308,13 +367,18 @@ export function ColumnsDrawer({
         >
           {highlight(col.label, query.trim())}
         </button>
-        {/* Pin: LEFT ⇄ none. Right-freeze is a table-rendering change and ships
-            separately — offering it here before the table honours it would be
-            a control that lies. */}
+        {/* Freeze: none → left → right → none. One button, because the three
+            states are one axis — a column is frozen to an edge or it isn't. */}
         <button
           type="button"
           onClick={() => onTogglePin(col.key)}
-          title={col.pinned ? "Unfreeze column" : "Freeze to the left"}
+          title={
+            col.pinned === "left"
+              ? "Frozen left — click to freeze right"
+              : col.pinned === "right"
+                ? "Frozen right — click to unfreeze"
+                : "Freeze to the left"
+          }
           className={cn(
             "flex items-center gap-[3px] rounded-md px-[5px] py-[3px] text-[9px] font-semibold uppercase tracking-[0.08em] transition-opacity",
             col.pinned
@@ -322,8 +386,14 @@ export function ColumnsDrawer({
               : "text-ink-muted opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100"
           )}
         >
-          {col.pinned ? <PinOff size={10} /> : <Columns3 size={10} />}
-          {col.pinned ? "Left" : ""}
+          {col.pinned === "left" ? (
+            <ArrowLeftToLine size={10} />
+          ) : col.pinned === "right" ? (
+            <ArrowRightToLine size={10} />
+          ) : (
+            <Columns3 size={10} />
+          )}
+          {col.pinned === "left" ? "Left" : col.pinned === "right" ? "Right" : ""}
         </button>
         {editingWidth === col.key ? (
           <input
@@ -376,7 +446,7 @@ export function ColumnsDrawer({
       const isCustom = group.name === CUSTOM_FIELDS_GROUP;
       return (
         <div key={group.name}>
-          {group.name !== UNGROUPED && (
+          {group.name !== UNGROUPED && showGroupHeaders && (
             <div
               role="button"
               tabIndex={0}
@@ -588,8 +658,135 @@ export function ColumnsDrawer({
               {[l.hint, `${l.count} columns`].filter(Boolean).join(" · ")}
             </span>
           </span>
+          {(onDuplicateLayout || onRenameLayout) && (
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label={`Actions for ${l.label}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setRowMenu((cur) => (cur === l.id ? null : l.id));
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                e.preventDefault();
+                e.stopPropagation();
+                setRowMenu((cur) => (cur === l.id ? null : l.id));
+              }}
+              className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-ink-muted hover:bg-surface-2 hover:text-ink"
+            >
+              <MoreVertical size={13} />
+            </span>
+          )}
         </button>
       ))}
+      {/* Row menu — the layout list stays visible behind it, as designed. */}
+      {rowMenu && (
+        <div className="mt-1 rounded-[10px] border border-border bg-surface p-1 shadow-[0_10px_28px_rgba(34,31,32,0.16)]">
+          {(() => {
+            const target = layouts.find((l) => l.id === rowMenu);
+            if (!target) return null;
+            const close = () => {
+              setRowMenu(null);
+              setPopover(null);
+            };
+            return (
+              <>
+                {onUpdateLayout && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      close();
+                      await runLayoutAction(
+                        onUpdateLayout(target.id),
+                        `“${target.label}” now matches these columns`,
+                      );
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
+                  >
+                    <Check size={13} /> Update with current columns
+                  </button>
+                )}
+                {onRenameLayout && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const name = await promptForName("Rename layout", target.label);
+                      close();
+                      if (name) await runLayoutAction(onRenameLayout(target.id, name), "Layout renamed");
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
+                  >
+                    <Pencil size={13} /> Rename
+                  </button>
+                )}
+                {onDuplicateLayout && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const name = await promptForName("Duplicate layout as", `${target.label} copy`);
+                      close();
+                      if (name) await runLayoutAction(onDuplicateLayout(target.id, name), "Layout duplicated");
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
+                  >
+                    <Copy size={13} /> Duplicate
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    close();
+                    handleExport();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
+                >
+                  <Download size={13} /> Export config
+                </button>
+                {target.savedId != null && onDeleteLayout && (
+                  <>
+                    <div className="mx-2 my-1 h-px bg-border-subtle" />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ok = await dialog?.confirm({
+                          title: `Delete “${target.label}”?`,
+                          message:
+                            "The layout is removed from your picker. Columns on screen stay as they are.",
+                          danger: true,
+                          confirmLabel: "Delete",
+                        });
+                        close();
+                        if (ok) await runLayoutAction(onDeleteLayout(target.savedId!), "Layout deleted");
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-err/10 hover:text-err"
+                    >
+                      <Trash2 size={13} /> Delete layout
+                    </button>
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      )}
+      {onSaveLayout && (
+        <>
+          <div className="mx-2 my-1.5 h-px bg-border-subtle" />
+          <button
+            type="button"
+            onClick={async () => {
+              const name = await promptForName("New layout from current columns", "");
+              setPopover(null);
+              if (name) await runLayoutAction(onSaveLayout(name), `Saved “${name}”`);
+            }}
+            className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
+          >
+            <Plus size={14} />
+            New layout from current columns
+          </button>
+        </>
+      )}
       {defaultManager && (
         <>
           <div className="mx-2 my-1.5 h-px bg-border-subtle" />

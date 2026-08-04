@@ -719,6 +719,24 @@ function upcaseLeadingState(name: string, state?: string | null): string {
   return name;
 }
 
+// The browser MIME for a file the user should be able to VIEW inline (PDF,
+// image, video). Used to re-type octet-stream blobs before window.open so a
+// "View" actually renders instead of downloading. Returns null for types the
+// browser can't render inline (docx/xlsx) — those fall through to download.
+function viewableMime(name: string): string | null {
+  const m = /\.([a-z0-9]+)$/i.exec(name || "");
+  if (!m) return null;
+  const ext = m[1].toLowerCase();
+  if (["png", "jpg", "jpeg", "webp", "gif", "heic", "bmp"].includes(ext)) {
+    return `image/${ext === "jpg" ? "jpeg" : ext}`;
+  }
+  if (ext === "svg") return "image/svg+xml";
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "mp4" || ext === "webm") return `video/${ext}`;
+  if (ext === "mov") return "video/quicktime";
+  return null;
+}
+
 /* Canonical Malaysian states — aligned to `scm.my_localities` after mig 0172
    (owner 2026-07-22). PMS used to store an UPPERCASE short list (`JOHOR` /
    `KL` / `PENANG`) while SCM stored the Title Case full names (`Johor` /
@@ -7120,7 +7138,10 @@ function TaskAttachmentRow({
 
   async function viewInTab() {
     try {
-      const url = await api.fetchBlobUrl(`/api/projects/attachments/${attachment.r2_key}`);
+      const url = await api.fetchBlobUrl(
+        `/api/projects/attachments/${attachment.r2_key}`,
+        viewableMime(attachment.file_name),
+      );
       window.open(url, "_blank", "noopener");
     } catch (e: any) {
       toast?.error(e?.message || "Failed to open");
@@ -9649,7 +9670,7 @@ function StockTransferSection({
   async function openFile(t: StockTransfer) {
     if (!t.record_r2_key) return;
     try {
-      const url = await api.fetchBlobUrl(`/api/projects/attachments/${t.record_r2_key}`);
+      const url = await api.fetchBlobUrl(`/api/projects/attachments/${t.record_r2_key}`, viewableMime(t.record_r2_key));
       window.open(url, "_blank");
       setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (e: any) {
@@ -10924,9 +10945,10 @@ function ScheduleRef({
   const [remarkDraft, setRemarkDraft] = useState(remark ?? "");
   useEffect(() => setRemarkDraft(remark ?? ""), [remark]);
   const fileRef = useRef<HTMLInputElement>(null);
-  // Remark-first-before-upload (owner 2026-07-27), same flow as the Defect List:
-  // Upload prompts for a required remark, then the file picker; the screenshot
-  // uploads carrying that remark (stored as the phase-photo caption).
+  // Remark-then-upload (owner 2026-07-27; made OPTIONAL 2026-08-03 per owner —
+  // no longer blocks the file picker). Upload offers an optional remark, then
+  // the file picker; the screenshot carries that remark as its caption. Blank
+  // remark = no caption. Cancelling the dialog leaves the picker closed.
   const pendingCaptionRef = useRef<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const photos = useQuery<{ photos: PhasePhoto[] }>(
@@ -10938,14 +10960,13 @@ function ScheduleRef({
   const startUpload = async () => {
     const remark = await dialog.prompt({
       title: "Remark for this schedule",
-      message: "Write a remark before uploading (required).",
+      message: "Add a remark for this screenshot (optional).",
       placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm",
-      required: true,
       multiline: true,
       confirmLabel: "Choose file…",
     });
-    if (remark == null || !remark.trim()) return;
-    pendingCaptionRef.current = remark.trim();
+    if (remark == null) return; // cancelled — leave the picker closed
+    pendingCaptionRef.current = remark.trim() || undefined;
     fileRef.current?.click();
   };
   const upload = async (file: File, caption?: string) => {
@@ -12782,7 +12803,7 @@ function CategoryDetailLines({
   async function openFile(line: FinanceLine) {
     if (!line.r2_key) return;
     try {
-      const url = await api.fetchBlobUrl(`/api/projects/attachments/${line.r2_key}`);
+      const url = await api.fetchBlobUrl(`/api/projects/attachments/${line.r2_key}`, viewableMime(line.r2_key));
       window.open(url, "_blank");
       setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (e: any) {
@@ -13106,7 +13127,7 @@ function LedgerGroup({
   async function openFile(line: FinanceLine) {
     if (!line.r2_key) return;
     try {
-      const url = await api.fetchBlobUrl(`/api/projects/attachments/${line.r2_key}`);
+      const url = await api.fetchBlobUrl(`/api/projects/attachments/${line.r2_key}`, viewableMime(line.r2_key));
       window.open(url, "_blank");
       setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (e: any) {
@@ -13807,7 +13828,7 @@ function AttachmentTile({
 
   async function openFile() {
     try {
-      const url = await api.fetchBlobUrl(`/api/projects/attachments/${attachment.r2_key}`);
+      const url = await api.fetchBlobUrl(`/api/projects/attachments/${attachment.r2_key}`, viewableMime(attachment.file_name || attachment.r2_key));
       window.open(url, "_blank");
       setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (e: any) {

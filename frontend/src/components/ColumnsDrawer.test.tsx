@@ -137,14 +137,39 @@ describe("columns drawer", () => {
     expect(JSON.parse(localStorage.getItem("dt:widths:width")!)).toEqual({ date: 400 });
   });
 
-  it("freezes and unfreezes a column from its row", () => {
-    renderTable("freeze");
+  it("cycles a column none → left → right → none, never both", () => {
+    const { container } = renderTable("freeze");
     openDrawer();
 
     fireEvent.click(screen.getAllByTitle("Freeze to the left")[0]!);
     expect(JSON.parse(localStorage.getItem("dt:pinned:freeze")!)).toEqual(["date"]);
-    fireEvent.click(screen.getByTitle("Unfreeze column"));
+
+    fireEvent.click(screen.getByTitle(/^Frozen left/));
+    // MOVED, not added — frozen to both edges is not a table anyone can render.
     expect(JSON.parse(localStorage.getItem("dt:pinned:freeze")!)).toEqual([]);
+    expect(JSON.parse(localStorage.getItem("dt:pinnedr:freeze")!)).toEqual(["date"]);
+    // A right-frozen column renders LAST, whatever its place in the order.
+    expect(headerLabels(container)).toEqual(["Customer", "Total", "Carrier", "Date"]);
+
+    fireEvent.click(screen.getByTitle(/^Frozen right/));
+    expect(JSON.parse(localStorage.getItem("dt:pinnedr:freeze")!)).toEqual([]);
+    expect(headerLabels(container)).toEqual(["Date", "Customer", "Total", "Carrier"]);
+  });
+
+  it("sticks a right-frozen column to the right edge, with a divider on its left", () => {
+    const { container } = renderTable("stickright");
+    openDrawer();
+    fireEvent.click(screen.getAllByTitle("Freeze to the left")[0]!);
+    fireEvent.click(screen.getByTitle(/^Frozen left/));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+
+    const head = [...container.querySelectorAll<HTMLElement>("thead th")];
+    const last = head[head.length - 1]!;
+    expect(last.style.position).toBe("sticky");
+    // Offset from the RIGHT edge: nothing is frozen outside it, so zero.
+    expect(last.style.right).toBe("0px");
+    expect(last.className).toContain("border-l");
+    expect(last.style.left).toBe("");
   });
 
   it("Show all reveals even a defaultHidden column, and says so in the footer", () => {
@@ -183,6 +208,60 @@ describe("columns drawer", () => {
     expect(headerLabels(container)).toEqual(["Customer", "Date", "Total", "Carrier"]);
   });
 
+  it("stacks two right-frozen columns by width, counted from the right edge", () => {
+    const { container } = renderTable("stack");
+    openDrawer();
+    // Freeze Total (120px) and Carrier right; Carrier is last in table order.
+    const freezeRight = (label: string) => {
+      const row = Array.from(document.querySelectorAll<HTMLElement>("[data-column-row]")).find(
+        (el) => el.textContent?.includes(label),
+      )!;
+      fireEvent.click(row.querySelector<HTMLElement>("[title='Freeze to the left']")!);
+      fireEvent.click(row.querySelector<HTMLElement>("[title^='Frozen left']")!);
+    };
+    freezeRight("Total");
+    freezeRight("Carrier");
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+
+    const head = [...container.querySelectorAll<HTMLElement>("thead th")];
+    const last = head[head.length - 1]!;
+    const secondLast = head[head.length - 2]!;
+    // The outermost sits at 0; the one inside it is offset by the OUTER one's
+    // width — accumulated from the right, not from the left.
+    expect(last.style.right).toBe("0px");
+    expect(secondLast.style.right).not.toBe("0px");
+    expect(Number.parseInt(secondLast.style.right, 10)).toBeGreaterThan(0);
+  });
+
+  it("refuses a header drop across freeze sides, both ways", () => {
+    const { container } = renderTable("crossdrop");
+    openDrawer();
+    const row = (label: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-column-row]")).find(
+        (el) => el.textContent?.includes(label),
+      )!;
+    // Freeze Date to the RIGHT, leave Customer unfrozen (same Basic group).
+    fireEvent.click(row("Date").querySelector<HTMLElement>("[title='Freeze to the left']")!);
+    fireEvent.click(row("Date").querySelector<HTMLElement>("[title^='Frozen left']")!);
+
+    const before = headerLabels(container);
+    const drag = (from: Element, to: Element) => {
+      const dataTransfer = { effectAllowed: "", setData: vi.fn(), getData: vi.fn() };
+      fireEvent.dragStart(from, { dataTransfer });
+      fireEvent.dragOver(to, { dataTransfer });
+      fireEvent.drop(to, { dataTransfer });
+      fireEvent.dragEnd(from, { dataTransfer });
+    };
+
+    /* A right-frozen column and an unfrozen one are BOTH "not left-pinned", so
+       a guard that asked only that would let this through — rewriting the
+       stored order while the column stayed in the right run. */
+    drag(row("Date"), row("Customer"));
+    expect(headerLabels(container)).toEqual(before);
+    drag(row("Customer"), row("Date"));
+    expect(headerLabels(container)).toEqual(before);
+  });
+
   it("becomes a bottom sheet on a phone, with an Apply that only closes", () => {
     setViewport(375);
     renderTable("sheet");
@@ -195,7 +274,10 @@ describe("columns drawer", () => {
     expect(screen.queryByRole("dialog", { name: "Columns" })).toBeNull();
   });
 
-  it("stays a flat list for a table that annotates no groups", () => {
+  it("groups a table that annotates nothing, by inferring from the columns", () => {
+    // Owner 2026-08-02: 全部 column 都要像 sales order column 那样分类. A page
+    // no longer has to annotate anything — lib/columnGroups infers it, and an
+    // explicit `group` still wins where a page did the sorting by hand.
     render(
       <DataTable
         tableId="flat"
@@ -206,10 +288,29 @@ describe("columns drawer", () => {
     );
     openDrawer();
 
-    // No group chrome at all — an un-annotated table looks the way it always
-    // did, which is what let this ship to every list page at once.
-    expect(screen.queryByText("Basic")).toBeNull();
+    expect(screen.getByText("Basic")).toBeTruthy();
+    expect(screen.getByText("Amounts")).toBeTruthy();
+    expect(screen.getByText("Logistics")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Carrier" })).toBeTruthy();
+  });
+
+  it("draws no group header when everything lands in one group", () => {
+    render(
+      <DataTable
+        tableId="onegroup"
+        rows={rows}
+        columns={[
+          { key: "amount", label: "Amount", render: (r: Row) => r.name },
+          { key: "balance", label: "Balance", render: (r: Row) => r.name },
+        ]}
+        getRowKey={(row) => row.id}
+      />,
+    );
+    openDrawer();
+
+    // One group is no grouping — the header would say only "everything below".
+    expect(screen.queryByText("Amounts")).toBeNull();
+    expect(screen.getByRole("button", { name: "Amount" })).toBeTruthy();
   });
 });
 

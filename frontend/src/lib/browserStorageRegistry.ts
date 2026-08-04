@@ -66,6 +66,12 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "scan-toast-acks", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "houzs:scan-draft-acked:u<user>:c<company>", matches: prefix("houzs:scan-draft-acked:") },
   { id: "identity-preferences", classification: "IDENTITY_PREF", storage: ["localStorage"], keyFamily: "<approved preference base>:u<user>:c<company>", matches: identityPreference },
   { id: "pwa-dismissals", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "pwa:<surface>:dismissed-at", matches: prefix("pwa:") },
+  // Native-app opt-ins, per DEVICE and per install. Currently just the
+  // biometric-session flag (native:biometric-session) that gates unlocking a
+  // Keychain-held session with Face ID. NOT identity data: it stores whether the
+  // feature is on for this handset, never who is signed in — the session itself
+  // lives in the iOS Keychain, not here.
+  { id: "native-app-opt-ins", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "native:<feature>", matches: prefix("native:") },
   { id: "mobile-language", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs.mobile.lang", matches: exact("houzs.mobile.lang") },
   // Floating Assistant panel size — a per-device layout preference (width/height
   // of the draggable chat card), no identity/company data, same class as the
@@ -129,6 +135,11 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "lib/activeCompany.ts",
   "lib/authToken.ts",
   "lib/browserNotificationPreference.ts",
+  // Native app: reads/writes ONLY the per-device biometric opt-in flag
+  // (native:biometric-session, DEVICE_PREF). The session it unlocks lives in the
+  // iOS Keychain, never in browser storage — this file touches localStorage for
+  // the on/off switch and nothing else.
+  "lib/nativeSession.ts",
   "lib/query-persist.ts",
   "lib/rememberedEmail.ts",
   "lib/assrListFilter.ts",

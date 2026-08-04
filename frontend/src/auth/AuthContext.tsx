@@ -19,6 +19,7 @@ import {
 import { clearAllScmHandoffs } from "../lib/scmHandoffStorage";
 import { writeRememberedEmail } from "../lib/rememberedEmail";
 import { hydrateTableLayouts } from "../lib/tableLayouts";
+import { forgetNativeSession, rememberNativeSession } from "../lib/nativeSession";
 import type { AccessLevel, AuthUser } from "../types";
 
 /**
@@ -228,6 +229,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // remember → persist in localStorage (survives close); else session-only.
       resetSessionCaches();
       tokenStore.set(res.token!, remember);
+      /* Mirror into the Keychain so the next launch can unlock with Face ID
+         instead of a password. Flag-gated and fire-and-forget inside — a vault
+         write that fails costs one password entry, never the login. */
+      rememberNativeSession(res.token!);
       await fetchMe();
       await fetchStatus();
       return { kind: "ok" };
@@ -243,6 +248,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       resetSessionCaches();
       tokenStore.set(res.token, remember);
+      rememberNativeSession(res.token);
       await fetchMe();
       await fetchStatus();
     },
@@ -284,6 +290,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await api.post("/api/auth/logout");
     } catch {}
     tokenStore.clear();
+    /* The Keychain vault is NOT flag-gated here, on purpose: if the biometric
+       flag is turned off while a session is already saved, signing out must
+       still erase it. Gating would strand a live token in the Keychain of a
+       phone whose user believes they have signed out. No-op off the app. */
+    forgetNativeSession();
     resetSessionCaches();
     // Signing out is an identity-context change, and identity scopes every read
     // (own-vs-downline SO rows, finance fields, page access). Nothing from the

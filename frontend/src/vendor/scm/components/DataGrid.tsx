@@ -49,7 +49,12 @@ import {
 import { subscribeActiveCompany, getActiveCompanySnapshot } from '../../../lib/activeCompany';
 import {
   EMPTY_LAYOUT,
+  createNamedLayout,
   dataGridTableKey,
+  deleteNamedLayout,
+  renameCompanyDefault,
+  renameNamedLayout,
+  updateNamedLayout,
   getTableLayoutsSnapshot,
   saveCompanyDefault,
   saveMyLayout,
@@ -58,7 +63,9 @@ import {
   type StoredLayout,
 } from '../../../lib/tableLayouts';
 import { shortCompanyName } from '../../../lib/branding';
-import { LayoutSection, type LayoutPresetOption } from '../../../components/LayoutSection';
+import { inferColumnGroup } from '../../../lib/columnGroups';
+import { withSingleActive, type LayoutPresetOption } from '../../../components/LayoutSection';
+import { ColumnsDrawer, type DrawerColumn } from '../../../components/ColumnsDrawer';
 import styles from './DataGrid.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -66,6 +73,9 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
 export type DataGridColumn<T> = {
   key: string;
   label: string;
+  /** Category this column sits under in the Columns drawer — same opt-in field
+   *  DataTable's Column carries. Unannotated grids render one flat list. */
+  group?: string;
   accessor: (row: T) => ReactNode;
   /** default width in px */
   width?: number;
@@ -199,8 +209,15 @@ export type DataGridProps<T> = {
     selectedKeys: Set<string>;
     onToggle: (key: string) => void;
     /** Toggle all visible rows. `keys` = the keys currently shown; `allSelected`
-        = whether they are all already selected (so the parent clears vs selects). */
+        = whether they are all already selected (so the parent clears vs selects).
+        Keys vetoed by `isDisabled` are NOT included — the header checkbox must
+        never tick a row the operator cannot tick by hand. */
     onToggleAll: (keys: string[], allSelected: boolean) => void;
+    /** Optional per-row veto (2026-08-03). A row whose key returns true renders a
+        disabled checkbox and drops out of the header checkbox's set. Used by the
+        DO-from-SO picker, where picking one customer locks out every other
+        customer's lines (one Delivery Order ships to ONE customer). */
+    isDisabled?: (key: string) => boolean;
   };
   /**
    * Compact mode for grids embedded inside another grid's expansion row
@@ -669,12 +686,27 @@ function DataGridInner<T>({
         active: serializeLayout(saved) === currentSignature,
       });
     }
-    return rows.length > 0 ? rows : undefined;
+    /* The user's OWN saved layouts belong in this picker too — without them
+       the grid could save a layout it then never offered back. */
+    for (const saved of layoutStore.myLayouts[serverTableKey] ?? []) {
+      rows.push({
+        id: `saved:${saved.id}`,
+        label: saved.name,
+        hint: 'Saved by you',
+        count: Math.max(0, columns.length - saved.layout.hidden.length),
+        isDefault: false,
+        active: serializeLayout(saved.layout) === currentSignature,
+        savedId: saved.id,
+      });
+    }
+    return rows.length > 0 ? withSingleActive(rows) : undefined;
   }, [layoutStore, serverTableKey, layout, columns.length]);
 
   const applyGridPreset = useCallback((id: string) => {
-    const companyId = Number(id.split(':')[1]);
-    const saved = layoutStore.defaults[String(companyId)]?.[serverTableKey];
+    const [kind, rawId] = id.split(':');
+    const saved = kind === 'saved'
+      ? layoutStore.myLayouts[serverTableKey]?.find((l) => l.id === Number(rawId))?.layout
+      : layoutStore.defaults[String(Number(rawId))]?.[serverTableKey];
     if (!saved) return;
     setLayout((l) => ({
       order: saved.order,
@@ -743,6 +775,139 @@ function DataGridInner<T>({
   }, [columns, layout.order]);
 
   const [defaultSaveState, setDefaultSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  /* ── Drawer translation ──────────────────────────────────────────────────
+     One row per real column (the synthetic chevron the `expandable` option
+     prepends is not the operator's to hide), carrying what the shared drawer
+     draws. Derived, so every gesture lands on this grid's own layout state. */
+  const drawerColumns = useMemo<DrawerColumn[]>(
+    () =>
+      columns.map((c) => ({
+        key: c.key,
+        label: c.label || c.key,
+        // Explicit beats inferred — same rule as the DataTable lists.
+        group: c.group || inferColumnGroup(c.key, c.label || c.key) || "",
+        visible: !effectiveHidden.has(c.key),
+        width: layout.widths[c.key] ?? c.width ?? 140,
+        /* This grid freezes to the LEFT only; the drawer's three-state cycle
+           degrades to left ⇄ none here rather than offering a Right the grid
+           would not honour. Bringing right-freeze to the vendored grid is its
+           own change. */
+        pinned: layout.pinned.includes(c.key) ? ('left' as const) : null,
+      })),
+    [columns, effectiveHidden, layout.widths, layout.pinned],
+  );
+
+  /** Move `key` into `targetKey`'s slot — the drawer's single reorder rule. */
+  const reorderColumn = useCallback(
+    (key: string, targetKey: string) => {
+      setLayout((l) => {
+        const order = (l.order.length ? l.order : columns.map((c) => c.key)).filter(
+          (k) => k !== key,
+        );
+        const at = order.indexOf(targetKey);
+        order.splice(at < 0 ? order.length : at, 0, key);
+        return { ...l, order };
+      });
+    },
+    [columns, setLayout],
+  );
+
+  const togglePinnedColumn = useCallback(
+    (key: string) => {
+      setLayout((l) => ({
+        ...l,
+        pinned: l.pinned.includes(key)
+          ? l.pinned.filter((k) => k !== key)
+          : [...l.pinned, key],
+      }));
+    },
+    [setLayout],
+  );
+
+  /** What is ON SCREEN, materialised — for publishing and for saving a named
+   *  layout. The stored value is the wrong source: inherit a company default,
+   *  save it, and you would save nothing. */
+  const gridRenderedLayout = useCallback(
+    (): StoredLayout => ({
+      ...EMPTY_LAYOUT,
+      order: resolvedOrder,
+      hidden: [...effectiveHidden],
+      widths: layout.widths,
+      pinned: layout.pinned,
+      groupBy: layout.groupBy,
+    }),
+    [resolvedOrder, effectiveHidden, layout],
+  );
+
+  const saveGridLayout = useCallback(
+    (name: string) => createNamedLayout(serverTableKey, name, gridRenderedLayout()).then(() => undefined),
+    [serverTableKey, gridRenderedLayout],
+  );
+  const duplicateGridLayout = useCallback(
+    (id: string, name: string) => {
+      const source = gridLayoutPresets?.find((p) => p.id === id);
+      const saved = source?.savedId != null
+        ? layoutStore.myLayouts[serverTableKey]?.find((l) => l.id === source.savedId)?.layout
+        : undefined;
+      const fromCompany = source?.id.startsWith("company:")
+        ? layoutStore.defaults[source.id.slice("company:".length)]?.[serverTableKey]
+        : undefined;
+      return createNamedLayout(
+        serverTableKey,
+        name,
+        saved ?? fromCompany ?? gridRenderedLayout(),
+      ).then(() => undefined);
+    },
+    [serverTableKey, gridLayoutPresets, layoutStore, gridRenderedLayout],
+  );
+  const renameGridLayout = useCallback(
+    (id: string, name: string) => {
+      const target = gridLayoutPresets?.find((p) => p.id === id);
+      if (target?.savedId != null) return renameNamedLayout(serverTableKey, target.savedId, name);
+      if (target?.id.startsWith("company:")) return renameCompanyDefault(serverTableKey, name);
+      return Promise.resolve();
+    },
+    [serverTableKey, gridLayoutPresets],
+  );
+  const updateGridLayout = useCallback(
+    (id: string) => {
+      const target = gridLayoutPresets?.find((p) => p.id === id);
+      if (target?.savedId != null) {
+        return updateNamedLayout(serverTableKey, target.savedId, gridRenderedLayout());
+      }
+      if (target?.id.startsWith('company:')) {
+        return saveCompanyDefault(serverTableKey, gridRenderedLayout());
+      }
+      return Promise.resolve();
+    },
+    [serverTableKey, gridLayoutPresets, gridRenderedLayout],
+  );
+
+  const deleteGridLayout = useCallback(
+    (savedId: number) => deleteNamedLayout(serverTableKey, savedId),
+    [serverTableKey],
+  );
+
+  const exportGridColumnConfig = useCallback(() => {
+    const payload = {
+      table: storageKey,
+      exportedAt: new Date().toISOString(),
+      columns: drawerColumns,
+    };
+    try {
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+      );
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `columns-${storageKey}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Blob/URL unavailable — the menu item does nothing rather than throwing.
+    }
+  }, [storageKey, drawerColumns]);
+
   const gridDefaultManager = useMemo(() => {
     if (!layoutStore.ready || !layoutStore.canManageDefaults) return undefined;
     const cid = layoutStore.activeCompanyId;
@@ -1261,7 +1426,9 @@ function DataGridInner<T>({
                     type="checkbox"
                     aria-label="Select row"
                     checked={selectable.selectedKeys.has(key)}
+                    disabled={selectable.isDisabled?.(key) ?? false}
                     onChange={() => selectable.onToggle(key)}
+                    style={selectable.isDisabled?.(key) ? { cursor: 'not-allowed' } : undefined}
                   />
                 </td>
               );
@@ -1424,143 +1591,35 @@ function DataGridInner<T>({
             </span>
           </button>
           {columnsMenuOpen && (
-            <>
-              <div
-                ref={columnsMenuRef}
-                className={styles.columnsDrawer}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <header className={styles.columnsMenuHeader}>
-                  <span>Columns ({visibleColumns.length - (expandable ? 1 : 0)})</span>
-                  <span className={styles.columnsMenuHeaderBtns}>
-                    <button
-                      type="button"
-                      className={styles.columnsMenuReset}
-                      onClick={showAllColumns}
-                      title="Show every column"
-                    >
-                      <span>Show all</span>
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.columnsMenuReset}
-                      onClick={resetColumns}
-                      title="Reset to defaults"
-                    >
-                      <RotateCcw size={12} strokeWidth={1.75} aria-hidden />
-                      <span>Reset</span>
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.columnsMenuReset}
-                      onClick={() => setColumnsMenuOpen(false)}
-                      title="Close"
-                      aria-label="Close columns drawer"
-                    >
-                      <X size={13} strokeWidth={1.75} aria-hidden />
-                    </button>
-                  </span>
-                </header>
-                {/* The same Layout block the DataTable drawer shows — company
-                    default layouts, and for an admin the control that publishes
-                    the arrangement on screen as this company's default. Shared
-                    component so the two drawers cannot drift into two
-                    affordances for one feature. */}
-                <div className="px-3 pt-3">
-                  <LayoutSection
-                    presets={gridLayoutPresets}
-                    onApplyPreset={applyGridPreset}
-                    defaultManager={gridDefaultManager}
-                  />
-                </div>
-                {/* Same drawer contract as the DataTable ColumnsPanel (#1235;
-                    owner 2026-07-25: "应用到系统所有的table"): CHECKED columns
-                    float to the TOP in on-grid order — display == storage, so
-                    the key-based drop below still lands a row exactly where it
-                    sits — and stay hand-draggable; the unchecked pool sits
-                    BELOW, ALWAYS A-Z (a findable pick-list, never
-                    hand-ordered), carries no grip and refuses drops. Dropping
-                    writes layout.order, the same order the header drag writes;
-                    the checkbox still toggles visibility. */}
-                <div className={styles.columnsDrawerBody}>
-                  {(() => {
-                    const shownKeys = resolvedOrder.filter((k) => !effectiveHidden.has(k));
-                    const hiddenKeys = resolvedOrder
-                      .filter((k) => effectiveHidden.has(k))
-                      .sort((a, b) => {
-                        const la = columns.find((col) => col.key === a)?.label || a;
-                        const lb = columns.find((col) => col.key === b)?.label || b;
-                        return la.localeCompare(lb, undefined, { numeric: true, sensitivity: 'base' });
-                      });
-                    return [...shownKeys, ...hiddenKeys];
-                  })().map((key) => {
-                    const c = columns.find((col) => col.key === key);
-                    if (!c) return null;
-                    const isHidden = effectiveHidden.has(c.key);
-                    const rowCanDrag = !isHidden;
-                    const dragging = columnsMenuDragKey === c.key;
-                    const isDropRow = columnsMenuOverKey === c.key
-                      && !!columnsMenuDragKey && columnsMenuDragKey !== c.key;
-                    return (
-                      <label
-                        key={c.key}
-                        draggable={rowCanDrag}
-                        onDragStart={(e) => {
-                          if (!rowCanDrag) return;
-                          e.dataTransfer.effectAllowed = 'move';
-                          setColumnsMenuDragKey(c.key);
-                        }}
-                        onDragOver={(e) => {
-                          if (isHidden) return; // A-Z pool accepts no drops
-                          e.preventDefault();
-                          if (columnsMenuOverKey !== c.key) setColumnsMenuOverKey(c.key);
-                        }}
-                        onDrop={(e) => {
-                          if (isHidden) return;
-                          e.preventDefault();
-                          const sourceKey = columnsMenuDragKey;
-                          setColumnsMenuDragKey(null);
-                          setColumnsMenuOverKey(null);
-                          if (!sourceKey || sourceKey === c.key) return;
-                          const order = [...resolvedOrder];
-                          const from = order.indexOf(sourceKey);
-                          const to = order.indexOf(c.key);
-                          if (from < 0 || to < 0) return;
-                          order.splice(from, 1);
-                          order.splice(to, 0, sourceKey);
-                          setLayout((l) => ({ ...l, order }));
-                        }}
-                        onDragEnd={() => {
-                          setColumnsMenuDragKey(null);
-                          setColumnsMenuOverKey(null);
-                        }}
-                        className={[
-                          styles.columnsMenuItem,
-                          dragging ? styles.columnsMenuItemDragging : '',
-                          isDropRow ? styles.columnsMenuItemDrop : '',
-                        ].filter(Boolean).join(' ')}
-                      >
-                        {/* Grip only where a drag is real; the spacer keeps the
-                            unchecked pool's checkboxes on the same left edge. */}
-                        {rowCanDrag ? (
-                          <span className={styles.columnsMenuGrip} title="Drag to reorder">
-                            <GripVertical size={13} strokeWidth={1.75} aria-hidden />
-                          </span>
-                        ) : (
-                          <span aria-hidden style={{ width: 13, display: 'inline-block' }} />
-                        )}
-                        <input
-                          type="checkbox"
-                          checked={!isHidden}
-                          onChange={() => toggleColumn(c.key)}
-                        />
-                        <span>{c.label || c.key}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            </>
+            /* ONE columns panel for the whole app (owner 2026-08-02: 需要应用到
+               全系统 column panel). This grid used to carry its own drawer —
+               a second set of column affordances, missing search, grouping,
+               32px rows, the width chip and the mobile sheet. It now mounts the
+               same ColumnsDrawer every DataTable list uses; everything below is
+               translation between this grid's layout shape and the drawer's. */
+            <ColumnsDrawer
+              open
+              onClose={() => setColumnsMenuOpen(false)}
+              columns={drawerColumns}
+              onToggle={toggleColumn}
+              onReorder={reorderColumn}
+              onTogglePin={togglePinnedColumn}
+              onSetWidth={(key, px) =>
+                setLayout((l) => ({ ...l, widths: { ...l.widths, [key]: px } }))
+              }
+              onShowAll={showAllColumns}
+              onReset={resetColumns}
+              layouts={gridLayoutPresets}
+              onApplyLayout={applyGridPreset}
+              onSaveLayout={layoutStore.canManageLayouts ? saveGridLayout : undefined}
+              onDuplicateLayout={layoutStore.canManageLayouts ? duplicateGridLayout : undefined}
+              onRenameLayout={layoutStore.canManageLayouts ? renameGridLayout : undefined}
+              onDeleteLayout={layoutStore.canManageLayouts ? deleteGridLayout : undefined}
+              onUpdateLayout={layoutStore.canManageLayouts ? updateGridLayout : undefined}
+              defaultManager={gridDefaultManager}
+              dirty={Boolean(gridLayoutPresets && !gridLayoutPresets.some((p) => p.active))}
+              onExport={exportGridColumnConfig}
+            />
           )}
         </div>
       </div>
@@ -1603,7 +1662,11 @@ function DataGridInner<T>({
                 const isSorted = layout.sort?.key === col.key;
                 const arrow = isSorted ? (layout.sort!.dir === 'asc' ? 'A' : 'V') : '';
                 if (col.key === '__select__' && selectable) {
-                  const keys = sortedRows.map(rowKey);
+                  /* The header checkbox acts on WHAT THE OPERATOR SEES — the
+                     post-search, post-filter, post-sort rows — minus any row
+                     the per-row veto has disabled. Ticking it must never reach
+                     a row that is off-screen behind a search term. */
+                  const keys = sortedRows.map(rowKey).filter((k) => !(selectable.isDisabled?.(k) ?? false));
                   const allSel = keys.length > 0 && keys.every((k) => selectable.selectedKeys.has(k));
                   const someSel = !allSel && keys.some((k) => selectable.selectedKeys.has(k));
                   return (

@@ -24,8 +24,8 @@
 
 /**
  * Every job the fleet can be DISPATCHED to do — this file's copy of the
- * `scm.trip_stop_type` enum (mig 0053, extended by 0128 SUPPLIER_PICKUP and
- * 0165 INSPECTION).
+ * `scm.trip_stop_type` enum (mig 0053, extended by 0128 SUPPLIER_PICKUP, 0165
+ * INSPECTION and 0250 TRANSFER + LORRY_SERVICE).
  *
  * It is a copy, and a copy can lie. `npm run audit:job-types` reads the
  * migrations and fails if this list and the enum have drifted — the test below
@@ -34,8 +34,31 @@
  */
 export const DISPATCHABLE_JOB_TYPES = [
   'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION',
+  /* Owner 2026-08-03, the nine-job-type list. LORRY_SERVICE is dispatchable but
+     NOT billable — the workshop bills US, and that spend lives on
+     scm.lorry_work_orders — so it is named in NON_BILLABLE_JOB_TYPES in
+     backend/scripts/check-job-type-parity.mjs rather than given a rate rule
+     nobody would ever price a customer with. */
+  'TRANSFER', 'LORRY_SERVICE',
 ] as const;
 export type DispatchableJobType = (typeof DISPATCHABLE_JOB_TYPES)[number];
+
+/**
+ * Dispatchable jobs that must NOT be priced, and why.
+ *
+ * "Every job we dispatch must be billable" holds only where a CUSTOMER is on
+ * the other side of it. LORRY_SERVICE is the first job type where the money
+ * runs the other way: we send our own lorry to a workshop, the workshop bills
+ * US, and that spend is recorded on scm.lorry_work_orders (mig 0204/0241). A
+ * rate rule for it would be one no card could ever apply — a decoration that
+ * makes the coverage check pass without meaning anything.
+ *
+ * Read by BOTH the test in this folder and `npm run audit:job-types`, so an
+ * exemption cannot be granted to one and not the other. Adding an entry means
+ * writing down who is not being billed; the audit rejects an entry for a job
+ * type that does not exist, or one that some rule prices after all.
+ */
+export const NON_BILLABLE_JOB_TYPES = ['LORRY_SERVICE'] as const;
 
 /** Every rule type a card can carry. Mirrors the CHECK in mig 0243. */
 export const RATE_RULE_TYPES = [
@@ -108,10 +131,15 @@ export const RULE_LABEL: Record<RateRuleType, string> = {
  *
  *  - the DELIVERY group prices a DELIVERY job, but through three cooperating
  *    rules rather than one named after it;
- *  - DISPOSE and TRANSFER are add-ons billed on whatever job carried them —
- *    they were checked against the job list and are absent by design, not by
- *    oversight;
+ *  - DISPOSE is an add-on billed on whatever job carried it — checked against
+ *    the job list and absent by design, not by oversight;
  *  - the OUTSTATION rules are surcharges on any job, not a job.
+ *
+ * TRANSFER USED TO BE ONE OF THOSE ADD-ONS and no longer is. Mig 0243 read it
+ * as a line on the job that carried it; the owner's 2026-08-03 job-type list
+ * made "Transfer item" a job the fleet is dispatched to do (mig 0250), so the
+ * rule of the same name now names it. Same rule, same CHECK, same money — it
+ * just stopped being homeless.
  */
 export const RULE_JOB_TYPE: Record<RateRuleType, string | null> = {
   POSITIONAL_TIER: 'DELIVERY',
@@ -124,7 +152,7 @@ export const RULE_JOB_TYPE: Record<RateRuleType, string | null> = {
   PICKUP: 'PICKUP',
   INSPECTION: 'INSPECTION',
   SUPPLIER_PICKUP: 'SUPPLIER_PICKUP',
-  TRANSFER: null,
+  TRANSFER: 'TRANSFER',
   OUTSTATION: null,
   OUTSTATION_TRIP: null,
 };

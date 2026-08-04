@@ -27,6 +27,7 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Surface | File | Notes |
 |---------|------|-------|
 | Desktop board | `frontend/src/pages/scm-v2/DeliveryPlanning.tsx` | Thin host: PageHeader + data fetch (region server-side) + selection + drawers, rendering the shared **`DeliveryPlanningBoard`**. The 4 state tabs + region chips + inline Driver / Lorry cells + expand + multiselect all live in the shared component now. |
+| Desktop DP-order registry | `frontend/src/pages/scm-v2/DpOrders.tsx` | Route `/scm/dp-orders`, nav "DP Orders" under Transportation (after Delivery Planning). The FLAT `dp_orders` list over `GET /dp-orders` (`useDpOrders`) — every status, including the source-linked orders the board's anti-double-count guard hides and cancelled jobs the board drops. DataTable + client search; Schedule… (pending rows, reuses `ScheduleDpOrderDrawer` via its `ScheduleDpOrderTarget` subset prop) + Cancel + New DP order (reuses `NewDpOrderDrawer`). Status pill = `StatusPill docType="dpOrder"`. The optional P3 list of `docs/delivery-planning-jobtypes-spec.md`. |
 | Shared board grid | `frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx` | The board itself, extracted so it is reused UNCHANGED by both DeliveryPlanning and the Trips "To schedule" panel: the CONFIG-DRIVEN region chip row, the optional 4 state-tab rail, the compact bulk-edit bar (multiselect), the inline Excel-style cell editors, the SO line-item drill-down and the full HC column set. Props: `stateTabs?` (present → tab row + client state-filter; omitted → locked to the passed single-state fetch), `selectedKeys`/`onToggle`/`onToggleAll`/`onClearSelection`, `bulkExtras` (page-injected Convert / Schedule buttons), `contextMenu`, `onRowDoubleClick`. The page owns the `useDeliveryPlanning` fetch so `region` stays a server-side filter. |
 | Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx:51` | A trip = one lorry-day with an ordered stop list. Status tabs order `IN_PROGRESS` before `PLANNED` (default tab still `PLANNED`). Carries the **"To schedule"** panel — now the EXACT board scoped to PENDING_SCHEDULE — see below. |
 | Desktop fleet day-map (A4) | `frontend/src/pages/scm-v2/FleetDay.tsx` | Route `/scm/fleet-day`, nav "Fleet Map" under Transportation. Pick a date + depot → every trip that day, each lorry's route on ONE Google map in a distinct colour (numbered stops, depot origin), a side panel of the day's lorries (colour swatch + crew + drops + revenue), and a focused-trip stop list. READ-ONLY view over `GET /trips/day` — reuses the geocode/route infra and `FleetDayMap` (the multi-route sibling of `ScheduleRouteMap`). Creates / reschedules NOTHING. |
@@ -192,6 +193,14 @@ schedule endpoint, no new trip logic.
 
 ### Live driver tracking — "Live location" (Phase 4)
 
+> **Phase 5 (2026-08-03): the native app takes over the capture.** Everything
+> below still describes the BROWSER path, which remains the fallback and is
+> unchanged. What changed is that it is no longer the only path — see
+> *Background capture* at the end of this section. Owner: *"我们想要的是实时知道
+> 司机已经在哪里了... 肯定是要让顾客知道目前司机在哪里了、到达了没有"*, and on the
+> browser's limitation, *"是的，所以我才说，好像我们需要原生 APP"*.
+
+
 The dispatcher watches the driver move in real time, with **no websockets** —
 polling is this repo's realtime mechanism. The approach is PWA geolocation: the
 driver keeps the delivery page open on their phone, the browser reports
@@ -240,6 +249,50 @@ a "waiting for the driver's first location" caption.
 > (`validatePing`, `shouldAcceptPing`, `latestPerDriver`), unit-tested in
 > `tripLocation.test.ts`. The rate cap and the "IN_PROGRESS only" gate are
 > enforced there; `PING_ACCEPTED_STATUSES = {IN_PROGRESS}`.
+
+#### Background capture — the native app (Phase 5)
+
+The browser path stops when the page is backgrounded. That is correct for a
+browser tab and it is also the hole: **a driver who pockets their phone between
+drops disappears from the map**, which makes "where is my delivery" unanswerable
+honestly. No mobile browser can watch position with the screen locked; this is
+the reason the native app exists at all.
+
+`frontend/src/vendor/scm/lib/native-location.ts` is the bridge.
+`useTripLocationCapture` now takes the native branch when
+`hasBackgroundLocation()` is true and falls through to the browser watcher
+otherwise. **Everything downstream is identical** — same mutation, same
+`POST /trips/:id/location`, same accepted/rate-capped handling. Only the source
+of the fix differs.
+
+Two things about the native branch that are deliberate:
+
+- **No Page Visibility listener and no heartbeat interval.** Stopping on hidden
+  is precisely what it replaces, and the plugin's `distanceFilter` (30 m) decides
+  when a fix is worth sending. A stationary lorry stops filling the table with
+  identical rows, and the battery cost is what decides whether drivers leave
+  tracking on at all.
+- **No npm dependency in `frontend/`.** The plugin lives in `native/`. A
+  Capacitor plugin's JS wrapper is a thin shim over
+  `window.Capacitor.Plugins.<Name>`, so the bridge calls that directly — zero
+  bytes in the web bundle, which matters because the bundle-size gate is at its
+  ceiling on main. The types are a hand-written mirror of the plugin's
+  `definitions.d.ts`.
+
+#### `simulated` — a faked position is recorded, not refused (mig 0253)
+
+The native watcher reports `simulated: true` when a fix came from a
+mock-location app rather than the GPS chip. A browser cannot tell, and always
+leaves the column at its `false` default — which is a true statement about a
+browser ping, not a guess.
+
+It matters because these rows are about to answer a **customer-facing** question,
+and a driver running a mock-location app can put the lorry anywhere. Refusing the
+ping would leave a gap indistinguishable from lost signal — the most common and
+most innocent thing in this data. A row that says "this was simulated" is
+evidence; a missing row is nothing. What to do about it belongs to whoever reads
+the trail, not to the write path.
+
 
 ### The four state tabs
 

@@ -1039,6 +1039,13 @@ trips.post('/:id/location', async (c) => {
     lng:         v.ping.lng,
     accuracy_m:  v.ping.accuracyM,
     recorded_at: v.ping.recordedAt,
+    /* Mig 0253. Only the native watcher can tell a mock-location app from the
+       GPS chip; a browser always sends nothing here and the column defaults to
+       false, which is a true statement about a browser ping rather than a
+       guess. Recorded, never rejected: refusing a simulated fix would leave a
+       gap indistinguishable from lost signal, and the point is to be able to
+       SEE it. */
+    simulated:   (body as { simulated?: unknown } | null)?.simulated === true,
   });
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);

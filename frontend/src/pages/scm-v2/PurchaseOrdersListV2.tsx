@@ -24,7 +24,12 @@ import {
   CheckCircle2,
   Package,
   ArrowRightLeft,
+  CalendarClock,
 } from "lucide-react";
+import {
+  PoBulkSupplierDateModal,
+  type BulkSupplierDateResult,
+} from "../../components/scm-v2/PoBulkSupplierDateModal";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -854,6 +859,32 @@ export function PurchaseOrdersListV2() {
     navigate(`/scm/grns/from-po?poId=${ids.join(",")}`);
   };
 
+  /* Batch supplier-revised date (owner 2026-08-03) — a supplier who pushes a
+     date pushes it for every order in flight, so the operator picks the POs
+     here and sets the slot + date once. The server skips locked / other-company
+     POs per-PO, and the report below names them rather than claiming a clean
+     sweep. */
+  const [bulkDateOpen, setBulkDateOpen] = useState(false);
+  const onBulkDateDone = async (res: BulkSupplierDateResult) => {
+    await queryClient.invalidateQueries({ queryKey: ["mfg-purchase-orders"] });
+    clearSelection();
+    const n = res.updated.length;
+    const scope = res.applyToLines ? "and every line" : "(header only)";
+    const skippedNote = res.skipped.length
+      ? ` ${res.skipped.length} skipped — ${res.skipped
+          .map((s) => `${s.poNumber ?? s.id}: ${s.reason}`)
+          .join('; ')}`
+      : "";
+    notify({
+      title: n > 0
+        ? `Supplier Date ${res.slot} set on ${n} ${n === 1 ? "PO" : "POs"}`
+        : "No purchase orders were updated",
+      body: `${n > 0 ? `Header ${scope} now reads ${res.date}.` : ""}${skippedNote}`.trim()
+        || "Nothing matched — check the picked purchase orders.",
+      tone: res.skipped.length > 0 ? "error" : "info",
+    });
+  };
+
   // Batch "Print all" — fetch each selected PO's full detail, resolve its bound
   // warehouse name (the PDF can't hit the API), then render into one combined
   // file or one file per PO. Mirrors the V1 PurchaseOrders list handler.
@@ -1251,6 +1282,13 @@ export function PurchaseOrdersListV2() {
                     </Button>
                     <Button
                       variant="secondary"
+                      icon={<CalendarClock size={14} />}
+                      onClick={() => setBulkDateOpen(true)}
+                    >
+                      Supplier date ({selectedIds.size})
+                    </Button>
+                    <Button
+                      variant="secondary"
                       icon={<Printer size={14} />}
                       disabled={printingDocs}
                       onClick={() => void printSelectedPos()}
@@ -1366,6 +1404,13 @@ export function PurchaseOrdersListV2() {
         onPrint={() => selected && goPrint(selected)}
         onCancel={() => selected && doCancel(selected)}
         onConvertGrn={() => selected && goGrnFromPo(selected)}
+      />
+
+      <PoBulkSupplierDateModal
+        open={bulkDateOpen}
+        poIds={[...selectedIds]}
+        onClose={() => setBulkDateOpen(false)}
+        onDone={(res) => void onBulkDateDone(res)}
       />
     </PullToRefresh>
   );

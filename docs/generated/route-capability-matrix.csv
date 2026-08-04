@@ -663,6 +663,7 @@ PATCH,/api/scm/mfg-purchase-orders/:id/reopen,AUTHENTICATED_MIDDLEWARE,COMPANY_C
 GET,/api/scm/mfg-purchase-orders/:id/revisions,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/mfg-purchase-orders.ts
 POST,/api/scm/mfg-purchase-orders/:id/send-to-supplier,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/mfg-purchase-orders.ts
 PATCH,/api/scm/mfg-purchase-orders/:id/submit,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/mfg-purchase-orders.ts
+POST,/api/scm/mfg-purchase-orders/bulk-supplier-date,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/mfg-purchase-orders.ts
 POST,/api/scm/mfg-purchase-orders/from-sos,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/mfg-purchase-orders.ts
 GET,/api/scm/mfg-purchase-orders/outstanding-so-items,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/mfg-purchase-orders.ts
 GET,/api/scm/mfg-purchase-orders/so-line-candidates,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/mfg-purchase-orders.ts
@@ -1008,7 +1009,13 @@ GET,/api/table-layouts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHER
 DELETE,/api/table-layouts/:tableKey,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/tableLayouts.ts
 PUT,/api/table-layouts/:tableKey,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/tableLayouts.ts
 DELETE,/api/table-layouts/:tableKey/default,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requirePermission(MANAGE_DEFAULTS_PERM),,YES,DECLARED_GATE,backend/src/routes/tableLayouts.ts
+PATCH,/api/table-layouts/:tableKey/default,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireLayoutManager,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/tableLayouts.ts
 PUT,/api/table-layouts/:tableKey/default,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requirePermission(MANAGE_DEFAULTS_PERM),,YES,DECLARED_GATE,backend/src/routes/tableLayouts.ts
+GET,/api/table-layouts/:tableKey/layouts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/tableLayouts.ts
+POST,/api/table-layouts/:tableKey/layouts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireLayoutManager,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/tableLayouts.ts
+DELETE,/api/table-layouts/:tableKey/layouts/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireLayoutManager,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/tableLayouts.ts
+PATCH,/api/table-layouts/:tableKey/layouts/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireLayoutManager,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/tableLayouts.ts
+PUT,/api/table-layouts/:tableKey/layouts/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireLayoutManager,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/tableLayouts.ts
 POST,/api/totp/disable,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/totp.ts
 POST,/api/totp/enable,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/totp.ts
 POST,/api/totp/setup,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/totp.ts

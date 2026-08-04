@@ -37,6 +37,10 @@ export interface StoredLayout {
   shown: string[];
   widths: Record<string, number>;
   pinned: string[];
+  /** Columns frozen to the RIGHT edge (owner 2026-08-03). A second list rather
+   *  than a reshaped `pinned`: every stored layout and every browser already
+   *  holds the flat one. */
+  pinnedRight: string[];
   /** Group-by columns — vendored SCM DataGrid only, where grouping a list by
    *  supplier is part of its shape. Always empty for a DataTable. */
   groupBy: string[];
@@ -48,6 +52,7 @@ export const EMPTY_LAYOUT: StoredLayout = {
   shown: [],
   widths: {},
   pinned: [],
+  pinnedRight: [],
   groupBy: [],
 };
 
@@ -76,6 +81,15 @@ export interface LayoutCompany {
   name: string;
 }
 
+/** A column set the user saved and can switch back to (mig 0239). Switching
+ *  COPIES it into the live arrangement — it is data, not a pointer, which is
+ *  why saving one never disturbs the sync of what is on screen. */
+export interface NamedLayout {
+  id: number;
+  name: string;
+  layout: StoredLayout;
+}
+
 export interface TableLayoutsSnapshot {
   /** True once the boot fetch has succeeded. Everything below is empty until. */
   ready: boolean;
@@ -83,8 +97,16 @@ export interface TableLayoutsSnapshot {
   activeCompanyId: number | null;
   /** May this user write a company-wide default? (settings.manage) */
   canManageDefaults: boolean;
+  /** May this user create / rename / delete layouts, and name the company
+   *  default? Owner and Super Admin only — the "*" wildcard. */
+  canManageLayouts: boolean;
   /** companyId → tableKey → the company's default layout. */
   defaults: Record<string, Record<string, StoredLayout>>;
+  /** companyId → tableKey → the name an admin gave that default. Absent means
+   *  the picker names it after the company instead. */
+  defaultNames: Record<string, Record<string, string>>;
+  /** tableKey → this user's saved layouts, in the active company. */
+  myLayouts: Record<string, NamedLayout[]>;
   /** Bumped whenever hydration changed stored prefs, so a mounted table can
    *  re-read localStorage (it is read once, at mount, by design). */
   epoch: number;
@@ -95,7 +117,10 @@ const EMPTY: TableLayoutsSnapshot = {
   companies: [],
   activeCompanyId: null,
   canManageDefaults: false,
+  canManageLayouts: false,
   defaults: {},
+  defaultNames: {},
+  myLayouts: {},
   epoch: 0,
 };
 
@@ -138,7 +163,7 @@ export function dataGridIdKey(storageKey: string, companyId: number | null): str
   return companyId != null ? `${storageKey}::c${companyId}` : storageKey;
 }
 
-const PARTS = ["order", "hidden", "shown", "widths", "pinned"] as const;
+const PARTS = ["order", "hidden", "shown", "widths", "pinned", "pinnedr"] as const;
 
 /** Marker holding the layout we last pushed for this table. Its absence means
  *  "never pushed"; a mismatch against localStorage means there are local edits
@@ -188,6 +213,7 @@ function readLocal(tableKey: string, companyId: number | null): StoredLayout {
     shown: read<string[]>("shown", []),
     widths: read<Record<string, number>>("widths", {}),
     pinned: read<string[]>("pinned", []),
+    pinnedRight: read<string[]>("pinnedr", []),
   };
 }
 
@@ -210,7 +236,8 @@ function writeLocal(tableKey: string, companyId: number | null, layout: StoredLa
       return;
     }
     for (const part of PARTS) {
-      localStorage.setItem(`dt:${part}:${target.idKey}`, JSON.stringify(layout[part]));
+      const value = part === "pinnedr" ? layout.pinnedRight : layout[part];
+      localStorage.setItem(`dt:${part}:${target.idKey}`, JSON.stringify(value));
     }
   } catch {
     // quota / privacy mode — the server copy still exists; this browser just
@@ -224,6 +251,7 @@ export function isEmptyLayout(layout: StoredLayout): boolean {
     layout.hidden.length === 0 &&
     layout.shown.length === 0 &&
     layout.pinned.length === 0 &&
+    layout.pinnedRight.length === 0 &&
     layout.groupBy.length === 0 &&
     Object.keys(layout.widths).length === 0
   );
@@ -242,6 +270,7 @@ export function serializeLayout(layout: StoredLayout): string {
     shown: layout.shown,
     widths,
     pinned: layout.pinned,
+    pinnedRight: layout.pinnedRight,
     groupBy: layout.groupBy,
   });
 }
@@ -252,8 +281,24 @@ interface LayoutsResponse {
   companies?: LayoutCompany[];
   activeCompanyId?: number | null;
   canManageDefaults?: boolean;
+  canManageLayouts?: boolean;
   defaults?: Record<string, Record<string, StoredLayout>>;
+  defaultNames?: Record<string, Record<string, string>>;
   mine?: Record<string, { layout: StoredLayout; updatedAt: string | null }>;
+  myLayouts?: Record<string, Array<{ id: number; name: string; layout: StoredLayout }>>;
+}
+
+function normalizeNamed(
+  raw: LayoutsResponse["myLayouts"],
+): Record<string, NamedLayout[]> {
+  const out: Record<string, NamedLayout[]> = {};
+  for (const [tableKey, list] of Object.entries(raw ?? {})) {
+    if (!Array.isArray(list)) continue;
+    out[tableKey] = list
+      .filter((l) => l && typeof l.name === "string" && Number.isFinite(Number(l.id)))
+      .map((l) => ({ id: Number(l.id), name: l.name, layout: normalize(l.layout) }));
+  }
+  return out;
 }
 
 function normalize(raw: unknown): StoredLayout {
@@ -272,6 +317,7 @@ function normalize(raw: unknown): StoredLayout {
     shown: list(r.shown),
     widths,
     pinned: list(r.pinned),
+    pinnedRight: list(r.pinnedRight),
     groupBy: list(r.groupBy),
   };
 }
@@ -335,6 +381,9 @@ export async function hydrateTableLayouts(): Promise<void> {
       companies: Array.isArray(res.companies) ? res.companies : [],
       activeCompanyId: res.activeCompanyId ?? null,
       canManageDefaults: Boolean(res.canManageDefaults),
+      canManageLayouts: Boolean(res.canManageLayouts),
+      defaultNames: res.defaultNames ?? {},
+      myLayouts: normalizeNamed(res.myLayouts),
       defaults: Object.fromEntries(
         Object.entries(res.defaults ?? {}).map(([cid, tables]) => [
           cid,
@@ -410,4 +459,89 @@ export async function saveCompanyDefault(
   if (isEmptyLayout(layout)) delete tables[baseIdKey];
   else tables[baseIdKey] = layout;
   emit({ ...snapshot, defaults: { ...snapshot.defaults, [cid]: tables } });
+}
+
+// ── Named layouts (mig 0239) ────────────────────────────────────────────────
+// CRUD on the user's saved column sets. Each call refreshes the snapshot from
+// its own response rather than refetching: the boot fetch is a page-load thing,
+// and a picker that lags one action behind reads as a failed save.
+
+function putMyLayouts(tableKey: string, list: NamedLayout[]): void {
+  emit({
+    ...snapshot,
+    myLayouts: {
+      ...snapshot.myLayouts,
+      [tableKey]: [...list].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      ),
+    },
+  });
+}
+
+/** Save the given columns as a NEW layout. Duplicating is the same call with
+ *  the source's layout — one path, so the two cannot drift. */
+export async function createNamedLayout(
+  tableKey: string,
+  name: string,
+  layout: StoredLayout,
+): Promise<NamedLayout> {
+  const res = await api.post<{ layout: NamedLayout }>(
+    `/api/table-layouts/${encodeURIComponent(tableKey)}/layouts`,
+    { name, layout },
+  );
+  const created: NamedLayout = {
+    id: Number(res.layout.id),
+    name: res.layout.name,
+    layout: res.layout.layout,
+  };
+  putMyLayouts(tableKey, [...(snapshot.myLayouts[tableKey] ?? []), created]);
+  return created;
+}
+
+/** Replace a saved layout's COLUMNS with the given ones — the other half of
+ *  rename. Without it a layout could only be created, and "fix the one I
+ *  already have" meant delete-and-recreate under the same name. */
+export async function updateNamedLayout(
+  tableKey: string,
+  id: number,
+  layout: StoredLayout,
+): Promise<void> {
+  await api.put(`/api/table-layouts/${encodeURIComponent(tableKey)}/layouts/${id}`, { layout });
+  putMyLayouts(
+    tableKey,
+    (snapshot.myLayouts[tableKey] ?? []).map((l) => (l.id === id ? { ...l, layout } : l)),
+  );
+}
+
+export async function renameNamedLayout(
+  tableKey: string,
+  id: number,
+  name: string,
+): Promise<void> {
+  await api.patch(`/api/table-layouts/${encodeURIComponent(tableKey)}/layouts/${id}`, { name });
+  putMyLayouts(
+    tableKey,
+    (snapshot.myLayouts[tableKey] ?? []).map((l) => (l.id === id ? { ...l, name } : l)),
+  );
+}
+
+/** Name this company's default — what the whole company inherits. An empty
+ *  name clears it, so the picker goes back to naming it after the company. */
+export async function renameCompanyDefault(tableKey: string, name: string): Promise<void> {
+  await api.patch(`/api/table-layouts/${encodeURIComponent(tableKey)}/default`, { name });
+  const cid = snapshot.activeCompanyId;
+  if (cid == null) return;
+  const key = String(cid);
+  const names = { ...(snapshot.defaultNames[key] ?? {}) };
+  if (name.trim()) names[tableKey] = name.trim();
+  else delete names[tableKey];
+  emit({ ...snapshot, defaultNames: { ...snapshot.defaultNames, [key]: names } });
+}
+
+export async function deleteNamedLayout(tableKey: string, id: number): Promise<void> {
+  await api.del(`/api/table-layouts/${encodeURIComponent(tableKey)}/layouts/${id}`);
+  putMyLayouts(
+    tableKey,
+    (snapshot.myLayouts[tableKey] ?? []).filter((l) => l.id !== id),
+  );
 }

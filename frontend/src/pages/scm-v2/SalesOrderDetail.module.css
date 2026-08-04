@@ -224,6 +224,59 @@
   line-height: 1.3;
 }
 
+/* Label row — the field label with a right-aligned inline action beside it
+   (the PO "Apply to all" on each supplier-revised date slot, owner 2026-08-03).
+   Lives inside .field's column flow, so the action costs no extra height. */
+.fieldLabelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* Inline text action beside a field label. Underlined rather than boxed so it
+   reads as a field-scoped shortcut instead of a form-level button competing
+   with Save. Disabled = that slot has no date yet, so there is nothing to
+   apply. */
+.applyAllBtn {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.3;
+  white-space: nowrap;
+  color: #0c3f39;
+  background: none;
+  border: none;
+  border-bottom: 1px solid rgba(12, 63, 57, 0.35);
+  padding: 0;
+  cursor: pointer;
+}
+.applyAllBtn:hover:not(:disabled),
+.applyAllBtn:focus-visible:not(:disabled) {
+  color: #0a332e;
+  border-bottom-color: #0a332e;
+}
+.applyAllBtn:disabled {
+  color: #a8ada0;
+  border-bottom-color: transparent;
+  cursor: not-allowed;
+}
+
+/* Transient "Applied to N lines" acknowledgement. Replaces the button in place
+   so the label row doesn't reflow while it shows. */
+.applyAllDone {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.3;
+  white-space: nowrap;
+  color: #0c3f39;
+}
+
 /* Required-field label — darker ink + heavier weight so mandatory inputs read
    louder than the optional (soft-grey) ones. Pairs with .req below. Theme C
    tokens (not hardcoded hex) since this stylesheet is token-bound. */

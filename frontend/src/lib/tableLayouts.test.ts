@@ -29,6 +29,7 @@ const layout = (over: Partial<StoredLayout> = {}): StoredLayout => ({
   shown: [],
   widths: {},
   pinned: [],
+  pinnedRight: [],
   groupBy: [],
   ...over,
 });

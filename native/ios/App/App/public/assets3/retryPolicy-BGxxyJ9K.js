@@ -1,0 +1,1 @@
+function e(e){let t=e?.status;return typeof t==`number`?t:void 0}function t(t,n){let r=e(n);return r!==void 0&&r>=400&&r<500&&r!==408&&r!==429?!1:t<1}export{t};
