@@ -34,6 +34,7 @@ import {
   DELIVERY_STATES,
   DELIVERY_STATE_LABEL,
   dpJobTypeLabel,
+  assrJobKindLabel,
   type DeliveryState,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
@@ -122,16 +123,17 @@ function TypeChip({ order }: { order: PlanningOrder }) {
     tone = '#1f5e73';
     bg = 'rgba(31, 94, 115, 0.12)';
   } else if (isAssr(order)) {
+    // The three ASSR legs keep their own tones; the WORDS come from the shared
+    // map so the chip, the search index and the export cannot drift (they did,
+    // four ways, before the 2026-08-03 rename).
+    label = assrJobKindLabel(order.job_kind);
     if (order.job_kind === 'customer_pickup') {
-      label = 'Cust. pickup';
       tone = '#0c3f39';
       bg = 'rgba(232, 107, 58, 0.12)';
     } else if (order.job_kind === 'inspection') {
-      label = 'Inspection';
       tone = '#5a3fa0';
       bg = 'rgba(90, 63, 160, 0.12)';
     } else {
-      label = 'Delivery';
       tone = '#2f5d4f';
       bg = 'rgba(47, 93, 79, 0.12)';
     }
@@ -716,9 +718,14 @@ export function DeliveryPlanningBoard({
          two kinds read apart at a glance. */
       key: 'row_type', label: 'Type', width: 130, groupable: true,
       accessor: (o) => <TypeChip order={o} />,
-      searchValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o) : isAssr(o) ? (o.job_kind === 'customer_pickup' ? 'Cust. pickup customer pickup' : o.job_kind === 'inspection' ? 'Inspection' : 'Delivery') : 'SO delivery'),
-      groupValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o) : isAssr(o) ? (o.job_kind === 'customer_pickup' ? 'Cust. pickup' : o.job_kind === 'inspection' ? 'Inspection' : 'Delivery') : 'SO delivery'),
-      exportValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o) : isAssr(o) ? (o.job_kind === 'customer_pickup' ? 'Cust. pickup' : o.job_kind === 'inspection' ? 'Inspection' : 'Delivery') : 'SO delivery'),
+      /* Search keeps the OLD words as aliases ("cust. pickup", "delivery"):
+         the 2026-08-03 rename changed what the chip says, and someone who has
+         typed "delivery" into this box for a year should still find the row. */
+      searchValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o)
+        : isAssr(o) ? `${assrJobKindLabel(o.job_kind)} ${o.job_kind === 'customer_pickup' ? 'cust. pickup customer pickup' : o.job_kind === 'delivery' ? 'delivery' : ''}`.trim()
+        : 'SO delivery'),
+      groupValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o) : isAssr(o) ? assrJobKindLabel(o.job_kind) : 'SO delivery'),
+      exportValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o) : isAssr(o) ? assrJobKindLabel(o.job_kind) : 'SO delivery'),
     },
     {
       /* SO No. for SO rows; the ASSR ref (assr_no) for service-case rows. */
@@ -912,7 +919,11 @@ export function DeliveryPlanningBoard({
       groupValue: (o) => (isAssr(o) || isDp(o) ? '(n/a)' : o.stock_status),
     },
     {
-      key: 'delivery_state', label: 'Delivery State', width: 160, sortable: true, groupable: true,
+      /* "Delivery Status" on screen, `delivery_state` in the data (owner,
+         2026-08-04). The column key, the stored column and DELIVERY_STATE_LABEL
+         keep the old word — renaming those would touch the API contract and the
+         override write path for a heading. */
+      key: 'delivery_state', label: 'Delivery Status', width: 160, sortable: true, groupable: true,
       /* Inline-editable: writes a manual delivery_state override (wins over the
          derived state). Real stock readiness stays visible in the Stock column. */
       accessor: (o) => <StatusEditCell order={o} sched={sched} />,
