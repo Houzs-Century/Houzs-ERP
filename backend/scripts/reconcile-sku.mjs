@@ -264,9 +264,48 @@ async function reconcile(code) {
     console.log("");
   }
 
-  /* THE DOCUMENT TRUTH, which needs no physical count. Cancelled DOs release
-     their quantity, so they are excluded — the same rule soDeliverableRemaining
-     and the movement reversal both follow. */
+  /* WALK THE WHOLE FLOW, not just GRN and DO.
+     Owner, 2026-08-04: "你就一个一个排查，当做你重新录入一遍数据。GR 就是进货，DO
+     就是出货，然后查看在全套系统里还有什么东西可以进出货".
+
+     He is right that the earlier version was incomplete. GRN in minus DO out is
+     the answer ONLY when nothing else moved the goods, and eight other things
+     can:
+
+       IN   GRN receipt · Delivery Return · consignment receive · consignment
+            return-in · Stock Take (+) · Inventory Adjustment (+) · Stock
+            Transfer in · a cancelled DO's add-back
+       OUT  DO shipment · Purchase Return · consignment note out · consignment
+            return-out · Stock Take (-) · Inventory Adjustment (-) · Stock
+            Transfer out
+
+     Grouping the movements by source_doc_type re-walks every one of those by
+     construction: a stock change that wrote no movement does not exist, so
+     nothing can hide from this breakdown. The GRN/DO figures stay, because they
+     are the two the owner reconciles by hand — but they are now shown as part of
+     the whole flow rather than as if they were all of it. */
+  const byDocType = await pg`
+    SELECT COALESCE(source_doc_type, '(none)') AS doc_type,
+           SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
+                                  WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty
+                                  ELSE 0 END) AS net,
+           COUNT(*) AS rows
+      FROM scm.inventory_movements
+     WHERE product_code = ${code}
+     GROUP BY COALESCE(source_doc_type, '(none)')
+     ORDER BY 1`;
+  console.log("  EVERY WAY THIS SKU MOVED — the whole flow, walked again\n");
+  for (const d of byDocType) {
+    const n = num(d.net);
+    console.log(`      ${pad(d.doc_type, 16)} ${rpad(n >= 0 ? `+${n}` : n, 8)}   ${num(d.rows)} movement(s)`);
+  }
+  console.log(`      ${pad("", 16)} --------`);
+  console.log(`      ${pad("net", 16)} ${rpad(movBalance, 8)}\n`);
+
+  /* THE DOCUMENT TRUTH. Cancelled documents release their quantity, so they are
+     excluded — the same rule soDeliverableRemaining and the movement reversal
+     both follow. Delivery Returns come back IN and Purchase Returns go OUT, so
+     both belong in the arithmetic; leaving them out was the gap. */
   const [docTruth] = await pg`
     SELECT
       COALESCE((SELECT SUM(gi.qty_accepted)
@@ -278,15 +317,45 @@ async function reconcile(code) {
                   FROM scm.delivery_order_items di
                   JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
                  WHERE di.item_code = ${code}
-                   AND d.status IS DISTINCT FROM 'CANCELLED'), 0) AS shipped`;
-  const docStock = num(docTruth.received) - num(docTruth.shipped);
+                   AND d.status IS DISTINCT FROM 'CANCELLED'), 0) AS shipped,
+      COALESCE((SELECT SUM(dri.qty_returned)
+                  FROM scm.delivery_return_items dri
+                  JOIN scm.delivery_returns dr ON dr.id = dri.delivery_return_id
+                 WHERE dri.item_code = ${code}
+                   AND dr.status IS DISTINCT FROM 'CANCELLED'), 0) AS returned_in,
+      COALESCE((SELECT SUM(pri.qty_returned)
+                  FROM scm.purchase_return_items pri
+                  JOIN scm.purchase_returns pr ON pr.id = pri.purchase_return_id
+                 WHERE pri.material_code = ${code}
+                   AND pr.status IS DISTINCT FROM 'CANCELLED'), 0) AS returned_out`;
+
+  /* Whatever the documents above do NOT explain — stock takes, inventory
+     adjustments, transfers, consignment — read straight off the ledger by
+     source_doc_type, so the total is complete rather than "the four I thought
+     of". */
+  /* The four the block above counts from their own document tables. The full set
+     written anywhere in scm is: ADJUSTMENT, CONSIGNMENT_NOTE, DO, DR, GRN,
+     PC_RECEIVE, PURCHASE_RETURN, STOCK_TAKE, STOCK_TRANSFER — verified by
+     grepping the writers, not assumed. A Purchase Return stamps
+     'PURCHASE_RETURN', NOT 'PR'; getting that wrong would double-count it. */
+  const DOC_ACCOUNTED = new Set(['GRN', 'DO', 'DR', 'PURCHASE_RETURN']);
+  const otherNet = byDocType
+    .filter((d) => !DOC_ACCOUNTED.has(String(d.doc_type)))
+    .reduce((s, d) => s + num(d.net), 0);
+
+  const docStock = num(docTruth.received) - num(docTruth.shipped)
+    + num(docTruth.returned_in) - num(docTruth.returned_out) + otherNet;
+
   console.log("  WHAT THE DOCUMENTS SAY THE STOCK MUST BE (no physical count needed)");
-  console.log(`      GRN received (non-cancelled)   ${rpad(num(docTruth.received), 8)}`);
-  console.log(`      DO shipped   (non-cancelled)   ${rpad(-num(docTruth.shipped), 8)}`);
+  console.log(`      GRN received      (non-cancelled)   ${rpad(num(docTruth.received), 8)}`);
+  console.log(`      DO shipped        (non-cancelled)   ${rpad(-num(docTruth.shipped), 8)}`);
+  console.log(`      Delivery Returns  back in           ${rpad(num(docTruth.returned_in), 8)}`);
+  console.log(`      Purchase Returns  back out          ${rpad(-num(docTruth.returned_out), 8)}`);
+  console.log(`      everything else   (takes/adj/transfer/consignment/cancel add-back)  ${rpad(otherNet >= 0 ? `+${otherNet}` : otherNet, 8)}`);
   console.log(`      ------------------------------------------`);
-  console.log(`      DOCUMENT stock                 ${rpad(docStock, 8)}`);
-  console.log(`      movement ledger                ${rpad(movBalance, 8)}  ${movBalance === docStock ? "matches" : "WRONG"}`);
-  console.log(`      lot ledger                     ${rpad(lotBalance, 8)}  ${lotBalance === docStock ? "matches" : "WRONG"}\n`);
+  console.log(`      DOCUMENT stock                      ${rpad(docStock, 8)}`);
+  console.log(`      movement ledger                     ${rpad(movBalance, 8)}  ${movBalance === docStock ? "matches" : "WRONG"}`);
+  console.log(`      lot ledger                          ${rpad(lotBalance, 8)}  ${lotBalance === docStock ? "matches" : "WRONG"}\n`);
 
   // ── PART 2 ────────────────────────────────────────────────────────────────
   console.log("PART 2 — PO: WHAT IS STILL COMING IN\n");
