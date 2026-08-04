@@ -101,10 +101,8 @@
   white-space: nowrap;
 }
 
-/* days_left tone — overdue (negative) reads red, due-soon (<=3) petrol. */
-.daysOverdue  { color: #b8331f; font-weight: 700; }
-.daysSoon     { color: #0c3f39; font-weight: 700; }
-.daysOk       { color: #11140f; }
+/* The days_left tone classes lived here until the owner's 2026-08-04 column
+   pass removed that column; they had exactly one consumer and went with it. */
 
 /* ── Inline Excel-style cell editors (native select / date, styled like the
       grid so they read as plain cells until focused) ─────────────────────────
