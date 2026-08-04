@@ -281,6 +281,17 @@ Return** (`/purchase-returns`), a separate module.
 | Status POSTED, DRAFT excluded | over-receipt beyond the PO line's remaining | `verifyGrnOverReceipt` (`:602`), re-run at confirm `:1725-1728` |
 | Status not DRAFT / (POSTED without children) | the whole page read-only (frontend) | `GoodsReceivedDetail.tsx:246` — `isLocked = !(status === 'DRAFT' || (status === 'POSTED' && !hasChildren))`; the page drops out of edit mode automatically if it locks mid-edit (`:253-258`) |
 | Source PO belongs to another company | all three create paths | `firstCrossCompanyPo` (`:30-48`) — receiving another company's PO would post the stock and its cost into the active company's books |
+| An **unlinked line for a material the header's PO already orders** | `POST /` and `POST /:id/items` | `findUnlinkedPoLines` (`lib/grn-unlinked-po-lines.ts`) → 409 `unlinked_po_lines` |
+
+**Why that last one exists, and what it is NOT.** `grn_items.purchase_order_item_id`
+is nullable so a free/manual receipt can land stock with no PO behind it — that
+stays allowed and untouched. What is now refused is receiving THIS PO's own
+material while leaving the link off: the stock goes in, `received_qty` does not
+move, `verifyGrnOverReceipt` sees nothing, and the same delivery can be received
+again. It is the receiving-side mirror of the delivery-side defect in
+`docs/unlinked-line-duplicate-coe.md` (owner: *"包括 GR 那边也是"*). A production
+scan on 2026-08-04 found **no** GRN in this state — the guard is preventative
+here, corrective on the delivery side.
 
 **The header PATCH is the exception**: it is NOT gated by `grnHasDownstream`. A
 GRN with a downstream PI can still have its header edited, including a warehouse

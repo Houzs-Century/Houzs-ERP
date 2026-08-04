@@ -15,6 +15,7 @@ import { recostFromGrn } from '../lib/recost';
 import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurrency } from '../lib/fx';
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
+import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -1537,6 +1538,27 @@ grns.post('/', async (c) => {
     if (x) return c.json(x.blocked, 409);
   }
 
+  /* The other half of "lines with no purchase_order_item_id are uncapped"
+     (Wei Siang 2026-08-04, "包括 GR 那边也是"). Uncapped is right for a free
+     receipt; it is not right for receiving THIS PO's own material without
+     ticking the PO line off, because the stock goes in while the PO's
+     received_qty does not move — so the same delivery can be received twice.
+     Refused only when the named PO already orders that material. */
+  {
+    const unlinked = await findUnlinkedPoLines(
+      sb,
+      (body.purchaseOrderId as string | undefined) ?? null,
+      null,
+      items.map((it, idx) => ({
+        lineRef: String(idx),
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qtyAccepted ?? it.qtyReceived ?? 0),
+        soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
+      })),
+    );
+    if (unlinked.length > 0) return c.json(unlinkedPoLinesResponse(unlinked), 409);
+  }
+
   const headerWarehouseId = await resolveReceiveWarehouse(
     sb,
     (body.warehouseId as string | undefined) ?? null,
@@ -2632,6 +2654,25 @@ grns.post('/:id/items', async (c) => {
      NaN). On a GRN this is worse than a bad total: qty_received also drives the
      over-receipt headroom check and the inventory movement, so a NaN qty writes
      a NaN into stock. */
+  /* The add-a-line half of the same back door as the create path: receiving
+     THIS PO's own material with no purchase_order_item_id takes the stock in
+     while the PO's received_qty stays put, so it can be received again. */
+  {
+    const { data: grnPo } = await sb.from('grns').select('purchase_order_id').eq('id', grnId).maybeSingle();
+    const unlinked = await findUnlinkedPoLines(
+      sb,
+      (grnPo as { purchase_order_id?: string | null } | null)?.purchase_order_id ?? null,
+      null,
+      [{
+        lineRef: 'add',
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qtyAccepted ?? it.qtyReceived ?? it.qty ?? 0),
+        soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
+      }],
+    );
+    if (unlinked.length > 0) return c.json(unlinkedPoLinesResponse(unlinked), 409);
+  }
+
   const parsedAdd = parseLineNumbers({
     qty: { value: it.qty, fallback: 1 },
     unitPriceCenti: { value: it.unitPriceCenti },
