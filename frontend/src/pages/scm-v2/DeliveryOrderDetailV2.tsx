@@ -852,12 +852,12 @@ export function DeliveryOrderDetailV2() {
         `Cancel delivery order ${deliveryOrder.do_number}? Stock allocated to this DO will be released back to the SO.`
       )
     ) {
-      updateStatus.mutate({ id: deliveryOrder.id, status: "cancelled" });
+      updateStatus.mutate({ id: deliveryOrder.id, status: "CANCELLED" });
     }
   };
   const doMarkSigned = () => {
     if (!deliveryOrder) return;
-    updateStatus.mutate({ id: deliveryOrder.id, status: "delivered" });
+    updateStatus.mutate({ id: deliveryOrder.id, status: "DELIVERED" });
   };
   const goConvertToSi = () =>
     deliveryOrder &&

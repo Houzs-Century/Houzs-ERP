@@ -4778,11 +4778,27 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
   }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
+  /* NORMALISE FIRST, exactly as the Sales Order handler does
+     (`const toStatus = String(body.status).trim().toUpperCase()`,
+     mfg-sales-orders.ts). The two sibling handlers disagreed on this, and only
+     one of them was right.
+
+     Owner, 2026-08-04, trying to cancel 2990-DO-2607-005 — the remediation for
+     the duplicate-delivery incident — and getting: **"cancelled" is not a valid
+     Delivery Order status.** Cancel DO and Mark signed on the V2 detail page
+     both post LOWERCASE, so both had been dead since that page shipped, and the
+     one document that most needed cancelling could not be.
+
+     The comment that used to sit here said "The FE only ever sends the canonical
+     UPPERCASE values below." That was an assumption about callers, written into
+     the guard as if it were a fact, and three desktop call sites had already
+     broken it. Case is not what audit gap #4 was defending against — a garbage
+     status is. Normalising costs nothing and removes a whole class of caller
+     bug, including one from a browser still running a cached bundle. */
+  const toStatus = String(body.status).trim().toUpperCase();
   /* Audit gap #4 — reject an unknown status value outright. Historically the
-     handler wrote body.status verbatim, so a typo / lowercase value (the SI #77
-     class) or a bogus status persisted to the row. The FE only ever sends the
-     canonical UPPERCASE values below. */
-  if (!DO_STATUSES.has(body.status)) {
+     handler wrote body.status verbatim, so a bogus status persisted to the row. */
+  if (!DO_STATUSES.has(toStatus)) {
     return c.json({
       error: 'invalid_status',
       reason: `"${body.status}" is not a valid Delivery Order status.`,
@@ -4803,7 +4819,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
   // Already cancelled → echo back without re-reversing (would double-credit).
-  if (body.status === 'CANCELLED' && prevStatus === 'CANCELLED') {
+  if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
     return c.json({ deliveryOrder: { id, status: 'CANCELLED' } });
   }
   /* Audit 2026-06-10 #1 (CRITICAL) — a CANCELLED DO is FINAL. Un-cancelling
@@ -4827,7 +4843,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      confirm, and the CANCELLED transition (handled below) are all unaffected. */
   {
     const prevUpper = (prevStatus ?? '').toUpperCase();
-    if (DO_STOCK_OUT_STATUSES.has(prevUpper) && DO_PRESHIP_STATUSES.has(body.status)) {
+    if (DO_STOCK_OUT_STATUSES.has(prevUpper) && DO_PRESHIP_STATUSES.has(toStatus)) {
       return c.json({
         error: 'illegal_status_transition',
         reason: 'This Delivery Order has already shipped, so it cannot be moved back to a not-shipped status. Cancel it and create a new Delivery Order instead.',
@@ -4838,7 +4854,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   /* Tier 2 downstream-lock — only the CANCELLED transition is gated. Other
      status transitions ride through untouched so the existing state machine
      (LOADED→DISPATCHED→IN_TRANSIT→SIGNED→DELIVERED→INVOICED) keeps working. */
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     const childLock = await doHasDownstream(sb, id);
     if (childLock) return c.json(childLock, 409);
   }
@@ -4848,9 +4864,9 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   // Numeric columns cannot live in `ts` (typed Record<string, string>); merged
   // into the same update below.
   const tsNum: Record<string, number> = {};
-  if (body.status === 'DISPATCHED') ts.dispatched_at = now;
-  if (body.status === 'SIGNED')     ts.signed_at = now;
-  if (body.status === 'DELIVERED')  ts.delivered_at = now;
+  if (toStatus === 'DISPATCHED') ts.dispatched_at = now;
+  if (toStatus === 'SIGNED')     ts.signed_at = now;
+  if (toStatus === 'DELIVERED')  ts.delivered_at = now;
   /* POD capture — the mobile app posts the proof-of-delivery signature +
      photo alongside the status flip. Persist them to the existing columns
      (signature_data, pod_r2_key) so a DELIVERED DO keeps its signature +
@@ -4890,7 +4906,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      re-checked HERE, before the flip and the OUT. Reject 409 if any linked SO
      line would ship past its live remaining. Ad-hoc (unlinked) lines stay
      uncapped, exactly as at create. Read-only: no flip, no stock moved yet. */
-  if (SHIPPED_STATES.includes(body.status) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
+  if (SHIPPED_STATES.includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
     const { data: shipLines } = await sb.from('delivery_order_items')
       .select('so_item_id, qty').eq('delivery_order_id', id);
     const linkedQty = new Map<string, number>();
@@ -4918,9 +4934,9 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      cancelled" → idempotent echo, NO second reversal. Postgres serialises the two
      UPDATEs, so exactly one wins the row and fires the single reversal. */
   let data: { id: string; status: string } | null;
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: body.status, ...ts, ...tsNum })
+      .update({ status: toStatus, ...ts, ...tsNum })
       .eq('id', id), co.companyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
@@ -4932,7 +4948,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   } else {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: body.status, ...ts, ...tsNum }).eq('id', id), co.companyId).select('id, status').single();
+      .update({ status: toStatus, ...ts, ...tsNum }).eq('id', id), co.companyId).select('id, status').single();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as { id: string; status: string };
   }
@@ -4946,7 +4962,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      HERE, the single chokepoint. This is the commit moving create→confirm. */
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;
-  if (SHIPPED_STATES.includes(body.status)) {
+  if (SHIPPED_STATES.includes(toStatus)) {
     movementErrors = await deductInventoryForDo(sb, id, user.id);
     /* Mirror the create path: once stock goes out, re-check the source SO for
        full coverage and auto-advance to DELIVERED (best-effort). A DRAFT confirm
@@ -4969,14 +4985,14 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
        Once-per-DO by construction, not merely by the stamp: the guard at :3708
        bars a shipped DO from returning to a pre-ship status, so this transition
        cannot repeat. Gated OFF and fail-closed inside; best-effort. */
-    if (body.status === 'DISPATCHED' && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
+    if (toStatus === 'DISPATCHED' && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
       emailNotice = await maybeSendDeliveryOrderEmail(sb, c.env, id);
     }
   }
 
   /* Requirement #3 — if a DO is explicitly marked DELIVERED, re-check its SO
      for full coverage and auto-advance the SO to DELIVERED (best-effort). */
-  if (body.status === 'DELIVERED') {
+  if (toStatus === 'DELIVERED') {
     const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
     await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user.id);
   }
@@ -4991,7 +5007,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      positive ADJUSTMENT (unindexed by the DO source key, carrying variant_key) so
      the reversal actually lands. Idempotent (ADJUSTMENT existence check) +
      best-effort (a movement failure never un-cancels the DO). */
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     try { await reverseInventoryForDo(sb, id, user.id); } catch { /* best-effort */ }
     /* REC P4 — put the physical rack stock back (mirror of the dispatch
        stock-out). Best-effort + idempotent; never blocks the cancel. */
