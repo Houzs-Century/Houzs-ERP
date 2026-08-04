@@ -28,6 +28,7 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { recomputePoReceived, resolvePoBatchByItem } from './grns';
+import { findUnlinkedPrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import {
@@ -541,6 +542,27 @@ purchaseReturns.post('/', async (c) => {
   if (!Array.isArray(items) || !items.length) return c.json({ error: 'items_required' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
+
+  /* "Manual lines (no grnItemId) stay uncapped" — true, and the same back door
+     the delivery side had. An unlinked line on a return that NAMES a GRN still
+     sends the stock OUT while moving no grn_items.returned_qty, so the same
+     goods can be returned again and the guard below never sees it. Refused only
+     when the named GRN already contains that material, so a genuinely manual
+     return line still passes. See docs/unlinked-line-duplicate-coe.md. */
+  {
+    const unlinked = await findUnlinkedPrLines(
+      sb,
+      (body.grnId as string | undefined) ?? null,
+      (body.grnNumber as string | undefined) ?? null,
+      items.map((it, idx) => ({
+        lineRef: String(idx),
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qtyReturned ?? it.qty ?? 0),
+        soItemId: (it.grnItemId as string | undefined) ?? null,
+      })),
+    );
+    if (unlinked.length > 0) return c.json(unlinkedReturnResponse(unlinked, 'purchase'), 409);
+  }
 
   /* Audit gap #7 — REJECT a GRN-linked over-return with the SAME 409 the
      add-line path (`POST /:id/items`) returns, instead of the old silent
