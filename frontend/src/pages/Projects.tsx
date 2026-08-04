@@ -8940,6 +8940,23 @@ function ChecklistRow({
     fileInputRef.current?.click();
   }
 
+  /** Open one attachment in a new tab (auth-protected R2 goes through
+   *  api.fetchBlobUrl, same as the stock-transfer + TaskAttachmentRow viewers).
+   *  Used by the per-file chips on pill rows (Rental Payment / Security
+   *  Deposit), where every file must be individually clickable. */
+  async function openAttachment(a: TaskAttachment) {
+    try {
+      const url = await api.fetchBlobUrl(
+        `/api/projects/attachments/${a.r2_key}`,
+        viewableMime(a.r2_key),
+      );
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (e: any) {
+      toast?.error(e?.message || "Failed to open");
+    }
+  }
+
   async function uploadAttachment(file: File, caption?: string) {
     if (!file) return;
     const ext = (file.name.split(".").pop() || "").toLowerCase();
@@ -9082,14 +9099,26 @@ function ChecklistRow({
             if (fileInputRef.current) fileInputRef.current.value = "";
           }}
         />
+        {/* Every attachment gets its OWN clickable chip (owner 2026-08-01:
+            "got 2 file but list only appear one … so i can click in"). The old
+            single line printed "<first> + N more", which hid the other files
+            and opened nothing. */}
         {attachments && attachments.length > 0 && (
-          <div className="mt-1.5 flex items-center gap-1 text-[10px] text-ink-muted">
-            <Paperclip size={11} className="shrink-0" />
-            <span className="truncate">
-              {attachments.length === 1
-                ? attachments[0].file_name
-                : `${attachments[0].file_name} + ${attachments.length - 1} more`}
-            </span>
+          <div className="mt-1.5 flex flex-col gap-0.5">
+            {attachments.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); void openAttachment(a); }}
+                title={`Open ${a.file_name}`}
+                className="flex items-center gap-1 text-left text-[10px] text-ink-muted hover:text-accent"
+              >
+                <Paperclip size={11} className="shrink-0" />
+                <span className="truncate underline decoration-dotted underline-offset-2">
+                  {a.file_name}
+                </span>
+              </button>
+            ))}
           </div>
         )}
       </div>
