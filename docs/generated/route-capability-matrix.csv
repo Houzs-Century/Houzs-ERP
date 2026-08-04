@@ -71,8 +71,8 @@ GET,/api/assr-form-intake/status-export,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CO
 GET,/api/assr-print/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.read"")",,NO,DECLARED_GATE,backend/src/routes/assr_print.ts
 POST,/api/assr/:id/approve,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.approve"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/:id/archive,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.manage"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
-PUT,/api/assr/:id/attachments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requireAnyPermission([""service_cases.write"", ""service_cases.create""])",,YES,DECLARED_GATE,backend/src/routes/assr.ts
-PUT,/api/assr/:id/attachments/thumb,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requireAnyPermission([""service_cases.write"", ""service_cases.create""])",,YES,DECLARED_GATE,backend/src/routes/assr.ts
+PUT,/api/assr/:id/attachments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requireAnyPermission([""service_cases.write"", ""service_cases.create"", ""service_cases.manage""])",,YES,DECLARED_GATE,backend/src/routes/assr.ts
+PUT,/api/assr/:id/attachments/thumb,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requireAnyPermission([""service_cases.write"", ""service_cases.create"", ""service_cases.manage""])",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 GET,/api/assr/:id/cost-suggestion,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,NO,INHERITED_ONLY,backend/src/routes/assr.ts
 GET,/api/assr/:id/customer-history,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,NO,INHERITED_ONLY,backend/src/routes/assr.ts
 POST,/api/assr/:id/generate-po,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.manage"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
