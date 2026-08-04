@@ -146,6 +146,18 @@ try {
     const reasons = [];
     if (orphans.length === 0) reasons.push("no orphan lot — the excess is not this shape");
     if (excess <= 0) reasons.push(`excess is ${excess}, not positive — the lot ledger is not the over-stated side`);
+    /* `excess = lot - mov` goes positive for TWO different reasons, and only one
+       of them is this shape. A NEGATIVE movement balance — stock shipped that was
+       never received — also makes it positive while the lot ledger sits at 0 and
+       is not over-stated at all. The first run of this planner called exactly
+       that PROVABLE, on a bucket with zero backed lots and an RM0.00 impact, and
+       then offered to "re-point onto the backed lot(s)" that did not exist.
+       A negative movement balance is its own fault (the sofa variant-key family),
+       not a phantom lot. */
+    if (num(b.mov_qty) < 0) reasons.push(`movement ledger is ${num(b.mov_qty)} — negative on-hand is its own fault, not a phantom lot`);
+    if (backed.filter((l) => num(l.qty_remaining) > 0).length === 0) {
+      reasons.push("no OPEN backed lot to correct — there is nothing over-stated to take the excess off");
+    }
     const partialOrphan = orphans.find((l) => num(l.qty_remaining) !== 0);
     if (partialOrphan) reasons.push(`orphan lot ${partialOrphan.id} still has ${num(partialOrphan.qty_remaining)} remaining — live stock sits on it`);
     const orphanConsumed = orphans.reduce((s, l) => s + num(l.consumed), 0);
