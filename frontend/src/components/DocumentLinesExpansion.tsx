@@ -234,6 +234,45 @@ export function buildPairedSoRows(
   return [...rows.values(), ...orphans];
 }
 
+/* ACCESSORIES DO NOT LIST THEIR ORDERS on a purchase document.
+   Owner, 2026-08-04: "因为我的枕头进 500 粒，然后分配的话，它整个的 listing 会太
+   长了 … 关于整个 accessories 它不需要显示出来，没关系的。不过，你的 Stock
+   Movement Control 那边一定要有这个".
+   A pillow arrives 500 at a time and is spread over dozens of orders, so one GRN
+   line grows a sub-table taller than the rest of the document put together. */
+const isAccessoryLine = (group: string | null | undefined): boolean =>
+  String(group ?? "").trim().toLowerCase() === "accessory";
+
+/* …but NOT a blank cell. An empty assignment column reads as "this stock is
+   unassigned", and a document that quietly under-states its own linkage is the
+   exact ambiguity behind the duplicate-delivery incident
+   (docs/unlinked-line-duplicate-coe.md). The counts stay; only the list goes.
+   The underlying links are untouched — they are what the remaining-qty ceiling
+   counts — and the movement-by-movement trail is on Stock Movement, which
+   records the source document for every IN and OUT. */
+function AccessoryAssignmentSummary({
+  assigned,
+  delivered,
+}: {
+  assigned: OriginAssignment[];
+  delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
+}) {
+  const orders = new Set(assigned.map((a) => a.soDocNo)).size;
+  const dos = new Set(delivered.map((d) => d.doNo)).size;
+  if (orders === 0 && dos === 0) return <StockTag />;
+  return (
+    <span
+      className="text-[11px] leading-snug text-ink-secondary"
+      title="Accessories are received in bulk and spread across many orders, so the per-order list is not shown here. The links themselves are intact — open Stock Movement for the document-by-document trail."
+    >
+      {orders > 0 && `${orders} order${orders === 1 ? "" : "s"}`}
+      {orders > 0 && dos > 0 && " · "}
+      {dos > 0 && `${dos} deliver${dos === 1 ? "y" : "ies"}`}
+      <span className="block text-ink-muted">see Stock Movement</span>
+    </span>
+  );
+}
+
 function PairedSoCell({
   assigned,
   delivered,
@@ -429,6 +468,9 @@ export function DocumentLinesExpansion({
           const assigned = l.assignedSos ?? [];
           const delivered = l.deliveredDos ?? [];
           const sourcePos = l.sourcePos ?? [];
+          /* Purchase docs only. On a sales document (DO / SI) the assignment IS
+             the document, so there is nothing to collapse. */
+          const accessory = isAccessoryLine(l.itemGroup);
           return (
             <div
               key={i}
@@ -455,15 +497,22 @@ export function DocumentLinesExpansion({
                 {fmtRm(l.amountCenti)}
               </span>
               {paired && (
-                <PairedSoCell
-                  assigned={assigned}
-                  delivered={delivered}
-                  sourceLinked={l.sourceLinked}
-                  onOpenSo={onOpenSo}
-                  onOpenDo={onOpenDo}
-                />
+                accessory
+                  ? <AccessoryAssignmentSummary assigned={assigned} delivered={delivered} />
+                  : (
+                    <PairedSoCell
+                      assigned={assigned}
+                      delivered={delivered}
+                      sourceLinked={l.sourceLinked}
+                      onOpenSo={onOpenSo}
+                      onOpenDo={onOpenDo}
+                    />
+                  )
               )}
-              {!paired && showAssignment && (
+              {!paired && showAssignment && accessory && (
+                <AccessoryAssignmentSummary assigned={assigned} delivered={delivered} />
+              )}
+              {!paired && showAssignment && !accessory && (
                 <span className="flex min-w-0 flex-col gap-1">
                   <span className="flex min-w-0 flex-wrap gap-1">
                   {assigned.length > 0 ? (
@@ -508,9 +557,13 @@ export function DocumentLinesExpansion({
                   </span>
                 </span>
               )}
+              {/* SO Delivery Date — one date per assignment, so it grows at the
+                  same rate as the assignment list and has to collapse with it. */}
               {!paired && showAssignment && (
                 <span className="flex min-w-0 flex-col gap-0.5">
-                  {assigned.length > 0 ? (
+                  {accessory ? (
+                    <span className="text-[11px] text-ink-muted">—</span>
+                  ) : assigned.length > 0 ? (
                     assigned.map((a) => (
                       <span
                         key={a.soDocNo}
@@ -524,7 +577,12 @@ export function DocumentLinesExpansion({
                   )}
                 </span>
               )}
-              {!paired && showDelivered && (
+              {!paired && showDelivered && accessory && (
+                <span className="text-[11px] text-ink-secondary">
+                  {new Set(delivered.map((d) => d.doNo)).size || "—"}
+                </span>
+              )}
+              {!paired && showDelivered && !accessory && (
                 <span className="flex min-w-0 flex-wrap items-center gap-1">
                   {delivered.length > 0 ? (
                     delivered.map((d) => {

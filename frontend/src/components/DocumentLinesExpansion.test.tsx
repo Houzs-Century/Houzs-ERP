@@ -192,3 +192,98 @@ describe("Source PO chips render the stored doc number verbatim", () => {
     expect(sourcePoTitle("PO-2607-002")).toContain("base company");
   });
 });
+
+// ── Accessories do not list their orders on a purchase document ──────────────
+//
+// Owner, 2026-08-04, on a GRN line for NTYR MEMORY CONTOUR PILLOW that had grown
+// eight SO/DO rows of its own: "因为我的枕头进 500 粒，然后分配的话，它整个的
+// listing 会太长了 … 关于整个 accessories 它不需要显示出来，没关系的。不过，你的
+// Stock Movement Control 那边一定要有这个".
+//
+// The list goes; the COUNTS stay. A blank assignment cell would read as "this
+// stock is unassigned", and a document under-stating its own linkage is the
+// ambiguity behind the duplicate-delivery incident (docs/unlinked-line-duplicate-coe.md).
+describe("Accessory lines collapse their per-order list", () => {
+  const eightOrders = Array.from({ length: 8 }, (_, i) => ({
+    soDocNo: `2990-SO-2606-0${20 + i}`,
+    deliveryDate: "2026-07-13",
+    locked: true,
+  }));
+  const nineDos = Array.from({ length: 9 }, (_, i) => ({
+    doNo: `2990-DO-2607-0${10 + i}`,
+    qty: 2,
+  }));
+
+  const acc = (over = {}) =>
+    line({ itemGroup: "accessory", code: "NTYR-PILLOW", assignedSos: eightOrders, deliveredDos: nineDos, ...over });
+
+  it("shows counts instead of eight SO chips, on the paired purchase view", () => {
+    render(
+      <DocumentLinesExpansion isLoading={false} showAssignment showDelivered lines={[acc()]} />,
+    );
+    expect(screen.getByText(/8 orders/)).toBeTruthy();
+    expect(screen.getByText(/9 deliveries/)).toBeTruthy();
+    // Not one of the individual documents.
+    expect(screen.queryByText("2990-SO-2606-020")).toBeNull();
+    expect(screen.queryByText("2990-DO-2607-010")).toBeNull();
+  });
+
+  it("points at where the real trail lives", () => {
+    render(
+      <DocumentLinesExpansion isLoading={false} showAssignment showDelivered lines={[acc()]} />,
+    );
+    expect(screen.getByText(/see Stock Movement/)).toBeTruthy();
+  });
+
+  it("singularises one order and one delivery", () => {
+    render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        showDelivered
+        lines={[acc({ assignedSos: eightOrders.slice(0, 1), deliveredDos: nineDos.slice(0, 1) })]}
+      />,
+    );
+    expect(screen.getByText(/1 order · 1 delivery/)).toBeTruthy();
+  });
+
+  it("leaves a NON-accessory line listing every order, unchanged", () => {
+    // The whole point is that this is an accessory-only rule. A mattress line
+    // on the same GRN must still name its orders.
+    render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        showDelivered
+        lines={[line({ itemGroup: "mattress", assignedSos: eightOrders.slice(0, 2), deliveredDos: nineDos.slice(0, 2) })]}
+      />,
+    );
+    expect(screen.getByText("2990-SO-2606-020")).toBeTruthy();
+    expect(screen.queryByText(/see Stock Movement/)).toBeNull();
+  });
+
+  it("matches the group case-insensitively", () => {
+    render(
+      <DocumentLinesExpansion isLoading={false} showAssignment showDelivered lines={[acc({ itemGroup: "ACCESSORY" })]} />,
+    );
+    expect(screen.getByText(/8 orders/)).toBeTruthy();
+  });
+
+  it("an accessory with no assignment still reads as stock, not as a blank", () => {
+    render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        showDelivered
+        lines={[acc({ assignedSos: [], deliveredDos: [] })]}
+      />,
+    );
+    expect(screen.queryByText(/see Stock Movement/)).toBeNull();
+  });
+
+  it("collapses on an assignment-only view too (no Delivered column)", () => {
+    render(<DocumentLinesExpansion isLoading={false} showAssignment lines={[acc()]} />);
+    expect(screen.getByText(/8 orders/)).toBeTruthy();
+    expect(screen.queryByText("2990-SO-2606-020")).toBeNull();
+  });
+});
