@@ -253,42 +253,13 @@ function StatusEditCell({ order, sched }: { order: PlanningOrder; sched: SchedMu
   );
 }
 
-/* Delivery date → scheduleDate → the SO's amended_delivery_date (the firm date;
-   the customer's ORIGINAL customer_delivery_date is never overwritten). */
-function ScheduleDateEditCell({ order, sched }: { order: PlanningOrder; sched: SchedMutation }) {
-  const current = (order.amended_delivery_date ?? '').slice(0, 10);
-  /* DP-Order rows schedule through their own endpoint (mint the DP number from the
-     assigned lorry), not the board's SO/ASSR date write-back. Show the requested
-     date read-only here. */
-  if (isDp(order) || isProject(order)) {
-    return <span style={{ fontVariantNumeric: 'tabular-nums', color: '#767b6e' }}>{current || '—'}</span>;
-  }
-  const assr = isAssr(order);
-  return (
-    <input
-      type="date"
-      className={styles.inlineEdit}
-      value={current}
-      disabled={sched.isPending}
-      title={assr
-        ? 'Scheduled date for this service-case job'
-        : 'Firm / amended delivery date (original customer date is preserved)'}
-      {...stopRow}
-      onChange={(e) => {
-        const v = e.target.value || null;   // clearing → null
-        if ((v ?? '') === (current || '')) return;
-        /* ASSR rows write back through the same hook with type:'assr' — the id is
-           the service case's id and jobKind carries the row's kind (the backend
-           now accepts this). SO rows keep their existing so-doc-no path. */
-        if (assr) {
-          sched.mutate({ type: 'assr', id: String(order.assr_id ?? ''), scheduleDate: v, jobKind: order.job_kind });
-        } else {
-          sched.mutate({ type: 'so', id: order.so_doc_no, scheduleDate: v });
-        }
-      }}
-    />
-  );
-}
+/* The inline schedule-date cell lived here until the owner's 2026-08-04 column
+   pass removed its column ("删列但保留排期"). Scheduling did NOT go with it: an
+   SO row opens ScheduleTripDrawer from its row menu (date + driver + lorry +
+   trip), a service case opens SetJobDateDrawer, which makes the same
+   type:'assr' + jobKind call this cell used to make. Either way the write still
+   lands on the SO's amended_delivery_date — the customer's ORIGINAL
+   customer_delivery_date is never overwritten. */
 
 /* Sentinel for an existing crew assignment whose name/plate is NOT in the active
    master list — shown as a selected option so the cell never blanks an existing
@@ -710,7 +681,7 @@ export function DeliveryPlanningBoard({
       // Where it stands
       'delivery_state', 'stock_remark',
       // When
-      'customer_delivery_date', 'amended_delivery_date', 'sched_date',
+      'customer_delivery_date', 'amended_delivery_date',
       // Who takes it
       'driver', 'lorry',
       // What proves it
@@ -752,7 +723,7 @@ export function DeliveryPlanningBoard({
     },
     {
       /* SO No. for SO rows; the ASSR ref (assr_no) for service-case rows. */
-      key: 'so_doc_no', label: 'SO_Doc No.', width: 150, sortable: true,
+      key: 'so_doc_no', label: 'SO No.', width: 150, sortable: true,
       accessor: (o) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', fontWeight: 700, color: '#0c3f39', fontVariantNumeric: 'tabular-nums' }}>
           {isDp(o) ? (o.dp_no ?? '— not scheduled') : isAssr(o) ? (o.ref ?? '—') : o.so_doc_no}
@@ -927,17 +898,6 @@ export function DeliveryPlanningBoard({
       groupValue: (o) => DELIVERY_STATE_LABEL[o.delivery_state],
       exportValue: (o) => DELIVERY_STATE_LABEL[o.delivery_state],
       sortFn: (a, b) => a.delivery_state.localeCompare(b.delivery_state),
-    },
-    {
-      /* Inline-editable firm/amended delivery date → scheduleDate (writes the SO's
-         amended_delivery_date; the customer's original date is preserved). Shown
-         by default so operators can plan without opening the HC drawer. */
-      key: 'sched_date', label: 'Sched. Date', width: 150, sortable: true,
-      accessor: (o) => <ScheduleDateEditCell order={o} sched={sched} />,
-      searchValue: (o) => o.amended_delivery_date ?? '',
-      exportValue: (o) => fmtDateOrDash(o.amended_delivery_date),
-      sortFn: (a, b) => String(a.amended_delivery_date ?? '').localeCompare(String(b.amended_delivery_date ?? '')),
-      filterType: 'date', dateValue: (o) => o.amended_delivery_date,
     },
     /* HC DO-execution raw-data fields (migration 0197) — all default-HIDE since
        the owner's 2026-08-04 column pass (delivery_substatus joined them; the
