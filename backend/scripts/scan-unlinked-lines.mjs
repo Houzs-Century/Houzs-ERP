@@ -67,6 +67,7 @@ const key = (code, qty) => `${String(code ?? "").trim().toUpperCase()}::${num(qt
 try {
   await scanDeliveryOrders();
   await scanGoodsReceipts();
+  await scanRemainingChains();
 } catch (e) {
   console.error("Query failed:", e?.message ?? e);
   process.exit(1);
@@ -312,6 +313,135 @@ function report({ suspects, family, parentOf, docNoOf, lineKey, linkedOf, parent
   console.log(`function, which restores the original lots at their original cost and`);
   console.log(`removes the cancelled document's COGS rows. A hand-written UPDATE would`);
   console.log(`move the quantity back and leave the costing ledger wrong.\n`);
+}
+
+/**
+ * THE OTHER FOUR LINKS IN THE CHAIN.
+ *
+ * Owner, 2026-08-04: "除非像 PO 或 SO 因为是软匹配…否则其他的你都要看一下整个链路,
+ * 确保 convert 限制只能有一次".
+ *
+ * Every converter in this system already enforces once-only the SAME way — not
+ * with a boolean "converted" flag, but with a LINE-LEVEL REMAINING quantity:
+ *
+ *   SO  -> DO   qty          − Σ DO lines        + Σ returns
+ *   DO  -> SI   delivered    − invoiced          − returned
+ *   DO  -> DR   delivered    − invoiced          − returned   (the SAME pool)
+ *   PO  -> GRN  qty          − received_qty
+ *   GRN -> PI   qty_accepted − invoiced_qty
+ *   GRN -> PR   qty_accepted − returned_qty
+ *
+ * That model is right, and it is why a partial delivery is legal while a
+ * duplicate is not. But every one of those sums counts CHILD LINES THAT CARRY A
+ * LINK, and in every case the link column is NULLABLE. A child line with a null
+ * link moves the goods and moves no counter — so the parent still reads as
+ * having quantity left, and can be converted again.
+ *
+ * That is exactly what happened on the delivery side. This section asks the same
+ * question of the four links that were NOT part of that incident, so the answer
+ * is measured rather than assumed.
+ *
+ * Counting only. The sibling-overlap analysis above is expensive and only
+ * meaningful where a duplicate is possible; here the question is simply whether
+ * any such row exists at all.
+ */
+async function scanRemainingChains() {
+  banner("THE REST OF THE CHAIN — child declares a parent, lines do not link");
+
+  const chains = [
+    {
+      label: "DO -> Sales Invoice",
+      link: "sales_invoice_items.do_item_id",
+      guard: "GUARDED (unlinkedFromDoOffenders, sales-invoices.ts)",
+      sql: pg`
+        SELECT si.invoice_number AS doc_no, si.status,
+               COUNT(*) FILTER (WHERE sii.do_item_id IS NULL) AS unlinked,
+               COUNT(*) AS total
+          FROM scm.sales_invoices si
+          JOIN scm.sales_invoice_items sii ON sii.sales_invoice_id = si.id
+         WHERE si.delivery_order_id IS NOT NULL
+           AND si.status IS DISTINCT FROM 'CANCELLED'
+         GROUP BY si.invoice_number, si.status
+        HAVING COUNT(*) FILTER (WHERE sii.do_item_id IS NULL) > 0
+         ORDER BY si.invoice_number`,
+    },
+    {
+      label: "DO -> Delivery Return",
+      link: "delivery_return_items.do_item_id",
+      guard: "NO GUARD",
+      sql: pg`
+        SELECT dr.return_number AS doc_no, dr.status,
+               COUNT(*) FILTER (WHERE dri.do_item_id IS NULL) AS unlinked,
+               COUNT(*) AS total
+          FROM scm.delivery_returns dr
+          JOIN scm.delivery_return_items dri ON dri.delivery_return_id = dr.id
+         WHERE dr.delivery_order_id IS NOT NULL
+           AND dr.status IS DISTINCT FROM 'CANCELLED'
+         GROUP BY dr.return_number, dr.status
+        HAVING COUNT(*) FILTER (WHERE dri.do_item_id IS NULL) > 0
+         ORDER BY dr.return_number`,
+    },
+    {
+      label: "GRN -> Purchase Return",
+      link: "purchase_return_items.grn_item_id",
+      guard: "NO GUARD",
+      sql: pg`
+        SELECT pr.return_number AS doc_no, pr.status,
+               COUNT(*) FILTER (WHERE pri.grn_item_id IS NULL) AS unlinked,
+               COUNT(*) AS total
+          FROM scm.purchase_returns pr
+          JOIN scm.purchase_return_items pri ON pri.purchase_return_id = pr.id
+         WHERE pr.grn_id IS NOT NULL
+           AND pr.status IS DISTINCT FROM 'CANCELLED'
+         GROUP BY pr.return_number, pr.status
+        HAVING COUNT(*) FILTER (WHERE pri.grn_item_id IS NULL) > 0
+         ORDER BY pr.return_number`,
+    },
+    {
+      /* A PI line with no grn_item_id is LEGITIMATE — PI-native service lines
+         are defined by exactly that (purchase-invoices.ts: "POOL = PI-NATIVE
+         service lines only (grn_item_id IS NULL)"). Listed for completeness,
+         and money-only: a PI moves no stock. Read the count as "worth a look",
+         not "wrong". */
+      label: "GRN -> Purchase Invoice",
+      link: "purchase_invoice_items.grn_item_id",
+      guard: "N/A — a null link is a legitimate PI-native service line",
+      sql: pg`
+        SELECT pi.invoice_number AS doc_no, pi.status,
+               COUNT(*) FILTER (WHERE pii.grn_item_id IS NULL) AS unlinked,
+               COUNT(*) AS total
+          FROM scm.purchase_invoices pi
+          JOIN scm.purchase_invoice_items pii ON pii.purchase_invoice_id = pi.id
+         WHERE pi.grn_id IS NOT NULL
+           AND pi.status IS DISTINCT FROM 'CANCELLED'
+         GROUP BY pi.invoice_number, pi.status
+        HAVING COUNT(*) FILTER (WHERE pii.grn_item_id IS NULL) > 0
+         ORDER BY pi.invoice_number`,
+    },
+  ];
+
+  for (const ch of chains) {
+    let rows;
+    try {
+      rows = await ch.sql;
+    } catch (e) {
+      /* One chain's schema drifting must not cost the answer for the other
+         three — the whole point of this run is a complete picture. */
+      console.log(`${pad(ch.label, 26)} QUERY FAILED: ${e?.message ?? e}\n`);
+      continue;
+    }
+    console.log(`${ch.label}   (${ch.link})`);
+    console.log(`  guard: ${ch.guard}`);
+    if (rows.length === 0) {
+      console.log("  none — every line links to its parent.\n");
+      continue;
+    }
+    console.log(`  ${rows.length} document(s) with unlinked lines:`);
+    for (const r of rows) {
+      console.log(`    ${pad(r.doc_no, 22)} ${pad(r.status, 12)} ${num(r.unlinked)}/${num(r.total)} unlinked`);
+    }
+    console.log("");
+  }
 }
 
 function fmtDate(v) {
