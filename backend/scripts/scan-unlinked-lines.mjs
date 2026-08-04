@@ -81,7 +81,12 @@ async function scanDeliveryOrders() {
 
   /* Every non-cancelled DO that names an SO and has at least one unlinked line.
      DRAFT is included: it has not deducted yet, but it is the same defect and
-     confirming it would deduct. */
+     confirming it would deduct.
+
+     IS DISTINCT FROM, not COALESCE(status,'') — scm.do_status is an ENUM, so
+     the empty-string default is not a value it can hold and Postgres rejects the
+     whole query ("invalid input value for enum scm.do_status"). This form also
+     keeps a NULL status in scope, which COALESCE was there to do. */
   const suspects = await pg`
     SELECT d.id, d.do_number, d.status, d.do_date, d.so_doc_no,
            COUNT(*) FILTER (WHERE di.so_item_id IS NULL) AS unlinked,
@@ -90,7 +95,7 @@ async function scanDeliveryOrders() {
       JOIN scm.delivery_order_items di ON di.delivery_order_id = d.id
      WHERE d.so_doc_no IS NOT NULL
        AND d.so_doc_no <> ''
-       AND COALESCE(d.status, '') <> 'CANCELLED'
+       AND d.status IS DISTINCT FROM 'CANCELLED'
      GROUP BY d.id, d.do_number, d.status, d.do_date, d.so_doc_no
     HAVING COUNT(*) FILTER (WHERE di.so_item_id IS NULL) > 0
      ORDER BY d.so_doc_no, d.do_date
@@ -112,7 +117,7 @@ async function scanDeliveryOrders() {
       FROM scm.delivery_orders d
       JOIN scm.delivery_order_items di ON di.delivery_order_id = d.id
      WHERE d.so_doc_no IN ${pg(soDocs)}
-       AND COALESCE(d.status, '') <> 'CANCELLED'
+       AND d.status IS DISTINCT FROM 'CANCELLED'
      ORDER BY d.so_doc_no, d.do_date, di.item_code
   `;
 
@@ -139,7 +144,7 @@ async function scanGoodsReceipts() {
       FROM scm.grns g
       JOIN scm.purchase_orders po ON po.id = g.purchase_order_id
       JOIN scm.grn_items gi       ON gi.grn_id = g.id
-     WHERE COALESCE(g.status, '') <> 'CANCELLED'
+     WHERE g.status IS DISTINCT FROM 'CANCELLED'
      GROUP BY g.id, g.grn_number, g.status, g.received_at, po.po_number
     HAVING COUNT(*) FILTER (WHERE gi.purchase_order_item_id IS NULL) > 0
      ORDER BY po.po_number, g.received_at
@@ -161,7 +166,7 @@ async function scanGoodsReceipts() {
       JOIN scm.purchase_orders po ON po.id = g.purchase_order_id
       JOIN scm.grn_items gi       ON gi.grn_id = g.id
      WHERE po.po_number IN ${pg(poNos)}
-       AND COALESCE(g.status, '') <> 'CANCELLED'
+       AND g.status IS DISTINCT FROM 'CANCELLED'
      ORDER BY po.po_number, g.received_at, gi.material_code
   `;
 
