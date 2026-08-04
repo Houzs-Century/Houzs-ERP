@@ -136,7 +136,7 @@ try {
         SELECT d.do_number, di.item_code, di.qty, di.so_item_id
           FROM scm.delivery_order_items di
           JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
-         WHERE di.delivery_order_id = ANY(${pg.array(ids)})
+         WHERE di.delivery_order_id IN ${pg(ids)}
          ORDER BY d.do_number, di.item_code
       `;
       let unlinked = 0;
