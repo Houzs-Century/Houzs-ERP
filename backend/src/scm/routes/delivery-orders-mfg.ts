@@ -22,6 +22,7 @@ import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { findOverDeliveredSoItems } from '../lib/do-over-delivery';
+import { findUnlinkedSoLines, unlinkedSoLinesResponse } from '../lib/do-unlinked-so-lines';
 import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
@@ -3092,6 +3093,28 @@ deliveryOrdersMfg.post('/', async (c) => {
     }
   }
 
+  /* The back door that guard leaves open (Wei Siang 2026-08-04). "Uncapped"
+     above is only safe while an unlinked line means a genuinely ad-hoc item. It
+     stopped being safe the moment someone typed an SO number into the header and
+     added the order's OWN items by hand: the goods ship, the SO line's remaining
+     never moves, and a second DO can ship them again. That is 2990-DO-2607-005 /
+     2990-DO-2607-017 — the same pillow out twice, -2 on 13/07 and -2 on 23/07.
+     Refuse an unlinked line only when the named SO already orders that item; a
+     replacement part riding along on the same trip still passes. */
+  {
+    const unlinked = await findUnlinkedSoLines(sb, (body.soDocNo as string | null) ?? null,
+      items.map((it, idx) => ({
+        lineRef: String(idx),
+        itemCode: String(it.itemCode ?? ''),
+        qty: Number(it.qty ?? 0),
+        soItemId: (it.soItemId as string | null) ?? null,
+      })));
+    if (unlinked.length > 0) {
+      markIdempotencyNoWrite(c);
+      return c.json(unlinkedSoLinesResponse(unlinked), 409);
+    }
+  }
+
   /* Sofa batch guard (Wei Siang 2026-06-01) — a sofa set with NO production PO
      has no dye-lot batch; shipping it would pull another order's colour lot.
      Block here (applies even to a force-grab: confirmShortStock waives the soft
@@ -4120,14 +4143,17 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
   const childLock = await doHasDownstream(sb, id);
   if (childLock) return c.json(childLock, 409);
 
+  /* so_doc_no is selected for the unlinked-line guard below — adding a line by
+     hand is the other way an SO's own item lands on its DO without consuming
+     the order's quantity. */
   const { data: header } = await sb.from('delivery_orders')
-    .select('id, status, warehouse_id, do_number, company_id').eq('id', id).maybeSingle();
+    .select('id, status, warehouse_id, do_number, company_id, so_doc_no').eq('id', id).maybeSingle();
   if (!header) return c.json({ error: 'not_found' }, 404);
 
   /* Edge #1+#2 — if the DO is already shipped, an added line ships immediately
      via resync; check stock first, gated by confirmShortStock. Skipped on a
      not-yet-shipped DO (no OUT yet — first-ship deduction handles it). */
-  const h = header as { id: string; status: string | null; warehouse_id: string | null };
+  const h = header as { id: string; status: string | null; warehouse_id: string | null; so_doc_no: string | null };
   const addShipsNow = SHIPPED_STATES.includes((h.status ?? '').toUpperCase());
   /* The added line ships from ITS OWN SO line's warehouse — the same order the
      OUT uses (SO line → DO header → this company's default). Header-first was
@@ -4198,6 +4224,20 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
         }, 409);
       }
     }
+  }
+
+  /* …and the same back door as the create path: "ad-hoc lines stay uncapped" is
+     only true while ad-hoc means an item the order never asked for. Adding the
+     SO's OWN item by hand ships it without moving that line's remaining, so a
+     second DO can ship it again (2990-DO-2607-005 / 017). */
+  {
+    const unlinked = await findUnlinkedSoLines(sb, h.so_doc_no, [{
+      lineRef: 'add',
+      itemCode: String(it.itemCode ?? ''),
+      qty: Number(it.qty ?? 0),
+      soItemId: (it.soItemId as string | null) ?? null,
+    }]);
+    if (unlinked.length > 0) return c.json(unlinkedSoLinesResponse(unlinked), 409);
   }
 
   /* Sofa batch guard — a sofa line with no production PO has no dye-lot batch
