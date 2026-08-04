@@ -1453,6 +1453,18 @@ function DataTableInner<T>({
   function resetLayout() {
     resetVisibility();
     resetOrder();
+    /* Sort is persisted per table in `dt:sort:<id>` and replayed on every mount,
+       so a column clicked once months ago becomes the permanent default. Owner,
+       2026-08-04, on the Delivery Orders list opening oldest-first every time:
+       "为什么当我打开这个系统的一瞬间，它不是默认自动 sort 那个 documentation 呢？"
+       The backend's default IS newest-first (`do_date` DESC); the stored sort
+       simply never let it apply.
+       Reset must clear it too, or the one control named for undoing a layout
+       cannot undo the most visible part of one. reportServerSort is called
+       explicitly because the mount effect that normally pushes it up runs once
+       with [] deps. */
+    setSort(null);
+    reportServerSort(null);
   }
 
   /** True when the columns on screen match no offered layout — the "· edited"
