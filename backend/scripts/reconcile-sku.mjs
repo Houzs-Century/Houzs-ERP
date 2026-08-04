@@ -233,6 +233,61 @@ async function reconcile(code) {
     console.log("");
   }
 
+  /* WHERE DOES EACH OPEN LOT COME FROM?
+     Owner, 2026-08-04: "你不应该问我实体的数字是多少，根据我们的系统来说，我们进的
+     数量和我们出的数量必须是对得上的 … 你必须得从根本上、根源性地去解决它".
+     He is right: GRN in minus non-cancelled DO out IS the answer, so a lot
+     ledger that disagrees is wrong and no physical count is needed to say so.
+     But saying WHICH lot is wrong, and what opened it, needs the lots
+     themselves — a phantom opened by a GRN is a different fault from one minted
+     by a cancel's add-back, and they have different repairs. */
+  const lots = await pg`
+    SELECT l.id, l.source_doc_no, l.qty_received, l.qty_remaining, l.received_at,
+           COALESCE(l.variant_key,'') AS vkey, l.batch_no,
+           m.movement_type AS opened_by_type, m.source_doc_no AS opened_by_doc
+      FROM scm.inventory_lots l
+      LEFT JOIN scm.inventory_movements m ON m.id = l.movement_id
+     WHERE l.product_code = ${code}
+     ORDER BY l.received_at`;
+  if (lots.length > 0) {
+    console.log("  EVERY LOT, AND WHAT OPENED IT\n");
+    console.log(`      ${pad("opened by", 26)} ${rpad("recv", 6)} ${rpad("left", 6)}  ${pad("type", 12)} variant`);
+    for (const l of lots) {
+      /* A lot opened by an ADJUSTMENT is the tell for a cancel add-back that
+         minted stock instead of only restoring the balance — fn_reverse_do_out
+         closes the lot it mints, so an OPEN one means the route-side legacy
+         fallback ran instead, or the close did not take. */
+      const suspect = num(l.qty_remaining) > 0 && String(l.opened_by_type ?? "") === "ADJUSTMENT"
+        ? "   <- OPEN lot minted by an ADJUSTMENT (cancel add-back should have closed it)" : "";
+      console.log(`      ${pad(l.opened_by_doc ?? l.source_doc_no ?? "(unknown)", 26)} ${rpad(num(l.qty_received), 6)} ${rpad(num(l.qty_remaining), 6)}  ${pad(l.opened_by_type ?? "?", 12)} ${l.vkey || "(none)"}${suspect}`);
+    }
+    console.log("");
+  }
+
+  /* THE DOCUMENT TRUTH, which needs no physical count. Cancelled DOs release
+     their quantity, so they are excluded — the same rule soDeliverableRemaining
+     and the movement reversal both follow. */
+  const [docTruth] = await pg`
+    SELECT
+      COALESCE((SELECT SUM(gi.qty_accepted)
+                  FROM scm.grn_items gi
+                  JOIN scm.grns g ON g.id = gi.grn_id
+                 WHERE gi.material_code = ${code}
+                   AND g.status IS DISTINCT FROM 'CANCELLED'), 0) AS received,
+      COALESCE((SELECT SUM(di.qty)
+                  FROM scm.delivery_order_items di
+                  JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+                 WHERE di.item_code = ${code}
+                   AND d.status IS DISTINCT FROM 'CANCELLED'), 0) AS shipped`;
+  const docStock = num(docTruth.received) - num(docTruth.shipped);
+  console.log("  WHAT THE DOCUMENTS SAY THE STOCK MUST BE (no physical count needed)");
+  console.log(`      GRN received (non-cancelled)   ${rpad(num(docTruth.received), 8)}`);
+  console.log(`      DO shipped   (non-cancelled)   ${rpad(-num(docTruth.shipped), 8)}`);
+  console.log(`      ------------------------------------------`);
+  console.log(`      DOCUMENT stock                 ${rpad(docStock, 8)}`);
+  console.log(`      movement ledger                ${rpad(movBalance, 8)}  ${movBalance === docStock ? "matches" : "WRONG"}`);
+  console.log(`      lot ledger                     ${rpad(lotBalance, 8)}  ${lotBalance === docStock ? "matches" : "WRONG"}\n`);
+
   // ── PART 2 ────────────────────────────────────────────────────────────────
   console.log("PART 2 — PO: WHAT IS STILL COMING IN\n");
   const poLines = await pg`
