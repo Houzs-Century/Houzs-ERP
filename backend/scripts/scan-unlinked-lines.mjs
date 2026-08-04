@@ -131,6 +131,52 @@ async function scanDeliveryOrders() {
     parentLabel: "Sales Order",
     childLabel: "DO",
   });
+
+  await reportCancellability(suspects.map((s) => s.id), suspects.map((s) => s.do_number));
+}
+
+/**
+ * CAN the offending DO actually be cancelled?
+ *
+ * Cancel is the remediation, and it is not always available: `doHasDownstream`
+ * blocks the CANCELLED transition once a non-cancelled Sales Invoice or Delivery
+ * Return references the DO. Saying "cancel it" without checking would send the
+ * owner to a 409 rather than to a fix.
+ *
+ * The predicate here MIRRORS doHasDownstream exactly — both children are matched
+ * by their HEADER's delivery_order_id, not by their lines' do_item_id. Those two
+ * are not the same question, and answering the easier one would give an answer
+ * the app then contradicts.
+ */
+async function reportCancellability(ids, numbers) {
+  if (ids.length === 0) return;
+  console.log("Can these be cancelled? (cancel is blocked by a live SI or DR)\n");
+
+  const sis = await pg`
+    SELECT d.do_number, si.invoice_number, si.status
+      FROM scm.sales_invoices si
+      JOIN scm.delivery_orders d ON d.id = si.delivery_order_id
+     WHERE si.delivery_order_id IN ${pg(ids)}
+       AND si.status IS DISTINCT FROM 'CANCELLED'
+  `;
+  const drs = await pg`
+    SELECT d.do_number, dr.return_number, dr.status
+      FROM scm.delivery_returns dr
+      JOIN scm.delivery_orders d ON d.id = dr.delivery_order_id
+     WHERE dr.delivery_order_id IN ${pg(ids)}
+       AND dr.status IS DISTINCT FROM 'CANCELLED'
+  `;
+
+  for (const no of numbers) {
+    const blockers = [
+      ...sis.filter((r) => r.do_number === no).map((r) => `SI ${r.invoice_number} (${r.status})`),
+      ...drs.filter((r) => r.do_number === no).map((r) => `DR ${r.return_number} (${r.status})`),
+    ];
+    console.log(blockers.length === 0
+      ? `  ${pad(no, 22)} CANCELLABLE — nothing downstream references it.`
+      : `  ${pad(no, 22)} BLOCKED by ${blockers.join(", ")} — cancel or credit those first.`);
+  }
+  console.log("");
 }
 
 async function scanGoodsReceipts() {
