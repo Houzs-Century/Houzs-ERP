@@ -339,9 +339,26 @@ async function reconcile(code) {
      grepping the writers, not assumed. A Purchase Return stamps
      'PURCHASE_RETURN', NOT 'PR'; getting that wrong would double-count it. */
   const DOC_ACCOUNTED = new Set(['GRN', 'DO', 'DR', 'PURCHASE_RETURN']);
+
+  /* A cancel add-back is NOT an independent stock event — it is the other half
+     of the reversal whose first half is the cancelled DO's OUT. The DO figure
+     above already excludes cancelled deliveries, so counting the add-back too
+     credits the same reversal twice.
+     Caught by this script flagging the movement ledger as WRONG on a SKU whose
+     movement ledger had already been proven right: 1 - 1 + 1 = 1 against a
+     ledger reading 0. When a check disagrees with something already established,
+     suspect the check. */
+  const [{ cancel_addback: cancelAddBack }] = await pg`
+    SELECT COALESCE(SUM(m.qty), 0) AS cancel_addback
+      FROM scm.inventory_movements m
+      JOIN scm.delivery_orders d ON d.id = m.source_doc_id
+     WHERE m.product_code = ${code}
+       AND m.source_doc_type = 'ADJUSTMENT'
+       AND UPPER(COALESCE(d.status::text,'')) = 'CANCELLED'`;
+
   const otherNet = byDocType
     .filter((d) => !DOC_ACCOUNTED.has(String(d.doc_type)))
-    .reduce((s, d) => s + num(d.net), 0);
+    .reduce((s, d) => s + num(d.net), 0) - num(cancelAddBack);
 
   const docStock = num(docTruth.received) - num(docTruth.shipped)
     + num(docTruth.returned_in) - num(docTruth.returned_out) + otherNet;
@@ -351,7 +368,11 @@ async function reconcile(code) {
   console.log(`      DO shipped        (non-cancelled)   ${rpad(-num(docTruth.shipped), 8)}`);
   console.log(`      Delivery Returns  back in           ${rpad(num(docTruth.returned_in), 8)}`);
   console.log(`      Purchase Returns  back out          ${rpad(-num(docTruth.returned_out), 8)}`);
-  console.log(`      everything else   (takes/adj/transfer/consignment/cancel add-back)  ${rpad(otherNet >= 0 ? `+${otherNet}` : otherNet, 8)}`);
+  console.log(`      everything else   (takes/adjustments/transfers/consignment)  ${rpad(otherNet >= 0 ? `+${otherNet}` : otherNet, 8)}`);
+  if (num(cancelAddBack) !== 0) {
+    console.log(`        (a cancel add-back of ${num(cancelAddBack)} is excluded — the cancelled DO's`);
+    console.log(`         shipment is already out of the DO figure; counting both double-credits it)`);
+  }
   console.log(`      ------------------------------------------`);
   console.log(`      DOCUMENT stock                      ${rpad(docStock, 8)}`);
   console.log(`      movement ledger                     ${rpad(movBalance, 8)}  ${movBalance === docStock ? "matches" : "WRONG"}`);
