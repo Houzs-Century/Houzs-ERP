@@ -1,0 +1,53 @@
+name: Verify a DO cancel (read-only)
+
+# Did cancelling a delivery order actually put the stock and the costing back?
+#
+# Owner, 2026-08-04, after cancelling 2990-DO-2607-005: "可是我 cancel 了，我都
+# 不知道数据有没有对呀" — and then the question that matters, "做法要怎么样才算
+# 做对呀？"
+#
+# "Looks fine on the screen" is not an answer. A cancel touches four ledgers
+# (movements, FIFO lots, lot consumptions, the OUT rows' cost stamps) and a
+# partial reversal leaves each of them individually plausible — this repo has
+# already lived through the two quantity ledgers disagreeing while both looked
+# sane (docs/inventory-ledger-divergence-coe.md). So the script states the
+# invariants that can each be false, and checks each one.
+#
+# Manual trigger only, like every production read here. It is a question, not a
+# gate, and it exits 0 whether it passes or fails — the verdict is the output.
+on:
+  workflow_dispatch:
+    inputs:
+      do:
+        description: 'Delivery Order number, e.g. 2990-DO-2607-005'
+        required: true
+        type: string
+
+# Own group, and cancel-in-progress FALSE: verifying a second cancel must not
+# throw away the first answer. (doc-splits-check.yml learned that the hard way.)
+concurrency:
+  group: verify-do-cancel-${{ github.event.inputs.do }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/verify-do-cancel.mjs
+        env:
+          DO: ${{ inputs.do }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
