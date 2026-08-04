@@ -937,7 +937,7 @@ export function MfgDeliveryOrdersListV2() {
   const goFullPage = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}`);
   const doMarkSigned = (r: DoRow) =>
     updateStatus.mutate(
-      { id: r.id, status: "delivered" },
+      { id: r.id, status: "DELIVERED" },
       { onSuccess: () => setSelected(null) }
     );
   const doConvertToSi = (r: DoRow) =>
