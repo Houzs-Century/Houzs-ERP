@@ -253,42 +253,13 @@ function StatusEditCell({ order, sched }: { order: PlanningOrder; sched: SchedMu
   );
 }
 
-/* Delivery date → scheduleDate → the SO's amended_delivery_date (the firm date;
-   the customer's ORIGINAL customer_delivery_date is never overwritten). */
-function ScheduleDateEditCell({ order, sched }: { order: PlanningOrder; sched: SchedMutation }) {
-  const current = (order.amended_delivery_date ?? '').slice(0, 10);
-  /* DP-Order rows schedule through their own endpoint (mint the DP number from the
-     assigned lorry), not the board's SO/ASSR date write-back. Show the requested
-     date read-only here. */
-  if (isDp(order) || isProject(order)) {
-    return <span style={{ fontVariantNumeric: 'tabular-nums', color: '#767b6e' }}>{current || '—'}</span>;
-  }
-  const assr = isAssr(order);
-  return (
-    <input
-      type="date"
-      className={styles.inlineEdit}
-      value={current}
-      disabled={sched.isPending}
-      title={assr
-        ? 'Scheduled date for this service-case job'
-        : 'Firm / amended delivery date (original customer date is preserved)'}
-      {...stopRow}
-      onChange={(e) => {
-        const v = e.target.value || null;   // clearing → null
-        if ((v ?? '') === (current || '')) return;
-        /* ASSR rows write back through the same hook with type:'assr' — the id is
-           the service case's id and jobKind carries the row's kind (the backend
-           now accepts this). SO rows keep their existing so-doc-no path. */
-        if (assr) {
-          sched.mutate({ type: 'assr', id: String(order.assr_id ?? ''), scheduleDate: v, jobKind: order.job_kind });
-        } else {
-          sched.mutate({ type: 'so', id: order.so_doc_no, scheduleDate: v });
-        }
-      }}
-    />
-  );
-}
+/* The inline schedule-date cell lived here until the owner's 2026-08-04 column
+   pass removed its column ("删列但保留排期"). Scheduling did NOT go with it: an
+   SO row opens ScheduleTripDrawer from its row menu (date + driver + lorry +
+   trip), a service case opens SetJobDateDrawer, which makes the same
+   type:'assr' + jobKind call this cell used to make. Either way the write still
+   lands on the SO's amended_delivery_date — the customer's ORIGINAL
+   customer_delivery_date is never overwritten. */
 
 /* Sentinel for an existing crew assignment whose name/plate is NOT in the active
    master list — shown as a selected option so the cell never blanks an existing
@@ -376,13 +347,10 @@ function LorryEditCell({ order, sched, lorries }: { order: PlanningOrder; sched:
 const liveBalance = (o: PlanningOrder): number =>
   typeof o.balance_centi_live === 'number' ? o.balance_centi_live : o.balance_centi;
 
-/* days_left cell — overdue (<0) red, due-soon (0..3) burnt, else plain. */
-function DaysLeftCell({ days }: { days: number | null }) {
-  if (days == null) return <span style={{ color: '#767b6e' }}>—</span>;
-  const cls = days < 0 ? styles.daysOverdue : days <= 3 ? styles.daysSoon : styles.daysOk;
-  const label = days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'today' : `${days}d`;
-  return <span className={cls}>{label}</span>;
-}
+/* The days_left cell renderer lived here until the owner's 2026-08-04 column
+   pass removed that column. It is gone rather than left dangling — the Overdue
+   state tab and the delivery_state derivation already act on the same number,
+   so nothing lost the signal, only the column. The API still sends days_left. */
 
 /* ── SO line-item drill-down (parity with the Sales Order list) ───────────────
    Each planning row expands (▼ caret on the left, added by DataGrid's
@@ -699,18 +667,21 @@ export function DeliveryPlanningBoard({
        missing here falls to the end in definition order. */
     const DP_DEFAULT_ORDER = [
       /* ── SHOWN BY DEFAULT — the question each block answers ──────────────
-         Owner asked for a tidy-up, 2026-08-04. The 45 columns were written for
-         a board that carried SO deliveries only; it now also carries ASSR legs,
-         DP orders and PMS project rows, on which most SO columns are
-         structurally empty. So the default set is the columns that say
-         something for EVERY row type, plus the few SO ones a dispatcher plans
-         by — everything else stays one click away in the Columns drawer. */
+         Owner's column pass, 2026-08-04 (he went through all 45 by hand). These
+         columns were written for a board that carried SO deliveries only; it now
+         also carries ASSR legs, DP orders and PMS project rows, on which most SO
+         columns are structurally empty. Five columns were removed outright in
+         that pass — Days Left, Delivered Date, Property, Possession, Referral,
+         Internal Est. — and the address moved INTO the default view, because
+         where the lorry is going is a planning question. */
       // What is this row, and who is it for
       'row_type', 'so_doc_no', 'company_code', 'debtor_name', 'phone', 'wa_message',
-      // Where, and where it stands
-      'region', 'delivery_state', 'delivery_substatus', 'stock_remark',
+      // Where it is going
+      'region', 'address', 'postcode',
+      // Where it stands
+      'delivery_state', 'stock_remark',
       // When
-      'customer_delivery_date', 'amended_delivery_date', 'sched_date', 'days_left',
+      'customer_delivery_date', 'amended_delivery_date',
       // Who takes it
       'driver', 'lorry',
       // What proves it
@@ -720,25 +691,26 @@ export function DeliveryPlanningBoard({
       'shipout_date', 'eta_arriving_port', 'arrives_em_warehouse_date',
 
       /* ── DEFAULT-HIDDEN from here down, grouped by theme so the Columns
-            drawer reads as blocks rather than one 45-long alphabet. ──────── */
+            drawer reads as blocks rather than one long alphabet. ──────────── */
+      // Delivery detail
+      'delivery_substatus',
       // Amendment trail
       'amend_date_from_customer', 'amend_reason',
       // Execution times — filled in as the day happens, not while planning it
-      'time_range', 'time_confirmed', 'arrival_at', 'departure_at', 'customer_delivered_date',
+      'time_range', 'time_confirmed', 'arrival_at', 'departure_at',
       // Customer detail
-      'address', 'postcode', 'building_type', 'house_type', 'possession_date',
-      'replacement_disposal', 'referral', 'branding',
+      'house_type', 'replacement_disposal', 'branding',
       // Crew detail — the Driver / Lorry columns above carry the summary
       'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
       // Document + money
-      'so_date', 'internal_expected_dd', 'warehouse', 'do_date', 'balance_centi',
+      'so_date', 'warehouse', 'do_date', 'balance_centi',
     ];
     const pos = new Map(DP_DEFAULT_ORDER.map((k, i) => [k, i] as const));
     const cols: DataGridColumn<PlanningOrder>[] = [
     {
       /* Row type — SO delivery vs ASSR (service-case) job. A chip per row so the
          two kinds read apart at a glance. */
-      key: 'row_type', label: 'Type', width: 130, groupable: true,
+      key: 'row_type', label: 'Job Type', width: 130, groupable: true,
       accessor: (o) => <TypeChip order={o} />,
       /* Search keeps the OLD words as aliases ("cust. pickup", "delivery"):
          the 2026-08-03 rename changed what the chip says, and someone who has
@@ -751,7 +723,7 @@ export function DeliveryPlanningBoard({
     },
     {
       /* SO No. for SO rows; the ASSR ref (assr_no) for service-case rows. */
-      key: 'so_doc_no', label: 'SO / Ref', width: 150, sortable: true,
+      key: 'so_doc_no', label: 'SO No.', width: 150, sortable: true,
       accessor: (o) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', fontWeight: 700, color: '#0c3f39', fontVariantNumeric: 'tabular-nums' }}>
           {isDp(o) ? (o.dp_no ?? '— not scheduled') : isAssr(o) ? (o.ref ?? '—') : o.so_doc_no}
@@ -811,47 +783,34 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.branding ?? '',
       groupValue: (o) => o.branding ?? '(none)',
     },
+    /* Address + postcode default-SHOW since the owner's 2026-08-04 column pass:
+       where the lorry is going is a planning question, not a detail lookup. */
     {
-      key: 'address', label: 'Address', width: 220, defaultHidden: true,
+      key: 'address', label: 'Address', width: 220,
       accessor: (o) => o.address ?? '—',
       searchValue: (o) => o.address ?? '',
     },
     {
-      key: 'postcode', label: 'Postcode', width: 100, defaultHidden: true,
+      key: 'postcode', label: 'Postcode', width: 100,
       accessor: (o) => o.postcode ?? '—',
       searchValue: (o) => o.postcode ?? '',
     },
+    /* `building_type` ("Property") was REMOVED in the owner's 2026-08-04 column
+       pass, and `house_type` took over its NAME — one "Building Type" column
+       instead of two that nobody could tell apart. The API still sends
+       building_type and PlanningOrder still types it; only this board stopped
+       showing it. `possession_date` and `referral` went the same way: they
+       answer a sales question, not a dispatch one. */
     {
-      key: 'building_type', label: 'Property', width: 120, groupable: true, defaultHidden: true,
-      accessor: (o) => o.building_type ?? '—',
-      searchValue: (o) => o.building_type ?? '',
-      groupValue: (o) => o.building_type ?? '(none)',
-    },
-    /* HC SO-context raw-data fields (migration 0197) — all default-HIDDEN,
-       available in the Columns menu. */
-    {
-      key: 'possession_date', label: 'Possession', width: 120, sortable: true, defaultHidden: true,
-      accessor: (o) => fmtDateOrDash(o.possession_date),
-      searchValue: (o) => o.possession_date ?? '',
-      sortFn: (a, b) => String(a.possession_date ?? '').localeCompare(String(b.possession_date ?? '')),
-      filterType: 'date', dateValue: (o) => o.possession_date,
-    },
-    {
-      key: 'house_type', label: 'House Type', width: 130, groupable: true, defaultHidden: true,
+      key: 'house_type', label: 'Building Type', width: 130, groupable: true, defaultHidden: true,
       accessor: (o) => o.house_type ?? '—',
       searchValue: (o) => o.house_type ?? '',
       groupValue: (o) => o.house_type ?? '(none)',
     },
     {
-      key: 'replacement_disposal', label: 'Replacement/Disposal', width: 180, defaultHidden: true,
+      key: 'replacement_disposal', label: 'Replacement / Disposal', width: 180, defaultHidden: true,
       accessor: (o) => o.replacement_disposal ?? '—',
       searchValue: (o) => o.replacement_disposal ?? '',
-    },
-    {
-      key: 'referral', label: 'Referral', width: 140, groupable: true, defaultHidden: true,
-      accessor: (o) => o.referral ?? '—',
-      searchValue: (o) => o.referral ?? '',
-      groupValue: (o) => o.referral ?? '(none)',
     },
     {
       /* The order's ACTUAL customer state (Kuala Lumpur / Selangor / Johor …).
@@ -859,7 +818,7 @@ export function DeliveryPlanningBoard({
          visible in place — but it now shows the granular state, not the region
          BUCKET. The bucket is the tab row above; which states roll up into which
          bucket is owner-maintained in Delivery Regions. */
-      key: 'region', label: 'Cust. State', width: 140, sortable: true, groupable: true,
+      key: 'region', label: 'State', width: 140, sortable: true, groupable: true,
       accessor: (o) => o.customer_state?.trim() || '—',
       searchValue: (o) => o.customer_state ?? '',
       groupValue: (o) => o.customer_state?.trim() || '(none)',
@@ -880,7 +839,7 @@ export function DeliveryPlanningBoard({
       filterType: 'date', dateValue: (o) => o.so_date,
     },
     {
-      key: 'customer_delivery_date', label: 'Cust. Date', width: 130, sortable: true,
+      key: 'customer_delivery_date', label: 'Delivery Date', width: 130, sortable: true,
       accessor: (o) => (
         <span style={{ fontVariantNumeric: 'tabular-nums' }}>
           {fmtDateOrDash(o.customer_delivery_date)}
@@ -895,14 +854,14 @@ export function DeliveryPlanningBoard({
        to. "Amend (Cust)" (the customer's requested new date) default-HIDES. The
        ORIGINAL "Delivery Date" column above is unchanged. */
     {
-      key: 'amended_delivery_date', label: 'Amended Date', width: 130, sortable: true,
+      key: 'amended_delivery_date', label: 'Est. New Delivery Date', width: 130, sortable: true,
       accessor: (o) => fmtDateOrDash(o.amended_delivery_date),
       searchValue: (o) => o.amended_delivery_date ?? '',
       sortFn: (a, b) => String(a.amended_delivery_date ?? '').localeCompare(String(b.amended_delivery_date ?? '')),
       filterType: 'date', dateValue: (o) => o.amended_delivery_date,
     },
     {
-      key: 'amend_date_from_customer', label: 'Cust. Requested', width: 140, sortable: true, defaultHidden: true,
+      key: 'amend_date_from_customer', label: 'Customer Request Date', width: 140, sortable: true, defaultHidden: true,
       accessor: (o) => fmtDateOrDash(o.amend_date_from_customer),
       searchValue: (o) => o.amend_date_from_customer ?? '',
       sortFn: (a, b) => String(a.amend_date_from_customer ?? '').localeCompare(String(b.amend_date_from_customer ?? '')),
@@ -914,20 +873,6 @@ export function DeliveryPlanningBoard({
       key: 'amend_reason', label: 'Amend Reason', width: 200, defaultHidden: true,
       accessor: (o) => o.amend_reason ?? '—',
       searchValue: (o) => o.amend_reason ?? '',
-    },
-    {
-      key: 'internal_expected_dd', label: 'Internal Est.', width: 130, sortable: true, defaultHidden: true,
-      accessor: (o) => fmtDateOrDash(o.internal_expected_dd),
-      searchValue: (o) => o.internal_expected_dd ?? '',
-      sortFn: (a, b) => String(a.internal_expected_dd ?? '').localeCompare(String(b.internal_expected_dd ?? '')),
-      filterType: 'date', dateValue: (o) => o.internal_expected_dd,
-    },
-    {
-      key: 'days_left', label: 'Days Left', width: 110, align: 'right', sortable: true,
-      accessor: (o) => <DaysLeftCell days={o.days_left} />,
-      searchValue: (o) => (o.days_left == null ? '' : String(o.days_left)),
-      sortFn: (a, b) => (a.days_left ?? 99999) - (b.days_left ?? 99999),
-      numberValue: (o) => o.days_left,
     },
     {
       key: 'stock_remark', label: 'Stock', width: 150, groupable: true,
@@ -954,40 +899,20 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => DELIVERY_STATE_LABEL[o.delivery_state],
       sortFn: (a, b) => a.delivery_state.localeCompare(b.delivery_state),
     },
+    /* HC DO-execution raw-data fields (migration 0197) — all default-HIDE since
+       the owner's 2026-08-04 column pass (delivery_substatus joined them; the
+       delivered date was removed outright). The cross-border ones (shipout_date,
+       eta_arriving_port, arrives_em_warehouse_date) still default-SHOW when the
+       active region is EM/SG. */
     {
-      /* Inline-editable firm/amended delivery date → scheduleDate (writes the SO's
-         amended_delivery_date; the customer's original date is preserved). Shown
-         by default so operators can plan without opening the HC drawer. */
-      key: 'sched_date', label: 'Sched. Date', width: 150, sortable: true,
-      accessor: (o) => <ScheduleDateEditCell order={o} sched={sched} />,
-      searchValue: (o) => o.amended_delivery_date ?? '',
-      exportValue: (o) => fmtDateOrDash(o.amended_delivery_date),
-      sortFn: (a, b) => String(a.amended_delivery_date ?? '').localeCompare(String(b.amended_delivery_date ?? '')),
-      filterType: 'date', dateValue: (o) => o.amended_delivery_date,
-    },
-    /* HC DO-execution raw-data fields (migration 0197). delivery_substatus (a
-       small pill) + customer_delivered_date default-SHOW; the rest default-HIDE.
-       The cross-border ones (shipout_date, eta_arriving_port,
-       customer_delivered_date) default-SHOW when the active region is EM/SG. */
-    {
-      key: 'delivery_substatus', label: 'Sub-status', width: 150, groupable: true,
+      key: 'delivery_substatus', label: 'Sub-status', width: 150, groupable: true, defaultHidden: true,
       accessor: (o) => <SubstatusPill value={o.delivery_substatus} />,
       searchValue: (o) => o.delivery_substatus ?? '',
       groupValue: (o) => o.delivery_substatus ?? '(none)',
       exportValue: (o) => o.delivery_substatus ?? '',
     },
     {
-      /* Default-HIDDEN since the 2026-08-04 tidy-up: this is filled in AFTER the
-         day happens, so it answers a reporting question on a board whose job is
-         planning the days ahead. The Delivered state tab already separates them. */
-      key: 'customer_delivered_date', label: 'Delivered Date', width: 130, sortable: true, defaultHidden: true,
-      accessor: (o) => fmtDateOrDash(o.customer_delivered_date),
-      searchValue: (o) => o.customer_delivered_date ?? '',
-      sortFn: (a, b) => String(a.customer_delivered_date ?? '').localeCompare(String(b.customer_delivered_date ?? '')),
-      filterType: 'date', dateValue: (o) => o.customer_delivered_date,
-    },
-    {
-      key: 'time_range', label: 'Time Range', width: 120, defaultHidden: true,
+      key: 'time_range', label: 'Time Slot', width: 120, defaultHidden: true,
       accessor: (o) => o.time_range ?? '—',
       searchValue: (o) => o.time_range ?? '',
     },
@@ -997,26 +922,26 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => (o.time_confirmed == null ? '' : o.time_confirmed ? 'Yes' : 'No'),
     },
     {
-      key: 'arrival_at', label: 'Arrival', width: 150, sortable: true, defaultHidden: true,
+      key: 'arrival_at', label: 'Arrived At', width: 150, sortable: true, defaultHidden: true,
       accessor: (o) => dtOrDash(o.arrival_at),
       searchValue: (o) => o.arrival_at ?? '',
       sortFn: (a, b) => String(a.arrival_at ?? '').localeCompare(String(b.arrival_at ?? '')),
     },
     {
-      key: 'departure_at', label: 'Departure', width: 150, sortable: true, defaultHidden: true,
+      key: 'departure_at', label: 'Departed At', width: 150, sortable: true, defaultHidden: true,
       accessor: (o) => dtOrDash(o.departure_at),
       searchValue: (o) => o.departure_at ?? '',
       sortFn: (a, b) => String(a.departure_at ?? '').localeCompare(String(b.departure_at ?? '')),
     },
     {
-      key: 'shipout_date', label: 'Shipout', width: 120, sortable: true, defaultHidden: !isEmSg,
+      key: 'shipout_date', label: 'Ship-out Date', width: 120, sortable: true, defaultHidden: !isEmSg,
       accessor: (o) => fmtDateOrDash(o.shipout_date),
       searchValue: (o) => o.shipout_date ?? '',
       sortFn: (a, b) => String(a.shipout_date ?? '').localeCompare(String(b.shipout_date ?? '')),
       filterType: 'date', dateValue: (o) => o.shipout_date,
     },
     {
-      key: 'eta_arriving_port', label: 'ETA / Port', width: 150, defaultHidden: !isEmSg,
+      key: 'eta_arriving_port', label: 'ETA Port', width: 150, defaultHidden: !isEmSg,
       accessor: (o) => o.eta_arriving_port ?? '—',
       searchValue: (o) => o.eta_arriving_port ?? '',
     },
@@ -1024,7 +949,7 @@ export function DeliveryPlanningBoard({
        Default-HIDDEN, but auto-SHOWS on the EM/SG region tabs like shipout / ETA
        (these cross-border columns only matter for the EM trip). */
     {
-      key: 'arrives_em_warehouse_date', label: 'Arrives EM Whse', width: 150, sortable: true, defaultHidden: !isEmSg,
+      key: 'arrives_em_warehouse_date', label: 'Arrives EM Warehouse', width: 150, sortable: true, defaultHidden: !isEmSg,
       accessor: (o) => fmtDateOrDash(o.arrives_em_warehouse_date),
       searchValue: (o) => o.arrives_em_warehouse_date ?? '',
       sortFn: (a, b) => String(a.arrives_em_warehouse_date ?? '').localeCompare(String(b.arrives_em_warehouse_date ?? '')),
@@ -1089,7 +1014,7 @@ export function DeliveryPlanningBoard({
       numberValue: (o) => liveBalance(o) / 100,
     },
     {
-      key: 'do', label: 'DO', width: 130, groupable: true,
+      key: 'do', label: 'DO No.', width: 130, groupable: true,
       accessor: (o) => (o.delivery_orders.length > 0 ? o.delivery_orders.map((d) => d.do_number).join(', ') : '—'),
       searchValue: (o) => o.delivery_orders.map((d) => d.do_number).join(' '),
     },

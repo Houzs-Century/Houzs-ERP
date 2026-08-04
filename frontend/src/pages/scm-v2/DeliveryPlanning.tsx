@@ -35,6 +35,7 @@ import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { DeliveryFieldsDrawer } from '../../vendor/scm/components/DeliveryFieldsDrawer';
 import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
+import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
 import { SendDeliveryMessageModal } from '../../vendor/scm/components/SendDeliveryMessageModal';
@@ -81,6 +82,11 @@ export const DeliveryPlanning = () => {
   const [showNewDp, setShowNewDp] = useState(false);
   /* The DP job being scheduled (Schedule drawer open when non-null). */
   const [schedulingDp, setSchedulingDp] = useState<PlanningOrder | null>(null);
+  /* Single-row scheduling, from the row menu. The board's "Sched. Date" column
+     was removed in the owner's 2026-08-04 column pass ("删列但保留排期") — an SO
+     goes to the full trip drawer, a service case to the one-field date drawer. */
+  const [schedulingOne, setSchedulingOne] = useState<PlanningOrder | null>(null);
+  const [datingAssr, setDatingAssr] = useState<PlanningOrder | null>(null);
   const cancelDp = useCancelDpOrder();
 
   /* Cancel a DP job. The row's so_doc_no is the synthetic `DP:<id>` key, so the
@@ -341,9 +347,12 @@ export const DeliveryPlanning = () => {
             ]
           : isAssr(row)
           ? [
+              { label: 'Set job date…', onClick: () => setDatingAssr(row) },
+              { divider: true },
               { label: 'Open Service Case', onClick: () => openRow(row) },
             ]
           : [
+              { label: 'Schedule…', onClick: () => setSchedulingOne(row) },
               { label: 'Edit HC fields…', onClick: () => setEditing(row) },
               { label: 'Send WhatsApp…', onClick: () => setSendingRows([row]) },
               ...(canConvertToDo
@@ -368,6 +377,19 @@ export const DeliveryPlanning = () => {
           onClose={() => setScheduling(false)}
           onOpenTrips={() => navigate('/scm/trips')}
         />
+      )}
+
+      {/* Same drawer as the bulk bar, handed a single row from its menu. */}
+      {schedulingOne && (
+        <ScheduleTripDrawer
+          orders={[schedulingOne]}
+          onClose={() => setSchedulingOne(null)}
+          onOpenTrips={() => navigate('/scm/trips')}
+        />
+      )}
+
+      {datingAssr && (
+        <SetJobDateDrawer order={datingAssr} onClose={() => setDatingAssr(null)} />
       )}
 
       {sendingRows && sendingRows.length > 0 && (
