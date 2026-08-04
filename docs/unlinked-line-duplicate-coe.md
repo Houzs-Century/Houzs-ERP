@@ -141,6 +141,26 @@ cancelled amount — the failure class already documented in
 **Not automated on purpose.** Cancelling a DISPATCHED delivery is a business
 decision about a real shipment, and there is exactly one of them.
 
+**AND THE REMEDIATION WAS ITSELF BLOCKED BY A SECOND BUG.** The owner tried to
+cancel and got *"cancelled" is not a valid Delivery Order status* — Cancel DO,
+Mark signed and Mark delivered had never worked on desktop, because those pages
+post lowercase and the DO status handler validated the raw value while its Sales
+Order sibling had always normalised. Fixed in #1587
+(`BUG-HISTORY.md`, 2026-08-04, HIGH).
+
+That is worth recording as part of THIS incident and not only as its own bug:
+**the remediation path for a data-integrity fault had never been exercised.** A
+guard that has never been used is not known to work, and the one occasion it was
+needed is a poor time to find out.
+
+**How the cancel is verified afterwards.** `backend/scripts/verify-do-cancel.mjs`
++ Actions → **Verify a DO cancel (read-only)**. It states the invariants a cancel
+must leave behind and checks each: status CANCELLED with an add-back written; the
+DO's own movements netting to zero per SKU; no lot consumption still attributed
+to it; the OUT cost stamps zeroed; the add-back minting no open lot; and — the
+one that answers "is the stock right" — the movement ledger agreeing with the
+FIFO lot ledger on every SKU the DO touched.
+
 ## 7. What the audit RULED OUT
 
 - **A duplicate created by the SO→DO convert.** `POST /from-sos` writes
@@ -164,7 +184,8 @@ decision about a real shipment, and there is exactly one of them.
 |------|-------|------|
 | Cancelling `2990-DO-2607-005` | Wei Siang | In the app. Reverses the second deduction and closes the stock discrepancy. |
 | Whether `so_doc_no` should become a real foreign key | Wei Siang | The free-text header is what let the label and the lines disagree. The guard now stops the harmful case, but the underlying column still permits a header that names an SO no line belongs to. |
-| Accessory lines (pillows, 500 at a time) not showing an SO on screen | Wei Siang | Raised in the same conversation. Worth separating clearly: **not displaying** the SO is a presentation change and is fine; **not linking** to it is this defect. |
+| ~~Accessory lines (pillows, 500 at a time) not showing an SO on screen~~ | — | **SHIPPED #1588.** PO / GRN / Purchase Invoice collapse an accessory line's per-order list to `N orders · M deliveries · see Stock Movement`. The counts stay deliberately — a blank cell would read as "unassigned", which is the same under-statement that hid this incident. The LINKS are untouched; only the presentation changed. |
+| No guard on `delivery_return_items.do_item_id` or `purchase_return_items.grn_item_id` | Wei Siang | The same nullable-link shape as this incident, on the DO→DR and GRN→PR chains. A production scan on 2026-08-04 found **zero** affected rows on both, so this is a hole rather than a fault — but it is the identical hole. |
 
 ## 9. Lessons
 
