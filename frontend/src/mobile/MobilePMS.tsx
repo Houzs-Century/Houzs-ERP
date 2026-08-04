@@ -2597,7 +2597,7 @@ const isoTimePart = (iso: string | null | undefined): string => {
 // PUT /:id/phase-photos/upload → POST /:id/phase-photos). Schedule/driver/
 // lorry all persist via PATCH /:id.
 function SetupDismantle({
-  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleView, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm, prompt,
+  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleView, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm,
 }: {
   projectId: number;
   project: ProjectDetail["project"];
@@ -2629,21 +2629,10 @@ function SetupDismantle({
   const scheduleShots = photos.filter((ph): ph is PhasePhoto & { r2_key: string } => ph.phase === "schedule" && !!ph.r2_key);
   const schedRef = useRef<HTMLInputElement | null>(null);
   const [schedView, setSchedView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
-  // Remark-then-upload (owner 2026-07-27; made OPTIONAL 2026-08-03 per owner —
-  // no longer blocks the file picker): prompt for an optional remark, then the
-  // file picker; the screenshot carries that remark as its caption. Blank = no
-  // caption. Cancelling the dialog leaves the picker closed.
-  const pendingSchedCaptionRef = useRef<string | undefined>(undefined);
-  const startScheduleUpload = async () => {
-    const remark = await prompt({
-      title: "Remark for this schedule",
-      placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm (optional)",
-      confirmLabel: "Choose file…",
-    });
-    if (remark == null) return; // cancelled
-    pendingSchedCaptionRef.current = remark.trim() || undefined;
-    schedRef.current?.click();
-  };
+  // Owner 2026-08-03: NO remark step before upload — tapping Upload opens the
+  // file picker straight away (the earlier prompt, even optional, was an unwanted
+  // extra tap). Setup/dismantle times go in the standalone Remark box below.
+  const startScheduleUpload = () => schedRef.current?.click();
   const uploadSchedule = async (file: File, caption?: string) => {
     if (file.size > 50 * 1024 * 1024) {
       await notify({ title: "File too large", body: "Max 50MB.", tone: "error" });
@@ -2793,7 +2782,7 @@ function SetupDismantle({
               <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => void startScheduleUpload()}>
                 {scheduleShots.length ? "+ Add / replace screenshot" : "Upload handbook schedule screenshot"}
               </button>
-              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; const cap = pendingSchedCaptionRef.current; pendingSchedCaptionRef.current = undefined; if (f) void uploadSchedule(f, cap); }} />
+              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadSchedule(f); }} />
             </>
           )}
           {schedView && (

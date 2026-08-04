@@ -10941,15 +10941,13 @@ function ScheduleRef({
   onSaveRemark?: (v: string) => void;
 }) {
   const toast = useToast();
-  const dialog = useDialog();
   const [remarkDraft, setRemarkDraft] = useState(remark ?? "");
   useEffect(() => setRemarkDraft(remark ?? ""), [remark]);
   const fileRef = useRef<HTMLInputElement>(null);
-  // Remark-then-upload (owner 2026-07-27; made OPTIONAL 2026-08-03 per owner —
-  // no longer blocks the file picker). Upload offers an optional remark, then
-  // the file picker; the screenshot carries that remark as its caption. Blank
-  // remark = no caption. Cancelling the dialog leaves the picker closed.
-  const pendingCaptionRef = useRef<string | undefined>(undefined);
+  // Owner 2026-08-03: NO remark step before upload. Clicking Upload opens the
+  // file picker straight away — the earlier prompt (even made optional) was an
+  // unwanted extra click. Setup/dismantle times go in the standalone Remark box
+  // below (onSaveRemark), not a per-screenshot caption.
   const [busy, setBusy] = useState(false);
   const photos = useQuery<{ photos: PhasePhoto[] }>(
     "/api/projects/:/phase-photos",
@@ -10957,18 +10955,7 @@ function ScheduleRef({
     [projectId],
   );
   const items = (photos.data?.photos ?? []).filter((p) => p.phase === "schedule");
-  const startUpload = async () => {
-    const remark = await dialog.prompt({
-      title: "Remark for this schedule",
-      message: "Add a remark for this screenshot (optional).",
-      placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm",
-      multiline: true,
-      confirmLabel: "Choose file…",
-    });
-    if (remark == null) return; // cancelled — leave the picker closed
-    pendingCaptionRef.current = remark.trim() || undefined;
-    fileRef.current?.click();
-  };
+  const startUpload = () => fileRef.current?.click();
   const upload = async (file: File, caption?: string) => {
     if (file.size > 50 * 1024 * 1024) {
       toast?.error("That file is over 50MB.");
@@ -11031,9 +11018,7 @@ function ScheduleRef({
             accept="image/*,application/pdf,.heic"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              const cap = pendingCaptionRef.current;
-              pendingCaptionRef.current = undefined;
-              if (f) void upload(f, cap);
+              if (f) void upload(f);
             }}
           />
           <button
