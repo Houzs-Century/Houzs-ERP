@@ -117,12 +117,25 @@ async function reconcile(code) {
 
   /* SERVICE lines carry no stock and write no movement. Saying so up front stops
      an empty ledger reading as a missing one. */
+  /* consumed = the qty this movement actually drew from the FIFO ledger, read
+     from inventory_lot_consumptions DIRECTLY.
+
+     It was total_cost_sen, and that was wrong — a proxy, not the fact. The
+     cancel path ZEROES an OUT's cost stamps on purpose (fn_reverse_do_out step
+     b: "their consumptions are gone, so a stamped cost would be a COGS figure
+     with no ledger backing"), so a cost of 0 means EITHER "consumed nothing"
+     OR "was cancelled". The first run of this script labelled a cancelled DO as
+     having consumed no lot and pointed at the wrong document. Reading the
+     consumption rows says which is which, with no inference. */
   const movs = await pg`
-    SELECT movement_type, qty, source_doc_type, source_doc_no, created_at,
-           COALESCE(variant_key,'') AS vkey, warehouse_id, total_cost_sen
-      FROM scm.inventory_movements
-     WHERE product_code = ${code}
-     ORDER BY created_at`;
+    SELECT m.movement_type, m.qty, m.source_doc_type, m.source_doc_no, m.created_at,
+           COALESCE(m.variant_key,'') AS vkey, m.warehouse_id, m.total_cost_sen,
+           COALESCE((SELECT SUM(c.qty_consumed)
+                       FROM scm.inventory_lot_consumptions c
+                      WHERE c.movement_id = m.id), 0) AS consumed
+      FROM scm.inventory_movements m
+     WHERE m.product_code = ${code}
+     ORDER BY m.created_at`;
   if (movs.length === 0) {
     console.log("\nNo stock movements at all — this is a SERVICE line (delivery fee, disposal)");
     console.log("or a code that has never moved. Nothing to reconcile.\n");
@@ -142,13 +155,20 @@ async function reconcile(code) {
   console.log(`      ${pad("", 12)} ${rpad(`= ${totalIn}`, 7)}  total received\n`);
 
   console.log(`  OUT — ${outs.length} shipment(s)`);
+  console.log(`      ${pad("date", 12)} ${rpad("qty", 6)}  ${pad("document", 24)} drew from FIFO`);
   for (const m of outs) {
-    /* A zero cost stamp on an OUT means it consumed NO lot: the goods left the
-       balance but nothing was drawn from the FIFO ledger and no COGS was
-       booked. This is the exact state that makes "did it deduct stock?"
-       ambiguous, so it is labelled rather than left to be inferred. */
-    const uncosted = num(m.total_cost_sen) === 0 ? "   <- consumed no lot, no COGS" : "";
-    console.log(`      ${pad(day(m.created_at), 12)} -${rpad(num(m.qty), 5)}  ${pad(m.source_doc_no ?? "(no doc)", 24)}${uncosted}`);
+    /* Three genuinely different states, which the cost stamp alone cannot tell
+       apart — and conflating them is how "did this DO deduct stock?" got two
+       different answers out of me:
+         consumed == qty   normal: balance down AND a lot drawn at a real cost
+         consumed == 0     the OUT stands but NOTHING was drawn — no COGS. The
+                           balance moved, the FIFO ledger did not.
+         0 < consumed < q  partially short. */
+    const c = num(m.consumed), q = num(m.qty);
+    const state = c === 0 ? "NOTHING — no lot drawn, no COGS"
+      : c < q ? `${c} of ${q} — partially short`
+      : `${c}`;
+    console.log(`      ${pad(day(m.created_at), 12)} -${rpad(q, 5)}  ${pad(m.source_doc_no ?? "(no doc)", 24)} ${state}`);
   }
   const totalOut = outs.reduce((s, m) => s + num(m.qty), 0);
   console.log(`      ${pad("", 12)} ${rpad(`= ${totalOut}`, 7)}  total shipped\n`);
@@ -173,11 +193,20 @@ async function reconcile(code) {
   console.log(`      ------------------------------`);
   console.log(`      MOVEMENT balance    ${rpad(movBalance, 8)}   <- what the Inventory screen's "stock" shows`);
   console.log(`      LOT balance         ${rpad(lotBalance, 8)}   <- what FIFO can actually claim and cost`);
+  const shipped = outs.reduce((s, m) => s + num(m.qty), 0);
+  const drawn = outs.reduce((s, m) => s + num(m.consumed), 0);
   console.log(
     movBalance === lotBalance
       ? `      AGREE.\n`
-      : `      DISAGREE by ${movBalance - lotBalance}. One of the two is wrong; see the uncosted OUTs above.\n`,
+      : `      DISAGREE by ${movBalance - lotBalance}.\n`,
   );
+  if (shipped !== drawn) {
+    /* This line is the explanation, not a second finding: units that left the
+       balance without drawing a lot are exactly the gap between the two
+       ledgers, and they also shipped with no COGS booked. */
+    console.log(`      ${shipped - drawn} unit(s) shipped WITHOUT drawing a lot — ${shipped} shipped vs ${drawn} drawn.`);
+    console.log(`      Those units carry no COGS, so any margin on them is overstated.\n`);
+  }
 
   /* The variant split matters: movements and lots are keyed by
      (warehouse, product, variant), so a SKU can reconcile in total while two
