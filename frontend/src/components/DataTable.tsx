@@ -77,6 +77,13 @@ export interface Column<T> {
   /** Provide a raw value for CSV export and client-side sorting. Columns
    *  without this are skipped during export and can't be sorted. */
   getValue?: (row: T) => string | number | boolean | null | undefined;
+  /** For cells that hold SEVERAL values (a service case can be both Bedframe
+   *  and Mattress). The funnel then lists each value on its own line, counts
+   *  it against every row that carries it, and a row matches when ANY of its
+   *  values is ticked. Without this a multi-value cell shows up as one
+   *  composite entry ("Bedframe, Mattress") that ticking "Bedframe" misses.
+   *  `getValue` is still required — sort and CSV export use it. */
+  getFilterValues?: (row: T) => (string | number | null | undefined)[];
   /** If true, the column is excluded from the column chooser AND pinned
    *  to the front of the render order (can't be reordered past). */
   alwaysVisible?: boolean;
@@ -1866,15 +1873,20 @@ function DataTableInner<T>({
     const getters = active
       .map(([key, vals]) => {
         const col = allColumns.find((c) => c.key === key);
-        return col?.getValue ? { getValue: col.getValue, allowed: new Set(vals) } : null;
+        if (!col?.getValue) return null;
+        // Multi-value columns match on ANY of the row's values; single-value
+        // ones keep the exact-key rule.
+        const values = col.getFilterValues
+          ? (r: T) => filterKeysOf(col.getFilterValues!(r))
+          : (r: T) => [filterKeyOf(col.getValue!(r))];
+        return { values, allowed: new Set(vals) };
       })
       .filter(
-        (g): g is { getValue: NonNullable<Column<T>["getValue"]>; allowed: Set<string> } =>
-          g !== null
+        (g): g is { values: (r: T) => string[]; allowed: Set<string> } => g !== null
       );
     if (getters.length === 0) return rows;
     return rows.filter((r) =>
-      getters.every((g) => g.allowed.has(filterKeyOf(g.getValue(r))))
+      getters.every((g) => g.values(r).some((v) => g.allowed.has(v)))
     );
   }, [rows, colFilters, allColumns]);
 
@@ -3116,10 +3128,15 @@ function DataTableInner<T>({
           const col = allColumns.find((c) => c.key === filterMenu.colKey);
           if (!col?.getValue) return null;
           const getter = col.getValue;
+          const multi = col.getFilterValues;
           const counts = new Map<string, number>();
           for (const r of rows ?? []) {
-            const k = filterKeyOf(getter(r));
-            counts.set(k, (counts.get(k) ?? 0) + 1);
+            // A multi-value row counts once against EACH of its values, so
+            // the funnel lists "Bedframe" and "Mattress" separately rather
+            // than a composite "Bedframe, Mattress" entry.
+            for (const k of multi ? filterKeysOf(multi(r)) : [filterKeyOf(getter(r))]) {
+              counts.set(k, (counts.get(k) ?? 0) + 1);
+            }
           }
           const values = [...counts.entries()].sort((a, b) =>
             a[0].localeCompare(b[0], undefined, { numeric: true })
@@ -3459,6 +3476,14 @@ function parsePxWidth(width: string | undefined): number | null {
 function filterKeyOf(v: unknown): string {
   if (v == null || v === "") return "—";
   return String(v);
+}
+
+/** Multi-value cell -> its filter keys. An empty list is still "—" (blank),
+ *  so a row with no values stays tickable under the blank entry exactly like
+ *  a single-value column's null. */
+function filterKeysOf(vs: readonly unknown[]): string[] {
+  const keys = vs.map(filterKeyOf).filter((k) => k !== "—");
+  return keys.length ? [...new Set(keys)] : ["—"];
 }
 
 function compareValues(

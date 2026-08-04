@@ -384,13 +384,14 @@ app.get("/status-export", async (c) => {
   }
 
   const rows = await c.env.DB.prepare(
-    `SELECT assr_no, doc_no, ref_no, stage, completion_date, closed_at
+    `SELECT assr_no, doc_no, ref_no, complained_date, stage, completion_date, closed_at
        FROM assr_cases
       WHERE archived_at IS NULL`
   ).all<{
     assr_no: string;
     doc_no: string | null;
     ref_no: string | null;
+    complained_date: string | null;
     stage: string;
     completion_date: string | null;
     closed_at: string | null;
@@ -400,6 +401,12 @@ app.get("/status-export", async (c) => {
     assr_no: r.assr_no,
     so_no: r.doc_no,
     ref_no: r.ref_no,
+    // Third discriminator for the sheet sync (added 2026-08-04). SO + Ref
+    // cannot separate the cases that share both — SO-006443 carries three,
+    // all ref HC8307 — and the sheet keeps the complaint date in col D, so
+    // it settles them. Still no PII: the sheet already owns the customer
+    // columns and this endpoint never sends them.
+    complained_date: r.complained_date,
     status:
       SHEET_STATUS[r.stage] ??
       r.stage.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase()),
