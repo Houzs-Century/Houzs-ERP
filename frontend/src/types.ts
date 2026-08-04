@@ -319,6 +319,10 @@ export interface AssrStageHistoryRow {
 
 export interface AssrDetail {
   case: AssrCase;
+  /** Product categories as a list — what the multi-select form binds to.
+   *  The flat `case.service_category` string stays for read-only surfaces
+   *  (list column, CSV, print, portals, mobile). */
+  service_categories?: string[];
   items: AssrItem[];
   attachments: AssrAttachment[];
   activity: AssrActivity[];
