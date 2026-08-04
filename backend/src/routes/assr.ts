@@ -3143,7 +3143,7 @@ app.patch("/:id/items/:itemId", requirePermission("service_cases.write"), async 
 const ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "mp4", "mov", "webm", "pdf"]);
 const MAX_SIZE = 25 * 1024 * 1024; // 25 MB
 
-app.put("/:id/attachments", requireAnyPermission(["service_cases.write", "service_cases.create"]), async (c) => {
+app.put("/:id/attachments", requireAnyPermission(["service_cases.write", "service_cases.create", "service_cases.manage"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const userId = (c as any).get?.("userId") ?? 0;
@@ -3190,7 +3190,7 @@ app.put("/:id/attachments", requireAnyPermission(["service_cases.write", "servic
 // at `<r2_key>.thumb`. The frontend uploads it right after the main PUT above;
 // old clients never call this and nothing changes for them. Best-effort by
 // design: a failed thumb never invalidates the already-saved attachment.
-app.put("/:id/attachments/thumb", requireAnyPermission(["service_cases.write", "service_cases.create"]), async (c) => {
+app.put("/:id/attachments/thumb", requireAnyPermission(["service_cases.write", "service_cases.create", "service_cases.manage"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
 
