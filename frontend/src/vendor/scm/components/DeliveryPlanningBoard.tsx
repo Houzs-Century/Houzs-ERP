@@ -34,6 +34,7 @@ import {
   DELIVERY_STATES,
   DELIVERY_STATE_LABEL,
   dpJobTypeLabel,
+  assrJobKindLabel,
   type DeliveryState,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
@@ -122,16 +123,17 @@ function TypeChip({ order }: { order: PlanningOrder }) {
     tone = '#1f5e73';
     bg = 'rgba(31, 94, 115, 0.12)';
   } else if (isAssr(order)) {
+    // The three ASSR legs keep their own tones; the WORDS come from the shared
+    // map so the chip, the search index and the export cannot drift (they did,
+    // four ways, before the 2026-08-03 rename).
+    label = assrJobKindLabel(order.job_kind);
     if (order.job_kind === 'customer_pickup') {
-      label = 'Cust. pickup';
       tone = '#0c3f39';
       bg = 'rgba(232, 107, 58, 0.12)';
     } else if (order.job_kind === 'inspection') {
-      label = 'Inspection';
       tone = '#5a3fa0';
       bg = 'rgba(90, 63, 160, 0.12)';
     } else {
-      label = 'Delivery';
       tone = '#2f5d4f';
       bg = 'rgba(47, 93, 79, 0.12)';
     }
@@ -696,18 +698,40 @@ export function DeliveryPlanningBoard({
        layouts actually show. A user's saved layout.order still wins. A key
        missing here falls to the end in definition order. */
     const DP_DEFAULT_ORDER = [
+      /* ── SHOWN BY DEFAULT — the question each block answers ──────────────
+         Owner asked for a tidy-up, 2026-08-04. The 45 columns were written for
+         a board that carried SO deliveries only; it now also carries ASSR legs,
+         DP orders and PMS project rows, on which most SO columns are
+         structurally empty. So the default set is the columns that say
+         something for EVERY row type, plus the few SO ones a dispatcher plans
+         by — everything else stays one click away in the Columns drawer. */
+      // What is this row, and who is it for
       'row_type', 'so_doc_no', 'company_code', 'debtor_name', 'phone', 'wa_message',
-      'region', 'delivery_state', 'delivery_substatus',
+      // Where, and where it stands
+      'region', 'delivery_state', 'delivery_substatus', 'stock_remark',
+      // When
       'customer_delivery_date', 'amended_delivery_date', 'sched_date', 'days_left',
-      'stock_remark', 'driver', 'lorry', 'do', 'do_date',
+      // Who takes it
+      'driver', 'lorry',
+      // What proves it
+      'do',
+      // Cross-border, shown ONLY on the EM / SG region tabs (defaultHidden:
+      // !isEmSg) — noise on the other four, essential on those two.
       'shipout_date', 'eta_arriving_port', 'arrives_em_warehouse_date',
-      'customer_delivered_date', 'balance_centi',
-      // ── default-hidden from here down (drawer order) ──
-      'branding', 'address', 'postcode', 'building_type', 'possession_date',
-      'house_type', 'replacement_disposal', 'referral', 'warehouse',
-      'so_date', 'amend_date_from_customer', 'amend_reason',
-      'internal_expected_dd', 'time_range', 'time_confirmed', 'arrival_at', 'departure_at',
+
+      /* ── DEFAULT-HIDDEN from here down, grouped by theme so the Columns
+            drawer reads as blocks rather than one 45-long alphabet. ──────── */
+      // Amendment trail
+      'amend_date_from_customer', 'amend_reason',
+      // Execution times — filled in as the day happens, not while planning it
+      'time_range', 'time_confirmed', 'arrival_at', 'departure_at', 'customer_delivered_date',
+      // Customer detail
+      'address', 'postcode', 'building_type', 'house_type', 'possession_date',
+      'replacement_disposal', 'referral', 'branding',
+      // Crew detail — the Driver / Lorry columns above carry the summary
       'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
+      // Document + money
+      'so_date', 'internal_expected_dd', 'warehouse', 'do_date', 'balance_centi',
     ];
     const pos = new Map(DP_DEFAULT_ORDER.map((k, i) => [k, i] as const));
     const cols: DataGridColumn<PlanningOrder>[] = [
@@ -716,9 +740,14 @@ export function DeliveryPlanningBoard({
          two kinds read apart at a glance. */
       key: 'row_type', label: 'Type', width: 130, groupable: true,
       accessor: (o) => <TypeChip order={o} />,
-      searchValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o) : isAssr(o) ? (o.job_kind === 'customer_pickup' ? 'Cust. pickup customer pickup' : o.job_kind === 'inspection' ? 'Inspection' : 'Delivery') : 'SO delivery'),
-      groupValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o) : isAssr(o) ? (o.job_kind === 'customer_pickup' ? 'Cust. pickup' : o.job_kind === 'inspection' ? 'Inspection' : 'Delivery') : 'SO delivery'),
-      exportValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o) : isAssr(o) ? (o.job_kind === 'customer_pickup' ? 'Cust. pickup' : o.job_kind === 'inspection' ? 'Inspection' : 'Delivery') : 'SO delivery'),
+      /* Search keeps the OLD words as aliases ("cust. pickup", "delivery"):
+         the 2026-08-03 rename changed what the chip says, and someone who has
+         typed "delivery" into this box for a year should still find the row. */
+      searchValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o)
+        : isAssr(o) ? `${assrJobKindLabel(o.job_kind)} ${o.job_kind === 'customer_pickup' ? 'cust. pickup customer pickup' : o.job_kind === 'delivery' ? 'delivery' : ''}`.trim()
+        : 'SO delivery'),
+      groupValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o) : isAssr(o) ? assrJobKindLabel(o.job_kind) : 'SO delivery'),
+      exportValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o) : isAssr(o) ? assrJobKindLabel(o.job_kind) : 'SO delivery'),
     },
     {
       /* SO No. for SO rows; the ASSR ref (assr_no) for service-case rows. */
@@ -912,7 +941,11 @@ export function DeliveryPlanningBoard({
       groupValue: (o) => (isAssr(o) || isDp(o) ? '(n/a)' : o.stock_status),
     },
     {
-      key: 'delivery_state', label: 'Delivery State', width: 160, sortable: true, groupable: true,
+      /* "Delivery Status" on screen, `delivery_state` in the data (owner,
+         2026-08-04). The column key, the stored column and DELIVERY_STATE_LABEL
+         keep the old word — renaming those would touch the API contract and the
+         override write path for a heading. */
+      key: 'delivery_state', label: 'Delivery Status', width: 160, sortable: true, groupable: true,
       /* Inline-editable: writes a manual delivery_state override (wins over the
          derived state). Real stock readiness stays visible in the Stock column. */
       accessor: (o) => <StatusEditCell order={o} sched={sched} />,
@@ -944,7 +977,10 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => o.delivery_substatus ?? '',
     },
     {
-      key: 'customer_delivered_date', label: 'Delivered Date', width: 130, sortable: true,
+      /* Default-HIDDEN since the 2026-08-04 tidy-up: this is filled in AFTER the
+         day happens, so it answers a reporting question on a board whose job is
+         planning the days ahead. The Delivered state tab already separates them. */
+      key: 'customer_delivered_date', label: 'Delivered Date', width: 130, sortable: true, defaultHidden: true,
       accessor: (o) => fmtDateOrDash(o.customer_delivered_date),
       searchValue: (o) => o.customer_delivered_date ?? '',
       sortFn: (a, b) => String(a.customer_delivered_date ?? '').localeCompare(String(b.customer_delivered_date ?? '')),
@@ -1037,7 +1073,11 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => o.crew?.lorry_plate ?? '',
     },
     {
-      key: 'balance_centi', label: 'Balance', width: 130, align: 'right', sortable: true,
+      /* Default-HIDDEN since the 2026-08-04 tidy-up. The release gate — which is
+         what a dispatcher actually needs from the money side — already rides on
+         the row; the raw balance is a finance figure, and it is 0 on every ASSR /
+         DP / project row by construction. */
+      key: 'balance_centi', label: 'Balance', width: 130, align: 'right', sortable: true, defaultHidden: true,
       accessor: (o) => (
         <span style={{ fontFamily: 'var(--font-mark)', fontWeight: 700, color: liveBalance(o) > 0 ? '#0c3f39' : '#767b6e' }}>
           {fmtCenti(liveBalance(o))}
@@ -1054,10 +1094,12 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.delivery_orders.map((d) => d.do_number).join(' '),
     },
     /* DO Date — the latest DO's OWN document date (delivery_orders.do_date), from
-       the same latest-DO lookup the crew / HC fields use. Default-SHOWS so a
-       converted row immediately reads its DO date. "—" until a DO exists. */
+       the same latest-DO lookup the crew / HC fields use. Default-HIDDEN since
+       the 2026-08-04 tidy-up: the DO column beside it already says whether a DO
+       exists, which is the planning question; its document date is a lookup, and
+       it is blank on every ASSR / DP / project row. */
     {
-      key: 'do_date', label: 'DO Date', width: 120, sortable: true,
+      key: 'do_date', label: 'DO Date', width: 120, sortable: true, defaultHidden: true,
       accessor: (o) => fmtDateOrDash(o.do_date),
       searchValue: (o) => o.do_date ?? '',
       sortFn: (a, b) => String(a.do_date ?? '').localeCompare(String(b.do_date ?? '')),
