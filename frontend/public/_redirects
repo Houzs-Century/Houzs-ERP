@@ -9,4 +9,10 @@
 # Instead the frontend talks to the Worker using its absolute URL
 # configured via VITE_API_URL (frontend/.env.production). CORS is
 # enabled on the Worker so cross-origin requests just work.
+# The privacy policy is a real static page, but Pages 308-canonicalises
+# /privacy.html -> /privacy, and WITHOUT this rule the extensionless path then
+# falls through to the /* SPA rewrite below — making the page unreachable at
+# either URL. Rules are first-match: this must stay above /*. The public URL
+# (the one App Store Connect points at) is https://erp.houzscentury.com/privacy.
+/privacy  /privacy.html  200
 /*  /index.html  200

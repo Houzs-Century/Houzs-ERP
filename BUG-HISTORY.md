@@ -1,5 +1,12 @@
 ## 2026-08-06
 
+### [LOW] The privacy policy page shipped unreachable — Pages' clean-URL redirect fed it to the SPA fallback
+- **Symptom.** Minutes after #1644 deployed, `curl` of the new `privacy.html` (the URL App Store Connect will require) answered **308 → `/privacy`**, and `/privacy` served the React shell (`<title>Houzs Century ERP</title>`) — the policy was unreachable at BOTH addresses despite the asset deploying fine.
+- **Root cause (traced, not guessed).** Cloudflare Pages canonicalises `*.html` to the extensionless URL with a 308 — but the extensionless path is not an asset, so `_redirects`' `/*  /index.html  200` SPA fallback swallowed it. The two behaviours compose into "every static .html page except index.html is unreachable"; `privacy.html` was simply the first page to hit it.
+- **Fix.** Explicit first-match rule above the fallback: `/privacy  /privacy.html  200`. The public URL is `https://erp.houzscentury.com/privacy`, verified 200 with the policy content after deploy.
+- **The class, for next time.** Any future static page in `frontend/public/` needs its own rule above `/*`, or it ships unreachable the same way. The `_redirects` comment now says so.
+- **Ref:** #1645. `fix/privacy-page-unreachable` 2026-08-06.
+
 ### [MEDIUM] Own and consignment now split end to end on the Inventory list — and Age stopped counting other people's goods
 - **Symptom.** Owner, 2026-08-06, three related observations on the list: (1) *"age 的计算为什么不是根据库存？当我 sort 的时候…我就看不到到底是哪一个东西放得最久"* — rows with ZERO own stock carried an Age (e.g. BOOQIT-1A(LHF), own 0, held 2, Age 54d), because `oldest_lot_at` read every open lot including consignment, so sorting by Age buried the goods that had really sat longest; (2) value should be TWO figures — *"一个是 inventory value,一个是 consignment value"*; (3) stock likewise — *"就不用去算 2 加 2 了"*, the `0 +2 held` suffix made every glance a small sum. He also confirmed the Stock Breakdown drawer's own/consignment split is exactly the presentation he wants (*"里面的分门别类清清楚楚,已经很漂亮了,只是说外面这一边的界面而已"*).
 - **Fix.** The list now mirrors the drawer: **Age** derives from OWNED open lots only (no owned lot → no age); **Consignment** is its own column (held qty, value in the tooltip), and Stock is one clean owned number; the cards become four — Own Stock Qty / Consignment Qty / Inventory Value / **Consignment Value** (new `held_value_sen`, summed from consignment lots, never inside inventory value). Available/Spare arithmetic already stood on owned only since the 2026-08-05 fix.
