@@ -140,6 +140,10 @@ export const PRODUCTION_STORAGE_CALLERS = [
   // iOS Keychain, never in browser storage — this file touches localStorage for
   // the on/off switch and nothing else.
   "lib/nativeSession.ts",
+  // native:push-token — the APNs device token last registered from this phone,
+  // remembered ONLY so logout can delete the server row. Same native:<feature>
+  // family; not a secret (an APNs token is useless without our provider key).
+  "lib/nativePush.ts",
   "lib/query-persist.ts",
   "lib/rememberedEmail.ts",
   "lib/assrListFilter.ts",
