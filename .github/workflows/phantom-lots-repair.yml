@@ -1,0 +1,75 @@
+name: Phantom lot repair (DRY-RUN gated)
+
+# Retire an orphan lot onto the real one.
+#
+# The 2990 import created lots with no backing movement. The real shipment
+# consumed THOSE, so the GRN's own lot was never decremented and sits open
+# forever — the movement ledger is right and the lot ledger over-states by
+# exactly the orphan's consumed quantity.
+#
+# Cost-neutral by construction: the repair REFUSES unless the orphan and the
+# receiving lot carry the same unit cost, so consumption rows move without
+# restating the COGS of a sale that has already shipped. Only inventory VALUE
+# moves, and only downward, by stock that is not there.
+#
+# DRY-RUN unless apply=APPLY AND the confirmation phrase matches exactly. Every
+# bucket is repaired inside a transaction, verified (lot ledger must end equal to
+# the movement ledger, consumed quantity must be unchanged) and rolled back
+# otherwise.
+#
+# Run the read-only "Phantom lot plan" first and read it.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Set to APPLY to COMMIT. Anything else = DRY-RUN (rolled back).'
+        required: false
+        default: 'DRY-RUN'
+        type: choice
+        options:
+          - 'DRY-RUN'
+          - 'APPLY'
+      confirm:
+        description: 'Required for APPLY: type exactly  I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ''
+
+concurrency:
+  group: phantom-lots-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Decide mode
+        id: mode
+        run: |
+          if [ "${{ github.event.inputs.apply }}" = "APPLY" ] && [ "${{ github.event.inputs.confirm }}" = "I HAVE REVIEWED THE DRY-RUN" ]; then
+            echo "apply=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::APPLY confirmed — writes will be COMMITTED."
+          else
+            echo "apply=false" >> "$GITHUB_OUTPUT"
+            if [ "${{ github.event.inputs.apply }}" = "APPLY" ]; then
+              echo "::warning::APPLY requested but the confirmation phrase is missing or wrong — running DRY-RUN."
+            fi
+          fi
+      - run: node scripts/repair-phantom-lots.mjs
+        env:
+          APPLY: ${{ steps.mode.outputs.apply }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
