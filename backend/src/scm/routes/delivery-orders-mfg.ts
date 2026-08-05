@@ -1575,7 +1575,38 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
   }
   if (writes.length > 0) {
     // Multi-company: resync movements inherit the DO's company.
-    await writeMovements(sb, writes, (doHeader as { company_id?: number | null }).company_id ?? null);
+    const wrote = await writeMovements(sb, writes, (doHeader as { company_id?: number | null }).company_id ?? null);
+    /* 2026-08-05 — this result used to be DISCARDED, the only movement write in
+       the DO family with no failure trace (first-ship and GRN both collect
+       movementErrors). A failed resync delta means a shipped DO's line edit
+       changed the paperwork but not the ledger, silently — the exact shape of
+       the orphan-movement divergence audited that day. The write stays
+       best-effort (an edit must not be rolled back for a ledger hiccup), but a
+       failure now leaves an audit row naming the DO, the buckets and the reason,
+       so /inventory/reconcile and a human have something to find. */
+    if (!wrote.ok) {
+      /* eslint-disable-next-line no-console */
+      console.error(`[do-resync] movement write FAILED for DO ${deliveryOrderId}: ${wrote.reason ?? 'unknown'}`);
+      try {
+        // Same shape as the GRN recount-failure precedent (grns.ts): the edit
+        // stands, the trail records that the ledger did not follow it.
+        await recordEntityAudit(sb, {
+          entityType: 'DELIVERY_ORDER',
+          entityId: deliveryOrderId,
+          entityDocNo: (doHeader as { do_number?: string | null }).do_number ?? null,
+          action: 'RECOUNT_FAILED',
+          companyId: (doHeader as { company_id?: number | null }).company_id ?? null,
+          source: 'resyncInventoryForDo',
+          note:
+            `Line edit committed on a shipped DO but the resync delta movements were NOT written ` +
+            `(${writes.length} row(s)): ${wrote.reason ?? 'unknown'}. The ledger does not reflect this edit ` +
+            `until /inventory/reconcile or a re-save repairs it.`,
+        });
+      } catch { /* audit is best-effort too — the console line above still stands */ }
+      // Nothing changed in the ledger, so the downstream re-costing steps would
+      // only re-read the stale state — skip them.
+      return;
+    }
     /* Oversell retro-cost (0154) — a reduced / deleted line on a shipped DO gives
        stock BACK (a lot-opening IN), so a prior "ship anyway" DO that went out at
        RM0 in this warehouse can now be costed from it. Wired 2026-07-29; until
