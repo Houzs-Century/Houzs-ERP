@@ -82,6 +82,15 @@ async function main() {
   await dump("creditors", "creditors.json", async () =>
     (await sql`SELECT to_jsonb(t) AS j FROM public.creditors t`).map((r) => r.j)
   );
+  await dump("supplier_material_bindings", "bindings.json", async () => {
+    const reg = (await sql`SELECT COALESCE(to_regclass('scm.supplier_material_bindings')::text, to_regclass('public.supplier_material_bindings')::text) AS t`)[0].t;
+    if (!reg) return [];
+    return (await sql.unsafe(`SELECT to_jsonb(t) AS j FROM ${reg} t`)).map((r) => r.j);
+  });
+  try {
+    const kinds = await sql`SELECT e.enumlabel AS v FROM pg_type t JOIN pg_enum e ON e.enumtypid=t.oid WHERE t.typname='material_kind' ORDER BY e.enumsortorder`;
+    console.log("MATERIAL_KIND_ENUM:", JSON.stringify(kinds.map((r) => r.v)));
+  } catch (e) { console.log("MATERIAL_KIND_ENUM ERROR", e.message); }
   await dump("categories", "categories.json", async () =>
     (await sql`SELECT to_jsonb(t) AS j FROM scm.categories t WHERE t.company_id = ${cid} ORDER BY sort_order`).map((r) => r.j)
   );
