@@ -80,7 +80,7 @@ async function sweep() {
              SUM(i.qty)::numeric AS doc_qty
         FROM scm.delivery_orders d
         JOIN scm.delivery_order_items i ON i.delivery_order_id = d.id
-       WHERE upper(d.status) = ANY(${SHIPPED})
+       WHERE upper(d.status::text) = ANY(${SHIPPED})
          AND NOT (i.item_code ILIKE 'SVC-%' OR lower(COALESCE(i.item_group,'')) = 'service')
        GROUP BY 1, 2, 3
     ), moves AS (
@@ -89,7 +89,7 @@ async function sweep() {
            - SUM(CASE WHEN m.movement_type = 'IN'  THEN ABS(m.qty) ELSE 0 END)::numeric AS net_out
         FROM scm.inventory_movements m
         JOIN scm.delivery_orders d ON d.id = m.source_doc_id
-       WHERE m.source_doc_type = 'DO' AND upper(d.status) = ANY(${SHIPPED})
+       WHERE m.source_doc_type = 'DO' AND upper(d.status::text) = ANY(${SHIPPED})
        GROUP BY 1, 2
     )
     SELECT COALESCE(l.doc_no, (SELECT do_number FROM scm.delivery_orders WHERE id = m.doc_id)) AS doc_no,
@@ -106,7 +106,7 @@ async function sweep() {
              SUM(i.qty_accepted)::numeric AS doc_qty
         FROM scm.grns g
         JOIN scm.grn_items i ON i.grn_id = g.id
-       WHERE upper(g.status) = 'POSTED'
+       WHERE upper(g.status::text) = 'POSTED'
          AND NOT (i.material_code ILIKE 'SVC-%' OR lower(COALESCE(i.item_group,'')) = 'service')
        GROUP BY 1, 2, 3
     ), moves AS (
@@ -115,7 +115,7 @@ async function sweep() {
         FROM scm.inventory_movements m
         JOIN scm.grns g ON g.id = m.source_doc_id
        WHERE m.source_doc_type = 'GRN' AND m.movement_type = 'IN'
-         AND upper(g.status) = 'POSTED'
+         AND upper(g.status::text) = 'POSTED'
        GROUP BY 1, 2
     )
     SELECT COALESCE(l.doc_no, (SELECT grn_number FROM scm.grns WHERE id = m.doc_id)) AS doc_no,
