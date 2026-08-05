@@ -510,6 +510,10 @@ inventory.get('/products', async (c) => {
   /* HELD (consignment-sourced) open-lot qty per product_code — the other half of
      the lot ledger, read straight from the lots (see the split below). */
   const heldQty = new Map<string, number>();
+  /* HELD (consignment) value — reported SEPARATELY, never inside inventory
+     value. Owner, 2026-08-06: "分成两个 value：一个是 inventory value,一个是
+     consignment value". */
+  const heldValueSen = new Map<string, number>();
   /* On-hand standing in a NON-SELLING warehouse (showroom / display / service),
      per product_code. Feeds `sellable_surplus_qty` below so the list's Dead/Spare
      badge stops calling a display piece idle. */
@@ -638,16 +642,23 @@ inventory.get('/products', async (c) => {
       if (!isConsignmentLotSource(r.source_doc_type, r.source_doc_no)) {
         ownedValueSen.set(r.product_code, (ownedValueSen.get(r.product_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
         ownedQty.set(r.product_code, (ownedQty.get(r.product_code) ?? 0) + Number(r.qty_remaining ?? 0));
+        /* AGE from OWNED lots only. It used to read every open lot, so a row
+           with zero owned stock aged by somebody else's consignment pieces —
+           sorting by Age then buried the goods that had really sat longest.
+           Owner, 2026-08-06: "age 的计算为什么不是根据库存？当我 sort 的时候…
+           我就看不到到底是哪一个东西放得最久". No owned lot → no age. */
+        if (r.received_at) {
+          const cur = oldestLot.get(r.product_code);
+          if (!cur || r.received_at < cur) oldestLot.set(r.product_code, r.received_at);
+        }
       } else {
         /* HELD read from the lots directly, not derived as (movement stock −
            owned lots). The derived form mixed the two ledgers, so whenever they
            disagreed the held figure absorbed the difference and reported a
            consignment quantity that no document supports. */
         heldQty.set(r.product_code, (heldQty.get(r.product_code) ?? 0) + Number(r.qty_remaining ?? 0));
+        heldValueSen.set(r.product_code, (heldValueSen.get(r.product_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
       }
-      if (!r.received_at) continue;
-      const cur = oldestLot.get(r.product_code);
-      if (!cur || r.received_at < cur) oldestLot.set(r.product_code, r.received_at);
     }
   }
 
@@ -752,6 +763,7 @@ inventory.get('/products', async (c) => {
          (movement stock − owned lots), which mixed the two ledgers so that any
          disagreement between them was silently reported as consignment stock. */
       held_qty:            lotHeld,
+      held_value_sen:      Math.round(heldValueSen.get(code) ?? 0),
       /* The movement rollup and whether it disagrees with the lots. Carried so
          the screen can MARK a divergent row instead of quietly presenting one
          ledger as the truth — the divergence is a real data fault

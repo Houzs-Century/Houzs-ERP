@@ -462,10 +462,16 @@ const BalancesTab = ({
     ? baseRows.filter((r) => (r.sellable_surplus_qty ?? r.surplus_qty ?? 0) > 0)
     : baseRows;
 
+  /* Own vs consignment, SEPARATED end to end (owner, 2026-08-06: "分成两个
+     value：一个是 inventory value,一个是 consignment value…stock 也可以分成
+     自己的 stock 和 consignment stock"). The drawer already speaks this
+     language; the list and the cards now match it. */
   const stats = useMemo(() => ({
-    totalQty: visibleRows.reduce((s, r) => s + (r.total_qty ?? 0), 0),
+    ownQty: visibleRows.reduce((s, r) => s + (r.owned_qty ?? r.total_qty ?? 0), 0),
+    heldQty: visibleRows.reduce((s, r) => s + (r.held_qty ?? 0), 0),
     distinctSku: visibleRows.length,
     totalValue: visibleRows.reduce((s, r) => s + (r.total_value_sen ?? 0), 0),
+    heldValue: visibleRows.reduce((s, r) => s + (r.held_value_sen ?? 0), 0),
   }), [visibleRows]);
 
   // `visibleRows` is deliberately EMPTY while a search/filter is in flight, so
@@ -477,10 +483,11 @@ const BalancesTab = ({
 
   return (
     <>
-      <div className={STAT_GRID_3}>
-        <StatCard label="Total Qty" value={fmtQty(stats.totalQty)} pending={statsPending} />
-        <StatCard label="Distinct SKUs" value={stats.distinctSku} pending={statsPending} />
+      <div className={STAT_GRID}>
+        <StatCard label="Own Stock Qty" value={fmtQty(stats.ownQty)} pending={statsPending} />
+        <StatCard label="Consignment Qty" value={fmtQty(stats.heldQty)} pending={statsPending} />
         <StatCard label="Inventory Value" value={fmtRm(stats.totalValue)} pending={statsPending} />
+        <StatCard label="Consignment Value" value={fmtRm(stats.heldValue)} pending={statsPending} />
       </div>
 
       {/* Dead-stock view — SKUs with Spare (surplus) stock beyond all demand.
@@ -591,46 +598,50 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
   {
     key: 'stock',
     label: 'Stock',
-    /* 80px fitted the bare number and clipped the held suffix the moment it
-       appeared — PJ SHOWROOM rows rendered "0 +2 he…". The cell carries up to
-       "<owned> +<held> held", so the width has to cover both figures. */
-    width: '130px',
+    width: '85px',
     align: 'right',
-    /* Sorts and reads on the OWNED figure. Owner, 2026-08-05: "consignment 的东西
-       怎么可以放进 my stocks 里面，还呈现出来？你这样子我会以为我有货". Twelve of
-       the fourteen pieces standing in PJ SHOWROOM are somebody else's, and this
-       column blended them into one number.
-       The held units are not hidden — they ride beside it in the muted "+N held"
-       so the goods can still be found — but the figure that reads as "my stock",
-       and the one the column sorts by, is now the owned one. Same words the Stock
-       Breakdown drawer already uses. */
+    /* OWN stock only — one clean number, nothing to mentally add up. Owner,
+       2026-08-05: "consignment 的东西怎么可以放进 my stocks 里面…我会以为我有货";
+       2026-08-06: "stock 也可以分成自己的 stock 和 consignment stock…就不用去
+       算 2 加 2 了". Consignment moved to its OWN column, mirroring the Stock
+       Breakdown drawer's split. */
     getValue: (r) => r.owned_qty ?? r.total_qty,
     render: (r) => {
       const owned = r.owned_qty ?? r.total_qty;
-      const held = r.held_qty ?? Math.max(0, r.total_qty - owned);
       const qtyClass = owned > 0 ? styles.numCellPos
         : owned < 0 ? styles.numCellNeg
         : styles.numCellZero;
       return (
         <span className={`${styles.numCell} ${qtyClass}`}>
           {fmtQty(owned)}
-          {held > 0 && (
-            <span
-              className={styles.numCellZero}
-              title={`${fmtQty(held)} held on consignment — not owned, excluded from value`}
-            >{` +${fmtQty(held)} held`}</span>
-          )}
-          {/* The two ledgers disagree for this SKU. Marked, not hidden: the row
-              is built from the lot ledger (which matched the documents on every
-              SKU reconciled on 2026-08-05), but a divergence is a real data
-              fault and the planner should know before trusting the number.
-              Actions -> "Reconcile a SKU" settles it from the documents. */}
+          {/* The two ledgers disagree for this SKU. Marked, not hidden — Actions
+              -> "Reconcile a SKU" settles it from the documents. */}
           {r.ledger_mismatch && (
             <span
               className={styles.numCellNeg}
-              title={`Ledgers disagree: the movement ledger says ${fmtQty(r.movement_qty ?? 0)}, the lot ledger says ${fmtQty(owned + held)}. This row uses the lot ledger. Run Actions → "Reconcile a SKU" to settle it against the documents.`}
+              title={`Ledgers disagree: the movement ledger says ${fmtQty(r.movement_qty ?? 0)}, the lot ledger says ${fmtQty(owned + (r.held_qty ?? 0))}. This row uses the lot ledger. Run Actions → "Reconcile a SKU" to settle it against the documents.`}
             >{' ⚠'}</span>
           )}
+        </span>
+      );
+    },
+  },
+  {
+    key: 'consignment',
+    label: 'Consignment',
+    width: '105px',
+    align: 'right',
+    /* Somebody else's goods standing with us — findable, sortable, and never
+       mixed into Stock, Available, Spare or any value figure. */
+    getValue: (r) => r.held_qty ?? 0,
+    render: (r) => {
+      const held = r.held_qty ?? 0;
+      return (
+        <span
+          className={`${styles.numCell} ${styles.numCellZero}`}
+          title={held > 0 ? `${fmtQty(held)} held on consignment — not owned; value ${fmtRm(r.held_value_sen ?? 0)} excluded from inventory value` : undefined}
+        >
+          {held > 0 ? fmtQty(held) : '—'}
         </span>
       );
     },
