@@ -192,6 +192,10 @@ type SoHeader = {
   version: number;
   debtor_name: string | null;
   status: string | null;
+  /* The staff row this order is credited to. Served by the detail route and read
+     by MobileSODetail already; this form was typed without it, which is part of
+     why it never seeded the picker. */
+  salesperson_id: string | number | null;
   phone: string | null;
   email: string | null;
   ref: string | null;
@@ -908,11 +912,20 @@ export function MobileNewSO({
         setOrigCity(h.city ?? "");
         setOrigAddress1(h.address1 ?? "");
         setOrigAddress2(h.address2 ?? "");
-        /* The pristine baseline — the SAME builder save() uses, fed the values
-           just seeded above, so an untouched form diffs to {}. salespersonId is
-           seeded to "" here exactly as the picker is (this form never seeds it
-           from the row), and "" maps to the same null save() would send, so an
-           untouched picker is not dirty and salesperson_id is left alone. */
+        /* SEED THE PICKER FROM THE ROW. Owner, 2026-08-05, on an order whose
+           salesperson is Pei Fen: "当我点选 ID 的时候，跳出第一个人的时候，他就
+           直接变成我的名字了，那么奇怪".
+           The form used to leave salespersonId as "" on edit, and "" renders as
+           "{me} (me)" — the first option in the picker. So every edit screen
+           claimed the order was the CURRENT user's, whoever actually sold it.
+           The stored value was safe (an untouched picker sends null and
+           salesperson_id is left alone), but the screen said otherwise, and an
+           operator "correcting" what they saw would have reassigned a colleague's
+           sale to themselves.
+           Seeding it means the picker shows the truth. The pristine baseline
+           below is seeded to the SAME value, so an untouched picker still diffs
+           to {} and still sends nothing. */
+        setSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
         originalHeaderPatchRef.current = soHeaderPatchFrom({
           name: h.debtor_name ?? "",
           custRef: h.customer_so_no ?? h.ref ?? "",
@@ -934,7 +947,9 @@ export function MobileNewSO({
           ecName: h.emergency_contact_name ?? "",
           ecPhone: toE164(h.emergency_contact_phone),
           ecRel: h.emergency_contact_relationship ?? "",
-          salespersonId: null,
+          /* Matches the seed above, not a hard null: the baseline has to describe
+             the form as it now stands, or a form nobody touched reads as dirty. */
+          salespersonId: h.salesperson_id != null ? String(h.salesperson_id) : null,
         });
         const liveItems = (detail.items ?? []).filter((it) => !it.cancelled);
         setOrigItems(liveItems);
