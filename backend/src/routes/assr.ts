@@ -2203,7 +2203,7 @@ app.post("/:id/logistics/:logId/archive", requirePermission("service_cases.write
 });
 
 // Attachment archive — hard replacement for the old "delete" wish.
-app.post("/attachments/:attId/archive", requirePermission("service_cases.write"), async (c) => {
+app.post("/attachments/:attId/archive", requireAnyPermission(["service_cases.write", "service_cases.manage"]), async (c) => {
   const attId = parseInt(c.req.param("attId"), 10);
   if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
   const userId = (c as any).get?.("userId") ?? 0;
