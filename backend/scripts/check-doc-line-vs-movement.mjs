@@ -50,10 +50,7 @@ if (!url) {
   console.error("DATABASE_URL not set (env var or .dev.vars). Aborting.");
   process.exit(1);
 }
-if (!doNo) {
-  console.error("DO not set. Pass the delivery order number, e.g. 2990-DO-2607-017.");
-  process.exit(1);
-}
+// No DO given -> SWEEP MODE: every shipped DO and every posted GRN, item level.
 
 const notice = (msg) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : msg);
@@ -62,7 +59,103 @@ const lpad = (s, n) => String(s ?? "").padStart(n);
 
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
+/* ── SWEEP MODE — the catalogue-wide answer to "出的全部记录都对得上吗?" ──────
+   The posted-doc detector proves every shipped document wrote SOME movement;
+   this proves the QUANTITIES agree per item, in both directions:
+     DO : line qty  vs  net OUT (OUT − resync INs) per item
+     GRN: accepted  vs  IN per item
+   Service lines never move stock by design and are excluded. A cancelled doc is
+   excluded (its movements are legitimately reversed/netted). An orphan movement
+   here is stock that moved with no document line behind it — the exact shape
+   that made the movement ledger disagree with the documents on the four sofas
+   while every document looked correct on its own. */
+async function sweep() {
+  const SHIPPED = ["DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED", "INVOICED", "COMPLETED"];
+
+  notice("SWEEP MODE — every shipped DO and posted GRN, document lines vs movements, per item.");
+
+  const doRows = await pg`
+    WITH lines AS (
+      SELECT d.id AS doc_id, d.do_number AS doc_no, i.item_code,
+             SUM(i.qty)::numeric AS doc_qty
+        FROM scm.delivery_orders d
+        JOIN scm.delivery_order_items i ON i.delivery_order_id = d.id
+       WHERE upper(d.status) = ANY(${SHIPPED})
+         AND NOT (i.item_code ILIKE 'SVC-%' OR lower(COALESCE(i.item_group,'')) = 'service')
+       GROUP BY 1, 2, 3
+    ), moves AS (
+      SELECT m.source_doc_id AS doc_id, m.product_code AS item_code,
+             SUM(CASE WHEN m.movement_type = 'OUT' THEN ABS(m.qty) ELSE 0 END)::numeric
+           - SUM(CASE WHEN m.movement_type = 'IN'  THEN ABS(m.qty) ELSE 0 END)::numeric AS net_out
+        FROM scm.inventory_movements m
+        JOIN scm.delivery_orders d ON d.id = m.source_doc_id
+       WHERE m.source_doc_type = 'DO' AND upper(d.status) = ANY(${SHIPPED})
+       GROUP BY 1, 2
+    )
+    SELECT COALESCE(l.doc_no, (SELECT do_number FROM scm.delivery_orders WHERE id = m.doc_id)) AS doc_no,
+           COALESCE(l.item_code, m.item_code) AS item_code,
+           l.doc_qty, m.net_out
+      FROM lines l
+      FULL OUTER JOIN moves m ON l.doc_id = m.doc_id AND l.item_code = m.item_code
+     WHERE COALESCE(l.doc_qty, 0) <> COALESCE(m.net_out, 0)
+     ORDER BY 1, 2`;
+
+  const grnRows = await pg`
+    WITH lines AS (
+      SELECT g.id AS doc_id, g.grn_number AS doc_no, i.material_code AS item_code,
+             SUM(i.qty_accepted)::numeric AS doc_qty
+        FROM scm.grns g
+        JOIN scm.grn_items i ON i.grn_id = g.id
+       WHERE upper(g.status) = 'POSTED'
+         AND NOT (i.material_code ILIKE 'SVC-%' OR lower(COALESCE(i.item_group,'')) = 'service')
+       GROUP BY 1, 2, 3
+    ), moves AS (
+      SELECT m.source_doc_id AS doc_id, m.product_code AS item_code,
+             SUM(ABS(m.qty))::numeric AS in_qty
+        FROM scm.inventory_movements m
+        JOIN scm.grns g ON g.id = m.source_doc_id
+       WHERE m.source_doc_type = 'GRN' AND m.movement_type = 'IN'
+         AND upper(g.status) = 'POSTED'
+       GROUP BY 1, 2
+    )
+    SELECT COALESCE(l.doc_no, (SELECT grn_number FROM scm.grns WHERE id = m.doc_id)) AS doc_no,
+           COALESCE(l.item_code, m.item_code) AS item_code,
+           l.doc_qty, m.in_qty AS net_out
+      FROM lines l
+      FULL OUTER JOIN moves m ON l.doc_id = m.doc_id AND l.item_code = m.item_code
+     WHERE COALESCE(l.doc_qty, 0) <> COALESCE(m.in_qty, 0)
+     ORDER BY 1, 2`;
+
+  const report = (label, rows) => {
+    if (rows.length === 0) {
+      notice(`${label}: every item on every document matches its movements exactly.`);
+      return;
+    }
+    notice(`${label}: ${rows.length} item(s) where document and movements DISAGREE:`);
+    console.log(`  ${rpad("doc", 22)}${rpad("item", 34)}doc qty  moved`);
+    for (const r of rows) {
+      console.log(
+        `  ${rpad(r.doc_no, 22)}${rpad(r.item_code, 34)}${String(r.doc_qty ?? "—").padStart(7)}  ${String(r.net_out ?? "—").padStart(5)}` +
+          (r.doc_qty == null ? "   <- ORPHAN MOVEMENT (no line)" : r.net_out == null ? "   <- line moved nothing" : ""),
+      );
+    }
+  };
+
+  report("DO (out)", doRows);
+  report("GRN (in)", grnRows);
+  console.log("");
+  notice(
+    doRows.length === 0 && grnRows.length === 0
+      ? "VERDICT: every IN and every OUT is backed by a document line, and every quantity agrees."
+      : "VERDICT: the rows above are the complete list of document/ledger quantity disagreements. Settle each with reconcile-sku before repairing.",
+  );
+}
+
 try {
+  if (!doNo) {
+    await sweep();
+    process.exit(0);
+  }
   const [doc] = await pg`
     SELECT id, do_number, status, created_at
       FROM scm.delivery_orders

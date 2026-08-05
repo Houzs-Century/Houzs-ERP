@@ -13,8 +13,8 @@ on:
   workflow_dispatch:
     inputs:
       do:
-        description: 'Delivery Order number, e.g. 2990-DO-2607-017'
-        required: true
+        description: 'Delivery Order number, e.g. 2990-DO-2607-017. Leave BLANK to sweep EVERY shipped DO and posted GRN, item by item.'
+        required: false
         type: string
 
 concurrency:
