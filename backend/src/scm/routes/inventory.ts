@@ -40,7 +40,7 @@ import { enrichVariantKeyRowsWithFabricSupplierCode } from '../lib/fabric-suppli
 import {
   isConsignmentLotSource, isMakeToOrderCategory, distributeAssignedToLots,
 } from '../lib/inventory-movements';
-import { computeVariantKey, effectiveDelivery, type VariantAttrs } from '../shared';
+import { computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
@@ -644,6 +644,30 @@ inventory.get('/products', async (c) => {
 
   const enriched = products.map((p) => {
     const code = String(p.product_code);
+    /* SERVICE SKUs hold no stock — a delivery fee is not a thing on a shelf.
+       They were nonetheless getting the SO-demand aggregates summed onto them,
+       so SVC-DELIVERY read "Scheduled −18 · Unscheduled 20 · Spare −38" as if
+       the warehouse were 38 delivery fees short. Owner, 2026-08-05:
+       "这种 service 都不需要计算 qty 啊".
+       The ROW stays — the list has a SERVICE category chip and removing it would
+       empty that filter — but every quantity on it is reported as zero, because
+       zero is the truth. Classified through the SHARED isServiceLine (item group
+       / category / SVC- code prefix), never a category string compared inline,
+       so this agrees with the DO, GRN and return paths that already exclude
+       service from stock movement. */
+    if (isServiceLine({ itemGroup: (p as { item_group?: string | null }).item_group ?? null,
+                        category: (p as { category?: string | null }).category ?? null,
+                        itemCode: code })) {
+      return {
+        ...p,
+        total_qty: 0, total_value_sen: 0, owned_qty: 0, held_qty: 0,
+        committed_scheduled: 0, unscheduled_qty: 0, reserved_total: 0,
+        available_qty: 0, surplus_qty: 0,
+        sellable_surplus_qty: 0, non_selling_qty: 0,
+        incoming_qty: 0, incoming_pos: [],
+        oldest_lot_at: null,
+      };
+    }
     const stock = warehouseId ? (whStock.get(code) ?? 0) : Number(p.total_qty ?? 0);
     // OWNED value from the open lots (consignment excluded), for BOTH scopes —
     // replaces the totals-view / v_inventory_value figures, which both counted
