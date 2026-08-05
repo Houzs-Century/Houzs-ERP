@@ -208,6 +208,11 @@ export type MobileScanLine = {
   suggestedCode: string;
   confidence: number;
   itemCode: string; // the SKU code the scan matched ('' = no match)
+  /* HOW itemCode was reached. 'exact' is the reader's code found verbatim; the
+     others are near matches (findNearestSku), which is what turns a slightly
+     misread code into the real SKU NAME on the line instead of raw handwriting.
+     The operator still picks the product, so nothing is auto-committed here. */
+  matchSource: import("../vendor/scm/lib/sku-nearest-match").SkuMatchSource | null;
 };
 export type MobileScanPayment = {
   method: string; // Cash / Merchant / Online (3-method model)
@@ -469,6 +474,7 @@ function buildPrefill(
       suggestedCode: l.suggestedCode,
       confidence: l.confidence,
       itemCode: l.itemCode,
+      matchSource: l.matchSource,
     })),
     sampleId: d.sampleId,
     salesperson: repName || rec.salesRep || null,
