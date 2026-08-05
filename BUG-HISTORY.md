@@ -1,5 +1,13 @@
 ## 2026-08-05
 
+### [MEDIUM] Held consignment units leaked into Available and Spare — the owned/held rule, regressed by the one-number unification
+- **Symptom.** Owner, same day, on BOOQIT-1A(LHF): Stock `0 +2 held` yet Available `2` and Spare `2` — *"为什么他的 consignment 会 show 了这两个？好像显得我们还有过量。这个不是之前处理过这样的问题的吗？"* He is right that it was handled: 2026-07-25 and that morning's owned/held split kept consignment out of the Stock figure and out of every value figure.
+- **Root cause.** The same day's "one stock number per row" fix set the arithmetic base to `lotOwned + lotHeld` so the column and the subtraction would agree. The column renders owned and held SEPARATELY, so it stayed honest — but `available = stock + incoming − scheduled` now carried the held units, and Spare inherited them. The unification fixed "row contradicts itself" and quietly reintroduced "somebody else's goods read as mine" one column to the right.
+- **Fix.** Arithmetic stands on OWNED only: `available = owned + incoming − scheduled`; the row still displays `+N held`. `sellable_surplus_qty` subtracts only the owned portion parked in non-selling warehouses (the non-selling balance counts the held units, which are already out of `available` — subtracting them twice could hide a real dead-stock candidate). Available's tooltip now says "owned", and names the held exclusion when present.
+- **The class, for next time.** When two safeguards guard the same rule in different places (Stock column vs Available arithmetic), a refactor that unifies their inputs must re-check BOTH. The rule lives in the arithmetic, not just in the label.
+- **Ref:** #<PR>. `fix/held-out-of-available` 2026-08-05.
+
+
 ### [HIGH] Four sofa lots consumed twice — the ledger audit, what it proved, and the three guards it produced
 - **Symptom.** Owner: *"为什么会货被吃两次呢？"* after the reconstruct dry-run classified four lots `received=1 consumed=2 remaining=0` (XAMMAR-1A/2A on `2990-PO-2606-011`, OMMBUC-1A/2A on `2990-PO-2606-005`) and refused them.
 - **What the audits established (four parallel investigations + production checks, all evidence in the run logs).**

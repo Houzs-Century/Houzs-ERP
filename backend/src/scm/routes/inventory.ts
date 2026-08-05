@@ -727,7 +727,13 @@ inventory.get('/products', async (c) => {
     const committed = committedScheduled.get(code) ?? 0;
     const unsched = unscheduled.get(code) ?? 0;
     const inc = incoming.get(code) ?? 0;
-    const available = stock + inc - committed;
+    /* Arithmetic stands on OWNED only. `stock` (owned + held) is what the row
+       DISPLAYS — the held suffix keeps consignment findable — but a held unit is
+       somebody else's goods and must not read as available or spare. Owner,
+       2026-07-25 and again 2026-08-05 when the one-number unification briefly
+       let held leak into Available/Spare: "consignment 的东西怎么可以放进 my
+       stocks 里面 … 你这样子我会以为我有货" / "好像显得我们还有过量". */
+    const available = lotOwned + inc - committed;
     const pos = (incomingPos.get(code) ?? []).slice().sort((a, b) => byDateAsc(a.eta, b.eta));
     return {
       ...p,
@@ -764,7 +770,11 @@ inventory.get('/products', async (c) => {
          (Available − Unscheduled) and is what the column's tooltip explains.
          Floored at 0: a SKU whose whole spare is standing in a showroom is not
          "negatively idle", it simply is not a dead-stock candidate. */
-      sellable_surplus_qty: Math.max(0, (available - unsched) - (nonSellingQty.get(code) ?? 0)),
+      /* Held is already out of `available`, and the non-selling balance COUNTS
+         those held units (they stand in the showroom), so subtract only the
+         OWNED portion parked in non-selling warehouses — else held would be
+         removed twice and a real dead-stock candidate could hide. */
+      sellable_surplus_qty: Math.max(0, (available - unsched) - Math.max(0, (nonSellingQty.get(code) ?? 0) - lotHeld)),
       non_selling_qty:     nonSellingQty.get(code) ?? 0,
       incoming_qty:        inc,
       incoming_pos:        pos,
