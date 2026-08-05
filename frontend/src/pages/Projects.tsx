@@ -737,6 +737,19 @@ function viewableMime(name: string): string | null {
   return null;
 }
 
+// Owner 2026-08-04: in the project EXPORT only (not the on-screen table), these
+// named event organisers — individual people, not companies — are anonymised to
+// "EO". Everything else (retailer organisers like Megahome/Bighome, MALL MGMT,
+// Solo) exports verbatim. Matched by LEADING name so the parenthetical team /
+// branch suffix doesn't matter: "KAI HAO (KL, CHEN)", "VINCENT (VTEAM EVENT)",
+// "MR OOI (TS MOON)", "SYELIN (EV PLAN MKTG)" all collapse to "EO".
+const EO_ANON_ORGANIZERS = ["kai hao", "vincent", "mr ooi", "syelin"];
+function exportOrganizer(organizer: string | null): string {
+  const v = (organizer ?? "").trim();
+  const low = v.toLowerCase();
+  return EO_ANON_ORGANIZERS.some((n) => low.startsWith(n)) ? "EO" : v;
+}
+
 /* Canonical Malaysian states — aligned to `scm.my_localities` after mig 0172
    (owner 2026-07-22). PMS used to store an UPPERCASE short list (`JOHOR` /
    `KL` / `PENANG`) while SCM stored the Title Case full names (`Johor` /
@@ -1212,7 +1225,7 @@ function ProjectsListView() {
         .map((c) => ({ key: c.key, label: c.label || c.key, getValue: c.getValue! }));
       // Owner 2026-07-23: add an Organizer column to the EXPORT only (not the
       // on-screen table), placed right after Brand.
-      const orgCol = { key: "organizer", label: "Organizer", getValue: (r: ProjectRow) => r.organizer ?? "" };
+      const orgCol = { key: "organizer", label: "Organizer", getValue: (r: ProjectRow) => exportOrganizer(r.organizer) };
       const brandIdx = csvCols.findIndex((c) => c.label === "Brand");
       if (brandIdx >= 0) csvCols.splice(brandIdx + 1, 0, orgCol);
       else csvCols.push(orgCol);
@@ -7056,6 +7069,11 @@ function TaskAttachmentRow({
   toast?: ReturnType<typeof useToast>;
 }) {
   const defectCtx = useContext(DefectActionsCtx);
+  // Owner 2026-08-04: deleting a file is a MANAGER action. projects.write (held
+  // by Logistic — e.g. Syu — and Sales) can upload and edit, but must NOT remove
+  // files; only projects.manage (BD / managers / directors) sees the trash.
+  const { can } = useAuth();
+  const canDeleteFile = can("projects.manage");
   const isDefectFile = /^defect (list|item)/i.test((itemTitle ?? "").trim());
   const fileActions = isDefectFile && defectCtx
     ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
@@ -7190,7 +7208,7 @@ function TaskAttachmentRow({
           >
             <Download size={10} /> Download
           </button>
-          {canManage && (
+          {canManage && canDeleteFile && (
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(); }}
               className="rounded p-0.5 text-ink-muted hover:bg-err/10 hover:text-err"
