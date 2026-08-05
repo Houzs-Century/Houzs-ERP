@@ -683,7 +683,8 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     render: (r) => (
       <span
         className={`${styles.numCell} ${r.available_qty < 0 ? styles.numCellNeg : r.available_qty > 0 ? styles.numCellPos : styles.numCellZero}`}
-        title={`${fmtQty(r.total_qty)} stock + ${fmtQty(r.incoming_qty)} incoming − ${fmtQty(r.committed_scheduled)} scheduled = ${fmtQty(r.available_qty)} available`}
+        title={`${fmtQty(r.owned_qty ?? r.total_qty)} owned + ${fmtQty(r.incoming_qty)} incoming − ${fmtQty(r.committed_scheduled)} scheduled = ${fmtQty(r.available_qty)} available` +
+          ((r.held_qty ?? 0) > 0 ? ` (held ${fmtQty(r.held_qty ?? 0)} on consignment — not ours, excluded)` : '')}
       >
         {fmtQty(r.available_qty)}
       </span>
