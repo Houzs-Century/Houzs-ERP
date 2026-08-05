@@ -620,6 +620,17 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
               title={`${fmtQty(held)} held on consignment — not owned, excluded from value`}
             >{` +${fmtQty(held)} held`}</span>
           )}
+          {/* The two ledgers disagree for this SKU. Marked, not hidden: the row
+              is built from the lot ledger (which matched the documents on every
+              SKU reconciled on 2026-08-05), but a divergence is a real data
+              fault and the planner should know before trusting the number.
+              Actions -> "Reconcile a SKU" settles it from the documents. */}
+          {r.ledger_mismatch && (
+            <span
+              className={styles.numCellNeg}
+              title={`Ledgers disagree: the movement ledger says ${fmtQty(r.movement_qty ?? 0)}, the lot ledger says ${fmtQty(owned + held)}. This row uses the lot ledger. Run Actions → "Reconcile a SKU" to settle it against the documents.`}
+            >{' ⚠'}</span>
+          )}
         </span>
       );
     },

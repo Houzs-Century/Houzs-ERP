@@ -137,6 +137,12 @@ export type InventoryProductTotal = {
      call sites fall back to surplus_qty, i.e. the old behaviour. */
   non_selling_qty?: number;
   sellable_surplus_qty?: number;
+  /* The MOVEMENT rollup (SUM of IN − OUT) and whether it disagrees with the lot
+     ledger the row is built from. Comparison only, never arithmetic: a mismatch
+     is a real data fault (docs/inventory-ledger-divergence-coe.md), and the row
+     marks it rather than presenting one ledger as the truth. */
+  movement_qty?: number;
+  ledger_mismatch?: boolean;
   oldest_lot_at: string | null;
 };
 
