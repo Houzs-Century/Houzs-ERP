@@ -1,0 +1,54 @@
+name: SO line totalHeight fix (DRY-RUN gated)
+
+# Adds the missing totalHeight to ONE SO line's variants so its variant key
+# agrees with its own DO, letting doc-relabel converge the TRION doc-conflict
+# (2026-08-05). Scoped to a single named line; DRY-RUN by default.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Type APPLY to commit. Anything else = DRY-RUN.'
+        required: false
+        default: ''
+        type: string
+      confirm:
+        description: 'Type exactly: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: so-line-totalheight-fix
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - id: mode
+        working-directory: .
+        run: |
+          if [ "${{ github.event.inputs.apply }}" = "APPLY" ] && [ "${{ github.event.inputs.confirm }}" = "I HAVE REVIEWED THE DRY-RUN" ]; then
+            echo "apply=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::APPLY confirmed — the write will be COMMITTED."
+          else
+            echo "apply=false" >> "$GITHUB_OUTPUT"
+          fi
+      - run: node scripts/fix-so-line-totalheight.mjs
+        env:
+          APPLY: ${{ steps.mode.outputs.apply }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
