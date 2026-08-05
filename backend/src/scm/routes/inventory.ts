@@ -616,6 +616,15 @@ inventory.get('/products', async (c) => {
       // OWNED qty (consignment excluded) — the divisor for avg unit cost so the
       // average isn't diluted by consignment units carried in total_qty.
       owned_qty:           Math.round(ownedQty.get(code) ?? 0),
+      /* HELD, NOT OWNED. total_qty has always carried consignment units and the
+         list had no way to say so, which is how 12 of the 14 pieces standing in
+         PJ SHOWROOM read as the owner's stock. Owner, 2026-08-05: "consignment
+         的东西怎么可以放进 my stocks 里面 … 你这样子我会以为我有货".
+         Derived, never stored: total minus owned, floored at 0 so a rounding
+         edge can never invent a negative. The Stock Breakdown drawer already
+         speaks this language ("CONSIGNMENT — HELD, NOT OWNED"); the list can now
+         use the same words instead of a single blended number. */
+      held_qty:            Math.max(0, stock - Math.round(ownedQty.get(code) ?? 0)),
       committed_scheduled: committed,
       unscheduled_qty:     unsched,
       reserved_total:      committed + unsched, // whole open demand (continuity)
@@ -946,6 +955,27 @@ inventory.get('/analytics', async (c) => {
   const lotRows = lots ?? [];
   const cogsRows = cogs ?? [];
 
+  /* WHERE the stock is standing decides whether "no sale" means anything.
+     Owner, 2026-08-05: "我的 dead stock 里面怎么会有 dead stock 呢？因为它明明是
+     showroom 的 display 啊".
+     Dead stock is defined below as "has on-hand value but no sale in the window",
+     which a display piece satisfies FOREVER — standing there IS its job. Same for
+     a unit sent back to the supplier for service. Neither is a slow seller, and
+     flagging them buries the ones that are.
+     `warehouses.type` already carries this (mig 0171 keeps is_showroom in step
+     with `type = 'showroom'`), so nothing new is stored — the axis was there and
+     dead stock simply never read it. */
+  const NON_SELLING_TYPES = new Set(['showroom', 'display', 'service']);
+  const nonSellingWh = new Set<string>();
+  {
+    const { data: whRows } = await scopeToCompany(
+      sb.from('warehouses').select('id, type'), c,
+    );
+    for (const w of (whRows ?? []) as Array<{ id: string; type: string | null }>) {
+      if (NON_SELLING_TYPES.has(String(w.type ?? '').toLowerCase())) nonSellingWh.add(w.id);
+    }
+  }
+
   // Aging buckets (days since lot received).
   const BUCKETS = [
     { key: '0-30', label: '0–30 days', max: 30 },
@@ -957,6 +987,9 @@ inventory.get('/analytics', async (c) => {
   const aging = BUCKETS.map((b) => ({ key: b.key, label: b.label, qty: 0, valueSen: 0 }));
   // Per-product current on-hand value + name.
   const prod = new Map<string, { name: string; qty: number; valueSen: number }>();
+  /* Same shape as `prod`, but only stock standing in a SELLING warehouse — the
+     population the dead-stock question is actually about. */
+  const sellable = new Map<string, { name: string; qty: number; valueSen: number }>();
   let totalValueSen = 0;
   for (const l of lotRows) {
     // Consignment stock is held, not owned — it shows QUANTITY on the drawer/list
@@ -975,6 +1008,17 @@ inventory.get('/analytics', async (c) => {
     const p = prod.get(code) ?? { name: String(l.product_name ?? code), qty: 0, valueSen: 0 };
     p.qty += qty; p.valueSen += val;
     prod.set(code, p);
+
+    /* Kept SEPARATE from `prod` on purpose. Owned display stock is still the
+       owner's money, so it stays in total value and in the aging buckets (his
+       decision, 2026-08-05) — it is only the DEAD-STOCK question it must not
+       answer. Excluding it from `prod` would have quietly shrunk the valuation
+       too, which is a different and unasked-for change. */
+    if (!nonSellingWh.has(String(l.warehouse_id ?? ''))) {
+      const s = sellable.get(code) ?? { name: String(l.product_name ?? code), qty: 0, valueSen: 0 };
+      s.qty += qty; s.valueSen += val;
+      sellable.set(code, s);
+    }
   }
 
   // Trailing-window COGS per product + all-time last-sold.
@@ -998,8 +1042,10 @@ inventory.get('/analytics', async (c) => {
   const turns = totalValueSen > 0 ? annualizedCogs / totalValueSen : 0;
   const daysOnHand = trailingCogsTotal > 0 ? (totalValueSen * days) / trailingCogsTotal : null;
 
-  // Dead stock — has on-hand value but no sale inside the window.
-  const deadStock = [...prod.entries()]
+  /* Dead stock — has SELLABLE on-hand value but no sale inside the window.
+     Reads `sellable`, not `prod`: a showroom/display/service unit is where it is
+     meant to be, so "never sold" says nothing about it. */
+  const deadStock = [...sellable.entries()]
     .filter(([code]) => !(trailingCogs.get(code) ?? 0))
     .map(([code, p]) => ({
       product_code: code, product_name: p.name, qty: p.qty, valueSen: p.valueSen,
