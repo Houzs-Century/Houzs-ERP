@@ -107,6 +107,8 @@ export type InventoryProductTotal = {
   owned_qty?: number;
   /** Consignment units standing in the warehouse — held, not owned. */
   held_qty?: number;
+  /* Consignment value, reported separately — never inside total_value_sen. */
+  held_value_sen?: number;
   last_movement_at: string | null;
   main_supplier_code: string | null;
   main_supplier_name: string | null;
