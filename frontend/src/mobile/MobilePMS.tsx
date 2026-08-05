@@ -2210,19 +2210,11 @@ function TaskRow({
         (l === "DRIVER" && (userRole === "HELPER" || userRole === "STOREKEEPER")));
     });
   const canAttach = canTick && (!tickOnly || roleMatchesUser);
-  // Owner 2026-07-17: sales staff may DELETE files only on their own four
-  // deliverables (the SALES PIC-badged Setup Image / Event Complete Image /
-  // Defect List / Filled Floorplan). Every other row is add-only for them —
-  // no × on the chips. Directors/mgt/admin keep full remove everywhere.
-  const SALES_REMOVABLE = /^(setup image|event complete image|defect (list|item)|filled floor\s*plan)/i;
-  const _isSalesStaffUser =
-    (/sales/i.test((user?.department_name ?? "").trim()) || /^sales/i.test((user?.position_name ?? "").trim())) &&
-    !/\b(Super Admin|Sales Director|Finance Manager)\b/i.test((user?.position_name ?? "").trim()) &&
-    !user?.permissions?.includes("*");
-  const canRemoveFile =
-    canAttach &&
-    (!_isSalesStaffUser ||
-      (badge.includes("SALES PIC") && SALES_REMOVABLE.test((it.title || "").trim())));
+  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
+  // (projects.manage: BD / managers / directors). Crew and sales keep upload
+  // (canAttach) but no longer see the × on file chips. canAttach folds in the
+  // row-edit + !archived gate, so a manager still can't delete a locked row.
+  const canRemoveFile = canAttach && can("projects.manage");
 
   const cycle = async () => {
     if (!canRowTick || busy) return;
@@ -3335,7 +3327,11 @@ function SalesDocsCard({
   // Stock Out/In, 3D/2D Design, Display Floorplan, Exchange List) had no way to
   // be approved on a phone. Gate + endpoint match the desktop DocRow exactly
   // (shared checklistReviewVisible / ReviewButtons); user drives the perm check.
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
+  // (projects.manage). canTick already folds in !archived, so a manager still
+  // can't delete on an archived project; upload/remark stay on canTick.
+  const canDeleteFiles = can("projects.manage") && canTick;
 
   const tiles = tileDefs.map((t) => {
     const item = (checklist ?? []).find(
@@ -3413,7 +3409,7 @@ function SalesDocsCard({
   };
 
   const removeFile = async (t: (typeof tiles)[number], att: TaskAttachment) => {
-    if (t.readOnly || !canTick) return;
+    if (t.readOnly || !canDeleteFiles) return;
     if (!(await confirm({ title: `Remove ${att.file_name || "this file"}?`, confirmLabel: "Remove", danger: true }))) return;
     setBusy(true);
     try {
@@ -3563,13 +3559,13 @@ function SalesDocsCard({
                           <button
                             type="button"
                             className="tinybtn"
-                            style={{ flex: 1, minWidth: 0, display: "inline-flex", alignItems: "center", gap: 5, ...(canTick && !t.readOnly ? { borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none" } : {}) }}
+                            style={{ flex: 1, minWidth: 0, display: "inline-flex", alignItems: "center", gap: 5, ...(canDeleteFiles && !t.readOnly ? { borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none" } : {}) }}
                             onClick={() => setView({ items: t.files, idx: i })}
                             title={a.file_name ?? undefined}
                           >
                             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.file_name || "File"}</span>
                           </button>
-                          {canTick && !t.readOnly && (
+                          {canDeleteFiles && !t.readOnly && (
                             <button
                               type="button"
                               className="tinybtn"
