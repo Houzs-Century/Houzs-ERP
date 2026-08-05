@@ -58,11 +58,11 @@ try {
   console.log(`\nSO LINE totalHeight FIX — ${APPLY ? "APPLY (will be COMMITTED)" : "DRY-RUN (nothing will be written)"}`);
   console.log(`target: ${SO} · ${ITEM} · totalHeight="${VALUE}"\n`);
 
+  /* mfg_sales_orders keys by doc_no (no surrogate id); items carry doc_no. */
   const rows = await pg`
     SELECT i.id, i.item_code, i.item_group, i.variants
       FROM scm.mfg_sales_order_items i
-      JOIN scm.mfg_sales_orders o ON o.id = i.sales_order_id
-     WHERE o.doc_no = ${SO} AND i.item_code = ${ITEM}`;
+     WHERE i.doc_no = ${SO} AND i.item_code = ${ITEM}`;
 
   if (rows.length === 0) {
     console.log("No such line. Nothing to do.");
