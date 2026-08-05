@@ -95,6 +95,19 @@ export const roles = pgTable("roles", {
   created_at: text("created_at").default(nowText),
 });
 
+// ── push_devices (mig-pg 0266) — iOS push token registry ───
+export const push_devices = pgTable("push_devices", {
+  id: serial("id").primaryKey(),
+  user_id: integer("user_id").notNull(),
+  platform: text("platform").notNull().default("ios"),
+  token: text("token").notNull().unique(),
+  created_at: text("created_at").default(nowText),
+  last_seen_at: text("last_seen_at").default(nowText),
+  disabled_at: text("disabled_at"),
+  last_error: text("last_error"),
+  last_reminder_sent_on: text("last_reminder_sent_on"),
+});
+
 // ── role_page_access (mig 073) ─────────────────────────────
 export const role_page_access = pgTable(
   "role_page_access",

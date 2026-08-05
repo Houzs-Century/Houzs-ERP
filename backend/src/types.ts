@@ -95,6 +95,13 @@ export type Env = {
   // Email (Resend). Leave RESEND_API_KEY unset to run in no-op mode —
   // send() will log + skip, never throw.
   RESEND_API_KEY?: string;
+  // APNs push (services/apns.ts). All unset = no-op mode, same as Resend.
+  // Values come from an App Store Connect auth KEY (.p8) once the Apple
+  // Developer enrolment completes — see docs/ios-app-store.md.
+  APNS_TEAM_ID?: string;
+  APNS_KEY_ID?: string;
+  APNS_PRIVATE_KEY?: string;
+  APNS_SANDBOX?: string;
   EMAIL_FROM?: string;        // e.g. "Houzs ERP <no-reply@houzs.com>"
   EMAIL_REPLY_TO?: string;
   // Public origin for building email links (portal survey URLs etc.).

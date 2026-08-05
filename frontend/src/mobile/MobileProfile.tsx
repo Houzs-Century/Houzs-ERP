@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   HOUZS_COMPANY_CODE,
   getBrandingCache,
@@ -21,6 +21,14 @@ import { useAuth } from "../auth/AuthContext";
 import { useAnnouncementUnread } from "./useAnnouncementUnread";
 import { useToast } from "../hooks/useToast";
 import { validatePasswordStrength } from "../lib/passwordStrength";
+import {
+  biometricSessionEnabled,
+  setBiometricSessionEnabled,
+  nativeBiometricSupported,
+  rememberNativeSession,
+  forgetNativeSession,
+} from "../lib/nativeSession";
+import { readAuthToken } from "../lib/authToken";
 import {
   requestBrowserNotificationPermission,
   setBrowserNotificationPreference,
@@ -588,6 +596,34 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Face ID / Touch ID unlock — rendered only inside the native app on a device
+  // with a biometric enrolled (nativeBiometricSupported ignores the opt-in flag,
+  // or the toggle could never appear to be turned on). In a browser this stays
+  // false and the card simply never exists.
+  const [bioSupported, setBioSupported] = useState(false);
+  const [bioOn, setBioOn] = useState(biometricSessionEnabled());
+  useEffect(() => {
+    void nativeBiometricSupported().then(setBioSupported);
+  }, []);
+
+  const toggleBiometric = () => {
+    if (bioOn) {
+      // Order matters: the flag gates rememberNativeSession but NOT
+      // forgetNativeSession — erase first, then drop the flag.
+      forgetNativeSession();
+      setBiometricSessionEnabled(false);
+      setBioOn(false);
+      toast.success("Biometric unlock off — saved session erased");
+    } else {
+      setBiometricSessionEnabled(true);
+      // Vault the CURRENT session immediately, or the feature only starts
+      // working after the next password login.
+      rememberNativeSession(readAuthToken());
+      setBioOn(true);
+      toast.success("Biometric unlock on");
+    }
+  };
+
   const submit = async () => {
     setErr(null);
     const strength = validatePasswordStrength(next, user?.email);
@@ -630,6 +666,31 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
       <div style={{ fontSize: 11, color: "#9aa093", marginTop: 11, lineHeight: 1.5, padding: "0 2px" }}>
         Requires your current password. You'll stay signed in here; other devices will be signed out.
       </div>
+      {bioSupported && (
+        <>
+          <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 14, overflow: "hidden", marginTop: 14 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 14px", cursor: "pointer" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>Face ID / fingerprint unlock</div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {bioOn
+                    ? "Your session is saved securely on this phone"
+                    : "Off — you sign in with your password each time"}
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={bioOn}
+                onChange={toggleBiometric}
+                style={{ width: 20, height: 20, accentColor: "var(--teal)" }}
+              />
+            </label>
+          </div>
+          <div style={{ fontSize: 11, color: "#9aa093", marginTop: 11, lineHeight: 1.5, padding: "0 2px" }}>
+            Keeps your sign-in in this phone's secure storage, unlocked with Face ID or your fingerprint when the app opens. Turning it off erases the saved session.
+          </div>
+        </>
+      )}
     </SubScreen>
   );
 }

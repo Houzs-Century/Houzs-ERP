@@ -91,6 +91,19 @@ export function setBiometricSessionEnabled(on: boolean): void {
   } catch { /* private mode — the feature simply stays off */ }
 }
 
+/** Device capability alone — in the app, plugin present, a biometric enrolled —
+ *  IGNORING the opt-in flag. The settings toggle needs this: it has to render
+ *  while the flag is still off, or nobody could ever turn it on. */
+export async function nativeBiometricSupported(): Promise<boolean> {
+  const p = plugin();
+  if (!p) return false;
+  try {
+    return (await p.isAvailable()).isAvailable === true;
+  } catch {
+    return false;
+  }
+}
+
 /** Is the whole thing usable here: in the app, flag on, plugin present, and a
  *  biometric actually enrolled on the device. */
 export async function biometricAvailable(): Promise<boolean> {
