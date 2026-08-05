@@ -8561,11 +8561,12 @@ function DocRow({
                   submit-then-review flow. BUT only once a file is uploaded
                   (owner 2026-07-27): there is nothing to approve before the
                   document exists, so an empty row must not show the buttons. */}
-              {/* A fresh submission re-opens a done item (owner 2026-07-31) —
-                  `submit` never clears `done`, so a re-upload onto an approved
-                  doc must not leave the approver without buttons. */}
+              {/* Owner 2026-07-31 (final): on a gated document the approver
+                  ALWAYS keeps the buttons once a file exists — approved ones
+                  included — so a decision can be reviewed or reversed. The
+                  decision itself stays visible as the approval badge. */}
               {attachments.length > 0 && (item.required_perm
-                ? canApprove && (awaiting || (rs !== "approved" && item.status !== "done"))
+                ? canApprove
                 : awaiting && canApprove) ? (
                 <div className="flex flex-wrap items-center gap-1">
                   <button
@@ -9437,12 +9438,12 @@ function ChecklistRow({
           (owner 2026-07-21); non-gated reviewable docs keep submit-then-review.
           BUT only once a file is uploaded (owner 2026-07-27): there is nothing
           to approve before the document exists. */}
-      {/* A fresh submission re-opens the decision even on a done item (owner
-          2026-07-31): `submit` sets review_status but never clears `done`, so a
-          replacement uploaded onto an approved doc previously left the approver
-          with no buttons. Mirrors the mobile checklistReviewVisible gate. */}
+      {/* Owner 2026-07-31 (final): on a gated document the approver ALWAYS
+          keeps Approve/Reject once a file exists — approved ones included — so
+          a decision can be reviewed or reversed. Mirrors the mobile
+          checklistReviewVisible gate; the decision stays on the review badge. */}
       {!!attachments && attachments.length > 0 && (item.required_perm
-        ? canApprove && (awaitingReview || (item.review_status !== "approved" && item.status !== "done"))
+        ? canApprove
         : reviewable && awaitingReview && canApprove) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
             <input

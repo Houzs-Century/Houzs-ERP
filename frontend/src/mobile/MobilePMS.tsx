@@ -3245,19 +3245,19 @@ function checklistReviewVisible(
   hasFiles: boolean,
 ): boolean {
   if (!item || !hasFiles) return false;
-  const status = (item.status ?? "").toLowerCase();
   const reviewStatus = (item.review_status ?? "").toLowerCase();
   const canApprove = !item.required_perm || holdsChecklistApproval(permissions, item.required_perm);
   const awaitingReview = reviewStatus === "pending_review" || reviewStatus === "amended";
-  // A FRESH submission re-opens the decision even on an item already marked
-  // done (owner 2026-07-31). `submit` only sets review_status — it never
-  // clears `done` (services/projects.ts submitChecklistForReview) — so
-  // re-uploading a replacement onto an approved doc used to leave the approver
-  // with no buttons at all. The awaitingReview arm is what makes a re-upload
-  // reviewable again; the second arm still covers never-yet-decided docs.
-  if (item.required_perm) {
-    return canApprove && (awaitingReview || (reviewStatus !== "approved" && status !== "done"));
-  }
+  // Owner 2026-07-31 (final): on a gated document the approver ALWAYS keeps
+  // Approve / Reject once a file exists — including one already approved — so a
+  // decision can be reviewed or reversed at any time. (Previously the buttons
+  // vanished the moment it was approved, which read as "the feature is
+  // missing": on prod all 248 3D Designs were approved, so no event showed
+  // them.) The current decision still rides the tile as its APPROVED /
+  // REJECTED / PENDING badge, and every click is logged to the comment
+  // history, so reversals stay auditable. `status`/`awaitingReview` are no
+  // longer part of this arm — the permission alone decides.
+  if (item.required_perm) return canApprove;
   const reviewable = REVIEWABLE_TITLE_RE.test((item.title ?? "").trim());
   return reviewable && awaitingReview && canApprove;
 }
@@ -3302,9 +3302,26 @@ function ReviewButtons({
 
 // Small review-decision badge (green approved / red rejected / amber pending),
 // shared by the doc cards. Renders nothing when there's no decision yet.
-function ReviewBadge({ reviewStatus }: { reviewStatus: string | null | undefined }) {
+// Owner 2026-07-31: "cant see which one not approve yet". A reviewable doc that
+// carries a file but has NO decision yet (review_status NULL — uploaded before
+// auto-submit existed, or never submitted) used to render NO badge at all, so
+// approved and un-approved documents looked identical on the tile. Pass
+// `item`+`hasFiles` and it now says NOT APPROVED instead of staying blank.
+// Nothing shows on an empty document — there is nothing to approve yet.
+function ReviewBadge({
+  reviewStatus, item, hasFiles,
+}: {
+  reviewStatus: string | null | undefined;
+  item?: ChecklistItem;
+  hasFiles?: boolean;
+}) {
   const rs = (reviewStatus ?? "").toLowerCase();
-  if (!rs) return null;
+  if (!rs) {
+    const reviewable = !!item && (!!item.required_perm || REVIEWABLE_TITLE_RE.test((item.title ?? "").trim()));
+    const approvedByStatus = (item?.status ?? "").toLowerCase() === "done";
+    if (!reviewable || !hasFiles || approvedByStatus) return null;
+    return <span className="rbadge" style={{ background: "#f6efd9", color: "#6e4d12" }}>NOT APPROVED</span>;
+  }
   return (
     <span className="rbadge" style={{
       background: rs === "approved" ? "#e2f0e9" : rs === "rejected" ? "#f7e7e5" : "#f6efd9",
@@ -3535,7 +3552,7 @@ function SalesDocsCard({
                       ))}
                       {/* Review decision (owner 2026-07-29): green approved ·
                           red rejected · amber pending — travels with the tile. */}
-                      <ReviewBadge reviewStatus={rItem.review_status} />
+                      <ReviewBadge reviewStatus={rItem.review_status} item={rItem} hasFiles={t.files.length > 0} />
                     </div>
                   </div>
                 </div>
@@ -3889,9 +3906,11 @@ function FloorPlans({
         </div>
         {/* Display Floor Plan review (owner 2026-07-29) — approve/reject for a
             holder/approver once it's uploaded + submitted. */}
-        {displayItem && (displayItem.review_status || checklistReviewVisible(user?.permissions, displayItem, displayPlanFiles.length > 0)) && (
+        {/* State for every viewer (approved / pending / not approved); buttons
+            stay approver-gated inside. Nothing renders on an empty document. */}
+        {displayItem && (displayItem.review_status || displayPlanFiles.length > 0) && (
           <div style={{ marginTop: -3, marginBottom: 10 }}>
-            {displayItem.review_status && <div style={{ marginBottom: 4 }}><ReviewBadge reviewStatus={displayItem.review_status} /></div>}
+            <div style={{ marginBottom: 4 }}><ReviewBadge reviewStatus={displayItem.review_status} item={displayItem} hasFiles={displayPlanFiles.length > 0} /></div>
             {checklistReviewVisible(user?.permissions, displayItem, displayPlanFiles.length > 0) && (
               <ReviewButtons item={displayItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
             )}
@@ -3937,7 +3956,7 @@ function FloorPlans({
                     <span className="rbadge" style={{ background: latest ? badgeBg : "#f0f1ed", color: latest ? badgeCol : "#9aa093" }}>
                       {latest ? `${badge}${files.length > 1 ? ` · ${files.length}` : ""}` : "NONE"}
                     </span>
-                    {tileItem && <ReviewBadge reviewStatus={tileItem.review_status} />}
+                    {tileItem && <ReviewBadge reviewStatus={tileItem.review_status} item={tileItem} hasFiles={files.length > 0} />}
                   </div>
                   {label === "Filled" && canWrite && filledPlanTaskId != null && (
                     <button
@@ -4003,10 +4022,13 @@ function FloorPlans({
             for a stock_transfer.approve holder once a record is uploaded. */}
         {stockOutItem && (() => {
           const stockOutHasFiles = (checklistAttachments ?? []).some((a) => !a.archived_at && a.item_id === stockOutItem.id);
-          if (!stockOutItem.review_status && !checklistReviewVisible(user?.permissions, stockOutItem, stockOutHasFiles)) return null;
+          // Owner 2026-07-31: the STATE is shown to every viewer (approved /
+          // pending / not approved) — only the buttons stay approver-gated. An
+          // empty record still renders nothing.
+          if (!stockOutHasFiles && !stockOutItem.review_status) return null;
           return (
             <div style={{ marginBottom: 8 }}>
-              {stockOutItem.review_status && <div style={{ marginBottom: 4 }}><ReviewBadge reviewStatus={stockOutItem.review_status} /></div>}
+              <div style={{ marginBottom: 4 }}><ReviewBadge reviewStatus={stockOutItem.review_status} item={stockOutItem} hasFiles={stockOutHasFiles} /></div>
               {checklistReviewVisible(user?.permissions, stockOutItem, stockOutHasFiles) && (
                 <ReviewButtons item={stockOutItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
               )}
