@@ -589,12 +589,32 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     label: 'Stock',
     width: '80px',
     align: 'right',
-    getValue: (r) => r.total_qty,
+    /* Sorts and reads on the OWNED figure. Owner, 2026-08-05: "consignment 的东西
+       怎么可以放进 my stocks 里面，还呈现出来？你这样子我会以为我有货". Twelve of
+       the fourteen pieces standing in PJ SHOWROOM are somebody else's, and this
+       column blended them into one number.
+       The held units are not hidden — they ride beside it in the muted "+N held"
+       so the goods can still be found — but the figure that reads as "my stock",
+       and the one the column sorts by, is now the owned one. Same words the Stock
+       Breakdown drawer already uses. */
+    getValue: (r) => r.owned_qty ?? r.total_qty,
     render: (r) => {
-      const qtyClass = r.total_qty > 0 ? styles.numCellPos
-        : r.total_qty < 0 ? styles.numCellNeg
+      const owned = r.owned_qty ?? r.total_qty;
+      const held = r.held_qty ?? Math.max(0, r.total_qty - owned);
+      const qtyClass = owned > 0 ? styles.numCellPos
+        : owned < 0 ? styles.numCellNeg
         : styles.numCellZero;
-      return <span className={`${styles.numCell} ${qtyClass}`}>{fmtQty(r.total_qty)}</span>;
+      return (
+        <span className={`${styles.numCell} ${qtyClass}`}>
+          {fmtQty(owned)}
+          {held > 0 && (
+            <span
+              className={styles.numCellZero}
+              title={`${fmtQty(held)} held on consignment — not owned, excluded from value`}
+            >{` +${fmtQty(held)} held`}</span>
+          )}
+        </span>
+      );
     },
   },
   {

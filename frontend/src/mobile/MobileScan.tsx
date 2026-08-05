@@ -266,6 +266,37 @@ const CAMERA = (
   </svg>
 );
 
+const UPLOAD = (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <path d="M17 8l-5-5-5 5" />
+    <path d="M12 3v13" />
+  </svg>
+);
+
+/* Which of a slot's two hidden inputs a tap targets — the camera one
+   (capture="environment") or the photo-library / Files one (no capture). */
+type PickSource = "camera" | "library";
+
+/* Shared look for the empty-slot pickers. The front slip is ONE dashed tile
+   split into two halves; the payment slots are two dashed cells in the grid. */
+const PICK_LABEL: CSSProperties = { fontSize: 10.5, fontWeight: 700, color: "#16695f", textAlign: "center", lineHeight: 1.25 };
+const pickHalfStyle = (busy: boolean): CSSProperties => ({
+  flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+  gap: 6, border: "none", background: "transparent", padding: 0, fontFamily: "inherit",
+  cursor: busy ? "default" : "pointer",
+});
+/* The dark chips overlaid on an already-taken front slip (Retake / Upload). */
+const RESHOOT_CHIP: CSSProperties = {
+  height: 24, padding: "0 9px", borderRadius: 999, border: "none", background: "rgba(17,20,15,.62)",
+  color: "#fff", fontFamily: "inherit", fontSize: 10.5, fontWeight: 700, cursor: "pointer",
+};
+const pickCellStyle = (busy: boolean): CSSProperties => ({
+  height: 96, width: "100%", boxSizing: "border-box", border: "1px dashed #c2c6bd", borderRadius: 12, background: "#f4f6f3",
+  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5,
+  fontFamily: "inherit", cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
+});
+
 /* A small red "×" delete control reused for every uploaded thumbnail (front +
    payment). Position is supplied by the caller. */
 function RemoveButton({ label, onClick, style }: { label: string; onClick: () => void; style: CSSProperties }) {
@@ -442,11 +473,14 @@ export function MobileScan({
   // its button shows a busy state without blocking the rest of the screen.
   const [forcingId, setForcingId] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
-  // ONE hidden front input + ONE hidden payment input, both re-targeted to the
-  // active order right before each capture. capture="environment" opens the rear
-  // camera each time.
-  const frontInputRef = useRef<HTMLInputElement>(null);
-  const payInputRef = useRef<HTMLInputElement>(null);
+  // TWO hidden inputs per slot — a camera one (capture="environment") and a
+  // library one (no capture). All four are re-targeted to the active order right
+  // before each pick. One input with capture cannot serve both: iOS honours the
+  // attribute and opens the rear camera with no way to reach Photos or Files.
+  const frontCamInputRef = useRef<HTMLInputElement>(null);
+  const frontLibInputRef = useRef<HTMLInputElement>(null);
+  const payCamInputRef = useRef<HTMLInputElement>(null);
+  const payLibInputRef = useRef<HTMLInputElement>(null);
   const activeOrderIdRef = useRef<string | null>(null);
 
   // Revoke every object URL still held when the component unmounts so captured
@@ -580,15 +614,15 @@ export function MobileScan({
   const ready = orders.length > 0 && orders.every((o) => o.front !== null);
   const multiOrder = orders.length > 1;
 
-  const pickFront = (orderId: string) => {
+  const pickFront = (orderId: string, from: PickSource) => {
     if (submitting) return;
     activeOrderIdRef.current = orderId;
-    frontInputRef.current?.click();
+    (from === "camera" ? frontCamInputRef : frontLibInputRef).current?.click();
   };
-  const pickPayment = (orderId: string) => {
+  const pickPayment = (orderId: string, from: PickSource) => {
     if (submitting) return;
     activeOrderIdRef.current = orderId;
-    payInputRef.current?.click();
+    (from === "camera" ? payCamInputRef : payLibInputRef).current?.click();
   };
 
   // Drop one order's inline error (its photos changed — new attempt).
@@ -1047,20 +1081,16 @@ export function MobileScan({
               </div>
             )}
 
-            {/* Hidden inputs: one for the front slip, one for payment slips. Both
-                re-targeted to activeOrderIdRef before each capture. The front
-                input keeps capture="environment" (single slip, rear camera); the
-                payment input is `multiple` without capture so the picker offers
-                gallery multi-select (capture would force a one-shot camera and
-                drop `multiple`). */}
+            {/* Hidden inputs: a camera one and a library one per slot, all four
+                re-targeted to activeOrderIdRef before each pick. The camera
+                inputs carry capture="environment" and take images only (a live
+                shot is never a PDF, and capture drops `multiple` anyway); the
+                library inputs carry no capture, so the OS offers Photos and
+                Files, and the payment one keeps `multiple` for batch picks. */}
             <input
-              ref={frontInputRef}
+              ref={frontCamInputRef}
               type="file"
-              /* Desktop parity — also accept a PDF slip (ScanOrderModal ACCEPT).
-                 capture="environment" stays: the owner's mobile flow is snap-the-
-                 slip with the rear camera; where a browser honours capture the
-                 front stays camera-first, where it doesn't a PDF becomes pickable. */
-              accept="image/*,application/pdf"
+              accept="image/*"
               capture="environment"
               style={{ display: "none" }}
               onChange={(e) => {
@@ -1069,10 +1099,31 @@ export function MobileScan({
               }}
             />
             <input
-              ref={payInputRef}
+              ref={frontLibInputRef}
               type="file"
-              /* Desktop parity — accept a PDF e-receipt alongside images. No
-                 capture here, so a PDF is fully pickable from Files. */
+              /* Desktop parity — also accept a PDF slip (ScanOrderModal ACCEPT). */
+              accept="image/*,application/pdf"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                onFrontFile(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
+            <input
+              ref={payCamInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                addPayFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <input
+              ref={payLibInputRef}
+              type="file"
+              /* Desktop parity — accept a PDF e-receipt alongside images. */
               accept="image/*,application/pdf"
               multiple
               style={{ display: "none" }}
@@ -1121,26 +1172,55 @@ export function MobileScan({
                           onClick={() => clearFront(order.id)}
                           style={{ position: "absolute", top: 6, right: 6 }}
                         />
-                        {/* Retake = delete then re-open camera in one tap. */}
-                        <button
-                          onClick={() => { clearFront(order.id); pickFront(order.id); }}
-                          aria-label={`Retake ${SLOT_LABELS[0]} for order ${oi + 1}`}
-                          style={{ position: "absolute", bottom: 6, right: 6, height: 24, padding: "0 9px", borderRadius: 999, border: "none", background: "rgba(17,20,15,.62)", color: "#fff", fontFamily: "inherit", fontSize: 10.5, fontWeight: 700, cursor: "pointer" }}
-                        >
-                          Retake
-                        </button>
+                        {/* Replace the shot without removing it first — same two
+                            sources as the empty tile. */}
+                        <div style={{ position: "absolute", bottom: 6, right: 6, display: "flex", gap: 6 }}>
+                          <button
+                            type="button"
+                            onClick={() => { clearFront(order.id); pickFront(order.id, "camera"); }}
+                            aria-label={`Retake ${SLOT_LABELS[0]} for order ${oi + 1}`}
+                            style={RESHOOT_CHIP}
+                          >
+                            Retake
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { clearFront(order.id); pickFront(order.id, "library"); }}
+                            aria-label={`Upload a different ${SLOT_LABELS[0].toLowerCase()} for order ${oi + 1}`}
+                            style={RESHOOT_CHIP}
+                          >
+                            Upload
+                          </button>
+                        </div>
                       </>
                     )}
                   </div>
                 ) : (
-                  <button
-                    onClick={() => pickFront(order.id)}
-                    disabled={submitting}
-                    style={{ height: 130, width: "100%", border: "1px dashed #c2c6bd", borderRadius: 12, background: "#f4f6f3", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, cursor: submitting ? "default" : "pointer", fontFamily: "inherit", opacity: submitting ? 0.5 : 1, marginBottom: 4 }}
-                  >
-                    {CAMERA}
-                    <span style={{ fontSize: 11, fontWeight: 700, color: "#16695f" }}>{SLOT_LABELS[0]}</span>
-                  </button>
+                  /* One dashed tile, TWO entry points: take a photo, or pick
+                     one already on the phone (Photos / Files). */
+                  <div style={{ height: 130, width: "100%", boxSizing: "border-box", border: "1px dashed #c2c6bd", borderRadius: 12, background: "#f4f6f3", display: "flex", overflow: "hidden", opacity: submitting ? 0.5 : 1, marginBottom: 4 }}>
+                    <button
+                      type="button"
+                      onClick={() => pickFront(order.id, "camera")}
+                      disabled={submitting}
+                      aria-label={`Take a photo of the ${SLOT_LABELS[0].toLowerCase()} for order ${oi + 1}`}
+                      style={pickHalfStyle(submitting)}
+                    >
+                      {CAMERA}
+                      <span style={PICK_LABEL}>{SLOT_LABELS[0]}</span>
+                    </button>
+                    <div style={{ width: 1, background: "#e0e3dc" }} />
+                    <button
+                      type="button"
+                      onClick={() => pickFront(order.id, "library")}
+                      disabled={submitting}
+                      aria-label={`Upload a ${SLOT_LABELS[0].toLowerCase()} for order ${oi + 1}`}
+                      style={pickHalfStyle(submitting)}
+                    >
+                      {UPLOAD}
+                      <span style={PICK_LABEL}>Upload</span>
+                    </button>
+                  </div>
                 )}
 
                 {/* PAYMENT SLIPS — one photo per payment, within this order. Add-
@@ -1168,16 +1248,29 @@ export function MobileScan({
                       )}
                     </div>
                   ))}
+                  {/* Same two entry points as the front slip, as two cells of
+                      the grid: take a photo, or pick from Photos / Files. */}
                   <button
-                    onClick={() => pickPayment(order.id)}
+                    type="button"
+                    onClick={() => pickPayment(order.id, "camera")}
                     disabled={submitting}
-                    aria-label={order.payShots.length === 0 ? `${SLOT_LABELS[1]} for order ${oi + 1}` : `Add another payment slip to order ${oi + 1}`}
-                    style={{ height: 96, width: "100%", border: "1px dashed #c2c6bd", borderRadius: 12, background: "#f4f6f3", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5, cursor: submitting ? "default" : "pointer", fontFamily: "inherit", opacity: submitting ? 0.5 : 1 }}
+                    aria-label={order.payShots.length === 0 ? `Take a photo of the payment slip for order ${oi + 1}` : `Take a photo of another payment slip for order ${oi + 1}`}
+                    style={pickCellStyle(submitting)}
                   >
                     {CAMERA}
-                    <span style={{ fontSize: 10.5, fontWeight: 700, color: "#16695f", textAlign: "center", lineHeight: 1.25 }}>
+                    <span style={PICK_LABEL}>
                       {order.payShots.length === 0 ? SLOT_LABELS[1] : "Add payment"}
                     </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => pickPayment(order.id, "library")}
+                    disabled={submitting}
+                    aria-label={`Upload payment slips for order ${oi + 1}`}
+                    style={pickCellStyle(submitting)}
+                  >
+                    {UPLOAD}
+                    <span style={PICK_LABEL}>Upload</span>
                   </button>
                 </div>
                 <div style={{ fontSize: 10.5, color: "#9aa093", textAlign: "center", marginTop: 10 }}>

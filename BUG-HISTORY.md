@@ -1,3 +1,20 @@
+## 2026-08-05
+
+### [HIGH] Consignment stock read as the owner's, and showroom display read as dead stock
+- **Symptom.** Owner, 2026-08-05: *"consignment 的东西怎么可以放进 my stocks 里面，还呈现出来？你这样子我会以为我有货"* and *"我的 dead stock 里面怎么会有 dead stock 呢？因为它明明是 showroom 的 display 啊"*. Of the 14 pieces standing in PJ SHOWROOM, **12 are not his** (`OWNED 2 / RM2,540` vs `HELD 12 / RM7,285`) — and the list showed one blended `Stock` number. Separately, display pieces were being tagged `DEAD` and `SPARE`.
+- **Root cause (traced, not guessed).** Two axes exist and only one was being read. **Ownership** — `isConsignmentLotSource(source_doc_type, source_doc_no)` — was already applied to every VALUE figure (BUG-HISTORY 2026-07-25) but deliberately NOT to quantity, so `total_qty` carried consignment units with nothing to say so. **Where the stock stands** — `warehouses.type` (`warehouse / showroom / display / service / others`, with mig 0171 keeping `is_showroom = (type = 'showroom')`) — was never read by the dead-stock query at all, which is simply `has on-hand value AND no sale in the window`. A display piece satisfies that forever: standing there IS its job.
+- **Fix.** The list now returns `held_qty` (derived, `total − owned`, floored at 0) and the Stock column reads and sorts on OWNED, with the held units riding beside it as a muted `+N held` so the goods can still be found. Dead stock reads a new `sellable` map that excludes `showroom`, `display` and `service` warehouses. Owned display stock stays in total value and the aging buckets — it is still the owner's money (his decision); it is only the dead-stock *question* it must not answer.
+- **Three wrong proposals before the right one, all corrected by checking.** I proposed keying this off `warehouses.is_consignment` (it flags exactly ONE warehouse — the disabled internal `CONSIGN-OUT`, and no showroom); then proposed ADDING an `is_display` column (`warehouses.type` already had `display` as a value); the owner remembered the Type field existed and was right. A `check-warehouses.mjs` was built so the next person reads the flags instead of proposing new ones.
+- **The class, for next time.** "Owned" and "held" are different facts, and so are "what it is" and "where it stands". Blending any of them into one number produces a screen that is individually plausible and collectively wrong.
+- **Ref:** #<PR>. `fix/owned-vs-held-presentation` 2026-08-05.
+
+### [MEDIUM] Two phantom lots overstated inventory value by RM3,547.60
+- **Symptom.** After the duplicate-delivery cleanup, two SKUs still disagreed between their stock ledgers: movement ledger `0` (correct, proven against the documents) and lot ledger `1`.
+- **Root cause (traced, not guessed).** The 2990 import created lots with **no backing movement** — one documented receipt, two lot rows. The real shipment consumed the ORPHAN, so the GRN's own lot was never decremented and stayed open forever. The movement ledger nets by arithmetic and cannot drift this way; the lot ledger is pointer-based (`inventory_lot_consumptions.lot_id`) and only nets if the OUT points at the lot the IN created.
+- **Fix.** `repair-phantom-lots.mjs` re-points the orphan's consumptions onto the backed open lot and retires the orphan. **Refuses unless both lots carry the same `unit_cost_sen`**, so the rows move without restating the COGS of a shipped sale. Verified in-transaction before committing: the lot ledger must end equal to the movement ledger and the consumed quantity must be unchanged.
+- **Result.** Applied 2026-08-05. Value overstatement `RM3,547.60 → RM0.00`; uncosted-OUT exposure `RM3,641.60 → RM94.00`; drift buckets `7 → 5`. Quantities and COGS unchanged. The remaining 5 are the sofa variant-key family (`inventory-ledger-divergence-coe.md`), where the MOVEMENT ledger is the wrong side (negative on-hand) — a different fault.
+- **Ref:** #1605, #1606, #1607. 2026-08-05.
+
 ## 2026-08-04
 
 ### [LOW] The two RETURN chains had the same nullable-link hole, with no rows in it yet
