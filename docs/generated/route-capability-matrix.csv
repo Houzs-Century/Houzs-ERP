@@ -101,7 +101,7 @@ POST,/api/assr/:id{[0-9]+}/sales-comment,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEX
 POST,/api/assr/:id{[0-9]+}/sales-nudge,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assr.ts
 POST,/api/assr/:id{[0-9]+}/set-creditor,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/activity/:actId/archive,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
-POST,/api/assr/attachments/:attId/archive,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
+POST,/api/assr/attachments/:attId/archive,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requireAnyPermission([""service_cases.write"", ""service_cases.manage""])",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 PATCH,/api/assr/attachments/:attId/visibility,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.write"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
 GET,/api/assr/attachments/:key{.+},AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,NO,INHERITED_ONLY,backend/src/routes/assr.ts
 POST,/api/assr/bulk/archive,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.manage"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
