@@ -161,6 +161,7 @@ export const PUBLIC_ROUTE_PATTERNS = [
   "/portal/supplier/:token",
   "/reset/:token",
   "/invite/:token",
+  "/privacy",
 ] as const;
 
 export type RouteContract = {

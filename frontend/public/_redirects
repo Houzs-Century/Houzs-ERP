@@ -9,10 +9,10 @@
 # Instead the frontend talks to the Worker using its absolute URL
 # configured via VITE_API_URL (frontend/.env.production). CORS is
 # enabled on the Worker so cross-origin requests just work.
-# Static pages live as DIRECTORY indexes (privacy/index.html -> /privacy/),
-# never as top-level .html files: Pages 308-canonicalises /page.html to /page,
-# which is not an asset, so the /* rewrite below serves the SPA instead — and a
-# `/page /page.html 200` rule here does NOT fix it (verified live 2026-08-06:
-# the rewrite still served index.html; see BUG-HISTORY). Directory indexes are
-# resolved by the asset layer itself, before any rule in this file runs.
+# DO NOT add static .html pages beside the SPA — they cannot be reached.
+# Pages 308-canonicalises /page.html (and /page/index.html) to the extensionless
+# URL, which the /* rewrite below then swallows; a `/page /page.html 200` rule
+# does not fix it either. BOTH shapes were verified unreachable live on
+# 2026-08-06 (see BUG-HISTORY). A page that must exist on this origin is a
+# public SPA surface (routing/appSurface.ts — /privacy is the precedent).
 /*  /index.html  200
