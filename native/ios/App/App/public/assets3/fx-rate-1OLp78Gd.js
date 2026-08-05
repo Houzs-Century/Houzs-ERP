@@ -1,1 +1,0 @@
-function e(e){let t=Number(e);return Number.isFinite(t)&&t>0?t:1}function t(e,t){let n=Number(e),r=Number(t);if(!Number.isFinite(n)||n<=0||!Number.isFinite(r)||r<=0)return null;let i=Math.round(n/r*1e6)/1e6;return i>0?i:null}export{e as n,t};

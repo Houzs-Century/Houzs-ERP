@@ -1,1 +1,0 @@
-var e={deliveryOrderLines:`delivery-order-lines`,deliveryReturnLines:`delivery-return-lines`,goodsReceivedLines:`goods-received-lines`,purchaseInvoiceLines:`purchase-invoice-lines`,purchaseOrderLines:`purchase-order-lines`,purchaseReturnLines:`purchase-return-lines`,salesInvoiceLines:`sales-invoice-lines`,salesOrderLines:`sales-order-lines`};export{e as t};

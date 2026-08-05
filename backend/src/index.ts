@@ -31,6 +31,8 @@ import departments from "./routes/departments";
 import companies from "./routes/companies";
 import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
+import pushDevices from "./routes/push";
+import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
 import events from "./routes/events";
 import projects from "./routes/projects";
@@ -332,6 +334,8 @@ app.route("/api/companies", companies);
 // row; the /default writes gate on settings.manage inside the router.
 app.route("/api/table-layouts", tableLayouts);
 app.route("/api/notifications", notifications);
+// Native-app push device registry (any signed-in user, own device only).
+app.route("/api/push", pushDevices);
 app.route("/api/presence", presence);
 app.route("/api/events", events);
 app.route("/api/projects", projects);
@@ -571,6 +575,23 @@ export default {
             warmCatalogCacheForCron(env)
               .then((r) => console.log(`[cron scan-so warm] ${JSON.stringify(r)}`))
               .catch((e) => console.error("[cron scan-so warm]", e)),
+          );
+        }
+      }
+      // iOS fleet-reminder push (docs/ios-app-store.md, phase 3). Gated to the
+      // 08:00 MYT hour (UTC 0); the slot fires twice in it and the per-device
+      // date stamp makes the second pass a no-op. Ships dark until the APNS_*
+      // secrets exist. Best-effort — a push failure can never break the slot.
+      {
+        const h = new Date(event.scheduledTime).getUTCHours();
+        if (h === 0) {
+          ctx.waitUntil(
+            runPushFleetReminders(env)
+              .then((r) => {
+                if (r.attempted || r.reason !== "apns_not_configured")
+                  console.log(`[cron push-reminders] ${JSON.stringify(r)}`);
+              })
+              .catch((e) => console.error("[cron push-reminders]", e))
           );
         }
       }
