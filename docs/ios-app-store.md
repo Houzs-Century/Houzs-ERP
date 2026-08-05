@@ -235,8 +235,8 @@ forwarding). Push ships dark until the owner adds the `APNS_TEAM_ID` /
 `APNS_KEY_ID` / `APNS_PRIVATE_KEY` Worker secrets — which exist only after
 enrolment. The signed-upload workflow is `.github/workflows/ios-release.yml`
 (four GitHub secrets, listed in its header). The privacy policy page ships at
-`https://erp.houzscentury.com/privacy/` (a directory index — a top-level .html
-beside the SPA is unreachable on Pages; see BUG-HISTORY 2026-08-06). Remaining before submission: Apple accounts
+`https://erp.houzscentury.com/privacy` (a public SPA surface — NO static file
+is reachable beside this SPA on Pages; see BUG-HISTORY 2026-08-06). Remaining before submission: Apple accounts
 (phase 1), the APNs key + API key secrets, screenshots, App Privacy answers,
 and a demo account.
 

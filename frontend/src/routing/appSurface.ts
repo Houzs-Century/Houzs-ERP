@@ -1,6 +1,6 @@
 import { useLocation } from "react-router-dom";
 
-export type AppSurface = "survey" | "portal" | "reset" | "invite" | "staff";
+export type AppSurface = "survey" | "portal" | "reset" | "invite" | "privacy" | "staff";
 
 /**
  * Pick the top-level application tree for one browser location.
@@ -19,6 +19,10 @@ export function appSurfaceForPath(pathname: string): AppSurface {
   ) return "portal";
   if (pathname.startsWith("/reset/")) return "reset";
   if (pathname.startsWith("/invite/")) return "invite";
+  // The App Store's privacy-policy URL. A static file cannot survive the
+  // Pages clean-URL + SPA-fallback combination (BUG-HISTORY 2026-08-06), so
+  // the policy is a public surface of the SPA itself.
+  if (pathname === "/privacy" || pathname.startsWith("/privacy/")) return "privacy";
   return "staff";
 }
 

@@ -59,6 +59,7 @@ const ResetPassword = lazy(() => import("./pages/ResetPassword").then((m) => ({ 
 // Invite acceptance rides in the unauthenticated-screens chunk (see
 // auth/AuthGate.tsx) — same split, same reason: staff sessions never load it.
 const AcceptInviteScreen = lazy(() => import("./auth/AuthScreens").then((m) => ({ default: m.AcceptInviteScreen })));
+const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy").then((m) => ({ default: m.PrivacyPolicy })));
 
 function PublicFallback() {
   return <div className="flex min-h-screen items-center justify-center text-sm text-ink-muted">Loading</div>;
@@ -183,6 +184,16 @@ function RootApp() {
           </Routes>
         </Suspense>
       </AuthProvider>
+    );
+  }
+  if (surface === "privacy") {
+    return (
+      <Suspense fallback={<PublicFallback />}>
+        <Routes>
+          <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="*" element={<Navigate to="/privacy" replace />} />
+        </Routes>
+      </Suspense>
     );
   }
   return (
