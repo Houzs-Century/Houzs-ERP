@@ -145,6 +145,10 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "lib/assrListFilter.ts",
   "lib/scmHandoffStorage.ts",
   "lib/scmListReturn.ts",
+  // One-shot cleanup of the dt:sort:* keys a bug made permanent (2026-08-05).
+  // Only REMOVES those, plus its own marker so it never runs twice; it writes no
+  // preference of its own and reads nothing else.
+  "lib/staleSortReset.ts",
   // Server-stored column layouts. Writes the SAME dt:* device-pref keys
   // DataTable owns (plus a dt:sync:* marker in that family) so a table renders
   // the account's saved layout on the first paint. Column keys only — no
