@@ -82,6 +82,14 @@ async function main() {
   await dump("creditors", "creditors.json", async () =>
     (await sql`SELECT to_jsonb(t) AS j FROM public.creditors t`).map((r) => r.j)
   );
+  await dump("categories", "categories.json", async () =>
+    (await sql`SELECT to_jsonb(t) AS j FROM scm.categories t WHERE t.company_id = ${cid} ORDER BY sort_order`).map((r) => r.j)
+  );
+  // distinct brandings actually in use (the branding picker source)
+  try {
+    const b = await sql`SELECT branding, count(*)::int n FROM scm.product_models WHERE company_id = ${cid} AND branding IS NOT NULL AND branding <> '' GROUP BY branding ORDER BY 2 DESC`;
+    console.log("BRANDINGS_IN_MODELS:", JSON.stringify(b));
+  } catch (e) { console.log("BRANDINGS ERROR", e.message); }
 }
 
 main().then(() => sql.end()).catch(async (e) => { console.error("FAIL", e.message); await sql.end(); process.exit(1); });
