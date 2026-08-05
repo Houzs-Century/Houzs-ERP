@@ -16,6 +16,7 @@ import { PwaBanners } from "./components/PwaBanners";
 import { ChunkReloadBoundary } from "./components/RouteFallback";
 import { registerPwa } from "./pwa";
 import { installGlobalErrorReporting } from "./lib/errorReporter";
+import { clearStaleTableSorts } from "./lib/staleSortReset";
 import { consumeCompanyUrlSeed } from "./lib/activeCompany";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
@@ -75,6 +76,11 @@ if (!canonicalTarget) registerPwa();
 // so even a first-render crash is captured. Prod builds only; reporting never
 // changes behaviour (see lib/errorReporter.ts).
 installGlobalErrorReporting();
+/* One-shot: drop the persisted table sorts a bug made permanent, so nobody has
+   to find the Columns drawer and press Reset on every list page and device.
+   Guarded by its own marker — a sort chosen deliberately after this ships is
+   never touched. */
+clearStaleTableSorts();
 
 // Multi-window company hand-off (owner 2026-07-23): the company switcher's
 // "Open in new window" opens `/?company=<id>` so the new window boots straight
