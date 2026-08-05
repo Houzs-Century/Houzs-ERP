@@ -45,10 +45,12 @@ async function main() {
     await sql`UPDATE scm.categories SET label=${u.label}, icon=${u.icon}, sort_order=${u.sort_order}, tbc=${u.tbc}
               WHERE company_id=${cid} AND id=${u.id}`;
   }
+  // `inserts` is already pre-filtered to ids not present for this company, so a
+  // plain INSERT is safe + idempotent across re-runs (no ON CONFLICT needed --
+  // the table's unique index columns/order don't match a (company_id, id) target).
   for (const i of inserts) {
     await sql`INSERT INTO scm.categories (company_id, id, label, icon, tbc, sort_order)
-              VALUES (${cid}, ${i.id}, ${i.label}, ${i.icon}, ${i.tbc}, ${i.sort_order})
-              ON CONFLICT (company_id, id) DO NOTHING`;
+              VALUES (${cid}, ${i.id}, ${i.label}, ${i.icon}, ${i.tbc}, ${i.sort_order})`;
   }
   const after = await sql`SELECT id, label, icon, tbc, sort_order FROM scm.categories WHERE company_id = ${cid} ORDER BY sort_order, id`;
   console.log(`APPLIED: ${updates.length} updated, ${inserts.length} inserted.`);
