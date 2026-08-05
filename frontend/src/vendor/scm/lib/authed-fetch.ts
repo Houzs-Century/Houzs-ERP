@@ -36,6 +36,7 @@ import {
 } from '../../../lib/requestCorrelation';
 import { companyHeader } from '../../../lib/activeCompany';
 import { abortableDelay, combineAbortSignals } from '../../../lib/abort';
+import { reportServerFailure, reportAccessDenied } from '../../../lib/errorReporter';
 
 // `||` not `??`: the CI build inlines VITE_API_URL as an EMPTY STRING when the
 // repo var is unset, and `'' ?? default` keeps `''`. PROD fallback is now
@@ -363,6 +364,21 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
   if (!res.ok) {
     let body = '';
     try { body = await res.text(); } catch { /* ignore */ }
+    /* REPORT IT. reportServerFailure and reportAccessDenied have existed in
+       errorReporter.ts since they were written and were called from NOWHERE — a
+       grep across the whole frontend returns only their definitions. So every
+       API 5xx has been invisible: the operator saw "The system hit a problem",
+       the screen carried on, and nothing anywhere recorded that it happened.
+       Owner, 2026-08-05, holding a screenshot of exactly that message on Edit
+       Sales Order: "这是什么意思呢？是什么问题呢？" — and the honest answer was
+       that the system had not kept one.
+       Best-effort and non-blocking: a reporter that throws must never turn a
+       500 into two failures. */
+    try {
+      const m = String(init?.method ?? 'GET').toUpperCase();
+      if (res.status >= 500) reportServerFailure(m, path, res.status);
+      else if (res.status === 403) reportAccessDenied(m, path);
+    } catch { /* never let telemetry break the request path */ }
     // Plain-language message for the operator (Wei Siang 2026-06-08: every error
     // shown must be 白话文 — no HTTP codes, no raw JSON, no DB internals). The
     // raw status/body are preserved on the error object for logging / Sentry.
