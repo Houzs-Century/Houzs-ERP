@@ -25,6 +25,7 @@
 //   • react-router → react-router-dom.
 //   • flow-queries hooks → the vendored sales-order-queries slice.
 //   • The dead `supabase` import is dropped; flushPendingPhotos reads the
+import { postScanLearningSample, reportScanLearningSkipped } from '../../vendor/scm/lib/scan-learning';
 //     freshly-created SO back through the vendored authedFetch (→ /api/scm)
 //     instead of a hand-rolled supabase token + VITE_API_URL fetch.
 //   • Navigation repointed to /scm/sales-orders/*.
@@ -1219,7 +1220,9 @@ export const SalesOrderNew = () => {
      everything else is carried straight from the AI-original so the diff is
      limited to what the operator genuinely touched. */
   const maybeLearnFromScan = (validLines: DraftLine[]) => {
-    if (!fromScan || !scanSampleId || !scanAiOriginal) return;
+    if (!fromScan) return;
+    if (!scanSampleId) { reportScanLearningSkipped('no-sample-id', 'desktop'); return; }
+    if (!scanAiOriginal) { reportScanLearningSkipped('no-ai-original', 'desktop'); return; }
     const ai = scanAiOriginal;
 
     const optMatch = (v: string) =>
@@ -1322,10 +1325,12 @@ export const SalesOrderNew = () => {
       }),
     };
 
-    void authedFetch(`/scan-so/samples/${scanSampleId}/confirm`, {
-      method: 'POST',
-      body: JSON.stringify({ corrected, salesperson: scanSalesperson || null, accepted: !changed }),
-    }).catch(() => { /* few-shot learning is best-effort — never blocks save */ });
+    void postScanLearningSample(
+      authedFetch,
+      scanSampleId,
+      { corrected, salesperson: scanSalesperson || null, accepted: !changed },
+      'desktop',
+    );
   };
 
   /* DRAFT flow — `asDraft` adds `asDraft: true` to the create body so the SO
