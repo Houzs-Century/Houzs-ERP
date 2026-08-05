@@ -6582,6 +6582,67 @@ function QuickRentalField({
   );
 }
 
+/** Read the total m² off the project's uploaded Display Floor Plan (owner
+ *  2026-08-04). The server does the reading; this is the manual trigger +
+ *  result feedback. `overwrite=1` because pressing the button IS the operator
+ *  asking to replace whatever is in the box. Shared with the automatic run
+ *  that fires after a floorplan upload (see detectFloorplanSize). */
+function DetectSizeButton({
+  projectId,
+  onDetected,
+  toast,
+}: {
+  projectId: number;
+  onDetected: () => void;
+  toast: ReturnType<typeof useToast>;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      title="Read the size off the uploaded Display Floor Plan"
+      onClick={async () => {
+        setBusy(true);
+        try {
+          const r = await detectFloorplanSize(projectId, true);
+          if (r.detected_sqm != null) {
+            toast?.success(
+              `Read ${r.detected_sqm} m² from ${r.source_file}${
+                r.confidence && r.confidence !== "high" ? ` (${r.confidence} confidence — please check)` : ""
+              }`,
+            );
+            onDetected();
+          } else {
+            toast?.error("Couldn't find a size on that floorplan — please type it in.");
+          }
+        } catch (e: any) {
+          toast?.error(e?.message || "Couldn't read the floorplan.");
+        } finally {
+          setBusy(false);
+        }
+      }}
+      className="shrink-0 rounded-md border border-border bg-surface px-2 py-1 text-[10px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent disabled:opacity-50"
+    >
+      {busy ? "Reading…" : "Auto"}
+    </button>
+  );
+}
+
+/** POST the detect-size call. Shared by the manual button and the automatic
+ *  post-upload run so both behave identically. */
+async function detectFloorplanSize(projectId: number, overwrite = false) {
+  return api.post<{
+    detected_sqm: number | null;
+    applied: boolean;
+    skipped_reason: string | null;
+    method: string;
+    evidence: string | null;
+    confidence: string;
+    source_file: string;
+  }>(`/api/projects/${projectId}/floorplan/detect-size${overwrite ? "?overwrite=1" : ""}`, {});
+}
+
 function ProjectSpecStrip({
   project: p,
   brands,
@@ -6827,13 +6888,24 @@ function ProjectSpecStrip({
         </SpecCell>
         {editing && (<>
         <SpecCell label="Size · m²">
-          <SpecTextField
-            editing={editing}
-            type="number"
-            value={p.size_sqm}
-            placeholder="—"
-            onChange={(v) => patch({ size_sqm: v ? parseFloat(v) : null })}
-          />
+          <div className="flex items-center gap-1.5">
+            <SpecTextField
+              editing={editing}
+              type="number"
+              value={p.size_sqm}
+              placeholder="—"
+              onChange={(v) => patch({ size_sqm: v ? parseFloat(v) : null })}
+            />
+            {/* Read the m² off the uploaded Display Floor Plan (owner
+                2026-08-04). Runs automatically right after a floorplan upload;
+                this button re-runs it on demand (and overwrites, since the
+                operator asked for it explicitly). */}
+            <DetectSizeButton
+              projectId={p.id}
+              onDetected={onFinanceChange}
+              toast={toast}
+            />
+          </div>
         </SpecCell>
 
         <SpecCell label="Rental · RM">
@@ -8129,6 +8201,7 @@ function TasklistSections({
                   <Fragment key={item.id}>
                   <ChecklistRow
                     item={item}
+                    projectId={projectId}
                     comments={comments.filter((c) => c.item_id === item.id)}
                     canTick={canTick}
                     canApprove={!item.required_perm || holdsChecklistApproval(user?.permissions, item.required_perm)}
@@ -8896,6 +8969,7 @@ function ChecklistRemark({
 
 function ChecklistRow({
   item,
+  projectId,
   comments,
   canTick,
   canApprove,
@@ -8911,6 +8985,9 @@ function ChecklistRow({
   toast,
 }: {
   item: ChecklistItem;
+  /** Owning project — needed by the floorplan size auto-detect that runs
+   *  after a Display Floor Plan upload (ChecklistItem carries no project_id). */
+  projectId: number;
   comments: ChecklistComment[];
   canTick: boolean;
   canApprove: boolean;
@@ -8995,6 +9072,24 @@ function ChecklistRow({
       // Approve/Reject reappear (and a prior decision is superseded).
       if (REVIEWABLE_TITLES.has(item.title)) {
         await onReview("submit", {});
+      }
+      // Floorplan → read the m² automatically (owner 2026-08-04: "once display
+      // floorplan uploaded, auto read the measurement and fill in in size
+      // box"). Best-effort and non-overwriting: a hand-typed size stands, and
+      // any failure here must never make a successful upload look failed.
+      if (/^(display floor\s*plan|blank floorplan)/i.test((item.title || "").trim())) {
+        try {
+          const r = await detectFloorplanSize(projectId);
+          if (r.applied && r.detected_sqm != null) {
+            toast?.success(
+              `Size read from the floorplan: ${r.detected_sqm} m²${
+                r.confidence !== "high" ? " (please double-check)" : ""
+              }`,
+            );
+          } else if (r.detected_sqm != null && r.skipped_reason === "already_set") {
+            toast?.info?.(`Floorplan reads ${r.detected_sqm} m² — the size box already has a value, left as is.`);
+          }
+        } catch { /* silent: the upload itself succeeded */ }
       }
       onAttachmentsChanged?.();
     } catch (e: any) {
