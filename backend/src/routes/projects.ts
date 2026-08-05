@@ -3245,12 +3245,7 @@ app.post("/:id/floorplan/detect-size", requirePermission("projects.write"), asyn
   const obj = await c.env.POD_BUCKET.get(att.r2_key);
   if (!obj) return c.json({ error: "The floorplan file is missing from storage." }, 404);
   const buf = await obj.arrayBuffer();
-  // 5MB keeps us inside the Anthropic request budget; plans are far smaller.
-  if (buf.byteLength > 5 * 1024 * 1024) {
-    return c.json({ error: "That floorplan is too large to read (over 5MB)." }, 400);
-  }
   const mime = (att.content_type || obj.httpMetadata?.contentType || "").toLowerCase();
-  const b64 = arrayBufferToBase64(buf);
   // Images go as image blocks; PDFs as a document block (both supported by the
   // model the scan pipeline already uses).
   const isPdf = mime.includes("pdf") || /\.pdf$/i.test(att.file_name);
@@ -3258,6 +3253,23 @@ app.post("/:id/floorplan/detect-size", requirePermission("projects.write"), asyn
   if (!isPdf && !isImage) {
     return c.json({ error: "Only image or PDF floorplans can be read." }, 400);
   }
+  // Per-kind ceilings: the API caps an IMAGE block near 5MB, while a PDF
+  // document block may be much larger (the 32MB request budget is the real
+  // limit, and base64 inflates ~33%, so 12MB of PDF is about 16MB on the wire).
+  // A venue master floorplan PDF routinely exceeds 5MB — the flat 5MB cap
+  // rejected them outright (project 187, verified 2026-08-05).
+  const maxBytes = isPdf ? 12 * 1024 * 1024 : 5 * 1024 * 1024;
+  if (buf.byteLength > maxBytes) {
+    return c.json(
+      {
+        error: `That floorplan is too large to read (${Math.round(buf.byteLength / 1024 / 1024)}MB; limit ${
+          maxBytes / 1024 / 1024
+        }MB for ${isPdf ? "PDFs" : "images"}). Please type the size in.`,
+      },
+      400,
+    );
+  }
+  const b64 = arrayBufferToBase64(buf);
   const fileBlock = isPdf
     ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
     : {
