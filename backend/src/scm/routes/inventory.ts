@@ -49,6 +49,30 @@ import type { Env, Variables } from '../env';
 export const inventory = new Hono<{ Bindings: Env; Variables: Variables }>();
 inventory.use('*', supabaseAuth);
 
+/* Warehouse types whose stock is NOT part of the sell-through question. A
+   display piece standing in a showroom is doing its job, and a unit sent back to
+   the supplier for service is not idle — neither is a slow seller, and flagging
+   them buries the ones that are. Owner, 2026-08-05: "我的 dead stock 里面怎么会有
+   dead stock 呢？因为它明明是 showroom 的 display 啊".
+   `warehouses.type` already carries this (mig 0171 keeps is_showroom in step with
+   `type = 'showroom'`), so nothing new is stored — the axis was there and dead
+   stock simply never read it. Shared by the ANALYTICS dead-stock list and the
+   LIST's per-SKU Dead/Spare badge: the 2026-08-05 fix reached only the first, so
+   the screen the owner actually looks at kept tagging display pieces DEAD. */
+const NON_SELLING_WAREHOUSE_TYPES = new Set(['showroom', 'display', 'service']);
+
+async function loadNonSellingWarehouseIds(
+  sb: any,
+  c: Parameters<typeof scopeToCompany>[1],
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  const { data } = await scopeToCompany(sb.from('warehouses').select('id, type'), c);
+  for (const w of (data ?? []) as Array<{ id: string; type: string | null }>) {
+    if (NON_SELLING_WAREHOUSE_TYPES.has(String(w.type ?? '').toLowerCase())) ids.add(w.id);
+  }
+  return ids;
+}
+
 /* ── Warehouses CRUD ─────────────────────────────────────────────────── */
 inventory.get('/warehouses', async (c) => {
   const sb = c.get('supabase');
@@ -483,6 +507,10 @@ inventory.get('/products', async (c) => {
   // unit cost divides owned value by OWNED qty — not total_qty (which still
   // counts consignment units and would dilute the average) (owner 2026-07-25).
   const ownedQty = new Map<string, number>();
+  /* On-hand standing in a NON-SELLING warehouse (showroom / display / service),
+     per product_code. Feeds `sellable_surplus_qty` below so the list's Dead/Spare
+     badge stops calling a display piece idle. */
+  const nonSellingQty = new Map<string, number>();
 
   if (codes.length > 0) {
     // Warehouse-scoped Stock: the totals view is a cross-warehouse rollup, so a
@@ -495,6 +523,24 @@ inventory.get('/products', async (c) => {
         .eq('warehouse_id', warehouseId).in('product_code', batch).range(from, to));
       for (const r of (bal ?? []) as Array<{ product_code: string; qty: number }>) {
         whStock.set(r.product_code, (whStock.get(r.product_code) ?? 0) + Number(r.qty ?? 0));
+      }
+    }
+
+    /* Non-selling on-hand per SKU. Read from the balances rather than the lots so
+       it matches the Stock column's own arithmetic; scoped to the chosen
+       warehouse when there is one, so a showroom view reports all of its stock as
+       non-selling and a KL view reports none of it. Skipped entirely when the
+       company has no showroom/display/service warehouse — the common case. */
+    const nonSellingIds = await loadNonSellingWarehouseIds(sb, c);
+    const scopedNonSelling = warehouseId
+      ? (nonSellingIds.has(warehouseId) ? [warehouseId] : [])
+      : [...nonSellingIds];
+    if (scopedNonSelling.length > 0) {
+      const { data: nsBal } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
+        .from('inventory_balances').select('product_code, qty'), c)
+        .in('warehouse_id', scopedNonSelling).in('product_code', batch).range(from, to));
+      for (const r of (nsBal ?? []) as Array<{ product_code: string; qty: number }>) {
+        nonSellingQty.set(r.product_code, (nonSellingQty.get(r.product_code) ?? 0) + Number(r.qty ?? 0));
       }
     }
 
@@ -630,6 +676,14 @@ inventory.get('/products', async (c) => {
       reserved_total:      committed + unsched, // whole open demand (continuity)
       available_qty:       available,
       surplus_qty:         available - unsched,
+      /* Spare that is genuinely IDLE — the same figure with showroom / display /
+         service stock taken out. The Dead/Spare badge reads this one; the Spare
+         column keeps reading `surplus_qty`, which is still the true arithmetic
+         (Available − Unscheduled) and is what the column's tooltip explains.
+         Floored at 0: a SKU whose whole spare is standing in a showroom is not
+         "negatively idle", it simply is not a dead-stock candidate. */
+      sellable_surplus_qty: Math.max(0, (available - unsched) - (nonSellingQty.get(code) ?? 0)),
+      non_selling_qty:     nonSellingQty.get(code) ?? 0,
       incoming_qty:        inc,
       incoming_pos:        pos,
       oldest_lot_at:       oldestLot.get(code) ?? null,
@@ -965,16 +1019,7 @@ inventory.get('/analytics', async (c) => {
      `warehouses.type` already carries this (mig 0171 keeps is_showroom in step
      with `type = 'showroom'`), so nothing new is stored — the axis was there and
      dead stock simply never read it. */
-  const NON_SELLING_TYPES = new Set(['showroom', 'display', 'service']);
-  const nonSellingWh = new Set<string>();
-  {
-    const { data: whRows } = await scopeToCompany(
-      sb.from('warehouses').select('id, type'), c,
-    );
-    for (const w of (whRows ?? []) as Array<{ id: string; type: string | null }>) {
-      if (NON_SELLING_TYPES.has(String(w.type ?? '').toLowerCase())) nonSellingWh.add(w.id);
-    }
-  }
+  const nonSellingWh = await loadNonSellingWarehouseIds(sb, c);
 
   // Aging buckets (days since lot received).
   const BUCKETS = [

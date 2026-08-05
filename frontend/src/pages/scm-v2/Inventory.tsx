@@ -452,11 +452,15 @@ const BalancesTab = ({
   const resultsAreStale = searchTransition.resultsAreStale || isPlaceholderData;
   const searching = searchTransition.isSearching || (isPlaceholderData && !error);
   // Owner 2026-07-25 — a "Dead stock only" view over the SAME set-based rows:
-  // SKUs with Spare (surplus_qty) > 0, i.e. on-hand stock beyond all demand.
+  // SKUs with idle Spare > 0, i.e. on-hand stock beyond all demand. Reads the
+  // SELLABLE figure so the filter and the badge agree — a showroom/display/
+  // service piece is where it belongs and must not appear here either.
   // Client-side (no extra query); the badge column emphasises make-to-order.
   const [deadOnly, setDeadOnly] = useState(false);
   const baseRows = resultsAreStale ? [] : rows;
-  const visibleRows = deadOnly ? baseRows.filter((r) => (r.surplus_qty ?? 0) > 0) : baseRows;
+  const visibleRows = deadOnly
+    ? baseRows.filter((r) => (r.sellable_surplus_qty ?? r.surplus_qty ?? 0) > 0)
+    : baseRows;
 
   const stats = useMemo(() => ({
     totalQty: visibleRows.reduce((s, r) => s + (r.total_qty ?? 0), 0),
@@ -587,7 +591,10 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
   {
     key: 'stock',
     label: 'Stock',
-    width: '80px',
+    /* 80px fitted the bare number and clipped the held suffix the moment it
+       appeared — PJ SHOWROOM rows rendered "0 +2 he…". The cell carries up to
+       "<owned> +<held> held", so the width has to cover both figures. */
+    width: '130px',
     align: 'right',
     /* Sorts and reads on the OWNED figure. Owner, 2026-08-05: "consignment 的东西
        怎么可以放进 my stocks 里面，还呈现出来？你这样子我会以为我有货". Twelve of
@@ -715,18 +722,42 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     key: 'deadstock',
     label: 'Dead stock',
     width: '110px',
-    getValue: (r) => (r.surplus_qty > 0 ? (isMakeToOrderCategory(r.category) ? `dead ${r.surplus_qty}` : `spare ${r.surplus_qty}`) : ''),
+    /* Reads sellable_surplus_qty, NOT surplus_qty. A piece standing in a showroom
+       or at the supplier for service is doing its job, so "no sale in the window"
+       says nothing about it — the badge must not call it dead. Owner, 2026-08-05:
+       "我的 dead stock 里面怎么会有 dead stock 呢？因为它明明是 showroom 的 display
+       啊". The same day's fix reached only the Analytics dead-stock list, so THIS
+       badge — the one on the screen he looks at — kept flagging them.
+       Falls back to surplus_qty so a cached pre-fix payload renders as before. */
+    getValue: (r) => {
+      const idle = r.sellable_surplus_qty ?? r.surplus_qty;
+      return idle > 0 ? (isMakeToOrderCategory(r.category) ? `dead ${idle}` : `spare ${idle}`) : '';
+    },
     render: (r) => {
-      if (r.surplus_qty <= 0) return <span className={styles.numCellZero}>—</span>;
+      const idle = r.sellable_surplus_qty ?? r.surplus_qty;
+      const parked = r.non_selling_qty ?? 0;
+      if (idle <= 0) {
+        return (
+          <span
+            className={styles.numCellZero}
+            title={parked > 0
+              ? `${fmtQty(parked)} standing in a showroom / display / service warehouse — where it is meant to be, so it is not a dead-stock candidate.`
+              : undefined}
+          >—</span>
+        );
+      }
       const mto = isMakeToOrderCategory(r.category);
+      const parkedNote = parked > 0
+        ? ` (${fmtQty(parked)} more is on display / at service and excluded)`
+        : '';
       return (
         <span
           className={`${styles.movementPill} ${mto ? styles.pillDeadStock : styles.pillFreeSoft}`}
           title={mto
-            ? `Make-to-order (${r.category}): ${fmtQty(r.surplus_qty)} spare on hand with no Sales Order — dead-stock candidate. Open the drawer for the exact assigned/free lots.`
-            : `Make-to-stock (${r.category}): ${fmtQty(r.surplus_qty)} spare is expected for a shelf item. Softer signal.`}
+            ? `Make-to-order (${r.category}): ${fmtQty(idle)} spare on hand with no Sales Order — dead-stock candidate${parkedNote}. Open the drawer for the exact assigned/free lots.`
+            : `Make-to-stock (${r.category}): ${fmtQty(idle)} spare is expected for a shelf item${parkedNote}. Softer signal.`}
         >
-          {mto ? 'Dead' : 'Spare'} {fmtQty(r.surplus_qty)}
+          {mto ? 'Dead' : 'Spare'} {fmtQty(idle)}
         </span>
       );
     },
