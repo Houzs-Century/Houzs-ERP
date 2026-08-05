@@ -1,5 +1,13 @@
 ## 2026-08-05
 
+### [HIGH] The SO edit screen said every order was yours
+- **Symptom.** Owner, 2026-08-05, on `SO-2608-004` whose salesperson is **Pei Fen**: *"当我点选 ID 的时候，跳出第一个人的时候，他就直接变成我的名字了，那么奇怪"*. The detail view showed Pei Fen; opening Edit showed **"Lim (me)"**.
+- **Root cause (traced, not guessed).** `MobileNewSO` left `salespersonId` as `""` when loading an order for edit, and `""` renders as the picker's FIRST option — `{selfDisplayName} (me)`. So every edit screen claimed the order belonged to whoever opened it. The form's local `SoHeader` type never even declared `salesperson_id`, though the detail route's HEADER select has always returned it (`mfg-sales-orders.ts:919`) and `MobileSODetail` already reads it.
+- **The stored value was safe; the screen was not.** An untouched picker sends `null`, so `salesperson_id` was left alone — that property was deliberate and still holds. But the screen stated something false about a field that drives **commission** and the **row-level visibility scope**, and an operator "correcting" what they saw would have reassigned a colleague's sale to themselves.
+- **Fix.** Seed from `h.salesperson_id`, and seed the pristine baseline to the SAME value so an untouched picker still diffs to `{}` and still sends nothing.
+- **The class, for next time.** A field left blank "so we do not overwrite it" is only safe if blank RENDERS as blank. Here blank rendered as a confident wrong answer.
+- **Ref:** #<PR>. `fix/so-salesperson-clean` 2026-08-05.
+
 ### [HIGH] Consignment stock read as the owner's, and showroom display read as dead stock
 - **Symptom.** Owner, 2026-08-05: *"consignment 的东西怎么可以放进 my stocks 里面，还呈现出来？你这样子我会以为我有货"* and *"我的 dead stock 里面怎么会有 dead stock 呢？因为它明明是 showroom 的 display 啊"*. Of the 14 pieces standing in PJ SHOWROOM, **12 are not his** (`OWNED 2 / RM2,540` vs `HELD 12 / RM7,285`) — and the list showed one blended `Stock` number. Separately, display pieces were being tagged `DEAD` and `SPARE`.
 - **Root cause (traced, not guessed).** Two axes exist and only one was being read. **Ownership** — `isConsignmentLotSource(source_doc_type, source_doc_no)` — was already applied to every VALUE figure (BUG-HISTORY 2026-07-25) but deliberately NOT to quantity, so `total_qty` carried consignment units with nothing to say so. **Where the stock stands** — `warehouses.type` (`warehouse / showroom / display / service / others`, with mig 0171 keeping `is_showroom = (type = 'showroom')`) — was never read by the dead-stock query at all, which is simply `has on-hand value AND no sale in the window`. A display piece satisfies that forever: standing there IS its job.
