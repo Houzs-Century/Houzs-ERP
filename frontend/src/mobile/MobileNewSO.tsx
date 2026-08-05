@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { postScanLearningSample, reportScanLearningSkipped } from "../vendor/scm/lib/scan-learning";
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch, parseSaveProblems } from "../vendor/scm/lib/authed-fetch";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
@@ -1363,7 +1364,12 @@ export function MobileNewSO({
      exactly (single logic layer); the backend keeps corrected vs accepted-as-is
      apart because they teach different things (scan-so.ts SAMPLE_* header). */
   const maybeLearnFromScan = () => {
-    if (!fromScan || !scanSampleId || !scanAiOriginal) return;
+    if (!fromScan) return;
+    /* A scan that teaches nothing used to return here in silence — the pool
+       stays empty and there is no record of why. 40 scans / 0 confirmations
+       made that ambiguity the whole question. */
+    if (!scanSampleId) { reportScanLearningSkipped('no-sample-id', 'mobile'); return; }
+    if (!scanAiOriginal) { reportScanLearningSkipped('no-ai-original', 'mobile'); return; }
     const ai = scanAiOriginal;
     const optMatch = (v: string) => (v ? { value: v, confidence: 1, reason: "operator-confirmed" } : null);
     const norm = (s: string | null | undefined) => (s ?? "").trim();
@@ -1433,10 +1439,16 @@ export function MobileNewSO({
       }),
     };
 
-    void authedFetch(`/scan-so/samples/${scanSampleId}/confirm`, {
-      method: "POST",
-      body: JSON.stringify({ corrected, salesperson: scanSalesperson || null, accepted: !changed }),
-    }).catch(() => { /* few-shot learning is best-effort — never blocks save */ });
+    /* Still best-effort — it never blocks the save. What changed is that a
+       4xx/5xx no longer vanishes into an empty arrow function (Hookka 5ea07668:
+       ".catch only sees a NETWORK failure — a 403, 404 or 500 resolves normally
+       and was thrown away unread"). */
+    void postScanLearningSample(
+      authedFetch,
+      scanSampleId,
+      { corrected, salesperson: scanSalesperson || null, accepted: !changed },
+      'mobile',
+    );
   };
 
   /* Post-create payment recording — records each SLIP-BACKED row AFTER the SO
