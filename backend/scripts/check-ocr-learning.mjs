@@ -53,6 +53,27 @@ try {
   console.log(`  last scan                  ${day(tot.last_any)}`);
   console.log(`  last correction captured   ${day(tot.last_corrected)}\n`);
 
+  /* Status histogram. `so_scan_samples.status` is FREE TEXT with no check
+     constraint, and the few-shot pool used to be gated on it — so a row with a
+     real corrected payload but a missing, legacy or differently-spelled status
+     was silently invisible to the model with nothing to say so. Production had
+     exactly that shape (2 corrected, 0 CONFIRMED). Printing the distribution is
+     what makes such a row findable instead of a contradiction between two
+     numbers above. */
+  const statuses = await pg`
+    SELECT COALESCE(NULLIF(TRIM(status), ''), '(null/blank)') AS status,
+           COUNT(*)                                          AS rows,
+           COUNT(*) FILTER (WHERE corrected IS NOT NULL)     AS with_corrected
+      FROM scm.so_scan_samples
+     GROUP BY 1
+     ORDER BY 2 DESC`;
+  console.log(`  STATUS DISTRIBUTION (free-text column — anything unexpected here is a bug)\n`);
+  console.log(`      ${rpad("status", 22)}${rpad("rows", 8)}with a corrected payload`);
+  for (const s of statuses) {
+    console.log(`      ${rpad(s.status, 22)}${rpad(num(s.rows), 8)}${num(s.with_corrected)}`);
+  }
+  console.log("");
+
   /* Per rep, because the few-shot examples are filtered per salesperson — a
      global pool that looks healthy can still leave an individual rep with none. */
   const perRep = await pg`
