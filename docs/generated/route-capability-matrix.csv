@@ -266,6 +266,7 @@ POST,/api/projects/:id/finance/lines,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,au
 POST,/api/projects/:id/finance/recompute-auto,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects/:id/finance/resync,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 PUT,/api/projects/:id/finance/upload,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
+POST,/api/projects/:id/floorplan/detect-size,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects/:id/notes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requireAnyPermission([""projects.write"", ""projects.chat""])",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects/:id/payment,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 PUT,/api/projects/:id/payment/proof,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
