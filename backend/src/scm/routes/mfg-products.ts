@@ -224,7 +224,7 @@ mfgProducts.get('/', listMfgProductsHandler);
    in-repo statement of that taxonomy — the HR item-KPI category picker imports
    it rather than re-listing the values, so a rule can never offer a category the
    column cannot hold. Keep in step with the enum if it ever gains a member. */
-export const MFG_PRODUCT_CATEGORIES = ['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE'] as const;
+export const MFG_PRODUCT_CATEGORIES = ['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'BEDLINES', 'DINING', 'DIFFUSER', 'CARPET', 'SERVICE'] as const;
 const VALID_CATEGORIES = new Set<string>(MFG_PRODUCT_CATEGORIES);
 mfgProducts.post('/', async (c) => {
   const gate = await requireRole(c);
