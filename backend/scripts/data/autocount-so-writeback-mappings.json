@@ -1,0 +1,132 @@
+{
+  "_meta": {
+    "purpose": "Durable master-data mapping for writing an ERP Sales Order back into AutoCount (HOUZS CENTURY [LIVE]) as an AutoCount Sales Order. Company 1 (Houzs Century) only; 2990 excluded. Harvested read-only from AutoCount 2.2 maintenance screens on 2026-08-06.",
+    "source": "AutoCount Accounting 2.2 64-bit, HOUZS CENTURY SDN BHD [LIVE], user ADMIN",
+    "harvested_at": "2026-08-06",
+    "notes": [
+      "AutoCount has NO create-SO endpoint yet; the .NET middleware only exposes updateFromSheet + update-udf-dates. Writeback needs a new AutoCount-SDK create path. This file is the data that path will consume.",
+      "Never write AutoCount accounting tables via raw SQL; go through the AutoCount SDK/UI so business logic runs.",
+      "DocNo strategy: AutoCount document is populated directly from what we write, so the ERP doc_no becomes the AutoCount DocNo directly (owner confirmed 2026-08-06)."
+    ]
+  },
+
+  "debtor": {
+    "strategy": "single-fixed-account-name-override",
+    "debtor_code": "300-C002",
+    "debtor_company_name_in_autocount": "CUSTOMER",
+    "rule": "Every writeback SO uses DebtorCode=300-C002 and overwrites DebtorName with the actual customer name (free text). No per-customer debtor alignment needed.",
+    "other_generic_accounts_for_reference": {
+      "300-C001": "SECURITY DEPOSIT",
+      "300-F001": "CASH & CARRY",
+      "300-B001": "ADDITIONAL SERVICE",
+      "300-B002": "BEDLINES & ACCESSORIES",
+      "300-D999": "DEPOSIT NOT REFUNDABLE FROM CUSTOMER"
+    }
+  },
+
+  "field_map": {
+    "header": {
+      "doc_no": "DocNo",
+      "so_date": "DocDate",
+      "agent": "SalesAgent",
+      "debtor": "DebtorCode(=300-C002)+DebtorName(customer name)",
+      "sales_location": "SalesLocation",
+      "venue": "SOUDF_VENUE",
+      "branding": "SOUDF_BRANDING",
+      "address1_4": "InvAddr1..InvAddr4",
+      "phone": "Phone1",
+      "ref": "Ref",
+      "po_doc_no": "SOUDF_ToPONo",
+      "remark2_stock_status": "Remark2",
+      "line_delivery_date": "SOUDF_PDate",
+      "balance_centi": "SOUDF_BALANCE"
+    },
+    "line": {
+      "item_code": "ItemCode (via SKU mapping)",
+      "composed_variants_description": "ItemDescription (Description 2) — the full composed variant string",
+      "qty": "Qty",
+      "unit_price": "UnitPrice"
+    },
+    "payment": {
+      "posts_to_autocount": false,
+      "note": "SO is non-financial in AutoCount. PAYEMENT UDF (free text, e.g. receipt ref) + SOUDF_BALANCE carry info only; real receipts are a separate AR document + endpoint that does not exist."
+    }
+  },
+
+  "branding_map": {
+    "AKEMI": "AKEMI",
+    "DUNLOPILLO": "DUNLOPILLO",
+    "ERGOTEX": "ERGOTEX",
+    "MYLATEX": "MYLATEX",
+    "Houzs": "HOUZS"
+  },
+  "branding_note": "HOUZS was ADDED to the AutoCount BRANDING UDF list on 2026-08-06 (via User Defined List Maintenance UI). AutoCount BRANDING options are now: AKEMI, MYLATEX, DUNLOPILLO, ZANOTTI, ERGOTEX, NONE, HOUZS.",
+
+  "location_map": {
+    "KL WAREHOUSE": "KL",
+    "PG WAREHOUSE": "PG",
+    "SLGR WAREHOUSE": "KL",
+    "Kuala Lumpur": "KL",
+    "Petaling Jaya": "KL",
+    "Cheras": "KL",
+    "Shah Alam": "KL",
+    "George Town": "PG",
+    "Kota Kinabalu": "SBH",
+    "Kuantan": "KL",
+    "Johor Bahru": "KL"
+  },
+  "location_note": "AutoCount SalesLocation uses SHORT codes; ERP uses long/free-text. JB & Kuantan have no dedicated AutoCount location and fall in the KL/Balakong delivery region per the ERP postcode->zone model (zone-classify.ts); KL warehouse serves central/south/east, PG serves the north, SBH=Sabah.",
+  "autocount_locations_reference": {
+    "KL": "BALAKONG WAREHOUSE", "PG": "PENANG WAREHOUSE", "SRW": "SARAWAK VENUE",
+    "SBH": "SABAH", "HQ": "Headquarter", "KELANA.J": "AKEMI SLEEP STUDIO KELANA JAYA",
+    "SUNWAY": "DUNLOPILLO SUITE SUNWAY", "C&C DISP": "CASH & CARRY - FAIR",
+    "C&C K.J": "CASH & CARRY - KELANA", "EM DISP": "SARAWAK BEDDING DISPLAY",
+    "KL DISP": "BALAKONG BEDDING DISPLAY", "PG DISP": "PENANG BEDDING DISPLAY",
+    "SBH DISP": "SABAH BEDDING DISPLAY", "SERV KL": "BALAKONG RETURNED TO SUPPLIER",
+    "SERV PG": "PENANG RETURNED TO SUPPLIER"
+  },
+
+  "venue_map": {
+    "SUNWAY PYRAMID CONVENTION CENTRE": "SUNWAY PYRAMID CONVENTION CENTRE",
+    "SUTERA MALL": "SUTERA MALL SOLO",
+    "KLCC CONVENTION CENTRE": "KUALA LUMPUR CONVENTION CENTRE",
+    "SUTERA SQUARE": "SUTRA SQUARE JOHOR",
+    "MVEC SOUTHKEY": "MIDVALLEY SOUTHKEY JB",
+    "SUNWAY KLUANG MALL": "SUNWAY KLUANG MALL SOLO",
+    "KSL CITY MALL": "KSL CITY MALL JOHOR SOLO"
+  },
+  "venue_note": "AutoCount SOUDF_VENUE is a controlled dropdown of ~95 options. ERP venue strings normalise to the AC option (naming differs by SOLO suffix / spelling). Full AC venue list captured in autocount-venue-options.txt if needed.",
+
+  "agent_map": {
+    "Anthony": "ANTHONY", "YUNY": "YUNY", "Kris": "KRIS", "Shawn": "SHAWN",
+    "Lawrence": "LAWRENCE", "Kingsley": "KINGSLEY", "Stanley": "STANLEY",
+    "Junie": "JUNIE", "Mei Ting": "MEI TING", "Peter": "PETER", "Wei How": "WEI HOW",
+    "Rachael": "RACHAEL", "Sally": "SALLY", "Zack": "Zack", "Sheldon Tan": "SHELDON",
+    "James Seow": "JAMES SEOW", "Lucas": "LUCAS", "Adrian": "ADRIAN",
+    "Esther Chong": "ESTHER CHONG", "Melvin Chong": "MELVIN CHONG", "Chea Huan": "Chea Huan",
+    "WengGi": "WENGGI", "Kar Jiun": "TAN KAR JIUN", "Hwa Sheng": "Hwasheng",
+    "Shi Ting": "Chang Shi Ting", "Luis Teo": "LUIS", "Pei Fen": "PEIFEN",
+    "Lim Yau Wei": "LIM YAU WEI"
+  },
+  "agent_map_fuzzy_to_confirm": {
+    "Ethan": "ETHAN SOO (or ETHAN SOO JIA XIAN)",
+    "Wei Pin": "WEIPIN (or WEIPIN NGIAU)"
+  },
+  "agent_excluded": {
+    "reason": "2990 staff (out of scope) or non-sales/test accounts — no AutoCount Houzs Century agent needed",
+    "reps": ["Bernard", "Frankie Lee Boon ping", "NG PENG CHUEN", "Nijam Houzs Sales Director", "Nijam Sales Person", "nancyhouzs@gmail.com", "yzhe212@gmail.com", "Sales Manager (test)", "Sales Director (test)", "Sales Executive (test)", "Sales Person (test)", "Sales Trainee (test)"]
+  },
+  "autocount_agents_reference_79": ["KINGSLEY","MK","WW","ALEX","OTHERS","SIANG","IDA","ALVIN","LIANG","JOEY","KRIS","PETER","STANLEY","WEI HOW","SHU HUI","LUIS","YUNY","ANTHONY","NINA","JUNIE","GRACE","YANG","JIA HOU","TERRY","MEI TING","SALLY","JANE","SHAWN","LAWRENCE","YURI","RACHAEL","SIA JONAS","SIA JOSIAH","DS","SHUANG","TAN KAR JIUN","SHELDON","Zanotti Living(Kelana Jaya)","STEPHY","LIM YAU WEI","Chea Huan","Hwasheng","Chang Shi Ting","JAY","Ummu","HOUZS CENTURY","ADRIAN","YEAP MIN HUA","Phoebe","KEN","Kingsley91","TAN HONG YU","Zack","PEIFEN","XUE TING","TAN JIA YEE","ESTHER","EMI","WEI SIANG","JAMES SEOW","ESTHER CHONG","LEE SZE ROU","SOO JIA XIAN","CHONG CHAN YEE","XIAO ROU","JUNO","DEXON","EDWIN","MAYSON","WEIPIN NGIAU","ETHAN SOO JIA XIAN","MELVIN CHONG CHAN YEE","WEIPIN","LUCAS","ETHAN SOO","MELVIN CHONG","WENGGI","LOUIS WONG YONG XING","LOUIS WONG"],
+
+  "sofa": {
+    "rule": "AutoCount holds ONE stock item per sofa MODEL per supplier (SET UOM, e.g. DSL-8038 SOFA, AMN-SF9028 SOFA, HOK-5530 SOFA). Our per-compartment ERP SKUs (8030-2S, 9028-L(RHF)...) collapse to the parent AutoCount code for the line's SUPPLIER, with the compartment (2L, 3S, CNR...) written into Description 2. No per-compartment AutoCount items exist.",
+    "verified_examples": {
+      "8038": ["DSL-8038 SOFA"],
+      "9028": ["AMN-SF9028 SOFA", "DSL-9028 SOFA", "HOK-5530 SOFA"]
+    },
+    "cleanup_needed": {
+      "stray_binding": "8038 compartments wrongly bound to RDS-5526 SOFA (no 5526 item exists) — remove.",
+      "self_bindings": "5543 / 8060 / 8069 / 9050 compartments bound to their OWN ERP code as supplier_sku (e.g. 8060-2S) — not AutoCount items, remove."
+    }
+  }
+}
