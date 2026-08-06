@@ -2728,10 +2728,13 @@ async function recomputeSoPicked(sb: any, soItemIds: Array<string | null | undef
 }
 
 /* ── SO-link target gate ────────────────────────────────────────────────────
-   `purchase_order_items.so_item_id` is not decoration: the drop-ship guard
-   resolves an incoming batch through it, MRP reads it, and the SO's
-   po_qty_picked is recounted from it. So the operator-facing bind (add-line and
-   line-edit) must not be able to point a PO line at just any SO line. Three
+   `purchase_order_items.so_item_id` is procurement PROVENANCE under the
+   2026-08-06 decision (soft until DO, hard from DO — see docs/modules/
+   purchase-order.md §Decision): the record of WHY we bought. Transitionally it
+   still feeds the drop-ship batch expectation and the per-line quota (staged
+   demotion in progress), and it is displayed and audited everywhere — so the
+   operator-facing bind (add-line and line-edit) must still not be able to
+   point a PO line at just any SO line. Three
    things are checked, and a failure is a 409 the UI can show verbatim:
 
      • the SO line exists and belongs to the ACTIVE COMPANY (a foreign uuid
