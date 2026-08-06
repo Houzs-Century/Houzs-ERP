@@ -816,7 +816,25 @@ function PurchaseOrderDetailV2ReadOnly() {
                 <span className="text-ink-muted">{` (qty ${a.qty})`}</span>
               </span>
             ))}
-            {allocs.length === 0 && <span className="text-[11px] text-ink-muted">—</span>}
+            {/* No explicit slices -> show the EFFECTIVE assignment instead of a
+                dash. The coarse Source-SO link (or STOCK) is what actually
+                governs this line, and rendering "—" while the list shows an
+                Assigned SO read as a contradiction. Owner, 2026-08-06: "明明显示
+                有 SO,可是 allocation 却显示没有". Muted + dashed border = implicit
+                (a real slice overrides it). */}
+            {allocs.length === 0 && (
+              <span
+                title={
+                  l.so_doc_no
+                    ? `Whole line (qty ${l.qty}) follows its Source SO link ${l.so_doc_no} — implicit; add a slice to override.`
+                    : `Whole line (qty ${l.qty}) is for stock — no Source SO link; add a slice to assign.`
+                }
+                className="rounded border border-dashed border-border px-1.5 py-0.5 font-mono text-[10.5px] text-ink-secondary"
+              >
+                {l.so_doc_no ?? "STOCK"}
+                <span className="text-ink-muted">{` (qty ${l.qty})`}</span>
+              </span>
+            )}
             {(purchaseOrder?.status || "").toUpperCase() !== "CANCELLED" && (
               <button
                 type="button"

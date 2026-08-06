@@ -1,5 +1,16 @@
 ## 2026-08-06
 
+### [MEDIUM] "SO revised, supplier can't follow" had no workflow — and the allocations UI contradicted the list
+- **Symptom.** Owner, walking the real case (salesperson mis-entered variants, PO already with the supplier, supplier refuses the change): *"我的 PO 既不能修改,也不能取消,那我接下来要怎么操作?"* Then, using the allocation editor: *"明明显示有 SO,可是 Allocations 却显示没有"* — the line's Assigned SO chip showed `2990-SO-2608-004` while the Allocations column and the modal's empty state both said none, because they render only the mig-0235 slices and stay silent about the coarse `so_item_id` link that actually governs the line.
+- **The architecture ruling this produced (owner, recorded for good).** *"Soft until DO, hard from DO"*: before a Delivery Order exists, ALL matching is the floating MRP allocator's job (pooled by SKU + variant, same-batch constraint is SOFA-only — bedframes exempt); the persisted PO→SO link is procurement provenance, not an execution binding; a spec mismatch after an SO revision is a FACT, not a decision — *"他喜欢的人已经变了…他就变了"*. Full realignment (demoting the link from ship-time batch expectation and quota) is staged separately; this entry ships the immediate pieces.
+- **Shipped.**
+  1. **Reject-a-follow-up now auto-releases to STOCK.** A PO amendment raised by an SO revision (`source_so_amendment_id`) that gets REJECTED = supplier keeps the original spec. The handler inserts a STOCK slice for each affected line's un-allocated remainder (`planStockRelease`, pure + unit-tested; existing slices untouched), audits, and returns `releasedToStock`; desktop and mobile toasts surface it. MRP then re-shows the corrected spec as shortage for a fresh PO. Release failure never un-rejects — reported in `releaseWarnings`, retryable in the editor.
+  2. **The allocations column and modal now show the EFFECTIVE assignment.** No slices → the coarse Source-SO link (or STOCK) renders as a muted implicit chip with the whole-line qty, instead of a dash that contradicted the Assigned SO one column over.
+- **The workflow for the live CODY case (recorded as the answer to "接下来怎么操作"):** revise the SO (amendment); the raised follow-up lands in PO Amendments; purchaser REJECTS it with "supplier cannot change" → old PO auto-releases to STOCK (arrives as own inventory: clearance or purchase-return); MRP re-shows the shortage → Proceed a fresh PO with the corrected spec; run PO-SO link check after.
+- **Ref:** #<PR>. `feat/split-own-consignment`… superseded branches; this change `fix/reject-releases-to-stock` 2026-08-06.
+
+
+
 ### [LOW] The privacy policy page shipped unreachable — Pages' clean-URL redirect fed it to the SPA fallback
 - **Symptom.** Minutes after #1644 deployed, `curl` of the new `privacy.html` (the URL App Store Connect will require) answered **308 → `/privacy`**, and `/privacy` served the React shell (`<title>Houzs Century ERP</title>`) — the policy was unreachable at BOTH addresses despite the asset deploying fine.
 - **Root cause (traced, not guessed).** Cloudflare Pages canonicalises `*.html` to the extensionless URL with a 308 — but the extensionless path is not an asset, so `_redirects`' `/*  /index.html  200` SPA fallback swallowed it. The two behaviours compose into "every static .html page except index.html is unreachable"; `privacy.html` was simply the first page to hit it.
