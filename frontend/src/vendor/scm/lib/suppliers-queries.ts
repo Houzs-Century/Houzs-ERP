@@ -146,6 +146,9 @@ export type PoHeaderRow = {
   revision?: number | null;
   /** PR #77 — default ship-to warehouse for every line on this PO. */
   purchase_location_id: string | null;
+  /** List endpoint embeds the purchase-location warehouse (id/code/name) for
+      the "Purchase Location" column + Excel export (owner 2026-08-05). */
+  purchase_location?: { id: string; code: string; name: string } | null;
   created_at: string;
   created_by: string;
   updated_at: string;
@@ -198,6 +201,9 @@ export type PoItemSummary = {
   material_code: string;
   material_name: string;
   qty: number;
+  /** Supplier's own SKU for this line (owner 2026-08-05) — the list's
+      "Supplier SKU" column / export; null on lines without a binding. */
+  supplier_sku?: string | null;
 };
 
 export type PoItemRow = {
