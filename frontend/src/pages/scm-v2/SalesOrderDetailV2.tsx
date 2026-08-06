@@ -378,6 +378,12 @@ function OrderTotalCard({
   discountCenti: number;
   totalCenti: number;
 }) {
+  /* The auto-derived delivery fee is inside `totalCenti` but was not itemised,
+     so an all-FOC order read "Subtotal 0 → Total 250" with nothing explaining
+     the 250 (owner, 2026-08-07: "为什么会有 rm250?"). Derived as the remainder
+     rather than read from a header field so the row is exactly the gap the
+     reader is staring at, whatever fee components the server folds in. */
+  const feeCenti = totalCenti - (subtotalCenti - discountCenti);
   const st = statusFor(header.status);
   return (
     <div className="rounded-lg bg-sidebar px-5 py-5 text-sidebar-ink shadow-stone">
@@ -406,6 +412,9 @@ function OrderTotalCard({
       <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
         <TotalLine k="Subtotal" v={fmtMoney(subtotalCenti, header.currency)} />
         <TotalLine k="Discount" v={fmtMoney(discountCenti, header.currency)} />
+        {feeCenti > 0 && (
+          <TotalLine k="Delivery fee" v={fmtMoney(feeCenti, header.currency)} />
+        )}
         <TotalLine k="SST" v="Inclusive" muted />
         <TotalLine
           k="Total"
