@@ -1,5 +1,13 @@
 ## 2026-08-06
 
+### [HIGH] Deploy blocked: 0267 resolved `grns` through the default search_path to the legacy public table
+- **Symptom.** The post-#1664 deploy failed at `pg-migrate`: `FAILED 0267_grn_outstanding_line_level.sql: column g.company_id does not exist` — every later migration and the Worker deploy blocked behind it (the standing CLAUDE.md failure class: main green, prod not deployed).
+- **Root cause.** 0267 (from #1663) writes `FROM grns` unqualified. The runner's default search_path resolves that to `public.grns` — the legacy D1-era table without `company_id` — not `scm.grns`. The view's ORIGINAL definition (0084) only works because it opens with `SET search_path TO scm, public;`; 0267 replaced it without carrying that line.
+- **Fix.** The same `SET search_path` line added to 0267. The file FAILED and was never recorded as applied, so in-place editing is the correct move (immutability applies to APPLIED files).
+- **The class, for next time.** A migration that re-defines an object must carry the same schema-resolution preamble as the migration that created it — or qualify every relation. `column … does not exist` on a column you can see in the schema dump usually means you are looking at a different schema's table.
+- **Ref:** #<PR>. `fix/0267-search-path` 2026-08-06.
+
+
 ### [MEDIUM] Soft-until-DO Stage 2 (shadow): the DO-time allocator runs beside the stored link, binding nothing yet
 - **What ships.** `lib/do-live-allocator.ts` — the live incoming-batch pick by the owner's rules (supply: earliest effective ETA, tie → smaller PO number; whole-set single-dye-lot pick for SOFA sets only, set membership from the lines themselves, which closes the `findIncompleteSofaSets` empty-full-set gap by construction; 11 unit tests). `resolveShipCommitments` now computes the allocator's pick beside `resolveExpectedBatchBySoItem` and **logs divergences** (`[bind-shadow]` in the Worker log); the stored link still binds everything. A failure in the shadow path is caught and cannot touch shipping.
 - **Why shadow first.** Binding is the money path; the repo's discipline for flipping money behaviour is a soak with evidence (`AUTOCOUNT_WRITES_DISABLED` precedent, 0195 staging-first). The flip PR will: subtract `outstandingCommitments` (deliberately omitted in shadow — rare, comparison stays meaningful, documented in the code), switch `expectedBatchNo` to the allocator pick, and keep `planSofaSetPoConflicts` armed as the backstop.
