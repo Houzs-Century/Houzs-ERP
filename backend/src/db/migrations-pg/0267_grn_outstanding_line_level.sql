@@ -20,6 +20,14 @@
 --
 -- Consumers: backend/src/scm/routes/outstanding.ts (the Outstanding → GRN tab).
 -- Columns and their order are unchanged, so the route needs no edit.
+--
+-- 2026-08-06 deploy fix: the first dispatch FAILED on prod with "column
+-- g.company_id does not exist" — the unqualified `FROM grns` resolved through
+-- the migration runner's default search_path to public.grns (the legacy
+-- D1-era table), not scm.grns. 0084 (this view's original definition) works
+-- because it sets the search_path first; do the same here. The file never
+-- applied, so editing it in place is allowed.
+SET search_path TO scm, public;
 
 -- search_path is pinned to scm exactly as 0084 does, and every table ref is
 -- schema-qualified. Without the pin an unqualified `grns` binds to public.grns
