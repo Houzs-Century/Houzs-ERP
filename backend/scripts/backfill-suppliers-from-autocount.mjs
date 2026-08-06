@@ -19,11 +19,22 @@
 //      Names are deliberately not touched (400-B002 / 400-N001 hold short
 //      names on purpose — "不改，保持系统现状").
 //
-//   2. THE ONE APPROVED OVERWRITE: two China suppliers' phones carry the
-//      wrong country code in production (+60 on numbers that are mainland
-//      mobiles — the country-code backfill assumed Malaysia). 400-C005 and
-//      400-J002 are corrected to +86. This is the only place a non-empty
-//      value changes.
+//   2. APPROVED OVERWRITES (the only places a non-empty value changes):
+//      a. Two China suppliers' phones carry the wrong country code in
+//         production (+60 on numbers that are mainland mobiles — the
+//         country-code backfill assumed Malaysia). 400-C005 and 400-J002
+//         are corrected to +86.
+//      b. Registration-number FORMAT UPGRADE (approved 2026-08-06 after the
+//         first dry run): where the live column holds the short old-format
+//         number and the AutoCount value is the full "newformat (oldformat)"
+//         string CONTAINING it, the full form replaces the short form. Same
+//         number, richer format — a full value that does NOT contain the
+//         live one is still only flagged, never written.
+//
+//      Also from that dry-run review: an AutoCount "Website" value that is
+//      actually an EMAIL ADDRESS (contains @ — 400-N002, 400-T002) is
+//      redirected to the email column instead of being copied into website
+//      verbatim, fill-empty-only as usual.
 //
 //   3. ONE INSERT: 400-S007 SWEET HOME INTERNATIONAL SDN BHD is in the
 //      AutoCount list but not in the system — approved as a new row.
@@ -114,9 +125,20 @@ const FIELD_MAP = [
   ["phone1Norm", "phone"],
   ["phone2Norm", "phone2"],
   ["website", "website"],
+  ["emailFromWebsite", "email"],
   ["desc2", "notes"],
   ["creditorType", "supplier_type"],
 ];
+
+// Registration-number format upgrade (approved overwrite 2b): the full
+// AutoCount value may replace a non-empty short-form ONLY when it contains
+// that short form. Compared with whitespace collapsed, since AutoCount pads
+// unevenly ("201701006116 (1220281-M) ").
+function regUpgradeAllowed(liveVal, incoming) {
+  const live = String(liveVal).replace(/\s+/g, " ").trim();
+  const full = String(incoming).replace(/\s+/g, " ").trim();
+  return live !== "" && full !== live && full.includes(live);
+}
 
 // Port of scm/shared/phone.ts normalizePhone, plus the two rules that file
 // cannot know: dual-line "6156/6157 9999" keeps the first alternative, and a
@@ -167,10 +189,17 @@ try {
   const companyId = houzs.id;
 
   // Pre-compute normalized phones once so the plan and the write agree.
+  // A "Website" that is actually an email address (source-file quirk) is
+  // redirected to the email column rather than copied into website verbatim.
   for (const d of DATA) {
     d.mobileNorm = normPhone(d.mobile, d.currency);
     d.phone1Norm = normPhone(d.phone1, d.currency);
     d.phone2Norm = normPhone(d.phone2, d.currency);
+    d.emailFromWebsite = null;
+    if (d.website && d.website.includes("@")) {
+      d.emailFromWebsite = d.website;
+      d.website = null;
+    }
   }
 
   const codes = DATA.map((d) => d.code);
@@ -202,29 +231,37 @@ try {
       continue;
     }
 
-    const sets = {};
+    const sets = {}; // col -> value (fill-empty; write path re-guards)
+    const overwrites = new Set(); // cols allowed to replace a non-empty value
     for (const [key, col] of FIELD_MAP) {
       const incoming = d[key];
       if (incoming == null) continue;
       if (isBlank(row[col])) {
         sets[col] = incoming;
       } else if (String(row[col]).trim() !== String(incoming).trim()) {
-        // Occupied and different — flag, never overwrite. Phones the fix
-        // covers are handled below; suppress their duplicate flag here.
+        // Occupied and different. Two approved overwrites pass through
+        // (phone fix handled below; registration format upgrade here);
+        // everything else is flagged and left alone.
         if (col === "phone" && PHONE_FIX[d.code]) continue;
+        if (col === "registration_no" && regUpgradeAllowed(row[col], incoming)) {
+          sets[col] = incoming;
+          overwrites.add(col);
+          continue;
+        }
         flags.push(`${d.code} ${col} 不一致 — 系统: "${row[col]}" / 文件: "${incoming}" (未改)`);
       }
     }
 
     if (PHONE_FIX[d.code] && String(row.phone ?? "").trim() !== PHONE_FIX[d.code]) {
       sets.phone = PHONE_FIX[d.code];
+      overwrites.add("phone");
     }
 
     if (d.currency && row.currency && d.currency !== row.currency) {
       flags.push(`${d.code} currency 不一致 — 系统: ${row.currency} / 文件: ${d.currency} (未改，改币种影响采购单据，需单独决定)`);
     }
 
-    if (Object.keys(sets).length > 0) plan.push({ code: d.code, sets, row });
+    if (Object.keys(sets).length > 0) plan.push({ code: d.code, sets, overwrites, row });
   }
 
   // ── Report the plan ──
@@ -233,9 +270,11 @@ try {
 
   console.log(`\n== 补录计划 (company_id=${companyId} HOUZS) ==`);
   for (const p of updates) {
-    const parts = Object.entries(p.sets).map(([c, v]) => `${c} ← "${v}"`);
     console.log(`  ${p.code}  ${p.row.name}`);
-    for (const part of parts) console.log(`      ${part}`);
+    for (const [c, v] of Object.entries(p.sets)) {
+      const mark = p.overwrites.has(c) ? "  [覆盖-已批准]" : "";
+      console.log(`      ${c} ← "${v}"${mark}`);
+    }
   }
   for (const p of inserts) {
     console.log(`  ${p.code}  ${p.d.name}  [新增]`);
@@ -256,11 +295,10 @@ try {
       for (const p of updates) {
         // Guard every SET with its own emptiness check inside the
         // transaction, so a concurrent edit between the read above and this
-        // write can never be overwritten. The phone fix is the exception —
-        // approved as an overwrite.
+        // write can never be overwritten. The approved overwrites (phone
+        // fix, registration format upgrade) are the exception.
         for (const [col, val] of Object.entries(p.sets)) {
-          const isPhoneFix = col === "phone" && PHONE_FIX[p.code];
-          if (isPhoneFix) {
+          if (p.overwrites.has(col)) {
             await tx`
               UPDATE scm.suppliers SET ${tx({ [col]: val })}, updated_at = now()
                WHERE company_id = ${companyId} AND code = ${p.code}`;
