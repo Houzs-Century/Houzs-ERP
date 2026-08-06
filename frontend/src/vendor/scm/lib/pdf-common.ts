@@ -537,3 +537,73 @@ export function drawSignatureBoxes(
 // Safe filename: keep alphanum + - and _
 export const safeName = (s: string, maxLen = 32): string =>
   (s || 'doc').replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, maxLen);
+
+// ── How a finished PDF reaches the operator ───────────────────────────────────
+//
+// Every document's Print preview offers the same three exits, so the delivery
+// step lives here instead of being re-implemented per generator (it was written
+// once, for the SO, and every other generator only knew doc.save()):
+//
+//   'save'    → download it (the historical default; keep it the fallback so an
+//               un-migrated caller behaves exactly as before)
+//   'print'   → blob → hidden iframe → the browser's print dialog. NOTE this is
+//               the ONLY correct way to print a document from this app: the
+//               global @media print block (index.css) hides `body *` and shows
+//               only `.org-print-area`, so window.print() on a detail page
+//               prints a BLANK sheet. The DO preview's "Print now" did exactly
+//               that until 2026-08-06.
+//   'preview' → blob → new tab, i.e. the "View full PDF" escape hatch from the
+//               summary card when the operator wants to see every line first.
+export type PdfAction = 'save' | 'print' | 'preview';
+
+/* Mount a blob URL in a hidden iframe and (optionally) trigger print.
+   Cleanup is deferred 60 s so the OS print dialog can hold the iframe
+   document until the user closes it. */
+const renderViaIframe = (blobUrl: string, andPrint: boolean): void => {
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.src = blobUrl;
+  document.body.appendChild(iframe);
+  if (andPrint) {
+    iframe.onload = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch {
+        /* Some browsers throw if the PDF viewer hasn't fully hydrated.
+           Worst case the user sees the iframe content briefly; we still
+           clean up below. */
+      }
+    };
+  }
+  window.setTimeout(() => {
+    try { document.body.removeChild(iframe); } catch { /* already detached */ }
+    URL.revokeObjectURL(blobUrl);
+  }, 60_000);
+};
+
+/** Deliver a rendered doc by the requested route. Defaults to a download. */
+export function deliverPdf(
+  doc: import('jspdf').jsPDF,
+  filename: string,
+  action: PdfAction = 'save',
+): void {
+  if (action === 'save') {
+    doc.save(filename);
+    return;
+  }
+  const blobUrl = URL.createObjectURL(doc.output('blob'));
+  if (action === 'preview') {
+    /* The blob URL must outlive this call — the new tab reads it lazily. 60 s
+       is long enough for the tab to load and short enough not to leak. */
+    window.open(blobUrl, '_blank');
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    return;
+  }
+  renderViaIframe(blobUrl, true);
+}

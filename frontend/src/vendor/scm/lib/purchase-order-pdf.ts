@@ -43,7 +43,7 @@ import {
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { drawSofaLayout } from './sofa-layout-pdf';
-import { COMPANY, amountInWordsMyr, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp } from './pdf-common';
+import { COMPANY, amountInWordsMyr, deliverPdf, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { poDisplayNumber } from './po-status';
 import {
@@ -680,7 +680,7 @@ function finalizePoPdf(doc: JsPdf): void {
 export async function generatePurchaseOrderPdf(
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string },
+  opts?: { docTitle?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -688,7 +688,7 @@ export async function generatePurchaseOrderPdf(
   const { supplierName } = await renderPurchaseOrderInto(doc, autoTable, header, items, opts);
   finalizePoPdf(doc);
   const safeName = supplierName.replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 32);
-  doc.save(`${poDisplayNumber(header.po_number, header.revision)}-${safeName}.pdf`);
+  deliverPdf(doc, `${poDisplayNumber(header.po_number, header.revision)}-${safeName}.pdf`, opts?.action);
 }
 
 /* The SAME PO PDF, returned as raw base64 instead of downloaded — for emailing it
@@ -716,7 +716,7 @@ export async function purchaseOrderPdfBase64(
    "Page p of N" footer. */
 export async function generateCombinedPurchaseOrderPdf(
   pos: Array<{ header: PoHeader; items: PoItem[] }>,
-  opts?: { docTitle?: string; fileName?: string },
+  opts?: { docTitle?: string; fileName?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -726,5 +726,5 @@ export async function generateCombinedPurchaseOrderPdf(
     await renderPurchaseOrderInto(doc, autoTable, pos[i]!.header, pos[i]!.items, opts);
   }
   finalizePoPdf(doc);
-  doc.save(opts?.fileName ?? 'purchase-orders.pdf');
+  deliverPdf(doc, opts?.fileName ?? 'purchase-orders.pdf', opts?.action);
 }

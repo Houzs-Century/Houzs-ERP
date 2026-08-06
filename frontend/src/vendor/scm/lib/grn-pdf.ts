@@ -11,7 +11,7 @@ import {
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { formatPhone } from '@2990s/shared/phone';
-import { COMPANY, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate } from './pdf-common';
+import { COMPANY, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { loadSupplierDocData, supplierCodeFor, docVariantLine } from './supplier-doc-data';
 
@@ -181,20 +181,20 @@ export async function renderGrnInto(
 export async function generateGrnPdf(
   header: GrnHeader,
   items: GrnItem[],
-  opts?: { docTitle?: string; docNoLabel?: string },
+  opts?: { docTitle?: string; docNoLabel?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   await renderGrnInto(doc, autoTable, header, items, opts);
-  doc.save(`${header.grn_number}-${safeName(header.supplier?.name ?? 'supplier')}.pdf`);
+  deliverPdf(doc, `${header.grn_number}-${safeName(header.supplier?.name ?? 'supplier')}.pdf`, opts?.action);
 }
 
 /* Several GRNs → ONE combined file, each GRN starting on a new page. For the
    batch "Export PDF" action on the Goods Received list. */
 export async function generateCombinedGrnPdf(
   docs: Array<{ header: GrnHeader; items: GrnItem[] }>,
-  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string },
+  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -203,5 +203,5 @@ export async function generateCombinedGrnPdf(
     if (i > 0) doc.addPage();
     await renderGrnInto(doc, autoTable, docs[i]!.header, docs[i]!.items, opts);
   }
-  doc.save(opts?.fileName ?? 'goods-received.pdf');
+  deliverPdf(doc, opts?.fileName ?? 'goods-received.pdf', opts?.action);
 }

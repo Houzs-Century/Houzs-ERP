@@ -12,7 +12,7 @@ import {
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { formatPhone } from '@2990s/shared/phone';
-import { COMPANY, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate } from './pdf-common';
+import { COMPANY, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { loadSupplierDocData, supplierCodeFor, docVariantLine } from './supplier-doc-data';
 
@@ -190,13 +190,13 @@ export async function renderPurchaseReturnInto(
 export async function generatePurchaseReturnPdf(
   header: PrHeader,
   items: PrItem[],
-  opts?: { docTitle?: string; docNoLabel?: string; amountLabel?: string; totalLabel?: string },
+  opts?: { docTitle?: string; docNoLabel?: string; amountLabel?: string; totalLabel?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   await renderPurchaseReturnInto(doc, autoTable, header, items, opts);
-  doc.save(`${header.return_number}-${safeName(header.supplier?.name ?? 'supplier')}.pdf`);
+  deliverPdf(doc, `${header.return_number}-${safeName(header.supplier?.name ?? 'supplier')}.pdf`, opts?.action);
 }
 
 /* Several PRs → ONE combined file, each PR starting on a new page. For the batch
@@ -204,7 +204,7 @@ export async function generatePurchaseReturnPdf(
    credit-note returns in one attachment). */
 export async function generateCombinedPurchaseReturnPdf(
   docs: Array<{ header: PrHeader; items: PrItem[] }>,
-  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; amountLabel?: string; totalLabel?: string },
+  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; amountLabel?: string; totalLabel?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -213,5 +213,5 @@ export async function generateCombinedPurchaseReturnPdf(
     if (i > 0) doc.addPage();
     await renderPurchaseReturnInto(doc, autoTable, docs[i]!.header, docs[i]!.items, opts);
   }
-  doc.save(opts?.fileName ?? 'purchase-returns.pdf');
+  deliverPdf(doc, opts?.fileName ?? 'purchase-returns.pdf', opts?.action);
 }

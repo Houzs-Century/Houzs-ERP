@@ -42,6 +42,8 @@ import {
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary, fmtDateOrDash } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import {
   usePurchaseInvoiceDetail,
   useUpdatePurchaseInvoiceHeader,
@@ -479,13 +481,14 @@ export const PurchaseInvoiceDetail = () => {
     }
   };
 
-  const handlePrint = () => {
-    // PI PDF (AutoCount layout) — mirrors PO/GRN's handlePrint wiring its own
+  const deliverPrintPdf = (action: PdfAction) => {
+    // PI PDF (AutoCount layout) — mirrors PO/GRN's print wiring its own
     // purchase-invoice-pdf helper.
-    import('../../vendor/scm/lib/purchase-invoice-pdf').then(({ generatePurchaseInvoicePdf }) =>
-      generatePurchaseInvoicePdf(pi, items as any),
+    return import('../../vendor/scm/lib/purchase-invoice-pdf').then(({ generatePurchaseInvoicePdf }) =>
+      generatePurchaseInvoicePdf(pi, items as any, { action }),
     ).catch((e) => notify({ title: 'PDF generation failed', body: `${e instanceof Error ? e.message : 'Something went wrong.'}`, tone: 'error' }));
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   return (
     <div className={styles.page}>
@@ -513,10 +516,22 @@ export const PurchaseInvoiceDetail = () => {
           {/* A PI is Confirmed the moment it exists (no Draft/lifecycle). */}
           <StatusPill docType="pi" status={pi.status} />
           <RelationshipMapButton type="pi" id={id} />
-          <Button variant="ghost" size="md" onClick={handlePrint}>
+          <Button variant="ghost" size="md" onClick={print.openPreview}>
             <Printer {...ICON} />
             <span>Print PDF</span>
           </Button>
+          <PrintPreviewModal
+            open={print.open}
+            onClose={print.close}
+            docTitle="Purchase Invoice"
+            docNo={pi.invoice_number}
+            rows={[
+              { label: 'Supplier', value: pi.supplier?.name ?? pi.supplier?.code ?? '—' },
+              { label: 'Invoice date', value: fmtDateOrDash(pi.invoice_date) },
+              { label: 'Items', value: `${items.length} line${items.length === 1 ? '' : 's'}` },
+            ]}
+            {...print.handlers}
+          />
           {/* Cancel — only when the PI is not locked (no payment recorded, not
               already cancelled). */}
           {!isLocked && (

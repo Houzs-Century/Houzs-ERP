@@ -52,6 +52,8 @@ import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { useSoRelationshipMap } from "./so-relationship-map";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
@@ -590,7 +592,7 @@ function SalesOrderDetailV2ReadOnly() {
   // Render + download the SO PDF via the shared jspdf generator (client-side),
   // mirroring the V1 SalesOrderDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!salesOrder) return;
     /* The guard below used to be keyed on `isLoading` alone with a `?? []`
        fallback. On a FAILED payments read react-query leaves `isLoading` false
@@ -622,13 +624,13 @@ function SalesOrderDetailV2ReadOnly() {
     // trigger items issued, so the printed PDF can mark the trigger lines.
     const pwpCodes = ((detail.data as { pwpCodes?: unknown[] } | undefined)
       ?.pwpCodes ?? []) as never;
-    import("../../vendor/scm/lib/sales-order-pdf")
+    return import("../../vendor/scm/lib/sales-order-pdf")
       .then(({ generateSalesOrderPdf }) =>
         generateSalesOrderPdf(
           salesOrder as never,
           items as never,
           payments as never,
-          "save",
+          action,
           pwpCodes
         )
       )
@@ -640,6 +642,8 @@ function SalesOrderDetailV2ReadOnly() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!salesOrder);
 
   // The 5-node document chain + what each node does when clicked now come from
   // the shared hook, so this page and the ?edit=1 editor cannot drift again
@@ -931,7 +935,7 @@ function SalesOrderDetailV2ReadOnly() {
             <Button
               variant="secondary"
               icon={<Printer size={14} />}
-              onClick={goPrintPdf}
+              onClick={print.openPreview}
             >
               Print PDF
             </Button>
@@ -1276,7 +1280,7 @@ function SalesOrderDetailV2ReadOnly() {
           </button>
           <button
             type="button"
-            onClick={goPrintPdf}
+            onClick={print.openPreview}
             className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft"
             aria-label="Print PDF"
           >
@@ -1321,6 +1325,29 @@ function SalesOrderDetailV2ReadOnly() {
           setRelMapOpen(false);
           pickChainChoice(d);
         }}
+      />
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Sales Order"
+        docNo={salesOrder.doc_no}
+        rows={[
+          { label: "Customer", value: salesOrder.debtor_name || "—" },
+          { label: "Order date", value: fmtDate(salesOrder.so_date) },
+          {
+            label: "Items",
+            value: `${items.length} line${items.length === 1 ? "" : "s"}`,
+          },
+          {
+            label: "Order total",
+            value: fmtMoney(salesOrder.local_total_centi, salesOrder.currency),
+          },
+          {
+            label: "Balance",
+            value: fmtMoney(salesOrder.balance_centi, salesOrder.currency),
+          },
+        ]}
+        {...print.handlers}
       />
     </div>
   );

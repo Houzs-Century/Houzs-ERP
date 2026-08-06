@@ -28,6 +28,8 @@ import {
 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
 import { formatPhone } from '@2990s/shared/phone';
@@ -1516,7 +1518,7 @@ export const SalesOrderDetail = () => {
       });
     }
   };
-  const handlePrint = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     /* Followup #81 — Wait for the payments query before generating; legacy
        header columns (paid_centi, payment_method, …) are deprecated. If
        the query is still loading we surface a brief notice and bail out
@@ -1561,7 +1563,7 @@ export const SalesOrderDetail = () => {
     /* `pwpCodes` rides on the same GET /:docNo payload — vouchers this SO's
        trigger items issued, so the printed PDF can mark the trigger lines. */
     const pwpCodes = ((detail.data as { pwpCodes?: unknown[] } | undefined)?.pwpCodes ?? []) as never;
-    generateSalesOrderPdf(header, items, payments, 'save', pwpCodes).catch((e) => {
+    return generateSalesOrderPdf(header, items, payments, action, pwpCodes).catch((e) => {
       // eslint-disable-next-line no-console
       console.error('PDF generation failed:', e);
       notify({
@@ -1571,6 +1573,7 @@ export const SalesOrderDetail = () => {
       });
     });
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   return (
     /* Commander 2026-05-29 — a CANCELLED SO greys the whole page so it reads
@@ -1657,10 +1660,23 @@ export const SalesOrderDetail = () => {
               <Share2 {...ICON} />
               <span>Map</span>
             </Button>
-            <Button variant="ghost" onClick={handlePrint}>
+            <Button variant="ghost" onClick={print.openPreview}>
               <Printer {...ICON} />
               <span>Print</span>
             </Button>
+            <PrintPreviewModal
+              open={print.open}
+              onClose={print.close}
+              docTitle="Sales Order"
+              docNo={header.doc_no}
+              rows={[
+                { label: 'Customer', value: header.debtor_name || '—' },
+                { label: 'Order date', value: fmtDateOrDash(header.so_date) },
+                { label: 'Items', value: `${header.line_count} line${header.line_count === 1 ? '' : 's'}` },
+                { label: 'Order total', value: fmtRm(header.local_total_centi, header.currency) },
+              ]}
+              {...print.handlers}
+            />
             {/* Cancel SO (Commander 2026-05-29) — stops proceeding; final. */}
             {!isCancelled && canCancel && !isEditing ? (
               <Button variant="ghost"

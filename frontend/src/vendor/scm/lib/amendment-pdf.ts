@@ -22,7 +22,7 @@
 // NO EMOJI anywhere (owner rule, extends to all product copy).
 // ----------------------------------------------------------------------------
 
-import { COMPANY, drawHeader, ensurePdfCjkFont, fmtDocDate, fmtDocStamp } from './pdf-common';
+import { COMPANY, deliverPdf, drawHeader, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, type PdfAction } from './pdf-common';
 
 /* One changed line on the amendment. `kind` drives the tint semantics: a CHANGE
    shows before (red) -> after (green); an ADD has no before; a REMOVE has no
@@ -83,7 +83,10 @@ const MUTED_INK: [number, number, number] = [120, 120, 120];
 const titleFor = (kind: 'SO' | 'PO'): string =>
   kind === 'SO' ? 'Sales order amendment' : 'Purchase order amendment';
 
-export async function generateAmendmentPdf(input: AmendmentPdfInput): Promise<void> {
+export async function generateAmendmentPdf(
+  input: AmendmentPdfInput,
+  opts?: { action?: PdfAction },
+): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
@@ -274,5 +277,5 @@ export async function generateAmendmentPdf(input: AmendmentPdfInput): Promise<vo
   doc.setTextColor(0);
 
   const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 40);
-  doc.save(`${safe(input.amendmentNo || `${input.kind}-amendment`)}.pdf`);
+  deliverPdf(doc, `${safe(input.amendmentNo || `${input.kind}-amendment`)}.pdf`, opts?.action);
 }

@@ -14,6 +14,7 @@ import { useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Printer, ArrowLeft } from 'lucide-react';
 import { Button } from '../../components/Button';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import { fmtCenti, fmtDate, todayMY } from '../../vendor/shared/format';
 import { useFleetDay, type FleetDayTrip } from '../../vendor/scm/lib/fleet-day-queries';
 import { assignRouteColors, routeColorFor } from '../../vendor/scm/lib/fleet-colors';
@@ -43,11 +44,17 @@ export function FleetRunSheet() {
   );
 
   // Give the map tiles a moment to paint before a print is triggered manually;
-  // the button just calls window.print(), never auto-prints on load.
+  // the button opens the Print preview, never auto-prints on load.
   useEffect(() => { document.title = `Run-sheet ${date}`; }, [date]);
 
+  const print = usePrintPreview(() => window.print());
+
   return (
-    <div className="fleet-runsheet mx-auto max-w-[900px] px-4 py-4">
+    /* `print-area` is the app's print opt-in (index.css). Without it the global
+       `body * { visibility: hidden }` swallowed this page whole and the Print
+       button produced a blank sheet — the local @media print block below only
+       ever governed layout, never visibility. */
+    <div className="fleet-runsheet print-area mx-auto max-w-[900px] px-4 py-4">
       {/* Screen-only toolbar — hidden when printing. */}
       <div className="no-print mb-4 flex flex-wrap items-center gap-2">
         <Button variant="ghost" icon={<ArrowLeft size={14} />} onClick={() => navigate(-1)}>Back</Button>
@@ -55,10 +62,28 @@ export function FleetRunSheet() {
         <span className="text-[12px] text-ink-muted">
           {fmtDate(date)} · {sheets.length} {sheets.length === 1 ? 'lorry' : 'lorries'}
         </span>
-        <Button variant="primary" icon={<Printer size={14} />} onClick={() => window.print()} disabled={sheets.length === 0}>
+        <Button variant="primary" icon={<Printer size={14} />} onClick={print.openPreview} disabled={sheets.length === 0}>
           Print
         </Button>
       </div>
+      {/* Same Print preview every document in the app opens. The run sheet is
+          printed from the page itself, not a jspdf file, so there is nothing to
+          download or open in a tab — Print is the only exit. */}
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Driver Run-Sheet"
+        docNo={fmtDate(date)}
+        rows={[
+          { label: 'Lorries', value: `${sheets.length} ${sheets.length === 1 ? 'lorry' : 'lorries'}` },
+          {
+            label: 'Stops',
+            value: `${sheets.reduce((n, t) => n + (t.stops?.length ?? 0), 0)} in total`,
+          },
+          { value: 'One lorry per page.' },
+        ]}
+        onPrint={print.handlers.onPrint}
+      />
 
       {query.isLoading && <p className="no-print text-[13px] text-ink-muted">Loading…</p>}
       {!query.isLoading && sheets.length === 0 && (
