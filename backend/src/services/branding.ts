@@ -36,8 +36,19 @@ export interface Branding {
   phone: string;
   email: string;
   website: string;
-  // R2 object key for an optional uploaded logo; "" when none.
+  // R2 object key for an optional uploaded logo; "" when none. This is the
+  // ON-SCREEN logo (app chrome + login screen) and the letterhead fallback.
   logoR2Key: string;
+  // R2 object key for an optional SECOND logo used on printed documents only
+  // (PDF letterheads + the HTML prints); "" = fall back to logoR2Key.
+  //
+  // Why two (owner 2026-08-06): the app chrome is DARK and paper is WHITE, so
+  // one file cannot serve both. 2990's on-screen logo is the white variant —
+  // correct in the sidebar, a near-invisible watermark on a Delivery Order.
+  // This slot holds the dark variant for paper. Companies that only ever
+  // uploaded one logo are unaffected: blank means "print the same one", which
+  // is exactly today's behaviour.
+  printLogoR2Key: string;
 }
 
 const BRANDING_KEY = "branding";
@@ -69,6 +80,7 @@ export const DEFAULT_BRANDING: Branding = {
   email: "hello@houzscentury.com",
   website: "",
   logoR2Key: "",
+  printLogoR2Key: "",
 };
 
 // Default branding for the 2990 company row. companyName mirrors the
@@ -86,6 +98,7 @@ export const DEFAULT_BRANDING_2990: Branding = {
   email: "",
   website: "",
   logoR2Key: "",
+  printLogoR2Key: "",
 };
 
 /** Compile-time defaults per company code. Unknown codes get a name-only
@@ -128,6 +141,20 @@ export function composeBrandingAddress(b: {
   return `${a.replace(/[.,\s]+$/, "")}, ${p}`;
 }
 
+/** The logo key a PRINTED document should use: the dedicated print logo when
+ *  one is uploaded, otherwise the on-screen logo. "" = text-only letterhead.
+ *
+ *  Every print surface must go through this — the frontend jspdf letterheads
+ *  (lib/branding.ts mirrors it), the ASSR print and the project print. A print
+ *  site reading logoR2Key directly would silently keep printing the screen
+ *  variant after the owner uploads a print one. */
+export function letterheadLogoKey(b: {
+  logoR2Key: string;
+  printLogoR2Key?: string;
+}): string {
+  return (b.printLogoR2Key || "").trim() || (b.logoR2Key || "").trim();
+}
+
 /** Split the single-line branding address into ≤2 print lines on a comma
  *  boundary — same convention as the frontend PDF letterhead. Blank → []. */
 export function brandingAddressLines(address: string): string[] {
@@ -158,6 +185,9 @@ function normalize(raw: unknown, defaults: Branding = DEFAULT_BRANDING): Brandin
     email: str(r.email, defaults.email),
     website: str(r.website, defaults.website),
     logoR2Key: str(r.logoR2Key, defaults.logoR2Key),
+    // Rows written before the print slot existed have no key → "" (blank means
+    // "print the on-screen logo", the pre-2026-08 behaviour).
+    printLogoR2Key: str(r.printLogoR2Key, ""),
   };
 }
 
