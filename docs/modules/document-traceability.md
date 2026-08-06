@@ -594,6 +594,52 @@ separate document: a PO revision is the PO leg of an SO amendment (approve-po �
 `reviseBoundPo` → `po_revisions`), so there is nothing extra to branch off the
 PO. The SI / DO / DR maps do not pass amendments and are unchanged.
 
+### 2.10 The living Relationship Map (2026-08-07) — chain / provenance / floating, zero added backend load
+`feat/living-relationship-map` (PR-2 of the soft-until-DO rollout). The map now
+RENDERS the §Decision model instead of contradicting it: before this, a stored
+SO→PO raise-link drew in the same visual register as the execution FKs, and the
+floating pre-DO pairing — the thing that actually governs matching — was not on
+the map at all.
+
+**Three edge classes, one rule each:**
+
+| class | what it is | where it comes from | rendering |
+|---|---|---|---|
+| **chain** | vertical execution FKs — SO→DO→SI→payment, DO→DR, PO→GRN→PI, GRN→PR, consignment | `/document-flow` stamps `linkage:'chain'` on every edge (ADDITIVE field; default) | solid, existing kind colours — anchored history |
+| **provenance** | the SO→PO raise-link (stored `so_item_id` / "From SOs:" note) | `/document-flow` stamps `linkage:'provenance'` at the ONE SO→PO edge callsite | muted solid, tooltip "Bought for — procurement provenance" |
+| **floating** | the live pre-DO PO↔SO MRP pairing ("会跳动" — recomputed per open, may change) | CLIENT-ASSEMBLED: `buildFloatingOverlay` / `floatingSoDocNos` (flow-queries.ts) over the `usePoSoCoverage` response, `source:'mrp'` assignments ONLY | dashed + pulse (`animate-pulse`, no bespoke animation system), tooltip "Live MRP pairing — recomputed on every view; may change" |
+
+**The zero-load rule (owner: "它可能会 API 爆炸").** The floating overlay adds
+NO backend call class: `document-flow.ts` gained no query and must never call
+`computeMrp`; the overlay reads the SAME `usePoSoCoverage` query key the PO /
+GRN / PI list drill-downs and detail readers already use, so the common path is
+a react-query cache hit (staleTime 30s; the backend path-cache dedupes a cold
+one) and the worst case is the ONE normal coverage fetch the page would do
+anyway. No polling, no websockets.
+
+**One-engine symmetry, test-pinned.** Floating edges equal EXACTLY the
+coverage assignments with `source:'mrp'` (`flow-floating-overlay.test.ts`) —
+the same single `computeMrp` allocation every other coverage reader inverts
+(§2.4), so the map can never disagree with the Assigned-SO chips. A
+`locked:false` assignment WITHOUT a source (older backend) is never floated.
+
+**Surfaces.** The vendor `DocumentFlowModal` (PO / GRN / PI anchors via
+`RelationshipMapButton`) merges the overlay into the graph — a floating SO
+absent from the stored graph is synthesised as a dashed node; legend gains
+"Bought for (provenance)" + "Live MRP pairing (floating)". The scm-v2
+`DocumentRelationshipMapModal` gains an optional `pairing` prop
+(`{ kind: 'provenance' | 'floating' }`): the PO map (`po-relationship-map.ts`,
+now also calling `usePoSoCoverage('po', id)`) restyles its SO↔PO hop — floating
+when any `source:'mrp'` pairing exists (SO slot floats dashed + "~" when
+nothing stored backs it), provenance when only stored links do — and the
+execution hops behind a declared pairing render solid. The SO map passes
+`provenance` for its SO↓PO drop when the graph carries stored PO links; it
+deliberately shows NO floating hop (coverage is purchase-doc-keyed — an
+SO-keyed read would be new backend load; the SO side already shows the same
+engine's answer in its per-line coverage column). DO / SI / DR maps pass
+nothing and render exactly as before. Maps remain DESKTOP-ONLY (§5); the
+mobile surface is queued separately.
+
 ---
 
 ## 3. What was STOP-and-reported (not built — would require fabricating a linkage or new persistence)
