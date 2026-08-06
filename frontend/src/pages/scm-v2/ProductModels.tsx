@@ -46,7 +46,7 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
 const BANNER_ERR =
   'rounded-lg border border-err/40 bg-err/10 px-4 py-3 text-[13px] text-err';
 
-const CATEGORIES: MfgCategory[] = ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE'];
+const CATEGORIES: MfgCategory[] = ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'BEDLINES', 'DINING', 'DIFFUSER', 'CARPET', 'SERVICE'];
 
 /* DataGrid layout key for the Models list. The legacy page rendered one
    table per category — to keep that read on first visit we seed a default

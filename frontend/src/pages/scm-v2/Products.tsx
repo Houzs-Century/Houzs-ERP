@@ -233,6 +233,10 @@ const CATEGORIES: { value: MfgCategory | 'all'; label: string }[] = [
   { value: 'BEDFRAME', label: 'Bedframe' },
   { value: 'SOFA', label: 'Sofa' },
   { value: 'MATTRESS', label: 'Mattress' },
+  { value: 'BEDLINES', label: 'Bedlines' },
+  { value: 'DINING', label: 'Dining' },
+  { value: 'DIFFUSER', label: 'Diffuser' },
+  { value: 'CARPET', label: 'Carpet' },
   { value: 'SERVICE', label: 'Service' },
 ];
 
@@ -4103,7 +4107,7 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
   // Branding datalist — maintenance pool first, DISTINCT fallback. Free text
   // stays possible (datalist, not a hard select) so legacy values aren't blocked.
   const brandingPool = useBrandingPool();
-  type Cat = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'MATTRESS' | 'SERVICE';
+  type Cat = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'MATTRESS' | 'BEDLINES' | 'DINING' | 'DIFFUSER' | 'CARPET' | 'SERVICE';
   /* 2990 is a trading company — no in-house manufacturing. Production-time
      tracking dropped (was HOOKKA legacy). DB column production_time_minutes
      stays for now but the UI no longer collects it. */
