@@ -252,7 +252,8 @@ export type PoItemRow = {
   /** Migration 0098 — source SO line this PO line was converted from. */
   so_item_id?: string | null;
   /** 2026-06-12 — stamped by GET /:id (so_item_id → SO doc_no) for the PO
-      PDF's "Transferred SO" column. Null for manual / MRP lines. */
+      PDF's "For SO" provenance column (relabelled from "Transferred SO",
+      owner 2026-08-07). Null for manual / MRP lines. */
   so_doc_no?: string | null;
   /** SO→PO drift (Commander 2026-06-16) — set by GET /:id when this line's
       source SO line was edited AFTER the PO was raised, so the PO snapshot no
