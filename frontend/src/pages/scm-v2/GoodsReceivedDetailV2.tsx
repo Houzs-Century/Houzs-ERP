@@ -85,8 +85,14 @@ type GrnItem = {
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
   uom?: string;
-  qty?: number;
-  received_qty?: number;
+  /* Owner 2026-08-06 — the API's real qty fields. The page previously read
+     nonexistent `qty`/`received_qty` and rendered 0 on EVERY GRN (found via
+     GRN-2608-006: qty 0 but amounts full). qty_accepted = landed in stock
+     (what the billing picker's REMAINING keys off); ordered_qty = the source
+     PO line's qty, stamped by the detail GET (null on manual lines). */
+  qty_received?: number | null;
+  qty_accepted?: number | null;
+  ordered_qty?: number | null;
   unit_price_centi?: number;
   line_total_centi?: number;
   warehouse_code?: string | null;
@@ -143,8 +149,8 @@ const receivedOf = (items: GrnItem[]) => {
   let orderedQty = 0;
   let receivedQty = 0;
   for (const l of items) {
-    orderedQty += Number(l.qty ?? 0);
-    receivedQty += Number(l.received_qty ?? 0);
+    orderedQty += Number(l.ordered_qty ?? 0);
+    receivedQty += Number(l.qty_accepted ?? 0);
   }
   return { orderedQty, receivedQty };
 };
@@ -421,10 +427,11 @@ function GoodsReceivedDetailV2ReadOnly() {
       label: "Ordered",
       width: "84px",
       align: "right",
-      getValue: (l) => l.qty ?? 0,
+      // Source PO line's qty (stamped by the detail GET); "—" on manual lines.
+      getValue: (l) => l.ordered_qty ?? "",
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty ?? 0} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
+          {l.ordered_qty ?? "—"} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
         </span>
       ),
     },
@@ -433,10 +440,12 @@ function GoodsReceivedDetailV2ReadOnly() {
       label: "Received",
       width: "92px",
       align: "right",
-      getValue: (l) => l.received_qty ?? 0,
+      // qty_accepted = landed in stock — the same figure the billing picker's
+      // REMAINING and the PO received-rollup key off.
+      getValue: (l) => l.qty_accepted ?? 0,
       render: (l) => {
-        const rec = Number(l.received_qty ?? 0);
-        const ordered = Number(l.qty ?? 0);
+        const rec = Number(l.qty_accepted ?? 0);
+        const ordered = Number(l.ordered_qty ?? 0);
         const full = ordered > 0 && rec >= ordered;
         return <span className={cn("font-money text-[13px] font-semibold", full ? "text-synced" : "text-ink")}>{rec}</span>;
       },
