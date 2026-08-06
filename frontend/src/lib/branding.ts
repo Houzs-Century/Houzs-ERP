@@ -228,6 +228,75 @@ const blobToDataUrl = (blob: Blob): Promise<string> =>
     r.readAsDataURL(blob);
   });
 
+/**
+ * The letterhead draws the logo inside 40mm x 16mm (pdf-common `drawHeader`).
+ * At 300dpi that is 472 x 189 px — anything larger is detail no printer will
+ * ever emit.
+ *
+ * It is not merely wasted: jsPDF embeds the bitmap RAW, uncompressed, into
+ * EVERY document. A 3508 x 1561 logo (what the 2990 upload actually was) is
+ * 16.4 MB of pixels plus 5.5 MB of alpha — which is why one Delivery Order
+ * PDF weighed 21 MB and could not be emailed.
+ */
+export const LETTERHEAD_MAX_PX = { width: 480, height: 192 } as const;
+
+/**
+ * Scale factor to fit `w x h` inside the letterhead box — 1 when it already
+ * does, so a sensibly sized logo is passed through untouched (byte-identical
+ * output, no re-encode).
+ *
+ * Exported for its own test: the canvas work below cannot run in jsdom, but
+ * the arithmetic that decides it is the part worth pinning.
+ */
+export function letterheadScale(width: number, height: number): number {
+  if (!width || !height) return 1;
+  return Math.min(
+    1,
+    LETTERHEAD_MAX_PX.width / width,
+    LETTERHEAD_MAX_PX.height / height,
+  );
+}
+
+/**
+ * Re-encode an oversized logo down to letterhead size. PNG is kept as PNG so
+ * transparency survives — a logo with an alpha channel flattened onto white
+ * would show a box on any non-white background.
+ *
+ * Fail-soft in every direction: no canvas (jsdom), a tainted canvas, an
+ * encoder that returns nothing — all fall back to the original image. A
+ * heavier PDF is a bad day; a PDF with no letterhead is a wrong document.
+ */
+async function fitLogoForLetterhead(
+  dataUrl: string,
+  width: number,
+  height: number,
+  isPng: boolean,
+): Promise<{ dataUrl: string; width: number; height: number }> {
+  const scale = letterheadScale(width, height);
+  if (scale >= 1) return { dataUrl, width, height };
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("decode failed"));
+      el.src = dataUrl;
+    });
+    const w = Math.max(1, Math.round(width * scale));
+    const h = Math.max(1, Math.round(height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { dataUrl, width, height };
+    ctx.drawImage(img, 0, 0, w, h);
+    const out = canvas.toDataURL(isPng ? "image/png" : "image/jpeg", 0.92);
+    if (!out || !out.startsWith("data:image/")) return { dataUrl, width, height };
+    return { dataUrl: out, width: w, height: h };
+  } catch {
+    return { dataUrl, width, height };
+  }
+}
+
 const dataUrlDimensions = (dataUrl: string): Promise<{ width: number; height: number }> =>
   new Promise((resolve, reject) => {
     const img = new Image();
@@ -268,10 +337,14 @@ export async function ensureBrandingLogoLoaded(): Promise<void> {
       if (!res.ok) throw correlateError(new Error(`logo fetch ${res.status}`), requestIdFromResponse(res));
       const { dataUrl, width, height, contentType } = await consumeCorrelated(res, async () => {
         const blob = await res.blob();
-        const dataUrl = await blobToDataUrl(blob);
-        const { width, height } = await dataUrlDimensions(dataUrl);
-        if (!width || !height) throw new Error("logo has no dimensions");
-        return { dataUrl, width, height, contentType: blob.type };
+        const raw = await blobToDataUrl(blob);
+        const natural = await dataUrlDimensions(raw);
+        if (!natural.width || !natural.height) throw new Error("logo has no dimensions");
+        // Shrink to what the letterhead actually draws BEFORE it reaches
+        // jsPDF, which embeds the bitmap raw into every document.
+        const isPng = blob.type === "image/png" || raw.startsWith("data:image/png");
+        const fitted = await fitLogoForLetterhead(raw, natural.width, natural.height, isPng);
+        return { ...fitted, contentType: isPng ? "image/png" : blob.type };
       });
       const format: BrandingLogo["format"] =
         contentType === "image/png" || dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
@@ -341,10 +414,14 @@ export async function ensureBrandLogoLoaded(key: string | null | undefined): Pro
       if (!res.ok) throw correlateError(new Error(`brand logo fetch ${res.status}`), requestIdFromResponse(res));
       const { dataUrl, width, height, contentType } = await consumeCorrelated(res, async () => {
         const blob = await res.blob();
-        const dataUrl = await blobToDataUrl(blob);
-        const { width, height } = await dataUrlDimensions(dataUrl);
-        if (!width || !height) throw new Error("logo has no dimensions");
-        return { dataUrl, width, height, contentType: blob.type };
+        const raw = await blobToDataUrl(blob);
+        const natural = await dataUrlDimensions(raw);
+        if (!natural.width || !natural.height) throw new Error("logo has no dimensions");
+        // Shrink to what the letterhead actually draws BEFORE it reaches
+        // jsPDF, which embeds the bitmap raw into every document.
+        const isPng = blob.type === "image/png" || raw.startsWith("data:image/png");
+        const fitted = await fitLogoForLetterhead(raw, natural.width, natural.height, isPng);
+        return { ...fitted, contentType: isPng ? "image/png" : blob.type };
       });
       const format: BrandingLogo["format"] =
         contentType === "image/png" || dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
