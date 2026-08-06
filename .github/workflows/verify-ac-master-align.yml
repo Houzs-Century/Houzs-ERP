@@ -1,0 +1,39 @@
+name: Verify AutoCount master align (read-only)
+
+# Sizes the gap between ERP-native master data and what AutoCount would need for
+# an ERP Sales Order to be written back as an AutoCount Sales Order. Read-only.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: true
+        default: "1"
+        type: string
+
+concurrency:
+  group: verify-ac-master-align
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: Census
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          node scripts/verify-ac-master-align.mjs
