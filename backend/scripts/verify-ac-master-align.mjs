@@ -1,148 +1,76 @@
 #!/usr/bin/env node
-// READ-ONLY census of the master data that an ERP Sales Order references, so we
-// can size the gap for writing an ERP SO back into AutoCount as a Sales Order.
-//
-// For each controlled master (the values AutoCount validates on a SO), report
-// how many distinct ERP values exist and how many are already linked to an
-// AutoCount code. Anything unlinked would make the writeback API reject the SO.
-//
-// No writes, no DDL, single connection. Default company_id=1 (Houzs Century,
-// the one AutoCount account book). 2990 (id=2) is out of scope for writeback.
+// READ-ONLY final SKU-alignment status between the ERP and AutoCount for the
+// writeback. Answers: are all AutoCount stock items represented in the ERP, and
+// what exactly are the ERP products with no AutoCount code (real gap vs sofa
+// compartments that collapse to a parent that IS bound). No writes.
 import postgres from "postgres";
-
 const cid = String(process.env.COMPANY_ID || "1");
 const sql = postgres(process.env.DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
-
 function h(t) { console.log(`\n===== ${t} =====`); }
-async function safe(label, fn) {
-  try { return await fn(); }
-  catch (e) { console.log(`  [${label}] query failed: ${e.message}`); return null; }
-}
 
 async function main() {
-  console.log(`AutoCount master-align census  company_id=${cid}  (read-only)`);
+  console.log(`SKU alignment final status  company_id=${cid}  (read-only)`);
 
-  // 1) SKU (StockItem) — the biggest controlled master. A SO line's ItemCode
-  //    must exist in AutoCount. We treat "has a supplier binding carrying an
-  //    AutoCount supplier_sku" as linked.
-  h("1) SKU / ItemCode coverage");
-  await safe("sku", async () => {
-    const [tot] = await sql`SELECT count(*)::int n FROM scm.mfg_products WHERE company_id=${cid}`;
-    const [linked] = await sql`
-      SELECT count(DISTINCT p.code)::int n
-      FROM scm.mfg_products p
-      JOIN scm.supplier_material_bindings b
-        ON b.material_code = p.code AND b.company_id = p.company_id
-       AND b.material_kind = 'mfg_product'
-       AND b.supplier_sku IS NOT NULL AND btrim(b.supplier_sku) <> ''
-      WHERE p.company_id=${cid}`;
-    console.log(`  total SKUs:           ${tot.n}`);
-    console.log(`  linked to AutoCount:  ${linked.n}`);
-    console.log(`  UNLINKED (gap):       ${tot.n - linked.n}`);
-    const unlinked = await sql`
-      SELECT p.code, p.name, p.category::text AS category
-      FROM scm.mfg_products p
-      WHERE p.company_id=${cid}
-        AND NOT EXISTS (
-          SELECT 1 FROM scm.supplier_material_bindings b
-          WHERE b.material_code=p.code AND b.company_id=p.company_id
-            AND b.material_kind='mfg_product'
-            AND b.supplier_sku IS NOT NULL AND btrim(b.supplier_sku) <> '')
-      ORDER BY p.code LIMIT 25`;
-    if (unlinked.length) {
-      console.log(`  sample unlinked (max 25):`);
-      for (const r of unlinked) console.log(`    ${r.code}  |  ${r.name}  [${r.category}]`);
-    }
-  });
+  const [tot] = await sql`SELECT count(*)::int n FROM scm.mfg_products WHERE company_id=${cid}`;
+  const [linked] = await sql`
+    SELECT count(DISTINCT p.code)::int n FROM scm.mfg_products p
+    JOIN scm.supplier_material_bindings b ON b.material_code=p.code AND b.company_id=p.company_id
+      AND b.material_kind='mfg_product' AND b.supplier_sku IS NOT NULL AND btrim(b.supplier_sku)<>''
+    WHERE p.company_id=${cid}`;
+  console.log(`total ERP products: ${tot.n}   linked to an AutoCount code: ${linked.n}   unlinked: ${tot.n - linked.n}`);
 
-  // 2) Branding -> SOUDF_BRANDING (dropdown UDF, controlled)
-  h("2) Branding (-> SOUDF_BRANDING dropdown)");
-  await safe("branding", async () => {
-    const prod = await sql`
-      SELECT btrim(branding) AS v, count(*)::int n FROM scm.mfg_products
-      WHERE company_id=${cid} AND branding IS NOT NULL AND btrim(branding)<>''
-      GROUP BY 1 ORDER BY 1`;
-    const so = await sql`
-      SELECT btrim(branding) AS v, count(*)::int n FROM scm.mfg_sales_orders
-      WHERE company_id=${cid} AND branding IS NOT NULL AND btrim(branding)<>''
-      GROUP BY 1 ORDER BY 1`;
-    console.log(`  distinct branding on products: ${prod.length}`);
-    console.log(`    ${prod.map(r => `${r.v}(${r.n})`).join(", ")}`);
-    console.log(`  distinct branding on SOs:      ${so.length}`);
-    console.log(`    ${so.map(r => `${r.v}(${r.n})`).join(", ")}`);
-  });
+  h("distinct AutoCount codes bound (how many AC items are represented)");
+  const [acbound] = await sql`
+    SELECT count(DISTINCT btrim(supplier_sku))::int n FROM scm.supplier_material_bindings
+    WHERE company_id=${cid} AND material_kind='mfg_product' AND supplier_sku IS NOT NULL AND btrim(supplier_sku)<>''`;
+  console.log(`  distinct AutoCount codes referenced by bindings: ${acbound.n}`);
 
-  // 3) Venue -> SOUDF_VENUE (dropdown UDF, controlled)
-  h("3) Venue (-> SOUDF_VENUE dropdown)");
-  await safe("venue", async () => {
-    const so = await sql`
-      SELECT btrim(venue) AS v, count(*)::int n FROM scm.mfg_sales_orders
-      WHERE company_id=${cid} AND venue IS NOT NULL AND btrim(venue)<>''
-      GROUP BY 1 ORDER BY 2 DESC LIMIT 60`;
-    console.log(`  distinct venue on SOs (top 60 by count): ${so.length}`);
-    for (const r of so) console.log(`    ${r.n.toString().padStart(5)}  ${r.v}`);
-    await safe("venues-table", async () => {
-      const [vt] = await sql`SELECT count(*)::int n FROM venues`;
-      console.log(`  venues master table rows: ${vt.n}`);
-    });
-  });
+  h("UNLINKED products by category");
+  const byCat = await sql`
+    SELECT coalesce(category::text,'(null)') cat, count(*)::int n FROM scm.mfg_products p
+    WHERE company_id=${cid}
+      AND NOT EXISTS (SELECT 1 FROM scm.supplier_material_bindings b
+        WHERE b.material_code=p.code AND b.company_id=p.company_id AND b.material_kind='mfg_product'
+          AND b.supplier_sku IS NOT NULL AND btrim(b.supplier_sku)<>'')
+    GROUP BY 1 ORDER BY 2 DESC`;
+  for (const r of byCat) console.log(`  ${r.cat.padEnd(12)} ${r.n}`);
 
-  // 4) Agent -> SalesAgent (master, controlled)
-  h("4) Sales Agent (-> SalesAgent master)");
-  await safe("agent", async () => {
-    const so = await sql`
-      SELECT btrim(agent) AS v, count(*)::int n FROM scm.mfg_sales_orders
-      WHERE company_id=${cid} AND agent IS NOT NULL AND btrim(agent)<>''
-      GROUP BY 1 ORDER BY 2 DESC`;
-    console.log(`  distinct agent on SOs: ${so.length}`);
-    for (const r of so) console.log(`    ${r.n.toString().padStart(5)}  ${r.v}`);
-    const [nullc] = await sql`
-      SELECT count(*)::int n FROM scm.mfg_sales_orders
-      WHERE company_id=${cid} AND (agent IS NULL OR btrim(agent)='')`;
-    console.log(`  SOs with NO agent: ${nullc.n}`);
-  });
+  h("UNLINKED SOFA: does the parent prefix have a bound sibling? (collapse-ok vs orphan)");
+  const sofa = await sql`
+    WITH unl AS (
+      SELECT p.code, split_part(p.code,'-',1) parent FROM scm.mfg_products p
+      WHERE p.company_id=${cid} AND p.category::text='SOFA'
+        AND NOT EXISTS (SELECT 1 FROM scm.supplier_material_bindings b
+          WHERE b.material_code=p.code AND b.company_id=p.company_id AND b.material_kind='mfg_product'
+            AND b.supplier_sku IS NOT NULL AND btrim(b.supplier_sku)<>'')
+    )
+    SELECT parent,
+      count(*)::int unlinked,
+      EXISTS (SELECT 1 FROM scm.supplier_material_bindings b
+        JOIN scm.mfg_products p2 ON p2.code=b.material_code AND p2.company_id=b.company_id
+        WHERE b.company_id=${cid} AND b.material_kind='mfg_product'
+          AND b.supplier_sku IS NOT NULL AND btrim(b.supplier_sku)<>''
+          AND split_part(p2.code,'-',1)=unl.parent
+          AND btrim(b.supplier_sku) LIKE '%SOFA%') AS parent_has_ac
+    FROM unl GROUP BY parent ORDER BY parent`;
+  let collapseOk = 0, orphan = 0;
+  for (const r of sofa) {
+    (r.parent_has_ac ? (collapseOk += r.unlinked) : (orphan += r.unlinked));
+    console.log(`  ${r.parent.padEnd(10)} unlinked=${r.unlinked}  parent_has_AC_sofa_code=${r.parent_has_ac}`);
+  }
+  console.log(`  -> SOFA unlinked that COLLAPSE to a bound parent: ${collapseOk}`);
+  console.log(`  -> SOFA unlinked that are ORPHAN (no bound parent): ${orphan}`);
 
-  // 5) Debtor -> DebtorCode/DebtorName (master, controlled)
-  h("5) Debtor / customer (-> DebtorCode master)");
-  await safe("debtor", async () => {
-    const [tot] = await sql`SELECT count(*)::int n FROM scm.mfg_sales_orders WHERE company_id=${cid}`;
-    const [dc] = await sql`
-      SELECT count(DISTINCT btrim(debtor_code))::int n FROM scm.mfg_sales_orders
-      WHERE company_id=${cid} AND debtor_code IS NOT NULL AND btrim(debtor_code)<>''`;
-    const [dn] = await sql`SELECT count(DISTINCT btrim(debtor_name))::int n FROM scm.mfg_sales_orders WHERE company_id=${cid}`;
-    const [nodc] = await sql`
-      SELECT count(*)::int n FROM scm.mfg_sales_orders
-      WHERE company_id=${cid} AND (debtor_code IS NULL OR btrim(debtor_code)='')`;
-    console.log(`  total SOs:                 ${tot.n}`);
-    console.log(`  distinct debtor_code:      ${dc.n}`);
-    console.log(`  distinct debtor_name:      ${dn.n}`);
-    console.log(`  SOs with NO debtor_code:   ${nodc.n}  (would need an AutoCount debtor first)`);
-  });
-
-  // 6) Sales Location -> SalesLocation (master, controlled)
-  h("6) Sales Location (-> SalesLocation master)");
-  await safe("loc", async () => {
-    const so = await sql`
-      SELECT btrim(sales_location) AS v, count(*)::int n FROM scm.mfg_sales_orders
-      WHERE company_id=${cid} AND sales_location IS NOT NULL AND btrim(sales_location)<>''
-      GROUP BY 1 ORDER BY 2 DESC`;
-    console.log(`  distinct sales_location on SOs: ${so.length}`);
-    for (const r of so) console.log(`    ${r.n.toString().padStart(5)}  ${r.v}`);
-  });
-
-  // 7) Creditor (line-level supplier on the SO) — AutoCount creditor master is
-  //    mirrored locally in `creditors`.
-  h("7) Creditor / supplier (line-level, mirrored in `creditors`)");
-  await safe("creditor", async () => {
-    const [cr] = await sql`SELECT count(*)::int n FROM creditors`;
-    console.log(`  creditors mirrored from AutoCount: ${cr.n}`);
-    const [sup] = await sql`SELECT count(*)::int n FROM scm.suppliers WHERE company_id=${cid}`;
-    console.log(`  scm.suppliers (company ${cid}):      ${sup.n}`);
-    const [bound] = await sql`
-      SELECT count(DISTINCT supplier_id)::int n FROM scm.supplier_material_bindings
-      WHERE company_id=${cid} AND material_kind='mfg_product'`;
-    console.log(`  suppliers with >=1 SKU binding:    ${bound.n}`);
-  });
+  h("NON-SOFA unlinked (potential real gap) sample");
+  const nonsofa = await sql`
+    SELECT p.code, p.name, p.category::text cat FROM scm.mfg_products p
+    WHERE p.company_id=${cid} AND coalesce(p.category::text,'') <> 'SOFA'
+      AND NOT EXISTS (SELECT 1 FROM scm.supplier_material_bindings b
+        WHERE b.material_code=p.code AND b.company_id=p.company_id AND b.material_kind='mfg_product'
+          AND b.supplier_sku IS NOT NULL AND btrim(b.supplier_sku)<>'')
+    ORDER BY p.category, p.code LIMIT 40`;
+  console.log(`  non-sofa unlinked shown: ${nonsofa.length}`);
+  for (const r of nonsofa) console.log(`    [${r.cat}] ${r.code}  ${r.name}`);
 
   console.log("\nDONE (read-only).");
 }
