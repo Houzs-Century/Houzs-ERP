@@ -41,7 +41,7 @@ import {
 } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
-import { useGrnDetail } from '../../vendor/scm/lib/grn-queries';
+import { useGrnDetail, useGrnDetails } from '../../vendor/scm/lib/grn-queries';
 import { useActiveCurrencies, rateFor } from '../../vendor/scm/lib/currencies-queries';
 import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
@@ -122,6 +122,17 @@ export const PurchaseInvoiceNew = () => {
   // lines (with the ticked qty), not every accepted line on the GRN.
   const fromPicks = params.get('fromPicks') === '1';
   const grnQ     = useGrnDetail(grnId);
+  /* Multi-note invoice (owner 2026-08-06) — the picker passes every note the
+     picks span in ?grnIds=; grnId stays the PRIMARY (header context: supplier,
+     currency, PO ref). Load the EXTRA notes too, or their picked lines would be
+     silently dropped when the draft is built below. Empty on the single-note
+     path, so nothing extra is fetched. */
+  const extraGrnIds = useMemo(() => {
+    const raw = params.get('grnIds');
+    if (!raw) return [] as string[];
+    return raw.split(',').map((s) => s.trim()).filter((s) => s && s !== grnId);
+  }, [params, grnId]);
+  const extraGrnQs = useGrnDetails(extraGrnIds);
 
   // Manual mode = no ?grnId= in the URL (Commander 2026-05-29 — blank PI).
   const isManual = !grnId;
@@ -184,8 +195,21 @@ export const PurchaseInvoiceNew = () => {
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
 
   // ── GRN-sourced lines (only when ?grnId= present). ──────────────────────
+  /* Every loaded note's lines, primary first (multi-note invoices). Waits for
+     the extra notes so a partially-loaded set never builds a short draft. */
+  const extraReady = extraGrnQs.every((q) => q.data || q.isError);
+  const sourceItems = useMemo(() => {
+    if (!grnQ.data) return null;
+    if (!extraReady) return null;
+    return [
+      ...(grnQ.data.items ?? []),
+      ...extraGrnQs.flatMap((q) => (q.data?.items ?? [])),
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grnQ.data, extraReady, extraGrnQs.map((q) => q.data).join('|')]);
+
   useEffect(() => {
-    if (!grnQ.data) return;
+    if (!sourceItems) return;
     // In picker mode, only the ticked GRN lines come through — keyed by GRN
     // line id → ticked qty. Outside picker mode, prefill every accepted line.
     let pickQtyById: Map<string, number> | null = null;
@@ -194,7 +218,7 @@ export const PurchaseInvoiceNew = () => {
       if (picks) pickQtyById = new Map(picks.map((p) => [p.grnItemId, Number(p.qty ?? 0)]));
       removeScmHandoff('piFromGrnPicks');
     }
-    const next: DraftLine[] = (grnQ.data.items ?? [])
+    const next: DraftLine[] = (sourceItems)
       // Remaining-to-bill = accepted − already-invoiced − returned-to-supplier.
       // Outside picker mode, prefill only lines that still have something left
       // to bill (so a part-billed note doesn't re-show settled lines).
@@ -215,7 +239,7 @@ export const PurchaseInvoiceNew = () => {
         notes:          '',
       }));
     setLines(next);
-  }, [grnQ.data, fromPicks]);
+  }, [sourceItems, fromPicks]);
 
   // Manual mode — seed ONE blank starter line so a LINE 1 card shows
   // immediately (matches New PO). Only when empty (never clobbers).
