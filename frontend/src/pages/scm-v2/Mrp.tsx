@@ -1438,7 +1438,7 @@ const ChildLine = ({ ln, suppliers, whCode, whName, selected, onToggleLine, chos
           /* Covered / already-PO'd line → the PO's supplier, READ-ONLY (a raised
              PO's supplier can't change). Stock lines show a dash. */
           : ln.source === 'po'
-            ? <span className={styles.poSupplierRO} title="Supplier locked — this line is already on a PO">
+            ? <span className={styles.poSupplierRO} title="This PO covers the line in the current allocation. Supplier is read-only because the PO is already raised.">
                 <Truck {...ICON} /> {ln.poSupplierName ?? '—'}
               </span>
             : <span className={styles.whNone}>—</span>}
@@ -1519,7 +1519,7 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
               {short
                 ? <LineSupplierCell suppliers={v.suppliers} chosenSupplierId={lineSupplier[ln.soItemId] ?? null} onSupplierChange={(sid) => onLineSupplierChange(ln.soItemId, sid)} />
                 : ln.source === 'po'
-                  ? <span className={styles.poSupplierRO} title="Supplier locked — this line is already on a PO"><Truck {...ICON} /> {ln.poSupplierName ?? '—'}</span>
+                  ? <span className={styles.poSupplierRO} title="This PO covers the line in the current allocation. Supplier is read-only because the PO is already raised."><Truck {...ICON} /> {ln.poSupplierName ?? '—'}</span>
                   : <span className={styles.whNone}>—</span>}
             </td>
           </tr>
