@@ -44,6 +44,25 @@ rejecting an SO-revision follow-up auto-releases the PO to STOCK.
 
 
 
+### Why — the owner's business case (2026-08-06, verbatim intent)
+
+Customise moves from Make-to-Order to **Make-to-Stock**, possible because every
+SKU now carries its variant identity — a PO can order spot stock against a
+specific (SKU, variant), and an incoming SO simply gets allocated.
+
+1. **Cheaper procurement** — order ahead in bulk, negotiate the supplier down.
+2. **No dead-stock risk from mistakes** — a mis-ordered spec is not dead goods:
+   clear the order and the PO's units re-assign to the next identical demand
+   automatically.
+3. **Automated matching** — no more CS hand-matching after a mistake; sell the
+   identical thing and the SO auto-assigns on open, straight to READY.
+4. **Delivery flexibility** — spot stock ships early when the customer wants
+   it; a rush order takes from the pool and the next PO backfills.
+
+Every surface must present this model: the execution chains (SO→DO→SI,
+PO→GRN→PI) are anchored facts; every pre-DO PO↔SO pairing is floating and
+visibly live — including the Relationship Map, which "会跳动" by design.
+
 ## 1. The one engine and its consumers
 
 `computeMrp(sb, opts)` is called by every surface that answers "what covers
