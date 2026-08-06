@@ -157,6 +157,21 @@ async function resolveRootSos(sb: any, c: Context<any>, type: NodeType, id: stri
       return data?.purchase_order_id ? resolveRootSos(sb, c, 'po', data.purchase_order_id) : [];
     }
     case 'pi': {
+      /* Multi-GRN PIs (owner 2026-08-06) — the header grn_id is the PRIMARY
+         note only, so walk EVERY note this PI bills (via its lines) and union
+         their root SOs; fall back to the header when the lines resolve none. */
+      const { data: piLines } = await sb.from('purchase_invoice_items')
+        .select('grn_item_id').eq('purchase_invoice_id', id);
+      const grnItemIds = uniq(((piLines ?? []) as Array<{ grn_item_id: string | null }>).map((r) => r.grn_item_id));
+      const grnIds: string[] = [];
+      if (grnItemIds.length) {
+        const { data: gis } = await sb.from('grn_items').select('grn_id').in('id', grnItemIds);
+        grnIds.push(...uniq(((gis ?? []) as Array<{ grn_id: string | null }>).map((r) => r.grn_id)));
+      }
+      if (grnIds.length) {
+        const all = await Promise.all(grnIds.map((gid) => resolveRootSos(sb, c, 'grn', gid)));
+        return uniq(all.flat());
+      }
       const { data } = await scopeToCompany(sb.from('purchase_invoices').select('grn_id').eq('id', id), c).maybeSingle();
       return data?.grn_id ? resolveRootSos(sb, c, 'grn', data.grn_id) : [];
     }
@@ -537,11 +552,34 @@ documentFlow.get('/:type/:id', async (c) => {
         addEdge(anchorKey, k, agg ? cover(agg.childQty, parentQty) : 'full');
       }
       if (grnIds.length) {
-        const { data: pis } = await sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('grn_id', grnIds);
-        for (const p of (pis ?? []) as any[]) {
+        /* Multi-GRN PIs — same union as the main builder: a PI reaches this
+           family through its LINES even when its header names another note. */
+        const { data: myGrnItems } = await sb.from('grn_items').select('id, grn_id').in('grn_id', grnIds);
+        const myGrnItemIds = ((myGrnItems ?? []) as Array<{ id: string }>).map((r) => r.id);
+        const grnIdByItem = new Map(((myGrnItems ?? []) as Array<{ id: string; grn_id: string }>).map((r) => [r.id, r.grn_id]));
+        const { data: piLineLinks } = myGrnItemIds.length
+          ? await sb.from('purchase_invoice_items').select('purchase_invoice_id, grn_item_id').in('grn_item_id', myGrnItemIds)
+          : { data: [] as any[] };
+        const notesByPi = new Map<string, Set<string>>();
+        for (const l of ((piLineLinks ?? []) as any[])) {
+          const gid = l.grn_item_id ? grnIdByItem.get(l.grn_item_id) : undefined;
+          if (!gid) continue;
+          const set = notesByPi.get(l.purchase_invoice_id) ?? new Set<string>();
+          set.add(gid);
+          notesByPi.set(l.purchase_invoice_id, set);
+        }
+        const { data: pisByHeader } = await sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('grn_id', grnIds);
+        const seen = new Set((pisByHeader ?? []).map((p: any) => p.id));
+        const extraIds = [...notesByPi.keys()].filter((pid) => !seen.has(pid));
+        const { data: pisByLine } = extraIds.length
+          ? await sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('id', extraIds)
+          : { data: [] as any[] };
+        for (const p of [...((pisByHeader ?? []) as any[]), ...((pisByLine ?? []) as any[])]) {
           const k = keyOf('pi', p.id);
           nodes.set(k, { key: k, type: 'pi', id: p.id, label: p.invoice_number ?? p.id, status: p.status ?? null, isAnchor: false });
-          if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
+          const notes = notesByPi.get(p.id);
+          if (notes?.size) for (const gid of notes) addEdge(keyOf('grn', gid), k, 'full');
+          else if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
         }
         const { data: prs } = await sb.from('purchase_returns').select('id, return_number, status, grn_id').in('grn_id', grnIds);
         for (const p of (prs ?? []) as any[]) {
@@ -834,7 +872,12 @@ documentFlow.get('/:type/:id', async (c) => {
   const grnIds = [...grnById.keys()];
   const grnItemIds = [...grnItemMeta.keys()];
   if (grnIds.length) {
-    const { data: pis } = await sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('grn_id', grnIds);
+    /* Multi-GRN PIs (owner 2026-08-06): one supplier invoice can bill several
+       notes, so the header's grn_id is just the primary ref. Discover PIs by
+       the LINE link (grn_item_id ∈ this family's GRN lines) UNION the header
+       FK — a header-only match still appears (e.g. a PI whose lines were all
+       deleted), and a PI whose header points at another family's note is no
+       longer invisible here. */
     const piLineLinks = grnItemIds.length
       ? (await sb.from('purchase_invoice_items').select('purchase_invoice_id, grn_item_id, qty').in('grn_item_id', grnItemIds)).data ?? []
       : [];
@@ -848,13 +891,30 @@ documentFlow.get('/:type/:id', async (c) => {
       agg.parentItems.add(l.grn_item_id);
       grnToPi.set(k, agg);
     }
-    for (const p of (pis ?? []) as any[]) {
+    const piIdsFromLines = uniq((piLineLinks as any[]).map((l) => l.purchase_invoice_id));
+    const { data: pisByHeader } = await sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('grn_id', grnIds);
+    const knownPiIds = new Set((pisByHeader ?? []).map((p: any) => p.id));
+    const missingPiIds = piIdsFromLines.filter((pid) => !knownPiIds.has(pid));
+    const { data: pisByLine } = missingPiIds.length
+      ? await sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('id', missingPiIds)
+      : { data: [] as any[] };
+    const pis = [...((pisByHeader ?? []) as any[]), ...((pisByLine ?? []) as any[])];
+    for (const p of pis) {
       const k = keyOf('pi', p.id);
       nodes.set(k, { key: k, type: 'pi', id: p.id, label: p.invoice_number ?? p.id, status: p.status ?? null, isAnchor: k === anchorKey });
-      if (p.grn_id) {
-        const agg = grnToPi.get(`${p.grn_id}|${p.id}`);
-        const parentQty = agg ? [...agg.parentItems].reduce((s, gi) => s + (grnItemMeta.get(gi)?.qty ?? 0), 0) : 0;
-        addEdge(keyOf('grn', p.grn_id), k, agg ? cover(agg.childQty, parentQty) : 'full');
+      /* One edge per NOTE this PI actually bills (from the line aggregation),
+         so a 3-note invoice draws three GRN→PI edges, each with its own
+         coverage. The header FK only supplies a fallback edge when the PI has
+         no line links at all. */
+      const billed = [...grnToPi.entries()].filter(([key]) => key.endsWith(`|${p.id}`));
+      if (billed.length) {
+        for (const [key, agg] of billed) {
+          const grnId = key.slice(0, key.length - `|${p.id}`.length);
+          const parentQty = [...agg.parentItems].reduce((s, gi) => s + (grnItemMeta.get(gi)?.qty ?? 0), 0);
+          addEdge(keyOf('grn', grnId), k, cover(agg.childQty, parentQty));
+        }
+      } else if (p.grn_id) {
+        addEdge(keyOf('grn', p.grn_id), k, 'full');
       }
     }
   }
