@@ -675,7 +675,7 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
     sb
       .from('grns')
       .select(`
-      id, grn_number, received_at, supplier_id, purchase_order_id,
+      id, grn_number, received_at, supplier_id, purchase_order_id, currency, exchange_rate,
       supplier:suppliers ( code, name ),
       purchase_order:purchase_orders ( po_number )
     `),
@@ -688,6 +688,7 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
   const headers = (grnHeaders ?? []) as unknown as Array<{
     id: string; grn_number: string; received_at: string; supplier_id: string;
     purchase_order_id: string | null;
+    currency?: string | null; exchange_rate?: string | number | null;
     supplier: { code: string; name: string } | null;
     purchase_order: { po_number: string } | null;
   }>;
@@ -740,6 +741,11 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
         remaining:      r._remaining,
         unitPriceCenti: r.unit_price_centi,
         variants:       r.variants,
+        /* Multi-note invoices (owner 2026-08-06) — the picker may combine
+           several of a supplier's notes into ONE invoice, but a PI header
+           carries ONE currency + rate, so the picker locks on these too. */
+        currency:       normalizeCurrency(h.currency),
+        exchangeRate:   normalizeExchangeRate(h.exchange_rate, normalizeCurrency(h.currency)),
       };
     });
 
@@ -833,15 +839,39 @@ purchaseInvoices.get('/:id', async (c) => {
     // eslint-disable-next-line no-console
     console.error('[pi detail] customer-DO resolve failed', { id, error: e });
   }
+  /* Every SOURCE NOTE this PI bills (owner 2026-08-06 multi-GRN) — the header's
+     grn_id is only the primary ref, so derive the full set from the LINES
+     (grn_item_id → grn). Carries each note's supplier delivery-note ref too:
+     one supplier invoice covering three deliveries has three DO refs, and the
+     detail page must list them all rather than just the primary's. */
+  let sourceGrns: Array<{ id: string; grn_number: string; delivery_note_ref: string | null }> = [];
+  try {
+    const grnItemIds = uniq(((i.data ?? []) as Array<{ grn_item_id?: string | null }>).map((r) => r.grn_item_id));
+    if (grnItemIds.length) {
+      const { data: gis } = await sb.from('grn_items').select('grn_id').in('id', grnItemIds);
+      const grnIds = uniq(((gis ?? []) as Array<{ grn_id: string | null }>).map((r) => r.grn_id));
+      if (grnIds.length) {
+        const { data: gs } = await sb.from('grns')
+          .select('id, grn_number, delivery_note_ref').in('id', grnIds).order('grn_number');
+        sourceGrns = (gs ?? []) as Array<{ id: string; grn_number: string; delivery_note_ref: string | null }>;
+      }
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[pi detail] source-GRN resolve failed', { id, error: e });
+  }
   // Stamp each line's supplier fabric code so the on-screen line reads
   // "BF-01 (PC151-01)" — same READ enrichment as the SO/PO/DO/SI details
   // (owner 2026-07-24). ONE batched query; fail-soft.
   await enrichLinesWithFabricSupplierCode(sb, c, items);
-  return c.json({ purchaseInvoice: h.data, items, customerDos });
+  return c.json({ purchaseInvoice: h.data, items, customerDos, sourceGrns });
 });
 
 // ── Linked docs (Smart Buttons fan-out) ─────────────────────────────
-// For a PI: the parent GRN + parent PO (both via FK on purchase_invoices).
+// For a PI: its source GRN(s) + parent PO(s). The header FKs are only the
+// PRIMARY refs (a PI may bill several notes — owner 2026-08-06), so walk the
+// LINES for the full set and keep `grn`/`purchaseOrder` as the primary for
+// callers that still expect one.
 purchaseInvoices.get('/:id/linked', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const { data, error } = await sb
@@ -860,11 +890,49 @@ purchaseInvoices.get('/:id/linked', async (c) => {
     grn?: { id: string; grn_number: string } | Array<{ id: string; grn_number: string }> | null;
     purchase_order?: { id: string; po_number: string } | Array<{ id: string; po_number: string }> | null;
   };
-  const grn: { id: string; grn_number: string } | null =
+  const headerGrn: { id: string; grn_number: string } | null =
     Array.isArray(raw.grn) ? (raw.grn[0] ?? null) : (raw.grn ?? null);
-  const po: { id: string; po_number: string } | null =
+  const headerPo: { id: string; po_number: string } | null =
     Array.isArray(raw.purchase_order) ? (raw.purchase_order[0] ?? null) : (raw.purchase_order ?? null);
-  return c.json({ grn, purchaseOrder: po });
+
+  /* Line-level fan-out: PI line → grn_item → grn (→ purchase_order). Fail-soft;
+     on any hiccup the primary FKs alone still answer. */
+  let grns: Array<{ id: string; grn_number: string }> = headerGrn ? [headerGrn] : [];
+  let pos: Array<{ id: string; po_number: string }> = headerPo ? [headerPo] : [];
+  try {
+    const { data: piLines } = await sb.from('purchase_invoice_items')
+      .select('grn_item_id').eq('purchase_invoice_id', id);
+    const grnItemIds = uniq(((piLines ?? []) as Array<{ grn_item_id: string | null }>).map((r) => r.grn_item_id));
+    if (grnItemIds.length) {
+      const { data: gis } = await sb.from('grn_items')
+        .select('grn_id, purchase_order_item_id').in('id', grnItemIds);
+      const grnIds = uniq(((gis ?? []) as Array<{ grn_id: string | null }>).map((r) => r.grn_id));
+      if (grnIds.length) {
+        const { data: gs } = await sb.from('grns').select('id, grn_number').in('id', grnIds).order('grn_number');
+        if (gs?.length) grns = gs as Array<{ id: string; grn_number: string }>;
+      }
+      /* POs via the notes' lines — a note's own purchase_order_id can be null
+         (manual receipt) while its lines still point at PO lines. */
+      const poiIds = uniq(((gis ?? []) as Array<{ purchase_order_item_id: string | null }>).map((r) => r.purchase_order_item_id));
+      if (poiIds.length) {
+        const { data: pois } = await sb.from('purchase_order_items').select('purchase_order_id').in('id', poiIds);
+        const poIds = uniq(((pois ?? []) as Array<{ purchase_order_id: string | null }>).map((r) => r.purchase_order_id));
+        if (poIds.length) {
+          const { data: ps } = await sb.from('purchase_orders').select('id, po_number').in('id', poIds).order('po_number');
+          if (ps?.length) pos = ps as Array<{ id: string; po_number: string }>;
+        }
+      }
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[pi linked] line-level fan-out failed', { id, error: e });
+  }
+  return c.json({
+    grn: headerGrn ?? grns[0] ?? null,
+    purchaseOrder: headerPo ?? pos[0] ?? null,
+    grns,
+    purchaseOrders: pos,
+  });
 });
 
 purchaseInvoices.post('/', async (c) => {
@@ -1363,9 +1431,17 @@ purchaseInvoices.patch('/:id/cancel', async (c) => {
            notes? }.
    Server logic:
      1. Load all selected GRN items with parent GRN (for supplier_id + po_id)
-     2. Group by GRN (each PI has single grn_id FK → one PI per GRN)
-     3. Create + auto-post one PI per GRN, with each PI scoped to one supplier
-        (already true since a GRN has exactly one supplier).
+     2. Group by SUPPLIER + currency + FX rate — a supplier who delivers three
+        times and bills ONCE gets ONE PI covering all three notes (owner
+        2026-08-06). Splitting by currency/rate is not a policy choice: the
+        header carries a single currency + exchange_rate, so notes that landed
+        under different FX cannot share one document.
+     3. Create + auto-post one PI per group.
+   MULTI-GRN MODEL (mirrors purchase_returns/from-grns): the header's grn_id is
+   the PRIMARY note ref only; the authoritative linkage is per LINE via
+   purchase_invoice_items.grn_item_id. Every consumption / costing path already
+   reads the line level (recomputeGrnInvoiced, verifyGrnLinesNotOverInvoiced,
+   computeGrnFlags, recostForPi), so they are multi-GRN correct unchanged.
    PI does NOT touch inventory (PI is AP-only — inventory landed at GRN time).
    Returns { created: [{ id, invoiceNumber, supplierId, grnCount, lineCount }], total }. */
 purchaseInvoices.post('/from-grn-items', async (c) => {
@@ -1428,9 +1504,15 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
     }
   }
 
-  // Group picks by GRN (each PI ↔ one GRN, per single FK).
+  /* Group picks by SUPPLIER + currency + FX rate (owner 2026-08-06). One
+     supplier invoice can cover several delivery notes, so notes no longer split
+     the document — but currency/rate still must, since the PI header carries a
+     single pair. grnIds/grnNumbers keep every note the group touches: the
+     FIRST (by note number) becomes the header's primary grn_id, and all of them
+     drive the notes text, the recost fan-out and the audit trail. */
   type Bucket = {
-    grnId: string; grnNumber: string; supplierId: string; purchaseOrderId: string | null;
+    grnIds: string[]; grnNumbers: string[];
+    supplierId: string; purchaseOrderId: string | null;
     currency: string; exchangeRate: number;
     lines: Array<{ row: ItemRow; qty: number }>;
   };
@@ -1440,14 +1522,33 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
     // Migration 0082 — the PI inherits its source GRN's currency + exchange_rate
     // (the receipt already fixed the FX). MYR ⇒ rate 1, no-op.
     const grnCur = normalizeCurrency(row.grn.currency);
-    const cur = buckets.get(row.grn.id) ?? {
-      grnId: row.grn.id, grnNumber: row.grn.grn_number,
-      supplierId: row.grn.supplier_id, purchaseOrderId: row.grn.purchase_order_id,
-      currency: grnCur, exchangeRate: normalizeExchangeRate(row.grn.exchange_rate, grnCur),
+    const rate = normalizeExchangeRate(row.grn.exchange_rate, grnCur);
+    const key = `${row.grn.supplier_id}|${grnCur}|${rate}`;
+    const cur = buckets.get(key) ?? {
+      grnIds: [], grnNumbers: [],
+      supplierId: row.grn.supplier_id,
+      /* Header PO ref is the FIRST note's PO — like grn_id it is a convenience
+         ref, not the truth: notes in one group may descend from different POs,
+         and the per-line grn_item_id → grn → po walk is what readers use. */
+      purchaseOrderId: row.grn.purchase_order_id,
+      currency: grnCur, exchangeRate: rate,
       lines: [],
     };
+    if (!cur.grnIds.includes(row.grn.id)) {
+      cur.grnIds.push(row.grn.id);
+      cur.grnNumbers.push(row.grn.grn_number);
+    }
     cur.lines.push({ row, qty: p.qty });
-    buckets.set(row.grn.id, cur);
+    buckets.set(key, cur);
+  }
+  /* Stable primary: lowest note number, so re-running the same picks always
+     stamps the same header ref (and the notes text reads in note order). */
+  for (const b of buckets.values()) {
+    const order = b.grnIds
+      .map((id, i) => ({ id, no: b.grnNumbers[i]! }))
+      .sort((x, y) => x.no.localeCompare(y.no));
+    b.grnIds = order.map((o) => o.id);
+    b.grnNumbers = order.map((o) => o.no);
   }
 
   // Generate PI numbers sequentially within this batch.
@@ -1482,7 +1583,9 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
       supplier_invoice_ref: body.supplierInvoiceNumber ?? null,
       supplier_id: bucket.supplierId,
       purchase_order_id: bucket.purchaseOrderId,
-      grn_id: bucket.grnId,
+      // PRIMARY note ref (see the multi-GRN note above) — the line-level
+      // grn_item_id is the authoritative linkage.
+      grn_id: bucket.grnIds[0]!,
       invoice_date: invoiceDate,
       due_date: body.dueDate ?? null,
       currency: bucket.currency,
@@ -1493,7 +1596,11 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
       // Auto-post per Commander preference (matches GRN/PO behaviour).
       status: 'POSTED',
       posted_at: new Date().toISOString(),
-      notes: body.notes ? `Multi-pick from ${bucket.grnNumber} · ${body.notes}` : `Multi-pick from ${bucket.grnNumber}`,
+      notes: (() => {
+        // Every note this PI bills, so the document says what it covers.
+        const from = `Multi-pick from ${bucket.grnNumbers.join(', ')}`;
+        return body.notes ? `${from} · ${body.notes}` : from;
+      })(),
       created_by: user.id,
     };
     /* Audit (ported from 2990 b30f0bb1) — concurrent PI creation can collide on
@@ -1559,7 +1666,7 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
        each bucket is its own document and its own CREATE row. */
     await recordPiCreate(
       sb, c.get('houzsUser'), activeCompanyId(c), h.id, bucket.lines.length,
-      `Converted from Goods Receipt ${bucket.grnNumber}`,
+      `Converted from Goods Receipt ${bucket.grnNumbers.join(', ')}`,
     );
     // Consume the GRN lines: recount invoiced_qty from live PI lines.
     await recomputeGrnInvoiced(sb, bucket.lines.map(({ row }) => row.id));
@@ -1567,11 +1674,13 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
     // lines only, so a service line among them stays GRN-owned (already in the lot)
     // and the pool is 0 — kept for the invariant, not for an expected charge.
     await reallocatePiCharges(sb, h.id, undefined, activeCompanyId(c));
-    // Costing B — push the billed price down to the GRN's lots / DO / SI.
-    await recostFromGrn(sb, bucket.grnId);
+    // Costing B — push the billed price down to the lots / DO / SI of EVERY note
+    // this PI bills (was: the single bucket GRN; a multi-note PI must re-cost
+    // them all or the unbilled notes keep their GR price).
+    for (const grnId of bucket.grnIds) await recostFromGrn(sb, grnId);
     created.push({
       id: h.id, invoiceNumber: h.invoice_number,
-      supplierId: bucket.supplierId, grnCount: 1, lineCount: bucket.lines.length,
+      supplierId: bucket.supplierId, grnCount: bucket.grnIds.length, lineCount: bucket.lines.length,
     });
   }
 

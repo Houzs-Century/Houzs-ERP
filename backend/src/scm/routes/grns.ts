@@ -1451,9 +1451,36 @@ grns.get('/:id/linked', async (c) => {
   const po: { id: string; po_number: string } | null =
     Array.isArray(poJoin) ? (poJoin[0] ?? null) : (poJoin ?? null);
 
+  /* Multi-GRN PIs (owner 2026-08-06) — one supplier invoice can bill several
+     notes, and only ONE of them is the header's primary grn_id. Union the
+     header match above with the LINE-level path (this note's grn_items →
+     purchase_invoice_items) so a note billed on another note's PI still lists
+     its invoice here. Fail-soft: a hiccup leaves the header-matched set. */
+  let invoices = (piRes.data ?? []) as Array<{ id: string; invoice_number: string; status: string; invoice_date: string }>;
+  try {
+    const { data: myLines } = await sb.from('grn_items').select('id').eq('grn_id', id);
+    const grnItemIds = ((myLines ?? []) as Array<{ id: string }>).map((r) => r.id);
+    if (grnItemIds.length) {
+      const { data: piLines } = await sb.from('purchase_invoice_items')
+        .select('purchase_invoice_id').in('grn_item_id', grnItemIds);
+      const piIds = [...new Set(((piLines ?? []) as Array<{ purchase_invoice_id: string | null }>)
+        .map((r) => r.purchase_invoice_id).filter((x): x is string => Boolean(x)))];
+      const missing = piIds.filter((pid) => !invoices.some((v) => v.id === pid));
+      if (missing.length) {
+        const { data: extra } = await sb.from('purchase_invoices')
+          .select('id, invoice_number, status, invoice_date').in('id', missing);
+        invoices = [...invoices, ...((extra ?? []) as typeof invoices)]
+          .sort((a, b) => String(b.invoice_date).localeCompare(String(a.invoice_date)));
+      }
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[grn linked] line-level PI union failed', { id, error: e });
+  }
+
   return c.json({
     purchaseOrder: po,
-    invoices:      piRes.data ?? [],
+    invoices,
     returns:       prRes.data ?? [],
   });
 });

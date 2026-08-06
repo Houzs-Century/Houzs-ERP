@@ -791,6 +791,11 @@ export type OutstandingGrnItem = {
   remaining:       number;
   unitPriceCenti:  number;
   variants:        unknown;
+  /* Source note's currency + FX rate (owner 2026-08-06) — one invoice may bill
+     several of a supplier's notes, but a PI header carries ONE currency + rate,
+     so the picker locks the selection on these as well as the supplier. */
+  currency?:       string | null;
+  exchangeRate?:   number | null;
 };
 
 export function useOutstandingGrnItems() {

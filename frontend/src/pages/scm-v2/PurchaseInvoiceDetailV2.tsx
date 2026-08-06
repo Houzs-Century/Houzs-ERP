@@ -370,6 +370,17 @@ function PurchaseInvoiceDetailV2ReadOnly() {
     () => ((detail.data as { items?: PiItem[] } | undefined)?.items ?? []),
     [detail.data]
   );
+  /* Every source note this invoice bills (owner 2026-08-06 multi-note) — the
+     backend derives it from the LINES, so it covers notes the header's single
+     grn_id doesn't name. Empty on a manual PI. */
+  const sourceGrns = useMemo(
+    () => ((detail.data as { sourceGrns?: Array<{ id: string; grn_number: string; delivery_note_ref: string | null }> } | undefined)?.sourceGrns ?? []),
+    [detail.data]
+  );
+  const supplierDoRefs = useMemo(
+    () => [...new Set(sourceGrns.map((g) => (g.delivery_note_ref ?? '').trim()).filter(Boolean))],
+    [sourceGrns]
+  );
 
   useSetBreadcrumbs([
     { label: "Purchase Invoices", to: "/scm/purchase-invoices" },
@@ -741,12 +752,23 @@ function PurchaseInvoiceDetailV2ReadOnly() {
                   muted={!purchaseInvoice.supplier_invoice_ref}
                   mono={!!purchaseInvoice.supplier_invoice_ref}
                 />
+                {/* Owner 2026-08-06 — a supplier invoice may bill SEVERAL
+                    notes; the detail GET derives the full set from the LINES
+                    (the header FK is only the primary ref). List them all, and
+                    each note's supplier delivery-note ref alongside. */}
                 <Field
-                  label="Source"
-                  value={sourceOf(purchaseInvoice)}
-                  mono={sourceOf(purchaseInvoice) !== "—"}
-                  muted={sourceOf(purchaseInvoice) === "—"}
+                  label={sourceGrns.length > 1 ? `Source · ${sourceGrns.length} notes` : "Source"}
+                  value={sourceGrns.length ? sourceGrns.map((g) => g.grn_number).join(", ") : sourceOf(purchaseInvoice)}
+                  mono={sourceGrns.length > 0 || sourceOf(purchaseInvoice) !== "—"}
+                  muted={!sourceGrns.length && sourceOf(purchaseInvoice) === "—"}
                 />
+                {supplierDoRefs.length > 0 && (
+                  <Field
+                    label={supplierDoRefs.length > 1 ? "Supplier DO #s" : "Supplier DO #"}
+                    value={supplierDoRefs.join(", ")}
+                    mono
+                  />
+                )}
                 <Field label="Currency" value={purchaseInvoice.currency} />
                 {/* Multi-currency / landed cost (Phase 1-A) — shown only for a
                     foreign PI; an MYR invoice is byte-for-byte the old layout. */}
