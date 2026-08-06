@@ -43,6 +43,13 @@
 // stored raise-link), false for (c) (FLOATING — recomputed, evaporates/shifts as
 // demand moves). The UI shows a subtle floating-vs-static indicator.
 //
+// DECISION 2026-08-06 (soft until DO, hard from DO — docs/modules/
+// purchase-order.md §Decision): (b) is procurement PROVENANCE, not an execution
+// answer. Pre-DO the execution answer is (c); post-DO it is (a). The staged
+// realignment demotes (b) out of the precedence chain into a parallel
+// "bought-for" annotation — until that stage lands, remember when reading this
+// route's output that (b) outranking (c) reflects the RETIRED model.
+//
 // Read-only + company-scoped: every doc read is scopeToCompany'd (a foreign id
 // resolves to nothing); computeMrp is called with the active company id; the
 // origin + DO-linked SOs are re-validated against company-owned mfg_sales_orders.

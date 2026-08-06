@@ -15,6 +15,36 @@ chain that moves **no stock at all** (see §5).
 
 ---
 
+## Decision (owner, 2026-08-06): soft until DO, hard from DO
+
+Before a Delivery Order exists, ALL supply-demand matching belongs to the
+floating MRP allocator — pooled by (warehouse, item_code, variant_key),
+constrained by one-batch-per-SOFA-set (bedframes exempt), ordered by delivery
+date then doc_no. Nothing persisted before the DO may bind execution:
+`purchase_order_items.so_item_id` and the mig-0235 allocation sub-lines are
+**procurement provenance** — they record why we bought, they are displayed and
+audited, and they influence NO cap, NO batch expectation, NO coverage
+precedence.
+
+At DO creation the allocator decides binding **live** — including which incoming
+PO batch a ship-before-arrival commits to — and records it on the DO line
+(`committed_po_batch_no`, mig 0230). From that moment everything is anchored
+history: committed batches, OUT movements, lot consumptions, COGS, delivered
+attribution. Post-DO records are never recomputed from provenance, and
+provenance is never "hardened" into them.
+
+A stored-link-vs-delivered divergence is therefore NOT a defect; a double-SERVE
+in the delivered ledger IS. Do not reintroduce the stored link into any
+execution path — that is the pre-2026-08 model this decision retires, and the
+parked branch `wip/harden-so-po-link-parked` (which hardens the MRP pick INTO
+the link) is formally ABANDONED by this decision; do not resurrect it.
+
+Rollout is staged (lenses/docs → DO-time live allocator → pooled caps →
+display demotion); until every stage lands, the transitional guard remains:
+rejecting an SO-revision follow-up auto-releases the PO to STOCK.
+
+
+
 ## 1. Frontend
 
 ### Screens
