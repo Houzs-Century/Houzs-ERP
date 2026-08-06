@@ -743,6 +743,16 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
       };
     });
 
+  /* Owner 2026-08-06 — re-resolve each line's SUPPLIER fabric code from the
+     live fabric_trackings row, exactly as the GRN / PO / SI details already do
+     at READ. Without it this picker echoed the variants SNAPSHOT taken when
+     the line was first raised, so a fabric whose supplier code has since been
+     corrected showed the STALE code here while the GRN detail showed the
+     current one — the same GRN line read two different ways (found on
+     2990-GRN-2608-006: detail KN390-1, picker KN390-2). One batched read,
+     fail-soft. */
+  await enrichLinesWithFabricSupplierCode(sb, c, out);
+
   return c.json({ items: out });
 });
 
