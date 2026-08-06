@@ -1131,6 +1131,19 @@ function PurchaseOrderDetailV2ReadOnly() {
                   }
                   muted={!purchaseOrder.purchase_location_id}
                 />
+                {/* Owner 2026-08-06 — supplier-revised delivery dates (mig 0180
+                    lineage). Only render the slots the supplier actually pushed
+                    ("如果有更新 supplier delivery date 2"); the raw dates show so
+                    the desk sees each revision, not just the latest. */}
+                {purchaseOrder.supplier_delivery_date_2 && (
+                  <Field label="Supplier date 2" value={fmtDate(purchaseOrder.supplier_delivery_date_2)} />
+                )}
+                {purchaseOrder.supplier_delivery_date_3 && (
+                  <Field label="Supplier date 3" value={fmtDate(purchaseOrder.supplier_delivery_date_3)} />
+                )}
+                {purchaseOrder.supplier_delivery_date_4 && (
+                  <Field label="Supplier date 4" value={fmtDate(purchaseOrder.supplier_delivery_date_4)} />
+                )}
               </div>
 
               {purchaseOrder.notes && (
@@ -1202,6 +1215,17 @@ function PurchaseOrderDetailV2ReadOnly() {
                   v={fmtDate(purchaseOrder.expected_at)}
                   muted={!purchaseOrder.expected_at}
                 />
+                {/* Owner 2026-08-06 — supplier-revised dates, mirrored from the
+                    PO info card so the aside tells the same story. */}
+                {purchaseOrder.supplier_delivery_date_2 && (
+                  <KeyDateRow k="Supplier date 2" v={fmtDate(purchaseOrder.supplier_delivery_date_2)} />
+                )}
+                {purchaseOrder.supplier_delivery_date_3 && (
+                  <KeyDateRow k="Supplier date 3" v={fmtDate(purchaseOrder.supplier_delivery_date_3)} />
+                )}
+                {purchaseOrder.supplier_delivery_date_4 && (
+                  <KeyDateRow k="Supplier date 4" v={fmtDate(purchaseOrder.supplier_delivery_date_4)} />
+                )}
                 {purchaseOrder.submitted_at && (
                   <KeyDateRow
                     k="Submitted"
