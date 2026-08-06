@@ -385,7 +385,8 @@ const ITEM_COLS =
      date = MAX over non-null of [delivery_date, _2, _3, _4]. */
   'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, ' +
   /* Migration 0098 — source SO line link. The detail route resolves it to a
-     per-line so_doc_no for the PO PDF's "Transferred SO" column. */
+     per-line so_doc_no for the PO PDF's "For SO" provenance column
+     (relabelled from "Transferred SO", owner 2026-08-07). */
   'so_item_id';
 
 // ── List ──────────────────────────────────────────────────────────────
@@ -880,7 +881,8 @@ mfgPurchaseOrders.get('/:id', async (c) => {
       (r) => r.item_group as string | null | undefined,
     ),
   );
-  /* 2026-06-12 — "Transferred SO" column on the PO PDF (DSL/AutoCount layout):
+  /* 2026-06-12 — "For SO" provenance column on the PO PDF (DSL/AutoCount
+     layout; relabelled from "Transferred SO", owner 2026-08-07):
      resolve each line's so_item_id (migration 0098) to the source SO doc_no.
      Best-effort: a lookup failure leaves so_doc_no null, never blocks the
      detail response. */
