@@ -21,6 +21,12 @@
 -- Consumers: backend/src/scm/routes/outstanding.ts (the Outstanding → GRN tab).
 -- Columns and their order are unchanged, so the route needs no edit.
 
+-- search_path is pinned to scm exactly as 0084 does, and every table ref is
+-- schema-qualified. Without the pin an unqualified `grns` binds to public.grns
+-- (a different table with no company_id) → the migration fails with
+-- "column g.company_id does not exist" and BLOCKS the deploy.
+SET search_path TO scm, public;
+
 CREATE OR REPLACE VIEW scm.v_grn_outstanding AS
 SELECT
   g.id, g.grn_number, g.supplier_id, g.received_at, g.status,
@@ -29,7 +35,7 @@ SELECT
     WHEN g.status = 'CANCELLED' THEN FALSE
     WHEN EXISTS (
       SELECT 1
-      FROM grn_items gi
+      FROM scm.grn_items gi
       WHERE gi.grn_id = g.id
         AND (COALESCE(gi.qty_accepted, 0)
              - COALESCE(gi.invoiced_qty, 0)
@@ -38,4 +44,4 @@ SELECT
     ELSE FALSE
   END AS is_outstanding,
   g.company_id
-FROM grns g;
+FROM scm.grns g;
