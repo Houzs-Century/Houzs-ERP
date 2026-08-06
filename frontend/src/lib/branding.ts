@@ -34,8 +34,18 @@ export interface Branding {
   email: string;
   website: string;
   /** R2 object key for an uploaded logo ("" = none). Uploaded in Settings →
-   *  Branding; served via GET /api/branding/logo (auth-gated). */
+   *  Branding; served via GET /api/branding/logo (auth-gated). This is the
+   *  ON-SCREEN logo (app chrome + login screen) and the letterhead fallback. */
   logoR2Key: string;
+  /** R2 object key for the optional SECOND logo used on PRINTED documents
+   *  ("" = fall back to logoR2Key). Served via GET
+   *  /api/branding/logo?variant=print.
+   *
+   *  Why two (owner 2026-08-06): the app chrome is DARK and paper is WHITE, so
+   *  one file cannot serve both — 2990's white logo is right in the sidebar and
+   *  a near-invisible watermark on a Delivery Order. Blank means "print the
+   *  on-screen one", i.e. exactly the pre-2026-08 behaviour. */
+  printLogoR2Key: string;
 }
 
 /** Seeded defaults — VERBATIM the values that were hardcoded before this change
@@ -55,6 +65,7 @@ export const DEFAULT_BRANDING: Branding = {
   email: "hello@houzscentury.com",
   website: "",
   logoR2Key: "",
+  printLogoR2Key: "",
 };
 
 /** 2990 company defaults — mirrors the backend's DEFAULT_BRANDING_2990 and
@@ -70,6 +81,7 @@ export const DEFAULT_BRANDING_2990: Branding = {
   email: "",
   website: "",
   logoR2Key: "",
+  printLogoR2Key: "",
 };
 
 /** Defaults for the given company code (GET /api/branding echoes the active
@@ -138,6 +150,10 @@ export function normalizeBranding(
     // optional, so a blank server value must stay blank, not snap to a literal.
     website: ((r.website ?? r.web_site) as string | undefined)?.toString().trim() ?? "",
     logoR2Key: ((r.logoR2Key ?? r.logo_r2_key) as string | undefined)?.toString().trim() ?? "",
+    // Rows written before the print slot existed have no key → "" ("print the
+    // on-screen logo").
+    printLogoR2Key:
+      ((r.printLogoR2Key ?? r.print_logo_r2_key) as string | undefined)?.toString().trim() ?? "",
   };
 }
 
@@ -205,9 +221,25 @@ let logoCache: BrandingLogo | null = null;
 let logoInflight: Promise<void> | null = null;
 let logoFailedKey: string | null = null; // don't hammer a 404/broken key
 
+/**
+ * The logo key a PRINTED document should use: the dedicated print logo when one
+ * is uploaded, otherwise the on-screen logo. "" = text-only letterhead.
+ * Mirrors the backend's letterheadLogoKey (services/branding.ts) so the jspdf
+ * letterheads and the server-rendered HTML prints pick the same file.
+ *
+ * The app chrome (CompanyMark) deliberately does NOT go through this — it wants
+ * the on-screen variant, which is the whole reason there are two.
+ */
+export function letterheadLogoKey(b: {
+  logoR2Key: string;
+  printLogoR2Key?: string;
+}): string {
+  return (b.printLogoR2Key || "").trim() || (b.logoR2Key || "").trim();
+}
+
 /** Sync accessor for drawHeader(). null = no logo (text-only header). */
 export function getBrandingLogoCache(): BrandingLogo | null {
-  const key = brandingCache.logoR2Key;
+  const key = letterheadLogoKey(brandingCache);
   if (!key) return null;
   return logoCache && logoCache.key === key ? logoCache : null;
 }
@@ -312,7 +344,11 @@ const dataUrlDimensions = (dataUrl: string): Promise<{ width: number; height: nu
  * callers share one in-flight fetch.
  */
 export async function ensureBrandingLogoLoaded(): Promise<void> {
-  const key = brandingCache.logoR2Key;
+  // The PRINT slot when the owner uploaded one, else the on-screen logo. The
+  // memo is keyed by whichever we resolved, so swapping slots never serves the
+  // stale one.
+  const key = letterheadLogoKey(brandingCache);
+  const usingPrintSlot = key !== "" && key === (brandingCache.printLogoR2Key || "").trim();
   if (!key) return;                                   // no logo configured
   if (logoCache && logoCache.key === key) return;     // memo is current
   if (logoFailedKey === key) return;                  // known-bad — don't retry per print
@@ -328,12 +364,15 @@ export async function ensureBrandingLogoLoaded(): Promise<void> {
       // X-Company-Id rides along (like every api/client call) so the backend
       // serves the ACTIVE company's logo — without it a 2990 session on the
       // Houzs hostname would cache Houzs's logo under 2990's key.
-      const res = await correlatedFetch(`${api.baseUrl}/api/branding/logo`, {
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...companyHeader(),
+      const res = await correlatedFetch(
+        `${api.baseUrl}/api/branding/logo${usingPrintSlot ? "?variant=print" : ""}`,
+        {
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...companyHeader(),
+          },
         },
-      });
+      );
       if (!res.ok) throw correlateError(new Error(`logo fetch ${res.status}`), requestIdFromResponse(res));
       const { dataUrl, width, height, contentType } = await consumeCorrelated(res, async () => {
         const blob = await res.blob();

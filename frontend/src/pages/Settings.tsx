@@ -512,6 +512,206 @@ const BRANDING_FIELDS: {
   },
 ];
 
+/**
+ * One of the two company logo slots (owner 2026-08-06).
+ *
+ * `app`   → logoR2Key      — what the app chrome and the login screen render.
+ *                            Those surfaces are DARK, so this is normally the
+ *                            light/white artwork.
+ * `print` → printLogoR2Key — what document letterheads use. That's white paper,
+ *                            so it is normally the dark artwork. Empty means
+ *                            "print the app logo", which is what every company
+ *                            did before this slot existed.
+ *
+ * One file genuinely can't serve both: 2990's white logo is right in the
+ * sidebar and prints as a near-invisible watermark on a Delivery Order.
+ */
+const LOGO_SLOT_COPY = {
+  app: {
+    label: "Company logo",
+    filled:
+      "Shown in the app (sidebar, login screen). Those are dark surfaces, so use the light version. Also used on document letterheads when no print logo is set below.",
+    empty:
+      "No logo uploaded — the app shows the company name, and letterheads use the text-only header.",
+    uploaded: "Logo uploaded — the app chrome now uses it",
+    removeTitle: "Remove company logo?",
+    removeMessage:
+      "The app chrome falls back to the company name. Document letterheads keep using the print logo if one is set, otherwise the text-only header.",
+  },
+  print: {
+    label: "Print logo (documents)",
+    filled:
+      "Printed top-left on every document letterhead (PDF and print). That's white paper, so use the dark version.",
+    empty:
+      "No print logo — document letterheads use the company logo above. Set one here if that logo is too light to print.",
+    uploaded: "Print logo uploaded — it now prints on every document letterhead",
+    removeTitle: "Remove print logo?",
+    removeMessage: "Document letterheads go back to using the company logo above.",
+  },
+} as const;
+
+function LogoSlot({
+  variant,
+  storedKey,
+  canEdit,
+  disabled,
+  onApply,
+}: {
+  variant: "app" | "print";
+  storedKey: string;
+  canEdit: boolean;
+  disabled: boolean;
+  onApply: (raw: unknown) => void;
+}) {
+  const toast = useToast();
+  const dialog = useDialog();
+  const copy = LOGO_SLOT_COPY[variant];
+  // ?variant=print addresses the second slot; no param = the on-screen one, so
+  // this collapses to the exact pre-2026-08 request for the app slot.
+  const query = variant === "print" ? "?variant=print" : "";
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [url, setUrl] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Preview is a blob URL — the serve endpoint needs the bearer, so <img src>
+  // can't hit it directly (same pattern as Avatar). Keys carry a Date.now()
+  // stamp, so passing the key as a query param busts stale caches.
+  useEffect(() => {
+    if (!storedKey) {
+      setUrl(null);
+      return;
+    }
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    api
+      .fetchBlobUrl(
+        `/api/branding/logo${query ? `${query}&` : "?"}k=${encodeURIComponent(storedKey)}`,
+      )
+      .then((u) => {
+        if (cancelled) {
+          URL.revokeObjectURL(u);
+        } else {
+          objectUrl = u;
+          setUrl(u);
+        }
+      })
+      .catch(() => setUrl(null));
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [storedKey, query]);
+
+  async function upload(file: File | null) {
+    if (!file) return;
+    if (!["image/png", "image/jpeg"].includes(file.type)) {
+      toast.error("Logo must be a PNG or JPG image");
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      toast.error("Logo must be under 1 MB");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.postBinary<BrandingResponse>(
+        `/api/branding/logo${query}`,
+        file,
+        file.type,
+      );
+      onApply(res?.branding);
+      toast.success(copy.uploaded);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to upload logo");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    const ok = await dialog.confirm({
+      title: copy.removeTitle,
+      message: copy.removeMessage,
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const res = await api.del<BrandingResponse>(`/api/branding/logo${query}`);
+      onApply(res?.branding);
+      toast.success(variant === "print" ? "Print logo removed" : "Logo removed");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to remove logo");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <label className="mb-1 block text-[11px] font-semibold text-ink-secondary">
+        {copy.label}
+        <span className="ml-1 font-normal text-ink-muted">(optional)</span>
+      </label>
+      <div className="flex items-center gap-3 rounded-md border border-border bg-bg/50 px-3 py-3">
+        {/* Preview each logo ON THE SURFACE IT IS FOR — the app slot against the
+            dark sidebar colour, the print slot against paper white. A white
+            logo previewed on a light card is invisible, which is exactly the
+            confusion this whole feature exists to clear up. */}
+        {url ? (
+          <img
+            src={url}
+            alt={copy.label}
+            className={`h-12 max-w-[160px] shrink-0 rounded-sm object-contain px-2 ${
+              variant === "print" ? "bg-white" : "bg-sidebar"
+            }`}
+          />
+        ) : (
+          <div className="grid h-12 w-16 shrink-0 place-items-center rounded-sm border border-dashed border-border text-ink-muted">
+            <ImageIcon size={16} />
+          </div>
+        )}
+        <div className="min-w-0 flex-1 text-[11px] text-ink-muted">
+          {storedKey ? copy.filled : copy.empty}
+          <div className="mt-0.5">PNG or JPG, up to 1 MB.</div>
+        </div>
+        {canEdit && (
+          <div className="flex shrink-0 items-center gap-2">
+            <input
+              ref={inputRef}
+              type="file"
+              accept="image/png,image/jpeg"
+              className="hidden"
+              onChange={(e) => {
+                void upload(e.target.files?.[0] ?? null);
+                e.target.value = "";
+              }}
+            />
+            <Button
+              variant="secondary"
+              disabled={busy || disabled}
+              onClick={() => inputRef.current?.click()}
+            >
+              <Upload size={13} />
+              {busy ? "Working…" : storedKey ? "Replace" : "Upload"}
+            </Button>
+            {storedKey && (
+              <Button
+                variant="secondary"
+                disabled={busy || disabled}
+                onClick={() => void remove()}
+              >
+                <Trash2 size={13} />
+                Remove
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BrandingTab() {
   const toast = useToast();
   const dialog = useDialog();
@@ -521,12 +721,6 @@ function BrandingTab() {
   const q = useQuery<BrandingResponse>("/api/branding", () => api.get("/api/branding"));
   const [form, setForm] = useState<Branding | null>(null);
   const [saving, setSaving] = useState(false);
-
-  // Logo uploader state — the preview is a blob URL (the serve endpoint needs
-  // the bearer, so <img src> can't hit it directly — same pattern as Avatar).
-  const logoInputRef = useRef<HTMLInputElement>(null);
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
-  const [logoBusy, setLogoBusy] = useState(false);
 
   // Active company for this tab (echoed by GET /api/branding). Drives the
   // default set — a blank 2990 field must stay blank, never snap to a Houzs
@@ -541,33 +735,6 @@ function BrandingTab() {
     if (q.data) setForm(normalizeBranding(q.data.branding, defaultBrandingForCompany((q.data.companyCode?.trim() || hostDefaultCompanyCode()).toUpperCase())));
   }, [q.data]);
 
-  // Load / refresh the logo preview whenever the stored key changes. Keys carry
-  // a Date.now() stamp, so passing the key as a query param busts stale caches.
-  const logoKey = form?.logoR2Key ?? "";
-  useEffect(() => {
-    if (!logoKey) {
-      setLogoUrl(null);
-      return;
-    }
-    let url: string | null = null;
-    let cancelled = false;
-    api
-      .fetchBlobUrl(`/api/branding/logo?k=${encodeURIComponent(logoKey)}`)
-      .then((u) => {
-        if (cancelled) {
-          URL.revokeObjectURL(u);
-        } else {
-          url = u;
-          setLogoUrl(u);
-        }
-      })
-      .catch(() => setLogoUrl(null));
-    return () => {
-      cancelled = true;
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [logoKey]);
-
   function set<K extends keyof Branding>(key: K, value: Branding[K]) {
     setForm((f) => (f ? { ...f, [key]: value } : f));
   }
@@ -575,7 +742,9 @@ function BrandingTab() {
   /** Apply the server-confirmed branding after a logo change: form + module
    *  cache + PDF logo memo, so the next generated PDF is immediately right. */
   function applyBranding(raw: unknown) {
-    const next = normalizeBranding(raw, companyDefaults);
+    // A logo route always echoes the saved row; fall back to the current form
+    // so a truncated response can never blank the fields on screen.
+    const next = normalizeBranding(raw ?? form ?? {}, companyDefaults);
     setForm(next);
     setBrandingCache(next, companyCode);
     clearBrandingLogoCache();
@@ -583,52 +752,6 @@ function BrandingTab() {
     // drop /api/branding explicitly so the reload below fetches fresh.
     invalidate("/api/branding");
     q.reload();
-  }
-
-  async function uploadLogo(file: File | null) {
-    if (!file) return;
-    if (!["image/png", "image/jpeg"].includes(file.type)) {
-      toast.error("Logo must be a PNG or JPG image");
-      return;
-    }
-    if (file.size > 1024 * 1024) {
-      toast.error("Logo must be under 1 MB");
-      return;
-    }
-    setLogoBusy(true);
-    try {
-      const res = await api.postBinary<BrandingResponse>(
-        "/api/branding/logo",
-        file,
-        file.type,
-      );
-      applyBranding(res?.branding ?? { ...(form ?? {}), logoR2Key: logoKey });
-      toast.success("Logo uploaded — it now prints on every document letterhead");
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to upload logo");
-    } finally {
-      setLogoBusy(false);
-    }
-  }
-
-  async function removeLogo() {
-    const ok = await dialog.confirm({
-      title: "Remove company logo?",
-      message:
-        "Document letterheads (PDFs) go back to the text-only company header.",
-      confirmLabel: "Remove",
-    });
-    if (!ok) return;
-    setLogoBusy(true);
-    try {
-      const res = await api.del<BrandingResponse>("/api/branding/logo");
-      applyBranding(res?.branding ?? { ...(form ?? {}), logoR2Key: "" });
-      toast.success("Logo removed");
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to remove logo");
-    } finally {
-      setLogoBusy(false);
-    }
   }
 
   async function save() {
@@ -713,65 +836,23 @@ function BrandingTab() {
             );
           })}
 
-          {/* Company logo — prints TOP-LEFT on every document letterhead (PDF).
-              PNG/JPG up to 1 MB; stored in R2, key on the branding config. */}
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-ink-secondary">
-              Company logo
-              <span className="ml-1 font-normal text-ink-muted">(optional)</span>
-            </label>
-            <div className="flex items-center gap-3 rounded-md border border-border bg-bg/50 px-3 py-3">
-              {logoUrl ? (
-                <img
-                  src={logoUrl}
-                  alt="Company logo"
-                  className="h-12 max-w-[160px] shrink-0 rounded-sm object-contain"
-                />
-              ) : (
-                <div className="grid h-12 w-16 shrink-0 place-items-center rounded-sm border border-dashed border-border text-ink-muted">
-                  <ImageIcon size={16} />
-                </div>
-              )}
-              <div className="min-w-0 flex-1 text-[11px] text-ink-muted">
-                {logoKey
-                  ? "Printed top-left on every document letterhead (PDF)."
-                  : "No logo uploaded — letterheads use the text-only company header."}
-                <div className="mt-0.5">PNG or JPG, up to 1 MB.</div>
-              </div>
-              {canEdit && (
-                <div className="flex shrink-0 items-center gap-2">
-                  <input
-                    ref={logoInputRef}
-                    type="file"
-                    accept="image/png,image/jpeg"
-                    className="hidden"
-                    onChange={(e) => {
-                      void uploadLogo(e.target.files?.[0] ?? null);
-                      e.target.value = "";
-                    }}
-                  />
-                  <Button
-                    variant="secondary"
-                    disabled={logoBusy || saving}
-                    onClick={() => logoInputRef.current?.click()}
-                  >
-                    <Upload size={13} />
-                    {logoBusy ? "Working…" : logoKey ? "Replace" : "Upload"}
-                  </Button>
-                  {logoKey && (
-                    <Button
-                      variant="secondary"
-                      disabled={logoBusy || saving}
-                      onClick={() => void removeLogo()}
-                    >
-                      <Trash2 size={13} />
-                      Remove
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+          {/* Two logo slots: the app chrome is DARK and paper is WHITE, so one
+              file can't serve both. The print slot is optional — blank means
+              "print the app logo", the pre-2026-08 behaviour. */}
+          <LogoSlot
+            variant="app"
+            storedKey={form.logoR2Key}
+            canEdit={canEdit}
+            disabled={saving}
+            onApply={applyBranding}
+          />
+          <LogoSlot
+            variant="print"
+            storedKey={form.printLogoR2Key}
+            canEdit={canEdit}
+            disabled={saving}
+            onApply={applyBranding}
+          />
 
           {canEdit ? (
             <div className="flex items-center gap-2 border-t border-border pt-4">
