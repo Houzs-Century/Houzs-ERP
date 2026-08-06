@@ -3,7 +3,8 @@
 ### [HIGH] Deploy blocked: 0267 resolved `grns` through the default search_path to the legacy public table
 - **Symptom.** The post-#1664 deploy failed at `pg-migrate`: `FAILED 0267_grn_outstanding_line_level.sql: column g.company_id does not exist` — every later migration and the Worker deploy blocked behind it (the standing CLAUDE.md failure class: main green, prod not deployed).
 - **Root cause.** 0267 (from #1663) writes `FROM grns` unqualified. The runner's default search_path resolves that to `public.grns` — the legacy D1-era table without `company_id` — not `scm.grns`. The view's ORIGINAL definition (0084) only works because it opens with `SET search_path TO scm, public;`; 0267 replaced it without carrying that line.
-- **Fix.** The same `SET search_path` line added to 0267. The file FAILED and was never recorded as applied, so in-place editing is the correct move (immutability applies to APPLIED files).
+- **Fix.** #1666 (a parallel session) landed the same `SET search_path` fix first and its deploy APPLIED 0267. My duplicate #1668 then edited the now-APPLIED file (clean merge, both insertions landed) — which is exactly the drift `pg-migrate` refuses on ("Applied migration history is immutable"). Restored to the byte-exact applied version (`35769c6`) before any backend deploy could hit the checksum gate.
+- **The second lesson.** Two sessions racing the same hotfix: before shipping a deploy fix, re-fetch and check whether it is already fixed — and NEVER edit a migration without first confirming, from the latest deploy log, that it has not been applied in the meantime.
 - **The class, for next time.** A migration that re-defines an object must carry the same schema-resolution preamble as the migration that created it — or qualify every relation. `column … does not exist` on a column you can see in the schema dump usually means you are looking at a different schema's table.
 - **Ref:** #<PR>. `fix/0267-search-path` 2026-08-06.
 
