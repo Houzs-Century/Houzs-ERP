@@ -20,6 +20,7 @@ import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
+import { loadIncomingLines, pickIncomingForBucket, pickIncomingForSofaSet, incomingBucketKey } from '../lib/do-live-allocator';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { findOverDeliveredSoItems } from '../lib/do-over-delivery';
 import { findUnlinkedSoLines, unlinkedSoLinesResponse } from '../lib/do-unlinked-so-lines';
@@ -620,6 +621,46 @@ async function resolveShipCommitments(
         strictBatch: d.strictBatch,
         variantKey: variantByRef.get(d.lineRef) ?? '',
       });
+    }
+
+    /* ── SHADOW: the DO-time live allocator (soft-until-DO stage 2) ─────────
+       Decision 2026-08-06. The allocator computes what it WOULD bind — pooled
+       open-PO supply, earliest effective ETA then smaller PO number — beside
+       the stored-link resolution, and logs every divergence. It binds NOTHING
+       yet: the flip is a deliberate switch in a later PR, after the shadow
+       data is reviewed (the AUTOCOUNT_WRITES_DISABLED soak discipline).
+       Shadow-only simplification, documented: outstanding ship-before-arrival
+       commitments are not subtracted here (they are rare and the comparison
+       stays meaningful); the flip PR folds them in via outstandingCommitments. */
+    try {
+      const codes = [...new Set(linked.map((l) => l.itemCode))];
+      const incoming = await loadIncomingLines(sb, codes, warehouseId);
+      for (const f of facts) {
+        const pick = pickIncomingForBucket(incoming, f.itemCode, f.variantKey, f.shipQty);
+        if ((pick?.poNumber ?? null) !== (f.expectedBatchNo ?? null)) {
+          /* eslint-disable-next-line no-console */
+          console.info(`[bind-shadow] ${f.itemCode} [${f.variantKey}] stored=${f.expectedBatchNo ?? '—'} allocator=${pick?.poNumber ?? '—'}${pick?.eta ? ` (eta ${pick.eta})` : ''} — divergence logged; stored link still binds`);
+        }
+      }
+      // Sofa sets: one dye lot per set (sofa-only). Log the allocator's whole-set pick.
+      const setNeeds = new Map<string, Map<string, number>>();
+      for (const l of linked) {
+        if (!(l.soItemId && sofaIds.has(l.soItemId))) continue;
+        const docNo = docNoBySoItem.get(l.soItemId) ?? null;
+        if (!docNo) continue;
+        const needs = setNeeds.get(docNo) ?? new Map<string, number>();
+        const k = incomingBucketKey(l.itemCode, l.variantKey);
+        needs.set(k, (needs.get(k) ?? 0) + Number(l.qty));
+        setNeeds.set(docNo, needs);
+      }
+      for (const [docNo, needs] of setNeeds) {
+        const setPick = pickIncomingForSofaSet(incoming, needs);
+        /* eslint-disable-next-line no-console */
+        if (setPick) console.info(`[bind-shadow] sofa set ${docNo}: allocator whole-set pick = ${setPick.poNumber}${setPick.eta ? ` (eta ${setPick.eta})` : ''}`);
+      }
+    } catch (e) {
+      /* eslint-disable-next-line no-console */
+      console.error('[bind-shadow] failed (shadow only, shipping unaffected):', e);
     }
 
     /* ONE PO IS ONE BATCH NUMBER (owner, 2026-07-31), so a sofa SET binds ONE
