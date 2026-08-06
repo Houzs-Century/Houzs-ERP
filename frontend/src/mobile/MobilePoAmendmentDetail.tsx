@@ -258,8 +258,14 @@ export function MobilePoAmendmentDetail({
     });
     if (r == null) return;
     try {
-      await rejectAmendment.mutateAsync({ id: amendmentId, reason: r.trim(), poId });
-      notify({ title: "Amendment rejected" });
+      const res = await rejectAmendment.mutateAsync({ id: amendmentId, reason: r.trim(), poId });
+      const released = res.releasedToStock ?? [];
+      notify({
+        title: "Amendment rejected",
+        ...(released.length > 0
+          ? { body: `Released to STOCK: ${released.map((x) => `${x.materialCode} ×${x.qty}`).join(", ")} — MRP will re-show the corrected spec as shortage.` }
+          : {}),
+      });
     } catch (e) {
       notify({ title: "Could not reject", body: `${plainError(e)} Nothing was changed.`, tone: "error" });
     }

@@ -534,10 +534,13 @@ export function PoAmendmentDetailV2() {
     });
     if (rejectReason == null) return;
     try {
-      await rejectAmendment.mutateAsync({ id, reason: rejectReason.trim(), poId });
+      const res = await rejectAmendment.mutateAsync({ id, reason: rejectReason.trim(), poId });
+      const released = res.releasedToStock ?? [];
       notify({
         title: "Amendment rejected",
-        body: "The person who raised it can see your reason and raise a corrected request.",
+        body: released.length > 0
+          ? `Supplier keeps the original spec — released to STOCK: ${released.map((x) => `${x.materialCode} ×${x.qty}`).join(", ")}. MRP will re-show the corrected spec as shortage.`
+          : "The person who raised it can see your reason and raise a corrected request.",
       });
     } catch (e) {
       notify({
