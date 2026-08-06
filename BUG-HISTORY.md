@@ -1,3 +1,20 @@
+## 2026-08-07
+
+### [LOW] PDF snapshot-rule sweep: all nine generators print only anchored facts + stored provenance; the PO's "Transf. SO" column relabelled "For SO"
+- **The rule (owner-confirmed, from the 2026-08-06 "soft until DO, hard from DO" Decision — `docs/modules/purchase-order.md` §Decision).** A printed document is a SNAPSHOT: it prints ONLY anchored execution facts (SO→DO→SI, PO→GRN→PI chains) and stored provenance labelled as provenance ("bought for"). It must NEVER print a floating MRP/READY pairing (`coverage_po`, `ready_source_pos`, `source_po_union`, `usePoSoCoverage` origins with `source: 'mrp'`) — those shift as demand moves, so the paper would lie by tomorrow.
+- **Sweep verdict (all generators in `frontend/src/vendor/scm/lib/`, traced through their call sites AND the backend fields feeding them).**
+  - `sales-order-pdf.ts` — CLEAN. Customer-facing; prints no source-PO data at all (payments ledger is anchored).
+  - `delivery-order-pdf.ts` — CLEAN. Line `source_pos` is server-resolved (`delivery-orders-mfg.ts` detail): shipped-ledger batches (OUT movements ∪ consumed FIFO lots) with a stored-link fallback (`resolveExpectedBatchBySoItem`, `purchase_order_items.so_item_id`). No MRP path feeds it.
+  - `sales-invoice-pdf.ts` — CLEAN. Prints only the SI's own `so_doc_no` (execution chain).
+  - `grn-pdf.ts` — CLEAN. Prints only `purchase_order.po_number`, the PO the GRN received against (execution chain).
+  - `purchase-invoice-pdf.ts` — CLEAN. Prints only the PO/GRN refs the PI was raised from (execution chain).
+  - `purchase-return-pdf.ts` — CLEAN. Prints only the source PO ref.
+  - `delivery-return-pdf.ts` — CLEAN. No doc-pairing fields at all.
+  - `amendment-pdf.ts` (+ `amendment-pdf-map.ts`) — CLEAN. Prints stored amendment change rows only.
+  - `purchase-order-pdf.ts` — CLEAN data-wise (per-line `so_doc_no` = stored `so_item_id` link; "Your Ref No" = stored refs / "From SOs:" note). Zero floating leaks found; nothing removed.
+- **Relabel (owner-approved).** The PO PDF's per-line column header "Transf. SO" → **"For SO"** — provenance wording, not execution-binding wording, because pre-DO pairing is decided live at DO time and the stored link only records why we bought. What PRINTS is unchanged (stored `so_doc_no`, single-source note fallback — both conform). Comment references updated in `suppliers-queries.ts`, `backend/src/scm/routes/mfg-purchase-orders.ts`, and the `docs/mockups/pdf/purchase-order.html` mockup.
+- **Ref:** #<PR>. `fix/pdf-snapshot-rule` 2026-08-07.
+
 ## 2026-08-06
 
 ### [MEDIUM] Provenance chips dressed as execution — stored PO→SO links wore the same solid tone and "Locked" tooltips as delivered facts
