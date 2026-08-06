@@ -16,12 +16,12 @@ async function main() {
     SELECT id, code FROM scm.mfg_products
     WHERE company_id=${cid} AND category IN ('MATTRESS','BEDFRAME')
       AND (size_code IS NULL OR size_code='')
-      AND code ~ '\\((K|Q|S|SS|SK|SP)\\)\\s*$'`;
+      AND code ~ '\\((K|Q|S|SS|SK|SP)\\)?\\s*$'`;
   console.log(`candidates (empty size_code, sized code): ${rows.length}`);
   const byCode = {};
   let updated = 0;
   for (const r of rows) {
-    const m = String(r.code).match(/\(([KQSP]{1,2})\)\s*$/);
+    const m = String(r.code).match(/\(([KQSP]{1,2})\)?\s*$/);
     if (!m) continue;
     const sc = m[1];
     byCode[sc] = (byCode[sc] || 0) + 1;
