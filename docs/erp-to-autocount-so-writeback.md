@@ -167,3 +167,52 @@ only. Real receipts are a separate AR document + a separate endpoint (not in sco
    Ref/UDF) with AutoCount's document-numbering settings.
 4. Flip `AUTOCOUNT_WRITES_DISABLED` to `false` once the create path is verified on a
    test book.
+
+---
+
+## 8. Middleware maintainer task list (.NET + AutoCount SDK)
+
+The middleware already connects to the LIVE book via the SDK and has working read
+endpoints. Add the writes below, reusing the same auth (`X-API-KEY`, `X-Request-ID`).
+
+**A. `POST /SalesOrder/create`** (core)
+1. Run the pre-flight master check (task D) so every referenced master exists first.
+2. `SalesOrderCommand.Create()` → data object. Set header:
+   DocNo = our `doc_no`; DocDate; DebtorCode = `300-C002`; DebtorName = customer name;
+   SalesAgent; SalesLocation; InvAddr1..4; Phone1; Ref; Remark2; SOUDF_ToPONo;
+   SOUDF_PDate; SOUDF_BALANCE; and UDFs SOUDF_BRANDING, SOUDF_VENUE (`SetUDFValue`).
+3. For each line: add a detail row — ItemCode (resolved via SKU map; sofa → parent
+   code), Qty, UnitPrice, UOM, ItemDescription = the composed variant string (Desc2).
+4. `Save()`. Return the AutoCount DocNo + status.
+5. **Idempotent:** if a SO with our DocNo already exists, skip and return it (safe retry).
+
+**B. `POST /StockItem/upsert`**
+- If ItemCode exists → return "exists". Else create with §4 defaults (CostingMethod=1,
+  StockControl/IsSalesItem/IsPurchaseItem=T, Serial/Batch=F, UOM by group, MainSupplier
+  from payload). Flag auto-created items for Finance review.
+
+**C. `POST /SalesAgent/upsert`** — create code+description if the agent code is missing.
+
+**D. Pre-flight master provisioning** (called inside A, also exposed):
+- ItemCode → B (per line); SalesAgent → C; BRANDING/VENUE → `PUT /UDFList/add` if the
+  option isn't in the list; SalesLocation → normalize to an existing code (don't
+  auto-create warehouses); Debtor → always `300-C002`, nothing to create.
+
+**E. `PUT /UDFList/add`** — add an option to a UDF list (BRANDING / VENUE) via the
+UserDefinedList maintenance if not present.
+
+SDK areas to use (confirm exact classes in your SDK version): SalesOrderCommand /
+SalesOrderDataObject + SetUDFValue for the SO; Item create for StockItem; SalesAgent
+maintenance; UserDefinedList maintenance for UDF options.
+
+**F. Test + go-live**
+1. Point the middleware at a NON-live test account book.
+2. Call `/SalesOrder/create` with one full sample SO (new agent + new item to exercise
+   auto-provisioning). Confirm in AutoCount: header, line ItemCodes, Description 2,
+   SOUDF_BRANDING/VENUE all correct.
+3. Switch back to the LIVE book; on the ERP side set `AUTOCOUNT_WRITES_DISABLED = false`
+   and wire the ERP SO-save to call `/SalesOrder/create`.
+
+**Still owed before go-live (ERP side, not middleware):** re-verify the ERP-code →
+AutoCount-ItemCode map against LIVE (a prior census used a stale local copy). Field
+templates and master alignment in this doc are already LIVE-verified.
