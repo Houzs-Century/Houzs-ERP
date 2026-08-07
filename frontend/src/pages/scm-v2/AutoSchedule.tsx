@@ -280,7 +280,7 @@ export const AutoSchedule = () => {
     <div className="space-y-4">
       <PageHeader
         eyebrow="Delivery"
-        title="Auto-Schedule"
+        title="Delivery Date Arrangement"
         description="Fit the pending-schedule orders into delivery days automatically. Pick a depot and a start date; each order is grouped by its postcode zone and packed into lorry-days under your per-lorry capacity ceilings. The proposal is reversible — review it, then apply the dates (amended delivery date only) and lock the days you are happy with."
       />
 
