@@ -67,16 +67,22 @@ const HEADER = {
   dispatched_at: null,
   signed_at: null,
   delivered_at: null,
-  driver_name: null,
-  vehicle: null,
+  // Annotated rather than inferred: the tests below build variants that DO
+  // carry a driver / note / customer reference, and an inferred `null` would
+  // make every one of those a type error rather than a case.
+  driver_name: null as string | null,
+  vehicle: null as string | null,
   address1: '50, Jalan Elitis Suria, Valencia',
   address2: null,
   city: 'Sungai Buloh',
   state: 'Selangor',
   postcode: '47000',
   phone: '+60166636038',
-  notes: null,
+  notes: null as string | null,
   m3_total_milli: 0,
+  po_doc_no: null as string | null,
+  customer_so_no: null as string | null,
+  ref: null as string | null,
 };
 
 const itemAt = (i: number) => ({
@@ -283,6 +289,79 @@ describe('Delivery Order — Theme C template', () => {
 
     expect(spans.some((s) => s.text === '2990-DO-2608-006 · Page 1 of 1')).toBe(true);
     expect(spans.some((s) => s.text === '2990-DO-2608-007 · Page 1 of 1')).toBe(true);
+  });
+
+  test('Houzs splits SO No from the customer Ref No.; 2990 keeps one SO Ref', async () => {
+    /* Owner 2026-08-07. The customer reference resolves po_doc_no →
+       customer_so_no → ref, the same order the DO detail page uses, so the sheet
+       and the screen never name a different one. */
+    const withRefs = {
+      ...HEADER,
+      po_doc_no: 'CUST-PO-8891',
+      customer_so_no: 'CUST-SO-1',
+      ref: 'REF-1',
+    };
+
+    setBrandingCache({ ...DEFAULT_BRANDING }, 'HOUZS');
+    const houzs = await renderDo([itemAt(1)], withRefs as typeof HEADER);
+    expect(houzs.spans.some((s) => s.text === 'SO No')).toBe(true);
+    expect(houzs.spans.some((s) => s.text === 'Ref No.')).toBe(true);
+    expect(houzs.spans.some((s) => s.text === 'SO Ref')).toBe(false);
+    expect(houzs.spans.some((s) => s.text === 'CUST-PO-8891')).toBe(true);
+
+    setBrandingCache({ ...BRANDING_2990 }, '2990');
+    const two990 = await renderDo([itemAt(1)], withRefs as typeof HEADER);
+    expect(two990.spans.some((s) => s.text === 'SO Ref')).toBe(true);
+    expect(two990.spans.some((s) => s.text === 'Ref No.')).toBe(false);
+    // 2990's sheet must not leak the customer reference into the details block.
+    expect(two990.spans.some((s) => s.text === 'CUST-PO-8891')).toBe(false);
+  });
+
+  test('the customer reference falls back through the three columns in order', async () => {
+    setBrandingCache({ ...DEFAULT_BRANDING }, 'HOUZS');
+    const noPo = await renderDo(
+      [itemAt(1)],
+      { ...HEADER, po_doc_no: null, customer_so_no: 'CUST-SO-1', ref: 'REF-1' } as typeof HEADER,
+    );
+    expect(noPo.spans.some((s) => s.text === 'CUST-SO-1')).toBe(true);
+
+    const refOnly = await renderDo(
+      [itemAt(1)],
+      { ...HEADER, po_doc_no: null, customer_so_no: null, ref: 'REF-1' } as typeof HEADER,
+    );
+    expect(refOnly.spans.some((s) => s.text === 'REF-1')).toBe(true);
+  });
+
+  test('driver, vehicle, customer code and the delivery note print when the record has them', async () => {
+    /* All four were dropped by the handoff's block and put back on the owner's
+       call (2026-08-07): the driver's sheet is exactly where they are needed. */
+    setBrandingCache({ ...BRANDING_2990 }, '2990');
+    const { spans } = await renderDo(
+      [itemAt(1)],
+      {
+        ...HEADER,
+        driver_name: 'Ah Seng',
+        vehicle: 'WXY 1234',
+        notes: 'Call the guardhouse on arrival, unit is behind the clubhouse.',
+      } as typeof HEADER,
+    );
+    expect(spans.some((s) => s.text === 'Driver')).toBe(true);
+    expect(spans.some((s) => s.text === 'Ah Seng')).toBe(true);
+    expect(spans.some((s) => s.text === 'Vehicle')).toBe(true);
+    expect(spans.some((s) => s.text === 'WXY 1234')).toBe(true);
+    expect(spans.some((s) => s.text === HEADER.debtor_code)).toBe(true);
+    expect(spans.some((s) => s.text === 'Note:')).toBe(true);
+    expect(spans.some((s) => s.text.includes('guardhouse'))).toBe(true);
+  });
+
+  test('an unassigned run prints no dashed Driver / Vehicle rows', async () => {
+    // A dash against "Driver" tells the reader nothing and costs a line on a
+    // sheet whose whole job is to be scanned in a warehouse doorway.
+    setBrandingCache({ ...BRANDING_2990 }, '2990');
+    const { spans } = await renderDo([itemAt(1)]);
+    expect(spans.some((s) => s.text === 'Driver')).toBe(false);
+    expect(spans.some((s) => s.text === 'Vehicle')).toBe(false);
+    expect(spans.some((s) => s.text === 'Note:')).toBe(false);
   });
 
   test('the Consignment Note reuse drops the picking columns and keeps its own title', async () => {
