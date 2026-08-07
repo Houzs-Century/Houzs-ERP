@@ -32,6 +32,16 @@ const EXPECTED_RAW_FETCH_CALLS: FetchCall[] = [
     callee: "fetch",
     argument: "url",
   },
+  {
+    // Capability probe for the service worker's /print-preview route. It never
+    // leaves the device — the worker answers it — and carries no API traffic, so
+    // correlation headers would be meaningless. Same category as the version
+    // check and the font asset above.
+    file: "vendor/scm/lib/pdf-common.ts",
+    functionName: "putPrintPreview",
+    callee: "fetch",
+    argument: "`${PRINT_PREFIX}__probe`",
+  },
 ];
 
 function sourceFiles(dir: string): string[] {
