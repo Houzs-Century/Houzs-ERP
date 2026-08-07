@@ -1284,13 +1284,15 @@ export interface ListProjectsFilters {
    *  matches. Special values: "__done" = all sections complete; "__none"
    *  = project has no sections defined. */
   section?: string;
-  /** Checklist TASK title that must still be OUTSTANDING (owner 2026-08-05:
-   *  "i can filter which task is not complete yet appear once i extract in
-   *  excel"). Returns projects that HAVE this task with status not in
-   *  (done, na) — i.e. pending or blocked. When set, the row also carries
-   *  task_pending_status / task_pending_due so the Excel export can show what
-   *  is outstanding per event. Exact title match (the picker feeds canonical
-   *  template titles). */
+  /** Checklist TASK titles that must still be OUTSTANDING — COMMA-SEPARATED,
+   *  multi-select since 2026-08-07 (owner: "make it can click multiple choice.
+   *  and once export will export what already tick only"). Returns projects
+   *  where AT LEAST ONE of these tasks has status not in (done, na) — the
+   *  useful reading of "show me events still missing any of these". When set,
+   *  each row also carries `task_pending_map` ('title=status' pairs joined by
+   *  '|') for every ticked title, so the Excel export can render one column per
+   *  ticked task. Exact title match (the picker feeds canonical template
+   *  titles, none of which contain a comma or '='). */
   task_pending?: string;
   /** Project status filter (mig 088 palette): "confirmed" | "pending" |
    *  "cancelled". Pushed server-side so the list stays paginated even while
@@ -1717,17 +1719,23 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
       binds.push(f.section);
     }
   }
-  // Outstanding-task filter (owner 2026-08-05): keep only events where THIS
-  // task is still open. Deliberately not `NOT EXISTS(... done ...)` — an event
-  // that never had the task at all is not "incomplete", it is out of scope.
-  if (f.task_pending) {
+  // Outstanding-task filter (owner 2026-08-05, multi-select 2026-08-07): keep
+  // events where AT LEAST ONE of the ticked tasks is still open. Deliberately
+  // not `NOT EXISTS(... done ...)` — an event that never had the task at all is
+  // not "incomplete", it is out of scope.
+  const taskPendingList = (f.task_pending ?? "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (taskPendingList.length) {
+    const ph = taskPendingList.map(() => "?").join(",");
     where.push(
       `EXISTS (SELECT 1 FROM project_checklist tp
                 WHERE tp.project_id = p.id
-                  AND tp.title = ?
+                  AND tp.title IN (${ph})
                   AND tp.status NOT IN ('done','na'))`
     );
-    binds.push(f.task_pending);
+    binds.push(...taskPendingList);
   }
   if (f.search) {
     // Restore mobile client-search coverage lost when the PMS list moved to
@@ -1880,23 +1888,19 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
             END as my_pending_titles`
       : "";
 
-  // Outstanding-task columns (owner 2026-08-05) — only when that filter is on,
-  // so the Excel export can show WHICH task is open and when it was due. The
-  // title is bound (not interpolated) via the taskPendingBinds pushed below in
-  // the same order the SELECT list is read.
-  const taskPendingCols = f.task_pending
+  // Outstanding-task column (owner 2026-08-05; multi 2026-08-07) — only when
+  // the filter is on. One 'title=status' pair per TICKED task, '|'-joined, so
+  // the export renders a column per ticked task and Excel can be filtered on
+  // each. Titles are BOUND, never interpolated.
+  const taskPendingCols = taskPendingList.length
     ? `,
-            (SELECT tp2.status FROM project_checklist tp2
-              WHERE tp2.project_id = p.id AND tp2.title = ?
-                AND tp2.status NOT IN ('done','na')
-              ORDER BY tp2.id LIMIT 1) as task_pending_status,
-            (SELECT tp3.due_date FROM project_checklist tp3
-              WHERE tp3.project_id = p.id AND tp3.title = ?
-                AND tp3.status NOT IN ('done','na')
-              ORDER BY tp3.id LIMIT 1) as task_pending_due`
+            (SELECT group_concat(tp2.title || '=' || tp2.status, '|')
+               FROM project_checklist tp2
+              WHERE tp2.project_id = p.id
+                AND tp2.title IN (${taskPendingList.map(() => "?").join(",")})) as task_pending_map`
     : "";
   // SELECT-list binds come BEFORE the WHERE binds in prepare() order.
-  const taskPendingBinds = f.task_pending ? [f.task_pending, f.task_pending] : [];
+  const taskPendingBinds = taskPendingList.length ? [...taskPendingList] : [];
 
   const rows = await env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.stage, p.status, p.brand,
