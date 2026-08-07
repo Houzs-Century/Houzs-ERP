@@ -1005,6 +1005,10 @@ POST,/api/supplier-portal/stage,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTE
 GET,/api/survey/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/survey.ts
 POST,/api/survey/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/survey.ts
 POST,/api/sync/amendment-mirror,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,mirrorAuthed,YES,HANDLER_GUARD_REVIEW,backend/src/scm/routes/amendment-mirror.ts
+POST,/api/sync/autocount-so-writeback/ack,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,mirrorAuthed,YES,HANDLER_GUARD_REVIEW,backend/src/scm/routes/autocount-so-writeback.ts
+GET,/api/sync/autocount-so-writeback/enabled,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,mirrorAuthed,NO,INHERITED_ONLY,backend/src/scm/routes/autocount-so-writeback.ts
+PUT,/api/sync/autocount-so-writeback/enabled,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,mirrorAuthed,YES,HANDLER_GUARD_REVIEW,backend/src/scm/routes/autocount-so-writeback.ts
+GET,/api/sync/autocount-so-writeback/pending,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,mirrorAuthed,NO,INHERITED_ONLY,backend/src/scm/routes/autocount-so-writeback.ts
 POST,/api/sync/customer-mirror,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,mirrorAuthed,YES,HANDLER_GUARD_REVIEW,backend/src/scm/routes/customer-mirror.ts
 POST,/api/sync/so-mirror,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,mirrorAuthed,YES,HANDLER_GUARD_REVIEW,backend/src/scm/routes/so-mirror.ts
 POST,/api/sync/staff-mirror,HANDLER_CREDENTIAL_REVIEW,NO_GLOBAL_COMPANY_CONTEXT,,,,mirrorAuthed,YES,HANDLER_GUARD_REVIEW,backend/src/scm/routes/staff-mirror.ts
