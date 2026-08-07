@@ -1,16 +1,24 @@
 // ----------------------------------------------------------------------------
-// FleetDay — Fleet Module A4, the DAY MAP. Pick a date + depot and see every
-// trip that day: each lorry's route drawn on ONE Google map in its own colour
-// (numbered stops 1->2->3, the depot as origin), a side panel of the day's
-// lorries, and a link to the printable driver run-sheet.
+// Last Mile Delivery — stage 4 (EXECUTION) of the delivery pipeline (Planning
+// -> Date -> Time -> Last Mile). Owner spec 2026-08-07/08.
 //
-// A READ / RENDER layer over already-scheduled trips (GET /trips/day) — it does
-// NOT create or reschedule anything. Reuses the geocode/route infra (the backend
-// geocodes cache-first) and the @vis.gl map pattern (FleetDayMap, the multi-route
-// sibling of the Phase-3 ScheduleRouteMap). Scheduling stays on the Trips page.
+// Time-arranged orders flow in automatically: the board rows are simply the SO
+// rows whose live trip sits on the picked date (the server stamps trip_id /
+// trip_no / trip_date on every row; lib/last-mile.ts folds the split — see its
+// header). Same page skeleton as the rest of the family: PageHeader -> split
+// chips (All / Time arranged / Delivered, counts for the day) -> region chips
+// -> the shared DeliveryPlanningBoard. The crew columns (Driver / Lorry inline
+// cells + the bulk bar) write through the ONE existing schedule path, making
+// this the central place to view and manage drivers, lorries and helpers on
+// the day.
+//
+// The A4 day MAP stays as the page's visual: every trip that day, each lorry's
+// route in its own colour, the side panel of lorries + crew, the focused stop
+// list, and the printable driver run-sheet link. The map reads GET /trips/day
+// (READ-only) exactly as before.
 // ----------------------------------------------------------------------------
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MapPin, Printer, Truck, Users } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
@@ -22,6 +30,23 @@ import { useFleetDay, type FleetDayTrip } from '../../vendor/scm/lib/fleet-day-q
 import { assignRouteColors, routeColorFor } from '../../vendor/scm/lib/fleet-colors';
 import { buildMapRoutes, etaLabel, windowLabel, kmLabel } from '../../vendor/scm/lib/fleet-day-model';
 import { FleetDayMap } from '../../vendor/scm/components/FleetDayMap';
+import {
+  useDeliveryPlanning,
+  useScheduleDelivery,
+  type PlanningOrder,
+} from '../../vendor/scm/lib/delivery-planning-queries';
+import {
+  lastMileSideOf,
+  LAST_MILE_SIDE_LABEL,
+  type LastMileSide,
+} from '../../vendor/scm/lib/last-mile';
+import {
+  DeliveryPlanningBoard,
+  regionTabsFrom,
+} from '../../vendor/scm/components/DeliveryPlanningBoard';
+import { arrangementQueueCompare } from '../../vendor/scm/lib/arrangement-sort';
+import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
+import { useLorries } from '../../vendor/scm/lib/lorries-queries';
 
 const MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 
@@ -61,6 +86,35 @@ export function FleetDay() {
   const geocodedStops = trips.reduce((n, t) => n + t.stops.filter((s) => s.geocoded).length, 0);
   const ungeocodedStops = trips.reduce((n, t) => n + t.stops.filter((s) => !s.geocoded).length, 0);
 
+  /* ── The day's board — the shared DeliveryPlanningBoard over the SO rows on
+     a live trip THIS day (server-stamped trip_date; lib/last-mile.ts). state=ALL
+     because a delivered order leaves Pending Schedule but not the day. */
+  const [boardRegion, setBoardRegion] = useState<string>('ALL');
+  const board = useDeliveryPlanning({ region: boardRegion, state: 'ALL' });
+  const boardOrders = useMemo<PlanningOrder[]>(() => board.data?.orders ?? [], [board.data]);
+  const boardRegionTabs = useMemo(() => regionTabsFrom(board.data?.regions), [board.data?.regions]);
+
+  const [side, setSide] = useState<'ALL' | LastMileSide>('ALL');
+  const sideCounts = useMemo(() => {
+    const c: Record<LastMileSide, number> = { TIME_ARRANGED: 0, DELIVERED: 0 };
+    for (const o of boardOrders) {
+      const s = lastMileSideOf(o, date);
+      if (s) c[s] += 1;
+    }
+    return c;
+  }, [boardOrders, date]);
+  const dayRows = useMemo(
+    () => boardOrders.filter((o) => (side === 'ALL' ? lastMileSideOf(o, date) != null : lastMileSideOf(o, date) === side)),
+    [boardOrders, date, side],
+  );
+
+  /* Crew management rides the existing shared write path — the board's inline
+     Driver / Lorry cells and the bulk bar, nothing new. */
+  const sched = useScheduleDelivery();
+  const { data: drivers = [] } = useDrivers();
+  const { data: lorries = [] } = useLorries();
+  const [sel, setSel] = useState<Set<string>>(new Set());
+
   const goPrint = () => {
     const p = new URLSearchParams();
     p.set('date', date);
@@ -74,7 +128,7 @@ export function FleetDay() {
       <PageHeader
         eyebrow="Delivery"
         title="Last Mile Delivery"
-        description="Every trip on one day, each lorry's route on one map. A view over scheduled trips — plan and assign on the Trips page."
+        description="The day's time-arranged orders and their trips — manage crew on the board, watch every lorry's route on one map, and print the driver run-sheet."
         primaryAction={
           <Button variant="secondary" icon={<Printer size={14} />} onClick={goPrint} disabled={trips.length === 0}>
             Print run-sheet
@@ -82,14 +136,15 @@ export function FleetDay() {
         }
       />
 
-      {/* controls: date + depot filter */}
+      {/* controls: date + depot filter (the depot chips scope the MAP fetch;
+          the board carries its own region chips like the rest of the family) */}
       <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface px-4 py-3">
         <label className="flex items-center gap-2 text-[12.5px] text-ink-secondary">
           <span className="font-semibold text-ink">Date</span>
           <input
             type="date"
             value={date}
-            onChange={(e) => setParam('date', e.target.value || null)}
+            onChange={(e) => { setParam('date', e.target.value || null); setSel(new Set()); }}
             className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink"
           />
         </label>
@@ -125,6 +180,63 @@ export function FleetDay() {
         </span>
       </div>
 
+      {/* Split chips — the execution split for the picked day. */}
+      <div className="flex flex-wrap gap-1.5">
+        {(['ALL', 'TIME_ARRANGED', 'DELIVERED'] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => { setSide(s); setSel(new Set()); }}
+            className={cn(
+              'rounded-full border px-3 py-1 text-[12px]',
+              side === s ? 'border-accent bg-accent/10 font-semibold text-accent' : 'border-border text-ink-secondary',
+            )}
+          >
+            {s === 'ALL'
+              ? `All (${sideCounts.TIME_ARRANGED + sideCounts.DELIVERED})`
+              : `${LAST_MILE_SIDE_LABEL[s]} (${sideCounts[s]})`}
+          </button>
+        ))}
+        <span className="ml-2 self-center text-[11.5px] text-ink-muted">
+          Time-arranged orders flow in from Delivery Time Arrangement automatically
+        </span>
+      </div>
+
+      <DeliveryPlanningBoard
+        orders={dayRows}
+        counts={board.data?.counts ?? {}}
+        regionTabs={boardRegionTabs}
+        activeRegion={boardRegion}
+        onRegionChange={setBoardRegion}
+        isLoading={board.isLoading}
+        error={board.error}
+        /* No stateTabs — the page owns one DAY; the split chips above are its rail. */
+        selectedKeys={sel}
+        onToggle={(k) => setSel((p) => {
+          const n = new Set(p);
+          if (n.has(k)) n.delete(k); else n.add(k);
+          return n;
+        })}
+        onToggleAll={(keys, allSel) => setSel((p) => {
+          const n = new Set(p);
+          if (allSel) { for (const k of keys) n.delete(k); }
+          else { for (const k of keys) n.add(k); }
+          return n;
+        })}
+        onClearSelection={() => setSel(new Set())}
+        sched={sched}
+        drivers={drivers}
+        lorries={lorries}
+        storageKey="dg-last-mile"
+        exportName="LastMileDelivery"
+        defaultSort={arrangementQueueCompare}
+        emptyMessage="No time-arranged orders for this day — arrange times in Delivery Time Arrangement."
+        onRowDoubleClick={(o) => { if (o.row_type === 'so') navigate('/scm/sales-orders/' + o.so_doc_no); }}
+        contextMenu={(row) => (row.row_type === 'so'
+          ? [{ label: 'Open Sales Order', onClick: () => navigate('/scm/sales-orders/' + row.so_doc_no) }]
+          : [])}
+      />
+
       {query.isLoading && <p className="p-4 text-[13px] text-ink-muted">Loading the day…</p>}
       {query.error && (
         <p className="rounded-md border border-err/40 bg-err/5 p-4 text-[13px] text-err">
@@ -134,7 +246,7 @@ export function FleetDay() {
 
       {!query.isLoading && !query.error && trips.length === 0 && (
         <p className="rounded-md border border-border bg-surface p-6 text-center text-[13px] text-ink-muted">
-          No trips scheduled for this day. Schedule deliveries onto a lorry-day from the Trips page.
+          No trips scheduled for this day. Arrange times in Delivery Time Arrangement to create them.
         </p>
       )}
 
@@ -270,7 +382,7 @@ export function FleetDay() {
 
       <p className="flex items-center gap-1.5 text-[11px] text-ink-muted">
         <Truck size={12} strokeWidth={1.75} />
-        Read-only day view. Trips are created and assigned on the Trips page; nothing here changes a schedule.
+        The map is a read-only view over scheduled trips. Crew edits on the board above write through the same schedule path as everywhere else.
       </p>
     </div>
   );
