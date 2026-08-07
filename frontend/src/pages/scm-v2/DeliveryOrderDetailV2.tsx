@@ -45,6 +45,7 @@ import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { DataTable, type Column } from "../../components/DataTable";
 import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFamilies";
+import { CommittedBatchCell } from "../../components/DocumentLinesExpansion";
 import {
   DetailGrid,
   DetailMain,
@@ -159,6 +160,11 @@ type DoItem = {
   rack_id?: string | null;
   racks?: string[];
   warehouse_id?: string | null;
+  /* Mig 0230 — the incoming PO batch this line committed to at DO creation
+     (ship-before-arrival). The hard-from-DO anchor (Decision, docs/modules/
+     purchase-order.md 2026-08-06); returned by the detail GET's ITEM columns.
+     Display-only here — rendered as an anchored CommittedBatchCell chip. */
+  committed_po_batch_no?: string | null;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -912,6 +918,14 @@ export function DeliveryOrderDetailV2() {
                 <span className="truncate text-ink-secondary">
                   {secondary}
                 </span>
+              </div>
+            )}
+            {/* Committed batch (mig 0230) — the hard-from-DO anchor. Renders
+                ONLY when the line stored a commitment at DO creation; most
+                lines never commit, so absence renders nothing (no dash). */}
+            {l.committed_po_batch_no && (
+              <div className="mt-1">
+                <CommittedBatchCell poNo={l.committed_po_batch_no} />
               </div>
             )}
           </div>

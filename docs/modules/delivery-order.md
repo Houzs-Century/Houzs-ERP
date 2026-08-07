@@ -306,6 +306,14 @@ STORED value (source 2 of 3) at every later seam — resync delta, restamp, reco
 — so a PO cancelled or added after the ship can never move the bucket an OUT was
 already stamped with.
 
+The DO detail SURFACES the stored anchor (2026-08-07): the detail GET's ITEM
+columns already return `committed_po_batch_no`, and both surfaces render it per
+line as an anchored solid "Committed PO" chip — desktop
+`DeliveryOrderDetailV2.tsx` Item cell (`CommittedBatchCell`,
+`components/DocumentLinesExpansion.tsx`), mobile `MobileModuleDetail.tsx` line
+rows (`CommittedBatchRowMobile`, `mobile/source-chips.tsx`) — display-only,
+rendered only when present (absent lines show nothing, no dash).
+
 **A sofa SET binds ONE purchase order.** Owner, 2026-07-31: *"同一张 batch no 就
 是 PO"* — one PO IS one batch number. The old gate (`allHavePo`) only asked
 whether every module had *a* PO and never whether they were the SAME one, so a

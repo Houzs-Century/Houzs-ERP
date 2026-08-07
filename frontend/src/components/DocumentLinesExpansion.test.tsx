@@ -13,6 +13,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   AssignedSoCell,
+  CommittedBatchCell,
   DeliveredCell,
   DocumentLinesExpansion,
   sourcePoTitle,
@@ -285,5 +286,40 @@ describe("Accessory lines collapse their per-order list", () => {
     render(<DocumentLinesExpansion isLoading={false} showAssignment lines={[acc()]} />);
     expect(screen.getByText(/8 orders/)).toBeTruthy();
     expect(screen.queryByText("2990-SO-2606-020")).toBeNull();
+  });
+});
+
+describe("Committed batch — the hard-from-DO anchor (mig 0230, Decision 2026-08-06)", () => {
+  // The DO detail surfaces `delivery_order_items.committed_po_batch_no`: which
+  // incoming PO batch a ship-before-arrival line committed to at DO creation.
+  // ANCHORED identity — solid chip, never dashed, no "~" — because it is a
+  // stored fact, not a floating MRP allocation.
+
+  it("renders the anchored solid chip with the hard-from-DO tooltip when present", () => {
+    const { container } = render(<CommittedBatchCell poNo="2990-PO-2607-014" />);
+    const chip = screen.getByText("2990-PO-2607-014") as HTMLElement;
+    expect(chip).toBeTruthy();
+    // Anchored tone: solid border + surface fill + accent ink — and NOT the
+    // floating dashed treatment.
+    expect(chip.className).toContain("bg-surface-2");
+    expect(chip.className).toContain("text-accent-ink");
+    expect(chip.className).not.toContain("border-dashed");
+    expect(container.textContent).not.toContain("~");
+    // Tooltip states the anchor: committed at DO creation — hard from DO.
+    expect(chip.title).toMatch(/committed/i);
+    expect(chip.title).toMatch(/when the Delivery Order was created/i);
+    expect(chip.title).toMatch(/hard from DO/);
+    // The batch number renders VERBATIM (company-prefix namespacing rule).
+    expect(chip.textContent).toBe("2990-PO-2607-014");
+    // The cell labels itself so a bare PO chip cannot be misread as Source PO.
+    expect(screen.getByText(/Committed PO/i)).toBeTruthy();
+  });
+
+  it("renders NOTHING when the line never committed (no dash clutter)", () => {
+    const empty = render(<CommittedBatchCell poNo={null} />);
+    expect(empty.container.firstChild).toBeNull();
+    cleanup();
+    const absent = render(<CommittedBatchCell />);
+    expect(absent.container.firstChild).toBeNull();
   });
 });
