@@ -314,6 +314,38 @@
 }
 .groupChipRemove:hover { color: var(--c-festive-b, #B8331F); }
 
+/* ── Active-filter chips row (owner 2026-08-07: stacked filters must read).
+   One chip per active column filter — column label, value summary, per-chip
+   clear — plus a Clear all. Renders ONLY while ≥1 filter is active, so a grid
+   with no filters is untouched. Reuses .groupChip / .groupChipRemove for the
+   chip body so the two chip rows read as one family. */
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px var(--space-3);
+  background: rgba(230, 129, 0, 0.05);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  color: var(--fg-muted);
+  min-height: 26px;
+}
+.filterChipCol { color: var(--fg-muted); font-weight: 600; }
+.filterChipVal { color: var(--c-ink); }
+.filterBarClear {
+  background: transparent;
+  border: 0;
+  color: #16695f;
+  font-size: var(--fs-11);
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0 2px;
+}
+.filterBarClear:hover { color: var(--c-ink); }
+
 /* ── Table ───────────────────────────────────────────────────────── */
 /* Issue #2 fix (so-list-pixel-perfect-houzs) — force the horizontal
    scrollbar to be always visible (overflow-x: scroll vs auto) and make
