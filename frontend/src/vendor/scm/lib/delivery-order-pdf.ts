@@ -28,7 +28,12 @@ import {
   safeName,
   type PdfAction,
 } from './pdf-common';
-import { getBrandingLogoCache, type BrandingLogo } from '../../../lib/branding';
+import {
+  getBrandingCompanyCode,
+  getBrandingLogoCache,
+  HOUZS_COMPANY_CODE,
+  type BrandingLogo,
+} from '../../../lib/branding';
 import { DO_THEME as T, MONO, SANS, charSpace, monoFor, pt, type Rgb } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 
@@ -53,6 +58,13 @@ type DoHeader = {
   phone: string | null;
   notes: string | null;
   m3_total_milli: number | null;
+  /* The customer's OWN reference for this order. Houzs prints it beside our SO
+     number; 2990 does not (owner 2026-08-07). Resolution mirrors the DO detail
+     page's refOf() so the document and the screen never disagree. All optional:
+     the Consignment Note reuse passes a header without them. */
+  po_doc_no?: string | null;
+  customer_so_no?: string | null;
+  ref?: string | null;
 };
 
 type DoItem = {
@@ -335,6 +347,19 @@ function drawInfoPanel(
       y += pt(12) * 1.2;
       if (draw) { setInk(doc, T.ink); doc.text(line, leftX, y); }
     }
+    // The debtor code rides on the name's last line — it is how the warehouse
+    // and the customer's own AP team match the account, and it costs no height
+    // there. Omitted rather than dashed when a record has none.
+    if (draw && header.debtor_code) {
+      const lastLine = nameLines[nameLines.length - 1] ?? '';
+      doc.setFont(SANS, 'bold');
+      doc.setFontSize(12);
+      const nameW = doc.getTextWidth(lastLine);
+      doc.setFont(monoFor(header.debtor_code), 'normal');
+      doc.setFontSize(9);
+      setInk(doc, T.inkMuted);
+      doc.text(header.debtor_code, leftX + nameW + 3, y);
+    }
 
     doc.setFont(SANS, 'normal');
     doc.setFontSize(9);
@@ -360,19 +385,53 @@ function drawInfoPanel(
       setInk(doc, T.ink);
       doc.text(tel, leftX + labelW, y);
     }
+
+    // Delivery note from the order — the "ring the bell twice", "leave with the
+    // guardhouse" line. Whatever it says, the driver is the one who needs it,
+    // so it prints on the driver's sheet. Absent when blank.
+    const note = (header.notes || '').trim();
+    if (note) {
+      doc.setFont(SANS, 'normal');
+      doc.setFontSize(9);
+      const noteLines = doc.splitTextToSize(note, Math.min(72, colW)) as string[];
+      y += 2.5 + pt(9);
+      if (draw) { setInk(doc, T.inkSecondary); doc.text('Note:', leftX, y); }
+      for (const line of noteLines) {
+        y += pt(9 * 1.5);
+        if (draw) doc.text(line, leftX, y);
+      }
+    }
     return y;
   };
 
   // ── Right column: label gutter + value ───────────────────────────────────
   const LABEL_W = 26;
   const ROW_GAP = 2;
+  /* Houzs prints OUR number and the CUSTOMER'S own reference on separate lines;
+     2990 prints the single "SO Ref" (owner 2026-08-07). The customer reference
+     resolves exactly as the DO detail page's refOf() does — po_doc_no, then
+     customer_so_no, then ref — so the document and the screen can never
+     disagree about which of the three a given record actually carries. */
+  const isHouzs = getBrandingCompanyCode() === HOUZS_COMPANY_CODE;
+  const customerRef = header.po_doc_no || header.customer_so_no || header.ref || null;
+  const soRows = isHouzs
+    ? [
+        { label: 'SO No', value: header.so_doc_no, bold: true },
+        { label: 'Ref No.', value: customerRef },
+      ]
+    : [{ label: 'SO Ref', value: header.so_doc_no, bold: true }];
+
   const rows: Array<{ label: string; value: string | null; bold?: boolean; chip?: boolean }> = [
-    { label: 'SO Ref', value: header.so_doc_no, bold: true },
+    ...soRows,
     { label: 'Issued Date', value: fmtDocDate(header.do_date) },
     {
       label: 'Delivery Date',
       value: header.expected_delivery_at ? fmtDocDate(header.expected_delivery_at) : null,
     },
+    // Who is bringing it, and in what. Printed only once the run is assigned —
+    // a dashed "Driver —" on an unassigned DO is noise on the driver's sheet.
+    ...(header.driver_name ? [{ label: 'Driver', value: header.driver_name }] : []),
+    ...(header.vehicle ? [{ label: 'Vehicle', value: header.vehicle }] : []),
     {
       label: 'Status',
       value: header.status
