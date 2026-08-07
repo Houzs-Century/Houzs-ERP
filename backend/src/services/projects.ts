@@ -1284,6 +1284,14 @@ export interface ListProjectsFilters {
    *  matches. Special values: "__done" = all sections complete; "__none"
    *  = project has no sections defined. */
   section?: string;
+  /** Checklist TASK title that must still be OUTSTANDING (owner 2026-08-05:
+   *  "i can filter which task is not complete yet appear once i extract in
+   *  excel"). Returns projects that HAVE this task with status not in
+   *  (done, na) — i.e. pending or blocked. When set, the row also carries
+   *  task_pending_status / task_pending_due so the Excel export can show what
+   *  is outstanding per event. Exact title match (the picker feeds canonical
+   *  template titles). */
+  task_pending?: string;
   /** Project status filter (mig 088 palette): "confirmed" | "pending" |
    *  "cancelled". Pushed server-side so the list stays paginated even while
    *  a status pill is active (was previously filtered client-side over a
@@ -1709,6 +1717,18 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
       binds.push(f.section);
     }
   }
+  // Outstanding-task filter (owner 2026-08-05): keep only events where THIS
+  // task is still open. Deliberately not `NOT EXISTS(... done ...)` — an event
+  // that never had the task at all is not "incomplete", it is out of scope.
+  if (f.task_pending) {
+    where.push(
+      `EXISTS (SELECT 1 FROM project_checklist tp
+                WHERE tp.project_id = p.id
+                  AND tp.title = ?
+                  AND tp.status NOT IN ('done','na'))`
+    );
+    binds.push(f.task_pending);
+  }
   if (f.search) {
     // Restore mobile client-search coverage lost when the PMS list moved to
     // server pagination: brand + PIC name were previously searchable
@@ -1860,6 +1880,24 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
             END as my_pending_titles`
       : "";
 
+  // Outstanding-task columns (owner 2026-08-05) — only when that filter is on,
+  // so the Excel export can show WHICH task is open and when it was due. The
+  // title is bound (not interpolated) via the taskPendingBinds pushed below in
+  // the same order the SELECT list is read.
+  const taskPendingCols = f.task_pending
+    ? `,
+            (SELECT tp2.status FROM project_checklist tp2
+              WHERE tp2.project_id = p.id AND tp2.title = ?
+                AND tp2.status NOT IN ('done','na')
+              ORDER BY tp2.id LIMIT 1) as task_pending_status,
+            (SELECT tp3.due_date FROM project_checklist tp3
+              WHERE tp3.project_id = p.id AND tp3.title = ?
+                AND tp3.status NOT IN ('done','na')
+              ORDER BY tp3.id LIMIT 1) as task_pending_due`
+    : "";
+  // SELECT-list binds come BEFORE the WHERE binds in prepare() order.
+  const taskPendingBinds = f.task_pending ? [f.task_pending, f.task_pending] : [];
+
   const rows = await env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.stage, p.status, p.brand,
             p.start_date, p.end_date,
@@ -1928,7 +1966,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                 AND (c.status IN ('done', 'na')
                      OR EXISTS (SELECT 1 FROM project_checklist_attachments a
                                  WHERE a.item_id = c.id
-                                   AND a.archived_at IS NULL))) as sales_tasks_done${pendingTitlesCol}
+                                   AND a.archived_at IS NULL))) as sales_tasks_done${pendingTitlesCol}${taskPendingCols}
        FROM projects p
        LEFT JOIN project_event_types et ON et.id = p.event_type_id
        LEFT JOIN project_finance pf ON pf.project_id = p.id
@@ -1951,7 +1989,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
      ${orderBy}
      LIMIT ? OFFSET ?`
   )
-    .bind(...binds, perPage, offset)
+    .bind(...taskPendingBinds, ...binds, perPage, offset)
     .all();
 
   return {
