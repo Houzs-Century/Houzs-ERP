@@ -216,3 +216,57 @@ maintenance; UserDefinedList maintenance for UDF options.
 **Still owed before go-live (ERP side, not middleware):** re-verify the ERP-code →
 AutoCount-ItemCode map against LIVE (a prior census used a stale local copy). Field
 templates and master alignment in this doc are already LIVE-verified.
+
+---
+
+## 9. ACTUAL implementation: the iNiState `syncSalesOrder` Logic job
+
+Discovered 2026-08-07 on the integration server (DESKTOP-TDH50IT): the AutoCount
+integration is **iNiState** (`api.inistate.com`) driving jobs, NOT a bespoke .NET
+middleware. AutoCount↔ERP syncs are iNiState jobs. Two kinds:
+- **SQL/hook jobs** — run a `SELECT` on the AutoCount DB, POST rows to an ERP hook.
+  READ-only (AutoCount → ERP). Cannot create documents.
+- **"Logic" jobs** — carry an AutoCount **user login**, i.e. they log into AutoCount and
+  act **through the SDK** → they CAN create documents safely (business logic, not raw SQL).
+
+**A `syncSalesOrder` Logic job already exists but is `enabled:false`** (hook
+`28186-SyncSalesOrder`). So the write-back path is already chosen and half-built — finish
+its Logic and enable it. Reuse this; no bespoke SDK project. Test book `AED_TESTING` exists.
+
+### 9a. The two owner requirements (2026-08-07)
+
+**(1) It must do EVERYTHING — every order writes, and any missing master is auto-created.**
+The Logic job runs the pre-flight (§5) on every SO: for each ItemCode / SalesAgent it
+creates the master via SDK if absent (§4 defaults); adds BRANDING/VENUE UDF options if
+absent. So a brand-new SKU or agent never blocks a write — the job provisions it first,
+then creates the SO. No manual AutoCount setup, ever.
+
+**(2) The ON/OFF switch lives on the ERP side — no server/UltraViewer access to toggle.**
+Control belongs to the ERP, not to enabling/disabling the job on the box. Design:
+- The ERP is the **initiator + gatekeeper**. Add a runtime, admin-flippable toggle in the
+  ERP (a `scm.sync_config` row / settings flag surfaced in the ERP admin UI — NOT the
+  compile-time `AUTOCOUNT_WRITES_DISABLED` constant, which needs a deploy).
+- When ON: on SO save (or via a queue), the ERP exposes the SO as "pending writeback".
+- The iNiState `syncSalesOrder` job stays **always enabled** and polls the ERP's
+  pending-writeback endpoint (mirroring how the other jobs poll on a 5s interval); when
+  the ERP toggle is OFF, that endpoint returns nothing, so nothing is written.
+- Net: staff flip writeback on/off from the ERP admin screen anytime; the server is never
+  touched again.
+
+### 9b. Logic (AutoCount SDK), per pending ERP SO
+1. Pre-flight masters (§5) — create item/agent, add UDF options as needed.
+2. Create SO via `SalesOrderCommand`, all fields per §2 (DocNo = our number; DebtorCode =
+   300-C002 + name; SalesAgent; SalesLocation; InvAddr1-4; Phone1; Ref; Remark2;
+   SOUDF_ToPONo/PDate/BALANCE; SOUDF_BRANDING/VENUE; lines: ItemCode + Qty + UnitPrice +
+   UOM + ItemDescription(Desc2); sofa → parent code + compartment in Desc2).
+3. Idempotent — skip if our DocNo already exists in AutoCount.
+4. Report the AutoCount DocNo back so the ERP marks the SO synced (and won't resend).
+
+Point `database` at **AED_TESTING** first; switch to **AED_HOUZS** only after it passes.
+
+**Pre-req (do first):** the server `jobs` config holds **plaintext, weak credentials**
+(AutoCount DB login + AutoCount user login). **Rotate both** before go-live.
+
+**Roles:** owner → log into iNiState (the account already owns jobs 28183/28186/31126),
+open job 28186, follow 9a/9b; Claude → ERP-side toggle + pending-writeback endpoint +
+payload composer (`autocount-so-writeback.ts`, already built) + this spec. No third-party.
