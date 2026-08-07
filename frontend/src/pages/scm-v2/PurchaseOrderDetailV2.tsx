@@ -778,11 +778,12 @@ function PurchaseOrderDetailV2ReadOnly() {
     },
     {
       /* mig 0235 — the consolidated-PO split: which customer (or STOCK) each
-         slice of this line serves, as sub-numbered chips. The Split button
-         opens the editor; it stays available on RECEIVED POs on purpose (the
-         backend refuses only CANCELLED) — attributing historical consolidated
-         buys by hand is what the editor exists for. When allocations exist
-         they are the authoritative Assigned-SO answer for this line. */
+         slice of this line was BOUGHT for, as sub-numbered chips. The Split
+         button opens the editor; it stays available on RECEIVED POs on purpose
+         (the backend refuses only CANCELLED) — attributing historical
+         consolidated buys by hand is what the editor exists for. Slices are
+         procurement provenance (Decision, purchase-order.md 2026-08-06: soft
+         until DO) — muted tone, "bought for" wording, never "assigned". */
       key: "allocations",
       label: "Allocations",
       width: "230px",
@@ -801,13 +802,13 @@ function PurchaseOrderDetailV2ReadOnly() {
                 key={a.id}
                 title={
                   a.so_doc_no
-                    ? `${sub(a.seq)} — ${a.qty} of this line for ${a.so_doc_no}`
-                    : `${sub(a.seq)} — ${a.qty} of this line for stock (no customer)`
+                    ? `${sub(a.seq)} — ${a.qty} of this line bought for ${a.so_doc_no}. Procurement provenance, not the live assignment.`
+                    : `${sub(a.seq)} — ${a.qty} of this line bought for stock (no customer)`
                 }
                 className={cn(
                   "rounded border px-1.5 py-0.5 font-mono text-[10.5px] font-semibold",
                   a.so_doc_no
-                    ? "border-border-subtle bg-surface-2 text-accent-ink"
+                    ? "border-border-subtle bg-surface-dim text-ink-secondary"
                     : "border-dashed border-border text-ink-secondary"
                 )}
               >
@@ -827,8 +828,8 @@ function PurchaseOrderDetailV2ReadOnly() {
               <span
                 title={
                   l.so_doc_no
-                    ? `Whole line (qty ${l.qty}) follows its Source SO link ${l.so_doc_no} — implicit; add a slice to override.`
-                    : `Whole line (qty ${l.qty}) is for stock — no Source SO link; add a slice to assign.`
+                    ? `Whole line (qty ${l.qty}) bought for ${l.so_doc_no} — procurement provenance, not the live assignment; add a slice to split it.`
+                    : `Whole line (qty ${l.qty}) bought for stock — no Source SO link; add a slice to attribute it.`
                 }
                 className="rounded border border-dashed border-border px-1.5 py-0.5 font-mono text-[10.5px] text-ink-secondary"
               >

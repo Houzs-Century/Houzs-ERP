@@ -238,13 +238,17 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
           {allocations!.map((a) => {
             const subNo = `${poNumber ?? ""}-${String(a.seq).padStart(2, "0")}`;
             const stock = !a.so_doc_no;
+            /* Slices are procurement provenance (soft-until-DO Decision,
+               docs/modules/purchase-order.md 2026-08-06) — muted like the
+               desktop PurchaseOrderDetailV2 twin, "bought for", never
+               "assigned". Stock slices keep the dashed look. */
             return (
               <span
                 key={a.seq}
                 title={stock
-                  ? `${subNo} — ${a.qty} of this line for stock (no customer)`
-                  : `${subNo} — ${a.qty} of this line for ${a.so_doc_no}`}
-                style={{ fontFamily: "monospace", fontSize: 10.5, fontWeight: 700, color: stock ? "#5c6357" : "#0c3f39", background: stock ? "transparent" : "#eef3f1", border: stock ? "1px dashed #b6c6c0" : "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px" }}
+                  ? `${subNo} — ${a.qty} of this line bought for stock (no customer)`
+                  : `${subNo} — ${a.qty} of this line bought for ${a.so_doc_no}. Procurement provenance, not the live assignment.`}
+                style={{ fontFamily: "monospace", fontSize: 10.5, fontWeight: 700, color: "#5c6357", background: stock ? "transparent" : "#f4f6f3", border: stock ? "1px dashed #b6c6c0" : "1px solid #d9ded4", borderRadius: 5, padding: "1px 6px" }}
               >
                 {subNo}{" -> "}{a.so_doc_no ?? "STOCK"} (qty {a.qty})
               </span>
