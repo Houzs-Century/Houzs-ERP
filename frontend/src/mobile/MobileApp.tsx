@@ -26,6 +26,7 @@ import { AndroidInstallGuide } from "../components/AndroidInstallGuide";
 import { MobileModuleList, MODULE_CONFIGS, FORM_MEMBERS_EDIT } from "./MobileModuleList";
 import { MobileInvitations } from "./MobileInvitations";
 import { mobileDestinationMatches, resolveMobileRoute, type MobileRoute } from "./mobileRoute";
+import type { FlowDocNav, FlowNav } from "./relationship-map-model";
 import type { SearchNav } from "./MobileSearch";
 import type { MobileScanPrefill } from "./MobileScan";
 import type { ConvertTarget } from "./MobileConvertWizard";
@@ -203,6 +204,12 @@ const ROUTE_TO_CONFIG: Record<string, string> = {
   "/scm/purchase-consignment-returns": "purchase-consignment-returns",
   "/scm/accounting": "accounting",
 };
+
+/* moduleKey → its menu path, for gating Relationship-Map node taps with the
+ *  SAME `allowed()` the menu rows use. Derived, so it cannot drift. */
+const CONFIG_TO_ROUTE: Record<string, string> = Object.fromEntries(
+  Object.entries(ROUTE_TO_CONFIG).map(([path, key]) => [key, path]),
+);
 
 /** The mobile Menu mirrors the owner's design prototype `var MENU`
  *  (Houzs Mobile.html) — same groups, order, and labels, EXCEPT the
@@ -556,6 +563,27 @@ function MobileAppInner() {
     setScreen({ t: "tab" });
   };
 
+  /* Relationship-Map node navigation (MobileRelationshipMap, opened from the
+     SO / module detail screens). `can` runs the SAME fail-closed `allowed()`
+     gate the menu rows use, so a map node whose destination this position may
+     not open renders INERT (off, not hide) instead of mounting a screen whose
+     queries would 403. */
+  const flowNav: FlowNav = {
+    can: (nav: FlowDocNav) => {
+      if (nav.kind === "so") return canOrders;
+      const path = CONFIG_TO_ROUTE[nav.moduleKey];
+      return !!path && !!MODULE_CONFIGS[nav.moduleKey] && allowed(path);
+    },
+    open: (nav: FlowDocNav) => {
+      if (nav.kind === "so") { setScreen({ t: "so-detail", docNo: nav.docNo }); return; }
+      const cfg = MODULE_CONFIGS[nav.moduleKey];
+      if (!cfg) return;
+      // A synthetic { id } row is enough: DocumentDetail fetches the full
+      // header + items by id and falls back to the row only while loading.
+      setScreen({ t: "module-detail", key: nav.moduleKey, row: { id: nav.id }, title: cfg.title ?? nav.moduleKey });
+    },
+  };
+
   // Search → calendar jump target. When a project search hit is tapped we route
   // to the Calendar tab and snap it to the project's start-date month, with the
   // project's bar highlighted (see MobileCalendar focusProjectId). A monotonic
@@ -647,7 +675,7 @@ function MobileAppInner() {
   // boundary (full-screen fallback — an overlay owns the whole viewport anyway).
   let overlay: ReactNode = null;
   if (screen.t === "search") overlay = <MobileSearch onBack={back} onNavigate={onSearchNavigate} />;
-  else if (screen.t === "so-detail") overlay = <MobileSODetail docNo={screen.docNo} onBack={back} onEdit={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d })} />;
+  else if (screen.t === "so-detail") overlay = <MobileSODetail docNo={screen.docNo} onBack={back} onEdit={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d })} flowNav={flowNav} />;
   else if (screen.t === "amendments") overlay = <MobileAmendments onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} />;
   else if (screen.t === "po-amendments") overlay = <MobilePoAmendments onBack={back} onOpen={(id) => setScreen({ t: "po-amendment-detail", id })} />;
   else if (screen.t === "po-amendment-detail") overlay = <MobilePoAmendmentDetail amendmentId={screen.id} onBack={() => setScreen({ t: "po-amendments" })} />;
@@ -743,7 +771,8 @@ function MobileAppInner() {
     overlay = <MobileModuleDetail moduleKey={screen.key} row={screen.row} title={screen.title}
       onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })}
       onEdit={() => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: screen.row })}
-      onPOD={canPod ? () => setScreen({ t: "pod", docNo: String(doNo) }) : undefined} />;
+      onPOD={canPod ? () => setScreen({ t: "pod", docNo: String(doNo) }) : undefined}
+      flowNav={flowNav} />;
   }
   else if (screen.t === "module-form") {
     const cfg = MODULE_CONFIGS[screen.key];

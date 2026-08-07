@@ -7,6 +7,8 @@ import { formatPhone } from "@2990s/shared/phone";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { usePoSoCoverage, originsByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
+import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -261,8 +263,10 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
 }
 
 // ── Header card (shared by every module) ────────────────────────────────────
-function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf }: {
+function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf, onMap }: {
   eyebrow: string; title: string; subtitle?: string; status?: unknown; onBack: () => void; onEdit?: () => void; onPdf?: () => void;
+  /** Opens the mobile Relationship Map (document modules with a flow anchor). */
+  onMap?: () => void;
 }) {
   return (
     <header className="hdr">
@@ -272,6 +276,11 @@ function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf 
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <StatusPill status={status} />
+          {onMap && (
+            <button className="tinybtn" onClick={onMap} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>
+              Map
+            </button>
+          )}
           {onPdf && (
             <button className="tinybtn" onClick={onPdf} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>
               PDF
@@ -1337,10 +1346,17 @@ const COVERAGE_TYPE: Record<string, "po" | "grn" | "pi"> = {
   "purchase-invoices": "pi",
 };
 
-function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: DocMap; row: any; moduleKey: string; onBack: () => void; onEdit?: () => void; onPOD?: () => void }) {
+function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }: { map: DocMap; row: any; moduleKey: string; onBack: () => void; onEdit?: () => void; onPOD?: () => void; flowNav?: FlowNav }) {
   const id = docId(row);
   const qc = useQueryClient();
   const detailNotify = useNotify();
+  /* Relationship Map — the mobile twin of the desktop DocumentFlowModal /
+     DocumentRelationshipMapModal (PO / GRN / PI / DO anchors here; the SO
+     anchor lives on MobileSODetail). Zero added backend load: the map reads
+     the same useDocumentFlow query the desktop modal reads and, for purchase
+     docs, the SAME usePoSoCoverage key covQ below already fetched. */
+  const [mapOpen, setMapOpen] = useState(false);
+  const mapAnchor = flowAnchorForModule(moduleKey);
   // Purchase docs only: the real per-SKU origin SO(s) for each line.
   const coverageType = COVERAGE_TYPE[moduleKey] ?? null;
   const covQ = usePoSoCoverage(coverageType, coverageType && id ? id : null);
@@ -1419,6 +1435,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
         onBack={onBack}
         onEdit={onEdit}
         onPdf={onPdf}
+        onMap={mapAnchor && id ? () => setMapOpen(true) : undefined}
       />
       <div className="scroll hz-scroll" style={hasFooter ? { ...scrollStyle, paddingBottom: podEnabled && hasStatusActions ? 150 : 96 } : scrollStyle}>
         {!id && <div style={{ textAlign: "center", color: "#b23a3a", fontSize: 12, padding: "26px 0" }}>Couldn't identify this record.</div>}
@@ -1495,6 +1512,15 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
           actions (Reopen / Delete, the sole actions statusActionsFor returns for
           a cancelled doc) survive so a mis-cancel is still recoverable. */}
       {hasFooter && <DocActionFooter moduleKey={moduleKey} id={id} header={header} invalidate={invalidate} onPOD={onPOD} onDeleted={onBack} />}
+      {mapOpen && mapAnchor && !!id && (
+        <MobileRelationshipMap
+          type={mapAnchor}
+          id={id}
+          label={map.eyebrow(header) || map.title(header)}
+          onClose={() => setMapOpen(false)}
+          nav={flowNav}
+        />
+      )}
     </div>
   );
 }
@@ -1816,12 +1842,14 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
 // Public entry — routes by moduleKey to the document or the simple detail.
 // ---------------------------------------------------------------------------
 
-export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdit }: {
+export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdit, flowNav }: {
   moduleKey: string; row: any; title: string; onBack: () => void; onPOD?: () => void;
   /** Wired by the parent when the module's form supports edit (updatePath).
    *  The header "Edit" button calls this. MobileApp passes the current row's
    *  id + the module's FormSchema through to MobileModuleForm. */
   onEdit?: () => void;
+  /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
+  flowNav?: FlowNav;
 }) {
   // Only offer Edit for modules whose form declares an updatePath (create-only
   // modules like Warehouse show no Edit button even when onEdit is passed).
@@ -1833,7 +1861,7 @@ export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdi
   // modules (Sales/Purchase Returns, Purchase Invoices) get a status action bar
   // driven off the list row's id + status.
   if (doc) {
-    return <DocumentDetail map={doc} row={row} moduleKey={moduleKey} onBack={onBack} onEdit={editHandler} onPOD={onPOD} />;
+    return <DocumentDetail map={doc} row={row} moduleKey={moduleKey} onBack={onBack} onEdit={editHandler} onPOD={onPOD} flowNav={flowNav} />;
   }
   return <SimpleDetail moduleKey={moduleKey} row={row} title={title} onBack={onBack} onEdit={editHandler} />;
 }

@@ -1,6 +1,8 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
 import { SourcePosRowMobile, soStockPillMobile } from "./source-chips";
+import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
@@ -243,13 +245,22 @@ const total = (h: SoHeader) => h.local_total_centi ?? h.total_revenue_centi ?? 0
  *  (`#so-detail` + `renderSoDetail`/`openSO`), wired to the real
  *  /mfg-sales-orders/:docNo (header + line items) and /:docNo/payments.
  *  Draft/Submitted actions PATCH /:docNo/status. Design classes only. */
-export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void }) {
+export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void;
+  /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
+  flowNav?: FlowNav;
+}) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const notifyTop = useNotify();
   const askPrompt = usePrompt();
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  /* Relationship Map — the mobile twin of the desktop SO map
+     (so-relationship-map.ts → DocumentRelationshipMapModal). The SO anchor
+     reads /document-flow/so/:docNo ONLY — no coverage fetch, matching the
+     desktop SO map's deliberate no-floating-hop rule (coverage is
+     purchase-doc-keyed; an SO-keyed read would be new backend load). */
+  const [mapOpen, setMapOpen] = useState(false);
   /* SO-amendment (Phase 1-C) — the pending-amendment banner's actions. The
      diff sheet opens with the amendment id; the supplier-confirm sheet toggles
      inline. approve-SO / reject / withdraw are direct mutations gated by
@@ -713,6 +724,7 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
         <div className="hdr-row">
           <button className="back" onClick={onBack}><span className="chev">{"‹"}</span> Sales Orders</button>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {h && <button className="tinybtn" onClick={() => setMapOpen(true)} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>Map</button>}
             {h && <button className="tinybtn" onClick={onPdf} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>PDF</button>}
             {h && <StatusPill status={h.status} />}
           </div>
@@ -1248,6 +1260,19 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
             <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--mut2)", padding: 4 }}>This order was cancelled.</div>
           )}
         </footer>
+      )}
+
+      {/* Relationship Map (mobile) — the SO anchor's stacked twin of the
+          desktop SO map. See the mapOpen comment at the top of the component
+          for the deliberate no-coverage-fetch rule. */}
+      {mapOpen && (
+        <MobileRelationshipMap
+          type="so"
+          id={docNo}
+          label={h?.doc_no ?? docNo}
+          onClose={() => setMapOpen(false)}
+          nav={flowNav}
+        />
       )}
 
     </div>
