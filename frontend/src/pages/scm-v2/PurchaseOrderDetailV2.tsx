@@ -437,6 +437,7 @@ function PurchaseOrderDetailV2ReadOnly() {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    pairing: chainPairing,
     choice: chainChoice,
     closeChoice: closeChainChoice,
     pickChoice: pickChainChoice,
@@ -1376,6 +1377,7 @@ function PurchaseOrderDetailV2ReadOnly() {
         }}
         rowLabels={{ primary: "Purchase chain", secondary: "After goods receipt" }}
         amendmentsLabel="Related amendments (Sales Order & this PO)"
+        pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
           of a notice that only named them. Picking a row navigates, so the map

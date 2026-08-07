@@ -17,6 +17,11 @@ export type FlowNodeType =
   | 'so' | 'do' | 'si' | 'payment' | 'po' | 'grn' | 'pi' | 'dr' | 'pr'
   | 'cso' | 'cdo' | 'cdr' | 'pco' | 'pcr' | 'pcrn';
 export type FlowEdgeKind = 'full' | 'partial' | 'value' | 'payment';
+/* "Soft until DO, hard from DO" (owner 2026-08-06): every stored edge is either
+   a vertical execution FK ('chain' — anchored history, solid) or the SO ▶ PO
+   raise-link ('provenance' — why we bought, binds no execution; muted).
+   Optional so a response from an older backend degrades to the kind colours. */
+export type FlowEdgeLinkage = 'chain' | 'provenance';
 export type FlowNode = {
   key: string;
   type: FlowNodeType;
@@ -25,7 +30,7 @@ export type FlowNode = {
   status: string | null;
   isAnchor: boolean;
 };
-export type FlowEdge = { from: string; to: string; kind: FlowEdgeKind };
+export type FlowEdge = { from: string; to: string; kind: FlowEdgeKind; linkage?: FlowEdgeLinkage };
 // SO amendments (revision requests) hang off the Sales Order. The backend
 // returns them as a read-only side list, not graph nodes, so the relationship
 // map can branch them off the SO — each clickable to /scm/amendments/:id.
@@ -138,6 +143,59 @@ export const storedLinkSkus = (resp: PoSoCoverageResp | undefined): Set<string> 
     if (o.itemCode && o.storedLink) s.add(o.itemCode);
   }
   return s;
+};
+
+/* ── Floating PO↔SO pairing overlay ("soft until DO, hard from DO") ────────
+   The pre-DO pairing between a purchase doc and the Sales Orders MRP currently
+   assigns it to is FLOATING — recomputed on every view, may change ("会跳动").
+   It is deliberately NOT part of the stored /document-flow graph: the overlay
+   is assembled CLIENT-SIDE from the po-so-coverage response the opening page
+   already fetched (react-query cache + the backend path-cache dedupe it), so
+   rendering it adds ZERO backend load (owner constraint — never add a
+   computeMrp call to document-flow, never poll).
+
+   One-engine symmetry: the floating edge set equals EXACTLY the coverage
+   assignments whose `source` is 'mrp' — the same single computeMrp allocation
+   the SO detail reads (mrpLineCoverage / mrpReverseCoverage are two directions
+   of one map). A 'delivered' or 'linked' assignment is never floating; an
+   assignment without `source` (older backend) is not guessed at. */
+export const floatingSoDocNos = (resp: PoSoCoverageResp | undefined): string[] => {
+  const docs = new Set<string>();
+  for (const o of resp?.origins ?? []) {
+    for (const a of o.assignments ?? []) {
+      if (a.source === 'mrp' && a.soDocNo) docs.add(a.soDocNo);
+    }
+  }
+  return [...docs];
+};
+
+/* What the canvas merges over the stored graph: the floating SO ▶ PO edges,
+   plus synthesised nodes for any endpoint the stored graph does not carry (an
+   MRP-paired SO is usually NOT in the graph — that is the point: nothing is
+   stored). Pure; safe on undefined inputs. */
+export type FloatingOverlay = {
+  nodes: FlowNode[];
+  edges: Array<{ from: string; to: string }>;
+};
+export const buildFloatingOverlay = (
+  flow: { nodes: FlowNode[] } | undefined,
+  coverage: PoSoCoverageResp | undefined,
+): FloatingOverlay => {
+  const poId = coverage?.poId;
+  if (!poId) return { nodes: [], edges: [] };
+  const soDocs = floatingSoDocNos(coverage);
+  if (soDocs.length === 0) return { nodes: [], edges: [] };
+  const have = new Set((flow?.nodes ?? []).map((n) => n.key));
+  const poKey = `po:${poId}`;
+  const nodes: FlowNode[] = [];
+  if (!have.has(poKey)) {
+    nodes.push({ key: poKey, type: 'po', id: poId, label: coverage?.poNumber ?? poId, status: null, isAnchor: false });
+  }
+  for (const doc of soDocs) {
+    const k = `so:${doc}`;
+    if (!have.has(k)) nodes.push({ key: k, type: 'so', id: doc, label: doc, status: null, isAnchor: false });
+  }
+  return { nodes, edges: soDocs.map((doc) => ({ from: `so:${doc}`, to: poKey })) };
 };
 
 /* Advisory candidate POs for an SO with NO linked purchase leg (pre-MRP orders,

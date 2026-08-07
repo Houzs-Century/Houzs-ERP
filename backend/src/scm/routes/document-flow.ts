@@ -16,6 +16,18 @@
 //   value    — SO ▶ PO, a value/qty purchase transfer             (orange)
 //   payment  — Sales Invoice ▶ AR Payment                         (green)
 //
+// Every edge ALSO carries `linkage` (2026-08-07, the owner's "soft until DO,
+// hard from DO" decision — docs/modules/document-traceability.md §Decision):
+//   chain      — a vertical execution FK (SO▶DO▶SI▶payment, DO▶DR, PO▶GRN▶PI,
+//                GRN▶PR, the consignment chains) — anchored history, solid.
+//   provenance — the SO▶PO raise-link (stored so_item_id / "From SOs:" note).
+//                It records WHY WE BOUGHT and binds no execution — muted.
+// The third kind the map renders, the FLOATING pre-DO PO↔SO pairing, is
+// deliberately NOT computed here: the client assembles it from the
+// /po-so-coverage response it already holds (source:'mrp' assignments), so the
+// map adds ZERO backend load (owner constraint — no computeMrp call on this
+// route, ever). `linkage` is ADDITIVE; consumers that ignore it are unaffected.
+//
 // All linkage columns are the real FKs (confirmed against the scm schema):
 //   delivery_orders.so_doc_no / delivery_order_items.so_item_id
 //   sales_invoices.so_doc_no / .delivery_order_id / sales_invoice_items.do_item_id
@@ -45,6 +57,7 @@ type NodeType =
   //   purchase: pco ──▶ pcr ──▶ pcrn  (PC Order / Receive / Return)
   | 'cso' | 'cdo' | 'cdr' | 'pco' | 'pcr' | 'pcrn';
 type EdgeKind = 'full' | 'partial' | 'value' | 'payment';
+type EdgeLinkage = 'chain' | 'provenance';
 
 const CONSIGNMENT_TYPES: NodeType[] = ['cso', 'cdo', 'cdr', 'pco', 'pcr', 'pcrn'];
 
@@ -56,7 +69,7 @@ type FlowNode = {
   status: string | null;
   isAnchor: boolean;
 };
-type FlowEdge = { from: string; to: string; kind: EdgeKind };
+type FlowEdge = { from: string; to: string; kind: EdgeKind; linkage: EdgeLinkage };
 
 const keyOf = (type: NodeType, id: string) => `${type}:${id}`;
 const cover = (childQty: number, parentQty: number): EdgeKind =>
@@ -220,8 +233,9 @@ async function buildConsignmentFlow(sb: any, c: Context<any>, type: NodeType, id
   const anchorKey = keyOf(type, id);
   const nodes = new Map<string, FlowNode>();
   const edges: FlowEdge[] = [];
+  // Consignment chains are execution FKs end to end — every edge is 'chain'.
   const addEdge = (from: string, to: string, kind: EdgeKind) => {
-    if (nodes.has(from) && nodes.has(to)) edges.push({ from, to, kind });
+    if (nodes.has(from) && nodes.has(to)) edges.push({ from, to, kind, linkage: 'chain' });
   };
   const orphan = (rootSos: string[]) => {
     if (nodes.size === 0) nodes.set(anchorKey, { key: anchorKey, type, id, label: id, status: null, isAnchor: true });
@@ -501,8 +515,10 @@ documentFlow.get('/:type/:id', async (c) => {
   const anchorKey = keyOf(type, id);
   const nodes = new Map<string, FlowNode>();
   const edges: FlowEdge[] = [];
-  const addEdge = (from: string, to: string, kind: EdgeKind) => {
-    if (nodes.has(from) && nodes.has(to)) edges.push({ from, to, kind });
+  // Default 'chain' — every edge below is an execution FK except the SO ▶ PO
+  // raise-link, whose one callsite stamps 'provenance' explicitly.
+  const addEdge = (from: string, to: string, kind: EdgeKind, linkage: EdgeLinkage = 'chain') => {
+    if (nodes.has(from) && nodes.has(to)) edges.push({ from, to, kind, linkage });
   };
 
   if (rootSos.length === 0) {
@@ -833,7 +849,9 @@ documentFlow.get('/:type/:id', async (c) => {
       set.add(soDoc);
       poToSo.set(poId, set);
     }
-    for (const [poId, soDocs] of poToSo) for (const soDoc of soDocs) addEdge(keyOf('so', soDoc), keyOf('po', poId), 'value');
+    // The SO ▶ PO raise-link is PROVENANCE, not execution ("soft until DO,
+    // hard from DO"): it records why we bought and binds nothing downstream.
+    for (const [poId, soDocs] of poToSo) for (const soDoc of soDocs) addEdge(keyOf('so', soDoc), keyOf('po', poId), 'value', 'provenance');
   }
 
   // ── 6. GRNs ─────────────────────────────────────────────────────────────
