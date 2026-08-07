@@ -1032,6 +1032,101 @@ const PROJECTS_LIST_FILTER_KEYS = [
   "page",
 ] as const;
 
+/** Multi-select task filter (owner 2026-08-07). A plain <select multiple> is
+ *  unusable with ~20 grouped options (ctrl-click, no room), so this is a
+ *  button + checkbox popover: tick any number of tasks, grouped by section.
+ *  Closes on outside click / Escape. The chosen titles drive both the list
+ *  filter and the export columns. */
+function TaskStatusMultiSelect({
+  all,
+  selected,
+  onChange,
+}: {
+  all: { title: string; section: string | null }[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const groups = useMemo(() => {
+    const g: Record<string, string[]> = {};
+    for (const t of all) (g[t.section ?? "Other"] ||= []).push(t.title);
+    return Object.entries(g);
+  }, [all]);
+  const toggle = (title: string) =>
+    onChange(selected.includes(title) ? selected.filter((t) => t !== title) : [...selected, title]);
+  const label =
+    selected.length === 0 ? "Status" : selected.length === 1 ? selected[0] : `${selected.length} tasks not completed`;
+  return (
+    <div className="relative" ref={boxRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="Tick the tasks that are still not completed"
+        className={cn(
+          "inline-flex h-8 max-w-[260px] items-center gap-1.5 rounded-md border bg-surface px-2 text-[12px]",
+          selected.length ? "border-accent font-semibold text-accent" : "border-border text-ink",
+        )}
+      >
+        <span className="truncate">{label}</span>
+        <ChevronDown size={13} className="shrink-0 opacity-70" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-9 z-30 max-h-[420px] w-[320px] overflow-y-auto rounded-md border border-border bg-surface p-2 shadow-slab">
+          <div className="mb-1.5 flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
+              Not completed
+            </span>
+            {selected.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                className="text-[10.5px] font-semibold text-ink-secondary hover:text-err"
+              >
+                Clear ({selected.length})
+              </button>
+            )}
+          </div>
+          {groups.map(([sectionName, titles]) => (
+            <div key={sectionName} className="mb-1.5">
+              <div className="px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-ink-muted">
+                {sectionName}
+              </div>
+              {titles.map((t) => (
+                <label
+                  key={t}
+                  className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12px] hover:bg-primary-soft/40"
+                >
+                  <input
+                    type="checkbox"
+                    className="accent-accent"
+                    checked={selected.includes(t)}
+                    onChange={() => toggle(t)}
+                  />
+                  <span className="truncate">{t}</span>
+                </label>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProjectsListView() {
   const { can, user } = useAuth();
   const toast = useToast();
@@ -1047,6 +1142,11 @@ function ProjectsListView() {
   const month = params.get("month") || "";
   const section = params.get("section") || "";
   const taskPending = params.get("task") || "";
+  // Multi-select (owner 2026-08-07): the param is a comma-joined title list.
+  const taskPendingList = useMemo(
+    () => taskPending.split(",").map((t) => t.trim()).filter(Boolean),
+    [taskPending],
+  );
   const status = params.get("status") || "";
   // Cohort "Setup"/"Dismantle" pick a date-derived event PHASE (not the stale
   // `stage` enum) — see the field/sales slim bar below + backend f.phase.
@@ -1237,25 +1337,27 @@ function ProjectsListView() {
       const brandIdx = csvCols.findIndex((c) => c.label === "Brand");
       if (brandIdx >= 0) csvCols.splice(brandIdx + 1, 0, orgCol);
       else csvCols.push(orgCol);
-      // Outstanding-task columns (owner 2026-08-05: the filtered task must
-      // "appear once i extract in excel"). Only when the filter is active, so a
-      // normal export keeps its existing shape. Every exported row is an event
-      // where this task is open, so the task name + its status + due date say
-      // exactly what is outstanding and by when.
-      if (taskPending) {
-        csvCols.push(
-          { key: "task_pending", label: "Outstanding task", getValue: () => taskPending },
-          {
-            key: "task_pending_status",
-            label: "Task status",
-            getValue: (r: ProjectRow) => (r as any).task_pending_status ?? "pending",
-          },
-          {
-            key: "task_pending_due",
-            label: "Task due",
-            getValue: (r: ProjectRow) => (r as any).task_pending_due ?? "",
-          },
-        );
+      // Outstanding-task columns (owner 2026-08-05; multi 2026-08-07: "once
+      // export will export what already tick only"). ONE column per TICKED
+      // task — nothing else is added — so the sheet shows exactly the ticked
+      // tasks and Excel can be filtered per column. Values come from the
+      // row's task_pending_map ("title=status" pairs joined by "|").
+      if (taskPendingList.length) {
+        const statusOf = (r: ProjectRow, title: string): string => {
+          const map = String((r as any).task_pending_map ?? "");
+          for (const pair of map.split("|")) {
+            const i = pair.lastIndexOf("=");
+            if (i > 0 && pair.slice(0, i) === title) return pair.slice(i + 1);
+          }
+          return "not on this event";
+        };
+        for (const title of taskPendingList) {
+          csvCols.push({
+            key: `task:${title}`,
+            label: title,
+            getValue: (r: ProjectRow) => statusOf(r, title),
+          });
+        }
       }
       if (!csvCols.length || all.length === 0) {
         toast.error(all.length === 0 ? "No projects match the current filter." : "Nothing to export.");
@@ -1729,36 +1831,16 @@ function ProjectsListView() {
           ))}
           <option value="__done">Completed</option>
         </select>
-        {/* Outstanding-TASK filter (owner 2026-08-05: "booth layout for
-            display, 3D, 2D, stock out transfer … i can filter which task is
-            not complete yet appear once i extract in excel"). Lists the
-            template's tasks grouped by section; picking one keeps only events
-            where that task is still open, and the export gains its status +
-            due columns. */}
-        <select
-          value={taskPending}
-          onChange={(e) => setTaskPending(e.target.value)}
-          className={cn(
-            "h-8 max-w-[240px] rounded-md border bg-surface px-2 text-[12px]",
-            taskPending ? "border-accent font-semibold text-accent" : "border-border",
-          )}
-          title="Show only events where this task is still not completed"
-        >
-          <option value="">Any task status</option>
-          {Object.entries(
-            (taskTitles.data?.data ?? []).reduce<Record<string, string[]>>((acc, t) => {
-              const key = t.section ?? "Other";
-              (acc[key] ||= []).push(t.title);
-              return acc;
-            }, {}),
-          ).map(([sectionName, titles]) => (
-            <optgroup key={sectionName} label={`${sectionName} — not completed`}>
-              {titles.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
+        {/* Outstanding-TASK filter (owner 2026-08-05; MULTI-select 2026-08-07:
+            "make it can click multiple choice. and once export will export what
+            already tick only"). Tick any number of tasks; the list keeps events
+            where AT LEAST ONE ticked task is still open, and the export gains
+            one column per ticked task. */}
+        <TaskStatusMultiSelect
+          all={taskTitles.data?.data ?? []}
+          selected={taskPendingList}
+          onChange={(next) => setTaskPending(next.join(","))}
+        />
         <select
           value={brand}
           onChange={(e) => setBrand(e.target.value)}
