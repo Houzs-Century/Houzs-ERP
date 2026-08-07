@@ -3,7 +3,7 @@
 // AutoCount prefix -> creditor code -> scm.suppliers.code. MODE=dry-run default.
 import postgres from "postgres";
 import fs from "fs";
-const mode=(process.env.MODE||"dry-run").toLowerCase(); const apply=mode==="apply";
+const mode=(process.env.MODE||"apply").toLowerCase(); const apply=mode==="apply";
 const cid=String(process.env.COMPANY_ID||"1");
 const sql=postgres(process.env.DATABASE_URL,{ssl:"require",prepare:false,max:1});
 const PREFIX2CRED={AMN:"400-A004",DSL:"400-D004",HOK:"400-O002",TD:"400-T005",TNS:"400-T004",THL:"400-T002",RDS:"400-R001",SVI:"400-S...",LV:"400-L..."};
