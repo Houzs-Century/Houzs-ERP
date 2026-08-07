@@ -63,8 +63,30 @@ export const PurchaseInvoiceFromGrn = () => {
     return [...byDoc.entries()].map(([docNo, { meta, lines }]) => ({ docNo, meta, lines }));
   }, [items]);
 
-  // The note currently being billed = the GRN of the first ticked line. While
-  // it is set, lines from every OTHER note are locked (one PI ↔ one note).
+  /* The SUPPLIER currently being billed = the supplier of the first ticked
+     line. One supplier invoice may cover SEVERAL of that supplier's notes
+     (owner 2026-08-06), so notes no longer lock each other — only lines from a
+     DIFFERENT supplier are locked out, because a PI is one supplier's bill.
+     activeGrnId stays as the PRIMARY note ref carried to the review screen. */
+  const activeSupplierId = useMemo(() => {
+    for (const it of items) {
+      const p = picks[it.grnItemId];
+      if (p?.picked && p.qty > 0) return it.supplierId;
+    }
+    return null;
+  }, [picks, items]);
+
+  /* The PI header carries ONE currency + FX rate, so notes that landed under a
+     different pair can't share the document even for the same supplier. */
+  const fxKeyOf = (it: OutstandingGrnItem) => `${it.currency ?? 'MYR'}|${it.exchangeRate ?? 1}`;
+  const activeFxKey = useMemo(() => {
+    for (const it of items) {
+      const p = picks[it.grnItemId];
+      if (p?.picked && p.qty > 0) return fxKeyOf(it);
+    }
+    return null;
+  }, [picks, items]);
+
   const activeGrnId = useMemo(() => {
     for (const it of items) {
       const p = picks[it.grnItemId];
@@ -73,8 +95,20 @@ export const PurchaseInvoiceFromGrn = () => {
     return null;
   }, [picks, items]);
 
+  /* Notes this selection spans — drives the "billing N notes" hint + the
+     handoff so the review screen knows to load every one of them. */
+  const pickedGrnIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const it of items) {
+      const p = picks[it.grnItemId];
+      if (p?.picked && p.qty > 0) set.add(it.grnId);
+    }
+    return [...set];
+  }, [picks, items]);
+
   const togglePick = (it: OutstandingGrnItem) => {
-    if (activeGrnId && activeGrnId !== it.grnId) return; // locked to another note
+    if (activeSupplierId && activeSupplierId !== it.supplierId) return; // one supplier per invoice
+    if (activeFxKey && activeFxKey !== fxKeyOf(it)) return;             // one currency + rate per invoice
     setPicks((s) => ({
       ...s,
       [it.grnItemId]: s[it.grnItemId]?.picked
@@ -99,13 +133,17 @@ export const PurchaseInvoiceFromGrn = () => {
   const pickedCount = picked.length;
 
   const onContinue = () => {
-    if (pickedCount === 0 || !activeGrnId) { notify({ title: 'Tick at least one line from one note first.', tone: 'error' }); return; }
+    if (pickedCount === 0 || !activeGrnId) { notify({ title: 'Tick at least one line first.', tone: 'error' }); return; }
     const stash = picked.map(([grnItemId, v]) => ({ grnItemId, qty: v.qty }));
     if (!writeScmHandoff('piFromGrnPicks', stash)) {
       notify({ title: 'Unable to continue', body: 'This browser could not safely store your picked lines. Your selection is still here; free some browser storage and try again.', tone: 'error' });
       return;
     }
-    navigate(`/scm/purchase-invoices/new?grnId=${encodeURIComponent(activeGrnId)}&fromPicks=1`);
+    /* grnId = the PRIMARY note (the review screen's header context); grnIds =
+       every note the picks span, so the review screen loads them all and the
+       created PI bills the lot as ONE invoice. */
+    const extra = pickedGrnIds.length > 1 ? `&grnIds=${encodeURIComponent(pickedGrnIds.join(','))}` : '';
+    navigate(`/scm/purchase-invoices/new?grnId=${encodeURIComponent(activeGrnId)}${extra}&fromPicks=1`);
   };
 
   return (
@@ -151,8 +189,11 @@ export const PurchaseInvoiceFromGrn = () => {
           </div>
         </div>
         <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', padding: '0 var(--space-4) var(--space-2)' }}>
-          One purchase invoice covers one note. Tick lines from a single note, then Continue to review — nothing is
-          invoiced until you click Create on the next screen.
+          One purchase invoice covers one supplier — tick lines from as many of that supplier&rsquo;s notes as the
+          invoice bills, then Continue to review. Nothing is invoiced until you click Create on the next screen.
+          {pickedGrnIds.length > 1 && (
+            <strong style={{ color: 'var(--c-burnt)' }}> Billing {pickedGrnIds.length} notes as one invoice.</strong>
+          )}
         </p>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           {grouped.length === 0 && !itemsQ.isLoading && (
@@ -161,7 +202,13 @@ export const PurchaseInvoiceFromGrn = () => {
             </p>
           )}
           {grouped.map(({ docNo, meta, lines }) => {
-            const locked   = Boolean(activeGrnId) && activeGrnId !== meta.grnId;
+            /* Locked only when the note can't share the document: a DIFFERENT
+               supplier, or the same supplier under a different currency/rate
+               (the PI header carries one pair). Same supplier + same pair =
+               tickable alongside, which is the whole point of multi-note. */
+            const otherSupplier = Boolean(activeSupplierId) && activeSupplierId !== meta.supplierId;
+            const otherFx       = Boolean(activeFxKey) && activeFxKey !== fxKeyOf(meta);
+            const locked        = otherSupplier || otherFx;
             const allPicked = lines.every((l) => picks[l.grnItemId]?.picked);
             return (
               <div key={docNo} style={{
@@ -189,7 +236,9 @@ export const PurchaseInvoiceFromGrn = () => {
                   </span>
                   {locked && (
                     <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-soft)', fontStyle: 'italic' }}>
-                      Clear your picks to bill this note instead
+                      {otherSupplier
+                        ? 'Different supplier — clear your picks to bill this note instead'
+                        : 'Different currency — clear your picks to bill this note instead'}
                     </span>
                   )}
                 </div>

@@ -1,1 +1,0 @@
-import{r as e}from"./react-vendor-CNN4Jg4e.js";import{n as t}from"./authed-fetch-BvGaRmwZ.js";var n={staleTime:1/0,gcTime:1/0},r=()=>e({queryKey:[`library`,`fabrics`],queryFn:async()=>(await t(`/fabric-library`)).fabrics??[],...n});export{r as t};

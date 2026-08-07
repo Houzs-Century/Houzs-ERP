@@ -306,6 +306,14 @@ STORED value (source 2 of 3) at every later seam — resync delta, restamp, reco
 — so a PO cancelled or added after the ship can never move the bucket an OUT was
 already stamped with.
 
+The DO detail SURFACES the stored anchor (2026-08-07): the detail GET's ITEM
+columns already return `committed_po_batch_no`, and both surfaces render it per
+line as an anchored solid "Committed PO" chip — desktop
+`DeliveryOrderDetailV2.tsx` Item cell (`CommittedBatchCell`,
+`components/DocumentLinesExpansion.tsx`), mobile `MobileModuleDetail.tsx` line
+rows (`CommittedBatchRowMobile`, `mobile/source-chips.tsx`) — display-only,
+rendered only when present (absent lines show nothing, no dash).
+
 **A sofa SET binds ONE purchase order.** Owner, 2026-07-31: *"同一张 batch no 就
 是 PO"* — one PO IS one batch number. The old gate (`allHavePo`) only asked
 whether every module had *a* PO and never whether they were the SAME one, so a
@@ -360,6 +368,21 @@ a separate module.
 | Status already CANCELLED | every further transition — **CANCELLED is FINAL** | `:4203-4209`. Un-cancelling would leave the cancel's add-back ADJUSTMENT standing while `deductInventoryForDo` no-ops, inflating stock by the whole DO. Re-deliver via a NEW DO. |
 | DO has shipped (`DO_STOCK_OUT_STATUSES`) | moving back to DRAFT / LOADED | `:4219-4225`. A plain status write does not reverse the OUT, so the DO would read un-shipped while its stock stayed deducted. |
 | Unknown status string | the whole request | `:4171-4176` — the handler historically wrote `body.status` verbatim. |
+| An **unlinked line for an item the header's SO already orders** | `POST /` and `POST /:id/items` | `findUnlinkedSoLines` (`lib/do-unlinked-so-lines.ts`) → 409 `unlinked_so_lines`. See below — this is the guard that was missing when one SO shipped twice. |
+
+**`so_doc_no` is free text, and that used to be a hole.** A DO line with no
+`so_item_id` still deducts stock (`deductInventoryForDo` reads the DO's OWN
+lines) but counts toward no SO line, so `soDeliverableRemaining` cannot see it
+and the over-delivery guard cannot fire. Typing an SO number into the header and
+adding the order's own items by hand therefore produced a DO that shipped the
+order's goods and took nothing off its remaining — which is how
+`2990-DO-2607-005` and `2990-DO-2607-017` both shipped `2990-SO-2606-019`
+(`docs/unlinked-line-duplicate-coe.md`). `POST /from-sos` always writes
+`so_item_id` and never had this problem.
+
+The rule is deliberately narrow: an unlinked line is refused **only when the
+named SO already orders that item code**. A replacement part or a sample riding
+along on the same trip still passes, because it is not bypassing anything.
 | Shipped statuses (frontend) | the line editor renders read-only | `DeliveryOrderDetailV2.tsx:1362` — `["dispatched","in_transit","signed","delivered","invoiced"]` |
 
 **Amendment path — no, not on the DO itself.** There is no `do_revisions` table

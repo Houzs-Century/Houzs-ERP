@@ -206,6 +206,9 @@ export interface AssrCase {
   // Mig 0073 — who performs the issue inspection: 'own' | 'supplier'.
   // Lives on the Under Verification stage since mig 0105.
   inspection_by?: "own" | "supplier" | null;
+  /** Who collects the faulty item in the Supplier stage — 'customer' =
+   *  our logistics picks up from the customer's house. */
+  pickup_by?: "customer" | "supplier" | null;
   items_ready_at?: string | null;
   stage_changed_at?: string | null;
   // Mig 081 — Verification card (gate between Under Verification and
@@ -319,6 +322,10 @@ export interface AssrStageHistoryRow {
 
 export interface AssrDetail {
   case: AssrCase;
+  /** Product categories as a list — what the multi-select form binds to.
+   *  The flat `case.service_category` string stays for read-only surfaces
+   *  (list column, CSV, print, portals, mobile). */
+  service_categories?: string[];
   items: AssrItem[];
   attachments: AssrAttachment[];
   activity: AssrActivity[];

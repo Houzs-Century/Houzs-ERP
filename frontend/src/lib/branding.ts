@@ -34,8 +34,25 @@ export interface Branding {
   email: string;
   website: string;
   /** R2 object key for an uploaded logo ("" = none). Uploaded in Settings →
-   *  Branding; served via GET /api/branding/logo (auth-gated). */
+   *  Branding; served via GET /api/branding/logo (auth-gated). This is the
+   *  ON-SCREEN logo (app chrome + login screen) and the letterhead fallback. */
   logoR2Key: string;
+  /** R2 object key for the optional SECOND logo used on PRINTED documents
+   *  ("" = fall back to logoR2Key). Served via GET
+   *  /api/branding/logo?variant=print.
+   *
+   *  Why two (owner 2026-08-06): the app chrome is DARK and paper is WHITE, so
+   *  one file cannot serve both — 2990's white logo is right in the sidebar and
+   *  a near-invisible watermark on a Delivery Order. Blank means "print the
+   *  on-screen one", i.e. exactly the pre-2026-08 behaviour. */
+  printLogoR2Key: string;
+  /** Customer-service phone printed on documents ("" = the line is omitted).
+   *  SEPARATE from `phone`: the desk a customer calls about a delivery is not
+   *  the company's headline number. Per company — a 2990 delivery order must
+   *  never print a Houzs contact. */
+  csPhone: string;
+  /** Customer-service email, same contract as csPhone. */
+  csEmail: string;
 }
 
 /** Seeded defaults — VERBATIM the values that were hardcoded before this change
@@ -55,6 +72,9 @@ export const DEFAULT_BRANDING: Branding = {
   email: "hello@houzscentury.com",
   website: "",
   logoR2Key: "",
+  printLogoR2Key: "",
+  csPhone: "",
+  csEmail: "",
 };
 
 /** 2990 company defaults — mirrors the backend's DEFAULT_BRANDING_2990 and
@@ -70,6 +90,9 @@ export const DEFAULT_BRANDING_2990: Branding = {
   email: "",
   website: "",
   logoR2Key: "",
+  printLogoR2Key: "",
+  csPhone: "",
+  csEmail: "",
 };
 
 /** Defaults for the given company code (GET /api/branding echoes the active
@@ -138,6 +161,14 @@ export function normalizeBranding(
     // optional, so a blank server value must stay blank, not snap to a literal.
     website: ((r.website ?? r.web_site) as string | undefined)?.toString().trim() ?? "",
     logoR2Key: ((r.logoR2Key ?? r.logo_r2_key) as string | undefined)?.toString().trim() ?? "",
+    // Rows written before the print slot existed have no key → "" ("print the
+    // on-screen logo").
+    printLogoR2Key:
+      ((r.printLogoR2Key ?? r.print_logo_r2_key) as string | undefined)?.toString().trim() ?? "",
+    // Blank stays blank: an unset CS contact omits the line rather than
+    // inheriting another company's.
+    csPhone: ((r.csPhone ?? r.cs_phone) as string | undefined)?.toString().trim() ?? "",
+    csEmail: ((r.csEmail ?? r.cs_email) as string | undefined)?.toString().trim() ?? "",
   };
 }
 
@@ -193,6 +224,10 @@ export function getBrandingCompanyCode(): string {
 
 export interface BrandingLogo {
   key: string;
+  /** The company code these bytes were served for. The R2 key alone cannot say
+   *  WHOSE image this is, and a letterhead that prints another company's mark is
+   *  worse than one that prints none. */
+  company?: string;
   dataUrl: string;
   /** jspdf addImage format tag. */
   format: "PNG" | "JPEG";
@@ -205,11 +240,32 @@ let logoCache: BrandingLogo | null = null;
 let logoInflight: Promise<void> | null = null;
 let logoFailedKey: string | null = null; // don't hammer a 404/broken key
 
+/**
+ * The logo key a PRINTED document should use: the dedicated print logo when one
+ * is uploaded, otherwise the on-screen logo. "" = text-only letterhead.
+ * Mirrors the backend's letterheadLogoKey (services/branding.ts) so the jspdf
+ * letterheads and the server-rendered HTML prints pick the same file.
+ *
+ * The app chrome (CompanyMark) deliberately does NOT go through this — it wants
+ * the on-screen variant, which is the whole reason there are two.
+ */
+export function letterheadLogoKey(b: {
+  logoR2Key: string;
+  printLogoR2Key?: string;
+}): string {
+  return (b.printLogoR2Key || "").trim() || (b.logoR2Key || "").trim();
+}
+
 /** Sync accessor for drawHeader(). null = no logo (text-only header). */
 export function getBrandingLogoCache(): BrandingLogo | null {
-  const key = brandingCache.logoR2Key;
+  const key = letterheadLogoKey(brandingCache);
   if (!key) return null;
-  return logoCache && logoCache.key === key ? logoCache : null;
+  if (!logoCache || logoCache.key !== key) return null;
+  // A memo entry stamped with a DIFFERENT company is refused outright rather
+  // than drawn: the letterhead falls back to text-only, which is a poorer
+  // document but still this company's document.
+  if (logoCache.company && logoCache.company !== brandingCompanyCodeCache) return null;
+  return logoCache;
 }
 
 /** Drop the memo — called after a logo upload/remove in Settings so the next
@@ -228,6 +284,75 @@ const blobToDataUrl = (blob: Blob): Promise<string> =>
     r.readAsDataURL(blob);
   });
 
+/**
+ * The letterhead draws the logo inside 40mm x 16mm (pdf-common `drawHeader`).
+ * At 300dpi that is 472 x 189 px — anything larger is detail no printer will
+ * ever emit.
+ *
+ * It is not merely wasted: jsPDF embeds the bitmap RAW, uncompressed, into
+ * EVERY document. A 3508 x 1561 logo (what the 2990 upload actually was) is
+ * 16.4 MB of pixels plus 5.5 MB of alpha — which is why one Delivery Order
+ * PDF weighed 21 MB and could not be emailed.
+ */
+export const LETTERHEAD_MAX_PX = { width: 480, height: 192 } as const;
+
+/**
+ * Scale factor to fit `w x h` inside the letterhead box — 1 when it already
+ * does, so a sensibly sized logo is passed through untouched (byte-identical
+ * output, no re-encode).
+ *
+ * Exported for its own test: the canvas work below cannot run in jsdom, but
+ * the arithmetic that decides it is the part worth pinning.
+ */
+export function letterheadScale(width: number, height: number): number {
+  if (!width || !height) return 1;
+  return Math.min(
+    1,
+    LETTERHEAD_MAX_PX.width / width,
+    LETTERHEAD_MAX_PX.height / height,
+  );
+}
+
+/**
+ * Re-encode an oversized logo down to letterhead size. PNG is kept as PNG so
+ * transparency survives — a logo with an alpha channel flattened onto white
+ * would show a box on any non-white background.
+ *
+ * Fail-soft in every direction: no canvas (jsdom), a tainted canvas, an
+ * encoder that returns nothing — all fall back to the original image. A
+ * heavier PDF is a bad day; a PDF with no letterhead is a wrong document.
+ */
+async function fitLogoForLetterhead(
+  dataUrl: string,
+  width: number,
+  height: number,
+  isPng: boolean,
+): Promise<{ dataUrl: string; width: number; height: number }> {
+  const scale = letterheadScale(width, height);
+  if (scale >= 1) return { dataUrl, width, height };
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("decode failed"));
+      el.src = dataUrl;
+    });
+    const w = Math.max(1, Math.round(width * scale));
+    const h = Math.max(1, Math.round(height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { dataUrl, width, height };
+    ctx.drawImage(img, 0, 0, w, h);
+    const out = canvas.toDataURL(isPng ? "image/png" : "image/jpeg", 0.92);
+    if (!out || !out.startsWith("data:image/")) return { dataUrl, width, height };
+    return { dataUrl: out, width: w, height: h };
+  } catch {
+    return { dataUrl, width, height };
+  }
+}
+
 const dataUrlDimensions = (dataUrl: string): Promise<{ width: number; height: number }> =>
   new Promise((resolve, reject) => {
     const img = new Image();
@@ -243,7 +368,15 @@ const dataUrlDimensions = (dataUrl: string): Promise<{ width: number; height: nu
  * callers share one in-flight fetch.
  */
 export async function ensureBrandingLogoLoaded(): Promise<void> {
-  const key = brandingCache.logoR2Key;
+  // The PRINT slot when the owner uploaded one, else the on-screen logo. The
+  // memo is keyed by whichever we resolved, so swapping slots never serves the
+  // stale one.
+  const key = letterheadLogoKey(brandingCache);
+  const usingPrintSlot = key !== "" && key === (brandingCache.printLogoR2Key || "").trim();
+  // Captured up front: whatever the request returns must belong to the company
+  // whose branding produced this key, not to whichever company happens to be
+  // active by the time the bytes land.
+  const expectedCompany = brandingCompanyCodeCache;
   if (!key) return;                                   // no logo configured
   if (logoCache && logoCache.key === key) return;     // memo is current
   if (logoFailedKey === key) return;                  // known-bad — don't retry per print
@@ -259,23 +392,51 @@ export async function ensureBrandingLogoLoaded(): Promise<void> {
       // X-Company-Id rides along (like every api/client call) so the backend
       // serves the ACTIVE company's logo — without it a 2990 session on the
       // Houzs hostname would cache Houzs's logo under 2990's key.
-      const res = await correlatedFetch(`${api.baseUrl}/api/branding/logo`, {
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...companyHeader(),
+      /* The R2 KEY is in the URL, not just the company header. Two companies
+         asked for the same `/api/branding/logo?variant=print` and were told
+         apart only by X-Company-Id — but a browser caches by URL, and the
+         response carried `max-age=300` with no Vary. So opening a 2990 document
+         and then a Houzs one inside five minutes printed 2990's logo on the
+         Houzs letterhead, while the app chrome (which has always passed ?k=)
+         stayed correct. The key is per company AND per upload, so it is both
+         the isolation and the cache-buster. */
+      const params = new URLSearchParams({ k: key });
+      if (usingPrintSlot) params.set("variant", "print");
+      const res = await correlatedFetch(
+        `${api.baseUrl}/api/branding/logo?${params.toString()}`,
+        {
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...companyHeader(),
+          },
         },
-      });
+      );
       if (!res.ok) throw correlateError(new Error(`logo fetch ${res.status}`), requestIdFromResponse(res));
+      /* The server names the company it served (routes/branding.ts). A mismatch
+         means the active company moved under this fetch, and caching the bytes
+         would print one company's mark on another's documents for the rest of
+         the session — so it fails instead, and the letterhead goes text-only.
+         A null header (an older worker, or a proxy that dropped it) is NOT
+         treated as a mismatch: the guard tightens the failure mode, it must not
+         invent one. */
+      const servedCompany = res.headers.get("x-company-code");
+      if (servedCompany && servedCompany.toUpperCase() !== expectedCompany.toUpperCase()) {
+        throw new Error(`logo served for ${servedCompany}, expected ${expectedCompany}`);
+      }
       const { dataUrl, width, height, contentType } = await consumeCorrelated(res, async () => {
         const blob = await res.blob();
-        const dataUrl = await blobToDataUrl(blob);
-        const { width, height } = await dataUrlDimensions(dataUrl);
-        if (!width || !height) throw new Error("logo has no dimensions");
-        return { dataUrl, width, height, contentType: blob.type };
+        const raw = await blobToDataUrl(blob);
+        const natural = await dataUrlDimensions(raw);
+        if (!natural.width || !natural.height) throw new Error("logo has no dimensions");
+        // Shrink to what the letterhead actually draws BEFORE it reaches
+        // jsPDF, which embeds the bitmap raw into every document.
+        const isPng = blob.type === "image/png" || raw.startsWith("data:image/png");
+        const fitted = await fitLogoForLetterhead(raw, natural.width, natural.height, isPng);
+        return { ...fitted, contentType: isPng ? "image/png" : blob.type };
       });
       const format: BrandingLogo["format"] =
         contentType === "image/png" || dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
-      logoCache = { key, dataUrl, format, width, height };
+      logoCache = { key, company: expectedCompany, dataUrl, format, width, height };
       logoFailedKey = null;
     } catch {
       logoFailedKey = key; // fail-soft: text-only header this session
@@ -341,10 +502,14 @@ export async function ensureBrandLogoLoaded(key: string | null | undefined): Pro
       if (!res.ok) throw correlateError(new Error(`brand logo fetch ${res.status}`), requestIdFromResponse(res));
       const { dataUrl, width, height, contentType } = await consumeCorrelated(res, async () => {
         const blob = await res.blob();
-        const dataUrl = await blobToDataUrl(blob);
-        const { width, height } = await dataUrlDimensions(dataUrl);
-        if (!width || !height) throw new Error("logo has no dimensions");
-        return { dataUrl, width, height, contentType: blob.type };
+        const raw = await blobToDataUrl(blob);
+        const natural = await dataUrlDimensions(raw);
+        if (!natural.width || !natural.height) throw new Error("logo has no dimensions");
+        // Shrink to what the letterhead actually draws BEFORE it reaches
+        // jsPDF, which embeds the bitmap raw into every document.
+        const isPng = blob.type === "image/png" || raw.startsWith("data:image/png");
+        const fitted = await fitLogoForLetterhead(raw, natural.width, natural.height, isPng);
+        return { ...fitted, contentType: isPng ? "image/png" : blob.type };
       });
       const format: BrandingLogo["format"] =
         contentType === "image/png" || dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";

@@ -1,1 +1,0 @@
-var e=(e=0)=>new Date(Date.now()+8*3600*1e3+e*86400*1e3).toISOString().slice(0,10),t=e=>{if(!e)return null;let t=new Date(e).getTime();return Number.isNaN(t)?null:new Date(t+8*3600*1e3).toISOString().slice(0,10)};export{e as n,t};

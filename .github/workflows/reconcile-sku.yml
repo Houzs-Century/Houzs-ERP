@@ -1,0 +1,51 @@
+name: Reconcile a SKU (read-only)
+
+# Read the ledger instead of reasoning about it.
+#
+# Owner, 2026-08-04, after I had changed my story twice about 2990-DO-2607-005:
+# "你确定吗？… 你就直接看我们的历史记录". His method, in his order: every GRN
+# receipt and DO shipment against the stock figure, then the PO still coming in,
+# then the SO still due out, then whether each shipment's Assigned SO is real.
+#
+# Takes a SKU, or a DO number to reconcile every SKU on that document.
+#
+# Manual trigger only. It is a question, not a gate.
+on:
+  workflow_dispatch:
+    inputs:
+      sku:
+        description: 'Product code, e.g. NTYR MEMORY CONTOUR PILLOW (leave blank if using do)'
+        required: false
+        type: string
+      do:
+        description: 'Delivery Order number — reconciles every SKU on it, e.g. 2990-DO-2607-005'
+        required: false
+        type: string
+
+concurrency:
+  group: reconcile-sku-${{ github.event.inputs.sku }}-${{ github.event.inputs.do }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/reconcile-sku.mjs
+        env:
+          SKU: ${{ inputs.sku }}
+          DO: ${{ inputs.do }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

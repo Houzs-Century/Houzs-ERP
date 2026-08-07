@@ -801,7 +801,16 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const defectActionsValue = useMemo(
     () => ({
       actions: (((data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
-      canAct:
+      // Two-stage defect triage (owner 2026-08-07): canReview = the Storekeeper
+      // Supervisor (Shukor) or admin triages a fresh defect (Done / Replace);
+      // canPurchase = the purchaser (Sim / Farra) / BD or admin closes an
+      // escalated (Replace) defect with Done. Mirrors desktop Projects.tsx.
+      canReview:
+        !!user &&
+        (user.permissions?.includes("*") ||
+          user.permissions?.includes("projects.manage") ||
+          /^storekeeper supervisor$/i.test((user.position_name ?? "").trim())),
+      canPurchase:
         !!user &&
         (user.permissions?.includes("*") ||
           user.permissions?.includes("projects.manage") ||
@@ -2049,17 +2058,24 @@ type AttachmentAction = {
 };
 const DefectActionsCtx = createContext<{
   actions: AttachmentAction[];
-  canAct: boolean;
+  canReview: boolean;
+  canPurchase: boolean;
   reload: () => void;
 } | null>(null);
 
 function DefectFileActions({ att }: { att: TaskAttachment }) {
   const ctx = useContext(DefectActionsCtx);
-  const [draft, setDraft] = useState<null | "ongoing" | "done">(null);
+  const [draft, setDraft] = useState<null | "done" | "replace">(null);
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
   if (!ctx) return null;
   const list = ctx.actions.filter((x) => x.attachment_id === att.id);
+  // Latest timeline entry drives the state machine: fresh (no action / legacy
+  // 'ongoing') awaits the reviewer; 'replace' awaits the purchaser; 'done' is
+  // resolved. Mirrors desktop TaskAttachmentRow.
+  const latest = list.length ? list.reduce((m, a) => (a.id > m.id ? a : m)) : null;
+  const isFresh = !latest || (latest.status !== "done" && latest.status !== "replace");
+  const isEscalated = latest?.status === "replace";
   const save = async () => {
     if (!draft) return;
     setSaving(true);
@@ -2077,9 +2093,14 @@ function DefectFileActions({ att }: { att: TaskAttachment }) {
   const ts = (v: string) => String(v || "").slice(0, 16).replace("T", " ");
   return (
     <div style={{ paddingLeft: 2 }}>
-      {ctx.canAct && (
+      {isFresh && ctx.canReview && (
         <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
-          <button className="tinybtn" disabled={saving} style={{ background: draft === "ongoing" ? "#f6efd9" : "#fff", borderColor: "#e7d9ae", color: "#6e4d12", fontWeight: draft === "ongoing" ? 800 : 700 }} onClick={() => setDraft("ongoing")}>Ongoing</button>
+          <button className="tinybtn" disabled={saving} style={{ background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
+          <button className="tinybtn" disabled={saving} style={{ background: draft === "replace" ? "#f7e3e3" : "#fff", borderColor: "#e6bcbc", color: "#b4362f", fontWeight: draft === "replace" ? 800 : 700 }} onClick={() => setDraft("replace")}>Replace</button>
+        </div>
+      )}
+      {isEscalated && ctx.canPurchase && (
+        <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
           <button className="tinybtn" disabled={saving} style={{ background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
         </div>
       )}
@@ -2097,8 +2118,8 @@ function DefectFileActions({ att }: { att: TaskAttachment }) {
           {[...list].reverse().map((a) => (
             <div key={a.id}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <span style={{ width: 6, height: 6, borderRadius: 3, background: a.status === "done" ? "#2f8a5b" : "#c9971f", flex: "none" }} />
-                <span className="rbadge" style={{ background: a.status === "done" ? "#e2f0e9" : "#f6efd9", color: a.status === "done" ? "#2f8a5b" : "#6e4d12" }}>{a.status === "done" ? "Done" : "Ongoing"}</span>
+                <span style={{ width: 6, height: 6, borderRadius: 3, background: a.status === "done" ? "#2f8a5b" : a.status === "replace" ? "#b4362f" : "#c9971f", flex: "none" }} />
+                <span className="rbadge" style={{ background: a.status === "done" ? "#e2f0e9" : a.status === "replace" ? "#f7e3e3" : "#f6efd9", color: a.status === "done" ? "#2f8a5b" : a.status === "replace" ? "#b4362f" : "#6e4d12" }}>{a.status === "done" ? "Done" : a.status === "replace" ? "Replace" : "Ongoing"}</span>
                 <span style={{ fontSize: 10.5, color: "#9aa093" }}>{a.user_name || "—"} · {ts(a.created_at)}</span>
               </div>
               {a.remark && <div style={{ fontSize: 11.5, color: "#6b6f63", marginLeft: 12, marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{a.remark}</div>}
@@ -2210,19 +2231,11 @@ function TaskRow({
         (l === "DRIVER" && (userRole === "HELPER" || userRole === "STOREKEEPER")));
     });
   const canAttach = canTick && (!tickOnly || roleMatchesUser);
-  // Owner 2026-07-17: sales staff may DELETE files only on their own four
-  // deliverables (the SALES PIC-badged Setup Image / Event Complete Image /
-  // Defect List / Filled Floorplan). Every other row is add-only for them —
-  // no × on the chips. Directors/mgt/admin keep full remove everywhere.
-  const SALES_REMOVABLE = /^(setup image|event complete image|defect (list|item)|filled floor\s*plan)/i;
-  const _isSalesStaffUser =
-    (/sales/i.test((user?.department_name ?? "").trim()) || /^sales/i.test((user?.position_name ?? "").trim())) &&
-    !/\b(Super Admin|Sales Director|Finance Manager)\b/i.test((user?.position_name ?? "").trim()) &&
-    !user?.permissions?.includes("*");
-  const canRemoveFile =
-    canAttach &&
-    (!_isSalesStaffUser ||
-      (badge.includes("SALES PIC") && SALES_REMOVABLE.test((it.title || "").trim())));
+  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
+  // (projects.manage: BD / managers / directors). Crew and sales keep upload
+  // (canAttach) but no longer see the × on file chips. canAttach folds in the
+  // row-edit + !archived gate, so a manager still can't delete a locked row.
+  const canRemoveFile = canAttach && can("projects.manage");
 
   const cycle = async () => {
     if (!canRowTick || busy) return;
@@ -2597,7 +2610,7 @@ const isoTimePart = (iso: string | null | undefined): string => {
 // PUT /:id/phase-photos/upload → POST /:id/phase-photos). Schedule/driver/
 // lorry all persist via PATCH /:id.
 function SetupDismantle({
-  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleView, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm, prompt,
+  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleView, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm,
 }: {
   projectId: number;
   project: ProjectDetail["project"];
@@ -2629,21 +2642,10 @@ function SetupDismantle({
   const scheduleShots = photos.filter((ph): ph is PhasePhoto & { r2_key: string } => ph.phase === "schedule" && !!ph.r2_key);
   const schedRef = useRef<HTMLInputElement | null>(null);
   const [schedView, setSchedView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
-  // Remark-then-upload (owner 2026-07-27; made OPTIONAL 2026-08-03 per owner —
-  // no longer blocks the file picker): prompt for an optional remark, then the
-  // file picker; the screenshot carries that remark as its caption. Blank = no
-  // caption. Cancelling the dialog leaves the picker closed.
-  const pendingSchedCaptionRef = useRef<string | undefined>(undefined);
-  const startScheduleUpload = async () => {
-    const remark = await prompt({
-      title: "Remark for this schedule",
-      placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm (optional)",
-      confirmLabel: "Choose file…",
-    });
-    if (remark == null) return; // cancelled
-    pendingSchedCaptionRef.current = remark.trim() || undefined;
-    schedRef.current?.click();
-  };
+  // Owner 2026-08-03: NO remark step before upload — tapping Upload opens the
+  // file picker straight away (the earlier prompt, even optional, was an unwanted
+  // extra tap). Setup/dismantle times go in the standalone Remark box below.
+  const startScheduleUpload = () => schedRef.current?.click();
   const uploadSchedule = async (file: File, caption?: string) => {
     if (file.size > 50 * 1024 * 1024) {
       await notify({ title: "File too large", body: "Max 50MB.", tone: "error" });
@@ -2793,7 +2795,7 @@ function SetupDismantle({
               <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => void startScheduleUpload()}>
                 {scheduleShots.length ? "+ Add / replace screenshot" : "Upload handbook schedule screenshot"}
               </button>
-              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; const cap = pendingSchedCaptionRef.current; pendingSchedCaptionRef.current = undefined; if (f) void uploadSchedule(f, cap); }} />
+              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadSchedule(f); }} />
             </>
           )}
           {schedView && (
@@ -3209,8 +3211,13 @@ const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
 // Decoration shows its remark AND its files (view remark + download).
 // Defect tiles carry the per-file Ongoing/Done timeline + the N/A button
 // (owner 2026-07-29). Matched off the resolved checklist item title.
+// Live task titles are "Defect Item Setup/Dismantle" (there are no "Defect
+// List" rows in prod), so the old /^defect list/i matched nothing here and the
+// tile path never showed the action buttons or the no-defect N/A control
+// (BUG-HISTORY 2026-08-07). Widen to match both families, like every other
+// defect matcher and the backend.
 const isDefectTile = (t: { item?: ChecklistItem | null }): boolean =>
-  /^defect list/i.test((t.item?.title ?? "").trim());
+  /^defect (list|item)/i.test((t.item?.title ?? "").trim());
 
 const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
   // Owner 2026-07-22: Stock Out Transfer Record + Blank Floorplan tiles
@@ -3346,7 +3353,11 @@ function SalesDocsCard({
   // Stock Out/In, 3D/2D Design, Display Floorplan, Exchange List) had no way to
   // be approved on a phone. Gate + endpoint match the desktop DocRow exactly
   // (shared checklistReviewVisible / ReviewButtons); user drives the perm check.
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
+  // (projects.manage). canTick already folds in !archived, so a manager still
+  // can't delete on an archived project; upload/remark stay on canTick.
+  const canDeleteFiles = can("projects.manage") && canTick;
 
   const tiles = tileDefs.map((t) => {
     const item = (checklist ?? []).find(
@@ -3424,7 +3435,7 @@ function SalesDocsCard({
   };
 
   const removeFile = async (t: (typeof tiles)[number], att: TaskAttachment) => {
-    if (t.readOnly || !canTick) return;
+    if (t.readOnly || !canDeleteFiles) return;
     if (!(await confirm({ title: `Remove ${att.file_name || "this file"}?`, confirmLabel: "Remove", danger: true }))) return;
     setBusy(true);
     try {
@@ -3574,13 +3585,13 @@ function SalesDocsCard({
                           <button
                             type="button"
                             className="tinybtn"
-                            style={{ flex: 1, minWidth: 0, display: "inline-flex", alignItems: "center", gap: 5, ...(canTick && !t.readOnly ? { borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none" } : {}) }}
+                            style={{ flex: 1, minWidth: 0, display: "inline-flex", alignItems: "center", gap: 5, ...(canDeleteFiles && !t.readOnly ? { borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none" } : {}) }}
                             onClick={() => setView({ items: t.files, idx: i })}
                             title={a.file_name ?? undefined}
                           >
                             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.file_name || "File"}</span>
                           </button>
-                          {canTick && !t.readOnly && (
+                          {canDeleteFiles && !t.readOnly && (
                             <button
                               type="button"
                               className="tinybtn"

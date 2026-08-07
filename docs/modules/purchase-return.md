@@ -1,0 +1,159 @@
+# Module: Purchase Return (SCM)
+
+Goods going BACK to a supplier. The mirror of the Goods Received Note: a GRN
+moves stock IN, a PR sends it OUT.
+
+> Convention: money is in **sen** (integer cents) end-to-end. Dates are stored
+> UTC, displayed DD/MM/YYYY. All reads/writes go through `/api/scm/*`.
+
+Written 2026-08-05 to close the gap CLAUDE.md names — the module gained guards on
+2026-08-04 and had no guide. Read this before changing the module; if your change
+alters its SURFACE (an endpoint, a permission, a status, a field that starts or
+stops being required, a lock), update this file in the same PR.
+
+---
+
+## 1. What it is for
+
+Stock received from a supplier is sent back — damaged, wrong, or surplus. The
+return names the GRN it came from, its lines name the GRN lines, and posting it
+takes the stock out at the cost it came in at. A credit note reference closes it.
+
+---
+
+## 2. The status model — and the thing that will surprise you
+
+`DRAFT → POSTED → COMPLETED`, plus `CANCELLED`.
+
+**But a PR is created as POSTED.** The DRAFT stage was removed: `POST /` writes
+the row as `POSTED` with the inventory OUT **already written**. `PATCH /:id/post`
+survives only for backward compatibility with callers that still call it, and it
+is deliberately **idempotent** — an already-POSTED or COMPLETED row returns 200
+without re-writing movements, because re-writing them would double-debit
+inventory. Anything else 409s `cannot_post`.
+
+So: do not write code that waits for a PR to be posted, and do not add a second
+"post" path. If you need a not-yet-real return, that is a different concept and
+this module does not have one.
+
+`PATCH /:id/complete` moves POSTED → COMPLETED and takes an optional
+`creditNoteRef`. Its tenancy check runs **before** the state guard on purpose, so
+a same-company return that simply is not POSTED gets the honest "not posted"
+message rather than a company-mismatch 404.
+
+---
+
+## 3. Surfaces
+
+| Surface | File |
+|---|---|
+| Desktop list | `frontend/src/pages/scm-v2/PurchaseReturnsListV2.tsx` |
+| Desktop detail | `frontend/src/pages/scm-v2/PurchaseReturnDetailV2.tsx` |
+| Desktop new | `frontend/src/pages/scm-v2/PurchaseReturnNew.tsx` |
+
+**No dedicated mobile screen** — the generic `MobileModuleList` /
+`MobileModuleDetail` render it. The repo-wide "desktop and mobile change
+together" rule has no paired file to apply to here.
+
+The consignment variants (`PurchaseConsignmentReturn*.tsx`) are a **different
+module** on different tables. Do not change one expecting the other to follow.
+
+---
+
+## 4. API surface
+
+Mounted in `backend/src/scm/index.ts`:
+
+```
+scm.use("/purchase-returns/*", scmAreaGuard("scm.procurement.pr"));
+scm.route("/purchase-returns", purchaseReturns);
+```
+
+One guard, `scm.procurement.pr`, over the whole router — read and write.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/` | List |
+| GET | `/:id` | One return, header + lines |
+| GET | `/:id/linked` | The GRN and PO behind this return, for the detail's links |
+| POST | `/` | Create — **lands as POSTED with inventory OUT written** (§2) |
+| POST | `/from-grn`, `/from-grns` | Convert GRN line(s) into a return |
+| PATCH | `/:id/post` | Back-compat, idempotent (§2) |
+| PATCH | `/:id/complete` | POSTED → COMPLETED, optional `creditNoteRef` |
+| PATCH | `/:id/cancel` | `cancelPurchaseReturnHandler` |
+| PATCH | `/:id` | Update the header |
+| POST | `/:id/items` | Add a line |
+| PATCH | `/:id/items/:itemId` | Update a line |
+| DELETE | `/:id/items/:itemId` | Remove a line |
+
+Handler file: `backend/src/scm/routes/purchase-returns.ts` (~1,400 lines — use
+`docs/generated/route-locator.md` to jump to a handler instead of reading it
+whole).
+
+`GET /:id/linked` has a Supabase-specific trap worth knowing: **typegen returns
+joined rows as arrays even for to-one FKs**, so `grn` and `purchase_order` come
+back as arrays and the handler unwraps them. Any new join here needs the same
+unwrap.
+
+---
+
+## 5. The unlinked-line guard — read this before touching create/add-item
+
+`scm.purchase_returns.grn_id` names a GRN, but
+`scm.purchase_return_items.grn_item_id` is **nullable**. A line with a null link
+still sends goods OUT, yet counts toward no GRN line, so the pool that governs
+the chain (`qty_accepted − returned_qty`) never moves and the same goods can be
+returned twice. The file's own comment used to record the gap plainly: *"Manual
+lines (no grnItemId) stay uncapped."*
+
+`backend/src/scm/lib/return-unlinked-lines.ts` (`findUnlinkedPrLines`,
+`unlinkedReturnResponse`) applies the same narrow rule as the other three chains:
+
+| situation | outcome |
+|---|---|
+| header names no GRN | allowed — nothing to bypass |
+| item is NOT on the named GRN | allowed — genuinely ad-hoc |
+| item IS on the named GRN but the line does not link to it | **REFUSED** — link it |
+
+A production scan on 2026-08-04 found **zero** rows of this shape, so the guard
+is preventative. It was added anyway because the cost is one query on a path
+already doing several, and the cost of not having it on the delivery side was
+three weeks of a double deduction nobody could see
+(`docs/unlinked-line-duplicate-coe.md`).
+
+---
+
+## 6. Data model
+
+| Table | Role |
+|---|---|
+| `scm.purchase_returns` | Header — `return_number`, `status`, `grn_id`, `posted_at`, `company_id` |
+| `scm.purchase_return_items` | Lines — `grn_item_id` (nullable, §5), item, qty, cost |
+
+Every read is company-scoped through `requireActiveCompanyId(c)` +
+`scopeToCompanyId(...)`, returning `NOT_THIS_COMPANY` (404) rather than leaking
+that the row exists elsewhere. Unlike Delivery Return, there is **no sales-scope
+row filter** here — procurement is not scoped own+downline.
+
+---
+
+## 7. Traps, collected
+
+- **Created as POSTED.** Inventory OUT is written at create. Anything that
+  assumes a DRAFT stage is wrong.
+- **`/:id/post` is idempotent by design.** Do not "fix" it into a real
+  transition; re-writing movements double-debits inventory.
+- **`grn_item_id` is nullable and always will be** — ad-hoc lines are
+  legitimate. The guard is what keeps that from being a bypass.
+- **Tenancy check before state guard** on `/complete`, so error messages stay
+  honest.
+- **Joined to-one FKs come back as arrays** from Supabase typegen.
+- **Consignment returns are a different module.**
+- **No mobile twin.**
+
+## See also
+
+- `docs/modules/delivery-return.md` — the mirror module, same shape
+- `docs/unlinked-line-duplicate-coe.md` — why the guard exists
+- `BUG-HISTORY.md` 2026-08-04, "The two RETURN chains had the same nullable-link
+  hole"

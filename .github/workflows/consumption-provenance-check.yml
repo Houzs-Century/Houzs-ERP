@@ -1,0 +1,36 @@
+name: Consumption provenance check (read-only)
+
+# WHO wrote each consumption row on the over-consumed lots (received < consumed),
+# and whether each consuming DO still carries a line for the item. Settles the
+# question static analysis cannot: did normal shipping consume a stale lot twice
+# (the 2990 import top-up shape), did a repair double-count, or is a shipment
+# undocumented (the orphan-movement shape).
+#
+# Manual trigger only — it is a question, not a gate.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: consumption-provenance-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-consumption-provenance.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

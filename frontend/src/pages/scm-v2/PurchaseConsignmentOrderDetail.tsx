@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
-import { buildVariantSummary } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash } from '@2990s/shared';
 import {
   usePurchaseConsignmentOrderDetail,
   useUpdatePurchaseConsignmentOrderHeader,
@@ -66,6 +66,8 @@ import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -307,12 +309,13 @@ export const PurchaseConsignmentOrderDetail = () => {
 
   const headerView = headerDraft ?? headerSnapshot(po);
 
-  const handlePrint = () => {
-    import('../../vendor/scm/lib/purchase-order-pdf')
+  const deliverPrintPdf = (action: PdfAction) => {
+    return import('../../vendor/scm/lib/purchase-order-pdf')
       .then(({ generatePurchaseOrderPdf }) =>
-        generatePurchaseOrderPdf(po as never, items as never, { docTitle: 'PURCHASE CONSIGNMENT ORDER' }))
+        generatePurchaseOrderPdf(po as never, items as never, { docTitle: 'PURCHASE CONSIGNMENT ORDER', action }))
       .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(po)), [k]: v }));
@@ -485,9 +488,22 @@ export const PurchaseConsignmentOrderDetail = () => {
             </div>
             <StatusPill docType="po" status={po.status} />
             <RelationshipMapButton type="pco" id={po.id} />
-            <Button variant="ghost" size="md" onClick={handlePrint}>
+            <Button variant="ghost" size="md" onClick={print.openPreview}>
               <Printer {...ICON} /><span>Print PDF</span>
             </Button>
+            <PrintPreviewModal
+              open={print.open}
+              onClose={print.close}
+              docTitle="Purchase Consignment Order"
+              docNo={pcNo}
+              rows={[
+                { label: 'Supplier', value: po.supplier?.name ?? po.supplier?.code ?? '—' },
+                { label: 'Order date', value: po.po_date ? fmtDateOrDash(po.po_date) : '—' },
+                { label: 'Items', value: `${items.length} line${items.length === 1 ? '' : 's'}` },
+                { label: 'Goods value', value: fmtRm(grandTotal, po.currency) },
+              ]}
+              {...print.handlers}
+            />
             {(po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
               <Button variant="ghost" size="md"
                 onClick={async () => {

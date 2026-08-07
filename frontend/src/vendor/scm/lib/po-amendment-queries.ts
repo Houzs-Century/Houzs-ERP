@@ -210,7 +210,15 @@ export const useRejectPoAmendment = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string; poId?: string }) =>
-      authedFetch<{ amendment: PoAmendmentRow }>(`/po-amendments/${id}/reject`, {
+      authedFetch<{
+        amendment: PoAmendmentRow;
+        /* Rejecting a FOLLOW-UP (raised by an SO revision) means the supplier
+           will not follow the revision, so the server auto-releases the affected
+           lines' un-allocated qty to STOCK and reports it here (owner rule,
+           2026-08-06: the spec mismatch is a fact, not a decision). */
+        releasedToStock?: Array<{ poItemId: string; materialCode: string; qty: number }>;
+        releaseWarnings?: string[];
+      }>(`/po-amendments/${id}/reject`, {
         method: 'PATCH', body: JSON.stringify({ reason }),
       }),
     onSuccess: (_, vars) => invalidatePoAmendmentSideEffects(qc, vars.id, vars.poId),

@@ -1,0 +1,37 @@
+name: Align safe cleanup
+
+# Post-seed safe cleanup: copy Hookka Industries to co1, fix mangled names,
+# fill mattress thickness, sofa remap (owner map), delete LEAVING junk.
+# Idempotent. Dry-run default.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "dry-run (report only) or apply (write)"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: Safe cleanup
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          node scripts/align-safe-cleanup.mjs

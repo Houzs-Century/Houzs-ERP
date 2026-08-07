@@ -22,6 +22,8 @@ import {
   CheckCircle2,
   Send,
 } from "lucide-react";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -588,7 +590,7 @@ export function PurchaseReturnsListV2() {
 
   // Batch "Print all" — one ticked PR downloads straight; several prompt
   // combined-vs-separate.
-  const printSelectedPrs = async () => {
+  const deliverSelectedPrs = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = filtered.filter((r) => selectedIds.has(r.id));
     if (chosen.length === 0) return;
@@ -598,11 +600,14 @@ export function PurchaseReturnsListV2() {
       if (chosen.length === 1) {
         setPrintingDocs(true);
         const b = await fetchPrBundle(chosen[0]!);
-        await generatePurchaseReturnPdf(b.header as never, b.items as never);
+        await generatePurchaseReturnPdf(b.header as never, b.items as never, { action });
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      /* View / Print always render ONE document — a preview or a print run
+         is about the stack, not N separate files. Only the download exit
+         still asks combined-vs-separate. */
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} purchase returns`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -616,10 +621,11 @@ export function PurchaseReturnsListV2() {
       if (how === "one") {
         await generateCombinedPurchaseReturnPdf(bundles as never, {
           fileName: `purchase-returns-${new Date().toISOString().slice(0, 10)}.pdf`,
+          action,
         });
       } else {
         for (const b of bundles)
-          await generatePurchaseReturnPdf(b.header as never, b.items as never);
+          await generatePurchaseReturnPdf(b.header as never, b.items as never, { action });
       }
       clearSelection();
     } catch (e) {
@@ -632,6 +638,7 @@ export function PurchaseReturnsListV2() {
       setPrintingDocs(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedPrs);
   const doPost = (r: PrRow) => {
     if (window.confirm(`Post return ${r.return_number}? A credit-owed entry will be booked against the supplier.`)) {
       postPr.mutate(r.id, { onSuccess: () => setSelected(null) });
@@ -809,10 +816,17 @@ export function PurchaseReturnsListV2() {
                     variant="primary"
                     icon={<Printer size={14} />}
                     disabled={printingDocs}
-                    onClick={() => void printSelectedPrs()}
+                    onClick={batchPrint.openPreview}
                   >
                     {printingDocs ? "Printing…" : `Print all (${selectedIds.size})`}
                   </Button>
+                  <PrintPreviewBatchModal
+                    open={batchPrint.open}
+                    onClose={batchPrint.close}
+                    docTitle="Purchase Returns"
+                    docNos={filtered.filter((r) => selectedIds.has(r.id)).map((r) => r.return_number)}
+                    {...batchPrint.handlers}
+                  />
                   <Button variant="ghost" disabled={printingDocs} onClick={clearSelection}>
                     Clear
                   </Button>

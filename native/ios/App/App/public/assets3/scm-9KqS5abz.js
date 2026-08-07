@@ -1,1 +1,0 @@
-var e={MYR:`RM`,SGD:`S$`,USD:`US$`,RMB:`¥`};function t(e){let t=Number(e??0);return((Number.isFinite(t)?t:0)/100).toLocaleString(`en-MY`,{minimumFractionDigits:2,maximumFractionDigits:2})}function n(n,r=`MYR`){return`${e[r]??`${r} `}${t(n)}`}function r(e){let t=(e??``).trim().toUpperCase();return t===`CANCELLED`||t===`CANCEL`}export{n,r,t};

@@ -999,6 +999,26 @@ async function runReconstruct() {
             ON c.movement_id = m.id
          WHERE (m.movement_type = 'OUT' OR (m.movement_type = 'ADJUSTMENT' AND m.qty < 0))
            AND m.warehouse_id::text = $1 AND m.product_code = $2${byCompany ? " AND m.company_id = $3" : ""}
+           /* A CANCELLED DO's OUTs are NOT a shortfall to repair. The cancel
+              path DELETES their consumptions and zeroes their cost stamps on
+              purpose (fn_reverse_do_out steps a + b), and writes a balancing
+              add-back — so Sigma(OUT) > Sigma(consumed) is the CORRECT end state
+              for a cancelled delivery, not a deficit.
+
+              Without this, the 2026-08-04 dry-run planned to reconstruct
+              consumption rows for 2990-DO-2607-005 across three SKUs and stamp
+              RM3641.60 of COGS onto a delivery order the owner had just
+              cancelled — re-creating precisely the fault
+              check-cancelled-do-cogs.mjs exists to detect.
+
+              basis-cost mode already skips cancelled DOs by name (":SKIP —
+              CANCELLED (its OUTs were reversed; 0154 excludes it)"); the deficit
+              side never inherited that rule. */
+           AND NOT EXISTS (
+             SELECT 1 FROM scm.delivery_orders d
+              WHERE m.source_doc_type = 'DO'
+                AND d.id = m.source_doc_id
+                AND UPPER(COALESCE(d.status::text,'')) = 'CANCELLED')
          ORDER BY m.created_at, m.id`,
         byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
       deficitPlan = {

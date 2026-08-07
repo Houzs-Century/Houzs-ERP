@@ -26,8 +26,8 @@ import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { useDocumentFlow, type FlowNode, type FlowEdge } from '../../vendor/scm/lib/flow-queries';
-import type { ChainNode, AmendmentChip } from '../../components/scm-v2/DocumentRelationshipMapModal';
+import { useDocumentFlow, usePoSoCoverage, floatingSoDocNos, type FlowNode, type FlowEdge } from '../../vendor/scm/lib/flow-queries';
+import type { ChainNode, AmendmentChip, PairingKind } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useDocChoice, type DocChoiceApi } from './doc-choice';
 
 export type PoRelationshipHeader = {
@@ -57,7 +57,11 @@ const docCell = (labels: string[], plural: string, emptyDoc: string) =>
 
 /** Pure node builder for the PO chain (exported for unit tests). `soLabels`
  *  merges the graph's root-SO nodes with the note fallback (the hook does the
- *  merge); grn/pi/pr are the edge-walked nodes off THIS PO's anchor. */
+ *  merge); grn/pi/pr are the edge-walked nodes off THIS PO's anchor.
+ *  `floatingSos` ("soft until DO, hard from DO") are the SO doc numbers the
+ *  live MRP allocation currently pairs this PO with (coverage source 'mrp') —
+ *  shown, never stored: the slot floats (dashed, "~") when nothing stored
+ *  backs it, and a stored raise-link always paints the slot solid. */
 export function buildPoChainNodes(
   header: PoRelationshipHeader,
   soLabels: string[],
@@ -65,6 +69,7 @@ export function buildPoChainNodes(
   piNodes: FlowNode[],
   prNodes: FlowNode[],
   gates: { canOpenSo: boolean; canOpenGrn: boolean; canOpenPi: boolean; canOpenPr: boolean },
+  floatingSos: string[] = [],
 ): ChainNode[] {
   const gateMeta = (
     nodes: FlowNode[],
@@ -79,19 +84,31 @@ export function buildPoChainNodes(
         : nodes.length === 1
           ? 'Tap to open'
           : 'Tap to list';
+  // A floating SO that is ALSO stored (another SKU's raise-link) shows once.
+  const floatOnly = floatingSos.filter((d) => !soLabels.includes(d));
+  const allSo = [...soLabels, ...floatOnly];
+  const purelyFloating = soLabels.length === 0 && floatOnly.length > 0;
   return [
     {
       type: 'Sales Order',
-      doc: docCell(soLabels, 'sales orders', 'Not linked'),
+      doc: docCell(allSo, 'sales orders', 'Not linked'),
       meta:
-        soLabels.length === 0
+        allSo.length === 0
           ? 'Stock buy — no source SO'
           : !gates.canOpenSo
             ? 'Sales document'
-            : soLabels.length === 1
-              ? 'Tap to open'
-              : 'Tap to list',
+            : purelyFloating
+              ? allSo.length === 1
+                ? 'Live MRP pairing — tap'
+                : 'Live MRP pairings — tap'
+              : allSo.length === 1
+                ? 'Tap to open'
+                : 'Tap to list',
+      // Only a STORED link paints the slot done/green; a floating pairing is
+      // a live fact, not a record — it renders dashed via `float`.
       state: soLabels.length > 0 ? 'done' : 'pending',
+      actionable: allSo.length > 0,
+      float: purelyFloating,
     },
     {
       type: 'Purchase Order',
@@ -125,6 +142,10 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
   onNodeClick: (n: ChainNode) => boolean;
   amendments: AmendmentChip[];
   onAmendmentClick: (a: AmendmentChip) => boolean;
+  /* How this PO's SO hop is paired — 'floating' when any live MRP pairing
+     exists, 'provenance' when only stored raise-links do, null when neither.
+     The modal restyles the SO↔PO connector from it. */
+  pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
   const navigate = useNavigate();
   const notify = useNotify();
@@ -136,6 +157,15 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
 
   const poId = header?.id ?? null;
   const flow = useDocumentFlow('po', poId);
+
+  /* FLOATING pre-DO pairing ("soft until DO, hard from DO") — the SO doc
+     numbers the live MRP allocation currently assigns this PO to, read from
+     the SAME usePoSoCoverage query key the PO list drill-down and every other
+     coverage reader use. Common path = react-query cache hit; cold path = the
+     one normal coverage fetch. NEVER a new endpoint, never a computeMrp call
+     added to document-flow (owner constraint: zero new backend load). */
+  const cov = usePoSoCoverage('po', poId);
+  const floatingSos = useMemo(() => floatingSoDocNos(cov.data), [cov.data]);
 
   /* Edge-walk off this PO's anchor (see header comment): its own GRNs, then
      the invoices / returns those GRNs carry. */
@@ -166,6 +196,21 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
   const soLabels = useMemo(
     () => (soNodes.length > 0 ? soNodes.map((n) => n.label) : noteSos),
     [soNodes, noteSos],
+  );
+  // Floating SOs no stored link already names (a stored raise-link always
+  // paints the slot solid; the pairing HOP can still float — see `pairing`).
+  const floatOnlySos = useMemo(
+    () => floatingSos.filter((d) => !soLabels.includes(d)),
+    [floatingSos, soLabels],
+  );
+  const pairing = useMemo<{ kind: PairingKind } | null>(
+    () =>
+      floatingSos.length > 0
+        ? { kind: 'floating' }
+        : soLabels.length > 0
+          ? { kind: 'provenance' }
+          : null,
+    [floatingSos, soLabels],
   );
 
   /* Amendments branch off this PO — BOTH kinds (owner 2026-07-27, "这个应该有
@@ -220,28 +265,37 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
             canOpenGrn,
             canOpenPi,
             canOpenPr,
-          })
+          }, floatingSos)
         : [],
-    [header, soLabels, grnNodes, piNodes, prNodes, canOpenSo, canOpenGrn, canOpenPi, canOpenPr],
+    [header, soLabels, grnNodes, piNodes, prNodes, canOpenSo, canOpenGrn, canOpenPi, canOpenPr, floatingSos],
   );
 
   const onNodeClick = useCallback(
     (n: ChainNode): boolean => {
-      if (n.type === 'Sales Order' && soLabels.length > 0) {
+      if (n.type === 'Sales Order' && (soLabels.length > 0 || floatOnlySos.length > 0)) {
         if (!canOpenSo) {
           void notify({
             title: 'Sales Orders are not open to you',
             body:
-              `This PO was raised from ${soLabels.join(', ')}. ` +
+              (soLabels.length > 0
+                ? `This PO was raised from ${soLabels.join(', ')}. `
+                : `MRP currently pairs this PO with ${floatOnlySos.join(', ')} — a live pairing, not a stored link. `) +
               `Opening a Sales Order needs sales access — ask an admin if you need it.`,
           });
           return false;
         }
-        // Graph so-nodes navigate by doc_no (their id); note tokens are the
-        // doc numbers verbatim, so both shapes route the same way.
-        const docNo = soNodes.length > 0 ? soNodes[0]!.id : noteSos[0]!;
-        if (soLabels.length === 1) {
-          navigate(`/scm/sales-orders/${encodeURIComponent(docNo)}`);
+        /* Stored rows first (graph so-nodes navigate by doc_no — their id;
+           note tokens are the doc numbers verbatim), then the floating
+           pairings, each row saying what it is — live, never a stored link. */
+        const storedRows = soNodes.length > 0
+          ? soNodes.map((so) => ({ id: so.id, label: so.label, sub: so.status as string | null }))
+          : noteSos.map((doc) => ({ id: doc, label: doc, sub: null as string | null }));
+        const floatRows = floatOnlySos.map((doc) => ({
+          id: doc, label: `${doc} ~`, sub: 'Live MRP pairing — may change' as string | null,
+        }));
+        const rows = [...storedRows, ...floatRows];
+        if (rows.length === 1) {
+          navigate(`/scm/sales-orders/${encodeURIComponent(rows[0]!.id)}`);
           return true;
         }
         /* Several SOs, one slot. The SO list searches its own refs, not a PO
@@ -249,12 +303,13 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
            it. Graph so-nodes and note tokens are both doc numbers, so both route
            the same way. */
         openChoice({
-          title: 'Raised from more than one sales order',
-          intro: 'This PO covers several Sales Orders. Pick one to open it.',
-          docs: (soNodes.length > 0
-            ? soNodes.map((so) => ({ id: so.id, label: so.label, sub: so.status }))
-            : noteSos.map((doc) => ({ id: doc, label: doc, sub: null as string | null }))
-          ).map((d) => ({ ...d, to: `/scm/sales-orders/${encodeURIComponent(d.id)}` })),
+          title: floatRows.length === 0
+            ? 'Raised from more than one sales order'
+            : 'Paired with more than one sales order',
+          intro: floatRows.length === 0
+            ? 'This PO covers several Sales Orders. Pick one to open it.'
+            : 'Plain rows are stored raise-links; "~" rows are the live MRP pairing and may change on the next view. Pick one to open it.',
+          docs: rows.map((d) => ({ ...d, to: `/scm/sales-orders/${encodeURIComponent(d.id)}` })),
         });
         return false;
       }
@@ -323,8 +378,8 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
       }
       return false;
     },
-    [navigate, notify, openChoice, soLabels, soNodes, noteSos, grnNodes, piNodes, prNodes, canOpenSo, canOpenGrn, canOpenPi, canOpenPr],
+    [navigate, notify, openChoice, soLabels, floatOnlySos, soNodes, noteSos, grnNodes, piNodes, prNodes, canOpenSo, canOpenGrn, canOpenPi, canOpenPr],
   );
 
-  return { nodes, onNodeClick, amendments, onAmendmentClick, choice, openChoice, closeChoice, pickChoice };
+  return { nodes, onNodeClick, amendments, onAmendmentClick, pairing, choice, openChoice, closeChoice, pickChoice };
 }

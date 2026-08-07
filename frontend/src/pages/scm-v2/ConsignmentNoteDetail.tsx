@@ -55,6 +55,8 @@ import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -315,12 +317,13 @@ export const ConsignmentNoteDetail = () => {
   const isLocked = lockedStatuses.includes(header.status);
   const isCancelled = header.status === 'CANCELLED';
 
-  const handlePrint = () => {
-    import('../../vendor/scm/lib/delivery-order-pdf')
+  const deliverPrintPdf = (action: PdfAction) => {
+    return import('../../vendor/scm/lib/delivery-order-pdf')
       .then(({ generateDeliveryOrderPdf }) =>
-        generateDeliveryOrderPdf(header as never, items as never, { docTitle: 'CONSIGNMENT NOTE', docNoLabel: 'CN No', showPicking: false }))
+        generateDeliveryOrderPdf(header as never, items as never, { docTitle: 'CONSIGNMENT NOTE', docNoLabel: 'CN No', showPicking: false, action }))
       .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   const handleCancel = async () => {
     if (!(await askConfirm({
@@ -355,9 +358,22 @@ export const ConsignmentNoteDetail = () => {
           </div>
           <StatusPill docType="do" status={header.status} />
           <RelationshipMapButton type="cdo" id={id} />
-          <Button variant="ghost" size="md" onClick={handlePrint}>
+          <Button variant="ghost" size="md" onClick={print.openPreview}>
             <Printer size={15} strokeWidth={1.75} /><span>Print PDF</span>
           </Button>
+          <PrintPreviewModal
+            open={print.open}
+            onClose={print.close}
+            docTitle="Consignment Note"
+            docNo={header.do_number}
+            rows={[
+              { label: 'Consignee', value: header.debtor_name || '—' },
+              { label: 'Note date', value: fmtDateOrDash(header.do_date) },
+              { label: 'Items', value: `${header.line_count} line${header.line_count === 1 ? '' : 's'}` },
+              { label: 'Goods value', value: fmtRm(header.local_total_centi, header.currency) },
+            ]}
+            {...print.handlers}
+          />
           {!isCancelled && !isEditing && (
             <Button variant="ghost" size="md"
               onClick={() => navigate(`/scm/consignment-returns/new?fromConsignmentNote=${id}`)}>

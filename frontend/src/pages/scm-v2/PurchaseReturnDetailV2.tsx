@@ -38,6 +38,8 @@ import {
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { RelationshipMapButton } from "../../vendor/scm/components/RelationshipMapButton";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 
 type PrStatus = "DRAFT" | "POSTED" | "COMPLETED" | "CANCELLED" | string;
@@ -267,11 +269,11 @@ export function PurchaseReturnDetailV2() {
   // Render + download the PR PDF via the shared jspdf generator (client-side),
   // mirroring the V1 PurchaseReturnDetail handler. The old `?print=1`
   // navigation was dead — nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!purchaseReturn) return;
-    import("../../vendor/scm/lib/purchase-return-pdf")
+    return import("../../vendor/scm/lib/purchase-return-pdf")
       .then(({ generatePurchaseReturnPdf }) =>
-        generatePurchaseReturnPdf(purchaseReturn as never, items as never)
+        generatePurchaseReturnPdf(purchaseReturn as never, items as never, { action })
       )
       .catch((e) =>
         notify({
@@ -281,6 +283,8 @@ export function PurchaseReturnDetailV2() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseReturn);
   const doPost = () => {
     if (!purchaseReturn) return;
     if (window.confirm("Post this purchase return? A credit-owed entry will be booked against the supplier.")) {
@@ -462,7 +466,7 @@ export function PurchaseReturnDetailV2() {
                 (type 'pr'), not a hand-built chain. */}
             <RelationshipMapButton type="pr" id={purchaseReturn.id} style={{ height: 34 }} />
             <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>History</Button>
-            <Button variant="secondary" icon={<Printer size={14} />} onClick={goPrintPdf}>Print PDF</Button>
+            <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
             {canCancel && <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel return</Button>}
             {canPost && <Button variant="secondary" icon={<Send size={14} />} onClick={doPost}>Post</Button>}
             {canComplete && <Button variant="secondary" icon={<CheckCircle2 size={14} />} onClick={doComplete}>Complete</Button>}
@@ -591,7 +595,7 @@ export function PurchaseReturnDetailV2() {
               <Edit3 size={16} /> Edit
             </button>
           )}
-          <button type="button" onClick={goPrintPdf} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Print PDF">
+          <button type="button" onClick={print.openPreview} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Print PDF">
             <Printer size={17} />
           </button>
           <button type="button" onClick={goCall} disabled={!purchaseReturn.supplier?.phone} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft disabled:opacity-40" aria-label={purchaseReturn.supplier?.phone ? `Call ${purchaseReturn.supplier.phone}` : "No phone on file"}>
@@ -599,6 +603,20 @@ export function PurchaseReturnDetailV2() {
           </button>
         </div>
       </div>
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Purchase Return"
+        docNo={purchaseReturn.return_number}
+        rows={[
+          { label: "Supplier", value: supplierNameOf(purchaseReturn) },
+          { label: "Against", value: sourceOf(purchaseReturn) },
+          { label: "Return date", value: fmtDate(purchaseReturn.return_date) },
+          { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
+          { label: "Refund", value: fmtMoney(refund, purchaseReturn.currency) },
+        ]}
+        {...print.handlers}
+      />
     </div>
   );
 }

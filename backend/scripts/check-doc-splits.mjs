@@ -22,7 +22,24 @@
 // (CLAUDE.md). A fact that lives only in production is a workflow he clicks, not
 // a SELECT pasted into chat.
 //
-// READ-ONLY. Two SELECTs, no DDL, no writes, no transaction.
+// CORRECTED 2026-08-04 — THE FIRST VERSION HAD A BLIND SPOT THAT MATTERED.
+// It joined children to the parent through delivery_order_items.so_item_id, so a
+// child whose lines carry NO link was invisible to it. Asked about
+// 2990-SO-2606-019 it answered "1 Delivery Order" while TWO delivery orders,
+// both DISPATCHED, both RM4,890, identical line for line, existed against that
+// SO. The owner had to point at the screen to disprove the check.
+//
+// That failure mode is the dangerous one: a duplicate created by an UNLINKED
+// line is exactly the case a link-based query cannot see, and it is also the
+// case that bypasses the remaining() ceiling — so the ERP itself under-counts it
+// too. The Sales Invoice side already names this vector ("the link was dropped,
+// so both the ceiling and the pool are bypassed"); the DO side had no such
+// guard and this check inherited the same blindness.
+//
+// Children are now found by the HEADER reference as well as the line link, and
+// unlinked lines are reported explicitly.
+//
+// READ-ONLY. No DDL, no writes, no transaction.
 //
 // EXITS 0 FOR EVERY LEGITIMATE ANSWER — including "these are duplicates". A red
 // job reads as "the check broke"; the ANSWER is the output. Only an unreachable
@@ -97,6 +114,45 @@ try {
        ORDER BY si.item_code, d.created_at NULLS FIRST
     `;
     report(doc, "Sales Order", "Delivery Orders", rows);
+
+    /* THE HALF THE LINE-LINK CANNOT SEE. Every DO whose HEADER names this SO,
+       with its lines and whether each one is linked. A DO built from unlinked
+       lines never appears above — it takes no quantity from any SO line — yet
+       its stock DID leave, because deductInventoryForDo reads the DO's own
+       lines, not the link. Two such DOs are a real double deduction that the
+       remaining() formula cannot detect. */
+    const headerDos = await pg`
+      SELECT d.id, d.do_number, d.status, d.do_date
+        FROM scm.delivery_orders d
+       WHERE d.so_doc_no = ${doc}
+       ORDER BY d.created_at
+    `;
+    console.log(`\nEVERY Delivery Order whose HEADER names ${doc}: ${headerDos.length}`);
+    for (const d of headerDos) console.log(`  ${pad(d.do_number, 22)} ${pad(d.status ?? "", 12)} ${d.do_date ?? ""}`);
+
+    if (headerDos.length > 0) {
+      const ids = headerDos.map((d) => d.id);
+      const lines = await pg`
+        SELECT d.do_number, di.item_code, di.qty, di.so_item_id
+          FROM scm.delivery_order_items di
+          JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+         WHERE di.delivery_order_id IN ${pg(ids)}
+         ORDER BY d.do_number, di.item_code
+      `;
+      let unlinked = 0;
+      console.log(`\nTheir lines (UNLINKED = takes no SO quantity, but its stock still left):`);
+      for (const l of lines) {
+        const tag = l.so_item_id ? "linked" : "UNLINKED";
+        if (!l.so_item_id) unlinked++;
+        console.log(`  ${pad(l.do_number, 22)} ${pad(l.item_code ?? "", 28)} qty ${pad(num(l.qty), 5)} ${tag}`);
+      }
+      if (unlinked > 0) {
+        console.log(`\nFINDING: ${unlinked} line(s) carry NO so_item_id.`);
+        console.log("They deducted stock but count toward no Sales Order line, so the");
+        console.log("remaining() ceiling never saw them. If another DO covers the same");
+        console.log("goods, the stock has been deducted twice and nothing above will say so.");
+      }
+    }
   } else {
     /* qty_accepted, not qty: a GRN line records what was ACCEPTED, and rejected
        goods never entered stock and must not count against the PO. */

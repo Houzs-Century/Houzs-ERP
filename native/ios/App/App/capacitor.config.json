@@ -10,5 +10,9 @@
 			"erp.houzscentury.com"
 		]
 	},
-	"packageClassList": []
+	"packageClassList": [
+		"BackgroundGeolocation",
+		"PushNotificationsPlugin",
+		"NativeBiometric"
+	]
 }

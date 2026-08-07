@@ -50,6 +50,7 @@ import {
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
+import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import {
   SOFA_MODULES,
   resolveSofaQuickPresets,
@@ -233,6 +234,10 @@ const CATEGORIES: { value: MfgCategory | 'all'; label: string }[] = [
   { value: 'BEDFRAME', label: 'Bedframe' },
   { value: 'SOFA', label: 'Sofa' },
   { value: 'MATTRESS', label: 'Mattress' },
+  { value: 'BEDLINES', label: 'Bedlines' },
+  { value: 'DINING', label: 'Dining' },
+  { value: 'DIFFUSER', label: 'Diffuser' },
+  { value: 'CARPET', label: 'Carpet' },
   { value: 'SERVICE', label: 'Service' },
 ];
 
@@ -911,20 +916,26 @@ const SkuMasterTab = () => {
         </div>
       </div>
 
-      {/* PR #39 + #107 — Model filter chips, available on SOFA / BEDFRAME /
+      {/* PR #39 + #107 — Model filter, available on SOFA / BEDFRAME /
           MATTRESS. ACCESSORY + SERVICE skip — no base_model on those rows.
-          PR — Commander 2026-05-28 ("100个 model 不是排到尾巴去了吗"): when
-          the Model count exceeds MODEL_PILLS_VISIBLE_LIMIT we collapse the
-          extras behind a "More (N) ▼" pill that opens a searchable popover.
-          The currently-selected Model is always promoted into the visible
-          row so commander can see the active filter without opening the
-          popover. */}
+          Owner 2026-08-07 ("SKU side also ah"): the pill rail (12 inline +
+          "More (N)" popover) is retired for the system-standard
+          SearchableSelect — one type-to-filter control, "All models" as the
+          empty pick, same idiom as the Variants tab. */}
       {supportsModelFilter && categoryModels.length > 1 && (
-        <ModelFilterRail
-          models={categoryModels}
-          activeModel={modelFilter}
-          onChange={setModelFilter}
-        />
+        <div style={{ marginTop: 'var(--space-2)', width: 300, maxWidth: '100%' }}>
+          <SearchableSelect
+            value={modelFilter === 'all' ? '' : modelFilter}
+            onChange={(v) => setModelFilter(v || 'all')}
+            options={[
+              { value: '', label: `All models (${categoryModels.length})` },
+              ...categoryModels.map((m) => ({ value: m, label: m })),
+            ]}
+            placeholder={`Search ${categoryModels.length} models…`}
+            className="block w-full rounded-md border border-border bg-surface py-1.5 px-2.5 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            ariaLabel="Model filter"
+          />
+        </div>
       )}
 
       <p className={styles.eyebrow}>
@@ -1447,230 +1458,6 @@ const CategoryChip = ({
   </button>
 );
 
-/* ════════════════════════════════════════════════════════════════════════
-   ModelFilterRail — visible pills + "More (N) ▼" popover with search.
-
-   PR — Commander 2026-05-28 ("100个 model 不是排到尾巴去了吗"). At 4 Models
-   the row reads fine. At 100 the pills overflow horizontally off the page.
-   This wrapper keeps the first MODEL_PILLS_VISIBLE_LIMIT pills inline; the
-   rest hide behind a popover with a search input + scrolling list. The
-   active Model is always promoted into the visible row so commander can
-   see what's filtering without opening the popover.
-
-   Implementation notes:
-     - Click-outside closes the popover (mousedown listener on document).
-     - Esc also closes; search input autofocuses on open.
-     - No portal — popover positions absolutely under the "More" pill via
-       the wrapper's `position: relative`. Good enough at this density.
-   ════════════════════════════════════════════════════════════════════════ */
-
-const MODEL_PILLS_VISIBLE_LIMIT = 12;
-/* Perf cap — bound the searchable overflow dropdown's rendered rows so a large
-   model pool can't freeze the menu. Every model stays reachable: the search
-   input filters first, so any model surfaces within the cap. Render-only. */
-const MODEL_OVERFLOW_RENDER_CAP = 60;
-
-const ModelFilterRail = ({
-  models,
-  activeModel,
-  onChange,
-}: {
-  models: string[];
-  activeModel: string;
-  onChange: (m: string) => void;
-}) => {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
-
-  // Decide which pills go inline vs into the "More" popover. The active
-  // Model (non-"all") is always promoted into the inline set.
-  const { inline, overflow } = useMemo(() => {
-    if (models.length <= MODEL_PILLS_VISIBLE_LIMIT) {
-      return { inline: models, overflow: [] as string[] };
-    }
-    const head = models.slice(0, MODEL_PILLS_VISIBLE_LIMIT);
-    const tail = models.slice(MODEL_PILLS_VISIBLE_LIMIT);
-    if (activeModel !== 'all' && tail.includes(activeModel)) {
-      // Promote the active model into the visible row — swap with the last
-      // inline pill so the inline count stays stable.
-      const promoted = [...head.slice(0, -1), activeModel];
-      const demoted = [head[head.length - 1]!, ...tail.filter((m) => m !== activeModel)];
-      return { inline: promoted, overflow: demoted };
-    }
-    return { inline: head, overflow: tail };
-  }, [models, activeModel]);
-
-  // Close popover on click outside + Esc.
-  useEffect(() => {
-    if (!open) return;
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (!wrapperRef.current) return;
-      if (e.target instanceof Node && !wrapperRef.current.contains(e.target)) {
-        setOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('mousedown', onDocMouseDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDocMouseDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-
-  const filteredOverflow = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return overflow;
-    return overflow.filter((m) => m.toLowerCase().includes(q));
-  }, [overflow, search]);
-
-  return (
-    <div
-      ref={wrapperRef}
-      className={styles.categoryChips}
-      style={{
-        marginTop: 'var(--space-2)',
-        flexWrap: 'wrap',
-        position: 'relative',
-        rowGap: 'var(--space-2)',
-      }}
-    >
-      <CategoryChip
-        active={activeModel === 'all'}
-        onClick={() => onChange('all')}
-      >
-        All Models
-      </CategoryChip>
-      {inline.map((m) => (
-        <CategoryChip
-          key={m}
-          active={activeModel === m}
-          onClick={() => onChange(m)}
-        >
-          {m}
-        </CategoryChip>
-      ))}
-      {overflow.length > 0 && (
-        <>
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            aria-haspopup="listbox"
-            style={{
-              fontFamily: 'var(--font-button)',
-              fontSize: 'var(--fs-13)',
-              fontWeight: 600,
-              letterSpacing: '0.02em',
-              padding: 'var(--space-2) var(--space-3)',
-              borderRadius: 'var(--radius-pill)',
-              border: '1px solid #d6d9d2',
-              background: '#fff',
-              color: '#11140f',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-          >
-            <span>More ({overflow.length})</span>
-            <ChevronDown size={12} strokeWidth={1.75} />
-          </button>
-          {open && (
-            <div
-              role="listbox"
-              style={{
-                position: 'absolute',
-                top: 'calc(100% + 4px)',
-                right: 0,
-                zIndex: 50,
-                width: 280,
-                maxHeight: 360,
-                display: 'flex',
-                flexDirection: 'column',
-                background: '#fff',
-                border: '1px solid #c2c6bd',
-                borderRadius: 'var(--radius-md)',
-                boxShadow: 'var(--shadow-2)',
-                padding: 'var(--space-2)',
-              }}
-            >
-              <input
-                autoFocus
-                type="search"
-                value={search}
-                placeholder="Search models…"
-                onChange={(e) => setSearch(e.target.value)}
-                style={{
-                  fontFamily: 'var(--font-sans)',
-                  fontSize: 'var(--fs-13)',
-                  background: '#f4f6f3',
-                  border: '1px solid #d6d9d2',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: '4px 8px',
-                  outline: 'none',
-                  marginBottom: 'var(--space-2)',
-                }}
-              />
-              <div style={{ overflowY: 'auto', flex: 1 }}>
-                {filteredOverflow.length === 0 && (
-                  <p style={{
-                    fontSize: 'var(--fs-12)',
-                    color: '#767b6e',
-                    padding: 'var(--space-2)',
-                    textAlign: 'center',
-                  }}>
-                    No models match “{search}”.
-                  </p>
-                )}
-                {filteredOverflow.slice(0, MODEL_OVERFLOW_RENDER_CAP).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    role="option"
-                    aria-selected={activeModel === m}
-                    onClick={() => {
-                      onChange(m);
-                      setOpen(false);
-                      setSearch('');
-                    }}
-                    style={{
-                      width: '100%',
-                      textAlign: 'left',
-                      fontFamily: 'var(--font-sans)',
-                      fontSize: 'var(--fs-13)',
-                      padding: '4px var(--space-2)',
-                      background: activeModel === m ? '#f4f6f3' : 'transparent',
-                      border: 'none',
-                      borderRadius: 'var(--radius-sm)',
-                      color: '#11140f',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {m}
-                  </button>
-                ))}
-                {filteredOverflow.length > MODEL_OVERFLOW_RENDER_CAP && (
-                  <p style={{
-                    fontSize: 'var(--fs-11)',
-                    color: '#767b6e',
-                    padding: 'var(--space-2)',
-                    textAlign: 'center',
-                  }}>
-                    Showing first {MODEL_OVERFLOW_RENDER_CAP} of {filteredOverflow.length} — keep typing to narrow.
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-};
 
 /* ════════════════════════════════════════════════════════════════════════
    Maintenance tab
@@ -4103,7 +3890,7 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
   // Branding datalist — maintenance pool first, DISTINCT fallback. Free text
   // stays possible (datalist, not a hard select) so legacy values aren't blocked.
   const brandingPool = useBrandingPool();
-  type Cat = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'MATTRESS' | 'SERVICE';
+  type Cat = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'MATTRESS' | 'BEDLINES' | 'DINING' | 'DIFFUSER' | 'CARPET' | 'SERVICE';
   /* 2990 is a trading company — no in-house manufacturing. Production-time
      tracking dropped (was HOOKKA legacy). DB column production_time_minutes
      stays for now but the UI no longer collects it. */

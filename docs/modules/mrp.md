@@ -14,6 +14,55 @@ persistence and NO stored SO<->PO lock.
 
 ---
 
+## Decision (owner, 2026-08-06): soft until DO, hard from DO
+
+Before a Delivery Order exists, ALL supply-demand matching belongs to the
+floating MRP allocator — pooled by (warehouse, item_code, variant_key),
+constrained by one-batch-per-SOFA-set (bedframes exempt), ordered by delivery
+date then doc_no. Nothing persisted before the DO may bind execution:
+`purchase_order_items.so_item_id` and the mig-0235 allocation sub-lines are
+**procurement provenance** — they record why we bought, they are displayed and
+audited, and they influence NO cap, NO batch expectation, NO coverage
+precedence.
+
+At DO creation the allocator decides binding **live** — including which incoming
+PO batch a ship-before-arrival commits to — and records it on the DO line
+(`committed_po_batch_no`, mig 0230). From that moment everything is anchored
+history: committed batches, OUT movements, lot consumptions, COGS, delivered
+attribution. Post-DO records are never recomputed from provenance, and
+provenance is never "hardened" into them.
+
+A stored-link-vs-delivered divergence is therefore NOT a defect; a double-SERVE
+in the delivered ledger IS. Do not reintroduce the stored link into any
+execution path — that is the pre-2026-08 model this decision retires, and the
+parked branch `wip/harden-so-po-link-parked` (which hardens the MRP pick INTO
+the link) is formally ABANDONED by this decision; do not resurrect it.
+
+Rollout is staged (lenses/docs → DO-time live allocator → pooled caps →
+display demotion); until every stage lands, the transitional guard remains:
+rejecting an SO-revision follow-up auto-releases the PO to STOCK.
+
+
+
+### Why — the owner's business case (2026-08-06, verbatim intent)
+
+Customise moves from Make-to-Order to **Make-to-Stock**, possible because every
+SKU now carries its variant identity — a PO can order spot stock against a
+specific (SKU, variant), and an incoming SO simply gets allocated.
+
+1. **Cheaper procurement** — order ahead in bulk, negotiate the supplier down.
+2. **No dead-stock risk from mistakes** — a mis-ordered spec is not dead goods:
+   clear the order and the PO's units re-assign to the next identical demand
+   automatically.
+3. **Automated matching** — no more CS hand-matching after a mistake; sell the
+   identical thing and the SO auto-assigns on open, straight to READY.
+4. **Delivery flexibility** — spot stock ships early when the customer wants
+   it; a rush order takes from the pool and the next PO backfills.
+
+Every surface must present this model: the execution chains (SO→DO→SI,
+PO→GRN→PI) are anchored facts; every pre-DO PO↔SO pairing is floating and
+visibly live — including the Relationship Map, which "会跳动" by design.
+
 ## 1. The one engine and its consumers
 
 `computeMrp(sb, opts)` is called by every surface that answers "what covers

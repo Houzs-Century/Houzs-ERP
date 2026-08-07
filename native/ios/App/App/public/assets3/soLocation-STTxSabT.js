@@ -1,1 +1,0 @@
-var e=e=>{let t=(e??``).trim();return t===``?null:t},t=t=>{let n=e(t?.warehouse_name);return n?{label:n,isWarehouse:!0}:{label:e(t?.sales_location),isWarehouse:!1}};export{t};

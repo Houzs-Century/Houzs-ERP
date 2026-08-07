@@ -60,14 +60,16 @@ describe("executable route contract", () => {
       "/portal/supplier/:token",
       "/reset/:token",
       "/invite/:token",
+      "/privacy",
     ]);
     const mountedPublic = [...`${mainSource}\n${portalSource}`.matchAll(/path="([^"]+)"/g)]
       .map((match) => match[1])
       .filter((path) => path !== "*");
     expect([...new Set(["/survey/:token", ...mountedPublic])].sort())
       .toEqual([...PUBLIC_ROUTE_PATTERNS].sort());
-    // 148 since 2026-08-03 — see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(148);
+    // 149 since 2026-08-06: /privacy, the App Store's policy URL.
+    // (148 since 2026-08-03 — see the staff-route count above.)
+    expect(ROUTE_CONTRACT).toHaveLength(149);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

@@ -202,23 +202,41 @@ select.appearance-none:focus {
 }
 
 /* ──────────────────────────────────────────────────────────
-   Org Chart export — print only the reporting tree. The "Export"
-   button calls window.print(); these rules hide the rest of the
-   app so the browser's "Save as PDF" / paper print captures just
-   the chart. visibility (not display) keeps the tree's own layout
-   intact; the on-screen zoom transform is reset so the export is
-   always 1:1, and the scroll container is unclipped so a wide tree
-   prints in full.
+   Printing — the app hides everything and reveals ONE opted-in
+   region, so a page must name what it prints.
+
+   `.org-print-area` was written for the Org Chart export and was the
+   ONLY thing the browser could ever see: every other window.print()
+   in the app (the fleet run sheet, the supplier portal case, the SO
+   detail-listing shell) printed a BLANK sheet, because `body *` hid
+   their content and nothing revealed it again. `.print-area` is the
+   generic name for that opt-in; the org-chart class stays as its
+   zoom-aware special case.
+
+   visibility (not display) keeps the region's own layout intact; the
+   on-screen zoom transform is reset so the export is always 1:1, and
+   the scroll container is unclipped so wide content prints in full.
+   `.no-print` blanks screen-only chrome INSIDE a print area (the
+   toolbars those pages already marked up, against a rule that never
+   existed).
    ────────────────────────────────────────────────────────── */
 @media print {
   body * {
     visibility: hidden;
   }
   .org-print-area,
-  .org-print-area * {
+  .org-print-area *,
+  .print-area,
+  .print-area * {
     visibility: visible;
   }
-  .org-print-area {
+  .no-print,
+  .no-print * {
+    visibility: hidden !important;
+    display: none !important;
+  }
+  .org-print-area,
+  .print-area {
     position: absolute;
     left: 0;
     top: 0;

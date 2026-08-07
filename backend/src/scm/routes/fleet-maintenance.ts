@@ -1012,14 +1012,30 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
 });
 
 // ── GET /reminders — fleet-wide actionable expiries, most urgent first ───────
-fleetMaintenance.get("/reminders", requireHouzsPerm("fleet.read"), async (c) => {
-  const sb = c.get("supabase");
+// The computation is EXPORTED for the daily push job
+// (services/pushFleetReminders.ts) — the module guide has always called this
+// endpoint "the seam a future notification job calls". One computation, two
+// consumers; the route stays the single place the rules live.
+export type FleetReminderItem = {
+  vehicleId: string;
+  plate: string;
+  docType: ComplianceDocType;
+  expiryDate: string | null;
+  daysRemaining: number | null;
+  reminderLevel: string;
+  tone: string;
+  result: unknown;
+};
+
+export async function computeFleetReminders(
+  sb: { from: (t: string) => { select: (cols: string) => any } },
+): Promise<{ ok: true; today: string; reminders: FleetReminderItem[] } | { ok: false; reason: string }> {
   const today = todayMyt();
   const [lorriesR, vaultR] = await Promise.all([
     inHouseLorries(sb, "id, plate, warehouse_id, active, road_tax_expiry, insurance_expiry, puspakom_expiry, type, is_internal, model, notes"),
     sb.from("lorry_compliance_documents").select("*"),
   ]);
-  if (lorriesR.error || vaultR.error) return c.json({ error: "load_failed", reason: (lorriesR.error || vaultR.error)?.message }, 500);
+  if (lorriesR.error || vaultR.error) return { ok: false, reason: (lorriesR.error || vaultR.error)?.message ?? "load_failed" };
   const lorries = (lorriesR.data ?? []) as Lorry[];
   const vaultByLorry = new Map<string, VaultRow[]>();
   for (const v of (vaultR.data ?? []) as VaultRow[]) {
@@ -1027,7 +1043,7 @@ fleetMaintenance.get("/reminders", requireHouzsPerm("fleet.read"), async (c) => 
     list.push(v);
     vaultByLorry.set(v.lorry_id, list);
   }
-  const reminders: Array<Record<string, unknown>> = [];
+  const reminders: FleetReminderItem[] = [];
   for (const l of lorries) {
     const { compliance } = currentByType(l, vaultByLorry.get(l.id) ?? [], today);
     for (const type of COMPLIANCE_DOC_TYPES) {
@@ -1036,8 +1052,14 @@ fleetMaintenance.get("/reminders", requireHouzsPerm("fleet.read"), async (c) => 
       reminders.push({ vehicleId: l.id, plate: l.plate, docType: type, expiryDate: d.expiryDate, daysRemaining: d.daysRemaining, reminderLevel: d.reminderLevel, tone: d.tone, result: d.result });
     }
   }
-  reminders.sort((a, b) => ((a.daysRemaining as number | null) ?? 1e9) - ((b.daysRemaining as number | null) ?? 1e9));
-  return c.json({ today, reminders });
+  reminders.sort((a, b) => (a.daysRemaining ?? 1e9) - (b.daysRemaining ?? 1e9));
+  return { ok: true, today, reminders };
+}
+
+fleetMaintenance.get("/reminders", requireHouzsPerm("fleet.read"), async (c) => {
+  const r = await computeFleetReminders(c.get("supabase"));
+  if (!r.ok) return c.json({ error: "load_failed", reason: r.reason }, 500);
+  return c.json({ today: r.today, reminders: r.reminders });
 });
 
 // ── POST /vehicles/:id/compliance — APPEND a vault renewal (never overwrite) ─

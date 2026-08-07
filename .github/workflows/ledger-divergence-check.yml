@@ -1,0 +1,41 @@
+name: Ledger divergence check (read-only)
+
+# Every stock bucket where the MOVEMENT ledger and the LOT ledger disagree,
+# catalogue-wide, keyed exactly as MRP allocates — so a row here is an MRP row
+# whose supply figure cannot be relied on.
+#
+# It says WHICH buckets disagree, never which side is right: the repo has
+# evidence both ways (2026-08-04 the lots were wrong, 2026-08-05 the movements
+# were). Settle each one with "Reconcile a SKU", which walks the receipts and
+# shipments and states what the documents require.
+#
+# Manual trigger only — it is a question, not a gate.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: ledger-divergence-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-ledger-divergence.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { postScanLearningSample, reportScanLearningSkipped } from "../vendor/scm/lib/scan-learning";
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch, parseSaveProblems } from "../vendor/scm/lib/authed-fetch";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
@@ -192,6 +193,10 @@ type SoHeader = {
   version: number;
   debtor_name: string | null;
   status: string | null;
+  /* The staff row this order is credited to. Served by the detail route and read
+     by MobileSODetail already; this form was typed without it, which is part of
+     why it never seeded the picker. */
+  salesperson_id: string | number | null;
   phone: string | null;
   email: string | null;
   ref: string | null;
@@ -908,11 +913,20 @@ export function MobileNewSO({
         setOrigCity(h.city ?? "");
         setOrigAddress1(h.address1 ?? "");
         setOrigAddress2(h.address2 ?? "");
-        /* The pristine baseline — the SAME builder save() uses, fed the values
-           just seeded above, so an untouched form diffs to {}. salespersonId is
-           seeded to "" here exactly as the picker is (this form never seeds it
-           from the row), and "" maps to the same null save() would send, so an
-           untouched picker is not dirty and salesperson_id is left alone. */
+        /* SEED THE PICKER FROM THE ROW. Owner, 2026-08-05, on an order whose
+           salesperson is Pei Fen: "当我点选 ID 的时候，跳出第一个人的时候，他就
+           直接变成我的名字了，那么奇怪".
+           The form used to leave salespersonId as "" on edit, and "" renders as
+           "{me} (me)" — the first option in the picker. So every edit screen
+           claimed the order was the CURRENT user's, whoever actually sold it.
+           The stored value was safe (an untouched picker sends null and
+           salesperson_id is left alone), but the screen said otherwise, and an
+           operator "correcting" what they saw would have reassigned a colleague's
+           sale to themselves.
+           Seeding it means the picker shows the truth. The pristine baseline
+           below is seeded to the SAME value, so an untouched picker still diffs
+           to {} and still sends nothing. */
+        setSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
         originalHeaderPatchRef.current = soHeaderPatchFrom({
           name: h.debtor_name ?? "",
           custRef: h.customer_so_no ?? h.ref ?? "",
@@ -934,7 +948,9 @@ export function MobileNewSO({
           ecName: h.emergency_contact_name ?? "",
           ecPhone: toE164(h.emergency_contact_phone),
           ecRel: h.emergency_contact_relationship ?? "",
-          salespersonId: null,
+          /* Matches the seed above, not a hard null: the baseline has to describe
+             the form as it now stands, or a form nobody touched reads as dirty. */
+          salespersonId: h.salesperson_id != null ? String(h.salesperson_id) : null,
         });
         const liveItems = (detail.items ?? []).filter((it) => !it.cancelled);
         setOrigItems(liveItems);
@@ -1348,7 +1364,12 @@ export function MobileNewSO({
      exactly (single logic layer); the backend keeps corrected vs accepted-as-is
      apart because they teach different things (scan-so.ts SAMPLE_* header). */
   const maybeLearnFromScan = () => {
-    if (!fromScan || !scanSampleId || !scanAiOriginal) return;
+    if (!fromScan) return;
+    /* A scan that teaches nothing used to return here in silence — the pool
+       stays empty and there is no record of why. 40 scans / 0 confirmations
+       made that ambiguity the whole question. */
+    if (!scanSampleId) { reportScanLearningSkipped('no-sample-id', 'mobile'); return; }
+    if (!scanAiOriginal) { reportScanLearningSkipped('no-ai-original', 'mobile'); return; }
     const ai = scanAiOriginal;
     const optMatch = (v: string) => (v ? { value: v, confidence: 1, reason: "operator-confirmed" } : null);
     const norm = (s: string | null | undefined) => (s ?? "").trim();
@@ -1418,10 +1439,16 @@ export function MobileNewSO({
       }),
     };
 
-    void authedFetch(`/scan-so/samples/${scanSampleId}/confirm`, {
-      method: "POST",
-      body: JSON.stringify({ corrected, salesperson: scanSalesperson || null, accepted: !changed }),
-    }).catch(() => { /* few-shot learning is best-effort — never blocks save */ });
+    /* Still best-effort — it never blocks the save. What changed is that a
+       4xx/5xx no longer vanishes into an empty arrow function (Hookka 5ea07668:
+       ".catch only sees a NETWORK failure — a 403, 404 or 500 resolves normally
+       and was thrown away unread"). */
+    void postScanLearningSample(
+      authedFetch,
+      scanSampleId,
+      { corrected, salesperson: scanSalesperson || null, accepted: !changed },
+      'mobile',
+    );
   };
 
   /* Post-create payment recording — records each SLIP-BACKED row AFTER the SO

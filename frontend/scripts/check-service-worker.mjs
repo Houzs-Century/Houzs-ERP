@@ -177,4 +177,37 @@ if (mutation !== undefined) {
   process.exit(1);
 }
 
-console.log(`[service-worker] PASS ${version}: stamped cache, code/API isolation, fresh/offline shell, mutation bypass.`);
+// A print preview is a DOCUMENT path served from its own cache. Two invariants:
+//
+//   • the probe must answer with the sentinel header — it is the only signal the
+//     page has that this route exists. Without it the page falls back to a blob
+//     tab: still correct, but the address bar goes back to being a GUID.
+//   • a MISS must fail honestly. This path is a navigation, so if it ever fell
+//     through to navigationNetworkFirst the operator would be handed the ERP app
+//     shell where a PDF was expected — the same class of bug this file already
+//     guards against for code URLs.
+const probe = await dispatch(new Request("https://erp.houzscentury.com/print-preview/__probe"));
+if (!(probe instanceof Response) || probe.headers.get("X-Houzs-Print-Preview") !== "1") {
+  console.error("[service-worker] the print-preview probe did not answer with its sentinel header.");
+  process.exit(1);
+}
+cachedResponse = null; // nothing stored under this name — the expiry case
+context.fetch = async () => html.clone(); // ...and the network would offer the shell
+const missedPreview = await dispatch({
+  url: "https://erp.houzscentury.com/print-preview/DO-1.pdf",
+  method: "GET",
+  mode: "navigate",
+  destination: "document",
+});
+if (!(missedPreview instanceof Response) || missedPreview.status !== 404) {
+  console.error(
+    `[service-worker] an expired print preview returned ${
+      missedPreview instanceof Response ? missedPreview.status : "no response"
+    } instead of an honest 404 — the app shell can reach a PDF tab.`,
+  );
+  process.exit(1);
+}
+
+console.log(
+  `[service-worker] PASS ${version}: stamped cache, code/API isolation, fresh/offline shell, print-preview isolation, mutation bypass.`,
+);

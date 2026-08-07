@@ -1,1 +1,0 @@
-var e={DRAFT:`Draft`,SUBMITTED:`Confirmed`,PARTIALLY_RECEIVED:`Partially Received`,RECEIVED:`Received`,CANCELLED:`Cancelled`};function t(t){return e[t]??t.replace(/_/g,` `)}function n(e,t){let n=String(e??``),r=Number(t??1);return Number.isFinite(r)&&r>1?`${n}_R${r-1}`:n}export{t as n,n as t};

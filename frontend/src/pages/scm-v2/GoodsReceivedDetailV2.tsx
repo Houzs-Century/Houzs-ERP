@@ -34,6 +34,8 @@ import { useSupplierDetail } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { EntityHistoryPanel } from "./EntityHistoryPanel";
 import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
@@ -85,8 +87,14 @@ type GrnItem = {
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
   uom?: string;
-  qty?: number;
-  received_qty?: number;
+  /* Owner 2026-08-06 — the API's real qty fields. The page previously read
+     nonexistent `qty`/`received_qty` and rendered 0 on EVERY GRN (found via
+     GRN-2608-006: qty 0 but amounts full). qty_accepted = landed in stock
+     (what the billing picker's REMAINING keys off); ordered_qty = the source
+     PO line's qty, stamped by the detail GET (null on manual lines). */
+  qty_received?: number | null;
+  qty_accepted?: number | null;
+  ordered_qty?: number | null;
   unit_price_centi?: number;
   line_total_centi?: number;
   warehouse_code?: string | null;
@@ -143,8 +151,8 @@ const receivedOf = (items: GrnItem[]) => {
   let orderedQty = 0;
   let receivedQty = 0;
   for (const l of items) {
-    orderedQty += Number(l.qty ?? 0);
-    receivedQty += Number(l.received_qty ?? 0);
+    orderedQty += Number(l.ordered_qty ?? 0);
+    receivedQty += Number(l.qty_accepted ?? 0);
   }
   return { orderedQty, receivedQty };
 };
@@ -330,11 +338,11 @@ function GoodsReceivedDetailV2ReadOnly() {
   // Render + download the GRN PDF via the shared jspdf generator (client-side),
   // mirroring the V1 GoodsReceivedDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!grn) return;
-    import("../../vendor/scm/lib/grn-pdf")
+    return import("../../vendor/scm/lib/grn-pdf")
       .then(({ generateGrnPdf }) =>
-        generateGrnPdf(grn as never, items as never)
+        generateGrnPdf(grn as never, items as never, { action })
       )
       .catch((e) =>
         notify({
@@ -344,6 +352,8 @@ function GoodsReceivedDetailV2ReadOnly() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!grn);
   const goConvertToPi = () => id && navigate(`/scm/purchase-invoices/from-grn?grn=${id}`);
   const goConvertToPr = () => id && navigate(`/scm/purchase-returns/new?fromGrn=${id}`);
   const doPost = () => {
@@ -421,10 +431,11 @@ function GoodsReceivedDetailV2ReadOnly() {
       label: "Ordered",
       width: "84px",
       align: "right",
-      getValue: (l) => l.qty ?? 0,
+      // Source PO line's qty (stamped by the detail GET); "—" on manual lines.
+      getValue: (l) => l.ordered_qty ?? "",
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty ?? 0} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
+          {l.ordered_qty ?? "—"} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
         </span>
       ),
     },
@@ -433,10 +444,12 @@ function GoodsReceivedDetailV2ReadOnly() {
       label: "Received",
       width: "92px",
       align: "right",
-      getValue: (l) => l.received_qty ?? 0,
+      // qty_accepted = landed in stock — the same figure the billing picker's
+      // REMAINING and the PO received-rollup key off.
+      getValue: (l) => l.qty_accepted ?? 0,
       render: (l) => {
-        const rec = Number(l.received_qty ?? 0);
-        const ordered = Number(l.qty ?? 0);
+        const rec = Number(l.qty_accepted ?? 0);
+        const ordered = Number(l.ordered_qty ?? 0);
         const full = ordered > 0 && rec >= ordered;
         return <span className={cn("font-money text-[13px] font-semibold", full ? "text-synced" : "text-ink")}>{rec}</span>;
       },
@@ -570,7 +583,7 @@ function GoodsReceivedDetailV2ReadOnly() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" icon={<History size={14} />} onClick={() => setHistoryOpen(true)}>History</Button>
-            <Button variant="secondary" icon={<Printer size={14} />} onClick={goPrintPdf}>Print PDF</Button>
+            <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
             {canCancel && <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel GRN</Button>}
             {canPost && <Button variant="secondary" icon={<Send size={14} />} onClick={doPost}>Post</Button>}
             {canConvertToPi && <Button variant="secondary" icon={<Receipt size={14} />} onClick={goConvertToPi}>Convert to PI</Button>}
@@ -689,7 +702,7 @@ function GoodsReceivedDetailV2ReadOnly() {
               <Edit3 size={16} /> Edit
             </button>
           )}
-          <button type="button" onClick={goPrintPdf} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Print PDF">
+          <button type="button" onClick={print.openPreview} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Print PDF">
             <Printer size={17} />
           </button>
           <button type="button" onClick={goCall} disabled={!grn.supplier?.phone} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft disabled:opacity-40" aria-label={grn.supplier?.phone ? `Call ${grn.supplier.phone}` : "No phone on file"}>
@@ -697,6 +710,20 @@ function GoodsReceivedDetailV2ReadOnly() {
           </button>
         </div>
       </div>
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Goods Received Note"
+        docNo={grn.grn_number}
+        rows={[
+          { label: "Supplier", value: supplierNameOf(grn) },
+          { label: "Against PO", value: poOf(grn) },
+          { label: "Received", value: fmtDate(grn.received_at) },
+          { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
+          { label: "Receipt value", value: fmtMoney(grn.total_centi, grn.currency) },
+        ]}
+        {...print.handlers}
+      />
     </div>
   );
 }
