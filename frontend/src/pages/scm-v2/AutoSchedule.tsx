@@ -30,6 +30,7 @@ import {
   type PlanningOrder,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { DeliveryPlanningBoard, regionTabsFrom } from '../../vendor/scm/components/DeliveryPlanningBoard';
+import { arrangementQueueCompare } from '../../vendor/scm/lib/arrangement-sort';
 import {
   useProposeDelivery,
   useSequenceAssign,
@@ -537,6 +538,10 @@ export const AutoSchedule = () => {
           lorries={lorries.data ?? []}
           storageKey="dg-date-arrangement"
           exportName="DeliveryDateArrangement"
+          /* Default queue order on entry (owner 2026-08-07): delivery date
+             OLDEST first, then state, then postcode — both sides. A clicked
+             column header still overrides. */
+          defaultSort={arrangementQueueCompare}
           emptyMessage={dateSide === 'PENDING_DATE'
             ? 'No orders waiting for a delivery date.'
             : 'No date-arranged orders — confirm dates on the pending tab.'}

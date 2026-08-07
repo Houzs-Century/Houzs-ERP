@@ -506,6 +506,27 @@ and two default-hidden columns ("Arrangement", "Trip No.") join the grid.
 Mobile is deliberately untouched — the phone surface is the driver run-sheet,
 not the planning board (§7's intentional asymmetry).
 
+**Default queue order (owner 2026-08-07: "跟着 delivery date、state、postcode
+去排，这样排下来比较整齐").** On entry, BOTH arrangement queues — the Date
+Arrangement queue and the Time Arrangement panel, each on BOTH sides (pending
+and arranged, and their All tabs) — order by: the row's **effective delivery
+date, OLDEST first** (ascending; rows with no date sink to the bottom), then
+**customer state** A→Z, then **postcode** A→Z. The rule is ONE pure comparator,
+`arrangementQueueCompare` (`vendor/scm/lib/arrangement-sort.ts`, pinned by
+`arrangement-sort.test.ts` — the date key is
+`effective_delivery_date ?? amended_delivery_date ?? customer_delivery_date`,
+the same chain the drawer's Propose-dates uses). It reaches the grid through
+the opt-in `defaultSort` comparator prop (page →
+`DeliveryPlanningBoard` → `DataGrid`), applied ONLY while no column sort is
+active: a header the operator clicks overrides as always, and cycling that
+header back to "off" returns to this default, not to raw fetch order. The main
+Delivery Planning board passes no `defaultSort` and keeps the server's order
+(SO rows by `customer_delivery_date` asc, then the ASSR/DP/project blocks).
+Stacked per-column filters (they AND across columns; multi-select within one
+column ORs) now surface as an active-filter chips row in the shared `DataGrid`
+— one chip per filter with its own clear, plus Clear all — so a layered
+narrow-down stays visible and reversible on every grid, this board included.
+
 **Known gap, inherited and documented (BUG-HISTORY 2026-07-22):** a `type:'so'`
 schedule for an SO with **no DO** writes no `trip_stops` row at all (no uuid),
 so such an order cannot read as Time arranged — it stays Pending Time even

@@ -39,6 +39,7 @@ import {
   regionTabsFrom,
   soDocNosFromSelection,
 } from '../../vendor/scm/components/DeliveryPlanningBoard';
+import { arrangementQueueCompare } from '../../vendor/scm/lib/arrangement-sort';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
 import { LiveTripMap, type LiveMarker } from '../../vendor/scm/components/LiveTripMap';
 import { useTripLatestLocations } from '../../vendor/scm/lib/trip-locations-queries';
@@ -413,6 +414,10 @@ export function Trips() {
           lorries={lorries}
           storageKey="dg-trips-to-schedule"
           exportName="TripsTimeArrangement"
+          /* Default queue order on entry (owner 2026-08-07): delivery date
+             OLDEST first, then state, then postcode — both sides. A clicked
+             column header still overrides. */
+          defaultSort={arrangementQueueCompare}
           emptyMessage={timeSide === 'PENDING_TIME'
             ? 'No date-confirmed orders waiting for a time — confirm dates in Delivery Date Arrangement.'
             : 'No orders on a trip yet.'}
