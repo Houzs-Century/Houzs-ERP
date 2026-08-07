@@ -278,13 +278,51 @@ stores that PO number in `delivery_order_items.committed_po_batch_no`, whichever
 guard the operator answered. `is_dropship` keeps the meaning migration 0057 gave
 it — the UI badge.
 
+> **LANDS WITH PR-4 (this branch, owner-gated — NOT on main until the flip
+> merges): WHO resolves the PO changed.** Under the Decision (owner 2026-08-06,
+> `docs/modules/purchase-order.md` §Decision — soft until DO, hard from DO),
+> "resolves one live PO" no longer means the stored raise-link
+> (`purchase_order_items.so_item_id` via `resolveExpectedBatchBySoItem`). It
+> means **the LIVE allocator's pick**: `allocateExpectedBatches`
+> (`backend/src/scm/lib/do-live-allocator.ts`) walks the DO's linked lines in
+> the owner's DEMAND order (delivery date ascending nulls-last, then smaller
+> doc number) over the pooled open-PO supply for the ship warehouse (supply
+> order: earliest effective ETA nulls-last, then smaller PO number), with
+> SOFA sets picked WHOLE — one covering PO for the entire set
+> (`pickIncomingForSofaSet`; a module already holding a received
+> `allocated_batch_no` contributes no need but anchors the set's batch
+> preference), and every pick drawing down the pool before the next line
+> looks. Outstanding ship-before-arrival commitments are SUBTRACTED from the
+> pool first (`subtractOutstanding` over
+> `lib/committed-shipments.loadCommittedShipments` — the SAME loader
+> `computeMrp` deducts with), so committing the same incoming unit twice is
+> structurally impossible. Ties auto-pick deterministically and the operator
+> confirms in the EXISTING short-stock dialog — never a new refusal.
+> The stored PO→SO link is **procurement provenance only**: it is still
+> resolved, but only to log/persist stored-vs-allocator divergences as
+> `BIND_SHADOW` evidence rows (a divergence is NOT a defect — the Decision
+> says so), and for the provenance displays listed in
+> `docs/modules/purchase-order.md`. `planSofaSetPoConflicts` stays ARMED as
+> the backstop. TWO KNOWN SEAMS, flagged for the flip review: (1) the Type-A
+> sofa no-batch guard's drop-ship waiver (`buildDropshipOffenders` +
+> `allHavePo`) still resolves the STORED link, so its dialog can name a
+> different PO than the allocator stamps; (2) `resolveDoSofaBatchMap`'s
+> source 3 (the legacy pre-0230 `is_dropship` fallback) re-resolves the
+> stored link at deduction time, so a post-flip drop-ship DO whose allocator
+> bound NOTHING can still get a stored-link batch stamped on its OUT — kept
+> because old drop-ship DOs need it to keep resolving their original bucket,
+> and the code cannot tell old from new. Both are open review items on the
+> flip PR.
+
 The decision is a pure function, `planShipCommitments`
-(`backend/src/scm/lib/ship-commitment.ts`), unit-tested as a table:
+(`backend/src/scm/lib/ship-commitment.ts`), unit-tested as a table
+("resolves … PO" = the allocator's pick once PR-4 lands; the stored link
+before it):
 
 | Line | Binds? | Why |
 |---|---|---|
 | resolves one live PO, nothing on hand | **yes**, to that PO's number | every shipped unit comes from that PO |
-| resolves no live PO (or >1 — ambiguous, audit H3) | no | there is no incoming batch to name, and a guessed dye lot is worse than none |
+| resolves no live PO (pre-PR-4 also: >1 — ambiguous, audit H3; the allocator has no ambiguity, its ties auto-pick) | no | there is no incoming batch to name, and a guessed dye lot is worse than none |
 | SOFA with no `allocated_batch_no`, one live PO | **yes** | a sofa OUT is batch-scoped by construction; this is the classic drop-ship |
 | `allocated_batch_no` set | no | the allocator only sets it once a covering batch is PHYSICALLY received — a normal ship |
 | non-sofa with SOME stock on hand (partial short) | no | a batch stamp routes the whole OUT through `fn_consume_fifo_batch`, which sees no lot for a batch that has not arrived, so the units that WERE on hand would stop being costed at ship time. Its shortfall is still repaired by `fn_reconcile_uncosted_out` (0154) |

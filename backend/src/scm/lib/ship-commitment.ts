@@ -35,7 +35,8 @@ export type ShipCommitmentReason =
   | 'no_so_link'
   /** The allocator already locked a PHYSICALLY RECEIVED batch: a normal ship. */
   | 'allocated_batch'
-  /** No single live bound PO (none, or >1 so the batch is ambiguous — audit H3). */
+  /** The allocator found no incoming supply for this bucket (pre-PR-4: no
+   *  single live bound PO, or >1 so the batch was ambiguous — audit H3). */
   | 'no_po'
   /** Non-sofa line with stock on hand: plain FIFO must keep costing those units. */
   | 'stock_on_hand'
@@ -61,8 +62,12 @@ export type ShipLineFact = {
   /** mfg_sales_order_items.allocated_batch_no — set ONLY once a covering batch
    *  is physically received, so a non-null value means this is a normal ship. */
   allocatedBatchNo: string | null;
-  /** The single live bound PO number (= the batch_no the GRN will stamp), from
-   *  resolveExpectedBatchBySoItem in 'block' mode. null = none, or ambiguous. */
+  /** The incoming PO number the LIVE ALLOCATOR picked for this line (= the
+   *  batch_no the GRN will stamp) — allocateExpectedBatches in
+   *  do-live-allocator.ts, since the PR-4 flip (Decision 2026-08-06: soft
+   *  until DO, hard from DO). null = no incoming supply resolves. The stored
+   *  PO→SO raise-link (resolveExpectedBatchBySoItem) no longer feeds this
+   *  field: it is procurement provenance, compared and logged only. */
   expectedBatchNo: string | null;
   /** Live on-hand qty in this (warehouse, item, variant) bucket at ship time. */
   availableQty: number;

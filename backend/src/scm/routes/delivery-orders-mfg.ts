@@ -20,7 +20,8 @@ import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
-import { loadIncomingLines, pickIncomingForBucket, pickIncomingForSofaSet, incomingBucketKey } from '../lib/do-live-allocator';
+import { loadIncomingLines, subtractOutstanding, allocateExpectedBatches } from '../lib/do-live-allocator';
+import { loadCommittedShipments } from '../lib/committed-shipments';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { findOverDeliveredSoItems } from '../lib/do-over-delivery';
 import { findUnlinkedSoLines, unlinkedSoLinesResponse } from '../lib/do-unlinked-so-lines';
@@ -499,7 +500,7 @@ async function recomputeTotals(sb: any, deliveryOrderId: string) {
 
    EXPORTED (Costing B, 2026-06-01) so the recost engine (apps/api/src/lib/
    recost.ts) can re-run it after a PI/GR price correction re-costs the lots. */
-/* ── resolveShipCommitments (2026-07-31) ──────────────────────────────────────
+/* ── resolveShipCommitments (2026-07-31; allocator-bound since PR-4) ──────────
    THE ONE PLACE a ship decides whether it is binding an incoming PO.
 
    Owner's rule: "when they pick ship-anyway, that matched PO should be bound and
@@ -511,21 +512,33 @@ async function recomputeTotals(sb: any, deliveryOrderId: string) {
 
      · isSofa            — detectSofaSoItemIds (the same detector the cost paths use)
      · allocatedBatchNo  — mfg_sales_order_items.allocated_batch_no (a RECEIVED batch)
-     · expectedBatchNo   — resolveExpectedBatchBySoItem in 'block' mode, so a line
-                           bound to >1 live PO (audit H3) resolves to null and
-                           binds NOTHING rather than guessing a dye lot
+     · expectedBatchNo   — THE LIVE ALLOCATOR'S PICK (Decision 2026-08-06, "soft
+                           until DO, hard from DO"): allocateExpectedBatches over
+                           the pooled open-PO supply minus outstanding
+                           commitments (lib/do-live-allocator +
+                           lib/committed-shipments), supply ordered earliest
+                           effective ETA then smaller PO number, demand ordered
+                           delivery date then doc number, sofa sets picked WHOLE
+                           (one dye lot per set). The stored PO→SO link
+                           (resolveExpectedBatchBySoItem) stopped deciding this
+                           at the flip — it is procurement provenance, resolved
+                           only for the BIND_SHADOW divergence evidence below.
      · availableQty      — from the shortage list the short-stock guard just
                            produced, so the binding cannot disagree with the
                            question the operator was asked
 
    Returns lineRef -> the binding for the lines that bind (batch + ETA, so the
    ONE dialog the operator sees can name the incoming PO), plus any SOFA SET
-   this write would split across two batches — see planSofaSetPoConflicts.
+   this write would split across two batches — see planSofaSetPoConflicts,
+   which stays ARMED as the backstop even though whole-set picks make a split
+   structurally unreachable from this path (a stored allocated_batch_no on part
+   of a set can still conflict with the pick for the rest).
    Best-effort throughout: any read failure yields no commitments, i.e. exactly
-   today's behaviour (ship, no binding) — a binding lookup must never block a
-   shipment. The set conflict is the one exception, and deliberately so: it is
+   the pre-0230 behaviour (ship, no binding) — a binding lookup must never block
+   a shipment. The set conflict is the one exception, and deliberately so: it is
    raised only when a binding WAS resolved, so it can never turn a working ship
-   into a refusal. */
+   into a refusal. Ties auto-pick + the operator confirms in the existing
+   short-stock dialog — never a new refusal (owner tiebreak ruling). */
 type ShipCandidateLine = {
   lineRef: string;
   soItemId: string | null;
@@ -578,22 +591,71 @@ async function resolveShipCommitments(
   try {
     const soItemIds = [...new Set(linked.map((l) => l.soItemId as string))];
 
-    const [sofaIds, expected, allocRes] = await Promise.all([
+    /* The stored PO→SO raise-link, resolved ONLY for the BIND_SHADOW evidence
+       below — since the flip it decides NOTHING. Started here so it overlaps
+       the reads that do decide; the .catch keeps a provenance hiccup from ever
+       reaching the binding path (an empty map just reads as "no stored link"). */
+    const storedProvenancePromise: Promise<Map<string, { poNumber: string | null; eta: string | null }>> =
+      resolveExpectedBatchBySoItem(sb, soItemIds, { onMultiPo: 'block' }).catch((e: unknown) => {
+        /* eslint-disable-next-line no-console */
+        console.error('[bind-shadow] stored-link provenance read failed (evidence only):', e);
+        return new Map();
+      });
+
+    const [sofaIds, allocRes] = await Promise.all([
       detectSofaSoItemIds(sb, linked.map((l) => ({
         itemCode: l.itemCode, itemGroup: l.itemGroup, soItemId: l.soItemId,
       })), companyId),
-      /* 'block', not 'latest': a NEW commitment must never be guessed. A line
-         bound to two live POs resolves to null here and ships unbound, which is
-         what the drop-ship offer path already does (audit H3). */
-      resolveExpectedBatchBySoItem(sb, soItemIds, { onMultiPo: 'block' }),
       /* doc_no comes along because it IS the sofa set's identity — the same
          definition findIncompleteSofaSets uses (all the READY sofa lines of one
-         Sales Order). One read, not a second query. */
-      sb.from('mfg_sales_order_items').select('id, doc_no, allocated_batch_no').in('id', soItemIds),
+         Sales Order) — AND the demand tiebreak. line_delivery_date + the SO
+         header's customer_delivery_date give the demand ORDER (mrp.ts §2:
+         line date, else header date, nulls last). One read, not a second query;
+         the embed is a LEFT join so an orphan SO item still resolves. */
+      sb.from('mfg_sales_order_items')
+        .select('id, doc_no, allocated_batch_no, line_delivery_date, so:mfg_sales_orders ( customer_delivery_date )')
+        .in('id', soItemIds),
     ]);
-    const soRows = ((allocRes as { data?: Array<{ id: string; doc_no: string | null; allocated_batch_no: string | null }> }).data ?? []);
+    const soRows = ((allocRes as {
+      data?: Array<{
+        id: string; doc_no: string | null; allocated_batch_no: string | null;
+        line_delivery_date: string | null; so: { customer_delivery_date: string | null } | null;
+      }>;
+    }).data ?? []);
     const allocated = new Map<string, string | null>(soRows.map((r) => [r.id, r.allocated_batch_no ?? null]));
     const docNoBySoItem = new Map<string, string | null>(soRows.map((r) => [r.id, r.doc_no ?? null]));
+    const demandDateBySoItem = new Map<string, string | null>(
+      soRows.map((r) => [r.id, r.line_delivery_date ?? r.so?.customer_delivery_date ?? null]),
+    );
+
+    /* ── THE LIVE PICK (PR-4, Decision 2026-08-06) ──────────────────────────
+       The allocator decides the binding at DO time: pooled open-PO supply for
+       the DO's own item codes, MINUS the units earlier ship-before-arrivals
+       already own (subtractOutstanding over the SAME loadCommittedShipments
+       read computeMrp deducts with — one definition of "still committed", so
+       double-commitment is structurally impossible), walked in the owner's
+       demand order with sofa sets picked whole. loadIncomingLines throws on a
+       read error, which lands in the outer catch: ship, no binding — a lookup
+       must never block a shipment. */
+    const codes = [...new Set(linked.map((l) => l.itemCode))];
+    const incoming = await loadIncomingLines(sb, codes, warehouseId);
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    const scoped = <Q>(q: Q): Q =>
+      companyId != null ? (q as unknown as { eq(c: string, v: unknown): Q }).eq('company_id', companyId) : q;
+    const committed = await loadCommittedShipments(
+      sb, scoped, [...new Set(incoming.map((l) => l.poNumber))],
+    );
+    const pool = subtractOutstanding(incoming, committed.values());
+    const picks = allocateExpectedBatches(pool, linked.map((l) => ({
+      lineRef: l.lineRef,
+      itemCode: l.itemCode,
+      variantKey: l.variantKey,
+      shipQty: Number(l.qty),
+      isSofa: !!l.soItemId && sofaIds.has(l.soItemId),
+      soDocNo: l.soItemId ? (docNoBySoItem.get(l.soItemId) ?? null) : null,
+      allocatedBatchNo: l.soItemId ? (allocated.get(l.soItemId) ?? null) : null,
+      deliveryDate: l.soItemId ? (demandDateBySoItem.get(l.soItemId) ?? null) : null,
+    })));
 
     /* The short-stock guard reports only the buckets that are SHORT, with what
        was on hand. A bucket it did not report is covered, so anything > 0 marks
@@ -609,7 +671,8 @@ async function resolveShipCommitments(
       warehouseId,
       isSofa: !!l.soItemId && sofaIds.has(l.soItemId),
       allocatedBatchNo: allocated.get(l.soItemId as string) ?? null,
-      expectedBatchNo: (l.soItemId ? expected.get(l.soItemId)?.poNumber : null) ?? null,
+      /* THE FLIP: the allocator's pick, not the stored link. */
+      expectedBatchNo: picks.get(l.lineRef)?.poNumber ?? null,
       availableQty: availableByBucket.get(`${l.itemCode}::${l.variantKey}`) ?? Number(l.qty),
       shipQty: Number(l.qty),
       priorShippedQty: l.priorShippedQty ?? 0,
@@ -623,72 +686,62 @@ async function resolveShipCommitments(
       out.set(d.lineRef, {
         itemCode: d.itemCode,
         poNumber: d.batchNo,
-        eta: (d.soItemId ? expected.get(d.soItemId)?.eta : null) ?? null,
+        eta: picks.get(d.lineRef)?.eta ?? null,
         strictBatch: d.strictBatch,
         variantKey: variantByRef.get(d.lineRef) ?? '',
       });
     }
 
-    /* ── SHADOW: the DO-time live allocator (soft-until-DO stage 2) ─────────
-       Decision 2026-08-06. The allocator computes what it WOULD bind — pooled
-       open-PO supply, earliest effective ETA then smaller PO number — beside
-       the stored-link resolution, and logs every divergence. It binds NOTHING
-       yet: the flip is a deliberate switch in a later PR, after the shadow
-       data is reviewed (the AUTOCOUNT_WRITES_DISABLED soak discipline).
-       Shadow-only simplification, documented: outstanding ship-before-arrival
-       commitments are not subtracted here (they are rare and the comparison
-       stays meaningful); the flip PR folds them in via outstandingCommitments. */
+    /* ── SHADOW, INVERTED (post-flip observability) ─────────────────────────
+       The allocator BINDS now; the stored raise-link is procurement provenance
+       (Decision 2026-08-06). The comparison and its BIND_SHADOW evidence rows
+       stay — same rows, same checker (scripts/check-bind-shadow.mjs), so the
+       soak keeps measuring how often provenance and execution disagree AFTER
+       the flip. A divergence here is NOT a defect (the Decision says so in as
+       many words); a double-SERVE in the delivered ledger is, and that is what
+       the other checks watch. Failure-isolated exactly as before: nothing in
+       this block can touch shipping. */
     try {
-      const codes = [...new Set(linked.map((l) => l.itemCode))];
-      const incoming = await loadIncomingLines(sb, codes, warehouseId);
+      const stored = await storedProvenancePromise;
       const divergences: Array<{ itemCode: string; variantKey: string; stored: string | null; allocator: string | null; eta: string | null }> = [];
       for (const f of facts) {
-        const pick = pickIncomingForBucket(incoming, f.itemCode, f.variantKey, f.shipQty);
-        if ((pick?.poNumber ?? null) !== (f.expectedBatchNo ?? null)) {
+        const storedPo = (f.soItemId ? stored.get(f.soItemId)?.poNumber : null) ?? null;
+        if (storedPo !== (f.expectedBatchNo ?? null)) {
           divergences.push({
             itemCode: f.itemCode,
             variantKey: f.variantKey,
-            stored: f.expectedBatchNo ?? null,
-            allocator: pick?.poNumber ?? null,
-            eta: pick?.eta ?? null,
+            stored: storedPo,
+            allocator: f.expectedBatchNo ?? null,
+            eta: picks.get(f.lineRef)?.eta ?? null,
           });
           /* eslint-disable-next-line no-console */
-          console.info(`[bind-shadow] ${f.itemCode} [${f.variantKey}] stored=${f.expectedBatchNo ?? '—'} allocator=${pick?.poNumber ?? '—'}${pick?.eta ? ` (eta ${pick.eta})` : ''} — divergence logged; stored link still binds`);
+          console.info(`[bind-shadow] ${f.itemCode} [${f.variantKey}] stored=${storedPo ?? '—'} allocator=${f.expectedBatchNo ?? '—'} — divergence logged; the ALLOCATOR binds, the stored link is provenance`);
         }
       }
-      // Sofa sets: one dye lot per set (sofa-only). Log the allocator's whole-set pick.
-      const setNeeds = new Map<string, Map<string, number>>();
-      for (const l of linked) {
-        if (!(l.soItemId && sofaIds.has(l.soItemId))) continue;
-        const docNo = docNoBySoItem.get(l.soItemId) ?? null;
-        if (!docNo) continue;
-        const needs = setNeeds.get(docNo) ?? new Map<string, number>();
-        const k = incomingBucketKey(l.itemCode, l.variantKey);
-        needs.set(k, (needs.get(k) ?? 0) + Number(l.qty));
-        setNeeds.set(docNo, needs);
-      }
-      const setPicks: Array<{ docNo: string; poNumber: string; eta: string | null }> = [];
-      for (const [docNo, needs] of setNeeds) {
-        const setPick = pickIncomingForSofaSet(incoming, needs);
-        if (setPick) {
-          setPicks.push({ docNo, poNumber: setPick.poNumber, eta: setPick.eta ?? null });
+      // Sofa whole-set picks, for the summary row (the pick IS the binding now).
+      const setPicks: Array<{ docNo: string; poNumber: string }> = [];
+      {
+        const seen = new Set<string>();
+        for (const l of linked) {
+          if (!(l.soItemId && sofaIds.has(l.soItemId))) continue;
+          const docNo = docNoBySoItem.get(l.soItemId) ?? null;
+          const pick = picks.get(l.lineRef);
+          if (!docNo || !pick || seen.has(docNo)) continue;
+          seen.add(docNo);
+          setPicks.push({ docNo, poNumber: pick.poNumber });
           /* eslint-disable-next-line no-console */
-          console.info(`[bind-shadow] sofa set ${docNo}: allocator whole-set pick = ${setPick.poNumber}${setPick.eta ? ` (eta ${setPick.eta})` : ''}`);
+          console.info(`[bind-shadow] sofa set ${docNo}: allocator whole-set pick = ${pick.poNumber}${pick.eta ? ` (eta ${pick.eta})` : ''}`);
         }
       }
 
       /* ── Persist the evidence (2026-08-07) ──────────────────────────────
-         The console lines above go to wrangler tail — ephemeral, no history —
-         and the flip (PR-4) is gated on REVIEWED shadow data, so the soak
-         needs STORED evidence. One BIND_SHADOW row per divergence plus one
-         SUMMARY row per resolution (the denominator: how many comparisons
-         produced how many divergences) land in scm.entity_audit_log, the
-         same sink the RECOUNT_FAILED precedent uses, read back by
-         scripts/check-bind-shadow.mjs (workflow "Bind shadow check
-         (read-only)"). recordEntityAudit never throws, and this whole block
-         sits inside the shadow's own catch besides — a persistence failure
-         can NEVER touch shipping. Console logs stay: tail remains the live
-         view, the table is the history. */
+         One BIND_SHADOW row per divergence plus one SUMMARY row per
+         resolution (the denominator) land in scm.entity_audit_log — the
+         RECOUNT_FAILED sink — read back by scripts/check-bind-shadow.mjs
+         (workflow "Bind shadow check (read-only)"). recordEntityAudit never
+         throws, and this whole block sits inside its own catch besides — a
+         persistence failure can NEVER touch shipping. Console logs stay:
+         tail remains the live view, the table is the history. */
       try {
         const entityId = auditCtx?.doId ?? 'pre-create';
         const entityDocNo = auditCtx?.doNumber ?? null;
@@ -704,7 +757,7 @@ async function resolveShipCommitments(
             fieldChanges: [{ field: `${d.itemCode} [${d.variantKey}]`, from: d.stored, to: d.allocator }],
             note:
               `[bind-shadow] ${d.itemCode} [${d.variantKey}] stored=${d.stored ?? 'none'} ` +
-              `allocator=${d.allocator ?? 'none'}${d.eta ? ` (eta ${d.eta})` : ''} — shadow only; the stored link still binds.`,
+              `allocator=${d.allocator ?? 'none'}${d.eta ? ` (eta ${d.eta})` : ''} — the allocator binds; the stored link is provenance.`,
           });
         }
         await recordEntityAudit(sb, {
@@ -729,11 +782,11 @@ async function resolveShipCommitments(
         });
       } catch (e) {
         /* eslint-disable-next-line no-console */
-        console.error('[bind-shadow] evidence persist failed (shadow only, shipping unaffected):', e);
+        console.error('[bind-shadow] evidence persist failed (evidence only, shipping unaffected):', e);
       }
     } catch (e) {
       /* eslint-disable-next-line no-console */
-      console.error('[bind-shadow] failed (shadow only, shipping unaffected):', e);
+      console.error('[bind-shadow] failed (evidence only, shipping unaffected):', e);
     }
 
     /* ONE PO IS ONE BATCH NUMBER (owner, 2026-07-31), so a sofa SET binds ONE
