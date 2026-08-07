@@ -75,6 +75,7 @@ import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
+import { deriveArrangementStage } from '../lib/arrangement-stage';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
@@ -714,6 +715,12 @@ deliveryPlanning.get('/', async (c) => {
      took. Best-effort: a failed read leaves dp_no null, which renders as "—" and
      is honest about not knowing, rather than inventing a number. */
   const dpNoByDoc = new Map<string, string>();
+  /* Live trip per SO — the ARRANGEMENT-pipeline signal. An SO is "Time arranged"
+     when a DELIVERY stop keyed on one of its DOs sits on a non-CANCELLED trip
+     (the same do_id key scheduleOntoTrip writes and staleStopSweepFor sweeps).
+     Best-effort like the dp_no read: a failed read leaves the map empty, so the
+     stage degrades to PENDING_TIME/PENDING_DATE — never a guess. */
+  const tripByDoc = new Map<string, { id: string; trip_no: string | null; trip_date: string | null }>();
   {
     /* SO rows resolve their number through their DO. There is deliberately NO
        so_id lookup: scm.mfg_sales_orders has no `id`, so an SO can never be the
@@ -723,7 +730,7 @@ deliveryPlanning.get('/', async (c) => {
     const docByDoId = new Map<string, string>();
     for (const [dn, arr] of doByDoc) for (const d of arr) docByDoId.set(d.id, dn);
 
-    type StopRow = { dp_no?: string | null; do_id?: string | null };
+    type StopRow = { dp_no?: string | null; do_id?: string | null; trip_id?: string | null; tripId?: string | null };
     const take = (rows: StopRow[] | null | undefined) => {
       for (const s of rows ?? []) {
         const no = s.dp_no;
@@ -736,11 +743,45 @@ deliveryPlanning.get('/', async (c) => {
     };
     try {
       if (doIds.length) {
+        /* ONE widened read serves both maps. The dp_no rule is unchanged — the
+           filter that used to live in the query (`dp_no IS NOT NULL`) now lives
+           in take(), same rows either way. */
         const byDo = await sb.from('trip_stops')
-          .select('dp_no, do_id').in('do_id', doIds).not('dp_no', 'is', null);
-        take((byDo as { data?: StopRow[] }).data);
+          .select('dp_no, do_id, trip_id').in('do_id', doIds);
+        const stopRows = ((byDo as { data?: StopRow[] }).data ?? []);
+        take(stopRows.filter((s) => s.dp_no != null));
+
+        /* Resolve the stops' trips (bounded .in) and keep only live ones —
+           a CANCELLED trip is no arrangement (the reverse reconcile already
+           returns such orders to the queue). Last write wins, matching the
+           latest-schedule convention above. */
+        const tripIds = [...new Set(stopRows
+          .map((s) => (s.tripId ?? s.trip_id) as string | null)
+          .filter((x): x is string => !!x))];
+        if (tripIds.length) {
+          const { data: tripRowsRaw } = await sb.from('trips')
+            .select('id, trip_no, trip_date, status').in('id', tripIds);
+          const liveTripById = new Map<string, { id: string; trip_no: string | null; trip_date: string | null }>();
+          for (const t of (tripRowsRaw ?? []) as Array<{
+            id: string; trip_no?: string | null; tripNo?: string | null;
+            trip_date?: string | null; tripDate?: string | null; status?: string | null;
+          }>) {
+            if (String(t.status ?? '').toUpperCase() === 'CANCELLED') continue;
+            liveTripById.set(String(t.id), {
+              id: String(t.id),
+              trip_no: (t.tripNo ?? t.trip_no ?? null) as string | null,
+              trip_date: (t.tripDate ?? t.trip_date ?? null) as string | null,
+            });
+          }
+          for (const s of stopRows) {
+            const tripId = (s.tripId ?? s.trip_id) as string | null;
+            const trip = tripId ? liveTripById.get(tripId) : undefined;
+            const dn = (s.do_id && docByDoId.get(s.do_id)) || null;
+            if (dn && trip) tripByDoc.set(dn, trip);
+          }
+        }
       }
-    } catch { /* leave the map empty — rows render dp_no null */ }
+    } catch { /* leave the maps empty — rows render dp_no / trip null */ }
   }
 
   /* Crew snapshot per DO. Best-effort — read the assign-time snapshot so the
@@ -970,6 +1011,21 @@ deliveryPlanning.get('/', async (c) => {
       // crew (from the latest DO) + the DOs themselves
       crew,
       delivery_orders: dos.map((d) => ({ id: d.id, do_number: d.doNumber, status: d.status })),
+      /* ── Arrangement pipeline (derived, lib/arrangement-stage.ts) ─────────
+         The live trip this order sits on (via its DO's DELIVERY stop, CANCELLED
+         trips excluded) and the derived stage:
+           PENDING_DATE  — in Pending Schedule, amended_delivery_date not set
+           PENDING_TIME  — date confirmed (amended_delivery_date), no live stop
+           TIME_ARRANGED — on a live trip
+         null outside Pending Schedule (nothing to arrange / already delivered). */
+      trip_id: tripByDoc.get(docNo)?.id ?? null,
+      trip_no: tripByDoc.get(docNo)?.trip_no ?? null,
+      trip_date: tripByDoc.get(docNo)?.trip_date ?? null,
+      arrangement_stage: deriveArrangementStage({
+        deliveryState: state,
+        dateConfirmed: amendedDD != null,
+        onActiveTrip: tripByDoc.has(docNo),
+      }),
     };
   });
 
@@ -1117,6 +1173,12 @@ deliveryPlanning.get('/', async (c) => {
           remaining_qty: 0,
           crew: null,
           delivery_orders: [],
+          /* ASSR legs land PENDING_DELIVERY and schedule on their own document —
+             they are outside the SO arrangement pipeline (stage null). */
+          trip_id: null,
+          trip_no: null,
+          trip_date: null,
+          arrangement_stage: null,
         });
       }
     }
@@ -1266,6 +1328,20 @@ deliveryPlanning.get('/', async (c) => {
         remaining_qty: 0,
         crew: null,
         delivery_orders: [],
+        /* A manual DP job joins the pipeline while it is PENDING_SCHEDULE: its
+           requested_date is its confirmed date (dp orders are created with the
+           date in hand), so an unscheduled dated job is PENDING_TIME — it needs
+           a lorry, which is exactly what the Time Arrangement inbox offers.
+           Scheduling it (date+lorry in one act) flips its board state to
+           PENDING_DELIVERY, which exits the pipeline (stage null). */
+        trip_id: ((d.trip_id ?? (d as { tripId?: string | null }).tripId) as string | null) ?? null,
+        trip_no: null,
+        trip_date: null,
+        arrangement_stage: deriveArrangementStage({
+          deliveryState: scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE',
+          dateConfirmed: date != null,
+          onActiveTrip: false, // an unscheduled DP job is never on a trip yet
+        }),
       });
     }
   } catch (e) {
@@ -1390,6 +1466,12 @@ deliveryPlanning.get('/', async (c) => {
             lorry_plate: leg.lorry,
           } : null,
           delivery_orders: [],
+          /* PMS windows are scheduled and crewed in Projects — a read-only
+             mirror here, outside the arrangement pipeline. */
+          trip_id: null,
+          trip_no: null,
+          trip_date: null,
+          arrangement_stage: null,
         });
       }
     }
