@@ -616,12 +616,33 @@ export const SalesOrderDetail = () => {
   const [isEditing, setIsEditing] = useState(
     editSearchParams.get('edit') === '1',
   );
+  /* Print preview — the HOOK must live above the isPending / isError early
+     returns (owner 2026-08-07). It arrived at its call site further down
+     (#1665), which sits PAST those returns: a cold page's first render bails
+     out early with N hooks, the render after the query resolves reaches
+     usePrintPreview with N+1, and React throws "Rendered more hooks than during
+     the previous render" — a blank crash page.
+
+     Nobody hit it coming from the SO list, because arriving that way the header
+     is already in the TanStack cache and there is no pending first render. It
+     only bites a COLD load of this route: a pasted or bookmarked link, a
+     refresh while on the editor, a new tab. That is also why it shipped.
+
+     The deliver callback closes over `header` / `items` / query data that only
+     exist after the guards, so it cannot move up here with the hook. The ref is
+     the join: the hook is created once, up here, and reads the CURRENT deliver
+     through the ref at call time. Assigned below, where deliverPrintPdf is
+     defined. */
+  const deliverPrintPdfRef = useRef<(action: PdfAction) => void | Promise<void>>(() => {});
+  const print = usePrintPreview(
+    useCallback((action: PdfAction) => deliverPrintPdfRef.current(action), []),
+  );
+
   /* Payments edit mode — the money's OWN toggle (owner 2026-08-07). Declared up
      here with the other page state, NOT beside the `canEditPayments` derivation
-     it feeds: everything below line ~1374 sits after the isPending / isError
-     early returns, so a hook there renders conditionally and React throws
-     "Rendered more hooks than during the previous render" the moment the detail
-     query resolves. See the derivation for what this gates and why. */
+     it feeds: everything below the early returns is conditional, and a hook
+     there throws the exact error described above. See the derivation for what
+     this gates and why. */
   const [payEditing, setPayEditing] = useState(
     /* `?payments=1` — arrived through V2's "Collect payment" button, which is
        the only door into this page on a hard-locked order. Open the ledger
@@ -1603,7 +1624,11 @@ export const SalesOrderDetail = () => {
       });
     });
   };
-  const print = usePrintPreview(deliverPrintPdf);
+  /* The hook itself lives above the early returns (see its declaration and why).
+     This is the assignment half: every render refreshes the ref with a closure
+     over the CURRENT header / items / payments, so Print behaves exactly as it
+     did when the hook was created here. */
+  deliverPrintPdfRef.current = deliverPrintPdf;
 
   return (
     /* Commander 2026-05-29 — a CANCELLED SO greys the whole page so it reads
