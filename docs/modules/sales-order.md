@@ -344,6 +344,65 @@ not role (Owner ruling, `mfg-sales-orders.ts` `isPosTabletCaller`):
   `isHatchSales` true for `sales` (+ `super_admin`), so the price input is editable
   for salespersons on both surfaces.
 
+### Delivery fee — every ringgit is a line (owner ruling 2026-08-07)
+
+> Owner, verbatim intent: *"正常来说,全部都会有 SKU 的,不可能没有 SKU,一定要有
+> SKU 才可以 … 怎么可以走后门呢?"*, reinforced the same day: *"无论是 POS
+> 系统也好,什么情况也好,它一定要有这一个 SKU 出来"* — **every ringgit on a
+> Sales Order is a LINE (SKU) row, on EVERY path, no exceptions.** The delivery
+> fee's one correct shape is an `SVC-DELIVERY*` service line (e.g.
+> 2990-SO-2608-005: `SVC-DELIVERY qty 1 MYR 250.00`, inside the subtotal). The
+> header `delivery_fee_centi` column is a dual-write MIRROR of those lines — it
+> may only ever equal Σ(SVC-DELIVERY* lines), **never carry money the lines
+> don't**. A fee that reaches the TOTAL without a line is a back door and must
+> not exist.
+
+**One derivation, one write path.** The fee amount is owned by the pure
+`computeSoDeliveryFee` (`scm/shared/pricing.ts` — the base is
+`delivery_fee_config.base_fee` for the SO's company, whole-MYR ×100 → sen: the
+familiar RM250), decomposed into line specs by `buildDeliveryFeeServiceLines`
+(`scm/shared/service-lines.ts` — Σ lines === fee.total by construction), and
+written by exactly one primitive: the atomic RPC
+`scm.rebuild_mfg_so_delivery_lines` (migration **0214**: per-doc advisory xact
+lock, delete → insert → header stamp in one call — the duplicate-fee race fix).
+
+**Path inventory — how each SO-producing path satisfies the ruling:**
+
+| path | fee? | how the line is guaranteed |
+|---|---|---|
+| **POS handover create** (`applyDeliveryFee` — the ONLY sender of a fee at create) | yes | `createSalesOrderCore`: `computeSoDeliveryFee` → `buildDeliveryFeeServiceLines` specs pushed into the SAME item insert as the goods; header fee dual-written equal to Σ(specs); a failed item insert deletes the whole header — the fee and its lines land together or not at all |
+| **Desktop New SO / mobile New-SO wizard** | no | neither sends `applyDeliveryFee`; fee = 0, no line needed, header 0 |
+| **Scan/OCR draft → create** (`buildDraftSoBodyFromSlip` / shell) | no | never sets `applyDeliveryFee`; the draft lands fee-less — an operator later triggering a fee does so through edits, which derive below |
+| **Every line add / patch / delete** | re-derive | `rederiveDeliveryFee` → `recomputeDeliveryFeeCore` → 0214 RPC (stored cross-category source passed through) |
+| **Customer change** | re-derive | `redetectCrossCategoryDelivery` → same core (re-runs the auto-match) |
+| **Amendment apply** | re-derive | `applySoAmendment` → `rederiveDeliveryFee` |
+| **2990 mirror import** (pre-cutover history) | verbatim copy | whatever shape 2990 held — the one path that could legitimately leave a header-only fee; those rows are exactly what the detector lists and the repair itemises |
+
+**The bail rule (the 2990-SO-2608-006 fix).** `recomputeDeliveryFeeCore` bails
+(derives nothing) only when the SO has **no `SVC-DELIVERY*` lines AND no header
+`delivery_fee_centi`** — the dormant-fee rule: backend-authored SOs never grow
+a fee. It used to bail on "no fee lines" alone, which was half of a back door
+AND a heal-blocker: deleting/cancelling the fee line orphaned the header
+snapshot, the derivation turned itself off forever (a fee-line-less SO could
+NEVER be healed by any recompute, no matter how many edits followed), and
+`recomputeTotals`' legacy line-less fallback kept folding the snapshot into
+the total — 006 read subtotal RM0 / total RM250 with no line saying why. Now
+an orphaned header fee is **re-materialised as lines through the same
+derivation** on the next edit — the recompute no longer depends on a fee line
+already existing; deleting a derived fee line is therefore a no-op — the way
+to change the fee is to change what drives it (the items, the rate config, or
+the `SVC-DELIVERY-ADD` operator line).
+
+**The legacy fallback.** `recomputeTotals` still reads the header fee back for
+a line-less SO — that exists ONLY for legacy (pre-P2 / mirror-imported) rows
+and may not be deleted until Loo retires the column (SO-SKU spec §5 P6).
+Integrity tooling: `backend/scripts/check-so-fee-line-integrity.mjs` (read-only
+detector: every non-cancelled SO where total ≠ Σ(lines), with audit-log
+evidence) + `repair-so-fee-line-integrity.mjs` (DRY-RUN gated; materialises the
+missing line via the same 0214 RPC — total never changes, only itemises), both
+behind the **SO fee-line integrity check (read-only)** workflow. Tests:
+`backend/tests/soDeliveryFeeLineIntegrity.test.ts`.
+
 ### Looking a product up by CODE — always pass the company
 
 `mfg_products.code` is **not unique**. Both companies keep their own SKU master,
