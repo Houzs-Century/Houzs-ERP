@@ -99,10 +99,38 @@ dashed-vs-"Locked" rendering): **anchored** (source `delivered`) solid,
 assignment at any layer renders **"—"**.
 
 Backend: `GET /po-so-coverage/:type/:id` returns `{ poNumber, poId, origins, delivered }`
-where `origins: [{ itemCode, assignments: [{ soDocNo, deliveryDate, locked }] }]`
-and `delivered: [{ itemCode, dos: [{ doNo, qty }] }]`, matched by SKU
-(`material_code`). The full relationship graph (SO/DO/SI + returns) stays on the
-Relationship Map modal (`/document-flow/:type/:id`) — unchanged.
+where `origins: [{ itemCode, assignments: [{ soDocNo, deliveryDate, locked,
+source }], storedLink, provenance: [{ soDocNo, deliveryDate, locked: true,
+source: 'linked' }] }]` and `delivered: [{ itemCode, dos: [{ doNo, qty }] }]`,
+matched by SKU (`material_code`). The full relationship graph (SO/DO/SI +
+returns) stays on the Relationship Map modal (`/document-flow/:type/:id`) —
+unchanged.
+
+**The parallel `provenance` slot (2026-08-07, PR-3 of the Decision rollout —
+ADDITIVE, precedence NOT changed).** `assignments` still carries ONLY the
+precedence winner exactly as above; `provenance` ALWAYS carries the layer-(b)
+stored-origin SOs for that SKU, whichever layer won (empty when none). It is
+the "which SOs" companion to the coarser `storedLink` boolean. List rollups
+carry the same pair: `PoAssignedSummary` gained `provenanceSos` (deduped
+across SKUs) beside the untouched `assignedSos`/`sourceLinked`, and the PO /
+GRN / PI list rows stamp it as `assigned_so_provenance` (for GRN / PI it is
+rolled up over the same code-filtered origins, so header ≡ ∪(lines) holds for
+the provenance slot too). Optional on the frontend types, so an older backend
+degrades to exactly the pre-PR-3 rendering.
+
+**Side-by-side rendering rule.** After the precedence chips, every Assigned-SO
+surface (drill-down cells, `AssignedSoCell`, and the mobile twins — one
+product) ALSO renders a muted "bought for" chip (§2.10 provenance identity —
+never the word "Locked", no execution status pill) for each provenance SO NOT
+already shown, deduped by `soDocNo` — when the stored origin won the
+precedence the two slots are identical and nothing extra renders. The case
+this exists for: the floating allocator re-assigned (dashed chips) while the
+stored links remain — after an SO amendment both truths sit side by side.
+Under TODAY'S precedence (b) still outranks (c), so a per-SKU floating winner
+implies an empty stored layer; the side-by-side state reaches the UI now via
+delivered-vs-stored divergence and mixed-SKU list rollups, and becomes the
+common case when PR-4 (the owner-gated live DO-time allocator binding) flips
+the execution answer to the allocator.
 
 ### 2.5 Doc-side split (2026-07-31) — sales docs show Source PO, purchase docs add Delivered; no "+N" collapse anywhere
 `feat/assigned-so-inline-date`. Owner feedback split the unified "Assigned SO"
@@ -367,6 +395,11 @@ allocation chips) — one-product rule. A `locked:true` assignment WITHOUT
 Pinned by the "Three chip identities" block in
 `DocumentLinesExpansion.test.tsx`; see BUG-HISTORY 2026-08-06.
 
+Since 2026-08-07 (PR-3) the provenance identity is no longer only a re-dress
+of the precedence winner: the coverage wire carries a parallel `provenance`
+slot and the Assigned-SO surfaces render it BESIDE the execution chips — see
+the side-by-side rule in §2.1.
+
 ### 2.7 The 2990 doc-reference repair (2026-08-01) — the DATA answer to 2.6, and the rule that makes it safe
 `fix/doc-ref-repair`. The **Source PO prefix check** was run and 2.6's open
 question is answered: the mixed prefixes are TWO problems, not one.
@@ -623,7 +656,7 @@ separate document: a PO revision is the PO leg of an SO amendment (approve-po �
 `reviseBoundPo` → `po_revisions`), so there is nothing extra to branch off the
 PO. The SI / DO / DR maps do not pass amendments and are unchanged.
 
-### 2.10 The living Relationship Map (2026-08-07) — chain / provenance / floating, zero added backend load
+### 2.11 The living Relationship Map (2026-08-07) — chain / provenance / floating, zero added backend load
 `feat/living-relationship-map` (PR-2 of the soft-until-DO rollout). The map now
 RENDERS the §Decision model instead of contradicting it: before this, a stored
 SO→PO raise-link drew in the same visual register as the execution FKs, and the
@@ -666,11 +699,11 @@ execution hops behind a declared pairing render solid. The SO map passes
 deliberately shows NO floating hop (coverage is purchase-doc-keyed — an
 SO-keyed read would be new backend load; the SO side already shows the same
 engine's answer in its per-line coverage column). DO / SI / DR maps pass
-nothing and render exactly as before. The mobile surface shipped as §2.11
+nothing and render exactly as before. The mobile surface shipped as §2.12
 (same three identities, same zero-load rule).
 
-### 2.11 Mobile relationship map (2026-08-07) — parity with the desktop three-identity map
-`feat/mobile-relationship-map`. The phone now has the map the §2.10 living-map
+### 2.12 Mobile relationship map (2026-08-07) — parity with the desktop three-identity map
+`feat/mobile-relationship-map`. The phone now has the map the §2.11 living-map
 round left "queued separately". One product, two presentations: instead of the
 desktop SVG stage-column canvas, the phone renders the SAME graph as a STACKED
 CHAIN LIST — `frontend/src/mobile/MobileRelationshipMap.tsx`, a full-screen
@@ -690,7 +723,7 @@ shipped desktop anchor set).
   a visible caption under each pairing row. A floating-only SO synthesises as
   a dashed card in the sales chain. Legend matches the desktop labels
   ("Bought for (provenance)" / "Live MRP pairing (floating)").
-- **Zero added backend load (the §2.10 rule, unchanged).** The screen reads
+- **Zero added backend load (the §2.11 rule, unchanged).** The screen reads
   the SAME `useDocumentFlow` query key the desktop modal reads and, for
   purchase anchors only, the SAME `usePoSoCoverage` key the mobile document
   detail already fetched for its Assigned-SO chips — a react-query cache hit.
@@ -849,7 +882,7 @@ via `RelationshipMapButton` (`cso/cdo/cdr/pco/pcr/pcrn`) and were not changed.
 - DR list — **"From SO"**: the Sales Order behind the return's DO, resolved
   `delivery_order_id → delivery_orders.so_doc_no` (best-effort, never 500s).
 
-The Relationship Map is no longer desktop-only: §2.11 ships the mobile surface
+The Relationship Map is no longer desktop-only: §2.12 ships the mobile surface
 (SO / PO / GRN / PI / DO anchors, stacked-list idiom, same three identities,
 zero added backend load). The LIST columns above (`Invoiced to` / `From DO` /
 `From SO`, and `converted_po_nos`) remain desktop-only.

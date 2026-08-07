@@ -5,8 +5,8 @@ import { lineIdentity, orderLineIdentity } from "@2990s/shared";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "@2990s/shared/phone";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
-import { usePoSoCoverage, originsByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
-import { PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
+import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
+import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
 import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
@@ -177,19 +177,28 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLinked, allocations, poNumber, sourcePos, sourceAdj, delivered }: {
+function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch }: {
   name: string; sub?: string; qty: unknown; unitCenti: unknown; amountCenti: unknown;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
   // date, matched by SKU. Empty array → dash, mirroring the desktop columns.
   // Display-only on mobile (the phone shell doesn't route to the SO).
   assigned?: OriginAssignment[];
+  // PR-3 (2026-08-07): the coverage wire's PARALLEL stored-origin slot — the
+  // "bought for" SO(s), rendered muted BESIDE the precedence rows above
+  // (deduped by soDocNo inside PairedSoRowsMobile). Desktop twin: the
+  // DocumentLinesExpansion provenance chips — one product.
+  provenance?: OriginAssignment[];
   // Sales docs (DO / SI): the source PO(s) the shipped goods actually came from
   // (batch trail, GRN-healed) + the PO-less adjustment flag — the mobile twin
   // of the desktop drill-down's Source PO cell (owner 2026-08-01: identical
   // data on every surface).
   sourcePos?: string[];
   sourceAdj?: boolean;
+  // DO lines only (mig 0230): the incoming PO batch this line committed to at
+  // DO creation — the hard-from-DO anchor. Rendered as an anchored solid chip
+  // (CommittedBatchRowMobile); absent → nothing. Display-only.
+  committedBatch?: string | null;
   // Purchase docs (PO / GRN / PI): the DO(s) that shipped this line's goods,
   // with per-DO qty + the DO's own SO (soDocNo) so each chip pairs with its
   // Assigned-SO row — the mobile twin of the desktop per-SO sub-table.
@@ -229,11 +238,14 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
           assigned={assigned}
           delivered={delivered ?? []}
           sourceLinked={sourceLinked}
+          provenance={provenance}
         />
       )}
       {sourcePos !== undefined && (
         <SourcePosRowMobile pos={sourcePos} adj={sourceAdj} showEmpty />
       )}
+      <CommittedBatchRowMobile poNo={committedBatch} />
+
       {(allocations?.length ?? 0) > 0 && (
         <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 4 }}>
           <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093" }}>Allocations</span>
@@ -1361,6 +1373,8 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
   const coverageType = COVERAGE_TYPE[moduleKey] ?? null;
   const covQ = usePoSoCoverage(coverageType, coverageType && id ? id : null);
   const originByCode = originsByCode(covQ.data);
+  // PR-3: the parallel stored-origin "bought for" slot, per SKU.
+  const provByCode = provenanceByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
   // Per-SKU Delivered (DO + qty) — same resolver payload the desktop lists read.
   const deliveredMap = deliveredByCode(covQ.data);
@@ -1501,8 +1515,16 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                   ? (((it?.source_pos as string[] | null | undefined) ?? []) as string[])
                   : undefined;
                 const sourceAdj = isSalesDoc ? Boolean(it?.source_adj) : undefined;
+                /* DO lines only (mig 0230): the committed batch — the
+                   hard-from-DO anchor the detail GET already returns
+                   (committed_po_batch_no). Same field the desktop detail's
+                   CommittedBatchCell reads (one-product rule). */
+                const committedBatch = moduleKey === "delivery-orders-mfg"
+                  ? ((it?.committed_po_batch_no as string | null | undefined) ?? null)
+                  : null;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} />;
+                const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
           </div>

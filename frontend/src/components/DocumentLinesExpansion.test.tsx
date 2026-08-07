@@ -13,6 +13,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   AssignedSoCell,
+  CommittedBatchCell,
   DeliveredCell,
   DocumentLinesExpansion,
   sourcePoTitle,
@@ -187,6 +188,114 @@ describe("Three chip identities — anchored / provenance / floating", () => {
     const c = chipFor(container, "SO-OLD");
     expect(c.className).toContain("bg-surface-dim");
     expect(c.title).not.toMatch(/locked/i);
+  });
+});
+
+// ── PR-3: the coverage wire's PARALLEL provenance slot, rendered side by side ──
+//
+// The wire now carries `provenance` (layer-b stored-origin SOs) beside the
+// precedence winner in `assignments`. Rendering rule: AFTER the precedence
+// chips, ALSO render muted "bought for" chips for provenance SOs not already
+// shown (dedupe by soDocNo). The case this exists for: the floating allocator
+// re-assigned (dashed chips) while the stored links remain — after an SO
+// amendment both truths must be visible. Additive and optional: no provenance
+// field → exactly the pre-PR-3 rendering.
+describe("Provenance slot beside execution (PR-3)", () => {
+  const floating = { soDocNo: "SO-FLOT", deliveryDate: null, locked: false, source: "mrp" as const };
+  const bought = { soDocNo: "SO-PROV", deliveryDate: "2026-09-01", locked: true, source: "linked" as const };
+
+  const chipFor = (container: HTMLElement, soDocNo: string): HTMLElement[] =>
+    Array.from(container.querySelectorAll<HTMLElement>("[title]")).filter((el) =>
+      el.textContent?.includes(soDocNo),
+    );
+
+  it("floating won + provenance present: both chip kinds render in the drill-down cell", () => {
+    const { container } = render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        lines={[line({ assignedSos: [floating], provenance: [bought] })]}
+      />,
+    );
+    const f = chipFor(container, "SO-FLOT");
+    expect(f).toHaveLength(1);
+    expect(f[0].className).toContain("border-dashed");
+    expect(f[0].textContent).toContain("~");
+    const p = chipFor(container, "SO-PROV");
+    expect(p).toHaveLength(1);
+    expect(p[0].className).toContain("bg-surface-dim");
+    expect(p[0].title).toContain("Bought for SO-PROV");
+    expect(p[0].title).toContain("procurement provenance, not the live assignment");
+    expect(p[0].title).not.toMatch(/locked/i);
+    expect(p[0].textContent).not.toContain("~");
+  });
+
+  it("renders both truths in the paired per-SO sub-table, without an execution status on the provenance row", () => {
+    render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        showDelivered
+        lines={[line({ assignedSos: [floating], deliveredDos: [], provenance: [bought] })]}
+      />,
+    );
+    expect(screen.getByText("SO-FLOT")).toBeTruthy();
+    expect(screen.getByText("SO-PROV")).toBeTruthy();
+    // Exactly ONE status pill — the floating assignment's PENDING. Provenance
+    // is not the live assignment, so it carries no DELIVERED/PENDING verdict.
+    expect(screen.getAllByText(/DELIVERED|PENDING/)).toHaveLength(1);
+  });
+
+  it("renders both slots in the header AssignedSoCell", () => {
+    const { container } = render(
+      <AssignedSoCell assignments={[floating]} provenance={[bought]} />,
+    );
+    expect(chipFor(container, "SO-FLOT")[0].className).toContain("border-dashed");
+    const p = chipFor(container, "SO-PROV");
+    expect(p).toHaveLength(1);
+    expect(p[0].className).toContain("bg-surface-dim");
+    expect(p[0].title).toContain("Bought for SO-PROV");
+  });
+
+  it("stored origin won: the slots are identical and NOTHING extra renders (dedupe by soDocNo)", () => {
+    const stored = { soDocNo: "SO-SAME", deliveryDate: null, locked: true, source: "linked" as const };
+    const { container } = render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        lines={[line({ assignedSos: [stored], provenance: [stored] })]}
+      />,
+    );
+    expect(chipFor(container, "SO-SAME")).toHaveLength(1);
+  });
+
+  it("no provenance field (older backend): exactly today's rendering", () => {
+    const { container } = render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        lines={[line({ assignedSos: [floating] })]}
+      />,
+    );
+    // One chip, dashed — and no muted provenance chip anywhere.
+    expect(container.querySelectorAll("[title]")).toHaveLength(1);
+    expect(container.querySelector('[title*="Bought for"]')).toBeNull();
+  });
+
+  it("provenance chips never flip to the no-stored-link wording even when the line's sourceLinked is false", () => {
+    // sourceLinked=false describes the ASSIGNMENT slot (an MRP guess with no
+    // link behind it). The provenance chip exists precisely BECAUSE a stored
+    // origin names it — it must keep the "bought for" words.
+    const { container } = render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        lines={[line({ assignedSos: [floating], sourceLinked: false, provenance: [bought] })]}
+      />,
+    );
+    const p = chipFor(container, "SO-PROV");
+    expect(p[0].title).toContain("Bought for SO-PROV");
+    expect(p[0].title).not.toContain("no stored link");
   });
 });
 
@@ -379,5 +488,40 @@ describe("Accessory lines collapse their per-order list", () => {
     render(<DocumentLinesExpansion isLoading={false} showAssignment lines={[acc()]} />);
     expect(screen.getByText(/8 orders/)).toBeTruthy();
     expect(screen.queryByText("2990-SO-2606-020")).toBeNull();
+  });
+});
+
+describe("Committed batch — the hard-from-DO anchor (mig 0230, Decision 2026-08-06)", () => {
+  // The DO detail surfaces `delivery_order_items.committed_po_batch_no`: which
+  // incoming PO batch a ship-before-arrival line committed to at DO creation.
+  // ANCHORED identity — solid chip, never dashed, no "~" — because it is a
+  // stored fact, not a floating MRP allocation.
+
+  it("renders the anchored solid chip with the hard-from-DO tooltip when present", () => {
+    const { container } = render(<CommittedBatchCell poNo="2990-PO-2607-014" />);
+    const chip = screen.getByText("2990-PO-2607-014") as HTMLElement;
+    expect(chip).toBeTruthy();
+    // Anchored tone: solid border + surface fill + accent ink — and NOT the
+    // floating dashed treatment.
+    expect(chip.className).toContain("bg-surface-2");
+    expect(chip.className).toContain("text-accent-ink");
+    expect(chip.className).not.toContain("border-dashed");
+    expect(container.textContent).not.toContain("~");
+    // Tooltip states the anchor: committed at DO creation — hard from DO.
+    expect(chip.title).toMatch(/committed/i);
+    expect(chip.title).toMatch(/when the Delivery Order was created/i);
+    expect(chip.title).toMatch(/hard from DO/);
+    // The batch number renders VERBATIM (company-prefix namespacing rule).
+    expect(chip.textContent).toBe("2990-PO-2607-014");
+    // The cell labels itself so a bare PO chip cannot be misread as Source PO.
+    expect(screen.getByText(/Committed PO/i)).toBeTruthy();
+  });
+
+  it("renders NOTHING when the line never committed (no dash clutter)", () => {
+    const empty = render(<CommittedBatchCell poNo={null} />);
+    expect(empty.container.firstChild).toBeNull();
+    cleanup();
+    const absent = render(<CommittedBatchCell />);
+    expect(absent.container.firstChild).toBeNull();
   });
 });

@@ -6,7 +6,7 @@
 // each render as stage-ordered card groups joined by solid connectors, and
 // the SO ▸ PO hop between them renders as explicit pairing rows. The three
 // edge identities of the "soft until DO, hard from DO" Decision
-// (docs/modules/document-traceability.md §2.10) keep the SAME language as
+// (docs/modules/document-traceability.md §2.11) keep the SAME language as
 // the desktop maps — keep the wording constants below in lockstep with
 // vendor/scm/components/DocumentFlowModal.tsx:
 //   chain      — vertical execution FKs. Solid; anchored history.
