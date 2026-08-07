@@ -25,12 +25,13 @@
 // ships, renames must be done one row at a time via SKU Master.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   Check,
+  ChevronDown,
   Loader2,
   RotateCw,
   Save,
@@ -387,16 +388,81 @@ function ModelPicker({
   selectedId: string;
   onPick: (id: string) => void;
 }) {
+  /* Same idiom as the Products page's ModelFilterRail (owner-approved,
+     2026-05-28 "100个 model 不是排到尾巴去了吗", re-confirmed 2026-08-07
+     "太丑了" against this tab's all-pills dump): the first PICKER_VISIBLE
+     pills inline, the rest behind ONE "More (N) ▼" pill with a searchable
+     popover, and the picked model always promoted into the visible row.
+     The old side-by-side search box is gone — search lives in the popover. */
+  const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const filtered = useMemo(() => {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  const { inline, overflow } = useMemo(() => {
+    if (models.length <= PICKER_VISIBLE) return { inline: models, overflow: [] as ProductModel[] };
+    const head = models.slice(0, PICKER_VISIBLE);
+    const tail = models.slice(PICKER_VISIBLE);
+    const picked = tail.find((m) => m.id === selectedId);
+    if (picked) {
+      return {
+        inline: [...head.slice(0, -1), picked],
+        overflow: [head[head.length - 1]!, ...tail.filter((m) => m.id !== selectedId)],
+      };
+    }
+    return { inline: head, overflow: tail };
+  }, [models, selectedId]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && e.target instanceof Node && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const filteredOverflow = useMemo(() => {
     const trimmed = q.trim().toLowerCase();
-    if (!trimmed) return models;
-    return models.filter(
+    if (!trimmed) return overflow;
+    return overflow.filter(
       (m) =>
         m.model_code.toLowerCase().includes(trimmed) ||
         (m.name ?? "").toLowerCase().includes(trimmed),
     );
-  }, [q, models]);
+  }, [q, overflow]);
+
+  const pill = (m: ProductModel) => {
+    const isOn = m.id === selectedId;
+    return (
+      <button
+        key={m.id}
+        type="button"
+        onClick={() => onPick(m.id)}
+        className={cn(
+          "whitespace-nowrap rounded-full border px-3 py-1 text-[11.5px] font-semibold transition-colors",
+          isOn
+            ? "border-primary bg-primary text-white"
+            : "border-border bg-surface-2 text-ink-secondary hover:border-primary/40 hover:text-primary",
+        )}
+        aria-pressed={isOn}
+      >
+        <span>{m.model_code}</span>
+        {m.name && m.name !== m.model_code && (
+          <span className={cn("ml-1 opacity-80", isOn ? "" : "text-ink-muted")}>
+            · {m.name}
+          </span>
+        )}
+      </button>
+    );
+  };
+
   return (
     <div className="rounded-xl border border-border bg-surface p-4 shadow-stone">
       <div className="flex items-center justify-between gap-3">
@@ -410,57 +476,67 @@ function ModelPicker({
           Couldn't load sofa models: {error}
         </div>
       ) : (
-        <div className="mt-2 grid gap-3 sm:grid-cols-[260px_1fr]">
-          {/* Search */}
-          <div className="relative">
-            <Search
-              size={14}
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-muted"
-              aria-hidden
-            />
-            <input
-              type="search"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search model…"
-              className="block w-full rounded-md border border-border bg-surface-2 py-1.5 pl-8 pr-2 text-[12.5px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            />
-          </div>
-          {/* Chip list */}
-          <div className="flex flex-wrap gap-1.5">
-            {filtered.length === 0 && !loading && (
-              <span className="text-[11.5px] text-ink-muted">No models match.</span>
-            )}
-            {filtered.map((m) => {
-              const isOn = m.id === selectedId;
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => onPick(m.id)}
-                  className={cn(
-                    "rounded-full border px-3 py-1 text-[11.5px] font-semibold transition-colors",
-                    isOn
-                      ? "border-primary bg-primary text-white"
-                      : "border-border bg-surface-2 text-ink-secondary hover:border-primary/40 hover:text-primary",
-                  )}
-                  aria-pressed={isOn}
+        <div ref={wrapRef} className="relative mt-2 flex flex-wrap items-center gap-1.5">
+          {models.length === 0 && !loading && (
+            <span className="text-[11.5px] text-ink-muted">No sofa models registered.</span>
+          )}
+          {inline.map(pill)}
+          {overflow.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                aria-expanded={open}
+                aria-haspopup="listbox"
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-border bg-surface px-3 py-1 text-[11.5px] font-semibold text-ink transition-colors hover:border-primary/40 hover:text-primary"
+              >
+                <span>More ({overflow.length})</span>
+                <ChevronDown size={12} strokeWidth={1.75} />
+              </button>
+              {open && (
+                <div
+                  role="listbox"
+                  className="absolute right-0 top-full z-50 mt-1 flex max-h-[360px] w-[300px] flex-col rounded-md border border-border bg-surface p-2 shadow-slab"
                 >
-                  <span>{m.model_code}</span>
-                  {m.name && m.name !== m.model_code && (
-                    <span className={cn("ml-1 opacity-80", isOn ? "" : "text-ink-muted")}>
-                      · {m.name}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+                  <div className="relative mb-2">
+                    <Search
+                      size={13}
+                      className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-muted"
+                      aria-hidden
+                    />
+                    <input
+                      autoFocus
+                      type="search"
+                      value={q}
+                      onChange={(e) => setQ(e.target.value)}
+                      placeholder="Search model…"
+                      className="block w-full rounded-md border border-border bg-surface-2 py-1.5 pl-8 pr-2 text-[12.5px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                  <div className="flex flex-1 flex-wrap content-start gap-1.5 overflow-y-auto">
+                    {filteredOverflow.length === 0 && (
+                      <span className="px-1 py-2 text-[11.5px] text-ink-muted">No models match.</span>
+                    )}
+                    {filteredOverflow.slice(0, PICKER_OVERFLOW_CAP).map((m) => pill(m))}
+                    {filteredOverflow.length > PICKER_OVERFLOW_CAP && (
+                      <span className="px-1 py-2 text-[11.5px] text-ink-muted">
+                        +{filteredOverflow.length - PICKER_OVERFLOW_CAP} more — keep typing to narrow.
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
   );
 }
+
+/* Same numbers as the Products page's ModelFilterRail — one idiom, two tabs. */
+const PICKER_VISIBLE = 12;
+const PICKER_OVERFLOW_CAP = 60;
 
 // ── Axes bar ────────────────────────────────────────────────────────────────
 
