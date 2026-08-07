@@ -6017,7 +6017,17 @@ function ProjectDetailContent({
   const defectActionsValue = useMemo(
     () => ({
       actions: (((detail.data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
-      canAct:
+      // Two-stage defect triage (owner 2026-08-07):
+      //  - canReview  = Storekeeper Supervisor (Shukor) or admin — triages a
+      //    fresh defect: Done (cleaned) or Replace (escalate to purchaser).
+      //  - canPurchase = purchaser (Sim / Farra) / BD or admin — closes an
+      //    escalated (Replace) defect with Done once the replacement is ordered.
+      canReview:
+        !!user &&
+        (user.permissions?.includes("*") ||
+          user.permissions?.includes("projects.manage") ||
+          /^storekeeper supervisor$/i.test((user.position_name ?? "").trim())),
+      canPurchase:
         !!user &&
         (user.permissions?.includes("*") ||
           user.permissions?.includes("projects.manage") ||
@@ -7325,7 +7335,8 @@ interface AttachmentAction {
 }
 const DefectActionsCtx = createContext<{
   actions: AttachmentAction[];
-  canAct: boolean;
+  canReview: boolean;
+  canPurchase: boolean;
   reload: () => void;
 } | null>(null);
 
@@ -7356,7 +7367,16 @@ function TaskAttachmentRow({
   const fileActions = isDefectFile && defectCtx
     ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
     : [];
-  const [actionDraft, setActionDraft] = useState<null | "ongoing" | "done">(null);
+  // Latest timeline entry drives the two-stage state machine: no action (or a
+  // legacy 'ongoing') = fresh, awaiting the Storekeeper Supervisor's triage;
+  // 'replace' = escalated to the purchaser; 'done' = resolved (no buttons).
+  const latestAction = fileActions.length
+    ? fileActions.reduce((m, a) => (a.id > m.id ? a : m))
+    : null;
+  const isFreshDefect =
+    !latestAction || (latestAction.status !== "done" && latestAction.status !== "replace");
+  const isEscalatedDefect = latestAction?.status === "replace";
+  const [actionDraft, setActionDraft] = useState<null | "done" | "replace">(null);
   const [actionRemark, setActionRemark] = useState("");
   const [savingAction, setSavingAction] = useState(false);
   async function saveAction() {
@@ -7519,25 +7539,42 @@ function TaskAttachmentRow({
             </div>
           )
         )}
-        {/* Defect action timeline — buttons for the purchaser/BD, the stacked
-            history for everyone. Both buttons stay clickable forever; each
-            save APPENDS an entry (owner 2026-07-29). */}
+        {/* Defect action timeline (two-stage, owner 2026-08-07): a FRESH defect
+            shows Done + Replace to the Storekeeper Supervisor (Shukor); once he
+            escalates with Replace it shows Done to the purchaser (Sim / Farra).
+            A resolved (Done) file shows only the stacked history, for everyone. */}
         {isDefectFile && defectCtx && (
           <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
-            {defectCtx.canAct && (
+            {isFreshDefect && defectCtx.canReview && (
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => { setActionDraft("ongoing"); }}
+                  onClick={() => { setActionDraft("done"); }}
                   className={cn(
                     "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
-                    actionDraft === "ongoing"
-                      ? "border-amber-500 bg-amber-100 text-amber-700"
-                      : "border-amber-300 bg-surface text-amber-600 hover:bg-amber-50",
+                    actionDraft === "done"
+                      ? "border-green-600 bg-green-100 text-green-700"
+                      : "border-green-300 bg-surface text-green-600 hover:bg-green-50",
                   )}
                 >
-                  Ongoing
+                  Done
                 </button>
+                <button
+                  type="button"
+                  onClick={() => { setActionDraft("replace"); }}
+                  className={cn(
+                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
+                    actionDraft === "replace"
+                      ? "border-rose-600 bg-rose-100 text-rose-700"
+                      : "border-rose-300 bg-surface text-rose-600 hover:bg-rose-50",
+                  )}
+                >
+                  Replace
+                </button>
+              </div>
+            )}
+            {isEscalatedDefect && defectCtx.canPurchase && (
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => { setActionDraft("done"); }}
@@ -7590,7 +7627,11 @@ function TaskAttachmentRow({
                       <span
                         className={cn(
                           "h-1.5 w-1.5 shrink-0 rounded-full",
-                          a.status === "done" ? "bg-green-600" : "bg-amber-500",
+                          a.status === "done"
+                            ? "bg-green-600"
+                            : a.status === "replace"
+                              ? "bg-rose-600"
+                              : "bg-amber-500",
                         )}
                       />
                       <span
@@ -7598,10 +7639,16 @@ function TaskAttachmentRow({
                           "rounded px-1.5 py-0.5 font-bold",
                           a.status === "done"
                             ? "bg-green-100 text-green-700"
-                            : "bg-amber-100 text-amber-700",
+                            : a.status === "replace"
+                              ? "bg-rose-100 text-rose-700"
+                              : "bg-amber-100 text-amber-700",
                         )}
                       >
-                        {a.status === "done" ? "Done" : "Ongoing"}
+                        {a.status === "done"
+                          ? "Done"
+                          : a.status === "replace"
+                            ? "Replace"
+                            : "Ongoing"}
                       </span>
                       <span className="text-ink-muted">
                         {a.user_name || "—"} · {formatDateTime(a.created_at)}

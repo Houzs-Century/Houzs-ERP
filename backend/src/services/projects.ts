@@ -1356,6 +1356,11 @@ export interface ListProjectsFilters {
   pending_sales_attending?: boolean;
   /** Agreement/Quotation on its own timeline (Super Admin / weisiang). */
   pending_agreement?: boolean;
+  /** Defect clean-or-replace review (Storekeeper Supervisor / Shukor, owner
+   *  2026-08-07): projects with >=1 live defect-list attachment whose LATEST
+   *  timeline entry is neither 'done' nor 'replace' — i.e. a fresh upload the
+   *  reviewer has not triaged yet. Not a checklist item; own predicate. */
+  pending_defect_review?: boolean;
   /** Multi-company (mig-pg 0093): the ACTIVE company (activeCompanyId(c)).
    *  When set the list is isolated to that company; undefined (company
    *  context unresolved — pre-migration / D1 test mirror) = no predicate. */
@@ -1377,6 +1382,10 @@ export interface ListProjectsFilters {
    *  setup/dismantle time+crew), not a checklist item — when set,
    *  my_pending_titles carries the matching arrangement step instead. */
   pending_titles_logistic?: boolean;
+  /** Defect-review pending is derived from the attachment timeline, not a
+   *  checklist item — when set, my_pending_titles carries a "Review Defect
+   *  Items" chip (every row in this lane is here because of a fresh defect). */
+  pending_titles_defect_review?: boolean;
 }
 
 // Allow-listed sort columns for the project list. The default (when
@@ -1602,12 +1611,13 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                                                         AND da.archived_at IS NULL)))))`
     );
     pendingBinds.push(dueToday);
-    // Defect ACTIONING (owner 2026-07-29): every uploaded defect-list file is
-    // the purchaser task until its LATEST timeline entry is done — Ongoing
-    // keeps it pending, Done clears it; a later Ongoing entry reopens it.
-    // Timeline-gated to events that ended within the last 30 days so the
-    // historical backlog (41 old events with defect uploads predating this
-    // feature) does not flood the lane. One bind (defectSince).
+    // Defect ACTIONING (owner 2026-07-29; two-stage 2026-08-07): a defect-list
+    // file reaches the PURCHASER only once the Storekeeper Supervisor (Shukor)
+    // has ESCALATED it — its LATEST timeline entry is 'replace'. He resolves
+    // clean-able ones himself with 'done' (they never reach here); the purchaser
+    // then closes a replace with 'done'. Timeline-gated to events that ended
+    // within the last 30 days so the historical backlog does not flood the lane.
+    // One bind (defectSince).
     const defectSince = (() => {
       const d = new Date(`${dueToday}T00:00:00Z`);
       d.setUTCDate(d.getUTCDate() - 30);
@@ -1623,7 +1633,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                   AND COALESCE((SELECT act.status
                                   FROM project_checklist_attachment_actions act
                                  WHERE act.attachment_id = da.id
-                                 ORDER BY act.id DESC LIMIT 1), '') <> 'done'))`
+                                 ORDER BY act.id DESC LIMIT 1), '') = 'replace'))`
     );
     pendingBinds.push(defectSince);
   } else if (f.pending_label) {
@@ -1636,6 +1646,32 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                   AND pc.role_label LIKE ? AND ${NOT_IN_REVIEW} AND ${DUE_GATE})`
     );
     pendingBinds.push(`%${f.pending_label}%`, dueToday);
+  }
+  if (f.pending_defect_review) {
+    // Defect clean-or-replace REVIEW (owner 2026-08-07): the Storekeeper
+    // Supervisor's lane (Shukor). A live defect-list attachment whose LATEST
+    // timeline entry is neither 'done' (he cleaned it) nor 'replace' (he
+    // escalated it to the purchaser) is a fresh upload awaiting his triage.
+    // Same 30-day window as the purchaser arm so the pre-feature backlog stays
+    // out. One bind (reviewSince).
+    const reviewSince = (() => {
+      const d = new Date(`${dueToday}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - 30);
+      return d.toISOString().slice(0, 10);
+    })();
+    pendingOr.push(
+      `(substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?
+        AND EXISTS (SELECT 1 FROM project_checklist dl
+                JOIN project_checklist_attachments da
+                  ON da.item_id = dl.id AND da.archived_at IS NULL
+                WHERE dl.project_id = p.id
+                  AND (dl.title LIKE 'Defect List%' OR dl.title LIKE 'Defect Item%')
+                  AND COALESCE((SELECT act.status
+                                  FROM project_checklist_attachment_actions act
+                                 WHERE act.attachment_id = da.id
+                                 ORDER BY act.id DESC LIMIT 1), '') NOT IN ('done', 'replace')))`
+    );
+    pendingBinds.push(reviewSince);
   }
   if (f.pending_title) {
     pendingOr.push(
@@ -1923,6 +1959,9 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                    AND COALESCE(p.dismantle_crew, '') IN ('', '{}')
                 THEN 'Arrange Dismantle Time and Crew'
             END as my_pending_titles`
+      : f.pending_titles_defect_review
+      ? `,
+            'Review Defect Items' as my_pending_titles`
       : "";
 
   // Outstanding-task column (owner 2026-08-05; multi 2026-08-07) — only when
