@@ -822,8 +822,11 @@ function PurchaseOrderDetailV2ReadOnly() {
                 dash. The coarse Source-SO link (or STOCK) is what actually
                 governs this line, and rendering "—" while the list shows an
                 Assigned SO read as a contradiction. Owner, 2026-08-06: "明明显示
-                有 SO,可是 allocation 却显示没有". Muted + dashed border = implicit
-                (a real slice overrides it). */}
+                有 SO,可是 allocation 却显示没有". A stored Source-SO link wears the
+                MUTED PROVENANCE dress even when implicit — under the three-identity
+                language a dash means FLOATING, and this is a stored fact (owner,
+                2026-08-07: the list and the editor read as two different answers).
+                Only the no-link STOCK case stays dashed. */}
             {allocs.length === 0 && (
               <span
                 title={
@@ -831,7 +834,12 @@ function PurchaseOrderDetailV2ReadOnly() {
                     ? `Whole line (qty ${l.qty}) bought for ${l.so_doc_no} — procurement provenance, not the live assignment; add a slice to split it.`
                     : `Whole line (qty ${l.qty}) bought for stock — no Source SO link; add a slice to attribute it.`
                 }
-                className="rounded border border-dashed border-border px-1.5 py-0.5 font-mono text-[10.5px] text-ink-secondary"
+                className={cn(
+                  "rounded border px-1.5 py-0.5 font-mono text-[10.5px]",
+                  l.so_doc_no
+                    ? "border-border-subtle bg-surface-dim font-semibold text-ink-secondary"
+                    : "border-dashed border-border text-ink-secondary"
+                )}
               >
                 {l.so_doc_no ?? "STOCK"}
                 <span className="text-ink-muted">{` (qty ${l.qty})`}</span>
