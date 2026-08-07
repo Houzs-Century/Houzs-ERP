@@ -1,0 +1,84 @@
+name: SO fee-line integrity check (read-only)
+
+# Owner ruling 2026-08-07: every ringgit on a Sales Order is a LINE — a
+# delivery fee that reaches the TOTAL without an SVC-DELIVERY* line is a back
+# door (proven on 2990-SO-2608-006: subtotal RM0, total RM250, no line).
+#
+# Default run = the READ-ONLY detector (check-so-fee-line-integrity.mjs): one
+# SELECT listing every non-cancelled SO where total != Σ(lines), with the
+# difference, the header delivery-fee snapshot, and the audit-log evidence of
+# which route created the SO and which mutation removed its fee line. Exit 0
+# for every legitimate answer — clean and dirty are both answers.
+#
+# Optional repair (repair-so-fee-line-integrity.mjs) materialises the missing
+# SVC-DELIVERY line via the SAME 0214 RPC the live derivation uses — the total
+# is never changed, only itemised. DRY-RUN unless apply = "APPLY" AND the
+# confirmation phrase matches; the dry-run is verified in-transaction and
+# rolled back.
+#
+# Manual trigger only, own concurrency group — never the deploy's.
+on:
+  workflow_dispatch:
+    inputs:
+      repair:
+        description: 'Leave empty for the read-only check. Type REPAIR to run the repair (DRY-RUN unless confirmed below).'
+        required: false
+        default: ''
+        type: string
+      apply:
+        description: 'Repair only — type APPLY to commit. Anything else = DRY-RUN.'
+        required: false
+        default: ''
+        type: string
+      confirm:
+        description: 'Repair apply only — type exactly: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: so-fee-line-integrity
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - if: ${{ github.event.inputs.repair != 'REPAIR' }}
+        run: node scripts/check-so-fee-line-integrity.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - if: ${{ github.event.inputs.repair == 'REPAIR' }}
+        id: mode
+        working-directory: .
+        run: |
+          if [ "${{ github.event.inputs.apply }}" = "APPLY" ] && [ "${{ github.event.inputs.confirm }}" = "I HAVE REVIEWED THE DRY-RUN" ]; then
+            echo "apply=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::APPLY confirmed — writes will be COMMITTED."
+          else
+            echo "apply=false" >> "$GITHUB_OUTPUT"
+            if [ "${{ github.event.inputs.apply }}" = "APPLY" ]; then
+              echo "::warning::APPLY requested but the confirmation phrase is missing or wrong — running DRY-RUN."
+            fi
+          fi
+      - if: ${{ github.event.inputs.repair == 'REPAIR' }}
+        run: node scripts/repair-so-fee-line-integrity.mjs
+        env:
+          APPLY: ${{ steps.mode.outputs.apply }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -6002,9 +6002,11 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
    path, rederiveDeliveryFee). Preserves the operator's free-form additional fee
    (recovered from the existing SVC-DELIVERY-ADD line), recomputes on the
    authoritative computeSoDeliveryFee, and rebuilds the SVC-DELIVERY* lines. Only
-   runs when the SO already carries a delivery fee (else returns null BEFORE
-   recomputeTotals — the caller is responsible for any totals refresh).
-   Best-effort: logs DB errors, never throws. */
+   runs when the SO already carries a delivery fee — as SVC-DELIVERY* LINES, or
+   as an orphaned header delivery_fee_centi that lost its lines (see the bail
+   below); a genuinely fee-less SO returns null BEFORE recomputeTotals (the
+   caller is responsible for any totals refresh), so nothing here ever STARTS a
+   fee on a backend-authored SO. Best-effort: logs DB errors, never throws. */
 async function recomputeDeliveryFeeCore(
   sb: any, docNo: string, sourceDocNo: string | null, c: any,
 ): Promise<{ isFollowup: boolean; sourceDocNo: string | null; total: number } | null> {
@@ -6013,7 +6015,33 @@ async function recomputeDeliveryFeeCore(
     .eq('doc_no', docNo).eq('cancelled', false);
   const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_centi: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
   const deliveryLines = lines.filter((l) => isDeliveryFeeServiceCode(l.item_code));
-  if (deliveryLines.length === 0) return null; // no delivery fee → nothing to re-detect
+  /* Owner ruling 2026-08-07 ("全部都会有 SKU 的 … 怎么可以走后门呢?"): every
+     ringgit on a Sales Order is a LINE. The header delivery_fee_centi is a
+     dual-write MIRROR of the SVC-DELIVERY* lines, never money of its own — but
+     2990-SO-2608-006 proved the mirror could outlive the lines: delete (or
+     cancel) every fee line and the old `length === 0 → return null` bail turned
+     this derivation off FOREVER, while recomputeTotals' legacy line-less
+     fallback kept folding the orphaned header snapshot into the total. The SO
+     then read subtotal RM0 / total RM250 with no line saying why — the back
+     door. So the bail now asks the header too: no fee lines but a header still
+     carrying a fee means the fee must be RE-MATERIALISED as lines through this
+     same derivation (the 0214 RPC below), which also re-stamps the header to
+     the derived total — the ONE truth. Only an SO with no fee lines AND no
+     header fee is genuinely fee-less; the dormant-fee rule stands (nothing
+     here ever STARTS a fee — only the create path's applyDeliveryFee does). */
+  if (deliveryLines.length === 0) {
+    const { data: feeHdr, error: feeHdrErr } = await sb.from('mfg_sales_orders')
+      .select('delivery_fee_centi').eq('doc_no', docNo).maybeSingle();
+    /* Fail CLOSED (the 2026-07-17 zeroing lesson): a failed read is not "no
+       fee". Bail without writing — the shape self-heals on the next edit. */
+    if (feeHdrErr) {
+      /* eslint-disable-next-line no-console */
+      console.error('[so-redetect] header fee read failed — delivery derivation skipped:', docNo, feeHdrErr.message);
+      return null;
+    }
+    const headerFeeCenti = Number((feeHdr as { delivery_fee_centi?: number } | null)?.delivery_fee_centi ?? 0);
+    if (headerFeeCenti <= 0) return null; // no lines AND no header fee → genuinely fee-less
+  }
 
   // The rebuilt SVC-DELIVERY* lines append AFTER the kept lines (services sort
   // last anyway, but a numbered line_no keeps the order stable + matches create).
@@ -6212,9 +6240,11 @@ async function redetectCrossCategoryDelivery(
    THROUGH unchanged, so a benign item edit never drops or flips an operator-
    pinned cross-category source link. Only the FEE re-derives (special-delivery
    triggers + sofa↔mattress cross-category mix follow the current items). When
-   the SO carries no delivery fee, the core early-bails (null) before
-   recomputeTotals, so we still refresh the header totals for the edit.
-   Best-effort. */
+   the SO carries no delivery fee — no SVC-DELIVERY* lines AND no header
+   delivery_fee_centi (the core checks both; an orphaned header fee is
+   re-materialised as lines, never left header-only) — the core early-bails
+   (null) before recomputeTotals, so we still refresh the header totals for
+   the edit. Best-effort. */
 export async function rederiveDeliveryFee(sb: any, docNo: string, c: any): Promise<void> {
   let storedSource: string | null = null;
   const { data: hdr } = await sb.from('mfg_sales_orders')
@@ -7126,6 +7156,18 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
   // double-count); only a line-less legacy SO still reads the header back.
   // ⚠️ DO NOT DELETE this fallback without retiring the delivery_fee_centi
   // header column itself (SO-SKU spec §5 P6 — Loo decides the retirement).
+  //
+  // ⚠️ This fallback is for LEGACY line-less SOs ONLY, and it is the half of
+  // the 2990-SO-2608-006 back door (owner ruling 2026-08-07: every ringgit is
+  // a LINE): a MODERN SO whose SVC-DELIVERY* lines were deleted/cancelled fell
+  // into this branch and its total silently re-absorbed the orphaned header
+  // snapshot with no line saying why. The other half is closed at the source —
+  // recomputeDeliveryFeeCore no longer bails on "no fee lines" when the header
+  // still carries a fee; it re-materialises the lines through the one true
+  // derivation (0214 RPC), so every edit path exits with lines and this branch
+  // stays unreachable for it. Stragglers (SOs not edited since) are listed by
+  // backend/scripts/check-so-fee-line-integrity.mjs and repaired (DRY-RUN
+  // gated) by repair-so-fee-line-integrity.mjs.
   const hasDeliveryFeeLines = rows.some((r) => isDeliveryFeeServiceCode(r.item_code));
   let deliveryCenti = 0;
   if (!hasDeliveryFeeLines) {
