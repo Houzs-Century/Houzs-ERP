@@ -11,6 +11,11 @@
 //    owner wants no fills on printed documents — first the DO, then (same
 //    session) every other document that carried the same treatment.
 //
+// The DO itself has since been rebuilt on its own Theme C template, where pale
+// paper panels and chips are deliberate; its assertions live in
+// delivery-order-template.test.ts. What remains here covers the seven documents
+// still drawn by the shared helpers.
+//
 // Both are pinned by measuring the DRAWN output (doc.text / doc.rect), not by
 // asserting the options object — a theme or style rename would keep an
 // options-level test green while the sheet changed.
@@ -185,28 +190,14 @@ describe('letterhead: the company block never runs into the meta column', () => 
   });
 });
 
-describe('Delivery Order prints no black or grey fills', () => {
-  test('a real DO draws zero filled rectangles', async () => {
-    setBrandingCache({ ...CROWDED_BRANDING }, '2990');
-    const [{ jsPDF }, { default: autoTable }, { renderDeliveryOrderInto }] =
-      await Promise.all([
-        import('jspdf'),
-        import('jspdf-autotable'),
-        import('./delivery-order-pdf'),
-      ]);
-
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-    const fills = captureFills(doc);
-    await renderDeliveryOrderInto(doc, autoTable, HEADER as never, ITEMS as never);
-
-    expect(fills).toEqual([]);
-  });
-
-  test('a Delivery Return draws none either — the sweep reached the siblings', async () => {
-    /* The other seven documents moved to the same no-fill treatment in the same
-       session. DR stands in for them: it is the closest sibling and shares the
-       shared style constants, so a regression that reintroduced a band would
-       almost certainly land in all of them at once. */
+describe('the seven shared-template documents print no fills', () => {
+  test('a Delivery Return draws zero filled rectangles', async () => {
+    /* DR stands in for the seven documents still on the shared template: it
+       shares DOC_TABLE_STYLES with all of them, so a regression that
+       reintroduced a band would land in all of them at once. (The Delivery
+       Order left this group on 2026-08-07 — it has its own Theme C template,
+       whose pale panels ARE fills; delivery-order-template.test.ts holds the
+       rule that survived the redesign.) */
     setBrandingCache({ ...CROWDED_BRANDING }, '2990');
     const [{ jsPDF }, { default: autoTable }, { renderDeliveryReturnInto }] =
       await Promise.all([

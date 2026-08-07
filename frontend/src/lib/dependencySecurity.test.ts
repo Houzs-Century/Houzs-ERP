@@ -170,7 +170,11 @@ describe("security-upgraded document dependencies", () => {
       Array.isArray(value) ? value.map(String) : [String(value)]
     );
     expect(flattenedText).toContain(testBranding.companyName);
-    expect(flattenedText).toContain("中文客户");
+    // The Theme C DO (2026-08-07) labels the name inside the Deliver To panel
+    // ("Customer :  中文客户"), so it reaches the page within a line rather than
+    // as one. What this guards is that it reaches the page at all, through the
+    // CJK font — not how it is labelled.
+    expect(flattenedText.some((line) => line.includes("中文客户"))).toBe(true);
     expect(requestedFonts.sort()).toEqual([
       "/fonts/noto-sans-sc-hanzi-400.ttf",
       "/fonts/noto-sans-sc-hanzi-700.ttf",
