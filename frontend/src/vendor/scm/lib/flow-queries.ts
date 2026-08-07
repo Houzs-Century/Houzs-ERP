@@ -80,8 +80,21 @@ export type OriginAssignment = {
 /* `storedLink` — do this SKU's PO lines actually carry a stored so_item_id?
    Separate from the assignments on purpose: a SKU can show an MRP-derived SO
    while nothing in the database binds it, and reading that as a binding is the
-   2026-07-29 incident. Optional so an older backend degrades to "unknown". */
-export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[]; storedLink?: boolean };
+   2026-07-29 incident. Optional so an older backend degrades to "unknown".
+
+   `provenance` (PR-3, 2026-08-07) — ALWAYS the layer-(b) stored-origin SO(s)
+   for this SKU (`locked: true, source: 'linked'`), in PARALLEL with the
+   precedence winner in `assignments`: `storedLink` says stored links exist,
+   `provenance` says WHICH SOs they name. Rendered as the muted "bought for"
+   slot BESIDE the execution chips (three-identity idiom, §2.10), deduped by
+   soDocNo against `assignments`. Optional so an older backend (no field)
+   degrades to exactly today's rendering. */
+export type SkuOrigin = {
+  itemCode: string;
+  assignments: OriginAssignment[];
+  storedLink?: boolean;
+  provenance?: OriginAssignment[];
+};
 /* "Delivered" — the FORWARD companion of the delivered-lock: which Delivery
    Order(s) have shipped this purchase doc's goods (batch_no = the PO number) and
    how many units per DO. Cancelled DOs excluded. Optional so an older backend
@@ -115,6 +128,17 @@ export const originsByCode = (resp: PoSoCoverageResp | undefined): Map<string, O
   const m = new Map<string, OriginAssignment[]>();
   for (const o of resp?.origins ?? []) {
     if (o.itemCode) m.set(o.itemCode, o.assignments ?? []);
+  }
+  return m;
+};
+
+/* Per-SKU lookup (material_code → stored-origin "bought for" SOs) — the
+   provenance twin of originsByCode. Null-safe; empty map on an older backend
+   without the field, so every consumer degrades to today's rendering. */
+export const provenanceByCode = (resp: PoSoCoverageResp | undefined): Map<string, OriginAssignment[]> => {
+  const m = new Map<string, OriginAssignment[]>();
+  for (const o of resp?.origins ?? []) {
+    if (o.itemCode && (o.provenance?.length ?? 0) > 0) m.set(o.itemCode, o.provenance ?? []);
   }
   return m;
 };

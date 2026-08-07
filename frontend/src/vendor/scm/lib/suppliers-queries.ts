@@ -181,6 +181,10 @@ export type PoHeaderRow = {
       so_item_id, so the column can mark an MRP-only guess apart from a binding. */
   assigned_sos?: OriginAssignment[];
   assigned_so_linked?: boolean;
+  /** PR-3 (2026-08-07) — the parallel stored-origin "bought for" SO(s) of the
+      coverage wire, rendered muted beside the precedence chips (never
+      replacing them). Optional so an older backend degrades gracefully. */
+  assigned_so_provenance?: OriginAssignment[];
   /** "Delivered" column (owner 2026-07-31) — the Delivery Order(s) that have
       shipped this PO's goods (batch_no = the PO number) + qty per DO, resolved
       server-side. EVERY DO renders (no collapse); empty when nothing shipped. */

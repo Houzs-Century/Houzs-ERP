@@ -32,7 +32,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
-import { usePoSoCoverage, originsByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
+import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -83,6 +83,9 @@ type PiRow = {
       parent PO (resolved pi.grn_id → grn → PO), server-side for the whole page. */
   assigned_sos?: OriginAssignment[];
   assigned_so_linked?: boolean;
+  /** PR-3 (2026-08-07) — the parallel stored-origin "bought for" SO(s),
+      rendered muted beside the precedence chips. Optional: older backend. */
+  assigned_so_provenance?: OriginAssignment[];
   /** "Delivered" column (owner 2026-07-31) — the DO(s) that shipped the parent
       PO's goods + qty per DO. EVERY DO renders; empty when nothing shipped. */
   delivered_dos?: Array<{ doNo: string; qty: number }>;
@@ -545,6 +548,8 @@ function PiLinesExpansion({ id }: { id: string }) {
   const detailQ = usePurchaseInvoiceDetail(id);
   const covQ = usePoSoCoverage("pi", id);
   const byCode = originsByCode(covQ.data);
+  // PR-3: the parallel stored-origin "bought for" slot, per SKU.
+  const provByCode = provenanceByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
   const deliveredMap = deliveredByCode(covQ.data);
   const items =
@@ -561,6 +566,7 @@ function PiLinesExpansion({ id }: { id: string }) {
       amountCenti: l.line_total_centi ?? 0,
       assignedSos: byCode.get(code) ?? [],
       sourceLinked: linkedSkus.has(code),
+      provenance: provByCode.get(code) ?? [],
       deliveredDos: deliveredMap.get(code) ?? [],
     };
   });
@@ -852,6 +858,7 @@ export function PurchaseInvoicesListV2() {
         <AssignedSoCell
           assignments={r.assigned_sos}
           sourceLinked={r.assigned_so_linked}
+          provenance={r.assigned_so_provenance}
           onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
           emptyMeans="stock"
         />

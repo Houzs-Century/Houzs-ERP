@@ -190,6 +190,114 @@ describe("Three chip identities — anchored / provenance / floating", () => {
   });
 });
 
+// ── PR-3: the coverage wire's PARALLEL provenance slot, rendered side by side ──
+//
+// The wire now carries `provenance` (layer-b stored-origin SOs) beside the
+// precedence winner in `assignments`. Rendering rule: AFTER the precedence
+// chips, ALSO render muted "bought for" chips for provenance SOs not already
+// shown (dedupe by soDocNo). The case this exists for: the floating allocator
+// re-assigned (dashed chips) while the stored links remain — after an SO
+// amendment both truths must be visible. Additive and optional: no provenance
+// field → exactly the pre-PR-3 rendering.
+describe("Provenance slot beside execution (PR-3)", () => {
+  const floating = { soDocNo: "SO-FLOT", deliveryDate: null, locked: false, source: "mrp" as const };
+  const bought = { soDocNo: "SO-PROV", deliveryDate: "2026-09-01", locked: true, source: "linked" as const };
+
+  const chipFor = (container: HTMLElement, soDocNo: string): HTMLElement[] =>
+    Array.from(container.querySelectorAll<HTMLElement>("[title]")).filter((el) =>
+      el.textContent?.includes(soDocNo),
+    );
+
+  it("floating won + provenance present: both chip kinds render in the drill-down cell", () => {
+    const { container } = render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        lines={[line({ assignedSos: [floating], provenance: [bought] })]}
+      />,
+    );
+    const f = chipFor(container, "SO-FLOT");
+    expect(f).toHaveLength(1);
+    expect(f[0].className).toContain("border-dashed");
+    expect(f[0].textContent).toContain("~");
+    const p = chipFor(container, "SO-PROV");
+    expect(p).toHaveLength(1);
+    expect(p[0].className).toContain("bg-surface-dim");
+    expect(p[0].title).toContain("Bought for SO-PROV");
+    expect(p[0].title).toContain("procurement provenance, not the live assignment");
+    expect(p[0].title).not.toMatch(/locked/i);
+    expect(p[0].textContent).not.toContain("~");
+  });
+
+  it("renders both truths in the paired per-SO sub-table, without an execution status on the provenance row", () => {
+    render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        showDelivered
+        lines={[line({ assignedSos: [floating], deliveredDos: [], provenance: [bought] })]}
+      />,
+    );
+    expect(screen.getByText("SO-FLOT")).toBeTruthy();
+    expect(screen.getByText("SO-PROV")).toBeTruthy();
+    // Exactly ONE status pill — the floating assignment's PENDING. Provenance
+    // is not the live assignment, so it carries no DELIVERED/PENDING verdict.
+    expect(screen.getAllByText(/DELIVERED|PENDING/)).toHaveLength(1);
+  });
+
+  it("renders both slots in the header AssignedSoCell", () => {
+    const { container } = render(
+      <AssignedSoCell assignments={[floating]} provenance={[bought]} />,
+    );
+    expect(chipFor(container, "SO-FLOT")[0].className).toContain("border-dashed");
+    const p = chipFor(container, "SO-PROV");
+    expect(p).toHaveLength(1);
+    expect(p[0].className).toContain("bg-surface-dim");
+    expect(p[0].title).toContain("Bought for SO-PROV");
+  });
+
+  it("stored origin won: the slots are identical and NOTHING extra renders (dedupe by soDocNo)", () => {
+    const stored = { soDocNo: "SO-SAME", deliveryDate: null, locked: true, source: "linked" as const };
+    const { container } = render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        lines={[line({ assignedSos: [stored], provenance: [stored] })]}
+      />,
+    );
+    expect(chipFor(container, "SO-SAME")).toHaveLength(1);
+  });
+
+  it("no provenance field (older backend): exactly today's rendering", () => {
+    const { container } = render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        lines={[line({ assignedSos: [floating] })]}
+      />,
+    );
+    // One chip, dashed — and no muted provenance chip anywhere.
+    expect(container.querySelectorAll("[title]")).toHaveLength(1);
+    expect(container.querySelector('[title*="Bought for"]')).toBeNull();
+  });
+
+  it("provenance chips never flip to the no-stored-link wording even when the line's sourceLinked is false", () => {
+    // sourceLinked=false describes the ASSIGNMENT slot (an MRP guess with no
+    // link behind it). The provenance chip exists precisely BECAUSE a stored
+    // origin names it — it must keep the "bought for" words.
+    const { container } = render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        lines={[line({ assignedSos: [floating], sourceLinked: false, provenance: [bought] })]}
+      />,
+    );
+    const p = chipFor(container, "SO-PROV");
+    expect(p[0].title).toContain("Bought for SO-PROV");
+    expect(p[0].title).not.toContain("no stored link");
+  });
+});
+
 describe("Paired per-SO sub-table (2026-08-02 — one row per assigned SO)", () => {
   const assigned = [
     { soDocNo: "2990-SO-2606-021", deliveryDate: "2026-07-10", locked: true, source: "delivered" as const },

@@ -5,7 +5,7 @@ import { lineIdentity, orderLineIdentity } from "@2990s/shared";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "@2990s/shared/phone";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
-import { usePoSoCoverage, originsByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
+import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
@@ -175,13 +175,18 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLinked, allocations, poNumber, sourcePos, sourceAdj, delivered }: {
+function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered }: {
   name: string; sub?: string; qty: unknown; unitCenti: unknown; amountCenti: unknown;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
   // date, matched by SKU. Empty array → dash, mirroring the desktop columns.
   // Display-only on mobile (the phone shell doesn't route to the SO).
   assigned?: OriginAssignment[];
+  // PR-3 (2026-08-07): the coverage wire's PARALLEL stored-origin slot — the
+  // "bought for" SO(s), rendered muted BESIDE the precedence rows above
+  // (deduped by soDocNo inside PairedSoRowsMobile). Desktop twin: the
+  // DocumentLinesExpansion provenance chips — one product.
+  provenance?: OriginAssignment[];
   // Sales docs (DO / SI): the source PO(s) the shipped goods actually came from
   // (batch trail, GRN-healed) + the PO-less adjustment flag — the mobile twin
   // of the desktop drill-down's Source PO cell (owner 2026-08-01: identical
@@ -227,6 +232,7 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
           assigned={assigned}
           delivered={delivered ?? []}
           sourceLinked={sourceLinked}
+          provenance={provenance}
         />
       )}
       {sourcePos !== undefined && (
@@ -1345,6 +1351,8 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
   const coverageType = COVERAGE_TYPE[moduleKey] ?? null;
   const covQ = usePoSoCoverage(coverageType, coverageType && id ? id : null);
   const originByCode = originsByCode(covQ.data);
+  // PR-3: the parallel stored-origin "bought for" slot, per SKU.
+  const provByCode = provenanceByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
   // Per-SKU Delivered (DO + qty) — same resolver payload the desktop lists read.
   const deliveredMap = deliveredByCode(covQ.data);
@@ -1485,7 +1493,8 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
                   : undefined;
                 const sourceAdj = isSalesDoc ? Boolean(it?.source_adj) : undefined;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} />;
+                const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
           </div>

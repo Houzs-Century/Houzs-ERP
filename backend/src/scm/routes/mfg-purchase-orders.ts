@@ -562,6 +562,10 @@ mfgPurchaseOrders.get('/', async (c) => {
     transfer_to_grns: grnsByPo.get(r.id) ?? [],
     assigned_sos: assignedByPo.get(r.id)?.assignedSos ?? [],
     assigned_so_linked: assignedByPo.get(r.id)?.sourceLinked ?? false,
+    /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s), the
+       parallel provenance slot rendered muted BESIDE the precedence chips.
+       assigned_sos is unchanged — an older frontend simply ignores this. */
+    assigned_so_provenance: assignedByPo.get(r.id)?.provenanceSos ?? [],
     delivered_dos: deliveredByPo.get(r.id)?.deliveredDos ?? [],
   }));
   if (paginate) return c.json({ purchaseOrders, total, page, pageSize, statusCounts });
