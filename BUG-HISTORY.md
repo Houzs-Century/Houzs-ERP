@@ -1,9 +1,27 @@
+## 2026-08-07
+
+### [LOW] PDF snapshot-rule sweep: all nine generators print only anchored facts + stored provenance; the PO's "Transf. SO" column relabelled "For SO"
+- **The rule (owner-confirmed, from the 2026-08-06 "soft until DO, hard from DO" Decision — `docs/modules/purchase-order.md` §Decision).** A printed document is a SNAPSHOT: it prints ONLY anchored execution facts (SO→DO→SI, PO→GRN→PI chains) and stored provenance labelled as provenance ("bought for"). It must NEVER print a floating MRP/READY pairing (`coverage_po`, `ready_source_pos`, `source_po_union`, `usePoSoCoverage` origins with `source: 'mrp'`) — those shift as demand moves, so the paper would lie by tomorrow.
+- **Sweep verdict (all generators in `frontend/src/vendor/scm/lib/`, traced through their call sites AND the backend fields feeding them).**
+  - `sales-order-pdf.ts` — CLEAN. Customer-facing; prints no source-PO data at all (payments ledger is anchored).
+  - `delivery-order-pdf.ts` — CLEAN. Line `source_pos` is server-resolved (`delivery-orders-mfg.ts` detail): shipped-ledger batches (OUT movements ∪ consumed FIFO lots) with a stored-link fallback (`resolveExpectedBatchBySoItem`, `purchase_order_items.so_item_id`). No MRP path feeds it.
+  - `sales-invoice-pdf.ts` — CLEAN. Prints only the SI's own `so_doc_no` (execution chain).
+  - `grn-pdf.ts` — CLEAN. Prints only `purchase_order.po_number`, the PO the GRN received against (execution chain).
+  - `purchase-invoice-pdf.ts` — CLEAN. Prints only the PO/GRN refs the PI was raised from (execution chain).
+  - `purchase-return-pdf.ts` — CLEAN. Prints only the source PO ref.
+  - `delivery-return-pdf.ts` — CLEAN. No doc-pairing fields at all.
+  - `amendment-pdf.ts` (+ `amendment-pdf-map.ts`) — CLEAN. Prints stored amendment change rows only.
+  - `purchase-order-pdf.ts` — CLEAN data-wise (per-line `so_doc_no` = stored `so_item_id` link; "Your Ref No" = stored refs / "From SOs:" note). Zero floating leaks found; nothing removed.
+- **Relabel (owner-approved).** The PO PDF's per-line column header "Transf. SO" → **"For SO"** — provenance wording, not execution-binding wording, because pre-DO pairing is decided live at DO time and the stored link only records why we bought. What PRINTS is unchanged (stored `so_doc_no`, single-source note fallback — both conform). Comment references updated in `suppliers-queries.ts`, `backend/src/scm/routes/mfg-purchase-orders.ts`, and the `docs/mockups/pdf/purchase-order.html` mockup.
+- **Ref:** #<PR>. `fix/pdf-snapshot-rule` 2026-08-07.
+
 ## 2026-08-06
 
 ### [HIGH] Deploy blocked: 0267 resolved `grns` through the default search_path to the legacy public table
 - **Symptom.** The post-#1664 deploy failed at `pg-migrate`: `FAILED 0267_grn_outstanding_line_level.sql: column g.company_id does not exist` — every later migration and the Worker deploy blocked behind it (the standing CLAUDE.md failure class: main green, prod not deployed).
 - **Root cause.** 0267 (from #1663) writes `FROM grns` unqualified. The runner's default search_path resolves that to `public.grns` — the legacy D1-era table without `company_id` — not `scm.grns`. The view's ORIGINAL definition (0084) only works because it opens with `SET search_path TO scm, public;`; 0267 replaced it without carrying that line.
-- **Fix.** The same `SET search_path` line added to 0267. The file FAILED and was never recorded as applied, so in-place editing is the correct move (immutability applies to APPLIED files).
+- **Fix.** #1666 (a parallel session) landed the same `SET search_path` fix first and its deploy APPLIED 0267. My duplicate #1668 then edited the now-APPLIED file (clean merge, both insertions landed) — which is exactly the drift `pg-migrate` refuses on ("Applied migration history is immutable"). Restored to the byte-exact applied version (`35769c6`) before any backend deploy could hit the checksum gate.
+- **The second lesson.** Two sessions racing the same hotfix: before shipping a deploy fix, re-fetch and check whether it is already fixed — and NEVER edit a migration without first confirming, from the latest deploy log, that it has not been applied in the meantime.
 - **The class, for next time.** A migration that re-defines an object must carry the same schema-resolution preamble as the migration that created it — or qualify every relation. `column … does not exist` on a column you can see in the schema dump usually means you are looking at a different schema's table.
 - **Ref:** #<PR>. `fix/0267-search-path` 2026-08-06.
 
