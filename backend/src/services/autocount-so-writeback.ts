@@ -1,13 +1,21 @@
 // ERP -> AutoCount Sales Order write-back: the ERP-side composer + master
-// resolution. Turns an ERP mfg_sales_order (+ items) into the payload the
-// middleware's POST /SalesOrder/create expects, and reports which controlled
-// masters must be auto-provisioned first so a brand-new SKU/agent/branding/venue
-// can never make the push fail.
+// resolution. Turns an ERP mfg_sales_order (+ items) into the body the on-prem
+// AutoCount connector expects, and reports which controlled masters must be
+// auto-provisioned first so a brand-new SKU/agent/branding/venue can never make
+// the push fail.
 //
-// The middleware (AutoCount 2.x SDK) implements the actual create + upserts; see
-// docs/erp-to-autocount-so-writeback.md. This module is pure + dependency-injected
-// (the ItemCode resolver is passed in) so it type-checks and unit-tests without a
-// live DB or AutoCount.
+// TARGET: the connector (InistateConnector.exe, AutoCount 2.x SDK) self-hosts
+//   POST /api/AutoCount  header `Authorization: <SecretKey>`
+//   body { type: "SalesOrder", payload: <AcCreateSoPayload> }   (create)
+//   body { type: "ARDebtor" | "APCreditor" | "Item", payload: {...} }  (provision)
+// It logs into the AutoCount book named in the connector's setup.json and runs
+// SalesOrderCommand + DocumentService<SalesOrder>.UpdateOrCreate(payload).Save().
+// Field mapping is reflection by native AutoCount property name (case-insensitive)
+// with three quirks baked into the payload shape below: UDFs nest under `UDF`,
+// the line array is `Details`, and Description 2 is the detail `FurtherDescription`.
+// See docs/erp-to-autocount-so-writeback.md. This module is pure + dependency-
+// injected (the ItemCode resolver is passed in) so it type-checks and unit-tests
+// without a live DB or AutoCount.
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = "300-C002";
@@ -96,7 +104,9 @@ export interface ErpSoItem {
 export interface AcSoLine {
   ItemCode: string;
   Description: string | null;
-  ItemDescription: string | null; // Description 2
+  // Description 2. The connector maps a detail key named `FurtherDescription`
+  // into AutoCount's rich-text Description 2 (it RTF-encodes the plain string).
+  FurtherDescription: string | null;
   Qty: number;
   UOM: string | null;
   UnitPrice: number;
@@ -112,24 +122,45 @@ export interface MasterToProvision {
   mainSupplierCode?: string | null;
 }
 
+/** User-defined fields. The connector writes these via `salesOrder.UDF[key]`,
+ *  so they MUST be nested under a `UDF` object — a top-level SOUDF_* key finds no
+ *  writable SalesOrder property and is silently dropped. */
+export interface AcSoUdf {
+  SOUDF_BRANDING: string | null;
+  SOUDF_VENUE: string | null;
+  SOUDF_ToPONo: string | null;
+  SOUDF_PDate: string | null;
+  SOUDF_BALANCE: number | null;
+}
+
 export interface AcCreateSoPayload {
   DocNo: string;
   DocDate: string | null;
   DebtorCode: string;
   DebtorName: string | null;
-  SalesAgent: string | null;
+  // AutoCount SO header agent property is `Agent` (the agent code IS the name).
+  Agent: string | null;
   SalesLocation: string | null;
-  SOUDF_BRANDING: string | null;
-  SOUDF_VENUE: string | null;
   InvAddr1: string | null; InvAddr2: string | null;
   InvAddr3: string | null; InvAddr4: string | null;
   Phone1: string | null;
   Ref: string | null;
-  SOUDF_ToPONo: string | null;
   Remark2: string | null;
-  SOUDF_PDate: string | null;
-  SOUDF_BALANCE: number | null;
-  Detail: AcSoLine[];
+  UDF: AcSoUdf;
+  // The connector only consumes a line array named `Details` (lower-cased match);
+  // a `Detail` key is silently ignored, creating a header with no lines.
+  Details: AcSoLine[];
+}
+
+/** The full body posted to the connector `POST /api/AutoCount`. */
+export interface AcCreateRequest {
+  type: "SalesOrder";
+  payload: AcCreateSoPayload;
+}
+
+/** Wrap a composed payload into the connector's create envelope. */
+export function toAutoCountCreateRequest(payload: AcCreateSoPayload): AcCreateRequest {
+  return { type: "SalesOrder", payload };
 }
 
 /** Resolves an ERP item_code to its AutoCount ItemCode (via bindings; sofa lines
@@ -184,7 +215,7 @@ export async function composeAutoCountSalesOrder(
     detail.push({
       ItemCode: code,
       Description: it.description,
-      ItemDescription: it.description2 ?? composeDescription2(it),
+      FurtherDescription: it.description2 ?? composeDescription2(it),
       Qty: it.qty,
       UOM: it.uom,
       UnitPrice: price(it.unit_price_centi),
@@ -196,19 +227,21 @@ export async function composeAutoCountSalesOrder(
     DocDate: header.so_date,
     DebtorCode: AC_DEBTOR_CODE,
     DebtorName: header.debtor_name,
-    SalesAgent: agent,
+    Agent: agent,
     SalesLocation: location,
-    SOUDF_BRANDING: branding,
-    SOUDF_VENUE: venue,
     InvAddr1: header.address1, InvAddr2: header.address2,
     InvAddr3: header.address3, InvAddr4: header.address4,
     Phone1: header.phone,
     Ref: header.ref,
-    SOUDF_ToPONo: header.po_doc_no,
     Remark2: header.remark2,
-    SOUDF_PDate: header.line_delivery_date,
-    SOUDF_BALANCE: header.balance_centi != null ? price(header.balance_centi) : null,
-    Detail: detail,
+    UDF: {
+      SOUDF_BRANDING: branding,
+      SOUDF_VENUE: venue,
+      SOUDF_ToPONo: header.po_doc_no,
+      SOUDF_PDate: header.line_delivery_date,
+      SOUDF_BALANCE: header.balance_centi != null ? price(header.balance_centi) : null,
+    },
+    Details: detail,
   };
 
   // de-dup provision list by kind+value

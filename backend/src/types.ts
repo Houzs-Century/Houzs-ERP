@@ -84,6 +84,12 @@ export type Env = {
   SESSION_FALLBACK_TTL_MS?: string;
   AUTOCOUNT_API_URL: string;
   AUTOCOUNT_API_KEY: string;
+  // On-prem AutoCount connector (InistateConnector, POST /api/AutoCount) used for
+  // the SO write-back. Falls back to the read-middleware URL/key when unset.
+  // URL = tunnel base (e.g. https://autocount.houzscentury.com); KEY = the
+  // connector's Authorization shared secret (distinct from AUTOCOUNT_API_KEY).
+  AUTOCOUNT_CONNECTOR_URL?: string;
+  AUTOCOUNT_CONNECTOR_KEY?: string;
   // Inbound-sync kill switch. "true" = skip every AutoCount pull (cron + manual).
   AUTOCOUNT_SYNC_DISABLED?: string;
   DASHBOARD_API_KEY: string;

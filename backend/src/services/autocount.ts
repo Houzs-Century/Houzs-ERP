@@ -273,6 +273,39 @@ export class AutoCountClient {
    * the write-back fail. Upserts via the middleware (AutoCount SDK). Honors the kill
    * switch. Stops and returns the first failing upsert.
    */
+  /**
+   * POST a document to the on-prem AutoCount connector's generic endpoint
+   * (`POST /api/AutoCount`, body `{ type, payload }`). Auth is the connector's
+   * own shared secret in the `Authorization` header (NOT the read middleware's
+   * X-API-KEY). The connector logs into the AutoCount book named in its
+   * setup.json and runs the SDK create/upsert.
+   */
+  private async connectorPost(
+    body: { type: string; payload: Record<string, unknown> }
+  ): Promise<{ ok: boolean; status: number; body: string }> {
+    const key = this.env.AUTOCOUNT_CONNECTOR_KEY ?? this.env.AUTOCOUNT_API_KEY;
+    const base = this.env.AUTOCOUNT_CONNECTOR_URL ?? this.env.AUTOCOUNT_API_URL;
+    const res = await fetch(`${base.replace(/\/$/, "")}/api/AutoCount`, {
+      method: "POST",
+      headers: {
+        Authorization: key,
+        "X-Request-ID": this.rid,
+        "ngrok-skip-browser-warning": "true",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    return { ok: res.ok, status: res.status, body: await res.text() };
+  }
+
+  /**
+   * Ensure every controlled master referenced by an SO exists in AutoCount BEFORE
+   * the SO is created. Only STOCK ITEMS are creatable through the connector's
+   * generic endpoint (type:"Item"); a brand-new sales agent / branding / venue is
+   * NOT createable there — but the composer already null-safes an unknown value
+   * (the SO is written without it and it is reported for manual follow-up), so it
+   * never blocks the write. Honors the kill switch; stops at the first failure.
+   */
   async provisionMasters(
     masters: MasterToProvision[]
   ): Promise<{ ok: boolean; status: number; body: string }> {
@@ -282,37 +315,33 @@ export class AutoCountClient {
       );
       return { ok: true, status: 200, body: "skipped: AUTOCOUNT_WRITES_DISABLED" };
     }
+    let created = 0;
     for (const m of masters) {
-      const path =
-        m.kind === "stock_item" ? "/StockItem/upsert"
-        : m.kind === "sales_agent" ? "/SalesAgent/upsert"
-        : "/UDFList/add";
-      const body =
-        m.kind === "udf_branding" ? { list: "BRANDING", value: m.value }
-        : m.kind === "udf_venue" ? { list: "VENUE", value: m.value }
-        : m.kind === "sales_agent" ? { code: m.value, description: m.value }
-        : {
-            itemCode: m.value,
-            description: m.description,
-            itemGroup: m.itemGroup,
-            uom: m.uom,
-            mainSupplier: m.mainSupplierCode,
-          };
-      const res = await fetch(this.url(path), {
-        method: path === "/UDFList/add" ? "PUT" : "POST",
-        headers: headers(this.env, this.rid),
-        body: JSON.stringify(body),
+      if (m.kind !== "stock_item") continue; // agent/branding/venue: null-safed, not blocking
+      // Item field names map to AutoCount ItemEntity properties by reflection.
+      // Exact names + the create defaults (StockControl/IsSalesItem/…) still to be
+      // confirmed on AED_TESTING; see docs/erp-to-autocount-so-writeback.md §4.
+      const res = await this.connectorPost({
+        type: "Item",
+        payload: {
+          ItemCode: m.value,
+          Description: m.description ?? m.value,
+          ItemGroup: m.itemGroup ?? null,
+          BaseUOM: m.uom ?? null,
+          MainSupplier: m.mainSupplierCode ?? null,
+        },
       });
-      if (!res.ok) return { ok: false, status: res.status, body: await res.text() };
+      if (!res.ok) return res;
+      created++;
     }
-    return { ok: true, status: 200, body: `provisioned ${masters.length}` };
+    return { ok: true, status: 200, body: `provisioned ${created} item(s)` };
   }
 
   /**
-   * Create a full Sales Order in AutoCount via the SDK middleware
-   * (POST /SalesOrder/create). Idempotent middleware-side by DocNo. Honors the
-   * kill switch. Run provisionMasters() first (or the middleware runs the
-   * pre-flight itself).
+   * Create a Sales Order in AutoCount via the connector
+   * (POST /api/AutoCount, type "SalesOrder"). The connector always CREATES (our
+   * capitalized DocNo never triggers its update path). Honors the kill switch.
+   * Run provisionMasters() first for any new stock item.
    */
   async createSalesOrder(
     payload: AcCreateSoPayload
@@ -323,13 +352,10 @@ export class AutoCountClient {
       );
       return { ok: true, status: 200, body: "skipped: AUTOCOUNT_WRITES_DISABLED" };
     }
-    const res = await fetch(this.url(`/SalesOrder/create`), {
-      method: "POST",
-      headers: headers(this.env, this.rid),
-      body: JSON.stringify(payload),
+    return this.connectorPost({
+      type: "SalesOrder",
+      payload: payload as unknown as Record<string, unknown>,
     });
-    const text = await res.text();
-    return { ok: res.ok, status: res.status, body: text };
   }
 }
 
