@@ -10,13 +10,19 @@
 // arrangement_stage. Two actions on the multiselect:
 //
 //   "Propose time (N)"  — the A2/A3 sequence-assign flow, RELOCATED from the
-//     Delivery Date Arrangement page: the backend re-packs the selected orders,
-//     crews each group with an available lorry + driver + helper (leave-aware),
+//     Delivery Date Arrangement page, under the CONFIRMED-DATE discipline
+//     (lib/propose-time.ts): the selection is grouped by each order's
+//     confirmed delivery date, the endpoint is called once per date-group with
+//     that date as its start, and the response is PINNED to that one day —
+//     what the packer walked past the date spills to the 3PL overflow bucket
+//     FOR the date (own fleet provably full) instead of being re-dated. The
+//     Date page owns dates; this page never re-derives them. Each call crews
+//     the groups with an available lorry + driver + helper (leave-aware),
 //     sequences the stops (geocode + one Distance Matrix call per trip) and
-//     returns editable per-trip cards + a 3PL overflow section. Apply persists
-//     through the ESTABLISHED schedule path (PATCH
+//     returns editable per-trip cards + the 3PL overflow section. Apply
+//     persists through the ESTABLISHED schedule path (PATCH
 //     /delivery-planning/so/:id/schedule). Depot / capacity / max-trips ride
-//     the server defaults silently; only a depart time sits beside the button.
+//     the server defaults silently; the depart-time input applies per day.
 //   "Schedule (N)"      — the existing manual ScheduleTripDrawer, unchanged.
 //
 // Trip detail belongs under the "Time arranged" side: when that tab is active,
@@ -60,6 +66,11 @@ import {
   type ThreePlCarrier,
 } from '../../vendor/scm/lib/delivery-zones-queries';
 import { findCrewLeave, crewLeaveLabel, type CrewLeaveRow } from '../../vendor/shared/crew-leave';
+import {
+  groupByConfirmedDate,
+  pinAssignToDate,
+  mergeAssignResults,
+} from '../../vendor/scm/lib/propose-time';
 import {
   DeliveryPlanningBoard,
   regionTabsFrom,
@@ -152,9 +163,12 @@ export function Trips() {
     return pendingOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no));
   }, [pendingOrders, pendingSel]);
 
-  /* ── Propose time — the RELOCATED A2/A3 sequence-assign flow. */
+  /* ── Propose time — the RELOCATED A2/A3 sequence-assign flow, under the
+     confirmed-date discipline (lib/propose-time.ts): one endpoint call per
+     confirmed-date group, each response pinned to its one day. */
   const seqAssign = useSequenceAssign();
   const [departTime, setDepartTime] = useState<string>('09:00');
+  const [proposing, setProposing] = useState(false);
   const [assign, setAssign] = useState<SequenceAssignResponse | null>(null);
   // Per-trip dispatcher overrides of the auto-assigned lorry / driver / helper.
   const [overrides, setOverrides] = useState<Record<string, { lorryId?: string | null; driverId?: string | null; helperId?: string | null }>>({});
@@ -163,21 +177,50 @@ export function Trips() {
   const [threePl, setThreePl] = useState<Record<string, { carrierId?: string | null; costRm?: string }>>({});
   const [assigning3pl, setAssigning3pl] = useState<string | null>(null);
 
-  const runProposeTime = () => {
+  const runProposeTime = async () => {
     if (selectedDocNos.length === 0) {
       notify({ title: 'Nothing selected', body: 'Tick the orders to arrange first.', tone: 'error' });
       return;
     }
-    /* Depot, start date, capacity ceilings and max-trips ride the server
-       defaults silently (owner: no config lump-sum). Only the depart time is a
-       genuine time-arrangement input. */
-    seqAssign.mutate({
-      soDocNos: selectedDocNos,
-      departTime,
-    }, {
-      onSuccess: (r) => { setAssign(r); setOverrides({}); setThreePl({}); },
-      onError: (err) => notify({ title: 'Propose time failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
-    });
+    /* Dates first, lorries second: group the selection by each order's
+       CONFIRMED delivery date — the Date page owns dates, so the packer is
+       started AT each confirmed date and pinned to that one day. An order with
+       no confirmed date is reported and skipped, never dated here. Depot,
+       capacity ceilings and max-trips still ride the server defaults silently;
+       the depart time applies to every day's trips. */
+    const { groups, undated } = groupByConfirmedDate(pendingOrders, selectedDocNos);
+    if (groups.length === 0) {
+      notify({
+        title: 'No confirmed dates',
+        body: 'None of the selected orders has a confirmed delivery date — arrange dates in Delivery Date Arrangement first.',
+        tone: 'error',
+      });
+      return;
+    }
+    setProposing(true);
+    const results: SequenceAssignResponse[] = [];
+    const failures: string[] = [];
+    for (const g of groups) {
+      try {
+        const r = await seqAssign.mutateAsync({ soDocNos: g.docNos, startDate: g.date, departTime });
+        results.push(pinAssignToDate(r, g.date));
+      } catch (e) {
+        failures.push(`${g.date} (${e instanceof Error ? e.message : 'Something went wrong.'})`);
+      }
+    }
+    setProposing(false);
+    const merged = mergeAssignResults(results);
+    if (merged) { setAssign(merged); setOverrides({}); setThreePl({}); }
+    if (undated.length > 0 || failures.length > 0) {
+      notify({
+        title: merged ? 'Proposed, with notes' : 'Propose time failed',
+        body: [
+          undated.length > 0 ? `${undated.length} order(s) skipped — no confirmed delivery date yet (arrange the date first): ${undated.join(', ')}.` : '',
+          failures.length > 0 ? `Failed for ${failures.join('; ')}.` : '',
+        ].filter(Boolean).join(' '),
+        tone: merged && failures.length === 0 ? 'info' : 'error',
+      });
+    }
   };
 
   // The effective (possibly overridden) crew/lorry for a trip.
@@ -415,11 +458,11 @@ export function Trips() {
             <Button
               variant="primary"
               icon={<Wand2 {...ICON} />}
-              disabled={seqAssign.isPending || selectedDocNos.length === 0}
-              onClick={runProposeTime}
-              title={selectedDocNos.length === 0 ? 'Select one or more sales orders first' : 'Propose lorry, crew, stop sequence and times for the selected orders'}
+              disabled={proposing || selectedDocNos.length === 0}
+              onClick={() => void runProposeTime()}
+              title={selectedDocNos.length === 0 ? 'Select one or more sales orders first' : 'Propose lorry, crew, stop sequence and times — each order on its confirmed delivery date'}
             >
-              {seqAssign.isPending ? 'Proposing…' : `Propose time (${selectedDocNos.length})`}
+              {proposing ? 'Proposing…' : `Propose time (${selectedDocNos.length})`}
             </Button>
             <Button
               variant="secondary"
