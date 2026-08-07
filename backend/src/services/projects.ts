@@ -1276,8 +1276,11 @@ export interface ListProjectsFilters {
   brand?: string;
   event_type_id?: number;
   search?: string;
-  year?: number;
-  month?: number;  // 1-12, filters on start_date
+  /** Year(s) on start_date. `number` for legacy single-value callers, or a
+   *  comma-separated string for the multi-select picker (owner 2026-08-07). */
+  year?: number | string;
+  /** Month(s) 1-12 on start_date. Single number or comma-separated list. */
+  month?: number | string;
   state?: string;
   /** Active tasklist section name (mig 050). When set, the list only
    *  returns projects whose lowest-sort_order section with open tasks
@@ -1399,6 +1402,16 @@ const PROJECT_SORT_MAP: Record<string, string> = {
   created_by_name: "cb.name",
 };
 
+/** Split a filter value that may be a COMMA-SEPARATED multi-select list (owner
+ *  2026-08-07). Accepts the number|string the filters already carry, trims,
+ *  drops blanks, and de-dupes — so `IN (…)` never gets an empty or repeated
+ *  placeholder. A single value yields a one-element list, which keeps every
+ *  pre-existing single-select caller behaving identically. */
+function csvList(v: string | number | null | undefined): string[] {
+  if (v == null) return [];
+  return [...new Set(String(v).split(",").map((s) => s.trim()).filter(Boolean))];
+}
+
 export async function listProjects(env: Env, f: ListProjectsFilters) {
   const where: string[] = [];
   const binds: any[] = [];
@@ -1434,25 +1447,38 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     );
     binds.push(todayMyt());
   }
-  if (f.brand) {
-    where.push("p.brand = ?");
-    binds.push(f.brand);
+  // brand / status / year / month accept COMMA-SEPARATED lists since
+  // 2026-08-07 (owner: "add multiple choice for all dropdown also"). A single
+  // value still behaves exactly as before — csvList() yields one element and
+  // the IN (?) collapses to equality.
+  const brandList = csvList(f.brand);
+  if (brandList.length) {
+    where.push(`p.brand IN (${brandList.map(() => "?").join(",")})`);
+    binds.push(...brandList);
   }
-  if (f.status) {
-    where.push("p.status = ?");
-    binds.push(f.status);
+  const statusList = csvList(f.status);
+  if (statusList.length) {
+    where.push(`p.status IN (${statusList.map(() => "?").join(",")})`);
+    binds.push(...statusList);
   }
   if (f.event_type_id != null) {
     where.push("p.event_type_id = ?");
     binds.push(f.event_type_id);
   }
-  if (f.year) {
-    where.push("strftime('%Y', p.start_date) = ?");
-    binds.push(String(f.year));
+  // Year / month are numeric lists. Non-numeric or out-of-range entries are
+  // dropped rather than bound, so a hand-edited URL can't inject nonsense.
+  const yearList = csvList(f.year).filter((y) => /^\d{4}$/.test(y));
+  if (yearList.length) {
+    where.push(`strftime('%Y', p.start_date) IN (${yearList.map(() => "?").join(",")})`);
+    binds.push(...yearList);
   }
-  if (f.month && f.month >= 1 && f.month <= 12) {
-    where.push("strftime('%m', p.start_date) = ?");
-    binds.push(String(f.month).padStart(2, "0"));
+  const monthList = csvList(f.month)
+    .map((m) => parseInt(m, 10))
+    .filter((m) => Number.isFinite(m) && m >= 1 && m <= 12)
+    .map((m) => String(m).padStart(2, "0"));
+  if (monthList.length) {
+    where.push(`strftime('%m', p.start_date) IN (${monthList.map(() => "?").join(",")})`);
+    binds.push(...monthList);
   }
   if (f.state) {
     where.push("p.state = ?");
@@ -1690,20 +1716,30 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     )
   )`;
 
-  if (f.exclude_done && f.section !== "__done") {
+  // Hide-completed stands down when the caller explicitly asked for the
+  // Completed bucket — checked against the whole multi-pick, not just an exact
+  // "__done" (owner 2026-08-07 made section a list).
+  if (f.exclude_done && !csvList(f.section).includes("__done")) {
     where.push(`NOT ${SECTION_DONE_PREDICATE}`);
   }
 
-  if (f.section) {
-    if (f.section === "__done") {
-      where.push(SECTION_DONE_PREDICATE);
-    } else if (f.section === "__none") {
-      where.push(
+  // Section accepts a COMMA-SEPARATED list too (owner 2026-08-07). The two
+  // sentinels stay meaningful inside a multi-pick: "__done" (everything
+  // complete) and "__none" (no sections defined) become OR-ed alternatives
+  // alongside the real section names, so "OPERATION or Completed" works.
+  const sectionList = csvList(f.section);
+  if (sectionList.length) {
+    const names = sectionList.filter((s) => s !== "__done" && s !== "__none");
+    const ors: string[] = [];
+    if (sectionList.includes("__done")) ors.push(SECTION_DONE_PREDICATE);
+    if (sectionList.includes("__none")) {
+      ors.push(
         `NOT EXISTS (SELECT 1 FROM project_checklist_sections s WHERE s.project_id = p.id)`
       );
-    } else {
+    }
+    if (names.length) {
       // Match the active section (lowest sort_order with open tasks).
-      where.push(
+      ors.push(
         `(
            SELECT s.name FROM project_checklist_sections s
             WHERE s.project_id = p.id
@@ -1714,10 +1750,11 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                    AND c.status NOT IN ('done','na')
               )
             ORDER BY s.sort_order LIMIT 1
-         ) = ?`
+         ) IN (${names.map(() => "?").join(",")})`
       );
-      binds.push(f.section);
     }
+    where.push(`(${ors.join(" OR ")})`);
+    binds.push(...names);
   }
   // Outstanding-task filter (owner 2026-08-05, multi-select 2026-08-07): keep
   // events where AT LEAST ONE of the ticked tasks is still open. Deliberately

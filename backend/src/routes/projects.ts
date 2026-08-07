@@ -1073,8 +1073,11 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     status: c.req.query("status") || undefined,
     exclude_done: c.req.query("exclude_done") === "1",
     search: c.req.query("search"),
-    year: yearParam ? parseInt(yearParam, 10) : undefined,
-    month: monthParam ? parseInt(monthParam, 10) : undefined,
+    // Passed through as-is: may be a single value OR a comma-separated
+    // multi-select list (owner 2026-08-07). listProjects validates each entry
+    // (4-digit year / 1-12 month) and binds them individually.
+    year: yearParam || undefined,
+    month: monthParam || undefined,
     page: parseInt(c.req.query("page") || "1", 10),
     per_page: parseInt(c.req.query("per_page") || "50", 10),
     include_archived: c.req.query("include_archived") === "1",
