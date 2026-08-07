@@ -142,6 +142,22 @@ describe("branding logo slots", () => {
     expect(letterheadLogoKey(body.branding)).toBe(a.branding.logoR2Key);
   });
 
+  test("the served bytes name their company, so a client can refuse a mismatch", async () => {
+    /* The client memoises the letterhead logo by R2 key alone, which cannot say
+       WHOSE image arrived. This header is what lets it refuse one company's mark
+       on another company's document (frontend lib/branding.ts) — and it must be
+       on the response for BOTH slots, since the letterhead may resolve to
+       either. */
+    await resetSlots();
+    await upload("app", PNG_APP);
+    const screen = await request("/api/branding/logo");
+    expect(screen.headers.get("x-company-code")).toBe(CO);
+
+    await upload("print", PNG_PRINT);
+    const paper = await request("/api/branding/logo?variant=print");
+    expect(paper.headers.get("x-company-code")).toBe(CO);
+  });
+
   test("an unknown variant is treated as the on-screen slot, never as a third one", async () => {
     await resetSlots();
     const a = await upload("app", PNG_APP);
