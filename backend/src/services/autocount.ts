@@ -6,6 +6,7 @@ import type {
   ACSalesOrderDetail,
   ACDeliveryOrder,
 } from "../types";
+import type { AcCreateSoPayload, MasterToProvision } from "./autocount-so-writeback";
 
 /**
  * GLOBAL KILL SWITCH for outbound writes to AutoCount.
@@ -261,6 +262,71 @@ export class AutoCountClient {
       method: "PUT",
       headers: headers(this.env, this.rid),
       body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    return { ok: res.ok, status: res.status, body: text };
+  }
+
+  /**
+   * Ensure every controlled master referenced by an SO exists in AutoCount BEFORE
+   * the SO is created, so a brand-new SKU / agent / branding / venue can never make
+   * the write-back fail. Upserts via the middleware (AutoCount SDK). Honors the kill
+   * switch. Stops and returns the first failing upsert.
+   */
+  async provisionMasters(
+    masters: MasterToProvision[]
+  ): Promise<{ ok: boolean; status: number; body: string }> {
+    if (AUTOCOUNT_WRITES_DISABLED) {
+      console.warn(
+        `[autocount][${this.rid}] WRITES DISABLED — skipping provisionMasters (${masters.length})`
+      );
+      return { ok: true, status: 200, body: "skipped: AUTOCOUNT_WRITES_DISABLED" };
+    }
+    for (const m of masters) {
+      const path =
+        m.kind === "stock_item" ? "/StockItem/upsert"
+        : m.kind === "sales_agent" ? "/SalesAgent/upsert"
+        : "/UDFList/add";
+      const body =
+        m.kind === "udf_branding" ? { list: "BRANDING", value: m.value }
+        : m.kind === "udf_venue" ? { list: "VENUE", value: m.value }
+        : m.kind === "sales_agent" ? { code: m.value, description: m.value }
+        : {
+            itemCode: m.value,
+            description: m.description,
+            itemGroup: m.itemGroup,
+            uom: m.uom,
+            mainSupplier: m.mainSupplierCode,
+          };
+      const res = await fetch(this.url(path), {
+        method: path === "/UDFList/add" ? "PUT" : "POST",
+        headers: headers(this.env, this.rid),
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return { ok: false, status: res.status, body: await res.text() };
+    }
+    return { ok: true, status: 200, body: `provisioned ${masters.length}` };
+  }
+
+  /**
+   * Create a full Sales Order in AutoCount via the SDK middleware
+   * (POST /SalesOrder/create). Idempotent middleware-side by DocNo. Honors the
+   * kill switch. Run provisionMasters() first (or the middleware runs the
+   * pre-flight itself).
+   */
+  async createSalesOrder(
+    payload: AcCreateSoPayload
+  ): Promise<{ ok: boolean; status: number; body: string }> {
+    if (AUTOCOUNT_WRITES_DISABLED) {
+      console.warn(
+        `[autocount][${this.rid}] WRITES DISABLED — skipping createSalesOrder ${payload.DocNo}`
+      );
+      return { ok: true, status: 200, body: "skipped: AUTOCOUNT_WRITES_DISABLED" };
+    }
+    const res = await fetch(this.url(`/SalesOrder/create`), {
+      method: "POST",
+      headers: headers(this.env, this.rid),
+      body: JSON.stringify(payload),
     });
     const text = await res.text();
     return { ok: res.ok, status: res.status, body: text };
