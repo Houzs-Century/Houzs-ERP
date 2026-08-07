@@ -105,7 +105,7 @@ export const AutoSchedule = () => {
      the two share one react-query cache entry, so no extra fetch. */
   const [queueRegion, setQueueRegion] = useState<string>('ALL');
   const queue = useDeliveryPlanning({ region: queueRegion, state: 'PENDING_SCHEDULE' });
-  const [dateSide, setDateSide] = useState<DateArrangement>('PENDING_DATE');
+  const [dateSide, setDateSide] = useState<'ALL' | DateArrangement>('PENDING_DATE');
   const [queueSel, setQueueSel] = useState<Set<string>>(new Set());
   const queueOrders = useMemo<PlanningOrder[]>(() => queue.data?.orders ?? [], [queue.data]);
   const queueRegionTabs = useMemo(() => regionTabsFrom(queue.data?.regions), [queue.data?.regions]);
@@ -118,7 +118,9 @@ export const AutoSchedule = () => {
     return c;
   }, [queueOrders]);
   const sideRows = useMemo(
-    () => queueOrders.filter((o) => dateArrangementOf(o) === dateSide),
+    () => (dateSide === 'ALL'
+      ? queueOrders.filter((o) => dateArrangementOf(o) != null)
+      : queueOrders.filter((o) => dateArrangementOf(o) === dateSide)),
     [queueOrders, dateSide],
   );
 
@@ -320,11 +322,11 @@ export const AutoSchedule = () => {
       <PageHeader
         eyebrow="Delivery"
         title="Delivery Date Arrangement"
-        description="Fit the pending-schedule orders into delivery days automatically. Pick a depot and a start date; each order is grouped by its postcode zone and packed into lorry-days under your per-lorry capacity ceilings. The proposal is reversible — review it, then apply the dates (amended delivery date only) and lock the days you are happy with."
+        description="Pick a depot and start date — pending orders pack into lorry-days by postcode zone. Review the proposal, then apply (amended delivery date only) and lock the days you are happy with."
       />
 
       {/* Controls */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end', padding: '14px 16px', borderRadius: 10, background: 'var(--bg-subtle, rgba(0,0,0,0.03))' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end', padding: '8px 10px', borderRadius: 10, background: 'var(--bg-subtle, rgba(0,0,0,0.03))' }}>
         <Ctl label="Depot (origin)">
           <select value={depot} onChange={(e) => { setDepot(e.target.value); setResult(null); }} style={selStyle}>
             <option value={ALL_DEPOTS}>All depots</option>
@@ -489,7 +491,7 @@ export const AutoSchedule = () => {
           </span>
         </div>
         <div className="mb-3 flex flex-wrap gap-1.5">
-          {(['PENDING_DATE', 'DATE_ARRANGED'] as const).map((side) => (
+          {(['ALL', 'PENDING_DATE', 'DATE_ARRANGED'] as const).map((side) => (
             <button
               key={side}
               type="button"
@@ -501,7 +503,9 @@ export const AutoSchedule = () => {
                   : 'border-border text-ink-secondary',
               ].join(' ')}
             >
-              {DATE_ARRANGEMENT_LABEL[side]} ({sideCounts[side]})
+              {side === 'ALL'
+                ? `All (${sideCounts.PENDING_DATE + sideCounts.DATE_ARRANGED})`
+                : `${DATE_ARRANGEMENT_LABEL[side]} (${sideCounts[side]})`}
             </button>
           ))}
         </div>

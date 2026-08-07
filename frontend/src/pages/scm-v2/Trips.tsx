@@ -99,7 +99,7 @@ export function Trips() {
   );
   const pendingRegionTabs = useMemo(() => regionTabsFrom(pending.data?.regions), [pending.data?.regions]);
 
-  const [timeSide, setTimeSide] = useState<TimeArrangement>('PENDING_TIME');
+  const [timeSide, setTimeSide] = useState<'ALL' | TimeArrangement>('PENDING_TIME');
   const timeCounts = useMemo(() => {
     const c: Record<TimeArrangement, number> & { awaitingDate: number } = {
       PENDING_TIME: 0, TIME_ARRANGED: 0, awaitingDate: 0,
@@ -112,7 +112,9 @@ export function Trips() {
     return c;
   }, [pendingOrders]);
   const timeRows = useMemo(
-    () => pendingOrders.filter((o) => timeArrangementOf(o) === timeSide),
+    () => (timeSide === 'ALL'
+      ? pendingOrders.filter((o) => timeArrangementOf(o) != null)
+      : pendingOrders.filter((o) => timeArrangementOf(o) === timeSide)),
     [pendingOrders, timeSide],
   );
 
@@ -357,7 +359,7 @@ export function Trips() {
           <span className="text-[11.5px] text-ink-muted">Tick orders, then Schedule to put them on a trip</span>
         </div>
         <div className="mb-3 flex flex-wrap items-center gap-1.5">
-          {(['PENDING_TIME', 'TIME_ARRANGED'] as const).map((side) => (
+          {(['ALL', 'PENDING_TIME', 'TIME_ARRANGED'] as const).map((side) => (
             <button
               key={side}
               type="button"
@@ -367,7 +369,9 @@ export function Trips() {
                 timeSide === side ? 'border-accent bg-accent/10 font-semibold text-accent' : 'border-border text-ink-secondary',
               )}
             >
-              {ARRANGEMENT_STAGE_LABEL[side]} ({timeCounts[side]})
+              {side === 'ALL'
+                ? `All (${timeCounts.PENDING_TIME + timeCounts.TIME_ARRANGED})`
+                : `${ARRANGEMENT_STAGE_LABEL[side]} (${timeCounts[side]})`}
             </button>
           ))}
           {timeCounts.awaitingDate > 0 && (
