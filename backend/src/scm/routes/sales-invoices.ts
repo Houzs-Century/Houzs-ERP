@@ -49,7 +49,7 @@ import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
-import { doLineRemaining, doRemainingByItemId, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
@@ -1031,6 +1031,36 @@ salesInvoices.post('/', async (c) => {
     const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo));
     const { error: iErr } = await sb.from('sales_invoice_items').insert(stampCompany(rows, c));
     if (iErr) { await sb.from('sales_invoices').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
+
+  /* Race-condition guard — the SI counterpart of "Edge #E" in
+     delivery-orders-mfg.ts. checkSiOverRemaining above is read-before-write, so
+     two invoices raised against the same delivered goods at the same moment can
+     both pass and bill the customer twice for one delivery. After inserting,
+     re-derive remaining for the picked DO lines and ROLL BACK when any has gone
+     negative.
+
+     SO -> DO, PO -> GRN and GRN -> PI all close this already; DO -> SI was the
+     one conversion without it. */
+  {
+    const pickedDoItemIds = rows
+      .map((r) => (r as { do_item_id?: string | null }).do_item_id)
+      .filter((x): x is string => !!x);
+    if (pickedDoItemIds.length > 0) {
+      const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      if (over.length > 0) {
+        // Undo: lines then header. Nothing else has happened yet — revenue is
+        // posted further down, so there is no ledger entry to reverse.
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json({
+          error: 'race_conflict',
+          message: 'Another operator just invoiced overlapping qty from this Delivery Order. Refresh and try again.',
+          conflicts: over,
+        }, 409);
+      }
+    }
+  }
     await recomputeTotals(sb, h.id);
   }
 
@@ -1264,6 +1294,29 @@ salesInvoices.post('/from-dos', async (c) => {
   if (iErr) {
     await sb.from('sales_invoices').delete().eq('id', h.id);
     return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
+  }
+
+  /* Race-condition guard — same as the POST / path above, and the SI
+     counterpart of "Edge #E" in delivery-orders-mfg.ts. This is the picker
+     path, so EVERY line carries a do_item_id and the whole invoice is exposed
+     to the race, not just the linked part of it. */
+  {
+    const pickedDoItemIds = rows
+      .map((r) => (r as { do_item_id?: string | null }).do_item_id)
+      .filter((x): x is string => !!x);
+    if (pickedDoItemIds.length > 0) {
+      const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      if (over.length > 0) {
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json({
+          error: 'race_conflict',
+          message: 'Another operator just invoiced overlapping qty from this Delivery Order. Refresh and try again.',
+          conflicts: over,
+        }, 409);
+      }
+    }
   }
 
   await recomputeTotals(sb, h.id);
