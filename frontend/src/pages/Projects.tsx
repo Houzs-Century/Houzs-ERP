@@ -1020,6 +1020,9 @@ const PROJECTS_LIST_FILTER_KEYS = [
   // ON, so the slim bar defaults to their own events). See ProjectsListView.
   "mine",
   "section",
+  // `task` — outstanding-task filter (owner 2026-08-05): show only events where
+  // this checklist task is still not complete. Sticky like the rest.
+  "task",
   "search",
   "brand",
   "year",
@@ -1042,6 +1045,7 @@ function ProjectsListView() {
   const year = params.get("year") || "";
   const month = params.get("month") || "";
   const section = params.get("section") || "";
+  const taskPending = params.get("task") || "";
   const status = params.get("status") || "";
   // Cohort "Setup"/"Dismantle" pick a date-derived event PHASE (not the stale
   // `stage` enum) — see the field/sales slim bar below + backend f.phase.
@@ -1060,6 +1064,7 @@ function ProjectsListView() {
   const setYear = (v: string) => patchParams({ year: v, page: "1" });
   const setMonth = (v: string) => patchParams({ month: v, page: "1" });
   const setSection = (v: string) => patchParams({ section: v, page: "1" });
+  const setTaskPending = (v: string) => patchParams({ task: v, page: "1" });
   const setStatus = (v: string) => patchParams({ status: v, page: "1" });
   const setPhase = (v: string) => patchParams({ phase: v, page: "1" });
   const setPage = (n: number) => patchParams({ page: String(n) });
@@ -1146,6 +1151,7 @@ function ProjectsListView() {
           year: restrictedCohort ? undefined : year || undefined,
           month: restrictedCohort ? undefined : month || undefined,
           section: restrictedCohort ? undefined : section || undefined,
+          task_pending: restrictedCohort ? undefined : taskPending || undefined,
           phase: restrictedCohort && phase ? phase : undefined,
           assigned_to_me: sendAssignedToMe ? 1 : undefined,
           exclude_done: restrictedCohort ? undefined : excludeDoneParam,
@@ -1162,7 +1168,7 @@ function ProjectsListView() {
         })}`,
         { signal },
       ),
-    [brand, year, month, section, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
+    [brand, year, month, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
     // Paginated + filter-switched list: keep the current rows on screen while
     // the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
@@ -1204,6 +1210,7 @@ function ProjectsListView() {
             year: restrictedCohort ? undefined : year || undefined,
             month: restrictedCohort ? undefined : month || undefined,
             section: restrictedCohort ? undefined : section || undefined,
+            task_pending: restrictedCohort ? undefined : taskPending || undefined,
             phase: restrictedCohort && phase ? phase : undefined,
             assigned_to_me: sendAssignedToMe ? 1 : undefined,
             exclude_done: restrictedCohort ? undefined : excludeDoneParam,
@@ -1229,6 +1236,26 @@ function ProjectsListView() {
       const brandIdx = csvCols.findIndex((c) => c.label === "Brand");
       if (brandIdx >= 0) csvCols.splice(brandIdx + 1, 0, orgCol);
       else csvCols.push(orgCol);
+      // Outstanding-task columns (owner 2026-08-05: the filtered task must
+      // "appear once i extract in excel"). Only when the filter is active, so a
+      // normal export keeps its existing shape. Every exported row is an event
+      // where this task is open, so the task name + its status + due date say
+      // exactly what is outstanding and by when.
+      if (taskPending) {
+        csvCols.push(
+          { key: "task_pending", label: "Outstanding task", getValue: () => taskPending },
+          {
+            key: "task_pending_status",
+            label: "Task status",
+            getValue: (r: ProjectRow) => (r as any).task_pending_status ?? "pending",
+          },
+          {
+            key: "task_pending_due",
+            label: "Task due",
+            getValue: (r: ProjectRow) => (r as any).task_pending_due ?? "",
+          },
+        );
+      }
       if (!csvCols.length || all.length === 0) {
         toast.error(all.length === 0 ? "No projects match the current filter." : "Nothing to export.");
         return;
@@ -1260,6 +1287,11 @@ function ProjectsListView() {
   // Empty until any project has tasklist sections defined.
   const sectionsList = useQuery<{ data: string[] }>("/api/projects/sections-distinct", () =>
     api.get("/api/projects/sections-distinct")
+  );
+  // Canonical task titles (+ their section) for the outstanding-task filter.
+  const taskTitles = useQuery<{ data: { title: string; section: string | null }[] }>(
+    "/api/projects/task-titles-distinct",
+    () => api.get("/api/projects/task-titles-distinct"),
   );
 
   const columns: Column<ProjectRow>[] = [
@@ -1681,21 +1713,51 @@ function ProjectsListView() {
           </div>
         ) : (
         <>
-        {/* Tasklist-section filter pills — replaces the old draft /
-            setup / dismantle / completed stage filter. Sections are
-            pulled live so any custom workflow shows up here too. */}
-        <FilterPills
+        {/* Section filter — a DROPDOWN since 2026-08-05 (owner: "need to add
+            drop down for pc"). The pill row spanned the full width and left no
+            room for the task filter beside it; the options are identical. */}
+        <select
           value={section}
-          onChange={(v) => setSection(v)}
-          options={[
-            { value: "", label: "All" },
-            ...(sectionsList.data?.data ?? []).map((s) => ({
-              value: s,
-              label: s,
-            })),
-            { value: "__done", label: "Completed" },
-          ]}
-        />
+          onChange={(e) => setSection(e.target.value)}
+          className="h-8 rounded-md border border-border bg-surface px-2 text-[12px] font-semibold"
+          title="Filter by the tasklist section an event is currently in"
+        >
+          <option value="">All sections</option>
+          {(sectionsList.data?.data ?? []).map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+          <option value="__done">Completed</option>
+        </select>
+        {/* Outstanding-TASK filter (owner 2026-08-05: "booth layout for
+            display, 3D, 2D, stock out transfer … i can filter which task is
+            not complete yet appear once i extract in excel"). Lists the
+            template's tasks grouped by section; picking one keeps only events
+            where that task is still open, and the export gains its status +
+            due columns. */}
+        <select
+          value={taskPending}
+          onChange={(e) => setTaskPending(e.target.value)}
+          className={cn(
+            "h-8 max-w-[240px] rounded-md border bg-surface px-2 text-[12px]",
+            taskPending ? "border-accent font-semibold text-accent" : "border-border",
+          )}
+          title="Show only events where this task is still not completed"
+        >
+          <option value="">Any task status</option>
+          {Object.entries(
+            (taskTitles.data?.data ?? []).reduce<Record<string, string[]>>((acc, t) => {
+              const key = t.section ?? "Other";
+              (acc[key] ||= []).push(t.title);
+              return acc;
+            }, {}),
+          ).map(([sectionName, titles]) => (
+            <optgroup key={sectionName} label={`${sectionName} — not completed`}>
+              {titles.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
         <select
           value={brand}
           onChange={(e) => setBrand(e.target.value)}
@@ -1939,10 +2001,10 @@ function ProjectsListView() {
             totalRecords: list.data?.total,
           }}
           resetFilters={{
-            active: !!(search || brand || year || month || section || status),
+            active: !!(search || brand || year || month || section || taskPending || status),
             onReset: () => {
               const next = new URLSearchParams(params);
-              ["search", "brand", "year", "month", "section", "status", "page"].forEach((k) =>
+              ["search", "brand", "year", "month", "section", "task", "status", "page"].forEach((k) =>
                 next.delete(k)
               );
               setParams(next, { replace: true });
