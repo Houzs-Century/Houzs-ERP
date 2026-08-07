@@ -236,11 +236,18 @@ function drawDoHeader(
   let logoBottom = 0;
   const logo = opts.logo ?? getBrandingLogoCache();
   if (logo) {
-    // The handoff's box is 28.8 x 14.6mm. A logo is never distorted to fill it:
-    // it is scaled to fit and pinned left, so a squarer mark simply occupies
-    // less of the box.
+    /* The handoff's box is 28.8 x 14.6mm, sized around 2990's WIDE mark
+       (≈2.25:1), which fills it edge to edge. Houzs's lockup is a stacked,
+       near-square one: in a box that flat it is height-bound and lands at half
+       the width, which is what the owner saw (2026-08-07).
+       The height allowance is therefore 20mm, chosen so a SQUARE mark covers
+       about the same area (20² ≈ 28.8 x 12.8) and the two companies' documents
+       carry equal weight. A wide mark is unaffected — 2990's is still
+       width-bound and renders exactly as before.
+       A logo is never distorted to fill the box: it is scaled to fit and
+       pinned left. */
     const BOX_W = 28.8;
-    const BOX_H = 14.6;
+    const BOX_H = 20;
     const scale = Math.min(BOX_W / logo.width, BOX_H / logo.height);
     const w = logo.width * scale;
     const h = logo.height * scale;
