@@ -533,6 +533,14 @@ export type DeliveryPlanningBoardProps = {
   exportName?: string;
   searchPlaceholder?: string;
   emptyMessage?: string;
+
+  /* Default ordering while NO column sort is active — forwarded to the
+     DataGrid. The two arrangement queues pass arrangementQueueCompare
+     (lib/arrangement-sort.ts: delivery date OLDEST first, then state, then
+     postcode — owner 2026-08-07 "跟着 delivery date、state、postcode 去排").
+     A clicked header still overrides as always. Omitted (the main Delivery
+     Planning board), the rows render in the server's order exactly as before. */
+  defaultSort?: (a: PlanningOrder, b: PlanningOrder) => number;
 };
 
 /* Selection keys are prefixed (`so:<docNo>` / `assr:<id>` / `dp:<id>`). The bulk
@@ -565,6 +573,7 @@ export function DeliveryPlanningBoard({
   exportName = 'DeliveryPlanning',
   searchPlaceholder = 'Search SO / ref / customer / phone…',
   emptyMessage = 'No orders need delivering in this view.',
+  defaultSort,
 }: DeliveryPlanningBoardProps) {
   const askConfirm = useConfirm();
   const notify = useNotify();
@@ -1304,6 +1313,7 @@ export function DeliveryPlanningBoard({
         }}
         rowStyle={(o) => (o.region === 'SG' ? { boxShadow: 'inset 3px 0 0 #2f5d4f' } : undefined)}
         contextMenu={contextMenu}
+        defaultSort={defaultSort}
       />
     </div>
   );
