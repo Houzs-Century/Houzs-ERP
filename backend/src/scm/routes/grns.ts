@@ -1152,6 +1152,10 @@ grns.get('/', async (c) => {
       ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
       assigned_sos: summary.assignedSos,
       assigned_so_linked: summary.sourceLinked,
+      /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s) —
+         rolled up over the SAME code-filtered origins, so header ≡ ∪(lines)
+         holds for the provenance slot too. */
+      assigned_so_provenance: summary.provenanceSos,
       delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
     };
   });

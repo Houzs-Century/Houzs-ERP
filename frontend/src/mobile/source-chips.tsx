@@ -198,10 +198,17 @@ export function PairedSoRowsMobile({
   assigned,
   delivered,
   sourceLinked,
+  provenance,
 }: {
   assigned: Array<{ soDocNo: string; deliveryDate?: string | null; locked?: boolean; source?: string }>;
   delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
   sourceLinked?: boolean;
+  /* PR-3 (2026-08-07): the coverage wire's PARALLEL stored-origin slot. SOs
+     not already shown above render as one trailing row of muted "bought for"
+     chips (+ delivery date), with NO status pill — provenance is not the live
+     assignment, so DELIVERED/PENDING (execution verdicts) do not apply.
+     Desktop twin: PairedSoCell provenance row — keep in lockstep. */
+  provenance?: Array<{ soDocNo: string; deliveryDate?: string | null }>;
   }) {
   const rows: Array<{ soDocNo: string; deliveryDate: string | null; floating: boolean; chip: CSSProperties; title: string; dos: Array<{ doNo: string; qty: number }> }> = [];
   for (const a of assigned) {
@@ -238,7 +245,12 @@ export function PairedSoRowsMobile({
       orphan.dos.push({ doNo: d.doNo, qty: d.qty });
     }
   }
-  if (rows.length === 0) {
+  /* PR-3: "bought for" chips for provenance SOs not already shown by ANY row
+     (assignments or orphan delivered rows) — dedupe by soDocNo, so when the
+     stored origin won the precedence nothing extra renders. */
+  const shownSos = new Set(rows.map((r) => r.soDocNo));
+  const provExtra = (provenance ?? []).filter((p) => p.soDocNo && !shownSos.has(p.soDocNo));
+  if (rows.length === 0 && provExtra.length === 0) {
     return (
       <div style={rowStyle}>
         <span style={eyebrowStyle}>Assigned SO</span>
@@ -279,6 +291,23 @@ export function PairedSoRowsMobile({
           </div>
         );
       })}
+      {provExtra.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+          {provExtra.map((p) => (
+            <span key={`prov-${p.soDocNo}`} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span
+                style={mutedChip}
+                title={`Bought for ${p.soDocNo} — procurement provenance, not the live assignment.`}
+              >
+                {p.soDocNo}
+              </span>
+              <span className="money" style={{ fontSize: 10.5, color: "#9aa093", fontWeight: 600 }}>
+                {p.deliveryDate ? formatDate(p.deliveryDate) : "—"}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
