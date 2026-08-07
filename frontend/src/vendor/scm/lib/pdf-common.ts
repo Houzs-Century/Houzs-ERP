@@ -358,6 +358,37 @@ export const fmtDocStamp = (d: Date = new Date()): string => {
   return `${fmtDate(d)}, ${time}`;
 };
 
+/* ── Shared line-item table look (owner 2026-08-07) ──────────────────────────
+   Printed documents carry NO decorative fills: no near-black header band, no
+   zebra striping. Both are ink the reader doesn't need, and both read as
+   smudges once a sheet has been photocopied or faxed — which is what happens
+   to a Delivery Order. Structure comes from rules instead: a hairline between
+   rows, a heavier rule above and below the header.
+
+   Spread these into autoTable rather than copying the values, so the eight
+   documents cannot drift apart again:
+
+     theme: 'plain',
+     styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
+     headStyles: DOC_TABLE_HEAD_STYLES,
+
+   Fills that carry MEANING are not covered by this and must stay — the
+   Amendment's red/green added-vs-removed rows are information, not decoration.
+*/
+export const DOC_TABLE_STYLES = {
+  cellPadding: 2,
+  valign: 'top' as const,
+  lineColor: [120, 120, 120] as [number, number, number],
+  lineWidth: 0.1,
+};
+
+export const DOC_TABLE_HEAD_STYLES = {
+  fontStyle: 'bold' as const,
+  // Per-side widths: a rule above and below the header row, nothing at the
+  // sides. autoTable accepts the object form; its published type does not.
+  lineWidth: { top: 0.4, bottom: 0.4 } as never,
+};
+
 // Draw the company header (top-left brand) + doc title + meta block on the right.
 // Returns the y position where the body should continue.
 export function drawHeader(
@@ -382,37 +413,77 @@ export function drawHeader(
      memo not yet warmed) → the historic text-only header, byte-identical.
      The memo is primed by useBranding() at app load and awaited by the SO
      generator, so multi-page / multi-print runs never refetch. */
+  /* Measure the right-hand meta column FIRST. The company block on the left
+     used to be drawn with no width limit at all, so a long address simply ran
+     under the right column — on a 2990 Delivery Order "…Wilayah Persekutuan
+     KL" ended up touching "Date: 06/08/2026". Reserving the right column's
+     real width (plus a gutter) and wrapping the left block into what remains
+     is what keeps the two apart; nothing moves for a letterhead that already
+     fitted. */
+  const gutter = 8;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+  let rightW = doc.getTextWidth(opts.docTitle);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  for (const m of opts.rightMeta) {
+    rightW = Math.max(rightW, doc.getTextWidth(`${m.label}: ${m.value}`));
+  }
+
   let textX = margin;
-  let logoBottomY = 0;
   const logo = opts.logo ?? getBrandingLogoCache();
+  let logoBox: { w: number; h: number } | null = null;
   if (logo) {
     const maxW = 40;   // mm — letterhead-scale, never dominates the header
     const maxH = 16;   // mm — fits beside the 4-line text block
     const scale = Math.min(maxW / logo.width, maxH / logo.height);
-    const w = logo.width * scale;
-    const h = logo.height * scale;
+    logoBox = { w: logo.width * scale, h: logo.height * scale };
+    textX = margin + logoBox.w + 6;
+  }
+
+  // What the left block may occupy before it would collide with the meta
+  // column. Floored so a pathological logo/meta combination still leaves a
+  // usable measure rather than a negative one.
+  const leftMaxW = Math.max(40, pageW - margin - textX - rightW - gutter);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
+  const nameLines = doc.splitTextToSize(COMPANY.name, leftMaxW) as string[];
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  const regLines = doc.splitTextToSize(COMPANY.reg, leftMaxW) as string[];
+  const addressLines = COMPANY.addressLines.flatMap(
+    (line) => doc.splitTextToSize(line, leftMaxW) as string[],
+  );
+
+  let logoBottomY = 0;
+  if (logo && logoBox) {
     /* Vertical centring (owner 2026-07 — 左上角的中间位置): the company text
        block spans from the name's cap line (margin - 5, the 16pt cap height
-       above the baseline at `margin`) down to the last address-line baseline
-       (margin + 5 for the reg line, then 4mm per address line). Centre the
-       logo's midline on that block's midline; a logo TALLER than the block
-       keeps the historic top alignment so it never floats above the page
-       margin. */
+       above the baseline at `margin`) down to the last address-line baseline.
+       Centre the logo's midline on that block's midline; a logo TALLER than
+       the block keeps the historic top alignment so it never floats above the
+       page margin. Measured from the WRAPPED lines, so a block that grew a
+       line still centres correctly. */
     const blockTop = margin - 5;
-    const blockH = (margin + 5 + 4 * COMPANY.addressLines.length) - blockTop;
-    const topY = h < blockH ? blockTop + (blockH - h) / 2 : blockTop;
+    const lastBaseline =
+      margin + 6 * (nameLines.length - 1) + 5 * regLines.length + 4 * addressLines.length;
+    const blockH = lastBaseline - blockTop;
+    const topY = logoBox.h < blockH ? blockTop + (blockH - logoBox.h) / 2 : blockTop;
     try {
-      doc.addImage(logo.dataUrl, logo.format, margin, topY, w, h);
-      textX = margin + w + 6;
-      logoBottomY = topY + h;
-    } catch { /* fail-soft: draw the text-only header */ }
+      doc.addImage(logo.dataUrl, logo.format, margin, topY, logoBox.w, logoBox.h);
+      logoBottomY = topY + logoBox.h;
+    } catch {
+      textX = margin; // fail-soft: draw the text-only header, full width
+    }
   }
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
-  doc.text(COMPANY.name, textX, y);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); y += 5;
-  doc.text(COMPANY.reg, textX, y);
-  for (const line of COMPANY.addressLines) {
+  nameLines.forEach((line, i) => {
+    if (i) y += 6;
+    doc.text(line, textX, y);
+  });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  for (const line of regLines) {
+    y += 5;
+    doc.text(line, textX, y);
+  }
+  for (const line of addressLines) {
     y += 4;
     doc.text(line, textX, y);
   }

@@ -14,6 +14,8 @@ import { formatPhone } from '@2990s/shared/phone';
 import {
   COMPANY,
   deliverPdf,
+  DOC_TABLE_HEAD_STYLES,
+  DOC_TABLE_STYLES,
   drawHeader,
   drawInfoColumns,
   drawSignatureBoxes,
@@ -178,10 +180,10 @@ export async function renderDeliveryOrderInto(
         : ['#', 'Item Code', 'Description', 'Qty', 'm³'],
     ],
     body: rows,
-    theme: 'striped',
+    theme: 'plain',
     rowPageBreak: 'avoid',
-    styles: { fontSize: 8.5, cellPadding: 2, valign: 'top' },
-    headStyles: { fillColor: [34, 31, 32], textColor: 250, fontStyle: 'bold' },
+    styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
+    headStyles: DOC_TABLE_HEAD_STYLES,
     columnStyles: showPicking
       ? {
           0: { cellWidth: 8, halign: 'right', fontSize: 7.5 },

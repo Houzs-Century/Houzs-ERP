@@ -172,7 +172,11 @@ export async function generateAmendmentPdf(
     theme: 'grid',
     margin: { left: margin, right: margin },
     styles: { font: 'helvetica', fontSize: 9, cellPadding: 2, overflow: 'linebreak', valign: 'middle' },
-    headStyles: { fillColor: [40, 40, 40], textColor: [255, 255, 255], fontStyle: 'bold' },
+    /* No black band (owner 2026-08-07: no decorative fills on printed
+       documents). The grid theme already rules every cell, so the header only
+       needs weight. The red/green before/after fills below STAY — those carry
+       meaning, and a change sheet that loses them loses the change. */
+    headStyles: { fontStyle: 'bold' },
     columnStyles: {
       0: { cellWidth: 44 },
       1: { cellWidth: 24 },
