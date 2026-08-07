@@ -368,6 +368,25 @@ const SHEET_STATUS: Record<string, string> = {
   voided: "Voided",
 };
 
+// Sub-status detail (Nico 2026-08-07: Delivery triggers were messy on
+// the coarse stage words). Stages with sub-states export the SUB label -
+// the Delivery sheet's trigger map fires INSPECTION/PICKUP only on the
+// actionable halves ("QC Issue Result" / "Pending Supplier Return" have
+// no trigger entry, so they fire nothing). A null sub falls back to the
+// stage's seeded first sub-state, matching transitionStage's seeding.
+const SHEET_SUB_STATUS: Record<string, Record<string, string>> = {
+  under_verification: {
+    pending_inspection: "Pending Inspection",
+    qc_issue_result: "QC Issue Result",
+    __default: "Pending Inspection",
+  },
+  pending_supplier_pickup: {
+    pending_supplier_pickup: "Pending Supplier Pickup",
+    pending_supplier_return: "Pending Supplier Return",
+    __default: "Pending Supplier Pickup",
+  },
+};
+
 app.get("/status-export", async (c) => {
   // Accepts EITHER shared secret: FORM_INTAKE_KEY (the form-intake
   // script's key) or SHEET_SYNC_KEY (issued for the HC Delivery
@@ -389,7 +408,7 @@ app.get("/status-export", async (c) => {
   // Same trust boundary: key-protected, and the sheet already owns
   // these customer columns for every existing row.
   const rows = await c.env.DB.prepare(
-    `SELECT assr_no, doc_no, ref_no, complained_date, stage, completion_date, closed_at,
+    `SELECT assr_no, doc_no, ref_no, complained_date, stage, sub_status, completion_date, closed_at,
             customer_name, phone, location, sales_agent, po_no, complaint_issue,
             addr1, addr2, addr3, addr4,
             (SELECT group_concat(i.item_code, ', ')
@@ -404,6 +423,7 @@ app.get("/status-export", async (c) => {
     ref_no: string | null;
     complained_date: string | null;
     stage: string;
+    sub_status: string | null;
     completion_date: string | null;
     closed_at: string | null;
     customer_name: string | null;
