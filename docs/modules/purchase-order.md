@@ -135,9 +135,9 @@ All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 | GET | `/:id` | `:693` | Header + items + `has_children`. |
 | GET | `/:id/linked` | `:859` | Downstream GRNs / PIs / PRs (three parallel reads). |
 | GET | `/:id/revisions` | `:896` | `po_revisions` snapshots for the Revisions tab. |
-| GET | `/so-line-candidates?code=` | (static, pre-`/:id`) | SO lines carrying this item code, INCLUDING picked/delivered ones — the allocation editor's picker (historical consolidated POs are the point; the shortage view hides exactly those). Excludes cancelled lines + cancelled/draft SOs. |
+| GET | `/so-line-candidates?code=&poId=&itemId=` | (static, pre-`/:id`) | SO lines carrying this item code AND — when `poId`+`itemId` are given — the same SPEC as that PO line (fabric + colour + SEAT/LEG/SPECIAL via `specSignature`/`buildVariantSummary`; dye-lot excluded, owner 2026-08-08). INCLUDING picked/delivered ones (historical consolidated POs are the point). Excludes cancelled lines + cancelled/draft SOs. Omitting `poId`/`itemId` -> code-only (back-compat). |
 | GET | `/:id/items/:itemId/allocations` | | The line's allocations + `lineQty` + `poNumber` (mig 0235). |
-| POST | `/:id/items/:itemId/allocations` | | Add one slice `{ qty, soItemId\|null }` (null = STOCK). seq auto-assigned dense. |
+| POST | `/:id/items/:itemId/allocations` | | Add one slice `{ qty, soItemId\|null }` (null = STOCK; STOCK skips the SO gate, qty-capped insert). A non-null `soItemId` must be the same code AND same SPEC as the PO line — `soLinkTargetRefusal` returns 409 `so_link_material_mismatch` / `so_link_spec_mismatch` (owner 2026-08-08). seq auto-assigned dense. |
 | PATCH | `/:id/items/:itemId/allocations/:allocationId` | | Edit a slice (`qty?`, `soItemId?` — explicit null → STOCK; absent keeps). |
 | DELETE | `/:id/items/:itemId/allocations/:allocationId` | | Remove a slice + resequence the survivors dense 1..n. |
 | POST | `/` | `:911` | Create (`asDraft: true` → DRAFT, else SUBMITTED). SO-sourced lines (carrying `soItemId`, e.g. the desktop New-PO-from-SO flow) are capped at the SO line's remaining (`qty - po_qty_picked`): over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (pre-write guard, marks idempotency no-write). Manual lines (no `soItemId`) unaffected. |

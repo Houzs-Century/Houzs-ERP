@@ -52,6 +52,8 @@ import {
   planAllocationQtyUpdate,
   resequenceAfterDelete,
   allocationSubNumber,
+  specMatches,
+  specSignature,
   type AllocationRow,
 } from '../lib/po-allocations';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
@@ -719,11 +721,28 @@ mfgPurchaseOrders.get('/so-line-candidates', async (c) => {
   const code = (c.req.query('code') ?? '').trim();
   if (!code) return c.json({ error: 'code_required' }, 400);
   const supabase = c.get('supabase');
+
+  /* SPEC FILTER (owner 2026-08-08). The picker used to offer every same-CODE SO
+     line; a consolidated PO line may only be attributed to the SAME PRODUCT —
+     same code AND same variant summary (fabric + colour + SEAT/LEG/SPECIAL, no
+     dye-lot). When poId+itemId are given we load that PO line's spec and keep
+     only matching candidates. Omitted (older callers) -> code-only, unchanged. */
+  const poId = (c.req.query('poId') ?? '').trim();
+  const poItemId = (c.req.query('itemId') ?? '').trim();
+  let poSpec: { itemGroup: string | null; variants: Record<string, unknown> | null } | null = null;
+  if (poId && poItemId) {
+    const { data: poLine } = await scopeToCompany(
+      supabase.from('purchase_order_items').select('id, item_group, variants').eq('id', poItemId), c,
+    ).maybeSingle();
+    const pl = poLine as { item_group: string | null; variants: Record<string, unknown> | null } | null;
+    if (pl) poSpec = { itemGroup: pl.item_group ?? null, variants: pl.variants ?? null };
+  }
+
   const { data, error } = await scopeToCompany(
     supabase
       .from('mfg_sales_order_items')
       .select(`
-        id, doc_no, item_code, qty, po_qty_picked, cancelled,
+        id, doc_no, item_code, item_group, variants, qty, po_qty_picked, cancelled,
         so:mfg_sales_orders!inner ( doc_no, debtor_name, status, customer_delivery_date, amended_delivery_date )
       `),
     c,
@@ -734,7 +753,7 @@ mfgPurchaseOrders.get('/so-line-candidates', async (c) => {
     .limit(300);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   type CandRow = {
-    id: string; doc_no: string; item_code: string; qty: number; po_qty_picked: number;
+    id: string; doc_no: string; item_code: string; item_group: string | null; variants: Record<string, unknown> | null; qty: number; po_qty_picked: number;
     so: { doc_no: string; debtor_name: string | null; status: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null };
   };
   const items = ((data ?? []) as unknown as CandRow[])
@@ -742,6 +761,10 @@ mfgPurchaseOrders.get('/so-line-candidates', async (c) => {
       const st = (r.so?.status ?? '').toUpperCase();
       return st !== 'CANCELLED' && st !== 'DRAFT';
     })
+    // Spec gate: only lines describing the same product (fabric + spec). When
+    // no PO spec was resolvable (older caller, or the line vanished) leave the
+    // list at code-only rather than hiding everything.
+    .filter((r) => !poSpec || specMatches(poSpec, { itemGroup: r.item_group ?? null, variants: r.variants ?? null }))
     .map((r) => ({
       soItemId: r.id,
       soDocNo: r.doc_no,
@@ -2755,12 +2778,16 @@ async function soLinkTargetRefusal(
   c: any,
   soItemId: string | null,
   materialCode: string,
+  /* The PO line's spec signature (specSignature of its item_group+variants).
+     When provided, the SO line must match it, not just the item code. Null =
+     spec gate skipped (the code check still applies). */
+  poSpec: string | null = null,
 ): Promise<{ body: Record<string, unknown>; status: 404 | 409 } | null> {
   if (!soItemId) return null;
   const { data } = await scopeToCompany(
-    sb.from('mfg_sales_order_items').select('id, doc_no, item_code, cancelled').eq('id', soItemId), c,
+    sb.from('mfg_sales_order_items').select('id, doc_no, item_code, item_group, variants, cancelled').eq('id', soItemId), c,
   ).maybeSingle();
-  const row = data as { id: string; doc_no: string | null; item_code: string | null; cancelled: boolean | null } | null;
+  const row = data as { id: string; doc_no: string | null; item_code: string | null; item_group: string | null; variants: Record<string, unknown> | null; cancelled: boolean | null } | null;
   if (!row) {
     return {
       body: { error: 'so_line_not_found', reason: 'That Sales Order line does not exist on this company.' },
@@ -2788,6 +2815,24 @@ async function soLinkTargetRefusal(
       },
       status: 409,
     };
+  }
+  /* SPEC GATE (owner 2026-08-08). Same code is not enough — the SO line must be
+     the SAME PRODUCT (fabric + colour + SEAT/LEG/SPECIAL). poSpec is the PO
+     line's summary, resolved by the caller; when absent (forward-compat) the
+     code check above still holds. Dye-lot is deliberately not in the signature. */
+  if (poSpec) {
+    const soSpec = specSignature(row.item_group ?? null, row.variants ?? null);
+    if (soSpec !== poSpec) {
+      return {
+        body: {
+          error: 'so_link_spec_mismatch',
+          reason: `The picked Sales Order line is the same item code but a different spec. Pick a line whose fabric and options match, or leave the source blank.`,
+          soItemCode: row.item_code,
+          materialCode,
+        },
+        status: 409,
+      };
+    }
   }
   return null;
 }
@@ -3163,7 +3208,7 @@ async function resolveAllocationParent(
   poId: string,
   itemId: string,
 ): Promise<
-  | { ok: true; item: { id: string; qty: number; material_code: string }; poNumber: string | null }
+  | { ok: true; item: { id: string; qty: number; material_code: string; item_group: string | null; variants: Record<string, unknown> | null }; poNumber: string | null }
   | { ok: false; body: Record<string, unknown>; status: 404 | 409 }
 > {
   const co = requireActiveCompanyId(c);
@@ -3181,14 +3226,14 @@ async function resolveAllocationParent(
     };
   }
   const { data: item } = await sb.from('purchase_order_items')
-    .select('id, qty, material_code, purchase_order_id')
+    .select('id, qty, material_code, item_group, variants, purchase_order_id')
     .eq('id', itemId)
     .maybeSingle();
-  const itemRow = item as { id: string; qty: number; material_code: string; purchase_order_id: string } | null;
+  const itemRow = item as { id: string; qty: number; material_code: string; item_group: string | null; variants: Record<string, unknown> | null; purchase_order_id: string } | null;
   if (!itemRow || itemRow.purchase_order_id !== poId) {
     return { ok: false, body: { error: 'line_not_found', message: 'That line is not on this purchase order.' }, status: 404 };
   }
-  return { ok: true, item: { id: itemRow.id, qty: itemRow.qty, material_code: itemRow.material_code }, poNumber: poRow.po_number };
+  return { ok: true, item: { id: itemRow.id, qty: itemRow.qty, material_code: itemRow.material_code, item_group: itemRow.item_group ?? null, variants: itemRow.variants ?? null }, poNumber: poRow.po_number };
 }
 
 /* The line's current allocations, seq-ordered — the base every write plans on. */
@@ -3246,7 +3291,8 @@ mfgPurchaseOrders.post('/:id/items/:itemId/allocations', async (c) => {
 
   const soItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
   if (soItemId) {
-    const refusal = await soLinkTargetRefusal(sb, c, soItemId, parent.item.material_code);
+    const poSpec = specSignature(parent.item.item_group, parent.item.variants);
+    const refusal = await soLinkTargetRefusal(sb, c, soItemId, parent.item.material_code, poSpec);
     if (refusal) return c.json(refusal.body, refusal.status);
   }
   const existing = await currentAllocations(sb, itemId);
@@ -3309,7 +3355,8 @@ mfgPurchaseOrders.patch('/:id/items/:itemId/allocations/:allocationId', async (c
   if (soItemKeySent) {
     nextSoItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
     if (nextSoItemId) {
-      const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, parent.item.material_code);
+      const poSpec = specSignature(parent.item.item_group, parent.item.variants);
+      const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, parent.item.material_code, poSpec);
       if (refusal) return c.json(refusal.body, refusal.status);
     }
     updates.so_item_id = nextSoItemId;
