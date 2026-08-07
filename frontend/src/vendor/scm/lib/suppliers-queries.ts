@@ -1082,12 +1082,24 @@ export type SoLineCandidate = {
   qty: number;
   deliveryDate: string | null;
 };
-export function useSoLineCandidates(code: string | null) {
+// poId+itemId narrow the candidates to the PO line's SPEC (fabric + SEAT/LEG/
+// SPECIAL), not just its item code (owner 2026-08-08). Omitting them falls back
+// to code-only. Keyed on all three so switching lines refetches.
+export function useSoLineCandidates(
+  code: string | null,
+  poId?: string | null,
+  itemId?: string | null,
+) {
   return useQuery({
-    queryKey: ['po-so-line-candidates', code ?? ''],
-    queryFn: () => authedFetch<{ items: SoLineCandidate[] }>(
-      `/mfg-purchase-orders/so-line-candidates?code=${encodeURIComponent(code ?? '')}`,
-    ).then((r) => r.items),
+    queryKey: ['po-so-line-candidates', code ?? '', poId ?? '', itemId ?? ''],
+    queryFn: () => {
+      const qs = new URLSearchParams({ code: code ?? '' });
+      if (poId) qs.set('poId', poId);
+      if (itemId) qs.set('itemId', itemId);
+      return authedFetch<{ items: SoLineCandidate[] }>(
+        `/mfg-purchase-orders/so-line-candidates?${qs.toString()}`,
+      ).then((r) => r.items);
+    },
     enabled: Boolean(code),
     staleTime: 30_000,
     retry: retryUnlessClientError,
