@@ -4262,6 +4262,35 @@ function DetailContent({
                 {/* Folded in from the retired Item Pickup stage (mig 0110):
                     the date logistics collects the faulty item from the
                     customer's house — precedes the supplier handover. */}
+                {/* Pickup by (Nico 2026-08-07) — who collects the faulty
+                    item. Customer pickup = our logistics goes to the
+                    customer's house (fires the Delivery-sheet PICKUP job);
+                    Supplier direct = the supplier collects it themselves. */}
+                <div className="flex items-center gap-2">
+                  <span className="w-[130px] shrink-0 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+                    Pickup by
+                  </span>
+                  <div className="flex gap-1.5">
+                    {([
+                      { v: "customer", label: "Customer pickup" },
+                      { v: "supplier", label: "Supplier direct" },
+                    ] as const).map((o) => (
+                      <button
+                        key={o.v}
+                        type="button"
+                        onClick={() => patch({ pickup_by: c.pickup_by === o.v ? null : o.v })}
+                        className={cn(
+                          "rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors",
+                          c.pickup_by === o.v
+                            ? "border-primary bg-primary-soft text-primary"
+                            : "border-border bg-surface text-ink-secondary hover:border-primary/40",
+                        )}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <InlineEdit
                   label="Customer Pickup Date"
                   type="date"

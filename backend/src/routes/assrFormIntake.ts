@@ -374,18 +374,33 @@ const SHEET_STATUS: Record<string, string> = {
 // actionable halves ("QC Issue Result" / "Pending Supplier Return" have
 // no trigger entry, so they fire nothing). A null sub falls back to the
 // stage's seeded first sub-state, matching transitionStage's seeding.
-const SHEET_SUB_STATUS: Record<string, Record<string, string>> = {
-  under_verification: {
-    pending_inspection: "Pending Inspection",
-    qc_issue_result: "QC Issue Result",
-    __default: "Pending Inspection",
-  },
-  pending_supplier_pickup: {
-    pending_supplier_pickup: "Pending Supplier Pickup",
-    pending_supplier_return: "Pending Supplier Return",
-    __default: "Pending Supplier Pickup",
-  },
-};
+// The actionable halves additionally require WHO acts (Nico 2026-08-07:
+// inspection fires only when Own team inspects; pickup fires only when
+// our logistics collects from the customer). The words carry the choice —
+// the Delivery sheet's trigger map keys on the parenthesised variants and
+// the bare words fire nothing until ops picks a side.
+function sheetDetailStatus(
+  stage: string,
+  sub: string | null,
+  inspectionBy: string | null,
+  pickupBy: string | null,
+): string | undefined {
+  if (stage === "under_verification") {
+    const s = sub ?? "pending_inspection";
+    if (s === "qc_issue_result") return "QC Issue Result";
+    if (inspectionBy === "own") return "Pending Inspection (Own Team)";
+    if (inspectionBy === "supplier") return "Pending Inspection (Supplier)";
+    return "Pending Inspection";
+  }
+  if (stage === "pending_supplier_pickup") {
+    const s = sub ?? "pending_supplier_pickup";
+    if (s === "pending_supplier_return") return "Pending Supplier Return";
+    if (pickupBy === "customer") return "Pending Supplier Pickup (Customer Pickup)";
+    if (pickupBy === "supplier") return "Pending Supplier Pickup (Supplier Direct)";
+    return "Pending Supplier Pickup";
+  }
+  return undefined;
+}
 
 app.get("/status-export", async (c) => {
   // Accepts EITHER shared secret: FORM_INTAKE_KEY (the form-intake
@@ -408,7 +423,7 @@ app.get("/status-export", async (c) => {
   // Same trust boundary: key-protected, and the sheet already owns
   // these customer columns for every existing row.
   const rows = await c.env.DB.prepare(
-    `SELECT assr_no, doc_no, ref_no, complained_date, stage, sub_status, completion_date, closed_at,
+    `SELECT assr_no, doc_no, ref_no, complained_date, stage, sub_status, inspection_by, pickup_by, completion_date, closed_at,
             customer_name, phone, location, sales_agent, po_no, complaint_issue,
             addr1, addr2, addr3, addr4,
             (SELECT group_concat(i.item_code, ', ')
@@ -424,6 +439,8 @@ app.get("/status-export", async (c) => {
     complained_date: string | null;
     stage: string;
     sub_status: string | null;
+    inspection_by: string | null;
+    pickup_by: string | null;
     completion_date: string | null;
     closed_at: string | null;
     customer_name: string | null;
@@ -450,9 +467,7 @@ app.get("/status-export", async (c) => {
     // columns and this endpoint never sends them.
     complained_date: r.complained_date,
     status:
-      (SHEET_SUB_STATUS[r.stage]
-        ? SHEET_SUB_STATUS[r.stage][r.sub_status ?? "__default"] ?? SHEET_SUB_STATUS[r.stage].__default
-        : undefined) ??
+      sheetDetailStatus(r.stage, r.sub_status, r.inspection_by, r.pickup_by) ??
       SHEET_STATUS[r.stage] ??
       r.stage.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase()),
     completed_date: r.completion_date ?? r.closed_at ?? null,
