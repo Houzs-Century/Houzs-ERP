@@ -698,31 +698,98 @@ export function deliverPdf(
   }
   const blobUrl = URL.createObjectURL(doc.output('blob'));
   if (action === 'preview') {
-    openNamedPdfTab(blobUrl, filename);
+    openPdfPreviewTab(doc, blobUrl, filename);
     return;
   }
   renderViaIframe(blobUrl, true);
 }
 
-/* "View full PDF" used to be a bare `window.open(blobUrl)`, which lands the
-   operator on a tab named `8a7f3c2e-1b4d-…` — the browser has nothing else to
-   call it, because a blob URL carries no name. Two documents open side by side
-   were indistinguishable, and Save from the PDF viewer suggested the GUID as the
-   filename (Nico, 2026-08-07: "网址不要乱码").
-
-   A blob's address bar cannot be renamed from script — there is no same-origin
-   path to serve it under without a route or a service worker. What CAN carry the
-   document's name is the tab: a tiny wrapper page whose <title> is the document,
-   with the PDF in a full-bleed iframe and an <a download> that hands the browser
-   the real filename. So the tab strip, the window title and Save all say
-   `2990-DO-2608-006-家具世界`, and only the address bar stays a blob. */
-function openNamedPdfTab(blobUrl: string, filename: string): void {
+/* ── The preview tab ──────────────────────────────────────────────────────────
+ *
+ * Two routes, in order of how good the address bar looks:
+ *
+ *   1. `/print-preview/<filename>.pdf`, served by the service worker out of a
+ *      cache this function writes. A REAL same-origin path, so the address bar
+ *      reads the document — the whole point.
+ *   2. A wrapper page whose <title> is the document, with the PDF in an iframe.
+ *      Used when the worker is not in control: a first visit, a client still on
+ *      an older worker, local dev (the worker deliberately never intercepts), or
+ *      a browser with storage blocked. The tab is still NAMED correctly; only
+ *      the address bar stays a blob.
+ *
+ * Route 1 must be PROVEN, not assumed. Without a worker, `/print-preview/x.pdf`
+ * hits Pages' SPA catch-all and returns 200 + index.html — the operator would
+ * get the ERP app where a document should be, with no error anywhere. So the
+ * worker answers a probe with a sentinel header, and only that header switches
+ * this on.
+ *
+ * The tab is opened SYNCHRONOUSLY, before any await: a `window.open` that
+ * follows an await has lost the user gesture and is blocked as a popup. */
+function openPdfPreviewTab(doc: import('jspdf').jsPDF, blobUrl: string, filename: string): void {
   const tab = window.open('', '_blank');
   if (!tab) {
     // Popup blocked — the raw blob is still better than nothing.
     window.open(blobUrl, '_blank');
     return;
   }
+  void (async () => {
+    try {
+      const path = await putPrintPreview(doc, filename);
+      if (path) {
+        tab.location.replace(path);
+        return;
+      }
+    } catch {
+      // Any storage/worker failure just means route 2.
+    }
+    writeNamedPdfTab(tab, blobUrl, filename);
+  })();
+}
+
+const PRINT_CACHE = 'houzs-print-preview';
+const PRINT_PREFIX = '/print-preview/';
+/** Newest N previews kept; older entries are dropped on each write. */
+const PRINT_KEEP = 5;
+
+/* Put the PDF where the service worker can serve it, and return the path — or
+   null when the worker is not in control (see openPdfPreviewTab). */
+async function putPrintPreview(
+  doc: import('jspdf').jsPDF,
+  filename: string,
+): Promise<string | null> {
+  if (typeof caches === 'undefined' || !navigator.serviceWorker?.controller) return null;
+  const probe = await fetch(`${PRINT_PREFIX}__probe`, { cache: 'no-store' }).catch(() => null);
+  if (!probe || probe.headers.get('x-houzs-print-preview') !== '1') return null;
+
+  const cache = await caches.open(PRINT_CACHE);
+  /* Trim first, so a failure below cannot leave the cache growing. cache.keys()
+     is insertion-ordered, so the oldest are at the front. */
+  const keys = await cache.keys();
+  await Promise.all(keys.slice(0, Math.max(0, keys.length - (PRINT_KEEP - 1))).map((k) => cache.delete(k)));
+
+  const path = PRINT_PREFIX + encodeURIComponent(filename);
+  await cache.put(
+    path,
+    new Response(doc.output('blob'), {
+      headers: {
+        'Content-Type': 'application/pdf',
+        /* `inline` so the browser RENDERS it rather than downloading; the
+           filename still rides along, so Save from the viewer proposes the
+           document's name. RFC 5987 encoding carries the CJK safely. */
+        'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        'Cache-Control': 'no-store',
+      },
+    }),
+  );
+  return path;
+}
+
+/* Route 2 — the fallback tab. A blob URL carries no name, so a bare
+   `window.open(blobUrl)` lands the operator on a tab called `8a7f3c2e-1b4d-…`:
+   two documents open side by side are indistinguishable and Save proposes the
+   GUID. This wrapper cannot fix the address bar (only the service-worker route
+   above can) but it does name the tab, the window title and the download. */
+function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string): void {
   const title = filename.replace(/\.pdf$/i, '');
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
