@@ -1068,6 +1068,8 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     state: c.req.query("state") || undefined,
     event_type_id: eventTypeParam ? parseInt(eventTypeParam, 10) : undefined,
     section: c.req.query("section") || undefined,
+    // Outstanding-task filter (owner 2026-08-05) — exact checklist title.
+    task_pending: c.req.query("task_pending") || undefined,
     status: c.req.query("status") || undefined,
     exclude_done: c.req.query("exclude_done") === "1",
     search: c.req.query("search"),
@@ -1153,6 +1155,34 @@ app.get("/sections-distinct", requirePageAccess("projects"), async (c) => {
       ORDER BY s.sort_order, s.id`
   ).all<{ name: string; sort_order: number }>();
   return c.json({ data: (rows.results ?? []).map((r) => r.name) });
+});
+
+// Distinct TASK titles for the project-list "task not completed" filter (owner
+// 2026-08-05: "booth layout for display, 3D, 2D, stock out transfer … make it
+// drop down. and i can filter which task is not complete yet"). Read off the
+// active template so the picker lists the canonical tasks in checklist order,
+// grouped by their section — the same source sections-distinct uses.
+app.get("/task-titles-distinct", requirePageAccess("projects"), async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT i.title, s.name AS section_name, s.sort_order AS section_order, i.seq
+       FROM project_checklist_template_items i
+       LEFT JOIN project_checklist_template_sections s ON s.id = i.section_id
+      WHERE i.template_id = (
+        SELECT MAX(t.id) FROM project_checklist_templates t WHERE t.active = 1
+      )
+      ORDER BY s.sort_order, i.seq, i.id`
+  ).all<{ title: string; section_name: string | null; section_order: number | null; seq: number }>();
+  // De-dupe by title, keeping the first (lowest section/seq) occurrence — a
+  // title can repeat across role variants (e.g. two "Setup Image" rows).
+  const seen = new Set<string>();
+  const data: { title: string; section: string | null }[] = [];
+  for (const r of rows.results ?? []) {
+    const t = (r.title ?? "").trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    data.push({ title: t, section: r.section_name ?? null });
+  }
+  return c.json({ data });
 });
 
 // ── Organizers (lookup) ──────────────────────────────────────
