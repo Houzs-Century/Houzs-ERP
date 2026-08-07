@@ -10823,6 +10823,118 @@ mfgSalesOrders.get('/:docNo/payments/:id/slip-url', async (c) => {
   });
 });
 
+/* Attach the proof to an ALREADY-RECORDED payment (owner 2026-08-07 —
+   "开放 backend 可以上传 balance payment proof").
+
+   Until now the slip could only ride along with the INSERT: paymentCreateSchema
+   took an uploadSessionId, paymentPatchSchema did not, and both editors say in
+   as many words that an edit never touches the slip. So a balance collected
+   without the receipt on hand — the normal case when the money lands in the
+   bank before the slip reaches the office — had no route back to its proof,
+   ever.
+
+   Deliberately NOT behind the same-day window that gates PATCH / DELETE. That
+   window exists because the day's cash-up settles the MONEY, and a settled
+   amount must not move afterwards. This route moves no money: amount, method,
+   date and collector are all untouched, and the paid/balance rollups (which sum
+   amount_centi) cannot shift. Gating it would defeat the entire point, since
+   the proof that arrives late is precisely the proof that arrives on a later
+   day.
+
+   Replacing an existing slip is allowed — a wrong photo needs a way back — and
+   both keys go into the UPDATE_PAYMENT audit entry, so a swap is on the record
+   rather than silent. */
+const paymentSlipAttachSchema = z.object({
+  uploadSessionId: z.string().min(1),
+});
+
+mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
+  const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const id = c.req.param('id');
+  const user = c.get('user');
+  // Same self-scope gate as POST / PATCH / DELETE payments.
+  if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
+
+  const { data: row, error: rowErr } = await sb
+    .from('mfg_sales_order_payments')
+    .select('id, so_doc_no, slip_key, version')
+    .eq('id', id)
+    .maybeSingle();
+  if (rowErr) return c.json({ error: 'lookup_failed', reason: rowErr.message }, 500);
+  const before = row as { so_doc_no: string; slip_key: string | null; version: number } | null;
+  if (!before) return c.json({ error: 'not_found' }, 404);
+  if (before.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
+
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = paymentSlipAttachSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
+  const { uploadSessionId } = parsed.data;
+
+  /* Resolve the upload session → committed R2 key. Same contract as the POST
+     route: only a session that finished its PUT ('uploaded') resolves, so a
+     dangling id can never blank out or mis-point an existing slip. */
+  const { data: slipRow, error: slipErr } = await sb
+    .from('pending_slip_uploads')
+    .select('r2_key, status')
+    .eq('upload_session_id', uploadSessionId)
+    .maybeSingle();
+  if (slipErr) return c.json({ error: 'lookup_failed', reason: slipErr.message }, 500);
+  const slipRowT = slipRow as { r2_key: string | null; status: string } | null;
+  if (!slipRowT || slipRowT.status !== 'uploaded' || !slipRowT.r2_key) {
+    return c.json({ error: 'slip_required', reason: 'Upload the payment slip first.' }, 400);
+  }
+  const nextSlipKey = slipRowT.r2_key;
+
+  const expectedVersion = Number(before.version ?? 1);
+  const { data: updated, error: updErr } = await sb
+    .from('mfg_sales_order_payments')
+    .update({
+      slip_key:   nextSlipKey,
+      version:    expectedVersion + 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('so_doc_no', docNo)
+    .eq('version', expectedVersion)
+    .select(`${PAYMENT_COLS}, staff:collected_by ( name )`)
+    .maybeSingle();
+  if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
+  if (!updated) {
+    const { data: latest } = await sb.from('mfg_sales_order_payments').select('version').eq('id', id).maybeSingle();
+    return c.json({ error: 'payment_version_conflict', currentVersion: Number(latest?.version ?? expectedVersion) }, 409);
+  }
+
+  /* Promote — 'promoted' rows are excluded from the slip reaper, same dance as
+     the POST path. Logged loudly rather than swallowed on a no-op: the payment
+     keeps its slip_key either way, but an un-promoted row means the R2 object
+     is on the reaper's list. */
+  const { data: promoted, error: promoteErr } = await sb
+    .from('pending_slip_uploads')
+    .update({ status: 'promoted', promoted_at: new Date().toISOString() })
+    .eq('upload_session_id', uploadSessionId)
+    .select('upload_session_id');
+  if (promoteErr || !promoted || promoted.length === 0) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[payments] slip promote FAILED for session ${uploadSessionId} on ${docNo}/${id}: `
+      + (promoteErr?.message ?? 'no row matched (RLS uploader mismatch?)')
+      + ' — slip will be reaped after TTL; re-upload window open until then.',
+    );
+  }
+
+  await recordSoAudit(sb, {
+    docNo,
+    action: 'UPDATE_PAYMENT',
+    actorId: user.id,
+    actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    note: before.slip_key ? 'Payment proof replaced' : 'Payment proof attached',
+    fieldChanges: [{ field: 'slipKey', from: before.slip_key, to: nextSlipKey }],
+  });
+
+  const { staff, ...rest } = updated as unknown as Record<string, unknown> & { staff: { name: string } | null };
+  return c.json({ payment: { ...rest, collected_by_name: staff?.name ?? null } });
+});
+
 // ── Debtor lookup — autocomplete from prior SOs ───────────────────────
 mfgSalesOrders.get('/debtors/search', async (c) => {
   const sb = c.get('supabase'); const q = c.req.query('q') ?? '';
