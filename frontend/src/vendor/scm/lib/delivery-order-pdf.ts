@@ -1,30 +1,35 @@
 // ----------------------------------------------------------------------------
-// Delivery Order PDF — customer-facing signed POD. Driver / vehicle / expected
-// date in the DELIVERY DETAILS column; dashed signature boxes for the customer
-// to sign at delivery.
+// Delivery Order PDF — customer-facing signed POD.
 //
-// 2026-06-19 — adopts the unified "Hookka-tidy" layout shared with the Sales
-// Order / Purchase Order PDFs: real letterhead header, the drawInfoColumns
-// info block (DELIVER TO label-gutter + DELIVERY DETAILS colon-aligned), and a
-// consistent footer (doc no · portal · page n of m) on every page. A4 portrait,
-// pure black & white for printing. No field dropped from the previous layout.
+// 2026-08-07 REBUILD to Theme C "Ink & Petrol" (owner handoff: design project
+// "DO Layout 重新设计" / HANDOFF-delivery-order.md). The handoff is written as
+// CSS; this document is drawn by jsPDF, so it is a reproduction, not a
+// stylesheet — see delivery-order-theme.ts for how the palette is bound and
+// which three colours have no DS token.
+//
+// This renderer does NOT use the shared pdf-common letterhead / info block /
+// signature helpers: the DO's header, panel and signature areas are now
+// specific to this document (logo + wordmark stack, doc-number chip, rounded
+// paper panel, status chip). The other seven documents keep the shared ones.
+//
+// Page anatomy (A4 portrait, padding 14/14/12mm), mirroring the handoff's flex
+// column: header → info panel → items table (the flexing item) → signature →
+// footer. The signature and footer are pinned to the BOTTOM of the last page,
+// so a 3-line DO and a 30-line DO both close the same way; the table absorbs
+// the slack and repeats its header on every page it spills onto.
 // ----------------------------------------------------------------------------
 
 import { formatPhone } from '@2990s/shared/phone';
 import {
   COMPANY,
   deliverPdf,
-  DOC_TABLE_HEAD_STYLES,
-  DOC_TABLE_STYLES,
-  drawHeader,
-  drawInfoColumns,
-  drawSignatureBoxes,
   ensurePdfCjkFont,
   fmtDocDate,
   safeName,
   type PdfAction,
 } from './pdf-common';
-import { shipToBlock } from './pdf-party-blocks';
+import { getBrandingLogoCache, type BrandingLogo } from '../../../lib/branding';
+import { DO_THEME as T, MONO, SANS, charSpace, monoFor, pt, type Rgb } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 
 type DoHeader = {
@@ -67,41 +72,244 @@ type DoItem = {
   racks?: string[] | null;
 };
 
-/* Draw ONE delivery order's content into `doc` (letterhead → info block →
-   items → signature → footer). Does NOT create the doc or save — the caller
-   finalizes, so several DOs can share one doc (batch "Export PDF"). The footer
-   loop starts at the page this DO began on (startPage) so combined docs keep
-   each DO's own "page n of m" footer scoped to the run's pages. */
-export async function renderDeliveryOrderInto(
-  doc: import('jspdf').jsPDF,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  autoTable: any,
+type Doc = import('jspdf').jsPDF;
+
+// ── Page geometry (handoff: A4, padding 14mm 14mm 12mm) ─────────────────────
+const PAGE_W = 210;
+const PAGE_H = 297;
+const M = 14;                       // left / right / top padding
+const PAD_BOTTOM = 12;
+const CONTENT_W = PAGE_W - M * 2;   // 182mm
+
+/** CSS px → mm at the 96dpi the handoff's radii are authored in. */
+const px = (v: number): number => (v * 25.4) / 96;
+
+const EM_DASH = '—';
+
+// jsPDF places text on its BASELINE; the handoff places blocks by their top
+// edge. This is the cap-height drop that converts one to the other, and it is
+// the single number that keeps the two columns of the header optically level.
+const BASELINE_DROP = 0.78;
+const baselineOf = (topMm: number, sizePt: number): number => topMm + pt(sizePt) * BASELINE_DROP;
+
+const setInk = (doc: Doc, rgb: Rgb): void => { doc.setTextColor(rgb[0], rgb[1], rgb[2]); };
+const setFill = (doc: Doc, rgb: Rgb): void => { doc.setFillColor(rgb[0], rgb[1], rgb[2]); };
+const setStroke = (doc: Doc, rgb: Rgb): void => { doc.setDrawColor(rgb[0], rgb[1], rgb[2]); };
+
+/** A rule of a given thickness. jsPDF strokes centred on the path, which is why
+ *  the 2px brand rules sit a hair lower than a CSS border would — negligible at
+ *  0.5mm, and consistent for every rule on the page. */
+const rule = (doc: Doc, x1: number, y: number, x2: number, widthMm: number, rgb: Rgb): void => {
+  setStroke(doc, rgb);
+  doc.setLineWidth(widthMm);
+  doc.line(x1, y, x2, y);
+};
+
+/** A pill (border-radius: 999px) sized to its text, returning its width so the
+ *  caller can right-align it. */
+function drawChip(
+  doc: Doc,
+  opts: {
+    text: string;
+    /** Left edge, or — with `alignRight` — the right edge to hang it from. */
+    x: number;
+    top: number;
+    sizePt: number;
+    padX: number;
+    padY: number;
+    bg: Rgb;
+    ink: Rgb;
+    font?: string;
+    style?: 'normal' | 'bold';
+    tracking?: number;
+    alignRight?: boolean;
+  },
+): { width: number; height: number } {
+  const font = opts.font ?? SANS;
+  const style = opts.style ?? 'bold';
+  const tracking = opts.tracking ?? 0;
+  doc.setFont(font, style);
+  doc.setFontSize(opts.sizePt);
+  const textW = doc.getTextWidth(opts.text) + tracking * Math.max(0, opts.text.length - 1);
+  const w = textW + opts.padX * 2;
+  const h = pt(opts.sizePt) + opts.padY * 2;
+  const x = opts.alignRight ? opts.x - w : opts.x;
+  setFill(doc, opts.bg);
+  // Radius = half the height: the handoff's 999px, which is what makes it a
+  // pill rather than a rounded box at any font size.
+  doc.roundedRect(x, opts.top, w, h, h / 2, h / 2, 'F');
+  setInk(doc, opts.ink);
+  doc.text(opts.text, x + opts.padX, baselineOf(opts.top + opts.padY, opts.sizePt), { charSpace: tracking });
+  return { width: w, height: h };
+}
+
+/** A dotted field rule — the Name / Date lines under each signature. jsPDF has
+ *  no dotted stroke, so it is drawn as dots; `setLineDashPattern` exists but
+ *  renders as dashes at this weight and reads as a strikethrough on paper. */
+function dottedRule(doc: Doc, x1: number, x2: number, y: number, rgb: Rgb): void {
+  setFill(doc, rgb);
+  const step = 0.9;
+  const r = 0.11;
+  for (let x = x1; x <= x2; x += step) doc.circle(x, y, r, 'F');
+}
+
+/**
+ * The letterhead: logo + company stack on the left, document title + number
+ * chip on the right, closed by the 2px petrol rule.
+ *
+ * Both columns are laid out from their own top edge and the rule clears
+ * whichever ran longer — the two never consult each other's width because the
+ * right column is right-aligned and the left is wrapped into the measure that
+ * remains. (That measure is the fix from 2026-08-07: the old shared letterhead
+ * let a long address run straight under the meta column.)
+ */
+function drawDoHeader(
+  doc: Doc,
   header: DoHeader,
-  items: DoItem[],
-  opts?: { docTitle?: string; docNoLabel?: string; showPicking?: boolean },
-): Promise<void> {
-  /* Before ANY drawing — the delivery address is the field that strands a
-     driver when it prints as mojibake. No-op for a pure-WinAnsi DO. */
-  await ensurePdfCjkFont(doc, [header, items]);
+  opts: { docTitle: string; docNoLabel: string; logo?: BrandingLogo | null },
+): number {
+  // ── Right column first: it is fixed-width and defines the left's measure ──
+  const rightEdge = PAGE_W - M;
+  const titleWords = opts.docTitle.trim().split(/\s+/);
+  const titleTracking = charSpace(16, 0.1);
 
-  // Source PO + Rack picking columns are a DELIVERY-ORDER aid; the Consignment
-  // Note reuses this renderer but opts out (showPicking: false).
-  const showPicking = opts?.showPicking !== false;
-  const startPage = doc.getNumberOfPages();
-  const pageW = doc.internal.pageSize.getWidth();
-  const margin = 14;
+  doc.setFont(SANS, 'bold');
+  doc.setFontSize(16);
+  let rightW = 0;
+  for (const word of titleWords) {
+    rightW = Math.max(rightW, doc.getTextWidth(word) + titleTracking * Math.max(0, word.length - 1));
+  }
 
-  // ── Header (shared pdf-common letterhead) ─────────────────────────
-  let y = drawHeader(doc, {
-    docTitle: opts?.docTitle ?? 'DELIVERY ORDER',
-    rightMeta: [
-      { label: opts?.docNoLabel ?? 'DO No', value: header.do_number },
-      { label: 'Date', value: fmtDocDate(header.do_date) },
-    ],
+  let ty = baselineOf(M, 16);
+  setInk(doc, T.ink);
+  for (const word of titleWords) {
+    doc.text(word.toUpperCase(), rightEdge, ty, { align: 'right', charSpace: titleTracking });
+    ty += pt(16 * 1.1);
+  }
+
+  const chipTop = ty - pt(16 * 1.1) + pt(16) * 0.3 + 3;
+  const chip = drawChip(doc, {
+    text: header.do_number,
+    x: rightEdge,
+    top: chipTop,
+    sizePt: 10,
+    padX: 3.4,
+    padY: 1.4,
+    bg: T.brassSoft,
+    ink: T.brass,
+    font: monoFor(header.do_number),
+    tracking: charSpace(10, 0.04),
+    alignRight: true,
+  });
+  rightW = Math.max(rightW, chip.width);
+
+  const issuedTop = chipTop + chip.height + 2.5;
+  const issuedBaseline = baselineOf(issuedTop, 8.5);
+  const issuedDate = fmtDocDate(header.do_date);
+  doc.setFont(monoFor(issuedDate), 'normal');
+  doc.setFontSize(8.5);
+  const dateW = doc.getTextWidth(issuedDate);
+  setInk(doc, T.ink);
+  doc.text(issuedDate, rightEdge, issuedBaseline, { align: 'right' });
+  doc.setFont(SANS, 'normal');
+  setInk(doc, T.inkMuted);
+  doc.text('Issued', rightEdge - dateW - 1.2, issuedBaseline, { align: 'right' });
+  rightW = Math.max(rightW, dateW + 1.2 + doc.getTextWidth('Issued'));
+
+  const rightBottom = issuedBaseline + 1.2;
+
+  // ── Left column, wrapped into what the right one left ────────────────────
+  const GUTTER = 7; // the handoff's header gap
+  let textX = M;
+  let logoBottom = 0;
+  const logo = opts.logo ?? getBrandingLogoCache();
+  if (logo) {
+    // The handoff's box is 28.8 x 14.6mm. A logo is never distorted to fill it:
+    // it is scaled to fit and pinned left, so a squarer mark simply occupies
+    // less of the box.
+    const BOX_W = 28.8;
+    const BOX_H = 14.6;
+    const scale = Math.min(BOX_W / logo.width, BOX_H / logo.height);
+    const w = logo.width * scale;
+    const h = logo.height * scale;
+    try {
+      doc.addImage(logo.dataUrl, logo.format, M, M + 1, w, h);
+      textX = M + BOX_W + 4;
+      logoBottom = M + 1 + h;
+    } catch { /* fail-soft: text-only letterhead */ }
+  }
+
+  const leftMaxW = Math.max(40, rightEdge - rightW - GUTTER - textX);
+
+  doc.setFont(SANS, 'bold');
+  doc.setFontSize(15);
+  const nameLines = doc.splitTextToSize(COMPANY.name, leftMaxW) as string[];
+  let y = baselineOf(M, 15);
+  setInk(doc, T.ink);
+  nameLines.forEach((line, i) => {
+    if (i) y += pt(15 * 1.15);
+    doc.text(line, textX, y, { charSpace: charSpace(15, -0.01) });
   });
 
-  // ── DELIVER TO + DELIVERY DETAILS (unified Hookka-tidy info block) ─
-  const addressValue = [
+  if (COMPANY.reg) {
+    y += 2 + pt(8);
+    doc.setFont(monoFor(COMPANY.reg), 'normal');
+    doc.setFontSize(8);
+    setInk(doc, T.inkMuted);
+    doc.text(COMPANY.reg, textX, y, { charSpace: charSpace(8, 0.02) });
+  }
+
+  doc.setFont(SANS, 'normal');
+  doc.setFontSize(8.5);
+  setInk(doc, T.inkSecondary);
+  const addressLines = COMPANY.addressLines.flatMap(
+    (line) => doc.splitTextToSize(line, leftMaxW) as string[],
+  );
+  let first = true;
+  for (const line of addressLines) {
+    y += first ? 2 + pt(8.5) : pt(8.5 * 1.5);
+    first = false;
+    doc.text(line, textX, y);
+  }
+
+  const ruleY = Math.max(y + 1.2, rightBottom, logoBottom) + 5;
+  rule(doc, M, ruleY, PAGE_W - M, 0.5, T.petrol);
+  return ruleY;
+}
+
+/** Eyebrow label — mono, uppercase, wide tracking, brass. */
+function drawEyebrow(doc: Doc, text: string, x: number, top: number): number {
+  doc.setFont(MONO, 'bold');
+  doc.setFontSize(8.5);
+  setInk(doc, T.brass);
+  doc.text(text.toUpperCase(), x, baselineOf(top, 8.5), { charSpace: charSpace(8.5, 0.14) });
+  return top + pt(8.5) + 3;
+}
+
+/**
+ * DELIVER TO / DELIVERY DETAILS — one rounded paper panel, two columns.
+ *
+ * Drawn in two passes: the columns are measured first (so the panel can be
+ * sized to the taller one), then the panel is filled and the content is drawn
+ * on top. Measuring by drawing into a throwaway pass would double every text
+ * call, so instead each column's writer is run once in `measure` mode.
+ */
+function drawInfoPanel(
+  doc: Doc,
+  top: number,
+  header: DoHeader,
+  opts: { docNoLabel: string },
+): number {
+  const PAD_X = 6;
+  const PAD_Y = 5;
+  const GAP = 8;
+  const innerW = CONTENT_W - PAD_X * 2;
+  const colW = (innerW - GAP) / 2;
+  const leftX = M + PAD_X;
+  const rightX = leftX + colW + GAP;
+  const contentTop = top + PAD_Y;
+
+  const address = [
     header.address1,
     header.address2,
     [header.postcode, header.city, header.state]
@@ -112,115 +320,383 @@ export async function renderDeliveryOrderInto(
     .map((s) => (typeof s === 'string' ? s.trim() : ''))
     .filter(Boolean)
     .join(', ');
-  const statusText = header.status.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
-  const volumeText = header.m3_total_milli ? `${(header.m3_total_milli / 1000).toFixed(3)} m³` : null;
-  y = drawInfoColumns(doc, y,
-    shipToBlock({
-      name: header.debtor_name,
-      code: header.debtor_code,
-      address: addressValue,
-      phone: header.phone ? formatPhone(header.phone) : null,
-      note: header.notes,
-    }, { title: 'DELIVER TO' }),
+
+  // ── Left column ──────────────────────────────────────────────────────────
+  const drawLeft = (draw: boolean): number => {
+    let y = draw ? drawEyebrow(doc, 'Deliver To', leftX, contentTop) : contentTop + pt(8.5) + 3;
+
+    doc.setFont(SANS, 'bold');
+    doc.setFontSize(12);
+    const nameLines = doc.splitTextToSize(
+      `Customer :  ${header.debtor_name || EM_DASH}`,
+      colW,
+    ) as string[];
+    for (const line of nameLines) {
+      y += pt(12) * 1.2;
+      if (draw) { setInk(doc, T.ink); doc.text(line, leftX, y); }
+    }
+
+    doc.setFont(SANS, 'normal');
+    doc.setFontSize(9);
+    // The handoff caps the address measure at 72mm so it never crowds the
+    // details column even on a wide page.
+    const addrLines = doc.splitTextToSize(address || EM_DASH, Math.min(72, colW)) as string[];
+    y += 2.5 + pt(9);
+    if (draw) { setInk(doc, T.inkSecondary); doc.text('Address:', leftX, y); }
+    for (const line of addrLines) {
+      y += pt(9 * 1.5);
+      if (draw) doc.text(line, leftX, y);
+    }
+
+    y += 2 + pt(9);
+    if (draw) {
+      const tel = header.phone ? formatPhone(header.phone) : EM_DASH;
+      setInk(doc, T.inkSecondary);
+      doc.setFont(SANS, 'normal');
+      doc.setFontSize(9);
+      doc.text('Tel :', leftX, y);
+      const labelW = doc.getTextWidth('Tel :') + 1.6;
+      doc.setFont(monoFor(tel), 'normal');
+      setInk(doc, T.ink);
+      doc.text(tel, leftX + labelW, y);
+    }
+    return y;
+  };
+
+  // ── Right column: label gutter + value ───────────────────────────────────
+  const LABEL_W = 26;
+  const ROW_GAP = 2;
+  const rows: Array<{ label: string; value: string | null; bold?: boolean; chip?: boolean }> = [
+    { label: 'SO Ref', value: header.so_doc_no, bold: true },
+    { label: 'Issued Date', value: fmtDocDate(header.do_date) },
     {
-      title: 'DELIVERY DETAILS',
-      rows: [
-        [opts?.docNoLabel ?? 'DO No', header.do_number],
-        ['SO Ref', header.so_doc_no],
-        ['Date', fmtDocDate(header.do_date)],
-        ['Expected', header.expected_delivery_at ? fmtDocDate(header.expected_delivery_at) : null],
-        ['Driver', header.driver_name],
-        ['Vehicle', header.vehicle],
-        ['Volume', volumeText],
-        ['Status', statusText],
-      ],
+      label: 'Delivery Date',
+      value: header.expected_delivery_at ? fmtDocDate(header.expected_delivery_at) : null,
     },
+    {
+      label: 'Status',
+      value: header.status
+        ? header.status.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
+        : null,
+      chip: true,
+    },
+  ];
+
+  const drawRight = (draw: boolean): number => {
+    let y = draw ? drawEyebrow(doc, 'Delivery Details', rightX, contentTop) : contentTop + pt(8.5) + 3;
+    for (const row of rows) {
+      const value = row.value || EM_DASH;
+      if (row.chip) {
+        // The chip is a box, not a line of text: advance by its height so the
+        // rows below (there are none today) would still clear it.
+        const top2 = y + ROW_GAP;
+        if (draw) {
+          doc.setFont(SANS, 'normal');
+          doc.setFontSize(9);
+          setInk(doc, T.inkMuted);
+          doc.text(row.label, rightX, baselineOf(top2 + 0.9, 7.5));
+          drawChip(doc, {
+            text: value.toUpperCase(),
+            x: rightX + LABEL_W + 4,
+            top: top2,
+            sizePt: 7.5,
+            padX: 3,
+            padY: 0.9,
+            bg: T.statusBg,
+            ink: T.statusInk,
+            tracking: charSpace(7.5, 0.08),
+          });
+        }
+        y = top2 + pt(7.5) + 1.8;
+        continue;
+      }
+      y += ROW_GAP + pt(9);
+      if (draw) {
+        doc.setFont(SANS, 'normal');
+        doc.setFontSize(9);
+        setInk(doc, T.inkMuted);
+        doc.text(row.label, rightX, y);
+        doc.setFont(monoFor(value), row.bold ? 'bold' : 'normal');
+        setInk(doc, T.ink);
+        doc.text(value, rightX + LABEL_W + 4, y);
+      }
+    }
+    return y;
+  };
+
+  const bottom = Math.max(drawLeft(false), drawRight(false)) + PAD_Y;
+  const panelH = bottom - top;
+
+  setFill(doc, T.paper);
+  setStroke(doc, T.line);
+  doc.setLineWidth(0.2);
+  doc.roundedRect(M, top, CONTENT_W, panelH, px(10), px(10), 'FD');
+
+  drawLeft(true);
+  drawRight(true);
+  return top + panelH;
+}
+
+/** Signature blocks + footer, pinned to the bottom of the page they close. */
+function drawClosing(doc: Doc, header: DoHeader, pageOf: { page: number; total: number }): void {
+  const footerRuleY = PAGE_H - PAD_BOTTOM - 6;
+  const SIG_BOX_H = 24;
+  const NAME_ROW = pt(8) + 3.2;
+  const sigTitleTop = footerRuleY - 6 - NAME_ROW * 2 - 2 - pt(10) - 2.5;
+  const sigBoxTop = sigTitleTop - SIG_BOX_H;
+
+  const colW = (CONTENT_W - 10) / 2;
+  const blocks: Array<{ x: number; title: string }> = [
+    { x: M, title: 'Customer Acknowledged Receipt' },
+    { x: M + colW + 10, title: `${COMPANY.name} — Driver Signature` },
+  ];
+
+  for (const block of blocks) {
+    rule(doc, block.x, sigBoxTop + SIG_BOX_H, block.x + colW, 0.2, T.lineStrong);
+
+    doc.setFont(SANS, 'bold');
+    doc.setFontSize(10);
+    setInk(doc, T.ink);
+    const titleLines = doc.splitTextToSize(block.title, colW) as string[];
+    doc.text(titleLines[0]!, block.x, baselineOf(sigTitleTop + 2.5, 10));
+
+    doc.setFont(SANS, 'normal');
+    doc.setFontSize(8);
+    setInk(doc, T.inkMuted);
+    let y = sigTitleTop + 2.5 + pt(10) + 2;
+    for (const label of ['Name', 'Date']) {
+      const baseline = baselineOf(y, 8);
+      doc.text(label, block.x, baseline);
+      const labelW = doc.getTextWidth('Date') + 3;
+      dottedRule(doc, block.x + labelW, block.x + colW, baseline + 0.6, T.lineStrong);
+      y += NAME_ROW;
+    }
+  }
+
+  rule(doc, M, footerRuleY, PAGE_W - M, 0.2, T.line);
+  const footBaseline = baselineOf(footerRuleY + 3, 7.5);
+  doc.setFont(SANS, 'normal');
+  doc.setFontSize(7.5);
+  setInk(doc, T.inkMuted);
+  doc.text(
+    'By signing above, the customer confirms receipt of the items listed in good order and condition.',
+    M,
+    footBaseline,
   );
+  const pageLabel = `${header.do_number} · Page ${pageOf.page} of ${pageOf.total}`;
+  doc.setFont(monoFor(pageLabel), 'normal');
+  doc.text(pageLabel, PAGE_W - M, footBaseline, { align: 'right' });
+}
+
+/** The footer alone — every page that is not the one carrying the signature. */
+function drawFooterOnly(doc: Doc, header: DoHeader, pageOf: { page: number; total: number }): void {
+  const footerRuleY = PAGE_H - PAD_BOTTOM - 6;
+  rule(doc, M, footerRuleY, PAGE_W - M, 0.2, T.line);
+  const footBaseline = baselineOf(footerRuleY + 3, 7.5);
+  doc.setFont(SANS, 'normal');
+  doc.setFontSize(7.5);
+  setInk(doc, T.inkMuted);
+  doc.text(`${COMPANY.portalLabel} · ${fmtDocDate(header.do_date)}`, M, footBaseline);
+  const pageLabel = `${header.do_number} · Page ${pageOf.page} of ${pageOf.total}`;
+  doc.setFont(monoFor(pageLabel), 'normal');
+  doc.text(pageLabel, PAGE_W - M, footBaseline, { align: 'right' });
+}
+
+/* Draw ONE delivery order's content into `doc`. Does NOT create the doc or
+   save — the caller finalizes, so several DOs can share one doc (batch "Export
+   PDF"). The footer loop starts at the page this DO began on (startPage) so
+   combined docs keep each DO's own "page n of m" scoped to its own pages. */
+export async function renderDeliveryOrderInto(
+  doc: Doc,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  autoTable: any,
+  header: DoHeader,
+  items: DoItem[],
+  opts?: {
+    docTitle?: string;
+    docNoLabel?: string;
+    showPicking?: boolean;
+    /** Per-document logo override, same contract as pdf-common's drawHeader:
+     *  null/undefined falls back to the company logo memo. */
+    logo?: BrandingLogo | null;
+  },
+): Promise<void> {
+  /* Before ANY drawing — the delivery address is the field that strands a
+     driver when it prints as mojibake. No-op for a pure-WinAnsi DO. */
+  await ensurePdfCjkFont(doc, [header, items]);
+
+  // Source PO + Rack picking columns are a DELIVERY-ORDER aid; the Consignment
+  // Note reuses this renderer but opts out (showPicking: false).
+  const showPicking = opts?.showPicking !== false;
+  const docNoLabel = opts?.docNoLabel ?? 'DO No';
+  const startPage = doc.getNumberOfPages();
+
+  const ruleY = drawDoHeader(doc, header, {
+    docTitle: opts?.docTitle ?? 'DELIVERY ORDER',
+    docNoLabel,
+    logo: opts?.logo,
+  });
+  const panelBottom = drawInfoPanel(doc, ruleY + 6, header, { docNoLabel });
 
   // ── Line items ────────────────────────────────────────────────────
   // Description cell = SKU description + the UNIFIED variant line (same composer
   // as SO/DR/SI/consignment), so the line reads identically on every customer
   // document (Commander 2026-06-16).
   const fabric = await loadCustomerFabricMaps(items);
-  // DO is QUANTITY-only (Owner 2026-06-26) — the Unit Price column was removed
-  // from the DO PDF; a delivery doc shows quantity / volume, not money. The
-  // underlying unit_price_centi still flows to the Sales Invoice.
-  // Source PO + Rack are storekeeper picking aids: which supplier PO supplied the
-  // goods and which physical rack they sit on. Multiple values are listed one per
-  // line; an empty list prints a dash.
+  // DO is QUANTITY-only (Owner 2026-06-26) — a delivery doc shows quantity /
+  // volume, not money. The unit_price_centi still flows to the Sales Invoice.
   const listCell = (vals?: string[] | null): string =>
-    vals && vals.length > 0 ? vals.join('\n') : '—';
+    vals && vals.length > 0 ? vals.join('\n') : EM_DASH;
   const descOf = (it: DoItem): string =>
-    [it.description, docVariantLine(it, fabric.ext, fabric.desc)].filter(Boolean).join('\n') || '—';
-  const rows = items.map((it, idx) =>
-    showPicking
-      ? [
-          String(idx + 1),
-          it.item_code,
-          descOf(it),
-          listCell(it.source_pos),
-          listCell(it.racks),
-          String(it.qty),
-          it.m3_milli != null ? (it.m3_milli / 1000).toFixed(3) : '—',
-        ]
-      : [
-          String(idx + 1),
-          it.item_code,
-          descOf(it),
-          String(it.qty),
-          it.m3_milli != null ? (it.m3_milli / 1000).toFixed(3) : '—',
-        ],
-  );
+    [it.description, docVariantLine(it, fabric.ext, fabric.desc)].filter(Boolean).join('\n') || EM_DASH;
+  const m3Of = (it: DoItem): string => (it.m3_milli != null ? (it.m3_milli / 1000).toFixed(3) : EM_DASH);
+
+  const rows = items.map((it, idx) => {
+    // Row numbers are zero-padded (01, 02 …) so the column stays a fixed-width
+    // rail rather than jittering at the tenth row.
+    const seq = String(idx + 1).padStart(2, '0');
+    return showPicking
+      ? [seq, it.item_code, descOf(it), listCell(it.source_pos), listCell(it.racks), String(it.qty), m3Of(it)]
+      : [seq, it.item_code, descOf(it), String(it.qty), m3Of(it)];
+  });
+
+  const qtyTotal = items.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
+  const m3Total = items.reduce((sum, it) => sum + (it.m3_milli ?? 0), 0) / 1000;
+  // The label spans everything left of the numbers: at 5% the first column is
+  // a row-number rail, and "TOTAL" dropped into it wraps to "TOT / AL".
+  const foot = [[
+    { content: 'TOTAL', colSpan: showPicking ? 5 : 3 },
+    String(qtyTotal),
+    m3Total.toFixed(3),
+  ]];
+
+  // Column widths are the handoff's percentages of the 182mm measure.
+  const pct = (p: number): number => (CONTENT_W * p) / 100;
+  const columnStyles = showPicking
+    ? {
+        0: { cellWidth: pct(5), textColor: T.tableHeadInk, fontStyle: 'bold' as const },
+        1: { cellWidth: pct(19), fontSize: 8, fontStyle: 'bold' as const },
+        2: { cellWidth: 'auto' as const, fontStyle: 'bold' as const },
+        3: { cellWidth: pct(20), fontSize: 8, textColor: T.inkSecondary },
+        4: { cellWidth: pct(8) },
+        5: { cellWidth: pct(8), halign: 'right' as const, fontStyle: 'bold' as const },
+        6: { cellWidth: pct(10), halign: 'right' as const, textColor: T.inkSecondary },
+      }
+    : {
+        0: { cellWidth: pct(5), textColor: T.tableHeadInk, fontStyle: 'bold' as const },
+        1: { cellWidth: pct(19), fontSize: 8, fontStyle: 'bold' as const },
+        2: { cellWidth: 'auto' as const, fontStyle: 'bold' as const },
+        3: { cellWidth: pct(8), halign: 'right' as const, fontStyle: 'bold' as const },
+        4: { cellWidth: pct(10), halign: 'right' as const, textColor: T.inkSecondary },
+      };
+
+  const headRow = showPicking
+    ? ['#', 'Item Code', 'Description', 'Source PO', 'Rack', 'Qty', 'm³']
+    : ['#', 'Item Code', 'Description', 'Qty', 'm³'];
+  const rightAlignedHead = new Set(showPicking ? [5, 6] : [3, 4]);
 
   autoTable(doc, {
-    startY: y,
-    head: [
-      showPicking
-        ? ['#', 'Item Code', 'Description', 'Source PO', 'Rack', 'Qty', 'm³']
-        : ['#', 'Item Code', 'Description', 'Qty', 'm³'],
-    ],
+    startY: panelBottom + 7,
+    head: [headRow],
     body: rows,
+    foot,
+    // The header repeats on every page the table spills onto — a second sheet
+    // of unlabelled numbers is not a delivery note.
+    showFoot: 'lastPage',
     theme: 'plain',
     rowPageBreak: 'avoid',
-    styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
-    headStyles: DOC_TABLE_HEAD_STYLES,
-    columnStyles: showPicking
-      ? {
-          0: { cellWidth: 8, halign: 'right', fontSize: 7.5 },
-          1: { cellWidth: 28 },
-          2: { cellWidth: 'auto' },
-          3: { cellWidth: 24, fontSize: 7.5 },      // Source PO
-          4: { cellWidth: 22, fontSize: 7.5 },      // Rack
-          5: { cellWidth: 12, halign: 'right', fontSize: 7.5 },
-          6: { cellWidth: 16, halign: 'right', fontSize: 7.5 },
+    styles: {
+      font: MONO,
+      fontSize: 9,
+      cellPadding: { top: 2.6, right: 2, bottom: 2.6, left: 2 },
+      valign: 'top',
+      textColor: T.ink,
+      lineColor: T.line,
+      lineWidth: { bottom: 0.1 } as never,
+    },
+    // Only the numeric / identifier columns are mono; Description is prose and
+    // stays on the UI face. autoTable applies `font` per table, so the prose
+    // column is switched back in didParseCell below.
+    headStyles: { fillColor: false as never, textColor: T.tableHeadInk },
+    footStyles: {
+      fillColor: false as never,
+      lineWidth: { top: 0.5 } as never,
+      lineColor: T.petrol,
+      textColor: T.burnt,
+    },
+    columnStyles,
+    margin: { left: M, right: M, bottom: PAGE_H - (PAGE_H - PAD_BOTTOM - 6) + 6 },
+    didParseCell: (data: { section: string; column: { index: number }; cell: { styles: Record<string, unknown> } }) => {
+      const isDescription = data.column.index === 2;
+      if (data.section === 'body') {
+        if (isDescription) data.cell.styles.font = SANS;
+        // The em-dash placeholder is deliberately fainter than a real value —
+        // "nothing here" should not read as loudly as a rack number.
+        if (String((data.cell as unknown as { text: string[] }).text?.join('') ?? '') === EM_DASH) {
+          data.cell.styles.textColor = T.inkFaint;
         }
-      : {
-          0: { cellWidth: 8, halign: 'right', fontSize: 7.5 },
-          1: { cellWidth: 30 },
-          2: { cellWidth: 'auto' },
-          3: { cellWidth: 14, halign: 'right', fontSize: 7.5 },
-          4: { cellWidth: 18, halign: 'right', fontSize: 7.5 },
-        },
-    margin: { left: margin, right: margin },
+      }
+      if (data.section === 'foot') {
+        data.cell.styles.font = MONO;
+        if (data.column.index === 0) {
+          // The merged TOTAL label.
+          data.cell.styles.fontSize = 7.5;
+          data.cell.styles.textColor = T.inkMuted;
+          data.cell.styles.fontStyle = 'bold';
+        } else {
+          data.cell.styles.fontSize = 10;
+          data.cell.styles.fontStyle = 'bold';
+        }
+      }
+    },
+    /* The header row is a rounded paper band with tracked-out mono labels.
+       autoTable can do neither — a per-cell fill would square the ends and it
+       has no letter-spacing — so the band is drawn once (from the first cell)
+       and every head cell paints its own text, then cancels autoTable's. */
+    willDrawCell: (data: {
+      section: string;
+      column: { index: number };
+      cell: {
+        x: number; y: number; width: number; height: number;
+        text: string[]; styles: { halign?: string };
+      };
+    }): boolean | void => {
+      if (data.section !== 'head') return;
+      if (data.column.index === 0) {
+        setFill(doc, T.paper);
+        doc.roundedRect(M, data.cell.y, CONTENT_W, data.cell.height, px(6), px(6), 'F');
+      }
+      const label = data.cell.text.join(' ');
+      const tracking = charSpace(7.5, 0.12);
+      doc.setFont(MONO, 'bold');
+      doc.setFontSize(7.5);
+      setInk(doc, T.tableHeadInk);
+      const right = rightAlignedHead.has(data.column.index);
+      const baseline = baselineOf(data.cell.y + 2.2, 7.5);
+      if (right) {
+        const w = doc.getTextWidth(label) + tracking * Math.max(0, label.length - 1);
+        doc.text(label.toUpperCase(), data.cell.x + data.cell.width - 2 - w, baseline, { charSpace: tracking });
+      } else {
+        doc.text(label.toUpperCase(), data.cell.x + 2, baseline, { charSpace: tracking });
+      }
+      return false;
+    },
   });
-  const lastY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
 
-  // ── Signature boxes: customer + driver (shared pdf-common layout) ──
-  const ty = drawSignatureBoxes(doc, lastY, 'Customer Acknowledged Receipt', `${COMPANY.name} Driver Signature`);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(110);
-  doc.text('Note: By signing above, the customer confirms receipt of the items listed in good order and condition.', margin, ty);
-  doc.setTextColor(0);
+  // ── Closing: signature + footer, pinned to the bottom ──────────────
+  const finalY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? panelBottom);
+  const CLOSING_TOP = PAGE_H - PAD_BOTTOM - 6 - 6 - (24 + 2.5 + pt(10) + 2 + (pt(8) + 3.2) * 2);
+  if (finalY > CLOSING_TOP) doc.addPage();
 
-  // ── Footer: doc no · portal · page n of m on every page ───────────
   const pageCount = doc.getNumberOfPages();
+  const total = pageCount - startPage + 1;
   for (let p = startPage; p <= pageCount; p += 1) {
     doc.setPage(p);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
-    doc.text(header.do_number, margin, 290);
-    doc.text(`${COMPANY.portalLabel} · ${fmtDocDate(header.do_date)}`, pageW / 2, 290, { align: 'center' });
-    doc.text(`Page ${p} of ${pageCount}`, pageW - margin, 290, { align: 'right' });
-    doc.setTextColor(0);
+    const pageOf = { page: p - startPage + 1, total };
+    if (p === pageCount) drawClosing(doc, header, pageOf);
+    else drawFooterOnly(doc, header, pageOf);
   }
+  setInk(doc, T.ink);
 }
 
 /* Single DO → its own file (unchanged behaviour). */
