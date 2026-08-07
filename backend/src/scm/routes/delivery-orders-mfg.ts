@@ -565,6 +565,12 @@ async function resolveShipCommitments(
   warehouseId: string | null,
   shortages: StockShortage[],
   companyId?: number | null,
+  /* Where the shadow's evidence rows should hang. The create paths run this
+     helper BEFORE any DO row exists, so they pass nothing and the rows land
+     under the 'pre-create' placeholder (same convention as the audit
+     pre-flight's 'preflight' probe id) — the soak checker reads by action,
+     never by entity_id, so the placeholder costs it nothing. */
+  auditCtx?: { doId?: string | null; doNumber?: string | null },
 ): Promise<ShipCommitmentPlan> {
   const out = new Map<string, ShipBinding>();
   const linked = lines.filter((l) => l.soItemId && Number(l.qty) > 0);
@@ -635,9 +641,17 @@ async function resolveShipCommitments(
     try {
       const codes = [...new Set(linked.map((l) => l.itemCode))];
       const incoming = await loadIncomingLines(sb, codes, warehouseId);
+      const divergences: Array<{ itemCode: string; variantKey: string; stored: string | null; allocator: string | null; eta: string | null }> = [];
       for (const f of facts) {
         const pick = pickIncomingForBucket(incoming, f.itemCode, f.variantKey, f.shipQty);
         if ((pick?.poNumber ?? null) !== (f.expectedBatchNo ?? null)) {
+          divergences.push({
+            itemCode: f.itemCode,
+            variantKey: f.variantKey,
+            stored: f.expectedBatchNo ?? null,
+            allocator: pick?.poNumber ?? null,
+            eta: pick?.eta ?? null,
+          });
           /* eslint-disable-next-line no-console */
           console.info(`[bind-shadow] ${f.itemCode} [${f.variantKey}] stored=${f.expectedBatchNo ?? '—'} allocator=${pick?.poNumber ?? '—'}${pick?.eta ? ` (eta ${pick.eta})` : ''} — divergence logged; stored link still binds`);
         }
@@ -653,10 +667,69 @@ async function resolveShipCommitments(
         needs.set(k, (needs.get(k) ?? 0) + Number(l.qty));
         setNeeds.set(docNo, needs);
       }
+      const setPicks: Array<{ docNo: string; poNumber: string; eta: string | null }> = [];
       for (const [docNo, needs] of setNeeds) {
         const setPick = pickIncomingForSofaSet(incoming, needs);
+        if (setPick) {
+          setPicks.push({ docNo, poNumber: setPick.poNumber, eta: setPick.eta ?? null });
+          /* eslint-disable-next-line no-console */
+          console.info(`[bind-shadow] sofa set ${docNo}: allocator whole-set pick = ${setPick.poNumber}${setPick.eta ? ` (eta ${setPick.eta})` : ''}`);
+        }
+      }
+
+      /* ── Persist the evidence (2026-08-07) ──────────────────────────────
+         The console lines above go to wrangler tail — ephemeral, no history —
+         and the flip (PR-4) is gated on REVIEWED shadow data, so the soak
+         needs STORED evidence. One BIND_SHADOW row per divergence plus one
+         SUMMARY row per resolution (the denominator: how many comparisons
+         produced how many divergences) land in scm.entity_audit_log, the
+         same sink the RECOUNT_FAILED precedent uses, read back by
+         scripts/check-bind-shadow.mjs (workflow "Bind shadow check
+         (read-only)"). recordEntityAudit never throws, and this whole block
+         sits inside the shadow's own catch besides — a persistence failure
+         can NEVER touch shipping. Console logs stay: tail remains the live
+         view, the table is the history. */
+      try {
+        const entityId = auditCtx?.doId ?? 'pre-create';
+        const entityDocNo = auditCtx?.doNumber ?? null;
+        for (const d of divergences) {
+          await recordEntityAudit(sb, {
+            entityType: 'DELIVERY_ORDER',
+            entityId,
+            entityDocNo,
+            action: 'BIND_SHADOW',
+            companyId: companyId ?? null,
+            statusSnapshot: 'DIVERGENCE',
+            source: 'bind-shadow',
+            fieldChanges: [{ field: `${d.itemCode} [${d.variantKey}]`, from: d.stored, to: d.allocator }],
+            note:
+              `[bind-shadow] ${d.itemCode} [${d.variantKey}] stored=${d.stored ?? 'none'} ` +
+              `allocator=${d.allocator ?? 'none'}${d.eta ? ` (eta ${d.eta})` : ''} — shadow only; the stored link still binds.`,
+          });
+        }
+        await recordEntityAudit(sb, {
+          entityType: 'DELIVERY_ORDER',
+          entityId,
+          entityDocNo,
+          action: 'BIND_SHADOW',
+          companyId: companyId ?? null,
+          statusSnapshot: 'SUMMARY',
+          source: 'bind-shadow',
+          fieldChanges: [
+            { field: 'lines_compared', from: null, to: facts.length },
+            { field: 'diverged', from: null, to: divergences.length },
+            ...setPicks.map((s) => ({ field: `sofa_set ${s.docNo}`, from: null, to: s.poNumber })),
+          ],
+          note:
+            `[bind-shadow] compared ${facts.length} line(s): ${divergences.length} divergence(s)` +
+            (setPicks.length > 0
+              ? `; sofa whole-set pick(s): ${setPicks.map((s) => `${s.docNo} -> ${s.poNumber}`).join(', ')}`
+              : '') +
+            `.`,
+        });
+      } catch (e) {
         /* eslint-disable-next-line no-console */
-        if (setPick) console.info(`[bind-shadow] sofa set ${docNo}: allocator whole-set pick = ${setPick.poNumber}${setPick.eta ? ` (eta ${setPick.eta})` : ''}`);
+        console.error('[bind-shadow] evidence persist failed (shadow only, shipping unaffected):', e);
       }
     } catch (e) {
       /* eslint-disable-next-line no-console */
@@ -4265,7 +4338,8 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
     itemGroup: (it.itemGroup as string | null) ?? null,
     variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
     qty: Number(it.qty ?? 0),
-  }], addWarehouseId ?? null, addShortages, activeCompanyId(c));
+  }], addWarehouseId ?? null, addShortages, activeCompanyId(c),
+  { doId: id, doNumber: (header as { do_number?: string | null }).do_number ?? null });
   // One PO IS one batch number — a set split across two dye lots is refused.
   if (addPlan.setConflicts.length > 0) {
     return c.json(sofaSetPoSplitResponse(addPlan.setConflicts), 409);
@@ -4546,7 +4620,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
           qty: delta,
           priorShippedQty: Number(prev.qty ?? 0),
           priorBatchNo: (prev.committed_po_batch_no as string | null) ?? null,
-        }], targetWh, shortages, activeCompanyId(c));
+        }], targetWh, shortages, activeCompanyId(c), { doId: id });
         if (patchPlan.setConflicts.length > 0) {
           return c.json(sofaSetPoSplitResponse(patchPlan.setConflicts), 409);
         }
