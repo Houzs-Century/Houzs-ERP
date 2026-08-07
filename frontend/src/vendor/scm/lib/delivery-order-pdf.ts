@@ -245,14 +245,18 @@ function drawDoHeader(
        carry equal weight. A wide mark is unaffected — 2990's is still
        width-bound and renders exactly as before.
        A logo is never distorted to fill the box: it is scaled to fit and
-       pinned left. */
+       CENTRED in it. Centring matters because the text column starts after the
+       box's full width either way — a mark narrower than the box, pinned left,
+       leaves all its slack on one side and reads as though it had drifted away
+       from the wordmark (owner 2026-08-07). A mark that fills the box (2990's)
+       is unmoved by centring. */
     const BOX_W = 28.8;
     const BOX_H = 20;
     const scale = Math.min(BOX_W / logo.width, BOX_H / logo.height);
     const w = logo.width * scale;
     const h = logo.height * scale;
     try {
-      doc.addImage(logo.dataUrl, logo.format, M, M + 1, w, h);
+      doc.addImage(logo.dataUrl, logo.format, M + (BOX_W - w) / 2, M + 1, w, h);
       textX = M + BOX_W + 4;
       logoBottom = M + 1 + h;
     } catch { /* fail-soft: text-only letterhead */ }
@@ -289,6 +293,34 @@ function drawDoHeader(
     y += first ? 2 + pt(8.5) : pt(8.5 * 1.5);
     first = false;
     doc.text(line, textX, y);
+  }
+
+  /* Customer-service contact (owner 2026-08-07). A delivery note is the one
+     document a customer holds while something is wrong with the delivery, so
+     the desk to call belongs on it — and it is NOT the company's headline
+     number, which is why Branding carries it as its own pair of fields. Both
+     are per company and omitted when blank: a 2990 sheet must never print a
+     Houzs contact. */
+  const cs = [COMPANY.csPhone, COMPANY.csEmail].map((v) => (v || '').trim()).filter(Boolean);
+  if (cs.length > 0) {
+    doc.setFont(SANS, 'normal');
+    doc.setFontSize(8.5);
+    const label = 'Customer Service';
+    const labelW = doc.getTextWidth(label) + 2;
+    const csLines = doc.splitTextToSize(cs.join('  ·  '), Math.max(30, leftMaxW - labelW)) as string[];
+    csLines.forEach((line, i) => {
+      y += i === 0 ? 2 + pt(8.5) : pt(8.5 * 1.35);
+      if (i === 0) {
+        setInk(doc, T.inkMuted);
+        doc.setFont(SANS, 'normal');
+        doc.text(label, textX, y);
+      }
+      setInk(doc, T.inkSecondary);
+      doc.setFont(monoFor(line), 'normal');
+      doc.text(line, textX + labelW, y);
+    });
+    doc.setFont(SANS, 'normal');
+    setInk(doc, T.inkSecondary);
   }
 
   const ruleY = Math.max(y + 1.2, rightBottom, logoBottom) + 5;

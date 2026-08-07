@@ -75,6 +75,18 @@ export const COMPANY = {
   get website(): string {
     return getBrandingCache().website;
   },
+  /* Customer-service desk (owner 2026-08-07) — deliberately NOT `phone` /
+     `email` above, which are the company's headline contacts. Blank for a
+     company that has not set one, and the document omits the line rather than
+     borrowing another company's. Canonicalised on read like `phone`, so a
+     number saved before that rule existed still prints in the same shape. */
+  get csPhone(): string {
+    const raw = getBrandingCache().csPhone;
+    return raw ? formatPhone(canonicalizeSinglePhone(raw)) : '';
+  },
+  get csEmail(): string {
+    return getBrandingCache().csEmail;
+  },
   // Footer "portal" label. HOUZS keeps the historic literal byte-identical;
   // any other active company renders "<short name> ERP" (e.g. "2990's Home
   // ERP"). Live getter like the fields above, so it flips with the switcher.
