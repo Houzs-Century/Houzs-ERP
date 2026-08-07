@@ -73,18 +73,25 @@ describe('SO detail payments lock', () => {
 });
 
 describe('the door into the payments ledger', () => {
-  /* The ledger lives ONLY on the ?edit=1 editor, and V2's Edit button is
-     `disabled={hardLocked}`. Without a second door a DELIVERED SO has no
-     reachable Payments section at all — the toggle above would be correct and
-     still unusable, which is exactly how this shipped broken the first time. */
-  test('a hard-locked order still gets a payments-only entry point', () => {
+  /* The ledger lives ONLY on the ?edit=1 editor, and V2's Edit button answers
+     to the LINE/HEADER lock: disabled when hard-locked, relabelled to "Submit
+     SO Amendment" when amendment-eligible. Without a second door a DELIVERED SO
+     has no reachable Payments section at all — the toggle above would be
+     correct and still unusable, which is exactly how this shipped broken the
+     first time. */
+  test('every order that can take money gets a payments-only entry point', () => {
     expect(readViewSource).toContain('const goPayments =');
     expect(readViewSource).toContain('?payments=1');
     expect(readViewSource).toContain('Collect payment');
-    // Offered where Edit is not, and never on an order that takes no money.
+    /* Gated on the MONEY, not the lock. The first cut read `hardLocked && …`,
+       which is a 2990 delivery-flow assumption: on Houzs every SO sits at
+       CONFIRMED with a balance still owing, so the button never appeared where
+       it was most needed. Only CANCELLED takes no money (DRAFT is out on the
+       standing "no payments on drafts" ruling, and is never locked anyway). */
     expect(readViewSource).toContain(
-      '{hardLocked && salesOrder.status?.toLowerCase() !== "cancelled" && (',
+      '{!["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (',
     );
+    expect(readViewSource).not.toContain('{hardLocked && salesOrder.status');
   });
 
   test('that entry point routes to the editor, and does not open the whole form', () => {

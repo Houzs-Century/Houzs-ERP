@@ -948,25 +948,38 @@ function SalesOrderDetailV2ReadOnly() {
             >
               Print PDF
             </Button>
-            {/* Collect payment (owner 2026-08-07) — the ONLY door to the
-                payments ledger on a hard-locked order. The ledger lives on the
-                ?edit=1 editor, and Edit below is `disabled={hardLocked}`, so a
-                DELIVERED SO (locked by status AND by its DO) had no reachable
-                Payments section at all: the balance could not be keyed, and its
-                proof had nowhere to go. Collecting the balance ON delivery is
-                the normal case — that is what a Balance figure is FOR.
+            {/* Collect payment (owner 2026-08-07) — the direct door to the
+                payments ledger. The ledger lives on the ?edit=1 editor, so
+                without this the only way to key money is the Edit button
+                below, and Edit answers to the LINE/HEADER lock rather than to
+                anything about money:
+                  · hard-locked (DELIVERED / SHIPPED / has a DO-SI) → disabled,
+                    so a delivered order had NO reachable Payments section at
+                    all — the balance could not be keyed and its proof had
+                    nowhere to go, on the exact order state where a balance is
+                    normally collected;
+                  · amendment-eligible → it becomes "Submit SO Amendment", so
+                    keying a payment means going through the amendment flow;
+                  · otherwise → it opens every field to edit a row of numbers.
+                Hence the gate here is about the MONEY, not the lock: only a
+                CANCELLED order takes none, which is the same rule the payments
+                card, the mobile screen and the server all use. DRAFT is left
+                out on the owner's standing "no payments on drafts" ruling — and
+                a draft is never locked, so Edit reaches it anyway.
+                Owner 2026-08-07, on Houzs (every SO CONFIRMED, several still
+                owing): "houzs也是需要collect payment功能" — the first cut gated
+                this on `hardLocked`, which is a 2990 delivery-flow assumption,
+                not a rule about collecting money.
                 `?payments=1` opens the editor with the Payments card unlocked
                 and NOTHING else: it does not set ?edit=1, so lines, header and
                 addresses stay read-only under their own `isLocked` gate, which
-                is the lock that genuinely belongs to them. Only offered where
-                Edit is not — an unlocked SO already reaches payments through
-                it — and never on a cancelled order, which takes no money. */}
-            {hardLocked && salesOrder.status?.toLowerCase() !== "cancelled" && (
+                is the lock that genuinely belongs to them. */}
+            {!["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (
               <Button
                 variant="secondary"
                 icon={<Wallet size={14} />}
                 onClick={goPayments}
-                title="Record a payment against this order — the rest of the order stays locked."
+                title="Record a payment against this order — everything else stays as it is."
               >
                 Collect payment
               </Button>
