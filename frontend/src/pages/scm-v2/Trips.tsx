@@ -189,7 +189,7 @@ export function Trips() {
     <div className="space-y-4">
       <PageHeader
         eyebrow="Delivery"
-        title="Trips"
+        title="Delivery Time Arrangement"
         description="A lorry-day: one lorry, a crew, and an ordered list of stops. Optimise the order with Google before the driver leaves."
       />
 
