@@ -2806,7 +2806,7 @@ function FinanceListView() {
     },
     {
       key: "sales_per_day",
-      label: "Sales / day",
+      label: "Revenue / day",
       align: "right",
       defaultHidden: true,
       render: (r) =>
@@ -2969,7 +2969,7 @@ function FinanceListView() {
     },
     {
       key: "income",
-      label: "Income (all)",
+      label: "Revenue (all)",
       align: "right",
       defaultHidden: true,
       render: (r) => (
