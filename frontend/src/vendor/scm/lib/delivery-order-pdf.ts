@@ -297,11 +297,16 @@ function drawDoHeader(
 
   /* Customer-service contact (owner 2026-08-07). A delivery note is the one
      document a customer holds while something is wrong with the delivery, so
-     the desk to call belongs on it — and it is NOT the company's headline
-     number, which is why Branding carries it as its own pair of fields. Both
-     are per company and omitted when blank: a 2990 sheet must never print a
-     Houzs contact. */
-  const cs = [COMPANY.csPhone, COMPANY.csEmail].map((v) => (v || '').trim()).filter(Boolean);
+     the desk to call belongs on it.
+     The dedicated Branding fields are an OVERRIDE, not a requirement: a company
+     that has not set them falls back to its own headline phone / email, which
+     is what the letterhead would print anyway and is the number a customer
+     would find regardless. Houzs's headline number IS its service desk.
+     The fallback reads THIS company's row, so a 2990 sheet still cannot print a
+     Houzs contact — the invariant survives. Both blank ⇒ the line is omitted. */
+  const cs = [COMPANY.csPhone || COMPANY.phone, COMPANY.csEmail || COMPANY.email]
+    .map((v) => (v || '').trim())
+    .filter(Boolean);
   if (cs.length > 0) {
     doc.setFont(SANS, 'normal');
     doc.setFontSize(8.5);

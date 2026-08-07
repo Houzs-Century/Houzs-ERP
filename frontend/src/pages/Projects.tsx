@@ -1032,19 +1032,30 @@ const PROJECTS_LIST_FILTER_KEYS = [
   "page",
 ] as const;
 
-/** Multi-select task filter (owner 2026-08-07). A plain <select multiple> is
- *  unusable with ~20 grouped options (ctrl-click, no room), so this is a
- *  button + checkbox popover: tick any number of tasks, grouped by section.
- *  Closes on outside click / Escape. The chosen titles drive both the list
- *  filter and the export columns. */
-function TaskStatusMultiSelect({
-  all,
+/** Generic multi-select filter (owner 2026-08-07: "add multiple choice for all
+ *  dropdown also"). A native <select multiple> is unusable in a filter bar
+ *  (ctrl-click, fixed height), so every project-list filter uses this button +
+ *  checkbox popover instead. Closes on outside click / Escape. Options may be
+ *  grouped (the task filter groups by checklist section); pass one group with a
+ *  null name for a flat list. Selection is a string[] the caller comma-joins
+ *  into the URL. */
+function MultiSelectFilter({
+  placeholder,
+  groups,
   selected,
   onChange,
+  title,
+  summary,
+  panelWidth = "w-[280px]",
 }: {
-  all: { title: string; section: string | null }[];
+  placeholder: string;
+  groups: { name: string | null; options: { value: string; label: string }[] }[];
   selected: string[];
   onChange: (next: string[]) => void;
+  title?: string;
+  /** Label when >1 is ticked, e.g. "3 brands". Defaults to "n selected". */
+  summary?: (n: number) => string;
+  panelWidth?: string;
 }) {
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -1061,21 +1072,29 @@ function TaskStatusMultiSelect({
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
-  const groups = useMemo(() => {
-    const g: Record<string, string[]> = {};
-    for (const t of all) (g[t.section ?? "Other"] ||= []).push(t.title);
-    return Object.entries(g);
-  }, [all]);
-  const toggle = (title: string) =>
-    onChange(selected.includes(title) ? selected.filter((t) => t !== title) : [...selected, title]);
+  const toggle = (v: string) =>
+    onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+  const labelFor = (v: string) => {
+    for (const g of groups) {
+      const hit = g.options.find((o) => o.value === v);
+      if (hit) return hit.label;
+    }
+    return v;
+  };
   const label =
-    selected.length === 0 ? "Status" : selected.length === 1 ? selected[0] : `${selected.length} tasks not completed`;
+    selected.length === 0
+      ? placeholder
+      : selected.length === 1
+        ? labelFor(selected[0])
+        : summary
+          ? summary(selected.length)
+          : `${selected.length} selected`;
   return (
     <div className="relative" ref={boxRef}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title="Tick the tasks that are still not completed"
+        title={title ?? placeholder}
         className={cn(
           "inline-flex h-8 max-w-[260px] items-center gap-1.5 rounded-md border bg-surface px-2 text-[12px]",
           selected.length ? "border-accent font-semibold text-accent" : "border-border text-ink",
@@ -1085,10 +1104,15 @@ function TaskStatusMultiSelect({
         <ChevronDown size={13} className="shrink-0 opacity-70" />
       </button>
       {open && (
-        <div className="absolute left-0 top-9 z-30 max-h-[420px] w-[320px] overflow-y-auto rounded-md border border-border bg-surface p-2 shadow-slab">
+        <div
+          className={cn(
+            "absolute left-0 top-9 z-30 max-h-[420px] overflow-y-auto rounded-md border border-border bg-surface p-2 shadow-slab",
+            panelWidth,
+          )}
+        >
           <div className="mb-1.5 flex items-center justify-between border-b border-border-subtle pb-1.5">
             <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
-              Not completed
+              {placeholder}
             </span>
             {selected.length > 0 && (
               <button
@@ -1100,23 +1124,25 @@ function TaskStatusMultiSelect({
               </button>
             )}
           </div>
-          {groups.map(([sectionName, titles]) => (
-            <div key={sectionName} className="mb-1.5">
-              <div className="px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-ink-muted">
-                {sectionName}
-              </div>
-              {titles.map((t) => (
+          {groups.map((g, gi) => (
+            <div key={g.name ?? `g${gi}`} className="mb-1.5">
+              {g.name && (
+                <div className="px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-ink-muted">
+                  {g.name}
+                </div>
+              )}
+              {g.options.map((o) => (
                 <label
-                  key={t}
+                  key={o.value}
                   className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12px] hover:bg-primary-soft/40"
                 >
                   <input
                     type="checkbox"
                     className="accent-accent"
-                    checked={selected.includes(t)}
-                    onChange={() => toggle(t)}
+                    checked={selected.includes(o.value)}
+                    onChange={() => toggle(o.value)}
                   />
-                  <span className="truncate">{t}</span>
+                  <span className="truncate">{o.label}</span>
                 </label>
               ))}
             </div>
@@ -1142,12 +1168,19 @@ function ProjectsListView() {
   const month = params.get("month") || "";
   const section = params.get("section") || "";
   const taskPending = params.get("task") || "";
-  // Multi-select (owner 2026-08-07): the param is a comma-joined title list.
-  const taskPendingList = useMemo(
-    () => taskPending.split(",").map((t) => t.trim()).filter(Boolean),
-    [taskPending],
-  );
+  // Multi-select (owner 2026-08-07): EVERY filter param is a comma-joined list
+  // now. csvParam keeps the URL⇄checkbox mapping in one place; a single value
+  // still round-trips unchanged, so old bookmarks keep working.
+  const csvParam = (v: string) => v.split(",").map((s) => s.trim()).filter(Boolean);
+  const taskPendingList = useMemo(() => csvParam(taskPending), [taskPending]);
   const status = params.get("status") || "";
+  // Ticked values per filter (owner 2026-08-07 multi-select). The raw comma
+  // strings above are what go on the wire; these arrays drive the checkboxes.
+  const sectionList = useMemo(() => csvParam(section), [section]);
+  const brandList = useMemo(() => csvParam(brand), [brand]);
+  const yearList = useMemo(() => csvParam(year), [year]);
+  const monthList = useMemo(() => csvParam(month), [month]);
+  const statusList = useMemo(() => csvParam(status), [status]);
   // Cohort "Setup"/"Dismantle" pick a date-derived event PHASE (not the stale
   // `stage` enum) — see the field/sales slim bar below + backend f.phase.
   const phase = params.get("phase") || "";
@@ -1239,7 +1272,7 @@ function ProjectsListView() {
   // Skip exclude_done when the user explicitly picked the Completed
   // section pill — otherwise the page would show zero rows.
   const excludeDoneParam =
-    hideCompleted && section !== "__done" ? 1 : undefined;
+    hideCompleted && !sectionList.includes("__done") ? 1 : undefined;
 
   const list = useQuery<Paginated<ProjectRow>>("/api/projects:",
     (signal) =>
@@ -1396,6 +1429,14 @@ function ProjectsListView() {
     "/api/projects/task-titles-distinct",
     () => api.get("/api/projects/task-titles-distinct"),
   );
+  // Task options grouped by checklist section, for the multi-select popover.
+  const taskGroups = useMemo(() => {
+    const g: Record<string, { value: string; label: string }[]> = {};
+    for (const t of taskTitles.data?.data ?? []) {
+      (g[t.section ?? "Other"] ||= []).push({ value: t.title, label: t.title });
+    }
+    return Object.entries(g).map(([name, options]) => ({ name, options }));
+  }, [taskTitles.data]);
 
   const columns: Column<ProjectRow>[] = [
     {
@@ -1819,85 +1860,90 @@ function ProjectsListView() {
         {/* Section filter — a DROPDOWN since 2026-08-05 (owner: "need to add
             drop down for pc"). The pill row spanned the full width and left no
             room for the task filter beside it; the options are identical. */}
-        <select
-          value={section}
-          onChange={(e) => setSection(e.target.value)}
-          className="h-8 rounded-md border border-border bg-surface px-2 text-[12px] font-semibold"
+        <MultiSelectFilter
+          placeholder="All sections"
           title="Filter by the tasklist section an event is currently in"
-        >
-          <option value="">All sections</option>
-          {(sectionsList.data?.data ?? []).map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-          <option value="__done">Completed</option>
-        </select>
+          summary={(n) => `${n} sections`}
+          selected={sectionList}
+          onChange={(next) => setSection(next.join(","))}
+          groups={[
+            {
+              name: null,
+              options: [
+                ...(sectionsList.data?.data ?? []).map((s) => ({ value: s, label: s })),
+                { value: "__done", label: "Completed" },
+              ],
+            },
+          ]}
+        />
         {/* Outstanding-TASK filter (owner 2026-08-05; MULTI-select 2026-08-07:
             "make it can click multiple choice. and once export will export what
             already tick only"). Tick any number of tasks; the list keeps events
             where AT LEAST ONE ticked task is still open, and the export gains
             one column per ticked task. */}
-        <TaskStatusMultiSelect
-          all={taskTitles.data?.data ?? []}
+        <MultiSelectFilter
+          placeholder="Status"
+          title="Tick the tasks that are still not completed"
+          summary={(n) => `${n} tasks not completed`}
+          panelWidth="w-[320px]"
           selected={taskPendingList}
           onChange={(next) => setTaskPending(next.join(","))}
+          groups={taskGroups}
         />
-        <select
-          value={brand}
-          onChange={(e) => setBrand(e.target.value)}
-          className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
-        >
-          <option value="">All brands</option>
-          {(brands.data?.data ?? []).map((b) => (
-            <option key={b} value={b}>
-              {b}
-            </option>
-          ))}
-        </select>
-        <select
-          value={year}
-          onChange={(e) => setYear(e.target.value)}
-          className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
-        >
-          <option value="">All years</option>
-          {(() => {
-            const y = new Date().getFullYear();
-            const years: number[] = [];
-            for (let i = y + 1; i >= y - 4; i--) years.push(i);
-            return years.map((yy) => (
-              <option key={yy} value={yy}>
-                {yy}
-              </option>
-            ));
-          })()}
-        </select>
-        <select
-          value={month}
-          onChange={(e) => setMonth(e.target.value)}
-          className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
-        >
-          <option value="">All months</option>
-          {[
-            "January", "February", "March", "April", "May", "June",
-            "July", "August", "September", "October", "November", "December",
-          ].map((label, i) => (
-            <option key={label} value={i + 1}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
+        <MultiSelectFilter
+          placeholder="All brands"
+          summary={(n) => `${n} brands`}
+          selected={brandList}
+          onChange={(next) => setBrand(next.join(","))}
+          groups={[
+            { name: null, options: (brands.data?.data ?? []).map((b) => ({ value: b, label: b })) },
+          ]}
+        />
+        <MultiSelectFilter
+          placeholder="All years"
+          summary={(n) => `${n} years`}
+          panelWidth="w-[160px]"
+          selected={yearList}
+          onChange={(next) => setYear(next.join(","))}
+          groups={[
+            {
+              name: null,
+              options: (() => {
+                const y = new Date().getFullYear();
+                const out: { value: string; label: string }[] = [];
+                for (let i = y + 1; i >= y - 4; i--) out.push({ value: String(i), label: String(i) });
+                return out;
+              })(),
+            },
+          ]}
+        />
+        <MultiSelectFilter
+          placeholder="All months"
+          summary={(n) => `${n} months`}
+          panelWidth="w-[180px]"
+          selected={monthList}
+          onChange={(next) => setMonth(next.join(","))}
+          groups={[
+            {
+              name: null,
+              options: [
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December",
+              ].map((label, i) => ({ value: String(i + 1), label })),
+            },
+          ]}
+        />
+        <MultiSelectFilter
+          placeholder="All statuses"
           title="Filter by project status"
-        >
-          <option value="">All statuses</option>
-          {STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          summary={(n) => `${n} statuses`}
+          panelWidth="w-[200px]"
+          selected={statusList}
+          onChange={(next) => setStatus(next.join(","))}
+          groups={[
+            { name: null, options: STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label })) },
+          ]}
+        />
         <label
           className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold text-ink-secondary"
           title="Show only projects with a task pending on your side (your role)"
@@ -1922,8 +1968,8 @@ function ProjectsListView() {
               setHideCompleted(e.target.checked);
             }}
             className="accent-accent"
-            disabled={section === "__done"}
-            title={section === "__done" ? "Disabled while the Completed section pill is active" : undefined}
+            disabled={sectionList.includes("__done")}
+            title={sectionList.includes("__done") ? "Disabled while the Completed section filter is ticked" : undefined}
           />
           Hide completed
         </label>
@@ -5971,7 +6017,17 @@ function ProjectDetailContent({
   const defectActionsValue = useMemo(
     () => ({
       actions: (((detail.data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
-      canAct:
+      // Two-stage defect triage (owner 2026-08-07):
+      //  - canReview  = Storekeeper Supervisor (Shukor) or admin — triages a
+      //    fresh defect: Done (cleaned) or Replace (escalate to purchaser).
+      //  - canPurchase = purchaser (Sim / Farra) / BD or admin — closes an
+      //    escalated (Replace) defect with Done once the replacement is ordered.
+      canReview:
+        !!user &&
+        (user.permissions?.includes("*") ||
+          user.permissions?.includes("projects.manage") ||
+          /^storekeeper supervisor$/i.test((user.position_name ?? "").trim())),
+      canPurchase:
         !!user &&
         (user.permissions?.includes("*") ||
           user.permissions?.includes("projects.manage") ||
@@ -7279,7 +7335,8 @@ interface AttachmentAction {
 }
 const DefectActionsCtx = createContext<{
   actions: AttachmentAction[];
-  canAct: boolean;
+  canReview: boolean;
+  canPurchase: boolean;
   reload: () => void;
 } | null>(null);
 
@@ -7310,7 +7367,16 @@ function TaskAttachmentRow({
   const fileActions = isDefectFile && defectCtx
     ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
     : [];
-  const [actionDraft, setActionDraft] = useState<null | "ongoing" | "done">(null);
+  // Latest timeline entry drives the two-stage state machine: no action (or a
+  // legacy 'ongoing') = fresh, awaiting the Storekeeper Supervisor's triage;
+  // 'replace' = escalated to the purchaser; 'done' = resolved (no buttons).
+  const latestAction = fileActions.length
+    ? fileActions.reduce((m, a) => (a.id > m.id ? a : m))
+    : null;
+  const isFreshDefect =
+    !latestAction || (latestAction.status !== "done" && latestAction.status !== "replace");
+  const isEscalatedDefect = latestAction?.status === "replace";
+  const [actionDraft, setActionDraft] = useState<null | "done" | "replace">(null);
   const [actionRemark, setActionRemark] = useState("");
   const [savingAction, setSavingAction] = useState(false);
   async function saveAction() {
@@ -7473,25 +7539,42 @@ function TaskAttachmentRow({
             </div>
           )
         )}
-        {/* Defect action timeline — buttons for the purchaser/BD, the stacked
-            history for everyone. Both buttons stay clickable forever; each
-            save APPENDS an entry (owner 2026-07-29). */}
+        {/* Defect action timeline (two-stage, owner 2026-08-07): a FRESH defect
+            shows Done + Replace to the Storekeeper Supervisor (Shukor); once he
+            escalates with Replace it shows Done to the purchaser (Sim / Farra).
+            A resolved (Done) file shows only the stacked history, for everyone. */}
         {isDefectFile && defectCtx && (
           <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
-            {defectCtx.canAct && (
+            {isFreshDefect && defectCtx.canReview && (
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => { setActionDraft("ongoing"); }}
+                  onClick={() => { setActionDraft("done"); }}
                   className={cn(
                     "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
-                    actionDraft === "ongoing"
-                      ? "border-amber-500 bg-amber-100 text-amber-700"
-                      : "border-amber-300 bg-surface text-amber-600 hover:bg-amber-50",
+                    actionDraft === "done"
+                      ? "border-green-600 bg-green-100 text-green-700"
+                      : "border-green-300 bg-surface text-green-600 hover:bg-green-50",
                   )}
                 >
-                  Ongoing
+                  Done
                 </button>
+                <button
+                  type="button"
+                  onClick={() => { setActionDraft("replace"); }}
+                  className={cn(
+                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
+                    actionDraft === "replace"
+                      ? "border-rose-600 bg-rose-100 text-rose-700"
+                      : "border-rose-300 bg-surface text-rose-600 hover:bg-rose-50",
+                  )}
+                >
+                  Replace
+                </button>
+              </div>
+            )}
+            {isEscalatedDefect && defectCtx.canPurchase && (
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => { setActionDraft("done"); }}
@@ -7544,7 +7627,11 @@ function TaskAttachmentRow({
                       <span
                         className={cn(
                           "h-1.5 w-1.5 shrink-0 rounded-full",
-                          a.status === "done" ? "bg-green-600" : "bg-amber-500",
+                          a.status === "done"
+                            ? "bg-green-600"
+                            : a.status === "replace"
+                              ? "bg-rose-600"
+                              : "bg-amber-500",
                         )}
                       />
                       <span
@@ -7552,10 +7639,16 @@ function TaskAttachmentRow({
                           "rounded px-1.5 py-0.5 font-bold",
                           a.status === "done"
                             ? "bg-green-100 text-green-700"
-                            : "bg-amber-100 text-amber-700",
+                            : a.status === "replace"
+                              ? "bg-rose-100 text-rose-700"
+                              : "bg-amber-100 text-amber-700",
                         )}
                       >
-                        {a.status === "done" ? "Done" : "Ongoing"}
+                        {a.status === "done"
+                          ? "Done"
+                          : a.status === "replace"
+                            ? "Replace"
+                            : "Ongoing"}
                       </span>
                       <span className="text-ink-muted">
                         {a.user_name || "—"} · {formatDateTime(a.created_at)}

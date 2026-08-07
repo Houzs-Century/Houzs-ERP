@@ -801,7 +801,16 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const defectActionsValue = useMemo(
     () => ({
       actions: (((data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
-      canAct:
+      // Two-stage defect triage (owner 2026-08-07): canReview = the Storekeeper
+      // Supervisor (Shukor) or admin triages a fresh defect (Done / Replace);
+      // canPurchase = the purchaser (Sim / Farra) / BD or admin closes an
+      // escalated (Replace) defect with Done. Mirrors desktop Projects.tsx.
+      canReview:
+        !!user &&
+        (user.permissions?.includes("*") ||
+          user.permissions?.includes("projects.manage") ||
+          /^storekeeper supervisor$/i.test((user.position_name ?? "").trim())),
+      canPurchase:
         !!user &&
         (user.permissions?.includes("*") ||
           user.permissions?.includes("projects.manage") ||
@@ -2049,17 +2058,24 @@ type AttachmentAction = {
 };
 const DefectActionsCtx = createContext<{
   actions: AttachmentAction[];
-  canAct: boolean;
+  canReview: boolean;
+  canPurchase: boolean;
   reload: () => void;
 } | null>(null);
 
 function DefectFileActions({ att }: { att: TaskAttachment }) {
   const ctx = useContext(DefectActionsCtx);
-  const [draft, setDraft] = useState<null | "ongoing" | "done">(null);
+  const [draft, setDraft] = useState<null | "done" | "replace">(null);
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
   if (!ctx) return null;
   const list = ctx.actions.filter((x) => x.attachment_id === att.id);
+  // Latest timeline entry drives the state machine: fresh (no action / legacy
+  // 'ongoing') awaits the reviewer; 'replace' awaits the purchaser; 'done' is
+  // resolved. Mirrors desktop TaskAttachmentRow.
+  const latest = list.length ? list.reduce((m, a) => (a.id > m.id ? a : m)) : null;
+  const isFresh = !latest || (latest.status !== "done" && latest.status !== "replace");
+  const isEscalated = latest?.status === "replace";
   const save = async () => {
     if (!draft) return;
     setSaving(true);
@@ -2077,9 +2093,14 @@ function DefectFileActions({ att }: { att: TaskAttachment }) {
   const ts = (v: string) => String(v || "").slice(0, 16).replace("T", " ");
   return (
     <div style={{ paddingLeft: 2 }}>
-      {ctx.canAct && (
+      {isFresh && ctx.canReview && (
         <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
-          <button className="tinybtn" disabled={saving} style={{ background: draft === "ongoing" ? "#f6efd9" : "#fff", borderColor: "#e7d9ae", color: "#6e4d12", fontWeight: draft === "ongoing" ? 800 : 700 }} onClick={() => setDraft("ongoing")}>Ongoing</button>
+          <button className="tinybtn" disabled={saving} style={{ background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
+          <button className="tinybtn" disabled={saving} style={{ background: draft === "replace" ? "#f7e3e3" : "#fff", borderColor: "#e6bcbc", color: "#b4362f", fontWeight: draft === "replace" ? 800 : 700 }} onClick={() => setDraft("replace")}>Replace</button>
+        </div>
+      )}
+      {isEscalated && ctx.canPurchase && (
+        <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
           <button className="tinybtn" disabled={saving} style={{ background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
         </div>
       )}
@@ -2097,8 +2118,8 @@ function DefectFileActions({ att }: { att: TaskAttachment }) {
           {[...list].reverse().map((a) => (
             <div key={a.id}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <span style={{ width: 6, height: 6, borderRadius: 3, background: a.status === "done" ? "#2f8a5b" : "#c9971f", flex: "none" }} />
-                <span className="rbadge" style={{ background: a.status === "done" ? "#e2f0e9" : "#f6efd9", color: a.status === "done" ? "#2f8a5b" : "#6e4d12" }}>{a.status === "done" ? "Done" : "Ongoing"}</span>
+                <span style={{ width: 6, height: 6, borderRadius: 3, background: a.status === "done" ? "#2f8a5b" : a.status === "replace" ? "#b4362f" : "#c9971f", flex: "none" }} />
+                <span className="rbadge" style={{ background: a.status === "done" ? "#e2f0e9" : a.status === "replace" ? "#f7e3e3" : "#f6efd9", color: a.status === "done" ? "#2f8a5b" : a.status === "replace" ? "#b4362f" : "#6e4d12" }}>{a.status === "done" ? "Done" : a.status === "replace" ? "Replace" : "Ongoing"}</span>
                 <span style={{ fontSize: 10.5, color: "#9aa093" }}>{a.user_name || "—"} · {ts(a.created_at)}</span>
               </div>
               {a.remark && <div style={{ fontSize: 11.5, color: "#6b6f63", marginLeft: 12, marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{a.remark}</div>}
@@ -3190,8 +3211,13 @@ const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
 // Decoration shows its remark AND its files (view remark + download).
 // Defect tiles carry the per-file Ongoing/Done timeline + the N/A button
 // (owner 2026-07-29). Matched off the resolved checklist item title.
+// Live task titles are "Defect Item Setup/Dismantle" (there are no "Defect
+// List" rows in prod), so the old /^defect list/i matched nothing here and the
+// tile path never showed the action buttons or the no-defect N/A control
+// (BUG-HISTORY 2026-08-07). Widen to match both families, like every other
+// defect matcher and the backend.
 const isDefectTile = (t: { item?: ChecklistItem | null }): boolean =>
-  /^defect list/i.test((t.item?.title ?? "").trim());
+  /^defect (list|item)/i.test((t.item?.title ?? "").trim());
 
 const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
   // Owner 2026-07-22: Stock Out Transfer Record + Blank Floorplan tiles

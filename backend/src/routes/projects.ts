@@ -984,6 +984,7 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   let pendingDirector: { stock?: boolean; agreement?: boolean; sales_attending?: boolean; sales_pic?: boolean } | undefined;
   let pendingSalesAttending = false;
   let pendingAgreement = false;
+  let pendingDefectReview = false;
   if (c.req.query("my_pending") === "1" && user) {
     // Owner 2026-07-13 — staged "My Pending". Approvers (anyone holding a
     // checklist approval permission, or `*`) see ONLY the items awaiting
@@ -1040,7 +1041,16 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       pendingDirector = { stock: true, sales_attending: true, sales_pic: true };
     } else if (r === "purchaser") pendingLabel = "PURCHASER";
     else if (r === "logistic") pendingLogistic = true; // setup not arranged
-    else if (r === "driver" || r === "helper" || r === "storekeeper") pendingLabel = "DRIVER";
+    else if ((user.position_name ?? "").trim().toLowerCase() === "storekeeper supervisor") {
+      // Shukor (owner 2026-08-07): the Storekeeper Supervisor is the defect
+      // clean-or-replace reviewer. A fresh defect upload (no Done/Replace yet)
+      // lands here; he clicks Done (cleaned) or Replace (escalate to purchaser).
+      // Keyed on POSITION, not role — his role is the shared "Storekeeper", so
+      // the driver/helper/storekeeper arm below would otherwise cage him to his
+      // own crewed events. This lane is deliberately NOT crew-scoped: he reviews
+      // defects across every event (see assigned_user_id below).
+      pendingDefectReview = true;
+    } else if (r === "driver" || r === "helper" || r === "storekeeper") pendingLabel = "DRIVER";
     else if (r.includes("sales")) {
       // Sales PIC: their SALES-PIC-badged tasks + the Sales Attending assignment.
       pendingLabel = "SALES PIC";
@@ -1057,6 +1067,7 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     pending_director: pendingDirector,
     pending_sales_attending: pendingSalesAttending || undefined,
     pending_agreement: pendingAgreement || undefined,
+    pending_defect_review: pendingDefectReview || undefined,
     stage: c.req.query("stage"),
     // Date-derived event phase for the field/sales slim bar (owner 2026-07-21).
     // Only "setup" | "dismantle" are honoured; anything else is ignored.
@@ -1073,8 +1084,11 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     status: c.req.query("status") || undefined,
     exclude_done: c.req.query("exclude_done") === "1",
     search: c.req.query("search"),
-    year: yearParam ? parseInt(yearParam, 10) : undefined,
-    month: monthParam ? parseInt(monthParam, 10) : undefined,
+    // Passed through as-is: may be a single value OR a comma-separated
+    // multi-select list (owner 2026-08-07). listProjects validates each entry
+    // (4-digit year / 1-12 month) and binds them individually.
+    year: yearParam || undefined,
+    month: monthParam || undefined,
     page: parseInt(c.req.query("page") || "1", 10),
     per_page: parseInt(c.req.query("per_page") || "50", 10),
     include_archived: c.req.query("include_archived") === "1",
@@ -1091,10 +1105,17 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     // events they're crewed on (FK cols or crew JSON name match).
     // Owner 2026-07-21: for helpers/storekeepers this is FORCED — they only
     // ever see their assigned events (isCrewScopedUser).
+    // The defect-review lane (Storekeeper Supervisor, owner 2026-08-07) is NOT
+    // crew-caged: skip the forced assigned-to-me filter so Shukor sees every
+    // event with a fresh defect, not only the ones he is crewed on.
     assigned_user_id:
-      isCrewScopedUser(user) || c.req.query("assigned_to_me") === "1" ? user?.id : undefined,
+      !pendingDefectReview && (isCrewScopedUser(user) || c.req.query("assigned_to_me") === "1")
+        ? user?.id
+        : undefined,
     assigned_user_name:
-      isCrewScopedUser(user) || c.req.query("assigned_to_me") === "1" ? user?.name ?? undefined : undefined,
+      !pendingDefectReview && (isCrewScopedUser(user) || c.req.query("assigned_to_me") === "1")
+        ? user?.name ?? undefined
+        : undefined,
     // Crew list cards show the caller's own due pending tasks (owner
     // 2026-07-21): drivers/helpers/storekeepers all work the DRIVER-badged
     // items, so every crew caller gets the DRIVER titles attached per row.
@@ -1103,10 +1124,15 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     // work, not the project's section. pendingLabel is only set when
     // my_pending=1; logistic pending isn't a checklist item, so it gets its
     // own derived-title flag.
-    pending_titles_label:
-      isCrewScopedUser(user) || /^(driver|helper|storekeeper)$/i.test(user?.role_name ?? "")
+    // Defect reviewer (Shukor) is crew-positioned but his chip is neither the
+    // DRIVER title nor a role_label match — it is a derived "Review Defect
+    // Items" step (pending_titles_defect_review), so suppress the DRIVER default.
+    pending_titles_label: pendingDefectReview
+      ? undefined
+      : isCrewScopedUser(user) || /^(driver|helper|storekeeper)$/i.test(user?.role_name ?? "")
         ? "DRIVER"
         : pendingLabel,
+    pending_titles_defect_review: pendingDefectReview || undefined,
     pending_titles_logistic: pendingLogistic || undefined,
   });
   // Server-side finance strip (rule 3): the list SELECTs pf.rental /
@@ -4079,11 +4105,18 @@ app.patch(
   }
 );
 
-// Per-attachment ACTION TIMELINE (owner 2026-07-29): append-only Ongoing /
-// Done entries the Purchaser (Sim) or BD stamp on defect-list uploads — each
-// click ADDS an entry with an optional remark; history is never overwritten.
-// A file whose LATEST entry is done clears from the purchaser My Pending lane
-// (listProjects PURCHASER arm). Wildcard / projects.manage admins may act too.
+// Per-attachment ACTION TIMELINE (owner 2026-07-29; two-stage 2026-08-07):
+// append-only entries stamped on each defect-list upload — each click ADDS an
+// entry with an optional remark; history is never overwritten. The flow now
+// has TWO actors and TWO statuses:
+//   - The Storekeeper Supervisor (Shukor) triages a fresh defect: 'done' means
+//     he cleaned it (resolved), 'replace' escalates it to the purchaser.
+//   - The Purchaser (Sim / Farra) or BD closes a 'replace' with 'done' once the
+//     replacement is ordered.
+// A file whose LATEST entry is 'done' is resolved and drops out of every lane;
+// 'replace' moves it from the Storekeeper-Supervisor review lane to the
+// purchaser lane (listProjects DEFECT_REVIEW / PURCHASER arms). Wildcard /
+// projects.manage admins may act as either.
 app.post(
   "/checklist/attachments/:attId/actions",
   requireAnyPermission(["projects.write", "projects.checklist.tick"]),
@@ -4093,18 +4126,31 @@ app.post(
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const role = (user?.role_name ?? "").toLowerCase();
-    const mayAct =
-      hasPermission(granted, "*") ||
-      hasPermission(granted, "projects.manage") ||
-      role.includes("purchaser") ||
-      role.includes("bd");
-    if (!mayAct) {
-      return c.json({ error: "Only the purchaser or BD can log defect actions" }, 403);
+    const position = (user?.position_name ?? "").trim().toLowerCase();
+    const isAdmin =
+      hasPermission(granted, "*") || hasPermission(granted, "projects.manage");
+    // Shukor (owner 2026-08-07) is the Storekeeper Supervisor; he triages every
+    // fresh defect. The purchaser (Sim / Farra) and BD only close escalations.
+    const isReviewer = position === "storekeeper supervisor";
+    const isPurchaser = role.includes("purchaser") || role.includes("bd");
+    if (!isAdmin && !isReviewer && !isPurchaser) {
+      return c.json(
+        { error: "Only the storekeeper supervisor, purchaser or BD can log defect actions" },
+        403
+      );
     }
     const body = await c.req.json<{ status?: string; remark?: string | null }>();
     const status = (body.status ?? "").toLowerCase();
-    if (status !== "ongoing" && status !== "done") {
-      return c.json({ error: "status must be ongoing or done" }, 400);
+    if (status !== "done" && status !== "replace") {
+      return c.json({ error: "status must be done or replace" }, 400);
+    }
+    // Escalation to Replace is the reviewer's decision (or an admin's) — the
+    // purchaser / BD close a replace with Done, they do not re-escalate.
+    if (status === "replace" && !isReviewer && !isAdmin) {
+      return c.json(
+        { error: "Only the storekeeper supervisor can mark a defect for replacement" },
+        403
+      );
     }
     const att = await c.env.DB.prepare(
       `SELECT a.id FROM project_checklist_attachments a
