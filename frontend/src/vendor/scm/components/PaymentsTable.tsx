@@ -878,11 +878,30 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      36px is the exact change that previously ballooned Collected By and punched
      a gap down the middle of the row. 880 still fits a typical ~960-1000px SCM
      detail body without a scrollbar; below it .gridScroll scrolls the block. */
+  /* Trailing actions track widens 28 -> 104px while an UNSAVED row is on screen
+     (owner 2026-08-07). 28px only ever fitted icon-only buttons, and an
+     icon-only 💾 is precisely what cost a real balance collection: the operator
+     filled the row, watched the slip uploader turn into a green tick, read that
+     as "saved", and navigated away — the payment was never written and the slip
+     was left orphaned in R2. The tick means "the FILE reached R2", which is not
+     a fact anyone outside this code cares about. So the commit affordance gets
+     a WORD, not a glyph. Widening a fixed track (rather than adding an `fr`) is
+     the change the note above permits; the 36px lesson was about flexible
+     tracks ballooning, not about track width.
+     Track sum with an unsaved row:
+       112 + 116 + 116 + 140 + 140 + 88 + 140 + 104 = 956 px.
+     Read-only (no drafts) stays exactly as it was at 880. */
+  const hasUnsavedRows = drafts.length > 0;
+  /* The tint marks a row as NOT YET a payment. That only says something in
+     SAVED mode, where it sits among real ones. On New SO / DO / SI every row is
+     unsaved and committed by the page's own Save, so tinting them all just
+     paints the table orange. Same reasoning as the Unsaved pill. */
+  const unsavedCls = isSaved ? paymentsStyles.unsavedCell : '';
   const gridStyle: CSSProperties | undefined = showSlip
     ? {
         gridTemplateColumns:
-          '112px 116px 116px 140px 140px 88px 140px 28px',
-        minWidth: 880,
+          `112px 116px 116px 140px 140px 88px 140px ${hasUnsavedRows ? '104px' : '28px'}`,
+        minWidth: hasUnsavedRows ? 956 : 880,
       }
     : undefined;
 
@@ -900,6 +919,15 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
           <div className={paymentsStyles.head}>
             <span className={paymentsStyles.headLabel}>
               {totalRowCount} transaction{totalRowCount === 1 ? '' : 's'}
+              {/* The count above cheerfully includes rows that are not payments
+                  yet, which is how an unsaved row can read as booked from the
+                  summary alone. Name them here too, so the fact survives being
+                  scrolled past the row itself. SAVED mode only — see the pill. */}
+              {isSaved && hasUnsavedRows && (
+                <span style={{ color: 'var(--c-burnt)', fontWeight: 700 }}>
+                  {' · '}{drafts.length} unsaved
+                </span>
+              )}
             </span>
             {!locked && (
               <button
@@ -1101,10 +1129,27 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
               </div>
             ))}
 
-            {/* In-flight draft rows (SAVED + DRAFT) */}
+            {/* In-flight draft rows (SAVED + DRAFT).
+
+                These are NOT payments yet. Nothing in the row used to say so:
+                it sat flush with the persisted rows above it, in the same
+                columns, and its only tell was a 14px 💾 glyph at the far right.
+                An operator filled one in, attached the slip, saw the uploader's
+                green tick and left — RM 6,400 never booked, slip orphaned in R2
+                (owner 2026-08-07, live on prod). The row now says what it is,
+                in words, in the reading position, and carries a Save button
+                with a label. */}
             {drafts.map((d) => (
               <div className={paymentsStyles.row} key={d.uid}>
-                <span className={paymentsStyles.cell} data-label="Date">
+                <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Date"
+                      style={{ flexDirection: 'column', alignItems: 'stretch', gap: 2 }}>
+                  {/* Only meaningful in SAVED mode: a DRAFT-mode caller (New SO
+                      / DO / SI) batches every row on the page's own Save, so
+                      there is no per-row commit to miss and the pill would be
+                      noise on a page where EVERY row is unsaved. */}
+                  {isSaved && (
+                    <span className={paymentsStyles.unsavedPill}>Unsaved</span>
+                  )}
                   <DateField
                     className={paymentsStyles.inlineInput}
                     value={d.paidAt ?? ''}
@@ -1112,7 +1157,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     onChange={(iso) => patchDraft(d.uid, { paidAt: iso })}
                   />
                 </span>
-                <span className={paymentsStyles.cell} data-label="Method" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+                <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Method" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
                   {/* L1 — Method (always visible) */}
                   <select
                     className={paymentsStyles.inlineSelect}
@@ -1250,7 +1295,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
 
                   {/* L2 — Cash: no extra fields */}
                 </span>
-                <span className={paymentsStyles.cellRight} data-label="Amount">
+                <span className={`${paymentsStyles.cellRight} ${unsavedCls}`} data-label="Amount">
                   <MoneyInput
                     bare allowBlank
                     valueSen={d.amountCenti === 0 ? null : d.amountCenti}
@@ -1260,7 +1305,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     onCommit={(sen) => patchDraft(d.uid, { amountCenti: sen ?? 0 })}
                   />
                 </span>
-                <span className={paymentsStyles.cell} data-label="Account Sheet">
+                <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Account Sheet">
                   <input
                     type="text"
                     className={`${paymentsStyles.inlineInput} ${paymentsStyles.placeholderHint}`}
@@ -1270,7 +1315,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     onChange={(e) => patchDraft(d.uid, { accountSheet: e.target.value })}
                   />
                 </span>
-                <span className={paymentsStyles.cell} data-label="Approval Code">
+                <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Approval Code">
                   <input
                     type="text"
                     className={paymentsStyles.inlineInput}
@@ -1280,7 +1325,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                   />
                 </span>
                 {showSlip && (
-                  <span className={paymentsStyles.cell} data-label="Slip">
+                  <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Slip">
                     {/* Edit mode — show the EXISTING attached slip (the persisted
                         row is hidden while its edit draft is open, so its Slip
                         thumbnail would otherwise disappear). Reuses the same
@@ -1313,7 +1358,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     />
                   </span>
                 )}
-                <span className={paymentsStyles.cell} data-label="Collected By">
+                <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Collected By">
                   <select
                     className={paymentsStyles.inlineInputUser}
                     value={d.collectedBy}
@@ -1337,7 +1382,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     })()}
                   </select>
                 </span>
-                <span className={paymentsStyles.cell}>
+                <span className={`${paymentsStyles.cell} ${unsavedCls}`}>
                   <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end', alignItems: 'center' }}>
                     {/* DRAFT mode slip uploader — opt-in via slipUpload prop.
                         Only the SO-route batching page (SalesOrderNew) sets
@@ -1369,19 +1414,19 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         : missing
                           ? `Pick the ${missing} for this ${d.methodLabel} payment first`
                           : d.editingPersistedId ? 'Save changes' : 'Save payment';
+                      /* A LABELLED button, not a bare glyph — see the note on
+                         the drafts block. `title` still carries the reason the
+                         button is unavailable, which a label cannot. */
                       return (
                         <button
                           type="button"
+                          className={paymentsStyles.saveBtn}
                           onClick={() => commitDraft(d)}
                           disabled={locked || addPayment.isPending || blocked}
                           title={title}
-                          style={{
-                            background: 'transparent', border: 'none', padding: 4,
-                            cursor: blocked ? 'not-allowed' : 'pointer',
-                            color: blocked ? 'var(--fg-muted)' : 'var(--c-secondary-a, #2F5D4F)',
-                          }}
                         >
-                          <Save size={14} strokeWidth={1.75} />
+                          <Save size={13} strokeWidth={1.75} />
+                          {addPayment.isPending ? 'Saving…' : 'Save'}
                         </button>
                       );
                     })()}
