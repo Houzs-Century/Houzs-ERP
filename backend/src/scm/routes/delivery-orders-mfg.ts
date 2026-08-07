@@ -39,7 +39,7 @@ export { soLineShippedSources, resolveDoSources } from '../lib/source-po-trace';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
-import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany, companyDocPrefix, companyCodeMap,
+import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany, companyDocPrefix, docPrefixForCode, companyCodeMap,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import type { getSupabaseService } from '../../db/supabase';
@@ -3762,12 +3762,17 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
   const emPhoneRaw = head.emergency_contact_phone as string | null;
   const today = todayMyt();
 
-  // Mint the DO number under the SOURCE SO's company prefix (2990 SO → "2990-DO-…"),
-  // matching the company_id stamp below, so a 2990 DO converted while browsing as
-  // Houzs isn't a company-2 row with a Houzs-style bare number. undefined → nextNum
-  // falls back to the active company's prefix (pre-migration SOs without company_id).
+  // Mint the DO number under the SOURCE SO's company prefix (2990 SO → "2990-DO-…",
+  // Houzs SO → "HC-DO-…"), matching the company_id stamp below, so a 2990 DO
+  // converted while browsing as Houzs isn't a company-2 row carrying Houzs's
+  // numbering. undefined → nextNum falls back to the active company's prefix
+  // (pre-migration SOs without company_id).
+  //
+  // docPrefixForCode, NOT a local copy of the rule: this line used to inline
+  // `code !== 'HOUZS' ? code + '-' : ''`, and a second copy of a numbering rule
+  // is a numbering rule that will disagree with itself the first time it moves.
   const srcCode = head.company_id != null ? companyCodeMap(c).get(Number(head.company_id)) : undefined;
-  const srcPrefix = srcCode != null ? (srcCode !== 'HOUZS' ? `${srcCode}-` : '') : undefined;
+  const srcPrefix = srcCode != null ? docPrefixForCode(srcCode) : undefined;
 
   const { data: doHeader, error: hErr } = await insertWithDocNoRetry<{ id: string; do_number: string }>(
     () => nextNum(sb, c, srcPrefix),
