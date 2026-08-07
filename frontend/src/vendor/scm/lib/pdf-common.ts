@@ -534,9 +534,37 @@ export function drawSignatureBoxes(
   return ty + 28;
 }
 
-// Safe filename: keep alphanum + - and _
-export const safeName = (s: string, maxLen = 32): string =>
-  (s || 'doc').replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, maxLen);
+/* Safe filename fragment.
+   This used to keep ONLY `[A-Za-z0-9_-]`, which is fine for a Latin customer and
+   destroys everything else: a Chinese debtor name came out as
+   `2990-DO-2608-006-______.pdf` — the customer's name replaced by a row of
+   underscores, on the file you send that customer (Nico, 2026-08-07).
+
+   Every target that matters handles Unicode filenames: `doc.save()` goes through
+   an <a download> (UTF-8 by definition), Windows/macOS/Linux all accept CJK, and
+   so does every mail client. What is genuinely illegal is a much smaller set —
+   the Windows reserved punctuation, path separators, and control characters — so
+   strip THAT and keep the name.
+
+   Also guarded: a trailing dot or space (Windows silently drops them, turning
+   "Foo ." into a name that round-trips wrong) and an all-punctuation input
+   collapsing to an empty string. */
+// Control characters plus the Windows reserved set. Nothing else is removed.
+// eslint-disable-next-line no-control-regex
+const ILLEGAL_IN_FILENAME = /[\x00-\x1f\x7f<>:"/\\|?*]+/g;
+export const safeName = (s: string, maxLen = 32): string => {
+  const cleaned = (s || '')
+    .replace(ILLEGAL_IN_FILENAME, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen)
+    /* Truncation can leave a dangling separator, and Windows silently drops a
+       trailing space. A trailing DOT is deliberately kept — every caller
+       appends ".pdf", so it never ends the real filename, and stripping it
+       would eat the dot in "Sdn. Bhd.", which is most of our supplier list. */
+    .replace(/[\s-]+$/, '');
+  return cleaned || 'doc';
+};
 
 // ── How a finished PDF reaches the operator ───────────────────────────────────
 //
@@ -599,11 +627,49 @@ export function deliverPdf(
   }
   const blobUrl = URL.createObjectURL(doc.output('blob'));
   if (action === 'preview') {
-    /* The blob URL must outlive this call — the new tab reads it lazily. 60 s
-       is long enough for the tab to load and short enough not to leak. */
-    window.open(blobUrl, '_blank');
-    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    openNamedPdfTab(blobUrl, filename);
     return;
   }
   renderViaIframe(blobUrl, true);
+}
+
+/* "View full PDF" used to be a bare `window.open(blobUrl)`, which lands the
+   operator on a tab named `8a7f3c2e-1b4d-…` — the browser has nothing else to
+   call it, because a blob URL carries no name. Two documents open side by side
+   were indistinguishable, and Save from the PDF viewer suggested the GUID as the
+   filename (Nico, 2026-08-07: "网址不要乱码").
+
+   A blob's address bar cannot be renamed from script — there is no same-origin
+   path to serve it under without a route or a service worker. What CAN carry the
+   document's name is the tab: a tiny wrapper page whose <title> is the document,
+   with the PDF in a full-bleed iframe and an <a download> that hands the browser
+   the real filename. So the tab strip, the window title and Save all say
+   `2990-DO-2608-006-家具世界`, and only the address bar stays a blob. */
+function openNamedPdfTab(blobUrl: string, filename: string): void {
+  const tab = window.open('', '_blank');
+  if (!tab) {
+    // Popup blocked — the raw blob is still better than nothing.
+    window.open(blobUrl, '_blank');
+    return;
+  }
+  const title = filename.replace(/\.pdf$/i, '');
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  tab.document.write(
+    `<!doctype html><html><head><meta charset="utf-8">` +
+      `<title>${esc(title)}</title>` +
+      `<style>html,body{margin:0;height:100%;background:#3a3a3a}` +
+      `iframe{border:0;width:100%;height:100%;display:block}` +
+      `a.dl{position:fixed;right:14px;top:10px;z-index:2;font:600 12px/1 system-ui,sans-serif;` +
+      `background:#0f766e;color:#fff;padding:8px 12px;border-radius:6px;text-decoration:none}</style>` +
+      `</head><body>` +
+      `<a class="dl" href="${esc(blobUrl)}" download="${esc(filename)}">Download PDF</a>` +
+      `<iframe src="${esc(blobUrl)}" title="${esc(title)}"></iframe>` +
+      `</body></html>`,
+  );
+  tab.document.close();
+  /* No revoke timer. The old code revoked after 60 s, which was safe when the
+     tab was the blob itself (already loaded) but would quietly break this page's
+     Download link the moment the operator took longer than a minute to decide.
+     The blob dies with the opener page instead. */
 }

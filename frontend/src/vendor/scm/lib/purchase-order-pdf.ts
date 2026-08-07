@@ -43,7 +43,7 @@ import {
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { drawSofaLayout } from './sofa-layout-pdf';
-import { COMPANY, amountInWordsMyr, deliverPdf, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, type PdfAction } from './pdf-common';
+import { COMPANY, amountInWordsMyr, deliverPdf, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, safeName, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { poDisplayNumber } from './po-status';
 import {
@@ -687,8 +687,13 @@ export async function generatePurchaseOrderPdf(
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const { supplierName } = await renderPurchaseOrderInto(doc, autoTable, header, items, opts);
   finalizePoPdf(doc);
-  const safeName = supplierName.replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 32);
-  deliverPdf(doc, `${poDisplayNumber(header.po_number, header.revision)}-${safeName}.pdf`, opts?.action);
+  // Was a private copy of the old ASCII-only scrub — a China supplier's name is
+  // exactly the case it destroyed, and the PO is the document that goes to them.
+  deliverPdf(
+    doc,
+    `${poDisplayNumber(header.po_number, header.revision)}-${safeName(supplierName)}.pdf`,
+    opts?.action,
+  );
 }
 
 /* The SAME PO PDF, returned as raw base64 instead of downloaded — for emailing it
