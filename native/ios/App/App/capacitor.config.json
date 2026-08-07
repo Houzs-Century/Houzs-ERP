@@ -1,0 +1,18 @@
+{
+	"appId": "com.houzscentury.erp",
+	"appName": "Houzs ERP",
+	"webDir": "../frontend/dist",
+	"ios": {
+		"contentInset": "always"
+	},
+	"server": {
+		"allowNavigation": [
+			"erp.houzscentury.com"
+		]
+	},
+	"packageClassList": [
+		"BackgroundGeolocation",
+		"PushNotificationsPlugin",
+		"NativeBiometric"
+	]
+}

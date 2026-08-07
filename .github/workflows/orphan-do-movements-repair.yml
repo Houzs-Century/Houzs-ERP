@@ -1,0 +1,67 @@
+name: Orphan DO movements repair (DRY-RUN gated)
+
+# Reverses the OUT that its own document disowns: an OUT movement on a shipped,
+# non-cancelled DO that carries NO line for the item. Proven shape (2026-08-05):
+# lines were moved between shipped DOs and the source DO's OUT was never
+# reversed — the goods shipped once, the ledger says twice, COGS double-booked.
+#
+# !! WRITES to the money-critical FIFO ledger when applied. !!
+#   * DEFAULT is DRY-RUN: each repair runs in a transaction, is verified
+#     (lot conservation + both ledgers agree) and ROLLED BACK.
+#   * To write, set apply = "APPLY" AND confirm = "I HAVE REVIEWED THE DRY-RUN".
+#   * After an APPLY: dispatch "Restamp DO actual cost", then re-run
+#     "Inventory integrity check".
+#
+# Manual trigger only, own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Type APPLY to commit. Anything else = DRY-RUN.'
+        required: false
+        default: ''
+        type: string
+      confirm:
+        description: 'Type exactly: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: orphan-do-movements-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - id: mode
+        working-directory: .
+        run: |
+          if [ "${{ github.event.inputs.apply }}" = "APPLY" ] && [ "${{ github.event.inputs.confirm }}" = "I HAVE REVIEWED THE DRY-RUN" ]; then
+            echo "apply=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::APPLY confirmed — writes will be COMMITTED."
+          else
+            echo "apply=false" >> "$GITHUB_OUTPUT"
+            if [ "${{ github.event.inputs.apply }}" = "APPLY" ]; then
+              echo "::warning::APPLY requested but the confirmation phrase is missing or wrong — running DRY-RUN."
+            fi
+          fi
+      - run: node scripts/repair-orphan-do-movements.mjs
+        env:
+          APPLY: ${{ steps.mode.outputs.apply }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

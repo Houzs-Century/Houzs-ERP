@@ -68,6 +68,19 @@ reject   : REQUESTED -> REJECTED
 withdraw : REQUESTED -> REJECTED   (resolution = 'WITHDRAWN' distinguishes it)
 ```
 
+**Rejecting a FOLLOW-UP auto-releases the PO to STOCK (2026-08-06).** A
+follow-up (`source_so_amendment_id` set) exists because the SO was revised;
+rejecting it means the supplier will NOT follow the revision, so the goods will
+arrive as originally ordered — no longer the revised SO line's goods. The reject
+handler therefore inserts a STOCK allocation slice for each affected line's
+un-allocated remainder (`planStockRelease`, `lib/po-allocations.ts` — existing
+slices are never touched), audits it, and returns `releasedToStock` on the
+response; both UIs surface it in the success toast. MRP then re-shows the
+corrected spec as a shortage. Owner's rule: the spec mismatch is a fact, not a
+decision ("SO amendment 了之后,我那张 PO 就直接废了…他就变了"). A release
+failure never un-rejects the amendment — it lands in `releaseWarnings` and is
+retryable via the allocation editor.
+
 `poReceivedFloorViolation(line, po)` — a revised qty may never drop below what has
 already been received. Tests: `shared/po-amendment.test.ts`.
 

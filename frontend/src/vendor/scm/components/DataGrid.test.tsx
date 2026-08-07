@@ -2,6 +2,9 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DataGrid, type DataGridColumn } from "./DataGrid";
 
+const rowTexts = (container: HTMLElement): string[] =>
+  [...container.querySelectorAll("tr[data-vrow]")].map((tr) => tr.textContent ?? "");
+
 type Row = { id: string; name: string };
 const rows: Row[] = [
   { id: "1", name: "Alpha" },
@@ -82,5 +85,120 @@ describe("DataGrid structural performance", () => {
     expect(mountedRows()).toBeGreaterThan(0);
     expect(mountedRows()).toBeLessThanOrEqual(60);
     expect(virtualContentHeight()).toBe(largeRows.length * rowHeight);
+  });
+});
+
+describe("DataGrid defaultSort (arrangement queues 2026-08-07)", () => {
+  type QRow = { id: string; name: string; rank: number };
+  const qRows: QRow[] = [
+    { id: "1", name: "Alpha", rank: 3 },
+    { id: "2", name: "Bravo", rank: 1 },
+    { id: "3", name: "Charlie", rank: 2 },
+  ];
+  const qColumns: DataGridColumn<QRow>[] = [
+    { key: "name", label: "Name", accessor: (r) => r.name, searchValue: (r) => r.name },
+  ];
+  const byRank = (a: QRow, b: QRow) => a.rank - b.rank;
+
+  test("without defaultSort the rows render exactly as passed (existing contract)", () => {
+    const { container } = render(
+      <DataGrid rows={qRows} columns={qColumns} storageKey="ds-none" rowKey={(r) => r.id} />,
+    );
+    expect(rowTexts(container)).toEqual(["Alpha", "Bravo", "Charlie"]);
+  });
+
+  test("defaultSort orders the rows while no column sort is active", () => {
+    const { container } = render(
+      <DataGrid
+        rows={qRows}
+        columns={qColumns}
+        storageKey="ds-applied"
+        rowKey={(r) => r.id}
+        defaultSort={byRank}
+      />,
+    );
+    expect(rowTexts(container)).toEqual(["Bravo", "Charlie", "Alpha"]);
+  });
+
+  test("a clicked header overrides the default, and cycling it off returns to the default", () => {
+    const { container } = render(
+      <DataGrid
+        rows={qRows}
+        columns={qColumns}
+        storageKey="ds-override"
+        rowKey={(r) => r.id}
+        defaultSort={byRank}
+      />,
+    );
+    const header = screen.getByRole("button", { name: "Name" });
+    fireEvent.click(header); // asc
+    expect(rowTexts(container)).toEqual(["Alpha", "Bravo", "Charlie"]);
+    fireEvent.click(header); // desc
+    expect(rowTexts(container)).toEqual(["Charlie", "Bravo", "Alpha"]);
+    fireEvent.click(header); // off -> back to the default, not to fetch order
+    expect(rowTexts(container)).toEqual(["Bravo", "Charlie", "Alpha"]);
+  });
+});
+
+describe("DataGrid active-filter chips (stacked filters visible, 2026-08-07)", () => {
+  type FRow = { id: string; name: string; state: string; post: string };
+  const fRows: FRow[] = [
+    { id: "1", name: "R1", state: "Johor", post: "80000" },
+    { id: "2", name: "R2", state: "Johor", post: "81000" },
+    { id: "3", name: "R3", state: "Selangor", post: "80000" },
+  ];
+  const fColumns: DataGridColumn<FRow>[] = [
+    { key: "name", label: "Name", accessor: (r) => r.name, searchValue: (r) => r.name },
+    { key: "state", label: "State", accessor: (r) => r.state, searchValue: (r) => r.state },
+    { key: "post", label: "Postcode", accessor: (r) => r.post, searchValue: (r) => r.post },
+  ];
+
+  test("filters AND across columns; each active filter shows a chip with its own clear, plus Clear all", () => {
+    const { container } = render(
+      <DataGrid rows={fRows} columns={fColumns} storageKey="chips-and" rowKey={(r) => r.id} />,
+    );
+    // No filters -> no chip row, rows untouched.
+    expect(container.querySelector("[data-filter-bar]")).toBeNull();
+    expect(rowTexts(container)).toHaveLength(3);
+
+    // Filter 1: State = Johor -> R1 + R2 stay, R3 (Selangor) drops.
+    fireEvent.click(screen.getByRole("button", { name: "Filter State" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Johor" }));
+    expect(rowTexts(container)).toHaveLength(2);
+    expect(rowTexts(container).join("|")).not.toContain("R3");
+    expect(container.querySelector("[data-filter-bar]")).not.toBeNull();
+
+    // Filter 2 STACKS on top: Postcode = 80000 -> Johor AND 80000 -> R1 only.
+    fireEvent.click(screen.getByRole("button", { name: "Filter Postcode" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "80000" }));
+    expect(rowTexts(container)).toHaveLength(1);
+    expect(rowTexts(container)[0]).toContain("R1");
+
+    // Two chips, one per column filter.
+    const bar = container.querySelector("[data-filter-bar]") as HTMLElement;
+    expect(bar.textContent).toContain("State");
+    expect(bar.textContent).toContain("Postcode");
+
+    // Per-chip clear: dropping State keeps only the Postcode filter -> R1 + R3.
+    fireEvent.click(screen.getByRole("button", { name: "Clear the State filter" }));
+    expect(rowTexts(container)).toHaveLength(2);
+    expect(rowTexts(container).join("|")).toContain("R3");
+
+    // Clear all: every row returns and the chip row disappears.
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(rowTexts(container)).toHaveLength(3);
+    expect(container.querySelector("[data-filter-bar]")).toBeNull();
+  });
+
+  test("multi-select within one column ORs its values while columns still AND", () => {
+    const { container } = render(
+      <DataGrid rows={fRows} columns={fColumns} storageKey="chips-or" rowKey={(r) => r.id} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Filter State" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Johor" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Selangor" }));
+    expect(rowTexts(container)).toHaveLength(3); // Johor OR Selangor
+    const bar = container.querySelector("[data-filter-bar]") as HTMLElement;
+    expect(bar.textContent).toContain("2 values");
   });
 });

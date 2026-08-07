@@ -269,9 +269,31 @@ export function PoLineAllocationsModal({
               );
             })}
             {allocations.length === 0 && (
-              <div className="rounded-md border border-dashed border-border px-3 py-3 text-[12px] text-ink-muted">
-                No allocations yet — this line still reads as one piece (its single Source SO link,
-                if any, stays in effect until a first slice is added).
+              <div className="rounded-md border border-dashed border-border px-3 py-3 text-[12px]">
+                {/* Show the EFFECTIVE assignment, not an empty state — the coarse
+                    Source-SO link governs the whole line until a slice overrides
+                    it, and "no allocations" beside a visible Assigned SO read as a
+                    contradiction (owner, 2026-08-06). */}
+                <div className="flex items-center gap-2">
+                  {/* Same dress as the list column's implicit chip (one answer,
+                      two surfaces): a stored Source-SO link is PROVENANCE —
+                      muted solid; only the no-link STOCK case is dashed. */}
+                  <span
+                    className={
+                      line?.so_doc_no
+                        ? 'rounded border border-border-subtle bg-surface-dim px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-ink-secondary'
+                        : 'rounded border border-dashed border-border px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-ink-secondary'
+                    }
+                  >
+                    {line?.so_doc_no ?? 'STOCK'}
+                  </span>
+                  <span className="text-ink-muted">
+                    whole line (qty {line?.qty ?? 0}) — {line?.so_doc_no
+                      ? 'bought for it via the Source SO link (procurement provenance, not the live assignment)'
+                      : 'for stock, no Source SO link'}.
+                    Adding a first slice overrides this.
+                  </span>
+                </div>
               </div>
             )}
           </div>

@@ -73,7 +73,7 @@ lorry routes.
 |---|---|---|
 | `GET /dashboard` | `fleet.read` | All lorries + current compliance per type (vault-latest, else flat column) + derived status + KPI ribbon (incl. real this-month repair spend + costliest vehicle from service records). |
 | `GET /vehicles/:id` | `fleet.read` | One lorry + full vault history per type + maintenance windows + latest service record. |
-| `GET /reminders` | `fleet.read` | Fleet-wide actionable expiries, most urgent first (the seam a future notification job calls). |
+| `GET /reminders` | `fleet.read` | Fleet-wide actionable expiries, most urgent first. The computation is the exported `computeFleetReminders()` in the same file — the route AND the daily iOS push job (`services/pushFleetReminders.ts`, 08:00 MYT cron) both call it. Change the rules in one place. |
 | `POST /vehicles/:id/compliance` | `fleet.write` | **Append** a compliance document (renewal) + sync the flat column. |
 
 The write surface is deliberately small: creating/editing a lorry stays in the
@@ -120,10 +120,13 @@ breakdown cases) are not supplied yet (§6).
 - `scm.lorry_breakdown_cases` (CRITICAL, non-resolved) → `BREAKDOWN` + downtime.
 - Preventive-maintenance plans (Phase 2) → `SERVICE_DUE`; mileage trip-capture GPS
   cross-check is Phase 4.
-- **Notifications**: `GET /reminders` is the computation a future scheduled job
-  rides onto the app's existing announcement/notification mechanism; a critical
-  breakdown ALSO posts a private announcement to the reporter's reporting line
-  (`postPersonalNotice`, `source='fleet_breakdown'`). No new push channel.
+- **Notifications**: `computeFleetReminders()` (the `GET /reminders`
+  computation) now HAS its scheduled consumer — the daily iOS push summary
+  (`services/pushFleetReminders.ts`: one APNs alert per registered
+  `push_devices` row whose user holds `fleet.read`, 08:00 MYT, dark until the
+  `APNS_*` secrets exist). A critical breakdown ALSO posts a private
+  announcement to the reporter's reporting line (`postPersonalNotice`,
+  `source='fleet_breakdown'`).
 
 ## 7. Frontend (`frontend/src/pages/FleetHealth.tsx`, `/fleet-health`)
 

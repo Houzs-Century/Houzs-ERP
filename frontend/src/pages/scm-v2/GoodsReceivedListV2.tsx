@@ -24,6 +24,8 @@ import {
   Send,
   ArrowRightLeft,
 } from "lucide-react";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -35,7 +37,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
-import { usePoSoCoverage, originsByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
+import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -76,6 +78,9 @@ type GrnRow = {
       parent PO's coverage, resolved server-side for the whole page. */
   assigned_sos?: OriginAssignment[];
   assigned_so_linked?: boolean;
+  /** PR-3 (2026-08-07) — the parallel stored-origin "bought for" SO(s),
+      rendered muted beside the precedence chips. Optional: older backend. */
+  assigned_so_provenance?: OriginAssignment[];
   /** "Delivered" column (owner 2026-07-31) — the DO(s) that shipped the parent
       PO's goods + qty per DO. EVERY DO renders; empty when nothing shipped. */
   delivered_dos?: Array<{ doNo: string; qty: number }>;
@@ -441,6 +446,8 @@ function GrnLinesExpansion({ id }: { id: string }) {
   const detailQ = useGrnDetail(id);
   const covQ = usePoSoCoverage("grn", id);
   const byCode = originsByCode(covQ.data);
+  // PR-3: the parallel stored-origin "bought for" slot, per SKU.
+  const provByCode = provenanceByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
   const deliveredMap = deliveredByCode(covQ.data);
   const items =
@@ -457,6 +464,7 @@ function GrnLinesExpansion({ id }: { id: string }) {
       amountCenti: l.line_total_centi ?? 0,
       assignedSos: byCode.get(code) ?? [],
       sourceLinked: linkedSkus.has(code),
+      provenance: provByCode.get(code) ?? [],
       deliveredDos: deliveredMap.get(code) ?? [],
     };
   });
@@ -626,7 +634,7 @@ export function GoodsReceivedListV2() {
 
   // Batch "Print all" — one ticked GRN downloads straight; several prompt
   // combined-vs-separate, then render into one merged file or one per GRN.
-  const printSelectedGrns = async () => {
+  const deliverSelectedGrns = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
     if (chosen.length === 0) return;
@@ -637,11 +645,14 @@ export function GoodsReceivedListV2() {
       if (chosen.length === 1) {
         setPrintingDocs(true);
         const b = await fetchGrnBundle(chosen[0]!);
-        await generateGrnPdf(b.header as never, b.items as never);
+        await generateGrnPdf(b.header as never, b.items as never, { action });
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      /* View / Print always render ONE document — a preview or a print run
+         is about the stack, not N separate files. Only the download exit
+         still asks combined-vs-separate. */
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} goods-received notes`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -655,10 +666,11 @@ export function GoodsReceivedListV2() {
       if (how === "one") {
         await generateCombinedGrnPdf(bundles as never, {
           fileName: `goods-received-${new Date().toISOString().slice(0, 10)}.pdf`,
+          action,
         });
       } else {
         for (const b of bundles)
-          await generateGrnPdf(b.header as never, b.items as never);
+          await generateGrnPdf(b.header as never, b.items as never, { action });
       }
       clearSelection();
     } catch (e) {
@@ -671,6 +683,7 @@ export function GoodsReceivedListV2() {
       setPrintingDocs(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedGrns);
 
   const doPost = (r: GrnRow) => {
     if (window.confirm(`Post GRN ${r.grn_number}? Inventory will be received into the warehouse.`)) {
@@ -733,6 +746,7 @@ export function GoodsReceivedListV2() {
         <AssignedSoCell
           assignments={r.assigned_sos}
           sourceLinked={r.assigned_so_linked}
+          provenance={r.assigned_so_provenance}
           onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
           emptyMeans="stock"
         />
@@ -904,10 +918,17 @@ export function GoodsReceivedListV2() {
                     variant="primary"
                     icon={<Printer size={14} />}
                     disabled={printingDocs}
-                    onClick={() => void printSelectedGrns()}
+                    onClick={batchPrint.openPreview}
                   >
                     {printingDocs ? "Printing…" : `Print all (${selectedIds.size})`}
                   </Button>
+                  <PrintPreviewBatchModal
+                    open={batchPrint.open}
+                    onClose={batchPrint.close}
+                    docTitle="Goods Received Notes"
+                    docNos={rows.filter((r) => selectedIds.has(r.id)).map((r) => r.grn_number)}
+                    {...batchPrint.handlers}
+                  />
                   <Button variant="ghost" disabled={printingDocs} onClick={clearSelection}>
                     Clear
                   </Button>

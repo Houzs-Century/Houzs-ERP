@@ -2600,6 +2600,17 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
   // own, so it carries strictly more information than one it already produces
   // correctly — it must never be displaced by an as-is sample that is merely
   // newer.
+  //
+  // STATUS RANKS, IT DOES NOT FILTER (2026-08-05). This pool used to be gated on
+  // `status IN (CONFIRMED, ACCEPTED)`. `so_scan_samples.status` is free text with
+  // NO check constraint, so any row whose status is missing, legacy or merely
+  // spelled differently was silently deleted from the model's memory — with
+  // nothing anywhere to say so. Production had exactly that: 2 rows carrying a
+  // real `corrected` payload and 0 rows at CONFIRMED, so the only two examples in
+  // the system taught nothing. The pool's actual requirement is a corrected
+  // payload to SHOW the model; that is what is filtered on now, and status is
+  // used only to rank CONFIRMED ahead of the rest. A free-text column must never
+  // be the thing that decides whether the scanner can learn.
   let fewShotText = '';
   try {
     type FewShotRow = { id: string; corrected: unknown; status: string | null };
@@ -2619,7 +2630,6 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
         .from('so_scan_samples')
         .select('id, corrected, status')
         .not('corrected', 'is', null)
-        .in('status', [SAMPLE_CORRECTED, SAMPLE_ACCEPTED])
         .ilike('salesperson', ilikeExact(repGiven))
         .order('created_at', { ascending: false })
         .limit(15);
@@ -2634,7 +2644,6 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
         .from('so_scan_samples')
         .select('id, corrected, status')
         .not('corrected', 'is', null)
-        .in('status', [SAMPLE_CORRECTED, SAMPLE_ACCEPTED])
         .order('created_at', { ascending: false })
         .limit(15);
       for (const r of goldFirst((rows as FewShotRow[] | null) ?? [])) {

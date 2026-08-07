@@ -43,6 +43,20 @@ npm --prefix native run sync         # copies it into the iOS project
 28 MB copy of the frontend, and a second stale copy of the SPA in the repo is
 worth nothing.
 
+## Push notifications
+
+`@capacitor/push-notifications` is wired end to end:
+
+- `AppDelegate.swift` forwards the APNs token/failure into Capacitor's
+  notification names — without that forwarding, `register()` succeeds but the
+  JS `registration` event never fires.
+- `App/App.entitlements` carries `aps-environment` (Xcode rewrites it to
+  `production` when archiving for the store; the unsigned CI build ignores it).
+- The web side (`frontend/src/lib/nativePush.ts`) registers after login and on
+  authed boot, and posts the token to `POST /api/push/devices`. The sender is
+  the backend's daily fleet-reminder job (`services/pushFleetReminders.ts`),
+  dark until the `APNS_*` Worker secrets exist.
+
 ## What CI does, and why it can do it with no Apple account
 
 `.github/workflows/ios-build.yml` builds the app **unsigned**
@@ -51,6 +65,10 @@ source file and every plugin without needing a Developer account, a certificate
 or a provisioning profile — so the shell is verified to build from the day it
 lands, months before it can be signed.
 
-Signing and upload come later, when the Apple Developer enrolment completes
-(see `docs/ios-app-store.md`). Those steps need an App Store Connect API key held
-as a GitHub secret; nothing in this repo ever contains it.
+Signing and upload live in `.github/workflows/ios-release.yml` (manual
+trigger). It stays unrunnable until the Apple Developer enrolment completes and
+the owner adds four GitHub secrets — `APPLE_TEAM_ID`,
+`APP_STORE_CONNECT_API_KEY_ID`, `APP_STORE_CONNECT_API_ISSUER_ID`,
+`APP_STORE_CONNECT_API_KEY` — after which it archives with Xcode cloud-managed
+signing (no certificates repo) and uploads to TestFlight. Nothing in this repo
+ever contains a key.

@@ -393,6 +393,29 @@ Two things happen here that are easy to miss:
    newest-first dashboard default — it is a work queue. A completed,
    N/A'd, or submitted-for-review task drops its row server-side the
    moment it changes state; nothing "done" ever lingers in My Pending.
+6. **Defect items are a TWO-STAGE workflow** (owner 2026-08-07). Each defect
+   photo on a "Defect Item Setup/Dismantle" task carries the append-only
+   `project_checklist_attachment_actions` timeline, whose statuses are now
+   **`done` | `replace`** (the old `ongoing` is retired; legacy rows read as
+   "fresh"). Two actors, two lanes:
+   - **Stage 1 — the Storekeeper Supervisor (Shukor)** is the reviewer. His
+     lane is `pending_defect_review` (`routes/projects.ts` lane switch keys on
+     **`position_name === "Storekeeper Supervisor"`**, NOT role_name — his role
+     is the shared "Storekeeper", which would otherwise cage him into the DRIVER
+     lane). The lane is deliberately **not** crew-scoped: `assigned_user_id` is
+     suppressed for it, so he reviews defects on EVERY event, not just his
+     crewed ones. Its predicate (`services/projects.ts`, `pendingOr`) is a live
+     defect attachment whose LATEST action is `NOT IN ('done','replace')` — a
+     fresh upload. Chip: a constant `Review Defect Items`.
+   - **Stage 2 — the Purchaser (Sim / Farra, role `Purchaser`)** only sees a
+     defect once Shukor ESCALATES it: the PURCHASER defect arm now matches
+     LATEST action `= 'replace'` (was `<> 'done'`). They close it with `done`.
+     Both purchasers share the lane (role-keyed), either can clear it.
+   - **Endpoint gate** (`POST /checklist/attachments/:attId/actions`): reviewer
+     (Storekeeper Supervisor) OR purchaser/BD OR `*`/`projects.manage`; `replace`
+     is reviewer/admin-only (a purchaser cannot re-escalate). Both stages, both
+     surfaces (`Projects.tsx` `TaskAttachmentRow` + `mobile/MobilePMS.tsx`
+     `DefectFileActions`), gate the buttons on the attachment's latest status.
 
 ### Setup & Dismantle crew editor — outsourced providers
 

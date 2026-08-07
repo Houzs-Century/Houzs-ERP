@@ -67,7 +67,20 @@ export function isEntityType(v: unknown): v is EntityType {
    By the time an operator noticed (2026-07-31, by opening one order), the only
    surviving evidence was the drift itself. A row here means the next occurrence
    names its own GRN, in the trail an investigator already opens. */
-export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED', 'RECOUNT_FAILED'] as const;
+/* BIND_SHADOW records an OBSERVATION, not a change: the DO-time live allocator
+   (soft-until-DO stage 2, Decision 2026-08-06 — docs/modules/purchase-order.md
+   §Decision) runs in SHADOW beside the stored-link resolution in
+   resolveShipCommitments (delivery-orders-mfg.ts), and its divergences used to
+   go only to the Worker console — wrangler tail, ephemeral, gone when the
+   stream closes. The flip (PR-4) is gated on REVIEWED shadow evidence, and
+   evidence that evaporates with a log stream is not evidence — the same
+   lesson RECOUNT_FAILED encodes one comment up. One row per divergence
+   (status_snapshot 'DIVERGENCE') plus one per resolution (status_snapshot
+   'SUMMARY' — the denominator a soak verdict needs). Written best-effort from
+   the shadow's own try/catch, so persistence can never touch shipping; read
+   back by scripts/check-bind-shadow.mjs, never by the History drawer (the
+   frontend's AuditEntityType union does not include DELIVERY_ORDER). */
+export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED', 'RECOUNT_FAILED', 'BIND_SHADOW'] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /* The Houzs caller, as middleware/auth.ts stashes it. Deliberately structural:

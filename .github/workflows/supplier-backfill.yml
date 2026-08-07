@@ -1,0 +1,51 @@
+name: Supplier backfill from AutoCount (DRY-RUN gated)
+
+# Fills empty master-record fields on HOUZS suppliers from the AutoCount
+# creditor export embedded in scripts/backfill-suppliers-from-autocount.mjs.
+# See that file's header for the exact approved rules (fill-empty-only, the
+# two +86 phone fixes, one insert, the Nantong skip list).
+#
+# Same shape as the other backfill workflows: manual trigger only, dry-run by
+# default, and the write only happens when the operator explicitly selects
+# APPLY. The dry-run output IS the review artifact — run it, read the plan,
+# then re-run with APPLY.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run shows the plan; APPLY writes it"
+        required: true
+        type: choice
+        default: dry-run
+        options:
+          - dry-run
+          - APPLY
+
+# Own concurrency group: a data backfill must never queue behind (or
+# displace) a release, and two concurrent APPLY runs must never interleave.
+concurrency:
+  group: supplier-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-suppliers-from-autocount.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.mode == 'APPLY' && '1' || '' }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

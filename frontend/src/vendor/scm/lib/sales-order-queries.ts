@@ -561,6 +561,29 @@ export const useEditSalesOrderPayment = () => {
   });
 };
 
+/* Owner 2026-08-07 — attach the proof to an ALREADY-RECORDED payment. Kept
+   separate from useEditSalesOrderPayment because the backend keeps them
+   separate: PATCH is same-day-gated (it moves money), this route is not (it
+   moves none). That distinction is the whole point — a balance collected
+   yesterday can still get its slip today. */
+export const useAttachSalesOrderPaymentSlip = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ docNo, id, uploadSessionId }: { docNo: string; id: string; uploadSessionId: string }) =>
+      authedFetch<{ payment: SoPayment }>(`/mfg-sales-orders/${docNo}/payments/${id}/slip`, {
+        method: 'POST', body: JSON.stringify({ uploadSessionId }),
+      }),
+    onSuccess: (_data, vars) => {
+      /* The per-row slip image is cached under its OWN key by the thumbnail
+         query, which the ['mfg-sales-orders'] prefix does not cover — without
+         this the ledger refetches but the cell keeps showing the old (or no)
+         image until that key's staleTime elapses. */
+      qc.invalidateQueries({ queryKey: ['payment-slip', vars.id] });
+      invalidateSoLists(qc);
+    },
+  });
+};
+
 export const useDeleteSalesOrderPayment = () => {
   const qc = useQueryClient();
   return useMutation({

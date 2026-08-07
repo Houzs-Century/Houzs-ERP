@@ -21,9 +21,16 @@ on:
 
 # Deliberately NOT the deploy's group: this touches nothing and must never queue
 # behind — or displace — a release.
+#
+# cancel-in-progress is FALSE, unlike a deploy's. A deploy supersedes the run
+# before it, so cancelling is right there. This is a QUESTION, and asking a
+# second one must not throw away the first one's answer — which is exactly what
+# happened the first time it was used: a check on an SO was cancelled mid-run by
+# a check on a PO, and the SO question went unanswered with no error to show for
+# it. Two people asking about two documents is normal use, not a conflict.
 concurrency:
-  group: doc-splits-check
-  cancel-in-progress: true
+  group: doc-splits-check-${{ github.event.inputs.doc }}
+  cancel-in-progress: false
 
 jobs:
   check:

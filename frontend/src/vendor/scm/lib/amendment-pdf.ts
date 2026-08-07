@@ -22,7 +22,7 @@
 // NO EMOJI anywhere (owner rule, extends to all product copy).
 // ----------------------------------------------------------------------------
 
-import { COMPANY, drawHeader, ensurePdfCjkFont, fmtDocDate, fmtDocStamp } from './pdf-common';
+import { COMPANY, deliverPdf, drawHeader, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, safeName, type PdfAction } from './pdf-common';
 
 /* One changed line on the amendment. `kind` drives the tint semantics: a CHANGE
    shows before (red) -> after (green); an ADD has no before; a REMOVE has no
@@ -83,7 +83,10 @@ const MUTED_INK: [number, number, number] = [120, 120, 120];
 const titleFor = (kind: 'SO' | 'PO'): string =>
   kind === 'SO' ? 'Sales order amendment' : 'Purchase order amendment';
 
-export async function generateAmendmentPdf(input: AmendmentPdfInput): Promise<void> {
+export async function generateAmendmentPdf(
+  input: AmendmentPdfInput,
+  opts?: { action?: PdfAction },
+): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
@@ -169,7 +172,11 @@ export async function generateAmendmentPdf(input: AmendmentPdfInput): Promise<vo
     theme: 'grid',
     margin: { left: margin, right: margin },
     styles: { font: 'helvetica', fontSize: 9, cellPadding: 2, overflow: 'linebreak', valign: 'middle' },
-    headStyles: { fillColor: [40, 40, 40], textColor: [255, 255, 255], fontStyle: 'bold' },
+    /* No black band (owner 2026-08-07: no decorative fills on printed
+       documents). The grid theme already rules every cell, so the header only
+       needs weight. The red/green before/after fills below STAY — those carry
+       meaning, and a change sheet that loses them loses the change. */
+    headStyles: { fontStyle: 'bold' },
     columnStyles: {
       0: { cellWidth: 44 },
       1: { cellWidth: 24 },
@@ -273,6 +280,7 @@ export async function generateAmendmentPdf(input: AmendmentPdfInput): Promise<vo
   );
   doc.setTextColor(0);
 
-  const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 40);
-  doc.save(`${safe(input.amendmentNo || `${input.kind}-amendment`)}.pdf`);
+  // Was a private copy of the old ASCII-only scrub; the shared helper keeps a
+  // non-Latin amendment number readable instead of underscoring it away.
+  deliverPdf(doc, `${safeName(input.amendmentNo || `${input.kind}-amendment`, 40)}.pdf`, opts?.action);
 }

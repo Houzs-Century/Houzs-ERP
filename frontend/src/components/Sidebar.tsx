@@ -525,9 +525,9 @@ export const NAV_TABS: NavTab[] = [
           // Daily dispatch flow — the pages used every day, in workflow order.
           { to: "/scm/delivery-planning", label: "Delivery Planning", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/dp-orders", label: "DP Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          { to: "/scm/auto-schedule", label: "Auto-Schedule", icon: Wand2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          { to: "/scm/trips", label: "Trips", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          { to: "/scm/fleet-day", label: "Fleet Map", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/auto-schedule", label: "Delivery Date Arrangement", icon: Wand2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/trips", label: "Delivery Time Arrangement", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/fleet-day", label: "Last Mile Delivery", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           // Fleet operations — capacity and leave. Fleet Health moved DOWN into
           // Maintenance (2026-08-02): it is reference-data upkeep on the in-house
           // lorries, not a daily dispatch view. The lorry/driver REGISTRY

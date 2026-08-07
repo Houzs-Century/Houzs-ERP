@@ -29,6 +29,8 @@ import {
   RotateCcw,
   ArrowRightLeft,
 } from "lucide-react";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -945,7 +947,7 @@ export function MfgDeliveryOrdersListV2() {
   const goFullPage = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}`);
   const doMarkSigned = (r: DoRow) =>
     updateStatus.mutate(
-      { id: r.id, status: "delivered" },
+      { id: r.id, status: "DELIVERED" },
       { onSuccess: () => setSelected(null) }
     );
   const doConvertToSi = (r: DoRow) =>
@@ -991,7 +993,7 @@ export function MfgDeliveryOrdersListV2() {
   // Batch "Export PDF" — one ticked DO downloads straight; several prompt
   // "One combined PDF" vs "Separate files", then fetch each bundle and render
   // into one merged file or one file per DO. Combined filename is date-stamped.
-  const exportSelectedDos = async () => {
+  const deliverSelectedDos = async (action: PdfAction) => {
     if (exporting) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
     if (chosen.length === 0) return;
@@ -1001,11 +1003,14 @@ export function MfgDeliveryOrdersListV2() {
       if (chosen.length === 1) {
         setExporting(true);
         const bundle = await fetchDoBundle(chosen[0]!);
-        await generateDeliveryOrderPdf(bundle.header as never, bundle.items as never);
+        await generateDeliveryOrderPdf(bundle.header as never, bundle.items as never, { action });
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      /* View / Print always render ONE document — a preview or a print run
+         is about the stack, not N separate files. Only the download exit
+         still asks combined-vs-separate. */
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Download ${chosen.length} delivery orders`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -1019,10 +1024,11 @@ export function MfgDeliveryOrdersListV2() {
       if (how === "one") {
         await generateCombinedDeliveryOrderPdf(bundles as never, {
           fileName: `delivery-orders-${new Date().toISOString().slice(0, 10)}.pdf`,
+          action,
         });
       } else {
         for (const b of bundles)
-          await generateDeliveryOrderPdf(b.header as never, b.items as never);
+          await generateDeliveryOrderPdf(b.header as never, b.items as never, { action });
       }
       clearSelection();
     } catch (e) {
@@ -1035,6 +1041,7 @@ export function MfgDeliveryOrdersListV2() {
       setExporting(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedDos);
 
   // Table columns
   const columns: Column<DoRow>[] = [
@@ -1813,10 +1820,17 @@ export function MfgDeliveryOrdersListV2() {
                   variant="primary"
                   icon={<Printer size={14} />}
                   disabled={exporting}
-                  onClick={() => void exportSelectedDos()}
+                  onClick={batchPrint.openPreview}
                 >
                   {exporting ? "Exporting…" : "Export PDF"}
                 </Button>
+                <PrintPreviewBatchModal
+                  open={batchPrint.open}
+                  onClose={batchPrint.close}
+                  docTitle="Delivery Orders"
+                  docNos={rows.filter((r) => selectedIds.has(r.id)).map((r) => r.do_number)}
+                  {...batchPrint.handlers}
+                />
                 <Button
                   variant="ghost"
                   disabled={exporting}

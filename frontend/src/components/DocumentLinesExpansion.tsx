@@ -41,6 +41,12 @@ export type DocumentDrillLine = {
   // it gone (2026-08-01); the distinction now lives in the chip's tooltip and in
   // the dashed-vs-solid tone, so the resolution is unchanged — only the caption.
   sourceLinked?: boolean;
+  // PR-3 (2026-08-07): the stored-origin "bought for" SO(s) for this SKU —
+  // the PARALLEL provenance slot of the coverage wire, rendered as muted chips
+  // BESIDE the precedence chips above, deduped by soDocNo (when stored origin
+  // won the precedence the slots are identical and nothing extra renders).
+  // Absent (older backend) → exactly today's rendering.
+  provenance?: OriginAssignment[];
   // SALES docs (DO / SI): the source PO(s) the shipped/invoiced goods actually
   // came from — the durable batch_no = source-PO hard link, not a guess. Empty /
   // absent → the Source PO cell shows a dash (plain FIFO / pre-batch stock).
@@ -85,6 +91,76 @@ export type DrillItemFields = {
 // Shared centi → RM string, same helper the lists use.
 const fmtRm = (centi: number): string => fmtCenti(centi);
 
+/* ── Three visual identities for a cross-document assignment chip ──────────
+   Decision (docs/modules/purchase-order.md, owner 2026-08-06): soft until DO,
+   hard from DO. Anything pre-DO is soft and must not dress as execution:
+   - ANCHORED  (source 'delivered'): a DO shipped these goods — hard history,
+     solid accent chip, unchanged.
+   - PROVENANCE (source 'linked', the stored PO→SO raise-link): records why we
+     bought, NOT the live assignment — muted tone, never the word "Locked".
+   - FLOATING  (source 'mrp' / locked:false): the live MRP allocation,
+     recomputed on every view — dashed border + trailing "~".
+   One helper trio so desktop cannot drift from itself; the mobile twin
+   (mobile/source-chips.tsx) mirrors these by hand — keep them in lockstep. */
+export type AssignmentTreatment = "anchored" | "provenance" | "floating";
+
+export const assignmentTreatment = (a: OriginAssignment): AssignmentTreatment =>
+  a.locked === false || a.source === "mrp"
+    ? "floating"
+    : a.source === "delivered"
+      ? "anchored"
+      : "provenance";
+
+export const FLOATING_ASSIGNMENT_TITLE =
+  "Floating — live MRP allocation, recomputed on every view. It moves as demand moves and can disappear.";
+
+export const assignmentTitle = (a: OriginAssignment, sourceLinked?: boolean): string => {
+  switch (assignmentTreatment(a)) {
+    case "floating":
+      return FLOATING_ASSIGNMENT_TITLE;
+    case "anchored":
+      return "Delivered — this line's goods shipped against this Sales Order (anchored history)";
+    default:
+      /* sourceLinked === false: the chip is locked by an older payload but no
+         stored so_item_id backs it — say so (2026-07-29 guess-read-as-binding
+         protection), still muted, still not execution. */
+      return sourceLinked === false
+        ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
+        : `Bought for ${a.soDocNo} — procurement provenance, not the live assignment.`;
+  }
+};
+
+export const assignmentTone = (a: OriginAssignment): string => {
+  switch (assignmentTreatment(a)) {
+    case "floating":
+      return "border border-dashed border-border text-ink-secondary";
+    case "anchored":
+      return "border border-border-subtle bg-surface-2 text-accent-ink";
+    default:
+      return "border border-border-subtle bg-surface-dim text-ink-secondary";
+  }
+};
+
+/* PR-3 (2026-08-07): the coverage wire now carries a PARALLEL `provenance`
+   slot (the layer-(b) stored-origin SOs) beside the precedence winner. This
+   picks the EXTRA "bought for" chips to render after the execution chips:
+   provenance SOs NOT already shown (dedupe by soDocNo — when stored origin won
+   the precedence the two slots are identical and nothing extra renders). Each
+   survivor is normalised to the provenance identity (locked, 'linked') so it
+   can only ever wear the muted dress and the "Bought for" words — never
+   "Locked", never execution. The interesting case this exists for: the
+   floating allocator re-assigned (dashed chips) while stored links remain →
+   both truths sit side by side. */
+export const provenanceExtras = (
+  provenance: OriginAssignment[] | undefined | null,
+  shownSoDocNos: Iterable<string>,
+): OriginAssignment[] => {
+  const seen = new Set(shownSoDocNos);
+  return (provenance ?? [])
+    .filter((p) => p.soDocNo && !seen.has(p.soDocNo))
+    .map((p) => ({ ...p, locked: true, source: "linked" as const }));
+};
+
 /* A Source-PO chip is the batch_no the ledger stored, which is the source PO's
    `po_number` VERBATIM — nothing here adds, strips or normalises a prefix, and
    nothing may start to. Doc numbers are namespaced PER COMPANY
@@ -111,6 +187,35 @@ export function StockAdjChip() {
       className="rounded border border-border-subtle bg-surface-dim px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary"
     >
       STOCK ADJ
+    </span>
+  );
+}
+
+/* Committed batch — the hard-from-DO anchor (Decision, docs/modules/
+   purchase-order.md 2026-08-06: "soft until DO, hard from DO"). A DO line that
+   ships before its goods arrive and resolves exactly ONE live bound PO stores
+   that PO's number in `delivery_order_items.committed_po_batch_no` at DO
+   creation (mig 0230, `planShipCommitments`). This cell surfaces that STORED
+   anchor: solid treatment (the ANCHORED identity — a recorded fact, never a
+   floating MRP guess, so no dash and no "~"). Absent → render NOTHING: most
+   lines ship from stock on hand and never commit, and a dash would read as
+   missing data. Display-only — the write path is ship-commitment.ts. */
+export const committedBatchTitle = (poNo: string): string =>
+  `Committed batch — this line committed to incoming purchase order ${poNo} when the Delivery Order was created (hard from DO). The commitment is stored on the line; a PO cancelled or raised later cannot move it.`;
+
+export function CommittedBatchCell({ poNo }: { poNo?: string | null }) {
+  if (!poNo) return null;
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+        Committed PO
+      </span>
+      <span
+        title={committedBatchTitle(poNo)}
+        className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink"
+      >
+        {poNo}
+      </span>
     </span>
   );
 }
@@ -234,39 +339,81 @@ export function buildPairedSoRows(
   return [...rows.values(), ...orphans];
 }
 
+/* ACCESSORIES DO NOT LIST THEIR ORDERS on a purchase document.
+   Owner, 2026-08-04: "因为我的枕头进 500 粒，然后分配的话，它整个的 listing 会太
+   长了 … 关于整个 accessories 它不需要显示出来，没关系的。不过，你的 Stock
+   Movement Control 那边一定要有这个".
+   A pillow arrives 500 at a time and is spread over dozens of orders, so one GRN
+   line grows a sub-table taller than the rest of the document put together. */
+const isAccessoryLine = (group: string | null | undefined): boolean =>
+  String(group ?? "").trim().toLowerCase() === "accessory";
+
+/* …but NOT a blank cell. An empty assignment column reads as "this stock is
+   unassigned", and a document that quietly under-states its own linkage is the
+   exact ambiguity behind the duplicate-delivery incident
+   (docs/unlinked-line-duplicate-coe.md). The counts stay; only the list goes.
+   The underlying links are untouched — they are what the remaining-qty ceiling
+   counts — and the movement-by-movement trail is on Stock Movement, which
+   records the source document for every IN and OUT. */
+function AccessoryAssignmentSummary({
+  assigned,
+  delivered,
+}: {
+  assigned: OriginAssignment[];
+  delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
+}) {
+  const orders = new Set(assigned.map((a) => a.soDocNo)).size;
+  const dos = new Set(delivered.map((d) => d.doNo)).size;
+  if (orders === 0 && dos === 0) return <StockTag />;
+  return (
+    <span
+      className="text-[11px] leading-snug text-ink-secondary"
+      title="Accessories are received in bulk and spread across many orders, so the per-order list is not shown here. The links themselves are intact — open Stock Movement for the document-by-document trail."
+    >
+      {orders > 0 && `${orders} order${orders === 1 ? "" : "s"}`}
+      {orders > 0 && dos > 0 && " · "}
+      {dos > 0 && `${dos} deliver${dos === 1 ? "y" : "ies"}`}
+      <span className="block text-ink-muted">see Stock Movement</span>
+    </span>
+  );
+}
+
 function PairedSoCell({
   assigned,
   delivered,
   sourceLinked,
+  provenance,
   onOpenSo,
   onOpenDo,
 }: {
   assigned: OriginAssignment[];
   delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
   sourceLinked?: boolean;
+  /* PR-3: the parallel stored-origin slot. Extra "bought for" chips render as
+     one trailing muted row — chip + delivery date, NO status pill (DELIVERED /
+     PENDING is an execution verdict and provenance is not the live
+     assignment). Deduped against every SO already shown (assignments AND
+     orphan delivered rows). */
+  provenance?: OriginAssignment[];
   onOpenSo?: (soDocNo: string) => void;
   onOpenDo?: (doNo: string) => void;
 }) {
   const rows = buildPairedSoRows(assigned, delivered);
-  if (rows.length === 0) return <StockTag />;
+  const provExtra = provenanceExtras(provenance, rows.map((r) => r.soDocNo));
+  if (rows.length === 0 && provExtra.length === 0) return <StockTag />;
   const chipBase = "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
   return (
     <div className="flex min-w-0 flex-col gap-1">
       {rows.map((r) => {
         const a = r.assignment;
-        const floating = a?.locked === false;
+        const floating = a ? assignmentTreatment(a) === "floating" : false;
         const soTitle = !a
           ? "This Delivery Order's Sales Order is not among this line's assignments — shown so the shipment stays visible."
-          : floating
-            ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
-            : a.source === "delivered"
-              ? "Locked — this line's goods were delivered against this Sales Order"
-              : sourceLinked === false
-                ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
-                : "Locked — a stored link to this Sales Order";
-        const soTone = floating
-          ? "border border-dashed border-border text-ink-secondary"
-          : "border border-border-subtle bg-surface-2 text-accent-ink";
+          : assignmentTitle(a, sourceLinked);
+        /* An orphan delivered-DO row is anchored history (goods shipped). */
+        const soTone = !a
+          ? "border border-border-subtle bg-surface-2 text-accent-ink"
+          : assignmentTone(a);
         const shipped = r.dos.length > 0;
         const doChipCount = r.dos.length;
         return (
@@ -331,6 +478,31 @@ function PairedSoCell({
           </div>
         );
       })}
+      {provExtra.length > 0 && (
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {provExtra.map((a) => (
+            <span key={a.soDocNo} className="inline-flex items-center gap-1.5">
+              {onOpenSo ? (
+                <button
+                  type="button"
+                  title={assignmentTitle(a)}
+                  onClick={() => onOpenSo(a.soDocNo)}
+                  className={cn(chipBase, assignmentTone(a), "hover:border-accent hover:text-accent")}
+                >
+                  {a.soDocNo}
+                </button>
+              ) : (
+                <span title={assignmentTitle(a)} className={cn(chipBase, assignmentTone(a))}>
+                  {a.soDocNo}
+                </span>
+              )}
+              <span className="whitespace-nowrap font-mono text-[10.5px] text-ink-muted">
+                {a.deliveryDate ? formatDate(a.deliveryDate) : "—"}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -429,6 +601,13 @@ export function DocumentLinesExpansion({
           const assigned = l.assignedSos ?? [];
           const delivered = l.deliveredDos ?? [];
           const sourcePos = l.sourcePos ?? [];
+          /* PR-3: extra "bought for" chips for the FLAT assignment cell —
+             provenance SOs the precedence chips do not already show. (The
+             paired cell dedupes for itself, against its orphan rows too.) */
+          const provExtra = provenanceExtras(l.provenance, assigned.map((a) => a.soDocNo));
+          /* Purchase docs only. On a sales document (DO / SI) the assignment IS
+             the document, so there is nothing to collapse. */
+          const accessory = isAccessoryLine(l.itemGroup);
           return (
             <div
               key={i}
@@ -455,35 +634,34 @@ export function DocumentLinesExpansion({
                 {fmtRm(l.amountCenti)}
               </span>
               {paired && (
-                <PairedSoCell
-                  assigned={assigned}
-                  delivered={delivered}
-                  sourceLinked={l.sourceLinked}
-                  onOpenSo={onOpenSo}
-                  onOpenDo={onOpenDo}
-                />
+                accessory
+                  ? <AccessoryAssignmentSummary assigned={assigned} delivered={delivered} />
+                  : (
+                    <PairedSoCell
+                      assigned={assigned}
+                      delivered={delivered}
+                      sourceLinked={l.sourceLinked}
+                      provenance={l.provenance}
+                      onOpenSo={onOpenSo}
+                      onOpenDo={onOpenDo}
+                    />
+                  )
               )}
-              {!paired && showAssignment && (
+              {!paired && showAssignment && accessory && (
+                <AccessoryAssignmentSummary assigned={assigned} delivered={delivered} />
+              )}
+              {!paired && showAssignment && !accessory && (
                 <span className="flex min-w-0 flex-col gap-1">
                   <span className="flex min-w-0 flex-wrap gap-1">
                   {assigned.length > 0 ? (
                     assigned.map((a) => {
-                      // Floating (live MRP coverage) reads as a dashed chip with a
-                      // trailing "~"; static (delivered→DO-locked or raised-from-SO)
-                      // reads as a solid chip. Owner distinguishes the two.
-                      const floating = a.locked === false;
-                      const title = floating
-                        ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
-                        : a.source === "delivered"
-                          ? "Locked — this PO's goods were delivered against this Sales Order"
-                          : l.sourceLinked === false
-                            ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
-                            : "Locked — this PO line stores a link to this Sales Order";
+                      // One of the three identities (see the helper trio above):
+                      // anchored solid, provenance muted, floating dashed + "~".
+                      const floating = assignmentTreatment(a) === "floating";
+                      const title = assignmentTitle(a, l.sourceLinked);
                       const base =
                         "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
-                      const tone = floating
-                        ? "border border-dashed border-border text-ink-secondary"
-                        : "border border-border-subtle bg-surface-2 text-accent-ink";
+                      const tone = assignmentTone(a);
                       return onOpenSo ? (
                         <button
                           type="button"
@@ -502,15 +680,39 @@ export function DocumentLinesExpansion({
                         </span>
                       );
                     })
-                  ) : (
+                  ) : provExtra.length === 0 ? (
                     <StockTag />
-                  )}
+                  ) : null}
+                  {/* PR-3: the muted "bought for" chips, side by side with the
+                      precedence chips above (no "~", never "Locked"). */}
+                  {provExtra.map((a) => {
+                    const base = "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
+                    return onOpenSo ? (
+                      <button
+                        type="button"
+                        key={`prov-${a.soDocNo}`}
+                        title={assignmentTitle(a)}
+                        onClick={() => onOpenSo(a.soDocNo)}
+                        className={cn(base, assignmentTone(a), "hover:border-accent hover:text-accent")}
+                      >
+                        {a.soDocNo}
+                      </button>
+                    ) : (
+                      <span key={`prov-${a.soDocNo}`} title={assignmentTitle(a)} className={cn(base, assignmentTone(a))}>
+                        {a.soDocNo}
+                      </span>
+                    );
+                  })}
                   </span>
                 </span>
               )}
+              {/* SO Delivery Date — one date per assignment, so it grows at the
+                  same rate as the assignment list and has to collapse with it. */}
               {!paired && showAssignment && (
                 <span className="flex min-w-0 flex-col gap-0.5">
-                  {assigned.length > 0 ? (
+                  {accessory ? (
+                    <span className="text-[11px] text-ink-muted">—</span>
+                  ) : assigned.length > 0 ? (
                     assigned.map((a) => (
                       <span
                         key={a.soDocNo}
@@ -524,7 +726,12 @@ export function DocumentLinesExpansion({
                   )}
                 </span>
               )}
-              {!paired && showDelivered && (
+              {!paired && showDelivered && accessory && (
+                <span className="text-[11px] text-ink-secondary">
+                  {new Set(delivered.map((d) => d.doNo)).size || "—"}
+                </span>
+              )}
+              {!paired && showDelivered && !accessory && (
                 <span className="flex min-w-0 flex-wrap items-center gap-1">
                   {delivered.length > 0 ? (
                     delivered.map((d) => {
@@ -592,24 +799,32 @@ export function DocumentLinesExpansion({
 // ---------------------------------------------------------------------------
 // AssignedSoCell — the COLLAPSED header-row "Assigned SO" summary, shared by the
 // PO / GRN / PI / DO lists. It is the one-line twin of the drill-down's per-line
-// Assigned-SO cell above: a FLOATING (live MRP) assignment reads as a dashed
-// chip with a trailing "~"; a STATIC one (delivered → DO-locked, a stored
-// raise-link, or a DO's own intrinsic SO) reads as a solid chip. LIST cells
+// Assigned-SO cell above and renders the same three identities (helper trio):
+// anchored delivered chips solid, stored-provenance chips muted, floating MRP
+// chips dashed with a trailing "~". LIST cells
 // render the first few chips + an in-place "+N" toggle (ChipOverflow — owner
 // 2026-08-01 scale ruling, superseding the 2026-07-31 "no collapse" rule for
 // LIST cells; drill-downs still render every chip). The primary assignment's
 // delivery date rides inline. `sourceLinked === false` is threaded into the
 // tooltip so the guess-vs-binding distinction (2026-07-29 incident) survives
-// even in the compact column.
+// even in the compact column. Since PR-3 the cell ALSO renders the parallel
+// provenance slot ("bought for" SOs not already among the precedence chips) —
+// muted, after the execution chips, under the same overflow rule.
 // ---------------------------------------------------------------------------
 export function AssignedSoCell({
   assignments,
   sourceLinked,
+  provenance,
   onOpenSo,
   emptyMeans = "dash",
 }: {
   assignments: OriginAssignment[] | undefined | null;
   sourceLinked?: boolean;
+  /* PR-3: the parallel stored-origin slot (`assigned_so_provenance` on list
+     rows). Extra "bought for" chips render muted AFTER the precedence chips,
+     deduped by soDocNo; the same in-place "+N" overflow rule covers the union.
+     Absent (older backend) → exactly today's cell. */
+  provenance?: OriginAssignment[] | null;
   onOpenSo?: (soDocNo: string) => void;
   /* "stock" (purchase docs, 2026-08-02): an empty cell means surplus stock, so
      it reads "STOCK" instead of a bare dash — no open demand is not missing
@@ -617,47 +832,40 @@ export function AssignedSoCell({
   emptyMeans?: "dash" | "stock";
 }) {
   const list = assignments ?? [];
-  if (list.length === 0) {
+  const provExtra = provenanceExtras(provenance, list.map((a) => a.soDocNo));
+  if (list.length === 0 && provExtra.length === 0) {
     return emptyMeans === "stock" ? <StockTag /> : <span className="text-[12px] text-ink-muted">—</span>;
   }
   const base = "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
-  const chipTitle = (a: OriginAssignment): string =>
-    a.locked === false
-      ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
-      : a.source === "delivered"
-        ? "Locked — the goods were delivered against this Sales Order"
-        : sourceLinked === false
-          ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
-          : "Locked — a stored link to this Sales Order";
-  const chipTone = (a: OriginAssignment): string =>
-    a.locked === false
-      ? "border border-dashed border-border text-ink-secondary"
-      : "border border-border-subtle bg-surface-2 text-accent-ink";
   // Each SO carries its OWN delivery date inline; the chip + its date form one
-  // wrapping unit. ChipOverflow applies the list-cell "+N" rule.
-  const chips = list.map((a) => {
+  // wrapping unit. ChipOverflow applies the list-cell "+N" rule. Provenance
+  // chips pass NO sourceLinked into the tooltip helper — the "no stored link"
+  // wording can never be true of a chip that exists because a stored origin
+  // names it.
+  const chipOf = (a: OriginAssignment, provSlot: boolean) => {
     const label = (
       <>
         {a.soDocNo}
-        {a.locked === false && <span className="text-ink-muted">{" ~"}</span>}
+        {assignmentTreatment(a) === "floating" && <span className="text-ink-muted">{" ~"}</span>}
       </>
     );
+    const title = provSlot ? assignmentTitle(a) : assignmentTitle(a, sourceLinked);
     return (
-      <span key={a.soDocNo} className="inline-flex items-center gap-1">
+      <span key={`${provSlot ? "prov-" : ""}${a.soDocNo}`} className="inline-flex items-center gap-1">
         {onOpenSo ? (
           <button
             type="button"
-            title={chipTitle(a)}
+            title={title}
             onClick={(e) => {
               e.stopPropagation();
               onOpenSo(a.soDocNo);
             }}
-            className={cn(base, chipTone(a), "hover:border-accent hover:text-accent")}
+            className={cn(base, assignmentTone(a), "hover:border-accent hover:text-accent")}
           >
             {label}
           </button>
         ) : (
-          <span title={chipTitle(a)} className={cn(base, chipTone(a))}>
+          <span title={title} className={cn(base, assignmentTone(a))}>
             {label}
           </span>
         )}
@@ -668,7 +876,8 @@ export function AssignedSoCell({
         )}
       </span>
     );
-  });
+  };
+  const chips = [...list.map((a) => chipOf(a, false)), ...provExtra.map((a) => chipOf(a, true))];
   return <ChipOverflow chips={chips} />;
 }
 

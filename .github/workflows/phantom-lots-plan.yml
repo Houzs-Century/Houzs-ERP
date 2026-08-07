@@ -1,0 +1,44 @@
+name: Phantom lot plan (read-only)
+
+# What would it take to make the lot ledger agree with the movement ledger?
+#
+# After the 2026-08-04 duplicate-delivery cleanup three SKUs still disagree. The
+# MOVEMENT ledger — what the Inventory screen shows and MRP allocates from — is
+# correct on all of them. The LOT ledger (FIFO, COGS, inventory value) carries
+# units that are not there.
+#
+# The existing repair modes do not fit: reconstruct planned to book COGS onto a
+# CANCELLED DO (blocked in #1600), relabel honestly refuses. So this names the
+# shape and says which buckets have a PROVABLE repair, what it would be, and what
+# it would cost.
+#
+# It writes nothing and has no APPLY path. The repair is a separate change,
+# reviewed against this plan first.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: phantom-lots-plan
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/plan-phantom-lots.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

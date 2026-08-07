@@ -30,6 +30,8 @@ import {
 } from "../vendor/scm/lib/amendment-routing";
 import { humanApiError } from "../vendor/scm/lib/authed-fetch";
 import { generateAmendmentPdf } from "../vendor/scm/lib/amendment-pdf";
+import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../vendor/scm/lib/pdf-common";
 import { poAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
 import "./mobile.css";
 
@@ -215,7 +217,7 @@ export function MobilePoAmendmentDetail({
     && String(amendment.requested_by) === String(currentStaff.id);
   const canWithdraw = status === "REQUESTED" && (isRequester || canApprove);
 
-  const handlePrint = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!amendment) return;
     const input = poAmendmentToPdfInput({
       amendment: {
@@ -230,9 +232,10 @@ export function MobilePoAmendmentDetail({
       supplierName: null,
       statusLabel: status === "APPROVED" ? "Approved" : "Requested",
     });
-    Promise.resolve(generateAmendmentPdf(input)).catch((e: unknown) =>
+    return Promise.resolve(generateAmendmentPdf(input, { action })).catch((e: unknown) =>
       notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }));
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   const handleApprove = async () => {
     if (!(await askConfirm({
@@ -258,8 +261,14 @@ export function MobilePoAmendmentDetail({
     });
     if (r == null) return;
     try {
-      await rejectAmendment.mutateAsync({ id: amendmentId, reason: r.trim(), poId });
-      notify({ title: "Amendment rejected" });
+      const res = await rejectAmendment.mutateAsync({ id: amendmentId, reason: r.trim(), poId });
+      const released = res.releasedToStock ?? [];
+      notify({
+        title: "Amendment rejected",
+        ...(released.length > 0
+          ? { body: `Released to STOCK: ${released.map((x) => `${x.materialCode} ×${x.qty}`).join(", ")} — MRP will re-show the corrected spec as shortage.` }
+          : {}),
+      });
     } catch (e) {
       notify({ title: "Could not reject", body: `${plainError(e)} Nothing was changed.`, tone: "error" });
     }
@@ -399,7 +408,20 @@ export function MobilePoAmendmentDetail({
 
             {/* Actions */}
             <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 2 }}>
-              <button className="btn-ghost" onClick={handlePrint}>Print amendment</button>
+              <button className="btn-ghost" onClick={print.openPreview}>Print amendment</button>
+              <PrintPreviewModal
+                open={print.open}
+                onClose={print.close}
+                docTitle="Purchase Order Amendment"
+                docNo={amendmentNo ?? "Amendment"}
+                rows={[
+                  { label: "Against PO", value: poNumber || "—" },
+                  { label: "Status", value: status === "APPROVED" ? "Approved" : "Requested" },
+                  { label: "Reason", value: reason || "—" },
+                  { label: "Changes", value: `${lines.length} change${lines.length === 1 ? "" : "s"}` },
+                ]}
+                {...print.handlers}
+              />
               {status === "REQUESTED" && canApprove && (
                 <button className="btn" onClick={() => void handleApprove()} disabled={approve.isPending}>
                   {approve.isPending ? "Approving…" : "Approve amendment"}
