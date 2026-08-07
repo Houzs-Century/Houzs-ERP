@@ -124,6 +124,12 @@ app.put("/", requirePermission("settings.manage"), async (c) => {
     website: str(body.website, current.website),
     logoR2Key: str(body.logoR2Key, current.logoR2Key),
     printLogoR2Key: str(body.printLogoR2Key, current.printLogoR2Key),
+    // Canonicalised like `phone` above, for the same reason: this number is
+    // printed on documents, so it should carry a country code like every other
+    // contact in the system — and refusing anything ambiguous keeps the human's
+    // formatting rather than concatenating two numbers into nonsense.
+    csPhone: canonicalizeSinglePhone(str(body.csPhone, current.csPhone)),
+    csEmail: str(body.csEmail, current.csEmail),
   };
   if (next.companyName === "") {
     return c.json({ error: "companyName is required" }, 400);
@@ -227,13 +233,22 @@ app.post("/logo", requirePermission("settings.manage"), async (c) => {
  */
 app.get("/logo", async (c) => {
   const field = logoFieldOf(variantOf(c.req.query("variant")));
-  const branding = await getBrandingForCompany(c.env, await resolveCompanyCode(c.env, c.get("companyCode")));
+  const companyCode = await resolveCompanyCode(c.env, c.get("companyCode"));
+  const branding = await getBrandingForCompany(c.env, companyCode);
   if (!branding[field]) return c.json({ error: "No logo uploaded" }, 404);
   const obj = await c.env.POD_BUCKET.get(branding[field]);
   if (!obj) return c.json({ error: "Logo missing" }, 404);
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
   headers.set("cache-control", "private, max-age=300");
+  /* Name the company these bytes belong to. The client memoises the letterhead
+     logo by R2 key alone, which cannot tell it WHOSE image arrived: if the
+     active company and the branding it was resolved from ever disagree, one
+     company's mark gets filed under another's key and prints on that company's
+     documents until the tab is reloaded. With this header the client can refuse
+     a mismatch and fall back to a text-only letterhead — a missing logo is a
+     bad document, another company's logo is the wrong one. */
+  headers.set("x-company-code", companyCode);
   return new Response(obj.body, { headers });
 });
 

@@ -412,6 +412,37 @@ describe('Delivery Order — Theme C template', () => {
     expect(square.w / square.h).toBeCloseTo(1, 1);
   });
 
+  test('the customer-service contact prints when the company has set one', async () => {
+    /* Owner 2026-08-07. Editable per company in Settings → Branding, and kept
+       apart from the headline phone/email on purpose. */
+    setBrandingCache(
+      { ...BRANDING_2990, csPhone: '+60 11-1110 8855', csEmail: 'operation@houzscentury.com' },
+      '2990',
+    );
+    const { spans } = await renderDo([itemAt(1)]);
+    expect(spans.some((s) => s.text === 'Customer Service')).toBe(true);
+    expect(spans.some((s) => s.text.includes('11-1110 8855'))).toBe(true);
+    expect(spans.some((s) => s.text.includes('operation@houzscentury.com'))).toBe(true);
+  });
+
+  test('a company with no customer-service contact prints no such line', async () => {
+    /* The load-bearing half: blank must stay blank. A 2990 delivery order that
+       borrowed Houzs's desk would send that customer to the wrong company. */
+    setBrandingCache({ ...BRANDING_2990, csPhone: '', csEmail: '' }, '2990');
+    const { spans } = await renderDo([itemAt(1)]);
+    expect(spans.some((s) => s.text === 'Customer Service')).toBe(false);
+    expect(spans.some((s) => s.text.includes('houzscentury.com'))).toBe(false);
+  });
+
+  test('one half of the contact is enough — the line prints what there is', async () => {
+    setBrandingCache({ ...BRANDING_2990, csPhone: '', csEmail: 'ops@2990shome.com' }, '2990');
+    const { spans } = await renderDo([itemAt(1)]);
+    expect(spans.some((s) => s.text === 'Customer Service')).toBe(true);
+    expect(spans.some((s) => s.text.includes('ops@2990shome.com'))).toBe(true);
+    // No orphaned separator when only one side is set.
+    expect(spans.some((s) => s.text.trim().startsWith('·') || s.text.trim().endsWith('·'))).toBe(false);
+  });
+
   test('the Consignment Note reuse drops the picking columns and keeps its own title', async () => {
     setBrandingCache({ ...BRANDING_2990 }, '2990');
     const [{ jsPDF }, { default: autoTable }, { renderDeliveryOrderInto }] = await Promise.all([
