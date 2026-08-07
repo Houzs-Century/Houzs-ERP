@@ -156,6 +156,14 @@ describe("branding logo slots", () => {
     await upload("print", PNG_PRINT);
     const paper = await request("/api/branding/logo?variant=print");
     expect(paper.headers.get("x-company-code")).toBe(CO);
+
+    /* The response is cacheable AND company-dependent, and the company arrives
+       in a header — so it must say so, or a cache may serve one company the
+       copy it stored for another. A browser did exactly that to the PDF
+       letterhead on 2026-08-07. */
+    expect(paper.headers.get("cache-control")).toContain("max-age");
+    expect(paper.headers.get("vary")?.toLowerCase()).toContain("x-company-id");
+    expect(screen.headers.get("vary")?.toLowerCase()).toContain("x-company-id");
   });
 
   test("an unknown variant is treated as the on-screen slot, never as a third one", async () => {

@@ -392,8 +392,18 @@ export async function ensureBrandingLogoLoaded(): Promise<void> {
       // X-Company-Id rides along (like every api/client call) so the backend
       // serves the ACTIVE company's logo — without it a 2990 session on the
       // Houzs hostname would cache Houzs's logo under 2990's key.
+      /* The R2 KEY is in the URL, not just the company header. Two companies
+         asked for the same `/api/branding/logo?variant=print` and were told
+         apart only by X-Company-Id — but a browser caches by URL, and the
+         response carried `max-age=300` with no Vary. So opening a 2990 document
+         and then a Houzs one inside five minutes printed 2990's logo on the
+         Houzs letterhead, while the app chrome (which has always passed ?k=)
+         stayed correct. The key is per company AND per upload, so it is both
+         the isolation and the cache-buster. */
+      const params = new URLSearchParams({ k: key });
+      if (usingPrintSlot) params.set("variant", "print");
       const res = await correlatedFetch(
-        `${api.baseUrl}/api/branding/logo${usingPrintSlot ? "?variant=print" : ""}`,
+        `${api.baseUrl}/api/branding/logo?${params.toString()}`,
         {
           headers: {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),

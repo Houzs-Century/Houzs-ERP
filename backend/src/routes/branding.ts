@@ -241,6 +241,13 @@ app.get("/logo", async (c) => {
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
   headers.set("cache-control", "private, max-age=300");
+  /* This URL's answer depends on WHO is asking, and that arrives in a header.
+     Without this, a cache is entitled to hand company B the copy it stored for
+     company A — which is exactly what a browser did to the PDF letterhead.
+     Callers also put the R2 key in the query string, so the URL alone is
+     already unique per company; this makes the response correct for any cache
+     that sees it, not only for callers that remember to. */
+  headers.set("vary", "X-Company-Id");
   /* Name the company these bytes belong to. The client memoises the letterhead
      logo by R2 key alone, which cannot tell it WHOSE image arrived: if the
      active company and the branding it was resolved from ever disagree, one
