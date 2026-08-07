@@ -699,8 +699,50 @@ execution hops behind a declared pairing render solid. The SO map passes
 deliberately shows NO floating hop (coverage is purchase-doc-keyed — an
 SO-keyed read would be new backend load; the SO side already shows the same
 engine's answer in its per-line coverage column). DO / SI / DR maps pass
-nothing and render exactly as before. Maps remain DESKTOP-ONLY (§5); the
-mobile surface is queued separately.
+nothing and render exactly as before. The mobile surface shipped as §2.12
+(same three identities, same zero-load rule).
+
+### 2.12 Mobile relationship map (2026-08-07) — parity with the desktop three-identity map
+`feat/mobile-relationship-map`. The phone now has the map the §2.11 living-map
+round left "queued separately". One product, two presentations: instead of the
+desktop SVG stage-column canvas, the phone renders the SAME graph as a STACKED
+CHAIN LIST — `frontend/src/mobile/MobileRelationshipMap.tsx`, a full-screen
+overlay opened by a "Map" header button on `MobileSODetail` (SO anchor) and on
+the generic `MobileModuleDetail` document detail (PO / GRN / PI / DO anchors,
+`flowAnchorForModule`; SI / returns / consignment stay map-less, matching the
+shipped desktop anchor set).
+
+- **Same three identities, same wording.** Sales chain and procurement chain
+  render as stage-ordered card groups joined by solid connectors (every
+  vertical hop is an execution FK — anchored history); the SO ▸ PO hop renders
+  as explicit pairing rows: muted chips + "Bought for — procurement
+  provenance" for the stored raise-link (incl. the kind-`value` fallback for
+  an older cached response), dashed chips + trailing "~" + "Live MRP pairing —
+  recomputed on every view; may change" for the floating pairing. Phones have
+  no hover, so the identity wording the desktop carries as tooltips renders as
+  a visible caption under each pairing row. A floating-only SO synthesises as
+  a dashed card in the sales chain. Legend matches the desktop labels
+  ("Bought for (provenance)" / "Live MRP pairing (floating)").
+- **Zero added backend load (the §2.11 rule, unchanged).** The screen reads
+  the SAME `useDocumentFlow` query key the desktop modal reads and, for
+  purchase anchors only, the SAME `usePoSoCoverage` key the mobile document
+  detail already fetched for its Assigned-SO chips — a react-query cache hit.
+  The floating rows come from the SAME pinned `buildFloatingOverlay`
+  (one-engine symmetry — the model never re-derives "floating" itself). The
+  SO anchor fetches NO coverage, the desktop SO map's deliberate
+  no-floating-hop rule. No polling, no new endpoint.
+- **Navigation, fail-closed.** Tapping a node opens its mobile screen — SO →
+  `MobileSODetail` (doc_no), the rest → the generic module detail (uuid) —
+  but ONLY when MobileApp's `flowNav.can` (the same `allowed()` gate the menu
+  rows use) admits the destination; a gated or screen-less node (AR payment)
+  renders inert (off, not hide). Amendment chips are display-only on the
+  phone.
+- **Pure model, pinned.** `frontend/src/mobile/relationship-map-model.ts`
+  (`buildMobileMapModel` / `flowDocNav` / `flowAnchorForModule` + the verbatim
+  identity wording constants) is pure and unit-pinned by
+  `relationship-map-model.test.ts`: floating rows equal EXACTLY the
+  `source:'mrp'` assignment set, provenance never renders as execution, the
+  wording matches the desktop strings character-for-character.
 
 ---
 
@@ -840,9 +882,10 @@ via `RelationshipMapButton` (`cso/cdo/cdr/pco/pcr/pcrn`) and were not changed.
 - DR list — **"From SO"**: the Sales Order behind the return's DO, resolved
   `delivery_order_id → delivery_orders.so_doc_no` (best-effort, never 500s).
 
-The Relationship Map + these columns are DESKTOP-ONLY surfaces, matching the
-existing precedent (the mobile detail explicitly omits the relationship graph,
-`MobileModuleDetail.tsx`; mobile lists don't render `converted_po_nos` either).
+The Relationship Map is no longer desktop-only: §2.12 ships the mobile surface
+(SO / PO / GRN / PI / DO anchors, stacked-list idiom, same three identities,
+zero added backend load). The LIST columns above (`Invoiced to` / `From DO` /
+`From SO`, and `converted_po_nos`) remain desktop-only.
 
 ## 6. Out of scope (do not touch)
 The DO/delivery STATUS derivation and delivery-planning state logic remain
