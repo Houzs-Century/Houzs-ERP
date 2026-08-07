@@ -425,13 +425,41 @@ describe('Delivery Order — Theme C template', () => {
     expect(spans.some((s) => s.text.includes('operation@houzscentury.com'))).toBe(true);
   });
 
-  test('a company with no customer-service contact prints no such line', async () => {
-    /* The load-bearing half: blank must stay blank. A 2990 delivery order that
-       borrowed Houzs's desk would send that customer to the wrong company. */
-    setBrandingCache({ ...BRANDING_2990, csPhone: '', csEmail: '' }, '2990');
+  test('an unset contact falls back to that same company phone and email', async () => {
+    /* The dedicated fields are an override, not a requirement (owner
+       2026-08-07). The fallback reads THIS company's row — which is what keeps
+       a 2990 sheet from ever printing a Houzs desk. */
+    setBrandingCache(
+      { ...BRANDING_2990, csPhone: '', csEmail: '', phone: '+60 3-1234 5678', email: 'hello@2990shome.com' },
+      '2990',
+    );
+    const { spans } = await renderDo([itemAt(1)]);
+    expect(spans.some((s) => s.text === 'Customer Service')).toBe(true);
+    expect(spans.some((s) => s.text.includes('hello@2990shome.com'))).toBe(true);
+    // The load-bearing half: never the other company's.
+    expect(spans.some((s) => s.text.includes('houzscentury.com'))).toBe(false);
+  });
+
+  test('a company with neither contact prints no such line', async () => {
+    setBrandingCache({ ...BRANDING_2990, csPhone: '', csEmail: '', phone: '', email: '' }, '2990');
     const { spans } = await renderDo([itemAt(1)]);
     expect(spans.some((s) => s.text === 'Customer Service')).toBe(false);
-    expect(spans.some((s) => s.text.includes('houzscentury.com'))).toBe(false);
+  });
+
+  test('the dedicated fields WIN over the headline ones', async () => {
+    setBrandingCache(
+      {
+        ...BRANDING_2990,
+        csPhone: '+60 11-1110 8855', csEmail: 'operation@2990shome.com',
+        phone: '+60 3-0000 0000', email: 'reception@2990shome.com',
+      },
+      '2990',
+    );
+    const { spans } = await renderDo([itemAt(1)]);
+    expect(spans.some((s) => s.text.includes('11-1110 8855'))).toBe(true);
+    expect(spans.some((s) => s.text.includes('operation@2990shome.com'))).toBe(true);
+    expect(spans.some((s) => s.text.includes('reception@'))).toBe(false);
+    expect(spans.some((s) => s.text.includes('0000 0000'))).toBe(false);
   });
 
   test('one half of the contact is enough — the line prints what there is', async () => {
