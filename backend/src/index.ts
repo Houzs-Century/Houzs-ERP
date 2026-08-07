@@ -79,6 +79,7 @@ import mailInbound from "./routes/mail-inbound";
 // 2990 → Houzs LIVE SO mirror receiver. PRE-AUTH (secret-guarded, called by the
 // 2990 DB via pg_net, no user JWT) — mounted at the top level, outside /api/scm.
 import { soMirror } from "./scm/routes/so-mirror";
+import { autocountSoWriteback } from "./scm/routes/autocount-so-writeback";
 import { drainCommands } from "./scm/lib/amendment-command";
 import { drainStockAllocationRecompute } from "./scm/lib/stock-allocation-job";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
@@ -244,6 +245,7 @@ app.route("/api/supplier-portal", supplierPortal);
 app.route("/api/mail-center/inbound", mailInbound);
 // 2990 live SO mirror — pre-auth, secret-guarded (x-sync-secret == SYNC_SECRET).
 app.route("/api/sync/so-mirror", soMirror);
+app.route("/api/sync/autocount-so-writeback", autocountSoWriteback);
 // 2990 live SO AMENDMENT mirror — same caller, same secret, SEPARATE route and
 // SEPARATE 2990-side drain/cron, so an amendment failure can never stall the SO
 // mirror the business already runs on.
