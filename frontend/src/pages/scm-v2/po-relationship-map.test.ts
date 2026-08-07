@@ -81,6 +81,35 @@ describe('buildPoChainNodes', () => {
     expect(cell(nodes, 'Purchase Return').doc).toBe('PRET-1');
     expect(cell(nodes, 'Purchase Return').meta).toBe('Tap to open');
   });
+
+  /* "Soft until DO, hard from DO" — the floating slot. A live MRP pairing is
+     shown but never painted as Linked: it floats (dashed, tappable) and a
+     stored raise-link always beats it for the slot's solid state. */
+  it('floats a live MRP pairing on a stock buy — pending + float, never done', () => {
+    const nodes = buildPoChainNodes(header, [], [], [], [], openAll, ['SO-9']);
+    const so = cell(nodes, 'Sales Order');
+    expect(so.doc).toBe('SO-9');
+    expect(so.state).toBe('pending');
+    expect(so.float).toBe(true);
+    expect(so.actionable).toBe(true);
+    expect(so.meta).toBe('Live MRP pairing — tap');
+  });
+
+  it('a stored raise-link keeps the slot solid; extra floating SOs join the count', () => {
+    const nodes = buildPoChainNodes(header, ['SO-1'], [], [], [], openAll, ['SO-1', 'SO-2']);
+    const so = cell(nodes, 'Sales Order');
+    expect(so.doc).toBe('2 sales orders'); // SO-1 stored + SO-2 floating, deduped
+    expect(so.state).toBe('done');
+    expect(so.float).toBe(false);
+  });
+
+  it('no floating arg keeps the legacy shape (backwards compatible)', () => {
+    const nodes = buildPoChainNodes(header, [], [], [], [], openAll);
+    const so = cell(nodes, 'Sales Order');
+    expect(so.doc).toBe('Not linked');
+    expect(so.float).toBe(false);
+    expect(so.actionable).toBe(false);
+  });
 });
 
 describe('parsePoNoteSos (the pre-MRP "From SOs: …" fallback)', () => {

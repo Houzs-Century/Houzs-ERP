@@ -82,7 +82,7 @@ describe("Assigned SO — the caption is gone, the warning is not", () => {
       />,
     );
     expect(screen.getByText("~", { exact: false })).toBeTruthy();
-    expect(container.querySelector('[title*="MRP guess"]')).toBeTruthy();
+    expect(container.querySelector('[title*="recomputed on every view"]')).toBeTruthy();
   });
 
   it("says so in the tooltip when a non-floating chip has no stored link", () => {
@@ -94,6 +94,100 @@ describe("Assigned SO — the caption is gone, the warning is not", () => {
     );
     expect(screen.queryByText(/MRP guess · not linked/)).toBeNull();
     expect(container.querySelector('[title*="MRP allocation"]')).toBeTruthy();
+  });
+});
+
+// ── Three chip identities (Decision, docs/modules/purchase-order.md 2026-08-06) ──
+//
+// "Soft until DO, hard from DO": only a delivered chip may dress as execution.
+// A stored PO→SO link is procurement provenance — muted, "bought for", never
+// the word "Locked" — and an MRP allocation is floating: dashed, live,
+// recomputed on every view. These pins keep provenance from re-hardening into
+// execution on any surface.
+describe("Three chip identities — anchored / provenance / floating", () => {
+  const anchored = { soDocNo: "SO-ANCH", deliveryDate: null, locked: true, source: "delivered" as const };
+  const provenance = { soDocNo: "SO-PROV", deliveryDate: null, locked: true, source: "linked" as const };
+  const floating = { soDocNo: "SO-FLOT", deliveryDate: null, locked: false, source: "mrp" as const };
+
+  const chipFor = (container: HTMLElement, soDocNo: string): HTMLElement => {
+    const hit = Array.from(container.querySelectorAll<HTMLElement>("[title]")).find((el) =>
+      el.textContent?.includes(soDocNo),
+    );
+    if (!hit) throw new Error(`no chip for ${soDocNo}`);
+    return hit;
+  };
+
+  it("renders the three treatments distinctly in the header cell", () => {
+    const { container } = render(
+      <AssignedSoCell assignments={[anchored, provenance, floating]} sourceLinked />,
+    );
+    const a = chipFor(container, "SO-ANCH");
+    const p = chipFor(container, "SO-PROV");
+    const f = chipFor(container, "SO-FLOT");
+    // Anchored: solid accent tone, delivered wording — unchanged.
+    expect(a.className).toContain("bg-surface-2");
+    expect(a.className).not.toContain("border-dashed");
+    expect(a.title).toContain("Delivered");
+    // Provenance: muted tone, "bought for", and NEVER the word "Locked".
+    expect(p.className).toContain("bg-surface-dim");
+    expect(p.className).not.toContain("border-dashed");
+    expect(p.title).toContain("Bought for SO-PROV");
+    expect(p.title).toContain("procurement provenance, not the live assignment");
+    expect(p.title).not.toMatch(/locked/i);
+    // Floating: dashed border + the live-recompute warning.
+    expect(f.className).toContain("border-dashed");
+    expect(f.title).toContain("recomputed on every view");
+    // The three tones are pairwise distinct.
+    expect(a.className).not.toBe(p.className);
+    expect(p.className).not.toBe(f.className);
+    expect(f.className).not.toBe(a.className);
+  });
+
+  it("applies the same treatments in the drill-down assignment cell", () => {
+    const { container } = render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        lines={[line({ assignedSos: [anchored, provenance, floating], sourceLinked: true })]}
+      />,
+    );
+    expect(chipFor(container, "SO-ANCH").className).toContain("bg-surface-2");
+    const p = chipFor(container, "SO-PROV");
+    expect(p.className).toContain("bg-surface-dim");
+    expect(p.title).toContain("procurement provenance");
+    expect(p.title).not.toMatch(/locked/i);
+    const f = chipFor(container, "SO-FLOT");
+    expect(f.className).toContain("border-dashed");
+    // Only the floating chip carries the "~" marker.
+    expect(f.textContent).toContain("~");
+    expect(p.textContent).not.toContain("~");
+  });
+
+  it("keeps the identities in the paired per-SO sub-table", () => {
+    const { container } = render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        showDelivered
+        lines={[line({ assignedSos: [provenance, floating], deliveredDos: [] })]}
+      />,
+    );
+    const p = chipFor(container, "SO-PROV");
+    expect(p.className).toContain("bg-surface-dim");
+    expect(p.title).toContain("Bought for SO-PROV");
+    expect(chipFor(container, "SO-FLOT").className).toContain("border-dashed");
+  });
+
+  it("a stored link without source metadata degrades to provenance, not execution", () => {
+    // Older/cached payloads carry locked:true with no `source`. Reading that as
+    // anchored would re-dress provenance as execution — the exact confusion the
+    // Decision retires.
+    const { container } = render(
+      <AssignedSoCell assignments={[{ soDocNo: "SO-OLD", deliveryDate: null, locked: true }]} />,
+    );
+    const c = chipFor(container, "SO-OLD");
+    expect(c.className).toContain("bg-surface-dim");
+    expect(c.title).not.toMatch(/locked/i);
   });
 });
 

@@ -91,9 +91,11 @@ table (`Assigned SO` + `SO Delivery Date`, styled like the SO detail's Stock /
 Incoming-PO columns) in each of `PurchaseOrdersListV2` / `GoodsReceivedListV2` /
 `PurchaseInvoicesListV2`. The chip is clickable on desktop (→ `/scm/sales-orders/:docNo`,
 via `onOpenSo`); the mobile twin rides each `LineItem` in
-`MobileModuleDetail.tsx` (display-only). **Floating** assignments render a dashed
-chip + trailing "~" (title "Floating — live MRP coverage"); **static** (delivered
-/ raised-from-SO) render a solid chip (title "Locked …"). A line with no
+`MobileModuleDetail.tsx` (display-only). Rendering follows the THREE chip
+identities of §2.10 (since 2026-08-07; this supersedes the original two-way
+dashed-vs-"Locked" rendering): **anchored** (source `delivered`) solid,
+**provenance** (source `linked`) muted with "bought for" wording, **floating**
+(source `mrp` / `locked:false`) dashed + trailing "~". A line with no
 assignment at any layer renders **"—"**.
 
 Backend: `GET /po-so-coverage/:type/:id` returns `{ poNumber, poId, origins, delivered }`
@@ -339,6 +341,32 @@ for the three incident entries.
   no-owner-action recommendation); part `service-lot-reverse` for the phantom
   service receipt; re-run the trace check and expect J3 = 0.
 
+### 2.10 Three chip identities (2026-08-07) — provenance stops dressing as execution
+`feat/provenance-chip-treatment` (PR-1 of the Decision's display-demotion
+stage). Display only — no resolver, no endpoint, no `getValue` sort key
+changed. Every cross-document chip now renders ONE of three identities, so the
+soft-until-DO model is legible at a glance:
+
+| identity | data | dress | tooltip says |
+|---|---|---|---|
+| **ANCHORED** | `source 'delivered'` (DO shipped the goods); shipped source-PO chips; Delivered DO chips | solid accent chip — unchanged | delivered / anchored history |
+| **PROVENANCE** | `source 'linked'` (stored `so_item_id` / "From SOs" note); mig-0235 allocation SO-slices | muted (`bg-surface-dim` / phone `mutedChip`) | "Bought for `<SO>` — procurement provenance, not the live assignment." **Never the word "Locked"** |
+| **FLOATING** | `source 'mrp'` / `locked:false`; READY FIFO projections; incoming MRP coverage | dashed border + trailing "~" | live, "recomputed on every view", moves as demand moves |
+
+Implemented as one helper trio in `DocumentLinesExpansion.tsx`
+(`assignmentTreatment` / `assignmentTitle` / `assignmentTone`) used by all
+three desktop call sites (PairedSoCell, drill-down cell, `AssignedSoCell`);
+`SoSourceChips` demotes READY + incoming chips to floating;
+`PurchaseOrderDetailV2`'s allocation SO-slices wear provenance ("bought for",
+never "assigned"; STOCK slices keep the dashed look); MRP's read-only supplier
+tooltip says the PO covers the line in the CURRENT allocation (no persisted
+per-line binding implied). Mobile mirrors all of it (`mobile/source-chips.tsx`
+`floatingChip` + three-way `PairedSoRowsMobile`, `MobileModuleDetail`
+allocation chips) — one-product rule. A `locked:true` assignment WITHOUT
+`source` (older/cached payload) degrades to provenance, never anchored.
+Pinned by the "Three chip identities" block in
+`DocumentLinesExpansion.test.tsx`; see BUG-HISTORY 2026-08-06.
+
 ### 2.7 The 2990 doc-reference repair (2026-08-01) — the DATA answer to 2.6, and the rule that makes it safe
 `fix/doc-ref-repair`. The **Source PO prefix check** was run and 2.6's open
 question is answered: the mixed prefixes are TWO problems, not one.
@@ -540,7 +568,8 @@ Resolution, all set-based and company-scoped:
    yields no link at all, overruling a stale single link). A line WITHOUT
    allocations keeps the single `so_item_id` — the 1:1 fast path, unchanged.
    The same function feeds `storedLink`/`sourceLinked`: an allocation IS a
-   stored link, so an allocated SKU reads as linked (solid chip), and each
+   stored link, so an allocated SKU reads as linked (a provenance chip since
+   §2.10), and each
    allocated SO now appears in the Assigned SO cell (multiple SOs per line are
    finally expressible). Both the single-doc route and the batched list
    resolver call the ONE pure function, so a list row and its drill-down
@@ -593,6 +622,52 @@ allowSales, same as the SO — no extra access check). PO amendments are NOT a
 separate document: a PO revision is the PO leg of an SO amendment (approve-po →
 `reviseBoundPo` → `po_revisions`), so there is nothing extra to branch off the
 PO. The SI / DO / DR maps do not pass amendments and are unchanged.
+
+### 2.10 The living Relationship Map (2026-08-07) — chain / provenance / floating, zero added backend load
+`feat/living-relationship-map` (PR-2 of the soft-until-DO rollout). The map now
+RENDERS the §Decision model instead of contradicting it: before this, a stored
+SO→PO raise-link drew in the same visual register as the execution FKs, and the
+floating pre-DO pairing — the thing that actually governs matching — was not on
+the map at all.
+
+**Three edge classes, one rule each:**
+
+| class | what it is | where it comes from | rendering |
+|---|---|---|---|
+| **chain** | vertical execution FKs — SO→DO→SI→payment, DO→DR, PO→GRN→PI, GRN→PR, consignment | `/document-flow` stamps `linkage:'chain'` on every edge (ADDITIVE field; default) | solid, existing kind colours — anchored history |
+| **provenance** | the SO→PO raise-link (stored `so_item_id` / "From SOs:" note) | `/document-flow` stamps `linkage:'provenance'` at the ONE SO→PO edge callsite | muted solid, tooltip "Bought for — procurement provenance" |
+| **floating** | the live pre-DO PO↔SO MRP pairing ("会跳动" — recomputed per open, may change) | CLIENT-ASSEMBLED: `buildFloatingOverlay` / `floatingSoDocNos` (flow-queries.ts) over the `usePoSoCoverage` response, `source:'mrp'` assignments ONLY | dashed + pulse (`animate-pulse`, no bespoke animation system), tooltip "Live MRP pairing — recomputed on every view; may change" |
+
+**The zero-load rule (owner: "它可能会 API 爆炸").** The floating overlay adds
+NO backend call class: `document-flow.ts` gained no query and must never call
+`computeMrp`; the overlay reads the SAME `usePoSoCoverage` query key the PO /
+GRN / PI list drill-downs and detail readers already use, so the common path is
+a react-query cache hit (staleTime 30s; the backend path-cache dedupes a cold
+one) and the worst case is the ONE normal coverage fetch the page would do
+anyway. No polling, no websockets.
+
+**One-engine symmetry, test-pinned.** Floating edges equal EXACTLY the
+coverage assignments with `source:'mrp'` (`flow-floating-overlay.test.ts`) —
+the same single `computeMrp` allocation every other coverage reader inverts
+(§2.4), so the map can never disagree with the Assigned-SO chips. A
+`locked:false` assignment WITHOUT a source (older backend) is never floated.
+
+**Surfaces.** The vendor `DocumentFlowModal` (PO / GRN / PI anchors via
+`RelationshipMapButton`) merges the overlay into the graph — a floating SO
+absent from the stored graph is synthesised as a dashed node; legend gains
+"Bought for (provenance)" + "Live MRP pairing (floating)". The scm-v2
+`DocumentRelationshipMapModal` gains an optional `pairing` prop
+(`{ kind: 'provenance' | 'floating' }`): the PO map (`po-relationship-map.ts`,
+now also calling `usePoSoCoverage('po', id)`) restyles its SO↔PO hop — floating
+when any `source:'mrp'` pairing exists (SO slot floats dashed + "~" when
+nothing stored backs it), provenance when only stored links do — and the
+execution hops behind a declared pairing render solid. The SO map passes
+`provenance` for its SO↓PO drop when the graph carries stored PO links; it
+deliberately shows NO floating hop (coverage is purchase-doc-keyed — an
+SO-keyed read would be new backend load; the SO side already shows the same
+engine's answer in its per-line coverage column). DO / SI / DR maps pass
+nothing and render exactly as before. Maps remain DESKTOP-ONLY (§5); the
+mobile surface is queued separately.
 
 ---
 

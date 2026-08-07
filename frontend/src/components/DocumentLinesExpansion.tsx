@@ -85,6 +85,56 @@ export type DrillItemFields = {
 // Shared centi → RM string, same helper the lists use.
 const fmtRm = (centi: number): string => fmtCenti(centi);
 
+/* ── Three visual identities for a cross-document assignment chip ──────────
+   Decision (docs/modules/purchase-order.md, owner 2026-08-06): soft until DO,
+   hard from DO. Anything pre-DO is soft and must not dress as execution:
+   - ANCHORED  (source 'delivered'): a DO shipped these goods — hard history,
+     solid accent chip, unchanged.
+   - PROVENANCE (source 'linked', the stored PO→SO raise-link): records why we
+     bought, NOT the live assignment — muted tone, never the word "Locked".
+   - FLOATING  (source 'mrp' / locked:false): the live MRP allocation,
+     recomputed on every view — dashed border + trailing "~".
+   One helper trio so desktop cannot drift from itself; the mobile twin
+   (mobile/source-chips.tsx) mirrors these by hand — keep them in lockstep. */
+export type AssignmentTreatment = "anchored" | "provenance" | "floating";
+
+export const assignmentTreatment = (a: OriginAssignment): AssignmentTreatment =>
+  a.locked === false || a.source === "mrp"
+    ? "floating"
+    : a.source === "delivered"
+      ? "anchored"
+      : "provenance";
+
+export const FLOATING_ASSIGNMENT_TITLE =
+  "Floating — live MRP allocation, recomputed on every view. It moves as demand moves and can disappear.";
+
+export const assignmentTitle = (a: OriginAssignment, sourceLinked?: boolean): string => {
+  switch (assignmentTreatment(a)) {
+    case "floating":
+      return FLOATING_ASSIGNMENT_TITLE;
+    case "anchored":
+      return "Delivered — this line's goods shipped against this Sales Order (anchored history)";
+    default:
+      /* sourceLinked === false: the chip is locked by an older payload but no
+         stored so_item_id backs it — say so (2026-07-29 guess-read-as-binding
+         protection), still muted, still not execution. */
+      return sourceLinked === false
+        ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
+        : `Bought for ${a.soDocNo} — procurement provenance, not the live assignment.`;
+  }
+};
+
+export const assignmentTone = (a: OriginAssignment): string => {
+  switch (assignmentTreatment(a)) {
+    case "floating":
+      return "border border-dashed border-border text-ink-secondary";
+    case "anchored":
+      return "border border-border-subtle bg-surface-2 text-accent-ink";
+    default:
+      return "border border-border-subtle bg-surface-dim text-ink-secondary";
+  }
+};
+
 /* A Source-PO chip is the batch_no the ledger stored, which is the source PO's
    `po_number` VERBATIM — nothing here adds, strips or normalises a prefix, and
    nothing may start to. Doc numbers are namespaced PER COMPANY
@@ -322,19 +372,14 @@ function PairedSoCell({
     <div className="flex min-w-0 flex-col gap-1">
       {rows.map((r) => {
         const a = r.assignment;
-        const floating = a?.locked === false;
+        const floating = a ? assignmentTreatment(a) === "floating" : false;
         const soTitle = !a
           ? "This Delivery Order's Sales Order is not among this line's assignments — shown so the shipment stays visible."
-          : floating
-            ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
-            : a.source === "delivered"
-              ? "Locked — this line's goods were delivered against this Sales Order"
-              : sourceLinked === false
-                ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
-                : "Locked — a stored link to this Sales Order";
-        const soTone = floating
-          ? "border border-dashed border-border text-ink-secondary"
-          : "border border-border-subtle bg-surface-2 text-accent-ink";
+          : assignmentTitle(a, sourceLinked);
+        /* An orphan delivered-DO row is anchored history (goods shipped). */
+        const soTone = !a
+          ? "border border-border-subtle bg-surface-2 text-accent-ink"
+          : assignmentTone(a);
         const shipped = r.dos.length > 0;
         const doChipCount = r.dos.length;
         return (
@@ -546,22 +591,13 @@ export function DocumentLinesExpansion({
                   <span className="flex min-w-0 flex-wrap gap-1">
                   {assigned.length > 0 ? (
                     assigned.map((a) => {
-                      // Floating (live MRP coverage) reads as a dashed chip with a
-                      // trailing "~"; static (delivered→DO-locked or raised-from-SO)
-                      // reads as a solid chip. Owner distinguishes the two.
-                      const floating = a.locked === false;
-                      const title = floating
-                        ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
-                        : a.source === "delivered"
-                          ? "Locked — this PO's goods were delivered against this Sales Order"
-                          : l.sourceLinked === false
-                            ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
-                            : "Locked — this PO line stores a link to this Sales Order";
+                      // One of the three identities (see the helper trio above):
+                      // anchored solid, provenance muted, floating dashed + "~".
+                      const floating = assignmentTreatment(a) === "floating";
+                      const title = assignmentTitle(a, l.sourceLinked);
                       const base =
                         "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
-                      const tone = floating
-                        ? "border border-dashed border-border text-ink-secondary"
-                        : "border border-border-subtle bg-surface-2 text-accent-ink";
+                      const tone = assignmentTone(a);
                       return onOpenSo ? (
                         <button
                           type="button"
@@ -679,9 +715,9 @@ export function DocumentLinesExpansion({
 // ---------------------------------------------------------------------------
 // AssignedSoCell — the COLLAPSED header-row "Assigned SO" summary, shared by the
 // PO / GRN / PI / DO lists. It is the one-line twin of the drill-down's per-line
-// Assigned-SO cell above: a FLOATING (live MRP) assignment reads as a dashed
-// chip with a trailing "~"; a STATIC one (delivered → DO-locked, a stored
-// raise-link, or a DO's own intrinsic SO) reads as a solid chip. LIST cells
+// Assigned-SO cell above and renders the same three identities (helper trio):
+// anchored delivered chips solid, stored-provenance chips muted, floating MRP
+// chips dashed with a trailing "~". LIST cells
 // render the first few chips + an in-place "+N" toggle (ChipOverflow — owner
 // 2026-08-01 scale ruling, superseding the 2026-07-31 "no collapse" rule for
 // LIST cells; drill-downs still render every chip). The primary assignment's
@@ -708,25 +744,13 @@ export function AssignedSoCell({
     return emptyMeans === "stock" ? <StockTag /> : <span className="text-[12px] text-ink-muted">—</span>;
   }
   const base = "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
-  const chipTitle = (a: OriginAssignment): string =>
-    a.locked === false
-      ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
-      : a.source === "delivered"
-        ? "Locked — the goods were delivered against this Sales Order"
-        : sourceLinked === false
-          ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
-          : "Locked — a stored link to this Sales Order";
-  const chipTone = (a: OriginAssignment): string =>
-    a.locked === false
-      ? "border border-dashed border-border text-ink-secondary"
-      : "border border-border-subtle bg-surface-2 text-accent-ink";
   // Each SO carries its OWN delivery date inline; the chip + its date form one
   // wrapping unit. ChipOverflow applies the list-cell "+N" rule.
   const chips = list.map((a) => {
     const label = (
       <>
         {a.soDocNo}
-        {a.locked === false && <span className="text-ink-muted">{" ~"}</span>}
+        {assignmentTreatment(a) === "floating" && <span className="text-ink-muted">{" ~"}</span>}
       </>
     );
     return (
@@ -734,17 +758,17 @@ export function AssignedSoCell({
         {onOpenSo ? (
           <button
             type="button"
-            title={chipTitle(a)}
+            title={assignmentTitle(a, sourceLinked)}
             onClick={(e) => {
               e.stopPropagation();
               onOpenSo(a.soDocNo);
             }}
-            className={cn(base, chipTone(a), "hover:border-accent hover:text-accent")}
+            className={cn(base, assignmentTone(a), "hover:border-accent hover:text-accent")}
           >
             {label}
           </button>
         ) : (
-          <span title={chipTitle(a)} className={cn(base, chipTone(a))}>
+          <span title={assignmentTitle(a, sourceLinked)} className={cn(base, assignmentTone(a))}>
             {label}
           </span>
         )}

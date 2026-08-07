@@ -649,6 +649,7 @@ function SalesOrderDetailV2ReadOnly() {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    pairing: chainPairing,
     choice: chainChoice,
     closeChoice: closeChainChoice,
     pickChoice: pickChainChoice,
@@ -1308,6 +1309,7 @@ function SalesOrderDetailV2ReadOnly() {
         onAmendmentClick={(a) => {
           if (onChainAmendmentClick(a)) setRelMapOpen(false);
         }}
+        pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
           of a notice that only named them. Picking a row navigates, so the map
