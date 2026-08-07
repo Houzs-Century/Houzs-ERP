@@ -810,8 +810,10 @@ function CasesView({
       // Product code — visible on the detail page; hidden here to cut
       // clutter, still available from the Columns menu.
       defaultHidden: true,
-      render: (r) => <span className="font-mono text-[11px]">{r.item_code || "—"}</span>,
-      getValue: (r) => r.item_code,
+      // Product Info items first (items_codes aggregate); the legacy
+      // form-era item_code only as fallback (Nico 2026-08-07).
+      render: (r) => <span className="font-mono text-[11px]">{(r as any).items_codes || r.item_code || "—"}</span>,
+      getValue: (r) => (r as any).items_codes || r.item_code,
     },
     {
       key: "resolution_method",
