@@ -430,6 +430,9 @@ app.get("/status-export", async (c) => {
     // columns and this endpoint never sends them.
     complained_date: r.complained_date,
     status:
+      (SHEET_SUB_STATUS[r.stage]
+        ? SHEET_SUB_STATUS[r.stage][r.sub_status ?? "__default"] ?? SHEET_SUB_STATUS[r.stage].__default
+        : undefined) ??
       SHEET_STATUS[r.stage] ??
       r.stage.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase()),
     completed_date: r.completion_date ?? r.closed_at ?? null,
