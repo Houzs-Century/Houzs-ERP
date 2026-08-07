@@ -444,6 +444,9 @@ app.get("/status-export", async (c) => {
     addr3: r.addr3,
     addr4: r.addr4,
     item_codes: r.items_codes,
+    // The sheet's _appendNewAssrRow reads c.item_code (singular) — alias
+    // so the existing script fills its Item column without an edit.
+    item_code: r.items_codes,
   }));
 
   return c.json({ count: cases.length, cases });
