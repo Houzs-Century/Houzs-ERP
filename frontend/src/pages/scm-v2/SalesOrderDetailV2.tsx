@@ -31,6 +31,7 @@ import {
   CircleDot,
   Phone as PhoneIcon,
   MoreHorizontal,
+  Wallet,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -489,7 +490,10 @@ const SalesOrderDetailInlineEditor = lazy(() =>
    would break on navigation). */
 export function SalesOrderDetailV2() {
   const [params] = useSearchParams();
-  if (params.get("edit") === "1") {
+  /* `payments=1` forwards to the same editor as `edit=1` — the payments ledger
+     only exists there. The editor decides what that flag unlocks (its payments
+     card, and nothing else); this router only decides WHICH body renders. */
+  if (params.get("edit") === "1" || params.get("payments") === "1") {
     return (
       <Suspense
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
@@ -576,6 +580,11 @@ function SalesOrderDetailV2ReadOnly() {
   // amendment-eligible the editor opens in amendment mode (Save submits an
   // amendment request); when hard-locked the button is disabled here.
   const goEdit = () => docNo && navigate(`/scm/sales-orders/${docNo}?edit=1`);
+  /* Payments-only door into the same editor (owner 2026-08-07). Deliberately
+     NOT `?edit=1`: that opens every field, and on a hard-locked order the whole
+     point is that only the money moves. The editor reads `payments=1` and seeds
+     its payments-card toggle from it. */
+  const goPayments = () => docNo && navigate(`/scm/sales-orders/${docNo}?payments=1`);
   const doCancel = () => {
     if (!salesOrder) return;
     if (
@@ -939,6 +948,29 @@ function SalesOrderDetailV2ReadOnly() {
             >
               Print PDF
             </Button>
+            {/* Collect payment (owner 2026-08-07) — the ONLY door to the
+                payments ledger on a hard-locked order. The ledger lives on the
+                ?edit=1 editor, and Edit below is `disabled={hardLocked}`, so a
+                DELIVERED SO (locked by status AND by its DO) had no reachable
+                Payments section at all: the balance could not be keyed, and its
+                proof had nowhere to go. Collecting the balance ON delivery is
+                the normal case — that is what a Balance figure is FOR.
+                `?payments=1` opens the editor with the Payments card unlocked
+                and NOTHING else: it does not set ?edit=1, so lines, header and
+                addresses stay read-only under their own `isLocked` gate, which
+                is the lock that genuinely belongs to them. Only offered where
+                Edit is not — an unlocked SO already reaches payments through
+                it — and never on a cancelled order, which takes no money. */}
+            {hardLocked && salesOrder.status?.toLowerCase() !== "cancelled" && (
+              <Button
+                variant="secondary"
+                icon={<Wallet size={14} />}
+                onClick={goPayments}
+                title="Record a payment against this order — the rest of the order stays locked."
+              >
+                Collect payment
+              </Button>
+            )}
             {salesOrder.status?.toLowerCase() !== "cancelled" && (
               <Button
                 variant="danger"

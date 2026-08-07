@@ -616,6 +616,23 @@ export const SalesOrderDetail = () => {
   const [isEditing, setIsEditing] = useState(
     editSearchParams.get('edit') === '1',
   );
+  /* Payments edit mode — the money's OWN toggle (owner 2026-08-07). Declared up
+     here with the other page state, NOT beside the `canEditPayments` derivation
+     it feeds: everything below line ~1374 sits after the isPending / isError
+     early returns, so a hook there renders conditionally and React throws
+     "Rendered more hooks than during the previous render" the moment the detail
+     query resolves. See the derivation for what this gates and why. */
+  const [payEditing, setPayEditing] = useState(
+    /* `?payments=1` — arrived through V2's "Collect payment" button, which is
+       the only door into this page on a hard-locked order. Open the ledger
+       straight away rather than making the operator hunt for a second toggle
+       on a page they reached BY asking for payments. */
+    editSearchParams.get('payments') === '1',
+  );
+  /* Page Edit mode already unlocks the ledger, so the toggle hides while it is
+     on — and clears, so leaving page Edit re-locks payments instead of leaving
+     them silently open on a stale `payEditing` from before. */
+  useEffect(() => { if (isEditing) setPayEditing(false); }, [isEditing]);
   useEffect(() => {
     if (!header) return;
     if (loadedVersionDocRef.current !== header.doc_no) {
@@ -1485,7 +1502,20 @@ export const SalesOrderDetail = () => {
      while the detail is in its read-only view. For every other status the
      Payments section stays view-only until the operator clicks Edit. */
   const isDraftSo = (header.status as string) === 'DRAFT';
+  /* Payments edit mode — the money's OWN toggle, deliberately not the page's
+     Edit mode (owner 2026-08-07, mobile parity). Page Edit is gated by
+     `isLocked` (terminal status / downstream DO-SI), which freezes LINES and the
+     HEADER because a child document already quotes them. It has no business
+     freezing the ledger: the balance is collected ON delivery, i.e. precisely
+     when the SO is locked. Only CANCELLED shuts payments — same rule as
+     MobileSODetail's `paymentLocked`.
+     The no-naked-edits rule (owner 2026-07-13) is unchanged: a submitted SO's
+     payments are view-only until the operator opts in here, and a DRAFT skips
+     the toggle because it is never confirmed. Page Edit mode still counts as
+     opting in, so the existing flow on an unlocked SO is untouched. */
   const canCancel = CANCELLABLE_STATUSES.includes(header.status);
+  const canOfferPayEdit  = !isDraftSo && !isCancelled && !isEditing;
+  const canEditPayments  = isDraftSo || (!isCancelled && (isEditing || payEditing));
 
   const handleCancelSo = async () => {
     if (!(await askConfirm({
@@ -2236,6 +2266,19 @@ export const SalesOrderDetail = () => {
           the normal case — that is what a Balance figure is FOR. Only CANCELLED
           stays shut (a cancelled order takes no money); the no-naked-edits rule
           is unchanged, so it is still Edit-then-type for everything but DRAFT. */}
+      {/* Owner 2026-08-07 — the paragraph above says what this page MEANT to do,
+          and mobile has done since 7-17 (MobileSODetail `paymentLocked =
+          rawStatus === "CANCELLED"` + its own in-card Edit toggle). Desktop
+          never got there: `locked` dropped `isLocked` but replaced it with
+          `!isEditing`, and PAGE Edit mode is reached through a button that is
+          itself `disabled={isLocked}` (see the header Button). So on a
+          delivered SO — the exact order a balance gets collected on — the
+          operator could not enter Edit, could not Add Payment, and had nowhere
+          to put the balance-payment proof. The lock was simply reached through
+          a second door.
+          Fix mirrors mobile rather than inventing a third rule: payments carry
+          their OWN edit toggle (`payEditing`), independent of the page-level
+          Edit mode that the line/header lock owns. "電話電腦的權限應該一樣的". */}
       {paymentRetryDrafts.length > 0 && (
         <div className={styles.bannerWarn} role="status">
           This order exists, but {paymentRetryDrafts.length} payment row{paymentRetryDrafts.length === 1 ? '' : 's'} were not confirmed saved.
@@ -2247,12 +2290,17 @@ export const SalesOrderDetail = () => {
         docNo={header.doc_no}
         grandTotalCenti={header.local_total_centi}
         currency={header.currency}
-        locked={!isDraftSo && (isCancelled || !isEditing)}
+        locked={!canEditPayments}
         draftUnlocked={isDraftSo}
         slip={{ slipKey: header.slip_key, fetcher: fetchSoSlipUrl }}
         defaultCollectedBy={selfStaffMatch?.id ?? ''}
         initialDrafts={paymentRetryDrafts}
         onDraftCommitted={paymentRetryCommitted}
+        headerAction={canOfferPayEdit ? (
+          <Button variant="ghost" onClick={() => setPayEditing((v) => !v)}>
+            {payEditing ? <span>Done</span> : <><Pencil {...ICON} /><span>Edit payments</span></>}
+          </Button>
+        ) : null}
       />
 
       {/* ── CUSTOMER SIGNATURE — moved directly below Payments (Wei Siang

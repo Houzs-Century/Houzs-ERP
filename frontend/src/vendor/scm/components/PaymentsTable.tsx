@@ -21,7 +21,7 @@
 // across both modes.
 // ----------------------------------------------------------------------------
 
-import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   DollarSign, Plus, Trash2, Save, FileText, Image as ImageIcon,
@@ -51,6 +51,7 @@ import {
   useSalesOrderPayments,
   useAddSalesOrderPayment,
   useEditSalesOrderPayment,
+  useAttachSalesOrderPaymentSlip,
   useDeleteSalesOrderPayment,
   type SoPayment,
 } from '../lib/sales-order-queries';
@@ -335,6 +336,11 @@ type SavedModeProps = {
   initialDrafts?: PaymentDraft[];
   /** Called only after a seeded/new draft is confirmed by the server. */
   onDraftCommitted?: (draft: PaymentDraft) => void;
+  /** Owner 2026-08-07 — control rendered on the RIGHT of the card header (the
+   *  SO detail puts its payments-only Edit toggle there, mirroring mobile's
+   *  in-card toggle). The card header lives in here, not in the caller, so a
+   *  page that needs a control beside "Payments" has to hand it in. */
+  headerAction?: ReactNode;
 };
 
 type DraftModeProps = {
@@ -354,6 +360,8 @@ type DraftModeProps = {
   collectedByAllowedIds?: Set<string> | null;
   /** See SavedModeProps.defaultCollectedBy. */
   defaultCollectedBy?: string | null;
+  /** See SavedModeProps.headerAction. */
+  headerAction?: ReactNode;
 };
 
 export type PaymentsTableProps = SavedModeProps | DraftModeProps;
@@ -452,7 +460,35 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
   const paymentsQ     = useSalesOrderPayments(isSaved ? props.docNo : null);
   const addPayment    = useAddSalesOrderPayment();
   const editPayment   = useEditSalesOrderPayment();
+  const attachSlip    = useAttachSalesOrderPaymentSlip();
   const deletePayment = useDeleteSalesOrderPayment();
+
+  /* Attach / replace the proof on a PERSISTED row (owner 2026-08-07). Separate
+     endpoint from the payment PATCH, because PATCH is same-day-locked and this
+     is not — see the route comment. Replacing an existing slip asks first: the
+     old proof is not recoverable from the UI afterwards. */
+  const attachSlipToPayment = async (p: SoPayment, uploadSessionId: string) => {
+    if (!isSaved) return;
+    if (p.slip_key && !(await askConfirm({
+      title: 'Replace the proof on this payment?',
+      body: 'The slip currently attached to this payment will be swapped for the one you just uploaded. The change is recorded in the order history.',
+      confirmLabel: 'Replace',
+    }))) return;
+    attachSlip.mutate(
+      { docNo: (props as SavedModeProps).docNo, id: p.id, uploadSessionId },
+      {
+        onError: (e) => {
+          // eslint-disable-next-line no-console
+          console.error('[payment] slip attach failed:', e);
+          notify({
+            title: 'Failed to attach the proof',
+            body: e instanceof Error ? e.message : 'Something went wrong.',
+            tone: 'error',
+          });
+        },
+      },
+    );
+  };
 
   /* SAVED-mode local drafts (pre-commit rows). DRAFT mode uses parent's
      `payments` array directly. */
@@ -856,6 +892,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
         <h2 className={detailStyles.cardTitle}>
           <DollarSign size={14} strokeWidth={1.75} /> Payments
         </h2>
+        {props.headerAction}
       </header>
       <div className={detailStyles.cardBody}>
         <div className={paymentsStyles.section}>
@@ -974,7 +1011,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                   {p.approval_code ?? <span className={detailStyles.muted}>—</span>}
                 </span>
                 {showSlip && (
-                  <span className={paymentsStyles.cell} data-label="Slip">
+                  <span className={paymentsStyles.cell} data-label="Slip"
+                        style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
                     {isSaved ? (
                       <PaymentSlipThumb
                         docNo={(props as SavedModeProps).docNo}
@@ -984,6 +1022,24 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                       />
                     ) : (
                       <span className={detailStyles.muted}>—</span>
+                    )}
+                    {/* Attach the proof AFTER the fact (owner 2026-08-07). Until
+                        now the slip could only ride along with the INSERT, so a
+                        balance collected before its receipt reached the office
+                        had no route back to its own proof. Deliberately NOT
+                        gated by rowMutable: the same-day window guards the
+                        MONEY (amount / method / date), and this touches none of
+                        it — a slip that turns up on a later day is exactly the
+                        case this exists for. `locked` still applies, so it only
+                        shows once the operator has opted into payment edits. */}
+                    {isSaved && !locked && (
+                      <SlipUploadField
+                        key={p.slip_key ?? 'none'}
+                        required={false}
+                        disabled={attachSlip.isPending}
+                        onConfirmed={(sid) => attachSlipToPayment(p, sid)}
+                        onCleared={() => {}}
+                      />
                     )}
                   </span>
                 )}
