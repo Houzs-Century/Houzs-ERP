@@ -1,3 +1,15 @@
+## 2026-08-04
+
+### [HIGH] Replying to an email answered ONE person and silently dropped everyone who was Cc'd
+- **Symptom.** Owner, 2026-08-03: *"为什么 Email Center 里面的 email 栏那边不能加多个或者 CC 谁吗?"* and *"然后那些人回复我的话，我要怎么回复他?"*. A customer emails the mailbox with three colleagues on Cc. The reply goes to the sender **only**. The other three never see the answer, nothing on screen says so, and the operator has no way to add them — so the conversation looks answered on our side and unanswered on theirs.
+- **Root cause (traced, not guessed).** `POST /threads/:id/reply` had **no recipient field at all**: `const to = thread.counterparty_email` and nothing else. Not a validation problem and not a UI restriction — the concept of a second recipient did not exist in the handler. The addresses were never missing either: `email_messages.cc_addresses` has stored inbound Cc since mig `0039`. The data for a reply-all had been sitting in the row, unread, the whole time.
+- **The same shape one layer out.** Compose was single-recipient at **four** layers — `to?: string` typed as one string, `EMAIL_RE.test(to)` run over the whole field (so a comma-separated list failed as "a valid recipient is required" with no clue which entry was wrong), `sendEmail(to: string)`, and `email_outbox.to_address` as a single column. Resend, underneath all of it, has always taken arrays and cc/bcc.
+- **Fix.** `recipientList()` in `services/email.ts` is now the single normaliser (string | array | comma/semicolon list, trimmed, `@`-checked, **de-duplicated case-insensitively**). `SendOptions` gains `cc`/`bcc`; mig `0254` (+ `144` in the D1 test tree) adds the outbox columns; compose accepts and validates lists and names the offending address; reply gains `replyAll`, rebuilding To from the newest inbound sender and Cc from that message's To + Cc **minus this mailbox and minus anyone already on To**.
+- **Three decisions inside that, each with a reason.** (1) **One send, never N sends** — a single provider call carries every recipient, because looping per recipient would let a mid-loop failure leave the outbox row `pending` and the 5-minute cron retry would deliver a SECOND copy to everyone who already had it. (2) **De-duplication is load-bearing**, not tidiness: the same address in To and Cc makes the provider deliver twice, and a reply-all including our own mailbox loops mail back into the thread it came from. (3) **Bcc is never reconstructed and never stored on the message row** — it was blind, and a thread anyone on the mailbox can open is the wrong place to record who was quietly copied.
+- **Caught by the test suite, correctly.** The outbox tests exercise the real INSERT, so adding the columns to `migrations-pg/` alone failed 5 tests — the D1 test tree needs the same change. The failure surfaced as "no outbox row", which reads like a logic bug rather than schema drift; recorded because the next person will see the same misleading message.
+- **The class, for next time.** A missing FIELD is invisible in a way a broken field is not. Nothing errored, nothing logged, and the UI showed a sent reply — the only way to notice was to be one of the people who did not receive it.
+- **Ref:** #<PR>. `feat/mail-cc-recipients` 2026-08-04.
+
 ## 2026-08-07
 
 ### [HIGH] A Sales Order total carried a delivery fee NO line owned — deleting the SVC-DELIVERY line turned the header snapshot into a back door
@@ -255,6 +267,7 @@
 - **Remediation is CANCEL in the app, never SQL.** The cancel path runs `fn_reverse_do_out`, which restores the DO's ORIGINAL lots at their ORIGINAL per-lot cost and deletes its `inventory_lot_consumptions` rows so the cancelled sale's COGS leaves the ledger. A hand-written UPDATE would move the quantity back and leave the costing ledger wrong.
 - **The class, for next time.** A nullable link is a nullable guard. Any check whose WHERE clause traverses a link is unable to see rows where the link is missing — audit those by the header, or by the absence itself. And when the owner says the screen disagrees with the check, the screen is the evidence and the check is the hypothesis.
 - **COE:** `docs/unlinked-line-duplicate-coe.md`. **Ref:** #1581, #<PR>. `fix/split-check-sees-unlinked` 2026-08-04.
+
 
 ## 2026-08-03
 
