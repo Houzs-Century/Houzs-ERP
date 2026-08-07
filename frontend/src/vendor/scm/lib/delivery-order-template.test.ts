@@ -364,6 +364,54 @@ describe('Delivery Order — Theme C template', () => {
     expect(spans.some((s) => s.text === 'Note:')).toBe(false);
   });
 
+  test('a stacked logo gets the same presence as a wide one', async () => {
+    /* The handoff's 28.8 x 14.6mm box was sized around 2990's WIDE mark, which
+       fills it edge to edge. Houzs's lockup is stacked and near-square: in a box
+       that flat it is height-bound and lands at half the width — which is what
+       the owner saw on a real Houzs DO (2026-08-07). The height allowance is now
+       20mm, so a square mark covers about the same AREA as the wide one, and a
+       wide mark is untouched. */
+    const drawn: Array<{ w: number; h: number }> = [];
+    const [{ jsPDF }, { default: autoTable }, { renderDeliveryOrderInto }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable'),
+      import('./delivery-order-pdf'),
+    ]);
+
+    const measure = async (width: number, height: number) => {
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+      const addImage = doc.addImage.bind(doc);
+      vi.spyOn(doc, 'addImage').mockImplementation(((...args: unknown[]) => {
+        drawn.push({ w: Number(args[4]), h: Number(args[5]) });
+        return (addImage as (...a: unknown[]) => unknown)(...args);
+      }) as typeof doc.addImage);
+      await renderDeliveryOrderInto(doc, autoTable, HEADER as never, [itemAt(1)] as never, {
+        logo: { ...LOGO, width, height },
+      });
+      return drawn[drawn.length - 1]!;
+    };
+
+    setBrandingCache({ ...BRANDING_2990 }, '2990');
+    const wide = await measure(3508, 1561);   // 2990's mark
+    const square = await measure(1024, 1024); // a stacked lockup
+
+    // The wide mark still fills the box's width exactly — unchanged by the
+    // taller allowance, so 2990's letterhead did not move.
+    expect(wide.w).toBeCloseTo(28.8, 1);
+    expect(wide.h).toBeCloseTo(28.8 / (3508 / 1561), 1);
+
+    // The square one is no longer capped at 14.6mm...
+    expect(square.h).toBeGreaterThan(14.6);
+    // ...and now carries comparable weight: within 15% of the wide mark's area.
+    const ratio = (square.w * square.h) / (wide.w * wide.h);
+    expect(ratio).toBeGreaterThan(0.85);
+    expect(ratio).toBeLessThan(1.15);
+
+    // Neither is distorted.
+    expect(wide.w / wide.h).toBeCloseTo(3508 / 1561, 1);
+    expect(square.w / square.h).toBeCloseTo(1, 1);
+  });
+
   test('the Consignment Note reuse drops the picking columns and keeps its own title', async () => {
     setBrandingCache({ ...BRANDING_2990 }, '2990');
     const [{ jsPDF }, { default: autoTable }, { renderDeliveryOrderInto }] = await Promise.all([
