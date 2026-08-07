@@ -189,6 +189,17 @@ interface PageHeaderProps {
    *  own. Pass `back` on New / Detail / From-X pages; a string routes to that
    *  path instead of history-back (mirrors DetailLayout's `backTo`). */
   back?: boolean | string;
+  /** Optional gate in front of the back button (owner 2026-08-07). Return false
+   *  to cancel the navigation — for a page holding work that leaving would
+   *  destroy. Async so the caller can await its own confirm dialog.
+   *
+   *  This exists because react-router 6 can only block in-app navigation through
+   *  `useBlocker`, which requires a DATA router; this app mounts a plain
+   *  `BrowserRouter` + `<Routes>`, so there is no generic blocker to hang a
+   *  guard on. Guarding the affordances a page actually owns is the honest
+   *  substitute — it is not the same thing, and the left nav / workspace tabs
+   *  remain unguarded. */
+  beforeBack?: () => boolean | Promise<boolean>;
 }
 
 export function PageHeader({
@@ -202,6 +213,7 @@ export function PageHeader({
   dense,
   titleSize = "default",
   back,
+  beforeBack,
 }: PageHeaderProps) {
   const secondary = secondaryActions ?? [];
   const hasSecondary = secondary.length > 0;
@@ -210,7 +222,9 @@ export function PageHeader({
   const navigate = useNavigate();
   // Opt-in back affordance (see the `back` prop doc) — detail-type pages only.
   const showBack = back === true || typeof back === "string";
-  function goBack() {
+  async function goBack() {
+    // The gate runs FIRST and can cancel — see the `beforeBack` prop doc.
+    if (beforeBack && !(await beforeBack())) return;
     if (typeof back === "string") navigate(back);
     else if (window.history.length > 1) navigate(-1);
     else navigate("/");
@@ -298,7 +312,7 @@ export function PageHeader({
         {showBack && (
           <button
             type="button"
-            onClick={goBack}
+            onClick={() => { void goBack(); }}
             aria-label="Back"
             title="Back"
             className="mb-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-ink-muted transition-all hover:-translate-x-0.5 hover:border-accent/50 hover:text-accent sm:mb-2"

@@ -40,7 +40,7 @@ import { enrichVariantKeyRowsWithFabricSupplierCode } from '../lib/fabric-suppli
 import {
   isConsignmentLotSource, isMakeToOrderCategory, distributeAssignedToLots,
 } from '../lib/inventory-movements';
-import { computeVariantKey, effectiveDelivery, type VariantAttrs } from '../shared';
+import { computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
@@ -48,6 +48,30 @@ import type { Env, Variables } from '../env';
 
 export const inventory = new Hono<{ Bindings: Env; Variables: Variables }>();
 inventory.use('*', supabaseAuth);
+
+/* Warehouse types whose stock is NOT part of the sell-through question. A
+   display piece standing in a showroom is doing its job, and a unit sent back to
+   the supplier for service is not idle — neither is a slow seller, and flagging
+   them buries the ones that are. Owner, 2026-08-05: "我的 dead stock 里面怎么会有
+   dead stock 呢？因为它明明是 showroom 的 display 啊".
+   `warehouses.type` already carries this (mig 0171 keeps is_showroom in step with
+   `type = 'showroom'`), so nothing new is stored — the axis was there and dead
+   stock simply never read it. Shared by the ANALYTICS dead-stock list and the
+   LIST's per-SKU Dead/Spare badge: the 2026-08-05 fix reached only the first, so
+   the screen the owner actually looks at kept tagging display pieces DEAD. */
+const NON_SELLING_WAREHOUSE_TYPES = new Set(['showroom', 'display', 'service']);
+
+async function loadNonSellingWarehouseIds(
+  sb: any,
+  c: Parameters<typeof scopeToCompany>[1],
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  const { data } = await scopeToCompany(sb.from('warehouses').select('id, type'), c);
+  for (const w of (data ?? []) as Array<{ id: string; type: string | null }>) {
+    if (NON_SELLING_WAREHOUSE_TYPES.has(String(w.type ?? '').toLowerCase())) ids.add(w.id);
+  }
+  return ids;
+}
 
 /* ── Warehouses CRUD ─────────────────────────────────────────────────── */
 inventory.get('/warehouses', async (c) => {
@@ -483,6 +507,17 @@ inventory.get('/products', async (c) => {
   // unit cost divides owned value by OWNED qty — not total_qty (which still
   // counts consignment units and would dilute the average) (owner 2026-07-25).
   const ownedQty = new Map<string, number>();
+  /* HELD (consignment-sourced) open-lot qty per product_code — the other half of
+     the lot ledger, read straight from the lots (see the split below). */
+  const heldQty = new Map<string, number>();
+  /* HELD (consignment) value — reported SEPARATELY, never inside inventory
+     value. Owner, 2026-08-06: "分成两个 value：一个是 inventory value,一个是
+     consignment value". */
+  const heldValueSen = new Map<string, number>();
+  /* On-hand standing in a NON-SELLING warehouse (showroom / display / service),
+     per product_code. Feeds `sellable_surplus_qty` below so the list's Dead/Spare
+     badge stops calling a display piece idle. */
+  const nonSellingQty = new Map<string, number>();
 
   if (codes.length > 0) {
     // Warehouse-scoped Stock: the totals view is a cross-warehouse rollup, so a
@@ -495,6 +530,24 @@ inventory.get('/products', async (c) => {
         .eq('warehouse_id', warehouseId).in('product_code', batch).range(from, to));
       for (const r of (bal ?? []) as Array<{ product_code: string; qty: number }>) {
         whStock.set(r.product_code, (whStock.get(r.product_code) ?? 0) + Number(r.qty ?? 0));
+      }
+    }
+
+    /* Non-selling on-hand per SKU. Read from the balances rather than the lots so
+       it matches the Stock column's own arithmetic; scoped to the chosen
+       warehouse when there is one, so a showroom view reports all of its stock as
+       non-selling and a KL view reports none of it. Skipped entirely when the
+       company has no showroom/display/service warehouse — the common case. */
+    const nonSellingIds = await loadNonSellingWarehouseIds(sb, c);
+    const scopedNonSelling = warehouseId
+      ? (nonSellingIds.has(warehouseId) ? [warehouseId] : [])
+      : [...nonSellingIds];
+    if (scopedNonSelling.length > 0) {
+      const { data: nsBal } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
+        .from('inventory_balances').select('product_code, qty'), c)
+        .in('warehouse_id', scopedNonSelling).in('product_code', batch).range(from, to));
+      for (const r of (nsBal ?? []) as Array<{ product_code: string; qty: number }>) {
+        nonSellingQty.set(r.product_code, (nonSellingQty.get(r.product_code) ?? 0) + Number(r.qty ?? 0));
       }
     }
 
@@ -589,16 +642,95 @@ inventory.get('/products', async (c) => {
       if (!isConsignmentLotSource(r.source_doc_type, r.source_doc_no)) {
         ownedValueSen.set(r.product_code, (ownedValueSen.get(r.product_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
         ownedQty.set(r.product_code, (ownedQty.get(r.product_code) ?? 0) + Number(r.qty_remaining ?? 0));
+        /* AGE from OWNED lots only. It used to read every open lot, so a row
+           with zero owned stock aged by somebody else's consignment pieces —
+           sorting by Age then buried the goods that had really sat longest.
+           Owner, 2026-08-06: "age 的计算为什么不是根据库存？当我 sort 的时候…
+           我就看不到到底是哪一个东西放得最久". No owned lot → no age. */
+        if (r.received_at) {
+          const cur = oldestLot.get(r.product_code);
+          if (!cur || r.received_at < cur) oldestLot.set(r.product_code, r.received_at);
+        }
+      } else {
+        /* HELD read from the lots directly, not derived as (movement stock −
+           owned lots). The derived form mixed the two ledgers, so whenever they
+           disagreed the held figure absorbed the difference and reported a
+           consignment quantity that no document supports. */
+        heldQty.set(r.product_code, (heldQty.get(r.product_code) ?? 0) + Number(r.qty_remaining ?? 0));
+        heldValueSen.set(r.product_code, (heldValueSen.get(r.product_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
       }
-      if (!r.received_at) continue;
-      const cur = oldestLot.get(r.product_code);
-      if (!cur || r.received_at < cur) oldestLot.set(r.product_code, r.received_at);
     }
   }
 
   const enriched = products.map((p) => {
     const code = String(p.product_code);
-    const stock = warehouseId ? (whStock.get(code) ?? 0) : Number(p.total_qty ?? 0);
+    /* SERVICE SKUs hold no stock — a delivery fee is not a thing on a shelf.
+       They were nonetheless getting the SO-demand aggregates summed onto them,
+       so SVC-DELIVERY read "Scheduled −18 · Unscheduled 20 · Spare −38" as if
+       the warehouse were 38 delivery fees short. Owner, 2026-08-05:
+       "这种 service 都不需要计算 qty 啊".
+       The ROW stays — the list has a SERVICE category chip and removing it would
+       empty that filter — but every quantity on it is reported as zero, because
+       zero is the truth. Classified through the SHARED isServiceLine (item group
+       / category / SVC- code prefix), never a category string compared inline,
+       so this agrees with the DO, GRN and return paths that already exclude
+       service from stock movement. */
+    if (isServiceLine({ itemGroup: (p as { item_group?: string | null }).item_group ?? null,
+                        category: (p as { category?: string | null }).category ?? null,
+                        itemCode: code })) {
+      return {
+        ...p,
+        total_qty: 0, total_value_sen: 0, owned_qty: 0, held_qty: 0,
+        committed_scheduled: 0, unscheduled_qty: 0, reserved_total: 0,
+        available_qty: 0, surplus_qty: 0,
+        sellable_surplus_qty: 0, non_selling_qty: 0,
+        incoming_qty: 0, incoming_pos: [],
+        oldest_lot_at: null,
+      };
+    }
+    /* ONE stock number, used by the column AND by the arithmetic below.
+       ------------------------------------------------------------------
+       These were two different numbers until 2026-08-05, and the row
+       contradicted itself in public: the Stock column showed the LOT ledger
+       (owned open lots) while `available` was computed from the MOVEMENT
+       rollup, so a row could read "1 stock, +1 incoming, −2 scheduled → −1
+       available". Owner: "明明一加一减二等于零,可是它却呈现出来是减一".
+
+       Which ledger to stand on was settled with EVIDENCE, not preference.
+       `reconcile-sku.mjs` walks the actual GRN receipts, DO shipments and
+       returns for a SKU and states what the documents require. Run against the
+       five drifting sofas on 2026-08-05, every one came back the same way:
+
+         XAMMAR-1A(LHF)  documents 0   movement −1 WRONG   lots 0 matches
+         XAMMAR-2A(RHF)  documents 1   movement  0 WRONG   lots 1 matches
+         OMMBUC-1A(LHF)  documents 0   movement −1 WRONG   lots 0 matches
+         OMMBUC-2A(RHF)  documents 0   movement −1 WRONG   lots 0 matches
+
+       So the column was already reading the right side and the arithmetic the
+       wrong one. Both now read the lots.
+
+       THIS IS A COHERENCE FIX, NOT A RULING ON WHICH LEDGER IS RIGHT, and the
+       distinction matters because the repo holds a direct counterexample.
+       `plan-phantom-lots.mjs` opens by stating that for ITS three SKUs "the
+       MOVEMENT ledger — the number the Inventory screen shows and MRP allocates
+       from — is CORRECT on all of them, proven against the documents. The LOT
+       ledger carries units that are not there." That was 2026-08-04, and it was
+       equally evidence-backed.
+
+       So neither ledger is universally correct, and no line of code here can
+       decide which one is. What a row CAN do is stop contradicting itself: one
+       number, shown and computed from. The Stock column already stood on the
+       lots, so the arithmetic follows it there.
+
+       `ledger_mismatch` below is the part that carries the uncertainty to the
+       screen — it marks exactly the rows where either side may be wrong, so a
+       planner reconciles instead of trusting. Hiding the disagreement behind
+       whichever side we picked is how it survived this long. */
+    const lotOwned = Math.round(ownedQty.get(code) ?? 0);
+    const lotHeld = Math.round(heldQty.get(code) ?? 0);
+    const stock = lotOwned + lotHeld;
+    // The movement rollup, kept for comparison only — never for arithmetic.
+    const movementStock = warehouseId ? (whStock.get(code) ?? 0) : Number(p.total_qty ?? 0);
     // OWNED value from the open lots (consignment excluded), for BOTH scopes —
     // replaces the totals-view / v_inventory_value figures, which both counted
     // consignment. Rounded once, mirroring the drawer's buildStockBreakdown.
@@ -606,7 +738,13 @@ inventory.get('/products', async (c) => {
     const committed = committedScheduled.get(code) ?? 0;
     const unsched = unscheduled.get(code) ?? 0;
     const inc = incoming.get(code) ?? 0;
-    const available = stock + inc - committed;
+    /* Arithmetic stands on OWNED only. `stock` (owned + held) is what the row
+       DISPLAYS — the held suffix keeps consignment findable — but a held unit is
+       somebody else's goods and must not read as available or spare. Owner,
+       2026-07-25 and again 2026-08-05 when the one-number unification briefly
+       let held leak into Available/Spare: "consignment 的东西怎么可以放进 my
+       stocks 里面 … 你这样子我会以为我有货" / "好像显得我们还有过量". */
+    const available = lotOwned + inc - committed;
     const pos = (incomingPos.get(code) ?? []).slice().sort((a, b) => byDateAsc(a.eta, b.eta));
     return {
       ...p,
@@ -615,12 +753,41 @@ inventory.get('/products', async (c) => {
       total_value_sen:     value,
       // OWNED qty (consignment excluded) — the divisor for avg unit cost so the
       // average isn't diluted by consignment units carried in total_qty.
-      owned_qty:           Math.round(ownedQty.get(code) ?? 0),
+      owned_qty:           lotOwned,
+      /* HELD, NOT OWNED. total_qty carried consignment units with no way to say
+         so, which is how 12 of the 14 pieces standing in PJ SHOWROOM read as the
+         owner's stock. Owner, 2026-08-05: "consignment 的东西怎么可以放进 my
+         stocks 里面 … 你这样子我会以为我有货". The Stock Breakdown drawer already
+         speaks this language ("CONSIGNMENT — HELD, NOT OWNED").
+         Summed from the consignment lots directly. It used to be derived as
+         (movement stock − owned lots), which mixed the two ledgers so that any
+         disagreement between them was silently reported as consignment stock. */
+      held_qty:            lotHeld,
+      held_value_sen:      Math.round(heldValueSen.get(code) ?? 0),
+      /* The movement rollup and whether it disagrees with the lots. Carried so
+         the screen can MARK a divergent row instead of quietly presenting one
+         ledger as the truth — the divergence is a real data fault
+         (docs/inventory-ledger-divergence-coe.md) and hiding it is how it
+         survived. Never used in any arithmetic. */
+      movement_qty:        movementStock,
+      ledger_mismatch:     movementStock !== stock,
       committed_scheduled: committed,
       unscheduled_qty:     unsched,
       reserved_total:      committed + unsched, // whole open demand (continuity)
       available_qty:       available,
       surplus_qty:         available - unsched,
+      /* Spare that is genuinely IDLE — the same figure with showroom / display /
+         service stock taken out. The Dead/Spare badge reads this one; the Spare
+         column keeps reading `surplus_qty`, which is still the true arithmetic
+         (Available − Unscheduled) and is what the column's tooltip explains.
+         Floored at 0: a SKU whose whole spare is standing in a showroom is not
+         "negatively idle", it simply is not a dead-stock candidate. */
+      /* Held is already out of `available`, and the non-selling balance COUNTS
+         those held units (they stand in the showroom), so subtract only the
+         OWNED portion parked in non-selling warehouses — else held would be
+         removed twice and a real dead-stock candidate could hide. */
+      sellable_surplus_qty: Math.max(0, (available - unsched) - Math.max(0, (nonSellingQty.get(code) ?? 0) - lotHeld)),
+      non_selling_qty:     nonSellingQty.get(code) ?? 0,
       incoming_qty:        inc,
       incoming_pos:        pos,
       oldest_lot_at:       oldestLot.get(code) ?? null,
@@ -946,6 +1113,18 @@ inventory.get('/analytics', async (c) => {
   const lotRows = lots ?? [];
   const cogsRows = cogs ?? [];
 
+  /* WHERE the stock is standing decides whether "no sale" means anything.
+     Owner, 2026-08-05: "我的 dead stock 里面怎么会有 dead stock 呢？因为它明明是
+     showroom 的 display 啊".
+     Dead stock is defined below as "has on-hand value but no sale in the window",
+     which a display piece satisfies FOREVER — standing there IS its job. Same for
+     a unit sent back to the supplier for service. Neither is a slow seller, and
+     flagging them buries the ones that are.
+     `warehouses.type` already carries this (mig 0171 keeps is_showroom in step
+     with `type = 'showroom'`), so nothing new is stored — the axis was there and
+     dead stock simply never read it. */
+  const nonSellingWh = await loadNonSellingWarehouseIds(sb, c);
+
   // Aging buckets (days since lot received).
   const BUCKETS = [
     { key: '0-30', label: '0–30 days', max: 30 },
@@ -957,6 +1136,9 @@ inventory.get('/analytics', async (c) => {
   const aging = BUCKETS.map((b) => ({ key: b.key, label: b.label, qty: 0, valueSen: 0 }));
   // Per-product current on-hand value + name.
   const prod = new Map<string, { name: string; qty: number; valueSen: number }>();
+  /* Same shape as `prod`, but only stock standing in a SELLING warehouse — the
+     population the dead-stock question is actually about. */
+  const sellable = new Map<string, { name: string; qty: number; valueSen: number }>();
   let totalValueSen = 0;
   for (const l of lotRows) {
     // Consignment stock is held, not owned — it shows QUANTITY on the drawer/list
@@ -975,6 +1157,17 @@ inventory.get('/analytics', async (c) => {
     const p = prod.get(code) ?? { name: String(l.product_name ?? code), qty: 0, valueSen: 0 };
     p.qty += qty; p.valueSen += val;
     prod.set(code, p);
+
+    /* Kept SEPARATE from `prod` on purpose. Owned display stock is still the
+       owner's money, so it stays in total value and in the aging buckets (his
+       decision, 2026-08-05) — it is only the DEAD-STOCK question it must not
+       answer. Excluding it from `prod` would have quietly shrunk the valuation
+       too, which is a different and unasked-for change. */
+    if (!nonSellingWh.has(String(l.warehouse_id ?? ''))) {
+      const s = sellable.get(code) ?? { name: String(l.product_name ?? code), qty: 0, valueSen: 0 };
+      s.qty += qty; s.valueSen += val;
+      sellable.set(code, s);
+    }
   }
 
   // Trailing-window COGS per product + all-time last-sold.
@@ -998,8 +1191,10 @@ inventory.get('/analytics', async (c) => {
   const turns = totalValueSen > 0 ? annualizedCogs / totalValueSen : 0;
   const daysOnHand = trailingCogsTotal > 0 ? (totalValueSen * days) / trailingCogsTotal : null;
 
-  // Dead stock — has on-hand value but no sale inside the window.
-  const deadStock = [...prod.entries()]
+  /* Dead stock — has SELLABLE on-hand value but no sale inside the window.
+     Reads `sellable`, not `prod`: a showroom/display/service unit is where it is
+     meant to be, so "never sold" says nothing about it. */
+  const deadStock = [...sellable.entries()]
     .filter(([code]) => !(trailingCogs.get(code) ?? 0))
     .map(([code, p]) => ({
       product_code: code, product_name: p.name, qty: p.qty, valueSen: p.valueSen,

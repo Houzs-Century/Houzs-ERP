@@ -583,7 +583,7 @@ export function ColumnsDrawer({
       <button
         type="button"
         onClick={onReset}
-        title="Restore this layout's columns, order and widths"
+        title="Restore this layout's columns, order, widths and sort"
         className="h-[30px] shrink-0 rounded-lg px-2.5 text-[11.5px] font-semibold text-ink-secondary hover:bg-surface-2 hover:text-ink"
       >
         Reset

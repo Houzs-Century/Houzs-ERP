@@ -1716,7 +1716,7 @@ app.post(
     complained_date?: string | null;
     ref_no?: string | null;
     customer_email?: string | null;
-    service_category?: string | null;
+    service_category?: string | string[] | null;
     assigned_to?: number | null;
   }>();
 
@@ -1827,7 +1827,11 @@ app.post(
     complained_date: trimOrNull(body.complained_date),
     ref_no: trimOrNull(body.ref_no),
     customer_email: trimOrNull(body.customer_email),
-    service_category: trimOrNull(body.service_category),
+    // Multi-select: pass an array straight through (createAssrCase resolves
+    // it against the lookup); trim only the legacy single-string form.
+    service_category: Array.isArray(body.service_category)
+      ? body.service_category
+      : trimOrNull(body.service_category),
     assigned_to: assignedTo,
     created_by: userId,
     // Owner 2026-07-20: 2990 raises Service Cases on the merged platform too.
@@ -2199,7 +2203,7 @@ app.post("/:id/logistics/:logId/archive", requirePermission("service_cases.write
 });
 
 // Attachment archive — hard replacement for the old "delete" wish.
-app.post("/attachments/:attId/archive", requirePermission("service_cases.write"), async (c) => {
+app.post("/attachments/:attId/archive", requireAnyPermission(["service_cases.write", "service_cases.manage"]), async (c) => {
   const attId = parseInt(c.req.param("attId"), 10);
   if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
   const userId = (c as any).get?.("userId") ?? 0;
@@ -3143,7 +3147,7 @@ app.patch("/:id/items/:itemId", requirePermission("service_cases.write"), async 
 const ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "mp4", "mov", "webm", "pdf"]);
 const MAX_SIZE = 25 * 1024 * 1024; // 25 MB
 
-app.put("/:id/attachments", requireAnyPermission(["service_cases.write", "service_cases.create"]), async (c) => {
+app.put("/:id/attachments", requireAnyPermission(["service_cases.write", "service_cases.create", "service_cases.manage"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const userId = (c as any).get?.("userId") ?? 0;
@@ -3190,7 +3194,7 @@ app.put("/:id/attachments", requireAnyPermission(["service_cases.write", "servic
 // at `<r2_key>.thumb`. The frontend uploads it right after the main PUT above;
 // old clients never call this and nothing changes for them. Best-effort by
 // design: a failed thumb never invalidates the already-saved attachment.
-app.put("/:id/attachments/thumb", requireAnyPermission(["service_cases.write", "service_cases.create"]), async (c) => {
+app.put("/:id/attachments/thumb", requireAnyPermission(["service_cases.write", "service_cases.create", "service_cases.manage"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
 

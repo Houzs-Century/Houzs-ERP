@@ -1,0 +1,46 @@
+name: SO-DO drill (read-only)
+
+# Drills one or more Sales Orders into their full SO -> DO -> inventory-movement
+# chain, to judge a suspected DUPLICATE DELIVERY by evidence (owner 2026-08-03,
+# 2990-DO-2607-005 vs -017 on 2990-SO-2606-019). Shows each DO's so_item_id link
+# state, the OUT/IN movements each posted, any return, and per product the net
+# stock-out vs ordered qty. See backend/scripts/check-so-do-drill.mjs.
+#
+# Manual trigger only — a diagnostic question, never a scheduled production read.
+on:
+  workflow_dispatch:
+    inputs:
+      so_docs:
+        description: "comma-separated SO doc_no list to drill"
+        required: false
+        default: "2990-SO-2606-019"
+        type: string
+
+# Own group, never the deploy's: it touches nothing and must not queue behind a
+# release.
+concurrency:
+  group: so-do-drill
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-so-do-drill.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SO_DOCS: ${{ inputs.so_docs }}
+          # GitHub-hosted runners have no IPv6 egress; mirror soak-gate/deploy so
+          # an IPv4-only pooler host resolves.
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -28,10 +28,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@2990s/design-system';
 import {
   useCreateDpOrder,
-  DP_CREATABLE_JOB_TYPES,
-  DP_JOB_TYPE_LABEL,
+  useScheduleDelivery,
+  DP_ENTRY_MENU,
   type DpOrderCreate,
 } from '../lib/delivery-planning-queries';
+import { useMfgSalesOrdersPaged } from '../lib/sales-order-queries';
 import { useSuppliers, useSupplierDetail } from '../lib/suppliers-queries';
 import { useLorries } from '../lib/lorries-queries';
 import { useStockTransfers } from '../lib/stock-queries';
@@ -78,6 +79,17 @@ type ProjectPickRow = {
    master is deliberately NOT scm.suppliers ("a workshop you send a lorry to is
    none of those"), so it needs its own picker rather than reusing the supplier
    one. */
+/* The slice of a service case the ASSR legs need (GET /api/assr → { data }).
+   Only enough to recognise the case in a dropdown — the party comes from the
+   case itself when the board renders the leg. */
+type AssrPickRow = {
+  id: number;
+  assr_no: string;
+  doc_no: string | null;
+  customer_name: string | null;
+  inspection_by?: string | null;
+};
+
 type WorkshopPickRow = {
   id: string;
   code: string | null;
@@ -91,7 +103,21 @@ type WorkshopPickRow = {
 
 export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   const create = useCreateDpOrder();
+  const schedule = useScheduleDelivery();
   const notify = useNotify();
+
+  /* Which of the nine menu entries is selected. The entry — not a job type —
+     is the drawer's mode switch: five of them CREATE a dp_order, four SCHEDULE
+     a document that is already on the board (see DP_ENTRY_MENU for why). */
+  const [entryKey, setEntryKey] = useState<string>(DP_ENTRY_MENU[0].key);
+  const entry = DP_ENTRY_MENU.find((e) => e.key === entryKey) ?? DP_ENTRY_MENU[0];
+  const isSchedule = entry.mode === 'schedule';
+
+  /* Schedule-mode state: which existing document, and the date to write on it.
+     Kept apart from `form` because none of the party fields apply — the
+     document already owns its customer and address. */
+  const [docId, setDocId] = useState('');
+  const [jobDate, setJobDate] = useState('');
 
   const [form, setForm] = useState({
     jobType: 'SETUP' as DpOrderCreate['jobType'],
@@ -115,6 +141,34 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     setForm((s) => ({ ...s, [k]: v }));
 
   const src = sourceMeta(form.jobType);
+
+  /* ── Schedule-mode pickers ───────────────────────────────────────────────
+     Only fetched for the entry that needs them. SOs come from the paged list
+     (newest first, one page is plenty for "which order am I planning today");
+     service cases come from the ASSR list, which lives outside the /api/scm
+     mount like the project list above. */
+  const soQ = useMfgSalesOrdersPaged({ page: 1, pageSize: 200, sort: '-so_date' });
+  const assrQ = useQuery<{ data: AssrPickRow[] }>({
+    queryKey: ['dp-assr-pick'],
+    queryFn: () => api.get<{ data: AssrPickRow[] }>('/api/assr?page=1&per_page=200&exclude_stage=completed'),
+    enabled: isSchedule && entry.scheduleType === 'assr',
+    staleTime: 60_000,
+  });
+
+  const soOptions = useMemo(
+    () => ((soQ.data?.salesOrders ?? []) as Array<Record<string, unknown>>).map((s) => ({
+      value: String(s.doc_no ?? ''),
+      label: `${String(s.doc_no ?? '')}${s.debtor_name ? ` — ${String(s.debtor_name)}` : ''}`,
+    })).filter((o) => o.value !== ''),
+    [soQ.data],
+  );
+  const assrOptions = useMemo(
+    () => (assrQ.data?.data ?? []).map((a) => ({
+      value: String(a.id),
+      label: `${a.assr_no}${a.customer_name ? ` — ${a.customer_name}` : ''}${a.doc_no ? ` · ${a.doc_no}` : ''}`,
+    })),
+    [assrQ.data],
+  );
 
   /* ── Source pickers ──────────────────────────────────────────────────────
      Fetch lazily per kind (enabled-gated) so a drawer opened for a manual
@@ -279,7 +333,36 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     setForm((s) => (dest ? applyWarehouse(dest, { ...s, source: id }) : { ...s, source: id }));
   };
 
+  /* Schedule-mode submit — put a DATE on a document that is already a board row.
+     No dp_order is inserted: the SO/DO and the three ASSR legs are synthesised
+     from their own source, so creating one would double the line or be eaten by
+     the anti-double-count guard. This is the same PATCH the board's own inline
+     date cell fires, which is why the row appears with no further wiring. */
+  const submitSchedule = () => {
+    if (!isSchedule || !docId || !jobDate) return;
+    schedule.mutate(
+      entry.scheduleType === 'assr'
+        ? { type: 'assr', id: docId, scheduleDate: jobDate, jobKind: entry.jobKind }
+        : { type: 'so', id: docId, scheduleDate: jobDate },
+      {
+        onSuccess: () => {
+          notify({
+            title: 'Job scheduled',
+            body: `${entry.label} on ${jobDate}. It is on the board — assign a lorry and crew there.`,
+          });
+          onClose();
+        },
+        onError: (err) => notify({
+          title: 'Could not schedule',
+          body: err instanceof Error ? err.message : 'Something went wrong.',
+          tone: 'error',
+        }),
+      },
+    );
+  };
+
   const submit = () => {
+    if (isSchedule) { submitSchedule(); return; }
     const body: DpOrderCreate = { jobType: form.jobType };
     const ref = form.source.trim();
     if (ref) {
@@ -348,17 +431,22 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
           <label style={fieldRow}>
             <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Job type</div>
             <select className={styles.searchInput} style={inputStyle}
-              value={form.jobType}
+              value={entryKey}
               onChange={(e) => {
                 // A supplier id is meaningless on a SETUP and vice versa — and
                 // so is the party the old source prefilled (a venue name must
                 // not survive into "Supplier name" as a would-be override).
-                // Switching type clears the pick AND the party fields;
-                // date/remark stay, they are type-agnostic.
-                const jobType = e.target.value as DpOrderCreate['jobType'];
+                // Switching entry clears the pick AND the party fields;
+                // date/remark stay, they are type-agnostic. The schedule-mode
+                // document + date clear too — an SO number is not a service case.
+                const key = e.target.value;
+                const next = DP_ENTRY_MENU.find((x) => x.key === key) ?? DP_ENTRY_MENU[0];
+                setEntryKey(key);
+                setDocId('');
+                setJobDate('');
                 setForm((s) => ({
                   ...s,
-                  jobType,
+                  jobType: next.mode === 'create' ? next.jobType : s.jobType,
                   source: '',
                   // Same reasoning for the serviced lorry: it only means
                   // anything on a LORRY_SERVICE, so it clears with the rest.
@@ -370,9 +458,80 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 }));
                 setPrefilledFor(null);
               }}>
-              {DP_CREATABLE_JOB_TYPES.map((t) => <option key={t} value={t}>{DP_JOB_TYPE_LABEL[t]}</option>)}
+              {DP_ENTRY_MENU.map((e) => <option key={e.key} value={e.key}>{e.label}</option>)}
             </select>
           </label>
+
+          {/* ── Schedule mode — put a date on a document that already exists ──
+              Deliberately a MUCH shorter body: there is no party to fill in,
+              because the sales order or the service case already owns its
+              customer and address. The panel says so, so the next reader does
+              not go looking for the address fields. */}
+          {isSchedule ? (
+            <>
+              <div style={{
+                margin: 'var(--space-2) 0 var(--space-3)', padding: 'var(--space-2)',
+                background: 'rgba(31, 94, 115, 0.08)', borderRadius: '6px',
+                fontSize: 'var(--fs-12)', lineHeight: 1.5,
+              }}>
+                This job already exists — {entry.scheduleType === 'assr' ? 'the service case' : 'the sales order'} is its
+                document. Picking a date puts it on the board; the customer and address
+                come from the document, and nothing new is created.
+              </div>
+
+              <label style={fieldRow}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
+                  {entry.scheduleType === 'assr' ? 'Service case' : 'Sales order'}{' '}
+                  <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}>— required</span>
+                </div>
+                {entry.scheduleType === 'assr' ? (
+                  assrQ.isError ? (
+                    <input className={styles.searchInput} style={inputStyle}
+                      placeholder="service case id — the case list could not be loaded"
+                      value={docId} onChange={(e) => setDocId(e.target.value)} />
+                  ) : (
+                    <SearchableSelect
+                      value={docId}
+                      onChange={setDocId}
+                      options={assrOptions}
+                      placeholder={assrQ.isLoading ? 'Loading service cases…' : 'Search by ASSR no, customer or SO…'}
+                      className={styles.searchInput}
+                      ariaLabel="Service case"
+                    />
+                  )
+                ) : soQ.isError ? (
+                  <input className={styles.searchInput} style={inputStyle}
+                    placeholder="SO No. — the order list could not be loaded"
+                    value={docId} onChange={(e) => setDocId(e.target.value)} />
+                ) : (
+                  <SearchableSelect
+                    value={docId}
+                    onChange={setDocId}
+                    options={soOptions}
+                    placeholder={soQ.isLoading ? 'Loading sales orders…' : 'Search by SO no or customer…'}
+                    className={styles.searchInput}
+                    ariaLabel="Sales order"
+                  />
+                )}
+                {entry.key === 'ASSR_INSPECTION' && (
+                  <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>
+                    An inspection reaches the board only when the case is inspected by our
+                    own team — on a supplier-inspected case the date is kept but no fleet
+                    job appears, because we do not dispatch for someone else's inspection.
+                  </div>
+                )}
+              </label>
+
+              <label style={fieldRow}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
+                  Job date <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}>— required</span>
+                </div>
+                <input type="date" className={styles.searchInput} style={inputStyle}
+                  value={jobDate} onChange={(e) => setJobDate(e.target.value)} />
+              </label>
+            </>
+          ) : (
+          <>
 
           <label style={fieldRow}>
             <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>{src.label} <span style={{ textTransform: 'none', color: 'var(--c-muted, #767b6e)' }}>— optional</span></div>
@@ -533,18 +692,26 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
             <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Remark</div>
             <input className={styles.searchInput} style={inputStyle} value={form.remark} onChange={(e) => set('remark', e.target.value)} />
           </label>
+          </>
+          )}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
           <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
-          {/* A lorry service with no lorry, or a transfer with no destination,
-              is not a job anyone can act on — so the button says no rather than
-              the server rejecting it later. */}
+          {/* Every entry has one thing it cannot do without — a lorry for a
+              service, a destination for a transfer, a document and a date for
+              anything being scheduled. The button says no rather than letting
+              the server reject it, or worse, accept a job nobody can act on.
+              The LABEL changes too: "Create" would be a lie in schedule mode,
+              where nothing is created. */}
           <Button variant="primary" size="md" onClick={submit}
-            disabled={create.isPending
-              || (form.jobType === 'LORRY_SERVICE' && !form.lorryId.trim())
-              || (form.jobType === 'TRANSFER' && !form.warehouseId.trim())}>
-            {create.isPending ? 'Creating…' : 'Create DP Order'}
+            disabled={create.isPending || schedule.isPending
+              || (isSchedule && (!docId || !jobDate))
+              || (!isSchedule && form.jobType === 'LORRY_SERVICE' && !form.lorryId.trim())
+              || (!isSchedule && form.jobType === 'TRANSFER' && !form.warehouseId.trim())}>
+            {isSchedule
+              ? (schedule.isPending ? 'Scheduling…' : 'Schedule job')
+              : (create.isPending ? 'Creating…' : 'Create DP Order')}
           </Button>
         </div>
       </div>

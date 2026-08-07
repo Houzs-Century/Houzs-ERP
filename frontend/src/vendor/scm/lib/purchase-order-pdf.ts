@@ -20,7 +20,7 @@
 //   │                                 Purchase Loc.: WH-KL · Main WH   │
 //   │                                 Page         : 1 of N            │
 //   ├──────────────────────────────────────────────────────────────────┤
-//   │ Transf. SO | Supplier Code | Description | UOM | Qty | U/Price │
+//   │ For SO     | Supplier Code | Description | UOM | Qty | U/Price │
 //   │            |               |             |     |     | Disc | Total
 //   │  (Supplier Code = SUPPLIER code, bold. Description = model +
 //   │   composition + supplier colour (our code) + variant attrs +
@@ -43,7 +43,7 @@ import {
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { drawSofaLayout } from './sofa-layout-pdf';
-import { COMPANY, amountInWordsMyr, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp } from './pdf-common';
+import { COMPANY, amountInWordsMyr, deliverPdf, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, safeName, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { poDisplayNumber } from './po-status';
 import {
@@ -125,9 +125,13 @@ type PoItem = {
   description?:   string | null;
   description2?:  string | null;
   variants?:      Record<string, unknown> | null;
-  /** 2026-06-12 — "Transferred SO" column. GET /mfg-purchase-orders/:id
-      stamps each line's source SO doc_no (so_item_id → mfg_sales_order_items
-      → doc_no). Null for manually-added / MRP / consignment lines. */
+  /** "For SO" provenance column (relabelled from "Transf. SO", owner
+      2026-08-07). GET /mfg-purchase-orders/:id stamps each line's source SO
+      doc_no from the STORED link (so_item_id → mfg_sales_order_items →
+      doc_no). Null for manually-added / MRP / consignment lines. Stored
+      provenance only — a printed document is a snapshot, so it must never
+      carry a floating MRP/READY pairing (Decision, owner 2026-08-06:
+      docs/modules/purchase-order.md). */
   so_doc_no?:     string | null;
 };
 
@@ -282,7 +286,7 @@ async function renderPurchaseOrderInto(
     ?? (lineSoDocs.length > 0 ? lineSoDocs.join(', ') : noteSoDocs);
   // When the whole PO traces to exactly ONE source SO (the note lists a single
   // doc, no comma) a line with no per-line link falls back to it, so the
-  // "Transf. SO" column reads that SO instead of a dash. Multi-SO POs keep the
+  // "For SO" column reads that SO instead of a dash. Multi-SO POs keep the
   // dash per line (all SOs are already listed in Your Ref No above).
   const singleSourceSo = (!lineSoDocs.length && noteSoDocs && !noteSoDocs.includes(',')) ? noteSoDocs : '';
 
@@ -355,7 +359,13 @@ async function renderPurchaseOrderInto(
   // Supplier-facing layout (Commander 2026-06-16 — dropped the standalone "Our
   // Code" column: our model already reads inside the Description, and the SO
   // this PO serves now leads the row):
-  //   Transf. SO    = the source S/O this line fulfils, FIRST column
+  //   For SO        = stored PROVENANCE, first column — the S/O this line was
+  //                   bought for (so_doc_no / single-source note fallback).
+  //                   Relabelled from "Transf. SO" (owner 2026-08-07): the
+  //                   wording must read as provenance, not as an execution
+  //                   binding — pre-DO pairing is decided live by the MRP
+  //                   allocator and must never print (Decision, owner
+  //                   2026-08-06, docs/modules/purchase-order.md).
   //   Supplier Code = SUPPLIER's code, bold (the code they act on)
   //   Description   = name/model + composition (description2) + Specs
   //                   (unified fabric format "CG-001 Pearl (KN390-1)" +
@@ -426,7 +436,7 @@ async function renderPurchaseOrderInto(
   autoTable(doc, {
     startY: y,
     head: [[
-      'Transf. SO', 'Supplier Code', 'Description', 'UOM', 'Qty',
+      'For SO', 'Supplier Code', 'Description', 'UOM', 'Qty',
       `U/Price ${header.currency}`, 'Disc.', `Total ${header.currency}`,
     ]],
     body: rows,
@@ -437,7 +447,7 @@ async function renderPurchaseOrderInto(
     bodyStyles: { valign: 'top' },
     // Widths sum to 180mm — fits the A4 printable width (210 − 14×2 = 182).
     columnStyles: {
-      0: { cellWidth: 25 },                    // Transf. SO — fits "SO-2606-001" on one line
+      0: { cellWidth: 25 },                    // For SO — fits "SO-2606-001" on one line
       1: { cellWidth: 27, fontStyle: 'bold' }, // Supplier Code (the code they act on)
       2: { cellWidth: 'auto' },                // Description — auto-fills (≈68mm with margin 10)
       3: { cellWidth: 11 },                    // UOM
@@ -670,15 +680,20 @@ function finalizePoPdf(doc: JsPdf): void {
 export async function generatePurchaseOrderPdf(
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string },
+  opts?: { docTitle?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const { supplierName } = await renderPurchaseOrderInto(doc, autoTable, header, items, opts);
   finalizePoPdf(doc);
-  const safeName = supplierName.replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 32);
-  doc.save(`${poDisplayNumber(header.po_number, header.revision)}-${safeName}.pdf`);
+  // Was a private copy of the old ASCII-only scrub — a China supplier's name is
+  // exactly the case it destroyed, and the PO is the document that goes to them.
+  deliverPdf(
+    doc,
+    `${poDisplayNumber(header.po_number, header.revision)}-${safeName(supplierName)}.pdf`,
+    opts?.action,
+  );
 }
 
 /* The SAME PO PDF, returned as raw base64 instead of downloaded — for emailing it
@@ -706,7 +721,7 @@ export async function purchaseOrderPdfBase64(
    "Page p of N" footer. */
 export async function generateCombinedPurchaseOrderPdf(
   pos: Array<{ header: PoHeader; items: PoItem[] }>,
-  opts?: { docTitle?: string; fileName?: string },
+  opts?: { docTitle?: string; fileName?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -716,5 +731,5 @@ export async function generateCombinedPurchaseOrderPdf(
     await renderPurchaseOrderInto(doc, autoTable, pos[i]!.header, pos[i]!.items, opts);
   }
   finalizePoPdf(doc);
-  doc.save(opts?.fileName ?? 'purchase-orders.pdf');
+  deliverPdf(doc, opts?.fileName ?? 'purchase-orders.pdf', opts?.action);
 }

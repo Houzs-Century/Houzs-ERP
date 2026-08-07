@@ -1276,14 +1276,27 @@ export interface ListProjectsFilters {
   brand?: string;
   event_type_id?: number;
   search?: string;
-  year?: number;
-  month?: number;  // 1-12, filters on start_date
+  /** Year(s) on start_date. `number` for legacy single-value callers, or a
+   *  comma-separated string for the multi-select picker (owner 2026-08-07). */
+  year?: number | string;
+  /** Month(s) 1-12 on start_date. Single number or comma-separated list. */
+  month?: number | string;
   state?: string;
   /** Active tasklist section name (mig 050). When set, the list only
    *  returns projects whose lowest-sort_order section with open tasks
    *  matches. Special values: "__done" = all sections complete; "__none"
    *  = project has no sections defined. */
   section?: string;
+  /** Checklist TASK titles that must still be OUTSTANDING — COMMA-SEPARATED,
+   *  multi-select since 2026-08-07 (owner: "make it can click multiple choice.
+   *  and once export will export what already tick only"). Returns projects
+   *  where AT LEAST ONE of these tasks has status not in (done, na) — the
+   *  useful reading of "show me events still missing any of these". When set,
+   *  each row also carries `task_pending_map` ('title=status' pairs joined by
+   *  '|') for every ticked title, so the Excel export can render one column per
+   *  ticked task. Exact title match (the picker feeds canonical template
+   *  titles, none of which contain a comma or '='). */
+  task_pending?: string;
   /** Project status filter (mig 088 palette): "confirmed" | "pending" |
    *  "cancelled". Pushed server-side so the list stays paginated even while
    *  a status pill is active (was previously filtered client-side over a
@@ -1343,6 +1356,11 @@ export interface ListProjectsFilters {
   pending_sales_attending?: boolean;
   /** Agreement/Quotation on its own timeline (Super Admin / weisiang). */
   pending_agreement?: boolean;
+  /** Defect clean-or-replace review (Storekeeper Supervisor / Shukor, owner
+   *  2026-08-07): projects with >=1 live defect-list attachment whose LATEST
+   *  timeline entry is neither 'done' nor 'replace' — i.e. a fresh upload the
+   *  reviewer has not triaged yet. Not a checklist item; own predicate. */
+  pending_defect_review?: boolean;
   /** Multi-company (mig-pg 0093): the ACTIVE company (activeCompanyId(c)).
    *  When set the list is isolated to that company; undefined (company
    *  context unresolved — pre-migration / D1 test mirror) = no predicate. */
@@ -1364,6 +1382,10 @@ export interface ListProjectsFilters {
    *  setup/dismantle time+crew), not a checklist item — when set,
    *  my_pending_titles carries the matching arrangement step instead. */
   pending_titles_logistic?: boolean;
+  /** Defect-review pending is derived from the attachment timeline, not a
+   *  checklist item — when set, my_pending_titles carries a "Review Defect
+   *  Items" chip (every row in this lane is here because of a fresh defect). */
+  pending_titles_defect_review?: boolean;
 }
 
 // Allow-listed sort columns for the project list. The default (when
@@ -1388,6 +1410,16 @@ const PROJECT_SORT_MAP: Record<string, string> = {
   pic_name: "pic.name",
   created_by_name: "cb.name",
 };
+
+/** Split a filter value that may be a COMMA-SEPARATED multi-select list (owner
+ *  2026-08-07). Accepts the number|string the filters already carry, trims,
+ *  drops blanks, and de-dupes — so `IN (…)` never gets an empty or repeated
+ *  placeholder. A single value yields a one-element list, which keeps every
+ *  pre-existing single-select caller behaving identically. */
+function csvList(v: string | number | null | undefined): string[] {
+  if (v == null) return [];
+  return [...new Set(String(v).split(",").map((s) => s.trim()).filter(Boolean))];
+}
 
 export async function listProjects(env: Env, f: ListProjectsFilters) {
   const where: string[] = [];
@@ -1424,25 +1456,38 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     );
     binds.push(todayMyt());
   }
-  if (f.brand) {
-    where.push("p.brand = ?");
-    binds.push(f.brand);
+  // brand / status / year / month accept COMMA-SEPARATED lists since
+  // 2026-08-07 (owner: "add multiple choice for all dropdown also"). A single
+  // value still behaves exactly as before — csvList() yields one element and
+  // the IN (?) collapses to equality.
+  const brandList = csvList(f.brand);
+  if (brandList.length) {
+    where.push(`p.brand IN (${brandList.map(() => "?").join(",")})`);
+    binds.push(...brandList);
   }
-  if (f.status) {
-    where.push("p.status = ?");
-    binds.push(f.status);
+  const statusList = csvList(f.status);
+  if (statusList.length) {
+    where.push(`p.status IN (${statusList.map(() => "?").join(",")})`);
+    binds.push(...statusList);
   }
   if (f.event_type_id != null) {
     where.push("p.event_type_id = ?");
     binds.push(f.event_type_id);
   }
-  if (f.year) {
-    where.push("strftime('%Y', p.start_date) = ?");
-    binds.push(String(f.year));
+  // Year / month are numeric lists. Non-numeric or out-of-range entries are
+  // dropped rather than bound, so a hand-edited URL can't inject nonsense.
+  const yearList = csvList(f.year).filter((y) => /^\d{4}$/.test(y));
+  if (yearList.length) {
+    where.push(`strftime('%Y', p.start_date) IN (${yearList.map(() => "?").join(",")})`);
+    binds.push(...yearList);
   }
-  if (f.month && f.month >= 1 && f.month <= 12) {
-    where.push("strftime('%m', p.start_date) = ?");
-    binds.push(String(f.month).padStart(2, "0"));
+  const monthList = csvList(f.month)
+    .map((m) => parseInt(m, 10))
+    .filter((m) => Number.isFinite(m) && m >= 1 && m <= 12)
+    .map((m) => String(m).padStart(2, "0"));
+  if (monthList.length) {
+    where.push(`strftime('%m', p.start_date) IN (${monthList.map(() => "?").join(",")})`);
+    binds.push(...monthList);
   }
   if (f.state) {
     where.push("p.state = ?");
@@ -1566,12 +1611,13 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                                                         AND da.archived_at IS NULL)))))`
     );
     pendingBinds.push(dueToday);
-    // Defect ACTIONING (owner 2026-07-29): every uploaded defect-list file is
-    // the purchaser task until its LATEST timeline entry is done — Ongoing
-    // keeps it pending, Done clears it; a later Ongoing entry reopens it.
-    // Timeline-gated to events that ended within the last 30 days so the
-    // historical backlog (41 old events with defect uploads predating this
-    // feature) does not flood the lane. One bind (defectSince).
+    // Defect ACTIONING (owner 2026-07-29; two-stage 2026-08-07): a defect-list
+    // file reaches the PURCHASER only once the Storekeeper Supervisor (Shukor)
+    // has ESCALATED it — its LATEST timeline entry is 'replace'. He resolves
+    // clean-able ones himself with 'done' (they never reach here); the purchaser
+    // then closes a replace with 'done'. Timeline-gated to events that ended
+    // within the last 30 days so the historical backlog does not flood the lane.
+    // One bind (defectSince).
     const defectSince = (() => {
       const d = new Date(`${dueToday}T00:00:00Z`);
       d.setUTCDate(d.getUTCDate() - 30);
@@ -1587,7 +1633,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                   AND COALESCE((SELECT act.status
                                   FROM project_checklist_attachment_actions act
                                  WHERE act.attachment_id = da.id
-                                 ORDER BY act.id DESC LIMIT 1), '') <> 'done'))`
+                                 ORDER BY act.id DESC LIMIT 1), '') = 'replace'))`
     );
     pendingBinds.push(defectSince);
   } else if (f.pending_label) {
@@ -1600,6 +1646,32 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                   AND pc.role_label LIKE ? AND ${NOT_IN_REVIEW} AND ${DUE_GATE})`
     );
     pendingBinds.push(`%${f.pending_label}%`, dueToday);
+  }
+  if (f.pending_defect_review) {
+    // Defect clean-or-replace REVIEW (owner 2026-08-07): the Storekeeper
+    // Supervisor's lane (Shukor). A live defect-list attachment whose LATEST
+    // timeline entry is neither 'done' (he cleaned it) nor 'replace' (he
+    // escalated it to the purchaser) is a fresh upload awaiting his triage.
+    // Same 30-day window as the purchaser arm so the pre-feature backlog stays
+    // out. One bind (reviewSince).
+    const reviewSince = (() => {
+      const d = new Date(`${dueToday}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - 30);
+      return d.toISOString().slice(0, 10);
+    })();
+    pendingOr.push(
+      `(substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?
+        AND EXISTS (SELECT 1 FROM project_checklist dl
+                JOIN project_checklist_attachments da
+                  ON da.item_id = dl.id AND da.archived_at IS NULL
+                WHERE dl.project_id = p.id
+                  AND (dl.title LIKE 'Defect List%' OR dl.title LIKE 'Defect Item%')
+                  AND COALESCE((SELECT act.status
+                                  FROM project_checklist_attachment_actions act
+                                 WHERE act.attachment_id = da.id
+                                 ORDER BY act.id DESC LIMIT 1), '') NOT IN ('done', 'replace')))`
+    );
+    pendingBinds.push(reviewSince);
   }
   if (f.pending_title) {
     pendingOr.push(
@@ -1680,20 +1752,30 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     )
   )`;
 
-  if (f.exclude_done && f.section !== "__done") {
+  // Hide-completed stands down when the caller explicitly asked for the
+  // Completed bucket — checked against the whole multi-pick, not just an exact
+  // "__done" (owner 2026-08-07 made section a list).
+  if (f.exclude_done && !csvList(f.section).includes("__done")) {
     where.push(`NOT ${SECTION_DONE_PREDICATE}`);
   }
 
-  if (f.section) {
-    if (f.section === "__done") {
-      where.push(SECTION_DONE_PREDICATE);
-    } else if (f.section === "__none") {
-      where.push(
+  // Section accepts a COMMA-SEPARATED list too (owner 2026-08-07). The two
+  // sentinels stay meaningful inside a multi-pick: "__done" (everything
+  // complete) and "__none" (no sections defined) become OR-ed alternatives
+  // alongside the real section names, so "OPERATION or Completed" works.
+  const sectionList = csvList(f.section);
+  if (sectionList.length) {
+    const names = sectionList.filter((s) => s !== "__done" && s !== "__none");
+    const ors: string[] = [];
+    if (sectionList.includes("__done")) ors.push(SECTION_DONE_PREDICATE);
+    if (sectionList.includes("__none")) {
+      ors.push(
         `NOT EXISTS (SELECT 1 FROM project_checklist_sections s WHERE s.project_id = p.id)`
       );
-    } else {
+    }
+    if (names.length) {
       // Match the active section (lowest sort_order with open tasks).
-      where.push(
+      ors.push(
         `(
            SELECT s.name FROM project_checklist_sections s
             WHERE s.project_id = p.id
@@ -1704,10 +1786,29 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                    AND c.status NOT IN ('done','na')
               )
             ORDER BY s.sort_order LIMIT 1
-         ) = ?`
+         ) IN (${names.map(() => "?").join(",")})`
       );
-      binds.push(f.section);
     }
+    where.push(`(${ors.join(" OR ")})`);
+    binds.push(...names);
+  }
+  // Outstanding-task filter (owner 2026-08-05, multi-select 2026-08-07): keep
+  // events where AT LEAST ONE of the ticked tasks is still open. Deliberately
+  // not `NOT EXISTS(... done ...)` — an event that never had the task at all is
+  // not "incomplete", it is out of scope.
+  const taskPendingList = (f.task_pending ?? "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (taskPendingList.length) {
+    const ph = taskPendingList.map(() => "?").join(",");
+    where.push(
+      `EXISTS (SELECT 1 FROM project_checklist tp
+                WHERE tp.project_id = p.id
+                  AND tp.title IN (${ph})
+                  AND tp.status NOT IN ('done','na'))`
+    );
+    binds.push(...taskPendingList);
   }
   if (f.search) {
     // Restore mobile client-search coverage lost when the PMS list moved to
@@ -1858,7 +1959,24 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                    AND COALESCE(p.dismantle_crew, '') IN ('', '{}')
                 THEN 'Arrange Dismantle Time and Crew'
             END as my_pending_titles`
+      : f.pending_titles_defect_review
+      ? `,
+            'Review Defect Items' as my_pending_titles`
       : "";
+
+  // Outstanding-task column (owner 2026-08-05; multi 2026-08-07) — only when
+  // the filter is on. One 'title=status' pair per TICKED task, '|'-joined, so
+  // the export renders a column per ticked task and Excel can be filtered on
+  // each. Titles are BOUND, never interpolated.
+  const taskPendingCols = taskPendingList.length
+    ? `,
+            (SELECT group_concat(tp2.title || '=' || tp2.status, '|')
+               FROM project_checklist tp2
+              WHERE tp2.project_id = p.id
+                AND tp2.title IN (${taskPendingList.map(() => "?").join(",")})) as task_pending_map`
+    : "";
+  // SELECT-list binds come BEFORE the WHERE binds in prepare() order.
+  const taskPendingBinds = taskPendingList.length ? [...taskPendingList] : [];
 
   const rows = await env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.stage, p.status, p.brand,
@@ -1928,7 +2046,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                 AND (c.status IN ('done', 'na')
                      OR EXISTS (SELECT 1 FROM project_checklist_attachments a
                                  WHERE a.item_id = c.id
-                                   AND a.archived_at IS NULL))) as sales_tasks_done${pendingTitlesCol}
+                                   AND a.archived_at IS NULL))) as sales_tasks_done${pendingTitlesCol}${taskPendingCols}
        FROM projects p
        LEFT JOIN project_event_types et ON et.id = p.event_type_id
        LEFT JOIN project_finance pf ON pf.project_id = p.id
@@ -1951,7 +2069,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
      ${orderBy}
      LIMIT ? OFFSET ?`
   )
-    .bind(...binds, perPage, offset)
+    .bind(...taskPendingBinds, ...binds, perPage, offset)
     .all();
 
   return {

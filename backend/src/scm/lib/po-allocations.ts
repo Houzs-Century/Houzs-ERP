@@ -111,3 +111,22 @@ export function resequenceAfterDelete(
     a seq past 99 simply prints wider rather than lying. */
 export const allocationSubNumber = (poNumber: string | null | undefined, seq: number): string =>
   `${poNumber ?? ''}-${String(seq).padStart(2, '0')}`;
+
+/** The un-allocated remainder of a line, as a STOCK release plan.
+ *
+ *  Used when a supplier CANNOT follow an SO revision (the follow-up PO
+ *  amendment is rejected): the goods will arrive as originally ordered, so
+ *  whatever the line has not already sliced out is re-pointed to STOCK — the
+ *  owner's rule, 2026-08-06: a spec mismatch is a FACT, not a decision ("他就
+ *  变了"). Returns null when the line is already fully allocated (nothing left
+ *  to release — existing slices are somebody's deliberate split and are not
+ *  touched). */
+export function planStockRelease(
+  lineQty: number,
+  existing: AllocationRow[],
+): { seq: number; qty: number } | null {
+  const allocated = existing.reduce((s, a) => s + Number(a.qty ?? 0), 0);
+  const remaining = Math.max(0, Number(lineQty ?? 0) - allocated);
+  if (remaining <= 0) return null;
+  return { seq: existing.length + 1, qty: remaining };
+}

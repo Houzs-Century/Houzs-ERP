@@ -53,6 +53,8 @@ import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -202,7 +204,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
 
   const headerView = headerDraft ?? headerSnapshot(grn);
 
-  const handlePrint = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     // A consignment receive has no QC accept/reject — accepted = received.
     const pdfHeader = {
       grn_number: grn.grn_number,
@@ -222,11 +224,12 @@ export const PurchaseConsignmentReceiveDetail = () => {
       rejection_reason: null,
       unit_price_centi: it.unit_price_centi,
     }));
-    import('../../vendor/scm/lib/grn-pdf')
+    return import('../../vendor/scm/lib/grn-pdf')
       .then(({ generateGrnPdf }) =>
-        generateGrnPdf(pdfHeader as never, pdfItems as never, { docTitle: 'CONSIGNMENT RECEIVE', docNoLabel: 'Receive No' }))
+        generateGrnPdf(pdfHeader as never, pdfItems as never, { docTitle: 'CONSIGNMENT RECEIVE', docNoLabel: 'Receive No', action }))
       .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(grn)), [k]: v }));
@@ -330,9 +333,22 @@ export const PurchaseConsignmentReceiveDetail = () => {
             </div>
             <StatusPill docType="grn" status={grn.status} />
             <RelationshipMapButton type="pcr" id={grn.id} />
-            <Button variant="ghost" size="md" onClick={handlePrint}>
+            <Button variant="ghost" size="md" onClick={print.openPreview}>
               <Printer {...ICON} /><span>Print PDF</span>
             </Button>
+            <PrintPreviewModal
+              open={print.open}
+              onClose={print.close}
+              docTitle="Consignment Receive"
+              docNo={grn.grn_number}
+              rows={[
+                { label: 'Supplier', value: grn.supplier?.name ?? grn.supplier?.code ?? '—' },
+                { label: 'Received', value: grn.received_at ? fmtDateOrDash(grn.received_at) : '—' },
+                { label: 'Items', value: `${items.length} line${items.length === 1 ? '' : 's'}` },
+                { label: 'Goods value', value: fmtRm(grandTotal, grn.currency) },
+              ]}
+              {...print.handlers}
+            />
             {grn.status === 'POSTED' && !isEditing && (
               <Button variant="ghost" size="md"
                 onClick={() => navigate(`/scm/purchase-consignment-returns/new?fromPcReceive=${grn.id}`)}>

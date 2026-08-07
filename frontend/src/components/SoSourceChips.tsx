@@ -23,7 +23,7 @@
 // rule applies to LIST header cells only).
 
 import { showDeliveredQty, sourcePoTitle, StockAdjChip } from "./DocumentLinesExpansion";
-import { formatDate } from "../lib/utils";
+import { cn, formatDate } from "../lib/utils";
 
 export type ReadySourceChip = {
   po: string | null;
@@ -78,6 +78,13 @@ export function SoStockPill({ line }: { line: SoLineSourceFields }) {
 const chipBase =
   "rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink";
 
+/* Soft-until-DO (Decision, docs/modules/purchase-order.md 2026-08-06): only a
+   SHIPPED source is anchored history and earns the solid chip. READY
+   projections and incoming MRP coverage are floating — live, recomputed on
+   every view — so they wear the dashed identity the other surfaces use. */
+const floatingChipBase =
+  "rounded border border-dashed border-border px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary";
+
 export function SoSourceChips({ line }: { line: SoLineSourceFields }) {
   const shippedPos = line.shipped_source_pos ?? [];
   const shippedSet = new Set(shippedPos);
@@ -112,8 +119,8 @@ export function SoSourceChips({ line }: { line: SoLineSourceFields }) {
       {readyPoChips.map((r) => (
         <span
           key={`r-${r.po}`}
-          title={`${sourcePoTitle(r.po as string)} READY — the allocated stock sits in this PO's batch (FIFO projection of what the delivery will consume).`}
-          className={chipBase}
+          title={`${sourcePoTitle(r.po as string)} READY — a live FIFO projection of the batch the delivery would consume, recomputed on every view; the Delivery Order decides the actual batch.`}
+          className={floatingChipBase}
         >
           {r.po}
           {showDeliveredQty(r.qty, readyPoChips.length + shippedPos.length) && (
@@ -123,7 +130,10 @@ export function SoSourceChips({ line }: { line: SoLineSourceFields }) {
       ))}
       {anyAdj && <StockAdjChip />}
       {showIncoming && (
-        <span className="whitespace-nowrap font-mono text-[11px] font-semibold text-accent-ink">
+        <span
+          title="Incoming — live MRP coverage for the un-arrived remainder, recomputed on every view; it moves as demand moves."
+          className={cn(floatingChipBase, "whitespace-nowrap font-mono")}
+        >
           {incomingPo}
           {line.coverage_eta ? ` · ETA ${formatDate(line.coverage_eta)}` : ""}
         </span>

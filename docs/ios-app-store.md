@@ -16,6 +16,11 @@ Three things still need saying before the steps.
 
 ## 1. There is no iOS app today. There is a website that behaves like one.
 
+**SUPERSEDED since this was written:** the Capacitor shell now EXISTS at
+`native/` (see `native/README.md`) and `.github/workflows/ios-build.yml` builds
+it unsigned in CI. The rest of this section's reasoning still holds; only the
+"nothing exists that could be submitted" claim is stale.
+
 `frontend/src/mobile` is a **mobile web surface** of the same React/Vite SPA the
 desktop uses, served by the same Cloudflare Worker. The address bar in your own
 screenshot reads `erp.houzscentury.com`. There is no Xcode project, no Capacitor,
@@ -133,6 +138,17 @@ Channel: **Custom App via Apple Business Manager, redemption-code link.**
 
 ### Phase 1 — accounts (days to weeks, [owner])
 
+**STATUS, 2026-08-06: D-U-N-S request SUBMITTED.** Via Apple's lookup form,
+signed in as the owner's Apple ID (`weisiang329@gmail.com` — the company-Apple-ID
+question below is NOT yet settled by this; a D-U-N-S belongs to the company, not
+the Apple ID that requested it). D&B had no existing record for the company, so a
+new request went in with the SSM particulars: HOUZS CENTURY SDN. BHD.,
+202201031135 (1476832-W), registered address 42-1, Jalan Prima 2, Pusat Niaga
+Metro Prima Kepong, 52100 Kuala Lumpur (the 19/12/2024 Section 46(3) address —
+NOT the Balakong business address), phone +60 11-1888 8289. Confirmation email
+and the number go to `hello@houzscentury.com`; up to 5 business days. D&B may
+telephone the listed number to verify — someone should answer it.
+
 **0. The company Apple ID comes FIRST.** Verified by opening the page on
 2026-08-03: `developer.apple.com/enroll/duns-lookup/` redirects straight to
 `idmsa.apple.com` — **the D-U-N-S lookup itself is behind an Apple sign-in.** An
@@ -208,6 +224,21 @@ the review posture and of any offline capability. **Still worth confirming with
 the owner before the shell is written**, because it is his release cadence.
 
 ### Phase 3 — the native subsystems (this is the real work)
+
+**STATUS, 2026-08-06: all four are CODE-COMPLETE.** Biometric + Keychain
+session (nativeSession.ts + a Security-screen toggle), background location
+(native-location.ts + trip-locations-queries + Info.plist), camera (WKWebView
+file inputs + purpose strings), and push (mig-pg 0266 push_devices,
+routes/push.ts, services/apns.ts + pushFleetReminders.ts on the 08:00 MYT cron,
+@capacitor/push-notifications in the shell, entitlements + AppDelegate
+forwarding). Push ships dark until the owner adds the `APNS_TEAM_ID` /
+`APNS_KEY_ID` / `APNS_PRIVATE_KEY` Worker secrets — which exist only after
+enrolment. The signed-upload workflow is `.github/workflows/ios-release.yml`
+(four GitHub secrets, listed in its header). The privacy policy page ships at
+`https://erp.houzscentury.com/privacy` (a public SPA surface — NO static file
+is reachable beside this SPA on Pages; see BUG-HISTORY 2026-08-06). Remaining before submission: Apple accounts
+(phase 1), the APNs key + API key secrets, screenshots, App Privacy answers,
+and a demo account.
 
 **Owner's requirement, 2026-08-03:** *"我要可以用到指纹解锁、面部解锁，然后他们的
 ESS 是 permanent 的"* and *"地点access permanent camera等等"*.

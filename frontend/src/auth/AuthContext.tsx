@@ -20,6 +20,7 @@ import { clearAllScmHandoffs } from "../lib/scmHandoffStorage";
 import { writeRememberedEmail } from "../lib/rememberedEmail";
 import { hydrateTableLayouts } from "../lib/tableLayouts";
 import { forgetNativeSession, rememberNativeSession } from "../lib/nativeSession";
+import { registerNativePush, unregisterNativePush } from "../lib/nativePush";
 import type { AccessLevel, AuthUser } from "../types";
 
 /**
@@ -233,6 +234,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
          instead of a password. Flag-gated and fire-and-forget inside — a vault
          write that fails costs one password entry, never the login. */
       rememberNativeSession(res.token!);
+      /* Register this device for APNs (native app only; permission prompt on
+         first call). After the token store is set so the POST rides the new
+         session; fire-and-forget inside — push must never gate a login. */
+      void registerNativePush();
       await fetchMe();
       await fetchStatus();
       return { kind: "ok" };
@@ -249,6 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       resetSessionCaches();
       tokenStore.set(res.token, remember);
       rememberNativeSession(res.token);
+      void registerNativePush();
       await fetchMe();
       await fetchStatus();
     },
@@ -286,6 +292,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    /* BEFORE the token is cleared — the server delete needs the session. A
+       signed-out phone must stop receiving work notifications. No-op off the
+       app. */
+    unregisterNativePush();
     try {
       await api.post("/api/auth/logout");
     } catch {}

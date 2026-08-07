@@ -15,7 +15,7 @@ import {
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { formatPhone } from '@2990s/shared/phone';
-import { COMPANY, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate } from './pdf-common';
+import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 
@@ -140,10 +140,10 @@ export async function renderDeliveryReturnInto(
     startY: y,
     head: [['#', 'Item', 'Description', 'Qty', 'Condition', 'Unit Price', opts?.amountLabel ?? 'Refund']],
     body: rows,
-    theme: 'striped',
+    theme: 'plain',
     rowPageBreak: 'avoid',
-    styles: { fontSize: 8.5, cellPadding: 2, valign: 'top' },
-    headStyles: { fillColor: [34, 31, 32], textColor: 250, fontStyle: 'bold' },
+    styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
+    headStyles: DOC_TABLE_HEAD_STYLES,
     columnStyles: {
       0: { cellWidth: 8, halign: 'right' },
       1: { cellWidth: 24 },
@@ -184,20 +184,20 @@ export async function renderDeliveryReturnInto(
 export async function generateDeliveryReturnPdf(
   header: DrHeader,
   items: DrItem[],
-  opts?: DrOpts,
+  opts?: DrOpts & { action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   await renderDeliveryReturnInto(doc, autoTable, header, items, opts);
-  doc.save(`${header.return_number}-${safeName(header.debtor_name)}.pdf`);
+  deliverPdf(doc, `${header.return_number}-${safeName(header.debtor_name)}.pdf`, opts?.action);
 }
 
 /* Several delivery returns → ONE combined file, each return starting on a new
    page. For the batch "Export PDF" action on the Delivery Returns list. */
 export async function generateCombinedDeliveryReturnPdf(
   docs: Array<{ header: DrHeader; items: DrItem[] }>,
-  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; amountLabel?: string; totalLabel?: string },
+  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; amountLabel?: string; totalLabel?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -206,5 +206,5 @@ export async function generateCombinedDeliveryReturnPdf(
     if (i > 0) doc.addPage();
     await renderDeliveryReturnInto(doc, autoTable, docs[i]!.header, docs[i]!.items, opts);
   }
-  doc.save(opts?.fileName ?? 'delivery-returns.pdf');
+  deliverPdf(doc, opts?.fileName ?? 'delivery-returns.pdf', opts?.action);
 }

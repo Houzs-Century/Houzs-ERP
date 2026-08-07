@@ -15,7 +15,7 @@
 // live in suppliers-queries.ts — NOT duplicated here; the from-PO page imports
 // useOutstandingPoItems from there.
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
@@ -111,6 +111,18 @@ export const useGrnDetail = (id: string | null) => useQuery({
   queryKey: ['grn-detail', id],
   queryFn: () => authedFetch<{ grn: any; items: any[] }>(`/grns/${id}`),
   enabled: Boolean(id), staleTime: 30_000, retry: retryUnlessClientError, retryDelay: 800,
+});
+
+/* Several notes at once — ONE supplier invoice may bill SEVERAL goods-received
+   notes (owner 2026-08-06), so the PI review screen needs every picked note's
+   lines, not just the primary's. Same query key + options as useGrnDetail, so a
+   note already fetched singly is served from that cache. */
+export const useGrnDetails = (ids: string[]) => useQueries({
+  queries: ids.map((id) => ({
+    queryKey: ['grn-detail', id],
+    queryFn: () => authedFetch<{ grn: any; items: any[] }>(`/grns/${id}`),
+    staleTime: 30_000, retry: retryUnlessClientError, retryDelay: 800,
+  })),
 });
 /* `idempotencyKey` is OPTIONAL and must be destructured OUT of the body — the
    rest-spread would otherwise post it as a GRN field. Pass one per GRN intent

@@ -29,8 +29,9 @@ export interface CreateAssrInput {
   ref_no?: string | null;
   /** Customer contact email captured at intake. */
   customer_email?: string | null;
-  /** Product category free-text (e.g. "Mattress / Bed frame"). */
-  service_category?: string | null;
+  /** Product category. Multi-select since 2026-08: an array of names or
+   *  slugs from the current UI, or a comma string from anything older. */
+  service_category?: string | string[] | null;
   /** Operations PIC — assr_cases.assigned_to. When provided, overrides
    *  the admin-configured default assignee. */
   assigned_to?: number | null;
@@ -432,6 +433,14 @@ export async function createAssrCase(
   const companyCol = companyId != null ? ", company_id" : "";
   const companyPlaceholder = companyId != null ? ", ?" : "";
 
+  /* Product Category is multi-select, so the caller may send an array. It
+     has to be folded into the display string BEFORE the INSERT binds it —
+     binding an array trips D1_TYPE_ERROR. The join rows are written once we
+     have an id, below. */
+  const categories = input.service_category != null
+    ? await resolveCategories(env, parseCategoryInput(input.service_category))
+    : null;
+
   /* Guarded take-a-number. nextAssrNumber is read-max-then-+1 with no lock,
      so two concurrent creates can mint the same number — that is exactly how
      the 8 grandfathered 2604 duplicates happened. The partial unique index
@@ -490,7 +499,7 @@ export async function createAssrCase(
       // customer_email / service_category <- captured on the intake
       // form so a case is created complete rather than backfilled.
       input.customer_email ?? null,
-      input.service_category ?? null,
+      categories?.display ?? null,
       // delivery_order / do_date <- the SO's linked DO. The AutoCount
       // /SalesOrder/getSingle context does not expose a DO doc no or
       // date, so these stay NULL at create time (case manager fills
@@ -534,6 +543,10 @@ export async function createAssrCase(
       .run();
   }
 
+  // The display string went in with the INSERT; the queryable rows need the
+  // id, so they land here.
+  if (categories?.slugs.length) await writeCaseCategories(env, assrId, categories.slugs);
+
   // Activity log
   await logActivity(env, assrId, "created", null, initialStage, null, input.created_by);
 
@@ -571,6 +584,97 @@ export async function createAssrCase(
   }
 
   return { assr_no: assrNo, id: assrId };
+}
+
+// ── Product categories (multi-select) ────────────────────────
+//
+// A case can be more than one category (mattress AND bedframe on the same
+// complaint), so assr_case_categories holds one row per category — that is
+// what grouping/counting must read, because a comma-joined string cannot
+// count a Bedframe+Mattress case once on each side.
+//
+// assr_cases.service_category stays the DISPLAY value (comma-joined names,
+// lookup order) because ~50 read sites — list column, CSV export, print,
+// both portals, mobile — only ever render it. Both are written here and
+// nowhere else, so they cannot drift.
+
+/** "Bedframe, Mattress" | ["Bedframe","mattress"] | ["bed_frame"] -> tokens. */
+function parseCategoryInput(v: unknown): string[] {
+  const raw = Array.isArray(v)
+    ? v.map((x) => String(x ?? ""))
+    : String(v ?? "").split(",");
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of raw) {
+    const s = t.trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+  }
+  return out;
+}
+
+/**
+ * Resolve caller tokens against the lookup by slug OR name (both
+ * case-insensitive). Unrecognised tokens are NOT dropped — they survive in
+ * the display string, matching the form's rule that a legacy/unknown value
+ * stays selectable so reopening a case never silently discards it. They
+ * simply get no row in the join table, i.e. they stay uncategorised for
+ * reporting, exactly like the cases that never had a category at all.
+ */
+async function resolveCategories(
+  env: Env,
+  tokens: string[],
+): Promise<{ display: string | null; slugs: string[] }> {
+  if (!tokens.length) return { display: null, slugs: [] };
+  const rows = await env.DB.prepare(
+    `SELECT slug, name, sort_order FROM assr_product_categories`,
+  ).all<{ slug: string; name: string; sort_order: number }>();
+  const lookup = rows.results ?? [];
+  const bySlug = new Map(lookup.map((r) => [r.slug.toLowerCase(), r]));
+  const byName = new Map(lookup.map((r) => [r.name.trim().toLowerCase(), r]));
+
+  const matched: { slug: string; name: string; sort_order: number }[] = [];
+  const unknown: string[] = [];
+  for (const t of tokens) {
+    const hit = bySlug.get(t.toLowerCase()) ?? byName.get(t.toLowerCase());
+    if (hit) matched.push(hit);
+    else unknown.push(t);
+  }
+  matched.sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
+  const display = [...matched.map((m) => m.name), ...unknown].join(", ");
+  return { display: display || null, slugs: matched.map((m) => m.slug) };
+}
+
+/** Replace a case's category rows. Delete-then-insert: the caller always
+ *  sends the complete set, so a removed category must disappear. */
+async function writeCaseCategories(env: Env, caseId: number, slugs: string[]) {
+  await env.DB.prepare(`DELETE FROM assr_case_categories WHERE case_id = ?`)
+    .bind(caseId)
+    .run();
+  for (const slug of slugs) {
+    await env.DB.prepare(
+      `INSERT INTO assr_case_categories (case_id, slug) VALUES (?, ?)`,
+    )
+      .bind(caseId, slug)
+      .run();
+  }
+}
+
+/** The categories a case carries, in lookup order, as display names. */
+export async function getCaseCategories(env: Env, caseId: number): Promise<string[]> {
+  const rows = await env.DB.prepare(
+    `SELECT p.name
+       FROM assr_case_categories cc
+       JOIN assr_product_categories p ON p.slug = cc.slug
+      WHERE cc.case_id = ?
+      ORDER BY p.sort_order ASC, p.name ASC`,
+  )
+    .bind(caseId)
+    .all<{ name: string }>();
+  return (rows.results ?? []).map((r) => r.name);
 }
 
 // ── Detail (composite) ───────────────────────────────────────
@@ -678,6 +782,9 @@ export async function getAssrDetail(env: Env, id: number) {
 
   return {
     case: caseRow,
+    // The multi-select form needs the categories as a list; the flat
+    // service_category string on `case` stays for every read-only site.
+    service_categories: await getCaseCategories(env, id),
     items: items.results ?? [],
     attachments: attachments.results ?? [],
     activity: activity.results ?? [],
@@ -874,6 +981,7 @@ const PATCH_FIELDS = [
   // Own-team inspections link into delivery planning for the visit.
   // Lives on the Under Verification stage since mig 0105.
   "inspection_by",
+  "pickup_by",
   // Mig 0105 — QC-on-receipt result (pass/fail/na), shown next to
   // qc_receipt_date in the Verification stage panel.
   "qc_issue_result",
@@ -905,7 +1013,7 @@ const FIELD_LABELS: Record<string, string> = {
   inspection_result: "Inspection Result", email_for_survey: "Survey Email",
   verification_outcome: "Verification Outcome", verified_root_cause: "Verified Root Cause",
   qc_receipt_date: "QC Receipt Date", goods_returned_note: "Goods Returned Note",
-  supplier_service_note: "Supplier Service Note", inspection_by: "Inspection By",
+  supplier_service_note: "Supplier Service Note", inspection_by: "Inspection By", pickup_by: "Pickup By",
   qc_issue_result: "QC Result",
 };
 // Only DATE and REMARK/note edits are worth a timeline entry (owner
@@ -998,6 +1106,17 @@ export async function patchAssrCase(
     .bind(id)
     .first<Record<string, any>>();
 
+  // Product Category is multi-select. Normalise the incoming value (array
+  // from the current UI, comma string from anything older) into the display
+  // form BEFORE the generic loop writes the column, and remember the slugs
+  // so the join rows can be rewritten once the UPDATE lands.
+  let pendingCategorySlugs: string[] | null = null;
+  if ("service_category" in body) {
+    const cats = await resolveCategories(env, parseCategoryInput(body.service_category));
+    body.service_category = cats.display;
+    pendingCategorySlugs = cats.slugs;
+  }
+
   for (const k of PATCH_FIELDS) {
     if (k in body) {
       sets.push(`${k} = ?`);
@@ -1069,6 +1188,8 @@ export async function patchAssrCase(
   )
     .bind(...binds)
     .run();
+
+  if (pendingCategorySlugs) await writeCaseCategories(env, id, pendingCategorySlugs);
 
   // Log assignment changes
   if ("assigned_to" in body) {
@@ -1779,6 +1900,10 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
            -- row also shows a readable company_code column. Raw SQL via env.DB, so
            -- this bypasses the supabase-js companyScope helper by necessity.
            co.code as company_code,
+           (SELECT group_concat(i.item_code, ', ')
+              FROM assr_items i
+             WHERE i.assr_id = c.id
+               AND i.item_code IS NOT NULL AND i.item_code != '') as items_codes,
            COALESCE(
              (SELECT MAX(a.created_at)
                 FROM assr_activity a

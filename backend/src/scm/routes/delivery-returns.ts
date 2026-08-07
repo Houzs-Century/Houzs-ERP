@@ -28,6 +28,7 @@ import { todayMyt } from '../lib/my-time';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { isServiceLine } from '../shared';
 import { findServiceLineCodes, serviceLinesNotReturnableResponse } from '../lib/service-line-guard';
+import { findUnlinkedDrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
@@ -956,6 +957,27 @@ deliveryReturns.post('/', async (c) => {
   {
     const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
+  }
+
+  /* An unlinked line on a return that NAMES a Delivery Order still brings the
+     stock back IN, but counts against no DO line — so the returned pool never
+     moves and the same goods can be returned again. Same shape that let one
+     Sales Order ship twice (docs/unlinked-line-duplicate-coe.md); refused only
+     when the named DO already contains that item, so a goodwill item added to a
+     return still passes. */
+  {
+    const unlinked = await findUnlinkedDrLines(
+      sb,
+      (body.deliveryOrderId as string | undefined) ?? null,
+      (body.doDocNo as string | undefined) ?? null,
+      items.map((it, idx) => ({
+        lineRef: String(idx),
+        itemCode: String(it.itemCode ?? ''),
+        qty: Number(it.qtyReturned ?? it.qty ?? 0),
+        soItemId: (it.doItemId as string | undefined) ?? null,
+      })),
+    );
+    if (unlinked.length > 0) return c.json(unlinkedReturnResponse(unlinked, 'delivery'), 409);
   }
 
   /* P1 SO-SKU spec §4.6 — SERVICE lines (delivery fee / dispose / lift) ride

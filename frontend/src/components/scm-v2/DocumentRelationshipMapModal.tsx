@@ -30,7 +30,20 @@ export type ChainNode = {
   // candidate POs ("N candidates — tap"); without this it renders disabled and
   // the tap is dead.
   actionable?: boolean;
+  // FLOATING slot ("soft until DO, hard from DO"): the doc(s) shown are a live
+  // MRP pairing, recomputed on every view — nothing stored binds them. Renders
+  // dashed with a trailing "~" (the Assigned-SO chip idiom), never as Linked.
+  float?: boolean;
 };
+
+// How the SO↔PO hop on this chain is paired (the horizontal pairing the
+// "soft until DO, hard from DO" model distinguishes from vertical execution):
+//   provenance — a STORED raise-link (so_item_id / "From SOs:" note). Muted
+//                solid: why we bought, not an execution binding.
+//   floating   — the live MRP pairing, recomputed per open ("会跳动").
+//                Dashed + pulsing.
+// Omitted → the legacy neutral connectors (the sales-side DO/SI/DR maps).
+export type PairingKind = "provenance" | "floating";
 
 // A Sales Order amendment (revision request) surfaced beside the graph. Each is
 // a real document, clickable to its job card at /scm/amendments/:id.
@@ -197,6 +210,7 @@ export function DocumentRelationshipMapModal({
   onAmendmentClick,
   rowLabels,
   amendmentsLabel,
+  pairing,
 }: {
   open: boolean;
   onClose: () => void;
@@ -213,6 +227,11 @@ export function DocumentRelationshipMapModal({
   // Optional heading for the amendments row (default keeps the SO map's
   // "Amendments off the Sales Order").
   amendmentsLabel?: string;
+  // Optional SO↔PO pairing kind (see PairingKind). Passed by the maps that
+  // carry a purchase leg (the PO map, the SO map): the pairing hop restyles
+  // (muted solid = provenance, dashed pulsing = floating) and the execution
+  // hops that FOLLOW it render solid — anchored. Omitted → legacy rendering.
+  pairing?: { kind: PairingKind } | null;
 }) {
   // Canvas layout — fixed pixel positions so the graph reads at any modal
   // width. Two shapes:
@@ -247,6 +266,21 @@ export function DocumentRelationshipMapModal({
         { left: x0 + xStep * 3, top: row2Top },
       ];
 
+  // The SO↔PO pairing hop, when the caller declares one (see PairingKind):
+  //   7-node (SO map)  — the branch drop, SO ↓ PO.
+  //   5-node (PO map)  — the first top segment, SO → PO.
+  // Floating pairs in brass (the live/current accent) with the dashed pulse;
+  // provenance stays muted but SOLID, so a dash can only ever mean "floating".
+  // Execution hops behind a declared pairing drop their dashes — anchored.
+  const pairingKind = pairing?.kind ?? null;
+  const floatingPairing = pairingKind === "floating";
+  const pairingTitle = floatingPairing
+    ? "Live MRP pairing — recomputed on every view; may change"
+    : "Bought for — procurement provenance";
+  const pairingStroke = floatingPairing ? "#a16a2e" : "var(--border-strong, #b3b8ac)";
+  const pairingDash = floatingPairing ? "6 5" : undefined;
+  const anchoredDash = pairingKind ? undefined : "4 4";
+
   const nodeCard = (n: ChainNode, opts: { left: number; top: number }) => {
     const cur = n.state === "current";
     const done = n.state === "done";
@@ -264,6 +298,7 @@ export function DocumentRelationshipMapModal({
         type="button"
         onClick={() => onNodeClick?.(n)}
         disabled={!linked && n.state !== "current"}
+        title={n.float ? "Live MRP pairing — recomputed on every view; may change" : undefined}
         style={{ position: "absolute", left: opts.left, top: opts.top, width: 148 }}
         className={cn(
           "rounded-xl px-3 py-2.5 text-left transition-all",
@@ -271,7 +306,9 @@ export function DocumentRelationshipMapModal({
             ? "border-2 border-accent bg-accent-soft shadow-[0_10px_22px_-12px_rgba(161,133,47,.55)]"
             : done
               ? "border border-primary/30 bg-primary-soft"
-              : "border border-border bg-surface-2",
+              : n.float
+                ? "border border-dashed border-accent/50 bg-surface-2"
+                : "border border-border bg-surface-2",
           linked
             ? "cursor-pointer hover:-translate-y-px hover:shadow-slab"
             : "cursor-default"
@@ -302,10 +339,12 @@ export function DocumentRelationshipMapModal({
         <div
           className={cn(
             "mt-1.5 truncate font-mono text-[12.5px] font-bold",
-            cur ? "text-accent-ink" : done ? "text-primary-ink" : "text-ink-muted"
+            cur ? "text-accent-ink" : done ? "text-primary-ink" : n.float ? "text-ink-secondary" : "text-ink-muted"
           )}
         >
           {n.doc}
+          {/* The floating tilde — the Assigned-SO chip idiom for "live, may change". */}
+          {n.float && <span className="font-normal text-ink-muted">{" ~"}</span>}
         </div>
         <div
           className={cn(
@@ -356,15 +395,23 @@ export function DocumentRelationshipMapModal({
           className="pointer-events-none absolute inset-0"
           preserveAspectRatio="none"
         >
+          {/* First top segment. On the 5-node PO map this IS the SO → PO
+              pairing hop, so a declared pairing restyles it; every other
+              shape keeps the solid execution stroke. */}
           <line
             x1={x0 + 150}
             y1={row1Top + 42}
             x2={x0 + xStep}
             y2={row1Top + 42}
-            stroke="var(--primary, #16695f)"
+            stroke={!twoChain && pairingKind ? pairingStroke : "var(--primary, #16695f)"}
             strokeWidth="2"
-            markerEnd="url(#arrowP)"
-          />
+            strokeDasharray={!twoChain && pairingKind ? pairingDash : undefined}
+            className={!twoChain && floatingPairing ? "animate-pulse" : undefined}
+            markerEnd={!twoChain && pairingKind ? (floatingPairing ? "url(#arrowF)" : "url(#arrowM)") : "url(#arrowP)"}
+            style={!twoChain && pairingKind ? { pointerEvents: "stroke" } : undefined}
+          >
+            {!twoChain && pairingKind && <title>{pairingTitle}</title>}
+          </line>
           <line
             x1={x0 + xStep + 150}
             y1={row1Top + 42}
@@ -386,19 +433,26 @@ export function DocumentRelationshipMapModal({
               markerEnd="url(#arrowP)"
             />
           )}
-          {/* Branch drop: 7-node hangs the PURCHASE row off the SO (col 1);
-              5-node keeps the original drop off the DO (col 2). */}
+          {/* Branch drop: 7-node hangs the PURCHASE row off the SO (col 1) —
+              that IS the SO ↓ PO pairing hop, restyled when declared; 5-node
+              keeps the original drop off col 2 (an execution hop — solid when
+              a pairing is declared, legacy dashes otherwise). */}
           <line
             x1={x0 + xStep * (twoChain ? 1 : 2) + 74}
             y1={row1Top + 88}
             x2={x0 + xStep * (twoChain ? 1 : 2) + 74}
             y2={row2Top}
-            stroke="var(--border-strong, #b3b8ac)"
+            stroke={twoChain && pairingKind ? pairingStroke : "var(--border-strong, #b3b8ac)"}
             strokeWidth="2"
-            strokeDasharray="4 4"
-            markerEnd="url(#arrowM)"
-          />
-          {/* 7-node only: PO → GRN (the 5-node shape has nothing at col 1). */}
+            strokeDasharray={twoChain ? (pairingKind ? pairingDash : "4 4") : anchoredDash}
+            className={twoChain && floatingPairing ? "animate-pulse" : undefined}
+            markerEnd={twoChain && floatingPairing ? "url(#arrowF)" : "url(#arrowM)"}
+            style={twoChain && pairingKind ? { pointerEvents: "stroke" } : undefined}
+          >
+            {twoChain && pairingKind && <title>{pairingTitle}</title>}
+          </line>
+          {/* 7-node only: PO → GRN (the 5-node shape has nothing at col 1).
+              Execution — anchored (solid) once a pairing is declared. */}
           {twoChain && (
             <line
               x1={x0 + xStep + 148}
@@ -407,7 +461,7 @@ export function DocumentRelationshipMapModal({
               y2={row2Top + 40}
               stroke="var(--border-strong, #b3b8ac)"
               strokeWidth="2"
-              strokeDasharray="4 4"
+              strokeDasharray={anchoredDash}
               markerEnd="url(#arrowM)"
             />
           )}
@@ -419,7 +473,7 @@ export function DocumentRelationshipMapModal({
             y2={row2Top + 40}
             stroke="var(--border-strong, #b3b8ac)"
             strokeWidth="2"
-            strokeDasharray="4 4"
+            strokeDasharray={anchoredDash}
             markerEnd="url(#arrowM)"
           />
           <defs>
@@ -444,6 +498,18 @@ export function DocumentRelationshipMapModal({
               markerUnits="strokeWidth"
             >
               <path d="M0,0 L7,3.5 L0,7 z" fill="var(--border-strong, #b3b8ac)" />
+            </marker>
+            {/* Brass arrowhead for the FLOATING pairing hop. */}
+            <marker
+              id="arrowF"
+              markerWidth="7"
+              markerHeight="7"
+              refX="6"
+              refY="3.5"
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <path d="M0,0 L7,3.5 L0,7 z" fill="#a16a2e" />
             </marker>
           </defs>
         </svg>
@@ -503,6 +569,21 @@ export function DocumentRelationshipMapModal({
           <span className="inline-block h-2.5 w-2.5 rounded-full border border-border-strong bg-surface" />{" "}
           Pending
         </span>
+        {/* The pairing legend, only when the chain declares one — a dash can
+            only ever mean FLOATING, a muted solid line is stored provenance. */}
+        {pairingKind && (
+          <span className="inline-flex items-center gap-1.5" title={pairingTitle}>
+            <span
+              className="inline-block h-0 w-5"
+              style={{
+                borderTop: floatingPairing ? "2px dashed #a16a2e" : "2px solid #b3b8ac",
+              }}
+            />
+            {floatingPairing
+              ? "Floating SO pairing — live MRP, recomputed each view"
+              : "SO link — procurement provenance, not execution"}
+          </span>
+        )}
       </div>
     </ModalOverlay>
   );

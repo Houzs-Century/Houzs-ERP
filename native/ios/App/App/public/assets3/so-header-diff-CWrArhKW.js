@@ -1,1 +1,0 @@
-var e=e=>e==null?``:String(e),t=e=>e==null||typeof e==`string`||typeof e==`number`||typeof e==`boolean`;function n(n,r){let i={};for(let[a,o]of Object.entries(r)){if(o===void 0)continue;if(!(a in n)){i[a]=o;continue}let r=n[a];t(r)&&t(o)&&e(r)===e(o)||(i[a]=o)}return i}var r=e=>Object.keys(e).length>0;export{r as n,n as t};

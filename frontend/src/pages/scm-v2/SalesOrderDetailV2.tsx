@@ -31,6 +31,7 @@ import {
   CircleDot,
   Phone as PhoneIcon,
   MoreHorizontal,
+  Wallet,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -52,8 +53,10 @@ import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { useSoRelationshipMap } from "./so-relationship-map";
-import { cn } from "../../lib/utils";
+import { cn, formatDate } from "../../lib/utils";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
@@ -378,6 +381,12 @@ function OrderTotalCard({
   discountCenti: number;
   totalCenti: number;
 }) {
+  /* The auto-derived delivery fee is inside `totalCenti` but was not itemised,
+     so an all-FOC order read "Subtotal 0 → Total 250" with nothing explaining
+     the 250 (owner, 2026-08-07: "为什么会有 rm250?"). Derived as the remainder
+     rather than read from a header field so the row is exactly the gap the
+     reader is staring at, whatever fee components the server folds in. */
+  const feeCenti = totalCenti - (subtotalCenti - discountCenti);
   const st = statusFor(header.status);
   return (
     <div className="rounded-lg bg-sidebar px-5 py-5 text-sidebar-ink shadow-stone">
@@ -406,6 +415,9 @@ function OrderTotalCard({
       <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
         <TotalLine k="Subtotal" v={fmtMoney(subtotalCenti, header.currency)} />
         <TotalLine k="Discount" v={fmtMoney(discountCenti, header.currency)} />
+        {feeCenti > 0 && (
+          <TotalLine k="Delivery fee" v={fmtMoney(feeCenti, header.currency)} />
+        )}
         <TotalLine k="SST" v="Inclusive" muted />
         <TotalLine
           k="Total"
@@ -478,7 +490,10 @@ const SalesOrderDetailInlineEditor = lazy(() =>
    would break on navigation). */
 export function SalesOrderDetailV2() {
   const [params] = useSearchParams();
-  if (params.get("edit") === "1") {
+  /* `payments=1` forwards to the same editor as `edit=1` — the payments ledger
+     only exists there. The editor decides what that flag unlocks (its payments
+     card, and nothing else); this router only decides WHICH body renders. */
+  if (params.get("edit") === "1" || params.get("payments") === "1") {
     return (
       <Suspense
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
@@ -565,6 +580,11 @@ function SalesOrderDetailV2ReadOnly() {
   // amendment-eligible the editor opens in amendment mode (Save submits an
   // amendment request); when hard-locked the button is disabled here.
   const goEdit = () => docNo && navigate(`/scm/sales-orders/${docNo}?edit=1`);
+  /* Payments-only door into the same editor (owner 2026-08-07). Deliberately
+     NOT `?edit=1`: that opens every field, and on a hard-locked order the whole
+     point is that only the money moves. The editor reads `payments=1` and seeds
+     its payments-card toggle from it. */
+  const goPayments = () => docNo && navigate(`/scm/sales-orders/${docNo}?payments=1`);
   const doCancel = () => {
     if (!salesOrder) return;
     if (
@@ -581,7 +601,7 @@ function SalesOrderDetailV2ReadOnly() {
   // Render + download the SO PDF via the shared jspdf generator (client-side),
   // mirroring the V1 SalesOrderDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!salesOrder) return;
     /* The guard below used to be keyed on `isLoading` alone with a `?? []`
        fallback. On a FAILED payments read react-query leaves `isLoading` false
@@ -613,13 +633,13 @@ function SalesOrderDetailV2ReadOnly() {
     // trigger items issued, so the printed PDF can mark the trigger lines.
     const pwpCodes = ((detail.data as { pwpCodes?: unknown[] } | undefined)
       ?.pwpCodes ?? []) as never;
-    import("../../vendor/scm/lib/sales-order-pdf")
+    return import("../../vendor/scm/lib/sales-order-pdf")
       .then(({ generateSalesOrderPdf }) =>
         generateSalesOrderPdf(
           salesOrder as never,
           items as never,
           payments as never,
-          "save",
+          action,
           pwpCodes
         )
       )
@@ -631,6 +651,8 @@ function SalesOrderDetailV2ReadOnly() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!salesOrder);
 
   // The 5-node document chain + what each node does when clicked now come from
   // the shared hook, so this page and the ?edit=1 editor cannot drift again
@@ -640,6 +662,7 @@ function SalesOrderDetailV2ReadOnly() {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    pairing: chainPairing,
     choice: chainChoice,
     closeChoice: closeChainChoice,
     pickChoice: pickChainChoice,
@@ -921,10 +944,46 @@ function SalesOrderDetailV2ReadOnly() {
             <Button
               variant="secondary"
               icon={<Printer size={14} />}
-              onClick={goPrintPdf}
+              onClick={print.openPreview}
             >
               Print PDF
             </Button>
+            {/* Collect payment (owner 2026-08-07) — the direct door to the
+                payments ledger. The ledger lives on the ?edit=1 editor, so
+                without this the only way to key money is the Edit button
+                below, and Edit answers to the LINE/HEADER lock rather than to
+                anything about money:
+                  · hard-locked (DELIVERED / SHIPPED / has a DO-SI) → disabled,
+                    so a delivered order had NO reachable Payments section at
+                    all — the balance could not be keyed and its proof had
+                    nowhere to go, on the exact order state where a balance is
+                    normally collected;
+                  · amendment-eligible → it becomes "Submit SO Amendment", so
+                    keying a payment means going through the amendment flow;
+                  · otherwise → it opens every field to edit a row of numbers.
+                Hence the gate here is about the MONEY, not the lock: only a
+                CANCELLED order takes none, which is the same rule the payments
+                card, the mobile screen and the server all use. DRAFT is left
+                out on the owner's standing "no payments on drafts" ruling — and
+                a draft is never locked, so Edit reaches it anyway.
+                Owner 2026-08-07, on Houzs (every SO CONFIRMED, several still
+                owing): "houzs也是需要collect payment功能" — the first cut gated
+                this on `hardLocked`, which is a 2990 delivery-flow assumption,
+                not a rule about collecting money.
+                `?payments=1` opens the editor with the Payments card unlocked
+                and NOTHING else: it does not set ?edit=1, so lines, header and
+                addresses stay read-only under their own `isLocked` gate, which
+                is the lock that genuinely belongs to them. */}
+            {!["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (
+              <Button
+                variant="secondary"
+                icon={<Wallet size={14} />}
+                onClick={goPayments}
+                title="Record a payment against this order — everything else stays as it is."
+              >
+                Collect payment
+              </Button>
+            )}
             {salesOrder.status?.toLowerCase() !== "cancelled" && (
               <Button
                 variant="danger"
@@ -1143,6 +1202,84 @@ function SalesOrderDetailV2ReadOnly() {
                 emptyLabel="No line items"
               />
             </Section>
+
+            {/* Payments — the read page finally SHOWS the ledger it already
+                fetches for printing (owner 2026-08-07: "我的这个下面不能看到
+                payment 的那个 column 吗"). Read-only: rows + paid/balance
+                summary; adding or editing money goes through the ONE door,
+                the payments-unlocked editor (goPayments — same door as the
+                header "Collect payment" button). */}
+            <Section
+              title="Payments"
+              actions={
+                <Button variant="secondary" onClick={goPayments} icon={<Wallet size={14} />}>
+                  Collect payment
+                </Button>
+              }
+            >
+              {printPaymentsQ.isError ? (
+                <div className="rounded-md border border-err/40 bg-err/5 p-2.5 text-[12px] text-err">
+                  Couldn't load payments — refresh to retry.
+                </div>
+              ) : !Array.isArray(printPaymentsQ.data) ? (
+                <div className="py-3 text-[12px] text-ink-muted">Loading payments…</div>
+              ) : printPaymentsQ.data.length === 0 ? (
+                <div className="py-3 text-[12px] text-ink-muted">
+                  No payments recorded — collect the first one with the button above.
+                </div>
+              ) : (
+                <>
+                  <table className="w-full text-[12.5px]">
+                    <thead>
+                      <tr className="border-b border-border-subtle text-left font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+                        <th className="py-1.5 pr-3">Date</th>
+                        <th className="py-1.5 pr-3">Method</th>
+                        <th className="py-1.5 pr-3">Collected by</th>
+                        <th className="py-1.5 pr-3">Note</th>
+                        <th className="py-1.5 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {printPaymentsQ.data.map((pmt) => (
+                        <tr key={pmt.id} className="border-b border-border-subtle/60">
+                          <td className="py-2 pr-3 font-mono text-[12px]">{formatDate(pmt.paid_at)}</td>
+                          <td className="py-2 pr-3">
+                            {pmt.method}
+                            {pmt.merchant_provider ? ` · ${pmt.merchant_provider}` : ""}
+                            {pmt.installment_months ? ` · ${pmt.installment_months} mo` : ""}
+                          </td>
+                          <td className="py-2 pr-3">{pmt.collected_by_name ?? "—"}</td>
+                          <td className="py-2 pr-3 text-ink-muted">{pmt.note ?? "—"}</td>
+                          <td className="py-2 text-right font-mono font-semibold">
+                            {fmtMoney(pmt.amount_centi, salesOrder.currency)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {(() => {
+                    const paidCenti = printPaymentsQ.data.reduce((n, r) => n + (r.amount_centi ?? 0), 0);
+                    const balanceCenti = (salesOrder.local_total_centi ?? 0) - paidCenti;
+                    return (
+                      <div className="mt-2.5 flex flex-wrap items-center justify-end gap-x-6 gap-y-1 text-[12.5px]">
+                        <span className="text-ink-muted">
+                          Paid{" "}
+                          <span className="font-mono font-semibold text-ink">
+                            {fmtMoney(paidCenti, salesOrder.currency)}
+                          </span>
+                        </span>
+                        <span className="text-ink-muted">
+                          Balance{" "}
+                          <span className={balanceCenti > 0 ? "font-mono font-semibold text-err" : "font-mono font-semibold text-primary"}>
+                            {fmtMoney(balanceCenti, salesOrder.currency)}
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
+            </Section>
           </DetailMain>
 
           <DetailAside>
@@ -1266,7 +1403,7 @@ function SalesOrderDetailV2ReadOnly() {
           </button>
           <button
             type="button"
-            onClick={goPrintPdf}
+            onClick={print.openPreview}
             className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft"
             aria-label="Print PDF"
           >
@@ -1299,6 +1436,7 @@ function SalesOrderDetailV2ReadOnly() {
         onAmendmentClick={(a) => {
           if (onChainAmendmentClick(a)) setRelMapOpen(false);
         }}
+        pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
           of a notice that only named them. Picking a row navigates, so the map
@@ -1310,6 +1448,29 @@ function SalesOrderDetailV2ReadOnly() {
           setRelMapOpen(false);
           pickChainChoice(d);
         }}
+      />
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Sales Order"
+        docNo={salesOrder.doc_no}
+        rows={[
+          { label: "Customer", value: salesOrder.debtor_name || "—" },
+          { label: "Order date", value: fmtDate(salesOrder.so_date) },
+          {
+            label: "Items",
+            value: `${items.length} line${items.length === 1 ? "" : "s"}`,
+          },
+          {
+            label: "Order total",
+            value: fmtMoney(salesOrder.local_total_centi, salesOrder.currency),
+          },
+          {
+            label: "Balance",
+            value: fmtMoney(salesOrder.balance_centi, salesOrder.currency),
+          },
+        ]}
+        {...print.handlers}
       />
     </div>
   );

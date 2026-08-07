@@ -49,6 +49,9 @@ const FIELDS: Record<string, string> = {
   stockStatus: 'Stock status', photoAdded: 'Photo added', photoRemoved: 'Photo removed',
   photosCleaned: 'Photos removed', tbcVariants: 'Variants updated', sofaBuild: 'Sofa build',
   pwpCode: 'PWP code', pwpRewardsReverted: 'PWP rewards reverted', pwpCodesDeleted: 'PWP codes deleted',
+  /* Emitted by POST /:docNo/payments/:id/slip (2026-08-07) — the after-the-fact
+     proof attach. from=null reads as an attach, from=<key> as a replacement. */
+  slipKey: 'Payment proof',
 };
 
 const MONEY_FIELDS = new Set([

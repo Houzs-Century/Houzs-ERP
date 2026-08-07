@@ -7,33 +7,57 @@
 // interpolated it straight into the month prefix, minting
 // "[object Object]-SO-2607-001" as a live doc number (which then surfaced in the
 // "Sales order saved — ..." scan announcement). These pin that a non-string
-// company code can NEVER reach the doc number: it degrades to BARE HOUZS
-// numbering, exactly as a base-company / single-company install already does.
+// company code can NEVER reach the doc number: it degrades to the BASE
+// company's prefix, exactly as a single-company install mints.
+//
+// Since 2026-08-07 the base company is not the absence of a prefix: HOUZS mints
+// "HC-" (owner's call — its documents used to read as anonymous next to
+// "2990-DO-2608-001"). So the degradation target moved with it, and "" is now
+// the one answer that would be WRONG: it belongs to no company at all.
 import { describe, expect, test } from 'vitest';
-import { companyDocPrefix, detailMissResponse } from './companyScope';
+import { companyDocPrefix, docPrefixForCode, detailMissResponse } from './companyScope';
 
 /** Minimal CompanyScopeCtx — companyDocPrefix only ever calls get('companyCode'). */
 const ctx = (companyCode: unknown) => ({ get: (k: string) => (k === 'companyCode' ? companyCode : undefined) });
 
 describe('companyDocPrefix', () => {
-  test('an OBJECT company code degrades to bare numbering, never "[object Object]-"', () => {
+  test('an OBJECT company code degrades to the base prefix, never "[object Object]-"', () => {
     // The exact reconstructed-context leak: get('companyCode') returns the
     // synthetic houzsUser object instead of a code string.
     const p = companyDocPrefix(ctx({ id: 42 }) as never);
-    expect(p).toBe('');
+    expect(p).toBe('HC-');
     expect(p).not.toContain('[object Object]');
   });
 
-  test('undefined (headless / single-company) is bare', () => {
-    expect(companyDocPrefix(ctx(undefined) as never)).toBe('');
+  test('undefined (headless / single-company) mints under the base company', () => {
+    expect(companyDocPrefix(ctx(undefined) as never)).toBe('HC-');
   });
 
-  test('the HOUZS base company keeps bare numbers', () => {
-    expect(companyDocPrefix(ctx('HOUZS') as never)).toBe('');
+  test('a broken context NEVER mints an unprefixed number', () => {
+    // "" belonged to Houzs while Houzs was bare. Now it belongs to nobody, and a
+    // document carrying it could not be attributed to a company by its number.
+    for (const bad of [{ id: 42 }, undefined, '', null, 0]) {
+      expect(companyDocPrefix(ctx(bad) as never)).not.toBe('');
+    }
+  });
+
+  test('HOUZS mints "HC-", not its bare code', () => {
+    expect(companyDocPrefix(ctx('HOUZS') as never)).toBe('HC-');
+    expect(companyDocPrefix(ctx('houzs') as never)).toBe('HC-');
+    expect(companyDocPrefix(ctx('HOUZS') as never)).not.toBe('HOUZS-');
   });
 
   test('a real non-base code prefixes with "<code>-"', () => {
     expect(companyDocPrefix(ctx('2990') as never)).toBe('2990-');
+  });
+
+  test('docPrefixForCode agrees with companyDocPrefix for every code', () => {
+    /* The Delivery-Planning convert mints under the SOURCE SO's company, so it
+       holds a code rather than a context. It used to carry its OWN copy of the
+       rule; these two must never drift apart again. */
+    for (const code of ['HOUZS', '2990', 'ACME']) {
+      expect(docPrefixForCode(code)).toBe(companyDocPrefix(ctx(code) as never));
+    }
   });
 });
 
