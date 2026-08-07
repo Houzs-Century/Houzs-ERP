@@ -181,6 +181,10 @@ export type PoHeaderRow = {
       so_item_id, so the column can mark an MRP-only guess apart from a binding. */
   assigned_sos?: OriginAssignment[];
   assigned_so_linked?: boolean;
+  /** PR-3 (2026-08-07) — the parallel stored-origin "bought for" SO(s) of the
+      coverage wire, rendered muted beside the precedence chips (never
+      replacing them). Optional so an older backend degrades gracefully. */
+  assigned_so_provenance?: OriginAssignment[];
   /** "Delivered" column (owner 2026-07-31) — the Delivery Order(s) that have
       shipped this PO's goods (batch_no = the PO number) + qty per DO, resolved
       server-side. EVERY DO renders (no collapse); empty when nothing shipped. */
@@ -252,7 +256,8 @@ export type PoItemRow = {
   /** Migration 0098 — source SO line this PO line was converted from. */
   so_item_id?: string | null;
   /** 2026-06-12 — stamped by GET /:id (so_item_id → SO doc_no) for the PO
-      PDF's "Transferred SO" column. Null for manual / MRP lines. */
+      PDF's "For SO" provenance column (relabelled from "Transferred SO",
+      owner 2026-08-07). Null for manual / MRP lines. */
   so_doc_no?: string | null;
   /** SO→PO drift (Commander 2026-06-16) — set by GET /:id when this line's
       source SO line was edited AFTER the PO was raised, so the PO snapshot no

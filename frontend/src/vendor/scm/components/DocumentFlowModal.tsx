@@ -10,6 +10,8 @@
 import { useNavigate } from 'react-router';
 import {
   useDocumentFlow,
+  usePoSoCoverage,
+  buildFloatingOverlay,
   type FlowNode,
   type FlowNodeType,
   type FlowEdgeKind,
@@ -73,11 +75,25 @@ const EDGE_COLOR: Record<FlowEdgeKind, string> = {
   value: '#ea580c',
   payment: '#16a34a',
 };
-const LEGEND: Array<{ kind: FlowEdgeKind; label: string }> = [
-  { kind: 'full', label: 'Full Transfer' },
-  { kind: 'partial', label: 'Partial Transfer' },
-  { kind: 'value', label: 'Value Transfer' },
-  { kind: 'payment', label: 'Payment' },
+/* "Soft until DO, hard from DO" edge classes (2026-08-07):
+   · chain (execution FKs) keep the solid kind colours above — anchored history.
+   · provenance — the stored SO ▶ PO raise-link ("bought for"). Muted: it
+     records why we bought and binds no execution. Every 'value' edge IS the
+     raise-link, so kind 'value' falls back to this when an older cached
+     response carries no `linkage`.
+   · floating — the live pre-DO MRP pairing, assembled CLIENT-SIDE from the
+     po-so-coverage the opening page already fetched (zero added backend
+     load). Dashed + pulsing: recomputed on every view, may change. */
+const PROVENANCE_COLOR = '#94a3b8';
+const FLOATING_COLOR = '#7c3aed';
+const PROVENANCE_TITLE = 'Bought for — procurement provenance';
+const FLOATING_TITLE = 'Live MRP pairing — recomputed on every view; may change';
+const LEGEND: Array<{ key: string; color: string; label: string; dashed?: boolean }> = [
+  { key: 'full', color: EDGE_COLOR.full, label: 'Full Transfer' },
+  { key: 'partial', color: EDGE_COLOR.partial, label: 'Partial Transfer' },
+  { key: 'payment', color: EDGE_COLOR.payment, label: 'Payment' },
+  { key: 'provenance', color: PROVENANCE_COLOR, label: 'Bought for (provenance)' },
+  { key: 'floating', color: FLOATING_COLOR, label: 'Live MRP pairing (floating)', dashed: true },
 ];
 
 const colX = (col: number) => PAD + col * (NODE_W + COL_GAP);
@@ -85,11 +101,22 @@ const colX = (col: number) => PAD + col * (NODE_W + COL_GAP);
 export function DocumentFlowModal({ type, id, open, onClose }: Props) {
   const navigate = useNavigate();
   const { data, isLoading, isError } = useDocumentFlow(open ? type : null, open ? id : null);
+  /* Floating pre-DO pairing for a PURCHASE anchor — read from the SAME
+     usePoSoCoverage query key the detail pages / list drill-downs use, so the
+     common path is a react-query cache hit (and the backend path-cache dedupes
+     a cold one). NEVER a new endpoint; a failed/absent read just renders no
+     overlay. */
+  const covType = type === 'po' || type === 'grn' || type === 'pi' ? type : null;
+  const cov = usePoSoCoverage(open ? covType : null, open && covType ? id : null);
 
   if (!open) return null;
 
-  const nodes = data?.nodes ?? [];
+  const overlay = buildFloatingOverlay(data, cov.data);
+  const nodes = [...(data?.nodes ?? []), ...overlay.nodes];
   const edges = data?.edges ?? [];
+  // Nodes that exist ONLY through the floating pairing (nothing stored) render
+  // dashed, matching their edge — they can move or vanish on the next view.
+  const floatingNodeKeys = new Set(overlay.nodes.map((n) => n.key));
   // PO amendments (mig 0192) branch off the Purchase Order — rendered as a
   // clickable chip row below the map, the same idiom #1229 used for SO
   // amendments on the SO map. Each opens /scm/po-amendments/:id.
@@ -182,7 +209,7 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
             <div style={{ position: 'relative', width, height, margin: 'auto' }}>
               <svg width={width} height={height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
                 <defs>
-                  {Object.entries(EDGE_COLOR).map(([k, color]) => (
+                  {Object.entries({ ...EDGE_COLOR, provenance: PROVENANCE_COLOR, floating: FLOATING_COLOR }).map(([k, color]) => (
                     <marker key={k} id={`arrow-${k}`} markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
                       <path d="M0,0 L7,3 L0,6 Z" fill={color} />
                     </marker>
@@ -194,13 +221,41 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
                   const x1 = p.x + NODE_W, y1 = p.y + NODE_H / 2;
                   const x2 = ch.x, y2 = ch.y + NODE_H / 2;
                   const mx = (x1 + x2) / 2;
+                  /* 'value' fallback: every value edge IS the SO ▶ PO raise-link,
+                     so an older cached response (no linkage) still reads muted. */
+                  const provenance = e.linkage === 'provenance' || (e.linkage == null && e.kind === 'value');
                   return (
                     <path
                       key={i}
                       d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2 - 2} ${y2}`}
-                      fill="none" stroke={EDGE_COLOR[e.kind]} strokeWidth={2}
-                      markerEnd={`url(#arrow-${e.kind})`}
-                    />
+                      fill="none" stroke={provenance ? PROVENANCE_COLOR : EDGE_COLOR[e.kind]} strokeWidth={2}
+                      markerEnd={`url(#arrow-${provenance ? 'provenance' : e.kind})`}
+                      style={provenance ? { pointerEvents: 'stroke' } : undefined}
+                    >
+                      {provenance && <title>{PROVENANCE_TITLE}</title>}
+                    </path>
+                  );
+                })}
+                {/* Floating pre-DO MRP pairing — client-assembled overlay.
+                    Dashed + pulsing (existing utility class; no bespoke
+                    animation system): the pairing is recomputed per view. */}
+                {overlay.edges.map((e, i) => {
+                  const p = pos.get(e.from); const ch = pos.get(e.to);
+                  if (!p || !ch) return null;
+                  const x1 = p.x + NODE_W, y1 = p.y + NODE_H / 2;
+                  const x2 = ch.x, y2 = ch.y + NODE_H / 2;
+                  const mx = (x1 + x2) / 2;
+                  return (
+                    <path
+                      key={`float-${i}`}
+                      className="animate-pulse"
+                      d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2 - 2} ${y2}`}
+                      fill="none" stroke={FLOATING_COLOR} strokeWidth={2} strokeDasharray="7 5"
+                      markerEnd="url(#arrow-floating)"
+                      style={{ pointerEvents: 'stroke' }}
+                    >
+                      <title>{FLOATING_TITLE}</title>
+                    </path>
                   );
                 })}
               </svg>
@@ -209,16 +264,17 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
                 const m = TYPE_META[n.type];
                 const clickable = !!m.route;
                 const cancelled = (n.status ?? '').toUpperCase() === 'CANCELLED';
+                const floating = floatingNodeKeys.has(n.key);
                 return (
                   <div
                     key={n.key}
                     onClick={() => go(n)}
-                    title={clickable ? 'Open document' : undefined}
+                    title={floating ? FLOATING_TITLE : clickable ? 'Open document' : undefined}
                     style={{
                       position: 'absolute', left: p.x, top: p.y, width: NODE_W, height: NODE_H,
                       boxSizing: 'border-box', borderRadius: 8, padding: '10px 12px',
                       background: n.isAnchor ? '#fff7d6' : m.bg,
-                      border: n.isAnchor ? '2px solid #d4a017' : '1px solid var(--c-line)',
+                      border: n.isAnchor ? '2px solid #d4a017' : floating ? `1.5px dashed ${FLOATING_COLOR}` : '1px solid var(--c-line)',
                       cursor: clickable ? 'pointer' : 'default',
                       display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2,
                       opacity: cancelled ? 0.55 : 1,
@@ -270,8 +326,8 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
 
         <div style={{ display: 'flex', gap: 18, alignItems: 'center', padding: '12px 22px', borderTop: '1px solid var(--c-line)', flexWrap: 'wrap' }}>
           {LEGEND.map((l) => (
-            <span key={l.kind} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--c-ink)' }}>
-              <span style={{ width: 22, height: 0, borderTop: `3px solid ${EDGE_COLOR[l.kind]}` }} />
+            <span key={l.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--c-ink)' }}>
+              <span style={{ width: 22, height: 0, borderTop: `3px ${l.dashed ? 'dashed' : 'solid'} ${l.color}` }} />
               {l.label}
             </span>
           ))}

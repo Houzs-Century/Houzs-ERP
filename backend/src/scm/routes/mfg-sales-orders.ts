@@ -6002,9 +6002,11 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
    path, rederiveDeliveryFee). Preserves the operator's free-form additional fee
    (recovered from the existing SVC-DELIVERY-ADD line), recomputes on the
    authoritative computeSoDeliveryFee, and rebuilds the SVC-DELIVERY* lines. Only
-   runs when the SO already carries a delivery fee (else returns null BEFORE
-   recomputeTotals — the caller is responsible for any totals refresh).
-   Best-effort: logs DB errors, never throws. */
+   runs when the SO already carries a delivery fee — as SVC-DELIVERY* LINES, or
+   as an orphaned header delivery_fee_centi that lost its lines (see the bail
+   below); a genuinely fee-less SO returns null BEFORE recomputeTotals (the
+   caller is responsible for any totals refresh), so nothing here ever STARTS a
+   fee on a backend-authored SO. Best-effort: logs DB errors, never throws. */
 async function recomputeDeliveryFeeCore(
   sb: any, docNo: string, sourceDocNo: string | null, c: any,
 ): Promise<{ isFollowup: boolean; sourceDocNo: string | null; total: number } | null> {
@@ -6013,7 +6015,33 @@ async function recomputeDeliveryFeeCore(
     .eq('doc_no', docNo).eq('cancelled', false);
   const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_centi: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
   const deliveryLines = lines.filter((l) => isDeliveryFeeServiceCode(l.item_code));
-  if (deliveryLines.length === 0) return null; // no delivery fee → nothing to re-detect
+  /* Owner ruling 2026-08-07 ("全部都会有 SKU 的 … 怎么可以走后门呢?"): every
+     ringgit on a Sales Order is a LINE. The header delivery_fee_centi is a
+     dual-write MIRROR of the SVC-DELIVERY* lines, never money of its own — but
+     2990-SO-2608-006 proved the mirror could outlive the lines: delete (or
+     cancel) every fee line and the old `length === 0 → return null` bail turned
+     this derivation off FOREVER, while recomputeTotals' legacy line-less
+     fallback kept folding the orphaned header snapshot into the total. The SO
+     then read subtotal RM0 / total RM250 with no line saying why — the back
+     door. So the bail now asks the header too: no fee lines but a header still
+     carrying a fee means the fee must be RE-MATERIALISED as lines through this
+     same derivation (the 0214 RPC below), which also re-stamps the header to
+     the derived total — the ONE truth. Only an SO with no fee lines AND no
+     header fee is genuinely fee-less; the dormant-fee rule stands (nothing
+     here ever STARTS a fee — only the create path's applyDeliveryFee does). */
+  if (deliveryLines.length === 0) {
+    const { data: feeHdr, error: feeHdrErr } = await sb.from('mfg_sales_orders')
+      .select('delivery_fee_centi').eq('doc_no', docNo).maybeSingle();
+    /* Fail CLOSED (the 2026-07-17 zeroing lesson): a failed read is not "no
+       fee". Bail without writing — the shape self-heals on the next edit. */
+    if (feeHdrErr) {
+      /* eslint-disable-next-line no-console */
+      console.error('[so-redetect] header fee read failed — delivery derivation skipped:', docNo, feeHdrErr.message);
+      return null;
+    }
+    const headerFeeCenti = Number((feeHdr as { delivery_fee_centi?: number } | null)?.delivery_fee_centi ?? 0);
+    if (headerFeeCenti <= 0) return null; // no lines AND no header fee → genuinely fee-less
+  }
 
   // The rebuilt SVC-DELIVERY* lines append AFTER the kept lines (services sort
   // last anyway, but a numbered line_no keeps the order stable + matches create).
@@ -6212,9 +6240,11 @@ async function redetectCrossCategoryDelivery(
    THROUGH unchanged, so a benign item edit never drops or flips an operator-
    pinned cross-category source link. Only the FEE re-derives (special-delivery
    triggers + sofa↔mattress cross-category mix follow the current items). When
-   the SO carries no delivery fee, the core early-bails (null) before
-   recomputeTotals, so we still refresh the header totals for the edit.
-   Best-effort. */
+   the SO carries no delivery fee — no SVC-DELIVERY* lines AND no header
+   delivery_fee_centi (the core checks both; an orphaned header fee is
+   re-materialised as lines, never left header-only) — the core early-bails
+   (null) before recomputeTotals, so we still refresh the header totals for
+   the edit. Best-effort. */
 export async function rederiveDeliveryFee(sb: any, docNo: string, c: any): Promise<void> {
   let storedSource: string | null = null;
   const { data: hdr } = await sb.from('mfg_sales_orders')
@@ -7126,6 +7156,18 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
   // double-count); only a line-less legacy SO still reads the header back.
   // ⚠️ DO NOT DELETE this fallback without retiring the delivery_fee_centi
   // header column itself (SO-SKU spec §5 P6 — Loo decides the retirement).
+  //
+  // ⚠️ This fallback is for LEGACY line-less SOs ONLY, and it is the half of
+  // the 2990-SO-2608-006 back door (owner ruling 2026-08-07: every ringgit is
+  // a LINE): a MODERN SO whose SVC-DELIVERY* lines were deleted/cancelled fell
+  // into this branch and its total silently re-absorbed the orphaned header
+  // snapshot with no line saying why. The other half is closed at the source —
+  // recomputeDeliveryFeeCore no longer bails on "no fee lines" when the header
+  // still carries a fee; it re-materialises the lines through the one true
+  // derivation (0214 RPC), so every edit path exits with lines and this branch
+  // stays unreachable for it. Stragglers (SOs not edited since) are listed by
+  // backend/scripts/check-so-fee-line-integrity.mjs and repaired (DRY-RUN
+  // gated) by repair-so-fee-line-integrity.mjs.
   const hasDeliveryFeeLines = rows.some((r) => isDeliveryFeeServiceCode(r.item_code));
   let deliveryCenti = 0;
   if (!hasDeliveryFeeLines) {
@@ -10821,6 +10863,118 @@ mfgSalesOrders.get('/:docNo/payments/:id/slip-url', async (c) => {
       'cache-control': 'private, max-age=300',
     },
   });
+});
+
+/* Attach the proof to an ALREADY-RECORDED payment (owner 2026-08-07 —
+   "开放 backend 可以上传 balance payment proof").
+
+   Until now the slip could only ride along with the INSERT: paymentCreateSchema
+   took an uploadSessionId, paymentPatchSchema did not, and both editors say in
+   as many words that an edit never touches the slip. So a balance collected
+   without the receipt on hand — the normal case when the money lands in the
+   bank before the slip reaches the office — had no route back to its proof,
+   ever.
+
+   Deliberately NOT behind the same-day window that gates PATCH / DELETE. That
+   window exists because the day's cash-up settles the MONEY, and a settled
+   amount must not move afterwards. This route moves no money: amount, method,
+   date and collector are all untouched, and the paid/balance rollups (which sum
+   amount_centi) cannot shift. Gating it would defeat the entire point, since
+   the proof that arrives late is precisely the proof that arrives on a later
+   day.
+
+   Replacing an existing slip is allowed — a wrong photo needs a way back — and
+   both keys go into the UPDATE_PAYMENT audit entry, so a swap is on the record
+   rather than silent. */
+const paymentSlipAttachSchema = z.object({
+  uploadSessionId: z.string().min(1),
+});
+
+mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
+  const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const id = c.req.param('id');
+  const user = c.get('user');
+  // Same self-scope gate as POST / PATCH / DELETE payments.
+  if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
+
+  const { data: row, error: rowErr } = await sb
+    .from('mfg_sales_order_payments')
+    .select('id, so_doc_no, slip_key, version')
+    .eq('id', id)
+    .maybeSingle();
+  if (rowErr) return c.json({ error: 'lookup_failed', reason: rowErr.message }, 500);
+  const before = row as { so_doc_no: string; slip_key: string | null; version: number } | null;
+  if (!before) return c.json({ error: 'not_found' }, 404);
+  if (before.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
+
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = paymentSlipAttachSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
+  const { uploadSessionId } = parsed.data;
+
+  /* Resolve the upload session → committed R2 key. Same contract as the POST
+     route: only a session that finished its PUT ('uploaded') resolves, so a
+     dangling id can never blank out or mis-point an existing slip. */
+  const { data: slipRow, error: slipErr } = await sb
+    .from('pending_slip_uploads')
+    .select('r2_key, status')
+    .eq('upload_session_id', uploadSessionId)
+    .maybeSingle();
+  if (slipErr) return c.json({ error: 'lookup_failed', reason: slipErr.message }, 500);
+  const slipRowT = slipRow as { r2_key: string | null; status: string } | null;
+  if (!slipRowT || slipRowT.status !== 'uploaded' || !slipRowT.r2_key) {
+    return c.json({ error: 'slip_required', reason: 'Upload the payment slip first.' }, 400);
+  }
+  const nextSlipKey = slipRowT.r2_key;
+
+  const expectedVersion = Number(before.version ?? 1);
+  const { data: updated, error: updErr } = await sb
+    .from('mfg_sales_order_payments')
+    .update({
+      slip_key:   nextSlipKey,
+      version:    expectedVersion + 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('so_doc_no', docNo)
+    .eq('version', expectedVersion)
+    .select(`${PAYMENT_COLS}, staff:collected_by ( name )`)
+    .maybeSingle();
+  if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
+  if (!updated) {
+    const { data: latest } = await sb.from('mfg_sales_order_payments').select('version').eq('id', id).maybeSingle();
+    return c.json({ error: 'payment_version_conflict', currentVersion: Number(latest?.version ?? expectedVersion) }, 409);
+  }
+
+  /* Promote — 'promoted' rows are excluded from the slip reaper, same dance as
+     the POST path. Logged loudly rather than swallowed on a no-op: the payment
+     keeps its slip_key either way, but an un-promoted row means the R2 object
+     is on the reaper's list. */
+  const { data: promoted, error: promoteErr } = await sb
+    .from('pending_slip_uploads')
+    .update({ status: 'promoted', promoted_at: new Date().toISOString() })
+    .eq('upload_session_id', uploadSessionId)
+    .select('upload_session_id');
+  if (promoteErr || !promoted || promoted.length === 0) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[payments] slip promote FAILED for session ${uploadSessionId} on ${docNo}/${id}: `
+      + (promoteErr?.message ?? 'no row matched (RLS uploader mismatch?)')
+      + ' — slip will be reaped after TTL; re-upload window open until then.',
+    );
+  }
+
+  await recordSoAudit(sb, {
+    docNo,
+    action: 'UPDATE_PAYMENT',
+    actorId: user.id,
+    actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    note: before.slip_key ? 'Payment proof replaced' : 'Payment proof attached',
+    fieldChanges: [{ field: 'slipKey', from: before.slip_key, to: nextSlipKey }],
+  });
+
+  const { staff, ...rest } = updated as unknown as Record<string, unknown> & { staff: { name: string } | null };
+  return c.json({ payment: { ...rest, collected_by_name: staff?.name ?? null } });
 });
 
 // ── Debtor lookup — autocomplete from prior SOs ───────────────────────

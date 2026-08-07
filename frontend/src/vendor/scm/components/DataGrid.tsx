@@ -237,6 +237,17 @@ export type DataGridProps<T> = {
    * callers keep their in-grid search box.
    */
   hideSearch?: boolean;
+  /**
+   * Default ordering while NO column sort is active (arrangement queues,
+   * owner 2026-08-07). `layout.sort` is single-key; a multi-key default like
+   * "date → state → postcode" therefore arrives as ONE pure comparator, applied
+   * to the filtered rows only while `layout.sort` is null. A header the
+   * operator clicks overrides as always, and cycling that header back to "off"
+   * returns HERE (the same relationship DataTable's null sort has to its
+   * backend default order). Opt-in per grid: omitted (every existing caller),
+   * rows render exactly as passed — byte-identical behaviour.
+   */
+  defaultSort?: (a: T, b: T) => number;
 };
 
 type Layout = DataGridLayout;
@@ -319,6 +330,7 @@ function DataGridInner<T>({
   embedded = false,
   hideSearch = false,
   loadedSearchLimit,
+  defaultSort,
 }: DataGridProps<T>) {
   /* HOUZS-style inline expansion (PR so-list-houzs-port). Tracks the set of
      expanded row ids; rendering inserts a colSpan sub-<tr> directly under
@@ -633,6 +645,68 @@ function DataGridInner<T>({
       return out;
     });
   }, []);
+  // One reset for every filter kind — shared by the toolbar "Clear filters"
+  // pill and the chip row's "Clear all".
+  const clearAllFilters = useCallback(() => {
+    setFilters({});
+    setDateFilters({});
+    setNumberFilters({});
+    setDateRangeFilters({});
+  }, []);
+
+  /* ── Active-filter chips (owner 2026-08-07: stacked multi-column filters
+     must be VISIBLE and individually removable). Filters already AND across
+     columns; the funnel highlight alone doesn't show WHICH columns are
+     narrowing the list once two or three stack. One chip per active filter —
+     column label + a short value summary + its own clear — rendered in a row
+     under the toolbar only while at least one filter is active, so a grid with
+     no filters set renders exactly as before. A column carrying both a date
+     preset and a custom range yields two chips (they AND together, and each
+     clears on its own). */
+  const activeFilterChips = useMemo(() => {
+    const labelOf = (k: string) => {
+      const c = columns.find((cc) => cc.key === k);
+      return c?.label || c?.exportLabel || k;
+    };
+    const chips: Array<{ id: string; label: string; summary: string; clear: () => void }> = [];
+    for (const [k, vals] of Object.entries(filters)) {
+      if (vals.length === 0) continue;
+      chips.push({
+        id: `values:${k}`,
+        label: labelOf(k),
+        summary: vals.length === 1 ? (vals[0] || '(blank)') : `${vals.length} values`,
+        clear: () => setFilters((prev) => { const o = { ...prev }; delete o[k]; return o; }),
+      });
+    }
+    for (const [k, preset] of Object.entries(dateFilters)) {
+      chips.push({
+        id: `preset:${k}`,
+        label: labelOf(k),
+        summary: DATE_PRESETS.find((p) => p.key === preset)?.label ?? preset,
+        clear: () => setDateFilters((prev) => { const o = { ...prev }; delete o[k]; return o; }),
+      });
+    }
+    for (const [k, range] of Object.entries(dateRangeFilters)) {
+      chips.push({
+        id: `range:${k}`,
+        label: labelOf(k),
+        summary: `${range.from ?? 'start'} - ${range.to ?? 'end'}`,
+        clear: () => setDateRangeFilters((prev) => { const o = { ...prev }; delete o[k]; return o; }),
+      });
+    }
+    for (const [k, range] of Object.entries(numberFilters)) {
+      const parts: string[] = [];
+      if (range.min != null) parts.push(`min ${range.min}`);
+      if (range.max != null) parts.push(`max ${range.max}`);
+      chips.push({
+        id: `number:${k}`,
+        label: labelOf(k),
+        summary: parts.join(', '),
+        clear: () => setNumberFilters((prev) => { const o = { ...prev }; delete o[k]; return o; }),
+      });
+    }
+    return chips;
+  }, [filters, dateFilters, dateRangeFilters, numberFilters, columns]);
 
   /* HOUZS-parity column show/hide actions for the Columns popover. Reset
      clears hidden + order + widths (preserving groupBy + sort so search
@@ -1054,9 +1128,12 @@ function DataGridInner<T>({
   }, [filterMenu, columns, rows, filterColValue]);
 
   const sortedRows = useMemo(() => {
-    if (!layout.sort) return filteredRows;
+    /* No active column sort → the grid's default order: the caller's
+       `defaultSort` comparator when provided (arrangement queues), otherwise
+       the rows exactly as passed (every other grid, unchanged). */
+    if (!layout.sort) return defaultSort ? [...filteredRows].sort(defaultSort) : filteredRows;
     const col = columns.find((c) => c.key === layout.sort!.key);
-    if (!col) return filteredRows;
+    if (!col) return defaultSort ? [...filteredRows].sort(defaultSort) : filteredRows;
     const cmp = col.sortFn ?? ((a: T, b: T) => {
       // Fall back to the column's group/search value when the cell is JSX
       // (accessor text is empty for a ReactNode) so columns without an
@@ -1070,7 +1147,7 @@ function DataGridInner<T>({
     });
     const dir = layout.sort.dir === 'asc' ? 1 : -1;
     return [...filteredRows].sort((a, b) => cmp(a, b) * dir);
-  }, [filteredRows, columns, layout.sort, colValue]);
+  }, [filteredRows, columns, layout.sort, colValue, defaultSort]);
 
   // Selection callback when row changes.
   useEffect(() => {
@@ -1542,20 +1619,20 @@ function DataGridInner<T>({
         {/* Clear-all-filters — appears only when ≥1 column filter is active.
             Per-column funnels already highlight orange; this is the one-click
             reset for the whole grid. Wei Siang 2026-06-04. */}
-        {(Object.values(filters).some((v) => v.length > 0)
-          || Object.keys(dateFilters).length > 0
-          || Object.keys(numberFilters).length > 0
-          || Object.keys(dateRangeFilters).length > 0) && (
+        {activeFilterChips.length > 0 && (
           <button
             type="button"
             className={styles.toolbarPill}
-            onClick={() => { setFilters({}); setDateFilters({}); setNumberFilters({}); setDateRangeFilters({}); }}
+            onClick={clearAllFilters}
             title="Clear all column filters"
           >
             <Filter size={14} strokeWidth={1.75} aria-hidden style={{ color: 'var(--c-orange)' }} />
             <span>Clear filters</span>
+            {/* Count every active filter kind, matching the chip row below —
+                the old value-filters-only count read "0" when a date or number
+                filter was the only one active. */}
             <span className={styles.toolbarPillBadge}>
-              {Object.values(filters).filter((v) => v.length > 0).length}
+              {activeFilterChips.length}
             </span>
           </button>
         )}
@@ -1623,6 +1700,32 @@ function DataGridInner<T>({
           )}
         </div>
       </div>
+
+      {/* Active-filter chips — the visible face of the AND-stack (see the
+          activeFilterChips memo above). Absent while no filter is active, so
+          every existing grid renders byte-identically until an operator
+          actually stacks one. */}
+      {activeFilterChips.length > 0 && (
+        <div className={styles.filterBar} data-filter-bar>
+          <span>Filtered by:</span>
+          {activeFilterChips.map((chip) => (
+            <span key={chip.id} className={styles.groupChip} title={`${chip.label}: ${chip.summary}`}>
+              <span className={styles.filterChipCol}>{chip.label}</span>
+              <span className={styles.filterChipVal}>{chip.summary}</span>
+              <button
+                type="button"
+                className={styles.groupChipRemove}
+                onClick={chip.clear}
+                title={`Clear the ${chip.label} filter`}
+                aria-label={`Clear the ${chip.label} filter`}
+              >x</button>
+            </span>
+          ))}
+          <button type="button" className={styles.filterBarClear} onClick={clearAllFilters}>
+            Clear all
+          </button>
+        </div>
+      )}
 
       {/* Group-by zone */}
       {groupBanner && (

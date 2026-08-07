@@ -46,6 +46,13 @@ export interface Branding {
    *  a near-invisible watermark on a Delivery Order. Blank means "print the
    *  on-screen one", i.e. exactly the pre-2026-08 behaviour. */
   printLogoR2Key: string;
+  /** Customer-service phone printed on documents ("" = the line is omitted).
+   *  SEPARATE from `phone`: the desk a customer calls about a delivery is not
+   *  the company's headline number. Per company — a 2990 delivery order must
+   *  never print a Houzs contact. */
+  csPhone: string;
+  /** Customer-service email, same contract as csPhone. */
+  csEmail: string;
 }
 
 /** Seeded defaults — VERBATIM the values that were hardcoded before this change
@@ -66,6 +73,8 @@ export const DEFAULT_BRANDING: Branding = {
   website: "",
   logoR2Key: "",
   printLogoR2Key: "",
+  csPhone: "",
+  csEmail: "",
 };
 
 /** 2990 company defaults — mirrors the backend's DEFAULT_BRANDING_2990 and
@@ -82,6 +91,8 @@ export const DEFAULT_BRANDING_2990: Branding = {
   website: "",
   logoR2Key: "",
   printLogoR2Key: "",
+  csPhone: "",
+  csEmail: "",
 };
 
 /** Defaults for the given company code (GET /api/branding echoes the active
@@ -154,6 +165,10 @@ export function normalizeBranding(
     // on-screen logo").
     printLogoR2Key:
       ((r.printLogoR2Key ?? r.print_logo_r2_key) as string | undefined)?.toString().trim() ?? "",
+    // Blank stays blank: an unset CS contact omits the line rather than
+    // inheriting another company's.
+    csPhone: ((r.csPhone ?? r.cs_phone) as string | undefined)?.toString().trim() ?? "",
+    csEmail: ((r.csEmail ?? r.cs_email) as string | undefined)?.toString().trim() ?? "",
   };
 }
 
@@ -209,6 +224,10 @@ export function getBrandingCompanyCode(): string {
 
 export interface BrandingLogo {
   key: string;
+  /** The company code these bytes were served for. The R2 key alone cannot say
+   *  WHOSE image this is, and a letterhead that prints another company's mark is
+   *  worse than one that prints none. */
+  company?: string;
   dataUrl: string;
   /** jspdf addImage format tag. */
   format: "PNG" | "JPEG";
@@ -241,7 +260,12 @@ export function letterheadLogoKey(b: {
 export function getBrandingLogoCache(): BrandingLogo | null {
   const key = letterheadLogoKey(brandingCache);
   if (!key) return null;
-  return logoCache && logoCache.key === key ? logoCache : null;
+  if (!logoCache || logoCache.key !== key) return null;
+  // A memo entry stamped with a DIFFERENT company is refused outright rather
+  // than drawn: the letterhead falls back to text-only, which is a poorer
+  // document but still this company's document.
+  if (logoCache.company && logoCache.company !== brandingCompanyCodeCache) return null;
+  return logoCache;
 }
 
 /** Drop the memo — called after a logo upload/remove in Settings so the next
@@ -349,6 +373,10 @@ export async function ensureBrandingLogoLoaded(): Promise<void> {
   // stale one.
   const key = letterheadLogoKey(brandingCache);
   const usingPrintSlot = key !== "" && key === (brandingCache.printLogoR2Key || "").trim();
+  // Captured up front: whatever the request returns must belong to the company
+  // whose branding produced this key, not to whichever company happens to be
+  // active by the time the bytes land.
+  const expectedCompany = brandingCompanyCodeCache;
   if (!key) return;                                   // no logo configured
   if (logoCache && logoCache.key === key) return;     // memo is current
   if (logoFailedKey === key) return;                  // known-bad — don't retry per print
@@ -364,8 +392,18 @@ export async function ensureBrandingLogoLoaded(): Promise<void> {
       // X-Company-Id rides along (like every api/client call) so the backend
       // serves the ACTIVE company's logo — without it a 2990 session on the
       // Houzs hostname would cache Houzs's logo under 2990's key.
+      /* The R2 KEY is in the URL, not just the company header. Two companies
+         asked for the same `/api/branding/logo?variant=print` and were told
+         apart only by X-Company-Id — but a browser caches by URL, and the
+         response carried `max-age=300` with no Vary. So opening a 2990 document
+         and then a Houzs one inside five minutes printed 2990's logo on the
+         Houzs letterhead, while the app chrome (which has always passed ?k=)
+         stayed correct. The key is per company AND per upload, so it is both
+         the isolation and the cache-buster. */
+      const params = new URLSearchParams({ k: key });
+      if (usingPrintSlot) params.set("variant", "print");
       const res = await correlatedFetch(
-        `${api.baseUrl}/api/branding/logo${usingPrintSlot ? "?variant=print" : ""}`,
+        `${api.baseUrl}/api/branding/logo?${params.toString()}`,
         {
           headers: {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -374,6 +412,17 @@ export async function ensureBrandingLogoLoaded(): Promise<void> {
         },
       );
       if (!res.ok) throw correlateError(new Error(`logo fetch ${res.status}`), requestIdFromResponse(res));
+      /* The server names the company it served (routes/branding.ts). A mismatch
+         means the active company moved under this fetch, and caching the bytes
+         would print one company's mark on another's documents for the rest of
+         the session — so it fails instead, and the letterhead goes text-only.
+         A null header (an older worker, or a proxy that dropped it) is NOT
+         treated as a mismatch: the guard tightens the failure mode, it must not
+         invent one. */
+      const servedCompany = res.headers.get("x-company-code");
+      if (servedCompany && servedCompany.toUpperCase() !== expectedCompany.toUpperCase()) {
+        throw new Error(`logo served for ${servedCompany}, expected ${expectedCompany}`);
+      }
       const { dataUrl, width, height, contentType } = await consumeCorrelated(res, async () => {
         const blob = await res.blob();
         const raw = await blobToDataUrl(blob);
@@ -387,7 +436,7 @@ export async function ensureBrandingLogoLoaded(): Promise<void> {
       });
       const format: BrandingLogo["format"] =
         contentType === "image/png" || dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
-      logoCache = { key, dataUrl, format, width, height };
+      logoCache = { key, company: expectedCompany, dataUrl, format, width, height };
       logoFailedKey = null;
     } catch {
       logoFailedKey = key; // fail-soft: text-only header this session

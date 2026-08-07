@@ -396,31 +396,57 @@ export function withCompanyCode<T extends Record<string, unknown>>(
   return { ...row, company_code: code };
 }
 
-/**
- * PER-COMPANY DOC-NUMBER PREFIX (Phase 0d). The base company HOUZS keeps BARE
- * numbers (e.g. `SO-2607-001`) so its existing live doc numbers are unchanged;
- * every OTHER company prefixes with its code (e.g. `2990-SO-2607-001`). The
- * prefix alone keeps the two companies' monthly sequences from colliding on the
- * GLOBAL unique doc_no index — no per-company unique constraint (no migration)
- * needed, because a minter's `.like('SO-2607-%')` fetch never matches
- * `2990-SO-2607-...`, so each company reads/advances only its own max+1.
+/** The doc-number prefix each company mints under.
  *
- * Returns "" when the company is unresolved (pre-activation / single-company)
- * OR is the HOUZS base — so Houzs numbering is a strict no-op until a non-base
- * company is active. Use at every PER-COMPANY minter: fold it into the month
- * prefix passed to BOTH the `.like(...)` fetch AND `nextMonthlyDocNo(...)` so
- * they agree, e.g. `const p = companyDocPrefix(c); ... .like(col, ${p}SO-${yymm}-%)`
- * and `nextMonthlyDocNo(${p}SO-${yymm}, existing)`. Do NOT apply to CROSS-COMPANY
+ *  HOUZS is NOT its bare company code (owner 2026-08-07): its documents used to
+ *  carry no prefix at all, which read as anonymous next to `2990-DO-2608-001`.
+ *  `HC-` is the house code the owner chose. Every other company keeps `<CODE>-`.
+ */
+const BASE_COMPANY_CODE = "HOUZS";
+const DOC_PREFIX_BY_COMPANY: Record<string, string> = {
+  [BASE_COMPANY_CODE]: "HC-",
+};
+
+/**
+ * PER-COMPANY DOC-NUMBER PREFIX (Phase 0d). Every company prefixes its doc
+ * numbers — HOUZS with `HC-` (e.g. `HC-SO-2608-001`), everyone else with their
+ * own code (e.g. `2990-SO-2608-001`). The prefix alone keeps the companies'
+ * monthly sequences from colliding on the GLOBAL unique doc_no index — no
+ * per-company unique constraint (no migration) needed, because a minter's
+ * `.like('HC-SO-2608-%')` fetch never matches `2990-SO-2608-...`, so each
+ * company reads/advances only its own max+1.
+ *
+ * HOUZS minted BARE numbers until 2026-08-07 (`SO-2607-001`). Those documents
+ * keep their numbers — renaming a live doc number would orphan every reference
+ * to it, in this system and in the customer's. The two shapes therefore coexist
+ * permanently, and the monthly counter for `HC-` starts from 1 in the month the
+ * change lands, because `.like('HC-SO-2608-%')` matches none of the old ones.
+ * That is a deliberate, one-off discontinuity, not a collision.
+ *
+ * Use at every PER-COMPANY minter: fold it into the month prefix passed to BOTH
+ * the `.like(...)` fetch AND `nextMonthlyDocNo(...)` so they agree, e.g.
+ * `const p = companyDocPrefix(c); ... .like(col, ${p}SO-${yymm}-%)` and
+ * `nextMonthlyDocNo(${p}SO-${yymm}, existing)`. Do NOT apply to CROSS-COMPANY
  * shared docs (trips / delivery-planning) — those keep one shared sequence.
  */
 export function companyDocPrefix(c: CompanyScopeCtx): string {
   const code = c.get("companyCode");
-  // Only prefix with a real, non-base company code. A non-string (e.g. a whole
-  // company object leaking in from a reconstructed context — as the scan
-  // background job did, minting "[object Object]-SO-2607-001") falls back to
-  // BARE numbering instead of stringifying to "[object Object]-".
-  if (typeof code !== "string" || !code || code === "HOUZS") return "";
-  return `${code}-`;
+  /* A non-string (a whole company object leaking in from a reconstructed
+     context — as the scan background job did, minting
+     "[object Object]-SO-2607-001") degrades to the BASE company's prefix. It
+     used to degrade to "", which was the base company's prefix at the time;
+     now that HOUZS mints `HC-`, returning "" would invent a THIRD numbering
+     shape belonging to no company. */
+  if (typeof code !== "string" || !code) return docPrefixForCode(BASE_COMPANY_CODE);
+  return docPrefixForCode(code);
+}
+
+/** The prefix for a company CODE, for callers that hold the code rather than a
+ *  request context (the Delivery-Planning convert mints under the SOURCE SO's
+ *  company, not the active one). */
+export function docPrefixForCode(code: string): string {
+  const upper = code.trim().toUpperCase();
+  return DOC_PREFIX_BY_COMPANY[upper] ?? `${upper}-`;
 }
 
 /**

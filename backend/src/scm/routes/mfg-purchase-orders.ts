@@ -385,7 +385,8 @@ const ITEM_COLS =
      date = MAX over non-null of [delivery_date, _2, _3, _4]. */
   'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, ' +
   /* Migration 0098 — source SO line link. The detail route resolves it to a
-     per-line so_doc_no for the PO PDF's "Transferred SO" column. */
+     per-line so_doc_no for the PO PDF's "For SO" provenance column
+     (relabelled from "Transferred SO", owner 2026-08-07). */
   'so_item_id';
 
 // ── List ──────────────────────────────────────────────────────────────
@@ -561,6 +562,10 @@ mfgPurchaseOrders.get('/', async (c) => {
     transfer_to_grns: grnsByPo.get(r.id) ?? [],
     assigned_sos: assignedByPo.get(r.id)?.assignedSos ?? [],
     assigned_so_linked: assignedByPo.get(r.id)?.sourceLinked ?? false,
+    /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s), the
+       parallel provenance slot rendered muted BESIDE the precedence chips.
+       assigned_sos is unchanged — an older frontend simply ignores this. */
+    assigned_so_provenance: assignedByPo.get(r.id)?.provenanceSos ?? [],
     delivered_dos: deliveredByPo.get(r.id)?.deliveredDos ?? [],
   }));
   if (paginate) return c.json({ purchaseOrders, total, page, pageSize, statusCounts });
@@ -880,7 +885,8 @@ mfgPurchaseOrders.get('/:id', async (c) => {
       (r) => r.item_group as string | null | undefined,
     ),
   );
-  /* 2026-06-12 — "Transferred SO" column on the PO PDF (DSL/AutoCount layout):
+  /* 2026-06-12 — "For SO" provenance column on the PO PDF (DSL/AutoCount
+     layout; relabelled from "Transferred SO", owner 2026-08-07):
      resolve each line's so_item_id (migration 0098) to the source SO doc_no.
      Best-effort: a lookup failure leaves so_doc_no null, never blocks the
      detail response. */

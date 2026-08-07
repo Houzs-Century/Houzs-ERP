@@ -981,6 +981,7 @@ const PATCH_FIELDS = [
   // Own-team inspections link into delivery planning for the visit.
   // Lives on the Under Verification stage since mig 0105.
   "inspection_by",
+  "pickup_by",
   // Mig 0105 — QC-on-receipt result (pass/fail/na), shown next to
   // qc_receipt_date in the Verification stage panel.
   "qc_issue_result",
@@ -1012,7 +1013,7 @@ const FIELD_LABELS: Record<string, string> = {
   inspection_result: "Inspection Result", email_for_survey: "Survey Email",
   verification_outcome: "Verification Outcome", verified_root_cause: "Verified Root Cause",
   qc_receipt_date: "QC Receipt Date", goods_returned_note: "Goods Returned Note",
-  supplier_service_note: "Supplier Service Note", inspection_by: "Inspection By",
+  supplier_service_note: "Supplier Service Note", inspection_by: "Inspection By", pickup_by: "Pickup By",
   qc_issue_result: "QC Result",
 };
 // Only DATE and REMARK/note edits are worth a timeline entry (owner
@@ -1899,6 +1900,10 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
            -- row also shows a readable company_code column. Raw SQL via env.DB, so
            -- this bypasses the supabase-js companyScope helper by necessity.
            co.code as company_code,
+           (SELECT group_concat(i.item_code, ', ')
+              FROM assr_items i
+             WHERE i.assr_id = c.id
+               AND i.item_code IS NOT NULL AND i.item_code != '') as items_codes,
            COALESCE(
              (SELECT MAX(a.created_at)
                 FROM assr_activity a

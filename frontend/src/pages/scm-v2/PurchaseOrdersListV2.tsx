@@ -42,7 +42,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
-import { usePoSoCoverage, originsByCode, storedLinkSkus, deliveredByCode } from "../../vendor/scm/lib/flow-queries";
+import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -673,6 +673,8 @@ function PoLinesExpansion({ id }: { id: string }) {
   const detailQ = usePurchaseOrderDetail(id);
   const covQ = usePoSoCoverage("po", id);
   const byCode = originsByCode(covQ.data);
+  // PR-3: the parallel stored-origin "bought for" slot, per SKU.
+  const provByCode = provenanceByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
   const deliveredMap = deliveredByCode(covQ.data);
   const items =
@@ -687,6 +689,7 @@ function PoLinesExpansion({ id }: { id: string }) {
     amountCenti: l.line_total_centi ?? 0,
     assignedSos: byCode.get((l.material_code ?? "").trim()) ?? [],
     sourceLinked: linkedSkus.has((l.material_code ?? "").trim()),
+    provenance: provByCode.get((l.material_code ?? "").trim()) ?? [],
     deliveredDos: deliveredMap.get((l.material_code ?? "").trim()) ?? [],
   }));
   return (
@@ -1120,6 +1123,7 @@ export function PurchaseOrdersListV2() {
         <AssignedSoCell
           assignments={r.assigned_sos}
           sourceLinked={r.assigned_so_linked}
+          provenance={r.assigned_so_provenance}
           onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
           emptyMeans="stock"
         />

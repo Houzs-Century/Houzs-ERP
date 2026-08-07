@@ -50,6 +50,12 @@
 // "bought-for" annotation — until that stage lands, remember when reading this
 // route's output that (b) outranking (c) reflects the RETIRED model.
 //
+// PR-3 (2026-08-07): the parallel annotation now EXISTS on the wire — every
+// SkuOrigin carries `provenance` = its layer-(b) assignments regardless of
+// which layer won — but the PRECEDENCE IS UNCHANGED: `assignments` still
+// resolves a > b > c exactly as above. The flip that makes (c)/(a) the only
+// execution answer (the live DO-time allocator binding) is PR-4, owner-gated.
+//
 // Read-only + company-scoped: every doc read is scopeToCompany'd (a foreign id
 // resolves to nothing); computeMrp is called with the active company id; the
 // origin + DO-linked SOs are re-validated against company-owned mfg_sales_orders.
@@ -129,8 +135,22 @@ export type OriginAssignment = {
    so_item_id. It is deliberately SEPARATE from the assignments: a SKU can show
    an MRP-derived SO while its PO lines are all unlinked, and that combination —
    an assignment on screen with nothing behind it in the database — is exactly
-   what the 2026-07-29 incident mistook for a binding. */
-export type SkuOrigin = { itemCode: string; assignments: OriginAssignment[]; storedLink: boolean };
+   what the 2026-07-29 incident mistook for a binding.
+
+   `provenance` (2026-08-07, PR-3 of the Decision rollout) = ALWAYS the
+   layer-(b) stored-origin assignments for this SKU (`locked: true`,
+   `source: 'linked'`), REGARDLESS of which layer won the precedence — the
+   parallel "bought for" slot the Decision's display stage renders beside the
+   execution answer. `storedLink` says THAT stored links exist; `provenance`
+   says WHICH SOs they name. Empty array when the SKU has no stored origin.
+   Purely additive: `assignments` keeps today's precedence winner, so an older
+   frontend that never reads `provenance` sees exactly the old wire. */
+export type SkuOrigin = {
+  itemCode: string;
+  assignments: OriginAssignment[];
+  storedLink: boolean;
+  provenance: OriginAssignment[];
+};
 
 type SoHeaderRow = {
   doc_no: string | null;
@@ -321,7 +341,14 @@ export function buildDeliveredSoLock(
    (a) delivered→DO-lock (static) > (b) stored origin (static) >
    (c) MRP floating (floating) > (d) none. Only SKUs with an assignment appear;
    a SKU absent from the result renders a dash. `locked` is carried through from
-   whichever layer won (do/origin already stamp true; floating stamps false). */
+   whichever layer won (do/origin already stamp true; floating stamps false).
+
+   Since 2026-08-07 (PR-3, additive): every emitted SKU ALSO carries
+   `provenance` = its layer-(b) stored-origin assignments verbatim, whether or
+   not (b) won. The precedence itself is NOT changed — `assignments` and
+   `storedLink` are byte-identical to the pre-PR-3 output. A SKU whose only
+   data is stored origin still appears (layer (b) wins for it), so provenance
+   is never silently dropped by the only-SKUs-with-an-assignment rule. */
 export function mergeAssignments(
   poSkus: Array<string | null | undefined>,
   doLock: Map<string, OriginAssignment[]>,
@@ -340,7 +367,12 @@ export function mergeAssignments(
       ?? (storedOrigin.get(code)?.length ? storedOrigin.get(code) : null)
       ?? (floating.get(code)?.length ? floating.get(code) : null);
     if (!picked || picked.length === 0) continue;
-    out.push({ itemCode: code, assignments: picked, storedLink: linkedSkus.has(code) });
+    out.push({
+      itemCode: code,
+      assignments: picked,
+      storedLink: linkedSkus.has(code),
+      provenance: storedOrigin.get(code) ?? [],
+    });
   }
   return out.sort((a, b) => a.itemCode.localeCompare(b.itemCode));
 }
@@ -577,7 +609,15 @@ poSoCoverage.get('/:type/:id', async (c) => {
 // the PO's lines carries a stored so_item_id (so the column can mark an MRP-only
 // guess apart from a real link). Fully company-scoped, same as the route.
 // ----------------------------------------------------------------------------
-export type PoAssignedSummary = { assignedSos: OriginAssignment[]; sourceLinked: boolean };
+export type PoAssignedSummary = {
+  assignedSos: OriginAssignment[];
+  sourceLinked: boolean;
+  /* PR-3 (2026-08-07, additive): the distinct layer-(b) stored-origin SOs
+     across every SKU — the "bought for" slot of the list cell, parallel to and
+     never replacing `assignedSos` (which keeps today's precedence winners).
+     Deduped by SO doc_no; empty when no SKU has a stored origin. */
+  provenanceSos: OriginAssignment[];
+};
 
 /* Roll a PO's per-SKU origins up to ONE distinct-SO summary for the list cell.
    EXPORTED since 2026-08-02: the GRN / PI lists roll up the SAME per-SKU
@@ -586,6 +626,7 @@ export type PoAssignedSummary = { assignedSos: OriginAssignment[]; sourceLinked:
    received). */
 export function summarizeOrigins(origins: SkuOrigin[]): PoAssignedSummary {
   const byDoc = new Map<string, OriginAssignment>();
+  const provByDoc = new Map<string, OriginAssignment>();
   let sourceLinked = false;
   for (const o of origins) {
     if (o.storedLink) sourceLinked = true;
@@ -594,8 +635,16 @@ export function summarizeOrigins(origins: SkuOrigin[]): PoAssignedSummary {
       // A STATIC (locked) assignment wins over a FLOATING one for the same SO.
       if (!prev || (prev.locked === false && a.locked)) byDoc.set(a.soDocNo, a);
     }
+    // Provenance rows are all layer (b) (locked, 'linked') — first hit wins.
+    for (const p of o.provenance ?? []) {
+      if (!provByDoc.has(p.soDocNo)) provByDoc.set(p.soDocNo, p);
+    }
   }
-  return { assignedSos: sortAssignments([...byDoc.values()]), sourceLinked };
+  return {
+    assignedSos: sortAssignments([...byDoc.values()]),
+    sourceLinked,
+    provenanceSos: sortAssignments([...provByDoc.values()]),
+  };
 }
 
 export async function resolvePoSoCoverageForPos(

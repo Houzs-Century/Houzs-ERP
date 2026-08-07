@@ -51,8 +51,14 @@ export function PortalFrame({ children }: { children: ReactNode }) {
         <div className="h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent" />
       </header>
 
-      {/* ═══ Main content ═══════════════════════════════════ */}
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-6 sm:py-10">
+      {/* ═══ Main content ═══════════════════════════════════
+          `print-area` is the app's print opt-in (index.css): the global
+          `body * { visibility: hidden }` means an un-tagged page prints a
+          BLANK sheet, which is exactly what the supplier case's Print button
+          did. Tagging the frame's main covers every portal page at once —
+          the header / footer chrome stays off the paper, which is what you
+          want there anyway. */}
+      <main className="print-area mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-6 sm:py-10">
         {children}
       </main>
 

@@ -175,7 +175,12 @@ function corsOriginAllowed(origin: string | undefined | null): string | undefine
     host === "127.0.0.1";
   return ok ? origin : undefined;
 }
-app.use("*", cors({ origin: corsOriginAllowed, exposeHeaders: ["X-Request-Id"] }));
+// X-Company-Code rides on the branding-logo response so the client can refuse
+// an image that belongs to another company (see routes/branding.ts). A custom
+// response header is INVISIBLE to a cross-origin reader unless it is exposed
+// here — omitting it would make the guard silently no-op in prod, where the
+// SPA and the worker are different origins.
+app.use("*", cors({ origin: corsOriginAllowed, exposeHeaders: ["X-Request-Id", "X-Company-Code"] }));
 
 // Baseline security headers on every Worker response. Deliberately conservative:
 // the cross-origin isolation family (CORP/COOP/COEP) is DISABLED because the API
