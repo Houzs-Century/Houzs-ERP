@@ -22,7 +22,7 @@
 // NO EMOJI anywhere (owner rule, extends to all product copy).
 // ----------------------------------------------------------------------------
 
-import { COMPANY, deliverPdf, drawHeader, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, type PdfAction } from './pdf-common';
+import { COMPANY, deliverPdf, drawHeader, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, safeName, type PdfAction } from './pdf-common';
 
 /* One changed line on the amendment. `kind` drives the tint semantics: a CHANGE
    shows before (red) -> after (green); an ADD has no before; a REMOVE has no
@@ -276,6 +276,7 @@ export async function generateAmendmentPdf(
   );
   doc.setTextColor(0);
 
-  const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 40);
-  deliverPdf(doc, `${safe(input.amendmentNo || `${input.kind}-amendment`)}.pdf`, opts?.action);
+  // Was a private copy of the old ASCII-only scrub; the shared helper keeps a
+  // non-Latin amendment number readable instead of underscoring it away.
+  deliverPdf(doc, `${safeName(input.amendmentNo || `${input.kind}-amendment`, 40)}.pdf`, opts?.action);
 }
