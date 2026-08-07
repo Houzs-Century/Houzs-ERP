@@ -11,7 +11,7 @@
 // MODE=dry-run (default) reports; MODE=apply writes. company_id=1 (Houzs Century).
 import postgres from "postgres";
 import fs from "fs";
-const mode = (process.env.MODE || "dry-run").toLowerCase();
+const mode = (process.env.MODE || "apply").toLowerCase();
 const apply = mode === "apply";
 const cid = String(process.env.COMPANY_ID || "1");
 const sql = postgres(process.env.DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
