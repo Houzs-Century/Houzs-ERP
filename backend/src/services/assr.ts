@@ -1900,8 +1900,6 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
            -- row also shows a readable company_code column. Raw SQL via env.DB, so
            -- this bypasses the supabase-js companyScope helper by necessity.
            co.code as company_code,
-           -- Product Info item codes (Nico 2026-08-07: the list's Item
-           -- column must show these, not the legacy form-era item_code).
            (SELECT group_concat(i.item_code, ', ')
               FROM assr_items i
              WHERE i.assr_id = c.id
