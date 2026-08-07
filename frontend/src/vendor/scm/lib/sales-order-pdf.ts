@@ -10,6 +10,7 @@ import {
 } from '@2990s/shared/so-line-display';
 import {
   COMPANY,
+  deliverPdf,
   drawHeader,
   drawInfoColumns,
   amountInWordsMyr,
@@ -17,6 +18,7 @@ import {
   fmtDocDate,
   fmtRm,
   safeName,
+  type PdfAction,
 } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { loadFabricDescriptionMap, loadFabricSupplierMap } from './supplier-doc-data';
@@ -262,43 +264,12 @@ const methodLabel = (p: SoPayment): string => {
   return 'Cash';
 };
 
-/* Follow-up #83 — action selects how the rendered PDF is delivered:
-   - 'save'    → traditional doc.save() download (default, back-compat)
-   - 'print'   → render into a hidden iframe and trigger print dialog,
-                 skipping the Downloads folder round-trip
-   - 'preview' → open as a blob URL in a new tab (no print, no download) */
-export type PdfAction = 'save' | 'print' | 'preview';
-
-/* Mount a blob URL in a hidden iframe and (optionally) trigger print.
-   Cleanup is deferred 60 s so the OS print dialog can hold the iframe
-   document until the user closes it. */
-const renderViaIframe = (blobUrl: string, andPrint: boolean): void => {
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
-  iframe.style.border = '0';
-  iframe.src = blobUrl;
-  document.body.appendChild(iframe);
-  if (andPrint) {
-    iframe.onload = () => {
-      try {
-        iframe.contentWindow?.focus();
-        iframe.contentWindow?.print();
-      } catch {
-        /* Some browsers throw if the PDF viewer hasn't fully hydrated.
-           Worst case the user sees the iframe content briefly; we still
-           clean up below. */
-      }
-    };
-  }
-  window.setTimeout(() => {
-    try { document.body.removeChild(iframe); } catch { /* already detached */ }
-    URL.revokeObjectURL(blobUrl);
-  }, 60_000);
-};
+/* Follow-up #83 introduced save / print / preview delivery HERE; every other
+   document's generator only knew doc.save(). The Print preview rollout
+   (2026-08-06) needs all of them to offer the same three exits, so the type and
+   the iframe/blob plumbing now live in pdf-common alongside the letterhead
+   helpers. Re-exported so the SO's existing importers keep their import path. */
+export type { PdfAction } from './pdf-common';
 
 type JsPdf = import('jspdf').jsPDF;
 type AutoTableFn = (typeof import('jspdf-autotable'))['default'];
@@ -761,26 +732,7 @@ export async function generateSalesOrderPdf(
 
   // Filename: SO-009001-DebtorName.pdf
   const filename = `${header.doc_no}-${safeName(header.debtor_name || 'customer')}.pdf`;
-
-  /* Follow-up #83 — Dispatch on action.
-     - save:    write a real file (download)
-     - print:   blob URL → hidden iframe → window.print()
-     - preview: blob URL → new tab (browser PDF viewer) */
-  if (action === 'save') {
-    doc.save(filename);
-    return;
-  }
-  const blob = doc.output('blob');
-  const blobUrl = URL.createObjectURL(blob);
-  if (action === 'preview') {
-    /* New-tab preview. The blob URL stays valid until revoked; we leave
-       it to the 60 s timer so the new tab has time to fetch the PDF. */
-    window.open(blobUrl, '_blank');
-    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
-    return;
-  }
-  // action === 'print'
-  renderViaIframe(blobUrl, true);
+  deliverPdf(doc, filename, action);
 }
 
 /* Several SOs → ONE combined file, each SO starting on a new page. For the
@@ -788,7 +740,7 @@ export async function generateSalesOrderPdf(
    footer numbers its own pages; the whole file saves once. */
 export async function generateCombinedSalesOrderPdf(
   docs: Array<{ header: SoHeader; items: SoItem[]; payments?: SoPayment[]; pwpCodes?: SoPwpCodeRow[] }>,
-  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; docNoun?: string },
+  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; docNoun?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -802,5 +754,5 @@ export async function generateCombinedSalesOrderPdf(
       opts,
     );
   }
-  doc.save(opts?.fileName ?? 'sales-orders.pdf');
+  deliverPdf(doc, opts?.fileName ?? 'sales-orders.pdf', opts?.action);
 }

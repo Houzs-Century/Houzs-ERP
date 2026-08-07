@@ -40,6 +40,8 @@ import {
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { activeOptions, buildVariantSummary, fmtDateOrDash, maintPickerValues } from '@2990s/shared';
 import {
   useGrnDetail,
@@ -376,13 +378,14 @@ export const GoodsReceivedDetail = () => {
     }
   };
 
-  const handlePrint = () => {
-    // GRN PDF (AutoCount layout) — mirrors PO's handlePrint wiring its own
+  const deliverPrintPdf = (action: PdfAction) => {
+    // GRN PDF (AutoCount layout) — mirrors PO's print wiring its own
     // purchase-order-pdf helper, here the GRN-specific grn-pdf helper.
-    import('../../vendor/scm/lib/grn-pdf').then(({ generateGrnPdf }) =>
-      generateGrnPdf(grn, items as any),
+    return import('../../vendor/scm/lib/grn-pdf').then(({ generateGrnPdf }) =>
+      generateGrnPdf(grn, items as any, { action }),
     ).catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   return (
     <div className={styles.page}>
@@ -425,10 +428,22 @@ export const GoodsReceivedDetail = () => {
               <span>From Purchase Order</span>
             </Button>
           )}
-          <Button variant="ghost" size="md" onClick={handlePrint}>
+          <Button variant="ghost" size="md" onClick={print.openPreview}>
             <Printer {...ICON} />
             <span>Print PDF</span>
           </Button>
+          <PrintPreviewModal
+            open={print.open}
+            onClose={print.close}
+            docTitle="Goods Received Note"
+            docNo={grn.grn_number}
+            rows={[
+              { label: 'Supplier', value: grn.supplier?.name ?? grn.supplier?.code ?? '—' },
+              { label: 'Received', value: fmtDateOrDash(grn.received_at) },
+              { label: 'Items', value: `${items.length} line${items.length === 1 ? '' : 's'}` },
+            ]}
+            {...print.handlers}
+          />
           {/* Cancel — when the GRN is still editable (Draft or Confirmed) AND has
               no downstream PI/PR (unified model). Confirm dialog → cancel mutation.
               For a Confirmed GRN this reverses the receipt; for a Draft the server

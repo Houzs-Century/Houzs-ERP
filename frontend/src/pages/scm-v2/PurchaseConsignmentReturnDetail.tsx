@@ -46,6 +46,8 @@ import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -181,7 +183,7 @@ export const PurchaseConsignmentReturnDetail = () => {
 
   const headerView = headerDraft ?? headerSnapshot(pr);
 
-  const handlePrint = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     const pdfHeader = {
       return_number: pr.return_number,
       status: String(pr.status),
@@ -200,14 +202,15 @@ export const PurchaseConsignmentReturnDetail = () => {
       line_refund_centi: it.line_refund_centi ?? (it.qty_returned * it.unit_price_centi),
       reason: null,
     }));
-    import('../../vendor/scm/lib/purchase-return-pdf')
+    return import('../../vendor/scm/lib/purchase-return-pdf')
       .then(({ generatePurchaseReturnPdf }) =>
         generatePurchaseReturnPdf(pdfHeader as never, pdfItems as never, {
           docTitle: 'PURCHASE CONSIGNMENT RETURN', docNoLabel: 'Return No',
-          amountLabel: 'Value', totalLabel: 'TOTAL VALUE',
+          amountLabel: 'Value', totalLabel: 'TOTAL VALUE', action,
         }))
       .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(pr)), [k]: v }));
@@ -299,9 +302,22 @@ export const PurchaseConsignmentReturnDetail = () => {
             </div>
             <StatusPill docType="pr" status={pr.status} />
             <RelationshipMapButton type="pcrn" id={pr.id} />
-            <Button variant="ghost" size="md" onClick={handlePrint}>
+            <Button variant="ghost" size="md" onClick={print.openPreview}>
               <Printer {...ICON} /><span>Print PDF</span>
             </Button>
+            <PrintPreviewModal
+              open={print.open}
+              onClose={print.close}
+              docTitle="Purchase Consignment Return"
+              docNo={pr.return_number}
+              rows={[
+                { label: 'Supplier', value: pr.supplier?.name ?? pr.supplier?.code ?? '—' },
+                { label: 'Return date', value: pr.return_date ? fmtDateOrDash(pr.return_date) : '—' },
+                { label: 'Items', value: `${items.length} line${items.length === 1 ? '' : 's'}` },
+                { label: 'Goods value', value: fmtRm(refundTotal) },
+              ]}
+              {...print.handlers}
+            />
             {pr.status !== 'CANCELLED' && pr.status !== 'COMPLETED' && (
               <Button variant="ghost" size="md"
                 onClick={async () => {

@@ -13,7 +13,7 @@
 // as before. The SI carries ONE flat address, not the SO's
 // ship_to/bill_to/install_to trio — see the SiHeader note.
 import { formatPhone } from '@2990s/shared/phone';
-import { COMPANY, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate } from './pdf-common';
+import { COMPANY, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 
@@ -195,12 +195,16 @@ export async function renderSalesInvoiceInto(
 }
 
 /* Single SI → its own file (unchanged behaviour). */
-export async function generateSalesInvoicePdf(header: SiHeader, items: SiItem[]): Promise<void> {
+export async function generateSalesInvoicePdf(
+  header: SiHeader,
+  items: SiItem[],
+  opts?: { action?: PdfAction },
+): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   await renderSalesInvoiceInto(doc, autoTable, header, items);
-  doc.save(`${header.invoice_number}-${safeName(header.debtor_name)}.pdf`);
+  deliverPdf(doc, `${header.invoice_number}-${safeName(header.debtor_name)}.pdf`, opts?.action);
 }
 
 /* Several SIs → ONE combined file, each invoice starting on a new page. For the
@@ -209,7 +213,7 @@ export async function generateSalesInvoicePdf(header: SiHeader, items: SiItem[])
    startPage-based footer loop. */
 export async function generateCombinedSalesInvoicePdf(
   docs: Array<{ header: SiHeader; items: SiItem[] }>,
-  opts?: { fileName?: string },
+  opts?: { fileName?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -218,5 +222,5 @@ export async function generateCombinedSalesInvoicePdf(
     if (i > 0) doc.addPage();
     await renderSalesInvoiceInto(doc, autoTable, docs[i]!.header, docs[i]!.items);
   }
-  doc.save(opts?.fileName ?? 'sales-invoices.pdf');
+  deliverPdf(doc, opts?.fileName ?? 'sales-invoices.pdf', opts?.action);
 }

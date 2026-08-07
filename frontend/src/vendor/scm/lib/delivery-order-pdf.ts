@@ -13,12 +13,14 @@
 import { formatPhone } from '@2990s/shared/phone';
 import {
   COMPANY,
+  deliverPdf,
   drawHeader,
   drawInfoColumns,
   drawSignatureBoxes,
   ensurePdfCjkFont,
   fmtDocDate,
   safeName,
+  type PdfAction,
 } from './pdf-common';
 import { shipToBlock } from './pdf-party-blocks';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
@@ -223,20 +225,20 @@ export async function renderDeliveryOrderInto(
 export async function generateDeliveryOrderPdf(
   header: DoHeader,
   items: DoItem[],
-  opts?: { docTitle?: string; docNoLabel?: string; showPicking?: boolean },
+  opts?: { docTitle?: string; docNoLabel?: string; showPicking?: boolean; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   await renderDeliveryOrderInto(doc, autoTable, header, items, opts);
-  doc.save(`${header.do_number}-${safeName(header.debtor_name || 'customer')}.pdf`);
+  deliverPdf(doc, `${header.do_number}-${safeName(header.debtor_name || 'customer')}.pdf`, opts?.action);
 }
 
 /* Several DOs → ONE combined file, each DO starting on a new page. For the
    batch "Export PDF" action (download a customer's DOs in one attachment). */
 export async function generateCombinedDeliveryOrderPdf(
   docs: Array<{ header: DoHeader; items: DoItem[] }>,
-  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; showPicking?: boolean },
+  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; showPicking?: boolean; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -245,5 +247,5 @@ export async function generateCombinedDeliveryOrderPdf(
     if (i > 0) doc.addPage();
     await renderDeliveryOrderInto(doc, autoTable, docs[i]!.header, docs[i]!.items, opts);
   }
-  doc.save(opts?.fileName ?? 'delivery-orders.pdf');
+  deliverPdf(doc, opts?.fileName ?? 'delivery-orders.pdf', opts?.action);
 }

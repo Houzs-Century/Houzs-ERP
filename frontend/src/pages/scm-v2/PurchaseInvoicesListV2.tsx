@@ -21,6 +21,8 @@ import {
   Wallet,
   ArrowRightLeft,
 } from "lucide-react";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -750,7 +752,7 @@ export function PurchaseInvoicesListV2() {
 
   // Batch "Print all" — one ticked PI downloads straight; several prompt
   // combined-vs-separate.
-  const printSelectedPis = async () => {
+  const deliverSelectedPis = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
     if (chosen.length === 0) return;
@@ -760,11 +762,14 @@ export function PurchaseInvoicesListV2() {
       if (chosen.length === 1) {
         setPrintingDocs(true);
         const b = await fetchPiBundle(chosen[0]!);
-        await generatePurchaseInvoicePdf(b.header as never, b.items as never);
+        await generatePurchaseInvoicePdf(b.header as never, b.items as never, { action });
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      /* View / Print always render ONE document — a preview or a print run
+         is about the stack, not N separate files. Only the download exit
+         still asks combined-vs-separate. */
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} purchase invoices`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -778,10 +783,11 @@ export function PurchaseInvoicesListV2() {
       if (how === "one") {
         await generateCombinedPurchaseInvoicePdf(bundles as never, {
           fileName: `purchase-invoices-${new Date().toISOString().slice(0, 10)}.pdf`,
+          action,
         });
       } else {
         for (const b of bundles)
-          await generatePurchaseInvoicePdf(b.header as never, b.items as never);
+          await generatePurchaseInvoicePdf(b.header as never, b.items as never, { action });
       }
       clearSelection();
     } catch (e) {
@@ -794,6 +800,7 @@ export function PurchaseInvoicesListV2() {
       setPrintingDocs(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedPis);
   const goRecordPayment = (r: PiRow) =>
     navigate(`/scm/purchase-invoices/${r.id}?tab=payments&record=1`);
   const doMarkPaid = (r: PiRow) => {
@@ -1083,10 +1090,17 @@ export function PurchaseInvoicesListV2() {
                     variant="primary"
                     icon={<Printer size={14} />}
                     disabled={printingDocs}
-                    onClick={() => void printSelectedPis()}
+                    onClick={batchPrint.openPreview}
                   >
                     {printingDocs ? "Printing…" : `Print all (${selectedIds.size})`}
                   </Button>
+                  <PrintPreviewBatchModal
+                    open={batchPrint.open}
+                    onClose={batchPrint.close}
+                    docTitle="Purchase Invoices"
+                    docNos={rows.filter((r) => selectedIds.has(r.id)).map((r) => r.invoice_number)}
+                    {...batchPrint.handlers}
+                  />
                   <Button variant="ghost" disabled={printingDocs} onClick={clearSelection}>
                     Clear
                   </Button>

@@ -20,6 +20,8 @@ import { todayMyt } from "../vendor/scm/lib/dates";
 import { fmtCenti } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from "../vendor/scm/lib/payment-methods";
+import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../vendor/scm/lib/pdf-common";
 import "./mobile.css";
 
 // ---------------------------------------------------------------------------
@@ -1412,22 +1414,36 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
         : "We couldn't load the line items for this document. Making the PDF now would produce one with no items on it. Please refresh and try again.",
     });
   };
-  const onPdf =
+  /* One deliver step per printable doc type; the preview dialog picks which of
+     its three exits (view / print / download) runs. Phone and desktop now open
+     the SAME Print preview — see components/scm-v2/PrintPreviewModal. */
+  const printableDocTitle =
     moduleKey === "delivery-orders-mfg"
-      ? !canPdf ? refusePdf : async () => {
-          try {
-            const { generateDeliveryOrderPdf } = await import("../vendor/scm/lib/delivery-order-pdf");
-            await generateDeliveryOrderPdf(header as never, items as never);
-          } catch (e) { void detailNotify({ title: "Couldn't generate the PDF", body: e instanceof Error ? e.message : "Please try again." }); }
-        }
+      ? "Delivery Order"
       : moduleKey === "sales-invoices"
-        ? !canPdf ? refusePdf : async () => {
-            try {
-              const { generateSalesInvoicePdf } = await import("../vendor/scm/lib/sales-invoice-pdf");
-              await generateSalesInvoicePdf(header as never, items as never);
-            } catch (e) { void detailNotify({ title: "Couldn't generate the PDF", body: e instanceof Error ? e.message : "Please try again." }); }
-          }
-        : undefined;
+        ? "Sales Invoice"
+        : null;
+  const deliverPdf = async (action: PdfAction) => {
+    try {
+      if (moduleKey === "delivery-orders-mfg") {
+        const { generateDeliveryOrderPdf } = await import("../vendor/scm/lib/delivery-order-pdf");
+        await generateDeliveryOrderPdf(header as never, items as never, { action });
+      } else {
+        const { generateSalesInvoicePdf } = await import("../vendor/scm/lib/sales-invoice-pdf");
+        await generateSalesInvoicePdf(header as never, items as never, { action });
+      }
+    } catch (e) {
+      void detailNotify({ title: "Couldn't generate the PDF", body: e instanceof Error ? e.message : "Please try again." });
+    }
+  };
+  const print = usePrintPreview(deliverPdf);
+  /* The refusal path stays AHEAD of the preview: a document whose lines failed
+     to load must not even reach a dialog offering to print it. */
+  const onPdf = !printableDocTitle
+    ? undefined
+    : !canPdf
+      ? refusePdf
+      : print.openPreview;
 
   // Whether a sticky footer will render — used to reserve scroll padding so it
   // never covers the last line item. A POD button (delivery orders) also counts.
@@ -1451,6 +1467,23 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
         onPdf={onPdf}
         onMap={mapAnchor && id ? () => setMapOpen(true) : undefined}
       />
+      {printableDocTitle && (
+        /* Summary rows come off the SAME DocMap the screen renders from
+           (eyebrow = doc no, title = party, meta = the KV grid), so the
+           preview can never disagree with the page behind it. */
+        <PrintPreviewModal
+          open={print.open}
+          onClose={print.close}
+          docTitle={printableDocTitle}
+          docNo={map.eyebrow(header)}
+          rows={[
+            { label: "Customer", value: map.title(header) },
+            ...meta.slice(0, 4).map(([label, value]) => ({ label, value })),
+            { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
+          ]}
+          {...print.handlers}
+        />
+      )}
       <div className="scroll hz-scroll" style={hasFooter ? { ...scrollStyle, paddingBottom: podEnabled && hasStatusActions ? 150 : 96 } : scrollStyle}>
         {!id && <div style={{ textAlign: "center", color: "#b23a3a", fontSize: 12, padding: "26px 0" }}>Couldn't identify this record.</div>}
 

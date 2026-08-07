@@ -118,6 +118,7 @@ import {
 } from "../lib/requestCorrelation";
 import { MediaLightbox } from "../components/MediaLightbox";
 import { ResetFiltersButton } from "../components/ResetFiltersButton";
+import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { formatDate, formatDateTime, formatTimestamp, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
 
 // ── Types (module-local) ─────────────────────────────────────
@@ -5866,6 +5867,15 @@ function ProjectDetailContent({
 }) {
   const { can, user } = useAuth();
   const dialog = useDialog();
+  /* Declared above the loading / error early returns so the hook count is
+     stable; the Print preview it drives renders down in the header row. */
+  const projectPrint = usePrintPreview(async () => {
+    try {
+      await api.openHtml(`/api/projects-print/${id}`);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to open print view");
+    }
+  });
   const detail = useQuery<ProjectDetail>("/api/projects/:", () => api.get(`/api/projects/${id}`), [id]);
   // Users list — fetched once per open panel, reused for owner pickers
   // in the logistics section, checklist add form, and reassign dropdowns.
@@ -6062,18 +6072,24 @@ function ProjectDetailContent({
                 </>
               )}
             </div>
-            <HeaderButton
-              variant="ghost"
-              onClick={async () => {
-                try {
-                  await api.openHtml(`/api/projects-print/${id}`);
-                } catch (e: any) {
-                  toast.error(e?.message || "Failed to open print view");
-                }
-              }}
-            >
+            <HeaderButton variant="ghost" onClick={projectPrint.openPreview}>
               <Printer size={12} /> Print
             </HeaderButton>
+            {/* Same Print preview the rest of the app opens. A project prints
+                from a SERVER-rendered HTML view, so there is no PDF file to
+                download here — Print hands over to that view. */}
+            <PrintPreviewModal
+              open={projectPrint.open}
+              onClose={projectPrint.close}
+              docTitle="Project"
+              docNo={p.code ?? String(id)}
+              rows={[
+                { label: "Project", value: p.name || "—" },
+                { label: "Status", value: p.status || "—" },
+                { value: "Print now opens the print view in a new tab." },
+              ]}
+              onPrint={projectPrint.handlers.onPrint}
+            />
             {!p.archived_at && (
               <ProjectStatusSelect
                 value={p.status}

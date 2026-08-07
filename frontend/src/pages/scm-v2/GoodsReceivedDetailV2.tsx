@@ -34,6 +34,8 @@ import { useSupplierDetail } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { EntityHistoryPanel } from "./EntityHistoryPanel";
 import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
@@ -336,11 +338,11 @@ function GoodsReceivedDetailV2ReadOnly() {
   // Render + download the GRN PDF via the shared jspdf generator (client-side),
   // mirroring the V1 GoodsReceivedDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!grn) return;
-    import("../../vendor/scm/lib/grn-pdf")
+    return import("../../vendor/scm/lib/grn-pdf")
       .then(({ generateGrnPdf }) =>
-        generateGrnPdf(grn as never, items as never)
+        generateGrnPdf(grn as never, items as never, { action })
       )
       .catch((e) =>
         notify({
@@ -350,6 +352,8 @@ function GoodsReceivedDetailV2ReadOnly() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!grn);
   const goConvertToPi = () => id && navigate(`/scm/purchase-invoices/from-grn?grn=${id}`);
   const goConvertToPr = () => id && navigate(`/scm/purchase-returns/new?fromGrn=${id}`);
   const doPost = () => {
@@ -579,7 +583,7 @@ function GoodsReceivedDetailV2ReadOnly() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" icon={<History size={14} />} onClick={() => setHistoryOpen(true)}>History</Button>
-            <Button variant="secondary" icon={<Printer size={14} />} onClick={goPrintPdf}>Print PDF</Button>
+            <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
             {canCancel && <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel GRN</Button>}
             {canPost && <Button variant="secondary" icon={<Send size={14} />} onClick={doPost}>Post</Button>}
             {canConvertToPi && <Button variant="secondary" icon={<Receipt size={14} />} onClick={goConvertToPi}>Convert to PI</Button>}
@@ -698,7 +702,7 @@ function GoodsReceivedDetailV2ReadOnly() {
               <Edit3 size={16} /> Edit
             </button>
           )}
-          <button type="button" onClick={goPrintPdf} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Print PDF">
+          <button type="button" onClick={print.openPreview} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Print PDF">
             <Printer size={17} />
           </button>
           <button type="button" onClick={goCall} disabled={!grn.supplier?.phone} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft disabled:opacity-40" aria-label={grn.supplier?.phone ? `Call ${grn.supplier.phone}` : "No phone on file"}>
@@ -706,6 +710,20 @@ function GoodsReceivedDetailV2ReadOnly() {
           </button>
         </div>
       </div>
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Goods Received Note"
+        docNo={grn.grn_number}
+        rows={[
+          { label: "Supplier", value: supplierNameOf(grn) },
+          { label: "Against PO", value: poOf(grn) },
+          { label: "Received", value: fmtDate(grn.received_at) },
+          { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
+          { label: "Receipt value", value: fmtMoney(grn.total_centi, grn.currency) },
+        ]}
+        {...print.handlers}
+      />
     </div>
   );
 }

@@ -72,6 +72,8 @@ import { usePoRelationshipMap } from "./po-relationship-map";
 // Per-line SO allocations (mig 0235) — split a consolidated line across the
 // customers (and stock) it serves; sub-numbered PO-xxxx-yy-01, -02, ...
 import { PoLineAllocationsModal } from "../../components/scm-v2/PoLineAllocationsModal";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -486,7 +488,7 @@ function PurchaseOrderDetailV2ReadOnly() {
   // Render + download the PO PDF via the shared jspdf generator (client-side),
   // mirroring the V1 PurchaseOrderDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!purchaseOrder) return;
     // PR #102 — pre-resolve purchase_location name + deliver-to address (the
     // PDF can't hit the API), same as the V1 detail page.
@@ -506,9 +508,9 @@ function PurchaseOrderDetailV2ReadOnly() {
         (purchaseOrder as unknown as { source_so_doc_no?: string | null })
           .source_so_doc_no ?? null,
     };
-    import("../../vendor/scm/lib/purchase-order-pdf")
+    return import("../../vendor/scm/lib/purchase-order-pdf")
       .then(({ generatePurchaseOrderPdf }) =>
-        generatePurchaseOrderPdf(headerForPdf as never, items as never)
+        generatePurchaseOrderPdf(headerForPdf as never, items as never, { action })
       )
       .catch((e) =>
         notify({
@@ -518,6 +520,8 @@ function PurchaseOrderDetailV2ReadOnly() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseOrder);
   const goGrnFromPo = () =>
     id && navigate(`/scm/grns/from-po?poId=${id}`);
 
@@ -1015,7 +1019,7 @@ function PurchaseOrderDetailV2ReadOnly() {
             <Button variant="ghost" icon={<Share2 size={14} />} onClick={() => setRelMapOpen(true)}>
               Relationship Map
             </Button>
-            <Button variant="secondary" icon={<Printer size={14} />} onClick={goPrintPdf}>
+            <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>
               Print PDF
             </Button>
             {purchaseOrder.status !== "DRAFT" && purchaseOrder.status !== "CANCELLED" && (
@@ -1346,7 +1350,7 @@ function PurchaseOrderDetailV2ReadOnly() {
           )}
           <button
             type="button"
-            onClick={goPrintPdf}
+            onClick={print.openPreview}
             className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft"
             aria-label="Print PDF"
           >
@@ -1397,6 +1401,29 @@ function PurchaseOrderDetailV2ReadOnly() {
           setRelMapOpen(false);
           pickChainChoice(d);
         }}
+      />
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Purchase Order"
+        docNo={poDisplayNumber(
+          purchaseOrder.po_number,
+          (purchaseOrder as unknown as { revision?: number | null }).revision
+        )}
+        rows={[
+          { label: "Supplier", value: supplierNameOf(purchaseOrder) },
+          { label: "PO date", value: fmtDate(purchaseOrder.po_date) },
+          {
+            label: "Expected",
+            value: purchaseOrder.expected_at ? fmtDate(purchaseOrder.expected_at) : "Not set",
+          },
+          { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
+          {
+            label: "Order total",
+            value: fmtMoney(totalOf(purchaseOrder), purchaseOrder.currency),
+          },
+        ]}
+        {...print.handlers}
       />
     </div>
   );

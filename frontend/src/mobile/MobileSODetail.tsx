@@ -67,6 +67,8 @@ import {
    the mobile SO-amendment surface the "Print amendment" the desktop already had,
    closing the desktop/mobile parity gap. */
 import { generateAmendmentPdf } from "../vendor/scm/lib/amendment-pdf";
+import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../vendor/scm/lib/pdf-common";
 import { soAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 /* The 2990 bridge's staff row — the vocabulary so_amendments.requested_by is
@@ -304,7 +306,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
   const payments = (paymentsKnown ? paymentsQ.data! : []) as SoPayment[];
   /* Download the SO PDF — reuses the SAME desktop generator (per-brand letterhead)
      so the phone produces byte-identical output. 'save' = normal download. */
-  const onPdf = async () => {
+  const deliverPdf = async (action: PdfAction) => {
     if (!h) return;
     /* This PDF is handed to the CUSTOMER. Generating it from an unknown payments
        ledger prints an empty Payments table, which does not read as "we could not
@@ -326,11 +328,12 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
     }
     try {
       const { generateSalesOrderPdf } = await import("../vendor/scm/lib/sales-order-pdf");
-      await generateSalesOrderPdf(h as never, items as never, payments as never, "save", []);
+      await generateSalesOrderPdf(h as never, items as never, payments as never, action, []);
     } catch (e) {
       void notifyTop({ title: "Couldn't generate the PDF", body: e instanceof Error ? e.message : "Please try again." });
     }
   };
+  const print = usePrintPreview(deliverPdf);
 
   /* Salesperson NAME — the detail header carries only salesperson_id (a staff
      UUID), so resolve it against the shared /staff list. Falls back to em-dash
@@ -725,7 +728,20 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
           <button className="back" onClick={onBack}><span className="chev">{"‹"}</span> Sales Orders</button>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {h && <button className="tinybtn" onClick={() => setMapOpen(true)} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>Map</button>}
-            {h && <button className="tinybtn" onClick={onPdf} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>PDF</button>}
+            {h && <button className="tinybtn" onClick={print.openPreview} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>PDF</button>}
+            {h && (
+              <PrintPreviewModal
+                open={print.open}
+                onClose={print.close}
+                docTitle="Sales Order"
+                docNo={String(h.doc_no ?? "")}
+                rows={[
+                  { label: "Customer", value: String(h.debtor_name ?? "—") },
+                  { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
+                ]}
+                {...print.handlers}
+              />
+            )}
             {h && <StatusPill status={h.status} />}
           </div>
         </div>
@@ -1857,7 +1873,7 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
   const amd = data?.amendment as Record<string, unknown> | undefined;
   const amdStatus = String(amd?.status ?? "");
   const soApplied = ["SO_APPROVED", "PO_APPROVED", "SENT", "APPROVED"].includes(amdStatus);
-  const handlePrintAmendment = () => {
+  const deliverAmendmentPdf = (action: PdfAction) => {
     if (!amd) return;
     const input = soAmendmentToPdfInput({
       amendment: {
@@ -1874,9 +1890,10 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
       customerName: (data?.salesOrder as { customer_name?: string | null } | null)?.customer_name ?? null,
       statusLabel: soApplied ? "Approved" : "Requested",
     });
-    Promise.resolve(generateAmendmentPdf(input)).catch((e: unknown) =>
+    return Promise.resolve(generateAmendmentPdf(input, { action })).catch((e: unknown) =>
       void notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }));
   };
+  const amendmentPrint = usePrintPreview(deliverAmendmentPdf);
 
   return (
     <div className="hz-m sheet-bd" onClick={onClose}>
@@ -2029,7 +2046,25 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
           </div>
         </div>
         <div className="sheet-foot">
-          <button type="button" className="btn" style={{ flex: 1 }} onClick={handlePrintAmendment} disabled={isLoading || !amd}>Print amendment</button>
+          <button type="button" className="btn" style={{ flex: 1 }} onClick={amendmentPrint.openPreview} disabled={isLoading || !amd}>Print amendment</button>
+          <PrintPreviewModal
+            open={amendmentPrint.open}
+            onClose={amendmentPrint.close}
+            docTitle="Sales Order Amendment"
+            docNo={amNo || "Amendment"}
+            rows={[
+              { label: "Against SO", value: soDocNo || "—" },
+              { label: "Status", value: soApplied ? "Approved" : "Requested" },
+              { label: "Reason", value: reason || "—" },
+              {
+                label: "Changes",
+                value: `${lines.length + headerDiffs.length} change${
+                  lines.length + headerDiffs.length === 1 ? "" : "s"
+                }`,
+              },
+            ]}
+            {...amendmentPrint.handlers}
+          />
           <button type="button" className="btn" style={{ flex: 1 }} onClick={onClose}>Close</button>
         </div>
       </div>

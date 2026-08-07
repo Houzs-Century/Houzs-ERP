@@ -36,6 +36,8 @@ import {
   Truck,
   RotateCcw,
 } from "lucide-react";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
 import { StockAdjChip } from "../../components/DocumentLinesExpansion";
@@ -1261,7 +1263,7 @@ export function MfgSalesOrdersListV2() {
 
   // Batch "Print all" — one ticked SO downloads straight; several prompt
   // combined-vs-separate. Mirrors the V1 exportSelected.
-  const printSelectedSos = async () => {
+  const deliverSelectedSos = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.doc_no));
     if (chosen.length === 0) return;
@@ -1275,13 +1277,16 @@ export function MfgSalesOrdersListV2() {
           b.header as never,
           b.items as never,
           b.payments as never,
-          "save",
+          action,
           b.pwpCodes as never
         );
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      /* View / Print always render ONE document — a preview or a print run
+         is about the stack, not N separate files. Only the download exit
+         still asks combined-vs-separate. */
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} sales orders`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -1300,7 +1305,7 @@ export function MfgSalesOrdersListV2() {
             payments: b.payments as never,
             pwpCodes: b.pwpCodes as never,
           })),
-          { fileName: `sales-orders-${new Date().toISOString().slice(0, 10)}.pdf` }
+          { fileName: `sales-orders-${new Date().toISOString().slice(0, 10)}.pdf`, action }
         );
       } else {
         for (const b of bundles)
@@ -1308,7 +1313,7 @@ export function MfgSalesOrdersListV2() {
             b.header as never,
             b.items as never,
             b.payments as never,
-            "save",
+            action,
             b.pwpCodes as never
           );
       }
@@ -1323,6 +1328,7 @@ export function MfgSalesOrdersListV2() {
       setPrintingDocs(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedSos);
 
   /* ── Table columns ───────────────────────────────────────────────────────
      `group` puts each column under a header in the Columns drawer. The design
@@ -2220,10 +2226,17 @@ export function MfgSalesOrdersListV2() {
                 variant="primary"
                 icon={<Printer size={14} />}
                 disabled={printingDocs}
-                onClick={() => void printSelectedSos()}
+                onClick={batchPrint.openPreview}
               >
                 {printingDocs ? "Printing…" : `Print all (${selectedIds.size})`}
               </Button>
+              <PrintPreviewBatchModal
+                open={batchPrint.open}
+                onClose={batchPrint.close}
+                docTitle="Sales Orders"
+                docNos={rows.filter((r) => selectedIds.has(r.doc_no)).map((r) => r.doc_no)}
+                {...batchPrint.handlers}
+              />
               <Button variant="ghost" disabled={printingDocs} onClick={clearSelection}>
                 Clear
               </Button>
