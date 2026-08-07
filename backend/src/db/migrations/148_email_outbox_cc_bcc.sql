@@ -1,6 +1,6 @@
 -- 144 — email_outbox gains cc/bcc (D1 TEST tree).
 --
--- The production counterpart is migrations-pg/0254_email_outbox_cc_bcc.sql.
+-- The production counterpart is migrations-pg/0269_email_outbox_cc_bcc.sql.
 -- This tree is test-only (CLAUDE.md), but the outbox tests exercise the real
 -- INSERT, so without these columns every send in the suite fails on an unknown
 -- column and the failure reads as "no outbox row" rather than "schema drift".
