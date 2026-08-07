@@ -82,6 +82,10 @@ describe('the letterhead logo refuses another company', () => {
     // And it failed on the HEADER, not on some later decode step — otherwise
     // this test would pass for the wrong reason.
     expect(res.blob).not.toHaveBeenCalled();
+    // Even the on-screen slot's fetch carries its key, so no two companies ever
+    // share a letterhead URL.
+    expect(String(correlatedFetch.mock.calls[0]?.[0]))
+      .toContain(`k=${encodeURIComponent('branding/houzs-logo-1.png')}`);
   });
 
   test('no header is not a mismatch — the guard tightens a failure, it must not invent one', async () => {
@@ -123,6 +127,11 @@ describe('the letterhead logo refuses another company', () => {
     expect(cached?.company).toBe('HOUZS');
     // The print slot is set, so the fetch must ask for it — otherwise the sheet
     // would carry the on-screen artwork.
-    expect(String(correlatedFetch.mock.calls[0]?.[0])).toContain('?variant=print');
+    const url = String(correlatedFetch.mock.calls[0]?.[0]);
+    expect(url).toContain('variant=print');
+    /* And the R2 KEY is in the URL. Two companies used to share one letterhead
+       URL and be told apart by a header alone, which a browser cache is free to
+       ignore — that is how a Houzs delivery order came to print 2990's logo. */
+    expect(url).toContain(`k=${encodeURIComponent('branding/houzs-print-logo-2.png')}`);
   });
 });
