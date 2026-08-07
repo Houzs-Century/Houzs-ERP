@@ -224,6 +224,10 @@ export function getBrandingCompanyCode(): string {
 
 export interface BrandingLogo {
   key: string;
+  /** The company code these bytes were served for. The R2 key alone cannot say
+   *  WHOSE image this is, and a letterhead that prints another company's mark is
+   *  worse than one that prints none. */
+  company?: string;
   dataUrl: string;
   /** jspdf addImage format tag. */
   format: "PNG" | "JPEG";
@@ -256,7 +260,12 @@ export function letterheadLogoKey(b: {
 export function getBrandingLogoCache(): BrandingLogo | null {
   const key = letterheadLogoKey(brandingCache);
   if (!key) return null;
-  return logoCache && logoCache.key === key ? logoCache : null;
+  if (!logoCache || logoCache.key !== key) return null;
+  // A memo entry stamped with a DIFFERENT company is refused outright rather
+  // than drawn: the letterhead falls back to text-only, which is a poorer
+  // document but still this company's document.
+  if (logoCache.company && logoCache.company !== brandingCompanyCodeCache) return null;
+  return logoCache;
 }
 
 /** Drop the memo — called after a logo upload/remove in Settings so the next
@@ -364,6 +373,10 @@ export async function ensureBrandingLogoLoaded(): Promise<void> {
   // stale one.
   const key = letterheadLogoKey(brandingCache);
   const usingPrintSlot = key !== "" && key === (brandingCache.printLogoR2Key || "").trim();
+  // Captured up front: whatever the request returns must belong to the company
+  // whose branding produced this key, not to whichever company happens to be
+  // active by the time the bytes land.
+  const expectedCompany = brandingCompanyCodeCache;
   if (!key) return;                                   // no logo configured
   if (logoCache && logoCache.key === key) return;     // memo is current
   if (logoFailedKey === key) return;                  // known-bad — don't retry per print
@@ -389,6 +402,17 @@ export async function ensureBrandingLogoLoaded(): Promise<void> {
         },
       );
       if (!res.ok) throw correlateError(new Error(`logo fetch ${res.status}`), requestIdFromResponse(res));
+      /* The server names the company it served (routes/branding.ts). A mismatch
+         means the active company moved under this fetch, and caching the bytes
+         would print one company's mark on another's documents for the rest of
+         the session — so it fails instead, and the letterhead goes text-only.
+         A null header (an older worker, or a proxy that dropped it) is NOT
+         treated as a mismatch: the guard tightens the failure mode, it must not
+         invent one. */
+      const servedCompany = res.headers.get("x-company-code");
+      if (servedCompany && servedCompany.toUpperCase() !== expectedCompany.toUpperCase()) {
+        throw new Error(`logo served for ${servedCompany}, expected ${expectedCompany}`);
+      }
       const { dataUrl, width, height, contentType } = await consumeCorrelated(res, async () => {
         const blob = await res.blob();
         const raw = await blobToDataUrl(blob);
@@ -402,7 +426,7 @@ export async function ensureBrandingLogoLoaded(): Promise<void> {
       });
       const format: BrandingLogo["format"] =
         contentType === "image/png" || dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
-      logoCache = { key, dataUrl, format, width, height };
+      logoCache = { key, company: expectedCompany, dataUrl, format, width, height };
       logoFailedKey = null;
     } catch {
       logoFailedKey = key; // fail-soft: text-only header this session
