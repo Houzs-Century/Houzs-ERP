@@ -28,7 +28,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, useCandidatePos, type FlowNode } from '../../vendor/scm/lib/flow-queries';
-import type { ChainNode, AmendmentChip } from '../../components/scm-v2/DocumentRelationshipMapModal';
+import type { ChainNode, AmendmentChip, PairingKind } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useDocChoice, type DocChoiceApi } from './doc-choice';
 
 /** The header columns the chain reads. Loose on purpose — the two SO detail
@@ -81,6 +81,13 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   onNodeClick: (n: ChainNode) => boolean;
   amendments: AmendmentChip[];
   onAmendmentClick: (a: AmendmentChip) => boolean;
+  /* The SO ↓ PO hop is PROVENANCE when the graph carries stored raise-links —
+     muted, "bought for", never an execution binding ("soft until DO, hard
+     from DO"). The SO map shows no FLOATING hop: usePoSoCoverage is keyed by
+     purchase doc, so the live pairing renders on the purchase-side maps and
+     on this page's per-line Stock/coverage column (same one engine) — adding
+     it here would need a new SO-keyed backend read (owner: zero new load). */
+  pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
   const navigate = useNavigate();
   const notify = useNotify();
@@ -400,5 +407,10 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
     [navigate, notify, openChoice, showCustomerPo, salesOrder?.doc_no, doNodes, siNodes, grnNodes, poNodes, piNodes, candidatePos, canOpenGrn, canOpenPo, canOpenPi],
   );
 
-  return { nodes, onNodeClick, amendments, onAmendmentClick, choice, openChoice, closeChoice, pickChoice };
+  const pairing = useMemo<{ kind: PairingKind } | null>(
+    () => (poNodes.length > 0 ? { kind: 'provenance' } : null),
+    [poNodes],
+  );
+
+  return { nodes, onNodeClick, amendments, onAmendmentClick, pairing, choice, openChoice, closeChoice, pickChoice };
 }

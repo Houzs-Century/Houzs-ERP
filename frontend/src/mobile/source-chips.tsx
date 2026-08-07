@@ -130,6 +130,29 @@ export function SourcePosRowMobile({
   );
 }
 
+/* DO lines only: the committed batch — the hard-from-DO anchor (Decision,
+   docs/modules/purchase-order.md 2026-08-06: "soft until DO, hard from DO").
+   `delivery_order_items.committed_po_batch_no` (mig 0230) stores which incoming
+   PO batch a ship-before-arrival line committed to at DO creation. Solid chip
+   (anchored — a recorded fact, never a floating guess); absent → render
+   NOTHING, most lines never commit and a dash would read as missing data.
+   Desktop twin: CommittedBatchCell in components/DocumentLinesExpansion.tsx —
+   keep the two in lockstep. Display-only; the write path is ship-commitment.ts. */
+export function CommittedBatchRowMobile({ poNo }: { poNo?: string | null }) {
+  if (!poNo) return null;
+  return (
+    <div style={rowStyle}>
+      <span style={eyebrowStyle}>Committed PO</span>
+      <span
+        style={solidChip}
+        title={`Committed batch — this line committed to incoming purchase order ${poNo} when the Delivery Order was created (hard from DO). The commitment is stored on the line; a PO cancelled or raised later cannot move it.`}
+      >
+        {poNo}
+      </span>
+    </div>
+  );
+}
+
 /* Purchase docs (PO / GRN / PI): the DO(s) that shipped this line's goods.
    Multi-DO lines ALWAYS show each qty — a 1+1 batch split must not read as one
    unit shipped twice (owner 2026-08-01); a single chip shows qty only past 1. */

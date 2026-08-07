@@ -191,6 +191,35 @@ export function StockAdjChip() {
   );
 }
 
+/* Committed batch — the hard-from-DO anchor (Decision, docs/modules/
+   purchase-order.md 2026-08-06: "soft until DO, hard from DO"). A DO line that
+   ships before its goods arrive and resolves exactly ONE live bound PO stores
+   that PO's number in `delivery_order_items.committed_po_batch_no` at DO
+   creation (mig 0230, `planShipCommitments`). This cell surfaces that STORED
+   anchor: solid treatment (the ANCHORED identity — a recorded fact, never a
+   floating MRP guess, so no dash and no "~"). Absent → render NOTHING: most
+   lines ship from stock on hand and never commit, and a dash would read as
+   missing data. Display-only — the write path is ship-commitment.ts. */
+export const committedBatchTitle = (poNo: string): string =>
+  `Committed batch — this line committed to incoming purchase order ${poNo} when the Delivery Order was created (hard from DO). The commitment is stored on the line; a PO cancelled or raised later cannot move it.`;
+
+export function CommittedBatchCell({ poNo }: { poNo?: string | null }) {
+  if (!poNo) return null;
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+        Committed PO
+      </span>
+      <span
+        title={committedBatchTitle(poNo)}
+        className="rounded border border-border-subtle bg-surface-2 px-1.5 py-0.5 font-docno text-[11px] font-semibold text-accent-ink"
+      >
+        {poNo}
+      </span>
+    </span>
+  );
+}
+
 /* "STOCK" — a purchase-doc line with NO assignment is surplus stock, not
    missing data (owner 2026-08-02, off 2990-PO-2607-001/-005: ANGGN stock
    replenishment with no open demand read as a bare dash). Subtle by design —
