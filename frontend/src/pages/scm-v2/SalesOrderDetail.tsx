@@ -616,12 +616,33 @@ export const SalesOrderDetail = () => {
   const [isEditing, setIsEditing] = useState(
     editSearchParams.get('edit') === '1',
   );
+  /* Print preview — the HOOK must live above the isPending / isError early
+     returns (owner 2026-08-07). It arrived at its call site further down
+     (#1665), which sits PAST those returns: a cold page's first render bails
+     out early with N hooks, the render after the query resolves reaches
+     usePrintPreview with N+1, and React throws "Rendered more hooks than during
+     the previous render" — a blank crash page.
+
+     Nobody hit it coming from the SO list, because arriving that way the header
+     is already in the TanStack cache and there is no pending first render. It
+     only bites a COLD load of this route: a pasted or bookmarked link, a
+     refresh while on the editor, a new tab. That is also why it shipped.
+
+     The deliver callback closes over `header` / `items` / query data that only
+     exist after the guards, so it cannot move up here with the hook. The ref is
+     the join: the hook is created once, up here, and reads the CURRENT deliver
+     through the ref at call time. Assigned below, where deliverPrintPdf is
+     defined. */
+  const deliverPrintPdfRef = useRef<(action: PdfAction) => void | Promise<void>>(() => {});
+  const print = usePrintPreview(
+    useCallback((action: PdfAction) => deliverPrintPdfRef.current(action), []),
+  );
+
   /* Payments edit mode — the money's OWN toggle (owner 2026-08-07). Declared up
      here with the other page state, NOT beside the `canEditPayments` derivation
-     it feeds: everything below line ~1374 sits after the isPending / isError
-     early returns, so a hook there renders conditionally and React throws
-     "Rendered more hooks than during the previous render" the moment the detail
-     query resolves. See the derivation for what this gates and why. */
+     it feeds: everything below the early returns is conditional, and a hook
+     there throws the exact error described above. See the derivation for what
+     this gates and why. */
   const [payEditing, setPayEditing] = useState(
     /* `?payments=1` — arrived through V2's "Collect payment" button, which is
        the only door into this page on a hard-locked order. Open the ledger
@@ -633,6 +654,15 @@ export const SalesOrderDetail = () => {
      on — and clears, so leaving page Edit re-locks payments instead of leaving
      them silently open on a stale `payEditing` from before. */
   useEffect(() => { if (isEditing) setPayEditing(false); }, [isEditing]);
+  /* Unbooked payment rows currently typed into the Payments card (owner
+     2026-08-07). They live inside PaymentsTable in SAVED mode, so the page has
+     to be told; it needs the count because IT owns the two exits that would
+     throw them away — the header back button and the payments Edit toggle.
+     `setUnsavedPayments` is a stable setState reference, which the prop
+     requires (it is an effect dependency over there).
+     Declared here with the other page state, ABOVE the early returns — same
+     rule as payEditing and the print hook. */
+  const [unsavedPayments, setUnsavedPayments] = useState(0);
   useEffect(() => {
     if (!header) return;
     if (loadedVersionDocRef.current !== header.doc_no) {
@@ -1517,6 +1547,32 @@ export const SalesOrderDetail = () => {
   const canOfferPayEdit  = !isDraftSo && !isCancelled && !isEditing;
   const canEditPayments  = isDraftSo || (!isCancelled && (isEditing || payEditing));
 
+  /* The two exits this PAGE owns, guarded against discarding typed-but-unbooked
+     payment rows (owner 2026-08-07). PaymentsTable registers the browser-level
+     beforeunload guard itself; these cover the in-app moves react-router 6
+     cannot block for us (no data router — see the `beforeBack` prop doc).
+
+     Named the money, not "unsaved changes": an operator who is told "1 payment
+     row" knows exactly what is at stake and can decide in one read. */
+  const guardUnsavedPayments = async (): Promise<boolean> => {
+    if (unsavedPayments === 0) return true;
+    return askConfirm({
+      title: `Leave ${unsavedPayments} payment row${unsavedPayments === 1 ? '' : 's'} unsaved?`,
+      body: `${unsavedPayments === 1 ? 'It has' : 'They have'} not been recorded against this order — `
+        + 'the balance stays as it is, and any slip attached to the row is discarded. '
+        + 'Press Save on the row to book it.',
+      confirmLabel: 'Discard and leave',
+      danger: true,
+    });
+  };
+
+  /* Closing the card with Done unmounts the rows, so it discards exactly what
+     leaving the page does. Opening it needs no guard. */
+  const togglePayEditing = async () => {
+    if (payEditing && !(await guardUnsavedPayments())) return;
+    setPayEditing((v) => !v);
+  };
+
   const handleCancelSo = async () => {
     if (!(await askConfirm({
       title: `Cancel ${header.doc_no}?`,
@@ -1603,7 +1659,11 @@ export const SalesOrderDetail = () => {
       });
     });
   };
-  const print = usePrintPreview(deliverPrintPdf);
+  /* The hook itself lives above the early returns (see its declaration and why).
+     This is the assignment half: every render refreshes the ref with a closure
+     over the CURRENT header / items / payments, so Print behaves exactly as it
+     did when the hook was created here. */
+  deliverPrintPdfRef.current = deliverPrintPdf;
 
   return (
     /* Commander 2026-05-29 — a CANCELLED SO greys the whole page so it reads
@@ -1611,7 +1671,7 @@ export const SalesOrderDetail = () => {
        (a CSS filter doesn't block pointer events). */
     <div className="space-y-4" style={isCancelled ? { filter: 'grayscale(0.7)' } : undefined}>
       {/* ── Header (shared PageHeader — full-bleed, design-system) ── */}
-      <PageHeader back
+      <PageHeader back beforeBack={guardUnsavedPayments}
         eyebrow="Sales Order"
         /* Owner 2026-07-16 — 17px document title (see PageHeader.titleSize).
            Scoped to this page; every other page keeps the default h1. */
@@ -2296,8 +2356,9 @@ export const SalesOrderDetail = () => {
         defaultCollectedBy={selfStaffMatch?.id ?? ''}
         initialDrafts={paymentRetryDrafts}
         onDraftCommitted={paymentRetryCommitted}
+        onUnsavedChange={setUnsavedPayments}
         headerAction={canOfferPayEdit ? (
-          <Button variant="ghost" onClick={() => setPayEditing((v) => !v)}>
+          <Button variant="ghost" onClick={() => { void togglePayEditing(); }}>
             {payEditing ? <span>Done</span> : <><Pencil {...ICON} /><span>Edit payments</span></>}
           </Button>
         ) : null}

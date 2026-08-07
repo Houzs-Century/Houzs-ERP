@@ -105,6 +105,81 @@ describe('the door into the payments ledger', () => {
   });
 });
 
+describe('unsaved payment rows are legible as unsaved', () => {
+  /* Owner 2026-08-07, from a real loss on prod: a balance row was filled in,
+     its slip attached, the uploader turned into a green tick, and the operator
+     left. The tick meant "the file reached R2" — nothing had been booked. The
+     row was visually identical to the payments above it and its only commit
+     affordance was a 14px glyph.
+
+     These assertions are about a row SAYING what it is. A future pass that
+     re-tidies the actions column back to icons should fail here rather than
+     silently reinstate the trap. */
+
+  test('the commit control carries a word, not just a glyph', () => {
+    expect(tableSource).toContain('className={paymentsStyles.saveBtn}');
+    expect(tableSource).toContain("{addPayment.isPending ? 'Saving…' : 'Save'}");
+  });
+
+  test('the row is marked, and the mark reaches the summary line too', () => {
+    expect(tableSource).toContain('paymentsStyles.unsavedPill');
+    expect(tableSource).toContain("const unsavedCls = isSaved ? paymentsStyles.unsavedCell : '';");
+    expect(tableSource).toContain('{drafts.length} unsaved');
+  });
+
+  test('the actions track widens for the labelled button', () => {
+    /* 28px only ever fitted icons. If this reverts to a fixed 28px the Save
+       label is clipped, which is worse than the glyph it replaced. */
+    expect(tableSource).toContain('const hasUnsavedRows = drafts.length > 0;');
+    expect(tableSource).toContain("${hasUnsavedRows ? '104px' : '28px'}");
+    expect(tableSource).toContain('minWidth: hasUnsavedRows ? 956 : 880,');
+  });
+
+  test('the marking is SAVED-mode only', () => {
+    /* On New SO / DO / SI every row is unsaved by definition and the page's own
+       Save commits them all — a per-row pill there is noise, not information.
+
+       Matched with a whitespace-tolerant regex: the first cut pinned the exact
+       newline and indentation, and a reformat broke the test without changing
+       a thing about the behaviour it guards. A contract test that fails on
+       whitespace teaches people to delete contract tests. */
+    expect(tableSource).toMatch(
+      /\{isSaved\s*&&\s*\(\s*<span className=\{paymentsStyles\.unsavedPill\}>Unsaved<\/span>/,
+    );
+    expect(tableSource).toContain(
+      "const unsavedCls = isSaved ? paymentsStyles.unsavedCell : '';",
+    );
+  });
+});
+
+describe('leaving with unbooked payment rows', () => {
+  /* Marks warn; they do not stop anyone. The loss that started all of this was
+     "filled it in and left", so the exits themselves are guarded. */
+
+  test('the browser-owned exits are covered by a beforeunload guard', () => {
+    expect(tableSource).toContain("window.addEventListener('beforeunload', warn)");
+    expect(tableSource).toContain("window.removeEventListener('beforeunload', warn)");
+    /* SAVED mode only — a New SO / DO / SI form is legitimately all-unsaved and
+       would prompt on every exit. */
+    expect(tableSource).toContain('const unsavedCount = isSaved ? drafts.length : 0;');
+  });
+
+  test('the page is told the count, so it can guard the exits it owns', () => {
+    expect(tableSource).toContain('onUnsavedChange?.(unsavedCount);');
+    // Reported back to zero on unmount, or the page guards work that is gone.
+    expect(tableSource).toContain('return () => onUnsavedChange?.(0);');
+    expect(detailSource).toContain('onUnsavedChange={setUnsavedPayments}');
+  });
+
+  test('back and the payments Done toggle both run the guard', () => {
+    expect(detailSource).toContain('<PageHeader back beforeBack={guardUnsavedPayments}');
+    expect(detailSource).toContain('if (payEditing && !(await guardUnsavedPayments())) return;');
+    /* The guard names the MONEY, not "unsaved changes" — an operator told
+       "1 payment row" can decide in one read. */
+    expect(detailSource).toMatch(/Leave \$\{unsavedPayments\} payment row/);
+  });
+});
+
 describe('PaymentsTable persisted-row proof uploader', () => {
   test('is gated by `locked` only, never by the same-day window', () => {
     expect(tableSource).toContain('{isSaved && !locked && (');

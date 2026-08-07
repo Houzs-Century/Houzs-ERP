@@ -17,11 +17,19 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState, type ReactNode, type CSSProperties } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@2990s/design-system';
 import { Lock, Unlock, Wand2, CalendarCheck, Route, Users } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
 import { useDeliveryPlanning } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useScheduleDelivery } from '../../vendor/scm/lib/delivery-planning-queries';
+import {
+  dateArrangementOf,
+  DATE_ARRANGEMENT_LABEL,
+  type DateArrangement,
+  type PlanningOrder,
+} from '../../vendor/scm/lib/delivery-planning-queries';
+import { DeliveryPlanningBoard, regionTabsFrom } from '../../vendor/scm/components/DeliveryPlanningBoard';
 import {
   useProposeDelivery,
   useSequenceAssign,
@@ -54,6 +62,7 @@ const rm = (centi: number): string => `RM ${(centi / 100).toLocaleString('en-MY'
 const groupLabel = (g: string): string => (g === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : g);
 
 export const AutoSchedule = () => {
+  const navigate = useNavigate();
   const board = useDeliveryPlanning({ region: 'ALL', state: 'PENDING_SCHEDULE' });
   const propose = useProposeDelivery();
   const seqAssign = useSequenceAssign();
@@ -82,6 +91,38 @@ export const AutoSchedule = () => {
   // A3: per-overflow-group 3PL choice — the carrier lorry + captured cost (RM).
   const [threePl, setThreePl] = useState<Record<string, { carrierId?: string | null; costRm?: string }>>({});
   const [assigning3pl, setAssigning3pl] = useState<string | null>(null);
+
+  /* ── The Pending Schedule queue, FULL FIDELITY (owner pipeline, 2026-08-07) ──
+     Every Pending Schedule order flows into this page with everything the
+     Delivery Planning board row carries — the EXACT shared board (columns,
+     region chips, line-item drill-down, inline editors, multiselect), the same
+     idiom as the Trips panel. Split per the owner's date side:
+     "Pending Date Arrangement" (date not yet confirmed) vs "Date arranged"
+     (amended_delivery_date written through the established schedule path —
+     those orders have already flowed on to Delivery Time Arrangement).
+     The queue has its OWN region chip state so filtering it never narrows the
+     propose/assign scope above (depotDocNos stays region-ALL); at region ALL
+     the two share one react-query cache entry, so no extra fetch. */
+  const [queueRegion, setQueueRegion] = useState<string>('ALL');
+  const queue = useDeliveryPlanning({ region: queueRegion, state: 'PENDING_SCHEDULE' });
+  const [dateSide, setDateSide] = useState<'ALL' | DateArrangement>('PENDING_DATE');
+  const [queueSel, setQueueSel] = useState<Set<string>>(new Set());
+  const queueOrders = useMemo<PlanningOrder[]>(() => queue.data?.orders ?? [], [queue.data]);
+  const queueRegionTabs = useMemo(() => regionTabsFrom(queue.data?.regions), [queue.data?.regions]);
+  const sideCounts = useMemo(() => {
+    const c: Record<DateArrangement, number> = { PENDING_DATE: 0, DATE_ARRANGED: 0 };
+    for (const o of queueOrders) {
+      const side = dateArrangementOf(o);
+      if (side) c[side] += 1;
+    }
+    return c;
+  }, [queueOrders]);
+  const sideRows = useMemo(
+    () => (dateSide === 'ALL'
+      ? queueOrders.filter((o) => dateArrangementOf(o) != null)
+      : queueOrders.filter((o) => dateArrangementOf(o) === dateSide)),
+    [queueOrders, dateSide],
+  );
 
   // SO pending-schedule orders, and the depot options derived from them.
   const soOrders = useMemo(
@@ -280,12 +321,12 @@ export const AutoSchedule = () => {
     <div className="space-y-4">
       <PageHeader
         eyebrow="Delivery"
-        title="Auto-Schedule"
-        description="Fit the pending-schedule orders into delivery days automatically. Pick a depot and a start date; each order is grouped by its postcode zone and packed into lorry-days under your per-lorry capacity ceilings. The proposal is reversible — review it, then apply the dates (amended delivery date only) and lock the days you are happy with."
+        title="Delivery Date Arrangement"
+        description="Pick a depot and start date — pending orders pack into lorry-days by postcode zone. Review the proposal, then apply (amended delivery date only) and lock the days you are happy with."
       />
 
       {/* Controls */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end', padding: '14px 16px', borderRadius: 10, background: 'var(--bg-subtle, rgba(0,0,0,0.03))' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end', padding: '8px 10px', borderRadius: 10, background: 'var(--bg-subtle, rgba(0,0,0,0.03))' }}>
         <Ctl label="Depot (origin)">
           <select value={depot} onChange={(e) => { setDepot(e.target.value); setResult(null); }} style={selStyle}>
             <option value={ALL_DEPOTS}>All depots</option>
@@ -432,6 +473,79 @@ export const AutoSchedule = () => {
           )}
         </div>
       )}
+
+      {/* ── The date-arrangement queue: every Pending Schedule order, full board
+          fidelity (the EXACT shared Delivery Planning board — same columns,
+          region chips, expandable line items, inline editors and bulk bar, whose
+          "Delivery date" bulk-set is the MANUAL date arrangement through the
+          same schedule path). Split by the date side of the derived pipeline:
+          confirm a date (Apply proposed dates, the bulk bar, or the drawer) and
+          the order moves to "Date arranged" — and appears on Delivery Time
+          Arrangement as work to do there. */}
+      <div className="rounded-md border border-border bg-surface p-4">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-[13px] font-semibold text-ink">Date arrangement queue</span>
+          <span className="flex-1" />
+          <span className="text-[11.5px] text-ink-muted">
+            Date-arranged orders flow on to Delivery Time Arrangement automatically
+          </span>
+        </div>
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {(['ALL', 'PENDING_DATE', 'DATE_ARRANGED'] as const).map((side) => (
+            <button
+              key={side}
+              type="button"
+              onClick={() => { setDateSide(side); setQueueSel(new Set()); }}
+              className={[
+                'rounded-full border px-3 py-1 text-[12px]',
+                dateSide === side
+                  ? 'border-accent bg-accent/10 font-semibold text-accent'
+                  : 'border-border text-ink-secondary',
+              ].join(' ')}
+            >
+              {side === 'ALL'
+                ? `All (${sideCounts.PENDING_DATE + sideCounts.DATE_ARRANGED})`
+                : `${DATE_ARRANGEMENT_LABEL[side]} (${sideCounts[side]})`}
+            </button>
+          ))}
+        </div>
+
+        <DeliveryPlanningBoard
+          orders={sideRows}
+          counts={queue.data?.counts ?? {}}
+          regionTabs={queueRegionTabs}
+          activeRegion={queueRegion}
+          onRegionChange={setQueueRegion}
+          isLoading={queue.isLoading}
+          error={queue.error}
+          /* No stateTabs — the fetch is locked to PENDING_SCHEDULE, split above. */
+          selectedKeys={queueSel}
+          onToggle={(k) => setQueueSel((p) => {
+            const n = new Set(p);
+            if (n.has(k)) n.delete(k); else n.add(k);
+            return n;
+          })}
+          onToggleAll={(keys, allSel) => setQueueSel((p) => {
+            const n = new Set(p);
+            if (allSel) { for (const k of keys) n.delete(k); }
+            else { for (const k of keys) n.add(k); }
+            return n;
+          })}
+          onClearSelection={() => setQueueSel(new Set())}
+          sched={schedule}
+          drivers={drivers.data ?? []}
+          lorries={lorries.data ?? []}
+          storageKey="dg-date-arrangement"
+          exportName="DeliveryDateArrangement"
+          emptyMessage={dateSide === 'PENDING_DATE'
+            ? 'No orders waiting for a delivery date.'
+            : 'No date-arranged orders — confirm dates on the pending tab.'}
+          onRowDoubleClick={(o) => { if (o.row_type === 'so') navigate('/scm/sales-orders/' + o.so_doc_no); }}
+          contextMenu={(row) => (row.row_type === 'so'
+            ? [{ label: 'Open Sales Order', onClick: () => navigate('/scm/sales-orders/' + row.so_doc_no) }]
+            : [])}
+        />
+      </div>
     </div>
   );
 };

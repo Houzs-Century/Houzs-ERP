@@ -56,7 +56,7 @@ import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../compon
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { useSoRelationshipMap } from "./so-relationship-map";
-import { cn } from "../../lib/utils";
+import { cn, formatDate } from "../../lib/utils";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
@@ -1201,6 +1201,84 @@ function SalesOrderDetailV2ReadOnly() {
                 getRowKey={(l) => l.id}
                 emptyLabel="No line items"
               />
+            </Section>
+
+            {/* Payments — the read page finally SHOWS the ledger it already
+                fetches for printing (owner 2026-08-07: "我的这个下面不能看到
+                payment 的那个 column 吗"). Read-only: rows + paid/balance
+                summary; adding or editing money goes through the ONE door,
+                the payments-unlocked editor (goPayments — same door as the
+                header "Collect payment" button). */}
+            <Section
+              title="Payments"
+              actions={
+                <Button variant="secondary" onClick={goPayments} icon={<Wallet size={14} />}>
+                  Collect payment
+                </Button>
+              }
+            >
+              {printPaymentsQ.isError ? (
+                <div className="rounded-md border border-err/40 bg-err/5 p-2.5 text-[12px] text-err">
+                  Couldn't load payments — refresh to retry.
+                </div>
+              ) : !Array.isArray(printPaymentsQ.data) ? (
+                <div className="py-3 text-[12px] text-ink-muted">Loading payments…</div>
+              ) : printPaymentsQ.data.length === 0 ? (
+                <div className="py-3 text-[12px] text-ink-muted">
+                  No payments recorded — collect the first one with the button above.
+                </div>
+              ) : (
+                <>
+                  <table className="w-full text-[12.5px]">
+                    <thead>
+                      <tr className="border-b border-border-subtle text-left font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+                        <th className="py-1.5 pr-3">Date</th>
+                        <th className="py-1.5 pr-3">Method</th>
+                        <th className="py-1.5 pr-3">Collected by</th>
+                        <th className="py-1.5 pr-3">Note</th>
+                        <th className="py-1.5 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {printPaymentsQ.data.map((pmt) => (
+                        <tr key={pmt.id} className="border-b border-border-subtle/60">
+                          <td className="py-2 pr-3 font-mono text-[12px]">{formatDate(pmt.paid_at)}</td>
+                          <td className="py-2 pr-3">
+                            {pmt.method}
+                            {pmt.merchant_provider ? ` · ${pmt.merchant_provider}` : ""}
+                            {pmt.installment_months ? ` · ${pmt.installment_months} mo` : ""}
+                          </td>
+                          <td className="py-2 pr-3">{pmt.collected_by_name ?? "—"}</td>
+                          <td className="py-2 pr-3 text-ink-muted">{pmt.note ?? "—"}</td>
+                          <td className="py-2 text-right font-mono font-semibold">
+                            {fmtMoney(pmt.amount_centi, salesOrder.currency)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {(() => {
+                    const paidCenti = printPaymentsQ.data.reduce((n, r) => n + (r.amount_centi ?? 0), 0);
+                    const balanceCenti = (salesOrder.local_total_centi ?? 0) - paidCenti;
+                    return (
+                      <div className="mt-2.5 flex flex-wrap items-center justify-end gap-x-6 gap-y-1 text-[12.5px]">
+                        <span className="text-ink-muted">
+                          Paid{" "}
+                          <span className="font-mono font-semibold text-ink">
+                            {fmtMoney(paidCenti, salesOrder.currency)}
+                          </span>
+                        </span>
+                        <span className="text-ink-muted">
+                          Balance{" "}
+                          <span className={balanceCenti > 0 ? "font-mono font-semibold text-err" : "font-mono font-semibold text-primary"}>
+                            {fmtMoney(balanceCenti, salesOrder.currency)}
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
             </Section>
           </DetailMain>
 
