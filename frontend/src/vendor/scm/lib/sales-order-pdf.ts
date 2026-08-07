@@ -11,6 +11,8 @@ import {
 import {
   COMPANY,
   deliverPdf,
+  DOC_TABLE_HEAD_STYLES,
+  DOC_TABLE_STYLES,
   drawHeader,
   drawInfoColumns,
   amountInWordsMyr,
@@ -505,7 +507,10 @@ export async function renderSalesOrderInto(
   });
 
   /* Interleave category section header rows (SOFA / BEDFRAME / …) above each
-     group, matching the on-screen grouping. Greyscale fill so it prints B&W. */
+     group, matching the on-screen grouping. Bold under a rule rather than the
+     grey band it used to carry (owner 2026-08-07: no fills on printed
+     documents) — the row still has to read as a divider, so the weight moves
+     from ink to a line. */
   const bodyRows: RowInput[] = [];
   let lastGroup: string | null = null;
   orderedItems.forEach((it, itIdx) => {
@@ -513,7 +518,7 @@ export async function renderSalesOrderInto(
     if (grp !== lastGroup) {
       bodyRows.push([{
         content: grp, colSpan: 7,
-        styles: { fontStyle: 'bold', fillColor: [238, 238, 238] as [number, number, number], textColor: 40, halign: 'left' },
+        styles: { fontStyle: 'bold', textColor: 40, halign: 'left', lineWidth: { top: 0.4 } as never },
       }]);
       lastGroup = grp;
     }
@@ -524,10 +529,10 @@ export async function renderSalesOrderInto(
     startY: y,
     head: [['#', 'Item Code', 'Description', 'Qty', 'Unit Price', 'Discount', 'Amount (RM)']],
     body: bodyRows,
-    theme: 'striped',
+    theme: 'plain',
     rowPageBreak: 'avoid',
-    styles: { fontSize: 8, cellPadding: 2, valign: 'top' },
-    headStyles: { fillColor: [34, 31, 32], textColor: 250, fontStyle: 'bold' },
+    styles: { ...DOC_TABLE_STYLES, fontSize: 8 },
+    headStyles: DOC_TABLE_HEAD_STYLES,
     /* Money cells must stay on ONE line ("MYR 2,990.00", never wrapped):
        numeric columns are 7.5 pt, right-aligned. Fixed widths sum to ~114 mm of
        182 usable (A4 − 2×14 margins), leaving ~68 mm for Description ('auto',
@@ -580,10 +585,10 @@ export async function renderSalesOrderInto(
       startY: ty,
       head: [['Date', 'Method', 'Approval Code', 'Collected By', 'Amount']],
       body: payRows,
-      theme: 'striped',
+      theme: 'plain',
       rowPageBreak: 'avoid',
-      styles: { fontSize: 8.5, cellPadding: 2, valign: 'top' },
-      headStyles: { fillColor: [34, 31, 32], textColor: 250, fontStyle: 'bold' },
+      styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
+      headStyles: DOC_TABLE_HEAD_STYLES,
       columnStyles: {
         0: { cellWidth: 24 },
         1: { cellWidth: 60 },

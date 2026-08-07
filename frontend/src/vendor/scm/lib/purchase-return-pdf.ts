@@ -12,7 +12,7 @@ import {
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { formatPhone } from '@2990s/shared/phone';
-import { COMPANY, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
+import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { loadSupplierDocData, supplierCodeFor, docVariantLine } from './supplier-doc-data';
 
@@ -145,10 +145,10 @@ export async function renderPurchaseReturnInto(
     startY: y,
     head: [['#', 'Supplier Code', 'Our Code', 'Description', 'Qty', 'Unit Price', opts?.amountLabel ?? 'Refund', 'Reason']],
     body: rows,
-    theme: 'striped',
+    theme: 'plain',
     rowPageBreak: 'avoid',
-    styles: { fontSize: 8.5, cellPadding: 2, valign: 'top' },
-    headStyles: { fillColor: [34, 31, 32], textColor: 250, fontStyle: 'bold' },
+    styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
+    headStyles: DOC_TABLE_HEAD_STYLES,
     columnStyles: {
       0: { cellWidth: 8, halign: 'right' },
       1: { cellWidth: 24, fontStyle: 'bold' },

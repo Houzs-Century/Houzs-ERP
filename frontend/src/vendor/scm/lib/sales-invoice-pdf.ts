@@ -13,7 +13,7 @@
 // as before. The SI carries ONE flat address, not the SO's
 // ship_to/bill_to/install_to trio — see the SiHeader note.
 import { formatPhone } from '@2990s/shared/phone';
-import { COMPANY, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
+import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 
@@ -138,10 +138,10 @@ export async function renderSalesInvoiceInto(
     startY: y,
     head: [['#', 'Item', 'Description', 'Qty', 'Unit Price', 'Disc', 'Total']],
     body: rows,
-    theme: 'striped',
+    theme: 'plain',
     rowPageBreak: 'avoid',
-    styles: { fontSize: 8.5, cellPadding: 2, valign: 'top' },
-    headStyles: { fillColor: [34, 31, 32], textColor: 250, fontStyle: 'bold' },
+    styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
+    headStyles: DOC_TABLE_HEAD_STYLES,
     columnStyles: {
       0: { cellWidth: 8, halign: 'right' },
       1: { cellWidth: 24 },
