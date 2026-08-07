@@ -292,3 +292,40 @@ export const custKeyOf = (l: { debtorCode: string | null; debtorName: string | n
   (l.debtorCode && l.debtorCode.trim())
     ? `code:${l.debtorCode.trim().toUpperCase()}`
     : `name:${(l.debtorName ?? '').trim().toUpperCase()}`;
+
+/* The POST-INSERT half of the remaining-to-invoice invariant, extracted pure so
+ * the money-path guard is unit testable without booting the route.
+ *
+ * WHY A SECOND CHECK. `checkSiOverRemaining` is read-before-write: it reads each
+ * DO line's remaining, finds it sufficient, and the caller inserts. Two invoices
+ * raised against the same delivered goods at the same moment BOTH read the same
+ * remaining, BOTH pass, and BOTH insert — the customer is billed twice for one
+ * delivery.
+ *
+ * Every sibling conversion already closes this. SO -> DO does it inline ("Edge
+ * #E" in delivery-orders-mfg.ts, rollback + 409 race_conflict); PO -> GRN has
+ * verifyGrnOverReceipt; GRN -> PI has verifyGrnLinesNotOverInvoiced, whose
+ * comment describes the identical failure. DO -> SI was the one path without it.
+ *
+ * WHY "< 0" IS THE WHOLE TEST. remaining_to_invoice = delivered − invoiced −
+ * returned, and a just-inserted SI line counts toward `invoiced` immediately.
+ * Re-reading therefore ALREADY subtracts our own quantity: >= 0 was within cap,
+ * NEGATIVE is over by exactly that much. This is the same shape `from-sos`
+ * uses, deliberately — one idea, not two.
+ *
+ * A MISSING id is not an offence. It means the line resolved to no open figure
+ * at all, which the pre-check already refused; treating absence as "over" would
+ * roll back a legitimate invoice whenever a read came back thin.
+ */
+export function findOverInvoicedDoItems(
+  doItemIds: readonly string[],
+  remainingAfterInsert: Map<string, number>,
+): Array<{ doItemId: string; over: number }> {
+  const out: Array<{ doItemId: string; over: number }> = [];
+  for (const id of [...new Set(doItemIds)]) {
+    const r = remainingAfterInsert.get(id);
+    if (r === undefined) continue;
+    if (r < 0) out.push({ doItemId: id, over: -r });
+  }
+  return out;
+}
