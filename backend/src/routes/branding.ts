@@ -44,6 +44,12 @@ import { canonicalizeSinglePhone } from "../scm/shared/phone";
 //   PDF generator and <img> can fetch it with the bearer token.
 // DELETE /api/branding/logo — admin-gated; clears the pointer and best-effort
 //   deletes the R2 object.
+//
+// Two logo slots (owner 2026-08-06): all three logo routes take an optional
+// ?variant=print addressing the SECOND slot (printLogoR2Key), the logo used on
+// printed documents. No variant = the on-screen slot (logoR2Key), so every
+// pre-existing caller behaves exactly as before. See the Branding interface for
+// why one file can't serve both a dark app chrome and white paper.
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -117,6 +123,13 @@ app.put("/", requirePermission("settings.manage"), async (c) => {
     email: str(body.email, current.email),
     website: str(body.website, current.website),
     logoR2Key: str(body.logoR2Key, current.logoR2Key),
+    printLogoR2Key: str(body.printLogoR2Key, current.printLogoR2Key),
+    // Canonicalised like `phone` above, for the same reason: this number is
+    // printed on documents, so it should carry a country code like every other
+    // contact in the system — and refusing anything ambiguous keeps the human's
+    // formatting rather than concatenating two numbers into nonsense.
+    csPhone: canonicalizeSinglePhone(str(body.csPhone, current.csPhone)),
+    csEmail: str(body.csEmail, current.csEmail),
   };
   if (next.companyName === "") {
     return c.json({ error: "companyName is required" }, 400);
@@ -145,7 +158,23 @@ const LOGO_TYPES: Record<string, string> = {
 const LOGO_MAX_BYTES = 1 * 1024 * 1024; // ~1 MB — a letterhead logo, not a photo
 
 /**
- * POST /api/branding/logo
+ * Which of the two logo slots a request addresses (?variant=print). Two slots
+ * exist because the app chrome is DARK and paper is WHITE — see the Branding
+ * interface. Anything but "print" (including absent) means the on-screen slot,
+ * so every pre-existing caller keeps hitting `logoR2Key` unchanged.
+ *
+ * A query param rather than separate /logo/print routes: the three verbs
+ * already carry the right permissions, and the route-capability matrix stays
+ * as it is.
+ */
+type LogoVariant = "app" | "print";
+const variantOf = (raw: string | undefined): LogoVariant =>
+  (raw || "").trim().toLowerCase() === "print" ? "print" : "app";
+const logoFieldOf = (v: LogoVariant): "logoR2Key" | "printLogoR2Key" =>
+  v === "print" ? "printLogoR2Key" : "logoR2Key";
+
+/**
+ * POST /api/branding/logo[?variant=print]
  * Raw binary upload of the company logo (admin-gated). The R2 key carries a
  * Date.now() stamp — same convention as profile pics — so every upload yields
  * a NEW key and every consumer (blob-URL previews, the PDF logo memo) can use
@@ -153,6 +182,8 @@ const LOGO_MAX_BYTES = 1 * 1024 * 1024; // ~1 MB — a letterhead logo, not a ph
  */
 app.post("/logo", requirePermission("settings.manage"), async (c) => {
   const user = c.get("user");
+  const variant = variantOf(c.req.query("variant"));
+  const field = logoFieldOf(variant);
   const contentType = (c.req.header("content-type") || "").split(";")[0].trim().toLowerCase();
   const ext = LOGO_TYPES[contentType];
   if (!ext) {
@@ -165,17 +196,21 @@ app.post("/logo", requirePermission("settings.manage"), async (c) => {
   }
 
   const companyCode = await resolveCompanyCode(c.env, c.get("companyCode"));
-  const key = `branding/${companyCode.toLowerCase()}-logo-${Date.now()}.${ext}`;
+  const slug = variant === "print" ? "print-logo" : "logo";
+  const key = `branding/${companyCode.toLowerCase()}-${slug}-${Date.now()}.${ext}`;
   await c.env.POD_BUCKET.put(key, buf, { httpMetadata: { contentType } });
 
   // Point the active company's branding row at the new object; best-effort
   // clean up the previous one (orphans are cheap; a failed delete never fails
-  // the upload).
+  // the upload). Only THIS variant's pointer moves — replacing the print logo
+  // must never disturb the one the app chrome renders.
   const current = await getBrandingForCompany(c.env, companyCode);
-  const prevKey = current.logoR2Key;
-  const next: Branding = { ...current, logoR2Key: key };
+  const prevKey = current[field];
+  const next: Branding = { ...current, [field]: key };
   await setBrandingForCompany(c.env, companyCode, next, user?.id ?? null);
-  if (prevKey && prevKey !== key) {
+  // A slot may hold the SAME key as the other one only if a future feature
+  // copies it; never delete an object the other slot still points at.
+  if (prevKey && prevKey !== key && prevKey !== next.logoR2Key && prevKey !== next.printLogoR2Key) {
     try { await c.env.POD_BUCKET.delete(prevKey); } catch { /* orphan is fine */ }
   }
 
@@ -183,51 +218,77 @@ app.post("/logo", requirePermission("settings.manage"), async (c) => {
     action: "settings.branding",
     entityType: "app_setting",
     entityId: brandingKeyForCompany(companyCode),
-    summary: `Company logo uploaded (${companyCode})`,
-    meta: { logoR2Key: key, bytes: buf.byteLength, companyCode },
+    summary: `Company ${variant === "print" ? "print " : ""}logo uploaded (${companyCode})`,
+    meta: { variant, [field]: key, bytes: buf.byteLength, companyCode },
   });
   return c.json({ ok: true, branding: next, companyCode });
 });
 
 /**
- * GET /api/branding/logo
+ * GET /api/branding/logo[?variant=print]
  * Streams the stored logo bytes. Any authed user — the PDF letterhead is
- * drawn client-side by every signed-in user. 404 when no logo is set.
+ * drawn client-side by every signed-in user. 404 when that slot is empty;
+ * the CALLER decides the fallback (letterheadLogoKey), because the client
+ * memoises by key and must know which one it actually got.
  */
 app.get("/logo", async (c) => {
-  const branding = await getBrandingForCompany(c.env, await resolveCompanyCode(c.env, c.get("companyCode")));
-  if (!branding.logoR2Key) return c.json({ error: "No logo uploaded" }, 404);
-  const obj = await c.env.POD_BUCKET.get(branding.logoR2Key);
+  const field = logoFieldOf(variantOf(c.req.query("variant")));
+  const companyCode = await resolveCompanyCode(c.env, c.get("companyCode"));
+  const branding = await getBrandingForCompany(c.env, companyCode);
+  if (!branding[field]) return c.json({ error: "No logo uploaded" }, 404);
+  const obj = await c.env.POD_BUCKET.get(branding[field]);
   if (!obj) return c.json({ error: "Logo missing" }, 404);
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
   headers.set("cache-control", "private, max-age=300");
+  /* This URL's answer depends on WHO is asking, and that arrives in a header.
+     Without this, a cache is entitled to hand company B the copy it stored for
+     company A — which is exactly what a browser did to the PDF letterhead.
+     Callers also put the R2 key in the query string, so the URL alone is
+     already unique per company; this makes the response correct for any cache
+     that sees it, not only for callers that remember to. */
+  headers.set("vary", "X-Company-Id");
+  /* Name the company these bytes belong to. The client memoises the letterhead
+     logo by R2 key alone, which cannot tell it WHOSE image arrived: if the
+     active company and the branding it was resolved from ever disagree, one
+     company's mark gets filed under another's key and prints on that company's
+     documents until the tab is reloaded. With this header the client can refuse
+     a mismatch and fall back to a text-only letterhead — a missing logo is a
+     bad document, another company's logo is the wrong one. */
+  headers.set("x-company-code", companyCode);
   return new Response(obj.body, { headers });
 });
 
 /**
- * DELETE /api/branding/logo
- * Clears the logo pointer (admin-gated) and best-effort deletes the object —
- * the letterheads fall back to the text-only header.
+ * DELETE /api/branding/logo[?variant=print]
+ * Clears that slot's pointer (admin-gated) and best-effort deletes the object.
+ * Clearing the print slot sends the letterheads back to the on-screen logo;
+ * clearing the on-screen one with no print logo set falls all the way back to
+ * the text-only header.
  */
 app.delete("/logo", requirePermission("settings.manage"), async (c) => {
   const user = c.get("user");
+  const variant = variantOf(c.req.query("variant"));
+  const field = logoFieldOf(variant);
   const companyCode = await resolveCompanyCode(c.env, c.get("companyCode"));
   const current = await getBrandingForCompany(c.env, companyCode);
-  const prevKey = current.logoR2Key;
+  const prevKey = current[field];
+  const cleared: Branding = { ...current, [field]: "" };
   if (prevKey) {
-    const next: Branding = { ...current, logoR2Key: "" };
-    await setBrandingForCompany(c.env, companyCode, next, user?.id ?? null);
-    try { await c.env.POD_BUCKET.delete(prevKey); } catch { /* orphan is fine */ }
+    await setBrandingForCompany(c.env, companyCode, cleared, user?.id ?? null);
+    // Never delete bytes the OTHER slot still points at.
+    if (prevKey !== cleared.logoR2Key && prevKey !== cleared.printLogoR2Key) {
+      try { await c.env.POD_BUCKET.delete(prevKey); } catch { /* orphan is fine */ }
+    }
   }
   await audit(c, {
     action: "settings.branding",
     entityType: "app_setting",
     entityId: brandingKeyForCompany(companyCode),
-    summary: `Company logo removed (${companyCode})`,
-    meta: { logoR2Key: prevKey, companyCode },
+    summary: `Company ${variant === "print" ? "print " : ""}logo removed (${companyCode})`,
+    meta: { variant, [field]: prevKey, companyCode },
   });
-  return c.json({ ok: true, branding: { ...current, logoR2Key: "" }, companyCode });
+  return c.json({ ok: true, branding: cleared, companyCode });
 });
 
 export default app;

@@ -1,1 +1,0 @@
-var e=e=>e==null?``:String(e).trim();function t(t){let n=e(t.code),r=e(t.description),i=e(t.variant),a=r||n;return{primary:a,secondary:i&&i!==a?i:null}}function n(t){let n=e(t.code),r=e(t.description),i=e(t.variant),a=n||r;return{primary:a,secondary:i&&i!==a?i:null}}export{n,t};

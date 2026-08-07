@@ -368,6 +368,40 @@ const SHEET_STATUS: Record<string, string> = {
   voided: "Voided",
 };
 
+// Sub-status detail (Nico 2026-08-07: Delivery triggers were messy on
+// the coarse stage words). Stages with sub-states export the SUB label -
+// the Delivery sheet's trigger map fires INSPECTION/PICKUP only on the
+// actionable halves ("QC Issue Result" / "Pending Supplier Return" have
+// no trigger entry, so they fire nothing). A null sub falls back to the
+// stage's seeded first sub-state, matching transitionStage's seeding.
+// The actionable halves additionally require WHO acts (Nico 2026-08-07:
+// inspection fires only when Own team inspects; pickup fires only when
+// our logistics collects from the customer). The words carry the choice —
+// the Delivery sheet's trigger map keys on the parenthesised variants and
+// the bare words fire nothing until ops picks a side.
+function sheetDetailStatus(
+  stage: string,
+  sub: string | null,
+  inspectionBy: string | null,
+  pickupBy: string | null,
+): string | undefined {
+  if (stage === "under_verification") {
+    const s = sub ?? "pending_inspection";
+    if (s === "qc_issue_result") return "QC Issue Result";
+    if (inspectionBy === "own") return "Pending Inspection (Own Team)";
+    if (inspectionBy === "supplier") return "Pending Inspection (Supplier)";
+    return "Pending Inspection";
+  }
+  if (stage === "pending_supplier_pickup") {
+    const s = sub ?? "pending_supplier_pickup";
+    if (s === "pending_supplier_return") return "Pending Supplier Return";
+    if (pickupBy === "customer") return "Pending Supplier Pickup (Customer Pickup)";
+    if (pickupBy === "supplier") return "Pending Supplier Pickup (Supplier Direct)";
+    return "Pending Supplier Pickup";
+  }
+  return undefined;
+}
+
 app.get("/status-export", async (c) => {
   // Accepts EITHER shared secret: FORM_INTAKE_KEY (the form-intake
   // script's key) or SHEET_SYNC_KEY (issued for the HC Delivery
@@ -383,8 +417,19 @@ app.get("/status-export", async (c) => {
     return c.json({ error: "unauthorized" }, 401);
   }
 
+  // Append fields (Nico 2026-08-07): with the Google Form closed, the
+  // sheet's Apps Script now auto-APPENDS rows for ERP cases the sheet
+  // doesn't have — so the export carries the columns a new row needs.
+  // Same trust boundary: key-protected, and the sheet already owns
+  // these customer columns for every existing row.
   const rows = await c.env.DB.prepare(
-    `SELECT assr_no, doc_no, ref_no, complained_date, stage, completion_date, closed_at
+    `SELECT assr_no, doc_no, ref_no, complained_date, stage, sub_status, inspection_by, pickup_by, completion_date, closed_at,
+            customer_name, phone, location, sales_agent, po_no, complaint_issue,
+            addr1, addr2, addr3, addr4,
+            (SELECT group_concat(i.item_code, ', ')
+               FROM assr_items i
+              WHERE i.assr_id = assr_cases.id
+                AND i.item_code IS NOT NULL AND i.item_code != '') as items_codes
        FROM assr_cases
       WHERE archived_at IS NULL`
   ).all<{
@@ -393,8 +438,22 @@ app.get("/status-export", async (c) => {
     ref_no: string | null;
     complained_date: string | null;
     stage: string;
+    sub_status: string | null;
+    inspection_by: string | null;
+    pickup_by: string | null;
     completion_date: string | null;
     closed_at: string | null;
+    customer_name: string | null;
+    phone: string | null;
+    location: string | null;
+    sales_agent: string | null;
+    po_no: string | null;
+    complaint_issue: string | null;
+    addr1: string | null;
+    addr2: string | null;
+    addr3: string | null;
+    addr4: string | null;
+    items_codes: string | null;
   }>();
 
   const cases = (rows.results ?? []).map((r) => ({
@@ -408,9 +467,24 @@ app.get("/status-export", async (c) => {
     // columns and this endpoint never sends them.
     complained_date: r.complained_date,
     status:
+      sheetDetailStatus(r.stage, r.sub_status, r.inspection_by, r.pickup_by) ??
       SHEET_STATUS[r.stage] ??
       r.stage.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase()),
     completed_date: r.completion_date ?? r.closed_at ?? null,
+    customer_name: r.customer_name,
+    phone: r.phone,
+    location: r.location,
+    sales_agent: r.sales_agent,
+    po_no: r.po_no,
+    complaint_issue: r.complaint_issue,
+    addr1: r.addr1,
+    addr2: r.addr2,
+    addr3: r.addr3,
+    addr4: r.addr4,
+    item_codes: r.items_codes,
+    // The sheet's _appendNewAssrRow reads c.item_code (singular) — alias
+    // so the existing script fills its Item column without an edit.
+    item_code: r.items_codes,
   }));
 
   return c.json({ count: cases.length, cases });

@@ -16,11 +16,14 @@ import { PwaBanners } from "./components/PwaBanners";
 import { ChunkReloadBoundary } from "./components/RouteFallback";
 import { registerPwa } from "./pwa";
 import { installGlobalErrorReporting } from "./lib/errorReporter";
+import { clearStaleTableSorts } from "./lib/staleSortReset";
 import { consumeCompanyUrlSeed } from "./lib/activeCompany";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { tokenStore } from "./api/client";
 import { restoreNativeSession } from "./lib/nativeSession";
+import { registerNativePush } from "./lib/nativePush";
+import { readAuthToken } from "./lib/authToken";
 import { canonicalRedirectUrl } from "./lib/canonicalHost";
 import { useAppSurface } from "./routing/appSurface";
 
@@ -56,6 +59,7 @@ const ResetPassword = lazy(() => import("./pages/ResetPassword").then((m) => ({ 
 // Invite acceptance rides in the unauthenticated-screens chunk (see
 // auth/AuthGate.tsx) — same split, same reason: staff sessions never load it.
 const AcceptInviteScreen = lazy(() => import("./auth/AuthScreens").then((m) => ({ default: m.AcceptInviteScreen })));
+const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy").then((m) => ({ default: m.PrivacyPolicy })));
 
 function PublicFallback() {
   return <div className="flex min-h-screen items-center justify-center text-sm text-ink-muted">Loading</div>;
@@ -75,6 +79,11 @@ if (!canonicalTarget) registerPwa();
 // so even a first-render crash is captured. Prod builds only; reporting never
 // changes behaviour (see lib/errorReporter.ts).
 installGlobalErrorReporting();
+/* One-shot: drop the persisted table sorts a bug made permanent, so nobody has
+   to find the Columns drawer and press Reset on every list page and device.
+   Guarded by its own marker — a sort chosen deliberately after this ships is
+   never touched. */
+clearStaleTableSorts();
 
 // Multi-window company hand-off (owner 2026-07-23): the company switcher's
 // "Open in new window" opens `/?company=<id>` so the new window boots straight
@@ -177,6 +186,16 @@ function RootApp() {
       </AuthProvider>
     );
   }
+  if (surface === "privacy") {
+    return (
+      <Suspense fallback={<PublicFallback />}>
+        <Routes>
+          <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="*" element={<Navigate to="/privacy" replace />} />
+        </Routes>
+      </Suspense>
+    );
+  }
   return (
     <AuthProvider>
       <AuthGate>
@@ -197,6 +216,13 @@ function RootApp() {
    line — so the web boot is unchanged, synchronous in effect, and cannot be
    made slower by a Keychain that is not there. */
 await restoreNativeSession();
+
+/* Keep the APNs registration fresh on every authed boot (iOS can rotate the
+   device token; the server row carries last_seen_at). NOT awaited — boot must
+   not wait on a permission dialog or the network. Only runs with a session
+   present: an already-granted permission re-registers silently, a denied one
+   returns, and a user who has never signed in is never prompted at boot. */
+if (readAuthToken()) void registerNativePush();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -1152,6 +1152,10 @@ grns.get('/', async (c) => {
       ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
       assigned_sos: summary.assignedSos,
       assigned_so_linked: summary.sourceLinked,
+      /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s) —
+         rolled up over the SAME code-filtered origins, so header ≡ ∪(lines)
+         holds for the provenance slot too. */
+      assigned_so_provenance: summary.provenanceSos,
       delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
     };
   });
@@ -1386,19 +1390,27 @@ grns.get('/:id', async (c) => {
   const headerReceivedAt = (h.data as { received_at?: string | null }).received_at ?? null;
   const poItemIds = [...new Set(lineItems.map((it) => it.purchase_order_item_id).filter((x): x is string => Boolean(x)))];
   const poNoByItemId = new Map<string, string>();
+  /* Owner 2026-08-06 — the V2 detail's "Ordered" column needs the SOURCE PO
+     line's qty (grn_items has no ordered-qty column of its own; the V2 page
+     was reading a nonexistent `qty` field and rendered 0 on every GRN). Same
+     round trip that already resolves the PO number — just carry `qty` too.
+     Manual lines (no purchase_order_item_id) stay null → the page shows "—". */
+  const poQtyByItemId = new Map<string, number>();
   const downstreamMap = await grnLineDownstream(sb, lineItems.map((it) => it.id));
   if (poItemIds.length > 0) {
     const { data: poiRows } = await sb.from('purchase_order_items')
-      .select('id, po:purchase_orders ( po_number )')
+      .select('id, qty, po:purchase_orders ( po_number )')
       .in('id', poItemIds);
-    for (const r of (poiRows ?? []) as Array<{ id: string; po: { po_number: string } | Array<{ po_number: string }> | null }>) {
+    for (const r of (poiRows ?? []) as Array<{ id: string; qty: number | null; po: { po_number: string } | Array<{ po_number: string }> | null }>) {
       const po = Array.isArray(r.po) ? r.po[0] : r.po;
       if (po?.po_number) poNoByItemId.set(r.id, po.po_number);
+      if (r.qty != null) poQtyByItemId.set(r.id, Number(r.qty));
     }
   }
   const items = lineItems.map((it) => ({
     ...it,
     source_po_number: it.purchase_order_item_id ? (poNoByItemId.get(it.purchase_order_item_id) ?? null) : null,
+    ordered_qty: it.purchase_order_item_id ? (poQtyByItemId.get(it.purchase_order_item_id) ?? null) : null,
     received_at: headerReceivedAt,
     downstream: downstreamMap.get(it.id) ?? [],
   }));
@@ -1443,9 +1455,36 @@ grns.get('/:id/linked', async (c) => {
   const po: { id: string; po_number: string } | null =
     Array.isArray(poJoin) ? (poJoin[0] ?? null) : (poJoin ?? null);
 
+  /* Multi-GRN PIs (owner 2026-08-06) — one supplier invoice can bill several
+     notes, and only ONE of them is the header's primary grn_id. Union the
+     header match above with the LINE-level path (this note's grn_items →
+     purchase_invoice_items) so a note billed on another note's PI still lists
+     its invoice here. Fail-soft: a hiccup leaves the header-matched set. */
+  let invoices = (piRes.data ?? []) as Array<{ id: string; invoice_number: string; status: string; invoice_date: string }>;
+  try {
+    const { data: myLines } = await sb.from('grn_items').select('id').eq('grn_id', id);
+    const grnItemIds = ((myLines ?? []) as Array<{ id: string }>).map((r) => r.id);
+    if (grnItemIds.length) {
+      const { data: piLines } = await sb.from('purchase_invoice_items')
+        .select('purchase_invoice_id').in('grn_item_id', grnItemIds);
+      const piIds = [...new Set(((piLines ?? []) as Array<{ purchase_invoice_id: string | null }>)
+        .map((r) => r.purchase_invoice_id).filter((x): x is string => Boolean(x)))];
+      const missing = piIds.filter((pid) => !invoices.some((v) => v.id === pid));
+      if (missing.length) {
+        const { data: extra } = await sb.from('purchase_invoices')
+          .select('id, invoice_number, status, invoice_date').in('id', missing);
+        invoices = [...invoices, ...((extra ?? []) as typeof invoices)]
+          .sort((a, b) => String(b.invoice_date).localeCompare(String(a.invoice_date)));
+      }
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[grn linked] line-level PI union failed', { id, error: e });
+  }
+
   return c.json({
     purchaseOrder: po,
-    invoices:      piRes.data ?? [],
+    invoices,
     returns:       prRes.data ?? [],
   });
 });

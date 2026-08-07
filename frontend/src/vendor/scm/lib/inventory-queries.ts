@@ -107,6 +107,8 @@ export type InventoryProductTotal = {
   owned_qty?: number;
   /** Consignment units standing in the warehouse — held, not owned. */
   held_qty?: number;
+  /* Consignment value, reported separately — never inside total_value_sen. */
+  held_value_sen?: number;
   last_movement_at: string | null;
   main_supplier_code: string | null;
   main_supplier_name: string | null;
@@ -120,6 +122,11 @@ export type InventoryProductTotal = {
        unscheduled_qty     = open SO demand with NO delivery date
        available_qty       = stock + incoming_qty − committed_scheduled
        surplus_qty         = available_qty − unscheduled_qty
+       non_selling_qty     = on-hand standing in a showroom / display / service
+                             warehouse — doing its job, not idle
+       sellable_surplus_qty= surplus_qty − non_selling_qty, floored at 0; the
+                             dead-stock signal, and the ONLY one the Dead/Spare
+                             badge may read
        oldest_lot_at       = oldest open FIFO lot → age of the stock */
   incoming_qty: number;
   incoming_pos: InventoryIncomingPo[];
@@ -128,6 +135,16 @@ export type InventoryProductTotal = {
   reserved_total: number;
   available_qty: number;
   surplus_qty: number;
+  /* Optional so a cached payload from before this shipped still renders — the
+     call sites fall back to surplus_qty, i.e. the old behaviour. */
+  non_selling_qty?: number;
+  sellable_surplus_qty?: number;
+  /* The MOVEMENT rollup (SUM of IN − OUT) and whether it disagrees with the lot
+     ledger the row is built from. Comparison only, never arithmetic: a mismatch
+     is a real data fault (docs/inventory-ledger-divergence-coe.md), and the row
+     marks it rather than presenting one ledger as the truth. */
+  movement_qty?: number;
+  ledger_mismatch?: boolean;
   oldest_lot_at: string | null;
 };
 

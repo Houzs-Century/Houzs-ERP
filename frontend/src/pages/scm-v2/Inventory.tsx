@@ -452,16 +452,26 @@ const BalancesTab = ({
   const resultsAreStale = searchTransition.resultsAreStale || isPlaceholderData;
   const searching = searchTransition.isSearching || (isPlaceholderData && !error);
   // Owner 2026-07-25 — a "Dead stock only" view over the SAME set-based rows:
-  // SKUs with Spare (surplus_qty) > 0, i.e. on-hand stock beyond all demand.
+  // SKUs with idle Spare > 0, i.e. on-hand stock beyond all demand. Reads the
+  // SELLABLE figure so the filter and the badge agree — a showroom/display/
+  // service piece is where it belongs and must not appear here either.
   // Client-side (no extra query); the badge column emphasises make-to-order.
   const [deadOnly, setDeadOnly] = useState(false);
   const baseRows = resultsAreStale ? [] : rows;
-  const visibleRows = deadOnly ? baseRows.filter((r) => (r.surplus_qty ?? 0) > 0) : baseRows;
+  const visibleRows = deadOnly
+    ? baseRows.filter((r) => (r.sellable_surplus_qty ?? r.surplus_qty ?? 0) > 0)
+    : baseRows;
 
+  /* Own vs consignment, SEPARATED end to end (owner, 2026-08-06: "分成两个
+     value：一个是 inventory value,一个是 consignment value…stock 也可以分成
+     自己的 stock 和 consignment stock"). The drawer already speaks this
+     language; the list and the cards now match it. */
   const stats = useMemo(() => ({
-    totalQty: visibleRows.reduce((s, r) => s + (r.total_qty ?? 0), 0),
+    ownQty: visibleRows.reduce((s, r) => s + (r.owned_qty ?? r.total_qty ?? 0), 0),
+    heldQty: visibleRows.reduce((s, r) => s + (r.held_qty ?? 0), 0),
     distinctSku: visibleRows.length,
     totalValue: visibleRows.reduce((s, r) => s + (r.total_value_sen ?? 0), 0),
+    heldValue: visibleRows.reduce((s, r) => s + (r.held_value_sen ?? 0), 0),
   }), [visibleRows]);
 
   // `visibleRows` is deliberately EMPTY while a search/filter is in flight, so
@@ -473,10 +483,11 @@ const BalancesTab = ({
 
   return (
     <>
-      <div className={STAT_GRID_3}>
-        <StatCard label="Total Qty" value={fmtQty(stats.totalQty)} pending={statsPending} />
-        <StatCard label="Distinct SKUs" value={stats.distinctSku} pending={statsPending} />
+      <div className={STAT_GRID}>
+        <StatCard label="Own Stock Qty" value={fmtQty(stats.ownQty)} pending={statsPending} />
+        <StatCard label="Consignment Qty" value={fmtQty(stats.heldQty)} pending={statsPending} />
         <StatCard label="Inventory Value" value={fmtRm(stats.totalValue)} pending={statsPending} />
+        <StatCard label="Consignment Value" value={fmtRm(stats.heldValue)} pending={statsPending} />
       </div>
 
       {/* Dead-stock view — SKUs with Spare (surplus) stock beyond all demand.
@@ -587,32 +598,50 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
   {
     key: 'stock',
     label: 'Stock',
-    width: '80px',
+    width: '85px',
     align: 'right',
-    /* Sorts and reads on the OWNED figure. Owner, 2026-08-05: "consignment 的东西
-       怎么可以放进 my stocks 里面，还呈现出来？你这样子我会以为我有货". Twelve of
-       the fourteen pieces standing in PJ SHOWROOM are somebody else's, and this
-       column blended them into one number.
-       The held units are not hidden — they ride beside it in the muted "+N held"
-       so the goods can still be found — but the figure that reads as "my stock",
-       and the one the column sorts by, is now the owned one. Same words the Stock
-       Breakdown drawer already uses. */
+    /* OWN stock only — one clean number, nothing to mentally add up. Owner,
+       2026-08-05: "consignment 的东西怎么可以放进 my stocks 里面…我会以为我有货";
+       2026-08-06: "stock 也可以分成自己的 stock 和 consignment stock…就不用去
+       算 2 加 2 了". Consignment moved to its OWN column, mirroring the Stock
+       Breakdown drawer's split. */
     getValue: (r) => r.owned_qty ?? r.total_qty,
     render: (r) => {
       const owned = r.owned_qty ?? r.total_qty;
-      const held = r.held_qty ?? Math.max(0, r.total_qty - owned);
       const qtyClass = owned > 0 ? styles.numCellPos
         : owned < 0 ? styles.numCellNeg
         : styles.numCellZero;
       return (
         <span className={`${styles.numCell} ${qtyClass}`}>
           {fmtQty(owned)}
-          {held > 0 && (
+          {/* The two ledgers disagree for this SKU. Marked, not hidden — Actions
+              -> "Reconcile a SKU" settles it from the documents. */}
+          {r.ledger_mismatch && (
             <span
-              className={styles.numCellZero}
-              title={`${fmtQty(held)} held on consignment — not owned, excluded from value`}
-            >{` +${fmtQty(held)} held`}</span>
+              className={styles.numCellNeg}
+              title={`Ledgers disagree: the movement ledger says ${fmtQty(r.movement_qty ?? 0)}, the lot ledger says ${fmtQty(owned + (r.held_qty ?? 0))}. This row uses the lot ledger. Run Actions → "Reconcile a SKU" to settle it against the documents.`}
+            >{' ⚠'}</span>
           )}
+        </span>
+      );
+    },
+  },
+  {
+    key: 'consignment',
+    label: 'Consignment',
+    width: '105px',
+    align: 'right',
+    /* Somebody else's goods standing with us — findable, sortable, and never
+       mixed into Stock, Available, Spare or any value figure. */
+    getValue: (r) => r.held_qty ?? 0,
+    render: (r) => {
+      const held = r.held_qty ?? 0;
+      return (
+        <span
+          className={`${styles.numCell} ${styles.numCellZero}`}
+          title={held > 0 ? `${fmtQty(held)} held on consignment — not owned; value ${fmtRm(r.held_value_sen ?? 0)} excluded from inventory value` : undefined}
+        >
+          {held > 0 ? fmtQty(held) : '—'}
         </span>
       );
     },
@@ -665,7 +694,8 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     render: (r) => (
       <span
         className={`${styles.numCell} ${r.available_qty < 0 ? styles.numCellNeg : r.available_qty > 0 ? styles.numCellPos : styles.numCellZero}`}
-        title={`${fmtQty(r.total_qty)} stock + ${fmtQty(r.incoming_qty)} incoming − ${fmtQty(r.committed_scheduled)} scheduled = ${fmtQty(r.available_qty)} available`}
+        title={`${fmtQty(r.owned_qty ?? r.total_qty)} owned + ${fmtQty(r.incoming_qty)} incoming − ${fmtQty(r.committed_scheduled)} scheduled = ${fmtQty(r.available_qty)} available` +
+          ((r.held_qty ?? 0) > 0 ? ` (held ${fmtQty(r.held_qty ?? 0)} on consignment — not ours, excluded)` : '')}
       >
         {fmtQty(r.available_qty)}
       </span>
@@ -715,18 +745,42 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     key: 'deadstock',
     label: 'Dead stock',
     width: '110px',
-    getValue: (r) => (r.surplus_qty > 0 ? (isMakeToOrderCategory(r.category) ? `dead ${r.surplus_qty}` : `spare ${r.surplus_qty}`) : ''),
+    /* Reads sellable_surplus_qty, NOT surplus_qty. A piece standing in a showroom
+       or at the supplier for service is doing its job, so "no sale in the window"
+       says nothing about it — the badge must not call it dead. Owner, 2026-08-05:
+       "我的 dead stock 里面怎么会有 dead stock 呢？因为它明明是 showroom 的 display
+       啊". The same day's fix reached only the Analytics dead-stock list, so THIS
+       badge — the one on the screen he looks at — kept flagging them.
+       Falls back to surplus_qty so a cached pre-fix payload renders as before. */
+    getValue: (r) => {
+      const idle = r.sellable_surplus_qty ?? r.surplus_qty;
+      return idle > 0 ? (isMakeToOrderCategory(r.category) ? `dead ${idle}` : `spare ${idle}`) : '';
+    },
     render: (r) => {
-      if (r.surplus_qty <= 0) return <span className={styles.numCellZero}>—</span>;
+      const idle = r.sellable_surplus_qty ?? r.surplus_qty;
+      const parked = r.non_selling_qty ?? 0;
+      if (idle <= 0) {
+        return (
+          <span
+            className={styles.numCellZero}
+            title={parked > 0
+              ? `${fmtQty(parked)} standing in a showroom / display / service warehouse — where it is meant to be, so it is not a dead-stock candidate.`
+              : undefined}
+          >—</span>
+        );
+      }
       const mto = isMakeToOrderCategory(r.category);
+      const parkedNote = parked > 0
+        ? ` (${fmtQty(parked)} more is on display / at service and excluded)`
+        : '';
       return (
         <span
           className={`${styles.movementPill} ${mto ? styles.pillDeadStock : styles.pillFreeSoft}`}
           title={mto
-            ? `Make-to-order (${r.category}): ${fmtQty(r.surplus_qty)} spare on hand with no Sales Order — dead-stock candidate. Open the drawer for the exact assigned/free lots.`
-            : `Make-to-stock (${r.category}): ${fmtQty(r.surplus_qty)} spare is expected for a shelf item. Softer signal.`}
+            ? `Make-to-order (${r.category}): ${fmtQty(idle)} spare on hand with no Sales Order — dead-stock candidate${parkedNote}. Open the drawer for the exact assigned/free lots.`
+            : `Make-to-stock (${r.category}): ${fmtQty(idle)} spare is expected for a shelf item${parkedNote}. Softer signal.`}
         >
-          {mto ? 'Dead' : 'Spare'} {fmtQty(r.surplus_qty)}
+          {mto ? 'Dead' : 'Spare'} {fmtQty(idle)}
         </span>
       );
     },

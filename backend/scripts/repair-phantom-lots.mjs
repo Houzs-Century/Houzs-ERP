@@ -131,6 +131,21 @@ try {
         if (orphans.some((l) => num(l.qty_remaining) !== 0)) stop("an orphan still holds stock");
         if (orphanConsumed !== excess) stop(`orphans consumed ${orphanConsumed} but the excess is ${excess}`);
 
+        /* Per-lot CONSERVATION pre-check (2026-08-05). A target lot that already
+           breaks `received = consumed + remaining` is a SURPLUS lot — consumption
+           rows exist against it while qty_remaining never came down (the 2990
+           import's top-up shape). Re-pointing MORE consumptions onto such a lot
+           manufactures exactly the `received=1 consumed=2 remaining=0`
+           over-consumed state the audit refuses on, and the bucket-level VERIFY
+           below cannot see it (bucket sums still balance). This script was the
+           only consumption writer in the tree without this check. */
+        const surplusTargets = open.filter(
+          (l) => num(l.consumed) + num(l.qty_remaining) > num(l.qty_received),
+        );
+        if (surplusTargets.length > 0) {
+          stop(`target lot(s) ${surplusTargets.map((l) => l.id).join(", ")} already break received = consumed + remaining — re-pointing onto them would manufacture an over-consumed lot`);
+        }
+
         /* The property that keeps this cost-neutral. Re-pointing a consumption
            onto a lot with a DIFFERENT unit cost silently restates the COGS of a
            sale that has already shipped, so that case stops rather than guesses. */
@@ -183,6 +198,28 @@ try {
         }
         if (num(consAfter.q) !== num(consumedBefore[0].q)) {
           stop(`consumed quantity changed ${num(consumedBefore[0].q)} -> ${num(consAfter.q)} — rows must MOVE, never appear or vanish`);
+        }
+        /* Per-lot CONSERVATION post-check (2026-08-05): every surviving lot in
+           the bucket must read received = consumed + remaining. The bucket-sum
+           checks above pass even when one lot is over-consumed and another
+           under-consumed by the same amount — which is precisely the damage a
+           mis-targeted re-point would leave. Mirrors the family verification in
+           backfill-fifo-divergence.mjs. */
+        const nonConserving = await sql`
+          SELECT l.id, l.qty_received, l.qty_remaining,
+                 COALESCE((SELECT SUM(c.qty_consumed)
+                             FROM scm.inventory_lot_consumptions c
+                            WHERE c.lot_id = l.id), 0) AS consumed
+            FROM scm.inventory_lots l
+           WHERE l.warehouse_id = ${b.warehouse_id}
+             AND l.product_code = ${b.product_code}
+             AND COALESCE(l.variant_key,'') = ${b.vkey}
+             AND l.qty_received <> l.qty_remaining
+                 + COALESCE((SELECT SUM(c.qty_consumed)
+                               FROM scm.inventory_lot_consumptions c
+                              WHERE c.lot_id = l.id), 0)`;
+        if (nonConserving.length > 0) {
+          stop(`lot(s) ${nonConserving.map((l) => l.id).join(", ")} end non-conserving (received != consumed + remaining) — the repair would trade bucket drift for lot damage`);
         }
 
         const value = excess * num(orphans[0].unit_cost_sen);

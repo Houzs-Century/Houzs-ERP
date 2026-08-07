@@ -23,6 +23,7 @@ describe("app surface routing", () => {
     ["/portal/case/token", "portal"],
     ["/reset/token", "reset"],
     ["/invite/token", "invite"],
+    ["/privacy", "privacy"],
     ["/", "staff"],
     ["/scm/sales-orders", "staff"],
   ] as const)("classifies %s as %s", (path, surface) => {

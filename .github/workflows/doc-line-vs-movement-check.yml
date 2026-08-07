@@ -1,0 +1,44 @@
+name: Doc lines vs movements (read-only)
+
+# For ONE delivery order: its document lines beside its inventory movements, so
+# an orphan on either side is named.
+#
+# The mirror of "Posted doc movements check", which finds a posted document that
+# wrote NO movements. Nothing looked for the opposite — a movement with no line
+# behind it — which is how one survived long enough to make an Inventory row read
+# "1 + 1 − 2 = −1".
+#
+# Manual trigger only — it is a question, not a gate.
+on:
+  workflow_dispatch:
+    inputs:
+      do:
+        description: 'Delivery Order number, e.g. 2990-DO-2607-017. Leave BLANK to sweep EVERY shipped DO and posted GRN, item by item.'
+        required: false
+        type: string
+
+concurrency:
+  group: doc-line-vs-movement-${{ github.event.inputs.do }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-doc-line-vs-movement.mjs
+        env:
+          DO: ${{ github.event.inputs.do }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

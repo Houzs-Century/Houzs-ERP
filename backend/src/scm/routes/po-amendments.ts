@@ -29,6 +29,7 @@ import type { Env, Variables } from '../env';
 import type { Context } from 'hono';
 import { canTransition, nextStatus, type PoAmendStatus, type PoAmendAction } from '../shared/po-amendment';
 import { applyPoAmendment, ReceivedFloorError } from '../lib/po-revision';
+import { planStockRelease, type AllocationRow } from '../lib/po-allocations';
 /* Two-lane rework: a follow-up row's approve re-derives its PO from the SO's
    current truth. po-revision re-exports so-revision's ReceivedFloorError (same
    class), so the one imported above already covers both engines. */
@@ -472,7 +473,79 @@ poAmendments.patch('/:id/reject', async (c) => {
     note: `PO amendment rejected: ${reason}`,
   });
 
-  return c.json({ amendment: updated });
+  /* ── Auto-release to STOCK on a rejected FOLLOW-UP ─────────────────────────
+     A follow-up (source_so_amendment_id set) exists because the SO was revised;
+     rejecting it means the supplier will NOT follow the revision, so the goods
+     will arrive as ORIGINALLY ordered — for the revised SO line they are simply
+     no longer its goods. Owner's rule (2026-08-06): that mismatch is a fact,
+     not a decision — "SO amendment 了之后,我那张 PO 就直接废了…他就变了". So the
+     un-allocated remainder of every affected line is re-pointed to STOCK
+     automatically; MRP then re-shows the shortage on the corrected spec and a
+     fresh PO can be raised. Existing slices (someone's deliberate split) are
+     never touched, and a failure here never un-rejects the amendment — the
+     release is reported, retryable via the allocation editor. */
+  const releasedToStock: Array<{ poItemId: string; materialCode: string; qty: number }> = [];
+  const releaseWarnings: string[] = [];
+  if (amendment.source_so_amendment_id) {
+    try {
+      const { data: amdLines } = await sb.from('po_amendment_lines')
+        .select('purchase_order_item_id')
+        .eq('amendment_id', id);
+      const itemIds = [...new Set(((amdLines ?? []) as Array<{ purchase_order_item_id: string | null }>)
+        .map((l) => l.purchase_order_item_id).filter((v): v is string => !!v))];
+      if (itemIds.length > 0) {
+        const { data: items } = await sb.from('purchase_order_items')
+          .select('id, qty, material_code')
+          .in('id', itemIds);
+        const { data: allocRows } = await sb.from('purchase_order_item_allocations')
+          .select('id, purchase_order_item_id, seq, qty, so_item_id')
+          .in('purchase_order_item_id', itemIds);
+        const byItem = new Map<string, AllocationRow[]>();
+        for (const a of (allocRows ?? []) as Array<AllocationRow & { purchase_order_item_id: string }>) {
+          const arr = byItem.get(a.purchase_order_item_id) ?? [];
+          arr.push(a); byItem.set(a.purchase_order_item_id, arr);
+        }
+        for (const it of (items ?? []) as Array<{ id: string; qty: number; material_code: string }>) {
+          const plan = planStockRelease(Number(it.qty ?? 0), byItem.get(it.id) ?? []);
+          if (!plan) continue;
+          const { error: insErr } = await sb.from('purchase_order_item_allocations').insert({
+            company_id: activeCompanyId(c),
+            purchase_order_item_id: it.id,
+            seq: plan.seq,
+            qty: plan.qty,
+            so_item_id: null,
+            created_by: user.id,
+          });
+          if (insErr) { releaseWarnings.push(`${it.material_code}: ${insErr.message}`); continue; }
+          releasedToStock.push({ poItemId: it.id, materialCode: it.material_code, qty: plan.qty });
+        }
+        if (releasedToStock.length > 0) {
+          await recordEntityAudit(sb, {
+            entityType: 'PURCHASE_ORDER',
+            entityId:   amendment.po_id,
+            entityDocNo: amendment.po_number,
+            action:     'UPDATE',
+            actor:      { id: c.get('houzsUser')?.id ?? null, name: c.get('houzsUser')?.name ?? null },
+            companyId:  activeCompanyId(c) ?? null,
+            fieldChanges: releasedToStock.map((r) => (
+              { field: 'allocationTarget', from: 'SO (revised away)', to: `STOCK · ${r.materialCode} × ${r.qty}` }
+            )),
+            note: `Supplier cannot follow SO revision ${amendment.source_so_amendment_no ?? ''} — un-allocated qty released to STOCK; MRP will re-show the corrected spec as shortage.`.replace('  ', ' '),
+          });
+        }
+      }
+    } catch (e) {
+      /* eslint-disable-next-line no-console */
+      console.error('[po-amendment] stock release after reject failed:', e);
+      releaseWarnings.push(e instanceof Error ? e.message : 'stock release failed');
+    }
+  }
+
+  return c.json({
+    amendment: updated,
+    ...(releasedToStock.length > 0 ? { releasedToStock } : {}),
+    ...(releaseWarnings.length > 0 ? { releaseWarnings } : {}),
+  });
 });
 
 /* ── PATCH /:id/withdraw ───────────────────────────────────────────────────

@@ -109,6 +109,7 @@ import { ServiceMetrics } from "./ServiceMetrics";
 import { ServiceSettingsView } from "./ServiceSettings";
 import { ServiceLeadTimePortal } from "./ServiceLeadTimePortal";
 import { Forbidden } from "./Forbidden";
+import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
 import type {
   Paginated,
@@ -809,8 +810,10 @@ function CasesView({
       // Product code — visible on the detail page; hidden here to cut
       // clutter, still available from the Columns menu.
       defaultHidden: true,
-      render: (r) => <span className="font-mono text-[11px]">{r.item_code || "—"}</span>,
-      getValue: (r) => r.item_code,
+      // Product Info items first (items_codes aggregate); the legacy
+      // form-era item_code only as fallback (Nico 2026-08-07).
+      render: (r) => <span className="font-mono text-[11px]">{(r as any).items_codes || r.item_code || "—"}</span>,
+      getValue: (r) => (r as any).items_codes || r.item_code,
     },
     {
       key: "resolution_method",
@@ -3550,7 +3553,7 @@ function DetailContent({
           <>
             {/* PR 1 redesign — Print + Portal Link moved up from the
                 pill row. Match the design's title-row action group. */}
-            <PrintMenu caseId={id} toast={toast} />
+            <PrintMenu caseId={id} assrNo={c.assr_no} toast={toast} />
             <PortalLinksMenu
               id={id}
               assrNo={c.assr_no}
@@ -4259,6 +4262,35 @@ function DetailContent({
                 {/* Folded in from the retired Item Pickup stage (mig 0110):
                     the date logistics collects the faulty item from the
                     customer's house — precedes the supplier handover. */}
+                {/* Pickup by (Nico 2026-08-07) — who collects the faulty
+                    item. Customer pickup = our logistics goes to the
+                    customer's house (fires the Delivery-sheet PICKUP job);
+                    Supplier direct = the supplier collects it themselves. */}
+                <div className="flex items-center gap-2">
+                  <span className="w-[130px] shrink-0 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+                    Pickup by
+                  </span>
+                  <div className="flex gap-1.5">
+                    {([
+                      { v: "customer", label: "Customer pickup" },
+                      { v: "supplier", label: "Supplier direct" },
+                    ] as const).map((o) => (
+                      <button
+                        key={o.v}
+                        type="button"
+                        onClick={() => patch({ pickup_by: c.pickup_by === o.v ? null : o.v })}
+                        className={cn(
+                          "rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors",
+                          c.pickup_by === o.v
+                            ? "border-primary bg-primary-soft text-primary"
+                            : "border-border bg-surface text-ink-secondary hover:border-primary/40",
+                        )}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <InlineEdit
                   label="Customer Pickup Date"
                   type="date"
@@ -6769,23 +6801,42 @@ function LogisticsRow({
 // route — backend defaults to "office" so any legacy bookmark still
 // works.
 
+const PRINT_VARIANTS = {
+  customer: { label: "Customer Copy", hint: "Tracker + QR to portal" },
+  supplier: { label: "Supplier Copy", hint: "PO, deadline, acknowledgement" },
+  office: { label: "Office Copy", hint: "Full internal view" },
+} as const;
+type PrintVariant = keyof typeof PRINT_VARIANTS;
+
 function PrintMenu({
   caseId,
+  assrNo,
   toast,
 }: {
   caseId: number;
+  assrNo?: string | null;
   toast: ReturnType<typeof useToast>;
 }) {
   const [open, setOpen] = useState(false);
+  /* Which copy the operator picked, held until the Print preview confirms it.
+     A service case prints from a SERVER-rendered HTML view, not a jspdf file,
+     so this preview names the case and the copy and then hands over to that
+     view — there is no document here to download. */
+  const [variant, setVariant] = useState<PrintVariant | null>(null);
 
-  async function go(variant: "customer" | "supplier" | "office") {
-    setOpen(false);
+  async function go(v: PrintVariant) {
     try {
-      await api.openHtml(`/api/assr-print/${caseId}?variant=${variant}`);
+      await api.openHtml(`/api/assr-print/${caseId}?variant=${v}`);
     } catch (e: any) {
       toast.error(e?.message || "Failed to open print view");
     }
   }
+  const print = usePrintPreview(() => (variant ? go(variant) : undefined));
+  const pick = (v: PrintVariant) => {
+    setOpen(false);
+    setVariant(v);
+    print.openPreview();
+  };
 
   // Click-outside close — listen on document while open.
   useEffect(() => {
@@ -6818,22 +6869,29 @@ function PrintMenu({
           className="absolute right-0 top-full z-30 mt-1 w-48 overflow-hidden rounded-md border border-border bg-surface shadow-stone"
           role="menu"
         >
-          <PrintMenuItem
-            label="Customer Copy"
-            hint="Tracker + QR to portal"
-            onClick={() => go("customer")}
-          />
-          <PrintMenuItem
-            label="Supplier Copy"
-            hint="PO, deadline, acknowledgement"
-            onClick={() => go("supplier")}
-          />
-          <PrintMenuItem
-            label="Office Copy"
-            hint="Full internal view"
-            onClick={() => go("office")}
-          />
+          {(Object.keys(PRINT_VARIANTS) as PrintVariant[]).map((v) => (
+            <PrintMenuItem
+              key={v}
+              label={PRINT_VARIANTS[v].label}
+              hint={PRINT_VARIANTS[v].hint}
+              onClick={() => pick(v)}
+            />
+          ))}
         </div>
+      )}
+      {variant && (
+        <PrintPreviewModal
+          open={print.open}
+          onClose={print.close}
+          docTitle="Service Case"
+          docNo={assrNo ?? `Case ${caseId}`}
+          rows={[
+            { label: "Copy", value: PRINT_VARIANTS[variant].label },
+            { label: "Contains", value: PRINT_VARIANTS[variant].hint },
+            { value: "Print now opens the print view in a new tab." },
+          ]}
+          onPrint={print.handlers.onPrint}
+        />
       )}
     </div>
   );

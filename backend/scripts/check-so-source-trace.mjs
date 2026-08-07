@@ -611,7 +611,7 @@ try {
                       AND c.product_code = di.item_code)
      GROUP BY di.so_item_id` : [];
   const servedQtyBySo = new Map(servedQtyRows.map((r) => [r.so_item_id, Number(r.qty ?? 0)]));
-  let j2Legit = 0, j2Conflict = 0;
+  let j2Legit = 0, j2Conflict = 0, j2Diverged = 0;
   for (const r of allocLines) {
     const conflicts = [];
     if (Number(r.alloc_qty) > Number(r.line_qty)) {
@@ -661,11 +661,16 @@ try {
     const servedDocs = poServedDocs.get(r.po_number);
     if (!servedDocs || servedDocs.size === 0) continue; // nothing delivered — nothing to disagree with
     if (!servedDocs.has(r.stored_doc)) {
-      j2Conflict += 1;
-      log(`  [CONFLICT] ${coCode.get(Number(r.company_id)) ?? "?"} ${r.po_number} line ${r.line_id} ${r.material_code}: stored link says ${r.stored_doc} but the PO's delivered chain served {${[...servedDocs].sort().join(", ")}} — stored-vs-delivered disagreement (needs eyes).`);
+      /* Decision (owner, 2026-08-06): soft until DO, hard from DO. The stored
+         link is procurement PROVENANCE ("why we bought"); the allocator may
+         legitimately ship this PO's goods to a different SO, so a stored-vs-
+         delivered divergence is EXPECTED on healthy data — informational, and
+         it no longer feeds the one-truth verdict. */
+      j2Diverged += 1;
+      log(`  [provenance-diverged] ${coCode.get(Number(r.company_id)) ?? "?"} ${r.po_number} line ${r.line_id} ${r.material_code}: bought for ${r.stored_doc}, delivered chain served {${[...servedDocs].sort().join(", ")}} — expected under soft-until-DO.`);
     }
   }
-  log(`  J2 totals: consolidated multi-SO splits (LEGIT, allocation model): ${j2Legit}; CONFLICTS: ${j2Conflict}.`);
+  log(`  J2 totals: consolidated multi-SO splits (LEGIT, allocation model): ${j2Legit}; allocation-vs-delivered CONFLICTS: ${j2Conflict}; provenance-diverged (informational): ${j2Diverged}.`);
 
   // ── 9. J3 — SO line claimed by >1 PO (stored links ∪ allocations) ─────────
   log("");
@@ -691,16 +696,25 @@ try {
      GROUP BY c.so_item_id, si.doc_no, si.item_code
     HAVING COUNT(DISTINCT c.po_id) > 1`;
   for (const r of j3) {
-    log(`  [DOUBLE-CLAIM] SO line ${r.so_item_id} (${r.doc_no ?? "?"} ${r.item_code ?? "?"}) claimed by: ${(r.pos ?? []).join(", ")} — fix: part=fifo-attribute-repair.`);
+    /* Demoted to data-hygiene (Decision 2026-08-06): a provenance double-claim
+       moves no stock and no money once the link drives nothing. It usually
+       smells of a DUPLICATE ORDER — cross-check the duplicate-documents
+       detector — but it leaves the one-truth verdict; a real double-serve
+       shows in the executed layer (section 5 + J1). */
+    log(`  [double-claim · hygiene] SO line ${r.so_item_id} (${r.doc_no ?? "?"} ${r.item_code ?? "?"}) claimed by: ${(r.pos ?? []).join(", ")} — check for a duplicate PO; tidy via the allocation editor or part=fifo-attribute-repair.`);
   }
-  log(`  J3 total: ${j3.length} SO line(s) claimed by more than one PO. Expected 0.`);
+  log(`  J3 total: ${j3.length} SO line(s) with a provenance double-claim (hygiene, not execution).`);
 
   // ── CLOSING one-truth verdict ─────────────────────────────────────────────
   log("");
-  const oneTruthHolds = j3.length === 0 && j1Hard === 0 && j1Suspect === 0 && j2Conflict === 0;
+  /* Verdict under soft-until-DO (Decision 2026-08-06): only the EXECUTED layer
+     can violate one-truth — J1 (delivered chain) and J2a (allocation names an
+     SO the delivered chain proves served elsewhere). Provenance divergence and
+     provenance double-claims are hygiene, reported above, never here. */
+  const oneTruthHolds = j1Hard === 0 && j1Suspect === 0 && j2Conflict === 0;
   log(oneTruthHolds
-    ? `ONE-TRUTH VERDICT: HOLDS — J3 double-claims = 0, J1 has no hard/suspect rows (${j1Legit} legitimate boundary split(s) listed), J2 has no conflicts (${j2Legit} legitimate consolidated split(s)), and header cells are the line union by construction.`
-    : `ONE-TRUTH VERDICT: VIOLATED — J3 double-claims: ${j3.length} (expect 0), J1 hard-defects: ${j1Hard} + fifo-suspects: ${j1Suspect} (expect 0), J2 conflicts: ${j2Conflict} (expect 0). Fix tools: part=fifo-attribute-repair for the claim classes; sofa multi-batch and fifo-suspects go to the owner with the rows above.`);
+    ? `ONE-TRUTH VERDICT: HOLDS — J1 has no hard/suspect rows (${j1Legit} legitimate boundary split(s) listed), allocation-vs-delivered conflicts = 0 (${j2Legit} legitimate consolidated split(s)). Provenance hygiene: ${j2Diverged} diverged, ${j3.length} double-claim(s) — informational under soft-until-DO.`
+    : `ONE-TRUTH VERDICT: VIOLATED — J1 hard-defects: ${j1Hard} + fifo-suspects: ${j1Suspect} (expect 0), allocation-vs-delivered conflicts: ${j2Conflict} (expect 0). Fix tools: part=fifo-attribute-repair for the claim classes; sofa multi-batch and fifo-suspects go to the owner with the rows above.`);
 } finally {
   await pg.end({ timeout: 5 });
 }

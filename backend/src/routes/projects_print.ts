@@ -9,6 +9,7 @@ import {
   brandingAddressLines,
   composeBrandingAddress,
   HOUZS_COMPANY_CODE,
+  letterheadLogoKey,
 } from "../services/branding";
 import { canSeeProject } from "../services/projectAcl";
 import { getPmsAccess, isFinanceViewer } from "../services/pmsAccess";
@@ -199,8 +200,11 @@ app.get("/:id", async (c) => {
 
   // Uploaded per-company letterhead logo wins; the bundled Houzs wordmark is
   // HOUZS-only; otherwise the text fallback renders the company name.
-  const logoUri = branding.logoR2Key
-    ? await fetchAsDataUri(c.env, branding.logoR2Key)
+  // letterheadLogoKey: the dedicated print logo when one is uploaded, else the
+  // on-screen one (the app chrome is dark, paper is white — see Branding).
+  const printLogoKey = letterheadLogoKey(branding);
+  const logoUri = printLogoKey
+    ? await fetchAsDataUri(c.env, printLogoKey)
     : companyCode === HOUZS_COMPANY_CODE
       ? await fetchAsDataUri(c.env, "static/logo-wordmark.png")
       : null;

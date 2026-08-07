@@ -348,6 +348,27 @@ const VERSION = "houzs-erp-v191-__SW_BUILD_ID__";
 const SHELL_CACHE = `${VERSION}-shell`;
 const API_CACHE = `${VERSION}-api`;
 
+/* Print preview (2026-08-07). "View full PDF" used to open a blob: URL, so the
+   address bar read `blob:https://erp.houzscentury.com/8a7f3c2e-…`. A blob has no
+   name — nothing in the browser can rename it — so the document had to be served
+   from a real same-origin path instead.
+ *
+ * The PAGE renders the PDF and puts it into this cache under
+ * `/print-preview/<filename>.pdf`; this worker answers that path from the cache.
+ * The address bar then reads the document. Nothing else changes: the prefix is
+ * new, and every other route below is untouched.
+ *
+ * Deliberately NOT prefixed with VERSION, and excluded from the activate purge:
+ * a deploy landing while someone has a preview open must not blank their tab.
+ * Entries are trimmed by the page (newest few kept), so it cannot grow. */
+const PRINT_CACHE = "houzs-print-preview";
+const PRINT_PREFIX = "/print-preview/";
+/* The page probes this before using the route, because an older installed worker
+   (or no worker at all, e.g. a first visit) would let `/print-preview/…` fall
+   through to Pages' SPA catch-all and render the app shell where a PDF should
+   be. Answering the probe is the ONLY proof that this worker is in control. */
+const PRINT_PROBE = `${PRINT_PREFIX}__probe`;
+
 // Pre-cache the bare-minimum shell so the app is launchable offline.
 // Hashed assets (built JS/CSS) are picked up lazily on first fetch.
 //
@@ -402,7 +423,8 @@ self.addEventListener("activate", (event) => {
       const keys = await caches.keys();
       await Promise.all(
         keys
-          .filter((k) => !k.startsWith(VERSION))
+          // PRINT_CACHE is version-independent on purpose — see its comment.
+          .filter((k) => !k.startsWith(VERSION) && k !== PRINT_CACHE)
           .map((k) => caches.delete(k))
       );
       await self.clients.claim();
@@ -471,6 +493,17 @@ self.addEventListener("fetch", (event) => {
   // saw these requests — this keeps that exact behavior.)
   if (url.pathname.startsWith("/api/")) return;
 
+  // Print preview: served from PRINT_CACHE, never from the network and never
+  // from the app shell. This MUST sit above the navigation branch — opening the
+  // PDF in a tab IS a navigation, and navigationNetworkFirst would answer it
+  // with index.html. A miss fails honestly (the preview expired or a different
+  // browser profile opened the link) rather than rendering the app where a
+  // document was expected.
+  if (url.pathname.startsWith(PRINT_PREFIX)) {
+    event.respondWith(printPreview(url.pathname));
+    return;
+  }
+
   // HTML / SPA navigation requests must always try the network first so a
   // fresh deploy is picked up on the very next refresh. Falls back to the
   // cached index.html only when offline. Without this, cache-first served
@@ -489,6 +522,30 @@ self.addEventListener("fetch", (event) => {
   // serving them from cache is always correct for the corresponding HTML.
   event.respondWith(cacheFirst(req));
 });
+
+/* Answer a /print-preview/ path from PRINT_CACHE.
+   The probe carries a sentinel header and no body — it exists purely so the page
+   can tell "this worker knows the route" from "an old worker / no worker", which
+   is otherwise indistinguishable (both would 200 with the SPA shell). */
+async function printPreview(pathname) {
+  if (pathname === PRINT_PROBE) {
+    return new Response("", {
+      status: 200,
+      headers: { "X-Houzs-Print-Preview": "1", "Cache-Control": "no-store" },
+    });
+  }
+  try {
+    const cache = await caches.open(PRINT_CACHE);
+    const hit = await cache.match(pathname);
+    if (hit) return hit;
+  } catch {
+    // Storage evicted / blocked — fall through to the honest failure below.
+  }
+  return new Response("This print preview is no longer available. Re-open it from the document.", {
+    status: 404,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
 
 async function networkFirst(req) {
   const cache = await caches.open(API_CACHE);

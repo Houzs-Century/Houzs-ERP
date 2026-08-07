@@ -132,7 +132,7 @@ export function useMaintenanceConfig(
    these two read hooks, so it is intentionally left out.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-export type MfgCategory = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'MATTRESS' | 'SERVICE';
+export type MfgCategory = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'MATTRESS' | 'SERVICE' | 'BEDLINES' | 'DINING' | 'DIFFUSER' | 'CARPET';
 
 /** MfgProductRow — the PO New form only reads id/code/name/category off each
     SKU. The ProductModels wave reads a few more SKU columns (size_code for the

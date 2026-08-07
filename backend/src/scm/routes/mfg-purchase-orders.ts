@@ -385,7 +385,8 @@ const ITEM_COLS =
      date = MAX over non-null of [delivery_date, _2, _3, _4]. */
   'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, ' +
   /* Migration 0098 — source SO line link. The detail route resolves it to a
-     per-line so_doc_no for the PO PDF's "Transferred SO" column. */
+     per-line so_doc_no for the PO PDF's "For SO" provenance column
+     (relabelled from "Transferred SO", owner 2026-08-07). */
   'so_item_id';
 
 // ── List ──────────────────────────────────────────────────────────────
@@ -406,7 +407,9 @@ mfgPurchaseOrders.get('/', async (c) => {
   // renders its SUPPLIER panel straight off the list row (owner 2026-07-24:
   // the panel showed "—" for contact/phone/email/address — the row simply
   // never carried them).
-  const SELECT = `${HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), items:purchase_order_items(material_code, material_name, qty), purchase_location:warehouses!purchase_location_id(id, code, name)`;
+  // supplier_sku rides the items embed (owner 2026-08-05) — the list's
+  // "Supplier SKU" column / Excel export shows the supplier's own codes.
+  const SELECT = `${HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), items:purchase_order_items(material_code, material_name, qty, supplier_sku), purchase_location:warehouses!purchase_location_id(id, code, name)`;
 
   /* Opt-in server-side pagination + search + sort + status-counts (mirrors the
      SO list in mfg-sales-orders.ts). The PRESENCE of `page` switches paging on;
@@ -559,6 +562,10 @@ mfgPurchaseOrders.get('/', async (c) => {
     transfer_to_grns: grnsByPo.get(r.id) ?? [],
     assigned_sos: assignedByPo.get(r.id)?.assignedSos ?? [],
     assigned_so_linked: assignedByPo.get(r.id)?.sourceLinked ?? false,
+    /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s), the
+       parallel provenance slot rendered muted BESIDE the precedence chips.
+       assigned_sos is unchanged — an older frontend simply ignores this. */
+    assigned_so_provenance: assignedByPo.get(r.id)?.provenanceSos ?? [],
     delivered_dos: deliveredByPo.get(r.id)?.deliveredDos ?? [],
   }));
   if (paginate) return c.json({ purchaseOrders, total, page, pageSize, statusCounts });
@@ -878,7 +885,8 @@ mfgPurchaseOrders.get('/:id', async (c) => {
       (r) => r.item_group as string | null | undefined,
     ),
   );
-  /* 2026-06-12 — "Transferred SO" column on the PO PDF (DSL/AutoCount layout):
+  /* 2026-06-12 — "For SO" provenance column on the PO PDF (DSL/AutoCount
+     layout; relabelled from "Transferred SO", owner 2026-08-07):
      resolve each line's so_item_id (migration 0098) to the source SO doc_no.
      Best-effort: a lookup failure leaves so_doc_no null, never blocks the
      detail response. */
@@ -2726,10 +2734,13 @@ async function recomputeSoPicked(sb: any, soItemIds: Array<string | null | undef
 }
 
 /* ── SO-link target gate ────────────────────────────────────────────────────
-   `purchase_order_items.so_item_id` is not decoration: the drop-ship guard
-   resolves an incoming batch through it, MRP reads it, and the SO's
-   po_qty_picked is recounted from it. So the operator-facing bind (add-line and
-   line-edit) must not be able to point a PO line at just any SO line. Three
+   `purchase_order_items.so_item_id` is procurement PROVENANCE under the
+   2026-08-06 decision (soft until DO, hard from DO — see docs/modules/
+   purchase-order.md §Decision): the record of WHY we bought. Transitionally it
+   still feeds the drop-ship batch expectation and the per-line quota (staged
+   demotion in progress), and it is displayed and audited everywhere — so the
+   operator-facing bind (add-line and line-edit) must still not be able to
+   point a PO line at just any SO line. Three
    things are checked, and a failure is a 409 the UI can show verbatim:
 
      • the SO line exists and belongs to the ACTIVE COMPANY (a foreign uuid

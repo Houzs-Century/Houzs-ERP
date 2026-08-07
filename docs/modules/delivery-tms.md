@@ -37,7 +37,7 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Desktop residence rules | `frontend/src/pages/scm-v2/DeliveryResidenceRules.tsx` | Per residence / building-type CONFIG the Phase-3 scheduler will read: service duration (shown in hours, stored as minutes), optional no-delivery time windows, lift-booking / registration flags. Owner-editable master, mirrors the Regions page (DataGrid + inline edit buffers + create drawer). Route `/scm/delivery-residence-rules`, nav "Residence Rules" under Transportation. NOT wired to any scheduler yet. |
 | Desktop capacity | `frontend/src/pages/scm-v2/LorryCapacity.tsx:140` | |
 | Desktop delivery zones (A1) | `frontend/src/pages/scm-v2/DeliveryZones.tsx` | Route `/scm/delivery-zones`, nav "Delivery Zones" under Transportation. Owner-editable postcode-prefix -> area-zone map (`scm.delivery_zone_postcodes`, mig 0205). Each row maps a first-two-digit postcode RANGE to one of the 14 zones; the classifier picks the NARROWEST matching range so a fine rule overrides a broad one. Ships with a "using the built-in default" banner + one-click "load the default map". Mirrors the Residence Rules master (DataGrid + inline edit + create drawer). |
-| Desktop auto-schedule (A1) | `frontend/src/pages/scm-v2/AutoSchedule.tsx` | Route `/scm/auto-schedule`, nav "Auto-Schedule" under Transportation. Pick a depot + start date -> the backend derives each PENDING_SCHEDULE order's zone (postcode) + set count (SO lines) and PACKS them into lorry-days under each lorry's capacity ceiling. Renders the REVERSIBLE proposal grouped day -> group -> lorry (fill vs ceiling, partial / over-ceiling badges), an "attention" list for unzoned orders, per-day LOCK/unlock, and "Apply proposed dates" (fans out `useScheduleDelivery` -> `amended_delivery_date`, no lorry assignment). Reads the SAME board (`useDeliveryPlanning` state=PENDING_SCHEDULE) — no parallel queue. **A3:** "Sequence & assign" also surfaces on-leave drivers, a "Max trips / lorry / day" control, and a 3PL-overflow section (carrier picker + captured cost). |
+| Desktop auto-schedule (A1) | `frontend/src/pages/scm-v2/AutoSchedule.tsx` | Route `/scm/auto-schedule`, nav "Auto-Schedule" under Transportation. Pick a depot + start date -> the backend derives each PENDING_SCHEDULE order's zone (postcode) + set count (SO lines) and PACKS them into lorry-days under each lorry's capacity ceiling. Renders the REVERSIBLE proposal grouped day -> group -> lorry (fill vs ceiling, partial / over-ceiling badges), an "attention" list for unzoned orders, per-day LOCK/unlock, and "Apply proposed dates" (fans out `useScheduleDelivery` -> `amended_delivery_date`, no lorry assignment). Reads the SAME board (`useDeliveryPlanning` state=PENDING_SCHEDULE) — no parallel queue. **A3:** "Sequence & assign" also surfaces on-leave drivers, a "Max trips / lorry / day" control, and a 3PL-overflow section (carrier picker + captured cost). **Pipeline (2026-08-07):** the page also carries the "Date arrangement queue" — the EXACT shared `DeliveryPlanningBoard` locked to PENDING_SCHEDULE (full column fidelity), split Pending Date Arrangement vs Date arranged over the server-stamped `arrangement_stage`; see "The arrangement pipeline" in §3. |
 | Desktop crew leave (A3 / WS2) | `frontend/src/pages/scm-v2/DriverLeave.tsx` | Route `/scm/driver-leave`, nav "Crew Leave" under Transportation. The date-ranged crew-absence master (`scm.driver_leave`, mig 0206 + **0208**) the A2 auto-assigner reads to skip on-leave crew. **WS2:** covers DRIVERS and HELPERS (a Who toggle picks which; storekeepers are in the helper list). Create form (who + from/to + reason) + table (Type/Name) + remove. On the covered days the person also drops off the manual trip picker (`ScheduleTripDrawer` filters `activeDrivers` by leave on the trip date). Mirrors the Residence Rules / Delivery Zones masters. |
 | Desktop delivery maintenance | `frontend/src/pages/scm-v2/DeliveryMaintenance.tsx` | Route `/scm/delivery-maintenance`, nav "Maintenance" under Transportation — since 2026-08-01 the **ONLY** Transportation reference-data nav row (the six child rows were removed from `Sidebar.tsx`; their ROUTES stay registered, so deep links and bookmarks still work). Owner: "Regions、Residentials 和 Fleet 其实是一个整体 — 这三个一个" + "Rate Card 与 3PL Company：这两个一个". So THREE parts, not six sections: **Regions + Residence Rules + Fleet**, **Delivery Zones**, **3PL Companies + Rate Cards**. EVERY LEVEL FOLDS (owner: "要不然页面拉得太长了") — the part folds, and inside a grouped part each screen folds too; nothing is open on a cold visit. A jump row above the parts opens a part before scrolling to it. Each screen renders THE SAME component its standalone route renders, with `embedded` suppressing that page's own `PageHeader`; there is no second copy. Part and screen keys share one `?open=` set (`components/CollapsibleSection.tsx`), so `?open=carriers,threepl` is a real link. A closed section is UNMOUNTED, so its queries do not fire. **Rate Cards takes `onCreateCompany`** — this page passes a handler that opens its own 3PL block, which is why those two are one part. |
 | Desktop 3PL companies (WS4a) | `frontend/src/pages/scm-v2/ThreePLCompanies.tsx` | Route `/scm/threepl-companies`, nav "3PL Companies" under Transportation > Maintenance. The 3PL carrier company master (`scm.threepl_companies`, mig 0210): create/edit/activate/delete + per-company lorry count. Attach a lorry to a company from the lorry drawer (`LorryDetail` "3PL company" selector). Rate card is priced per company (WS4b). |
@@ -55,9 +55,17 @@ the `/scm/drivers` route was retired on 2026-07-17 in favour of the Drivers
 section of `/scm/fleet` (`App.tsx:593-599`, `Sidebar.tsx:518-523`). Do not
 re-add it.
 
-### Trips "To schedule" panel — the FULL board, scoped to PENDING_SCHEDULE
+### Trips "Time arrangement" panel — the FULL board, scoped to PENDING_SCHEDULE
 
-The Trips page carries a **"To schedule"** panel below the trip list / stop
+> 2026-08-07: the panel (previously titled "To schedule") is now split by the
+> derived arrangement stage — **Pending Time Arrangement** (the inbox: date
+> confirmed, no trip yet; the default) vs **Time arranged** (on a live trip),
+> with an "awaiting date arrangement" count linking to the Delivery Date
+> Arrangement page. Everything below about the board, its data path and the
+> Schedule flow is unchanged — the split is a client-side filter over the
+> server-stamped `arrangement_stage`. See "The arrangement pipeline" in §3.
+
+The Trips page carries this panel below the trip list / stop
 sheet grid. It is the **EXACT Delivery Planning board** — the shared
 `DeliveryPlanningBoard` component — LOCKED to `state=PENDING_SCHEDULE` (owner
 2026-07-25: "把我的 Delivery Planning 一模一样做进去 Trips,可是你只需要看到的是
@@ -443,6 +451,87 @@ Effective delivery date = `amended_delivery_date ?? customer_delivery_date`
 (`:277-278`). The original customer date is never overwritten.
 `backend/src/services/agents/delivery-agent.ts:53` imports this same function,
 so the agent and the board cannot disagree.
+
+### The arrangement pipeline — Pending Schedule → Date Arrangement → Time Arrangement (2026-08-07)
+
+Owner's spec: every order in **Pending Schedule** means "needs a delivery DATE
+arranged", and ALL of them flow into the **Delivery Date Arrangement** page
+(`AutoSchedule.tsx`) with full data fidelity — "它的 Outlook、UI、Frontend、
+Backend、Database，以及所有的 column 等等，该有的资料全部都要进到去" — never a
+stripped-down subset. When Date Arrangement CONFIRMS a date, the order flows
+AUTOMATICALLY into **Delivery Time Arrangement** (`Trips.tsx`) as work to do
+there — no manual re-entry. The states split visibly, two per side:
+
+| Side | Sub-state | Derivation (per request — NO new columns) |
+|---|---|---|
+| Date | **Pending Date Arrangement** | `delivery_state == PENDING_SCHEDULE` AND `amended_delivery_date IS NULL` AND not on a live trip |
+| Date | **Date arranged** | `delivery_state == PENDING_SCHEDULE` AND (`amended_delivery_date IS NOT NULL` OR on a live trip) |
+| Time | **Pending Time Arrangement** | date confirmed (`amended_delivery_date`), NOT on a live trip — the Time page's inbox |
+| Time | **Time arranged** | a `DELIVERY` `trip_stops` row keyed on one of the SO's DO uuids (`do_id` — the same column `scheduleOntoTrip` writes) whose trip `status != CANCELLED` |
+
+The rule is ONE pure function — `deriveArrangementStage`
+(`backend/src/scm/lib/arrangement-stage.ts`, tests
+`backend/tests/arrangementStage.test.ts`): three mutually exclusive stages
+(`PENDING_DATE` / `PENDING_TIME` / `TIME_ARRANGED`; on-a-trip DOMINATES a
+missing date), `null` outside `PENDING_SCHEDULE`. The board endpoint resolves
+the two booleans (the dp_no trip_stops read was WIDENED to also return
+`trip_id`, joined to `trips` with CANCELLED dropped) and stamps
+`arrangement_stage` + `trip_id`/`trip_no`/`trip_date` on every row. Both
+frontends read the stamped field and never re-derive
+(`dateArrangementOf` / `timeArrangementOf` in
+`vendor/scm/lib/delivery-planning-queries.ts`, tests beside it); an old cached
+payload with no field degrades to the pre-split view, never a blanked queue.
+
+Row types: SO rows carry the full derivation. A manual DP job joins while
+`PENDING_SCHEDULE` (its `requested_date` is its confirmed date, so a dated
+unscheduled job is Pending Time — it needs a lorry; scheduling flips it to
+`PENDING_DELIVERY`, out of the pipeline). ASSR legs and PMS project windows
+land `PENDING_DELIVERY` and stamp `null` — their scheduling lives on their own
+documents. `derivePlanningState`, the A1 packer and the schedule write-path are
+UNTOUCHED; "Apply proposed dates" / the bulk Delivery-date set writing
+`amended_delivery_date` through `PATCH /delivery-planning/so/:id/schedule` IS
+the date-confirmation act, and `scheduleOntoTrip` wiring the stop IS the
+time-arrangement act.
+
+Surfaces: Delivery Date Arrangement carries a "Date arrangement queue" — the
+EXACT shared `DeliveryPlanningBoard` locked to `PENDING_SCHEDULE` (full HC
+columns, region chips, drill-down, inline editors, bulk bar) split
+Pending-Date vs Date-arranged. Delivery Time Arrangement's old "To schedule"
+panel became the "Time arrangement" panel: the same board split Pending-Time
+(the inbox, default) vs Time-arranged, with an "N awaiting date arrangement"
+note linking back to the Date page; the existing Schedule (N) →
+`ScheduleTripDrawer` flow acts on it unchanged. The Delivery Planning board's
+Pending Schedule tab shows the sub-split as a count line under the tab rail,
+and two default-hidden columns ("Arrangement", "Trip No.") join the grid.
+Mobile is deliberately untouched — the phone surface is the driver run-sheet,
+not the planning board (§7's intentional asymmetry).
+
+**Default queue order (owner 2026-08-07: "跟着 delivery date、state、postcode
+去排，这样排下来比较整齐").** On entry, BOTH arrangement queues — the Date
+Arrangement queue and the Time Arrangement panel, each on BOTH sides (pending
+and arranged, and their All tabs) — order by: the row's **effective delivery
+date, OLDEST first** (ascending; rows with no date sink to the bottom), then
+**customer state** A→Z, then **postcode** A→Z. The rule is ONE pure comparator,
+`arrangementQueueCompare` (`vendor/scm/lib/arrangement-sort.ts`, pinned by
+`arrangement-sort.test.ts` — the date key is
+`effective_delivery_date ?? amended_delivery_date ?? customer_delivery_date`,
+the same chain the drawer's Propose-dates uses). It reaches the grid through
+the opt-in `defaultSort` comparator prop (page →
+`DeliveryPlanningBoard` → `DataGrid`), applied ONLY while no column sort is
+active: a header the operator clicks overrides as always, and cycling that
+header back to "off" returns to this default, not to raw fetch order. The main
+Delivery Planning board passes no `defaultSort` and keeps the server's order
+(SO rows by `customer_delivery_date` asc, then the ASSR/DP/project blocks).
+Stacked per-column filters (they AND across columns; multi-select within one
+column ORs) now surface as an active-filter chips row in the shared `DataGrid`
+— one chip per filter with its own clear, plus Clear all — so a layered
+narrow-down stays visible and reversible on every grid, this board included.
+
+**Known gap, inherited and documented (BUG-HISTORY 2026-07-22):** a `type:'so'`
+schedule for an SO with **no DO** writes no `trip_stops` row at all (no uuid),
+so such an order cannot read as Time arranged — it stays Pending Time even
+though a trip row exists. Honest by construction: with no stop, no lorry's run
+sheet carries the job. Cut the DO first and the stop — and the stage — follow.
 
 ### Region is derived from the customer STATE — verified
 

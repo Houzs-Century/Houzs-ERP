@@ -83,12 +83,13 @@ export type { ScanJob, ScanJobsResp };
 // handoff limit), EVERY queued order becomes its own DRAFT: we OCR each order
 // and fire one createDraftFromPrefill per order. N orders → N drafts in Orders.
 //
-// Camera capture uses a hidden <input type="file" accept="image/*"> per slot —
-// the standard PWA pattern. The FRONT slip input keeps capture="environment"
-// (one slip, straight to the rear camera); the PAYMENT input is `multiple`
-// WITHOUT capture so the OS picker can offer gallery multi-select (owner: pick
-// all the payment photos in one go — capture forces a one-shot camera and
-// ignores `multiple`). No getUserMedia / live video.
+// Photos come from hidden <input type="file"> elements — the standard PWA
+// pattern, no getUserMedia / live video. Each slot has TWO of them: one with
+// capture="environment" (straight to the rear camera) and one without (the OS
+// offers Photos and Files; the payment one is `multiple` so a whole batch of
+// slips can be picked at once, which capture would forbid). Tapping a slot pops
+// a small menu that chooses between them — see PickSourceMenu for why the
+// choice cannot live on a single input.
 //
 // The multipart POST reuses authedFetch: it stamps the bearer from
 // localStorage['auth:token'], leaves the multipart content-type to the browser
@@ -207,6 +208,11 @@ export type MobileScanLine = {
   suggestedCode: string;
   confidence: number;
   itemCode: string; // the SKU code the scan matched ('' = no match)
+  /* HOW itemCode was reached. 'exact' is the reader's code found verbatim; the
+     others are near matches (findNearestSku), which is what turns a slightly
+     misread code into the real SKU NAME on the line instead of raw handwriting.
+     The operator still picks the product, so nothing is auto-committed here. */
+  matchSource: import("../vendor/scm/lib/sku-nearest-match").SkuMatchSource | null;
 };
 export type MobileScanPayment = {
   method: string; // Cash / Merchant / Online (3-method model)
@@ -266,8 +272,16 @@ const CAMERA = (
   </svg>
 );
 
-const UPLOAD = (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+/* 16px twins of the tile camera, for the source menu's rows. */
+const CAMERA_SM = (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" />
+    <circle cx="12" cy="13" r="3" />
+  </svg>
+);
+
+const UPLOAD_SM = (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
     <path d="M17 8l-5-5-5 5" />
     <path d="M12 3v13" />
@@ -278,24 +292,51 @@ const UPLOAD = (
    (capture="environment") or the photo-library / Files one (no capture). */
 type PickSource = "camera" | "library";
 
-/* Shared look for the empty-slot pickers. The front slip is ONE dashed tile
-   split into two halves; the payment slots are two dashed cells in the grid. */
-const PICK_LABEL: CSSProperties = { fontSize: 10.5, fontWeight: 700, color: "#16695f", textAlign: "center", lineHeight: 1.25 };
-const pickHalfStyle = (busy: boolean): CSSProperties => ({
-  flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-  gap: 6, border: "none", background: "transparent", padding: 0, fontFamily: "inherit",
-  cursor: busy ? "default" : "pointer",
-});
-/* The dark chips overlaid on an already-taken front slip (Retake / Upload). */
-const RESHOOT_CHIP: CSSProperties = {
-  height: 24, padding: "0 9px", borderRadius: 999, border: "none", background: "rgba(17,20,15,.62)",
-  color: "#fff", fontFamily: "inherit", fontSize: 10.5, fontWeight: 700, cursor: "pointer",
-};
-const pickCellStyle = (busy: boolean): CSSProperties => ({
-  height: 96, width: "100%", boxSizing: "border-box", border: "1px dashed #c2c6bd", borderRadius: 12, background: "#f4f6f3",
-  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5,
-  fontFamily: "inherit", cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
-});
+/* Small source menu — one tap on a slot pops this over the tile, and the row
+   picked here decides which hidden input fires. It exists because `capture`
+   cannot be conditional on a single input: iOS reads the attribute at click
+   time and offers the camera ONLY, so "camera or gallery" has to be asked
+   before the picker opens. Anchored, not a bottom sheet: the choice is two
+   words, and a full-height sheet for it reads as a much bigger decision. */
+const MENU_W = 156;
+const MENU_H = 88;
+
+function PickSourceMenu({ at, onPick, onClose }: {
+  at: { left: number; top: number };
+  onPick: (from: PickSource) => void;
+  onClose: () => void;
+}) {
+  const row: CSSProperties = {
+    display: "flex", alignItems: "center", gap: 9, width: "100%", padding: "10px 12px",
+    border: "none", background: "transparent", fontFamily: "inherit", cursor: "pointer", textAlign: "left",
+  };
+  const label: CSSProperties = { fontSize: 12.5, fontWeight: 700, color: "#11140f" };
+  const icon: CSSProperties = { display: "flex", width: 16, height: 16, flex: "none" };
+  return (
+    <>
+      {/* Transparent catcher — a tap anywhere else closes without dimming the
+          screen, which a two-word choice does not warrant. */}
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+      <div
+        style={{
+          position: "fixed", left: at.left, top: at.top, width: MENU_W, zIndex: 61,
+          background: "#fff", border: "1px solid #e3e6e0", borderRadius: 12, overflow: "hidden",
+          boxShadow: "0 10px 26px -10px rgba(17,24,16,.32)",
+        }}
+      >
+        <button type="button" style={row} onClick={() => onPick("camera")}>
+          <span style={icon}>{CAMERA_SM}</span>
+          <span style={label}>Take photo</span>
+        </button>
+        <div style={{ height: 1, background: "#eceee9" }} />
+        <button type="button" style={row} onClick={() => onPick("library")}>
+          <span style={icon}>{UPLOAD_SM}</span>
+          <span style={label}>Upload</span>
+        </button>
+      </div>
+    </>
+  );
+}
 
 /* A small red "×" delete control reused for every uploaded thumbnail (front +
    payment). Position is supplied by the caller. */
@@ -433,6 +474,7 @@ function buildPrefill(
       suggestedCode: l.suggestedCode,
       confidence: l.confidence,
       itemCode: l.itemCode,
+      matchSource: l.matchSource,
     })),
     sampleId: d.sampleId,
     salesperson: repName || rec.salesRep || null,
@@ -481,6 +523,11 @@ export function MobileScan({
   const frontLibInputRef = useRef<HTMLInputElement>(null);
   const payCamInputRef = useRef<HTMLInputElement>(null);
   const payLibInputRef = useRef<HTMLInputElement>(null);
+  // Which slot is waiting on a source choice, and where its menu sits — null
+  // when no menu is open.
+  const [pickMenu, setPickMenu] = useState<
+    { orderId: string; slot: "front" | "payment"; replacing: boolean; left: number; top: number } | null
+  >(null);
   const activeOrderIdRef = useRef<string | null>(null);
 
   // Revoke every object URL still held when the component unmounts so captured
@@ -614,15 +661,37 @@ export function MobileScan({
   const ready = orders.length > 0 && orders.every((o) => o.front !== null);
   const multiOrder = orders.length > 1;
 
-  const pickFront = (orderId: string, from: PickSource) => {
+  /* Tapping a slot does NOT open a picker straight away — it pops the source
+     menu (Take photo / Upload) over the tile, and the choice there fires the
+     matching hidden input. `replacing` means the front slip already has a shot,
+     so the old one is dropped the moment a source is chosen. The menu is placed
+     against the tapped element and clamped to the viewport. */
+  const openPicker = (
+    e: React.MouseEvent<HTMLElement>,
+    orderId: string,
+    slot: "front" | "payment",
+    replacing = false,
+  ) => {
     if (submitting) return;
-    activeOrderIdRef.current = orderId;
-    (from === "camera" ? frontCamInputRef : frontLibInputRef).current?.click();
+    const r = e.currentTarget.getBoundingClientRect();
+    const left = Math.min(Math.max(8, r.left + r.width / 2 - MENU_W / 2), window.innerWidth - MENU_W - 8);
+    // Below the tile's top edge, or flipped above it when the bottom of the
+    // screen is too close.
+    const below = r.top + 44;
+    const top = below + MENU_H > window.innerHeight - 12 ? Math.max(8, r.top - MENU_H - 6) : below;
+    setPickMenu({ orderId, slot, replacing, left, top });
   };
-  const pickPayment = (orderId: string, from: PickSource) => {
-    if (submitting) return;
-    activeOrderIdRef.current = orderId;
-    (from === "camera" ? payCamInputRef : payLibInputRef).current?.click();
+  const runPick = (from: PickSource) => {
+    const req = pickMenu;
+    setPickMenu(null);
+    if (!req || submitting) return;
+    activeOrderIdRef.current = req.orderId;
+    if (req.slot === "front") {
+      if (req.replacing) clearFront(req.orderId);
+      (from === "camera" ? frontCamInputRef : frontLibInputRef).current?.click();
+    } else {
+      (from === "camera" ? payCamInputRef : payLibInputRef).current?.click();
+    }
   };
 
   // Drop one order's inline error (its photos changed — new attempt).
@@ -1172,55 +1241,26 @@ export function MobileScan({
                           onClick={() => clearFront(order.id)}
                           style={{ position: "absolute", top: 6, right: 6 }}
                         />
-                        {/* Replace the shot without removing it first — same two
-                            sources as the empty tile. */}
-                        <div style={{ position: "absolute", bottom: 6, right: 6, display: "flex", gap: 6 }}>
-                          <button
-                            type="button"
-                            onClick={() => { clearFront(order.id); pickFront(order.id, "camera"); }}
-                            aria-label={`Retake ${SLOT_LABELS[0]} for order ${oi + 1}`}
-                            style={RESHOOT_CHIP}
-                          >
-                            Retake
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { clearFront(order.id); pickFront(order.id, "library"); }}
-                            aria-label={`Upload a different ${SLOT_LABELS[0].toLowerCase()} for order ${oi + 1}`}
-                            style={RESHOOT_CHIP}
-                          >
-                            Upload
-                          </button>
-                        </div>
+                        {/* Replace = pick a new source, then drop the old shot. */}
+                        <button
+                          onClick={(e) => openPicker(e, order.id, "front", true)}
+                          aria-label={`Replace ${SLOT_LABELS[0]} for order ${oi + 1}`}
+                          style={{ position: "absolute", bottom: 6, right: 6, height: 24, padding: "0 9px", borderRadius: 999, border: "none", background: "rgba(17,20,15,.62)", color: "#fff", fontFamily: "inherit", fontSize: 10.5, fontWeight: 700, cursor: "pointer" }}
+                        >
+                          Replace
+                        </button>
                       </>
                     )}
                   </div>
                 ) : (
-                  /* One dashed tile, TWO entry points: take a photo, or pick
-                     one already on the phone (Photos / Files). */
-                  <div style={{ height: 130, width: "100%", boxSizing: "border-box", border: "1px dashed #c2c6bd", borderRadius: 12, background: "#f4f6f3", display: "flex", overflow: "hidden", opacity: submitting ? 0.5 : 1, marginBottom: 4 }}>
-                    <button
-                      type="button"
-                      onClick={() => pickFront(order.id, "camera")}
-                      disabled={submitting}
-                      aria-label={`Take a photo of the ${SLOT_LABELS[0].toLowerCase()} for order ${oi + 1}`}
-                      style={pickHalfStyle(submitting)}
-                    >
-                      {CAMERA}
-                      <span style={PICK_LABEL}>{SLOT_LABELS[0]}</span>
-                    </button>
-                    <div style={{ width: 1, background: "#e0e3dc" }} />
-                    <button
-                      type="button"
-                      onClick={() => pickFront(order.id, "library")}
-                      disabled={submitting}
-                      aria-label={`Upload a ${SLOT_LABELS[0].toLowerCase()} for order ${oi + 1}`}
-                      style={pickHalfStyle(submitting)}
-                    >
-                      {UPLOAD}
-                      <span style={PICK_LABEL}>Upload</span>
-                    </button>
-                  </div>
+                  <button
+                    onClick={(e) => openPicker(e, order.id, "front")}
+                    disabled={submitting}
+                    style={{ height: 130, width: "100%", border: "1px dashed #c2c6bd", borderRadius: 12, background: "#f4f6f3", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, cursor: submitting ? "default" : "pointer", fontFamily: "inherit", opacity: submitting ? 0.5 : 1, marginBottom: 4 }}
+                  >
+                    {CAMERA}
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#16695f" }}>{SLOT_LABELS[0]}</span>
+                  </button>
                 )}
 
                 {/* PAYMENT SLIPS — one photo per payment, within this order. Add-
@@ -1248,29 +1288,16 @@ export function MobileScan({
                       )}
                     </div>
                   ))}
-                  {/* Same two entry points as the front slip, as two cells of
-                      the grid: take a photo, or pick from Photos / Files. */}
                   <button
-                    type="button"
-                    onClick={() => pickPayment(order.id, "camera")}
+                    onClick={(e) => openPicker(e, order.id, "payment")}
                     disabled={submitting}
-                    aria-label={order.payShots.length === 0 ? `Take a photo of the payment slip for order ${oi + 1}` : `Take a photo of another payment slip for order ${oi + 1}`}
-                    style={pickCellStyle(submitting)}
+                    aria-label={order.payShots.length === 0 ? `${SLOT_LABELS[1]} for order ${oi + 1}` : `Add another payment slip to order ${oi + 1}`}
+                    style={{ height: 96, width: "100%", border: "1px dashed #c2c6bd", borderRadius: 12, background: "#f4f6f3", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5, cursor: submitting ? "default" : "pointer", fontFamily: "inherit", opacity: submitting ? 0.5 : 1 }}
                   >
                     {CAMERA}
-                    <span style={PICK_LABEL}>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: "#16695f", textAlign: "center", lineHeight: 1.25 }}>
                       {order.payShots.length === 0 ? SLOT_LABELS[1] : "Add payment"}
                     </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => pickPayment(order.id, "library")}
-                    disabled={submitting}
-                    aria-label={`Upload payment slips for order ${oi + 1}`}
-                    style={pickCellStyle(submitting)}
-                  >
-                    {UPLOAD}
-                    <span style={PICK_LABEL}>Upload</span>
                   </button>
                 </div>
                 <div style={{ fontSize: 10.5, color: "#9aa093", textAlign: "center", marginTop: 10 }}>
@@ -1363,6 +1390,10 @@ export function MobileScan({
               : multiOrder ? `Scan & save ${orders.length} drafts` : "Scan & save draft"}
           </button>
         </footer>
+      )}
+
+      {pickMenu && (
+        <PickSourceMenu at={pickMenu} onPick={runPick} onClose={() => setPickMenu(null)} />
       )}
 
       <style>{`@keyframes hzSpin { to { transform: rotate(360deg); } }`}</style>
