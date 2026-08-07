@@ -79,14 +79,21 @@ type StagedEdit = {
 
 const fmtRm = (sen: number | null | undefined): string => fmtCenti(sen);
 
-// ── Hook: sofa models ───────────────────────────────────────────────────────
+// ── Hook: models by category ────────────────────────────────────────────────
+// The model registry carries five categories (backend CATEGORIES enum,
+// product-models.ts) — the tab was SOFA-hardcoded for no backend reason
+// (owner 2026-08-07: "only 1 category can be choose?").
 
-const useSofaModels = () =>
+const VARIANT_CATEGORIES = ["SOFA", "BEDFRAME", "MATTRESS", "ACCESSORY", "SERVICE"] as const;
+type VariantCategory = (typeof VARIANT_CATEGORIES)[number];
+const catLabel = (c: string) => c.charAt(0) + c.slice(1).toLowerCase();
+
+const useModelsByCategory = (category: VariantCategory) =>
   useQuery({
-    queryKey: ["product-models-sofa-for-variants"],
+    queryKey: ["product-models-for-variants", category],
     queryFn: () =>
       authedFetch<{ models: ProductModel[] }>(
-        `/product-models?category=SOFA`,
+        `/product-models?category=${category}`,
       ).then((r) => r.models),
     staleTime: 5 * 60_000,
     retry: false,
@@ -97,6 +104,10 @@ const useSofaModels = () =>
 export function VariantsTab() {
   const [searchParams, setSearchParams] = useSearchParams();
   const modelId = searchParams.get("model") ?? "";
+  const rawCat = searchParams.get("cat") ?? "SOFA";
+  const category: VariantCategory = (VARIANT_CATEGORIES as readonly string[]).includes(rawCat)
+    ? (rawCat as VariantCategory)
+    : "SOFA";
 
   const setModelId = (id: string) => {
     const sp = new URLSearchParams(searchParams);
@@ -104,9 +115,16 @@ export function VariantsTab() {
     else sp.delete("model");
     setSearchParams(sp, { replace: true });
   };
+  // Switching category clears the picked model — it belongs to the old one.
+  const setCategory = (c: string) => {
+    const sp = new URLSearchParams(searchParams);
+    sp.set("cat", c);
+    sp.delete("model");
+    setSearchParams(sp, { replace: true });
+  };
 
-  const modelsQ = useSofaModels();
-  const skusQ = useMfgProducts({ category: "SOFA" });
+  const modelsQ = useModelsByCategory(category);
+  const skusQ = useMfgProducts({ category });
 
   const models = modelsQ.data ?? [];
   const skus = skusQ.data ?? [];
@@ -286,6 +304,8 @@ export function VariantsTab() {
 
       {/* Model picker */}
       <ModelPicker
+        category={category}
+        onCategory={setCategory}
         models={models}
         loading={modelsQ.isLoading}
         error={modelsQ.error ? errMsg(modelsQ.error) : null}
@@ -296,7 +316,7 @@ export function VariantsTab() {
 
       {!selectedModel ? (
         <div className="rounded-md border border-dashed border-border bg-surface-2 px-4 py-8 text-center text-[12px] text-ink-muted">
-          Pick a sofa model above to see its variants.
+          Pick a model above to see its variants.
         </div>
       ) : (
         <>
@@ -377,6 +397,8 @@ export function VariantsTab() {
 // ── Model picker ────────────────────────────────────────────────────────────
 
 function ModelPicker({
+  category,
+  onCategory,
   models,
   loading,
   error,
@@ -384,6 +406,8 @@ function ModelPicker({
   onPick,
   variantCount,
 }: {
+  category: string;
+  onCategory: (c: string) => void;
   models: ProductModel[];
   loading: boolean;
   error: string | null;
@@ -392,12 +416,15 @@ function ModelPicker({
   /** SKU count under the picked model — the picker's one-line summary. */
   variantCount: number | null;
 }) {
-  /* Owner, 2026-08-07 (twice): the pill farm is ugly at 60+ models, and so
-     was the rail of 12 — picking ONE required model from a long code list is
-     a COMBOBOX job, not a browse job. This is the same SearchableSelect the
-     rest of the system uses for its long option lists (owner 2026-07-27:
-     "全部下拉的 option 都要加上搜索功能") — type-to-filter, windowed render,
-     body-portalled menu. One control, one line. */
+  /* Owner, 2026-08-07 (twice): picking ONE required model from a long code
+     list is a COMBOBOX job — this is the same SearchableSelect the rest of
+     the system's long dropdowns use (owner 2026-07-27: "全部下拉的 option 都要
+     加上搜索功能"). Category sits beside it (all five registry categories —
+     the SOFA hardcode was frontend-only). The inputs carry an explicit width
+     class: SearchableSelect styles nothing itself, and a bare input collapses
+     to the browser default (~170px — owner: "search bar so small"). */
+  const inputCls =
+    "block w-full rounded-md border border-border bg-surface-2 py-1.5 px-2.5 text-[12.5px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20";
   const options = useMemo<SearchableSelectOption[]>(
     () =>
       models.map((m) => ({
@@ -410,21 +437,34 @@ function ModelPicker({
     <div className="rounded-xl border border-border bg-surface p-4 shadow-stone">
       {error ? (
         <div className="rounded-md border border-err/40 bg-err/5 p-2.5 text-[12px] text-err">
-          Couldn't load sofa models: {error}
+          Couldn't load models: {error}
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-            Sofa model
+            Category
           </div>
-          <div className="w-[300px] max-w-full">
+          <div className="w-[170px]">
+            <SearchableSelect
+              value={category}
+              onChange={(c) => c && onCategory(c)}
+              options={VARIANT_CATEGORIES.map((c) => ({ value: c, label: catLabel(c) }))}
+              className={inputCls}
+              ariaLabel="Category"
+            />
+          </div>
+          <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+            Model
+          </div>
+          <div className="w-[360px] max-w-full">
             <SearchableSelect
               value={selectedId}
               onChange={onPick}
               options={options}
               disabled={loading}
               placeholder={loading ? "Loading models…" : `Search ${models.length} models…`}
-              ariaLabel="Sofa model"
+              className={inputCls}
+              ariaLabel="Model"
             />
           </div>
           {variantCount != null && (
