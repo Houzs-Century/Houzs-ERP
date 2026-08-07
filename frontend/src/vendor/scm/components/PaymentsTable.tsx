@@ -336,6 +336,12 @@ type SavedModeProps = {
   initialDrafts?: PaymentDraft[];
   /** Called only after a seeded/new draft is confirmed by the server. */
   onDraftCommitted?: (draft: PaymentDraft) => void;
+  /** How many rows are typed but NOT yet booked (owner 2026-08-07). The drafts
+   *  live inside this component in SAVED mode, so the page cannot see them —
+   *  and the page owns the exits (its back button, the payments Edit toggle)
+   *  that would silently discard them. Must be a STABLE reference (a useState
+   *  setter, or useCallback) — it is an effect dependency. */
+  onUnsavedChange?: (count: number) => void;
   /** Owner 2026-08-07 — control rendered on the RIGHT of the card header (the
    *  SO detail puts its payments-only Edit toggle there, mirroring mobile's
    *  in-card toggle). The card header lives in here, not in the caller, so a
@@ -362,6 +368,10 @@ type DraftModeProps = {
   defaultCollectedBy?: string | null;
   /** See SavedModeProps.headerAction. */
   headerAction?: ReactNode;
+  /** Declared so the discriminated union stays readable without a cast; the
+   *  count is always 0 in DRAFT mode (the whole document is unsaved and the
+   *  page's own Save commits it), so this never fires here. */
+  onUnsavedChange?: (count: number) => void;
 };
 
 export type PaymentsTableProps = SavedModeProps | DraftModeProps;
@@ -892,6 +902,48 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
        112 + 116 + 116 + 140 + 140 + 88 + 140 + 104 = 956 px.
      Read-only (no drafts) stays exactly as it was at 880. */
   const hasUnsavedRows = drafts.length > 0;
+
+  /* ── Leaving with unbooked money (owner 2026-08-07) ────────────────────────
+     The marks added earlier say a row is unsaved; they cannot stop anyone
+     acting on it. The loss this all comes from was "filled it in and left", and
+     a notice you have already walked past is not a guard.
+
+     `beforeunload` covers the exits the browser owns: closing the tab, a
+     refresh, typing a new URL — and the COMPANY SWITCH, which hard-reloads the
+     app (TopNavbar carries its own confirm precisely because, in its words,
+     "the app registers no beforeunload guard". It does now, for this case.)
+
+     It does NOT cover in-app SPA navigation. react-router 6 blocks that only
+     through `useBlocker`, which requires a DATA router, and this app mounts a
+     plain BrowserRouter + <Routes>. Converting the whole app's router to get
+     one dialog is not a trade worth making here, so the page-owned exits are
+     guarded individually instead (see onUnsavedChange). The left nav and the
+     workspace tabs remain unguarded — stated plainly rather than papered over.
+
+     SAVED mode only: a DRAFT-mode page (New SO / DO / SI) has its own Save for
+     the whole document and its own recovery path, and would otherwise prompt on
+     every single exit from a form where every row is legitimately unsaved. */
+  const unsavedCount = isSaved ? drafts.length : 0;
+  useEffect(() => {
+    if (unsavedCount === 0) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      /* Both lines are required for cross-browser coverage; no browser has
+         shown custom text here for years, so there is no message to write. */
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [unsavedCount]);
+
+  const onUnsavedChange = props.onUnsavedChange;
+  useEffect(() => {
+    onUnsavedChange?.(unsavedCount);
+    /* Report zero on unmount: the page outlives this card (the payments Edit
+       toggle unmounts it), and a stale non-zero count would leave the page
+       guarding work that no longer exists. */
+    return () => onUnsavedChange?.(0);
+  }, [unsavedCount, onUnsavedChange]);
   /* The tint marks a row as NOT YET a payment. That only says something in
      SAVED mode, where it sits among real ones. On New SO / DO / SI every row is
      unsaved and committed by the page's own Save, so tinting them all just
