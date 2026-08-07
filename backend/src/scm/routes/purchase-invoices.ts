@@ -556,11 +556,14 @@ async function attachPiAssignedSos(
         ...r,
         assigned_sos: summary.assignedSos,
         assigned_so_linked: summary.sourceLinked,
+        /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s) —
+           rolled up over the SAME code-filtered origins (header ≡ ∪(lines)). */
+        assigned_so_provenance: summary.provenanceSos,
         delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
       };
     });
   } catch {
-    return rows.map((r) => ({ ...r, assigned_sos: [], assigned_so_linked: false, delivered_dos: [] }));
+    return rows.map((r) => ({ ...r, assigned_sos: [], assigned_so_linked: false, assigned_so_provenance: [], delivered_dos: [] }));
   }
 }
 

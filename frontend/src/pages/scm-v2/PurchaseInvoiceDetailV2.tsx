@@ -40,6 +40,8 @@ import { useSupplierDetail } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { resolveFxRate } from "./fx-rate";
 
@@ -427,11 +429,11 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   // Render + download the PI PDF via the shared jspdf generator (client-side),
   // mirroring the V1 PurchaseInvoiceDetail handler. The old `?print=1`
   // navigation was dead — nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!purchaseInvoice) return;
-    import("../../vendor/scm/lib/purchase-invoice-pdf")
+    return import("../../vendor/scm/lib/purchase-invoice-pdf")
       .then(({ generatePurchaseInvoicePdf }) =>
-        generatePurchaseInvoicePdf(purchaseInvoice as never, items as never)
+        generatePurchaseInvoicePdf(purchaseInvoice as never, items as never, { action })
       )
       .catch((e) =>
         notify({
@@ -441,6 +443,8 @@ function PurchaseInvoiceDetailV2ReadOnly() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseInvoice);
   const goRecordPayment = () =>
     id && navigate(`/scm/purchase-invoices/${id}?tab=payments&record=1`);
   const doPost = () => {
@@ -666,7 +670,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>History</Button>
-            <Button variant="secondary" icon={<Printer size={14} />} onClick={goPrintPdf}>Print PDF</Button>
+            <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
             {!isCancelled && (
               <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel PI</Button>
             )}
@@ -873,7 +877,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
               <Edit3 size={16} /> Edit
             </button>
           )}
-          <button type="button" onClick={goPrintPdf} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Print PDF">
+          <button type="button" onClick={print.openPreview} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Print PDF">
             <Printer size={17} />
           </button>
           <button
@@ -887,6 +891,23 @@ function PurchaseInvoiceDetailV2ReadOnly() {
           </button>
         </div>
       </div>
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Purchase Invoice"
+        docNo={purchaseInvoice.invoice_number}
+        rows={[
+          { label: "Supplier", value: supplierNameOf(purchaseInvoice) },
+          { label: "Against", value: sourceOf(purchaseInvoice) },
+          { label: "Invoice date", value: fmtDate(purchaseInvoice.invoice_date) },
+          { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
+          {
+            label: "Invoice total",
+            value: fmtMoney(purchaseInvoice.total_centi, purchaseInvoice.currency),
+          },
+        ]}
+        {...print.handlers}
+      />
     </div>
   );
 }

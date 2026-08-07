@@ -134,7 +134,70 @@ export type PlanningOrder = {
     lorry_plate: string | null;
   } | null;
   delivery_orders: Array<{ id: string; do_number: string; status: string }>;
+  /* ── Arrangement pipeline (owner spec 2026-08-07) — DERIVED server-side by
+     backend lib/arrangement-stage.ts and stamped on every row; the frontends
+     read the field and never re-derive (one shared logic layer):
+       PENDING_DATE  — in Pending Schedule, delivery date not yet confirmed
+                       (amended_delivery_date null) → Delivery Date Arrangement.
+       PENDING_TIME  — date confirmed, not on a live trip → the Delivery Time
+                       Arrangement inbox. (== "Date arranged" on the date side.)
+       TIME_ARRANGED — assigned onto a non-CANCELLED trip.
+     null outside Pending Schedule. Optional (`?`) so a cached pre-upgrade
+     payload still typechecks; a missing field degrades to the un-split view. */
+  arrangement_stage?: ArrangementStage | null;
+  /* The live trip the order sits on (via its DO's DELIVERY stop; CANCELLED
+     trips excluded). null when not on a trip. */
+  trip_id?: string | null;
+  trip_no?: string | null;
+  trip_date?: string | null;
 };
+
+/* ── Arrangement-pipeline vocabulary (mirrors backend lib/arrangement-stage.ts).
+   The date-side and time-side views are each a 2-way split per the owner's
+   spec; PENDING_TIME is the SAME order read from both sides of the hand-off
+   (date arranged / awaiting a time). */
+export type ArrangementStage = 'PENDING_DATE' | 'PENDING_TIME' | 'TIME_ARRANGED';
+
+export const ARRANGEMENT_STAGE_LABEL: Record<ArrangementStage, string> = {
+  PENDING_DATE: 'Pending Date Arrangement',
+  PENDING_TIME: 'Pending Time Arrangement',
+  TIME_ARRANGED: 'Time arranged',
+};
+
+export type DateArrangement = 'PENDING_DATE' | 'DATE_ARRANGED';
+export const DATE_ARRANGEMENT_LABEL: Record<DateArrangement, string> = {
+  PENDING_DATE: 'Pending Date Arrangement',
+  DATE_ARRANGED: 'Date arranged',
+};
+
+/* Date-side view of a row's stage. `undefined` stage (a cached pre-upgrade
+   payload) falls back to PENDING_DATE so nothing silently disappears from the
+   Date Arrangement queue; null (out of pipeline) stays null. */
+export function dateArrangementOf(o: Pick<PlanningOrder, 'arrangement_stage'>): DateArrangement | null {
+  const stage = o.arrangement_stage;
+  if (stage === undefined) return 'PENDING_DATE';
+  if (stage === null) return null;
+  return stage === 'PENDING_DATE' ? 'PENDING_DATE' : 'DATE_ARRANGED';
+}
+
+export type TimeArrangement = 'PENDING_TIME' | 'TIME_ARRANGED';
+/* Time-side view. `undefined` stage falls back to PENDING_TIME — the Trips
+   inbox then degrades to the old show-everything "To schedule" panel rather
+   than blanking. PENDING_DATE / out-of-pipeline rows are not the Time page's
+   yet (null). */
+export function timeArrangementOf(o: Pick<PlanningOrder, 'arrangement_stage'>): TimeArrangement | null {
+  const stage = o.arrangement_stage;
+  if (stage === undefined) return 'PENDING_TIME';
+  if (stage === 'PENDING_TIME' || stage === 'TIME_ARRANGED') return stage;
+  return null;
+}
+
+/* Board-column label for a row's stage — '—' for rows outside the pipeline. */
+export function arrangementStageLabel(o: Pick<PlanningOrder, 'arrangement_stage'>): string {
+  const stage = o.arrangement_stage;
+  if (stage == null) return '';
+  return ARRANGEMENT_STAGE_LABEL[stage] ?? '';
+}
 
 export type PlanningCounts = Record<'ALL' | DeliveryState, number>;
 

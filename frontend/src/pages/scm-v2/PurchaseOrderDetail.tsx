@@ -52,6 +52,8 @@ const fmtDmy = (iso: string | null | undefined): string => {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
 };
 import { formatPhone } from '@2990s/shared/phone';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import {
   usePurchaseOrderDetail,
   useUpdatePurchaseOrderHeader,
@@ -677,7 +679,7 @@ export const PurchaseOrderDetail = () => {
      optional docTitle so the revised copy prints "Revised Purchase Order". The
      operator downloads / prints / WhatsApps it themselves (Houzs's "Send" only
      marks the amendment SENT — mirroring 2990, no server email here). */
-  const generatePoPdf = (docTitle?: string) => {
+  const generatePoPdf = (docTitle?: string, action: PdfAction = 'save') => {
     // PR #102 — pre-resolve purchase_location name (PDF can't hit the API).
     const wh = (warehousesQTop.data ?? []).find((w) => w.id === po.purchase_location_id);
     const headerForPdf = {
@@ -694,10 +696,10 @@ export const PurchaseOrderDetail = () => {
       source_so_doc_no: (po as unknown as { source_so_doc_no?: string | null }).source_so_doc_no ?? null,
     };
     import('../../vendor/scm/lib/purchase-order-pdf').then(({ generatePurchaseOrderPdf }) =>
-      generatePurchaseOrderPdf(headerForPdf, items, docTitle ? { docTitle } : undefined),
+      generatePurchaseOrderPdf(headerForPdf, items, { ...(docTitle ? { docTitle } : {}), action }),
     ).catch((e) => notify({ title: 'PDF generation failed', body: `${e instanceof Error ? e.message : 'Something went wrong.'}`, tone: 'error' }));
   };
-  const handlePrint = () => generatePoPdf();
+  const print = usePrintPreview((action: PdfAction) => generatePoPdf(undefined, action));
 
   /* ── SO-amendment banner state (Phase 1-C) ─────────────────────────────────
      The bound PO detail stamps `open_amendment` when its source SO has an
@@ -865,10 +867,23 @@ export const PurchaseOrderDetail = () => {
               instead of wrapping. Both return in view mode. */}
           {!isEditing && <RelationshipMapButton type="po" id={po.id} />}
           {!isEditing && (
-            <Button variant="ghost" size="md" onClick={handlePrint}>
+            <>
+            <Button variant="ghost" size="md" onClick={print.openPreview}>
               <Printer {...ICON} />
               <span>Print PDF</span>
             </Button>
+            <PrintPreviewModal
+              open={print.open}
+              onClose={print.close}
+              docTitle="Purchase Order"
+              docNo={poDisplayNumber(po.po_number, (po as unknown as { revision?: number | null }).revision)}
+              rows={[
+                { label: 'Supplier', value: po.supplier?.name ?? po.supplier?.code ?? '—' },
+                { label: 'Items', value: `${items.length} line${items.length === 1 ? '' : 's'}` },
+              ]}
+              {...print.handlers}
+            />
+            </>
           )}
           {/* PR #78 — Convert from Sales Order. Gated behind Edit mode (it
               mutates line items). Commander 2026-05-29 — opens the full "Pick

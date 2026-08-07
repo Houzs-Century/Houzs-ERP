@@ -52,6 +52,8 @@ import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -333,18 +335,19 @@ export const ConsignmentReturnDetail = () => {
   const isLocked = lockedStatuses.includes(header.status);
   const isCancelled = header.status === 'CANCELLED';
 
-  const handlePrint = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     // A consignment return has no money refund — show the goods value instead.
     const pdfHeader = { ...header, refund_centi: header!.local_total_centi };
     const pdfItems = items.map((it) => ({ ...it, refund_centi: it.line_total_centi }));
-    import('../../vendor/scm/lib/delivery-return-pdf')
+    return import('../../vendor/scm/lib/delivery-return-pdf')
       .then(({ generateDeliveryReturnPdf }) =>
         generateDeliveryReturnPdf(pdfHeader as never, pdfItems as never, {
           docTitle: 'CONSIGNMENT RETURN', docNoLabel: 'CR No',
-          amountLabel: 'Value', totalLabel: 'TOTAL VALUE',
+          amountLabel: 'Value', totalLabel: 'TOTAL VALUE', action,
         }))
       .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   const handleCancel = async () => {
     if (!(await askConfirm({
@@ -379,9 +382,22 @@ export const ConsignmentReturnDetail = () => {
           </div>
           <StatusPill docType="dr" status={header.status} />
           <RelationshipMapButton type="cdr" id={id} />
-          <Button variant="ghost" size="md" onClick={handlePrint}>
+          <Button variant="ghost" size="md" onClick={print.openPreview}>
             <Printer size={15} strokeWidth={1.75} /><span>Print PDF</span>
           </Button>
+          <PrintPreviewModal
+            open={print.open}
+            onClose={print.close}
+            docTitle="Consignment Return"
+            docNo={header.return_number}
+            rows={[
+              { label: 'Consignee', value: header.debtor_name || '—' },
+              { label: 'Return date', value: fmtDateOrDash(header.return_date) },
+              { label: 'Items', value: `${header.line_count} line${header.line_count === 1 ? '' : 's'}` },
+              { label: 'Goods value', value: fmtRm(header.local_total_centi, header.currency) },
+            ]}
+            {...print.handlers}
+          />
           {isCancelled ? (
             <Button variant="primary" size="md" onClick={handleReopen} disabled={updateStatus.isPending}>
               <RotateCcw {...ICON} /><span>Reopen Return</span>

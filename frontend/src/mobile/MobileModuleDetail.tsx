@@ -5,8 +5,10 @@ import { lineIdentity, orderLineIdentity } from "@2990s/shared";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "@2990s/shared/phone";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
-import { usePoSoCoverage, originsByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
-import { PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
+import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
+import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
+import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -18,6 +20,8 @@ import { todayMyt } from "../vendor/scm/lib/dates";
 import { fmtCenti } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from "../vendor/scm/lib/payment-methods";
+import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../vendor/scm/lib/pdf-common";
 import "./mobile.css";
 
 // ---------------------------------------------------------------------------
@@ -175,19 +179,28 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLinked, allocations, poNumber, sourcePos, sourceAdj, delivered }: {
+function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch }: {
   name: string; sub?: string; qty: unknown; unitCenti: unknown; amountCenti: unknown;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
   // date, matched by SKU. Empty array → dash, mirroring the desktop columns.
   // Display-only on mobile (the phone shell doesn't route to the SO).
   assigned?: OriginAssignment[];
+  // PR-3 (2026-08-07): the coverage wire's PARALLEL stored-origin slot — the
+  // "bought for" SO(s), rendered muted BESIDE the precedence rows above
+  // (deduped by soDocNo inside PairedSoRowsMobile). Desktop twin: the
+  // DocumentLinesExpansion provenance chips — one product.
+  provenance?: OriginAssignment[];
   // Sales docs (DO / SI): the source PO(s) the shipped goods actually came from
   // (batch trail, GRN-healed) + the PO-less adjustment flag — the mobile twin
   // of the desktop drill-down's Source PO cell (owner 2026-08-01: identical
   // data on every surface).
   sourcePos?: string[];
   sourceAdj?: boolean;
+  // DO lines only (mig 0230): the incoming PO batch this line committed to at
+  // DO creation — the hard-from-DO anchor. Rendered as an anchored solid chip
+  // (CommittedBatchRowMobile); absent → nothing. Display-only.
+  committedBatch?: string | null;
   // Purchase docs (PO / GRN / PI): the DO(s) that shipped this line's goods,
   // with per-DO qty + the DO's own SO (soDocNo) so each chip pairs with its
   // Assigned-SO row — the mobile twin of the desktop per-SO sub-table.
@@ -227,11 +240,14 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
           assigned={assigned}
           delivered={delivered ?? []}
           sourceLinked={sourceLinked}
+          provenance={provenance}
         />
       )}
       {sourcePos !== undefined && (
         <SourcePosRowMobile pos={sourcePos} adj={sourceAdj} showEmpty />
       )}
+      <CommittedBatchRowMobile poNo={committedBatch} />
+
       {(allocations?.length ?? 0) > 0 && (
         <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 4 }}>
           <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "#9aa093" }}>Allocations</span>
@@ -261,8 +277,10 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
 }
 
 // ── Header card (shared by every module) ────────────────────────────────────
-function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf }: {
+function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf, onMap }: {
   eyebrow: string; title: string; subtitle?: string; status?: unknown; onBack: () => void; onEdit?: () => void; onPdf?: () => void;
+  /** Opens the mobile Relationship Map (document modules with a flow anchor). */
+  onMap?: () => void;
 }) {
   return (
     <header className="hdr">
@@ -272,6 +290,11 @@ function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf 
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <StatusPill status={status} />
+          {onMap && (
+            <button className="tinybtn" onClick={onMap} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>
+              Map
+            </button>
+          )}
           {onPdf && (
             <button className="tinybtn" onClick={onPdf} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>
               PDF
@@ -1337,14 +1360,23 @@ const COVERAGE_TYPE: Record<string, "po" | "grn" | "pi"> = {
   "purchase-invoices": "pi",
 };
 
-function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: DocMap; row: any; moduleKey: string; onBack: () => void; onEdit?: () => void; onPOD?: () => void }) {
+function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }: { map: DocMap; row: any; moduleKey: string; onBack: () => void; onEdit?: () => void; onPOD?: () => void; flowNav?: FlowNav }) {
   const id = docId(row);
   const qc = useQueryClient();
   const detailNotify = useNotify();
+  /* Relationship Map — the mobile twin of the desktop DocumentFlowModal /
+     DocumentRelationshipMapModal (PO / GRN / PI / DO anchors here; the SO
+     anchor lives on MobileSODetail). Zero added backend load: the map reads
+     the same useDocumentFlow query the desktop modal reads and, for purchase
+     docs, the SAME usePoSoCoverage key covQ below already fetched. */
+  const [mapOpen, setMapOpen] = useState(false);
+  const mapAnchor = flowAnchorForModule(moduleKey);
   // Purchase docs only: the real per-SKU origin SO(s) for each line.
   const coverageType = COVERAGE_TYPE[moduleKey] ?? null;
   const covQ = usePoSoCoverage(coverageType, coverageType && id ? id : null);
   const originByCode = originsByCode(covQ.data);
+  // PR-3: the parallel stored-origin "bought for" slot, per SKU.
+  const provByCode = provenanceByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
   // Per-SKU Delivered (DO + qty) — same resolver payload the desktop lists read.
   const deliveredMap = deliveredByCode(covQ.data);
@@ -1382,22 +1414,36 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
         : "We couldn't load the line items for this document. Making the PDF now would produce one with no items on it. Please refresh and try again.",
     });
   };
-  const onPdf =
+  /* One deliver step per printable doc type; the preview dialog picks which of
+     its three exits (view / print / download) runs. Phone and desktop now open
+     the SAME Print preview — see components/scm-v2/PrintPreviewModal. */
+  const printableDocTitle =
     moduleKey === "delivery-orders-mfg"
-      ? !canPdf ? refusePdf : async () => {
-          try {
-            const { generateDeliveryOrderPdf } = await import("../vendor/scm/lib/delivery-order-pdf");
-            await generateDeliveryOrderPdf(header as never, items as never);
-          } catch (e) { void detailNotify({ title: "Couldn't generate the PDF", body: e instanceof Error ? e.message : "Please try again." }); }
-        }
+      ? "Delivery Order"
       : moduleKey === "sales-invoices"
-        ? !canPdf ? refusePdf : async () => {
-            try {
-              const { generateSalesInvoicePdf } = await import("../vendor/scm/lib/sales-invoice-pdf");
-              await generateSalesInvoicePdf(header as never, items as never);
-            } catch (e) { void detailNotify({ title: "Couldn't generate the PDF", body: e instanceof Error ? e.message : "Please try again." }); }
-          }
-        : undefined;
+        ? "Sales Invoice"
+        : null;
+  const deliverPdf = async (action: PdfAction) => {
+    try {
+      if (moduleKey === "delivery-orders-mfg") {
+        const { generateDeliveryOrderPdf } = await import("../vendor/scm/lib/delivery-order-pdf");
+        await generateDeliveryOrderPdf(header as never, items as never, { action });
+      } else {
+        const { generateSalesInvoicePdf } = await import("../vendor/scm/lib/sales-invoice-pdf");
+        await generateSalesInvoicePdf(header as never, items as never, { action });
+      }
+    } catch (e) {
+      void detailNotify({ title: "Couldn't generate the PDF", body: e instanceof Error ? e.message : "Please try again." });
+    }
+  };
+  const print = usePrintPreview(deliverPdf);
+  /* The refusal path stays AHEAD of the preview: a document whose lines failed
+     to load must not even reach a dialog offering to print it. */
+  const onPdf = !printableDocTitle
+    ? undefined
+    : !canPdf
+      ? refusePdf
+      : print.openPreview;
 
   // Whether a sticky footer will render — used to reserve scroll padding so it
   // never covers the last line item. A POD button (delivery orders) also counts.
@@ -1419,7 +1465,25 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
         onBack={onBack}
         onEdit={onEdit}
         onPdf={onPdf}
+        onMap={mapAnchor && id ? () => setMapOpen(true) : undefined}
       />
+      {printableDocTitle && (
+        /* Summary rows come off the SAME DocMap the screen renders from
+           (eyebrow = doc no, title = party, meta = the KV grid), so the
+           preview can never disagree with the page behind it. */
+        <PrintPreviewModal
+          open={print.open}
+          onClose={print.close}
+          docTitle={printableDocTitle}
+          docNo={map.eyebrow(header)}
+          rows={[
+            { label: "Customer", value: map.title(header) },
+            ...meta.slice(0, 4).map(([label, value]) => ({ label, value })),
+            { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
+          ]}
+          {...print.handlers}
+        />
+      )}
       <div className="scroll hz-scroll" style={hasFooter ? { ...scrollStyle, paddingBottom: podEnabled && hasStatusActions ? 150 : 96 } : scrollStyle}>
         {!id && <div style={{ textAlign: "center", color: "#b23a3a", fontSize: 12, padding: "26px 0" }}>Couldn't identify this record.</div>}
 
@@ -1484,8 +1548,16 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
                   ? (((it?.source_pos as string[] | null | undefined) ?? []) as string[])
                   : undefined;
                 const sourceAdj = isSalesDoc ? Boolean(it?.source_adj) : undefined;
+                /* DO lines only (mig 0230): the committed batch — the
+                   hard-from-DO anchor the detail GET already returns
+                   (committed_po_batch_no). Same field the desktop detail's
+                   CommittedBatchCell reads (one-product rule). */
+                const committedBatch = moduleKey === "delivery-orders-mfg"
+                  ? ((it?.committed_po_batch_no as string | null | undefined) ?? null)
+                  : null;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} />;
+                const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
           </div>
@@ -1495,6 +1567,15 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD }: { map: D
           actions (Reopen / Delete, the sole actions statusActionsFor returns for
           a cancelled doc) survive so a mis-cancel is still recoverable. */}
       {hasFooter && <DocActionFooter moduleKey={moduleKey} id={id} header={header} invalidate={invalidate} onPOD={onPOD} onDeleted={onBack} />}
+      {mapOpen && mapAnchor && !!id && (
+        <MobileRelationshipMap
+          type={mapAnchor}
+          id={id}
+          label={map.eyebrow(header) || map.title(header)}
+          onClose={() => setMapOpen(false)}
+          nav={flowNav}
+        />
+      )}
     </div>
   );
 }
@@ -1816,12 +1897,14 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
 // Public entry — routes by moduleKey to the document or the simple detail.
 // ---------------------------------------------------------------------------
 
-export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdit }: {
+export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdit, flowNav }: {
   moduleKey: string; row: any; title: string; onBack: () => void; onPOD?: () => void;
   /** Wired by the parent when the module's form supports edit (updatePath).
    *  The header "Edit" button calls this. MobileApp passes the current row's
    *  id + the module's FormSchema through to MobileModuleForm. */
   onEdit?: () => void;
+  /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
+  flowNav?: FlowNav;
 }) {
   // Only offer Edit for modules whose form declares an updatePath (create-only
   // modules like Warehouse show no Edit button even when onEdit is passed).
@@ -1833,7 +1916,7 @@ export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdi
   // modules (Sales/Purchase Returns, Purchase Invoices) get a status action bar
   // driven off the list row's id + status.
   if (doc) {
-    return <DocumentDetail map={doc} row={row} moduleKey={moduleKey} onBack={onBack} onEdit={editHandler} onPOD={onPOD} />;
+    return <DocumentDetail map={doc} row={row} moduleKey={moduleKey} onBack={onBack} onEdit={editHandler} onPOD={onPOD} flowNav={flowNav} />;
   }
   return <SimpleDetail moduleKey={moduleKey} row={row} title={title} onBack={onBack} onEdit={editHandler} />;
 }

@@ -1,0 +1,55 @@
+name: Bind shadow check (read-only)
+
+# Answers "what does the bind-shadow soak look like — may PR-4 flip yet?"
+# without anyone opening a SQL console.
+#
+# The evidence lives only in production's scm.entity_audit_log (BIND_SHADOW
+# rows written by resolveShipCommitments' shadow block), so before this
+# existed the question cost an owner interruption AND put the production DSN
+# in front of a human for a SELECT. Actions already holds
+# secrets.DATABASE_URL for the deploy, so the check runs here and nobody
+# handles the credential.
+#
+# The verdict is an input to the flip gate, not the gate: PR-4 stays DRAFT
+# until the picture is reviewed AND the owner signs off.
+#
+# Manual trigger only — it is a question, not a gate, and it must never run on
+# a schedule that would make a production DB read part of routine CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      window_days:
+        description: "How many days of shadow evidence to report (default 30)"
+        required: false
+        default: "30"
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: bind-shadow-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-bind-shadow.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          WINDOW_DAYS: ${{ inputs.window_days }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning. Harmless on an IPv4-only
+          # host, and this workflow may be pointed at a pooler hostname later.
+          NODE_OPTIONS: --dns-result-order=ipv4first

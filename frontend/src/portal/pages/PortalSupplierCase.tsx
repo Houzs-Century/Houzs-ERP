@@ -26,6 +26,7 @@ import { StatusPill } from "../components/StatusPill";
 import { Button } from "../../components/Button";
 import { Skeleton } from "../../components/Skeleton";
 import { useDialog } from "../../hooks/useDialog";
+import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PortalStatusColor } from "../types";
 
 const ALLOWED_EXT = ["jpg", "jpeg", "png", "webp"];
@@ -157,6 +158,9 @@ export function PortalSupplierCasePage() {
   const { token = "" } = useParams();
   const nav = useNavigate();
   const dialog = useDialog();
+  /* Declared up here, above the loading / error early returns, so the hook
+     count is stable — the Print preview it drives renders far below. */
+  const print = usePrintPreview(() => window.print());
 
   const [data, setData] = useState<SupplierCase | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -672,13 +676,27 @@ export function PortalSupplierCasePage() {
 
       {/* Footer actions */}
       <div className="mt-5 flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center sm:gap-3 print:hidden">
-        <Button variant="secondary" onClick={() => window.print()} icon={<Printer size={14} />}>
+        <Button variant="secondary" onClick={print.openPreview} icon={<Printer size={14} />}>
           Print
         </Button>
         <Button variant="ghost" onClick={() => nav(-1)} icon={<ArrowLeft size={14} />}>
           Back
         </Button>
       </div>
+      {/* The same Print preview the ERP's documents open. This page prints
+          itself (no jspdf document behind it), so Print is the only exit. */}
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Service Case"
+        docNo={cs.assr_no}
+        rows={[
+          { label: "Supplier", value: data.supplier_name || cs.creditor_code || "—" },
+          { label: "Stage", value: stageLabel },
+          { label: "Photos", value: `${data.attachments.length} attached` },
+        ]}
+        onPrint={print.handlers.onPrint}
+      />
 
       {err && (
         <div className="mt-4 flex items-center justify-between gap-3 rounded-md border border-err/40 bg-err/5 px-3 py-2 text-sm text-err print:hidden">
