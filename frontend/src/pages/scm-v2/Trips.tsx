@@ -27,6 +27,9 @@ import {
 import {
   useDeliveryPlanning,
   useScheduleDelivery,
+  timeArrangementOf,
+  ARRANGEMENT_STAGE_LABEL,
+  type TimeArrangement,
   type PlanningOrder,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
@@ -75,12 +78,19 @@ export function Trips() {
   const notify = useNotify();
   const askConfirm = useConfirm();
 
-  // "To schedule" queue: ready-to-ship orders not yet on a trip. It is the EXACT
-  // Delivery Planning board (shared <DeliveryPlanningBoard>) LOCKED to
+  // The TIME-ARRANGEMENT queue (owner pipeline, 2026-08-07): the EXACT Delivery
+  // Planning board (shared <DeliveryPlanningBoard>) LOCKED to
   // state=PENDING_SCHEDULE — same columns, region chips, expandable line-item
   // detail and multiselect — scoped to the region chip. Reuses the board's own
   // endpoint (GET /delivery-planning?region=<r>&state=PENDING_SCHEDULE) and its
-  // PENDING_SCHEDULE derivation: no new query, no new state logic.
+  // PENDING_SCHEDULE derivation: no new query, no new state logic. Split by the
+  // server-derived arrangement stage (never re-derived here):
+  //   Pending Time Arrangement — date confirmed, not yet on a trip. The INBOX:
+  //     every order Delivery Date Arrangement confirms flows in automatically.
+  //   Time arranged — already assigned onto a live trip (the trip list above is
+  //     the trip-level view of the same fact).
+  // Orders still AWAITING a date belong to Delivery Date Arrangement and are
+  // counted in a note here, not mixed into the inbox.
   const [pendingRegion, setPendingRegion] = useState<string>('ALL');
   const pending = useDeliveryPlanning({ region: pendingRegion, state: 'PENDING_SCHEDULE' });
   const pendingOrders = useMemo<PlanningOrder[]>(
@@ -88,6 +98,23 @@ export function Trips() {
     [pending.data],
   );
   const pendingRegionTabs = useMemo(() => regionTabsFrom(pending.data?.regions), [pending.data?.regions]);
+
+  const [timeSide, setTimeSide] = useState<TimeArrangement>('PENDING_TIME');
+  const timeCounts = useMemo(() => {
+    const c: Record<TimeArrangement, number> & { awaitingDate: number } = {
+      PENDING_TIME: 0, TIME_ARRANGED: 0, awaitingDate: 0,
+    };
+    for (const o of pendingOrders) {
+      const side = timeArrangementOf(o);
+      if (side) c[side] += 1;
+      else c.awaitingDate += 1;
+    }
+    return c;
+  }, [pendingOrders]);
+  const timeRows = useMemo(
+    () => pendingOrders.filter((o) => timeArrangementOf(o) === timeSide),
+    [pendingOrders, timeSide],
+  );
 
   // Shared write path + option lists for the board's inline cells + bulk bar.
   const sched = useScheduleDelivery();
@@ -312,22 +339,51 @@ export function Trips() {
         </div>
       </div>
 
-      {/* ── To schedule: ready-to-ship orders not yet on a trip ──────────────
+      {/* ── Time arrangement: date-confirmed orders flowing in from Delivery
+          Date Arrangement ─────────────────────────────────────────────────────
           The EXACT Delivery Planning board, LOCKED to PENDING_SCHEDULE (no
-          state-tab row). Same columns, region chips, expandable line-item detail
+          state-tab row), split by the derived time side: the "Pending Time
+          Arrangement" INBOX (date confirmed, no trip yet — no manual re-entry,
+          the schedule write is the hand-off) and "Time arranged" (already on a
+          live trip). Same columns, region chips, expandable line-item detail
           and multiselect. Ticking orders and clicking "Schedule (N)" opens the
           Phase-2 ScheduleTripDrawer → Apply via the existing schedule mutation,
           so the whole select → schedule → apply flow runs from inside Trips. */}
       <div className="rounded-md border border-border bg-surface p-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <span className="text-[13px] font-semibold text-ink">To schedule</span>
-          <Badge tone="neutral" caseless>{pendingOrders.length} ready to ship</Badge>
+          <span className="text-[13px] font-semibold text-ink">Time arrangement</span>
+          <Badge tone="neutral" caseless>{timeCounts.PENDING_TIME} to arrange</Badge>
           <span className="flex-1" />
           <span className="text-[11.5px] text-ink-muted">Tick orders, then Schedule to put them on a trip</span>
         </div>
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          {(['PENDING_TIME', 'TIME_ARRANGED'] as const).map((side) => (
+            <button
+              key={side}
+              type="button"
+              onClick={() => setTimeSide(side)}
+              className={cn(
+                'rounded-full border px-3 py-1 text-[12px]',
+                timeSide === side ? 'border-accent bg-accent/10 font-semibold text-accent' : 'border-border text-ink-secondary',
+              )}
+            >
+              {ARRANGEMENT_STAGE_LABEL[side]} ({timeCounts[side]})
+            </button>
+          ))}
+          {timeCounts.awaitingDate > 0 && (
+            <button
+              type="button"
+              className="ml-2 text-[11.5px] text-ink-muted underline decoration-dotted underline-offset-2"
+              onClick={() => navigate('/scm/auto-schedule')}
+              title="These orders have no confirmed delivery date yet — arrange the date first"
+            >
+              {timeCounts.awaitingDate} awaiting date arrangement
+            </button>
+          )}
+        </div>
 
         <DeliveryPlanningBoard
-          orders={pendingOrders}
+          orders={timeRows}
           counts={pending.data?.counts ?? {}}
           regionTabs={pendingRegionTabs}
           activeRegion={pendingRegion}
@@ -352,8 +408,10 @@ export function Trips() {
           drivers={drivers}
           lorries={lorries}
           storageKey="dg-trips-to-schedule"
-          exportName="TripsToSchedule"
-          emptyMessage="No orders waiting to be scheduled."
+          exportName="TripsTimeArrangement"
+          emptyMessage={timeSide === 'PENDING_TIME'
+            ? 'No date-confirmed orders waiting for a time — confirm dates in Delivery Date Arrangement.'
+            : 'No orders on a trip yet.'}
           onRowDoubleClick={(o) => { if (o.row_type === 'so') navigate('/scm/sales-orders/' + o.so_doc_no); }}
           bulkExtras={
             <Button
