@@ -46,6 +46,13 @@ export interface Branding {
    *  a near-invisible watermark on a Delivery Order. Blank means "print the
    *  on-screen one", i.e. exactly the pre-2026-08 behaviour. */
   printLogoR2Key: string;
+  /** Customer-service phone printed on documents ("" = the line is omitted).
+   *  SEPARATE from `phone`: the desk a customer calls about a delivery is not
+   *  the company's headline number. Per company — a 2990 delivery order must
+   *  never print a Houzs contact. */
+  csPhone: string;
+  /** Customer-service email, same contract as csPhone. */
+  csEmail: string;
 }
 
 /** Seeded defaults — VERBATIM the values that were hardcoded before this change
@@ -66,6 +73,8 @@ export const DEFAULT_BRANDING: Branding = {
   website: "",
   logoR2Key: "",
   printLogoR2Key: "",
+  csPhone: "",
+  csEmail: "",
 };
 
 /** 2990 company defaults — mirrors the backend's DEFAULT_BRANDING_2990 and
@@ -82,6 +91,8 @@ export const DEFAULT_BRANDING_2990: Branding = {
   website: "",
   logoR2Key: "",
   printLogoR2Key: "",
+  csPhone: "",
+  csEmail: "",
 };
 
 /** Defaults for the given company code (GET /api/branding echoes the active
@@ -154,6 +165,10 @@ export function normalizeBranding(
     // on-screen logo").
     printLogoR2Key:
       ((r.printLogoR2Key ?? r.print_logo_r2_key) as string | undefined)?.toString().trim() ?? "",
+    // Blank stays blank: an unset CS contact omits the line rather than
+    // inheriting another company's.
+    csPhone: ((r.csPhone ?? r.cs_phone) as string | undefined)?.toString().trim() ?? "",
+    csEmail: ((r.csEmail ?? r.cs_email) as string | undefined)?.toString().trim() ?? "",
   };
 }
 

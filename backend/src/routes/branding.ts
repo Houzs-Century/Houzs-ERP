@@ -124,6 +124,12 @@ app.put("/", requirePermission("settings.manage"), async (c) => {
     website: str(body.website, current.website),
     logoR2Key: str(body.logoR2Key, current.logoR2Key),
     printLogoR2Key: str(body.printLogoR2Key, current.printLogoR2Key),
+    // Canonicalised like `phone` above, for the same reason: this number is
+    // printed on documents, so it should carry a country code like every other
+    // contact in the system — and refusing anything ambiguous keeps the human's
+    // formatting rather than concatenating two numbers into nonsense.
+    csPhone: canonicalizeSinglePhone(str(body.csPhone, current.csPhone)),
+    csEmail: str(body.csEmail, current.csEmail),
   };
   if (next.companyName === "") {
     return c.json({ error: "companyName is required" }, 400);
