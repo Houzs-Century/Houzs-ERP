@@ -125,6 +125,15 @@ export type Env = {
   // regression). Parsed once via scm/lib/costing-enabled.isCostingDisplayEnabled.
   // Mirrors the FE build-time COSTING_DISPLAY_ENABLED, but THIS is authoritative.
   COSTING_DISPLAY_ENABLED?: string;
+  // Stock-take posting thresholds (phase 1, 2026-08-08). A variance whose
+  // |qty delta| exceeds the qty limit, or whose |delta| x unit cost exceeds the
+  // value limit (integer SEN), needs scm.stock_take.supervise to post. Absent /
+  // unparseable = the shipped defaults (5 units / RM500) — same absent-safe
+  // posture as COSTING_DISPLAY_ENABLED. Parsed once by
+  // scm/shared/stock-take-threshold.parseVarianceThresholds; set in
+  // wrangler.toml [vars] only when the owner wants different limits.
+  STOCK_TAKE_VARIANCE_QTY_LIMIT?: string;
+  STOCK_TAKE_VARIANCE_VALUE_LIMIT_SEN?: string;
   /** Error tracking (services/errorTracking.ts). The ONE switch: while unset —
    *  the default on every environment — the reporter makes no network call, no
    *  log line and no allocation, so the ERP behaves exactly as it did before it
