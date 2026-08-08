@@ -117,6 +117,17 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.payment_voucher.post",   resource: "Supply Chain", verb: "manage", label: "Post payment voucher",     description: "Post a Payment Voucher to the General Ledger (DRAFT -> POSTED; settles any linked PIs)" },
   { key: "scm.payment_voucher.cancel", resource: "Supply Chain", verb: "manage", label: "Cancel payment voucher",   description: "Cancel a Payment Voucher (reverses the GL entry + any PI settlement)" },
 
+  // Stock take supervision (owner-approved phase 1, 2026-08-08). A stock take
+  // carries an ASSIGNEE (scm.stock_takes.assignee_staff_id — the person
+  // responsible for the count); posting is allowed only for that assignee OR a
+  // holder of this key. The key additionally gates the two supervisor-only
+  // moves: posting a count whose variance exceeds the configured threshold
+  // (|qty delta| or line value — see scm/shared/stock-take-threshold.ts), and
+  // seeing SYSTEM QTY / VARIANCE on a BLIND take while it is still OPEN.
+  // Normal wildcard semantics (NOT in EXPLICIT_APPROVAL_KEYS): Owner + IT
+  // Admin pass via "*"; grant warehouse leads via Team > Positions.
+  { key: "scm.stock_take.supervise", resource: "Supply Chain", verb: "manage", label: "Supervise stock takes", description: "Post any stock take (not only ones assigned to you), post counts whose variance exceeds the threshold, and reveal system quantities on blind counts" },
+
   // Currency master — the owner-maintained list of currencies + each one's
   // rate_to_myr (multi-currency FX, migration 0082). Reading the list is open to
   // any authed SCM caller (the GRN/PI/PV currency dropdowns need it); this flat

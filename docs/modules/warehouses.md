@@ -125,6 +125,8 @@ you want "everything selectable", filter `is_active=true` and skip type.
 
 ## 6. See also
 
+- `docs/modules/stock-take.md` — the cycle-count document (assignees, blind
+  counts, variance threshold, NONZERO scope — phase 1, 2026-08-08).
 - `docs/modules/delivery-order.md` — DO consumes warehouse for the OUT leg.
 - `docs/modules/grn.md` — GRN consumes warehouse for the IN leg.
 - `BUG-HISTORY.md` — entry 2026-07-23 for the type + unification rationale;

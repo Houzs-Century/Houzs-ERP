@@ -27,6 +27,7 @@ import {
 } from "../../vendor/scm/lib/stock-queries";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { useStaffLookup } from "../../hooks/useStaffLookup";
 
 type StatusTab = "all" | "open" | "posted" | "cancelled";
 
@@ -76,6 +77,7 @@ function ViewToggle({ value, onChange }: { value: "table" | "cards"; onChange: (
 }
 
 function CardsGrid({ rows, onOpen }: { rows: StockTakeRow[]; onOpen: (r: StockTakeRow) => void }) {
+  const { actorNameOf } = useStaffLookup();
   if (rows.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center shadow-stone">
@@ -88,6 +90,9 @@ function CardsGrid({ rows, onOpen }: { rows: StockTakeRow[]; onOpen: (r: StockTa
     <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
       {rows.map((r) => {
         const st = statusFor(r.status);
+        /* null = a blind OPEN take viewed without the supervise permission —
+           the server withholds the figure (it would un-blind the count). */
+        const varianceHidden = r.variance_total == null && r.blind === true;
         const variance = Number(r.variance_total ?? 0);
         return (
           <button
@@ -104,7 +109,10 @@ function CardsGrid({ rows, onOpen }: { rows: StockTakeRow[]; onOpen: (r: StockTa
               <Warehouse size={13} className="text-ink-muted" />
               <span className="truncate">{warehouseOf(r)}</span>
             </div>
-            <div className="mt-1 text-[11.5px] text-ink-muted">{fmtDate(r.take_date)}</div>
+            <div className="mt-1 text-[11.5px] text-ink-muted">
+              {fmtDate(r.take_date)}
+              {r.assignee_staff_id ? ` · ${actorNameOf(r.assignee_staff_id)}` : ""}
+            </div>
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div>
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Lines</div>
@@ -112,8 +120,8 @@ function CardsGrid({ rows, onOpen }: { rows: StockTakeRow[]; onOpen: (r: StockTa
               </div>
               <div className="text-right">
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Variance</div>
-                <div className={cn("mt-0.5 font-money text-[15px] font-bold", variance < 0 ? "text-err" : variance > 0 ? "text-synced" : "text-ink")}>
-                  {variance > 0 ? "+" : ""}{variance}
+                <div className={cn("mt-0.5 font-money text-[15px] font-bold", varianceHidden ? "text-ink-muted" : variance < 0 ? "text-err" : variance > 0 ? "text-synced" : "text-ink")}>
+                  {varianceHidden ? "Hidden" : `${variance > 0 ? "+" : ""}${variance}`}
                 </div>
               </div>
             </div>
@@ -128,6 +136,7 @@ export function StockTakesListV2() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const { actorNameOf } = useStaffLookup();
 
   const status = (params.get("status") ?? "all") as StatusTab;
   const view = (params.get("view") ?? "table") as "table" | "cards";
@@ -248,6 +257,17 @@ export function StockTakesListV2() {
       ),
     },
     {
+      key: "assignee",
+      label: "Assignee",
+      width: "140px",
+      getValue: (r) => (r.assignee_staff_id ? actorNameOf(r.assignee_staff_id, "") : ""),
+      render: (r) => (
+        <span className="truncate text-[12.5px] text-ink-secondary">
+          {r.assignee_staff_id ? actorNameOf(r.assignee_staff_id) : "—"}
+        </span>
+      ),
+    },
+    {
       key: "lines",
       label: "Lines",
       width: "80px",
@@ -262,6 +282,10 @@ export function StockTakesListV2() {
       align: "right",
       getValue: (r) => r.variance_total ?? 0,
       render: (r) => {
+        /* null on a blind OPEN take for non-supervisors (server-stripped). */
+        if (r.variance_total == null && r.blind === true) {
+          return <span className="text-[12px] text-ink-muted">Hidden</span>;
+        }
         const v = Number(r.variance_total ?? 0);
         return (
           <span className={cn("font-money text-[13px] font-semibold", v < 0 ? "text-err" : v > 0 ? "text-synced" : "text-ink-muted")}>
