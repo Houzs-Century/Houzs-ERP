@@ -349,6 +349,19 @@ export async function applySoAmendment(
     if (change === 'ADD') {
       const itemCode = String(diff.new_item_code ?? '').trim();
       if (!itemCode) throw new Error('applySoAmendment: ADD line has no new_item_code');
+      /* Edge #4 at the insert choke point (owner 2026-08-08: every SO line is
+         a catalog SKU). The submit route already refused unknown codes; this
+         re-check covers amendments raised before that gate existed and any
+         non-route writer. Company-scoped to the SO's own company — code is
+         only unique per company. */
+      {
+        let q = sb.from('mfg_products').select('code').eq('code', itemCode);
+        if (soCompanyId != null) q = q.eq('company_id', soCompanyId);
+        const { data: prodRows } = await q.limit(1);
+        if (!prodRows || prodRows.length === 0) {
+          throw new Error(`applySoAmendment: ADD line item code is not in the product catalog: ${itemCode}`);
+        }
+      }
       const variants = (diff.new_variants ?? null) as Record<string, unknown> | null;
       const itemGroup = String((variants?.itemGroup ?? diff.old_snapshot?.item_group ?? 'others')).toLowerCase();
       const qty = Math.max(1, Number(diff.new_qty ?? 1));

@@ -274,6 +274,14 @@ const SoLineCardInner = ({
     enabled: showPicker && trimmedSearch.length >= 2,
   });
   const candidates = productsQuery.data ?? [];
+  /* Owner 2026-08-08 ("square pillow", HC-SO-2607-013) — typed text the
+     catalog does not match must read as an ERROR, not sit quietly in the box:
+     the operator once read the silence as "saved". True only when the line has
+     no committed product, the search term is a real query (>=2 chars), and the
+     server answered it with zero candidates. */
+  const unmatchedFreeText =
+    !draft.itemCode && trimmedSearch.length >= 2 &&
+    productsQuery.isSuccess && !productsQuery.isFetching && candidates.length === 0;
 
   /* Effective category (owner 2026-07-13) — draft/backdoor lines (scan-OCR,
      hatch) can persist a sofa/bedframe SKU under a GENERIC itemGroup ('others'),
@@ -668,18 +676,31 @@ const SoLineCardInner = ({
               </div>
             </button>
           ) : (
-            <input
-              className={styles.input}
-              /* Scan-Order no-match (Task #73) — surface the slip's rawText as
-                 the placeholder so the operator sees what was written while
-                 picking a real SKU, without it being committed as a value. */
-              placeholder={searchHint ? `Slip: ${searchHint} — pick a SKU` : 'Click to pick or type to filter…'}
-              value={search}
-              disabled={!isEditing}
-              onFocus={() => setShowPicker(true)}
-              onBlur={() => setTimeout(() => setShowPicker(false), 150)}
-              onChange={(e) => { setSearch(e.target.value); setShowPicker(true); }}
-            />
+            <>
+              <input
+                className={styles.input}
+                /* Scan-Order no-match (Task #73) — surface the slip's rawText as
+                   the placeholder so the operator sees what was written while
+                   picking a real SKU, without it being committed as a value. */
+                placeholder={searchHint ? `Slip: ${searchHint} — pick a SKU` : 'Click to pick or type to filter…'}
+                value={search}
+                disabled={!isEditing}
+                /* Owner 2026-08-08 ("square pillow") — typed text that matches
+                   NO catalog product can never become a line; the red ring +
+                   the note below say so while KEEPING the text for correction.
+                   The parent save guards refuse the line either way — this is
+                   the inline signal, not the gate. */
+                style={unmatchedFreeText ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
+                onFocus={() => setShowPicker(true)}
+                onBlur={() => setTimeout(() => setShowPicker(false), 150)}
+                onChange={(e) => { setSearch(e.target.value); setShowPicker(true); }}
+              />
+              {unmatchedFreeText && !showPicker && (
+                <div style={{ fontSize: 10.5, lineHeight: 1.35, color: 'var(--c-festive-b, #B8331F)', marginTop: 2 }}>
+                  Not in the catalog — pick a product from the list; free-typed lines cannot be saved.
+                </div>
+              )}
+            </>
           )}
           {showPicker && isEditing && menuPos && createPortal(
             /* Portal to body + position:fixed so the dropdown escapes the

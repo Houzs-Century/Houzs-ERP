@@ -325,6 +325,64 @@ RULE, not the storage. Net effect: the proceed paths LOOSENED by one condition
 (email), the processing-date path TIGHTENED by four (name / address / postcode /
 delivery date), and the threshold became per-company.
 
+### Every line is a catalog SKU — free text never saves (owner rule 2026-08-08)
+
+> Owner, verbatim, on HC-SO-2607-013's line "Square pillow Col: BO315-22":
+> *"为什么会有这样的 sku square pillow 你可以允许 freetext 的吗!?"*
+
+**The rule.** Every SO line names a REAL catalog SKU (`scm.mfg_products`,
+company-scoped — see "Looking a product up by CODE" below). Typed text that
+matches nothing can never become a row. Enforced at TWO layers:
+
+**Insert layer** (every path that writes `mfg_sales_order_items` rows —
+create / add-line / PATCH code change / tbc-swaps / amendment submit+apply;
+the free-gift and delivery-fee writers already draw their codes FROM the
+catalog; the 2990 mirror is a verbatim historical copy and is exempt):
+
+| shape | verdict |
+|---|---|
+| non-blank code not in the company catalog | `409 unknown_item_code` (`validateItemCodes`) |
+| non-blank code, INACTIVE, on a NEW pick (create / add-line / a PATCH that CHANGES the code / amendment ADD) | `409 unknown_item_code` with `inactive` — the picker only offers ACTIVE, so an INACTIVE arrival did not come from the UI. An UNCHANGED code on a line edit stays existence-only, so discontinued-SKU history remains editable |
+| blank code + typed description (the square-pillow shape) | `409 so_free_text_line` — refused on EVERY create, draft or not |
+| blank code + blank description | the scan pipeline's "Pick a product…" placeholder — allowed on DRAFT creates ONLY; the confirm gate below stops it there |
+
+**Confirm gate** (`lib/so-confirm-gate.ts`) — runs on DRAFT→CONFIRMED
+(`PATCH /:docNo/status`) and on every create that lands directly CONFIRMED
+(`asDraft !== true`, i.e. desktop New SO / mobile wizard / POS handover /
+from-products). Aggregated `validation_failed` + `problems[]` (HTTP 422, the
+same contract as the Processing-Date gates), all reasons at once:
+
+| problem | rule |
+|---|---|
+| `so_line_no_product` / `so_line_not_catalog` | every non-cancelled line resolves in the SO's own company catalog |
+| `salesperson_required` | `salesperson_id` OR the legacy `agent` text set (HC-SO-2607-008 confirmed as "Unassigned") |
+| `venue_required` | `venue` text OR `venue_id` set (owner: *"venue is compulsory的"*). No venue-less order class exists in code — venue-binding's "empty is honest" rule governs AUTO-resolution only; when it resolves nothing, confirm demands a human pick |
+| `variants_incomplete` | every goods line's required axes via `missingConfirmVariantAxes` (shared, both frontends + backend): sofa Seat Height + Fabrics, bedframe Divan/Leg/Gap/Fabrics. **Colour-KIV satisfies the fabric axis** — KIV blocks the Processing Date (2026-07-24 rule), never confirm. Mattress / accessory / service / others carry no axes |
+
+Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
+what changed is that they can no longer BECOME orders until resolved.
+ON_HOLD-resume and reopen re-enter CONFIRMED without re-gating (legacy orders
+must not strand).
+
+**Frontend twins (change together).** Desktop `SoLineCard` marks unmatched
+typed text with a red ring + "Not in the catalog" note (the text stays for
+correction; the parent save guards refuse the line). `SalesOrderNew` +
+`MobileNewSO` pre-check variants (confirm rule, KIV-exempt) / venue /
+salesperson on Create — Save-as-draft skips all three. The mobile headless
+scan-draft path (`createDraftFromPrefill` → `buildItemBody`) sends an
+UNPICKED line's description as '' (the desktop clean-placeholder rule,
+2026-07-13) — it used to send the raw slip text, which is exactly how the
+square pillow saved. `MobileSODetail`'s Create Sales Order and the desktop
+DRAFT banner / list Confirm surface the refusal list via the existing
+`humanApiError` problems rendering.
+
+**Existing damage** (pre-guard rows): Actions → **SO non-catalog lines check
+(read-only)** (`backend/scripts/check-so-noncatalog-lines.mjs`) lists every
+non-catalog line, confirmed order without salesperson / venue, and confirmed
+line with incomplete variants — with a TEST? hint for the "Jalan Test" batch.
+Deliberately NO auto-repair: each row needs a human to pick the right SKU /
+salesperson / venue.
+
 ### Selling-price authoring — who may set the line price
 
 The unit selling price is **operator-authored** and the trust gate is by SESSION,

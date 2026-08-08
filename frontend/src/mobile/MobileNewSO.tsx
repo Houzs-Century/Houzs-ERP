@@ -74,7 +74,7 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
-import { missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
+import { missingVariantAxes, missingConfirmVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
 import { isColourKiv } from "../vendor/shared/variant-summary";
 import { lineIdentity } from "@2990s/shared";
 import { normalizePhone } from "../vendor/shared/phone";
@@ -384,7 +384,15 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
   return {
     itemCode: l.itemCode,
     itemGroup: l.itemGroup || "others",
-    description: l.name.trim(),
+    /* Owner 2026-08-08 ("square pillow", HC-SO-2607-013) — an UNPICKED line
+       must NOT borrow free text (the raw slip transcription) as its
+       description; the backend now refuses that shape outright. A picked line
+       carries its SKU name; an unpicked one goes out as the CLEAN "Pick a
+       product…" placeholder (desktop scan rule, owner 2026-07-13 — the slip
+       photo on the SO detail is the operator's reference). Interactive saves
+       never reach here unpicked (the save() guard blocks them); this is the
+       headless scan-draft path. */
+    description: l.itemCode.trim() ? l.name.trim() : "",
     qty: num(l.qty) || 1,
     unitPriceCenti: toCenti(l.price),
     lineDeliveryDate: l.ddate || null,
@@ -1285,10 +1293,6 @@ export function MobileNewSO({
 
   const namedLines = useMemo(() => lines.filter((l) => l.name.trim() || l.itemCode.trim()), [lines]);
   const unpickedLines = useMemo(() => namedLines.filter((l) => !l.itemCode.trim()), [namedLines]);
-  const linesMissingVariants = useMemo(
-    () => namedLines.filter((l) => l.itemCode.trim() && missingVariantAxes(l.itemGroup, l.variants).length > 0),
-    [namedLines],
-  );
 
   /* Per-category variants captured from the FIRST line of that category that
      has any variants set. Mirrors SalesOrderNew.inheritVariantsByCategory. */
@@ -1710,16 +1714,41 @@ export function MobileNewSO({
       setError(SOFA_MIX_MESSAGE);
       return;
     }
-    /* Owner 2026-07-14 — the mandatory variants are enforced ONLY when a
-       Processing Date is being set (Boolean(procOut) === !asDraft && procDate),
-       matching the backend gate (mfg-sales-orders requires them `if procDate`)
-       + the desktop Save gates. A no-date confirm, or a draft (procDate stripped
-       to procOut ""), still saves with variant gaps — a scanned sofa the
-       operator hasn't finished isn't blocked. */
-    if (!asDraft && Boolean(procDate) && linesMissingVariants.length > 0) {
-      const l = linesMissingVariants[0];
-      const miss = missingVariantAxes(l.itemGroup, l.variants).map((a) => a.label).join(", ");
-      setError(`Complete the required options (${miss}) on "${l.name || l.itemCode}".`);
+    /* Variant completeness (owner 2026-08-08, HC-SO-2607-008) — CREATING a
+       CONFIRMED order requires every line's category-required axes, date or
+       no date. With a Processing Date the full rule applies
+       (missingVariantAxes — colour-KIV blocks a date, owner 2026-07-24);
+       a date-less confirmed CREATE applies the confirm rule
+       (missingConfirmVariantAxes — colour-KIV satisfies the fabric axis).
+       Drafts still save with gaps, and the EDIT sheet keeps its original
+       procDate-only rule — editing an existing order (e.g. fixing a remark)
+       must never be hostage to gaps the edit didn't touch; the confirm gate
+       on the status route owns those at Create Sales Order time. */
+    if (!asDraft && (procDate || !isEdit)) {
+      const missOf = (l: LineItem) =>
+        procDate
+          ? missingVariantAxes(l.itemGroup, l.variants)
+          : missingConfirmVariantAxes(l.itemGroup, l.variants);
+      const offender = namedLines.find((l) => missOf(l).length > 0);
+      if (offender) {
+        const miss = missOf(offender).map((a) => a.label).join(", ");
+        setError(`Complete the required options (${miss}) on "${offender.name || offender.itemCode}".`);
+        return;
+      }
+    }
+    /* Confirm gates (owner 2026-08-08) — a NEW confirmed order needs a venue
+       and a salesperson; drafts and edits are untouched (the DRAFT→CONFIRMED
+       status transition has its own server gate). The backend enforces both
+       (validation_failed); these pre-checks just say it in one sentence before
+       the round-trip. Salesperson: a caller who CANNOT re-pick is stamped
+       server-side as themselves, so only an attribute_other caller with the
+       picker left empty is blocked here. */
+    if (!asDraft && !isEdit && !outgoingVenueName && !outgoingVenueId) {
+      setError("Pick a venue before confirming this order (drafts can be saved without one).");
+      return;
+    }
+    if (!asDraft && !isEdit && canChangeSalesperson && !outgoingSalespersonId && !selfStaffMatch) {
+      setError("Pick a salesperson before confirming this order (drafts can be saved without one).");
       return;
     }
     const procOut = asDraft ? "" : procDate;

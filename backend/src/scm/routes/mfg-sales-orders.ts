@@ -168,7 +168,11 @@ import { canonicalizeVariants } from '../shared/so-variant-rule';
    different gift set. */
 import { reconcileFreeGiftLinesForSo } from '../lib/free-gift-reconcile';
 import { claimPwpForSingleLine, rollbackSinglePwpClaim } from '../lib/pwp-claim-single';
-import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
+import {
+  validateItemCodes, unknownItemCodeResponse,
+  findFreeTextSoLines, freeTextSoLineResponse,
+} from '../lib/validate-item-codes';
+import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
 import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
@@ -3181,10 +3185,22 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const sb = c.get('supabase'); const user = c.get('user');
 
   // Edge #4 — itemCode catalog guard. Reject typos / stale codes before any
-  // pricing / variant / inventory work runs.
+  // pricing / variant / inventory work runs. requireActive: a create is a NEW
+  // pick, and the picker only offers ACTIVE products (owner 2026-08-08).
   if (items.length > 0) {
-    const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), companyId);
-    if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
+    const codeCheck = await validateItemCodes(
+      sb, items.map((it) => it.itemCode as string | null | undefined), companyId,
+      { requireActive: true },
+    );
+    if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
+    /* Owner 2026-08-08 (HC-SO-2607-013 "square pillow") — a BLANK code with
+       typed text is free text wearing a line's clothes; it must never insert,
+       DRAFT or not. A blank code with a blank description is the scan
+       pipeline's deliberate "Pick a product…" placeholder and is allowed on
+       DRAFT creates ONLY — a direct-to-CONFIRMED create refuses it below via
+       the confirm gate. */
+    const freeText = findFreeTextSoLines(items);
+    if (freeText.length > 0) return c.json(freeTextSoLineResponse(freeText), 409);
   }
 
   /* POS line quantity (Loo 2026-06-12) — see invalidQtyResponse. Runs before
@@ -3482,6 +3498,32 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(venueIdToStamp)
       ? venueIdToStamp
       : null;
+
+  /* ── Confirm gate on the DIRECT-TO-CONFIRMED create (owner 2026-08-08) ────
+     Every create that is not asDraft lands CONFIRMED (PR #154), so the same
+     gates the DRAFT→CONFIRMED status transition enforces must hold HERE too:
+     a salesperson, a venue, and every line a real catalog SKU with its
+     required variant axes. Runs AFTER the venue / salesperson resolution
+     above (so the caller's home-venue / PMS autofill gets its chance to
+     satisfy the gate) and BEFORE any PWP claim (a reject must burn nothing).
+     Unknown codes were already refused above, so only blank-code placeholder
+     lines can trip the catalog half here. Drafts (asDraft: true — the scan
+     pipeline, Save as draft) skip this entirely and stay freely saveable. */
+  if ((body as { asDraft?: unknown }).asDraft !== true) {
+    const confirmProblems = collectSoConfirmProblems({
+      salespersonId: salespersonIdToStamp,
+      agent: (body.agent as string | null | undefined) ?? null,
+      venue: resolvedVenueName,
+      venueId: venueIdToStamp,
+      lines: items.map((it) => ({
+        itemCode: it.itemCode as string | null | undefined,
+        group: (it.itemGroup as string | null | undefined) ?? null,
+        variants: (it.variants as Record<string, unknown> | null) ?? null,
+        description: (it.description as string | null | undefined) ?? null,
+      })),
+    });
+    if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
+  }
 
   // Compute totals + category breakdown
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, total = 0, totalCost = 0;
@@ -5576,6 +5618,20 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
   if (fromNorm === toStatus) {
     return c.json({ salesOrder: prev, version: currentVersion, unchanged: true });
   }
+  /* ── Confirm gate (owner 2026-08-08) — a DRAFT may only become CONFIRMED
+     with a salesperson, a venue, and every non-cancelled line a REAL catalog
+     SKU carrying its required variant axes (colour-KIV satisfies the fabric
+     axis — KIV blocks the Processing Date, not confirm). This is where a
+     scan draft's "Pick a product…" placeholder line, and legacy free-text
+     lines like HC-SO-2607-013's "Square pillow", stop: the review screen's
+     Create Sales Order button gets the full aggregated problem list instead
+     of silently passing through. DRAFT→CONFIRMED only — a resume from
+     ON_HOLD or a reopen re-enters CONFIRMED on an order that already passed
+     (or predates) the gate, and re-gating those would strand legacy orders. */
+  if (fromNorm === 'DRAFT' && toStatus === 'CONFIRMED') {
+    const confirmProblems = await soConfirmProblemsForDoc(sb, docNo);
+    if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
+  }
   const patch: Record<string, unknown> = {
     status: toStatus,
     version: currentVersion + 1,
@@ -7227,12 +7283,16 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
+  /* Trimmed — a whitespace-only code used to pass this truthy check and then
+     slide through validateItemCodes' skip-as-no-op (owner 2026-08-08: every
+     line is a catalog SKU, so an add-line ALWAYS names one). */
+  if (!String(it.itemCode ?? '').trim()) return c.json({ error: 'item_code_required' }, 400);
 
-  /* Edge #4 — itemCode catalog guard. */
+  /* Edge #4 — itemCode catalog guard. requireActive: an add-line is a NEW
+     pick, and the picker only offers ACTIVE products. */
   {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
-    if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c), { requireActive: true });
+    if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
   }
 
   /* Tier 2 downstream-lock — line-add is blocked once a DO / SI exists. */
@@ -7788,10 +7848,17 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  /* Edge #4 — itemCode catalog guard (only when caller is changing it). */
+  /* Edge #4 — itemCode catalog guard (only when caller is changing it).
+     A PATCH may never BLANK the code (owner 2026-08-08: every line is a
+     catalog SKU — the '' the skip-as-no-op used to wave through would turn a
+     real line into a product-less one). Existence-only here: line edits
+     resend the unchanged code, and a legacy line whose product went INACTIVE
+     must stay editable — the ACTIVE requirement applies below, only when the
+     code actually CHANGES (a new pick). */
   if (it.itemCode !== undefined) {
+    if (!String(it.itemCode ?? '').trim()) return c.json({ error: 'item_code_required' }, 400);
     const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
-    if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
+    if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
   }
 
   /* Tier 2 downstream-lock — line-edit is blocked once a DO / SI exists. */
@@ -7840,6 +7907,14 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     itemId,
   ).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
+  /* ACTIVE gate on a CHANGED code only (owner 2026-08-08) — a product swap is
+     a NEW pick, so the replacement must be ACTIVE like every picker offer;
+     re-sending the line's unchanged code (every editor does, on any edit)
+     stays existence-only so discontinued-SKU history remains editable. */
+  if (it.itemCode !== undefined && String(it.itemCode).trim() !== String(prev.item_code ?? '')) {
+    const activeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c), { requireActive: true });
+    if (!activeCheck.ok) return c.json(unknownItemCodeResponse(activeCheck.unknown, activeCheck.inactive), 409);
+  }
   /* POS line quantity (Loo 2026-06-12) — same 422 gate as POST /. */
   const badQty = invalidQtyResponse(it.qty, prev.item_code);
   if (badQty) return c.json(badQty, 422);
@@ -11272,6 +11347,21 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       error: 'amendment_empty',
       reason: 'There are no changes to request — edit a line, a date or the delivery location first, then submit the amendment.',
     }, 400);
+  }
+
+  /* Edge #4, amendment flavour (owner 2026-08-08: every line is a catalog
+     SKU) — any requested new_item_code (an ADD line, or an EDIT that swaps
+     the product) must be a real ACTIVE catalog SKU in this company. Refused
+     at SUBMIT so the requester fixes it, not the approver; applySoAmendment
+     re-checks at apply time as the insert choke point. */
+  {
+    const requestedCodes = submittedLines
+      .map((l) => (typeof l.newItemCode === 'string' ? l.newItemCode.trim() : ''))
+      .filter(Boolean);
+    if (requestedCodes.length > 0) {
+      const codeCheck = await validateItemCodes(sb, requestedCodes, activeCompanyId(c), { requireActive: true });
+      if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
+    }
   }
 
   /* Date sanity on a requested schedule change (mirrors the create/edit form's
