@@ -33,6 +33,7 @@ import {
   resolveDoHeaderSources,
   resolveDoLineSourcePosImpl,
   resolveDoSourcePosForDosImpl,
+  resolveDoSourceSos,
   soLineShippedSourcePosImpl,
 } from '../lib/source-po-trace';
 export { soLineShippedSources, resolveDoSources } from '../lib/source-po-trace';
@@ -2765,6 +2766,13 @@ deliveryOrdersMfg.get('/', async (c) => {
   const sourceTraceByDo = rows.length > 0
     ? await resolveDoHeaderSources(sb, rows.map((r) => r.id))
     : new Map<string, { pos: string[]; adjQty: number }>();
+  /* The SOs this DO's LINES draw on — see resolveDoSourceSos. so_doc_no is a
+     header LABEL (from-sos copies the first pick's SO), so a merged DO shows one
+     source and hides the rest, and two DOs can appear to ship one Sales Order
+     while sharing no quantity at all. */
+  const sourceSosByDo = rows.length > 0
+    ? await resolveDoSourceSos(sb, rows.map((r) => r.id))
+    : new Map<string, string[]>();
   /* Finance gate — cost / margin / per-category subtotals reach ONLY a
      finance-viewer; stripped from every row otherwise. */
   const showFinance = canViewScmFinance(c);
@@ -2775,6 +2783,7 @@ deliveryOrdersMfg.get('/', async (c) => {
       lifecycle_state: lifecycleByDo.get(r.id) ?? 'shipped',
       so_internal_expected_dd: soProcByDoc.get((r.so_doc_no as string | null) ?? '') ?? null,
       source_pos: sourceTraceByDo.get(r.id)?.pos ?? [],
+      source_sos: sourceSosByDo.get(r.id) ?? [],
       source_adj: (sourceTraceByDo.get(r.id)?.adjQty ?? 0) > 0,
       // Transfer-to (display-only, audit R8): SI(s) invoiced / DR(s) returned.
       invoiced_si_nos: sortedNos(invoicedSiByDo.get(r.id)),

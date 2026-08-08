@@ -248,6 +248,34 @@ export type DataGridProps<T> = {
    * rows render exactly as passed — byte-identical behaviour.
    */
   defaultSort?: (a: T, b: T) => number;
+  /**
+   * RENDER-TIME hide overlay (Option B map narrowing, owner 2026-08-08). Keys
+   * listed here are hidden IN ADDITION to the user's own hidden set, without
+   * ever writing the persisted layout — drop the prop and the user's own
+   * column prefs return exactly as saved. Used by the delivery boards to
+   * auto-narrow to the essential columns while the side map is open. The
+   * Columns drawer keeps showing the user's REAL prefs (the overlay is a
+   * temporary state, not a choice of theirs to persist).
+   */
+  overlayHidden?: readonly string[];
+  /**
+   * Fired on every EXPLICIT column-visibility choice the user makes — the
+   * Columns drawer's toggle / Show all / Reset, the header context menu's
+   * Hide/Show column, and applying a saved layout. The Option-B map pages
+   * listen so their compact-columns overlay yields the moment the user picks
+   * columns by hand (owner bug 2026-08-08: the overlay must be a DEFAULT,
+   * never a lock — "已经添加了 column 可是它却没有出来"). Reorder / pin /
+   * width gestures do NOT fire it: they never conflict with a hide overlay.
+   */
+  onUserAdjustColumns?: () => void;
+  /**
+   * Imperative scroll-to-row (map pin → board linkage, owner 2026-08-08).
+   * Bump `nonce` with the target row's key: the grid selects (highlights) the
+   * row and scrolls it into view — via the virtualizer when windowed, via
+   * scrollIntoView otherwise. Same pin clicked twice re-scrolls (the nonce is
+   * the trigger, the key just names the row).
+   */
+  scrollToRow?: { key: string; nonce: number } | null;
 };
 
 type Layout = DataGridLayout;
@@ -331,6 +359,9 @@ function DataGridInner<T>({
   hideSearch = false,
   loadedSearchLimit,
   defaultSort,
+  overlayHidden,
+  onUserAdjustColumns,
+  scrollToRow,
 }: DataGridProps<T>) {
   /* HOUZS-style inline expansion (PR so-list-houzs-port). Tracks the set of
      expanded row ids; rendering inserts a colSpan sub-<tr> directly under
@@ -712,10 +743,12 @@ function DataGridInner<T>({
      clears hidden + order + widths (preserving groupBy + sort so search
      state survives). toggleColumn flips a column's presence in `hidden`. */
   const resetColumns = useCallback(() => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({ ...l, hidden: [], order: [], widths: {} }));
     setColumnsMenuOpen(false);
-  }, [setLayout]);
+  }, [setLayout, onUserAdjustColumns]);
   const toggleColumn = useCallback((colKey: string) => {
+    onUserAdjustColumns?.();
     setLayout((l) => {
       /* If we're still on the pristine-defaults overlay (no explicit
          choices yet) materialize the current set of hidden keys before
@@ -730,7 +763,7 @@ function DataGridInner<T>({
         : [...baseHidden, colKey];
       return { ...l, hidden };
     });
-  }, [columns, setLayout]);
+  }, [columns, setLayout, onUserAdjustColumns]);
   /* "Show all" — every column visible. Materializes the order when the layout
      is still pristine: an empty order + empty hidden would put the layout back
      on the defaults overlay and instantly re-hide every defaultHidden column. */
@@ -782,6 +815,7 @@ function DataGridInner<T>({
       ? layoutStore.myLayouts[serverTableKey]?.find((l) => l.id === Number(rawId))?.layout
       : layoutStore.defaults[String(Number(rawId))]?.[serverTableKey];
     if (!saved) return;
+    onUserAdjustColumns?.();
     setLayout((l) => ({
       order: saved.order,
       hidden: saved.hidden,
@@ -791,16 +825,17 @@ function DataGridInner<T>({
       // Picking a layout must not re-sort the list under the operator.
       sort: l.sort,
     }));
-  }, [layoutStore, serverTableKey, setLayout]);
+  }, [layoutStore, serverTableKey, setLayout, onUserAdjustColumns]);
 
 
   const showAllColumns = useCallback(() => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({
       ...l,
       hidden: [],
       order: l.order.length ? l.order : columns.map((c) => c.key),
     }));
-  }, [columns, setLayout]);
+  }, [columns, setLayout, onUserAdjustColumns]);
 
   // ── Resolve visible/ordered columns ───────────────────────────────
   // If `expandable` is set, prepend a synthetic 32px chevron column that
@@ -1019,8 +1054,11 @@ function DataGridInner<T>({
 
   const visibleColumns = useMemo(() => {
     const byKey = new Map(columns.map((c) => [c.key, c]));
+    /* Render-time overlay (map narrowing) — hides ON TOP of the user's set,
+       never written to the layout, so closing the map restores their prefs. */
+    const overlay = overlayHidden && overlayHidden.length > 0 ? new Set(overlayHidden) : null;
     const base = resolvedOrder
-      .filter((k) => !effectiveHidden.has(k))
+      .filter((k) => !effectiveHidden.has(k) && !(overlay?.has(k) ?? false))
       .map((k) => byKey.get(k)!)
       .filter(Boolean);
     const synthetic: DataGridColumn<T>[] = [];
@@ -1041,7 +1079,7 @@ function DataGridInner<T>({
       });
     }
     return synthetic.length ? [...synthetic, ...base] : base;
-  }, [columns, resolvedOrder, effectiveHidden, expandable, selectable]);
+  }, [columns, resolvedOrder, effectiveHidden, expandable, selectable, overlayHidden]);
 
   // ── Filtered + sorted + grouped rows ──────────────────────────────
   /* Precompute one lowercased search blob per row (once per rows/columns
@@ -1296,10 +1334,14 @@ function DataGridInner<T>({
   };
 
   // ── Header context menu actions ──────────────────────────────────
-  const hideColumn = (key: string) =>
+  const hideColumn = (key: string) => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({ ...l, hidden: l.hidden.includes(key) ? l.hidden : [...l.hidden, key] }));
-  const showColumn = (key: string) =>
+  };
+  const showColumn = (key: string) => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({ ...l, hidden: l.hidden.filter((k) => k !== key) }));
+  };
   const pinLeft = (key: string) =>
     setLayout((l) => {
       // pin = move to front of order
@@ -1449,6 +1491,27 @@ function DataGridInner<T>({
     ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1]!.end
     : 0;
 
+  /* Map pin → board row linkage (Option B, owner 2026-08-08): the parent bumps
+     `scrollToRow.nonce` with a row key; the grid selects (the existing
+     single-row highlight) and scrolls the row into view. Virtualized lists go
+     through the virtualizer (the row may not be mounted); plain lists find the
+     <tr> by its data-rowkey. A key not in the current view (filtered out /
+     other tab) just highlights nothing — never a crash. */
+  useEffect(() => {
+    const target = scrollToRow;
+    if (!target || !target.key) return;
+    setSelectedKey(target.key);
+    if (canVirtualize) {
+      const idx = renderList.findIndex((it) => it.kind === 'row' && rowKey(it.row) === target.key);
+      if (idx >= 0) rowVirtualizer.scrollToIndex(idx, { align: 'center' });
+    } else {
+      const el = tbodyRef.current?.querySelector(`tr[data-rowkey="${target.key.replace(/"/g, '\\"')}"]`);
+      (el as HTMLElement | null)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    // The nonce is the trigger — the same pin clicked twice must re-scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollToRow?.nonce]);
+
   /* One grid row (group banner OR data row + optional expansion). Extracted so
      the normal path and the virtualized window render through the same code. */
   const renderGridRow = (item: Render, idx: number) => {
@@ -1473,6 +1536,8 @@ function DataGridInner<T>({
           /* Marks a plain data row as the row-height measuring sample — group
              banners and the virtual spacers are deliberately not tagged. */
           data-vrow=""
+          /* The scroll-to-row target (map pin → board linkage). */
+          data-rowkey={key}
           className={`${styles.tr} ${selectedKey === key ? styles.trSelected : ''}`}
           style={{ ...(rowStyle?.(row)), ...((selectable || onRowClick || expandKey != null) ? { cursor: 'pointer' } : {}) }}
           /* Row-click = multi-select (Commander rule: "点行=multi-select"); L2

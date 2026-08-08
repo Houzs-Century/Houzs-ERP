@@ -150,6 +150,10 @@ export type PlanningOrder = {
   trip_id?: string | null;
   trip_no?: string | null;
   trip_date?: string | null;
+  /* Time-of-run keys (2026-08-08) — the stop's sequence and ETA offset on its
+     live trip; null off-trip. The arrangement comparator's TIME key. */
+  trip_stop_no?: number | null;
+  trip_eta_offset_s?: number | null;
 };
 
 /* ── Arrangement-pipeline vocabulary (mirrors backend lib/arrangement-stage.ts).
@@ -738,6 +742,39 @@ export function useScheduleDelivery() {
       });
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+  });
+}
+
+/* ── DO crew assignment (Last Mile "Propose crew", owner 2026-08-08) ──────────
+   Writes the FULL crew record — up to 2 drivers + 2 helpers + 1 lorry — via the
+   long-standing PUT /delivery-orders-mfg/:id/crew (mig 0053's
+   scm.delivery_order_crew UPSERT; this is its first UI caller). That row is the
+   snapshot THE BOARD's crew columns display (driver 1/2, helper 1/2, IC,
+   contact, plate), and the handler also syncs the DO header's primary-driver
+   quick-fields and records the audit trail. It is the ONLY store with a second
+   DRIVER seat (scm.trips has one driver + two helpers by schema), which is why
+   no migration accompanies the owner's two-driver rule: the two-driver-capable
+   record already exists and every display reads it — adding trips.driver_2_id
+   would be a second home for the same fact. */
+export type DoCrewVars = {
+  doId: string;
+  driver1Id?: string | null;
+  driver2Id?: string | null;
+  helper1Id?: string | null;
+  helper2Id?: string | null;
+  lorryId?: string | null;
+};
+export function useAssignDoCrew() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ doId, ...body }: DoCrewVars) =>
+      authedFetch<{ ok: true }>(`/delivery-orders-mfg/${doId}/crew`, {
+        method: 'PUT', body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['delivery-planning'] });
+      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
+    },
   });
 }
 

@@ -789,3 +789,69 @@ export async function tracePoDeliveredLedger(
   } catch { /* movements shape differs — consumption path still contributes */ }
   return { qtyByPoDo, qtyByPoDoCode, bucketsByPo, doIds };
 }
+
+/* The SOs a Delivery Order's LINES actually draw on — not the label on its
+ * header.
+ *
+ * WHY. Owner, 2026-08-04, looking at two DOs both showing 2990-SO-2606-019 in
+ * "From SO": "为什么一张SO可以开两张DO？？". The read-only split check answered it:
+ * that SO's six lines are covered exactly once, by ONE delivery order. The other
+ * DO merely DISPLAYS the number.
+ *
+ * `delivery_orders.so_doc_no` is a header label, and `from-sos` sets it to the
+ * FIRST pick's SO — so a DO merging lines from several SOs shows one of them and
+ * hides the rest. Two DOs then appear to ship the same Sales Order when neither
+ * line-level quantity overlaps at all. The screen looks like double-shipping
+ * precisely when the data is right, which is the worst way for a screen to be
+ * wrong: it invites a hunt for a bug that is not there.
+ *
+ * This is the same correction `resolveDoHeaderSources` already applied to the
+ * Source PO column — "Header ≡ ∪(lines) by construction". One idea, applied to
+ * the other anchor.
+ *
+ * Ad-hoc lines carry no so_item_id and contribute nothing; a DO made only of
+ * them returns an empty list, and the caller falls back to the header label
+ * rather than showing a blank cell.
+ */
+export async function resolveDoSourceSos(
+  sb: any,
+  doIds: Array<string | null | undefined>,
+): Promise<Map<string, string[]>> {
+  const ids = [...new Set(doIds.filter((x): x is string => Boolean(x)))];
+  const out = new Map<string, string[]>();
+  if (ids.length === 0) return out;
+  try {
+    const { data: lines } = await sb
+      .from('delivery_order_items')
+      .select('delivery_order_id, so_item_id')
+      .in('delivery_order_id', ids);
+    const rows = (lines ?? []) as Array<{ delivery_order_id: string; so_item_id: string | null }>;
+    const soItemIds = [...new Set(rows.map((r) => r.so_item_id).filter((x): x is string => Boolean(x)))];
+    if (soItemIds.length === 0) return out;
+
+    const { data: soItems } = await sb
+      .from('mfg_sales_order_items')
+      .select('id, doc_no')
+      .in('id', soItemIds);
+    const docByItem = new Map<string, string>(
+      ((soItems ?? []) as Array<{ id: string; doc_no: string | null }>)
+        .filter((r) => r.doc_no)
+        .map((r) => [r.id, r.doc_no as string]),
+    );
+
+    const byDo = new Map<string, Set<string>>();
+    for (const r of rows) {
+      if (!r.so_item_id) continue;
+      const doc = docByItem.get(r.so_item_id);
+      if (!doc) continue;
+      if (!byDo.has(r.delivery_order_id)) byDo.set(r.delivery_order_id, new Set());
+      byDo.get(r.delivery_order_id)!.add(doc);
+    }
+    for (const [doId, set] of byDo) out.set(doId, [...set].sort());
+    return out;
+  } catch {
+    /* Best-effort, exactly like the PO trace beside it: a failed lookup must
+       leave the list rendering its header label, never break the page. */
+    return out;
+  }
+}
