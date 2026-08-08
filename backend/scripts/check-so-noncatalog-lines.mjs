@@ -18,6 +18,12 @@
 //      axes (the confirm rule: colour-KIV satisfies the fabric axis — KIV
 //      blocks the Processing Date, not confirm; sofa Leg Height is not
 //      required — it defaults).
+//   E. DRAFT orders carrying a Processing Date (owner addendum, 2990-SO-2608-
+//      007: a draft has not started processing — the scan job used to pin
+//      internal_expected_dd to the scan day; the fix stops the default, this
+//      lists the rows it already stamped). The processing-date LOCK was
+//      verified to ignore DRAFTs on both ends (soProcessingLocked /
+//      procLockActive), so these rows mislead, they do not lock.
 //
 // Much of the visible damage is the test batch (addresses like "Jalan Test
 // 4") — every row carries a TEST? hint so real orders stand out.
@@ -107,6 +113,8 @@ try {
            NULLIF(TRIM(COALESCE(so.agent, '')), '')  AS agent,
            NULLIF(TRIM(COALESCE(so.venue, '')), '')  AS venue,
            so.venue_id,
+           so.internal_expected_dd,
+           so.so_date,
            (COALESCE(so.address1, '') ILIKE '%jalan test%'
              OR COALESCE(so.debtor_name, '') ILIKE '%test%') AS test_hint,
            COALESCE(l.lines, '[]'::jsonb) AS lines
@@ -138,11 +146,16 @@ try {
   const noSalesperson = []; // { doc, status, company, test, customer }
   const noVenue = [];
   const badVariants = [];  // { doc, status, company, test, code, missing }
+  const draftWithProc = []; // { doc, status, company, test, procDate, soDate }
 
+  const ymd = (v) => (v == null ? "" : String(v).slice(0, 10));
   for (const r of rows) {
     const test = r.test_hint === true;
     const base = { doc: r.doc_no, status: str(r.status) || "?", company: r.company_id ?? "—", test };
     const lines = Array.isArray(r.lines) ? r.lines : [];
+    if (str(r.status).toUpperCase() === "DRAFT" && r.internal_expected_dd != null) {
+      draftWithProc.push({ ...base, procDate: ymd(r.internal_expected_dd), soDate: ymd(r.so_date) });
+    }
     for (const ln of lines) {
       const code = str(ln.code);
       if (!code || ln.in_catalog !== true) {
@@ -199,16 +212,22 @@ try {
     badVariants,
     (x) => `  ${x.doc}  [${x.status}]  company ${x.company}  ${x.code}  missing: ${x.missing.join(", ")}${tag(x.test)}`,
   );
+  section(
+    `E. DRAFT orders carrying a Processing Date — ${draftWithProc.length}`,
+    draftWithProc,
+    (x) => `  ${x.doc}  company ${x.company}  processing ${x.procDate}${x.procDate === x.soDate ? " (= SO date — the scan job's old default)" : ""}${tag(x.test)}`,
+  );
   console.log("=".repeat(76));
 
-  const testCount = [...nonCatalog, ...noSalesperson, ...noVenue, ...badVariants].filter((x) => x.test).length;
-  const total = nonCatalog.length + noSalesperson.length + noVenue.length + badVariants.length;
+  const testCount = [...nonCatalog, ...noSalesperson, ...noVenue, ...badVariants, ...draftWithProc].filter((x) => x.test).length;
+  const total = nonCatalog.length + noSalesperson.length + noVenue.length + badVariants.length + draftWithProc.length;
   if (total === 0) {
-    notice("CLEAN — every non-cancelled SO line is a catalog SKU, and every confirmed order has a salesperson, a venue and complete required variants.");
+    notice("CLEAN — every non-cancelled SO line is a catalog SKU, every confirmed order has a salesperson, a venue and complete required variants, and no draft carries a Processing Date.");
   } else {
     notice(
       `${nonCatalog.length} non-catalog line(s), ${noSalesperson.length} confirmed order(s) without a salesperson, ` +
-      `${noVenue.length} without a venue, ${badVariants.length} confirmed line(s) with incomplete variants ` +
+      `${noVenue.length} without a venue, ${badVariants.length} confirmed line(s) with incomplete variants, ` +
+      `${draftWithProc.length} draft(s) carrying a Processing Date ` +
       `(${testCount} of ${total} rows look like the test batch). Each needs a human decision — no auto-repair exists for these.`,
     );
   }

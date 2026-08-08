@@ -376,12 +376,29 @@ square pillow saved. `MobileSODetail`'s Create Sales Order and the desktop
 DRAFT banner / list Confirm surface the refusal list via the existing
 `humanApiError` problems rendering.
 
+**A DRAFT never carries a Processing Date** (owner 2026-08-08 addendum,
+2990-SO-2608-007 — `internal_expected_dd` equal to its SO date). The only
+silent stamper was the backend scan job (`buildDraftSoBodyFromSlip`'s
+2026-07-04 "slip delivery date ⇒ pin processing to today" rule, now
+superseded): scan drafts land with BOTH dates null, and the operator keys the
+pair at review (the create core's both-or-none pairing rule forbids carrying
+the slip's delivery date alone; the mobile headless scan draft was already
+dateless). The desktop Save-as-Draft's visible Processing Date FIELD is an
+explicit operator entry and still saves. Confirm deliberately stamps NO
+processing date: setting one is its own gated act (deposit threshold,
+variants, KIV, customer completeness, delivery-date pairing) and an
+auto-stamp at confirm would bypass every one of those gates. The
+processing-date LOCK was verified to ignore DRAFTs on both ends
+(`soProcessingLocked` / `procLockActive` both short-circuit on status DRAFT,
+and every backend caller passes `status`), so a stamped draft misleads — it
+does not lock.
+
 **Existing damage** (pre-guard rows): Actions → **SO non-catalog lines check
 (read-only)** (`backend/scripts/check-so-noncatalog-lines.mjs`) lists every
-non-catalog line, confirmed order without salesperson / venue, and confirmed
-line with incomplete variants — with a TEST? hint for the "Jalan Test" batch.
-Deliberately NO auto-repair: each row needs a human to pick the right SKU /
-salesperson / venue.
+non-catalog line, confirmed order without salesperson / venue, confirmed
+line with incomplete variants, and DRAFT carrying a Processing Date — with a
+TEST? hint for the "Jalan Test" batch. Deliberately NO auto-repair: each row
+needs a human to pick the right SKU / salesperson / venue / dates.
 
 ### Selling-price authoring — who may set the line price
 

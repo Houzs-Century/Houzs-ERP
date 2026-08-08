@@ -301,7 +301,7 @@ carried across untouched and contributes **no diff**. The list is in code as
 |---|---|
 | `locationMatch` / `location` | the create core's venue-by-active-project autofill resolves a venue the slip never named |
 | `remarks` | the dedup path prefixes the note with `POSSIBLE DUPLICATE of <doc_no>` |
-| `processingDate` | pinned to today by owner rule (`:3795-3806`), never the slip's date |
+| `processingDate` | a DRAFT never carries a Processing Date (owner 2026-08-08, 2990-SO-2608-007 — supersedes the 2026-07-04 pin-to-today rule): scan drafts land with BOTH dates null, and the operator keys the pair at review against the slip photo |
 | `priceRmGuess` | the create core **reprices** every goods line — `unit_price_centi` is the catalog's figure, not a correction |
 | `installmentPlanMatch` | the header stores an integer month count; the pool's label spelling is unrecoverable, and inventing one breaks the never-invent rule |
 | `onlineTypeMatch` | there is no `online_type` column on the SO header (it lives on the payment ledger row) |
@@ -507,12 +507,12 @@ Two sibling documents:
 - **`docs/ocr-payment-spec.md`** covers the sibling `scan-payment` receipt OCR,
   the 3-method model, the processing/delivery date coupling and the
   postcode-driven address rule. One divergence worth knowing: §3 specifies
-  `Processing = max(today, Delivery − 6 weeks)`, but the code pins
-  `scanProcDate = scanDelivDate ? scanToday : null` (`scan-so.ts:3803-3806`) —
-  Processing is always **today**, never Delivery minus six weeks, and no 42-day
-  arithmetic exists in the file. The comment at `:3795-3797` records this as a
-  deliberate owner ruling of 2026-07-04 superseding the spec. The both-or-neither
-  half of the rule *is* honoured.
+  `Processing = max(today, Delivery − 6 weeks)`, but the code sets NEITHER
+  date on a scan draft (owner 2026-08-08, 2990-SO-2608-007: a DRAFT never
+  carries a Processing Date — this superseded the 2026-07-04 "pin processing
+  to today" ruling, which itself superseded the spec's 42-day arithmetic).
+  The create core's both-or-neither pairing rule is what forbids carrying the
+  slip's delivery date alone; the operator keys the pair at review.
 
 ---
 

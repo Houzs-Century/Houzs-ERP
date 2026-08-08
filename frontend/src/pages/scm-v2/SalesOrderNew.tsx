@@ -72,7 +72,7 @@ import {
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
-import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
+import { hasSofaMixConflict, missingConfirmVariantAxes, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
 /* FIX (d) scan fabric seed — resolve a scanned fabric code (e.g. "BO315-22")
    to the SAME fabric_colours / fabric_library rows SoLineCard's pickFabricColour
    uses, so the matched colour rides onto the seeded line's variants instead of

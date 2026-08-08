@@ -60,6 +60,18 @@ describe('line mutations', () => {
   });
 });
 
+describe('scan draft dates', () => {
+  test('a scan DRAFT is born with NO Processing Date and NO delivery date (owner 2026-08-08, 2990-SO-2608-007)', async () => {
+    const scanSource = (await import('../src/scm/routes/scan-so.ts?raw')).default as string;
+    const block = between(scanSource, 'function buildDraftSoBodyFromSlip', 'async function runScanJob');
+    expect(block).toContain('const scanDelivDate: string | null = null');
+    expect(block).toContain('const scanProcDate: string | null = null');
+    // The old default pinned processing to the scan day whenever the slip
+    // carried a future delivery date — make sure it cannot quietly return.
+    expect(block).not.toContain('scanDelivDate ? scanToday : null');
+  });
+});
+
 describe('status route', () => {
   test('DRAFT→CONFIRMED runs the confirm gate before the status write commits', () => {
     const block = between(routeSource, "mfgSalesOrders.patch('/:docNo/status',", 'const commitStatusChange');

@@ -3,12 +3,13 @@ name: SO non-catalog lines check (read-only)
 # Owner rulings 2026-08-08: every SO line is a REAL catalog SKU ("为什么会有
 # 这样的 sku square pillow 你可以允许 freetext 的吗!?" — HC-SO-2607-013), a
 # confirmed order has a salesperson (HC-SO-2607-008 was "Unassigned"), a venue
-# ("venue is compulsory的"), and complete required variants on every goods
-# line. The live guards now refuse all four shapes on NEW writes; this
-# read-only check lists the EXISTING damage — one row per offending line /
-# order, with a TEST? hint for the "Jalan Test" batch — so the owner can
-# decide the fix per line. There is deliberately NO repair mode: each row
-# needs a human to pick the right SKU / salesperson / venue.
+# ("venue is compulsory的"), complete required variants on every goods line,
+# and a DRAFT never carries a Processing Date (2990-SO-2608-007). The live
+# guards now refuse all five shapes on NEW writes; this read-only check lists
+# the EXISTING damage — one row per offending line / order, with a TEST? hint
+# for the "Jalan Test" batch — so the owner can decide the fix per line.
+# There is deliberately NO repair mode: each row needs a human to pick the
+# right SKU / salesperson / venue / dates.
 #
 # Exit 0 for every legitimate answer — clean and dirty are both answers.
 # Manual trigger only, own concurrency group — never the deploy's.
