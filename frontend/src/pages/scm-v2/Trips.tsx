@@ -34,8 +34,22 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Route as RouteIcon, MapPin, CalendarClock, CalendarCheck, Wand2 } from 'lucide-react';
+import { Route as RouteIcon, MapPin, CalendarClock, CalendarCheck, Wand2, Map as MapIcon } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
+import { DeliveryMapPanel, useMapPanelOpen } from '../../components/scm-v2/DeliveryMapPanel';
+import { useDeliveryGeo } from '../../vendor/scm/lib/delivery-geo-queries';
+import {
+  pinsFromGeoPoints,
+  geoTotals,
+  routesFromRuns,
+  stagedRoutesFromRows,
+  focusFilterRows,
+  toggleFocus,
+  MAP_ESSENTIAL_COLUMNS_TIME,
+  type MapFocus,
+  type MapLatLng,
+} from '../../vendor/scm/lib/delivery-map-model';
+import { todayMY } from '../../vendor/shared/format';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { cn } from '../../lib/utils';
@@ -175,6 +189,50 @@ export function Trips() {
   const runs = useMemo<AnonymousRun[]>(
     () => (assign ? foldToAnonymousRuns(assign.trips) : []),
     [assign],
+  );
+
+  /* ── Option B side map (owner 2026-08-08): board left, sticky map right.
+     Everything the Date page's map shows PLUS the proposed/staged Trip 1/2/3
+     routes as coloured polylines with numbered stops + per-stop window text.
+     A proposal for the picked date draws its runs (est. delivery windows from
+     the #1720 folds); otherwise the day's STAGED live trips draw off the
+     server-stamped board rows (trip_id / trip_stop_no / trip_eta_offset_s). */
+  const [mapOpen, setMapOpen] = useMapPanelOpen('time-arrangement');
+  const [mapDate, setMapDate] = useState<string>(todayMY());
+  const [mapRegion, setMapRegion] = useState<string>('ALL');
+  const [mapFocus, setMapFocus] = useState<MapFocus | null>(null);
+  const geo = useDeliveryGeo({ date: mapDate, region: mapRegion, enabled: mapOpen });
+  const mapPins = useMemo(() => pinsFromGeoPoints(geo.data?.points ?? []), [geo.data?.points]);
+  const mapTotals = useMemo(() => geoTotals(geo.data?.points ?? []), [geo.data?.points]);
+  const pointByRef = useMemo(() => {
+    const m = new Map<string, MapLatLng>();
+    for (const p of geo.data?.points ?? []) m.set(p.ref, { lat: p.lat, lng: p.lng });
+    return m;
+  }, [geo.data?.points]);
+  const mapDepot = geo.data?.depot ? { lat: geo.data.depot.lat, lng: geo.data.depot.lng } : null;
+  const mapRoutes = useMemo(() => {
+    const proposed = routesFromRuns(runs, mapDate, pointByRef, mapDepot);
+    if (proposed.length > 0) return proposed;
+    return stagedRoutesFromRows(pendingOrders, mapDate, pointByRef, mapDepot);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runs, mapDate, pointByRef, pendingOrders, geo.data?.depot]);
+  /* Trip focus: card or polyline click → dim the rest, zoom, filter the board. */
+  const focusRoute = (routeId: string) => {
+    const route = mapRoutes.find((r) => r.id === routeId);
+    if (!route) return;
+    setMapFocus((cur) => toggleFocus(cur, { routeId, refs: route.allRefs }));
+  };
+  /* Two-way linkage (same shape as the Date page). */
+  const [selectedPin, setSelectedPin] = useState<string | null>(null);
+  const [scrollTo, setScrollTo] = useState<{ key: string; nonce: number } | null>(null);
+  const onPinClick = (ref: string) => {
+    setSelectedPin(ref);
+    setScrollTo({ key: `so:${ref}`, nonce: Date.now() });
+  };
+  /* The board under focus: only the focused trip's stops (unpinned included). */
+  const boardRows = useMemo(
+    () => (mapOpen && mapFocus ? focusFilterRows(timeRows, mapFocus) : timeRows),
+    [timeRows, mapOpen, mapFocus],
   );
 
   const runProposeTime = async () => {
@@ -346,6 +404,10 @@ export function Trips() {
         description="For each delivery day, decide which zone goes first and the order of stops within it — crew and lorries are assigned next in Last Mile Delivery."
       />
 
+      {/* ── Option B split: board (left) / sticky map (right). ─────────────── */}
+      <div className="lg:flex lg:items-start lg:gap-4">
+      <div className="min-w-0 space-y-4 lg:flex-1">
+
       {/* Split chips — the derived time side of the pipeline. */}
       <div className="flex flex-wrap items-center gap-1.5">
         {(['ALL', 'PENDING_TIME', 'TIME_ARRANGED'] as const).map((side) => (
@@ -373,10 +435,26 @@ export function Trips() {
             {timeCounts.awaitingDate} awaiting date arrangement
           </button>
         )}
+        <span className="flex-1" />
+        {mapOpen && mapFocus && (
+          <button
+            type="button"
+            className="text-[11.5px] text-accent underline decoration-dotted underline-offset-2"
+            onClick={() => setMapFocus(null)}
+            title="Stop filtering the board to the focused trip"
+          >
+            Focused on one trip — clear
+          </button>
+        )}
+        {!mapOpen && (
+          <Button variant="ghost" icon={<MapIcon {...ICON} />} onClick={() => setMapOpen(true)} title="Show the day map beside the board">
+            Show map
+          </Button>
+        )}
       </div>
 
       <DeliveryPlanningBoard
-        orders={timeRows}
+        orders={boardRows}
         counts={pending.data?.counts ?? {}}
         regionTabs={pendingRegionTabs}
         activeRegion={pendingRegion}
@@ -402,6 +480,10 @@ export function Trips() {
         lorries={lorries}
         storageKey="dg-trips-time-arrangement-v2"
         exportName="TripsTimeArrangement"
+        /* Map-open narrowing + two-way linkage (Option B). */
+        visibleColumnsOverride={mapOpen ? MAP_ESSENTIAL_COLUMNS_TIME : null}
+        onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); }}
+        scrollToRow={scrollTo}
         /* Default queue order on entry (owner 2026-08-07/08): arranged date
            OLDEST first, then state, then postcode, then run time. A clicked
            column header still overrides. */
@@ -478,6 +560,14 @@ export function Trips() {
               run={run}
               onApply={() => void applyRun(run)}
               applyBusy={applyingRun === run.key}
+              /* Trip focus (Option B): clicking the card focuses its trip on
+                 the map (jumping the map to the run's date) and filters the
+                 board to its stops; clicking again unfocuses. */
+              focused={mapOpen && mapFocus?.routeId === run.key}
+              onFocus={mapOpen ? () => {
+                setMapDate(run.date);
+                setMapFocus((cur) => toggleFocus(cur, { routeId: run.key, refs: run.stops.map((s) => s.ref) }));
+              } : undefined}
             />
           ))}
 
@@ -523,7 +613,21 @@ export function Trips() {
                 <li key={t.id}>
                   <button
                     type="button"
-                    onClick={() => { setSelected(t.id); setPreview(null); }}
+                    onClick={() => {
+                      setSelected(t.id);
+                      setPreview(null);
+                      /* Trip focus (Option B): with the map open, picking a
+                         trip also focuses it — jump the map to its date, dim
+                         the other routes, filter the board to its stops. */
+                      if (mapOpen) {
+                        const day = String(t.trip_date ?? '').slice(0, 10);
+                        if (day) setMapDate(day);
+                        const refs = pendingOrders
+                          .filter((o) => o.row_type === 'so' && o.trip_id === t.id)
+                          .map((o) => o.so_doc_no);
+                        setMapFocus((cur) => toggleFocus(cur, { routeId: t.id, refs }));
+                      }
+                    }}
                     className={cn(
                       'flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-surface-raised',
                       selected === t.id && 'bg-surface-raised',
@@ -641,6 +745,55 @@ export function Trips() {
         </div>
       )}
 
+      </div>{/* /board column */}
+
+      {mapOpen && (
+        <DeliveryMapPanel
+          className="mt-4 lg:mt-0 lg:w-[40%] lg:flex-none"
+          title="Delivery day map"
+          onClose={() => { setMapOpen(false); setMapFocus(null); }}
+          headerControls={
+            <>
+              {/* REQUIRED picked date — the map always shows exactly one day. */}
+              <input
+                type="date"
+                required
+                value={mapDate}
+                onChange={(e) => { if (e.target.value) { setMapDate(e.target.value); setMapFocus(null); } }}
+                title="The day the map shows"
+                style={{ ...selStyle, width: 140 }}
+              />
+              {pendingRegionTabs.map((r) => (
+                <button
+                  key={r.key}
+                  type="button"
+                  onClick={() => setMapRegion(r.key)}
+                  className={cn(
+                    'rounded-full border px-2.5 py-0.5 text-[11px]',
+                    mapRegion === r.key ? 'border-accent bg-accent/10 font-semibold text-accent' : 'border-border text-ink-secondary',
+                  )}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </>
+          }
+          pins={mapPins}
+          routes={mapRoutes}
+          depot={geo.data?.depot ? { lat: geo.data.depot.lat, lng: geo.data.depot.lng, label: geo.data.depot.name } : null}
+          depotReason={geo.data?.depotReason ?? null}
+          focus={mapFocus}
+          onRouteClick={focusRoute}
+          selectedRef={selectedPin}
+          onPinClick={onPinClick}
+          totals={mapTotals}
+          ungeocoded={geo.data?.ungeocoded ?? []}
+          serverConfigured={geo.data?.configured ?? true}
+          isLoading={geo.isLoading}
+        />
+      )}
+      </div>{/* /split */}
+
       {scheduling && (
         <ScheduleTripDrawer
           orders={pendingSelectedOrders}
@@ -658,13 +811,21 @@ export function Trips() {
    the SAME numbered trips and only labels crew onto them. Deliberately carries
    no crew or vehicle identity (owner: 排单 decides which zone and which order
    go first; who drives is Last Mile's). */
-const RunCard = ({ run, onApply, applyBusy }: {
+const RunCard = ({ run, onApply, applyBusy, onFocus, focused = false }: {
   run: AnonymousRun;
   onApply: () => void;
   applyBusy: boolean;
+  /** Option B trip focus — clicking the card header focuses this trip on the
+   *  side map + filters the board; clicking again unfocuses. Absent (map
+   *  closed) the header is inert, exactly as before. */
+  onFocus?: () => void;
+  focused?: boolean;
 }) => (
-  <div style={{ borderRadius: 10, border: '1px solid var(--border, rgba(0,0,0,0.12))', overflow: 'hidden' }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 14px', background: 'var(--bg-subtle, rgba(0,0,0,0.03))' }}>
+  <div style={{ borderRadius: 10, border: `1px solid ${focused ? 'rgba(37,99,235,0.55)' : 'var(--border, rgba(0,0,0,0.12))'}`, overflow: 'hidden' }}>
+    <div
+      onClick={onFocus}
+      title={onFocus ? (focused ? 'Click to unfocus this trip on the map' : 'Click to focus this trip on the map') : undefined}
+      style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 14px', background: focused ? 'rgba(37,99,235,0.08)' : 'var(--bg-subtle, rgba(0,0,0,0.03))', cursor: onFocus ? 'pointer' : undefined }}>
       <strong style={{ fontSize: 'var(--fs-13)' }}>{run.date}</strong>
       <span style={{ fontSize: 'var(--fs-11)', padding: '2px 8px', borderRadius: 999, background: 'var(--bg, rgba(0,0,0,0.06))', fontWeight: 700 }}>
         Trip {run.runNo}
@@ -683,7 +844,8 @@ const RunCard = ({ run, onApply, applyBusy }: {
           back {run.returnTime} · {Math.round(run.totalDistanceMetres / 100) / 10} km
         </span>
       )}
-      <Button variant="primary" icon={<CalendarCheck {...ICON} />} onClick={onApply} disabled={applyBusy}>
+      {/* stopPropagation: Apply must never toggle the header's map focus. */}
+      <Button variant="primary" icon={<CalendarCheck {...ICON} />} onClick={(e) => { e.stopPropagation(); onApply(); }} disabled={applyBusy}>
         {applyBusy ? 'Applying…' : 'Apply this run'}
       </Button>
     </div>

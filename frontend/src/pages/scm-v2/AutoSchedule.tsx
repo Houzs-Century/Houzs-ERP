@@ -20,11 +20,18 @@
 // Day locks stay (reversible freezes, per date).
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@2990s/design-system';
-import { Lock, Unlock, Wand2, CalendarCheck } from 'lucide-react';
+import { Lock, Unlock, Wand2, CalendarCheck, Map as MapIcon } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
+import { DeliveryMapPanel, useMapPanelOpen } from '../../components/scm-v2/DeliveryMapPanel';
+import { useDeliveryGeo } from '../../vendor/scm/lib/delivery-geo-queries';
+import {
+  pinsFromGeoPoints,
+  geoTotals,
+  MAP_ESSENTIAL_COLUMNS,
+} from '../../vendor/scm/lib/delivery-map-model';
 import {
   useDeliveryPlanning,
   useScheduleDelivery,
@@ -173,6 +180,26 @@ export const AutoSchedule = () => {
     queue.refetch();
   };
 
+  /* ── Option B side map (owner 2026-08-08): board left, sticky map right.
+     The map owns a REQUIRED picked date (default today) + its own region
+     chips; the fetch is once per (date, region), only while OPEN. While open
+     the board narrows to the essential columns (a render-time overlay — the
+     user's own column prefs are untouched). */
+  const [mapOpen, setMapOpen] = useMapPanelOpen('date-arrangement');
+  const [mapDate, setMapDate] = useState<string>(todayMY());
+  const [mapRegion, setMapRegion] = useState<string>('ALL');
+  const geo = useDeliveryGeo({ date: mapDate, region: mapRegion, enabled: mapOpen });
+  const mapPins = useMemo(() => pinsFromGeoPoints(geo.data?.points ?? []), [geo.data?.points]);
+  const mapTotals = useMemo(() => geoTotals(geo.data?.points ?? []), [geo.data?.points]);
+  /* Two-way linkage: board row click → enlarge + pan; pin click → scroll +
+     highlight the board row (rowIdOf keys SO rows as `so:<docNo>`). */
+  const [selectedPin, setSelectedPin] = useState<string | null>(null);
+  const [scrollTo, setScrollTo] = useState<{ key: string; nonce: number } | null>(null);
+  const onPinClick = (ref: string) => {
+    setSelectedPin(ref);
+    setScrollTo({ key: `so:${ref}`, nonce: Date.now() });
+  };
+
   /* ── Day locks — reversible freezes per DATE (no depot dimension here). */
   const locks = useDayLocks({});
   const lockedDates = useMemo(() => new Set((locks.data ?? []).map((l) => l.deliveryDate)), [locks.data]);
@@ -199,6 +226,10 @@ export const AutoSchedule = () => {
         description="Tick pending orders and propose delivery dates by postcode zone — apply writes the amended date only; lorries and times are arranged next in Delivery Time Arrangement."
       />
 
+      {/* ── Option B split: board (left) / sticky map (right). ─────────────── */}
+      <div className="lg:flex lg:items-start lg:gap-4">
+      <div className="min-w-0 space-y-4 lg:flex-1">
+
       {/* Split chips — the derived date side of the pipeline. */}
       <div className="flex flex-wrap gap-1.5">
         {(['ALL', 'PENDING_DATE', 'DATE_ARRANGED'] as const).map((side) => (
@@ -221,6 +252,13 @@ export const AutoSchedule = () => {
         <span className="ml-2 self-center text-[11.5px] text-ink-muted">
           Date-arranged orders flow on to Delivery Time Arrangement automatically
         </span>
+        <span className="flex-1" />
+        {!mapOpen && (
+          <Button variant="ghost" size="sm" onClick={() => setMapOpen(true)} title="Show the day map beside the board">
+            <MapIcon {...ICON} />
+            <span>Show map</span>
+          </Button>
+        )}
       </div>
 
       <DeliveryPlanningBoard
@@ -250,6 +288,10 @@ export const AutoSchedule = () => {
         lorries={lorries.data ?? []}
         storageKey="dg-date-arrangement-v2"
         exportName="DeliveryDateArrangement"
+        /* Map-open narrowing + two-way linkage (Option B). */
+        visibleColumnsOverride={mapOpen ? MAP_ESSENTIAL_COLUMNS : null}
+        onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); }}
+        scrollToRow={scrollTo}
         /* Default queue order on entry (owner 2026-08-07): delivery date
            OLDEST first, then state, then postcode — both sides. A clicked
            column header still overrides. */
@@ -333,6 +375,54 @@ export const AutoSchedule = () => {
           )}
         </div>
       )}
+
+      </div>{/* /board column */}
+
+      {mapOpen && (
+        <DeliveryMapPanel
+          className="mt-4 lg:mt-0 lg:w-[40%] lg:flex-none"
+          title="Delivery day map"
+          onClose={() => setMapOpen(false)}
+          headerControls={
+            <>
+              {/* REQUIRED picked date — the map always shows exactly one day. */}
+              <input
+                type="date"
+                required
+                value={mapDate}
+                onChange={(e) => { if (e.target.value) setMapDate(e.target.value); }}
+                title="The day the map shows"
+                style={{ ...selStyle, width: 140 }}
+              />
+              {/* Region chips zoom/filter the map viewport (server-side filter,
+                  same buckets as the board's chips). */}
+              {queueRegionTabs.map((r) => (
+                <button
+                  key={r.key}
+                  type="button"
+                  onClick={() => setMapRegion(r.key)}
+                  className={[
+                    'rounded-full border px-2.5 py-0.5 text-[11px]',
+                    mapRegion === r.key ? 'border-accent bg-accent/10 font-semibold text-accent' : 'border-border text-ink-secondary',
+                  ].join(' ')}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </>
+          }
+          pins={mapPins}
+          depot={geo.data?.depot ? { lat: geo.data.depot.lat, lng: geo.data.depot.lng, label: geo.data.depot.name } : null}
+          depotReason={geo.data?.depotReason ?? null}
+          selectedRef={selectedPin}
+          onPinClick={onPinClick}
+          totals={mapTotals}
+          ungeocoded={geo.data?.ungeocoded ?? []}
+          serverConfigured={geo.data?.configured ?? true}
+          isLoading={geo.isLoading}
+        />
+      )}
+      </div>{/* /split */}
     </div>
   );
 };

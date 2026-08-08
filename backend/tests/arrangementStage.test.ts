@@ -153,8 +153,10 @@ describe("delivery-planning.ts — the board stamps the stage, one rule, no fork
   test("the trip lookup keys on do_id and drops CANCELLED trips", () => {
     const stripped = stripComments(boardSource);
     /* Same do_id key scheduleOntoTrip writes and staleStopSweepFor sweeps —
-       forward write and derived read stay symmetric. */
-    expect(stripped).toContain(".select('dp_no, do_id, trip_id').in('do_id', doIds)");
+       forward write and derived read stay symmetric. (#1720 widened the select
+       with stop_no + eta_offset_s — the run-time sort keys; the do_id key is
+       the invariant this pin protects.) */
+    expect(stripped).toContain(".select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', doIds)");
     /* A CANCELLED trip is no arrangement: the reverse reconcile already returns
        such orders to the queue, and the stage must agree with it. */
     const tripJoinIdx = stripped.indexOf(".select('id, trip_no, trip_date, status').in('id', tripIds)");

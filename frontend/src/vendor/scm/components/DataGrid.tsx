@@ -248,6 +248,24 @@ export type DataGridProps<T> = {
    * rows render exactly as passed — byte-identical behaviour.
    */
   defaultSort?: (a: T, b: T) => number;
+  /**
+   * RENDER-TIME hide overlay (Option B map narrowing, owner 2026-08-08). Keys
+   * listed here are hidden IN ADDITION to the user's own hidden set, without
+   * ever writing the persisted layout — drop the prop and the user's own
+   * column prefs return exactly as saved. Used by the delivery boards to
+   * auto-narrow to the essential columns while the side map is open. The
+   * Columns drawer keeps showing the user's REAL prefs (the overlay is a
+   * temporary state, not a choice of theirs to persist).
+   */
+  overlayHidden?: readonly string[];
+  /**
+   * Imperative scroll-to-row (map pin → board linkage, owner 2026-08-08).
+   * Bump `nonce` with the target row's key: the grid selects (highlights) the
+   * row and scrolls it into view — via the virtualizer when windowed, via
+   * scrollIntoView otherwise. Same pin clicked twice re-scrolls (the nonce is
+   * the trigger, the key just names the row).
+   */
+  scrollToRow?: { key: string; nonce: number } | null;
 };
 
 type Layout = DataGridLayout;
@@ -331,6 +349,8 @@ function DataGridInner<T>({
   hideSearch = false,
   loadedSearchLimit,
   defaultSort,
+  overlayHidden,
+  scrollToRow,
 }: DataGridProps<T>) {
   /* HOUZS-style inline expansion (PR so-list-houzs-port). Tracks the set of
      expanded row ids; rendering inserts a colSpan sub-<tr> directly under
@@ -1019,8 +1039,11 @@ function DataGridInner<T>({
 
   const visibleColumns = useMemo(() => {
     const byKey = new Map(columns.map((c) => [c.key, c]));
+    /* Render-time overlay (map narrowing) — hides ON TOP of the user's set,
+       never written to the layout, so closing the map restores their prefs. */
+    const overlay = overlayHidden && overlayHidden.length > 0 ? new Set(overlayHidden) : null;
     const base = resolvedOrder
-      .filter((k) => !effectiveHidden.has(k))
+      .filter((k) => !effectiveHidden.has(k) && !(overlay?.has(k) ?? false))
       .map((k) => byKey.get(k)!)
       .filter(Boolean);
     const synthetic: DataGridColumn<T>[] = [];
@@ -1041,7 +1064,7 @@ function DataGridInner<T>({
       });
     }
     return synthetic.length ? [...synthetic, ...base] : base;
-  }, [columns, resolvedOrder, effectiveHidden, expandable, selectable]);
+  }, [columns, resolvedOrder, effectiveHidden, expandable, selectable, overlayHidden]);
 
   // ── Filtered + sorted + grouped rows ──────────────────────────────
   /* Precompute one lowercased search blob per row (once per rows/columns
@@ -1449,6 +1472,27 @@ function DataGridInner<T>({
     ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1]!.end
     : 0;
 
+  /* Map pin → board row linkage (Option B, owner 2026-08-08): the parent bumps
+     `scrollToRow.nonce` with a row key; the grid selects (the existing
+     single-row highlight) and scrolls the row into view. Virtualized lists go
+     through the virtualizer (the row may not be mounted); plain lists find the
+     <tr> by its data-rowkey. A key not in the current view (filtered out /
+     other tab) just highlights nothing — never a crash. */
+  useEffect(() => {
+    const target = scrollToRow;
+    if (!target || !target.key) return;
+    setSelectedKey(target.key);
+    if (canVirtualize) {
+      const idx = renderList.findIndex((it) => it.kind === 'row' && rowKey(it.row) === target.key);
+      if (idx >= 0) rowVirtualizer.scrollToIndex(idx, { align: 'center' });
+    } else {
+      const el = tbodyRef.current?.querySelector(`tr[data-rowkey="${target.key.replace(/"/g, '\\"')}"]`);
+      (el as HTMLElement | null)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    // The nonce is the trigger — the same pin clicked twice must re-scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollToRow?.nonce]);
+
   /* One grid row (group banner OR data row + optional expansion). Extracted so
      the normal path and the virtualized window render through the same code. */
   const renderGridRow = (item: Render, idx: number) => {
@@ -1473,6 +1517,8 @@ function DataGridInner<T>({
           /* Marks a plain data row as the row-height measuring sample — group
              banners and the virtual spacers are deliberately not tagged. */
           data-vrow=""
+          /* The scroll-to-row target (map pin → board linkage). */
+          data-rowkey={key}
           className={`${styles.tr} ${selectedKey === key ? styles.trSelected : ''}`}
           style={{ ...(rowStyle?.(row)), ...((selectable || onRowClick || expandKey != null) ? { cursor: 'pointer' } : {}) }}
           /* Row-click = multi-select (Commander rule: "点行=multi-select"); L2

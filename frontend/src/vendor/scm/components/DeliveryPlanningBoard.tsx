@@ -529,6 +529,19 @@ export type DeliveryPlanningBoardProps = {
   onRowDoubleClick?: (order: PlanningOrder) => void;
   contextMenu?: (order: PlanningOrder) => ContextMenuItems;
 
+  /* ── Option B side map (owner 2026-08-08) ─────────────────────────────────
+     Single-click row hook (board row → map pin linkage; fires alongside the
+     grid's own select/multi-select, changing nothing existing). */
+  onRowClick?: (order: PlanningOrder) => void;
+  /* Map pin → board row: bump nonce with a rowIdOf key (`so:<docNo>`) to
+     scroll + highlight that row. Forwarded to the DataGrid. */
+  scrollToRow?: { key: string; nonce: number } | null;
+  /* While the side map is OPEN the board narrows to these column KEYS — a
+     RENDER-TIME overlay over the DataGrid's hidden set. The user's own saved
+     column prefs are never written; pass null/undefined (map closed) and the
+     full set returns exactly as the user left it. */
+  visibleColumnsOverride?: readonly string[] | null;
+
   storageKey?: string;
   exportName?: string;
   searchPlaceholder?: string;
@@ -569,6 +582,9 @@ export function DeliveryPlanningBoard({
   bulkExtras,
   onRowDoubleClick,
   contextMenu,
+  onRowClick,
+  scrollToRow,
+  visibleColumnsOverride,
   storageKey = 'dg-delivery-planning',
   exportName = 'DeliveryPlanning',
   searchPlaceholder = 'Search SO / ref / customer / phone…',
@@ -1102,6 +1118,15 @@ export function DeliveryPlanningBoard({
   // deps (a new driver/lorry list must re-render the pickers).
   }, [isEmSg, sched, drivers, lorries, msgStatuses]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* Map-open column narrowing: everything NOT in the override hides at render
+     time (DataGrid overlayHidden). The user's persisted layout is untouched —
+     closing the map returns their own column set exactly as saved. */
+  const overlayHidden = useMemo<string[] | undefined>(() => {
+    if (!visibleColumnsOverride || visibleColumnsOverride.length === 0) return undefined;
+    const keep = new Set(visibleColumnsOverride);
+    return columns.map((c) => c.key).filter((k) => !keep.has(k));
+  }, [columns, visibleColumnsOverride]);
+
   return (
     <div className="space-y-4">
       {/* 4 STATE TABS (top row) — only on the full board (DeliveryPlanning).
@@ -1314,6 +1339,9 @@ export function DeliveryPlanningBoard({
         rowStyle={(o) => (o.region === 'SG' ? { boxShadow: 'inset 3px 0 0 #2f5d4f' } : undefined)}
         contextMenu={contextMenu}
         defaultSort={defaultSort}
+        onRowClick={onRowClick}
+        scrollToRow={scrollToRow}
+        overlayHidden={overlayHidden}
       />
     </div>
   );

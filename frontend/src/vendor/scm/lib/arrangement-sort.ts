@@ -1,21 +1,27 @@
 // ----------------------------------------------------------------------------
 // arrangement-sort — the arrangement queues' default ordering.
 //
-// Owner, 2026-08-08 (superseding the 08-07 three-key rule): the beautiful
-// default is NEW date first, OLD date as the late tiebreak, doc number last —
+// Owner, 2026-08-08 (v3 — superseding the same-day v2): the beautiful default
+// is NEW date first, OLD date as the late tiebreak, doc number last — EXCEPT on
+// the pending-date side, where the customer's ORIGINAL date outranks geography:
 //
 //   1. the ARRANGED ("new") delivery date — amended_delivery_date, the date WE
 //      set — OLDEST first; rows without one sink BELOW every row that has one,
+//   1b. when BOTH rows lack a new date (the pending-date side): the ORIGINAL
+//      customer_delivery_date, oldest first (blanks last) — the oldest-promised
+//      customer waits at the top, BEFORE any geography grouping,
 //   2. then customer state, A→Z (blanks last),
 //   3. then postcode, A→Z (blanks last),
-//   4. then the ORIGINAL ("old" / estimated) customer_delivery_date, oldest
-//      first (blanks last),
-//   5. then the document number, so full ties land in a stable, readable run.
+//   4. then run time (ETA offset, stop sequence) on the live trip,
+//   5. then the ORIGINAL ("old" / estimated) customer_delivery_date, oldest
+//      first (blanks last) — a no-op on the pending side (1b already decided),
+//   6. then the document number, so full ties land in a stable, readable run.
 //
 // Applies to BOTH arrangement queues (Date Arrangement queue, Time Arrangement
 // inbox), BOTH sides each. On the Pending-Date side the amended date is null by
-// definition, so key 1 ties and the queue orders by state → postcode → the
-// customer's original date — exactly the "还没排的按老日期候着" reading.
+// definition, so the queue orders by the customer's original date first, then
+// state → postcode — "还没排的，谁答应得最早谁先排", geography second. When
+// either row HAS a new date the established order stands unchanged.
 //
 // This is a DEFAULT, not a lock: it applies only while no column sort is
 // active. A header the operator clicks overrides as always, and cycling the
@@ -81,10 +87,22 @@ function cmpNumBlankLast(a: number | null | undefined, b: number | null | undefi
   return av - bv;
 }
 
-/** new date → state → postcode → run time → old date → doc no (asc, blanks last). */
+/** new date → [both new-dateless: old date] → state → postcode → run time →
+ *  old date → doc no (asc, blanks last). */
 export function arrangementQueueCompare(a: ArrangementSortRow, b: ArrangementSortRow): number {
+  const newA = arrangementDateOf(a);
+  const newB = arrangementDateOf(b);
+  const byNew = cmpBlankLast(newA, newB);
+  if (byNew !== 0) return byNew;
+  /* Pending-date side (owner 2026-08-08 v3): when NEITHER row has an arranged
+     date, the customer's ORIGINAL promised date outranks geography — oldest
+     promise first. When either row has a new date the established order stands
+     (equal non-null new dates group by state → postcode as before). */
+  if (newA == null && newB == null) {
+    const byOld = cmpBlankLast(dayOf(a.customer_delivery_date), dayOf(b.customer_delivery_date));
+    if (byOld !== 0) return byOld;
+  }
   return (
-    cmpBlankLast(arrangementDateOf(a), arrangementDateOf(b)) ||
     cmpBlankLast(a.customer_state, b.customer_state) ||
     cmpBlankLast(a.postcode, b.postcode) ||
     cmpNumBlankLast(a.trip_eta_offset_s, b.trip_eta_offset_s) ||
