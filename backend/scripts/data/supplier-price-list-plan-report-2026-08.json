@@ -2379,6 +2379,56 @@
  "hok_5537_old_code_skipped": [
   "HOK-5537 SOFA"
  ],
+ "derived_recliner_units": [
+  {
+   "model": "BS22",
+   "size": "24",
+   "unit": "1A(R)",
+   "cost": 660.0
+  },
+  {
+   "model": "BS22",
+   "size": "24",
+   "unit": "1NA (middle)",
+   "cost": 440.0
+  },
+  {
+   "model": "BS30",
+   "size": "24",
+   "unit": "1A(R)",
+   "cost": 660.0
+  },
+  {
+   "model": "BS30",
+   "size": "24",
+   "unit": "1NA (middle)",
+   "cost": 440.0
+  },
+  {
+   "model": "SF5071",
+   "size": "24",
+   "unit": "1A(R)",
+   "cost": 475.0
+  },
+  {
+   "model": "SF5071",
+   "size": "28",
+   "unit": "1A(R)",
+   "cost": 500.0
+  },
+  {
+   "model": "SF5083",
+   "size": "24",
+   "unit": "1A(R)",
+   "cost": 475.0
+  },
+  {
+   "model": "SF5083",
+   "size": "28",
+   "unit": "1A(R)",
+   "cost": 500.0
+  }
+ ],
  "sofa_model_unmatched": [
   {
    "sheet_model": "1068",
@@ -4881,32 +4931,12 @@
   {
    "model": "5071",
    "sup": "TD",
-   "raw": "2RR",
-   "mapped": "2S(R)",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 950.0,
-   "decompose_as": "1A(R)(LHF) + 1A(R)(RHF)"
-  },
-  {
-   "model": "5071",
-   "sup": "TD",
    "raw": "2NA",
    "mapped": "2NA",
    "size": "28",
    "tier": "PRICE_2",
    "cost": 900.0,
    "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5071",
-   "sup": "TD",
-   "raw": "2RR",
-   "mapped": "2S(R)",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1000.0,
-   "decompose_as": "1A(R)(LHF) + 1A(R)(RHF)"
   },
   {
    "model": "5083",
@@ -4921,42 +4951,12 @@
   {
    "model": "5083",
    "sup": "TD",
-   "raw": "2RR",
-   "mapped": "2S(R)",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 950.0,
-   "decompose_as": "1A(R)(LHF) + 1A(R)(RHF)"
-  },
-  {
-   "model": "5083",
-   "sup": "TD",
    "raw": "2NA",
    "mapped": "2NA",
    "size": "28",
    "tier": "PRICE_2",
    "cost": 900.0,
    "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5083",
-   "sup": "TD",
-   "raw": "2RR",
-   "mapped": "2S(R)",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1000.0,
-   "decompose_as": "1A(R)(LHF) + 1A(R)(RHF)"
-  },
-  {
-   "model": "5117A",
-   "sup": "TD",
-   "raw": "2.5S",
-   "mapped": "2.5S",
-   "size": "36",
-   "tier": "PRICE_2",
-   "cost": 1408.0,
-   "decompose_as": "?"
   },
   {
    "model": "5133",
@@ -5107,96 +5107,6 @@
    "tier": "PRICE_3",
    "cost": 1953.684211,
    "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7179",
-   "sup": "THL",
-   "raw": "2.5",
-   "mapped": "2.5S",
-   "size": "75cm",
-   "tier": "PRICE_1",
-   "cost": 1250.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "7179",
-   "sup": "THL",
-   "raw": "2.5",
-   "mapped": "2.5S",
-   "size": "75cm",
-   "tier": "PRICE_2",
-   "cost": 1580.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "7179",
-   "sup": "THL",
-   "raw": "2.5",
-   "mapped": "2.5S",
-   "size": "75cm",
-   "tier": "PRICE_3",
-   "cost": 1800.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "7218",
-   "sup": "THL",
-   "raw": "2.5",
-   "mapped": "2.5S",
-   "size": "75cm",
-   "tier": "PRICE_1",
-   "cost": 1360.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "7218",
-   "sup": "THL",
-   "raw": "2.5",
-   "mapped": "2.5S",
-   "size": "75cm",
-   "tier": "PRICE_2",
-   "cost": 1660.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "7218",
-   "sup": "THL",
-   "raw": "2.5",
-   "mapped": "2.5S",
-   "size": "75cm",
-   "tier": "PRICE_3",
-   "cost": 1820.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "7219",
-   "sup": "THL",
-   "raw": "2.5",
-   "mapped": "2.5S",
-   "size": "66cm",
-   "tier": "PRICE_1",
-   "cost": 1140.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "7219",
-   "sup": "THL",
-   "raw": "2.5",
-   "mapped": "2.5S",
-   "size": "66cm",
-   "tier": "PRICE_2",
-   "cost": 1390.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "7219",
-   "sup": "THL",
-   "raw": "2.5",
-   "mapped": "2.5S",
-   "size": "66cm",
-   "tier": "PRICE_3",
-   "cost": 1720.0,
-   "decompose_as": "?"
   },
   {
    "model": "7221",
@@ -5541,36 +5451,6 @@
   {
    "model": "8030",
    "sup": "DSL",
-   "raw": "2.5 SEATER",
-   "mapped": "2.5S",
-   "size": "32",
-   "tier": "PRICE_1",
-   "cost": 2200.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2.5 SEATER",
-   "mapped": "2.5S",
-   "size": "32",
-   "tier": "PRICE_2",
-   "cost": 2288.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2.5 SEATER",
-   "mapped": "2.5S",
-   "size": "32",
-   "tier": "PRICE_3",
-   "cost": 2376.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
    "raw": "2NA",
    "mapped": "2NA",
    "size": "32",
@@ -5597,36 +5477,6 @@
    "tier": "PRICE_3",
    "cost": 1680.0,
    "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2.5 SEATER",
-   "mapped": "2.5S",
-   "size": "35",
-   "tier": "PRICE_1",
-   "cost": 2200.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2.5 SEATER",
-   "mapped": "2.5S",
-   "size": "35",
-   "tier": "PRICE_2",
-   "cost": 2288.0,
-   "decompose_as": "?"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2.5 SEATER",
-   "mapped": "2.5S",
-   "size": "35",
-   "tier": "PRICE_3",
-   "cost": 2376.0,
-   "decompose_as": "?"
   },
   {
    "model": "8030",
@@ -6507,46 +6357,6 @@
    "tier": "PRICE_1",
    "cost": 990.0,
    "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "BS22",
-   "sup": "TD",
-   "raw": "2RR",
-   "mapped": "2S(R)",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 1320.0,
-   "decompose_as": "1A(R)(LHF) + 1A(R)(RHF)"
-  },
-  {
-   "model": "BS22",
-   "sup": "TD",
-   "raw": "3RR",
-   "mapped": "3S(R)",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 1760.0,
-   "decompose_as": "1A(R) + 2A"
-  },
-  {
-   "model": "BS30",
-   "sup": "TD",
-   "raw": "2RR",
-   "mapped": "2S(R)",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 1320.0,
-   "decompose_as": "1A(R)(LHF) + 1A(R)(RHF)"
-  },
-  {
-   "model": "BS30",
-   "sup": "TD",
-   "raw": "3RR",
-   "mapped": "3S(R)",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 1760.0,
-   "decompose_as": "1A(R) + 2A"
   }
  ],
  "fabric_tiers_not_loaded": [
@@ -10485,6 +10295,104 @@
    "raw": "1B",
    "size": "35",
    "cost": 900.0
+  }
+ ],
+ "ruled_out_25_seater": [
+  {
+   "model": "5117A",
+   "sup": "TD",
+   "size": "36",
+   "cost": 1408.0
+  },
+  {
+   "model": "7179",
+   "sup": "THL",
+   "size": "75cm",
+   "cost": 1250.0
+  },
+  {
+   "model": "7179",
+   "sup": "THL",
+   "size": "75cm",
+   "cost": 1580.0
+  },
+  {
+   "model": "7179",
+   "sup": "THL",
+   "size": "75cm",
+   "cost": 1800.0
+  },
+  {
+   "model": "7218",
+   "sup": "THL",
+   "size": "75cm",
+   "cost": 1360.0
+  },
+  {
+   "model": "7218",
+   "sup": "THL",
+   "size": "75cm",
+   "cost": 1660.0
+  },
+  {
+   "model": "7218",
+   "sup": "THL",
+   "size": "75cm",
+   "cost": 1820.0
+  },
+  {
+   "model": "7219",
+   "sup": "THL",
+   "size": "66cm",
+   "cost": 1140.0
+  },
+  {
+   "model": "7219",
+   "sup": "THL",
+   "size": "66cm",
+   "cost": 1390.0
+  },
+  {
+   "model": "7219",
+   "sup": "THL",
+   "size": "66cm",
+   "cost": 1720.0
+  },
+  {
+   "model": "8030",
+   "sup": "DSL",
+   "size": "32",
+   "cost": 2200.0
+  },
+  {
+   "model": "8030",
+   "sup": "DSL",
+   "size": "32",
+   "cost": 2288.0
+  },
+  {
+   "model": "8030",
+   "sup": "DSL",
+   "size": "32",
+   "cost": 2376.0
+  },
+  {
+   "model": "8030",
+   "sup": "DSL",
+   "size": "35",
+   "cost": 2200.0
+  },
+  {
+   "model": "8030",
+   "sup": "DSL",
+   "size": "35",
+   "cost": 2288.0
+  },
+  {
+   "model": "8030",
+   "sup": "DSL",
+   "size": "35",
+   "cost": 2376.0
   }
  ],
  "sizeless_price3_no_slot": [

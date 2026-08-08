@@ -17229,6 +17229,7 @@
     "1A(R)(LHF)",
     "1A(R)(RHF)",
     "1NA",
+    "1S(R)",
     "2S",
     "3S",
     "CNR",
@@ -17257,6 +17258,12 @@
    "erp": "5071-1NA",
    "model": "5071",
    "comp": "1NA"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "5071-1S(R)",
+   "model": "5071",
+   "comp": "1S(R)"
   },
   {
    "op": "sku_mint",
@@ -17325,6 +17332,7 @@
     "1A(R)(LHF)",
     "1A(R)(RHF)",
     "1NA",
+    "1S(R)",
     "2S",
     "3S",
     "CNR",
@@ -17353,6 +17361,12 @@
    "erp": "5083-1NA",
    "model": "5083",
    "comp": "1NA"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "5083-1S(R)",
+   "model": "5083",
+   "comp": "1S(R)"
   },
   {
    "op": "sku_mint",
@@ -18970,6 +18984,8 @@
    "add_compartments": [
     "1A(R)(LHF)",
     "1A(R)(RHF)",
+    "1NA",
+    "1S(R)",
     "2S",
     "3S"
    ],
@@ -18991,6 +19007,18 @@
   },
   {
    "op": "sku_mint",
+   "erp": "BS22-1NA",
+   "model": "BS22",
+   "comp": "1NA"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "BS22-1S(R)",
+   "model": "BS22",
+   "comp": "1S(R)"
+  },
+  {
+   "op": "sku_mint",
    "erp": "BS22-2S",
    "model": "BS22",
    "comp": "2S"
@@ -19006,7 +19034,9 @@
    "model": "BS30",
    "add_compartments": [
     "1A(R)(LHF)",
-    "1A(R)(RHF)"
+    "1A(R)(RHF)",
+    "1NA",
+    "1S(R)"
    ],
    "sizes": [
     "24"
@@ -19023,6 +19053,18 @@
    "erp": "BS30-1A(R)(RHF)",
    "model": "BS30",
    "comp": "1A(R)(RHF)"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "BS30-1NA",
+   "model": "BS30",
+   "comp": "1NA"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "BS30-1S(R)",
+   "model": "BS30",
+   "comp": "1S(R)"
   },
   {
    "op": "model_open",
@@ -20145,12 +20187,12 @@
     {
      "height": "24",
      "tier": "PRICE_2",
-     "priceSen": 50000
+     "priceSen": 47500
     },
     {
      "height": "28",
      "tier": "PRICE_2",
-     "priceSen": 55000
+     "priceSen": 50000
     }
    ]
   },
@@ -20161,12 +20203,12 @@
     {
      "height": "24",
      "tier": "PRICE_2",
-     "priceSen": 50000
+     "priceSen": 47500
     },
     {
      "height": "28",
      "tier": "PRICE_2",
-     "priceSen": 55000
+     "priceSen": 50000
     }
    ]
   },
@@ -20194,6 +20236,22 @@
      "height": "24",
      "tier": "PRICE_2",
      "priceSen": 69000
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "5071-1S(R)",
+   "entries": [
+    {
+     "height": "24",
+     "tier": "PRICE_2",
+     "priceSen": 50000
+    },
+    {
+     "height": "28",
+     "tier": "PRICE_2",
+     "priceSen": 55000
     }
    ]
   },
@@ -20323,12 +20381,12 @@
     {
      "height": "24",
      "tier": "PRICE_2",
-     "priceSen": 50000
+     "priceSen": 47500
     },
     {
      "height": "28",
      "tier": "PRICE_2",
-     "priceSen": 55000
+     "priceSen": 50000
     }
    ]
   },
@@ -20339,12 +20397,12 @@
     {
      "height": "24",
      "tier": "PRICE_2",
-     "priceSen": 50000
+     "priceSen": 47500
     },
     {
      "height": "28",
      "tier": "PRICE_2",
-     "priceSen": 55000
+     "priceSen": 50000
     }
    ]
   },
@@ -20377,6 +20435,22 @@
      "height": "28",
      "tier": "PRICE_2",
      "priceSen": 78200
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "5083-1S(R)",
+   "entries": [
+    {
+     "height": "24",
+     "tier": "PRICE_2",
+     "priceSen": 50000
+    },
+    {
+     "height": "28",
+     "tier": "PRICE_2",
+     "priceSen": 55000
     }
    ]
   },
@@ -28629,7 +28703,7 @@
     {
      "height": "24",
      "tier": "PRICE_2",
-     "priceSen": 92000
+     "priceSen": 66000
     }
    ]
   },
@@ -28640,7 +28714,18 @@
     {
      "height": "24",
      "tier": "PRICE_2",
-     "priceSen": 92000
+     "priceSen": 66000
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "BS22-1NA",
+   "entries": [
+    {
+     "height": "24",
+     "tier": "PRICE_2",
+     "priceSen": 44000
     }
    ]
   },
@@ -28652,6 +28737,17 @@
      "height": "24",
      "tier": "PRICE_2",
      "priceSen": 80500
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "BS22-1S(R)",
+   "entries": [
+    {
+     "height": "24",
+     "tier": "PRICE_2",
+     "priceSen": 92000
     }
    ]
   },
@@ -28684,13 +28780,35 @@
     {
      "height": "24",
      "tier": "PRICE_2",
-     "priceSen": 92000
+     "priceSen": 66000
     }
    ]
   },
   {
    "op": "seat_grid",
    "erp": "BS30-1A(R)(RHF)",
+   "entries": [
+    {
+     "height": "24",
+     "tier": "PRICE_2",
+     "priceSen": 66000
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "BS30-1NA",
+   "entries": [
+    {
+     "height": "24",
+     "tier": "PRICE_2",
+     "priceSen": 44000
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "BS30-1S(R)",
    "entries": [
     {
      "height": "24",
@@ -35277,10 +35395,10 @@
    "ac": "TD-SF5071 SOFA",
    "matrix": {
     "24": {
-     "P2": 50000
+     "P2": 47500
     },
     "28": {
-     "P2": 55000
+     "P2": 50000
     }
    },
    "main": true
@@ -35292,10 +35410,10 @@
    "ac": "TD-SF5071 SOFA",
    "matrix": {
     "24": {
-     "P2": 50000
+     "P2": 47500
     },
     "28": {
-     "P2": 55000
+     "P2": 50000
     }
    },
    "main": true
@@ -35323,6 +35441,21 @@
    "matrix": {
     "24": {
      "P2": 69000
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-T005",
+   "erp": "5071-1S(R)",
+   "ac": "TD-SF5071 SOFA",
+   "matrix": {
+    "24": {
+     "P2": 50000
+    },
+    "28": {
+     "P2": 55000
     }
    },
    "main": true
@@ -35452,10 +35585,10 @@
    "ac": "TD-SF5083 SOFA",
    "matrix": {
     "24": {
-     "P2": 50000
+     "P2": 47500
     },
     "28": {
-     "P2": 55000
+     "P2": 50000
     }
    },
    "main": true
@@ -35467,10 +35600,10 @@
    "ac": "TD-SF5083 SOFA",
    "matrix": {
     "24": {
-     "P2": 50000
+     "P2": 47500
     },
     "28": {
-     "P2": 55000
+     "P2": 50000
     }
    },
    "main": true
@@ -35501,6 +35634,21 @@
     },
     "28": {
      "P2": 78200
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-T005",
+   "erp": "5083-1S(R)",
+   "ac": "TD-SF5083 SOFA",
+   "matrix": {
+    "24": {
+     "P2": 50000
+    },
+    "28": {
+     "P2": 55000
     }
    },
    "main": true
@@ -35704,7 +35852,7 @@
    "ac": "TD-BS22 SOFA",
    "matrix": {
     "24": {
-     "P2": 92000
+     "P2": 66000
     }
    },
    "main": true
@@ -35716,7 +35864,19 @@
    "ac": "TD-BS22 SOFA",
    "matrix": {
     "24": {
-     "P2": 92000
+     "P2": 66000
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-T005",
+   "erp": "BS22-1NA",
+   "ac": "TD-BS22 SOFA",
+   "matrix": {
+    "24": {
+     "P2": 44000
     }
    },
    "main": true
@@ -35729,6 +35889,18 @@
    "matrix": {
     "24": {
      "P2": 80500
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-T005",
+   "erp": "BS22-1S(R)",
+   "ac": "TD-BS22 SOFA",
+   "matrix": {
+    "24": {
+     "P2": 92000
     }
    },
    "main": true
@@ -35764,7 +35936,7 @@
    "ac": "TD-BS30 SOFA",
    "matrix": {
     "24": {
-     "P2": 92000
+     "P2": 66000
     }
    },
    "main": true
@@ -35773,6 +35945,30 @@
    "op": "sofa_bind",
    "sup": "400-T005",
    "erp": "BS30-1A(R)(RHF)",
+   "ac": "TD-BS30 SOFA",
+   "matrix": {
+    "24": {
+     "P2": 66000
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-T005",
+   "erp": "BS30-1NA",
+   "ac": "TD-BS30 SOFA",
+   "matrix": {
+    "24": {
+     "P2": 44000
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-T005",
+   "erp": "BS30-1S(R)",
    "ac": "TD-BS30 SOFA",
    "matrix": {
     "24": {
