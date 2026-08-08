@@ -72,6 +72,24 @@ one-line change if that ruling is revisited.
   not persisted — the phone unmounts the pop-up on every shell navigation, and a
   just-waved-away notice must not spring back on the next mount. It re-surfaces
   on the next visit.
+- **Skip limit (owner 2026-08-08): two skips, then acknowledge-only.** Each
+  session-dismiss of a notice (secondary "Remind later"/"Later", backdrop
+  tap, mobile sheet-x) also counts one skip in
+  `localStorage["announcements:localSkips"]` — identity-scoped and sanitised by
+  the same `announcementLocalAcks.ts` module as the ack memo, stored as
+  `{ id: { n, at } }`. When a notice's count reaches
+  `MAX_ANNOUNCEMENT_SKIPS` (2), the hook returns `mustAcknowledge: true` and
+  both shells drop every dismiss affordance, showing "This notice requires
+  acknowledgement" in the secondary slot — only the ack button remains
+  (`dismissSession` also refuses at the limit, so a missed call site cannot
+  grant a third skip). Applies to every banner notice — there is no
+  ack-required flag; all notices carry a tracked ack. The mobile "View
+  details"/"Read SOP" step-aside does **not** count (it navigates the reader TO
+  the notice via the non-counting `hideForNavigation`; the desktop twin counts
+  nothing either). Acking clears the notice's count, so an office Remind
+  re-pops with a fresh allowance. The count is local like the acks — the
+  backend records acks, never dismissals — so the allowance is per
+  browser+identity, not per account across devices.
 - **Secondary button semantics by category** (`:121-125`): `WARNING`/`SOP` →
   navigate to `/announcements`; `GENERAL`/`LEARNING` → session-dismiss (no ack).
   The desktop navigates with `window.location.assign` rather than `useNavigate`

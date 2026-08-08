@@ -51,10 +51,11 @@ export function MobileAnnouncementPopup({ onOpenList }: {
   // 30s, matching every other announcement read on the phone (the list, the
   // bell, the badge) — and sharing their cache entry, so the pop-up costs no
   // extra request.
-  const { current, ack, dismissSession } = useAnnouncementBanner({
-    scope: "human",
-    pollMs: 30_000,
-  });
+  const { current, mustAcknowledge, ack, dismissSession, hideForNavigation } =
+    useAnnouncementBanner({
+      scope: "human",
+      pollMs: 30_000,
+    });
   const lang = useMobileLang();
 
   if (!current) return null;
@@ -68,10 +69,12 @@ export function MobileAnnouncementPopup({ onOpenList }: {
 
   const secondary = () => {
     if (secondaryIsView) {
-      // Leave it UN-acked and un-dismissed: the reader is being sent to read
-      // it, so it must still be waiting for them afterwards. Session-dismiss
-      // only so the sheet isn't sitting on top of the screen we just opened.
-      dismissSession(current);
+      // Leave it UN-acked: the reader is being sent to read it, so it must
+      // still be waiting for them afterwards. hideForNavigation, NOT
+      // dismissSession — going to the notice is not a skip (the desktop twin
+      // of this button counts nothing either); it only steps the sheet aside
+      // so it isn't sitting on top of the screen we just opened.
+      hideForNavigation(current);
       onOpenList();
       return;
     }
@@ -87,8 +90,11 @@ export function MobileAnnouncementPopup({ onOpenList }: {
       aria-modal="true"
       aria-label="New announcement"
       // Backdrop tap dismisses for this session (re-surfaces next visit),
-      // never acks — same rule as the desktop backdrop.
-      onClick={(e) => { if (e.target === e.currentTarget) dismissSession(current); }}
+      // never acks — same rule as the desktop backdrop. Inert after the second
+      // skip (owner 2026-08-08): only the acknowledge action remains.
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !mustAcknowledge) dismissSession(current);
+      }}
     >
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="grab" />
@@ -102,9 +108,11 @@ export function MobileAnnouncementPopup({ onOpenList }: {
               <div style={{ fontSize: 11, color: "var(--mut2)", marginTop: 4 }}>{formatDate(current.createdAt)}</div>
             )}
           </div>
-          <button className="sheet-x" onClick={() => dismissSession(current)} aria-label="Dismiss">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
-          </button>
+          {!mustAcknowledge && (
+            <button className="sheet-x" onClick={() => dismissSession(current)} aria-label="Dismiss">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
+            </button>
+          )}
         </div>
         <div className="sheet-scroll" style={{ gap: 12 }}>
           {loc.body && (
@@ -113,14 +121,22 @@ export function MobileAnnouncementPopup({ onOpenList }: {
           <Attachments ann={current} />
         </div>
         <footer className="sheet-foot">
-          <button
-            type="button"
-            className="btn-ghost"
-            style={{ flex: 1 }}
-            onClick={secondary}
-          >
-            {secondaryIsView ? "View details" : "Later"}
-          </button>
+          {/* After the second skip only the acknowledge action remains — the
+              secondary slot turns into the why-line (owner 2026-08-08). */}
+          {mustAcknowledge ? (
+            <span style={{ flex: 1, fontSize: 11.5, fontWeight: 600, color: "var(--mut2)" }}>
+              This notice requires acknowledgement
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="btn-ghost"
+              style={{ flex: 1 }}
+              onClick={secondary}
+            >
+              {secondaryIsView ? "View details" : "Later"}
+            </button>
+          )}
           <button
             type="button"
             className="btn"
