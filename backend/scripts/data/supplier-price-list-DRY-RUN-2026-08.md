@@ -8,14 +8,14 @@
 | 动作 | 数量 | 说明 |
 |---|---|---|
 | 设 main supplier 旗标 | 1442 | 现在生产库 **0** 条有 main 旗标;按 Excel 的 Main Supplier 列补上 |
-| 补 supplier 成本(binding) | 952 | 只填现在为 0 的,已有成本的一条都不动(核对过:已有的与 Excel 零冲突) |
+| 补 supplier 成本(binding) | 962 | 只填现在为 0 的,已有成本的一条都不动(核对过:已有的与 Excel 零冲突) |
 | 补新 binding | 17 | Excel 有 supplier 但系统没绑的 |
-| 补产品档 costing(Product & Maintenance) | 947 | base_price_sen 只填现在为 0 的;含 71 个从 supplier 分页补的缺价 |
+| 补产品档 costing(Product & Maintenance) | 1014 | base_price_sen 只填现在为 0 的;含 71 个从 supplier 分页补的缺价 |
 | 新建沙发 model | 4 | HOK 5530 / 5536 / 5537 / 5540(当年标了 NEW 但一直没建) |
-| 打开沙发 compartment | 289 个(涉及 51 个 model) | 65 个 model 现在只有 ['1S'] |
-| 铸造 compartment SKU | 287 | `{model}-{compartment}`,与现有开法一致 |
-| 写沙发成本 grid | 355 个 SKU / 1417 格 | seat_height_prices:座宽 × 面料档 × cost;现在全系统是 **0** 张 grid |
-| 沙发 supplier binding(带 price_matrix) | 438 | 每家 supplier 自己的 compartment 报价存在自己的 binding 上 |
+| 打开沙发 compartment | 289 个(涉及 54 个 model) | 65 个 model 现在只有 ['1S'] |
+| 铸造 compartment SKU | 295 | `{model}-{compartment}`,与现有开法一致 |
+| 写沙发成本 grid | 297 个 SKU / 1256 格 | seat_height_prices:座深 × 面料档 × cost;现在全系统是 **0** 张 grid |
+| 沙发 supplier binding(带 price_matrix) | 446 | 每家 supplier 自己的 compartment 报价存在自己的 binding 上 |
 
 钱的单位:全部 RM×100 存 sen/centi,来源数字 = Excel 各分页现价(含 2026-04 涨价后的)。
 
@@ -42,7 +42,7 @@ Red Sofa 取的是 **PRICE + TRANSPORT CHARGES** 那组(到货成本);要改用�
 - **8038**:DSL-8038 SOFA (400-D004) vs RDS-5526 SOFA (400-R001)
 - **5152**:RDS-5152 SOFA (400-R001) vs THL-5152 (400-T002)
 
-这 4 个 model 的产品档 grid(共 45 个 SKU)等你指定谁是 main 才写;两家各自的报价已存去各自 binding,不会丢。
+这 4 个 model 的产品档 grid(共 50 个 SKU)等你指定谁是 main 才写;两家各自的报价已存去各自 binding,不会丢。
 
 ### 2. 两家 supplier 系统里不存在(涉及 5 个 SKU,先跳过)
 - `400-O001` — 建议名:MISCELLANEOUS;SKU:Miscellaneous
