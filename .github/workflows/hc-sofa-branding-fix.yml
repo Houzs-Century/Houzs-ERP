@@ -1,0 +1,74 @@
+name: HC sofa branding fix (Zanotti)
+
+# Owner rule 2026-08-08, verbatim: "houzs 的 sofa brand 是 zanotti; 2990 的
+# sofa brand 是 2990 sofa" — plus the same-day addenda: SERVICE blanks fill to
+# 'Service', BEDFRAME blanks take an evidence-matched mattress-family brand or
+# 'Bedframe'. Houzs Century ONLY ("确保是 houzs century 的故事而已") — 2990 and
+# MATTRESS appear as REPORT-ONLY sections, never written.
+#
+# Default run = DRY-RUN of scripts/fix-hc-sofa-branding.mjs: the full repair
+# runs inside one transaction, is count-verified, and is ROLLED BACK — the
+# output lists every catalog row and stamped SO/consignment line it WOULD
+# re-stamp, every bedframe decision with its evidence string, the 2990 sanity
+# picture, and whether project_brands carries an active 'Zanotti' row (the SO
+# PDF letterhead lookup matches by NAME; a missing row/logo must be added in
+# Project Maintenance -> Brands, never by this script).
+#
+# APPLY commits ONLY when apply = "APPLY" AND the confirmation phrase matches.
+# Review the DRY-RUN first — the bedframe evidence lines are the owner's veto
+# surface.
+#
+# Manual trigger only, own concurrency group — never the deploy's.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Type APPLY to commit. Anything else = DRY-RUN (report only, rolled back).'
+        required: false
+        default: ''
+        type: string
+      confirm:
+        description: 'Apply only — type exactly: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: hc-sofa-branding-fix
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - id: mode
+        working-directory: .
+        run: |
+          if [ "${{ github.event.inputs.apply }}" = "APPLY" ] && [ "${{ github.event.inputs.confirm }}" = "I HAVE REVIEWED THE DRY-RUN" ]; then
+            echo "apply=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::APPLY confirmed — writes will be COMMITTED."
+          else
+            echo "apply=false" >> "$GITHUB_OUTPUT"
+            if [ "${{ github.event.inputs.apply }}" = "APPLY" ]; then
+              echo "::warning::APPLY requested but the confirmation phrase is missing or wrong — running DRY-RUN."
+            fi
+          fi
+      - run: node scripts/fix-hc-sofa-branding.mjs
+        env:
+          APPLY: ${{ steps.mode.outputs.apply }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
