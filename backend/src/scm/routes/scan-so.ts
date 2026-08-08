@@ -3820,18 +3820,20 @@ function buildDraftSoBodyFromSlip(
   const remarkNote = (parsed.remarks ?? '').trim();
   if (remarkNote) noteParts.push(remarkNote);
 
-  // Owner 2026-07-04: when the slip names a real DELIVERY date, carry it and pin
-  // the PROCESSING date to TODAY (a scan is keyed the day the order comes in;
-  // the processing date can never be a past date). The create core pairs the two
-  // (both set or both null) and rejects a past date, so we only set them when the
-  // slip's delivery date is a real YYYY-MM-DD that is today-or-later; a past /
-  // blank / "TBC" delivery leaves both null for the operator. runScanJob retries
-  // dateless if the create ever rejects the pair (belt-and-suspenders).
-  const scanToday = todayMyt();
-  const delivRaw = (parsed.deliveryDate ?? '').trim();
-  const scanDelivDate =
-    /^\d{4}-\d{2}-\d{2}$/.test(delivRaw) && delivRaw >= scanToday ? delivRaw : null;
-  const scanProcDate = scanDelivDate ? scanToday : null;
+  // Owner 2026-08-08 (2990-SO-2608-007, addendum #3) — a DRAFT never carries a
+  // Processing Date. The previous rule here (owner 2026-07-04: slip delivery
+  // date ⇒ pin processing to TODAY) silently stamped internal_expected_dd on
+  // scan drafts, which is wrong twice over: semantically a draft has not
+  // started processing, and the date rode in WITHOUT the deposit / variant /
+  // completeness gates every explicit Processing-Date write runs. Both dates
+  // land NULL now — the create core's pairing rule (both-or-none) forbids
+  // carrying the slip's delivery date alone, so the operator keys the pair at
+  // review against the slip photo, exactly like the mobile headless scan
+  // draft (createDraftFromPrefill) has always done. This is also the shape
+  // runScanJob's TIER-1 dateless retry already produced whenever the old
+  // default tripped a gate.
+  const scanDelivDate: string | null = null;
+  const scanProcDate: string | null = null;
 
   const body: Record<string, unknown> = {
     customerName,

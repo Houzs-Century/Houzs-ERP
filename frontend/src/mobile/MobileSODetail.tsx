@@ -1183,7 +1183,11 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 historyOpen-mounted HistoryPanel). */}
             <HistoryCard docNo={docNo} />
 
-            {actionError && <div style={{ marginTop: 13, fontSize: 11.5, color: "var(--red)", textAlign: "center" }}>{actionError}</div>}
+            {/* Confirm-gate refusals arrive as a bullet-per-reason list
+                (humanApiError renders validation_failed problems one per
+                line) — pre-line keeps the list readable; a single-line error
+                stays centered as before. */}
+            {actionError && <div style={{ marginTop: 13, fontSize: 11.5, color: "var(--red)", whiteSpace: "pre-line", textAlign: actionError.includes("\n") ? "left" : "center" }}>{actionError}</div>}
           </div>
         )}
       </div>

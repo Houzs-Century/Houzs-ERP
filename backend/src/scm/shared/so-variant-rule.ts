@@ -22,6 +22,7 @@
 // Pure — no I/O. Shared by apps/api (409 gate), apps/backend (save gates +
 // warning banners), and any future surface. Do NOT hand-copy the lists again.
 // ----------------------------------------------------------------------------
+import { isColourKiv } from './variant-summary';
 
 export type VariantAxis = {
   /** Canonical key — what offender lists / `missing` arrays report. */
@@ -78,6 +79,25 @@ export function missingVariantAxes(
   return axes.filter(
     (axis) => axis.required !== false && axis.aliases.every((k) => isEmpty(v[k])),
   );
+}
+
+/** The axes a line must fill BEFORE THE ORDER MAY BE CONFIRMED (owner
+ *  2026-08-08, HC-SO-2607-008: a bedframe line confirmed with no variant
+ *  selections at all). Same axes map as missingVariantAxes, with ONE
+ *  carve-out: a colour-KIV line (fabric SERIES committed via fabricId /
+ *  fabricLabel, colour confirmed later — isColourKiv) SATISFIES the fabric
+ *  axis. KIV is a legitimate confirmed-order state; it blocks the Processing
+ *  Date (owner rule 2026-07-24), never confirm. Desktop, mobile and the
+ *  backend confirm gate all read THIS so the rule cannot drift. */
+export function missingConfirmVariantAxes(
+  itemGroup: string | null | undefined,
+  variants: Record<string, unknown> | null | undefined,
+): VariantAxis[] {
+  const missing = missingVariantAxes(itemGroup, variants);
+  if (missing.length === 0) return missing;
+  return isColourKiv(variants ?? null)
+    ? missing.filter((axis) => axis.key !== 'fabricCode')
+    : missing;
 }
 
 /** Rewrite POS-vocabulary alias keys to their canonical axis key for the given

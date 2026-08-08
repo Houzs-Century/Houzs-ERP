@@ -280,8 +280,15 @@ export function SalesOrderNewGuided() {
       debtorCode: customer.debtorCode || null,
       note: note.trim() || null,
       items,
-      // Dates intentionally omitted — server permits header-first and
-      // the variant-completeness guard only fires when a processingDate is set.
+      // Dates intentionally omitted — server permits header-first.
+      /* Owner 2026-08-08 — CONFIRMING now requires every sofa line's Seat
+         Height + Fabrics (and a venue + salesperson). The wizard deliberately
+         collects none of those — its model is "assemble the build, enrich on
+         the SO detail" — so it lands a DRAFT the operator completes and
+         confirms there (the detail's DRAFT banner). Without this flag the
+         create would land CONFIRMED and the server confirm gate would refuse
+         every wizard build outright. */
+      asDraft: true,
     };
 
     try {
@@ -1211,7 +1218,7 @@ function SoLiveSummary({
             disabled={submitting}
             icon={submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
           >
-            {submitting ? "Saving…" : "Create SO"}
+            {submitting ? "Saving…" : "Save draft SO"}
           </Button>
         ) : (
           <Button variant="primary" onClick={onNext} disabled={submitting}>
@@ -1280,7 +1287,7 @@ function MobileFooter({
             disabled={submitting}
             icon={submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
           >
-            {submitting ? "Saving…" : "Create SO"}
+            {submitting ? "Saving…" : "Save draft SO"}
           </Button>
         ) : (
           <Button variant="primary" onClick={onNext} disabled={submitting}>
