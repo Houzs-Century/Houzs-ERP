@@ -12,7 +12,7 @@ import {
 // scope ONCE however many surfaces are mounted; polls 30s (the notifications
 // cadence) so the badge stays live app-wide. Fail-soft: any hiccup leaves
 // `data` undefined and yields 0 — a failed poll must never invent a number.
-function useScopeUnread(scope: Exclude<BannerScope, "all">): number {
+function useScopeUnread(scope: BannerScope): number {
   const { user } = useAuth();
   const { data } = useQuery({
     queryKey: announcementFeedKey(scope),
