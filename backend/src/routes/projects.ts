@@ -241,16 +241,28 @@ app.post("/brands", requirePermission("projects.manage"), async (c) => {
   const name = (body.name || "").trim();
   if (!name) return c.json({ error: "name is required" }, 400);
   const color = normaliseHex(body.color) ?? "64748b";
-  const existing = await c.env.DB.prepare(
-    `SELECT id FROM project_brands WHERE LOWER(name) = LOWER(?)`
-  )
-    .bind(name)
-    .first<{ id: number }>();
-  if (existing) return c.json({ error: "A brand with that name already exists" }, 409);
   // Stamp the active company so a brand created under 2990 isn't silently
   // labelled HOUZS by the company_id column DEFAULT. When the company is
   // unresolved (single-company / cold-start) fall back to that DEFAULT.
   const activeCo = activeCompanyId(c);
+  /* Duplicate check is PER COMPANY, matching what the list shows (owner
+     2026-08-08: adding BEDFRAME/SERVICE on Houzs Century refused because
+     2990 owns brands with those names — the company-blind check named a
+     collision the operator could not even see). The INSERT below already
+     stamps company_id; the check must look at the same slice. Unresolved
+     company keeps the old global check (single-company installs). */
+  const existing = activeCo != null
+    ? await c.env.DB.prepare(
+        `SELECT id FROM project_brands WHERE LOWER(name) = LOWER(?) AND company_id = ?`
+      )
+        .bind(name, activeCo)
+        .first<{ id: number }>()
+    : await c.env.DB.prepare(
+        `SELECT id FROM project_brands WHERE LOWER(name) = LOWER(?)`
+      )
+        .bind(name)
+        .first<{ id: number }>();
+  if (existing) return c.json({ error: "A brand with that name already exists" }, 409);
   const r = activeCo != null
     ? await c.env.DB.prepare(
         `INSERT INTO project_brands (name, color, sort_order, active, company_id)
