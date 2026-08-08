@@ -380,9 +380,12 @@ const USER_A = { id: 101, department_id: null, position_id: null, permissions: [
 const USER_B = { id: 202, department_id: null, position_id: null, permissions: [] as string[], permissions_set: new Set<string>() };
 const MANAGER = { id: 300, department_id: null, position_id: null, permissions: ["*"], permissions_set: new Set(["*"]) };
 
-async function getBanner(user: any) {
+async function getBanner(user: any, scope?: "system") {
   bannerState.user = user;
-  const res = await annApp.request("/api/announcements/banner", {}, env as any);
+  const path = scope
+    ? `/api/announcements/banner?scope=${scope}`
+    : "/api/announcements/banner";
+  const res = await annApp.request(path, {}, env as any);
   expect(res.status).toBe(200);
   const body = (await res.json()) as any;
   return {
@@ -422,6 +425,9 @@ describe("/api/announcements/banner — per-user cache", () => {
     expect((await getBanner(USER_A)).cache).toBe("hit");
 
     // A PRIVATE notice for A busts exactly A's snapshot (postPersonalNotice).
+    // It is a MACHINE notice (source non-null), so A's rebuilt POP-UP slice
+    // stays empty — machine notices never pop a banner (owner 2026-08-08);
+    // the notice is delivered on the BELL slice (scope=system) instead.
     await postPersonalNotice(env as any, {
       userIds: [USER_A.id],
       category: "GENERAL",
@@ -431,16 +437,21 @@ describe("/api/announcements/banner — per-user cache", () => {
     });
     const a2 = await getBanner(USER_A);
     expect(a2.cache).toBe("miss"); // busted → rebuilt
-    expect(a2.ids.length).toBe(1);
-    const privateId = a2.ids[0];
+    expect(a2.ids).toEqual([]); // ...but the pop-up slice excludes it
+    const aSys = await getBanner(USER_A, "system");
+    expect(aSys.cache).toBe("bypass"); // bell slice is a live read
+    expect(aSys.ids.length).toBe(1);
+    const privateId = aSys.ids[0];
 
     // Direction check: B's banner (cached or rebuilt) NEVER shows A's private
     // notice — and B's entry was untouched by A's bust.
     const b2 = await getBanner(USER_B);
     expect(b2.cache).toBe("hit");
     expect(b2.ids).not.toContain(privateId);
+    expect((await getBanner(USER_B, "system")).ids).not.toContain(privateId);
 
-    // A acks → only A's snapshot busts; ackedIds shows on A's next read.
+    // A acks → only A's snapshot busts; the ack lands on the bell slice's
+    // ackedIds (the pop-up slice never carries the machine notice at all).
     bannerState.user = USER_A;
     const ack = await annApp.request(
       `/api/announcements/${privateId}/ack`,
@@ -450,7 +461,7 @@ describe("/api/announcements/banner — per-user cache", () => {
     expect(ack.status).toBe(200);
     const a3 = await getBanner(USER_A);
     expect(a3.cache).toBe("miss");
-    expect(a3.ackedIds).toContain(privateId);
+    expect((await getBanner(USER_A, "system")).ackedIds).toContain(privateId);
 
     // A broadcast create bumps the FAMILY version — every user rebuilds and
     // sees it, while per-user separation still holds.
@@ -473,7 +484,10 @@ describe("/api/announcements/banner — per-user cache", () => {
     expect(b4.cache).toBe("miss");
     expect(a4.ids).toContain(createdId);
     expect(b4.ids).toContain(createdId);
-    expect(a4.ids).toContain(privateId); // A still sees their private notice
-    expect(b4.ids).not.toContain(privateId); // B still does not
+    // The machine notice stays off the pop-up slice for everyone; A still has
+    // it on the bell slice, B still does not.
+    expect(a4.ids).not.toContain(privateId);
+    expect(b4.ids).not.toContain(privateId);
+    expect((await getBanner(USER_A, "system")).ids).toContain(privateId);
   });
 });
