@@ -28,6 +28,15 @@
 - **The class, for next time.** A missing FIELD is invisible in a way a broken field is not. Nothing errored, nothing logged, and the UI showed a sent reply — the only way to notice was to be one of the people who did not receive it.
 - **Ref:** #<PR>. `feat/mail-cc-recipients` 2026-08-04.
 
+## 2026-08-08
+
+### [LOW] Adding a project brand refused with an invisible collision — the duplicate check was company-blind
+- **Symptom.** Owner, Project Maintenance on Houzs Century: adding brand "BEDFRAME" (then "SERVICE") returned "A brand with that name already exists" while the brands list showed neither — the colliding rows belong to the OTHER company (2990), which the list correctly hides.
+- **Root cause.** `POST /brands` checked `LOWER(name)` across the WHOLE `project_brands` table while the INSERT (and the list) are company-scoped — the check looked at a different slice than every other reader.
+- **Fix.** The duplicate check scopes to the active company (same slice as the insert stamp and the list); unresolved-company installs keep the global check.
+- **Ref:** #<PR>. `fix/brand-dup-check-company-scope` 2026-08-08.
+
+
 ## 2026-08-07
 
 ### [HIGH] A Sales Order total carried a delivery fee NO line owned — deleting the SVC-DELIVERY line turned the header snapshot into a back door
