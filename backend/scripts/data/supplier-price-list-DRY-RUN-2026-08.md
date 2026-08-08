@@ -6,9 +6,9 @@
 ## A. 主体部分(按已定规则编好,勾这里就执行)
 
 - [ ] **A1 SKU↔Supplier 归位**:补 main supplier 旗标 1442 条(现在全系统 0 条有 main)、补 binding 成本 962 条(只填 0)、新绑 8 条
-- [ ] **A2 Product & Maintenance 指导价**:1015 个 SKU 填 base 成本(只填 0,含 71 个从分页反查的)+ 73 个床架 price1(Fab2)
-- [ ] **A3 开 compartment**:51 个 model 开 231 个件、铸 229 个 SKU;**每个 SKU 同步建 supplier binding 402 条(带那家报价矩阵)——“supplier 那边也会有吗”:会**
-- [ ] **A4 沙发成本**:271 个 SKU 写基准价 1531 格(每件一个价,面料档**不导**,升级钱走 fabric tier addon 那套)
+- [ ] **A2 Product & Maintenance 指导价**:1020 个 SKU 填 base 成本(只填 0,含 71 个从分页反查的)+ 73 个床架 price1(Fab2)
+- [ ] **A3 开 compartment**:51 个 model 开 402 个件、铸 400 个 SKU;**每个 SKU 同步建 supplier binding 430 条(带那家报价矩阵)——“supplier 那边也会有吗”:会**
+- [ ] **A4 沙发成本**:288 个 SKU 写基准价 1646 格(每件一个价,面料档**不导**,升级钱走 fabric tier addon 那套)
 
 **A5 各家「基准面料」我取的是哪一列(不对就圈出来):**
 
@@ -32,164 +32,17 @@
 ---
 ## C. 待你逐条勾的
 
-### C1 拆件确认(150 行 — 原表是整件报价,按你的规则要拆)
+### C1 拆件确认(3 行 — 原表是整件报价,按你的规则要拆)
 
 | 表上写 | 家 | model | 价 | 我建议拆成 | 勾 |
 |---|---|---|---|---|---|
-| `2(no arm)` | THL | 2376 | RM800 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 2376 | RM990 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 2376 | RM1080 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 2376 | RM960 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 2376 | RM1190 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 2376 | RM1300 | 1NA + 1NA | ☐ |
-| `2NA` | TD | 5071 | RM850 | 1NA + 1NA | ☐ |
-| `2NA` | TD | 5071 | RM900 | 1NA + 1NA | ☐ |
-| `2NA` | TD | 5083 | RM850 | 1NA + 1NA | ☐ |
-| `2NA` | TD | 5083 | RM900 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 5133 | RM1210 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 5133 | RM1460 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 5133 | RM1650 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 5142 | RM890 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 5142 | RM1060 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 5150 | RM1190 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 5150 | RM1330 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 5150 | RM1430 | 1NA + 1NA | ☐ |
-| `2(NO ARM)` | THL | 5152 | RM1070 | 1NA + 1NA | ☐ |
-| `2(NO ARM)` | THL | 5152 | RM1200 | 1NA + 1NA | ☐ |
-| `2(NO ARM)` | THL | 5152 | RM1490 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 5152 | RM1796 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 5152 | RM1906 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 558 | RM1855 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 558 | RM1954 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7221 | RM1650 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7221 | RM1880 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7221 | RM2250 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7223 | RM1030 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7223 | RM1240 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7223 | RM1500 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7226 | RM1030 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7226 | RM1240 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7226 | RM1500 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7233 | RM1150 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7233 | RM1300 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7233 | RM1520 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7238 | RM1480 | 1NA + 1NA | ☐ |
-| `2(no arm)` | THL | 7238 | RM1620 | 1NA + 1NA | ☐ |
-| `2NA` | HOK | 8030 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | HOK | 8030 | RM1518 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1520 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1600 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1680 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1520 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1600 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8030 | RM1680 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1400 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1480 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1560 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1500 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1580 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1660 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1500 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1580 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1660 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1500 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1580 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1660 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1500 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1580 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8038 | RM1660 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8039 | RM1200 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8039 | RM1280 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8039 | RM1360 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8060 | RM1200 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8060 | RM1280 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8060 | RM1360 | 1NA + 1NA | ☐ |
 | `3NA` | DSL | 8060 | RM1800 | 1NA + 1NA + 1NA | ☐ |
 | `3NA` | DSL | 8060 | RM1920 | 1NA + 1NA + 1NA | ☐ |
 | `3NA` | DSL | 8060 | RM2040 | 1NA + 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8069 | RM1200 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8069 | RM1280 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 8069 | RM1360 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 8133 | RM1709 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 8133 | RM1870 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 822 | RM1727 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 822 | RM1821 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 823 | RM1834 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 823 | RM1933 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 823 | RM1727 | 1NA + 1NA | ☐ |
-| `2NA` | RDS | 823 | RM1821 | 1NA + 1NA | ☐ |
-| `2NA` | HOK | 9028 | RM990 | 1NA + 1NA | ☐ |
-| `2NA` | HOK | 9028 | RM1045 | 1NA + 1NA | ☐ |
-| `2NA` | HOK | 9028 | RM1045 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1000 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1080 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1160 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1000 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1080 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1160 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1200 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1280 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9028 | RM1360 | 1NA + 1NA | ☐ |
-| `2NA` | AMN | 9028 | RM1000 | 1NA + 1NA | ☐ |
-| `2NA` | AMN | 9028 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | AMN | 9028 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | AMN | 9028 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9050 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9050 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9050 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | AMN | 9050 | RM1200 | 1NA + 1NA | ☐ |
-| `2NA` | AMN | 9050 | RM1300 | 1NA + 1NA | ☐ |
-| `2NA` | AMN | 9050 | RM1300 | 1NA + 1NA | ☐ |
-| `2NA` | AMN | 9050 | RM1400 | 1NA + 1NA | ☐ |
-| `2NA` | AMN | 9050 | RM1400 | 1NA + 1NA | ☐ |
-| `2NA` | HOK | 9058 | RM946 | 1NA + 1NA | ☐ |
-| `2NA` | HOK | 9058 | RM990 | 1NA + 1NA | ☐ |
-| `2NA` | HOK | 9058 | RM1078 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1100 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1180 | 1NA + 1NA | ☐ |
-| `2NA` | DSL | 9058 | RM1260 | 1NA + 1NA | ☐ |
-| `2NA` | AMN | 9058 | RM946 | 1NA + 1NA | ☐ |
-| `2NA` | AMN | 9058 | RM990 | 1NA + 1NA | ☐ |
 
 拆开后单件价格表上没有——要么问厂,要么你给拆价规则(对半?)。
 
-### C2 低置信度翻译(301 行没导,样例)
+### C2 低置信度翻译(299 行没导,样例)
 
 - ☐ THL `R` → 我猜 `1A(R)(LHF)`(model 2376)
 - ☐ THL `2rr` → 我猜 `2S(R)`(model 2376)
@@ -232,8 +85,8 @@
 
 ### C7 数据洞(参考,不用勾)
 
-- 366 个 SKU 全工作簿无成本(多是 DEMO/停产);20 个无 supplier;56 个新开件表上没价
-- 面料升级差价 492 格已留档(A/Luxury/Premium/皮价等);套装 538 行、加购件 42 行、看不懂 77 行 —— 都在 report JSON,第二批处理
+- 366 个 SKU 全工作簿无成本(多是 DEMO/停产);20 个无 supplier;217 个新开件表上没价
+- 面料升级差价 492 格已留档(A/Luxury/Premium/皮价等);套装 538 行、加购件 38 行、看不懂 77 行 —— 都在 report JSON,第二批处理
 
 ---
 执行方式:A+B 勾完 → workflow `load-supplier-price-list`(dry-run 已验证)→ apply(确认短语)→ 单事务,不符即回滚。

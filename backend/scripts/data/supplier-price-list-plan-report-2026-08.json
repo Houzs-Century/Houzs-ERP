@@ -4505,22 +4505,6 @@
    "cost": 1676.0
   },
   {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "DAYBED",
-   "mapped": "DAYBED",
-   "size": null,
-   "cost": 80.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "DAYBED",
-   "mapped": "DAYBED",
-   "size": null,
-   "cost": 80.0
-  },
-  {
    "model": "823",
    "sup": "RDS",
    "raw": "1NA/LT",
@@ -4855,1508 +4839,6 @@
    "mapped": "3S(P)",
    "size": "30",
    "cost": 4492.105263
-  }
- ],
- "non_pool_units_review": [
-  {
-   "model": "2376",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "60cm",
-   "tier": "PRICE_1",
-   "cost": 800.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "2376",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "60cm",
-   "tier": "PRICE_2",
-   "cost": 990.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "2376",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "60cm",
-   "tier": "PRICE_3",
-   "cost": 1080.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "2376",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "75cm",
-   "tier": "PRICE_1",
-   "cost": 960.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "2376",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "75cm",
-   "tier": "PRICE_2",
-   "cost": 1190.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "2376",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "75cm",
-   "tier": "PRICE_3",
-   "cost": 1300.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5071",
-   "sup": "TD",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 850.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5071",
-   "sup": "TD",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 900.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5083",
-   "sup": "TD",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 850.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5083",
-   "sup": "TD",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 900.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5133",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "75cm",
-   "tier": "PRICE_1",
-   "cost": 1210.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5133",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "75cm",
-   "tier": "PRICE_2",
-   "cost": 1460.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5133",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "75cm",
-   "tier": "PRICE_3",
-   "cost": 1650.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5142",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_1",
-   "cost": 890.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5142",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_2",
-   "cost": 1060.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5150",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "80CM",
-   "tier": "PRICE_1",
-   "cost": 1190.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5150",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "80CM",
-   "tier": "PRICE_2",
-   "cost": 1330.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5150",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "80CM",
-   "tier": "PRICE_3",
-   "cost": 1430.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5152",
-   "sup": "THL",
-   "raw": "2(NO ARM)",
-   "mapped": "2NA",
-   "size": "75CM",
-   "tier": "PRICE_1",
-   "cost": 1070.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5152",
-   "sup": "THL",
-   "raw": "2(NO ARM)",
-   "mapped": "2NA",
-   "size": "75CM",
-   "tier": "PRICE_2",
-   "cost": 1200.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5152",
-   "sup": "THL",
-   "raw": "2(NO ARM)",
-   "mapped": "2NA",
-   "size": "75CM",
-   "tier": "PRICE_3",
-   "cost": 1490.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5152",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_2",
-   "cost": 1795.789474,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "5152",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_3",
-   "cost": 1906.315789,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_2",
-   "cost": 1854.736842,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_3",
-   "cost": 1953.684211,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7221",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "80cm",
-   "tier": "PRICE_1",
-   "cost": 1650.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7221",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "80cm",
-   "tier": "PRICE_2",
-   "cost": 1880.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7221",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "80cm",
-   "tier": "PRICE_3",
-   "cost": 2250.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7223",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_1",
-   "cost": 1030.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7223",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_2",
-   "cost": 1240.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7223",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_3",
-   "cost": 1500.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7226",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_1",
-   "cost": 1030.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7226",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_2",
-   "cost": 1240.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7226",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_3",
-   "cost": 1500.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7233",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_1",
-   "cost": 1150.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7233",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_2",
-   "cost": 1300.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7233",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": null,
-   "tier": "PRICE_3",
-   "cost": 1520.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7238",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "75cm",
-   "tier": "PRICE_1",
-   "cost": 1480.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "7238",
-   "sup": "THL",
-   "raw": "2(no arm)",
-   "mapped": "2NA",
-   "size": "75cm",
-   "tier": "PRICE_2",
-   "cost": 1620.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "HOK",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "HOK",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "35",
-   "tier": "PRICE_2",
-   "cost": 1518.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "25",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "25",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "25",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "27",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "27",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "27",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_1",
-   "cost": 1520.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_2",
-   "cost": 1600.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_3",
-   "cost": 1680.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "35",
-   "tier": "PRICE_1",
-   "cost": 1520.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "35",
-   "tier": "PRICE_2",
-   "cost": 1600.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8030",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "35",
-   "tier": "PRICE_3",
-   "cost": 1680.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_1",
-   "cost": 1400.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 1480.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_3",
-   "cost": 1560.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_1",
-   "cost": 1500.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_2",
-   "cost": 1580.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_3",
-   "cost": 1660.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_1",
-   "cost": 1500.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1580.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_3",
-   "cost": 1660.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_1",
-   "cost": 1500.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_2",
-   "cost": 1580.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_3",
-   "cost": 1660.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_1",
-   "cost": 1500.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_2",
-   "cost": 1580.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8038",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_3",
-   "cost": 1660.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8039",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_1",
-   "cost": 1200.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8039",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1280.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8039",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_3",
-   "cost": 1360.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8060",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_1",
-   "cost": 1200.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8060",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1280.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8060",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_3",
-   "cost": 1360.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8060",
-   "sup": "DSL",
-   "raw": "3NA",
-   "mapped": "3NA",
-   "size": "28",
-   "tier": "PRICE_1",
-   "cost": 1800.0,
-   "decompose_as": "1NA + 1NA + 1NA"
-  },
-  {
-   "model": "8060",
-   "sup": "DSL",
-   "raw": "3NA",
-   "mapped": "3NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1920.0,
-   "decompose_as": "1NA + 1NA + 1NA"
-  },
-  {
-   "model": "8060",
-   "sup": "DSL",
-   "raw": "3NA",
-   "mapped": "3NA",
-   "size": "28",
-   "tier": "PRICE_3",
-   "cost": 2040.0,
-   "decompose_as": "1NA + 1NA + 1NA"
-  },
-  {
-   "model": "8069",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_1",
-   "cost": 1200.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8069",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1280.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8069",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_3",
-   "cost": 1360.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_2",
-   "cost": 1709.473684,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_3",
-   "cost": 1870.421053,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1727.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_3",
-   "cost": 1821.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_2",
-   "cost": 1833.684211,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_3",
-   "cost": 1932.631579,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1727.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_3",
-   "cost": 1821.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "HOK",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 990.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "HOK",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1045.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "HOK",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_2",
-   "cost": 1045.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "22",
-   "tier": "PRICE_1",
-   "cost": 1000.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "22",
-   "tier": "PRICE_2",
-   "cost": 1080.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "22",
-   "tier": "PRICE_3",
-   "cost": 1160.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_1",
-   "cost": 1000.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 1080.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_3",
-   "cost": 1160.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_1",
-   "cost": 1200.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_2",
-   "cost": 1280.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_3",
-   "cost": 1360.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "AMN",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_1",
-   "cost": 1000.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "AMN",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "AMN",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9028",
-   "sup": "AMN",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9050",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9050",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9050",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9050",
-   "sup": "AMN",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_1",
-   "cost": 1200.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9050",
-   "sup": "AMN",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_1",
-   "cost": 1300.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9050",
-   "sup": "AMN",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_1",
-   "cost": 1300.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9050",
-   "sup": "AMN",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_1",
-   "cost": 1400.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9050",
-   "sup": "AMN",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "35",
-   "tier": "PRICE_1",
-   "cost": 1400.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "HOK",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 946.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "HOK",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_2",
-   "cost": 990.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "HOK",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "32",
-   "tier": "PRICE_2",
-   "cost": 1078.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "26",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "28",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_1",
-   "cost": 1100.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_2",
-   "cost": 1180.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "DSL",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_3",
-   "cost": 1260.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "AMN",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "24",
-   "tier": "PRICE_1",
-   "cost": 946.0,
-   "decompose_as": "1NA + 1NA"
-  },
-  {
-   "model": "9058",
-   "sup": "AMN",
-   "raw": "2NA",
-   "mapped": "2NA",
-   "size": "30",
-   "tier": "PRICE_1",
-   "cost": 990.0,
-   "decompose_as": "1NA + 1NA"
   }
  ],
  "fabric_tiers_not_loaded": [
@@ -10397,6 +8879,12 @@
  ],
  "sizeless_price3_no_slot": [
   {
+   "sku": "5152-2NA",
+   "sup": "400-R001",
+   "cost": 1906.315789,
+   "raw": "2NA"
+  },
+  {
    "sku": "5152-1NA",
    "sup": "400-R001",
    "cost": 1058.421053,
@@ -10425,6 +8913,12 @@
    "sup": "400-R001",
    "cost": 1031.052632,
    "raw": "1NA"
+  },
+  {
+   "sku": "558-2NA",
+   "sup": "400-R001",
+   "cost": 1953.684211,
+   "raw": "2NA"
   },
   {
    "sku": "558-CNR",
@@ -10511,6 +9005,12 @@
    "raw": "2(1 arm)"
   },
   {
+   "sku": "7223-2NA",
+   "sup": "400-T002",
+   "cost": 1500.0,
+   "raw": "2(no arm)"
+  },
+  {
    "sku": "7223-L(LHF)",
    "sup": "400-T002",
    "cost": 1600.0,
@@ -10565,6 +9065,12 @@
    "raw": "2(1 arm)"
   },
   {
+   "sku": "7226-2NA",
+   "sup": "400-T002",
+   "cost": 1500.0,
+   "raw": "2(no arm)"
+  },
+  {
    "sku": "7226-L(LHF)",
    "sup": "400-T002",
    "cost": 1600.0,
@@ -10617,6 +9123,12 @@
    "sup": "400-T002",
    "cost": 1680.0,
    "raw": "2(1 arm)"
+  },
+  {
+   "sku": "7233-2NA",
+   "sup": "400-T002",
+   "cost": 1520.0,
+   "raw": "2(no arm)"
   },
   {
    "sku": "7233-L(LHF)",
@@ -10757,44 +9269,903 @@
    "raw": "CORNER"
   },
   {
-   "sku": "822-Console",
-   "sup": "400-R001",
-   "cost": 640.0,
-   "raw": "C/T"
-  },
-  {
    "sku": "R819-Console",
    "sup": "400-R001",
    "cost": 840.8421053,
    "raw": "C/T"
   }
  ],
+ "non_pool_units_review": [
+  {
+   "model": "8060",
+   "sup": "DSL",
+   "raw": "3NA",
+   "mapped": "3NA",
+   "size": "28",
+   "tier": "PRICE_1",
+   "cost": 1800.0,
+   "decompose_as": "1NA + 1NA + 1NA"
+  },
+  {
+   "model": "8060",
+   "sup": "DSL",
+   "raw": "3NA",
+   "mapped": "3NA",
+   "size": "28",
+   "tier": "PRICE_2",
+   "cost": 1920.0,
+   "decompose_as": "1NA + 1NA + 1NA"
+  },
+  {
+   "model": "8060",
+   "sup": "DSL",
+   "raw": "3NA",
+   "mapped": "3NA",
+   "size": "28",
+   "tier": "PRICE_3",
+   "cost": 2040.0,
+   "decompose_as": "1NA + 1NA + 1NA"
+  }
+ ],
+ "universal_opened_unpriced": [
+  {
+   "model": "2376",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "2376",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "2376",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "2376",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "2379",
+   "compartment": "2NA"
+  },
+  {
+   "model": "2379",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "2379",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "2379",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "2379",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "2391",
+   "compartment": "2NA"
+  },
+  {
+   "model": "2391",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "2391",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "2391",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "2391",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5015A",
+   "compartment": "1NA"
+  },
+  {
+   "model": "5015A",
+   "compartment": "2NA"
+  },
+  {
+   "model": "5015A",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "5015A",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "5015A",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5015A",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5030",
+   "compartment": "1NA"
+  },
+  {
+   "model": "5030",
+   "compartment": "2NA"
+  },
+  {
+   "model": "5030",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "5030",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "5030",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5030",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5066",
+   "compartment": "1NA"
+  },
+  {
+   "model": "5066",
+   "compartment": "2NA"
+  },
+  {
+   "model": "5066",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "5066",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "5066",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5066",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5071",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "5071",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "5071",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5071",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5080",
+   "compartment": "1NA"
+  },
+  {
+   "model": "5080",
+   "compartment": "2NA"
+  },
+  {
+   "model": "5080",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "5080",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "5080",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5080",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5083",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "5083",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "5083",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5083",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5111A",
+   "compartment": "1NA"
+  },
+  {
+   "model": "5111A",
+   "compartment": "2NA"
+  },
+  {
+   "model": "5111A",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "5111A",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "5111A",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5111A",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5117A",
+   "compartment": "1NA"
+  },
+  {
+   "model": "5117A",
+   "compartment": "2NA"
+  },
+  {
+   "model": "5117A",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "5117A",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "5117A",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5117A",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5133",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "5133",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "5133",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5133",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5135",
+   "compartment": "2NA"
+  },
+  {
+   "model": "5135",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5135",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5527",
+   "compartment": "2NA"
+  },
+  {
+   "model": "5527",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "5527",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "5527",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5527",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "5535",
+   "compartment": "1NA"
+  },
+  {
+   "model": "5535",
+   "compartment": "2NA"
+  },
+  {
+   "model": "5535",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "5535",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "5535",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "5535",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "558",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "558",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "558",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "558",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "7006",
+   "compartment": "1NA"
+  },
+  {
+   "model": "7006",
+   "compartment": "2NA"
+  },
+  {
+   "model": "7006",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "7006",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "7006",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "7006",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "7179",
+   "compartment": "2NA"
+  },
+  {
+   "model": "7202",
+   "compartment": "1NA"
+  },
+  {
+   "model": "7202",
+   "compartment": "2NA"
+  },
+  {
+   "model": "7202",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "7202",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "7202",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "7202",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "7212",
+   "compartment": "2NA"
+  },
+  {
+   "model": "7212",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "7212",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "7218",
+   "compartment": "2NA"
+  },
+  {
+   "model": "7219",
+   "compartment": "2NA"
+  },
+  {
+   "model": "7251",
+   "compartment": "2NA"
+  },
+  {
+   "model": "7251",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "7251",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "8038",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "8038",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "8038",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "8038",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "8050",
+   "compartment": "1NA"
+  },
+  {
+   "model": "8050",
+   "compartment": "2NA"
+  },
+  {
+   "model": "8050",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "8050",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "8050",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "8050",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "8051",
+   "compartment": "2NA"
+  },
+  {
+   "model": "8051",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "8051",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "8051",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "8051",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "8058",
+   "compartment": "1NA"
+  },
+  {
+   "model": "8058",
+   "compartment": "2NA"
+  },
+  {
+   "model": "8058",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "8058",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "8058",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "8058",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "8060",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "8060",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "8060",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "8060",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "810",
+   "compartment": "2NA"
+  },
+  {
+   "model": "810",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "810",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "810",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "810",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "8133",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "8133",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "8133",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "8133",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "822",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "822",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "822",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "822",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "823",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "823",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "823",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "823",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "9030",
+   "compartment": "2NA"
+  },
+  {
+   "model": "9030",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "9030",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "9030",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "9030",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "9838",
+   "compartment": "1NA"
+  },
+  {
+   "model": "9838",
+   "compartment": "2NA"
+  },
+  {
+   "model": "9838",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "9838",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "9838",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "9838",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "BS22",
+   "compartment": "2NA"
+  },
+  {
+   "model": "BS22",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "BS22",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "BS22",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "BS22",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "BS30",
+   "compartment": "2NA"
+  },
+  {
+   "model": "BS30",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "BS30",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "BS30",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "BS30",
+   "compartment": "2A(RHF)"
+  },
+  {
+   "model": "R819",
+   "compartment": "1NA"
+  },
+  {
+   "model": "R819",
+   "compartment": "2NA"
+  },
+  {
+   "model": "R819",
+   "compartment": "1A(LHF)"
+  },
+  {
+   "model": "R819",
+   "compartment": "1A(RHF)"
+  },
+  {
+   "model": "R819",
+   "compartment": "2A(LHF)"
+  },
+  {
+   "model": "R819",
+   "compartment": "2A(RHF)"
+  }
+ ],
+ "power_twins_opened_unpriced": [
+  {
+   "model": "5071",
+   "compartment": "1A(P)(LHF)"
+  },
+  {
+   "model": "5071",
+   "compartment": "1A(P)(RHF)"
+  },
+  {
+   "model": "5071",
+   "compartment": "1S(P)"
+  },
+  {
+   "model": "5083",
+   "compartment": "1A(P)(LHF)"
+  },
+  {
+   "model": "5083",
+   "compartment": "1A(P)(RHF)"
+  },
+  {
+   "model": "5083",
+   "compartment": "1S(P)"
+  },
+  {
+   "model": "BS22",
+   "compartment": "1A(P)(LHF)"
+  },
+  {
+   "model": "BS22",
+   "compartment": "1A(P)(RHF)"
+  },
+  {
+   "model": "BS22",
+   "compartment": "1S(P)"
+  },
+  {
+   "model": "BS30",
+   "compartment": "1A(P)(LHF)"
+  },
+  {
+   "model": "BS30",
+   "compartment": "1A(P)(RHF)"
+  },
+  {
+   "model": "BS30",
+   "compartment": "1S(P)"
+  }
+ ],
  "sofa_sku_no_cost": [
+  "2376-1A(LHF)",
+  "2376-1A(RHF)",
+  "2376-2A(LHF)",
+  "2376-2A(RHF)",
+  "2379-1A(LHF)",
+  "2379-1A(RHF)",
+  "2379-2A(LHF)",
+  "2379-2A(RHF)",
+  "2379-2NA",
+  "2391-1A(LHF)",
+  "2391-1A(RHF)",
+  "2391-2A(LHF)",
+  "2391-2A(RHF)",
+  "2391-2NA",
+  "5015A-1A(LHF)",
+  "5015A-1A(RHF)",
+  "5015A-1NA",
+  "5015A-2A(LHF)",
+  "5015A-2A(RHF)",
+  "5015A-2NA",
+  "5030-1A(LHF)",
+  "5030-1A(RHF)",
+  "5030-1NA",
+  "5030-2A(LHF)",
+  "5030-2A(RHF)",
+  "5030-2NA",
+  "5066-1A(LHF)",
+  "5066-1A(RHF)",
+  "5066-1NA",
+  "5066-2A(LHF)",
+  "5066-2A(RHF)",
+  "5066-2NA",
+  "5071-1A(LHF)",
+  "5071-1A(P)(LHF)",
+  "5071-1A(P)(RHF)",
+  "5071-1A(RHF)",
+  "5071-1S(P)",
+  "5071-2A(LHF)",
+  "5071-2A(RHF)",
+  "5080-1A(LHF)",
+  "5080-1A(RHF)",
+  "5080-1NA",
+  "5080-2A(LHF)",
+  "5080-2A(RHF)",
+  "5080-2NA",
+  "5083-1A(LHF)",
+  "5083-1A(P)(LHF)",
+  "5083-1A(P)(RHF)",
+  "5083-1A(RHF)",
+  "5083-1S(P)",
+  "5083-2A(LHF)",
+  "5083-2A(RHF)",
+  "5111A-1A(LHF)",
+  "5111A-1A(RHF)",
+  "5111A-1NA",
+  "5111A-2A(LHF)",
+  "5111A-2A(RHF)",
+  "5111A-2NA",
+  "5117A-1A(LHF)",
+  "5117A-1A(RHF)",
+  "5117A-1NA",
+  "5117A-2A(LHF)",
+  "5117A-2A(RHF)",
+  "5117A-2NA",
+  "5133-1A(LHF)",
+  "5133-1A(RHF)",
+  "5133-2A(LHF)",
+  "5133-2A(RHF)",
+  "5135-2A(LHF)",
+  "5135-2A(RHF)",
+  "5135-2NA",
   "5142-1A(LHF)",
   "5142-1A(RHF)",
   "5142-1NA",
   "5142-2A(LHF)",
   "5142-2A(RHF)",
+  "5142-2NA",
   "5142-CNR",
   "5152-CNR",
   "5152-STOOL",
+  "5527-1A(LHF)",
+  "5527-1A(RHF)",
+  "5527-2A(LHF)",
+  "5527-2A(RHF)",
+  "5527-2NA",
   "5527-CNR",
   "5527-Console",
+  "558-1A(LHF)",
+  "558-1A(RHF)",
   "558-1NA",
+  "558-2A(LHF)",
+  "558-2A(RHF)",
+  "558-2NA",
   "558-CNR",
+  "7006-1A(LHF)",
+  "7006-1A(RHF)",
+  "7006-1NA",
+  "7006-2A(LHF)",
+  "7006-2A(RHF)",
+  "7006-2NA",
   "7179-1A(LHF)",
   "7179-1A(RHF)",
   "7179-1NA",
   "7179-2A(LHF)",
   "7179-2A(RHF)",
+  "7179-2NA",
   "7179-CNR",
   "7179-L(LHF)",
   "7179-L(RHF)",
+  "7202-1A(LHF)",
+  "7202-1A(RHF)",
+  "7202-1NA",
+  "7202-2A(LHF)",
+  "7202-2A(RHF)",
+  "7202-2NA",
+  "7212-2A(LHF)",
+  "7212-2A(RHF)",
+  "7212-2NA",
+  "7218-2NA",
+  "7219-2NA",
   "7223-1A(LHF)",
   "7223-1A(RHF)",
   "7223-1NA",
   "7223-2A(LHF)",
   "7223-2A(RHF)",
+  "7223-2NA",
   "7223-2S",
   "7223-L(LHF)",
   "7223-L(RHF)",
@@ -10803,6 +10174,7 @@
   "7226-1NA",
   "7226-2A(LHF)",
   "7226-2A(RHF)",
+  "7226-2NA",
   "7226-2S",
   "7226-L(LHF)",
   "7226-L(RHF)",
@@ -10811,20 +10183,79 @@
   "7233-1NA",
   "7233-2A(LHF)",
   "7233-2A(RHF)",
+  "7233-2NA",
   "7233-CNR",
   "7233-L(LHF)",
   "7233-L(RHF)",
   "7233-STOOL",
+  "7251-2A(LHF)",
+  "7251-2A(RHF)",
+  "7251-2NA",
   "8038-Console",
+  "8058-1A(LHF)",
+  "8058-1A(RHF)",
+  "8058-1NA",
+  "8058-2A(LHF)",
+  "8058-2A(RHF)",
+  "8058-2NA",
   "8060-Console",
+  "810-1A(LHF)",
+  "810-1A(RHF)",
   "810-1NA",
+  "810-2A(LHF)",
+  "810-2A(RHF)",
+  "810-2NA",
   "810-2S",
   "810-3S",
   "810-CNR",
+  "8133-1A(LHF)",
+  "8133-1A(RHF)",
+  "8133-2A(LHF)",
+  "8133-2A(RHF)",
+  "822-1A(LHF)",
+  "822-1A(RHF)",
   "822-1NA",
+  "822-2A(LHF)",
+  "822-2A(RHF)",
   "822-CNR",
-  "822-Console",
+  "823-1A(LHF)",
+  "823-1A(RHF)",
+  "823-2A(LHF)",
+  "823-2A(RHF)",
+  "9030-1A(LHF)",
+  "9030-1A(RHF)",
+  "9030-2A(LHF)",
+  "9030-2A(RHF)",
+  "9030-2NA",
+  "9838-1A(LHF)",
+  "9838-1A(RHF)",
+  "9838-1NA",
+  "9838-2A(LHF)",
+  "9838-2A(RHF)",
+  "9838-2NA",
   "9838-3S",
+  "BS22-1A(LHF)",
+  "BS22-1A(P)(LHF)",
+  "BS22-1A(P)(RHF)",
+  "BS22-1A(RHF)",
+  "BS22-1S(P)",
+  "BS22-2A(LHF)",
+  "BS22-2A(RHF)",
+  "BS22-2NA",
+  "BS30-1A(LHF)",
+  "BS30-1A(P)(LHF)",
+  "BS30-1A(P)(RHF)",
+  "BS30-1A(RHF)",
+  "BS30-1S(P)",
+  "BS30-2A(LHF)",
+  "BS30-2A(RHF)",
+  "BS30-2NA",
+  "R819-1A(LHF)",
+  "R819-1A(RHF)",
+  "R819-1NA",
+  "R819-2A(LHF)",
+  "R819-2A(RHF)",
+  "R819-2NA",
   "R819-Console"
  ],
  "pool_additions": [],
@@ -15362,30 +14793,6 @@
    "model": "7251",
    "raw": "Armrest",
    "cost": 590.0
-  },
-  {
-   "sup": "RDS",
-   "model": "5526",
-   "raw": "WOODEN ARM",
-   "cost": 125.0
-  },
-  {
-   "sup": "RDS",
-   "model": "5526",
-   "raw": "WOODEN ARM",
-   "cost": 125.0
-  },
-  {
-   "sup": "RDS",
-   "model": "5527",
-   "raw": "WOODEN ARM",
-   "cost": 125.0
-  },
-  {
-   "sup": "RDS",
-   "model": "5527",
-   "raw": "WOODEN ARM",
-   "cost": 125.0
   }
  ],
  "unknown_rows": [
