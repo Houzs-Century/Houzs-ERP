@@ -98,3 +98,35 @@ export function useOptimizeTripRoute() {
     },
   });
 }
+
+/* ── Trip crew update (Last Mile "Propose crew", owner 2026-08-08) ─────────────
+   Labels the crew/vehicle onto an EXISTING trip via the long-standing
+   PATCH /trips/:id (it has accepted lorryId / driverId / helper1Id / helper2Id
+   since the TMS port — this is its first UI caller). The trip row is what the
+   day map's crew line, the run-sheet and the per-assignee row scope read.
+   NOTE: scm.trips carries ONE driver seat by schema; the second driver of a
+   two-driver run lives on the DO crew record (delivery_order_crew.driver_2_id,
+   written via useAssignDoCrew) — the two writes travel together in the page. */
+export function useUpdateTrip() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string;
+      lorryId?: string | null;
+      driverId?: string | null;
+      helper1Id?: string | null;
+      helper2Id?: string | null;
+      tripDate?: string | null;
+      warehouseId?: string | null;
+      notes?: string | null;
+    }) =>
+      authedFetch<{ trip: TripRow }>(`/trips/${id}`, {
+        method: 'PATCH', body: JSON.stringify(body),
+      }),
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ['scm-trip', v.id] });
+      qc.invalidateQueries({ queryKey: ['scm-trips'] });
+      qc.invalidateQueries({ queryKey: ['fleet-day'] });
+    },
+  });
+}

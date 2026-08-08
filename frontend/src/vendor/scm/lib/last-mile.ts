@@ -43,3 +43,77 @@ export function lastMileSideOf(o: LastMileRow, date: string): LastMileSide | nul
   if (!isLastMileRow(o, date)) return null;
   return o.delivery_state === 'DELIVERED' ? 'DELIVERED' : 'TIME_ARRANGED';
 }
+
+/** The "Propose crew" candidate set (owner's final division 2026-08-08: Last
+ *  Mile owns the intelligent driver + lorry assignment). Crew is proposed ONLY
+ *  for the picked day's already-sequenced runs — the TIME_ARRANGED side of the
+ *  day board: an SO on a live trip that date, not yet delivered. A delivered
+ *  drop needs no crew; another day's run belongs to its own day; anything not
+ *  on a run yet is still the Time page's business (排单 first). */
+export function proposeCrewDocNos(
+  orders: Array<LastMileRow & Pick<PlanningOrder, 'so_doc_no'>>,
+  date: string,
+): string[] {
+  return orders
+    .filter((o) => lastMileSideOf(o, date) === 'TIME_ARRANGED')
+    .map((o) => o.so_doc_no);
+}
+
+/* ── Matching the crew intelligence back onto the day's EXISTING runs.
+   Owner: "我只需要帮它标上去是什么罗里、什么 Driver、什么 Helper" — Last Mile
+   LABELS crew onto the trips the Time page staged; it re-sequences nothing.
+   The A2/A3 engine answers in its own packed runs, so its per-run crew picks
+   are re-attached to the real trips by stop overlap: each engine run votes for
+   the existing trip that carries the MOST of its orders (ties break to the
+   first-seen trip; an engine run whose orders sit on no existing day-trip
+   attaches to NOTHING — crew is never suggested for a run that does not
+   exist). One suggestion per trip; a second engine run mapping to the same
+   trip is ignored (first wins — deterministic, and the collision is a re-pack
+   divergence the dispatcher resolves by hand if it ever matters). */
+
+export type CrewSuggestion = {
+  lorryId: string | null;
+  driverId: string | null;
+  driverName: string | null;
+  helperId: string | null;
+  helperName: string | null;
+};
+
+type EngineRun = {
+  lorryId: string | null;
+  driverId: string | null;
+  driverName: string | null;
+  helperId: string | null;
+  helperName: string | null;
+  stops: Array<{ ref: string }>;
+};
+
+export function matchCrewSuggestions(
+  engineRuns: EngineRun[],
+  tripIdByDocNo: Map<string, string>,
+): Map<string, CrewSuggestion> {
+  const out = new Map<string, CrewSuggestion>();
+  for (const run of engineRuns) {
+    const votes = new Map<string, number>();
+    const order: string[] = [];
+    for (const s of run.stops) {
+      const tripId = tripIdByDocNo.get(s.ref);
+      if (!tripId) continue;
+      if (!votes.has(tripId)) order.push(tripId);
+      votes.set(tripId, (votes.get(tripId) ?? 0) + 1);
+    }
+    let best: string | null = null;
+    for (const tripId of order) {
+      if (best == null || (votes.get(tripId) ?? 0) > (votes.get(best) ?? 0)) best = tripId;
+    }
+    if (best == null || out.has(best)) continue;
+    out.set(best, {
+      lorryId: run.lorryId,
+      driverId: run.driverId,
+      driverName: run.driverName,
+      helperId: run.helperId,
+      helperName: run.helperName,
+    });
+  }
+  return out;
+}
