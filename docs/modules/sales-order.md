@@ -484,7 +484,7 @@ Flow:
    `derive-line-branding.ts`; `product_models` feeds `generate-skus`). Owner
    2026-08-08: HC sofa = **Zanotti**, 2990 sofa = 2990's own brand; drifted
    'Houzs'/blank rows are repaired by **HC sofa branding fix (Zanotti)**
-   (`fix-hc-sofa-branding.mjs`, DRY-RUN gated, #<PR>).
+   (`fix-hc-sofa-branding.mjs`, DRY-RUN gated, #1723).
 
 `?summary=1` skips the view join + item read entirely (dashboard only needs status
 buckets) — do not fully-hydrate 500 rows for a count.
