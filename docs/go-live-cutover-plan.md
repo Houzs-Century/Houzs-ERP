@@ -168,3 +168,39 @@ If any of these don't tie out → do NOT go live; investigate.
 
 Everything else is decided. On owner sign-off of this doc + the three prerequisites,
 execution begins at §5.
+
+---
+
+## 10. IMPORT BUILT — outstanding SO (2026-08-09)
+
+The SO-outstanding import is built as a sanctioned backend script + workflow (NOT
+hand-run SQL): `backend/scripts/import-ac-outstanding-so.mjs` +
+`.github/workflows/import-ac-outstanding-so.yml` (workflow_dispatch, DRY-RUN by
+default, `apply=1` to write, `limit=N` for a small verification run first). Source
+data = `backend/scripts/data/ac-outstanding-so.json.gz` (the LIVE AED_HOUZS
+outstanding export, 13,333 lines / 2,709 orders).
+
+Owner decisions locked this round:
+- **Company 1 only. SOFA EXCLUDED — and a MIXED order (any sofa line) is skipped
+  WHOLE**, not partially. Import = the **2,275 pure-non-sofa** orders; 191 mixed +
+  243 all-sofa (434 orders / 569 sofa lines) held for a later round.
+- **doc_no REUSES the AutoCount number with an `HC-` prefix** (`SO-000021` ->
+  `HC-SO-000021`); the raw AutoCount number is stored in **`linked_ac_docno`**
+  (migration `0269`) for write-back. `HC-` never collides with the app's bare
+  `SO-YYMM-NNN` minter.
+- Item codes via the binding CSV (proper CSV parse); **free-text lines resolved by
+  name+size against the live `mfg_products` pick list**; delivery -> company-1's
+  `TRANSPORTATION CHARGES` (not the 2990 `SVC-DELIVERY`). Bedframe `Desc2` ->
+  `gap_inches`/`divan_height_inches`/`leg_height_inches`/colour + specials
+  (fully-cover / push-back / HB style) into `custom_specials`.
+- **Payment + balance reconcile:** total = Σ(qty·unitprice); `balance_centi` =
+  UDF_BALANCE; `paid_centi` = total − balance; a `mfg_sales_order_payments` row is
+  written for the paid amount with account_sheet+approval_code parsed from
+  UDF_PAYEMENT, `paid_at = CURRENT_DATE` (payment date unknown in the SO export).
+- Dry-run (live) result: 2,275 orders, RM 16,178,290 total / RM 8,169,873 balance,
+  0 codes outside the pick list, **only 4 exception lines** (truly-blank AutoCount
+  lines with a price but no item name, RM 750 total — imported as `(UNMATCHED)` with
+  a remark for manual SKU assignment).
+
+Run order: `target=prod, apply=1, limit=5` first -> eyeball 5 in the ERP -> then
+`limit=0` for the full set.
