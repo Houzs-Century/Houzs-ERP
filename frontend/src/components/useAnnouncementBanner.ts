@@ -69,8 +69,12 @@ export type BannerResponse = {
 
 // Which slice of the feed a surface wants. The backend splits the SAME endpoint
 // (routes/announcements.ts /banner): `human` = human-written posts, `system` =
-// the actionable per-user scan / service-case notices, absent = both.
-export type BannerScope = "all" | "human" | "system";
+// the machine-generated per-user scan / service-case notices. There is no
+// "both" slice any more (owner 2026-08-08): machine notices must never pop a
+// banner — they are bell material (NotificationBell on desktop, the
+// Announcements-screen bell on the phone) — so the pop-up hook only ever asks
+// for `human` and the backend's unscoped default IS the human slice.
+export type BannerScope = "human" | "system";
 
 // ONE React Query key namespace for every /api/announcements/banner read, so
 // the desktop pop-up, the mobile pop-up, the mobile Announcements list and the
@@ -150,12 +154,13 @@ export type UseAnnouncementBanner = {
 };
 
 export function useAnnouncementBanner(options?: {
-  /** Feed slice to pop. Default `all` = exactly what the desktop has always shown. */
+  /** Feed slice to pop. Default `human` — machine-generated notices never pop
+   *  a banner (owner 2026-08-08); they live in the notification bell. */
   scope?: BannerScope;
   /** Poll cadence. Default 60s (the desktop banner's original interval). */
   pollMs?: number;
 }): UseAnnouncementBanner {
-  const scope = options?.scope ?? "all";
+  const scope = options?.scope ?? "human";
   const pollMs = options?.pollMs ?? POLL_MS;
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -178,11 +183,7 @@ export function useAnnouncementBanner(options?: {
   const { data } = useQuery({
     queryKey: announcementFeedKey(scope),
     queryFn: () =>
-      api.get<BannerResponse>(
-        scope === "all"
-          ? "/api/announcements/banner"
-          : `/api/announcements/banner?scope=${scope}`,
-      ),
+      api.get<BannerResponse>(`/api/announcements/banner?scope=${scope}`),
     staleTime: pollMs,
     refetchInterval: pollMs,
     // The desktop banner polled with a plain setInterval, which kept ticking

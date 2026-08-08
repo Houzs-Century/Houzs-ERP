@@ -26,7 +26,8 @@ import "./mobile.css";
 // Announcements plus the app-wide unread badge (owner 2026-07-20 B2) — and a
 // scan notice is written to the SCANNER, so popping that scope would throw a
 // full-screen sheet at the operator every time their own upload finished.
-// Desktop, which has no bell, keeps showing both.
+// The desktop pop-up is human-only too since owner 2026-08-08 (machine
+// notices go to NotificationBell's System-notices section, never a modal).
 // ---------------------------------------------------------------------------
 
 // Category colours + labels mirror MobileAnnouncements' CAT_COLOR / chip, so a

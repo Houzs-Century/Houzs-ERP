@@ -129,9 +129,16 @@ function relativeTime(iso: string): string {
 }
 
 export function AnnouncementBanner() {
-  // Unscoped feed (human posts AND the per-user scan / service-case notices) —
-  // the desktop pop-up has always shown both.
-  const { current, mustAcknowledge, ack, dismissSession } = useAnnouncementBanner();
+  // HUMAN posts only (owner 2026-08-08, "为什么一直有这个"). This pop-up used
+  // to take the unscoped feed — human posts AND the machine scan/service-case
+  // notices — so every "New service case ASSR/…" threw a modal card, and under
+  // the two-skips-then-mandatory-ack rule (#1728) that modal eventually
+  // refused to leave. Machine notices are bell material: they surface in
+  // NotificationBell's System-notices section instead, matching the phone
+  // (whose pop-up has been human-only since owner 2026-07-20 B2).
+  const { current, mustAcknowledge, ack, dismissSession } = useAnnouncementBanner({
+    scope: "human",
+  });
 
   if (!current) return null;
 

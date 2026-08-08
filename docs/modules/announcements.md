@@ -6,7 +6,10 @@ screen down to the database. Same structure as
 
 > Verified against `main` @ `8f8427ed`. Three commits landed on **2026-07-21**
 > and changed the permission model; read §6 before you reason about who can see
-> what.
+> what. **2026-08-08 (system notices to the bell):** machine-generated notices
+> no longer pop a banner on either shell — the `/banner` default is now the
+> HUMAN slice, and the desktop bell (`NotificationBell`) gained a System-notices
+> section. Sections 0-2 and 5-6 below are updated for that change.
 
 > Convention: the row is one table, `public.announcements`. Timestamps are
 > stored as **ISO text**, `is_active` is an **integer 0/1** (not boolean), and
@@ -21,8 +24,8 @@ keys off it:
 
 | `source` | Called | Written by | Where it surfaces |
 |---|---|---|---|
-| `NULL` | **human post** | the composer, `POST /api/announcements` | desktop page + list, mobile list, both pop-ups, `?scope=human` |
-| `'scan'` / `'service_case'` | **system notice** | `services/personalNotice.ts` | `?scope=system` only — the mobile bell + the unread badge |
+| `NULL` | **human post** | the composer, `POST /api/announcements` | desktop page + list, mobile list, both pop-ups (`/banner` default = `?scope=human`) |
+| `'scan'` / `'service_case'` | **system notice** | `services/personalNotice.ts` | `?scope=system` only — the BELL on both shells (desktop `NotificationBell` System-notices section, mobile Announcements bell) + the unread badge. **Never the pop-up** (owner 2026-08-08) |
 
 A system notice is a *private* announcement (`target_type='USER_IDS'`,
 `created_by NULL`) riding the announcements machinery so it inherits the unread
@@ -45,18 +48,23 @@ system notices never clutter the office composer list.
 | **Phone pop-up** | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | mounted above the tab shell AND above any overlay: `frontend/src/mobile/MobileApp.tsx:600-604` |
 | Shared pop-up logic | `frontend/src/components/useAnnouncementBanner.ts` | the feed read, the ack, the dismiss rules — **both** shells consume it |
 | Mobile list + system bell | `frontend/src/mobile/MobileAnnouncements.tsx` | human list `:275-282`, bell `:286-292` |
+| **Desktop system bell** | `frontend/src/components/NotificationBell.tsx` | System-notices section reading `?scope=system` (2026-08-08); mounted in `TopNavbar.tsx` + the sidebar's mobile drawer |
 | Media renderers | `frontend/src/components/AnnouncementMedia.tsx` (lazy) / `frontend/src/mobile/MobileAnnouncementMedia.tsx` | |
 | Unread badge hook | `frontend/src/mobile/useAnnouncementUnread.ts` | |
 
-### The two pop-ups differ in exactly one argument
+### Both pop-ups are human-only (owner 2026-08-08)
 
-Desktop takes the **unscoped** feed — human posts *and* the caller's own system
-notices (`AnnouncementBanner.tsx:132-134`). The phone takes `scope: "human"`
-only (`MobileAnnouncementPopup.tsx:54-57`): a `scan` notice is addressed to the
-person who scanned, so popping that scope would throw a sheet at the operator
-every time their own upload finished. The system half already has its own phone
-surface (the bell inside the Announcements screen, plus the badge). It is a
-one-line change if that ruling is revisited.
+Both shells pop `scope: "human"`. The phone has since owner 2026-07-20: a
+`scan` notice is addressed to the person who scanned, so popping that scope
+would throw a sheet at the operator every time their own upload finished. The
+desktop caught up on 2026-08-08 ("为什么一直有这个"): it used to take the
+unscoped full feed, so every "New service case ASSR/…" popped a modal card —
+and under the two-skips-then-mandatory-ack rule (#1728) that modal eventually
+refused to leave. Machine notices are bell material on both shells now: the
+phone's bell inside the Announcements screen, and on desktop a System-notices
+section inside `components/NotificationBell.tsx` (same `?scope=system` slice,
+same ack; rows settle via a "Mark read" button — there is no navigation
+target, since the desktop Announcements page lists human posts only).
 
 ### Pop-up trigger logic (all in `useAnnouncementBanner.ts`)
 
@@ -127,11 +135,14 @@ the phone's pop-up costs no extra request over the badge it already feeds.
 
 | Consumer | Key | staleTime | Poll | Cite |
 |---|---|---|---|---|
-| Desktop pop-up | `…"all"` | 60s | 60s, **including while the tab is hidden** | `useAnnouncementBanner.ts:159-175` |
+| Desktop pop-up | `…"human"` | 60s | 60s, **including while the tab is hidden** | `useAnnouncementBanner.ts` |
+| Desktop bell (system section) | `…"system"` | 30s | 30s | `NotificationBell.tsx` |
 | Phone pop-up | `…"human"` | 30s | 30s | `MobileAnnouncementPopup.tsx:54-57` |
 | Unread badge (×2) | `…"human"`, `…"system"` | 30s | 30s | `useAnnouncementUnread.ts:17-24` |
 | Mobile list / bell | `…"human"` / `…"system"` | 30s | none (mount/focus) | `MobileAnnouncements.tsx:275-292` |
 | Desktop page list | `["uq","/api/announcements"]` | app default | none | `Announcements.tsx:225` |
+
+(There is no `…"all"` key any more — `BannerScope` is `human | system`.)
 
 Acking anywhere invalidates the **bare prefix**
 (`useAnnouncementBanner.ts:237`, `MobileAnnouncements.tsx:359`), so every scope
@@ -171,17 +182,25 @@ else 403.
 
 ### `?scope=` on `/banner`
 
-Parsed at `announcements.ts:596-598`, applied at `:633`:
+The endpoint serves exactly **two slices** (owner 2026-08-08 — the unscoped
+full feed is gone; its only consumer was the desktop pop-up, which is exactly
+where machine notices were badgering):
 
 | `scope` | Returns |
 |---|---|
-| `human` | `source` NULL — human-authored posts |
-| `system` | `source` NOT NULL — the per-user `scan` / `service_case` notices |
-| absent / anything else | **the full feed** (both halves) |
+| absent / `human` / anything else | `source` NULL — human-authored posts (the POP-UP slice) |
+| `system` | `source` NOT NULL — the per-user `scan` / `service_case` notices (the BELL slice) |
 
-Response is `{ success, data: Announcement[], ackedIds: string[] }` (`:672-676`).
-Both scoped variants **bypass the KV snapshot** (`:611-614`) because the cache
-key is not scope-dimensioned — see §5.
+Unknown scopes falling back to the *human* slice — not to "everything" — is
+what silences the historical machine rows immediately on deploy: the split is
+applied on read, and a stale cached bundle still requesting the unscoped feed
+gets the human slice too.
+
+Response is `{ success, data: Announcement[], ackedIds: string[] }`. `ackedIds`
+spans only the returned slice, so the bell's acks appear under `scope=system`.
+The human slice is one payload however it is asked for, so the default AND
+`scope=human` are both served from the per-user KV snapshot; only
+`scope=system` bypasses it — see §6.
 
 ---
 
@@ -377,10 +396,12 @@ In place:
 - Upload caps: 25 MB per attachment (`:1253`), 1 MB per thumbnail (`:1287-1289`).
 
 Watch as data grows:
-- **`scope=human` and `scope=system` bypass the KV snapshot**
-  (`announcements.ts:611-614`) because the cache key is not scope-dimensioned.
-  Every phone hits the DB every 30s, twice (badge = two scopes). Dimensioning
-  the key by scope is the obvious fix.
+- **Only `scope=system` bypasses the KV snapshot** now (2026-08-08): the human
+  slice is one payload however it is asked for (default or `scope=human`), so
+  both are served from the per-user snapshot — the phone's human reads stopped
+  paying the bypass. The system slice is still a live read every 30s per
+  device (mobile badge/bell + the desktop bell); dimensioning the key by scope
+  remains the fix if that ever shows up in the tail.
 - **No `LIMIT` on any read.** `GET /` and `/banner` both select the whole table
   and filter in JS. `Announcements.tsx:222-224` already acknowledges this
   ("Capping it server-side is a separate follow-up"). `GET /:id/acks` and

@@ -538,8 +538,9 @@ app.get("/", async (c) => {
   }
   // System per-user notices (source='scan' slip-scan results, source=
   // 'service_case' service-case assignments) are delivered only through the
-  // /banner + mobile Announcements screen — they must NOT clutter this office
-  // composer list. Human-authored posts have source NULL, so filter to those.
+  // notification bell (/banner?scope=system, on both shells) — they must NOT
+  // clutter this office composer list. Human-authored posts have source NULL,
+  // so filter to those.
   const res = await c.env.DB
     .prepare(
       `SELECT * FROM announcements WHERE source IS NULL ORDER BY created_at DESC`,
@@ -578,8 +579,10 @@ app.get("/", async (c) => {
 
 // ============================================================
 // BANNER (every authed user) — newest ACTIVE + not-expired + audience-matching
-// row + this user's acked ids (for the popup gate). No permission gate: anyone
-// who passes the /api/* auth wall can see their own banner.
+// rows + this user's acked ids (for the popup gate). Default = the POP-UP
+// slice (human posts only); ?scope=system = the BELL slice (machine notices).
+// No permission gate: anyone who passes the /api/* auth wall can see their
+// own banner.
 // ============================================================
 app.get("/banner", async (c) => {
   const user = c.get("user");
@@ -587,14 +590,22 @@ app.get("/banner", async (c) => {
     return c.json({ success: false, error: "Your session has expired. Please sign in again." }, 401);
   }
 
-  // The mobile app splits this feed into two surfaces (owner 2026-07-20): the
-  // PERSISTENT Announcements list asks scope=human (source IS NULL — human posts
-  // only, matching the desktop Announcements page), the notification BELL asks
-  // scope=system (source NOT NULL — the actionable scan / service-case per-user
-  // notices). Absent/other keeps the FULL feed, so the desktop top-banner popup
-  // and every existing caller are unchanged.
+  // This endpoint serves exactly TWO slices (owner 2026-08-08, "为什么一直有
+  // 这个"): the POP-UP slice — human-authored posts only (source IS NULL) —
+  // and, under scope=system, the notification-BELL slice (source NOT NULL —
+  // the machine-generated scan / service-case per-user notices).
+  //
+  // The old unscoped FULL feed is gone on purpose. Its only consumer was the
+  // desktop pop-up, which is exactly where machine notices were badgering:
+  // every "New service case ASSR/…" popped a modal card, and under the
+  // two-skips-then-mandatory-ack rule (#1728) that modal eventually refuses to
+  // leave. A machine notice has no author waiting on an acknowledgement — it
+  // belongs in the bell, so the pop-up slice excludes source NOT NULL rows.
+  // Absent/unknown scope falls back to the human slice (NOT to "everything"),
+  // which is also what silences the HISTORICAL machine rows the moment this
+  // deploys: the split is applied on read, and a stale cached bundle still
+  // requesting the unscoped feed gets the human slice too.
   const scope = (c.req.query("scope") ?? "").toLowerCase();
-  const humanOnly = scope === "human";
   const systemOnly = scope === "system";
 
   // PER-USER KV snapshot (inbox.ts pattern) — this payload is per-user three
@@ -606,10 +617,14 @@ app.get("/banner", async (c) => {
   // 60s TTL matches the frontend's poll and sessionCache's freshness window
   // for role/dept edits. Best-effort: any KV trouble serves the live build.
   const bannerVersion = await configCacheVersion(c.env, "banner");
-  // The filtered variants bypass the snapshot (the cache key is not keyed on the
-  // scope) — a cheap live read + in-memory filter; the mobile surfaces poll at 30s.
+  // Only the SYSTEM slice bypasses the snapshot (the cache key is not keyed on
+  // the scope) — a cheap live read + in-memory filter; the mobile bell polls at
+  // 30s. The pop-up slice is the SAME payload whether asked for as the default
+  // or as scope=human, so both are served from (and fill) the one per-user
+  // snapshot — which also un-does the cache bypass the mobile human surfaces
+  // had been paying since the scope split.
   const cacheKey =
-    bannerVersion == null || humanOnly || systemOnly
+    bannerVersion == null || systemOnly
       ? null
       : bannerCacheKey(bannerVersion, user.id);
   if (cacheKey) {
@@ -630,7 +645,7 @@ app.get("/banner", async (c) => {
     .all<AnnouncementRow>();
   const active = (res.results ?? []).filter(
     (r) =>
-      (humanOnly ? !r.source : systemOnly ? !!r.source : true) &&
+      (systemOnly ? !!r.source : !r.source) &&
       isActiveFlag(r.isActive ?? r.is_active ?? null) &&
       notExpired(r.expiresAt ?? r.expires_at ?? null) &&
       companyCanSee(r, allowed) &&
