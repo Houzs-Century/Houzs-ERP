@@ -2405,6 +2405,78 @@
    "cost": 440.0
   },
   {
+   "model": "R819",
+   "size": "22",
+   "unit": "1A(R)",
+   "cost": 1070.526316
+  },
+  {
+   "model": "R819",
+   "size": "22",
+   "unit": "1NA (middle)",
+   "cost": 635.2631570000003
+  },
+  {
+   "model": "R819",
+   "size": "22",
+   "unit": "1A(R)",
+   "cost": 1017.894737
+  },
+  {
+   "model": "R819",
+   "size": "22",
+   "unit": "1NA (middle)",
+   "cost": 603.6842100000001
+  },
+  {
+   "model": "R819",
+   "size": "30",
+   "unit": "1A(P)",
+   "cost": 1809.4210525
+  },
+  {
+   "model": "R819",
+   "size": "30",
+   "unit": "1NA (middle)",
+   "cost": 873.2631580000002
+  },
+  {
+   "model": "R819",
+   "size": "30",
+   "unit": "1A(R)",
+   "cost": 1346.263158
+  },
+  {
+   "model": "R819",
+   "size": "30",
+   "unit": "1NA (middle)",
+   "cost": 873.2631580000002
+  },
+  {
+   "model": "R819",
+   "size": "30",
+   "unit": "1A(P)",
+   "cost": 1649.473684
+  },
+  {
+   "model": "R819",
+   "size": "30",
+   "unit": "1NA (middle)",
+   "cost": 798.421053
+  },
+  {
+   "model": "R819",
+   "size": "30",
+   "unit": "1A(R)",
+   "cost": 1228.4210525
+  },
+  {
+   "model": "R819",
+   "size": "30",
+   "unit": "1NA (middle)",
+   "cost": 798.421053
+  },
+  {
    "model": "SF5071",
    "size": "24",
    "unit": "1A(R)",
@@ -3793,91 +3865,11 @@
    "cost": 1620.0
   },
   {
-   "model": "5152",
-   "sup": "RDS",
-   "raw": "2NA/S",
-   "mapped": "2NA",
-   "size": null,
-   "cost": 1625.263158
-  },
-  {
-   "model": "5152",
-   "sup": "RDS",
-   "raw": "2NA/S",
-   "mapped": "2NA",
-   "size": null,
-   "cost": 1724.210526
-  },
-  {
-   "model": "5152",
-   "sup": "RDS",
-   "raw": "1EL/C",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1150.0
-  },
-  {
-   "model": "5152",
-   "sup": "RDS",
-   "raw": "1EL/C",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1231.052632
-  },
-  {
-   "model": "5152",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1070.0
-  },
-  {
-   "model": "5152",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1238.421053
-  },
-  {
-   "model": "5152",
-   "sup": "RDS",
-   "raw": "2EL",
-   "mapped": "2A(P)(LHF)",
-   "size": null,
-   "cost": 2164.210526
-  },
-  {
-   "model": "5152",
-   "sup": "RDS",
-   "raw": "2EL",
-   "mapped": "2A(P)(LHF)",
-   "size": null,
-   "cost": 2280.0
-  },
-  {
-   "model": "5527",
-   "sup": "RDS",
-   "raw": "2ER/W.Arm",
-   "mapped": "2A(P)(RHF)",
-   "size": null,
-   "cost": 2803.157895
-  },
-  {
-   "model": "5527",
-   "sup": "RDS",
-   "raw": "2ER/W.Arm",
-   "mapped": "2A(P)(RHF)",
-   "size": null,
-   "cost": 3073.473684
-  },
-  {
    "model": "5527",
    "sup": "RDS",
    "raw": "DAYBED",
    "mapped": "DAYBED",
-   "size": null,
+   "size": "37",
    "cost": 1335.157895
   },
   {
@@ -3885,136 +3877,8 @@
    "sup": "RDS",
    "raw": "DAYBED",
    "mapped": "DAYBED",
-   "size": null,
+   "size": "37",
    "cost": 1460.673684
-  },
-  {
-   "model": "5527",
-   "sup": "RDS",
-   "raw": "1ER/T",
-   "mapped": "1A(P)(RHF)",
-   "size": "28",
-   "cost": 2196.842105
-  },
-  {
-   "model": "5527",
-   "sup": "RDS",
-   "raw": "1ER/T",
-   "mapped": "1A(P)(RHF)",
-   "size": "28",
-   "cost": 2408.526316
-  },
-  {
-   "model": "5527",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": "35",
-   "cost": 2396.842105
-  },
-  {
-   "model": "5527",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": "35",
-   "cost": 2628.526316
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "1NA/LT + C + 2ER",
-   "mapped": "1NA(LHF)",
-   "size": null,
-   "cost": 5063.157895
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "1NA/LT + C + 2ER",
-   "mapped": "1NA(LHF)",
-   "size": null,
-   "cost": 5302.105263
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "1NA/LT",
-   "mapped": "1NA(LHF)",
-   "size": null,
-   "cost": 1501.578947
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "1NA/LT",
-   "mapped": "1NA(LHF)",
-   "size": null,
-   "cost": 1588.947368
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "2NA/LT",
-   "mapped": "2NA(LHF)",
-   "size": null,
-   "cost": 2294.736842
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "2NA/LT",
-   "mapped": "2NA(LHF)",
-   "size": null,
-   "cost": 2422.105263
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1188.947368
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1253.157895
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "2ER",
-   "mapped": "2A(P)(RHF)",
-   "size": null,
-   "cost": 1957.894737
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "2ER",
-   "mapped": "2A(P)(RHF)",
-   "size": null,
-   "cost": 2033.684211
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": "28",
-   "cost": 1672.631579
-  },
-  {
-   "model": "558",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": "28",
-   "cost": 1760.0
   },
   {
    "model": "8030",
@@ -4043,25 +3907,9 @@
   {
    "model": "8038",
    "sup": "RDS",
-   "raw": "2ER/W.Arm",
-   "mapped": "2A(P)(RHF)",
-   "size": null,
-   "cost": 2708.421053
-  },
-  {
-   "model": "8038",
-   "sup": "RDS",
-   "raw": "2ER/W.Arm",
-   "mapped": "2A(P)(RHF)",
-   "size": null,
-   "cost": 2818.947368
-  },
-  {
-   "model": "8038",
-   "sup": "RDS",
    "raw": "DAYBED",
    "mapped": "DAYBED",
-   "size": null,
+   "size": "37",
    "cost": 1335.157895
   },
   {
@@ -4069,42 +3917,10 @@
    "sup": "RDS",
    "raw": "DAYBED",
    "mapped": "DAYBED",
-   "size": null,
+   "size": "37",
    "cost": 1393.052632
   },
   {
-   "model": "8038",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 2196.842105
-  },
-  {
-   "model": "8038",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 2284.210526
-  },
-  {
-   "model": "8038",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 2396.842105
-  },
-  {
-   "model": "8038",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 2489.473684
-  },
-  {
    "model": "8039",
    "sup": "DSL",
    "raw": "1BS = STORAGE",
@@ -4199,646 +4015,6 @@
    "mapped": "2BS",
    "size": "28",
    "cost": 1780.0
-  },
-  {
-   "model": "810",
-   "sup": "RDS",
-   "raw": "1EL/1ER",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1094.421053
-  },
-  {
-   "model": "810",
-   "sup": "RDS",
-   "raw": "1EL/1ER",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1163.894737
-  },
-  {
-   "model": "810",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1827.263158
-  },
-  {
-   "model": "810",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1919.894737
-  },
-  {
-   "model": "810",
-   "sup": "RDS",
-   "raw": "1EL/T+1NA+2ER",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 5026.0
-  },
-  {
-   "model": "810",
-   "sup": "RDS",
-   "raw": "1EL/T+1NA+2ER",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 5292.315789
-  },
-  {
-   "model": "810",
-   "sup": "RDS",
-   "raw": "1EL/T+2ER",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 4074.0
-  },
-  {
-   "model": "810",
-   "sup": "RDS",
-   "raw": "1EL/T+2ER",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 4282.421053
-  },
-  {
-   "model": "810",
-   "sup": "RDS",
-   "raw": "2ER",
-   "mapped": "2A(P)(RHF)",
-   "size": null,
-   "cost": 2246.736842
-  },
-  {
-   "model": "810",
-   "sup": "RDS",
-   "raw": "2ER",
-   "mapped": "2A(P)(RHF)",
-   "size": null,
-   "cost": 2362.526316
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1NA/RT",
-   "mapped": "1NA(RHF)",
-   "size": "26",
-   "cost": 1108.947368
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1NA/RT",
-   "mapped": "1NA(RHF)",
-   "size": "26",
-   "cost": 1214.842105
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": "26",
-   "cost": 936.3157895
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": "26",
-   "cost": 1024.947368
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "2EL",
-   "mapped": "2A(P)(LHF)",
-   "size": "26",
-   "cost": 1598.947368
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "2EL",
-   "mapped": "2A(P)(LHF)",
-   "size": "26",
-   "cost": 1748.842105
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1ER/T",
-   "mapped": "1A(P)(RHF)",
-   "size": "26",
-   "cost": 1642.105263
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1ER/T",
-   "mapped": "1A(P)(RHF)",
-   "size": "26",
-   "cost": 1798.315789
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1NA/RT",
-   "mapped": "1NA(RHF)",
-   "size": "32",
-   "cost": 1353.157895
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1NA/RT",
-   "mapped": "1NA(RHF)",
-   "size": "32",
-   "cost": 1483.473684
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": "32",
-   "cost": 1085.789474
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": "32",
-   "cost": 1189.368421
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "2EL",
-   "mapped": "2A(P)(LHF)",
-   "size": "32",
-   "cost": 1878.947368
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "2EL",
-   "mapped": "2A(P)(LHF)",
-   "size": "32",
-   "cost": 2056.842105
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1ER/T",
-   "mapped": "1A(P)(RHF)",
-   "size": "32",
-   "cost": 1642.105263
-  },
-  {
-   "model": "8133",
-   "sup": "RDS",
-   "raw": "1ER/T",
-   "mapped": "1A(P)(RHF)",
-   "size": "32",
-   "cost": 1798.315789
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "1NA/LT+C+2ER",
-   "mapped": "1NA(LHF)",
-   "size": null,
-   "cost": 4563.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "1NA/LT+C+2ER",
-   "mapped": "1NA(LHF)",
-   "size": null,
-   "cost": 4790.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "1NA/LT",
-   "mapped": "1NA(LHF)",
-   "size": null,
-   "cost": 1242.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "1NA/LT",
-   "mapped": "1NA(LHF)",
-   "size": null,
-   "cost": 1325.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "2NA/LT",
-   "mapped": "2NA(LHF)",
-   "size": "35",
-   "cost": 1998.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "2NA/LT",
-   "mapped": "2NA(LHF)",
-   "size": "35",
-   "cost": 2119.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1122.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1183.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "2ER",
-   "mapped": "2A(P)(RHF)",
-   "size": null,
-   "cost": 1845.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "2ER",
-   "mapped": "2A(P)(RHF)",
-   "size": null,
-   "cost": 1917.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1593.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": null,
-   "cost": 1676.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1NA/LT",
-   "mapped": "1NA(LHF)",
-   "size": "32",
-   "cost": 1304.736842
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1NA/LT",
-   "mapped": "1NA(LHF)",
-   "size": "32",
-   "cost": 1392.105263
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2NA/LT",
-   "mapped": "2NA(LHF)",
-   "size": "32",
-   "cost": 2097.894737
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2NA/LT",
-   "mapped": "2NA(LHF)",
-   "size": "32",
-   "cost": 2225.263158
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": "32",
-   "cost": 1672.631579
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": "32",
-   "cost": 1760.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": "32",
-   "cost": 1178.421053
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": "32",
-   "cost": 1242.631579
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2ER",
-   "mapped": "2A(P)(RHF)",
-   "size": "32",
-   "cost": 1936.842105
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2ER",
-   "mapped": "2A(P)(RHF)",
-   "size": "32",
-   "cost": 2012.631579
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1NA/LT+C+2ER",
-   "mapped": "1NA(LHF)",
-   "size": "32",
-   "cost": 4792.631579
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1NA/LT+C+2ER",
-   "mapped": "1NA(LHF)",
-   "size": "32",
-   "cost": 5031.578947
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1NA/LT",
-   "mapped": "1NA(LHF)",
-   "size": "28",
-   "cost": 1242.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1NA/LT",
-   "mapped": "1NA(LHF)",
-   "size": "28",
-   "cost": 1325.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2NA/LT",
-   "mapped": "2NA(LHF)",
-   "size": "28",
-   "cost": 1998.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2NA/LT",
-   "mapped": "2NA(LHF)",
-   "size": "28",
-   "cost": 2119.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": "28",
-   "cost": 1593.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1EL/T",
-   "mapped": "1A(P)(LHF)",
-   "size": "28",
-   "cost": 1676.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": "28",
-   "cost": 1122.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1EL",
-   "mapped": "1A(P)(LHF)",
-   "size": "28",
-   "cost": 1183.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2ER",
-   "mapped": "2A(P)(RHF)",
-   "size": "28",
-   "cost": 1845.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "2ER",
-   "mapped": "2A(P)(RHF)",
-   "size": "28",
-   "cost": 1917.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1NA/LT+C+2ER",
-   "mapped": "1NA(LHF)",
-   "size": "28",
-   "cost": 4563.0
-  },
-  {
-   "model": "823",
-   "sup": "RDS",
-   "raw": "1NA/LT+C+2ER",
-   "mapped": "1NA(LHF)",
-   "size": "28",
-   "cost": 4790.0
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "1R",
-   "mapped": "1S(R)",
-   "size": "30",
-   "cost": 1473.157895
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "1R",
-   "mapped": "1S(R)",
-   "size": "30",
-   "cost": 1541.578947
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "2R",
-   "mapped": "2S(R)",
-   "size": null,
-   "cost": 2456.842105
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "2R",
-   "mapped": "2S(R)",
-   "size": null,
-   "cost": 2692.526316
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "3R",
-   "mapped": "3S(R)",
-   "size": null,
-   "cost": 3255.263158
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "3R",
-   "mapped": "3S(R)",
-   "size": null,
-   "cost": 3565.789474
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "1R",
-   "mapped": "1S(R)",
-   "size": "22",
-   "cost": 1157.368421
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "1R",
-   "mapped": "1S(R)",
-   "size": "22",
-   "cost": 1225.789474
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "2R",
-   "mapped": "2S(R)",
-   "size": "22",
-   "cost": 2035.789474
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "2R",
-   "mapped": "2S(R)",
-   "size": "22",
-   "cost": 2141.052632
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "3R",
-   "mapped": "3S(R)",
-   "size": "22",
-   "cost": 2639.473684
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "3R",
-   "mapped": "3S(R)",
-   "size": "22",
-   "cost": 2776.315789
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "1R/P",
-   "mapped": "1S(P)",
-   "size": "30",
-   "cost": 1578.421053
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "1R/P",
-   "mapped": "1S(P)",
-   "size": "30",
-   "cost": 1731.263158
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "2R/P",
-   "mapped": "2S(P)",
-   "size": "30",
-   "cost": 3298.947368
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "2R/P",
-   "mapped": "2S(P)",
-   "size": "30",
-   "cost": 3618.842105
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "3R/P",
-   "mapped": "3S(P)",
-   "size": "30",
-   "cost": 4097.368421
-  },
-  {
-   "model": "R819",
-   "sup": "RDS",
-   "raw": "3R/P",
-   "mapped": "3S(P)",
-   "size": "30",
-   "cost": 4492.105263
   }
  ],
  "fabric_tiers_not_loaded": [
@@ -8881,14 +8057,20 @@
   {
    "sku": "5152-2NA",
    "sup": "400-R001",
-   "cost": 1906.315789,
-   "raw": "2NA"
+   "cost": 1724.210526,
+   "raw": "2NA/S"
   },
   {
-   "sku": "5152-1NA",
+   "sku": "5152-2A(LHF)",
    "sup": "400-R001",
-   "cost": 1058.421053,
-   "raw": "1NA"
+   "cost": 2280.0,
+   "raw": "2EL"
+  },
+  {
+   "sku": "5152-2NA",
+   "sup": "400-R001",
+   "cost": 1906.315789,
+   "raw": "2NA"
   },
   {
    "sku": "5152-CNR",
@@ -8903,6 +8085,12 @@
    "raw": "STOOL"
   },
   {
+   "sku": "5527-2A(RHF)",
+   "sup": "400-R001",
+   "cost": 3073.473684,
+   "raw": "2ER/W.Arm"
+  },
+  {
    "sku": "5527-Console",
    "sup": "400-R001",
    "cost": 608.685,
@@ -8911,8 +8099,32 @@
   {
    "sku": "558-1NA",
    "sup": "400-R001",
-   "cost": 1031.052632,
-   "raw": "1NA"
+   "cost": 5302.105263,
+   "raw": "1NA/LT + C + 2ER"
+  },
+  {
+   "sku": "558-1NA",
+   "sup": "400-R001",
+   "cost": 1588.947368,
+   "raw": "1NA/LT"
+  },
+  {
+   "sku": "558-2NA",
+   "sup": "400-R001",
+   "cost": 2422.105263,
+   "raw": "2NA/LT"
+  },
+  {
+   "sku": "558-1A(LHF)",
+   "sup": "400-R001",
+   "cost": 1253.157895,
+   "raw": "1EL"
+  },
+  {
+   "sku": "558-2A(RHF)",
+   "sup": "400-R001",
+   "cost": 2033.684211,
+   "raw": "2ER"
   },
   {
    "sku": "558-2NA",
@@ -9173,22 +8385,22 @@
    "raw": "CONSOLE"
   },
   {
+   "sku": "8038-2A(RHF)",
+   "sup": "400-R001",
+   "cost": 2818.947368,
+   "raw": "2ER/W.Arm"
+  },
+  {
    "sku": "8038-Console",
    "sup": "400-R001",
    "cost": 572.05,
    "raw": "C/T"
   },
   {
-   "sku": "8038-1NA",
+   "sku": "8038-1A(LHF)",
    "sup": "400-R001",
-   "cost": 1388.421053,
-   "raw": "1NA"
-  },
-  {
-   "sku": "8038-1NA",
-   "sup": "400-R001",
-   "cost": 1466.842105,
-   "raw": "1NA"
+   "cost": 2489.473684,
+   "raw": "1EL/T"
   },
   {
    "sku": "8038-CNR",
@@ -9227,10 +8439,16 @@
    "raw": "CONSOLE"
   },
   {
-   "sku": "810-1NA",
+   "sku": "810-1A(LHF)",
    "sup": "400-R001",
-   "cost": 1009.894737,
-   "raw": "1NA"
+   "cost": 1919.894737,
+   "raw": "1EL/T"
+  },
+  {
+   "sku": "810-2A(RHF)",
+   "sup": "400-R001",
+   "cost": 2362.526316,
+   "raw": "2ER"
   },
   {
    "sku": "810-1S",
@@ -9259,14 +8477,38 @@
   {
    "sku": "822-1NA",
    "sup": "400-R001",
-   "cost": 972.0,
-   "raw": "1NA"
+   "cost": 4790.0,
+   "raw": "1NA/LT+C+2ER"
+  },
+  {
+   "sku": "822-1NA",
+   "sup": "400-R001",
+   "cost": 1325.0,
+   "raw": "1NA/LT"
   },
   {
    "sku": "822-CNR",
    "sup": "400-R001",
    "cost": 1548.0,
    "raw": "CORNER"
+  },
+  {
+   "sku": "822-1A(LHF)",
+   "sup": "400-R001",
+   "cost": 1183.0,
+   "raw": "1EL"
+  },
+  {
+   "sku": "822-2A(RHF)",
+   "sup": "400-R001",
+   "cost": 1917.0,
+   "raw": "2ER"
+  },
+  {
+   "sku": "822-1A(LHF)",
+   "sup": "400-R001",
+   "cost": 1676.0,
+   "raw": "1EL/T"
   },
   {
    "sku": "R819-Console",
@@ -9574,19 +8816,7 @@
   },
   {
    "model": "5527",
-   "compartment": "1A(LHF)"
-  },
-  {
-   "model": "5527",
-   "compartment": "1A(RHF)"
-  },
-  {
-   "model": "5527",
    "compartment": "2A(LHF)"
-  },
-  {
-   "model": "5527",
-   "compartment": "2A(RHF)"
   },
   {
    "model": "5535",
@@ -9614,19 +8844,11 @@
   },
   {
    "model": "558",
-   "compartment": "1A(LHF)"
-  },
-  {
-   "model": "558",
    "compartment": "1A(RHF)"
   },
   {
    "model": "558",
    "compartment": "2A(LHF)"
-  },
-  {
-   "model": "558",
-   "compartment": "2A(RHF)"
   },
   {
    "model": "7006",
@@ -9714,10 +8936,6 @@
   },
   {
    "model": "8038",
-   "compartment": "1A(LHF)"
-  },
-  {
-   "model": "8038",
    "compartment": "1A(RHF)"
   },
   {
@@ -9725,10 +8943,6 @@
    "compartment": "2A(LHF)"
   },
   {
-   "model": "8038",
-   "compartment": "2A(RHF)"
-  },
-  {
    "model": "8050",
    "compartment": "1NA"
   },
@@ -9818,39 +9032,11 @@
   },
   {
    "model": "810",
-   "compartment": "1A(LHF)"
-  },
-  {
-   "model": "810",
-   "compartment": "1A(RHF)"
-  },
-  {
-   "model": "810",
-   "compartment": "2A(LHF)"
-  },
-  {
-   "model": "810",
-   "compartment": "2A(RHF)"
-  },
-  {
-   "model": "8133",
-   "compartment": "1A(LHF)"
-  },
-  {
-   "model": "8133",
-   "compartment": "1A(RHF)"
-  },
-  {
-   "model": "8133",
    "compartment": "2A(LHF)"
   },
   {
    "model": "8133",
    "compartment": "2A(RHF)"
-  },
-  {
-   "model": "822",
-   "compartment": "1A(LHF)"
   },
   {
    "model": "822",
@@ -9861,24 +9047,12 @@
    "compartment": "2A(LHF)"
   },
   {
-   "model": "822",
-   "compartment": "2A(RHF)"
-  },
-  {
-   "model": "823",
-   "compartment": "1A(LHF)"
-  },
-  {
    "model": "823",
    "compartment": "1A(RHF)"
   },
   {
    "model": "823",
    "compartment": "2A(LHF)"
-  },
-  {
-   "model": "823",
-   "compartment": "2A(RHF)"
   },
   {
    "model": "9030",
@@ -9963,10 +9137,6 @@
   {
    "model": "BS30",
    "compartment": "2A(RHF)"
-  },
-  {
-   "model": "R819",
-   "compartment": "1NA"
   },
   {
    "model": "R819",
@@ -9992,7 +9162,7 @@
  "power_twins_opened_unpriced": [
   {
    "model": "5071",
-   "compartment": "1A(P)(LHF)"
+   "compartment": "1S(P)"
   },
   {
    "model": "5071",
@@ -10000,11 +9170,11 @@
   },
   {
    "model": "5071",
-   "compartment": "1S(P)"
+   "compartment": "1A(P)(LHF)"
   },
   {
    "model": "5083",
-   "compartment": "1A(P)(LHF)"
+   "compartment": "1S(P)"
   },
   {
    "model": "5083",
@@ -10012,11 +9182,11 @@
   },
   {
    "model": "5083",
-   "compartment": "1S(P)"
+   "compartment": "1A(P)(LHF)"
   },
   {
    "model": "BS22",
-   "compartment": "1A(P)(LHF)"
+   "compartment": "1S(P)"
   },
   {
    "model": "BS22",
@@ -10024,11 +9194,11 @@
   },
   {
    "model": "BS22",
-   "compartment": "1S(P)"
+   "compartment": "1A(P)(LHF)"
   },
   {
    "model": "BS30",
-   "compartment": "1A(P)(LHF)"
+   "compartment": "1S(P)"
   },
   {
    "model": "BS30",
@@ -10036,7 +9206,7 @@
   },
   {
    "model": "BS30",
-   "compartment": "1S(P)"
+   "compartment": "1A(P)(LHF)"
   }
  ],
  "sofa_sku_no_cost": [
@@ -10120,16 +9290,12 @@
   "5142-CNR",
   "5152-CNR",
   "5152-STOOL",
-  "5527-1A(LHF)",
-  "5527-1A(RHF)",
   "5527-2A(LHF)",
   "5527-2A(RHF)",
   "5527-2NA",
   "5527-CNR",
   "5527-Console",
-  "558-1A(LHF)",
   "558-1A(RHF)",
-  "558-1NA",
   "558-2A(LHF)",
   "558-2A(RHF)",
   "558-2NA",
@@ -10199,29 +9365,20 @@
   "8058-2A(RHF)",
   "8058-2NA",
   "8060-Console",
-  "810-1A(LHF)",
-  "810-1A(RHF)",
-  "810-1NA",
   "810-2A(LHF)",
   "810-2A(RHF)",
   "810-2NA",
   "810-2S",
   "810-3S",
   "810-CNR",
-  "8133-1A(LHF)",
-  "8133-1A(RHF)",
-  "8133-2A(LHF)",
   "8133-2A(RHF)",
   "822-1A(LHF)",
   "822-1A(RHF)",
-  "822-1NA",
   "822-2A(LHF)",
   "822-2A(RHF)",
   "822-CNR",
-  "823-1A(LHF)",
   "823-1A(RHF)",
   "823-2A(LHF)",
-  "823-2A(RHF)",
   "9030-1A(LHF)",
   "9030-1A(RHF)",
   "9030-2A(LHF)",
@@ -10252,7 +9409,6 @@
   "BS30-2NA",
   "R819-1A(LHF)",
   "R819-1A(RHF)",
-  "R819-1NA",
   "R819-2A(LHF)",
   "R819-2A(RHF)",
   "R819-2NA",
@@ -14470,9 +13626,41 @@
   },
   {
    "sup": "RDS",
+   "model": "810",
+   "raw": "1EL/T+1NA+2ER",
+   "size": null,
+   "tier": "EasyClean",
+   "cost": 5026.0
+  },
+  {
+   "sup": "RDS",
+   "model": "810",
+   "raw": "1EL/T+1NA+2ER",
+   "size": null,
+   "tier": "Acacia",
+   "cost": 5292.315789
+  },
+  {
+   "sup": "RDS",
+   "model": "810",
+   "raw": "1EL/T+2ER",
+   "size": null,
+   "tier": "EasyClean",
+   "cost": 4074.0
+  },
+  {
+   "sup": "RDS",
+   "model": "810",
+   "raw": "1EL/T+2ER",
+   "size": null,
+   "tier": "Acacia",
+   "cost": 4282.421053
+  },
+  {
+   "sup": "RDS",
    "model": "R819",
    "raw": "1+2+3",
-   "size": null,
+   "size": "30",
    "tier": "EasyClean",
    "cost": 5832.631579
   },
@@ -14480,7 +13668,7 @@
    "sup": "RDS",
    "model": "R819",
    "raw": "1+2+3",
-   "size": null,
+   "size": "30",
    "tier": "Acacia",
    "cost": 6385.894737
   },
@@ -15257,6 +14445,78 @@
    "model": "7233",
    "raw": "1F",
    "cost": 1450.0
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "2R",
+   "cost": 2456.842105
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "2R",
+   "cost": 2692.526316
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "3R",
+   "cost": 3255.263158
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "3R",
+   "cost": 3565.789474
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "2R",
+   "cost": 2035.789474
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "2R",
+   "cost": 2141.052632
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "3R",
+   "cost": 2639.473684
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "3R",
+   "cost": 2776.315789
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "2R/P",
+   "cost": 3298.947368
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "2R/P",
+   "cost": 3618.842105
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "3R/P",
+   "cost": 4097.368421
+  },
+  {
+   "sup": "RDS",
+   "model": "R819",
+   "raw": "3R/P",
+   "cost": 4492.105263
   }
  ]
 }

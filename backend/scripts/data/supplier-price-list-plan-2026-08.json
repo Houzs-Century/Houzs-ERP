@@ -18238,6 +18238,8 @@
     "STOOL"
    ],
    "sizes": [
+    "28",
+    "40",
     "75CM"
    ]
   },
@@ -18388,7 +18390,9 @@
     "2NA",
     "CNR"
    ],
-   "sizes": []
+   "sizes": [
+    "28"
+   ]
   },
   {
    "op": "sku_mint",
@@ -19341,6 +19345,8 @@
     "28",
     "30",
     "32",
+    "35",
+    "40",
     "42"
    ]
   },
@@ -19586,7 +19592,10 @@
     "3S",
     "CNR"
    ],
-   "sizes": []
+   "sizes": [
+    "32",
+    "38"
+   ]
   },
   {
    "op": "sku_mint",
@@ -19728,7 +19737,8 @@
     "CNR"
    ],
    "sizes": [
-    "28"
+    "28",
+    "35"
    ]
   },
   {
@@ -20225,20 +20235,53 @@
    "model": "R819",
    "add_compartments": [
     "1A(LHF)",
+    "1A(P)(LHF)",
+    "1A(P)(RHF)",
+    "1A(R)(LHF)",
+    "1A(R)(RHF)",
     "1A(RHF)",
     "1NA",
+    "1S(P)",
+    "1S(R)",
     "2A(LHF)",
     "2A(RHF)",
     "2NA",
     "Console"
    ],
-   "sizes": []
+   "sizes": [
+    "22",
+    "30"
+   ]
   },
   {
    "op": "sku_mint",
    "erp": "R819-1A(LHF)",
    "model": "R819",
    "comp": "1A(LHF)"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "R819-1A(P)(LHF)",
+   "model": "R819",
+   "comp": "1A(P)(LHF)"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "R819-1A(P)(RHF)",
+   "model": "R819",
+   "comp": "1A(P)(RHF)"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "R819-1A(R)(LHF)",
+   "model": "R819",
+   "comp": "1A(R)(LHF)"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "R819-1A(R)(RHF)",
+   "model": "R819",
+   "comp": "1A(R)(RHF)"
   },
   {
    "op": "sku_mint",
@@ -20251,6 +20294,18 @@
    "erp": "R819-1NA",
    "model": "R819",
    "comp": "1NA"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "R819-1S(P)",
+   "model": "R819",
+   "comp": "1S(P)"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "R819-1S(R)",
+   "model": "R819",
+   "comp": "1S(R)"
   },
   {
    "op": "sku_mint",
@@ -20327,15 +20382,15 @@
   },
   {
    "op": "product_cost",
-   "erp": "5152-1NA",
+   "erp": "5152-2A(LHF)",
    "ac": null,
-   "base_price_sen": 97526
+   "base_price_sen": 216421
   },
   {
    "op": "product_cost",
    "erp": "5152-2NA",
    "ac": null,
-   "base_price_sen": 179579
+   "base_price_sen": 162526
   },
   {
    "op": "product_cost",
@@ -20351,6 +20406,12 @@
   },
   {
    "op": "product_cost",
+   "erp": "5527-2A(RHF)",
+   "ac": null,
+   "base_price_sen": 280316
+  },
+  {
+   "op": "product_cost",
    "erp": "5527-CNR",
    "ac": null,
    "base_price_sen": 157579
@@ -20363,15 +20424,27 @@
   },
   {
    "op": "product_cost",
+   "erp": "558-1A(LHF)",
+   "ac": null,
+   "base_price_sen": 118895
+  },
+  {
+   "op": "product_cost",
    "erp": "558-1NA",
    "ac": null,
-   "base_price_sen": 97316
+   "base_price_sen": 506316
+  },
+  {
+   "op": "product_cost",
+   "erp": "558-2A(RHF)",
+   "ac": null,
+   "base_price_sen": 195789
   },
   {
    "op": "product_cost",
    "erp": "558-2NA",
    "ac": null,
-   "base_price_sen": 185474
+   "base_price_sen": 229474
   },
   {
    "op": "product_cost",
@@ -20661,9 +20734,15 @@
   },
   {
    "op": "product_cost",
-   "erp": "8038-1NA",
+   "erp": "8038-1A(LHF)",
    "ac": null,
-   "base_price_sen": 136158
+   "base_price_sen": 239684
+  },
+  {
+   "op": "product_cost",
+   "erp": "8038-2A(RHF)",
+   "ac": null,
+   "base_price_sen": 270842
   },
   {
    "op": "product_cost",
@@ -20714,15 +20793,21 @@
   },
   {
    "op": "product_cost",
-   "erp": "810-1NA",
+   "erp": "810-1A(LHF)",
    "ac": null,
-   "base_price_sen": 95200
+   "base_price_sen": 182726
   },
   {
    "op": "product_cost",
    "erp": "810-1S",
    "ac": null,
    "base_price_sen": 126116
+  },
+  {
+   "op": "product_cost",
+   "erp": "810-2A(RHF)",
+   "ac": null,
+   "base_price_sen": 224674
   },
   {
    "op": "product_cost",
@@ -20744,9 +20829,21 @@
   },
   {
    "op": "product_cost",
+   "erp": "822-1A(LHF)",
+   "ac": null,
+   "base_price_sen": 112200
+  },
+  {
+   "op": "product_cost",
    "erp": "822-1NA",
    "ac": null,
-   "base_price_sen": 91700
+   "base_price_sen": 456300
+  },
+  {
+   "op": "product_cost",
+   "erp": "822-2A(RHF)",
+   "ac": null,
+   "base_price_sen": 184500
   },
   {
    "op": "product_cost",
@@ -22665,6 +22762,16 @@
    "erp": "5152-1A(LHF)",
    "entries": [
     {
+     "height": "40",
+     "tier": "PRICE_2",
+     "priceSen": 115000
+    },
+    {
+     "height": "40",
+     "tier": "PRICE_3",
+     "priceSen": 123105
+    },
+    {
      "height": "75CM",
      "tier": "PRICE_1",
      "priceSen": 104000
@@ -22706,6 +22813,16 @@
    "op": "seat_grid",
    "erp": "5152-1NA",
    "entries": [
+    {
+     "height": "28",
+     "tier": "PRICE_2",
+     "priceSen": 97526
+    },
+    {
+     "height": "28",
+     "tier": "PRICE_3",
+     "priceSen": 105842
+    },
     {
      "height": "75CM",
      "tier": "PRICE_1",
@@ -22830,6 +22947,38 @@
   },
   {
    "op": "seat_grid",
+   "erp": "5527-1A(LHF)",
+   "entries": [
+    {
+     "height": "35",
+     "tier": "PRICE_2",
+     "priceSen": 239684
+    },
+    {
+     "height": "35",
+     "tier": "PRICE_3",
+     "priceSen": 262853
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "5527-1A(RHF)",
+   "entries": [
+    {
+     "height": "28",
+     "tier": "PRICE_2",
+     "priceSen": 219684
+    },
+    {
+     "height": "28",
+     "tier": "PRICE_3",
+     "priceSen": 240853
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
    "erp": "5527-1NA",
    "entries": [
     {
@@ -22899,6 +23048,38 @@
      "height": "28",
      "tier": "PRICE_2",
      "priceSen": 164500
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "558-1A(LHF)",
+   "entries": [
+    {
+     "height": "28",
+     "tier": "PRICE_2",
+     "priceSen": 167263
+    },
+    {
+     "height": "28",
+     "tier": "PRICE_3",
+     "priceSen": 176000
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "558-1NA",
+   "entries": [
+    {
+     "height": "28",
+     "tier": "PRICE_2",
+     "priceSen": 97316
+    },
+    {
+     "height": "28",
+     "tier": "PRICE_3",
+     "priceSen": 103105
     }
    ]
   },
@@ -25722,6 +25903,22 @@
   },
   {
    "op": "seat_grid",
+   "erp": "8038-1A(LHF)",
+   "entries": [
+    {
+     "height": "40",
+     "tier": "PRICE_2",
+     "priceSen": 219684
+    },
+    {
+     "height": "40",
+     "tier": "PRICE_3",
+     "priceSen": 228421
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
    "erp": "8038-1NA",
    "entries": [
     {
@@ -25798,6 +25995,16 @@
      "height": "32",
      "tier": "PRICE_3",
      "priceSen": 83000
+    },
+    {
+     "height": "35",
+     "tier": "PRICE_2",
+     "priceSen": 139737
+    },
+    {
+     "height": "35",
+     "tier": "PRICE_3",
+     "priceSen": 146684
     }
    ]
   },
@@ -27480,6 +27687,106 @@
   },
   {
    "op": "seat_grid",
+   "erp": "810-1A(LHF)",
+   "entries": [
+    {
+     "height": "38",
+     "tier": "PRICE_2",
+     "priceSen": 109442
+    },
+    {
+     "height": "38",
+     "tier": "PRICE_3",
+     "priceSen": 116389
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "810-1A(RHF)",
+   "entries": [
+    {
+     "height": "38",
+     "tier": "PRICE_2",
+     "priceSen": 109442
+    },
+    {
+     "height": "38",
+     "tier": "PRICE_3",
+     "priceSen": 116389
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "810-1NA",
+   "entries": [
+    {
+     "height": "32",
+     "tier": "PRICE_2",
+     "priceSen": 95200
+    },
+    {
+     "height": "32",
+     "tier": "PRICE_3",
+     "priceSen": 100989
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "8133-1A(LHF)",
+   "entries": [
+    {
+     "height": "26",
+     "tier": "PRICE_2",
+     "priceSen": 93632
+    },
+    {
+     "height": "26",
+     "tier": "PRICE_3",
+     "priceSen": 102495
+    },
+    {
+     "height": "32",
+     "tier": "PRICE_2",
+     "priceSen": 108579
+    },
+    {
+     "height": "32",
+     "tier": "PRICE_3",
+     "priceSen": 118937
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "8133-1A(RHF)",
+   "entries": [
+    {
+     "height": "26",
+     "tier": "PRICE_2",
+     "priceSen": 164211
+    },
+    {
+     "height": "26",
+     "tier": "PRICE_3",
+     "priceSen": 179832
+    },
+    {
+     "height": "32",
+     "tier": "PRICE_2",
+     "priceSen": 164211
+    },
+    {
+     "height": "32",
+     "tier": "PRICE_3",
+     "priceSen": 179832
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
    "erp": "8133-1NA",
    "entries": [
     {
@@ -27517,6 +27824,32 @@
      "height": "26",
      "tier": "PRICE_3",
      "priceSen": 119863
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "8133-2A(LHF)",
+   "entries": [
+    {
+     "height": "26",
+     "tier": "PRICE_2",
+     "priceSen": 159895
+    },
+    {
+     "height": "26",
+     "tier": "PRICE_3",
+     "priceSen": 174884
+    },
+    {
+     "height": "32",
+     "tier": "PRICE_2",
+     "priceSen": 187895
+    },
+    {
+     "height": "32",
+     "tier": "PRICE_3",
+     "priceSen": 205684
     }
    ]
   },
@@ -27596,6 +27929,22 @@
   },
   {
    "op": "seat_grid",
+   "erp": "822-1NA",
+   "entries": [
+    {
+     "height": "28",
+     "tier": "PRICE_2",
+     "priceSen": 91700
+    },
+    {
+     "height": "28",
+     "tier": "PRICE_3",
+     "priceSen": 97200
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
    "erp": "822-2NA",
    "entries": [
     {
@@ -27607,6 +27956,42 @@
      "height": "28",
      "tier": "PRICE_3",
      "priceSen": 182100
+    },
+    {
+     "height": "35",
+     "tier": "PRICE_2",
+     "priceSen": 199800
+    },
+    {
+     "height": "35",
+     "tier": "PRICE_3",
+     "priceSen": 211900
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "823-1A(LHF)",
+   "entries": [
+    {
+     "height": "28",
+     "tier": "PRICE_2",
+     "priceSen": 159300
+    },
+    {
+     "height": "28",
+     "tier": "PRICE_3",
+     "priceSen": 167600
+    },
+    {
+     "height": "32",
+     "tier": "PRICE_2",
+     "priceSen": 167263
+    },
+    {
+     "height": "32",
+     "tier": "PRICE_3",
+     "priceSen": 176000
     }
    ]
   },
@@ -27617,22 +28002,48 @@
     {
      "height": "28",
      "tier": "PRICE_2",
-     "priceSen": 91700
+     "priceSen": 124200
     },
     {
      "height": "28",
      "tier": "PRICE_3",
-     "priceSen": 97200
+     "priceSen": 132500
     },
     {
      "height": "32",
      "tier": "PRICE_2",
-     "priceSen": 96263
+     "priceSen": 130474
     },
     {
      "height": "32",
      "tier": "PRICE_3",
-     "priceSen": 102053
+     "priceSen": 139211
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "823-2A(RHF)",
+   "entries": [
+    {
+     "height": "28",
+     "tier": "PRICE_2",
+     "priceSen": 184500
+    },
+    {
+     "height": "28",
+     "tier": "PRICE_3",
+     "priceSen": 191700
+    },
+    {
+     "height": "32",
+     "tier": "PRICE_2",
+     "priceSen": 193684
+    },
+    {
+     "height": "32",
+     "tier": "PRICE_3",
+     "priceSen": 201263
     }
    ]
   },
@@ -27643,22 +28054,22 @@
     {
      "height": "28",
      "tier": "PRICE_2",
-     "priceSen": 172700
+     "priceSen": 199800
     },
     {
      "height": "28",
      "tier": "PRICE_3",
-     "priceSen": 182100
+     "priceSen": 211900
     },
     {
      "height": "32",
      "tier": "PRICE_2",
-     "priceSen": 183368
+     "priceSen": 209789
     },
     {
      "height": "32",
      "tier": "PRICE_3",
-     "priceSen": 193263
+     "priceSen": 222526
     }
    ]
   },
@@ -30721,6 +31132,158 @@
      "height": "24",
      "tier": "PRICE_2",
      "priceSen": 92000
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "R819-1A(P)(LHF)",
+   "entries": [
+    {
+     "height": "30",
+     "tier": "PRICE_2",
+     "priceSen": 164947
+    },
+    {
+     "height": "30",
+     "tier": "PRICE_3",
+     "priceSen": 180942
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "R819-1A(P)(RHF)",
+   "entries": [
+    {
+     "height": "30",
+     "tier": "PRICE_2",
+     "priceSen": 164947
+    },
+    {
+     "height": "30",
+     "tier": "PRICE_3",
+     "priceSen": 180942
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "R819-1A(R)(LHF)",
+   "entries": [
+    {
+     "height": "22",
+     "tier": "PRICE_2",
+     "priceSen": 101789
+    },
+    {
+     "height": "22",
+     "tier": "PRICE_3",
+     "priceSen": 107053
+    },
+    {
+     "height": "30",
+     "tier": "PRICE_2",
+     "priceSen": 122842
+    },
+    {
+     "height": "30",
+     "tier": "PRICE_3",
+     "priceSen": 134626
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "R819-1A(R)(RHF)",
+   "entries": [
+    {
+     "height": "22",
+     "tier": "PRICE_2",
+     "priceSen": 101789
+    },
+    {
+     "height": "22",
+     "tier": "PRICE_3",
+     "priceSen": 107053
+    },
+    {
+     "height": "30",
+     "tier": "PRICE_2",
+     "priceSen": 122842
+    },
+    {
+     "height": "30",
+     "tier": "PRICE_3",
+     "priceSen": 134626
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "R819-1NA",
+   "entries": [
+    {
+     "height": "22",
+     "tier": "PRICE_2",
+     "priceSen": 60368
+    },
+    {
+     "height": "22",
+     "tier": "PRICE_3",
+     "priceSen": 63526
+    },
+    {
+     "height": "30",
+     "tier": "PRICE_2",
+     "priceSen": 79842
+    },
+    {
+     "height": "30",
+     "tier": "PRICE_3",
+     "priceSen": 87326
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "R819-1S(P)",
+   "entries": [
+    {
+     "height": "30",
+     "tier": "PRICE_2",
+     "priceSen": 157842
+    },
+    {
+     "height": "30",
+     "tier": "PRICE_3",
+     "priceSen": 173126
+    }
+   ]
+  },
+  {
+   "op": "seat_grid",
+   "erp": "R819-1S(R)",
+   "entries": [
+    {
+     "height": "22",
+     "tier": "PRICE_2",
+     "priceSen": 115737
+    },
+    {
+     "height": "22",
+     "tier": "PRICE_3",
+     "priceSen": 122579
+    },
+    {
+     "height": "30",
+     "tier": "PRICE_2",
+     "priceSen": 147316
+    },
+    {
+     "height": "30",
+     "tier": "PRICE_3",
+     "priceSen": 154158
     }
    ]
   },
@@ -34921,12 +35484,38 @@
   {
    "op": "sofa_bind",
    "sup": "400-R001",
+   "erp": "5152-1A(LHF)",
+   "ac": "RDS-5152 SOFA",
+   "matrix": {
+    "40": {
+     "P2": 107000,
+     "P3": 123842
+    }
+   },
+   "main": false
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
    "erp": "5152-1NA",
    "ac": "RDS-5152 SOFA",
    "matrix": {
-    "STD": {
+    "28": {
      "P2": 97526,
      "P3": 105842
+    }
+   },
+   "main": false
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "5152-2A(LHF)",
+   "ac": "RDS-5152 SOFA",
+   "matrix": {
+    "STD": {
+     "P2": 216421,
+     "P3": 228000
     }
    },
    "main": false
@@ -34973,6 +35562,32 @@
   {
    "op": "sofa_bind",
    "sup": "400-R001",
+   "erp": "5527-1A(LHF)",
+   "ac": "RDS-5527 SOFA",
+   "matrix": {
+    "35": {
+     "P2": 239684,
+     "P3": 262853
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "5527-1A(RHF)",
+   "ac": "RDS-5527 SOFA",
+   "matrix": {
+    "28": {
+     "P2": 219684,
+     "P3": 240853
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
    "erp": "5527-1NA",
    "ac": "RDS-5527 SOFA",
    "matrix": {
@@ -34983,6 +35598,19 @@
     "35": {
      "P2": 141842,
      "P3": 155526
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "5527-2A(RHF)",
+   "ac": "RDS-5527 SOFA",
+   "matrix": {
+    "STD": {
+     "P2": 280316,
+     "P3": 307347
     }
    },
    "main": true
@@ -35015,12 +35643,46 @@
   {
    "op": "sofa_bind",
    "sup": "400-R001",
+   "erp": "558-1A(LHF)",
+   "ac": "RDS-558 SOFA",
+   "matrix": {
+    "STD": {
+     "P2": 118895,
+     "P3": 125316
+    },
+    "28": {
+     "P2": 167263,
+     "P3": 176000
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
    "erp": "558-1NA",
    "ac": "RDS-558 SOFA",
    "matrix": {
     "STD": {
+     "P2": 150158,
+     "P3": 158895
+    },
+    "28": {
      "P2": 97316,
      "P3": 103105
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "558-2A(RHF)",
+   "ac": "RDS-558 SOFA",
+   "matrix": {
+    "STD": {
+     "P2": 195789,
+     "P3": 203368
     }
    },
    "main": true
@@ -35054,12 +35716,46 @@
   {
    "op": "sofa_bind",
    "sup": "400-R001",
+   "erp": "8038-1A(LHF)",
+   "ac": "RDS-5526 SOFA",
+   "matrix": {
+    "40": {
+     "P2": 219684,
+     "P3": 228421
+    },
+    "STD": {
+     "P2": 239684,
+     "P3": 248947
+    }
+   },
+   "main": false
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
    "erp": "8038-1NA",
    "ac": "RDS-5526 SOFA",
    "matrix": {
-    "STD": {
+    "28": {
+     "P2": 136158,
+     "P3": 138842
+    },
+    "35": {
      "P2": 139737,
      "P3": 146684
+    }
+   },
+   "main": false
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "8038-2A(RHF)",
+   "ac": "RDS-5526 SOFA",
+   "matrix": {
+    "STD": {
+     "P2": 270842,
+     "P3": 281895
     }
    },
    "main": false
@@ -35106,10 +35802,40 @@
   {
    "op": "sofa_bind",
    "sup": "400-R001",
+   "erp": "810-1A(LHF)",
+   "ac": "RDS-810 SOFA",
+   "matrix": {
+    "38": {
+     "P2": 109442,
+     "P3": 116389
+    },
+    "STD": {
+     "P2": 182726,
+     "P3": 191989
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "810-1A(RHF)",
+   "ac": "RDS-810 SOFA",
+   "matrix": {
+    "38": {
+     "P2": 109442,
+     "P3": 116389
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
    "erp": "810-1NA",
    "ac": "RDS-810 SOFA",
    "matrix": {
-    "STD": {
+    "32": {
      "P2": 95200,
      "P3": 100989
     }
@@ -35125,6 +35851,19 @@
     "STD": {
      "P2": 126116,
      "P3": 134800
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "810-2A(RHF)",
+   "ac": "RDS-810 SOFA",
+   "matrix": {
+    "STD": {
+     "P2": 224674,
+     "P3": 236253
     }
    },
    "main": true
@@ -35171,16 +35910,50 @@
   {
    "op": "sofa_bind",
    "sup": "400-R001",
+   "erp": "8133-1A(LHF)",
+   "ac": "RDS-8133 SOFA",
+   "matrix": {
+    "26": {
+     "P2": 93632,
+     "P3": 102495
+    },
+    "32": {
+     "P2": 108579,
+     "P3": 118937
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "8133-1A(RHF)",
+   "ac": "RDS-8133 SOFA",
+   "matrix": {
+    "26": {
+     "P2": 164211,
+     "P3": 179832
+    },
+    "32": {
+     "P2": 164211,
+     "P3": 179832
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
    "erp": "8133-1NA",
    "ac": "RDS-8133 SOFA",
    "matrix": {
     "26": {
-     "P2": 77842,
-     "P3": 85126
+     "P2": 110895,
+     "P3": 121484
     },
     "32": {
-     "P2": 91632,
-     "P3": 100295
+     "P2": 135316,
+     "P3": 148347
     }
    },
    "main": true
@@ -35194,6 +35967,23 @@
     "26": {
      "P2": 120789,
      "P3": 132368
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "8133-2A(LHF)",
+   "ac": "RDS-8133 SOFA",
+   "matrix": {
+    "26": {
+     "P2": 159895,
+     "P3": 174884
+    },
+    "32": {
+     "P2": 187895,
+     "P3": 205684
     }
    },
    "main": true
@@ -35257,12 +36047,42 @@
   {
    "op": "sofa_bind",
    "sup": "400-R001",
+   "erp": "822-1A(LHF)",
+   "ac": "RDS-822 SOFA",
+   "matrix": {
+    "STD": {
+     "P2": 159300,
+     "P3": 167600
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
    "erp": "822-1NA",
    "ac": "RDS-822 SOFA",
    "matrix": {
     "STD": {
+     "P2": 124200,
+     "P3": 132500
+    },
+    "28": {
      "P2": 91700,
      "P3": 97200
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "822-2A(RHF)",
+   "ac": "RDS-822 SOFA",
+   "matrix": {
+    "STD": {
+     "P2": 184500,
+     "P3": 191700
     }
    },
    "main": true
@@ -35276,6 +36096,10 @@
     "28": {
      "P2": 172700,
      "P3": 182100
+    },
+    "35": {
+     "P2": 199800,
+     "P3": 211900
     }
    },
    "main": true
@@ -35296,16 +36120,50 @@
   {
    "op": "sofa_bind",
    "sup": "400-R001",
+   "erp": "823-1A(LHF)",
+   "ac": "RDS-823 SOFA",
+   "matrix": {
+    "32": {
+     "P2": 117842,
+     "P3": 124263
+    },
+    "28": {
+     "P2": 112200,
+     "P3": 118300
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
    "erp": "823-1NA",
    "ac": "RDS-823 SOFA",
    "matrix": {
     "32": {
-     "P2": 96263,
-     "P3": 102053
+     "P2": 479263,
+     "P3": 503158
     },
     "28": {
-     "P2": 91700,
-     "P3": 97200
+     "P2": 456300,
+     "P3": 479000
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "823-2A(RHF)",
+   "ac": "RDS-823 SOFA",
+   "matrix": {
+    "32": {
+     "P2": 193684,
+     "P3": 201263
+    },
+    "28": {
+     "P2": 184500,
+     "P3": 191700
     }
    },
    "main": true
@@ -35340,6 +36198,113 @@
     "28": {
      "P2": 147600,
      "P3": 154800
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "R819-1A(P)(LHF)",
+   "ac": "RDS-R819 SOFA",
+   "matrix": {
+    "30": {
+     "P3": 180942,
+     "P2": 164947
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "R819-1A(P)(RHF)",
+   "ac": "RDS-R819 SOFA",
+   "matrix": {
+    "30": {
+     "P3": 180942,
+     "P2": 164947
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "R819-1A(R)(LHF)",
+   "ac": "RDS-R819 SOFA",
+   "matrix": {
+    "22": {
+     "P3": 107053,
+     "P2": 101789
+    },
+    "30": {
+     "P3": 134626,
+     "P2": 122842
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "R819-1A(R)(RHF)",
+   "ac": "RDS-R819 SOFA",
+   "matrix": {
+    "22": {
+     "P3": 107053,
+     "P2": 101789
+    },
+    "30": {
+     "P3": 134626,
+     "P2": 122842
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "R819-1NA",
+   "ac": "RDS-R819 SOFA",
+   "matrix": {
+    "22": {
+     "P3": 63526,
+     "P2": 60368
+    },
+    "30": {
+     "P3": 87326,
+     "P2": 79842
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "R819-1S(P)",
+   "ac": "RDS-R819 SOFA",
+   "matrix": {
+    "30": {
+     "P2": 157842,
+     "P3": 173126
+    }
+   },
+   "main": true
+  },
+  {
+   "op": "sofa_bind",
+   "sup": "400-R001",
+   "erp": "R819-1S(R)",
+   "ac": "RDS-R819 SOFA",
+   "matrix": {
+    "30": {
+     "P2": 147316,
+     "P3": 154158
+    },
+    "22": {
+     "P2": 115737,
+     "P3": 122579
     }
    },
    "main": true
