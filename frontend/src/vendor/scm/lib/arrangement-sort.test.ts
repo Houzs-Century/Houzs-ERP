@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { arrangementDateOf, arrangementQueueCompare, type ArrangementSortRow } from './arrangement-sort';
 
-/* The arrangement queues' default order — owner 2026-08-08 (superseding the
-   08-07 three-key rule): new date → state → postcode → run time → old date →
-   doc no, everything ascending, blanks/nulls LAST. */
+/* The arrangement queues' default order — owner 2026-08-08 v3: new date →
+   [both new-dateless: old date first] → state → postcode → run time → old
+   date → doc no, everything ascending, blanks/nulls LAST. On the pending-date
+   side (no arranged date) the customer's ORIGINAL date outranks geography. */
 
 const row = (over: Partial<ArrangementSortRow>): ArrangementSortRow => ({
   amended_delivery_date: null,
@@ -54,13 +55,46 @@ describe('arrangementQueueCompare — new date → state → postcode → time �
     expect(out.map((r) => r.so_doc_no)).toEqual(['A', 'B2', 'B', 'C']);
   });
 
-  it('key 5: the OLD (customer) date breaks remaining ties — the pending-date side ordering', () => {
+  it('key 5: the OLD (customer) date breaks remaining ties within one old-date-and-geo group', () => {
     const out = sorted([
       row({ so_doc_no: 'B', customer_state: 'KL', postcode: '50000', customer_delivery_date: '2026-08-03' }),
       row({ so_doc_no: 'A', customer_state: 'KL', postcode: '50000', customer_delivery_date: '2026-08-01' }),
       row({ so_doc_no: 'C', customer_state: 'KL', postcode: '50000', customer_delivery_date: null }),
     ]);
     expect(out.map((r) => r.so_doc_no)).toEqual(['A', 'B', 'C']);
+  });
+
+  /* ── The pending-date side (owner 2026-08-08 v3): no arranged date on either
+     row → the customer's ORIGINAL date OUTRANKS geography. ─────────────────── */
+  describe('pending side — old date outranks state/postcode when no new date exists', () => {
+    it('orders by oldest promised customer date FIRST, then state, then postcode', () => {
+      const out = sorted([
+        row({ so_doc_no: 'C', customer_state: 'Johor', postcode: '80000', customer_delivery_date: '2026-08-05' }),
+        row({ so_doc_no: 'A', customer_state: 'Selangor', postcode: '47100', customer_delivery_date: '2026-08-01' }),
+        row({ so_doc_no: 'B', customer_state: 'Kuala Lumpur', postcode: '50000', customer_delivery_date: '2026-08-03' }),
+      ]);
+      // Oldest promise wins even though its state sorts LAST alphabetically.
+      expect(out.map((r) => r.so_doc_no)).toEqual(['A', 'B', 'C']);
+    });
+
+    it('same old date groups by state then postcode; old-dateless rows sink last', () => {
+      const out = sorted([
+        row({ so_doc_no: 'D', customer_state: 'Johor', postcode: '80000', customer_delivery_date: null }),
+        row({ so_doc_no: 'B', customer_state: 'Selangor', postcode: '40000', customer_delivery_date: '2026-08-01' }),
+        row({ so_doc_no: 'A', customer_state: 'Kuala Lumpur', postcode: '59200', customer_delivery_date: '2026-08-01' }),
+        row({ so_doc_no: 'C', customer_state: 'Selangor', postcode: '47100', customer_delivery_date: '2026-08-01' }),
+      ]);
+      expect(out.map((r) => r.so_doc_no)).toEqual(['A', 'B', 'C', 'D']);
+    });
+
+    it('when either row HAS a new date, the established order stands (state before old date)', () => {
+      const out = sorted([
+        // Same non-null NEW date: state decides, NOT the old date.
+        row({ so_doc_no: 'B', amended_delivery_date: '2026-08-12', customer_state: 'Selangor', customer_delivery_date: '2026-08-01' }),
+        row({ so_doc_no: 'A', amended_delivery_date: '2026-08-12', customer_state: 'Kuala Lumpur', customer_delivery_date: '2026-08-05' }),
+      ]);
+      expect(out.map((r) => r.so_doc_no)).toEqual(['A', 'B']);
+    });
   });
 
   it('key 6: document number is the final tiebreak (dp_no stands in when no SO)', () => {
