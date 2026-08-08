@@ -197,55 +197,65 @@ async function main() {
 
   if (!APPLY) { log("\nDRY-RUN only — no writes. Set APPLY=1 to import."); await sql.end(); return; }
 
-  // ---- apply ----
-  log("\nAPPLYING…");
+  // ---- apply (BULK, chunked) — per-order round trips are far too slow over the
+  //      GitHub->Supabase link, so build multi-row INSERTs (~3 statements per
+  //      150-order chunk). Idempotent: skip doc_nos already present. ----
+  log("\nAPPLYING (bulk)…");
   await sql`ALTER TABLE scm.mfg_sales_orders ADD COLUMN IF NOT EXISTS linked_ac_docno text`;
   await sql`CREATE INDEX IF NOT EXISTS mfg_so_linked_ac_docno_idx ON scm.mfg_sales_orders(linked_ac_docno)`;
-  let nOrders = 0, nItems = 0, nPay = 0, nSkipped = 0;
-  for (const o of built) {
-    const h = o.h;
-    await sql.begin(async (tx) => {
-      const ins = await tx`INSERT INTO scm.mfg_sales_orders
-        (doc_no, linked_ac_docno, so_date, debtor_name, debtor_code, agent, sales_location, ref, venue, branding,
-         address1, address2, address3, address4, phone, status, company_id, currency,
-         local_total_centi, balance_centi, paid_centi, deposit_centi, line_count,
-         mattress_sofa_centi, bedframe_centi, accessories_centi, service_centi, others_centi,
-         payment_method, approval_code, payment_date)
-        VALUES (${o.docNo}, ${o.acDoc}, ${h.DocDate || sql`CURRENT_DATE`}, ${h.DebtorName || "CUSTOMER"}, ${h.DebtorCode || null}, ${h.SalesAgent || null}, ${h.SalesLocation || null}, ${h.Ref || null}, ${h.UDF_VENUE || null}, ${h.UDF_BRANDING || null},
-         ${h.InvAddr1 || null}, ${h.InvAddr2 || null}, ${h.InvAddr3 || null}, ${h.InvAddr4 || null}, ${h.Phone1 || null}, 'CONFIRMED', 1, 'MYR',
-         ${o.total}, ${o.bal}, ${o.paid}, ${o.paid}, ${o.items.length},
-         ${o.bucket.mattress}, ${o.bucket.bedframe}, ${o.bucket.accessory}, ${o.bucket.service}, ${o.bucket.others},
-         ${o.paid > 0 ? "imported" : null}, ${o.pay.appr}, ${o.paid > 0 ? sql`CURRENT_DATE` : null})
-        ON CONFLICT (doc_no) DO NOTHING
-        RETURNING doc_no`;
-      if (!ins.length) { nSkipped++; return; }
+
+  const esc = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+  const CUR = { __raw: "CURRENT_DATE" };
+  const V = (v) => {
+    if (v === null || v === undefined) return "NULL";
+    if (typeof v === "object" && v.__raw) return v.__raw;
+    if (typeof v === "object" && "__json" in v) return v.__json == null ? "NULL" : esc(JSON.stringify(v.__json)) + "::jsonb";
+    if (typeof v === "number") return isFinite(v) ? String(v) : "NULL";
+    if (typeof v === "boolean") return v ? "true" : "false";
+    return esc(v);
+  };
+
+  // idempotency: which doc_nos are already in?
+  const allDocs = built.map((o) => o.docNo);
+  const existing = new Set();
+  for (let i = 0; i < allDocs.length; i += 1000) {
+    const rows = await sql`SELECT doc_no FROM scm.mfg_sales_orders WHERE company_id = 1 AND doc_no = ANY(${allDocs.slice(i, i + 1000)})`;
+    for (const r of rows) existing.add(r.doc_no);
+  }
+  const todo = built.filter((o) => !existing.has(o.docNo));
+  log(`already imported: ${existing.size}; to insert: ${todo.length}`);
+
+  const HCOLS = "(doc_no,linked_ac_docno,so_date,debtor_name,debtor_code,agent,sales_location,ref,venue,branding,address1,address2,address3,address4,phone,status,company_id,currency,local_total_centi,balance_centi,paid_centi,deposit_centi,line_count,mattress_sofa_centi,bedframe_centi,accessories_centi,service_centi,others_centi,payment_method,approval_code,payment_date)";
+  const ICOLS = "(doc_no,line_no,item_group,item_code,description,description2,uom,location,qty,unit_price_centi,total_centi,balance_centi,company_id,gap_inches,divan_height_inches,leg_height_inches,variants,custom_specials,remark)";
+  const PCOLS = "(so_doc_no,paid_at,method,approval_code,account_sheet,amount_centi,is_deposit,company_id,note)";
+
+  let nOrders = 0, nItems = 0, nPay = 0;
+  const CHUNK = 150;
+  for (let i = 0; i < todo.length; i += CHUNK) {
+    const batch = todo.slice(i, i + CHUNK);
+    const hv = [], iv = [], pv = [];
+    for (const o of batch) {
+      const h = o.h;
+      hv.push("(" + [V(o.docNo), V(o.acDoc), h.DocDate ? V(h.DocDate) : V(CUR), V(h.DebtorName || "CUSTOMER"), V(h.DebtorCode || null), V(h.SalesAgent || null), V(h.SalesLocation || null), V(h.Ref || null), V(h.UDF_VENUE || null), V(h.UDF_BRANDING || null), V(h.InvAddr1 || null), V(h.InvAddr2 || null), V(h.InvAddr3 || null), V(h.InvAddr4 || null), V(h.Phone1 || null), V("CONFIRMED"), "1", V("MYR"), V(o.total), V(o.bal), V(o.paid), V(o.paid), V(o.items.length), V(o.bucket.mattress), V(o.bucket.bedframe), V(o.bucket.accessory), V(o.bucket.service), V(o.bucket.others), V(o.paid > 0 ? "imported" : null), V(o.pay.appr || null), o.paid > 0 ? V(CUR) : "NULL"].join(",") + ")");
       let lineNo = 0;
-      for (const i of o.items) {
+      for (const it of o.items) {
         lineNo++;
-        const isFree = i.erp === "(UNMATCHED)";
-        const variants = i.bf ? { color: i.bf.color || null, specials: i.bf.specials, raw: i.bf.raw || null } : null;
-        const specials = i.bf && i.bf.specials.length ? i.bf.specials : null;
-        await tx`INSERT INTO scm.mfg_sales_order_items
-          (doc_no, line_no, item_group, item_code, description, description2, uom, location, qty,
-           unit_price_centi, total_centi, balance_centi, company_id,
-           gap_inches, divan_height_inches, leg_height_inches, variants, custom_specials, remark)
-          VALUES (${o.docNo}, ${lineNo}, ${i.grp}, ${isFree ? "(UNMATCHED)" : i.erp}, ${i.desc || null}, ${i.d2 || null}, ${uomOf(i.grp)}, ${i.loc || null}, ${i.qty},
-           ${i.up}, ${i.lineTotal}, ${i.lineTotal}, 1,
-           ${i.bf && isFinite(i.bf.gap) ? Math.round(i.bf.gap) : null}, ${i.bf && isFinite(i.bf.divan) ? Math.round(i.bf.divan) : null}, ${i.bf && isFinite(i.bf.leg) ? Math.round(i.bf.leg) : null},
-           ${variants ? sql.json(variants) : null}, ${specials ? sql.json(specials) : null},
-           ${i.resolvedFree ? "name-matched from free-text" : isFree ? "IMPORTED — needs SKU" : null})`;
+        const variants = it.bf ? { color: it.bf.color || null, specials: it.bf.specials, raw: it.bf.raw || null } : null;
+        const specials = it.bf && it.bf.specials.length ? it.bf.specials : null;
+        iv.push("(" + [V(o.docNo), String(lineNo), V(it.grp), V(it.erp), V(it.desc || null), V(it.d2 || null), V(uomOf(it.grp)), V(it.loc || null), String(it.qty), V(it.up), V(it.lineTotal), V(it.lineTotal), "1", it.bf && isFinite(it.bf.gap) ? String(Math.round(it.bf.gap)) : "NULL", it.bf && isFinite(it.bf.divan) ? String(Math.round(it.bf.divan)) : "NULL", it.bf && isFinite(it.bf.leg) ? String(Math.round(it.bf.leg)) : "NULL", V({ __json: variants }), V({ __json: specials }), V(it.resolvedFree ? "name-matched from free-text" : null)].join(",") + ")");
         nItems++;
       }
-      if (o.paid > 0) {
-        await tx`INSERT INTO scm.mfg_sales_order_payments
-          (so_doc_no, paid_at, method, approval_code, account_sheet, amount_centi, is_deposit, company_id, note)
-          VALUES (${o.docNo}, CURRENT_DATE, 'imported', ${o.pay.appr}, ${o.pay.acct}, ${o.paid}, true, 1, ${"imported from AutoCount " + o.acDoc + (o.pay.extra ? " [" + o.pay.extra + "]" : "")})`;
-        nPay++;
-      }
+      if (o.paid > 0) { pv.push("(" + [V(o.docNo), V(CUR), V("imported"), V(o.pay.appr || null), V(o.pay.acct || null), V(o.paid), "true", "1", V("imported from AutoCount " + o.acDoc + (o.pay.extra ? " [" + o.pay.extra + "]" : ""))].join(",") + ")"); nPay++; }
       nOrders++;
+    }
+    await sql.begin(async (tx) => {
+      await tx.unsafe(`INSERT INTO scm.mfg_sales_orders ${HCOLS} VALUES ${hv.join(",")} ON CONFLICT (doc_no) DO NOTHING`);
+      if (iv.length) await tx.unsafe(`INSERT INTO scm.mfg_sales_order_items ${ICOLS} VALUES ${iv.join(",")}`);
+      if (pv.length) await tx.unsafe(`INSERT INTO scm.mfg_sales_order_payments ${PCOLS} VALUES ${pv.join(",")}`);
     });
+    log(`  ..${Math.min(i + CHUNK, todo.length)}/${todo.length}`);
   }
-  log(`DONE. inserted orders=${nOrders} items=${nItems} payments=${nPay}; skipped-existing=${nSkipped}; exceptions=${exceptions.length}`);
+  log(`DONE. inserted orders=${nOrders} items=${nItems} payments=${nPay}; skipped-existing=${existing.size}; exceptions=${exceptions.length}`);
   await sql.end();
 }
 
