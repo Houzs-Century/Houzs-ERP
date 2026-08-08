@@ -1,0 +1,37 @@
+name: probe-supplier-costing-state
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to probe"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+concurrency:
+  group: probe-supplier-costing-state
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Run read-only probe
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+        run: node scripts/probe-supplier-costing-state.mjs | tee probe-out.ndjson
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-supplier-costing-state
+          path: backend/probe-out.ndjson
+          retention-days: 7
