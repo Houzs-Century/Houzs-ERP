@@ -4,6 +4,7 @@ import {
   groupByConfirmedDate,
   pinAssignToDate,
   mergeAssignResults,
+  depotForDocNos,
 } from './propose-time';
 import type { SequenceAssignResponse, AssignedTrip } from './delivery-zones-queries';
 
@@ -77,6 +78,36 @@ describe('groupByConfirmedDate — one call per confirmed date', () => {
       { date: '2026-08-11', docNos: ['SO-2'] },
     ]);
     expect(undated).toEqual(['SO-4', 'SO-MISSING']);
+  });
+});
+
+describe('depotForDocNos — the depot the engine geocodes windows from', () => {
+  const wh = (docNo: string, warehouseId: string | null, name: string | null = null) => ({
+    row_type: 'so' as const, so_doc_no: docNo,
+    warehouse_id: warehouseId, warehouse_name: name, warehouse_code: null,
+  });
+
+  test('majority warehouse wins, with its label for the loud failure message', () => {
+    const depot = depotForDocNos([
+      wh('SO-1', 'wh-kl', 'KL Warehouse'),
+      wh('SO-2', 'wh-kl', 'KL Warehouse'),
+      wh('SO-3', 'wh-jb', 'JB Warehouse'),
+    ], ['SO-1', 'SO-2', 'SO-3']);
+    expect(depot).toEqual({ warehouseId: 'wh-kl', label: 'KL Warehouse' });
+  });
+
+  test('ties break to the first seen (deterministic); unselected rows do not vote', () => {
+    const depot = depotForDocNos([
+      wh('SO-1', 'wh-a', 'A'),
+      wh('SO-2', 'wh-b', 'B'),
+      wh('SO-3', 'wh-b', 'B'),
+    ], ['SO-1', 'SO-2']);
+    expect(depot?.warehouseId).toBe('wh-a');
+  });
+
+  test('no warehouse anywhere -> null, a state the page must surface loudly', () => {
+    expect(depotForDocNos([wh('SO-1', null)], ['SO-1'])).toBeNull();
+    expect(depotForDocNos([], ['SO-1'])).toBeNull();
   });
 });
 

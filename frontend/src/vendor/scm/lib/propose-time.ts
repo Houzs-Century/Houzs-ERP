@@ -53,6 +53,44 @@ export function confirmedDateOf(o: ConfirmedDateRow): string | null {
 
 export type ConfirmedDateGroup = { date: string; docNos: string[] };
 
+/* ── Depot derivation (owner addendum 2026-08-08: time WINDOWS, not bare ETAs).
+   The sequence engine geocodes the depot ONLY when the request names a
+   depotWarehouseId (delivery-zones.ts: `if (configured && depotWarehouseId)`);
+   a call without one gets NO route and NO windows — the exact "ETA — / depot
+   could not be geocoded" the owner screenshotted. The pages therefore derive
+   the depot from the selected orders themselves: the MAJORITY warehouse among
+   the rows (ties break to the first seen, deterministic), with its label kept
+   so a geocode failure can name the warehouse to fix. null when no selected
+   row carries a warehouse at all — a state the caller must surface loudly, not
+   swallow. */
+
+export type DepotRow = Pick<PlanningOrder, 'row_type' | 'so_doc_no' | 'warehouse_id' | 'warehouse_name' | 'warehouse_code'>;
+
+export type DepotPick = { warehouseId: string; label: string };
+
+export function depotForDocNos(orders: DepotRow[], docNos: string[]): DepotPick | null {
+  const wanted = new Set(docNos);
+  const votes = new Map<string, { count: number; label: string; seen: number }>();
+  let seen = 0;
+  for (const o of orders) {
+    if (o.row_type !== 'so' || !wanted.has(o.so_doc_no) || !o.warehouse_id) continue;
+    const cur = votes.get(o.warehouse_id);
+    if (cur) cur.count += 1;
+    else votes.set(o.warehouse_id, {
+      count: 1,
+      label: o.warehouse_name || o.warehouse_code || o.warehouse_id,
+      seen: seen++,
+    });
+  }
+  let best: { id: string; count: number; label: string; seen: number } | null = null;
+  for (const [id, v] of votes) {
+    if (!best || v.count > best.count || (v.count === best.count && v.seen < best.seen)) {
+      best = { id, ...v };
+    }
+  }
+  return best ? { warehouseId: best.id, label: best.label } : null;
+}
+
 /** Split a selection into per-confirmed-date groups (dates ascending, doc
  *  order preserved within a group) plus the undated leftovers — those belong
  *  to the Date page and are REPORTED to the operator, never silently dated. */

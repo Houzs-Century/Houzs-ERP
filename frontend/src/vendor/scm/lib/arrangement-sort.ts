@@ -34,8 +34,16 @@ export type ArrangementSortRow = Pick<
   | 'customer_delivery_date'
   | 'customer_state'
   | 'postcode'
-  | 'so_doc_no'
-> & { dp_no?: string | null; trip_eta_offset_s?: number | null; trip_stop_no?: number | null };
+> & {
+  /* Nullable here (unlike PlanningOrder's non-null so_doc_no): a DP row keys
+     the final tiebreak on dp_no instead, and the comparator's `?? dp_no`
+     fallback needs the null to be expressible. A full PlanningOrder row still
+     satisfies this shape (string is assignable). */
+  so_doc_no?: string | null;
+  dp_no?: string | null;
+  trip_eta_offset_s?: number | null;
+  trip_stop_no?: number | null;
+};
 
 /** Truncate a date-ish value to its calendar day (YYYY-MM-DD); null = none. */
 function dayOf(d: string | null | undefined): string | null {
