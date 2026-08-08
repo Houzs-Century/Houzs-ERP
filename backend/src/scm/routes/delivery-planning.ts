@@ -720,7 +720,7 @@ deliveryPlanning.get('/', async (c) => {
      (the same do_id key scheduleOntoTrip writes and staleStopSweepFor sweeps).
      Best-effort like the dp_no read: a failed read leaves the map empty, so the
      stage degrades to PENDING_TIME/PENDING_DATE — never a guess. */
-  const tripByDoc = new Map<string, { id: string; trip_no: string | null; trip_date: string | null }>();
+  const tripByDoc = new Map<string, { id: string; trip_no: string | null; trip_date: string | null; stop_no: number | null; eta_offset_s: number | null }>();
   {
     /* SO rows resolve their number through their DO. There is deliberately NO
        so_id lookup: scm.mfg_sales_orders has no `id`, so an SO can never be the
@@ -730,7 +730,7 @@ deliveryPlanning.get('/', async (c) => {
     const docByDoId = new Map<string, string>();
     for (const [dn, arr] of doByDoc) for (const d of arr) docByDoId.set(d.id, dn);
 
-    type StopRow = { dp_no?: string | null; do_id?: string | null; trip_id?: string | null; tripId?: string | null };
+    type StopRow = { dp_no?: string | null; do_id?: string | null; trip_id?: string | null; tripId?: string | null; stop_no?: number | null; stopNo?: number | null; eta_offset_s?: number | null; etaOffsetS?: number | null };
     const take = (rows: StopRow[] | null | undefined) => {
       for (const s of rows ?? []) {
         const no = s.dp_no;
@@ -747,7 +747,7 @@ deliveryPlanning.get('/', async (c) => {
            filter that used to live in the query (`dp_no IS NOT NULL`) now lives
            in take(), same rows either way. */
         const byDo = await sb.from('trip_stops')
-          .select('dp_no, do_id, trip_id').in('do_id', doIds);
+          .select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', doIds);
         const stopRows = ((byDo as { data?: StopRow[] }).data ?? []);
         take(stopRows.filter((s) => s.dp_no != null));
 
@@ -777,7 +777,11 @@ deliveryPlanning.get('/', async (c) => {
             const tripId = (s.tripId ?? s.trip_id) as string | null;
             const trip = tripId ? liveTripById.get(tripId) : undefined;
             const dn = (s.do_id && docByDoId.get(s.do_id)) || null;
-            if (dn && trip) tripByDoc.set(dn, trip);
+            if (dn && trip) tripByDoc.set(dn, {
+              ...trip,
+              stop_no: (s.stopNo ?? s.stop_no ?? null) as number | null,
+              eta_offset_s: (s.etaOffsetS ?? s.eta_offset_s ?? null) as number | null,
+            });
           }
         }
       }
@@ -1021,6 +1025,11 @@ deliveryPlanning.get('/', async (c) => {
       trip_id: tripByDoc.get(docNo)?.id ?? null,
       trip_no: tripByDoc.get(docNo)?.trip_no ?? null,
       trip_date: tripByDoc.get(docNo)?.trip_date ?? null,
+      /* Time-of-run keys (owner 2026-08-08: within the same date/state/postcode
+         group the Time queues also order by TIME) — the stop's sequence and
+         ETA offset on its live trip; null off-trip. */
+      trip_stop_no: tripByDoc.get(docNo)?.stop_no ?? null,
+      trip_eta_offset_s: tripByDoc.get(docNo)?.eta_offset_s ?? null,
       arrangement_stage: deriveArrangementStage({
         deliveryState: state,
         dateConfirmed: amendedDD != null,
@@ -1178,6 +1187,8 @@ deliveryPlanning.get('/', async (c) => {
           trip_id: null,
           trip_no: null,
           trip_date: null,
+          trip_stop_no: null,
+          trip_eta_offset_s: null,
           arrangement_stage: null,
         });
       }
@@ -1337,6 +1348,8 @@ deliveryPlanning.get('/', async (c) => {
         trip_id: ((d.trip_id ?? (d as { tripId?: string | null }).tripId) as string | null) ?? null,
         trip_no: null,
         trip_date: null,
+        trip_stop_no: null,
+        trip_eta_offset_s: null,
         arrangement_stage: deriveArrangementStage({
           deliveryState: scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE',
           dateConfirmed: date != null,
@@ -1471,6 +1484,8 @@ deliveryPlanning.get('/', async (c) => {
           trip_id: null,
           trip_no: null,
           trip_date: null,
+          trip_stop_no: null,
+          trip_eta_offset_s: null,
           arrangement_stage: null,
         });
       }

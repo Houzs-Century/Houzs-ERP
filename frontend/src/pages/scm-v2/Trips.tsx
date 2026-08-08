@@ -1,38 +1,38 @@
 // ----------------------------------------------------------------------------
 // Delivery Time Arrangement — stage 3 of the delivery pipeline (Planning ->
-// Date -> Time -> Last Mile). Owner spec 2026-08-07/08: dates first, lorries
-// later — the lorry / sequence / 3PL tools live HERE now.
+// Date -> Time -> Last Mile). Owner's FINAL division (2026-08-08): this page
+// is 排单 — "在送货当天,决定那一个区要先送哪一张单" — for the delivery DAY,
+// decide the ORDER of orders within each zone. SEQUENCING ONLY: no lorry and
+// no driver is named here; the intelligent driver + lorry assignment lives on
+// Last Mile Delivery ("Propose crew").
 //
 // The page IS the queue board — the EXACT shared DeliveryPlanningBoard locked
 // to PENDING_SCHEDULE, split Pending Time Arrangement (the inbox: date
-// confirmed, no trip yet — every order Delivery Date Arrangement confirms flows
-// in automatically) vs Time arranged (on a live trip), over the server-stamped
-// arrangement_stage. Two actions on the multiselect:
+// confirmed, no run yet) vs Time arranged (on a live run). Two actions on the
+// multiselect:
 //
-//   "Propose time (N)"  — the A2/A3 sequence-assign flow, RELOCATED from the
-//     Delivery Date Arrangement page, under the CONFIRMED-DATE discipline
-//     (lib/propose-time.ts): the selection is grouped by each order's
-//     confirmed delivery date, the endpoint is called once per date-group with
-//     that date as its start, and the response is PINNED to that one day —
-//     what the packer walked past the date spills to the 3PL overflow bucket
-//     FOR the date (own fleet provably full) instead of being re-dated. The
-//     Date page owns dates; this page never re-derives them. Each call crews
-//     the groups with an available lorry + driver + helper (leave-aware),
-//     sequences the stops (geocode + one Distance Matrix call per trip) and
-//     returns editable per-trip cards + the 3PL overflow section. Apply
-//     persists through the ESTABLISHED schedule path (PATCH
-//     /delivery-planning/so/:id/schedule). Depot / capacity / max-trips ride
-//     the server defaults silently; the depart-time input applies per day.
+//   "Propose time (N)"  — the per-date, per-zone STOP-SEQUENCE proposal,
+//     under the confirmed-date discipline (lib/propose-time.ts): the selection
+//     groups by each order's confirmed delivery date, the sequence-assign
+//     engine runs once per date-group started AT that date, and each response
+//     is pinned to that one day. The engine inherently packs into LORRY-SIZED
+//     runs — capacity is real and is why the engine stays (zero backend
+//     change) — but the vehicle's NAME is not this page's business:
+//     lib/anonymous-runs.ts folds the trips into anonymous "Run 1 / Run 2"
+//     groups per date, stripping every crew/vehicle identity field. The one
+//     survivor is the opaque vehicleSlotId, kept strictly as Apply plumbing (a
+//     stop needs a trip; a trip keys on (lorry, date)) and never rendered —
+//     Last Mile's "Propose crew" is where a name is put to the slot. Applying
+//     a run writes the sequence + dates exactly as before (schedule PATCH with
+//     stopNo / ETA / leg metrics), with NO driver or helper written.
 //   "Schedule (N)"      — the existing manual ScheduleTripDrawer, unchanged.
 //
-// Trip detail belongs under the "Time arranged" side: when that tab is active,
-// the trip list + stop sheet (+ route optimiser + Phase-4 live map) render
-// below the board. The old page-top trip-state chip bar and its two panels are
-// gone — CANCELLED trips are dropped and the rest order IN_PROGRESS -> PLANNED
-// -> COMPLETED (dispatchers watch running trips first).
+// Run detail (the trip list + stop sheet + route optimiser + Phase-4 live map)
+// renders under the "Time arranged" tab. CANCELLED trips are dropped and the
+// rest order IN_PROGRESS -> PLANNED -> COMPLETED.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type ReactNode, type CSSProperties } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Route as RouteIcon, MapPin, CalendarClock, CalendarCheck, Wand2 } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
@@ -55,22 +55,19 @@ import {
   type PlanningOrder,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
-import { useHelpers } from '../../vendor/scm/lib/helpers-queries';
 import { useLorries } from '../../vendor/scm/lib/lorries-queries';
 import {
   useSequenceAssign,
-  useDriverLeave,
   type SequenceAssignResponse,
-  type AssignedTrip,
-  type OverflowGroup,
-  type ThreePlCarrier,
 } from '../../vendor/scm/lib/delivery-zones-queries';
-import { findCrewLeave, crewLeaveLabel, type CrewLeaveRow } from '../../vendor/shared/crew-leave';
 import {
   groupByConfirmedDate,
   pinAssignToDate,
   mergeAssignResults,
+  depotForDocNos,
 } from '../../vendor/scm/lib/propose-time';
+import { foldToAnonymousRuns, estWindowOf, type AnonymousRun } from '../../vendor/scm/lib/anonymous-runs';
+import { MiniBadge, Th, Td, selStyle, fmtRm } from './delivery-propose-ui';
 import {
   DeliveryPlanningBoard,
   regionTabsFrom,
@@ -85,7 +82,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-/* Trip ordering under the Time arranged tab (owner: dispatchers watch running
+/* Run-detail ordering under the Time arranged tab (dispatchers watch running
    trips first). CANCELLED is dropped entirely — a cancelled trip arranges
    nothing (its orders are already back in the queue via the reverse
    reconcile). */
@@ -143,16 +140,12 @@ export function Trips() {
   );
 
   /* Shared write path + option lists for the board's inline cells + bulk bar
-     AND the relocated propose-time cards. */
+     (the manual crew path stays on the board everywhere). */
   const sched = useScheduleDelivery();
   const { data: drivers = [] } = useDrivers();
-  const { data: helpers = [] } = useHelpers();
   const { data: lorries = [] } = useLorries();
-  /* Leave marks the manual pickers per TRIP DATE (mark, never hide — the
-     dispatcher has the final say; only the AUTO assigner refuses). */
-  const crewLeave = useDriverLeave();
 
-  /* Multiselect → Schedule (manual drawer) or Propose time (auto flow). */
+  /* Multiselect → Schedule (manual drawer) or Propose time (sequence flow). */
   const [pendingSel, setPendingSel] = useState<Set<string>>(new Set());
   const [scheduling, setScheduling] = useState(false);
   const selectedDocNos = soDocNosFromSelection(pendingSel);
@@ -163,31 +156,37 @@ export function Trips() {
     return pendingOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no));
   }, [pendingOrders, pendingSel]);
 
-  /* ── Propose time — the RELOCATED A2/A3 sequence-assign flow, under the
-     confirmed-date discipline (lib/propose-time.ts): one endpoint call per
-     confirmed-date group, each response pinned to its one day. */
+  /* ── Propose time — the per-date, per-zone stop-sequence proposal, under the
+     confirmed-date discipline. Crew-free by construction: the response is
+     folded to anonymous runs before anything renders. */
   const seqAssign = useSequenceAssign();
   const [departTime, setDepartTime] = useState<string>('09:00');
   const [proposing, setProposing] = useState(false);
   const [assign, setAssign] = useState<SequenceAssignResponse | null>(null);
-  // Per-trip dispatcher overrides of the auto-assigned lorry / driver / helper.
-  const [overrides, setOverrides] = useState<Record<string, { lorryId?: string | null; driverId?: string | null; helperId?: string | null }>>({});
-  const [applyingAssign, setApplyingAssign] = useState(false);
-  // A3: per-overflow-group 3PL choice — the carrier lorry + captured cost (RM).
-  const [threePl, setThreePl] = useState<Record<string, { carrierId?: string | null; costRm?: string }>>({});
-  const [assigning3pl, setAssigning3pl] = useState<string | null>(null);
+  const [applyingRun, setApplyingRun] = useState<string | null>(null);
+  /* Per-date window failures — a proposal with no computed route means NO
+     estimated delivery windows, and the owner wants that failure LOUD and
+     actionable (which warehouse, where to fix it), never a quiet "—" column. */
+  const [windowGaps, setWindowGaps] = useState<Array<{ date: string; label: string | null }>>([]);
+
+  const runs = useMemo<AnonymousRun[]>(
+    () => (assign ? foldToAnonymousRuns(assign.trips) : []),
+    [assign],
+  );
 
   const runProposeTime = async () => {
     if (selectedDocNos.length === 0) {
-      notify({ title: 'Nothing selected', body: 'Tick the orders to arrange first.', tone: 'error' });
+      notify({ title: 'Nothing selected', body: 'Tick the orders to sequence first.', tone: 'error' });
       return;
     }
-    /* Dates first, lorries second: group the selection by each order's
-       CONFIRMED delivery date — the Date page owns dates, so the packer is
+    /* Dates first, sequence second: group the selection by each order's
+       CONFIRMED delivery date — the Date page owns dates, so the engine is
        started AT each confirmed date and pinned to that one day. An order with
-       no confirmed date is reported and skipped, never dated here. Depot,
-       capacity ceilings and max-trips still ride the server defaults silently;
-       the depart time applies to every day's trips. */
+       no confirmed date is reported and skipped, never dated here. The DEPOT is
+       derived from the group's own rows (majority warehouse) because the engine
+       computes routes — and therefore delivery windows — only when the request
+       names a depot to geocode. Capacity ceilings and max-trips still ride the
+       server defaults silently; the depart time applies to every day's runs. */
     const { groups, undated } = groupByConfirmedDate(pendingOrders, selectedDocNos);
     if (groups.length === 0) {
       notify({
@@ -200,17 +199,29 @@ export function Trips() {
     setProposing(true);
     const results: SequenceAssignResponse[] = [];
     const failures: string[] = [];
+    const gaps: Array<{ date: string; label: string | null }> = [];
     for (const g of groups) {
+      const depot = depotForDocNos(pendingOrders, g.docNos);
       try {
-        const r = await seqAssign.mutateAsync({ soDocNos: g.docNos, startDate: g.date, departTime });
+        const r = await seqAssign.mutateAsync({
+          soDocNos: g.docNos,
+          startDate: g.date,
+          departTime,
+          depotWarehouseId: depot?.warehouseId ?? null,
+        });
         results.push(pinAssignToDate(r, g.date));
+        /* No depot on the orders, or the depot would not geocode → the engine
+           returned no route and no windows for this date. Name it. */
+        if (!depot) gaps.push({ date: g.date, label: null });
+        else if (r.configured && !r.depot) gaps.push({ date: g.date, label: depot.label });
       } catch (e) {
         failures.push(`${g.date} (${e instanceof Error ? e.message : 'Something went wrong.'})`);
       }
     }
     setProposing(false);
+    setWindowGaps(gaps);
     const merged = mergeAssignResults(results);
-    if (merged) { setAssign(merged); setOverrides({}); setThreePl({}); }
+    if (merged) setAssign(merged);
     if (undated.length > 0 || failures.length > 0) {
       notify({
         title: merged ? 'Proposed, with notes' : 'Propose time failed',
@@ -223,92 +234,39 @@ export function Trips() {
     }
   };
 
-  // The effective (possibly overridden) crew/lorry for a trip.
-  const effectiveTrip = (t: AssignedTrip) => {
-    const o = overrides[t.key] ?? {};
-    return {
-      lorryId: o.lorryId !== undefined ? o.lorryId : t.lorryId,
-      driverId: o.driverId !== undefined ? o.driverId : t.driverId,
-      helperId: o.helperId !== undefined ? o.helperId : t.helperId,
-    };
-  };
-  const setOverride = (key: string, patch: { lorryId?: string | null; driverId?: string | null; helperId?: string | null }) =>
-    setOverrides((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
-  const setThreePlPick = (key: string, patch: { carrierId?: string | null; costRm?: string }) =>
-    setThreePl((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
-
-  /* Apply ONE trip's assignment: fan out one schedule call per stop, in the
-     proposed order, reusing the established schedule write-path (date + lorry +
-     driver + helper + stop position + ETA). amended_delivery_date only. */
-  const applyTrip = async (t: AssignedTrip) => {
-    const eff = effectiveTrip(t);
-    if (!eff.lorryId) { notify({ title: 'Pick a lorry', body: 'This trip has no lorry assigned — choose one before applying.', tone: 'error' }); return; }
-    // Ordered refs: the sequenced order if we have a route, else the packed order.
-    const orderedRefs = t.sequence
-      ? t.sequence.sequence.map((s) => ({ ref: s.ref, stopNo: s.order, etaOffsetS: s.etaOffsetS, legDistanceM: s.legDistanceM, legDurationS: s.legDurationS }))
-      : t.stops.map((s, i) => ({ ref: s.ref, stopNo: i + 1, etaOffsetS: null as number | null, legDistanceM: null as number | null, legDurationS: null as number | null }));
-    setApplyingAssign(true);
+  /* Apply ONE run: persist the stop sequence + dates exactly as before — one
+     schedule call per stop with stopNo / ETA / leg metrics. The run's opaque
+     vehicleSlotId rides along as PLUMBING only (a stop needs a trip; a trip
+     keys on (lorry, date)); NO driver or helper is written — naming the crew
+     is Last Mile Delivery's "Propose crew". */
+  const applyRun = async (run: AnonymousRun) => {
+    setApplyingRun(run.key);
     let ok = 0; let failed = 0;
-    for (const r of orderedRefs) {
+    for (const s of run.stops) {
       try {
         await sched.mutateAsync({
-          type: 'so', id: r.ref,
-          scheduleDate: t.date, tripDate: t.date,
-          lorryId: eff.lorryId, driverId: eff.driverId ?? null,
-          helper1Id: eff.helperId ?? null,
-          stopNo: r.stopNo,
-          etaOffsetS: r.etaOffsetS ?? undefined,
-          legDistanceM: r.legDistanceM ?? undefined,
-          legDurationS: r.legDurationS ?? undefined,
+          type: 'so', id: s.ref,
+          scheduleDate: run.date, tripDate: run.date,
+          lorryId: run.vehicleSlotId,
+          stopNo: s.order,
+          etaOffsetS: s.etaOffsetS ?? undefined,
+          legDistanceM: s.legDistanceM ?? undefined,
+          legDurationS: s.legDurationS ?? undefined,
         });
         ok += 1;
       } catch { failed += 1; }
     }
-    setApplyingAssign(false);
+    setApplyingRun(null);
     notify({
-      title: failed === 0 ? 'Trip assigned' : 'Assigned with some failures',
-      body: `${t.plate}: ${ok} stop(s) scheduled${failed ? `, ${failed} failed` : ''}.`,
+      title: failed === 0 ? 'Trip sequenced' : 'Sequenced with some failures',
+      body: `${run.date} Trip ${run.runNo}: ${ok} stop(s) staged${failed ? `, ${failed} failed` : ''}. Assign the crew in Last Mile Delivery.`,
       tone: failed === 0 ? 'info' : 'error',
     });
     pending.refetch();
     list.refetch();
   };
 
-  /* A3: assign an overflow group to a 3PL carrier. Reuses the SAME schedule
-     write-path as an own-fleet trip — the carrier is an OUTSOURCE lorry, so the
-     backend flags the trip is_outsourced and records the captured cost. A 3PL
-     trip does NOT consume an own-fleet slot. */
-  const assignThreePl = async (o: OverflowGroup) => {
-    const pick = threePl[o.key] ?? {};
-    if (!pick.carrierId) { notify({ title: 'Pick a 3PL carrier', body: 'Choose a carrier for this overflow trip before assigning.', tone: 'error' }); return; }
-    const costRm = Number(pick.costRm);
-    const costCenti = Number.isFinite(costRm) && costRm > 0 ? Math.round(costRm * 100) : null;
-    setAssigning3pl(o.key);
-    let ok = 0; let failed = 0;
-    for (let i = 0; i < o.orders.length; i += 1) {
-      try {
-        await sched.mutateAsync({
-          type: 'so', id: o.orders[i],
-          scheduleDate: o.date, tripDate: o.date,
-          lorryId: pick.carrierId,
-          stopNo: i + 1,
-          // Capture the cost once (on the trip CREATE — the first stop mints it).
-          threePlCostCenti: i === 0 ? costCenti : undefined,
-        });
-        ok += 1;
-      } catch { failed += 1; }
-    }
-    setAssigning3pl(null);
-    notify({
-      title: failed === 0 ? '3PL assigned' : 'Assigned with some failures',
-      body: `${ok} order(s) routed to the 3PL carrier${failed ? `, ${failed} failed` : ''}.`,
-      tone: failed === 0 ? 'info' : 'error',
-    });
-    pending.refetch();
-    list.refetch();
-  };
-
-  /* ── Trip detail — the "Time arranged" tab's content. ─────────────────────── */
+  /* ── Run detail — the "Time arranged" tab's content. ──────────────────────── */
   const [selected, setSelected] = useState<string | null>(null);
   const [preview, setPreview] = useState<OptimizeResult | null>(null);
   const list = useTrips({ status: 'ALL' });
@@ -378,7 +336,7 @@ export function Trips() {
       <PageHeader
         eyebrow="Delivery"
         title="Delivery Time Arrangement"
-        description="Date-confirmed orders flow in automatically — propose or schedule each onto a lorry-day trip with a crew, a stop sequence and depart times."
+        description="For each delivery day, decide which zone goes first and the order of stops within it — crew and lorries are assigned next in Last Mile Delivery."
       />
 
       {/* Split chips — the derived time side of the pipeline. */}
@@ -435,10 +393,10 @@ export function Trips() {
         sched={sched}
         drivers={drivers}
         lorries={lorries}
-        storageKey="dg-trips-to-schedule"
+        storageKey="dg-trips-time-arrangement-v2"
         exportName="TripsTimeArrangement"
-        /* Default queue order on entry (owner 2026-08-07): delivery date
-           OLDEST first, then state, then postcode — both sides. A clicked
+        /* Default queue order on entry (owner 2026-08-07/08): arranged date
+           OLDEST first, then state, then postcode, then run time. A clicked
            column header still overrides. */
         defaultSort={arrangementQueueCompare}
         emptyMessage={timeSide === 'PENDING_TIME'
@@ -447,12 +405,12 @@ export function Trips() {
         onRowDoubleClick={(o) => { if (o.row_type === 'so') navigate('/scm/sales-orders/' + o.so_doc_no); }}
         bulkExtras={
           <>
-            {/* Depart time for the proposed routes — the one genuine input. */}
+            {/* Depart time for the proposed sequences — the one genuine input. */}
             <input
               type="time"
               value={departTime}
               onChange={(e) => setDepartTime(e.target.value)}
-              title="Depart time for the proposed trips"
+              title="Depart time for the proposed runs"
               style={{ ...selStyle, width: 100 }}
             />
             <Button
@@ -460,7 +418,7 @@ export function Trips() {
               icon={<Wand2 {...ICON} />}
               disabled={proposing || selectedDocNos.length === 0}
               onClick={() => void runProposeTime()}
-              title={selectedDocNos.length === 0 ? 'Select one or more sales orders first' : 'Propose lorry, crew, stop sequence and times — each order on its confirmed delivery date'}
+              title={selectedDocNos.length === 0 ? 'Select one or more sales orders first' : 'Propose the stop order per zone for each confirmed delivery date — no crew is named here'}
             >
               {proposing ? 'Proposing…' : `Propose time (${selectedDocNos.length})`}
             </Button>
@@ -480,60 +438,55 @@ export function Trips() {
           : [])}
       />
 
-      {/* ── The propose-time result: editable per-trip cards + 3PL overflow
-          (the machinery relocated from Delivery Date Arrangement). */}
+      {/* ── The propose-time result: anonymous per-date runs — the stop
+          sequence intelligence, presented with NO lorry or crew identity. */}
       {assign && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <strong style={{ fontSize: 'var(--fs-14)' }}>Proposed trips</strong>
+            <strong style={{ fontSize: 'var(--fs-14)' }}>Proposed trip sequence</strong>
             <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-              {assign.trips.length} trip(s) · {assign.dispatchableCount}/{assign.lorryCount} lorry(ies) available
-              {!assign.configured ? ' · route off (no maps key) — crew + grouping only' : assign.depot ? '' : ' · depot not geocoded'}
+              {runs.length} trip(s)
+              {!assign.configured ? ' · route off (no maps key) — zone grouping only' : ''}
+              {' '}· crew is assigned in Last Mile Delivery
             </span>
           </div>
 
-          {assign.excludedLorries.length > 0 && (
-            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-warning, #b45309)' }}>
-              Excluded by fleet status: {assign.excludedLorries.map((l) => `${l.plate} (${l.status})`).join(', ')}
+          {/* LOUD, actionable window failure (owner 2026-08-08): a proposal with
+              no geocoded depot has no ETAs and no estimated delivery windows —
+              name the warehouse and where to fix it, never a quiet dash. */}
+          {windowGaps.length > 0 && (
+            <div style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid rgba(220,38,38,0.4)', background: 'rgba(220,38,38,0.06)', fontSize: 'var(--fs-12)' }}>
+              <strong>No estimated delivery windows for {windowGaps.map((g) => g.date).join(', ')}.</strong>{' '}
+              {windowGaps.some((g) => g.label != null)
+                ? <>The depot warehouse {windowGaps.filter((g) => g.label).map((g) => `"${g.label}"`).join(', ')} could not be geocoded — fill in its address (location / city / postcode / state) in the Warehouses master, then re-propose.</>
+                : <>The selected orders carry no warehouse, so there is no depot to route from — set the orders&apos; warehouse (or fix the SO lines), then re-propose.</>}
+              {' '}The zone grouping and stop order below still stand; only the clock times are missing.
             </div>
           )}
 
-          {assign.excludedDrivers.length > 0 && (
-            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-warning, #b45309)' }}>
-              On leave (not auto-assigned): {assign.excludedDrivers.map((d) => `${d.name ?? d.id} (${d.from}–${d.to}${d.reason ? `, ${d.reason}` : ''})`).join(', ')}
-            </div>
-          )}
-
-          {assign.overflow.length > 0 && (
-            <OverflowSection
-              overflow={assign.overflow}
-              carriers={assign.carriers}
-              pick={threePl}
-              onPick={setThreePlPick}
-              onAssign={assignThreePl}
-              assigningKey={assigning3pl}
-            />
-          )}
-
-          {assign.trips.map((t) => (
-            <AssignTripCard
-              key={t.key}
-              trip={t}
-              eff={effectiveTrip(t)}
-              lorries={lorries.map((l) => ({ id: l.id, plate: l.plate }))}
-              drivers={drivers.map((d) => ({ id: d.id, name: d.name }))}
-              helpers={helpers.map((h) => ({ id: h.id, name: h.name }))}
-              leaveRows={crewLeave.data}
-              onOverride={(patch) => setOverride(t.key, patch)}
-              onApply={() => applyTrip(t)}
-              applyBusy={applyingAssign}
+          {runs.map((run) => (
+            <RunCard
+              key={run.key}
+              run={run}
+              onApply={() => void applyRun(run)}
+              applyBusy={applyingRun === run.key}
             />
           ))}
 
-          {assign.unassigned.length > 0 && (
-            <div style={{ padding: '12px 16px', borderRadius: 10, border: '1px solid var(--border, rgba(0,0,0,0.1))' }}>
-              <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fs-14)' }}>Could not crew ({assign.unassigned.length})</h3>
+          {(assign.overflow.length > 0 || assign.unassigned.length > 0) && (
+            <div style={{ padding: '12px 16px', borderRadius: 10, border: '1px solid rgba(217,119,6,0.4)' }}>
+              <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fs-14)' }}>
+                Beyond the day&apos;s own-fleet capacity ({assign.overflow.length + assign.unassigned.length})
+              </h3>
+              <p style={{ margin: '0 0 8px', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                These could not fit the day&apos;s runs — assign a 3PL carrier for them in Last Mile Delivery.
+              </p>
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                {assign.overflow.map((o) => (
+                  <li key={o.key}>
+                    <strong>{o.date}</strong> · {o.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : o.group} · {o.orders.join(', ')} — {o.sets} sets · {fmtRm(o.revenueCenti)}
+                  </li>
+                ))}
                 {assign.unassigned.map((u, i) => (
                   <li key={u.key ?? `${i}`}><strong>{u.orders.join(', ')}</strong> — {u.reason}</li>
                 ))}
@@ -543,8 +496,8 @@ export function Trips() {
         </div>
       )}
 
-      {/* ── Trip detail — only under the "Time arranged" side: the trip list is
-          the trip-level view of the same fact the board's TIME_ARRANGED rows
+      {/* ── Run detail — only under the "Time arranged" side: the trip list is
+          the run-level view of the same fact the board's TIME_ARRANGED rows
           state per order. */}
       {timeSide === 'TIME_ARRANGED' && (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,360px)_1fr]">
@@ -555,7 +508,7 @@ export function Trips() {
             </div>
             {list.isLoading && <p className="p-4 text-[13px] text-ink-muted">Loading trips…</p>}
             {!list.isLoading && trips.length === 0 && (
-              <p className="p-4 text-[13px] text-ink-muted">No trips yet — arrange times above to create them.</p>
+              <p className="p-4 text-[13px] text-ink-muted">No trips yet — sequence orders above to create them.</p>
             )}
             <ul className="divide-y divide-border">
               {trips.map((t) => (
@@ -691,225 +644,81 @@ export function Trips() {
   );
 }
 
-/* ── Relocated propose-time components (from the old Auto-Schedule page) ────── */
-
-type CrewOpt = { id: string; name: string };
-type LorryOpt = { id: string; plate: string };
-
-const fmtRm = (centi: number): string => `RM ${(centi / 100).toLocaleString('en-MY', { maximumFractionDigits: 0 })}`;
-
-const AssignTripCard = ({ trip, eff, lorries, drivers, helpers, leaveRows, onOverride, onApply, applyBusy }: {
-  trip: AssignedTrip;
-  eff: { lorryId: string | null; driverId: string | null; helperId: string | null };
-  lorries: LorryOpt[];
-  drivers: CrewOpt[];
-  helpers: CrewOpt[];
-  leaveRows: CrewLeaveRow[] | undefined;
-  onOverride: (patch: { lorryId?: string | null; driverId?: string | null; helperId?: string | null }) => void;
+/* One anonymous trip — the Time page's proposal unit: a date, a zone, a stop
+   ORDER with estimated delivery windows. Numbered "Trip N" per date (owner
+   2026-08-08) — applying stages exactly this trip identity, so Last Mile sees
+   the SAME numbered trips and only labels crew onto them. Deliberately carries
+   no crew or vehicle identity (owner: 排单 decides which zone and which order
+   go first; who drives is Last Mile's). */
+const RunCard = ({ run, onApply, applyBusy }: {
+  run: AnonymousRun;
   onApply: () => void;
   applyBusy: boolean;
-}) => {
-  const seq = trip.sequence;
-
-  // Leave is per-DATE, and this card owns one date — so the marking is computed
-  // here, not at page level where the proposal spans many days.
-  const driverOpts = drivers.map((d) => ({
-    id: d.id, label: d.name, note: crewLeaveLabel(findCrewLeave(leaveRows, 'driver', d.id, trip.date)),
-  }));
-  const helperOpts = helpers.map((h) => ({
-    id: h.id, label: h.name, note: crewLeaveLabel(findCrewLeave(leaveRows, 'helper', h.id, trip.date)),
-  }));
-  // The ordered rows to show: the sequenced route if present, else the plain stops.
-  const rows = seq
-    ? seq.sequence.map((s) => {
-        const info = trip.stops.find((st) => st.ref === s.ref);
-        return {
-          ref: s.ref, order: s.order, debtorName: info?.debtorName ?? null, address: info?.address ?? '',
-          buildingType: info?.buildingType ?? null,
-          arrivalTime: s.arrivalTime, finishTime: s.finishTime,
-          earliestTime: s.earliestTime, latestTime: s.latestTime, windowViolated: s.windowViolated,
-        };
-      })
-    : trip.stops.map((s, i) => ({
-        ref: s.ref, order: i + 1, debtorName: s.debtorName, address: s.address, buildingType: s.buildingType,
-        arrivalTime: null as string | null, finishTime: null as string | null,
-        earliestTime: s.earliestTime, latestTime: s.latestTime, windowViolated: false,
-      }));
-
-  return (
-    <div style={{ borderRadius: 10, border: '1px solid var(--border, rgba(0,0,0,0.12))', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 14px', background: 'var(--bg-subtle, rgba(0,0,0,0.03))' }}>
-        <strong style={{ fontSize: 'var(--fs-13)' }}>{trip.date}</strong>
-        <span style={{ fontSize: 'var(--fs-11)', padding: '2px 8px', borderRadius: 999, background: 'var(--bg, rgba(0,0,0,0.06))' }}>
-          {trip.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : trip.group}
-        </span>
-        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-          {trip.stops.length} stop(s) · {trip.sets} sets · {fmtRm(trip.revenueCenti)}
-        </span>
-        {trip.overCeiling && <MiniBadge tone="danger">Over ceiling</MiniBadge>}
-        {seq && seq.windowViolations > 0 && <MiniBadge tone="warn">{seq.windowViolations} window issue(s)</MiniBadge>}
-        <div style={{ flex: 1 }} />
-        {seq && (
-          <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
-            back {seq.returnTime ?? '—'} · {Math.round(seq.totalDistanceMetres / 100) / 10} km
-          </span>
-        )}
-      </div>
-
-      {/* Editable crew + lorry — the auto-assignment, all overridable. */}
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', padding: '10px 14px', borderTop: '1px solid var(--border, rgba(0,0,0,0.08))' }}>
-        <AssignSelect label="Lorry" value={eff.lorryId} onChange={(v) => onOverride({ lorryId: v })}
-          options={lorries.map((l) => ({ id: l.id, label: l.plate }))} placeholder="— pick a lorry —" />
-        <AssignSelect label="Driver" value={eff.driverId} onChange={(v) => onOverride({ driverId: v })}
-          options={driverOpts} placeholder="— none —" />
-        <AssignSelect label="Helper" value={eff.helperId} onChange={(v) => onOverride({ helperId: v })}
-          options={helperOpts} placeholder="— none —" />
-        <div style={{ flex: 1 }} />
-        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-          <Button variant="primary" icon={<CalendarCheck {...ICON} />} onClick={onApply} disabled={applyBusy || !eff.lorryId}>
-            {applyBusy ? 'Applying…' : 'Apply this trip'}
-          </Button>
-        </div>
-      </div>
-
-      {trip.routeReason && (
-        <div style={{ padding: '6px 14px', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
-          {trip.routeReason}
-        </div>
-      )}
-
-      {/* Ordered stops with ETA + delivery window. */}
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-12)' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', color: 'var(--fg-muted)' }}>
-              <Th>#</Th><Th>Order</Th><Th>Customer</Th><Th>House</Th><Th>ETA</Th><Th>Done</Th><Th>Window</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.ref} style={{ borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
-                <Td>{r.order}</Td>
-                <Td><strong>{r.ref}</strong></Td>
-                <Td>{r.debtorName ?? '—'}</Td>
-                <Td>{r.buildingType ?? '—'}</Td>
-                <Td>{r.arrivalTime ?? '—'}</Td>
-                <Td>{r.finishTime ?? '—'}</Td>
-                <Td>
-                  {r.earliestTime || r.latestTime ? `${r.earliestTime ?? ''}–${r.latestTime ?? ''}` : 'any'}
-                  {r.windowViolated && <span style={{ color: 'var(--c-warning, #b45309)' }}> !</span>}
-                </Td>
-              </tr>
-            ))}
-            {rows.length > 0 && rows.filter((r) => trip.ungeocoded.includes(r.ref)).length === 0 && trip.ungeocoded.length > 0 && (
-              <tr><Td>—</Td><Td colSpan={6}>Not geocoded: {trip.ungeocoded.join(', ')}</Td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
-
-// A3 — the day's overflow: groups the own fleet could not cover. The dispatcher
-// picks a region 3PL carrier (an OUTSOURCE lorry) and captures the trip cost (the
-// seam Module C's rate-card will compute against), then assigns it via the same
-// schedule write-path — a 3PL trip does not consume an own-fleet slot.
-const OverflowSection = ({ overflow, carriers, pick, onPick, onAssign, assigningKey }: {
-  overflow: OverflowGroup[];
-  carriers: ThreePlCarrier[];
-  pick: Record<string, { carrierId?: string | null; costRm?: string }>;
-  onPick: (key: string, patch: { carrierId?: string | null; costRm?: string }) => void;
-  onAssign: (o: OverflowGroup) => void;
-  assigningKey: string | null;
 }) => (
-  <div style={{ borderRadius: 10, border: '1px solid rgba(217,119,6,0.4)', overflow: 'hidden' }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 14px', background: 'rgba(217,119,6,0.08)' }}>
-      <strong style={{ fontSize: 'var(--fs-13)' }}>3PL overflow ({overflow.length})</strong>
-      <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-        Own fleet is full for these — assign a 3PL carrier and capture the cost.
+  <div style={{ borderRadius: 10, border: '1px solid var(--border, rgba(0,0,0,0.12))', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 14px', background: 'var(--bg-subtle, rgba(0,0,0,0.03))' }}>
+      <strong style={{ fontSize: 'var(--fs-13)' }}>{run.date}</strong>
+      <span style={{ fontSize: 'var(--fs-11)', padding: '2px 8px', borderRadius: 999, background: 'var(--bg, rgba(0,0,0,0.06))', fontWeight: 700 }}>
+        Trip {run.runNo}
       </span>
+      <span style={{ fontSize: 'var(--fs-11)', padding: '2px 8px', borderRadius: 999, background: 'var(--bg, rgba(0,0,0,0.06))' }}>
+        {run.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : run.group}
+      </span>
+      <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+        {run.stops.length} stop(s) · {run.sets} sets · {fmtRm(run.revenueCenti)}
+      </span>
+      {run.overCapacity && <MiniBadge tone="danger">Over capacity</MiniBadge>}
+      {run.windowViolations > 0 && <MiniBadge tone="warn">{run.windowViolations} window issue(s)</MiniBadge>}
+      <div style={{ flex: 1 }} />
+      {run.returnTime != null && run.totalDistanceMetres != null && (
+        <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+          back {run.returnTime} · {Math.round(run.totalDistanceMetres / 100) / 10} km
+        </span>
+      )}
+      <Button variant="primary" icon={<CalendarCheck {...ICON} />} onClick={onApply} disabled={applyBusy}>
+        {applyBusy ? 'Applying…' : 'Apply this run'}
+      </Button>
     </div>
-    {carriers.length === 0 && (
-      <div style={{ padding: '8px 14px', fontSize: 'var(--fs-12)', color: 'var(--c-warning, #b45309)' }}>
-        No 3PL carrier on file for this region. Add an OUTSOURCE lorry (non-internal) in Fleet to assign overflow.
+
+    {run.routeReason && (
+      <div style={{ padding: '6px 14px', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
+        {run.routeReason}
       </div>
     )}
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {overflow.map((o) => {
-        const p = pick[o.key] ?? {};
-        const busy = assigningKey === o.key;
-        return (
-          <div key={o.key} style={{ padding: '10px 14px', borderTop: '1px solid var(--border, rgba(0,0,0,0.08))' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <strong style={{ fontSize: 'var(--fs-13)' }}>{o.date}</strong>
-              <span style={{ fontSize: 'var(--fs-11)', padding: '2px 8px', borderRadius: 999, background: 'var(--bg, rgba(0,0,0,0.06))' }}>
-                {o.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : o.group}
-              </span>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-                {o.orders.length} order(s) · {o.sets} sets · {fmtRm(o.revenueCenti)}
-              </span>
-            </div>
-            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', margin: '4px 0' }}>{o.orders.join(', ')}</div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-              <AssignSelect label="3PL carrier" value={p.carrierId ?? null} onChange={(v) => onPick(o.key, { carrierId: v })}
-                options={carriers.map((c) => ({ id: c.id, label: c.plate }))} placeholder="— pick a carrier —" />
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>Captured cost (RM)</span>
-                <input type="number" min="0" value={p.costRm ?? ''} onChange={(e) => onPick(o.key, { costRm: e.target.value })}
-                  placeholder="0" style={{ ...selStyle, width: 120 }} />
-              </label>
-              <Button variant="primary" icon={<CalendarCheck {...ICON} />} onClick={() => onAssign(o)} disabled={busy || !p.carrierId || carriers.length === 0}>
-                {busy ? 'Assigning…' : 'Assign 3PL'}
-              </Button>
-            </div>
-          </div>
-        );
-      })}
+
+    {/* Ordered stops with the ESTIMATED delivery window (Google leg ETA +
+        installation time + unload buffer — owner: "就会知道下一单几点到几点")
+        beside the ALLOWED residence window — the 排单 answer itself. */}
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-12)' }}>
+        <thead>
+          <tr style={{ textAlign: 'left', color: 'var(--fg-muted)' }}>
+            <Th>#</Th><Th>Order</Th><Th>Customer</Th><Th>House</Th><Th>Est. window</Th><Th>Allowed</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {run.stops.map((r) => (
+            <tr key={r.ref} style={{ borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
+              <Td>{r.order}</Td>
+              <Td><strong>{r.ref}</strong></Td>
+              <Td>{r.debtorName ?? '—'}</Td>
+              <Td>{r.buildingType ?? '—'}</Td>
+              <Td>
+                <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                  {estWindowOf(r) ?? '—'}
+                </span>
+              </Td>
+              <Td>
+                {r.earliestTime || r.latestTime ? `${r.earliestTime ?? ''}–${r.latestTime ?? ''}` : 'any'}
+                {r.windowViolated && <span style={{ color: 'var(--c-warning, #b45309)' }}> !</span>}
+              </Td>
+            </tr>
+          ))}
+          {run.stops.length > 0 && run.ungeocoded.length > 0 && (
+            <tr><Td>—</Td><Td colSpan={5}>Not geocoded: {run.ungeocoded.join(', ')}</Td></tr>
+          )}
+        </tbody>
+      </table>
     </div>
   </div>
 );
-
-/* `note` marks an option without removing it — an on-leave driver stays
-   selectable because the dispatcher has always had the final say. */
-const AssignSelect = ({ label, value, onChange, options, placeholder }: {
-  label: string; value: string | null; onChange: (v: string | null) => void;
-  options: { id: string; label: string; note?: string }[]; placeholder: string;
-}) => {
-  const selectedNote = options.find((o) => o.id === value)?.note;
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{label}</span>
-      <select value={value ?? ''} onChange={(e) => onChange(e.target.value || null)} style={{ ...selStyle, minWidth: 150 }}>
-        <option value="">{placeholder}</option>
-        {value && !options.some((o) => o.id === value) && <option value={value}>(current)</option>}
-        {options.map((o) => (
-          <option key={o.id} value={o.id}>{o.note ? `${o.label} · ${o.note}` : o.label}</option>
-        ))}
-      </select>
-      {selectedNote && (
-        <span style={{ fontSize: 'var(--fs-11)', color: 'var(--c-warning, #b45309)' }}>{selectedNote}</span>
-      )}
-    </label>
-  );
-};
-
-const MiniBadge = ({ tone, children }: { tone: 'warn' | 'danger'; children: ReactNode }) => (
-  <span style={{
-    fontSize: 'var(--fs-11)', padding: '1px 7px', borderRadius: 999,
-    background: tone === 'danger' ? 'rgba(220,38,38,0.12)' : 'rgba(217,119,6,0.14)',
-    color: tone === 'danger' ? 'var(--c-danger, #b91c1c)' : 'var(--c-warning, #b45309)',
-  }}>{children}</span>
-);
-
-const Th = ({ children }: { children: ReactNode }) => (
-  <th style={{ padding: '6px 10px', fontWeight: 500 }}>{children}</th>
-);
-const Td = ({ children, colSpan }: { children: ReactNode; colSpan?: number }) => (
-  <td colSpan={colSpan} style={{ padding: '6px 10px' }}>{children}</td>
-);
-
-const selStyle: CSSProperties = {
-  padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border, rgba(0,0,0,0.2))',
-  background: 'var(--bg, #fff)', color: 'var(--fg, inherit)', fontSize: 'var(--fs-13)',
-};

@@ -235,7 +235,7 @@ export const AutoSchedule = () => {
         sched={schedule}
         drivers={drivers.data ?? []}
         lorries={lorries.data ?? []}
-        storageKey="dg-date-arrangement"
+        storageKey="dg-date-arrangement-v2"
         exportName="DeliveryDateArrangement"
         /* Default queue order on entry (owner 2026-08-07): delivery date
            OLDEST first, then state, then postcode — both sides. A clicked

@@ -29,8 +29,8 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Desktop board | `frontend/src/pages/scm-v2/DeliveryPlanning.tsx` | Thin host: PageHeader + data fetch (region server-side) + selection + drawers, rendering the shared **`DeliveryPlanningBoard`**. The 4 state tabs + region chips + inline Driver / Lorry cells + expand + multiselect all live in the shared component now. |
 | Desktop DP-order registry | `frontend/src/pages/scm-v2/DpOrders.tsx` | Route `/scm/dp-orders`, nav "DP Orders" under Transportation (after Delivery Planning). The FLAT `dp_orders` list over `GET /dp-orders` (`useDpOrders`) — every status, including the source-linked orders the board's anti-double-count guard hides and cancelled jobs the board drops. DataTable + client search; Schedule… (pending rows, reuses `ScheduleDpOrderDrawer` via its `ScheduleDpOrderTarget` subset prop) + Cancel + New DP order (reuses `NewDpOrderDrawer`). Status pill = `StatusPill docType="dpOrder"`. The optional P3 list of `docs/delivery-planning-jobtypes-spec.md`. |
 | Shared board grid | `frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx` | The board itself, extracted so it is reused UNCHANGED by both DeliveryPlanning and the Trips "To schedule" panel: the CONFIG-DRIVEN region chip row, the optional 4 state-tab rail, the compact bulk-edit bar (multiselect), the inline Excel-style cell editors, the SO line-item drill-down and the full HC column set. Props: `stateTabs?` (present → tab row + client state-filter; omitted → locked to the passed single-state fetch), `selectedKeys`/`onToggle`/`onToggleAll`/`onClearSelection`, `bulkExtras` (page-injected Convert / Schedule buttons), `contextMenu`, `onRowDoubleClick`. The page owns the `useDeliveryPlanning` fetch so `region` stays a server-side filter. |
-| Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx` | **Delivery Time Arrangement** (pipeline stage 3, 2026-08-08). The page IS the time-arrangement queue: the EXACT shared board locked to PENDING_SCHEDULE, split Pending Time Arrangement (the inbox) vs Time arranged. Multiselect carries TWO actions: **"Propose time (N)"** — the A2/A3 sequence-assign flow RELOCATED from the date page (lorry + crew + stop sequence + depart times, leave-aware, with the 3PL overflow section; depot/capacity ride the server defaults, only a depart-time input sits beside the button), run under the confirmed-date discipline of `vendor/scm/lib/propose-time.ts`: one packer call per confirmed delivery date, each pinned to that day, so every proposed stop lands on its order's confirmed date — and the manual **Schedule (N)** → `ScheduleTripDrawer` (unchanged). The trip list + stop sheet (+ route optimiser + Phase-4 live map) render UNDER the "Time arranged" tab; the old page-top trip-state chip bar is gone (CANCELLED dropped, ordering IN_PROGRESS → PLANNED → COMPLETED). |
-| Desktop fleet day-map (A4) | `frontend/src/pages/scm-v2/FleetDay.tsx` | **Last Mile Delivery** — the EXECUTION stage (pipeline stage 4, 2026-08-08). Route `/scm/fleet-day`. Same page skeleton as the family: split chips (All / Time arranged / Delivered for the picked day) + the shared board over the day's SO rows on a live trip (the pure fold `vendor/scm/lib/last-mile.ts` over the server-stamped `trip_date`; state=ALL so a delivered order stays visible as done). Crew columns edit through the ONE schedule path — this is the central place to view and manage drivers, lorries, helpers on the day. The A4 day MAP stays as the visual: every trip that day on ONE Google map (distinct colours, numbered stops), the lorry side panel, the focused stop list, and the printable run-sheet link. The map is still READ-ONLY over `GET /trips/day`. |
+| Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx` | **Delivery Time Arrangement** (pipeline stage 3, 2026-08-08). The page IS the time-arrangement queue: the EXACT shared board locked to PENDING_SCHEDULE, split Pending Time Arrangement (the inbox) vs Time arranged. Multiselect carries TWO actions: **"Propose time (N)"** — the per-date, per-zone STOP-SEQUENCE proposal (owner's final division 2026-08-08: this page is 排单, sequencing only). Runs the sequence-assign engine under the confirmed-date discipline of `vendor/scm/lib/propose-time.ts` (one call per confirmed delivery date, started AT that date, pinned to that one day; the depot is derived from the selected orders' majority warehouse via `depotForDocNos` so routes — and therefore delivery windows — can be computed at all), then `vendor/scm/lib/anonymous-runs.ts` folds the engine's crewed trips into anonymous **"Trip 1 / Trip 2"** cards per date: every crew/vehicle identity field is stripped (the opaque `vehicleSlotId` survives as Apply plumbing only — a stop needs a trip and a trip keys on (lorry, date)); each stop shows its **estimated delivery window** (`estWindowOf`: engine arrival → finish [installation folded in via residence rules] + `DELIVERY_UNLOAD_BUFFER_MIN`) beside the ALLOWED residence window; a proposal with no geocodable depot gets a LOUD red box naming the warehouse to fix. Applying a trip stages the sequence + dates through the schedule PATCH with NO driver/helper written — and the manual **Schedule (N)** → `ScheduleTripDrawer` (unchanged). The crew machinery (AssignTripCard / 3PL overflow) moved on to Last Mile Delivery (2026-08-08); the shared presentation pieces live in `pages/scm-v2/delivery-propose-ui.tsx`. The trip list + stop sheet (+ route optimiser + Phase-4 live map) render UNDER the "Time arranged" tab; the old page-top trip-state chip bar is gone (CANCELLED dropped, ordering IN_PROGRESS → PLANNED → COMPLETED). |
+| Desktop fleet day-map (A4) | `frontend/src/pages/scm-v2/FleetDay.tsx` | **Last Mile Delivery** — the EXECUTION + CREW stage (pipeline stage 4; owner's final division 2026-08-08: 智能 assign driver + lorry lives HERE). Route `/scm/fleet-day`. Same page skeleton as the family: split chips (All / Time arranged / Delivered for the picked day) + the shared board over the day's SO rows on a live trip (the pure fold `vendor/scm/lib/last-mile.ts` over the server-stamped `trip_date`; state=ALL so a delivered order stays visible as done). **"Propose crew"**: ONE leave-aware sequence-assign call over the day's time-arranged orders; the engine's per-run crew picks re-attach to the day's REAL numbered trips by stop overlap (`matchCrewSuggestions`), each trip carrying editable Lorry + Driver 1/2 + Helper 1/2 selects (crew-leave marked) and per-trip Apply → `PATCH /trips/:id` (trip row) + `PUT /delivery-orders-mfg/:id/crew` per live DO (the `delivery_order_crew` snapshot the board shows — the only driver-2 store, hence no migration). The 3PL overflow section (carrier + captured cost) lives here. The board's inline Driver / Lorry cells stay as the manual path. The A4 day MAP stays as the visual: every trip that day on ONE Google map, the lorry side panel (now "Trip N" numbered, trip_no order), the focused stop list, and the printable run-sheet link. The map read (`GET /trips/day`) is unchanged. |
 | Desktop driver run-sheet (A4) | `frontend/src/pages/scm-v2/FleetRunSheet.tsx` | Route `/scm/fleet-run-sheet?date=&warehouseId=&trip=`. The printable paper the driver takes: one clean sheet PER lorry (`@media print`, one lorry per page) — trip summary (date, driver, helper, plate, drops, revenue), the lorry's route map, and the ordered stop table (no., customer, full address, phone, house type, time window, ETA, access note). Same `GET /trips/day` data as the day-map. |
 | Desktop fleet masters | `frontend/src/pages/scm-v2/Fleet.tsx:78` | `DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`; `LorryDetail.tsx:71` mounts as a drawer from `Fleet.tsx:613`. |
 | Desktop regions | `frontend/src/pages/scm-v2/DeliveryPlanningRegions.tsx:40` | Region master + per-state mapping editor. |
@@ -82,27 +82,37 @@ split chips above the board are the page's rail.
 
 **Two bulk actions on the multiselect:**
 
-- **"Propose time (N)"** — the A2/A3 sequence-assign flow, RELOCATED here from
-  the Delivery Date Arrangement page (2026-08-08; the lorry dimension lives on
-  the TIME page now), under the **confirmed-date discipline**
-  (`vendor/scm/lib/propose-time.ts`, pinned by `propose-time.test.ts`): the
-  Date page owns dates, so the selection is grouped by each order's confirmed
-  delivery date (`amended_delivery_date` first, the live trip's date next,
-  effective/customer only as the degraded-cache fallback; a dateless order is
-  reported and skipped, never dated here), `POST
-  /delivery-zones/sequence-assign` is called ONCE PER date-group with that
-  date as its start, and each response is PINNED to that one day — a trip the
-  packer walked past the date means the own fleet is provably full on the
-  confirmed date, so those orders spill into the 3PL overflow bucket FOR that
-  date instead of being re-dated. The invariant: every proposed stop's trip
-  date equals its order's confirmed date. Depot, capacity ceilings and
+- **"Propose time (N)"** — the per-date, per-zone STOP-SEQUENCE proposal
+  (owner's final division 2026-08-08: this page is 排单 — sequencing only; the
+  crew machinery moved on to Last Mile Delivery). Under the **confirmed-date
+  discipline** (`vendor/scm/lib/propose-time.ts`, pinned by
+  `propose-time.test.ts`): the Date page owns dates, so the selection is
+  grouped by each order's confirmed delivery date (`amended_delivery_date`
+  first, the live trip's date next, effective/customer only as the
+  degraded-cache fallback; a dateless order is reported and skipped, never
+  dated here), `POST /delivery-zones/sequence-assign` is called ONCE PER
+  date-group with that date as its start and the group's MAJORITY warehouse as
+  the depot (`depotForDocNos` — the engine geocodes routes, and therefore
+  computes delivery windows, only when the request names a depot), and each
+  response is PINNED to that one day — a trip the packer walked past the date
+  means the own fleet is provably full on the confirmed date, so those orders
+  spill to a "beyond own-fleet capacity" list FOR that date (assigned to 3PL
+  at Last Mile) instead of being re-dated. The invariant: every proposed
+  stop's trip date equals its order's confirmed date. Capacity ceilings and
   max-trips ride the server defaults silently; the depart-time input (beside
-  the button) applies to every day's trips. Renders the merged per-trip cards
-  (lorry / driver / helper selects with crew-leave marks, ordered stop table
-  with ETA + windows, "Apply this trip"), the excluded-lorry / on-leave lines
-  (deduped across the per-date calls), the 3PL overflow section (carrier
-  picker + captured cost) and the could-not-crew list. Apply fans out
-  `useScheduleDelivery` per stop — the ESTABLISHED schedule path, nothing new.
+  the button) applies to every day's trips. The engine's crewed trips are then
+  folded to ANONYMOUS "Trip 1 / Trip 2" cards per date
+  (`vendor/scm/lib/anonymous-runs.ts`, pinned by `anonymous-runs.test.ts`):
+  every crew/vehicle identity field is stripped — the opaque `vehicleSlotId`
+  survives strictly as Apply plumbing (a stop needs a trip; a trip keys on
+  (lorry, date)) and never renders. Each stop row shows its **estimated
+  delivery window** (`estWindowOf`: engine arrival → finish, which already
+  folds the residence-rule installation minutes, + `DELIVERY_UNLOAD_BUFFER_MIN`
+  = 15, the one documented unload-buffer constant) beside the ALLOWED
+  residence window; a date whose depot could not be geocoded (or whose orders
+  carry no warehouse) gets a LOUD red box naming the warehouse and where to
+  fix its address. "Apply this run" fans out `useScheduleDelivery` per stop —
+  sequence + dates only, NO driver or helper written.
 - **"Schedule (N)"** — the Phase-2 manual `ScheduleTripDrawer`
   (`vendor/scm/components/ScheduleTripDrawer.tsx`, #1251), unchanged: Apply
   fans out one `useScheduleDelivery` call per SO, REUSING
@@ -478,14 +488,24 @@ so the agent and the board cannot disagree.
 ### The arrangement pipeline — Planning → Date → Time → Last Mile (2026-08-07/08)
 
 The delivery pipeline is FOUR stages over ONE UI family (owner, 2026-08-07/08;
-"不用搞得太麻烦" — keep it simple):
+"不用搞得太麻烦" — keep it simple). The owner's FINAL division of labour across
+the three arrangement modules (2026-08-08, his own framing):
+
+1. **Delivery Date Arrangement = 排期** — pick the day.
+2. **Delivery Time Arrangement = 排单** — for the delivery DAY, decide the
+   ORDER of orders within each zone: "在送货当天,决定那一个区要先送哪一张单".
+   SEQUENCING ONLY — no lorry and no driver is named here.
+3. **Last Mile Delivery = 智能 assign driver + lorry** — the crew / vehicle
+   assignment intelligence lives THERE: "我只需要帮它标上去是什么罗里、什么
+   Driver、什么 Helper". Crew capacity is flexible per trip: "Helper 可以是两个
+   也可以是一个;我也可以选择两个 Driver 出去".
 
 | Stage | Page | What happens there |
 |---|---|---|
 | 1. Delivery Planning | `DeliveryPlanning.tsx` | The full 4-state board — everything that needs delivering. |
-| 2. Delivery Date Arrangement | `AutoSchedule.tsx` | DATES only. Multiselect → "Propose dates" → a DAY-grouped (postcode-zone) proposal with **no lorry dimension** → Apply writes `amended_delivery_date`. |
-| 3. Delivery Time Arrangement | `Trips.tsx` | LORRIES + times. The date-confirmed inbox → "Propose time" (the relocated sequence-assign: lorry + crew + stop sequence + depart times + 3PL overflow, one packer call per CONFIRMED date, pinned to that day — every proposed stop lands on its order's confirmed date) or the manual Schedule drawer → stops land on trips. |
-| 4. Last Mile Delivery | `FleetDay.tsx` | EXECUTION. The day's time-arranged orders (they flow in automatically — they ARE the TIME_ARRANGED rows / their trips for the picked date), crew managed on the shared board, the day map + run-sheet. |
+| 2. Delivery Date Arrangement | `AutoSchedule.tsx` | DATES only (排期). Multiselect → "Propose dates" → a DAY-grouped (postcode-zone) proposal with **no lorry dimension** → Apply writes `amended_delivery_date`. |
+| 3. Delivery Time Arrangement | `Trips.tsx` | SEQUENCE only (排单). Multiselect → "Propose time" → per-confirmed-date, per-zone stop sequences presented as anonymous **"Trip 1 / Trip 2" runs** (`lib/anonymous-runs.ts` strips every crew/vehicle identity; the engine's lorry-sized capacity is kept, its NAME is not) with each stop's **estimated delivery window** (Google leg ETA + installation time + unload buffer — `estWindowOf`). Applying stages the trip identity + sequence + dates through the schedule PATCH, writing NO driver or helper. The manual Schedule drawer stays. |
+| 4. Last Mile Delivery | `FleetDay.tsx` | CREW (智能 assign). The day's numbered trips (trip_no order = the Time page's staging order) each get a crew card — Lorry + Driver 1/2 + Helper 1/2 — prefilled by "Propose crew": ONE leave-aware sequence-assign call over the day's time-arranged orders, its per-run picks re-attached to the REAL trips by stop overlap (`lib/last-mile.ts` `matchCrewSuggestions` — crew is never suggested for a run that does not exist). Apply writes the trip row (`PATCH /trips/:id`) + the `delivery_order_crew` snapshot per DO (`PUT /delivery-orders-mfg/:id/crew` — the ONLY store with a driver-2 seat, hence NO migration). The 3PL overflow tools live here. The day map + run-sheet stay. |
 
 Every page shares one skeleton — PageHeader (one-line description) → split
 chips (All / stage tabs with counts) → region chips → the shared
@@ -547,22 +567,26 @@ page's primary bulk action is "Propose dates (N)"; the time page carries
 "Propose time (N)" plus the existing Schedule (N) → `ScheduleTripDrawer` flow
 unchanged, and its trip list / stop sheet render under the Time-arranged tab.
 Last Mile Delivery shows the same board over the day's on-trip rows
-(`lib/last-mile.ts`) beside the A4 day map. The Delivery Planning board's
+(`lib/last-mile.ts`) beside the A4 day map, and carries the CREW machinery —
+"Propose crew" + the per-trip Lorry / Driver 1/2 / Helper 1/2 cards + the 3PL
+overflow tools (owner's final division 2026-08-08). The Delivery Planning board's
 Pending Schedule tab shows the sub-split as a count line under the tab rail,
 and two default-hidden columns ("Arrangement", "Trip No.") join the grid.
 Mobile is deliberately untouched — the phone surface is the driver run-sheet,
 not the planning board (§7's intentional asymmetry).
 
-**Default queue order (owner 2026-08-07: "跟着 delivery date、state、postcode
-去排，这样排下来比较整齐").** On entry, BOTH arrangement queues — the Date
-Arrangement queue and the Time Arrangement panel, each on BOTH sides (pending
-and arranged, and their All tabs) — order by: the row's **effective delivery
-date, OLDEST first** (ascending; rows with no date sink to the bottom), then
-**customer state** A→Z, then **postcode** A→Z. The rule is ONE pure comparator,
-`arrangementQueueCompare` (`vendor/scm/lib/arrangement-sort.ts`, pinned by
-`arrangement-sort.test.ts` — the date key is
-`effective_delivery_date ?? amended_delivery_date ?? customer_delivery_date`,
-the same chain the drawer's Propose-dates uses). It reaches the grid through
+**Default queue order (owner 2026-08-07 "跟着 delivery date、state、postcode
+去排" → v2 2026-08-08: new date first, run time in-group, doc-no tiebreak).**
+On entry, BOTH arrangement queues — the Date Arrangement queue and the Time
+Arrangement panel, each on BOTH sides (pending and arranged, and their All
+tabs) — order by: the **ARRANGED (new) date, OLDEST first** (rows with no
+arranged date sink below every dated row), then **customer state** A→Z, then
+**postcode** A→Z, then **run time** (the stop's ETA offset on its live trip,
+stop sequence as its tiebreak — the board stamps `trip_stop_no` /
+`trip_eta_offset_s` off the widened stop read), then the customer's ORIGINAL
+date, then the **document number** — blanks always last. The rule is ONE pure
+comparator, `arrangementQueueCompare` (`vendor/scm/lib/arrangement-sort.ts`,
+pinned by `arrangement-sort.test.ts`). It reaches the grid through
 the opt-in `defaultSort` comparator prop (page →
 `DeliveryPlanningBoard` → `DataGrid`), applied ONLY while no column sort is
 active: a header the operator clicks overrides as always, and cycling that
@@ -1067,14 +1091,16 @@ crewed, grouped trips, just without a computed route (the plain order is kept,
 `routeReason` says why). Same area guard as the rest of TMS.
 
 **Frontend** — since 2026-08-08 this flow lives on the **Delivery Time
-Arrangement** page (`Trips.tsx`) as "Propose time (N)" (it shipped first on
-Auto-Schedule as "Sequence & assign"; the dates-first restructure moved the
-lorry dimension to the time page). It calls `useSequenceAssign` and renders one
-card PER TRIP: editable lorry / driver / helper selects (the auto-assignment,
-all overridable), the ordered stop table (ETA / finish / delivery window, `!`
-on a window violation), and per-trip "Apply this trip". Apply fans out one
-`useScheduleDelivery` per stop in sequence order with `{ scheduleDate, lorryId,
-driverId, helper1Id, stopNo, etaOffsetS, legDistanceM, legDurationS }`. No new
+Arrangement** page (`Trips.tsx`) as "Propose time (N)" — SEQUENCE half only
+since the owner's final division (2026-08-08): the Time page renders the
+engine's runs ANONYMISED (no lorry / crew identity; `lib/anonymous-runs.ts`)
+and its Apply writes sequence + dates with no driver/helper. The CREW half —
+the editable lorry / driver / helper cards ("the auto-assignment, all
+overridable", crew-leave marked) — lives on **Last Mile Delivery**
+(`FleetDay.tsx`, "Propose crew"): one `useSequenceAssign` call over the day,
+suggestions re-attached to the day's real trips by stop overlap
+(`matchCrewSuggestions`), Apply via `PATCH /trips/:id` + `PUT
+/delivery-orders-mfg/:id/crew` (driver 2 + helper 2 seats included). No new
 page / route.
 
 **Schedule-path extension (additive).** `scheduleSchema` +  `scheduleOntoTrip`
@@ -1155,8 +1181,9 @@ drivers. `driver-availability.ts` is unchanged — it never sees external driver
 leave once they cannot be recorded.
 
 **Frontend** — the A3 pieces ride the same relocated "Propose time" flow on
-`Trips.tsx` (2026-08-08): an "On leave (not auto-assigned)" line (from
-`excludedDrivers`) and the **3PL overflow** section — per overflow group a
+`FleetDay.tsx` — Last Mile Delivery's "Propose crew" (2026-08-08 final
+division; they sat briefly on `Trips.tsx` mid-restructure): an "On leave (not
+auto-assigned)" line (from `excludedDrivers`) and the **3PL overflow** section — per overflow group a
 carrier picker (from `carriers`) + a captured-cost (RM) input + "Assign 3PL"
 that fans out `useScheduleDelivery` with `{ lorryId: carrier, threePlCostCenti,
 tripDate }` (cost captured once on the trip CREATE). The "Max trips / lorry /
