@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DataGrid, type DataGridColumn } from "./DataGrid";
@@ -200,5 +201,69 @@ describe("DataGrid active-filter chips (stacked filters visible, 2026-08-07)", (
     expect(rowTexts(container)).toHaveLength(3); // Johor OR Selangor
     const bar = container.querySelector("[data-filter-bar]") as HTMLElement;
     expect(bar.textContent).toContain("2 values");
+  });
+});
+
+/* ── Option-B map narrowing is a DEFAULT, never a lock (owner bug 2026-08-08:
+   "已经添加了 column 可是它却没有出来" — the overlay kept overriding columns
+   the user explicitly ticked in the Columns panel). The page wiring under pin:
+   overlayHidden narrows while compact mode is on, and the grid's
+   onUserAdjustColumns fires on any explicit Columns-panel visibility choice so
+   the page can switch compact OFF and let the user's picks win instantly. */
+describe("DataGrid overlay narrowing yields to explicit column choices", () => {
+  type WideRow = { id: string; name: string; extra: string; extra2: string };
+  const wideRows: WideRow[] = [{ id: "1", name: "Alpha", extra: "E1", extra2: "E2" }];
+  /* `extra` starts hidden in the USER's own prefs (defaultHidden) — the
+     owner's exact case: they tick it in the Columns panel, so it must render.
+     A second defaultHidden column keeps the materialised layout non-pristine
+     after the toggle (the grid's pristine-defaults overlay quirk). */
+  const wideColumns: DataGridColumn<WideRow>[] = [
+    { key: "name", label: "Name", accessor: (r) => r.name, searchValue: (r) => r.name },
+    { key: "extra", label: "Extra", accessor: (r) => r.extra, searchValue: (r) => r.extra, defaultHidden: true },
+    { key: "extra2", label: "Other", accessor: (r) => r.extra2, searchValue: (r) => r.extra2, defaultHidden: true },
+  ];
+
+  /* The same shape the three map pages use: compact defaults ON (the overlay
+     hides the non-essential columns) and any explicit user column choice
+     switches compact off. */
+  function MapPageHarness() {
+    const [compact, setCompact] = useState(true);
+    return (
+      <DataGrid
+        rows={wideRows}
+        columns={wideColumns}
+        storageKey="overlay-default-not-lock"
+        rowKey={(r) => r.id}
+        overlayHidden={compact ? ["extra", "extra2"] : undefined}
+        onUserAdjustColumns={() => setCompact(false)}
+      />
+    );
+  }
+
+  const headerTexts = (container: HTMLElement): string =>
+    [...container.querySelectorAll("thead th")].map((th) => th.textContent ?? "").join("|");
+
+  test("map open + user shows a non-essential column in the Columns panel -> that column renders", () => {
+    const { container } = render(<MapPageHarness />);
+
+    // Compact on: the overlay hides Extra from the grid...
+    expect(headerTexts(container)).not.toContain("Extra");
+
+    // ...the user opens the Columns panel and ticks the Extra column — an
+    // EXPLICIT choice, so the compact overlay must yield, not override.
+    fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Extra" }));
+
+    expect(headerTexts(container)).toContain("Extra");
+    // The pick is surgical: the OTHER overlay column stays as the user left it
+    // (hidden by their own defaults), so yielding shows their real prefs.
+    expect(headerTexts(container)).not.toContain("Other");
+  });
+
+  test("rendering with the overlay in place writes NOTHING to the persisted layout", () => {
+    render(<MapPageHarness />);
+    for (const key of Object.keys(window.localStorage)) {
+      expect(window.localStorage.getItem(key) ?? "").not.toContain('"extra"');
+    }
   });
 });

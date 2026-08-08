@@ -49,11 +49,12 @@ import { cn } from '../../lib/utils';
 import { fmtCenti, todayMY } from '../../vendor/shared/format';
 import { useFleetDay, type FleetDayTrip } from '../../vendor/scm/lib/fleet-day-queries';
 import { assignRouteColors, routeColorFor } from '../../vendor/scm/lib/fleet-colors';
-import { DeliveryMapPanel, useMapPanelOpen } from '../../components/scm-v2/DeliveryMapPanel';
+import { DeliveryMapPanel, useMapPanelOpen, useMapCompactColumns } from '../../components/scm-v2/DeliveryMapPanel';
 import { useDeliveryGeo } from '../../vendor/scm/lib/delivery-geo-queries';
 import {
   pinsFromGeoPoints,
   geoTotals,
+  zoneSummary,
   stagedRoutesFromRows,
   focusFilterRows,
   MAP_ESSENTIAL_COLUMNS_LAST_MILE,
@@ -208,10 +209,18 @@ export function FleetDay() {
      Time page draws staged trips with), with crew labels + the day-map colour
      per trip from GET /trips/day. */
   const [mapOpen, setMapOpen] = useMapPanelOpen('last-mile');
+  /* Compact columns: a per-page-persisted DEFAULT, never a lock — the pill on
+     the panel header toggles it, and any explicit Columns-panel choice while
+     the map is open switches it off (the user's picks win instantly). */
+  const [mapCompact, setMapCompact] = useMapCompactColumns('last-mile');
   const [mapRegion, setMapRegion] = useState<string>('ALL');
   const geo = useDeliveryGeo({ date, region: mapRegion, enabled: mapOpen });
   const mapPins = useMemo(() => pinsFromGeoPoints(geo.data?.points ?? []), [geo.data?.points]);
   const mapTotals = useMemo(() => geoTotals(geo.data?.points ?? []), [geo.data?.points]);
+  const mapZones = useMemo(
+    () => zoneSummary(geo.data?.points ?? [], boardRegionTabs, mapRegion),
+    [geo.data?.points, boardRegionTabs, mapRegion],
+  );
   const pointByRef = useMemo(() => {
     const m = new Map<string, MapLatLng>();
     for (const p of geo.data?.points ?? []) m.set(p.ref, { lat: p.lat, lng: p.lng });
@@ -620,8 +629,10 @@ export function FleetDay() {
         lorries={lorries}
         storageKey="dg-last-mile"
         exportName="LastMileDelivery"
-        /* Map-open narrowing + two-way linkage (Option B). */
-        visibleColumnsOverride={mapOpen ? MAP_ESSENTIAL_COLUMNS_LAST_MILE : null}
+        /* Map-open narrowing (a DEFAULT — the compact pill / an explicit
+           Columns-panel choice turns it off) + two-way linkage (Option B). */
+        visibleColumnsOverride={mapOpen && mapCompact ? MAP_ESSENTIAL_COLUMNS_LAST_MILE : null}
+        onUserAdjustColumns={() => { if (mapOpen && mapCompact) setMapCompact(false); }}
         onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); }}
         scrollToRow={scrollTo}
         defaultSort={arrangementQueueCompare}
@@ -691,6 +702,11 @@ export function FleetDay() {
           selectedRef={selectedPin}
           onPinClick={onPinClick}
           totals={mapTotals}
+          regionKey={mapRegion}
+          viewKey={`${date}|${mapRegion}`}
+          zoneSummary={mapZones}
+          compactColumns={mapCompact}
+          onCompactColumnsChange={setMapCompact}
           ungeocoded={geo.data?.ungeocoded ?? []}
           serverConfigured={geo.data?.configured ?? true}
           isLoading={geo.isLoading || query.isLoading}

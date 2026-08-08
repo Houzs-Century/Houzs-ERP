@@ -259,6 +259,16 @@ export type DataGridProps<T> = {
    */
   overlayHidden?: readonly string[];
   /**
+   * Fired on every EXPLICIT column-visibility choice the user makes — the
+   * Columns drawer's toggle / Show all / Reset, the header context menu's
+   * Hide/Show column, and applying a saved layout. The Option-B map pages
+   * listen so their compact-columns overlay yields the moment the user picks
+   * columns by hand (owner bug 2026-08-08: the overlay must be a DEFAULT,
+   * never a lock — "已经添加了 column 可是它却没有出来"). Reorder / pin /
+   * width gestures do NOT fire it: they never conflict with a hide overlay.
+   */
+  onUserAdjustColumns?: () => void;
+  /**
    * Imperative scroll-to-row (map pin → board linkage, owner 2026-08-08).
    * Bump `nonce` with the target row's key: the grid selects (highlights) the
    * row and scrolls it into view — via the virtualizer when windowed, via
@@ -350,6 +360,7 @@ function DataGridInner<T>({
   loadedSearchLimit,
   defaultSort,
   overlayHidden,
+  onUserAdjustColumns,
   scrollToRow,
 }: DataGridProps<T>) {
   /* HOUZS-style inline expansion (PR so-list-houzs-port). Tracks the set of
@@ -732,10 +743,12 @@ function DataGridInner<T>({
      clears hidden + order + widths (preserving groupBy + sort so search
      state survives). toggleColumn flips a column's presence in `hidden`. */
   const resetColumns = useCallback(() => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({ ...l, hidden: [], order: [], widths: {} }));
     setColumnsMenuOpen(false);
-  }, [setLayout]);
+  }, [setLayout, onUserAdjustColumns]);
   const toggleColumn = useCallback((colKey: string) => {
+    onUserAdjustColumns?.();
     setLayout((l) => {
       /* If we're still on the pristine-defaults overlay (no explicit
          choices yet) materialize the current set of hidden keys before
@@ -750,7 +763,7 @@ function DataGridInner<T>({
         : [...baseHidden, colKey];
       return { ...l, hidden };
     });
-  }, [columns, setLayout]);
+  }, [columns, setLayout, onUserAdjustColumns]);
   /* "Show all" — every column visible. Materializes the order when the layout
      is still pristine: an empty order + empty hidden would put the layout back
      on the defaults overlay and instantly re-hide every defaultHidden column. */
@@ -802,6 +815,7 @@ function DataGridInner<T>({
       ? layoutStore.myLayouts[serverTableKey]?.find((l) => l.id === Number(rawId))?.layout
       : layoutStore.defaults[String(Number(rawId))]?.[serverTableKey];
     if (!saved) return;
+    onUserAdjustColumns?.();
     setLayout((l) => ({
       order: saved.order,
       hidden: saved.hidden,
@@ -811,16 +825,17 @@ function DataGridInner<T>({
       // Picking a layout must not re-sort the list under the operator.
       sort: l.sort,
     }));
-  }, [layoutStore, serverTableKey, setLayout]);
+  }, [layoutStore, serverTableKey, setLayout, onUserAdjustColumns]);
 
 
   const showAllColumns = useCallback(() => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({
       ...l,
       hidden: [],
       order: l.order.length ? l.order : columns.map((c) => c.key),
     }));
-  }, [columns, setLayout]);
+  }, [columns, setLayout, onUserAdjustColumns]);
 
   // ── Resolve visible/ordered columns ───────────────────────────────
   // If `expandable` is set, prepend a synthetic 32px chevron column that
@@ -1319,10 +1334,14 @@ function DataGridInner<T>({
   };
 
   // ── Header context menu actions ──────────────────────────────────
-  const hideColumn = (key: string) =>
+  const hideColumn = (key: string) => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({ ...l, hidden: l.hidden.includes(key) ? l.hidden : [...l.hidden, key] }));
-  const showColumn = (key: string) =>
+  };
+  const showColumn = (key: string) => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({ ...l, hidden: l.hidden.filter((k) => k !== key) }));
+  };
   const pinLeft = (key: string) =>
     setLayout((l) => {
       // pin = move to front of order

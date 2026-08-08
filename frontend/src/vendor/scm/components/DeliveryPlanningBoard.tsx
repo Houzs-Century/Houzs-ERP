@@ -541,6 +541,11 @@ export type DeliveryPlanningBoardProps = {
      column prefs are never written; pass null/undefined (map closed) and the
      full set returns exactly as the user left it. */
   visibleColumnsOverride?: readonly string[] | null;
+  /* Explicit column-visibility choice made by the user (Columns drawer, header
+     context menu, saved layout) — forwarded from the DataGrid so the map pages
+     can switch their compact-columns overlay OFF the moment the user picks
+     columns by hand (the narrowing is a default, never a lock). */
+  onUserAdjustColumns?: () => void;
 
   storageKey?: string;
   exportName?: string;
@@ -585,6 +590,7 @@ export function DeliveryPlanningBoard({
   onRowClick,
   scrollToRow,
   visibleColumnsOverride,
+  onUserAdjustColumns,
   storageKey = 'dg-delivery-planning',
   exportName = 'DeliveryPlanning',
   searchPlaceholder = 'Search SO / ref / customer / phone…',
@@ -1342,6 +1348,7 @@ export function DeliveryPlanningBoard({
         onRowClick={onRowClick}
         scrollToRow={scrollToRow}
         overlayHidden={overlayHidden}
+        onUserAdjustColumns={onUserAdjustColumns}
       />
     </div>
   );

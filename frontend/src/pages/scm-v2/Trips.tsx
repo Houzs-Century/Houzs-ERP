@@ -36,11 +36,12 @@ import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Route as RouteIcon, MapPin, CalendarClock, CalendarCheck, Wand2, Map as MapIcon } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
-import { DeliveryMapPanel, useMapPanelOpen } from '../../components/scm-v2/DeliveryMapPanel';
+import { DeliveryMapPanel, useMapPanelOpen, useMapCompactColumns } from '../../components/scm-v2/DeliveryMapPanel';
 import { useDeliveryGeo } from '../../vendor/scm/lib/delivery-geo-queries';
 import {
   pinsFromGeoPoints,
   geoTotals,
+  zoneSummary,
   routesFromRuns,
   stagedRoutesFromRows,
   focusFilterRows,
@@ -198,12 +199,20 @@ export function Trips() {
      the #1720 folds); otherwise the day's STAGED live trips draw off the
      server-stamped board rows (trip_id / trip_stop_no / trip_eta_offset_s). */
   const [mapOpen, setMapOpen] = useMapPanelOpen('time-arrangement');
+  /* Compact columns: a per-page-persisted DEFAULT, never a lock — the pill on
+     the panel header toggles it, and any explicit Columns-panel choice while
+     the map is open switches it off (the user's picks win instantly). */
+  const [mapCompact, setMapCompact] = useMapCompactColumns('time-arrangement');
   const [mapDate, setMapDate] = useState<string>(todayMY());
   const [mapRegion, setMapRegion] = useState<string>('ALL');
   const [mapFocus, setMapFocus] = useState<MapFocus | null>(null);
   const geo = useDeliveryGeo({ date: mapDate, region: mapRegion, enabled: mapOpen });
   const mapPins = useMemo(() => pinsFromGeoPoints(geo.data?.points ?? []), [geo.data?.points]);
   const mapTotals = useMemo(() => geoTotals(geo.data?.points ?? []), [geo.data?.points]);
+  const mapZones = useMemo(
+    () => zoneSummary(geo.data?.points ?? [], pendingRegionTabs, mapRegion),
+    [geo.data?.points, pendingRegionTabs, mapRegion],
+  );
   const pointByRef = useMemo(() => {
     const m = new Map<string, MapLatLng>();
     for (const p of geo.data?.points ?? []) m.set(p.ref, { lat: p.lat, lng: p.lng });
@@ -480,8 +489,10 @@ export function Trips() {
         lorries={lorries}
         storageKey="dg-trips-time-arrangement-v2"
         exportName="TripsTimeArrangement"
-        /* Map-open narrowing + two-way linkage (Option B). */
-        visibleColumnsOverride={mapOpen ? MAP_ESSENTIAL_COLUMNS_TIME : null}
+        /* Map-open narrowing (a DEFAULT — the compact pill / an explicit
+           Columns-panel choice turns it off) + two-way linkage (Option B). */
+        visibleColumnsOverride={mapOpen && mapCompact ? MAP_ESSENTIAL_COLUMNS_TIME : null}
+        onUserAdjustColumns={() => { if (mapOpen && mapCompact) setMapCompact(false); }}
         onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); }}
         scrollToRow={scrollTo}
         /* Default queue order on entry (owner 2026-08-07/08): arranged date
@@ -787,6 +798,11 @@ export function Trips() {
           selectedRef={selectedPin}
           onPinClick={onPinClick}
           totals={mapTotals}
+          regionKey={mapRegion}
+          viewKey={`${mapDate}|${mapRegion}`}
+          zoneSummary={mapZones}
+          compactColumns={mapCompact}
+          onCompactColumnsChange={setMapCompact}
           ungeocoded={geo.data?.ungeocoded ?? []}
           serverConfigured={geo.data?.configured ?? true}
           isLoading={geo.isLoading}
