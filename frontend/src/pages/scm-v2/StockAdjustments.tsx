@@ -314,52 +314,26 @@ export function StockAdjustments() {
             {activeWarehouseList.length} location{activeWarehouseList.length === 1 ? "" : "s"}
           </span>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {/* "All warehouses" default pill */}
+        <div className="flex flex-wrap gap-1.5">
+          {/* Compact pill rail (owner 2026-08-08: the two-line cards sprawled
+              over two ragged rows — same chip idiom as the delivery pages;
+              the warehouse NAME moves into the tooltip). */}
           <button
             type="button"
             onClick={() => setWarehouseId(null)}
+            title="Every location"
             className={cn(
-              "group inline-flex h-14 shrink-0 items-center gap-2.5 rounded-xl px-3.5 transition-all duration-150",
+              "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-[12px] font-semibold transition-colors",
               warehouseId === null
-                ? "border border-sidebar bg-sidebar text-white shadow-slab"
-                : "border border-border bg-surface hover:border-primary/40",
+                ? "border-sidebar bg-sidebar text-white"
+                : "border-border bg-surface text-ink hover:border-primary/40",
             )}
           >
-            <span
-              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-              style={{ background: TONE_HEX.petrol }}
-            />
-            <span className="flex flex-col items-start leading-tight">
-              <span
-                className={cn(
-                  "whitespace-nowrap text-[13px] font-bold",
-                  warehouseId === null ? "text-white" : "text-ink",
-                )}
-              >
-                All warehouses
-              </span>
-              <span
-                className={cn(
-                  "whitespace-nowrap text-[10.5px]",
-                  warehouseId === null ? "text-sidebar-ink-muted" : "text-ink-muted",
-                )}
-              >
-                Every location
-              </span>
-            </span>
-            <span
-              className={cn(
-                "ml-0.5 rounded-full px-2 py-0.5 font-mono text-[11px] font-bold",
-                warehouseId === null
-                  ? "bg-white/10 text-sidebar-ink"
-                  : "bg-surface-2 text-ink-muted",
-              )}
-            >
+            All warehouses
+            <span className={cn("rounded-full px-1.5 font-mono text-[10.5px]", warehouseId === null ? "bg-white/15" : "bg-surface-2 text-ink-muted")}>
               {(data ?? []).length}
             </span>
           </button>
-
           {activeWarehouseList.map((w) => {
             const tone = warehouseToneOf(w);
             const active = warehouseId === w.id;
@@ -369,43 +343,17 @@ export function StockAdjustments() {
                 key={w.id}
                 type="button"
                 onClick={() => setWarehouseId(w.id)}
+                title={w.name}
                 className={cn(
-                  "group inline-flex h-14 shrink-0 items-center gap-2.5 rounded-xl px-3.5 transition-all duration-150",
+                  "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-[12px] font-semibold transition-colors",
                   active
-                    ? "border border-sidebar bg-sidebar text-white shadow-slab"
-                    : "border border-border bg-surface hover:border-primary/40",
+                    ? "border-sidebar bg-sidebar text-white"
+                    : "border-border bg-surface text-ink hover:border-primary/40",
                 )}
               >
-                <span
-                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ background: TONE_HEX[tone] }}
-                />
-                <span className="flex flex-col items-start leading-tight">
-                  <span
-                    className={cn(
-                      "whitespace-nowrap text-[13px] font-bold",
-                      active ? "text-white" : "text-ink",
-                    )}
-                  >
-                    {w.code}
-                  </span>
-                  <span
-                    className={cn(
-                      "whitespace-nowrap text-[10.5px]",
-                      active ? "text-sidebar-ink-muted" : "text-ink-muted",
-                    )}
-                  >
-                    {w.name}
-                  </span>
-                </span>
-                <span
-                  className={cn(
-                    "ml-0.5 rounded-full px-2 py-0.5 font-mono text-[11px] font-bold",
-                    active
-                      ? "bg-white/10 text-sidebar-ink"
-                      : "bg-surface-2 text-ink-muted",
-                  )}
-                >
+                <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: TONE_HEX[tone] }} />
+                {w.code}
+                <span className={cn("rounded-full px-1.5 font-mono text-[10.5px]", active ? "bg-white/15" : "bg-surface-2 text-ink-muted")}>
                   {count}
                 </span>
               </button>
