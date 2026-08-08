@@ -4,9 +4,15 @@ import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { identityStorageKey } from "../lib/storageIdentity";
 import {
+  clearAnnouncementSkip,
   mergeAndWriteAnnouncementAcks,
   readAnnouncementAcks,
+  readAnnouncementSkips,
+  recordAnnouncementSkip,
+  skipLimitReached,
+  writeAnnouncementSkips,
   type AnnouncementAcks,
+  type AnnouncementSkips,
 } from "./announcementLocalAcks";
 import type { AnnAttachment, AnnMediaLayout } from "./AnnouncementMedia";
 
@@ -88,6 +94,14 @@ const LOCAL_ACKS_KEY = "announcements:localAcks";
 // this hook and its tests share one definition of a valid ack map.
 const localAcksStorageKey = () => identityStorageKey(LOCAL_ACKS_KEY);
 
+// Skip counter (owner 2026-08-08): a notice may be waved away at most
+// MAX_ANNOUNCEMENT_SKIPS times; from then on both shells drop every dismiss
+// affordance and only the acknowledge action remains. Stored like the ack memo
+// — the backend records acks, never dismissals — so the allowance is per
+// browser+identity, not per account across devices.
+const LOCAL_SKIPS_KEY = "announcements:localSkips";
+const localSkipsStorageKey = () => identityStorageKey(LOCAL_SKIPS_KEY);
+
 // "Waved away for now" ids. MODULE-level, not component state: the phone
 // unmounts its pop-up whenever the shell navigates, and a notice the user has
 // just dismissed must not spring straight back on the next mount. Page-lifetime
@@ -120,10 +134,19 @@ export function bannerSecondaryKind(
 export type UseAnnouncementBanner = {
   /** The notice to pop right now, or null when there is nothing to show. */
   current: BannerAnnouncement | null;
+  /** True when `current` has used both skips — the surface must drop every
+   *  dismiss affordance (secondary button, backdrop, close X) and offer only
+   *  `ack`. `dismissSession` refuses anyway, so a missed call site cannot
+   *  grant a third skip. */
+  mustAcknowledge: boolean;
   /** Record the acknowledgement (server + local memo) and hide the notice. */
   ack: (a: BannerAnnouncement) => Promise<void>;
-  /** Hide for THIS session only — no ack, so it re-surfaces on the next visit. */
+  /** Skip: hide for THIS session (no ack, re-surfaces next visit) and spend one
+   *  of the two allowed skips. No-op once the limit is reached. */
   dismissSession: (a: BannerAnnouncement) => void;
+  /** Hide for this session WITHOUT spending a skip — only for stepping aside
+   *  while navigating the reader to the notice itself. */
+  hideForNavigation: (a: BannerAnnouncement) => void;
 };
 
 export function useAnnouncementBanner(options?: {
@@ -138,6 +161,9 @@ export function useAnnouncementBanner(options?: {
   const qc = useQueryClient();
   const [localAcks, setLocalAcks] = useState<AnnouncementAcks>(() =>
     readAnnouncementAcks(localAcksStorageKey()),
+  );
+  const [skips, setSkips] = useState<AnnouncementSkips>(() =>
+    readAnnouncementSkips(localSkipsStorageKey()),
   );
   // Render-visible mirror of the module-level dismiss set, SEEDED from it so a
   // remount (the phone unmounting its pop-up on navigation) doesn't forget what
@@ -191,15 +217,16 @@ export function useAnnouncementBanner(options?: {
     });
   }, [serverAcked]);
 
-  // Another tab under the SAME identity acking a notice must not leave this tab
-  // popping it again. Only this identity's key is watched.
+  // Another tab under the SAME identity acking or skipping a notice must not
+  // leave this tab disagreeing about it. Only this identity's keys are watched.
   useEffect(() => {
-    const key = localAcksStorageKey();
-    if (!key) return;
+    const ackKey = localAcksStorageKey();
+    const skipKey = localSkipsStorageKey();
+    if (!ackKey || !skipKey) return;
     const sync = (event: StorageEvent) => {
-      if (event.storageArea === localStorage && event.key === key) {
-        setLocalAcks(readAnnouncementAcks(key));
-      }
+      if (event.storageArea !== localStorage) return;
+      if (event.key === ackKey) setLocalAcks(readAnnouncementAcks(ackKey));
+      if (event.key === skipKey) setSkips(readAnnouncementSkips(skipKey));
     };
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
@@ -219,10 +246,30 @@ export function useAnnouncementBanner(options?: {
     return null;
   }, [rows, dismissed, localAcks]);
 
-  const dismissSession = useCallback((a: BannerAnnouncement) => {
+  // Hide for this session WITHOUT touching the skip counter — used by ack (the
+  // notice is settled, not skipped) and by the mobile "View details" step-aside
+  // (the reader is being sent TO the notice; the desktop twin of that button
+  // counts nothing either, and the shells must agree on what a skip is).
+  const hideForNavigation = useCallback((a: BannerAnnouncement) => {
     dismissedThisSession.add(a.id);
     setDismissed(new Set(dismissedThisSession));
   }, []);
+
+  const dismissSession = useCallback(
+    (a: BannerAnnouncement) => {
+      // Refused at the limit even if a surface still renders the control — the
+      // rule lives here so neither shell can drift.
+      if (skipLimitReached(skips, a.id)) return;
+      setSkips(
+        writeAnnouncementSkips(
+          localSkipsStorageKey(),
+          recordAnnouncementSkip(skips, a.id),
+        ),
+      );
+      hideForNavigation(a);
+    },
+    [skips, hideForNavigation],
+  );
 
   const ack = useCallback(
     async (a: BannerAnnouncement) => {
@@ -233,7 +280,15 @@ export function useAnnouncementBanner(options?: {
           [a.id]: now,
         }),
       );
-      dismissSession(a);
+      // Acknowledging settles the skip debt: a later office Remind re-pops the
+      // notice with a fresh allowance instead of an instant hard-lock.
+      setSkips((prev) =>
+        writeAnnouncementSkips(
+          localSkipsStorageKey(),
+          clearAnnouncementSkip(prev, a.id),
+        ),
+      );
+      hideForNavigation(a);
       try {
         await api.post(`/api/announcements/${a.id}/ack`);
       } catch {
@@ -245,8 +300,10 @@ export function useAnnouncementBanner(options?: {
       // leaving a stale count up for a whole poll interval.
       void qc.invalidateQueries({ queryKey: ANNOUNCEMENT_FEED_KEY });
     },
-    [dismissSession, qc],
+    [hideForNavigation, qc],
   );
 
-  return { current, ack, dismissSession };
+  const mustAcknowledge = current != null && skipLimitReached(skips, current.id);
+
+  return { current, mustAcknowledge, ack, dismissSession, hideForNavigation };
 }
