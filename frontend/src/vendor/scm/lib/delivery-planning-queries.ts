@@ -150,6 +150,10 @@ export type PlanningOrder = {
   trip_id?: string | null;
   trip_no?: string | null;
   trip_date?: string | null;
+  /* Time-of-run keys (2026-08-08) — the stop's sequence and ETA offset on its
+     live trip; null off-trip. The arrangement comparator's TIME key. */
+  trip_stop_no?: number | null;
+  trip_eta_offset_s?: number | null;
 };
 
 /* ── Arrangement-pipeline vocabulary (mirrors backend lib/arrangement-stage.ts).

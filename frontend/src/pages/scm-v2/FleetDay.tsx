@@ -136,8 +136,10 @@ export function FleetDay() {
         }
       />
 
-      {/* controls: date + depot filter (the depot chips scope the MAP fetch;
-          the board carries its own region chips like the rest of the family) */}
+      {/* controls: date only (owner 2026-08-08: the depot chip strip is gone —
+          the day map shows every depot's trips; the board's region chips carry
+          the narrowing like the rest of the family). warehouseId stays in the
+          URL for deep links but no chip UI sets it. */}
       <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface px-4 py-3">
         <label className="flex items-center gap-2 text-[12.5px] text-ink-secondary">
           <span className="font-semibold text-ink">Date</span>
@@ -148,32 +150,6 @@ export function FleetDay() {
             className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink"
           />
         </label>
-        <span className="h-5 w-px bg-border" />
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setParam('warehouseId', null)}
-            className={cn(
-              'rounded-full border px-3 py-1 text-[12px]',
-              warehouseId === '' ? 'border-accent bg-accent/10 font-semibold text-accent' : 'border-border text-ink-secondary',
-            )}
-          >
-            All depots
-          </button>
-          {warehouses.map((w) => (
-            <button
-              key={w.id}
-              type="button"
-              onClick={() => setParam('warehouseId', w.id)}
-              className={cn(
-                'rounded-full border px-3 py-1 text-[12px]',
-                warehouseId === w.id ? 'border-accent bg-accent/10 font-semibold text-accent' : 'border-border text-ink-secondary',
-              )}
-            >
-              {w.code || w.name}
-            </button>
-          ))}
-        </div>
         <span className="flex-1" />
         <span className="text-[11.5px] text-ink-muted">
           {trips.length} {trips.length === 1 ? 'trip' : 'trips'} · {totalDrops} drops · {fmtCenti(totalRevenue)}

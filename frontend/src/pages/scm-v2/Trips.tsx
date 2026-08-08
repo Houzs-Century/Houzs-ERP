@@ -435,7 +435,7 @@ export function Trips() {
         sched={sched}
         drivers={drivers}
         lorries={lorries}
-        storageKey="dg-trips-to-schedule"
+        storageKey="dg-trips-time-arrangement-v2"
         exportName="TripsTimeArrangement"
         /* Default queue order on entry (owner 2026-08-07): delivery date
            OLDEST first, then state, then postcode — both sides. A clicked
