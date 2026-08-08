@@ -4505,22 +4505,6 @@
    "cost": 1676.0
   },
   {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "DAYBED",
-   "mapped": "DAYBED",
-   "size": null,
-   "cost": 80.0
-  },
-  {
-   "model": "822",
-   "sup": "RDS",
-   "raw": "DAYBED",
-   "mapped": "DAYBED",
-   "size": null,
-   "cost": 80.0
-  },
-  {
    "model": "823",
    "sup": "RDS",
    "raw": "1NA/LT",
@@ -10757,19 +10741,69 @@
    "raw": "CORNER"
   },
   {
-   "sku": "822-Console",
-   "sup": "400-R001",
-   "cost": 640.0,
-   "raw": "C/T"
-  },
-  {
    "sku": "R819-Console",
    "sup": "400-R001",
    "cost": 840.8421053,
    "raw": "C/T"
   }
  ],
+ "power_twins_opened_unpriced": [
+  {
+   "model": "5071",
+   "compartment": "1A(P)(LHF)"
+  },
+  {
+   "model": "5071",
+   "compartment": "1S(P)"
+  },
+  {
+   "model": "5071",
+   "compartment": "1A(P)(RHF)"
+  },
+  {
+   "model": "5083",
+   "compartment": "1A(P)(LHF)"
+  },
+  {
+   "model": "5083",
+   "compartment": "1S(P)"
+  },
+  {
+   "model": "5083",
+   "compartment": "1A(P)(RHF)"
+  },
+  {
+   "model": "BS22",
+   "compartment": "1A(P)(LHF)"
+  },
+  {
+   "model": "BS22",
+   "compartment": "1S(P)"
+  },
+  {
+   "model": "BS22",
+   "compartment": "1A(P)(RHF)"
+  },
+  {
+   "model": "BS30",
+   "compartment": "1A(P)(RHF)"
+  },
+  {
+   "model": "BS30",
+   "compartment": "1S(P)"
+  },
+  {
+   "model": "BS30",
+   "compartment": "1A(P)(LHF)"
+  }
+ ],
  "sofa_sku_no_cost": [
+  "5071-1A(P)(LHF)",
+  "5071-1A(P)(RHF)",
+  "5071-1S(P)",
+  "5083-1A(P)(LHF)",
+  "5083-1A(P)(RHF)",
+  "5083-1S(P)",
   "5142-1A(LHF)",
   "5142-1A(RHF)",
   "5142-1NA",
@@ -10823,8 +10857,13 @@
   "810-CNR",
   "822-1NA",
   "822-CNR",
-  "822-Console",
   "9838-3S",
+  "BS22-1A(P)(LHF)",
+  "BS22-1A(P)(RHF)",
+  "BS22-1S(P)",
+  "BS30-1A(P)(LHF)",
+  "BS30-1A(P)(RHF)",
+  "BS30-1S(P)",
   "R819-Console"
  ],
  "pool_additions": [],
@@ -15362,30 +15401,6 @@
    "model": "7251",
    "raw": "Armrest",
    "cost": 590.0
-  },
-  {
-   "sup": "RDS",
-   "model": "5526",
-   "raw": "WOODEN ARM",
-   "cost": 125.0
-  },
-  {
-   "sup": "RDS",
-   "model": "5526",
-   "raw": "WOODEN ARM",
-   "cost": 125.0
-  },
-  {
-   "sup": "RDS",
-   "model": "5527",
-   "raw": "WOODEN ARM",
-   "cost": 125.0
-  },
-  {
-   "sup": "RDS",
-   "model": "5527",
-   "raw": "WOODEN ARM",
-   "cost": 125.0
   }
  ],
  "unknown_rows": [

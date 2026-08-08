@@ -6,9 +6,9 @@
 ## A. 主体部分(按已定规则编好,勾这里就执行)
 
 - [ ] **A1 SKU↔Supplier 归位**:补 main supplier 旗标 1442 条(现在全系统 0 条有 main)、补 binding 成本 962 条(只填 0)、新绑 8 条
-- [ ] **A2 Product & Maintenance 指导价**:1015 个 SKU 填 base 成本(只填 0,含 71 个从分页反查的)+ 73 个床架 price1(Fab2)
-- [ ] **A3 开 compartment**:51 个 model 开 231 个件、铸 229 个 SKU;**每个 SKU 同步建 supplier binding 402 条(带那家报价矩阵)——“supplier 那边也会有吗”:会**
-- [ ] **A4 沙发成本**:271 个 SKU 写基准价 1531 格(每件一个价,面料档**不导**,升级钱走 fabric tier addon 那套)
+- [ ] **A2 Product & Maintenance 指导价**:1014 个 SKU 填 base 成本(只填 0,含 71 个从分页反查的)+ 73 个床架 price1(Fab2)
+- [ ] **A3 开 compartment**:51 个 model 开 240 个件、铸 238 个 SKU;**每个 SKU 同步建 supplier binding 399 条(带那家报价矩阵)——“supplier 那边也会有吗”:会**
+- [ ] **A4 沙发成本**:269 个 SKU 写基准价 1527 格(每件一个价,面料档**不导**,升级钱走 fabric tier addon 那套)
 
 **A5 各家「基准面料」我取的是哪一列(不对就圈出来):**
 
@@ -189,7 +189,7 @@
 
 拆开后单件价格表上没有——要么问厂,要么你给拆价规则(对半?)。
 
-### C2 低置信度翻译(301 行没导,样例)
+### C2 低置信度翻译(299 行没导,样例)
 
 - ☐ THL `R` → 我猜 `1A(R)(LHF)`(model 2376)
 - ☐ THL `2rr` → 我猜 `2S(R)`(model 2376)
@@ -232,8 +232,8 @@
 
 ### C7 数据洞(参考,不用勾)
 
-- 366 个 SKU 全工作簿无成本(多是 DEMO/停产);20 个无 supplier;56 个新开件表上没价
-- 面料升级差价 492 格已留档(A/Luxury/Premium/皮价等);套装 538 行、加购件 42 行、看不懂 77 行 —— 都在 report JSON,第二批处理
+- 366 个 SKU 全工作簿无成本(多是 DEMO/停产);20 个无 supplier;67 个新开件表上没价
+- 面料升级差价 492 格已留档(A/Luxury/Premium/皮价等);套装 538 行、加购件 38 行、看不懂 77 行 —— 都在 report JSON,第二批处理
 
 ---
 执行方式:A+B 勾完 → workflow `load-supplier-price-list`(dry-run 已验证)→ apply(确认短语)→ 单事务,不符即回滚。

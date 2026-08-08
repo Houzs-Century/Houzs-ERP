@@ -17226,9 +17226,12 @@
    "op": "model_open",
    "model": "5071",
    "add_compartments": [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)",
     "1A(R)(LHF)",
     "1A(R)(RHF)",
     "1NA",
+    "1S(P)",
     "1S(R)",
     "2S",
     "3S",
@@ -17240,6 +17243,18 @@
     "24",
     "28"
    ]
+  },
+  {
+   "op": "sku_mint",
+   "erp": "5071-1A(P)(LHF)",
+   "model": "5071",
+   "comp": "1A(P)(LHF)"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "5071-1A(P)(RHF)",
+   "model": "5071",
+   "comp": "1A(P)(RHF)"
   },
   {
    "op": "sku_mint",
@@ -17258,6 +17273,12 @@
    "erp": "5071-1NA",
    "model": "5071",
    "comp": "1NA"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "5071-1S(P)",
+   "model": "5071",
+   "comp": "1S(P)"
   },
   {
    "op": "sku_mint",
@@ -17329,9 +17350,12 @@
    "op": "model_open",
    "model": "5083",
    "add_compartments": [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)",
     "1A(R)(LHF)",
     "1A(R)(RHF)",
     "1NA",
+    "1S(P)",
     "1S(R)",
     "2S",
     "3S",
@@ -17343,6 +17367,18 @@
     "24",
     "28"
    ]
+  },
+  {
+   "op": "sku_mint",
+   "erp": "5083-1A(P)(LHF)",
+   "model": "5083",
+   "comp": "1A(P)(LHF)"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "5083-1A(P)(RHF)",
+   "model": "5083",
+   "comp": "1A(P)(RHF)"
   },
   {
    "op": "sku_mint",
@@ -17361,6 +17397,12 @@
    "erp": "5083-1NA",
    "model": "5083",
    "comp": "1NA"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "5083-1S(P)",
+   "model": "5083",
+   "comp": "1S(P)"
   },
   {
    "op": "sku_mint",
@@ -18803,15 +18845,9 @@
    "model": "822",
    "add_compartments": [
     "1NA",
-    "2S",
-    "3S",
-    "CNR",
-    "Console"
+    "CNR"
    ],
-   "sizes": [
-    "28",
-    "35"
-   ]
+   "sizes": []
   },
   {
    "op": "sku_mint",
@@ -18821,27 +18857,9 @@
   },
   {
    "op": "sku_mint",
-   "erp": "822-2S",
-   "model": "822",
-   "comp": "2S"
-  },
-  {
-   "op": "sku_mint",
-   "erp": "822-3S",
-   "model": "822",
-   "comp": "3S"
-  },
-  {
-   "op": "sku_mint",
    "erp": "822-CNR",
    "model": "822",
    "comp": "CNR"
-  },
-  {
-   "op": "sku_mint",
-   "erp": "822-Console",
-   "model": "822",
-   "comp": "Console"
   },
   {
    "op": "model_open",
@@ -18982,9 +19000,12 @@
    "op": "model_open",
    "model": "BS22",
    "add_compartments": [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)",
     "1A(R)(LHF)",
     "1A(R)(RHF)",
     "1NA",
+    "1S(P)",
     "1S(R)",
     "2S",
     "3S"
@@ -18992,6 +19013,18 @@
    "sizes": [
     "24"
    ]
+  },
+  {
+   "op": "sku_mint",
+   "erp": "BS22-1A(P)(LHF)",
+   "model": "BS22",
+   "comp": "1A(P)(LHF)"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "BS22-1A(P)(RHF)",
+   "model": "BS22",
+   "comp": "1A(P)(RHF)"
   },
   {
    "op": "sku_mint",
@@ -19010,6 +19043,12 @@
    "erp": "BS22-1NA",
    "model": "BS22",
    "comp": "1NA"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "BS22-1S(P)",
+   "model": "BS22",
+   "comp": "1S(P)"
   },
   {
    "op": "sku_mint",
@@ -19033,14 +19072,29 @@
    "op": "model_open",
    "model": "BS30",
    "add_compartments": [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)",
     "1A(R)(LHF)",
     "1A(R)(RHF)",
     "1NA",
+    "1S(P)",
     "1S(R)"
    ],
    "sizes": [
     "24"
    ]
+  },
+  {
+   "op": "sku_mint",
+   "erp": "BS30-1A(P)(LHF)",
+   "model": "BS30",
+   "comp": "1A(P)(LHF)"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "BS30-1A(P)(RHF)",
+   "model": "BS30",
+   "comp": "1A(P)(RHF)"
   },
   {
    "op": "sku_mint",
@@ -19059,6 +19113,12 @@
    "erp": "BS30-1NA",
    "model": "BS30",
    "comp": "1NA"
+  },
+  {
+   "op": "sku_mint",
+   "erp": "BS30-1S(P)",
+   "model": "BS30",
+   "comp": "1S(P)"
   },
   {
    "op": "sku_mint",
@@ -19517,12 +19577,6 @@
    "erp": "822-CNR",
    "ac": null,
    "base_price_sen": 147600
-  },
-  {
-   "op": "product_cost",
-   "erp": "822-Console",
-   "ac": null,
-   "base_price_sen": 58100
   },
   {
    "op": "product_cost",
@@ -25907,38 +25961,6 @@
      "height": "32",
      "tier": "PRICE_3",
      "priceSen": 210758
-    }
-   ]
-  },
-  {
-   "op": "seat_grid",
-   "erp": "822-2S",
-   "entries": [
-    {
-     "height": "28",
-     "tier": "PRICE_2",
-     "priceSen": 10000
-    },
-    {
-     "height": "28",
-     "tier": "PRICE_3",
-     "priceSen": 10000
-    }
-   ]
-  },
-  {
-   "op": "seat_grid",
-   "erp": "822-3S",
-   "entries": [
-    {
-     "height": "35",
-     "tier": "PRICE_2",
-     "priceSen": 10000
-    },
-    {
-     "height": "35",
-     "tier": "PRICE_3",
-     "priceSen": 10000
     }
    ]
   },
@@ -33006,51 +33028,12 @@
   {
    "op": "sofa_bind",
    "sup": "400-R001",
-   "erp": "822-2S",
-   "ac": "RDS-822 SOFA",
-   "matrix": {
-    "28": {
-     "P2": 10000,
-     "P3": 10000
-    }
-   },
-   "main": true
-  },
-  {
-   "op": "sofa_bind",
-   "sup": "400-R001",
-   "erp": "822-3S",
-   "ac": "RDS-822 SOFA",
-   "matrix": {
-    "35": {
-     "P2": 10000,
-     "P3": 10000
-    }
-   },
-   "main": true
-  },
-  {
-   "op": "sofa_bind",
-   "sup": "400-R001",
    "erp": "822-CNR",
    "ac": "RDS-822 SOFA",
    "matrix": {
     "STD": {
      "P2": 147600,
      "P3": 154800
-    }
-   },
-   "main": true
-  },
-  {
-   "op": "sofa_bind",
-   "sup": "400-R001",
-   "erp": "822-Console",
-   "ac": "RDS-822 SOFA",
-   "matrix": {
-    "STD": {
-     "P2": 58100,
-     "P3": 64000
     }
    },
    "main": true
