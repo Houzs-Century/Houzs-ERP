@@ -25,11 +25,12 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@2990s/design-system';
 import { Lock, Unlock, Wand2, CalendarCheck, Map as MapIcon } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
-import { DeliveryMapPanel, useMapPanelOpen } from '../../components/scm-v2/DeliveryMapPanel';
+import { DeliveryMapPanel, useMapPanelOpen, useMapCompactColumns } from '../../components/scm-v2/DeliveryMapPanel';
 import { useDeliveryGeo } from '../../vendor/scm/lib/delivery-geo-queries';
 import {
   pinsFromGeoPoints,
   geoTotals,
+  zoneSummary,
   MAP_ESSENTIAL_COLUMNS,
 } from '../../vendor/scm/lib/delivery-map-model';
 import {
@@ -186,11 +187,19 @@ export const AutoSchedule = () => {
      the board narrows to the essential columns (a render-time overlay — the
      user's own column prefs are untouched). */
   const [mapOpen, setMapOpen] = useMapPanelOpen('date-arrangement');
+  /* Compact columns: a per-page-persisted DEFAULT, never a lock — the pill on
+     the panel header toggles it, and any explicit Columns-panel choice while
+     the map is open switches it off (the user's picks win instantly). */
+  const [mapCompact, setMapCompact] = useMapCompactColumns('date-arrangement');
   const [mapDate, setMapDate] = useState<string>(todayMY());
   const [mapRegion, setMapRegion] = useState<string>('ALL');
   const geo = useDeliveryGeo({ date: mapDate, region: mapRegion, enabled: mapOpen });
   const mapPins = useMemo(() => pinsFromGeoPoints(geo.data?.points ?? []), [geo.data?.points]);
   const mapTotals = useMemo(() => geoTotals(geo.data?.points ?? []), [geo.data?.points]);
+  const mapZones = useMemo(
+    () => zoneSummary(geo.data?.points ?? [], queueRegionTabs, mapRegion),
+    [geo.data?.points, queueRegionTabs, mapRegion],
+  );
   /* Two-way linkage: board row click → enlarge + pan; pin click → scroll +
      highlight the board row (rowIdOf keys SO rows as `so:<docNo>`). */
   const [selectedPin, setSelectedPin] = useState<string | null>(null);
@@ -288,8 +297,10 @@ export const AutoSchedule = () => {
         lorries={lorries.data ?? []}
         storageKey="dg-date-arrangement-v2"
         exportName="DeliveryDateArrangement"
-        /* Map-open narrowing + two-way linkage (Option B). */
-        visibleColumnsOverride={mapOpen ? MAP_ESSENTIAL_COLUMNS : null}
+        /* Map-open narrowing (a DEFAULT — the compact pill / an explicit
+           Columns-panel choice turns it off) + two-way linkage (Option B). */
+        visibleColumnsOverride={mapOpen && mapCompact ? MAP_ESSENTIAL_COLUMNS : null}
+        onUserAdjustColumns={() => { if (mapOpen && mapCompact) setMapCompact(false); }}
         onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); }}
         scrollToRow={scrollTo}
         /* Default queue order on entry (owner 2026-08-07): delivery date
@@ -417,6 +428,11 @@ export const AutoSchedule = () => {
           selectedRef={selectedPin}
           onPinClick={onPinClick}
           totals={mapTotals}
+          regionKey={mapRegion}
+          viewKey={`${mapDate}|${mapRegion}`}
+          zoneSummary={mapZones}
+          compactColumns={mapCompact}
+          onCompactColumnsChange={setMapCompact}
           ungeocoded={geo.data?.ungeocoded ?? []}
           serverConfigured={geo.data?.configured ?? true}
           isLoading={geo.isLoading}

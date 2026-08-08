@@ -354,18 +354,69 @@ STICKY map panel on the right.
   plus Trip No. + Time Slot on the Time page and Trip No. on Last Mile
   (`MAP_ESSENTIAL_COLUMNS*` in `vendor/scm/lib/delivery-map-model.ts`). This
   is a RENDER-TIME overlay: the board passes `visibleColumnsOverride` → the
-  DataGrid's new `overlayHidden` prop, which hides ON TOP of the user's own
+  DataGrid's `overlayHidden` prop, which hides ON TOP of the user's own
   hidden set without ever writing the persisted layout — close the map and the
   user's own column prefs return exactly as saved. Do NOT implement narrowing
   by writing `layout.hidden`.
+- The narrowing is a **DEFAULT, never a lock** (owner bug 2026-08-08: columns
+  ticked in the Columns panel stayed hidden — "已经添加了 column 可是它却没有
+  出来"). A visible "Compact columns" pill on the panel header carries the
+  state (on by default; persisted per page under `dmap-compact.<page>.v1`,
+  same DEVICE_PREF idiom as `dmap-open`, via `useMapCompactColumns`), and any
+  EXPLICIT column-visibility choice while the map is open — the Columns
+  drawer's toggle / Show all / Reset, the header context menu's Hide/Show,
+  applying a saved layout — fires the DataGrid's `onUserAdjustColumns`, which
+  the pages use to switch compact OFF so the user's picks win instantly.
+  Pinned by "overlay narrowing yields to explicit column choices" in
+  `DataGrid.test.tsx`.
 
 **What each page's map shows.**
 
 | Page | Map content |
 |---|---|
 | Date | Depot marker + ONE pin per order whose effective delivery date is the PICKED DATE (a required date input on the map header; region chips re-fetch + re-fit the viewport). Pin colour = postcode ZONE, region-bucket fallback (`zoneColorFor` — deterministic per zone NAME). Hover/click → a mini card (SO no, customer, sets, address); a totals line (orders / sets / RM). |
-| Time | Everything above + the PROPOSED runs for the picked date as coloured polylines with numbered stops and each stop's ESTIMATED delivery window (`estWindowOf`, the #1720 fold — the same text the run card shows); with no live proposal the day's STAGED trips draw instead, off the server-stamped `trip_id` / `trip_stop_no` / `trip_eta_offset_s` board columns (`stagedRoutesFromRows`), each stop labelled with its ETA offset. |
+| Time | Everything above + the PROPOSED runs for the picked date as coloured polylines with numbered stops and each stop's ESTIMATED delivery window (`estWindowOf`, the #1720 fold — the same text the run card shows); with no live proposal the day's STAGED trips draw instead, off the server-stamped `trip_id` / `trip_stop_no` / `trip_eta_offset_s` board columns (`stagedRoutesFromRows`), each stop labelled with its ETA offset — the arranged view is never poorer than the proposal view; nothing staged/proposed → pins only. |
 | Last Mile | The same staged routes for the picked day + CREW labels (plate · driver) per route from `GET /trips/day`. The page's old standalone day-map section became this panel: the "Lorries today" side list MERGED into the trip/crew cards, which render UNDER the map while it is open (colour dot, plate, crew line, warehouse, drops/revenue, per-trip run-sheet link) and below the board when it is closed. The printable run-sheet (`FleetRunSheet.tsx`) still uses `FleetDayMap` + `GET /trips/day` unchanged. |
+
+**Readability + navigation (owner feedback 2026-08-08, on prod).**
+
+- **Clustering.** At low zoom, plain order pins fold into coloured COUNT
+  bubbles; clicking a bubble zooms into its members. Hand-rolled pure grid
+  fold (`clusterPins` — ~64 px cells per integer zoom, dominant member colour,
+  off at zoom ≥ `CLUSTER_OFF_ZOOM`), deliberately NOT the
+  `@googlemaps/markerclusterer` dep: zero bundle cost, deterministic and
+  unit-tested, and the panel's imperative overlay (selected-pin outline, focus
+  dimming, hover cards) would fight the library's renderer abstraction.
+  Numbered TRIP stops and the depot never cluster; nor does the selected pin.
+- **Region fly-to + auto-fit.** Every (date, region) data load auto-fits the
+  viewport to the loaded pins (`viewportForPins` + the panel's `viewKey`):
+  many pins → fit with padding, zoom clamped to `FIT_MAX_ZOOM` (15); ONE pin →
+  centred at `SINGLE_PIN_ZOOM` (14, never street level); ZERO pins → fly to
+  the region's static geographic extent (`regionExtent`) with a "0 orders in
+  this region" note over the map. Region chips therefore ARE the fly-to:
+  clicking Southern with one Johor order lands the map on that order.
+- **Zone summary strip.** A per-region count strip above the map
+  (`zoneSummary` fold over the already-fetched geo points): under All, every
+  bucket with orders in master order + a "rest 0" collapse; under a region
+  filter only that region's count is claimed (the others are not loaded). The
+  totals line stays.
+- **Trip legend + direction.** Trip polylines are bold (weight 4) with
+  direction arrows; stops are numbered coloured circles. A TRIP LEGEND under
+  the map (`legendFromRoutes`) lists one row per trip — swatch, "Trip N",
+  stop count (allRefs, unpinned included), time range (first window's start →
+  last window's end; ETA offsets range the same way; none → null, never
+  fabricated), crew label on Last Mile, and the per-stop windows small.
+  HOVERING a legend row dims the other trips (visual only); CLICKING is the
+  existing focus behaviour (dim + zoom + board filter). The marker hover card
+  also shows the stop's trip, number and window.
+- **Decluttered roadmap.** The roadmap layer applies `roadmapDeclutterStyles`
+  by default — POI icons/labels, transit and road-shield badges (E19/AH2) off;
+  locality/town names and road-name text KEPT so orientation survives. Works
+  because the panel's map is classic raster with NO cloud mapId (a vector
+  mapId ignores the inline `styles` array — check before reusing). A small
+  "Labels" toggle (roadmap only) mirrors Satellite's checkbox: off = ALL
+  labels off (chosen over locality-only — one mental model with Satellite).
+  Satellite/hybrid and their built-in Labels checkbox are untouched.
 
 **Two-way linkage + trip focus.**
 
@@ -390,8 +441,10 @@ STICKY map panel on the right.
   No `VITE_GOOGLE_MAPS_API_KEY` → a note, everything else still works.
 - `frontend/src/vendor/scm/lib/delivery-map-model.ts` — the PURE model
   (`zoneColorFor`, `pinsFromGeoPoints`, `geoTotals`, `routesFromRuns`,
-  `stagedRoutesFromRows`, `focusFilterRows`, `toggleFocus`, the essential
-  column sets), pinned by `delivery-map-model.test.ts`.
+  `stagedRoutesFromRows`, `focusFilterRows`, `toggleFocus`, `clusterPins`,
+  `viewportForPins`/`regionExtent`, `zoneSummary`, `legendFromRoutes`,
+  `roadmapDeclutterStyles`, the essential column sets), pinned by
+  `delivery-map-model.test.ts`.
 - `frontend/src/vendor/scm/lib/delivery-geo-queries.ts` — `useDeliveryGeo`,
   `staleTime` 30 s like its siblings, fetched once per (date, region), and
   DISABLED while the panel is closed (a closed map fetches nothing).

@@ -228,10 +228,274 @@ export function toggleFocus(current: MapFocus | null, next: MapFocus): MapFocus 
   return current && current.routeId === next.routeId ? null : next;
 }
 
-/* ── Column narrowing while the map is open (owner rule: the board auto-narrows
-   to the essential columns; the full set returns when the map closes). These
-   are DataGrid column KEYS on the shared DeliveryPlanningBoard. A render-time
-   overlay — the user's own saved column prefs are never written. */
+/* ── Marker clustering (owner feedback 2026-08-08: zoomed out, individual dots
+   are unreadable — nearby pins collapse into a coloured bubble with the COUNT;
+   clicking a cluster zooms into it). A hand-rolled GRID fold, not the
+   @googlemaps/markerclusterer dep: zero bundle cost, deterministic and
+   unit-testable, and the panel's overlay is already imperative/bespoke
+   (selected-pin outline, focus dimming, hover cards) — the library's renderer
+   abstraction would fight all of it for a day of at most a few dozen pins. */
+
+export type MapCluster = {
+  key: string;
+  /** Centroid of the member pins. */
+  lat: number;
+  lng: number;
+  count: number;
+  /** The dominant member colour (most-frequent zone colour; first-seen wins a
+   *  tie) — the bubble stays an honest majority statement, never a new hue. */
+  color: string;
+  refs: string[];
+};
+
+/** Cluster bubble target size on screen, in pixels — two pins whose screen
+ *  distance at the current zoom is under this fold into one bubble. */
+const CLUSTER_GRID_PX = 64;
+/** At/above this zoom pins never cluster (the owner zooms IN to read singles;
+ *  street level must always show the real pins). */
+export const CLUSTER_OFF_ZOOM = 15;
+
+/** Grid-cluster the plain order pins for one zoom level. PURE + deterministic:
+ *  pins sharing a grid cell (~CLUSTER_GRID_PX on screen) fold into a cluster
+ *  when there are 2+; a lone pin stays a single. The caller excludes pins that
+ *  must never disappear into a bubble (the selected pin, route stops). */
+export function clusterPins(
+  pins: readonly MapPin[],
+  zoom: number,
+): { clusters: MapCluster[]; singles: MapPin[] } {
+  const z = Math.floor(Number.isFinite(zoom) ? zoom : 0);
+  if (z >= CLUSTER_OFF_ZOOM) return { clusters: [], singles: [...pins] };
+  /* Web-mercator world = 256 * 2^zoom px across 360 degrees of longitude. */
+  const cellDeg = (CLUSTER_GRID_PX * 360) / (256 * 2 ** Math.max(0, z));
+  const cells = new Map<string, MapPin[]>();
+  for (const p of pins) {
+    const key = `${Math.floor(p.lat / cellDeg)}:${Math.floor(p.lng / cellDeg)}`;
+    const arr = cells.get(key) ?? [];
+    arr.push(p);
+    cells.set(key, arr);
+  }
+  const clusters: MapCluster[] = [];
+  const singles: MapPin[] = [];
+  for (const [key, members] of cells) {
+    if (members.length < 2) { singles.push(members[0]); continue; }
+    let lat = 0; let lng = 0;
+    const colorCount = new Map<string, number>();
+    for (const m of members) {
+      lat += m.lat; lng += m.lng;
+      colorCount.set(m.color, (colorCount.get(m.color) ?? 0) + 1);
+    }
+    let color = members[0].color; let best = 0;
+    for (const m of members) {
+      const n = colorCount.get(m.color) ?? 0;
+      if (n > best) { best = n; color = m.color; }
+    }
+    clusters.push({
+      key: `cluster:${key}`,
+      lat: lat / members.length,
+      lng: lng / members.length,
+      count: members.length,
+      color,
+      refs: members.map((m) => m.ref),
+    });
+  }
+  /* Deterministic output order regardless of Map iteration quirks. */
+  clusters.sort((a, b) => a.key.localeCompare(b.key));
+  singles.sort((a, b) => a.ref.localeCompare(b.ref));
+  return { clusters, singles };
+}
+
+/* ── Region fly-to + auto fit (owner feedback 2026-08-08: clicking a region
+   chip must focus the map on THAT region's pins, sized right — "Johor 有
+   order,点 Southern 就该直接聚焦到那张单附近"; every (date, region) load
+   re-fits to the loaded pins; zero pins → the region's geographic extent). */
+
+export type MapBounds = { north: number; south: number; east: number; west: number };
+export type MapViewport =
+  | { kind: 'bounds'; bounds: MapBounds }
+  | { kind: 'center'; center: MapLatLng; zoom: number };
+
+/** A single pin centres at this zoom — close enough to read the neighbourhood,
+ *  never street level (owner: cap ~15). */
+export const SINGLE_PIN_ZOOM = 14;
+/** fitBounds over a tight cluster of pins may overzoom; the panel clamps the
+ *  post-fit zoom to this. */
+export const FIT_MAX_ZOOM = 15;
+
+/* Approximate geographic extents per region bucket (customer-state
+   classification, delivery-planning region keys). Static, display-only — a
+   zero-pin region still flies somewhere sensible. */
+const REGION_EXTENTS: Record<string, MapBounds> = {
+  KL:         { north: 3.9,  south: 2.55, east: 102.05, west: 100.75 }, // KL + Selangor
+  NORTHERN:   { north: 6.75, south: 3.7,  east: 101.9,  west: 99.6 },   // Perlis/Kedah/Penang/Perak
+  SOUTHERN:   { north: 3.3,  south: 1.2,  east: 104.45, west: 101.75 }, // NS/Melaka/Johor
+  EAST_COAST: { north: 6.35, south: 2.45, east: 103.65, west: 101.3 },  // Kelantan/Terengganu/Pahang
+  EM:         { north: 7.5,  south: 0.8,  east: 119.3,  west: 109.5 },  // Sabah/Sarawak/Labuan
+  SG:         { north: 1.48, south: 1.2,  east: 104.1,  west: 103.6 },
+};
+/** The whole-country fallback ('ALL', or an owner-added region with no extent). */
+const MALAYSIA_EXTENT: MapBounds = { north: 7.5, south: 0.8, east: 119.3, west: 99.6 };
+
+export function regionExtent(regionKey: string | null | undefined): MapBounds {
+  const key = (regionKey ?? '').trim().toUpperCase();
+  return REGION_EXTENTS[key] ?? MALAYSIA_EXTENT;
+}
+
+/** The viewport for a set of drawable points under a region filter. PURE.
+ *  - none  → the region's geographic extent (the zero-pin fly-to)
+ *  - one   → centred at SINGLE_PIN_ZOOM (never street level)
+ *  - many  → their bounding box (the panel fits it with padding + a zoom cap) */
+export function viewportForPins(
+  points: readonly MapLatLng[],
+  regionKey: string | null | undefined,
+): MapViewport {
+  if (points.length === 0) return { kind: 'bounds', bounds: regionExtent(regionKey) };
+  if (points.length === 1) {
+    return { kind: 'center', center: { lat: points[0].lat, lng: points[0].lng }, zoom: SINGLE_PIN_ZOOM };
+  }
+  let north = -90; let south = 90; let east = -180; let west = 180;
+  for (const p of points) {
+    if (p.lat > north) north = p.lat;
+    if (p.lat < south) south = p.lat;
+    if (p.lng > east) east = p.lng;
+    if (p.lng < west) west = p.lng;
+  }
+  return { kind: 'bounds', bounds: { north, south, east, west } };
+}
+
+/* ── Per-zone summary strip (owner feedback 2026-08-08: on every load, where
+   the orders are and how many must read in ONE glance — "KL/SEL 8 · Northern 2
+   · Southern 1 · rest 0"). Folds from the already-fetched geo points. */
+
+export type ZoneSummaryEntry = { key: string; label: string; count: number };
+export type ZoneSummary = {
+  entries: ZoneSummaryEntry[];
+  /** How many region buckets have ZERO orders (collapsed to one "rest 0" chip).
+   *  Always 0 under a region filter — the fetch only carries that region, so
+   *  claiming the others are empty would be a lie. */
+  zeroCount: number;
+};
+
+/** Count the loaded points per REGION bucket. Under 'ALL', every master region
+ *  with orders lists in master order (an unknown region the master list lacks
+ *  still shows, appended); the empty ones collapse into `zeroCount`. Under a
+ *  specific region filter only that region's count shows — the other buckets
+ *  are NOT loaded, so nothing is claimed about them. PURE. */
+export function zoneSummary(
+  points: readonly Pick<DeliveryGeoPoint, 'region'>[],
+  regions: readonly { key: string; label: string }[],
+  activeRegion: string,
+): ZoneSummary {
+  const masters = regions.filter((r) => r.key !== 'ALL');
+  const counts = new Map<string, number>();
+  for (const p of points) counts.set(p.region, (counts.get(p.region) ?? 0) + 1);
+  if (activeRegion !== 'ALL') {
+    const master = masters.find((r) => r.key === activeRegion);
+    return {
+      entries: [{ key: activeRegion, label: master?.label ?? activeRegion, count: points.length }],
+      zeroCount: 0,
+    };
+  }
+  const entries: ZoneSummaryEntry[] = [];
+  let zeroCount = 0;
+  const seen = new Set<string>();
+  for (const r of masters) {
+    seen.add(r.key);
+    const n = counts.get(r.key) ?? 0;
+    if (n > 0) entries.push({ key: r.key, label: r.label, count: n });
+    else zeroCount += 1;
+  }
+  for (const [region, n] of counts) {
+    if (!seen.has(region)) entries.push({ key: region, label: region, count: n });
+  }
+  return { entries, zeroCount };
+}
+
+/* ── Trip legend (owner feedback 2026-08-08: a VISIBLE legend beside the map —
+   one row per trip with its colour, stop count and time range; hover/click =
+   the existing focus behaviour; per-stop windows listed small). */
+
+export type MapLegendStop = { ref: string; order: number; windowLabel: string | null };
+export type MapLegendRow = {
+  routeId: string;
+  color: string;
+  title: string;
+  crewLabel: string | null;
+  /** EVERY order on the trip (allRefs — an unpinned stop still counts). */
+  stopCount: number;
+  /** First window's start → last window's end ("09:40 → 12:55"; ETA offsets
+   *  read "+30m → +2h 5m"). Null when no stop carries a window — never a
+   *  fabricated clock. */
+  timeRange: string | null;
+  stops: MapLegendStop[];
+};
+
+/** "09:40–10:25" → its start/end pieces; a dash-less label ("+30m") is both. */
+const windowPieces = (label: string): { start: string; end: string } => {
+  const parts = label.split('–');
+  return { start: parts[0], end: parts[parts.length - 1] };
+};
+
+/** The legend view of the drawn routes. PURE. */
+export function legendFromRoutes(routes: readonly MapRoute[]): MapLegendRow[] {
+  return routes.map((r) => {
+    const labelled = r.stops.filter((s) => s.windowLabel != null && s.windowLabel !== '');
+    let timeRange: string | null = null;
+    if (labelled.length > 0) {
+      const start = windowPieces(labelled[0].windowLabel!).start;
+      const end = windowPieces(labelled[labelled.length - 1].windowLabel!).end;
+      timeRange = start === end ? start : `${start} → ${end}`;
+    }
+    return {
+      routeId: r.id,
+      color: r.color,
+      title: r.title,
+      crewLabel: r.crewLabel,
+      stopCount: r.allRefs.length,
+      timeRange,
+      stops: r.stops.map((s) => ({ ref: s.ref, order: s.order, windowLabel: s.windowLabel })),
+    };
+  });
+}
+
+/* ── Roadmap declutter (owner addendum 2026-08-08: the default roadmap layer is
+   cluttered with road-shield badges (E19/AH2), POI/business icons and transit
+   marks — none of it useful for TMS). Applied via the Maps JS `styles` array,
+   which the panel CAN use because its map is classic raster with no cloud
+   mapId (a vector mapId would ignore inline styles). Satellite/hybrid ignore
+   roadmap styles inherently — Google's own Labels checkbox there is untouched.
+
+   The Labels toggle mirrors Satellite's checkbox semantics: ON (default) keeps
+   locality/town names and road-name text so orientation survives; OFF hides
+   ALL labels (pure geometry) — chosen over "locality names only" because it
+   matches what unchecking Satellite's Labels does, one mental model. POI,
+   transit and road-shield icons stay hidden in BOTH modes: they are the
+   clutter, not labels. */
+
+export type MapStyleRule = {
+  featureType?: string;
+  elementType?: string;
+  stylers: Array<Record<string, string>>;
+};
+
+export function roadmapDeclutterStyles(labelsOn: boolean): MapStyleRule[] {
+  const base: MapStyleRule[] = [
+    { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+    { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+    /* Road-shield badges (E19 / AH2 / …) are the road labels' ICON element;
+       the road-name TEXT stays (it is orientation, not clutter). */
+    { featureType: 'road', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+  ];
+  if (!labelsOn) base.push({ elementType: 'labels', stylers: [{ visibility: 'off' }] });
+  return base;
+}
+
+/* ── Column narrowing while the map is open (owner rule 2026-08-08, amended
+   same day: the board auto-narrows to the essential columns BY DEFAULT — a
+   visible per-page "Compact columns" toggle, never a lock; an explicit column
+   choice in the Columns panel while the map is open wins instantly by
+   switching the toggle off). These are DataGrid column KEYS on the shared
+   DeliveryPlanningBoard. A render-time overlay — the user's own saved column
+   prefs are never written. */
 export const MAP_ESSENTIAL_COLUMNS: readonly string[] = [
   'so_doc_no', 'debtor_name', 'region', 'postcode',
   'customer_delivery_date', 'amended_delivery_date',
