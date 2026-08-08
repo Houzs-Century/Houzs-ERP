@@ -32,7 +32,7 @@
 // -> COMPLETED (dispatchers watch running trips first).
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type ReactNode, type CSSProperties } from 'react';
+import { useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Route as RouteIcon, MapPin, CalendarClock, CalendarCheck, Wand2 } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
@@ -170,6 +170,9 @@ export function Trips() {
   const [departTime, setDepartTime] = useState<string>('09:00');
   const [proposing, setProposing] = useState(false);
   const [assign, setAssign] = useState<SequenceAssignResponse | null>(null);
+  /* Same silent-success gap as the Date page: the proposal renders below the
+     board, so success scrolls it into view. */
+  const assignRef = useRef<HTMLDivElement | null>(null);
   // Per-trip dispatcher overrides of the auto-assigned lorry / driver / helper.
   const [overrides, setOverrides] = useState<Record<string, { lorryId?: string | null; driverId?: string | null; helperId?: string | null }>>({});
   const [applyingAssign, setApplyingAssign] = useState(false);
@@ -210,7 +213,11 @@ export function Trips() {
     }
     setProposing(false);
     const merged = mergeAssignResults(results);
-    if (merged) { setAssign(merged); setOverrides({}); setThreePl({}); }
+    if (merged) {
+      setAssign(merged); setOverrides({}); setThreePl({});
+      notify({ title: 'Time proposal ready', body: 'Review the proposed trips below, then apply each.' });
+      setTimeout(() => assignRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+    }
     if (undated.length > 0 || failures.length > 0) {
       notify({
         title: merged ? 'Proposed, with notes' : 'Propose time failed',
@@ -482,6 +489,7 @@ export function Trips() {
 
       {/* ── The propose-time result: editable per-trip cards + 3PL overflow
           (the machinery relocated from Delivery Date Arrangement). */}
+      <div ref={assignRef} />
       {assign && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>

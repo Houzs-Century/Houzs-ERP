@@ -102,6 +102,10 @@ export const AutoSchedule = () => {
      ceilings) rides the server defaults silently. */
   const [startDate, setStartDate] = useState<string>(todayMY());
   const [result, setResult] = useState<ProposeResponse | null>(null);
+  /* The proposal renders BELOW the whole queue board; without a scroll the
+     click looks dead from the bulk bar (owner 2026-08-08: "点 proposed date
+     没有反应"). Success scrolls the section into view + toasts the count. */
+  const proposalRef = useRef<HTMLDivElement | null>(null);
   const [applying, setApplying] = useState(false);
 
   const selectedDocNos = soDocNosFromSelection(queueSel);
@@ -115,7 +119,16 @@ export const AutoSchedule = () => {
       soDocNos: selectedDocNos,
       startDate: startDate || undefined,
     }, {
-      onSuccess: (r) => setResult(r),
+      onSuccess: (r) => {
+        setResult(r);
+        notify({
+          title: `${r.proposals.length} date(s) proposed`,
+          body: r.unassigned.length > 0
+            ? `${r.unassigned.length} order(s) could not be placed — see the proposal below.`
+            : 'Review the days below, then Apply.',
+        });
+        setTimeout(() => proposalRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+      },
       onError: (err) => notify({ title: 'Propose failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
     });
   };
@@ -274,6 +287,7 @@ export const AutoSchedule = () => {
 
       {/* ── The proposal: DAY -> orders (postcode-zone grouped). NO lorry
           dimension — sets / revenue appear only as day summary numbers. */}
+      <div ref={proposalRef} />
       {result && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {result.usingDefaultZoneMap && (
