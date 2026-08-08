@@ -12,7 +12,7 @@
 | 补新 binding | 17 | Excel 有 supplier 但系统没绑的 |
 | 补产品档 costing(Product & Maintenance) | 1014 | base_price_sen 只填现在为 0 的;含 71 个从 supplier 分页补的缺价 |
 | 新建沙发 model | 4 | HOK 5530 / 5536 / 5537 / 5540(当年标了 NEW 但一直没建) |
-| 打开沙发 compartment | 289 个(涉及 54 个 model) | 65 个 model 现在只有 ['1S'] |
+| 打开沙发 compartment | 297 个(涉及 54 个 model) | 65 个 model 现在只有 ['1S'] |
 | 铸造 compartment SKU | 295 | `{model}-{compartment}`,与现有开法一致 |
 | 写沙发成本 grid | 297 个 SKU / 1256 格 | seat_height_prices:座深 × 面料档 × cost;现在全系统是 **0** 张 grid |
 | 沙发 supplier binding(带 price_matrix) | 446 | 每家 supplier 自己的 compartment 报价存在自己的 binding 上 |
