@@ -61,13 +61,17 @@ function parseBedframe(d2) {
      strip [..]/(..) wrappers, "diavan"->divan, "mattressgap"/"mgap"->m.gap. */
   let s = (d2 || "").replace(/\s+/g, " ").trim();
   s = s.replace(/^[[(]\s*/, "").replace(/\s*[\])]\s*$/, "");
-  s = s.replace(/DIAVAN/gi, "DIVAN").replace(/MATTRESS\s*GAP/gi, "M.GAP").replace(/\bM\s?GAP/gi, "M.GAP");
+  s = s.replace(/DIAVAN/gi, "DIVAN").replace(/MATTRESS\s*GAP/gi, "M.GAP").replace(/\bM\s?GAP/gi, "M.GAP")
+       .replace(/HYDROLIC|HYDRAULLIC|HYDRAILIC/gi, "HYDRAULIC")
+       .replace(/NOLEG/gi, "NO LEG");
   const o = { raw: (d2 || "").replace(/\s+/g, " ").trim(), specials: [] };
   let m;
   /* gap / divan / leg. AutoCount uses ", ”, '', ’’, "inch", "in" interchangeably
      and sometimes runs them together ("Divan10/Gap14", "8''+2\"leg",
      "10inch+NoLeg"). QUOTE = every quote-ish inch marker. */
   const QUOTE = `["”“"″'’‘′]{1,2}`;
+  // an inch marker may be a quote, the word, or BOTH run together ("8'INCH")
+  const INCHM = `(?:${QUOTE}\\s*INCH(?:ES)?|${QUOTE}|INCH(?:ES)?|IN\\b)`;
   /* HYDRAULIC beds first: the height lives inside a note — "Col:X(hydraulic 16”/
      Inner 14”/4Pump)" — and the INNER figure is the divan. Run before the general
      divan pattern so it cannot grab the 16" outer or a pump count. */
@@ -81,22 +85,24 @@ function parseBedframe(d2) {
   }
   // gap: also "M'GP:", "M'Gap:", "M.Gap :", and runs-together "M.GAP:14INCHES"
   if ((m = new RegExp(`(?:MATT(?:RESS)?|M)?\\s*['’.]?\\s*(?:GAP|GP)\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.gap = parseFloat(m[1]);
-  if (o.divan == null && (m = new RegExp(`\\bDIV(?:AN)?\\.?\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)?\\s*(?:\\+\\s*(\\d+(?:\\.\\d+)?))?`, "i").exec(s))) { o.divan = parseFloat(m[1]); if (m[2] != null) o.leg = parseFloat(m[2]); }
+  if (o.divan == null && (m = new RegExp(`\\bDIV(?:AN)?\\.?\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:\\+\\s*(\\d+(?:\\.\\d+)?))?`, "i").exec(s))) { o.divan = parseFloat(m[1]); if (m[2] != null) o.leg = parseFloat(m[2]); }
   if (/NO\s*LEGS?/i.test(s)) o.leg = 0;
-  else if (o.leg === undefined && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)?\\s*(?:WOODEN\\s*)?LEGS?`, "i").exec(s))) o.leg = parseFloat(m[1]);
+  else if (o.leg === undefined && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:WOODEN\\s*)?LEGS?`, "i").exec(s))) o.leg = parseFloat(m[1]);
   // a divan stated with no leg mentioned at all = no leg (0), per owner's model
   if (o.leg === undefined && o.divan != null && !/LEG/i.test(s)) o.leg = 0;
   /* divan written WITHOUT the word "divan": "PC151-07/8inch+4inchLeg/Gap14inch"
      or 'DIVAN"8"'. Take the height that sits right before the leg figure. */
-  if (o.divan == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)\\s*\\+\\s*(?:NO\\s*LEGS?|(\\d+(?:\\.\\d+)?))`, "i").exec(s))) {
+  if (o.divan == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}\\s*\\+\\s*(?:NO\\s*LEGS?|(\\d+(?:\\.\\d+)?))`, "i").exec(s))) {
     o.divan = parseFloat(m[1]); if (o.leg === undefined) o.leg = m[2] != null ? parseFloat(m[2]) : 0;
   }
   if (o.divan == null && (m = new RegExp(`DIVAN\\s*${QUOTE}?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.divan = parseFloat(m[1]);
   /* hydraulic beds state the height inside the note: "hydraulic 16”/Inner 14”",
      "12”innerhydraulic", "Hydraulic (Inner 10\")" — the INNER figure is the divan. */
   /* SPECIAL SIZE (owner): anything outside S/SS/Q/K/SK is "SP" and MUST carry its
-     dimensions, e.g. 190x220 / 153x200. Capture them from Desc2 or Description. */
-  if ((m = /(\d{2,3})\s*[xX*]\s*(\d{2,3})/.exec(s))) o.size = `${m[1]}x${m[2]}`;
+     dimensions. Staff write them every way: "240CM x 210CM", "180cmx200cm",
+     "200cm(L)x183cm(W)", "200cm width + 190cm length". Normalise to "AxB". */
+  if ((m = /(\d{2,3}(?:\.\d+)?)\s*CM?\s*(?:\([LW]\))?\s*[xX*]\s*(\d{2,3}(?:\.\d+)?)\s*CM?\s*(?:\([LW]\))?/i.exec(s))) o.size = `${m[1]}x${m[2]}`;
+  else if ((m = /(\d{2,3})\s*CM\s*(?:WIDTH|LENGTH|\(?[LW]\)?)?\s*[+&,]\s*(\d{2,3})\s*CM\s*(?:WIDTH|LENGTH|\(?[LW]\)?)?/i.exec(s))) o.size = `${m[1]}x${m[2]}`;
   /* colour: AutoCount writes it many ways — "COL:", "COLOUR:", "Color:",
      "COL CUSHION:", or the bare code first ("PC151-01/8inch+NoLeg/Gap12inch").
      Missing the Color:/bare forms left 1,500+ lines with no colour. */
@@ -106,10 +112,17 @@ function parseBedframe(d2) {
   // a colour code anywhere in the text (e.g. "Mgap 14 inch / colour PC151-01 / ...")
   if (!o.color && (m = /\b((?:PC|KS|BF|NB|SF|BO|AM|CH|CX|SC|DC|PU|HR|GD|FG|ZL|NV|RU)\s?-?\s?\d{2,4}\s?-\s?\d{1,3}|SF-AT\s?\d{1,3})\b/i.exec(s))) o.color = m[1].trim();
   if (o.color && /^(TBC|KIV)$/i.test(o.color)) o.color = null;   // "COL: KIV" = not chosen
-  // colour written as a plain word ("Cream/Divan10/Gap13", "sliver/...")
-  if (!o.color && (m = /(?:^|\/)\s*(CREAM|SILVER|SLIVER|WHITE|BLACK|GREY|GRAY|BEIGE|BROWN|BLUE|GREEN|PINK|IVORY|CHARCOAL)\b/i.exec(s))) o.color = m[1].trim();
-  // "8 inch : 2 inch leg" / "8 inch 1 inch leg" — divan then leg without +
-  if (o.divan == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)\\s*[:,]?\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)?\\s*LEGS?`, "i").exec(s))) { o.divan = parseFloat(m[1]); if (o.leg === undefined) o.leg = parseFloat(m[2]); }
+  // colour written as a plain word ("Cream/Divan10/Gap13", ")Cream/...", "sliver/...")
+  if (!o.color && (m = /(?:^|[\/)\s])\s*(CREAM|SILVER|SLIVER|WHITE|BLACK|GREY|GRAY|BEIGE|BROWN|BLUE|GREEN|PINK|IVORY|CHARCOAL)\b/i.exec(s))) o.color = m[1].trim();
+  // "8" NO LEG" with no divan keyword: the bare height before NO LEG is the divan
+  if (o.divan == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*NO\\s*LEGS?`, "i").exec(s))) { o.divan = parseFloat(m[1]); o.leg = 0; }
+  // "8 inch : 2 inch leg" / "8 inch 1 inch leg" / "8'INCH 4'INCH LEG" — divan then leg without +
+  if ((m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}\\s*[:,]?\\s*(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*LEGS?`, "i").exec(s))) {
+    if (o.divan == null) o.divan = parseFloat(m[1]);
+    if (o.leg === undefined) o.leg = parseFloat(m[2]);
+  }
+  // "Divan8+4" / "divan:10inch+no leg" — the +N right after the divan figure is the leg
+  if (o.leg === undefined && o.divan != null && (m = new RegExp(`DIV(?:AN)?\\D{0,3}${o.divan}\\s*${INCHM}?\\s*\\+\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.leg = parseFloat(m[1]);
   // specials -> variants.specials (the "Special Orders" picker). Capture all HB
   // phrasings ("HB straight", "HB without panel", "HB & divan fully cover", "HB
   // straight to wall"), fully-cover(ed), and push-back.
@@ -148,6 +161,8 @@ function parsePayment(p) {
   for (const g of groups) { if (g === "/" || g === "") continue; const parts = g.split("/"); if (!acct && parts[0]) acct = parts[0].trim(); if (!appr && parts[1]) appr = parts[1].trim(); kept.push(g); }
   return { acct, appr, extra: kept.length > 1 ? kept.join(" | ") : null };
 }
+
+
 
 
 
