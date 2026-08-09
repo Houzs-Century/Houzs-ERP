@@ -77,14 +77,18 @@ async function main() {
 
   // (SP) special-size lines are included whatever their group — a custom-size
   // MATTRESS carries its dimensions in Desc2 too and must show them.
-  const items = await sql`SELECT i.id, i.item_code, i.item_group, i.variants, h.linked_ac_docno
+  const items = await sql`SELECT i.id, i.item_code, i.item_group, i.variants, i.description2, h.linked_ac_docno
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = 1 AND (i.item_group = 'bedframe' OR i.item_code ILIKE '%(SP)%') AND h.linked_ac_docno IS NOT NULL`;
   log(`imported bedframe lines: ${items.length}`);
 
   const updates = []; let gained = 0;
   for (const it of items) {
-    const bf = parsed.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`);
+    // The line stores the original AutoCount Desc2 in description2, so when the
+    // export/CSV lookup misses (e.g. an (SP) code absent from the binding CSV),
+    // parse the line's own text instead of skipping it.
+    const bf = parsed.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`)
+      ?? (it.description2 ? parseBedframe(it.description2) : null);
     if (!bf) continue;
     if (it.item_group !== "bedframe") {
       // non-bedframe (SP) line: only the dimensions apply — no fabric/gap/divan/leg
