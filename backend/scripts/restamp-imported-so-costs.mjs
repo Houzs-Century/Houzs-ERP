@@ -46,14 +46,14 @@ try {
                           FROM scm.mfg_products WHERE company_id = ${cid}`;
   const prodBy = new Map(prods.map((p) => [p.code, p]));
 
-  const sos = await sql`SELECT id, total_revenue_centi, total_cost_centi FROM scm.mfg_sales_orders
+  const sos = await sql`SELECT doc_no, total_revenue_centi, total_cost_centi FROM scm.mfg_sales_orders
                         WHERE company_id = ${cid} AND total_cost_centi = 0`;
   note(`SO headers with zero total cost: ${sos.length}`);
   let stamped = 0, noCost = 0, headers = 0;
   await sql.begin(async (tx) => {
     const now = new Date().toISOString();
     for (const so of sos) {
-      const lines = await tx`SELECT id, item_code, qty, variants, unit_cost_centi FROM scm.mfg_sales_order_items WHERE so_id = ${so.id}`;
+      const lines = await tx`SELECT id, item_code, qty, variants, unit_cost_centi FROM scm.mfg_sales_order_items WHERE company_id = ${cid} AND doc_no = ${so.doc_no}`;
       const agg = { mattress_sofa: 0, bedframe: 0, accessories: 0, service: 0, others: 0 };
       let anyStamp = false;
       for (const l of lines) {
@@ -80,7 +80,7 @@ try {
             accessories_cost_centi = ${agg.accessories}, service_cost_centi = ${agg.service},
             others_cost_centi = ${agg.others}, total_cost_centi = ${total},
             total_margin_centi = ${(so.total_revenue_centi || 0) - total}, updated_at = ${now}
-          WHERE id = ${so.id}`;
+          WHERE doc_no = ${so.doc_no}`;
       }
     }
     note(`${APPLY ? "APPLIED" : "DRY-RUN"}: lines stamped ${stamped}, product-has-no-cost ${noCost}, headers updated ${headers}`);
