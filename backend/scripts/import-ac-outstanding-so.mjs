@@ -78,8 +78,13 @@ function stateOf(pc) {
 const isPendingColour = (c) => /(TBC|KIV)/i.test(c || ""); // TBC/KIV anywhere = colour not chosen yet
 
 function parseBedframe(d2) {
-  const s = (d2 || "").replace(/\s+/g, " ").trim();
-  const o = { raw: s, specials: [] };
+  /* AutoCount Desc2 is free text typed by many people over years. Normalise the
+     wrappers and misspellings FIRST so one set of patterns can read them all:
+     strip [..]/(..) wrappers, "diavan"->divan, "mattressgap"/"mgap"->m.gap. */
+  let s = (d2 || "").replace(/\s+/g, " ").trim();
+  s = s.replace(/^[[(]\s*/, "").replace(/\s*[\])]\s*$/, "");
+  s = s.replace(/DIAVAN/gi, "DIVAN").replace(/MATTRESS\s*GAP/gi, "M.GAP").replace(/\bM\s?GAP/gi, "M.GAP");
+  const o = { raw: (d2 || "").replace(/\s+/g, " ").trim(), specials: [] };
   let m;
   /* gap / divan / leg. AutoCount uses ", ”, '', ’’, "inch", "in" interchangeably
      and sometimes runs them together ("Divan10/Gap14", "8''+2\"leg",
@@ -104,8 +109,14 @@ function parseBedframe(d2) {
   /* colour: AutoCount writes it many ways — "COL:", "COLOUR:", "Color:",
      "COL CUSHION:", or the bare code first ("PC151-01/8inch+NoLeg/Gap12inch").
      Missing the Color:/bare forms left 1,500+ lines with no colour. */
-  if ((m = /(?:COL(?:OUR|OR)?|CLR)(?:\s*CUSHION)?\s*[:：;]?\s*([A-Z0-9][A-Z0-9\- ]*?)(?:\s*[\/,;]|\s*DIVAN?\b|\s*GAP|\s*M['’.]|$)/i.exec(s))) o.color = m[1].trim();
+  if ((m = /(?:COL(?:OUR|OR)?|CLR)(?:\s*CUSHION)?\s*[-:：;]\s*([A-Z0-9][A-Z0-9\- ]*?)(?:\s*[\/,;(]|\s*DIVAN?\b|\s*GAP|\s*M['’.]|$)/i.exec(s))) o.color = m[1].trim();
+  else if ((m = /(?:COL(?:OUR|OR)?|CLR)\s+([A-Z]{2,4}\s?-?\s?\d{2,4}[\d-]*)/i.exec(s))) o.color = m[1].trim(); // "colour PC151-01" (no colon)
   else if ((m = /^\s*([A-Z]{2,4}\s?-?\s?\d{2,4}\s?-\s?\d{1,3})\b/i.exec(s))) o.color = m[1].trim(); // bare code at the start
+  // a colour code anywhere in the text (e.g. "Mgap 14 inch / colour PC151-01 / ...")
+  if (!o.color && (m = /\b((?:PC|KS|BF|NB|SF|BO|AM|CH|CX|SC|DC|PU|HR|GD|FG|ZL|NV|RU)\s?-?\s?\d{2,4}\s?-\s?\d{1,3}|SF-AT\s?\d{1,3})\b/i.exec(s))) o.color = m[1].trim();
+  if (o.color && /^(TBC|KIV)$/i.test(o.color)) o.color = null;   // "COL: KIV" = not chosen
+  // "8 inch : 2 inch leg" / "8 inch 1 inch leg" — divan then leg without +
+  if (o.divan == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)\\s*[:,]?\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)?\\s*LEGS?`, "i").exec(s))) { o.divan = parseFloat(m[1]); if (o.leg === undefined) o.leg = parseFloat(m[2]); }
   // specials -> variants.specials (the "Special Orders" picker). Capture all HB
   // phrasings ("HB straight", "HB without panel", "HB & divan fully cover", "HB
   // straight to wall"), fully-cover(ed), and push-back.
