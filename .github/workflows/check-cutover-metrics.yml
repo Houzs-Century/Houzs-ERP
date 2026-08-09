@@ -1,0 +1,46 @@
+name: Cutover completeness metrics (read-only)
+
+# Manual. One run answers "都齐了吗": AutoCount-outstanding vs ERP diff,
+# SP sizes, processed/PO bedframe variant completeness (with exact leftover
+# lines), venue resolution, and field coverage. SELECT only, no writes.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+concurrency:
+  group: check-cutover-metrics-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-cutover-metrics.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-cutover-metrics.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
