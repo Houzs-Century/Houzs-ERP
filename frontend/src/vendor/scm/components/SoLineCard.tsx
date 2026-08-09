@@ -657,7 +657,10 @@ const SoLineCardInner = ({
               className={styles.input}
               style={{ textAlign: 'left', cursor: isEditing ? 'pointer' : 'not-allowed', padding: '2px 8px', height: 'auto', minHeight: 28 }}
               disabled={!isEditing}
-              onClick={() => { setShowPicker(true); setSearch(''); }}
+              /* Owner 2026-08-09 — opening the picker must NOT lose the
+                 current SKU: keep the description visible (select-all so
+                 typing replaces it), and blur-without-pick restores it. */
+              onClick={() => { setShowPicker(true); setSearch(draft.description ?? ''); }}
               title="Click to change product"
             >
               {/* Description ONCE, code NOT displayed — the shared rule
@@ -691,8 +694,14 @@ const SoLineCardInner = ({
                    The parent save guards refuse the line either way — this is
                    the inline signal, not the gate. */
                 style={unmatchedFreeText ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
-                onFocus={() => setShowPicker(true)}
-                onBlur={() => setTimeout(() => setShowPicker(false), 150)}
+                autoFocus
+                onFocus={(e) => { setShowPicker(true); e.currentTarget.select(); }}
+                onBlur={() => setTimeout(() => {
+                  setShowPicker(false);
+                  /* No new pick — bring the picked SKU back (owner 2026-08-09:
+                     "点了也不会不见,可以继续 search 别的,再换"). */
+                  if (draft.itemCode && draft.description) setSearch(draft.description);
+                }, 150)}
                 onChange={(e) => { setSearch(e.target.value); setShowPicker(true); }}
               />
               {unmatchedFreeText && !showPicker && (
