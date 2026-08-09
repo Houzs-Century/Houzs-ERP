@@ -368,7 +368,12 @@ function parseSofa(d2raw, model) {
             if (single) { out.push("2A(LHF)", "CNR", "1A(RHF)"); o._photo = "corner单写=2A+C+1A,左右看图"; }
             else out.push("CNR");
             break;
-          case "bseat": out.push(`${u.n}B`); break;
+          case "bseat": {
+            const bs = end ?? "R";
+            out.push(`${u.n}B(${bs === "L" ? "LHF" : "RHF"})`);
+            if (!end && !single) o._photo = (o._photo ? o._photo + "; " : "") + `中排${u.n}B边先放—看图`;
+            break;
+          }
           case "g2f1": out.push("2A(LHF)", "CNR", "1A(RHF)"); break;
           case "r3": // owner: 3R = 1AR+2A (写序左→右), photo-verify sides
             out.push("1A(R)(LHF)", "2A(RHF)"); o._photo = (o._photo ? o._photo + "; " : "") + "3R=1AR+2A,边按写序—看图";
