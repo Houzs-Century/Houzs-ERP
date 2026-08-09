@@ -744,6 +744,14 @@ export const SalesOrderDetail = () => {
     activeLineLeaseRef.current = null;
     setIsEditing(false);
   };
+  // Leaving edit must also drop ?edit=1 — the route fork in SalesOrderDetailV2
+  // keys on it, and without this the operator lands on this legacy component's
+  // read-only ledger instead of the V2 detail (owner 2026-08-10: "按 Cancel
+  // 出来不一样的页面"). NOT called on the amendment path, which stays to show
+  // the raised-amendment notice. replace: keep the edit URL out of history.
+  const returnToV2Detail = () => {
+    if (docNo) navigate(`/scm/sales-orders/${docNo}`, { replace: true });
+  };
 
   const enterEdit  = () => { setSaveError(null); setIsEditing(true); };
   const cancelEdit = () => {
@@ -752,6 +760,7 @@ export const SalesOrderDetail = () => {
     // The seed/clear effect wipes editingDrafts + addingDraft when isEditing
     // flips to false, discarding any uncommitted line edits.
     endEditSession();
+    returnToV2Detail();
   };
 
   /* Whole-order Save — persists the order in one shot:
@@ -907,6 +916,7 @@ export const SalesOrderDetail = () => {
       .then(() => {
         setSavingOrder(false);
         endEditSession();
+        returnToV2Detail();
       })
       .catch((e) => {
         setSavingOrder(false);

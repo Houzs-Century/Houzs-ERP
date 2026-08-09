@@ -528,6 +528,19 @@
   font-size: 9px;
   text-align: center;
   padding: 2px;
+  /* clickable retry (owner 2026-08-10) */
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.photoZoom {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: zoom-in;
 }
 
 .photoDelete {

@@ -63,6 +63,7 @@ import {
   readPaymentRetryHandoff, readPaymentRetryNavigationState,
 } from "../../lib/paymentRetryHandoff";
 import { cn, formatDate } from "../../lib/utils";
+import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
@@ -158,6 +159,10 @@ type SoItem = {
      floor, which is why the detail showed no Stock / Incoming PO at all. */
   stock_status?: string | null;
   stock_state?: "stock" | "po" | "shortage" | null;
+  /* R2 photo keys — already on the wire from GET /mfg-sales-orders/:docNo
+     (routes/mfg-sales-orders.ts:958); this page just never rendered them
+     (owner 2026-08-10: "我在外面的 UI 看不到照片了吗?"). */
+  photo_urls?: string[] | null;
   coverage_po?: string | null;
   coverage_eta?: string | null;
   shipped_source_pos?: string[];
@@ -814,6 +819,15 @@ function SalesOrderDetailV2ReadOnly() {
        renderer (components/SoSourceChips.tsx). The detail payload has carried
        these fields all along; this page just never rendered them, so an
        operator opening the full page lost the trace the drill-down had. */
+    {
+      key: "photos",
+      label: "Photos",
+      width: "120px",
+      getValue: (l) => (l.photo_urls?.length ? String(l.photo_urls.length) : ""),
+      render: (l) => (
+        <SoLinePhotoStrip docNo={docNo ?? ""} itemId={l.id} photoKeys={l.photo_urls ?? []} />
+      ),
+    },
     {
       key: "stock",
       label: "Stock",

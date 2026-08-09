@@ -1544,12 +1544,39 @@ const PhotoThumb = ({
 
   const src = urls ? (showingThumb ? urls.thumbUrl! : urls.signedUrl) : null;
 
+  /* Owner 2026-08-10: a thumbnail must open the FULL image on click, and the
+     err tile must offer a retry instead of dead-ending until remount. */
+  const retryLoad = () => {
+    retriedRef.current = false;
+    signedUrlCache.delete(photoKey);
+    thumbMissingKeys.delete(photoKey);
+    setError(null);
+    setUrls(null);
+    setUseFull(false);
+    loadSignedUrl(() => false);
+  };
+
   return (
     <div className={styles.photoTile}>
       {src ? (
-        <img src={src} alt="Line photo" onError={handleImgError} />
+        <a
+          href={urls!.signedUrl}
+          target="_blank"
+          rel="noreferrer"
+          className={styles.photoZoom}
+          title="Open full size"
+        >
+          <img src={src} alt="Line photo" onError={handleImgError} />
+        </a>
       ) : error ? (
-        <span className={styles.photoError} title={error}>err</span>
+        <button
+          type="button"
+          className={styles.photoError}
+          title={`${error} — click to retry`}
+          onClick={retryLoad}
+        >
+          err ↻
+        </button>
       ) : (
         <span className={styles.photoPlaceholder}>…</span>
       )}
