@@ -2,6 +2,12 @@
  "company_code": "HOUZS",
  "ops": [
   {
+   "op": "sku_mint",
+   "erp": "8030-Console",
+   "model": "8030",
+   "comp": "Console"
+  },
+  {
    "op": "product_cost",
    "erp": "AERO-MP (K)",
    "ac": "AERO-MP (K)",
