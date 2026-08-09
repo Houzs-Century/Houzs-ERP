@@ -319,8 +319,9 @@ async function main() {
   // auto-create INACTIVE salesperson staff for AutoCount agents with no ERP account
   const toCreate = [...createAgents].filter((n) => !staffId.has(norm(n)));
   if (toCreate.length) {
-    const vals = toCreate.map((n) => "(" + ["gen_random_uuid()", V("ACIMP-" + strip(n).slice(0, 12)), V(n), "'sales'", "false"].join(",") + ")").join(",");
-    await sql.unsafe(`INSERT INTO scm.staff (id, staff_code, name, role, active) VALUES ${vals} ON CONFLICT DO NOTHING`);
+    const initialsOf = (n) => (norm(n).split(/\s+/).map((w) => w[0]).join("").slice(0, 4)) || "X";
+    const vals = toCreate.map((n) => "(" + ["gen_random_uuid()", V("ACIMP-" + strip(n).slice(0, 12)), V(n), V(initialsOf(n)), "'#9CA3AF'", "'sales'", "false"].join(",") + ")").join(",");
+    await sql.unsafe(`INSERT INTO scm.staff (id, staff_code, name, initials, color, role, active) VALUES ${vals} ON CONFLICT DO NOTHING`);
     log(`created ${toCreate.length} inactive salesperson staff`);
   }
   if (createAgents.size) { const created = await sql`SELECT id, name FROM scm.staff WHERE name = ANY(${[...createAgents]})`; for (const r of created) staffId.set(norm(r.name), r.id); }
