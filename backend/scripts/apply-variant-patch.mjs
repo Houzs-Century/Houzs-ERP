@@ -38,6 +38,16 @@ async function main() {
 
   let nItems = 0, nHdr = 0;
   for (const p of items) {
+    // address by uuid OR by (doc_no + item code) — the metrics report speaks
+    // doc+code, so hand-parse patches shouldn't need an id lookup round-trip
+    if (!p.id && p.doc_no && p.code) {
+      const [hit] = await sql`SELECT id FROM scm.mfg_sales_order_items
+        WHERE doc_no = ${p.doc_no} AND upper(item_code) = ${(p.code || "").toUpperCase()}
+          AND (${p.desc_like ?? null}::text IS NULL OR description2 ILIKE '%' || ${p.desc_like ?? ""} || '%')
+        LIMIT 1`;
+      if (!hit) { log(`  !! item ${p.doc_no} ${p.code} not found, skipped`); continue; }
+      p.id = hit.id;
+    }
     const [row] = await sql`SELECT variants FROM scm.mfg_sales_order_items WHERE id = ${p.id}`;
     if (!row) { log(`  !! item ${p.id} not found, skipped`); continue; }
     const v = { ...(row.variants || {}), ...(p.variants || {}) };

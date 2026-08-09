@@ -76,6 +76,15 @@ const isEmpty = (val: unknown): boolean =>
 export const isDivanOnly = (itemCode: string | null | undefined): boolean =>
   /\bDIVAN\s*ONLY\b/i.test(itemCode ?? '');
 
+/** Adjustable (electric) beds, pull-out/trundle combos ((S+S) / (SS+S)) and
+ *  double-decker bunks have no divan base at all — physically there is no
+ *  Divan Height, Leg Height or Gap to state, only the fabric colour (owner
+ *  2026-08-10: "电动床/抽拉床…像 DIVAN ONLY 一样豁免 — 要"). */
+export const isDivanlessFrame = (itemCode: string | null | undefined): boolean =>
+  /ADJUSTABLE|\(S?S\+S\)|DOUBLE\s*D[AE]C?KER|\bDDB/i.test(itemCode ?? '');
+
+const DIVANLESS_AXES = new Set(['divanHeight', 'legHeight', 'gap']);
+
 export function missingVariantAxes(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
@@ -85,10 +94,12 @@ export function missingVariantAxes(
   if (!axes) return [];
   const v = variants ?? {};
   const skipGap = isDivanOnly(itemCode);
+  const skipBase = isDivanlessFrame(itemCode);
   return axes.filter(
     (axis) =>
       axis.required !== false &&
       !(skipGap && axis.key === 'gap') &&
+      !(skipBase && DIVANLESS_AXES.has(axis.key)) &&
       axis.aliases.every((k) => isEmpty(v[k])),
   );
 }
