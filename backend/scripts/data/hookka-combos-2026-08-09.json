@@ -1,0 +1,311 @@
+[
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 162000,
+   "28": 175200,
+   "30": 184000
+  },
+  "label": "1A+2A",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 210000,
+   "28": 220000,
+   "30": 230000
+  },
+  "label": "2A+L",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 264000,
+   "28": 275000,
+   "30": 275000
+  },
+  "label": "1A+2NA+L",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 264000,
+   "28": 275000,
+   "30": 275000
+  },
+  "label": "1NA+2A+L",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 350000,
+   "28": 380000,
+   "30": 400000
+  },
+  "label": "1S+2S+3S",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "5535",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 154000,
+   "28": 162800,
+   "30": 167200
+  },
+  "label": "1A+2A",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "5535",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 210000,
+   "28": 220000,
+   "30": 220000
+  },
+  "label": "2A+L",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "5535",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 260000,
+   "28": 275000,
+   "30": 286000
+  },
+  "label": "1NA+2A+L",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 165900,
+   "28": 170700,
+   "30": 170700
+  },
+  "label": "1A+2A",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 210000,
+   "28": 220000,
+   "30": 220000
+  },
+  "label": "2A+L",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 264000,
+   "28": 275000,
+   "30": 275000
+  },
+  "label": "1NA+2A+L",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "24": 340000,
+   "28": 366000,
+   "30": 360000
+  },
+  "label": "1S+2S+3S",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "8030",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "28": 175200,
+   "30": 184000,
+   "35": 228000
+  },
+  "label": "1A+2A",
+  "notes": "hookka-quotation-2026-08-09"
+ },
+ {
+  "base_model": "8030",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "prices_by_height": {
+   "28": 380000,
+   "30": 400000,
+   "35": 500000
+  },
+  "label": "1S+2S+3S",
+  "notes": "hookka-quotation-2026-08-09"
+ }
+]
