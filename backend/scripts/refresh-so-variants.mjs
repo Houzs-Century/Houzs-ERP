@@ -75,15 +75,23 @@ async function main() {
   };
   const validSpecials = new Set((await sql`SELECT code FROM scm.special_addons WHERE company_id = 1 AND 'BEDFRAME' = ANY(categories)`).map((r) => r.code));
 
-  const items = await sql`SELECT i.id, i.item_code, i.variants, h.linked_ac_docno
+  // (SP) special-size lines are included whatever their group — a custom-size
+  // MATTRESS carries its dimensions in Desc2 too and must show them.
+  const items = await sql`SELECT i.id, i.item_code, i.item_group, i.variants, h.linked_ac_docno
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-    WHERE h.company_id = 1 AND i.item_group = 'bedframe' AND h.linked_ac_docno IS NOT NULL`;
+    WHERE h.company_id = 1 AND (i.item_group = 'bedframe' OR i.item_code ILIKE '%(SP)%') AND h.linked_ac_docno IS NOT NULL`;
   log(`imported bedframe lines: ${items.length}`);
 
   const updates = []; let gained = 0;
   for (const it of items) {
     const bf = parsed.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`);
     if (!bf) continue;
+    if (it.item_group !== "bedframe") {
+      // non-bedframe (SP) line: only the dimensions apply — no fabric/gap/divan/leg
+      if (!bf.size) continue;
+      updates.push({ id: it.id, sizeOnly: true, variants: { ...(it.variants || {}), size: bf.size }, specials: [], gap: null, divan: null, leg: null });
+      continue;
+    }
     const pending = isPendingColour(bf.color);
     const fc = pending ? null : findColour(bf.color);
     const codes = new Set();
@@ -114,6 +122,10 @@ async function main() {
     const b = updates.slice(i, i + 200);
     await sql.begin(async (tx) => {
       for (const u of b) {
+        if (u.sizeOnly) {
+          await tx`UPDATE scm.mfg_sales_order_items SET variants = ${sql.json(u.variants)} WHERE id = ${u.id}`;
+          continue;
+        }
         await tx`UPDATE scm.mfg_sales_order_items SET
                    variants = ${sql.json(u.variants)},
                    custom_specials = ${u.specials.length ? sql.json(u.specials) : null},
