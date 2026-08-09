@@ -83,9 +83,12 @@ function parseBedframe(d2) {
   if (/NO\s*LEG/i.test(s)) o.leg = 0;
   else if (o.leg === undefined && (m = /(\d+(?:\.\d+)?)\s*(?:["”"″'′]|INCH|IN)?\s*(?:WOODEN\s*)?LEG/i.exec(s))) o.leg = parseFloat(m[1]);
   if ((m = /COL(?:OUR)?(?:\s*CUSHION)?\s*[:：;]?\s*([A-Z0-9][A-Z0-9\- ]*?)(?:\s*[\/,;]|\s*DIVAN|\s*GAP|$)/i.exec(s))) o.color = m[1].trim();
-  if (/FULL\s*COVER|FULLCOVER/i.test(s)) o.specials.push("fully cover");
+  // specials -> variants.specials (the "Special Orders" picker). Capture all HB
+  // phrasings ("HB straight", "HB without panel", "HB & divan fully cover", "HB
+  // straight to wall"), fully-cover(ed), and push-back.
+  const hm = /\bHB\b[^\/,()]*/i.exec(s); if (hm) { const t = hm[0].replace(/\s+/g, " ").trim(); if (t.length > 2) o.specials.push(t); }
+  if (/FULL(?:Y)?\s*COVER(?:ED)?/i.test(s) && !o.specials.some((x) => /cover/i.test(x))) o.specials.push("fully cover");
   if (/PUSH\s*BACK/i.test(s)) o.specials.push("push back");
-  if (/HB\s+([A-Z ]+?STRAIGHT|DO\s+STRAIGHT|DIVAN)/i.test(s)) { const hm = /HB\s+([A-Z ]+)/i.exec(s); if (hm) o.specials.push("HB " + hm[1].trim().split(/[\/,]/)[0].trim()); }
   return o;
 }
 
@@ -188,6 +191,8 @@ async function main() {
   let pure = [], skipMixed = 0, skipAllSofa = 0;
   for (const [doc, ls] of orders) { const s = ls.filter((l) => isSofa(l.ItemCode)).length; if (s === 0) pure.push([doc, ls]); else if (s === ls.length) skipAllSofa++; else skipMixed++; }
   pure.sort((a, b) => (a[1][0].DocDate || "") < (b[1][0].DocDate || "") ? -1 : 1);
+  const ONLY = (process.env.DOC || "").trim().replace(/^HC-/, ""); // import just one AutoCount DocNo (verification)
+  if (ONLY) pure = pure.filter(([d]) => d === ONLY);
   if (LIMIT) pure = pure.slice(0, LIMIT);
 
   // ---- build ----
@@ -280,6 +285,8 @@ async function main() {
   log("\nAPPLYING (bulk)…");
   await sql`ALTER TABLE scm.mfg_sales_orders ADD COLUMN IF NOT EXISTS linked_ac_docno text`;
   await sql`CREATE INDEX IF NOT EXISTS mfg_so_linked_ac_docno_idx ON scm.mfg_sales_orders(linked_ac_docno)`;
+  // single-order verification (DOC=...): delete that one order first so it re-imports
+  if (ONLY) { const d = "HC-" + ONLY; await sql`DELETE FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${d}`; await sql`DELETE FROM scm.mfg_sales_order_items WHERE doc_no = ${d}`; await sql`DELETE FROM scm.mfg_sales_orders WHERE doc_no = ${d}`; log(`DOC mode: cleared existing ${d} for re-import`); }
 
   const esc = (s) => "'" + String(s).replace(/'/g, "''") + "'";
   const CUR = { __raw: "CURRENT_DATE" };

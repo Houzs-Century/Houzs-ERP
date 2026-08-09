@@ -25,6 +25,11 @@ on:
         required: false
         default: "0"
         type: string
+      doc:
+        description: "Import ONLY this AutoCount DocNo (e.g. SO-013152) — single-order verification."
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: import-ac-outstanding-so-${{ inputs.target }}
@@ -45,6 +50,7 @@ jobs:
         env:
           APPLY: ${{ inputs.apply }}
           LIMIT: ${{ inputs.limit }}
+          DOC: ${{ inputs.doc }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
@@ -60,4 +66,5 @@ jobs:
         env:
           APPLY: ${{ inputs.apply }}
           LIMIT: ${{ inputs.limit }}
+          DOC: ${{ inputs.doc }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
