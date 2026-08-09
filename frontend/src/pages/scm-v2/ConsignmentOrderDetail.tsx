@@ -251,7 +251,7 @@ export const ConsignmentOrderDetail = () => {
         ...(addingDraft ? [addingDraft] : []),
       ]
         .filter((d) => d.itemCode.trim())
-        .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants) }))
+        .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants, d.itemCode) }))
         .filter((x) => x.miss.length > 0);
       if (variantGaps.length > 0) {
         setSaveError(
