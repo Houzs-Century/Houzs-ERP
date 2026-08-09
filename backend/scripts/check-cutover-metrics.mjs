@@ -121,10 +121,10 @@ async function main() {
   // — answer from the master itself so the patch uses verified codes.
   const fab = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours
     WHERE company_id = 1 AND (colour_id ILIKE 'NB%' OR colour_id ILIKE 'KS%'
-      OR label ILIKE '%SILVER%' OR label ILIKE '%CREAM%' OR colour_id ILIKE '%SILVER%' OR colour_id ILIKE '%CREAM%')
+      OR label ILIKE '%SILVER%' OR label ILIKE '%CREAM%' OR colour_id ILIKE '%SILVER%' OR colour_id ILIKE '%CREAM%' OR fabric_id ILIKE '%MEDITEX%' OR label ILIKE '%MEDITEX%')
     ORDER BY fabric_id, colour_id`;
   log(`fabric master hits (NB*/KS*/silver/cream): ${fab.length}`);
-  for (const f of fab.slice(0, 40)) log(`   fabric ${f.fabric_id} | colour ${f.colour_id} | label ${f.label}`);
+  for (const f of fab.slice(0, 120)) log(`   fabric ${f.fabric_id} | colour ${f.colour_id} | label ${f.label}`);
 
   await sql.end();
 }
