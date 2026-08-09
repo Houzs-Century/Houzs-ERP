@@ -159,8 +159,12 @@ async function main() {
   const findColour = (c) => {
     if (!c) return null;
     const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1"); // SFAT4 -> SFAT04 (single trailing digit)
-    const cands = [norm(c), strip(c), pad(strip(c))];
-    if (/^\d/.test(c.trim())) { cands.push(strip("PC" + c), pad(strip("PC" + c))); } // 151-03 -> PC151-03
+    // try the full string, the first token, and a regex-extracted code — so a
+    // colour with junk jammed after it ("PC151-17 8 icnh 2 inch leg") still matches PC151-17
+    const toks = [c, (c.trim().split(/\s+/)[0] || "")];
+    const m = /[A-Z]{1,4}\s?\d{2,4}\s?-?\s?\d*/i.exec(c); if (m) toks.push(m[0]);
+    const cands = [];
+    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t))); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
     for (const t of cands) { const h = fcx.get(t); if (h) return h; }
     return null;
   };
