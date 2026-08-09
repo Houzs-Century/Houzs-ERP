@@ -239,7 +239,7 @@ function parseSofa(d2raw, model) {
   for (const seg of segs) {
     // spaces glue ("3 SEATER"->3SEATER) but paren notes become their own
     // tokens ("(HANDLE MOVABLE)"->+HANDLEMOVABLE+); quotes are residue
-    let s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "+").replace(/["']/g, "").replace(/:/g, "+");
+    let s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "+").replace(/["'*]/g, "").replace(/:/g, "+");
     // owner layout rule: bare "n+L" == "nL"; "L+n" == "Ln"
     s = s.replace(/(^|\+)([123])\+L(?=$|\+)/, "$1$2L").replace(/(^|\+)L\+([123])(?=$|\+)/, "$1L$2");
     if (!s || /^[\d.]+\+*$/.test(s)) continue;
@@ -260,11 +260,18 @@ function parseSofa(d2raw, model) {
       let m;
       if ((m = /^([123])L$/.exec(t))) U.push({ k: "nL", n: m[1], dir: "R", raw: t });
       else if ((m = /^L([123])$/.exec(t))) U.push({ k: "nL", n: m[1], dir: "L", raw: t });
-      else if ((m = /^([123])(RR?|PP?)$/.exec(t)) && model === "R819") U.push({ k: "mech", n: m[1], M: m[2][0], raw: t });
+      else if ((m = /^([123])(RR|PP)$/.exec(t))) U.push({ k: "mech", n: m[1], M: m[2][0], raw: t });
+      else if ((m = /^([123])(R|P)$/.exec(t)) && model === "R819") U.push({ k: "mech", n: m[1], M: m[2], raw: t });
       else if ((m = /^([1234])$/.exec(t))) U.push({ k: "unit", n: m[1], raw: t });
       else if ((m = /^([1234])S(?:EATER)?$/.exec(t))) U.push({ k: "seat", n: m[1], raw: t });
       else if (/^2\.5S?$/.test(t)) U.push({ k: "seat", n: "2", raw: t, note: "2.5S→2S(owner:座深照写)" });
       else if ((m = /^([12])NA$/.exec(t))) U.push({ k: "na", n: m[1], raw: t });
+      else if ((m = /^([12])B$/.exec(t))) U.push({ k: "bseat", n: m[1], raw: t }); // owner: 1B 我们有
+      else if (t === "1C") U.push({ k: "corner", raw: t });                        // owner: 1C 是 corner
+      else if (t === "2G1F") U.push({ k: "g2f1", raw: t });                        // owner: 2G1F = 2A+C+1A
+      else if (t === "CS") U.push({ k: "console", raw: t });                       // owner: CS = console
+      else if (t === "3R" && model !== "R819") U.push({ k: "r3", raw: t });        // owner: 3R = 1AR+2A
+      else if (/^BACK(REST|CUSHION)\w*8030$/.test(t)) rider.push(t);               // special: backrest->8030
       else if ((m = /^1?NA([LR])T$/.exec(t))) U.push({ k: "box", side: m[1], raw: t }); // owner: 1ABOX
       else if ((m = /^([12])E?([LR])$/.exec(t))) U.push({ k: "armed", n: m[1], side: m[2], raw: t });
       else if (t === "L") U.push({ k: "chaise", raw: t });
@@ -273,7 +280,7 @@ function parseSofa(d2raw, model) {
       else if (/^STOOL/.test(t)) U.push({ k: "stool", raw: t });
       else if (t === "P") U.push({ k: "pw", raw: t });
       else if (t === "R") U.push({ k: "rc", raw: t });
-      else if (t === "LSHAPE") { bad = "bare 'L shape'"; break; }
+      else if (t === "LSHAPE") { U.push({ k: "chaise", raw: t }); o._photo = "L shape 单件,左右看图"; }
       else if (!/\d/.test(t) && t.length >= 3 && !/(ARM|SEAT|CUSTOM|RECLIN|WOOD|SHAPE|CORNER|CHAISE)/.test(t)
                && !/^(CT|CNR|STOOL|NA)/.test(t)) rider.push(t);
       else { bad = `token "${t}"`; break; }
@@ -328,6 +335,11 @@ function parseSofa(d2raw, model) {
             break;
           case "chaise": out.push(i === 0 ? "L(LHF)" : "L(RHF)"); break;
           case "corner": out.push("CNR"); break;
+          case "bseat": out.push(`${u.n}B`); break;
+          case "g2f1": out.push("2A(LHF)", "CNR", "1A(RHF)"); break;
+          case "r3": // owner: 3R = 1AR+2A (写序左→右), photo-verify sides
+            out.push("1A(R)(LHF)", "2A(RHF)"); o._photo = (o._photo ? o._photo + "; " : "") + "3R=1AR+2A,边按写序—看图";
+            break;
           case "console": out.push("Console"); break;
           case "stool": out.push("STOOL"); break;
           case "pw":
