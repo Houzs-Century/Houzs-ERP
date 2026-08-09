@@ -232,6 +232,8 @@ function parseSofa(d2raw, model) {
   const P = (c) => o.pieces.push(c);
   const seatSide = (n, side) => (n === "3"
     ? (side === "L" ? ["2A(LHF)", "1NA"] : ["1NA", "2A(RHF)"])
+    : n === "4" // owner 2026-08-10: "4S 就是 2A 加 2A 来的"
+    ? (side === "L" ? ["2A(LHF)", "2NA"] : ["2NA", "2A(RHF)"])
     : [`${n === "1" ? "1A" : "2A"}(${side === "L" ? "LHF" : "RHF"})`]);
   let matched = false;
   for (const seg of segs) {
@@ -259,8 +261,8 @@ function parseSofa(d2raw, model) {
       if ((m = /^([123])L$/.exec(t))) U.push({ k: "nL", n: m[1], dir: "R", raw: t });
       else if ((m = /^L([123])$/.exec(t))) U.push({ k: "nL", n: m[1], dir: "L", raw: t });
       else if ((m = /^([123])(RR?|PP?)$/.exec(t)) && model === "R819") U.push({ k: "mech", n: m[1], M: m[2][0], raw: t });
-      else if ((m = /^([123])$/.exec(t))) U.push({ k: "unit", n: m[1], raw: t });
-      else if ((m = /^([123])S(?:EATER)?$/.exec(t))) U.push({ k: "seat", n: m[1], raw: t });
+      else if ((m = /^([1234])$/.exec(t))) U.push({ k: "unit", n: m[1], raw: t });
+      else if ((m = /^([1234])S(?:EATER)?$/.exec(t))) U.push({ k: "seat", n: m[1], raw: t });
       else if (/^2\.5S?$/.test(t)) U.push({ k: "seat", n: "2", raw: t, note: "2.5S→2S(owner:座深照写)" });
       else if ((m = /^([12])NA$/.exec(t))) U.push({ k: "na", n: m[1], raw: t });
       else if ((m = /^1?NA([LR])T$/.exec(t))) U.push({ k: "box", side: m[1], raw: t }); // owner: 1ABOX
@@ -309,13 +311,13 @@ function parseSofa(d2raw, model) {
             ({ "1": [`1S(${u.M})`], "2": [`1A(${u.M})(LHF)`, `1A(${u.M})(RHF)`], "3": [`1A(${u.M})(LHF)`, "1NA", `1A(${u.M})(RHF)`] })[u.n].forEach((x) => out.push(x));
             break;
           case "unit": // bare digit: owner "1A+1A=1+1" — multi row means one-arm units
-            if (single) out.push(`${u.n}S`);
-            else if (end) seatSide(u.n, end).forEach((x) => out.push(x));
+            if (single) { if (u.n === "4") out.push("2A(LHF)", "2A(RHF)"); else out.push(`${u.n}S`); }
+            else if (end) { seatSide(u.n, end).forEach((x) => out.push(x)); if (u.n === "4") o._photo = "4S在连排,2A+2NA按端位—看图"; }
             else hold = `裸 "${u.raw}" 在中排 — 看图`;
             break;
           case "seat": // explicit nS: suite when standalone-ish, one-arm unit beside connectors
-            if (single || !hasConn) out.push(`${u.n}S`);
-            else if (end) seatSide(u.n, end).forEach((x) => out.push(x));
+            if (single || !hasConn) { if (u.n === "4") out.push("2A(LHF)", "2A(RHF)"); else out.push(`${u.n}S`); } // owner: 4S=2A+2A
+            else if (end) { seatSide(u.n, end).forEach((x) => out.push(x)); if (u.n === "4") o._photo = "4S在连排,2A+2NA按端位—看图"; }
             else hold = `"${u.raw}" 在连排中排 — 看图`;
             break;
           case "na": out.push(`${u.n}NA`); break;
