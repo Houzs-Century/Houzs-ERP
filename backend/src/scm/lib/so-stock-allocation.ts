@@ -121,16 +121,18 @@ export async function recomputeSoStockAllocation(
     }>;
     if (orders.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
     const orderByDoc = new Map(orders.map((o) => [o.doc_no, o]));
-    /* Houzs gate (owner 2026-08-10, go-live): company 1 runs the AutoCount-style
-       BOUND flow — nothing is prepared before the order is proceeded, so an SO
-       with NO Processing Date must not claim stock nor show READY TO SHIP
-       ("它明明都没有 Processing Date, 干嘛分配呢"). Gated lines still walk (so
-       an already-READY line regresses to PENDING and the header falls back to
-       CONFIRMED on this same run) but are forced PENDING and never consume a
-       bucket or a sofa batch. 2990 (and any other company) keeps the B2C
-       stock-on-hand model unchanged. */
+    /* Processing-date allocation gate (owner 2026-08-10, go-live): nothing is
+       prepared before the order is proceeded, so an SO with NO Processing Date
+       must not claim stock nor show READY TO SHIP ("它明明都没有 Processing
+       Date, 干嘛分配呢" … "2990 跟整套系统都是这样子的:有 processing date 才来
+       分配"). Shipped company-1-only first; flipped GLOBAL after measuring the
+       blast radius (check-cutover-metrics 2026-08-10: company 1: 15, company 2:
+       5 READY_TO_SHIP-without-processing-date — both regress to CONFIRMED on
+       the next recompute, which is the owner's intent). Gated lines still walk
+       (so an already-READY line regresses on this same run) but are forced
+       PENDING and never consume a bucket or a sofa batch. */
     const allocGated = new Set(
-      orders.filter((o) => o.company_id === 1 && !o.proceeded_at).map((o) => o.doc_no),
+      orders.filter((o) => !o.proceeded_at).map((o) => o.doc_no),
     );
 
     // 2. Non-cancelled lines on those SOs. Pull qty + variant fields so we
