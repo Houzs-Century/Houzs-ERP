@@ -209,7 +209,7 @@ function parseSofa(d2raw, model) {
   d2 = d2.replace(/col(?:our|or)?\s*\(([^)]+)\)\s*[:：]\s*([^\/\n]+)/gi, (_, pc, val) => {
     o.perPieceColor[pc.trim().toUpperCase()] = val.trim(); return " ";
   });
-  d2 = d2.replace(/col(?:our|or)?\s*[:：]\s*([^\/\n]+)/gi, (_, val) => {
+  d2 = d2.replace(/col(?:our|or)?\s*[-:：]\s*([^\/\n]+)/gi, (_, val) => {
     if (!o.color) o.color = val.trim(); return " ";
   });
   // seat size: inches or cm anywhere (also "(28'Inch)" / "28''" / "28'" / "Size:28")
@@ -219,15 +219,15 @@ function parseSofa(d2raw, model) {
     o.size = sm[2] ? String(CM_TO_INCH[n] ?? n) : String(n);
     d2 = d2.replace(sm[0], " ").replace(/['"]*\s*inch(?:es)?\b/gi, " ");
     // same size repeated per piece ("2EL(28\")+STOOL(28\")") is residue
-    d2 = d2.replace(new RegExp(sm[1] + "\\s*[\"']{0,2}", "g"), " ");
+    d2 = d2.replace(new RegExp(sm[1] + "\\s*(?:cm\\b|[\"']{0,2})", "gi"), " ");
   }
   d2 = d2.replace(/size\s*[:：]/gi, " "); // bare label left behind ("Size:3S(28\")")
   d2 = d2.replace(/\b(TBC|KIV|RANDOM\s*COLOU?R)\b/gi, " "); // noise words glue onto piece tokens ("L2 TBC")
   // specials that ride along
   if (/nylon|nilon/i.test(d2)) o.specials.push("nylon");
-  if (/wooden\s*arm/i.test(d2)) o.specials.push("wooden arm");
+  if (/(left|right)?\s*side?\s*woo[rd]+e?r?n?\s*arm/i.test(d2) || /wood\w*\s*arm/i.test(d2)) o.specials.push("wooden arm");
   const hasRecliner = /recliner/i.test(d2);
-  d2 = d2.replace(/bottom[^\/\n]*|wooden\s*arm[^\/\n]*|recliner/gi, " ");
+  d2 = d2.replace(/bottom[^\/\n]*|(left|right)?side?woo[rd]+e?r?n?\s*arm[^\/\n]*|wood\w*\s*arm[^\/\n]*|recliner/gi, " ");
   // find the structure segment: the chunk with piece tokens
   const segs = d2.split(/[\/\n,]+/).map((s) => s.trim()).filter(Boolean);
   const P = (c) => o.pieces.push(c);
@@ -237,10 +237,11 @@ function parseSofa(d2raw, model) {
     ? (side === "L" ? ["2A(LHF)", "2NA"] : ["2NA", "2A(RHF)"])
     : [`${n === "1" ? "1A" : "2A"}(${side === "L" ? "LHF" : "RHF"})`]);
   let matched = false;
-  for (const seg of segs) {
+  const orderedSegs = [...segs].sort((a, b) => (b.includes("+") ? 1 : 0) - (a.includes("+") ? 1 : 0));
+  for (const seg of orderedSegs) {
     // spaces glue ("3 SEATER"->3SEATER) but paren notes become their own
     // tokens ("(HANDLE MOVABLE)"->+HANDLEMOVABLE+); quotes are residue
-    let s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "+").replace(/["'*]/g, "").replace(/:/g, "+");
+    let s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "+").replace(/["'*]/g, "").replace(/:/g, "+").replace(/\.(?![5])/g, "+");
     // owner layout rule: bare "n+L" == "nL"; "L+n" == "Ln"
     if (s.split("+").filter(Boolean).length === 2)
       s = s.replace(/(^|\+)([123])\+L(?=$|\+)/, "$1$2L").replace(/(^|\+)L\+([123])(?=$|\+)/, "$1L$2");
@@ -265,7 +266,8 @@ function parseSofa(d2raw, model) {
       else if ((m = /^([123])(RR|PP)$/.exec(t))) U.push({ k: "mech", n: m[1], M: m[2][0], raw: t });
       else if ((m = /^([123])(R|P)$/.exec(t)) && model === "R819") U.push({ k: "mech", n: m[1], M: m[2], raw: t });
       else if ((m = /^([1234])$/.exec(t))) U.push({ k: "unit", n: m[1], raw: t });
-      else if ((m = /^([1234])S(?:EATER)?$/.exec(t))) U.push({ k: "seat", n: m[1], raw: t });
+      else if ((m = /^([1234])S(?:EATER|ETEAR)?$/.exec(t))) U.push({ k: "seat", n: m[1], raw: t });
+      else if (/^(TO|USE)?8030$/.test(t)) rider.push(t);
       else if (/^2\.5S?$/.test(t)) U.push({ k: "seat", n: "2", raw: t, note: "2.5S→2S(owner:座深照写)" });
       else if ((m = /^([12])NA$/.exec(t))) U.push({ k: "na", n: m[1], raw: t });
       else if ((m = /^([12])B$/.exec(t))) U.push({ k: "bseat", n: m[1], raw: t }); // owner: 1B 我们有
