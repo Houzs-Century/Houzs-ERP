@@ -47,12 +47,17 @@ try {
   const prodBy = new Map(prods.map((p) => [p.code, p]));
 
   const sos = await sql`SELECT doc_no, total_revenue_centi, total_cost_centi FROM scm.mfg_sales_orders
-                        WHERE company_id = ${cid} AND total_cost_centi = 0`;
+                        WHERE company_id = ${cid} AND total_cost_centi = 0
+                        ORDER BY doc_no`;
   note(`SO headers with zero total cost: ${sos.length}`);
-  let stamped = 0, noCost = 0, headers = 0;
-  await sql.begin(async (tx) => {
-    const now = new Date().toISOString();
-    for (const so of sos) {
+  let stamped = 0, noCost = 0, headers = 0, deadlocks = 0;
+  // One SHORT transaction per SO (2026-08-09): the single big transaction
+  // deadlocked against the concurrent AutoCount import writing the same
+  // tables. Idempotent + value-guarded, so partial progress is safe and a
+  // rerun continues where it stopped.
+  const now = new Date().toISOString();
+  for (const so of sos) {
+    const runOne = async (tx) => {
       const lines = await tx`SELECT id, item_code, qty, variants, unit_cost_centi FROM scm.mfg_sales_order_items WHERE company_id = ${cid} AND doc_no = ${so.doc_no}`;
       const agg = { mattress_sofa: 0, bedframe: 0, accessories: 0, service: 0, others: 0 };
       let anyStamp = false;
@@ -82,10 +87,25 @@ try {
             total_margin_centi = ${(so.total_revenue_centi || 0) - total}, updated_at = ${now}
           WHERE doc_no = ${so.doc_no}`;
       }
+    };
+    if (APPLY) {
+      let attempts = 0;
+      for (;;) {
+        try { await sql.begin(runOne); break; }
+        catch (e) {
+          if (/deadlock detected/i.test(e.message) && ++attempts <= 3) {
+            deadlocks++;
+            await new Promise((r) => setTimeout(r, 250 * attempts));
+            continue;
+          }
+          throw e;
+        }
+      }
+    } else {
+      await runOne(sql);   // dry-run: plain reads, no writes, no txn needed
     }
-    note(`${APPLY ? "APPLIED" : "DRY-RUN"}: lines stamped ${stamped}, product-has-no-cost ${noCost}, headers updated ${headers}`);
-    if (!APPLY) throw new Error("DRY-RUN-ROLLBACK");
-  }).catch((e) => { if (e.message !== "DRY-RUN-ROLLBACK") throw e; note("DRY-RUN: rolled back."); });
+  }
+  note(`${APPLY ? "APPLIED" : "DRY-RUN"}: lines stamped ${stamped}, product-has-no-cost ${noCost}, headers updated ${headers}, deadlock-retries ${deadlocks}`);
 } catch (e) {
   console.error("FAIL", e.message);
   await sql.end({ timeout: 3 });
