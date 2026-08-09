@@ -63,6 +63,9 @@ const CATG = { MATTRESS: "mattress", BEDFRAME: "bedframe", ACC: "accessory", ACC
 // Company-1 pick-list aliases: the binding CSV emits 2990-style service codes,
 // but company 1's own pick list names delivery "TRANSPORTATION CHARGES".
 const C1_ALIAS = { "SVC-DELIVERY": "TRANSPORTATION CHARGES", "SVC-DELIVERY-ADD": "TRANSPORTATION CHARGES", "SVC-DELIVERY-CROSS": "TRANSPORTATION CHARGES" };
+// AutoCount SalesLocation short code -> ERP full warehouse name (what the picker stores)
+const SALESLOC = { KL: "KL WAREHOUSE", PG: "PG WAREHOUSE", SRW: "SRW WAREHOUSE", SBH: "SBH WAREHOUSE", HQ: "HQ", JB: "KL WAREHOUSE", KUANTAN: "KL WAREHOUSE" };
+const salesLoc = (c) => c ? (SALESLOC[c.trim().toUpperCase()] || c.trim()) : null;
 const isSofa = (c) => /SOFA/i.test(c || "");
 const uomOf = (g) => (g === "bedframe" ? "SET" : "UNIT");
 const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
@@ -230,14 +233,22 @@ async function main() {
         const fcHit = pending ? null : findColour(bf.color);
         if (bf.color && !pending && !fcHit) exceptions.push({ ac: acDoc, code: l.ItemCode, desc: `colour "${bf.color}" not in fabric_colours`, price: 0 });
         else if (fcHit) { const allow = allowedColour.get((erp || "").toUpperCase()); if (allow && !allow.has(norm(fcHit.colour_id))) exceptions.push({ ac: acDoc, code: l.ItemCode, desc: `colour ${fcHit.colour_id} not a configured option for ${erp}`, price: 0 }); }
+        const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
+        // key names MUST match a real UI-created line exactly (the Fabrics picker
+        // reads fabricCode; totalHeight is shown as "Total height (auto)")
         variants = {
           fabricId: fcHit ? fcHit.fabric_id : null, colourId: fcHit ? fcHit.colour_id : null,
-          colourLabel: fcHit ? fcHit.label : null, fabricLabel: fcHit ? fcHit.fabric_id : null,
+          fabricCode: fcHit ? fcHit.colour_id : null, colourLabel: fcHit ? fcHit.label : null,
+          fabricLabel: fcHit ? fcHit.fabric_id : null,
           gap: bf.gap != null ? bf.gap + '"' : null, divanHeight: bf.divan != null ? bf.divan + '"' : null,
-          legHeight: bf.leg != null ? bf.leg + '"' : null, specials: bf.specials || [],
+          legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null,
+          specials: bf.specials || [],
         };
       }
-      items.push({ erp, grp, desc: l.Description, d2: l.Desc2, qty, up, lineTotal, loc: l.Location, bf, variants, resolvedFree });
+      // description MUST be the ERP product name (what a picker-selected item stores),
+      // not the AutoCount Description — else list shows item_code but Edit shows the AC text.
+      const prodRow = prodId.get((erp || "").toUpperCase());
+      items.push({ erp, grp, desc: (prodRow && prodRow.name) || l.Description, d2: l.Desc2, qty, up, lineTotal, loc: l.Location, bf, variants, resolvedFree });
     }
     const bal = centi(h.UDF_BALANCE); const paid = Math.max(0, total - bal);
     const pay = parsePayment(h.UDF_PAYEMENT);
@@ -320,7 +331,7 @@ async function main() {
   const todo = built.filter((o) => !existing.has(o.docNo));
   log(`already imported: ${existing.size}; to insert: ${todo.length}`);
 
-  const HCOLS = "(doc_no,linked_ac_docno,so_date,debtor_name,debtor_code,agent,salesperson_id,sales_location,ref,venue,venue_id,branding,address1,address2,address3,address4,postcode,city,customer_state,phone,emergency_contact_phone,status,company_id,currency,local_total_centi,balance_centi,paid_centi,deposit_centi,line_count,mattress_sofa_centi,bedframe_centi,accessories_centi,service_centi,others_centi,payment_method,approval_code,payment_date,proceeded_at)";
+  const HCOLS = "(doc_no,linked_ac_docno,so_date,debtor_name,debtor_code,agent,salesperson_id,sales_location,ref,customer_so_no,venue,venue_id,branding,address1,address2,address3,address4,postcode,city,customer_state,phone,emergency_contact_phone,status,company_id,currency,local_total_centi,balance_centi,paid_centi,deposit_centi,line_count,mattress_sofa_centi,bedframe_centi,accessories_centi,service_centi,others_centi,payment_method,approval_code,payment_date,proceeded_at)";
   const ICOLS = "(doc_no,line_no,item_group,item_code,description,description2,uom,location,qty,unit_price_centi,total_centi,balance_centi,company_id,gap_inches,divan_height_inches,leg_height_inches,variants,custom_specials,remark)";
   const PCOLS = "(so_doc_no,paid_at,method,approval_code,account_sheet,amount_centi,is_deposit,company_id,note)";
 
@@ -333,7 +344,7 @@ async function main() {
       const h = o.h;
       hv.push("(" + [
         V(o.docNo), V(o.acDoc), h.DocDate ? V(h.DocDate) : V(CUR), V(h.DebtorName || "CUSTOMER"), V(h.DebtorCode || null), V(h.SalesAgent || null), V(o.salespersonId || null),
-        V(h.SalesLocation || null), V(h.Ref || null), V(h.UDF_VENUE || null), V(o.venue ? o.venue.id : null), V(h.UDF_BRANDING || null),
+        V(salesLoc(h.SalesLocation)), V(h.Ref || null), V(h.Ref || null), V(h.UDF_VENUE || null), V(o.venue ? o.venue.id : null), V(h.UDF_BRANDING || null),
         V(h.InvAddr1 || null), V(h.InvAddr2 || null), V(h.InvAddr3 || null), V(h.InvAddr4 || null), V(o.postcode || null), V(o.city || null), V(o.cState || null),
         V(h.Phone1 || null), V(o.emergency || null),
         V("CONFIRMED"), "1", V("MYR"), V(o.total), V(o.bal), V(o.paid), V(o.paid), V(o.items.length),
