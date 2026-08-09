@@ -44,6 +44,9 @@ const SALESLOC = {
   KL: "KL WAREHOUSE", PG: "PG WAREHOUSE", SRW: "SRW WAREHOUSE", SBH: "SBH WAREHOUSE",
   HQ: "HQ", "KL DISP": "KL DISPLAY", "PG DISP": "PG DISPLAY", "SBH DISP": "SBH DISPLAY",
   "EM DISP": "EM DISPLAY", "C&C DISP": "C&C DISPLAY",
+  // dry-run 2 revealed the ERP codes for the last four AC locations verbatim
+  "SERV KL": "KL SERVICE", "SERV PG": "PG SERVICE",
+  SUNWAY: "SUNWAY SHOWROOM", "KELANA.J": "KELANA.J SHOWROOM",
 };
 
 async function main() {
@@ -78,10 +81,10 @@ async function main() {
   for (const l of locs) { const w = resolveWh(l); locMap.set(l, w); log(`  location ${l} -> ${w ? `${w.code} (${w.name})` : "UNRESOLVED"}`); }
 
   // ERP product cost fallback + product names
-  const prodCols = await sql`SELECT column_name FROM information_schema.columns WHERE table_schema='scm' AND table_name='products'`;
+  const prodCols = await sql`SELECT column_name FROM information_schema.columns WHERE table_schema='scm' AND table_name='mfg_products'`;
   const pcn = prodCols.map((r) => r.column_name);
   const costCol = ["cost_centi", "unit_cost_centi", "cost_sen", "base_cost_centi"].find((c) => pcn.includes(c));
-  const prods = await sql.unsafe(`SELECT code, name${costCol ? `, ${costCol} AS cost_centi` : ""} FROM scm.products WHERE company_id = 1`);
+  const prods = await sql.unsafe(`SELECT code, name${costCol ? `, ${costCol} AS cost_centi` : ""} FROM scm.mfg_products WHERE company_id = 1`);
   const prodBy = new Map(prods.map((p) => [norm(p.code), p]));
 
   // ERP current on-hand per product+warehouse (all variant keys summed)
