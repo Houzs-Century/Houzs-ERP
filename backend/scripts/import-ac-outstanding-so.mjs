@@ -83,7 +83,9 @@ function parseBedframe(d2) {
      strip [..]/(..) wrappers, "diavan"->divan, "mattressgap"/"mgap"->m.gap. */
   let s = (d2 || "").replace(/\s+/g, " ").trim();
   s = s.replace(/^[[(]\s*/, "").replace(/\s*[\])]\s*$/, "");
-  s = s.replace(/DIAVAN/gi, "DIVAN").replace(/MATTRESS\s*GAP/gi, "M.GAP").replace(/\bM\s?GAP/gi, "M.GAP");
+  s = s.replace(/DIAVAN/gi, "DIVAN").replace(/MATTRESS\s*GAP/gi, "M.GAP").replace(/\bM\s?GAP/gi, "M.GAP")
+       .replace(/HYDROLIC|HYDRAULLIC|HYDRAILIC/gi, "HYDRAULIC")
+       .replace(/NOLEG/gi, "NO LEG");
   const o = { raw: (d2 || "").replace(/\s+/g, " ").trim(), specials: [] };
   let m;
   /* gap / divan / leg. AutoCount uses ", ”, '', ’’, "inch", "in" interchangeably
@@ -130,8 +132,13 @@ function parseBedframe(d2) {
   if (o.color && /^(TBC|KIV)$/i.test(o.color)) o.color = null;   // "COL: KIV" = not chosen
   // colour written as a plain word ("Cream/Divan10/Gap13", "sliver/...")
   if (!o.color && (m = /(?:^|\/)\s*(CREAM|SILVER|SLIVER|WHITE|BLACK|GREY|GRAY|BEIGE|BROWN|BLUE|GREEN|PINK|IVORY|CHARCOAL)\b/i.exec(s))) o.color = m[1].trim();
-  // "8 inch : 2 inch leg" / "8 inch 1 inch leg" — divan then leg without +
-  if (o.divan == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)\\s*[:,]?\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)?\\s*LEGS?`, "i").exec(s))) { o.divan = parseFloat(m[1]); if (o.leg === undefined) o.leg = parseFloat(m[2]); }
+  // "8 inch : 2 inch leg" / "8 inch 1 inch leg" / "8'INCH 4'INCH LEG" — divan then leg without +
+  if ((m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)\\s*[:,]?\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)?\\s*LEGS?`, "i").exec(s))) {
+    if (o.divan == null) o.divan = parseFloat(m[1]);
+    if (o.leg === undefined) o.leg = parseFloat(m[2]);
+  }
+  // "Divan8+4" / "divan:10inch+no leg" — the +N right after the divan figure is the leg
+  if (o.leg === undefined && o.divan != null && (m = new RegExp(`DIV(?:AN)?\\D{0,3}${o.divan}\\s*(?:${QUOTE}|INCH(?:ES)?|IN)?\\s*\\+\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.leg = parseFloat(m[1]);
   // specials -> variants.specials (the "Special Orders" picker). Capture all HB
   // phrasings ("HB straight", "HB without panel", "HB & divan fully cover", "HB
   // straight to wall"), fully-cover(ed), and push-back.
@@ -235,13 +242,14 @@ async function main() {
   const fcx = new Map(); for (const r of fcRows) for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !fcx.has(k)) fcx.set(k, r);
   const findColour = (c) => {
     if (!c) return null;
-    const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1"); // SFAT4 -> SFAT04 (single trailing digit)
-    // try the full string, the first token, and a regex-extracted code — so a
-    // colour with junk jammed after it ("PC151-17 8 icnh 2 inch leg") still matches PC151-17
+    const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
+    /* SERIESNUM: split "PC151-2"/"PC151101" into series + number so a 1-digit or
+       over-long tail still finds PC151-02 / PC151-01 (owner data has both). */
+    const seriesNum = (x) => { const mm = /^([A-Z]{2,4})(\d{2,4})(\d{1,3})$/.exec(strip(x)); return mm ? [mm[1] + mm[2] + mm[3].padStart(2, "0"), mm[1] + mm[2] + mm[3].slice(-2)] : []; };
     const toks = [c, (c.trim().split(/\s+/)[0] || "")];
     const m = /[A-Z]{1,4}\s?\d{2,4}\s?-?\s?\d*/i.exec(c); if (m) toks.push(m[0]);
     const cands = [];
-    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t))); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
+    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t)), ...seriesNum(t)); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
     for (const t of cands) { const h = fcx.get(t); if (h) return h; }
     return null;
   };

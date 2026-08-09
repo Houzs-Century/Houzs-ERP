@@ -63,10 +63,13 @@ async function main() {
   const findColour = (c) => {
     if (!c) return null;
     const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
+    /* SERIESNUM: split "PC151-2"/"PC151101" into series + number so a 1-digit or
+       over-long tail still finds PC151-02 / PC151-01 (owner data has both). */
+    const seriesNum = (x) => { const mm = /^([A-Z]{2,4})(\d{2,4})(\d{1,3})$/.exec(strip(x)); return mm ? [mm[1] + mm[2] + mm[3].padStart(2, "0"), mm[1] + mm[2] + mm[3].slice(-2)] : []; };
     const toks = [c, (c.trim().split(/\s+/)[0] || "")];
     const m = /[A-Z]{1,4}\s?\d{2,4}\s?-?\s?\d*/i.exec(c); if (m) toks.push(m[0]);
     const cands = [];
-    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t))); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
+    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t)), ...seriesNum(t)); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
     for (const t of cands) { const h = fcx.get(t); if (h) return h; }
     return null;
   };
