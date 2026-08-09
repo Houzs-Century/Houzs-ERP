@@ -21,6 +21,8 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const isSofa = (c) => /SOFA/i.test(c || "");
 const isDivanOnly = (c) => /\bDIVAN\s*ONLY\b/i.test(c || "");
+// adjustable / pull-out / double-decker: no divan base at all (owner 2026-08-10)
+const isDivanless = (c) => /ADJUSTABLE|\(S?S\+S\)|DOUBLE\s*D[AE]C?KER|\bDDB/i.test(c || "");
 const snip = (s, n = 70) => (s || "").replace(/\s+/g, " ").slice(0, n);
 
 async function main() {
@@ -65,7 +67,7 @@ async function main() {
   const pb = await sql`SELECT i.id, i.item_code, i.description2, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, h.doc_no
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND h.proceeded_at IS NOT NULL AND i.item_group = 'bedframe'`;
-  const pbBad = pb.filter((r) => !(r.variants?.colourId) || r.divan_height_inches == null || r.leg_height_inches == null || (r.gap_inches == null && !isDivanOnly(r.item_code)));
+  const pbBad = pb.filter((r) => !(r.variants?.colourId) || (!isDivanless(r.item_code) && (r.divan_height_inches == null || r.leg_height_inches == null || (r.gap_inches == null && !isDivanOnly(r.item_code)))));
   log(`processed bedframe lines: ${pb.length}; complete: ${pb.length - pbBad.length}; INCOMPLETE: ${pbBad.length}`);
   for (const r of pbBad.slice(0, 40)) {
     const why = [!(r.variants?.colourId) && "colour", r.divan_height_inches == null && "divan", r.leg_height_inches == null && "leg", r.gap_inches == null && !isDivanOnly(r.item_code) && "gap"].filter(Boolean).join("+");
@@ -73,10 +75,10 @@ async function main() {
   }
 
   // ---- 4. PO bedframe completeness ----
-  const pob = await sql`SELECT i.id, i.material_code AS item_code, i.description2, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, h.doc_no
+  const pob = await sql`SELECT i.id, i.material_code AS item_code, i.description2, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, h.po_number AS doc_no
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND i.item_group = 'bedframe'`;
-  const pobBad = pob.filter((r) => !(r.variants?.colourId) || r.divan_height_inches == null || r.leg_height_inches == null || (r.gap_inches == null && !isDivanOnly(r.item_code)));
+  const pobBad = pob.filter((r) => !(r.variants?.colourId) || (!isDivanless(r.item_code) && (r.divan_height_inches == null || r.leg_height_inches == null || (r.gap_inches == null && !isDivanOnly(r.item_code)))));
   log(`PO bedframe lines: ${pob.length}; complete: ${pob.length - pobBad.length}; INCOMPLETE: ${pobBad.length}`);
   for (const r of pobBad.slice(0, 20)) log(`   PO-BF ${r.doc_no} ${r.item_code} :: "${snip(r.description2)}"`);
 
@@ -105,6 +107,14 @@ async function main() {
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL`;
   log(`coverage of ${cov.total} imported orders: processed=${cov.processed} deliveryDate=${cov.deliv} emergency=${cov.emergency} buildingType=${cov.building}; lines with delivery date: ${lcov.with_date}/${lcov.total}`);
+
+  // ---- 7. processing-date allocation gate impact (ALL companies) ----
+  // Owner 2026-08-10: "有 processing date 才来分配,没有 processing date 不分配 —
+  // 2990 跟整套系统都是这样子的". The company-1 gate shipped; this measures what
+  // flipping it GLOBAL would regress per company before touching 2990's pipeline.
+  const gateRows = await sql`SELECT company_id, COUNT(*) n FROM scm.mfg_sales_orders
+    WHERE status = 'READY_TO_SHIP' AND proceeded_at IS NULL GROUP BY company_id ORDER BY company_id`;
+  log(`READY_TO_SHIP without processing date (would regress under a global gate): ${gateRows.length ? gateRows.map((r) => `company ${r.company_id}: ${r.n}`).join("; ") : "none"}`);
 
   await sql.end();
 }

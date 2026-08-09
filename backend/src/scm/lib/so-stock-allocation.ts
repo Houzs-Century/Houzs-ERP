@@ -106,9 +106,9 @@ export async function recomputeSoStockAllocation(
             b) created_at ASC  — tiebreaker so order is deterministic */
     // Page through — PostgREST's default 1000-row cap would truncate the active
     // SO set, silently DROPPING orders from allocation (their lines never flip).
-    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; company_id: number | null }>((from, to) => sb
+    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; company_id: number | null; proceeded_at: string | null }>((from, to) => sb
       .from('mfg_sales_orders')
-      .select('doc_no, status, created_at, customer_delivery_date, company_id')
+      .select('doc_no, status, created_at, customer_delivery_date, company_id, proceeded_at')
       .not('status', 'in', '(CANCELLED,CLOSED,SHIPPED,DELIVERED,INVOICED,DRAFT)')
       .order('customer_delivery_date',  { ascending: true, nullsFirst: false })
       .order('created_at',              { ascending: true })
@@ -117,9 +117,21 @@ export async function recomputeSoStockAllocation(
     const orders = (orderRows ?? []) as Array<{
       doc_no: string; status: string; created_at: string;
       customer_delivery_date: string | null; company_id: number | null;
+      proceeded_at: string | null;
     }>;
     if (orders.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
     const orderByDoc = new Map(orders.map((o) => [o.doc_no, o]));
+    /* Houzs gate (owner 2026-08-10, go-live): company 1 runs the AutoCount-style
+       BOUND flow — nothing is prepared before the order is proceeded, so an SO
+       with NO Processing Date must not claim stock nor show READY TO SHIP
+       ("它明明都没有 Processing Date, 干嘛分配呢"). Gated lines still walk (so
+       an already-READY line regresses to PENDING and the header falls back to
+       CONFIRMED on this same run) but are forced PENDING and never consume a
+       bucket or a sofa batch. 2990 (and any other company) keeps the B2C
+       stock-on-hand model unchanged. */
+    const allocGated = new Set(
+      orders.filter((o) => o.company_id === 1 && !o.proceeded_at).map((o) => o.doc_no),
+    );
 
     // 2. Non-cancelled lines on those SOs. Pull qty + variant fields so we
     //    can compute variant_key and the bucket.
@@ -381,6 +393,10 @@ export async function recomputeSoStockAllocation(
     const targetById = new Map<string, TargetState>();
     const remaining = new Map(onHandByBucket);
     for (const n of needs) {
+      if (allocGated.has(n.doc_no)) {
+        targetById.set(n.id, { status: 'PENDING', qtyReady: 0 });
+        continue;
+      }
       const avail = remaining.get(n.bucket) ?? 0;
       if (avail >= n.need) {
         targetById.set(n.id, { status: 'READY', qtyReady: n.need });
@@ -428,6 +444,13 @@ export async function recomputeSoStockAllocation(
         return a.doc_no.localeCompare(b.doc_no);
       });
       for (const group of orderedSets) {
+        if (allocGated.has(group[0]!.doc_no)) {
+          for (const s of group) {
+            batchTargetByLine.set(s.id, null);
+            targetById.set(s.id, { status: 'PENDING', qtyReady: 0 });
+          }
+          continue;
+        }
         const whId = group[0]!.whId;
         const lines = group.map((s) => ({ itemCode: s.item_code, variantKey: s.variant_key, need: s.need }));
         const batch = findCoveringBatch(whId, lines, sofaStock);

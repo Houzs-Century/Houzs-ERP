@@ -364,6 +364,9 @@ type SoItem = {
   line_margin_centi: number;
   variants: Record<string, unknown> | null;
   remark: string | null;
+  /* PR-F photos live on the row as R2 keys; the API detail SELECT returns
+     them (mfg-sales-orders.ts items select), the card renders draft.photoUrls. */
+  photo_urls: string[] | null;
   cancelled: boolean;
   /* PR-E — Per-item delivery date with cascade override flag.
      line_delivery_date null + overridden=false → display falls back to
@@ -414,6 +417,11 @@ const draftFromItem = (it: SoItem): SoLineDraft => ({
   // only this editor seam wasn't.
   variants:       canonicalizeVariants(it.item_group, it.variants as Record<string, unknown> | null),
   remark:         it.remark ?? '',
+  /* Owner 2026-08-10 (AutoCount photo import): saved photos never rendered on
+     the desktop edit card because the draft seed dropped photo_urls — the card
+     defaulted photoUrls to [] and only session uploads showed. Mobile already
+     mapped it (MobileNewSO photoKeys); this closes the desktop seam. */
+  photoUrls:      it.photo_urls ?? [],
   lineDeliveryDate:           it.line_delivery_date ?? null,
   lineDeliveryDateOverridden: it.line_delivery_date_overridden ?? false,
 });
@@ -2749,6 +2757,25 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   });
 
   const [form, setForm] = useState(() => initialFormFor(header));
+  /* Imported-order venue seeding (owner 2026-08-10 "点 edit 的时候它不会不见掉"):
+     AutoCount-migrated rows carry the venue as TEXT but nothing the picker's
+     option values recognise in venue_id, so the picker rendered "—" even though
+     the view header shows the venue — operators read that as the value having
+     vanished. When the venue master loads and the seeded venueId matches no
+     option, adopt the option whose name equals the stored text
+     (case-insensitive). The adoption marks the field dirty, so the operator's
+     next Save persists the master link — self-healing, no data migration. */
+  useEffect(() => {
+    const opts = venuesQ.data ?? [];
+    if (!opts.length) return;
+    setForm((s) => {
+      if (s.venueId && opts.some((v) => v.id === s.venueId)) return s;
+      const name = (s.venue ?? '').trim().toUpperCase();
+      if (!name) return s;
+      const hit = opts.find((v) => (v.name ?? '').trim().toUpperCase() === name);
+      return hit && s.venueId !== hit.id ? { ...s, venueId: hit.id } : s;
+    });
+  }, [venuesQ.data, form.venueId, form.venue]);
   const buildPayload = () => payloadFor(form);
   /* The header payload AS SEEDED (pristine) — trySave diffs the outgoing
      payload against this so an untouched field is never sent (the header mirror

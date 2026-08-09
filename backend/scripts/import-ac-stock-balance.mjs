@@ -1,0 +1,131 @@
+#!/usr/bin/env node
+// Bring the AutoCount physical stock into the ERP for company 1 (Houzs Century),
+// non-sofa first (sofa held for the sofa round).
+//
+// Model: the ERP's inventory is movements-based (inventory_balances is a view,
+// FIFO lots created by the movement trigger), so this writes RECONCILING
+// ADJUSTMENT movements per product+warehouse: delta = AC balance − ERP on-hand.
+//   qty source  = vItemBalQty snapshot (data/ac-stock-balance.json.gz)
+//   cost source = UTDStockCost.AverageCost → ItemUOM cost → ERP product cost → 0
+//                 (zero-cost rows are REPORTED — they feed costless-stock-check)
+// Positive deltas insert stock (trigger creates lots at the given cost).
+// Negative deltas are REPORT-ONLY unless NEG=1 (they consume FIFO lots).
+// DRY-RUN by default; APPLY=1 writes.
+import fs from "node:fs";
+import zlib from "node:zlib";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+
+const DST = process.env.DATABASE_URL;
+if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
+const APPLY = process.env.APPLY === "1";
+const NEG = process.env.NEG === "1";
+const here = path.dirname(fileURLToPath(import.meta.url));
+const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
+const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
+const isSofa = (c) => /SOFA/i.test(c || "");
+const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
+
+function parseCsvLine(line) {
+  const out = []; let cur = ""; let q = false;
+  for (let i = 0; i < line.length; i++) { const c = line[i];
+    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else { if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; } }
+  out.push(cur); return out;
+}
+
+// AC location code -> how the ERP warehouse is usually named. Resolution below
+// is fuzzy (ILIKE on these fragments) and prints every unresolved code.
+const LOC_HINTS = {
+  "KL": ["KL"], "PG": ["PENANG", "PG"], "SBH": ["SABAH", "SBH", "KK"],
+  "SRW": ["SARAWAK", "SRW", "KUCHING"], "HQ": ["HQ", "KL"],
+  "KL DISP": ["KL DISPLAY", "DISPLAY"], "PG DISP": ["PENANG DISPLAY", "PG DISPLAY"],
+  "SBH DISP": ["SABAH DISPLAY", "SBH DISPLAY"],
+};
+
+async function main() {
+  log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}${NEG ? " (+negative adjustments)" : ""}`);
+  const bal = gz("ac-stock-balance.json.gz").filter((r) => r.BalQty !== 0 && !isSofa(r.ItemCode));
+  const utd = gz("ac-utd-stock-cost.json.gz");
+  const iuc = gz("ac-item-costs.json.gz");
+  const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
+  csv.shift();
+  const byAc = new Map();
+  for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
+
+  // cost maps (RM -> sen)
+  const utdCost = new Map(); // item -> avg cost
+  for (const r of utd) if (r.UTDQty > 0 && (r.AverageCost || r.UTDCost)) {
+    const c = r.AverageCost ?? (r.UTDCost / r.UTDQty);
+    if (c > 0 && !utdCost.has(norm(r.ItemCode))) utdCost.set(norm(r.ItemCode), c);
+  }
+  const iucCost = new Map();
+  for (const r of iuc) { const c = r.RealCost || r.Cost || r.RecentCost; if (c > 0 && !iucCost.has(norm(r.ItemCode))) iucCost.set(norm(r.ItemCode), c); }
+
+  // warehouse resolution
+  const whs = await sql`SELECT id, name FROM scm.warehouses WHERE company_id = 1`;
+  const resolveWh = (loc) => {
+    const hints = LOC_HINTS[norm(loc)] ?? [norm(loc)];
+    for (const h of hints) { const hit = whs.find((w) => norm(w.name).includes(h)); if (hit) return hit; }
+    return null;
+  };
+  const locs = [...new Set(bal.map((r) => norm(r.Location)))];
+  const locMap = new Map();
+  for (const l of locs) { const w = resolveWh(l); locMap.set(l, w); log(`  location ${l} -> ${w ? w.name : "UNRESOLVED"}`); }
+
+  // ERP product cost fallback + product names
+  const prodCols = await sql`SELECT column_name FROM information_schema.columns WHERE table_schema='scm' AND table_name='products'`;
+  const pcn = prodCols.map((r) => r.column_name);
+  const costCol = ["cost_centi", "unit_cost_centi", "cost_sen", "base_cost_centi"].find((c) => pcn.includes(c));
+  const prods = await sql.unsafe(`SELECT code, name${costCol ? `, ${costCol} AS cost_centi` : ""} FROM scm.products WHERE company_id = 1`);
+  const prodBy = new Map(prods.map((p) => [norm(p.code), p]));
+
+  // ERP current on-hand per product+warehouse (all variant keys summed)
+  const onhand = await sql`SELECT product_code, warehouse_id, SUM(qty)::int AS qty
+    FROM scm.inventory_balances WHERE company_id = 1 GROUP BY product_code, warehouse_id`;
+  const ohBy = new Map(onhand.map((r) => [`${norm(r.product_code)}|${r.warehouse_id}`, Number(r.qty)]));
+
+  // movements table company_id presence (multicompany migration)
+  const mvCols = (await sql`SELECT column_name FROM information_schema.columns WHERE table_schema='scm' AND table_name='inventory_movements'`).map((r) => r.column_name);
+  const hasCo = mvCols.includes("company_id");
+
+  let unmapped = 0, unWh = 0, zeroCost = 0;
+  const plan = []; const negs = [];
+  for (const r of bal) {
+    const erp = byAc.get(norm(r.ItemCode));
+    if (!erp) { unmapped++; log(`  unmapped AC item: ${r.ItemCode} (${r.Location} ${r.BalQty})`); continue; }
+    const wh = locMap.get(norm(r.Location));
+    if (!wh) { unWh++; continue; }
+    const p = prodBy.get(norm(erp));
+    const cur = ohBy.get(`${norm(erp)}|${wh.id}`) ?? 0;
+    const delta = Math.round(r.BalQty) - cur;
+    if (delta === 0) continue;
+    const costRm = utdCost.get(norm(r.ItemCode)) ?? iucCost.get(norm(r.ItemCode)) ?? (p?.cost_centi ? p.cost_centi / 100 : 0);
+    const costSen = Math.round(costRm * 100);
+    if (delta > 0 && costSen === 0) zeroCost++;
+    (delta > 0 ? plan : negs).push({ code: erp, name: p?.name ?? erp, wh, delta, costSen, ac: r.ItemCode, loc: r.Location, acQty: Math.round(r.BalQty), cur });
+  }
+  const units = plan.reduce((s, x) => s + x.delta, 0);
+  log(`positive adjustments: ${plan.length} cells / +${units} units (zero-cost: ${zeroCost}); negative deltas: ${negs.length}${NEG ? " (WILL APPLY)" : " (report-only)"}; unmapped items: ${unmapped}; unresolved-warehouse rows: ${unWh}`);
+  for (const x of plan.slice(0, 25)) log(`   +${x.delta} ${x.code} @ ${x.wh.name} (AC ${x.acQty} vs ERP ${x.cur}) cost ${x.costSen / 100} RM`);
+  for (const x of negs.slice(0, 15)) log(`   NEG ${x.delta} ${x.code} @ ${x.wh.name} (AC ${x.acQty} vs ERP ${x.cur})`);
+
+  if (!APPLY) { log("DRY-RUN — set APPLY=1 to write."); await sql.end(); return; }
+  const todo = NEG ? [...plan, ...negs] : plan;
+  let done = 0;
+  for (const x of todo) {
+    const cols = ["movement_type", "warehouse_id", "product_code", "product_name", "variant_key", "qty", "unit_cost_sen", "source_doc_type", "source_doc_no", "notes"];
+    const vals = ["'ADJUSTMENT'", `'${x.wh.id}'`, "$1", "$2", "''", `${x.delta}`, `${x.costSen}`, "'AC_CUTOVER'", "'AC-BAL-2026-08-09'", "$3"];
+    if (hasCo) { cols.push("company_id"); vals.push("1"); }
+    await sql.unsafe(
+      `INSERT INTO scm.inventory_movements (${cols.join(",")}) VALUES (${vals.join(",")})`,
+      [x.code, x.name, `AutoCount ${x.ac} @ ${x.loc}: AC ${x.acQty} vs ERP ${x.cur}`]);
+    done++;
+    if (done % 100 === 0) log(`  ..${done}/${todo.length}`);
+  }
+  log(`DONE. adjustment movements written: ${done}`);
+  await sql.end();
+}
+main().catch((e) => { console.error(e); process.exit(1); });
