@@ -237,10 +237,13 @@ export const StatePicker = ({
           }
           disabled={controlsDisabled}
           className={selectClassName ?? styles.select}
-          onFocus={() => {
+          /* House rule (owner 2026-08-09) — opening keeps the current value
+             in view: seed the query with it, select-all so typing replaces. */
+          onFocus={(e) => {
             setOpen(true);
-            setQuery('');
+            setQuery(value ?? '');
             setActive(0);
+            e.currentTarget.select();
           }}
           onChange={(e) => {
             setQuery(e.target.value);
