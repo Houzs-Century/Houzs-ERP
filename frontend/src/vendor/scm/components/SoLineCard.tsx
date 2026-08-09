@@ -1362,7 +1362,10 @@ const FabricColourCombobox = ({
           value={open ? search : value}
           placeholder={value ? undefined : 'Type 2+ chars to search…'}
           disabled={disabled}
-          onFocus={() => { setOpen(true); setSearch(''); }}
+          /* Owner 2026-08-09 — like the native Divan/Gap selects, opening must
+             KEEP the current value in view: seed the search with it and
+             select-all so typing replaces. Blur already restores `value`. */
+          onFocus={(e) => { setOpen(true); setSearch(value ?? ''); e.currentTarget.select(); }}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
           style={invalid && !disabled ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
