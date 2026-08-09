@@ -201,7 +201,9 @@ function parseSofa(d2raw, model) {
   if (!d2raw || !String(d2raw).trim()) { o.conf = "low"; o.why.push("empty Desc2"); return o; }
   let d2 = String(d2raw).replace(/[\[\]{}]/g, " ").replace(/[”“″’‘′]/g, '"').replace(/\r/g, "").trim();
   // protect composite tokens from the slash-splitter
-  d2 = d2.replace(/C\/T/gi, "CT").replace(/(\d?NA)\/(L|R)T/gi, "$1$2T").replace(/CONSOLE/gi, "CT");
+  d2 = d2.replace(/NO\s*CONSOLE/gi, " NOCONS ")
+    .replace(/C\/?T\s*TABLE\.?/gi, "CT").replace(/CONSOLE\s*TABLE\.?/gi, "CT")
+    .replace(/C\/T/gi, "CT").replace(/(\d?NA)\/(L|R)T/gi, "$1$2T").replace(/CONSOLE/gi, "CT");
   // colours: per-piece "colour (2s): X" first, then general COL:/COLOUR:
   d2 = d2.replace(/col(?:our|or)?\s*\(([^)]+)\)\s*[:：]\s*([^\/\n]+)/gi, (_, pc, val) => {
     o.perPieceColor[pc.trim().toUpperCase()] = val.trim(); return " ";
@@ -209,13 +211,14 @@ function parseSofa(d2raw, model) {
   d2 = d2.replace(/col(?:our|or)?\s*[:：]\s*([^\/\n]+)/gi, (_, val) => {
     if (!o.color) o.color = val.trim(); return " ";
   });
-  // seat size: inches or cm anywhere (also "(28'Inch)" / "28''" / "Size:28")
-  const sm = /(\d{2,3})\s*(cm)\b/i.exec(d2) || /(\d{2})\s*(?:"|''|\s*inch(?:es)?\b)/i.exec(d2) || /size\s*[:：]\s*(\d{2})/i.exec(d2);
+  // seat size: inches or cm anywhere (also "(28'Inch)" / "28''" / "28'" / "Size:28")
+  const sm = /(\d{2,3})\s*(cm)\b/i.exec(d2) || /(\d{2})\s*(?:['"]{1,2}\s*inch(?:es)?\b|"|''|'(?!\w)|\s*inch(?:es)?\b)/i.exec(d2) || /size\s*[:：]\s*(\d{2})/i.exec(d2);
   if (sm) {
     const n = Number(sm[1]);
     o.size = sm[2] ? String(CM_TO_INCH[n] ?? n) : String(n);
     d2 = d2.replace(sm[0], " ").replace(/['"]*\s*inch(?:es)?\b/gi, " ");
   }
+  d2 = d2.replace(/size\s*[:：]/gi, " "); // bare label left behind ("Size:3S(28\")")
   // specials that ride along
   if (/nylon|nilon/i.test(d2)) o.specials.push("nylon");
   if (/wooden\s*arm/i.test(d2)) o.specials.push("wooden arm");
@@ -229,7 +232,8 @@ function parseSofa(d2raw, model) {
     : [`${n === "1" ? "1A" : "2A"}(${side === "L" ? "LHF" : "RHF"})`]);
   let matched = false;
   for (const seg of segs) {
-    let s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "");
+    // strip quote residue BEFORE the n+L join — '(L+2)24"' must join as L2
+    let s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "").replace(/["']/g, "");
     // owner layout rule: bare "n+L" == "nL" (seats left, chaise RIGHT);
     // "L+n" == "Ln" (chaise LEFT). Explicit nS+L stays literal.
     s = s.replace(/(^|\+)([123])\+L(?=$|\+)/, "$1$2L").replace(/(^|\+)L\+([123])(?=$|\+)/, "$1L$2");
@@ -237,18 +241,31 @@ function parseSofa(d2raw, model) {
     const tokens = s.split("+").filter(Boolean);
     const out = [];
     let ok = tokens.length > 0;
-    for (const t0 of tokens) {
-      const t = t0.replace(/\([^)]*\)/g, "").replace(/["']/g, "");
+    // beside a corner/chaise/console, a bare-digit piece carries its arm on
+    // the OUTER side only (owner: token order = 摆位; same logic as 2L/L2)
+    const bare = (x) => x.replace(/\([^)]*\)/g, "").replace(/["']/g, "");
+    const conn = tokens.some((x) => /^(C|CNR|CORNER|CT|L|[123]L|L[123])$/.test(bare(x)));
+    for (let ti = 0; ti < tokens.length; ti++) {
+      const t0 = tokens[ti];
+      // "IEL+C+INA+IER" — letter I typo'd for digit 1 in piece tokens
+      const t = bare(t0).replace(/^I(?=(?:E?[LR]|NA|S)$)/, "1");
       let m;
       if ((m = /^([123])L$/.exec(t))) { seatSide(m[1], "L").forEach((x) => out.push(x)); out.push("L(RHF)"); }
       else if ((m = /^L([123])$/.exec(t))) { out.push("L(LHF)"); seatSide(m[1], "R").forEach((x) => out.push(x)); }
+      else if ((m = /^([123])$/.exec(t)) && conn) {
+        if (ti === 0) { seatSide(m[1], "L").forEach((x) => out.push(x)); o._layoutArms = true; }
+        else if (ti === tokens.length - 1) { seatSide(m[1], "R").forEach((x) => out.push(x)); o._layoutArms = true; }
+        else { ok = false; o.why.push(`bare "${t0}" mid-row beside corner/chaise`); }
+      }
       else if ((m = /^([123])$/.exec(t))) out.push(`${m[1]}S`);
       else if ((m = /^([123])S(?:EATER)?$/.exec(t))) out.push(`${m[1]}S`);
       else if (/^(RANDOM(COLOUR)?|COLOU?RTBC|TBC|KIV|WRAP|PERSEAT|X?\d*PILLOWS?|FOC\w*|FREE\w*)$/.test(t)) { o.why.push(`note "${t0}"`); continue; }
       else if ((m = /^2\.5S?$/.exec(t))) { ok = false; o.why.push("2.5 seater (not sold)"); }
       else if ((m = /^([12])NA$/.exec(t))) out.push(`${m[1]}NA`);
-      else if ((m = /^([123])R$/.exec(t)) && model === "R819") {
-        ({ "1": ["1S(R)"], "2": ["1A(R)(LHF)", "1A(R)(RHF)"], "3": ["1A(R)(LHF)", "1NA", "1A(R)(RHF)"] })[m[1]].forEach((x) => out.push(x));
+      else if ((m = /^([123])(RR?|PP?)$/.exec(t)) && model === "R819") {
+        // owner: 3RR = 1AR+1NA+1AR (per-unit mechanisms); PP = power twins
+        const M = m[2][0];
+        ({ "1": [`1S(${M})`], "2": [`1A(${M})(LHF)`, `1A(${M})(RHF)`], "3": [`1A(${M})(LHF)`, "1NA", `1A(${M})(RHF)`] })[m[1]].forEach((x) => out.push(x));
       }
       else if ((m = /^([12])E?([LR])$/.exec(t))) out.push(`${m[1]}A(${m[2] === "L" ? "LHF" : "RHF"})`);
       else if ((m = /^([12])NA([LR])T$/.exec(t))) out.push(`${m[1]}NA`);
@@ -258,6 +275,12 @@ function parseSofa(d2raw, model) {
       else if (t === "STOOL" || /^STOOL/.test(t)) out.push("STOOL");
       else if (t === "P") out.push("1S(P)");
       else if (t === "R") out.push("1S(R)");
+      else if (!/\d/.test(t) && t.length >= 3 && !/(ARM|SEAT|CUSTOM|RECLIN|WOOD|SHAPE|CORNER|CHAISE)/.test(t)
+               && !/^(CT|CNR|STOOL|NA|[LPRC])/.test(t)) { // a piece glued to text is NOT a note
+        // pure-text rider that can't change the build (e.g. HANDLEMOVABLE,
+        // FULLYCOVERREPLACETHELEG) — keep as note, demote for photo review
+        o.specials.push(t0); o.why.push(`note "${t0}"`); o._noteDemote = true;
+      }
       else { ok = false; o.why.push(`token "${t0}"`); }
     }
     if (ok && out.length) { o._seg = seg; out.forEach(P); matched = true; break; }
@@ -275,7 +298,7 @@ function parseSofa(d2raw, model) {
     }
   }
   // C/T sits inside a slash-split seg; catch it on the raw text
-  if (matched && /C\/T/i.test(d2raw) && !o.pieces.includes("Console")) o.pieces.push("Console");
+  if (matched && /C\/T|CONSOLE/i.test(String(d2raw).replace(/NO\s*CONSOLE/gi, " ")) && !o.pieces.includes("Console")) o.pieces.push("Console");
   if (hasRecliner) {
     // mechanism rule: seats become per-unit recliner pieces
     const conv = { "2S": ["1A(R)(LHF)", "1A(R)(RHF)"], "1S": ["1S(R)"], "3S": ["1A(R)(LHF)", "1NA", "1A(R)(RHF)"] };
@@ -285,6 +308,10 @@ function parseSofa(d2raw, model) {
   }
   if (!matched) { o.conf = "low"; if (!o.why.length) o.why.push("no structure tokens"); }
   else if (!o.size) { o.conf = "medium"; o.why.push("no seat size"); }
+  else if (o._layoutArms || o._noteDemote) {
+    o.conf = "medium";
+    if (o._layoutArms) o.why.push("layout-derived arms (photo-verify)");
+  }
   return o;
 }
 
@@ -454,7 +481,7 @@ async function main() {
         const fcHit = colour ? findColour(colour) : null;
         sofaDecode.push({ ac: acDoc, code: l.ItemCode, d2: l.Desc2, model,
           pieces: fullyOk ? ps.pieces : null, size: ps.size, colour: ps.color,
-          conf: fullyOk ? ps.conf : "low", why: fullyOk ? ps.why : [...ps.why, ...(allExist ? [] : ["piece SKU missing: " + pieceCodes.filter((c) => !codeSet.has(c.toUpperCase())).join(",")])] });
+          conf: fullyOk ? ps.conf : "low", why: fullyOk ? ps.why : [...ps.why, ...(allExist || !pieceCodes.length ? [] : ["piece SKU missing: " + pieceCodes.filter((c) => !codeSet.has(c.toUpperCase())).join(",")])] });
         if (fullyOk) {
           let first = true;
           for (const comp of ps.pieces) {
