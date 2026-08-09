@@ -53,7 +53,7 @@ export function findIncompleteVariantLines(
   const out: VariantOffender[] = [];
   for (const l of lines) {
     const group = (l.group ?? '').toLowerCase();
-    const missing = missingVariantAxes(group, l.variants).map((a) => a.key);
+    const missing = missingVariantAxes(group, l.variants, l.itemCode).map((a) => a.key);
     if (missing.length > 0) {
       out.push({ ...(l.id ? { id: l.id } : {}), itemCode: l.itemCode, group, missing });
     }

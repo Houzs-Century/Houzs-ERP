@@ -103,15 +103,27 @@ const isEmpty = (val: unknown): boolean =>
 /** The axes a line leaves unsatisfied — [] when the line is complete or its
  *  category has no mandatory variants (mattress / accessory / service). An
  *  axis is satisfied when ANY of its aliases carries a non-empty value. */
+/** A DIVAN ONLY line is a divan sold without a mattress, so there is no
+ *  mattress Gap to state — demanding one blocked orders that were complete
+ *  (owner 2026-08-09: "divan only 不需要 gap"). Matched on the item code so it
+ *  holds for every DIVAN ONLY variant (HOK-DIVAN ONLY (K), NB-DIVAN ONLY ...). */
+export const isDivanOnly = (itemCode: string | null | undefined): boolean =>
+  /\bDIVAN\s*ONLY\b/i.test(itemCode ?? '');
+
 export function missingVariantAxes(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
+  itemCode?: string | null,
 ): VariantAxis[] {
   const axes = REQUIRED_VARIANT_AXES_BY_CATEGORY[(itemGroup ?? '').toLowerCase()];
   if (!axes) return [];
   const v = variants ?? {};
+  const skipGap = isDivanOnly(itemCode);
   return axes.filter(
-    (axis) => axis.required !== false && axis.aliases.every((k) => isEmpty(v[k])),
+    (axis) =>
+      axis.required !== false &&
+      !(skipGap && axis.key === 'gap') &&
+      axis.aliases.every((k) => isEmpty(v[k])),
   );
 }
 
@@ -126,8 +138,9 @@ export function missingVariantAxes(
 export function missingConfirmVariantAxes(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
+  itemCode?: string | null,
 ): VariantAxis[] {
-  const missing = missingVariantAxes(itemGroup, variants);
+  const missing = missingVariantAxes(itemGroup, variants, itemCode);
   if (missing.length === 0) return missing;
   return isColourKiv(variants ?? null)
     ? missing.filter((axis) => axis.key !== 'fabricCode')
