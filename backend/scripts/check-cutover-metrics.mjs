@@ -108,6 +108,14 @@ async function main() {
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL`;
   log(`coverage of ${cov.total} imported orders: processed=${cov.processed} deliveryDate=${cov.deliv} emergency=${cov.emergency} buildingType=${cov.building}; lines with delivery date: ${lcov.with_date}/${lcov.total}`);
 
+  // ---- 7. processing-date allocation gate impact (ALL companies) ----
+  // Owner 2026-08-10: "有 processing date 才来分配,没有 processing date 不分配 —
+  // 2990 跟整套系统都是这样子的". The company-1 gate shipped; this measures what
+  // flipping it GLOBAL would regress per company before touching 2990's pipeline.
+  const gateRows = await sql`SELECT company_id, COUNT(*) n FROM scm.mfg_sales_orders
+    WHERE status = 'READY_TO_SHIP' AND proceeded_at IS NULL GROUP BY company_id ORDER BY company_id`;
+  log(`READY_TO_SHIP without processing date (would regress under a global gate): ${gateRows.length ? gateRows.map((r) => `company ${r.company_id}: ${r.n}`).join("; ") : "none"}`);
+
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });
