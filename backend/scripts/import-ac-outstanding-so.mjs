@@ -285,6 +285,8 @@ async function main() {
   log("\nAPPLYING (bulk)…");
   await sql`ALTER TABLE scm.mfg_sales_orders ADD COLUMN IF NOT EXISTS linked_ac_docno text`;
   await sql`CREATE INDEX IF NOT EXISTS mfg_so_linked_ac_docno_idx ON scm.mfg_sales_orders(linked_ac_docno)`;
+  // single-order verification (DOC=...): delete that one order first so it re-imports
+  if (ONLY) { const d = "HC-" + ONLY; await sql`DELETE FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${d}`; await sql`DELETE FROM scm.mfg_sales_order_items WHERE doc_no = ${d}`; await sql`DELETE FROM scm.mfg_sales_orders WHERE doc_no = ${d}`; log(`DOC mode: cleared existing ${d} for re-import`); }
 
   const esc = (s) => "'" + String(s).replace(/'/g, "''") + "'";
   const CUR = { __raw: "CURRENT_DATE" };
