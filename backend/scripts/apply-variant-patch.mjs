@@ -29,13 +29,25 @@ async function main() {
   const patch = JSON.parse(zlib.gunzipSync(Buffer.from(PATCH.trim(), "base64")).toString("utf8"));
   const items = patch.so_items || [];
   const headers = patch.so_headers || [];
-  log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}; item patches: ${items.length}; header patches: ${headers.length}`);
+  const poItems = patch.po_items || []; // {po_number, code, variants?, specials?, gap?, divan?, leg?}
+  log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}; item patches: ${items.length}; header patches: ${headers.length}; po item patches: ${poItems.length}`);
   for (const p of items.slice(0, 15)) log(`  item ${p.id}: ${JSON.stringify({ ...p, id: undefined })}`);
   for (const p of headers.slice(0, 15)) log(`  hdr ${p.doc_no}: ${JSON.stringify(p.set)}`);
+  for (const p of poItems.slice(0, 15)) log(`  po ${p.po_number} ${p.code}: ${JSON.stringify({ ...p, po_number: undefined, code: undefined })}`);
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to write."); await sql.end(); return; }
 
   let nItems = 0, nHdr = 0;
   for (const p of items) {
+    // address by uuid OR by (doc_no + item code) — the metrics report speaks
+    // doc+code, so hand-parse patches shouldn't need an id lookup round-trip
+    if (!p.id && p.doc_no && p.code) {
+      const [hit] = await sql`SELECT id FROM scm.mfg_sales_order_items
+        WHERE doc_no = ${p.doc_no} AND upper(item_code) = ${(p.code || "").toUpperCase()}
+          AND (${p.desc_like ?? null}::text IS NULL OR description2 ILIKE '%' || ${p.desc_like ?? ""} || '%')
+        LIMIT 1`;
+      if (!hit) { log(`  !! item ${p.doc_no} ${p.code} not found, skipped`); continue; }
+      p.id = hit.id;
+    }
     const [row] = await sql`SELECT variants FROM scm.mfg_sales_order_items WHERE id = ${p.id}`;
     if (!row) { log(`  !! item ${p.id} not found, skipped`); continue; }
     const v = { ...(row.variants || {}), ...(p.variants || {}) };
@@ -57,7 +69,24 @@ async function main() {
       [...cols.map(([, val]) => val), p.doc_no]);
     if (r.count) nHdr++; else log(`  !! header ${p.doc_no} not found, skipped`);
   }
-  log(`DONE. item patches applied ${nItems}; header patches applied ${nHdr}`);
+  let nPo = 0;
+  for (const p of poItems) {
+    const [row] = await sql`SELECT i.id, i.variants FROM scm.purchase_order_items i
+      JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+      WHERE h.company_id = 1 AND (h.po_number = ${p.po_number} OR h.linked_ac_docno = ${p.po_number})
+        AND upper(i.material_code) = ${(p.code || "").toUpperCase()} LIMIT 1`;
+    if (!row) { log(`  !! po item ${p.po_number} ${p.code} not found, skipped`); continue; }
+    const v = { ...(row.variants || {}), ...(p.variants || {}) };
+    await sql`UPDATE scm.purchase_order_items SET
+        variants = ${sql.json(v)},
+        custom_specials = COALESCE(${p.specials ? sql.json(p.specials) : null}, custom_specials),
+        gap_inches = COALESCE(${p.gap ?? null}, gap_inches),
+        divan_height_inches = COALESCE(${p.divan ?? null}, divan_height_inches),
+        leg_height_inches = COALESCE(${p.leg ?? null}, leg_height_inches)
+      WHERE id = ${row.id}`;
+    nPo++;
+  }
+  log(`DONE. item patches applied ${nItems}; header patches applied ${nHdr}; po item patches applied ${nPo}`);
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });
