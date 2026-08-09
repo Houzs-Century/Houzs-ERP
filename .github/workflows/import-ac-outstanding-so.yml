@@ -35,7 +35,7 @@ on:
         required: false
         default: "no"
         type: choice
-        options: [no, yes]
+        options: ["no", "yes"]
 
 concurrency:
   group: import-ac-outstanding-so-${{ inputs.target }}
