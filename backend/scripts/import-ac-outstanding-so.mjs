@@ -191,6 +191,8 @@ async function main() {
   let pure = [], skipMixed = 0, skipAllSofa = 0;
   for (const [doc, ls] of orders) { const s = ls.filter((l) => isSofa(l.ItemCode)).length; if (s === 0) pure.push([doc, ls]); else if (s === ls.length) skipAllSofa++; else skipMixed++; }
   pure.sort((a, b) => (a[1][0].DocDate || "") < (b[1][0].DocDate || "") ? -1 : 1);
+  const ONLY = (process.env.DOC || "").trim().replace(/^HC-/, ""); // import just one AutoCount DocNo (verification)
+  if (ONLY) pure = pure.filter(([d]) => d === ONLY);
   if (LIMIT) pure = pure.slice(0, LIMIT);
 
   // ---- build ----
