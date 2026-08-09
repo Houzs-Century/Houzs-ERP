@@ -94,12 +94,15 @@ describe('the door into the payments ledger', () => {
     expect(readViewSource).not.toContain('{hardLocked && salesOrder.status');
   });
 
-  test('that entry point routes to the editor, and does not open the whole form', () => {
-    expect(readViewSource).toContain(
-      'if (params.get("edit") === "1" || params.get("payments") === "1") {',
-    );
-    // `payments=1` must NOT be folded into the `edit` flag: page-edit unlocks
-    // every field, and on a locked order only the money may move.
+  test('collecting stays on the read page; only edit=1 swaps to the editor', () => {
+    /* 2026-08-09 (owner: "点选 collect payment … 全部 UI 都不一样") — the read
+       page now hosts the shared PaymentsTable itself; `?payments=1` merely
+       seeds its Edit toggle. Folding payments into `edit=1` would reopen the
+       whole form, so the fork must name edit alone. */
+    expect(readViewSource).toContain('if (params.get("edit") === "1") {');
+    expect(readViewSource).toContain('useState(params.get("payments") === "1")');
+    expect(readViewSource).toContain('<PaymentsTable');
+    // The legacy editor keeps its own payments-only door for `edit=1` sessions.
     expect(detailSource).toContain("editSearchParams.get('payments') === '1'");
     expect(detailSource).not.toMatch(/setIsEditing\([^)]*payments/);
   });

@@ -17,8 +17,8 @@
 // The old ledger-style SalesOrderDetail.tsx stays in the tree; App.tsx route
 // swap on /scm/sales-orders/:docNo decides which one users see.
 
-import { Suspense, lazy, useMemo, useState, type ReactNode } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -56,6 +56,12 @@ import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../compon
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { useSoRelationshipMap } from "./so-relationship-map";
+import { PaymentsTable, type PaymentDraft } from "../../vendor/scm/components/PaymentsTable";
+import { fetchSoSlipUrl } from "../../vendor/scm/lib/slip";
+import {
+  completePaymentRetryDraft, consumePaymentRetryNavigationState,
+  readPaymentRetryHandoff, readPaymentRetryNavigationState,
+} from "../../lib/paymentRetryHandoff";
 import { cn, formatDate } from "../../lib/utils";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
@@ -68,6 +74,9 @@ import {
 
 type SoHeader = {
   doc_no: string;
+  /* POS handover payment slip (migration 0143) — passed to PaymentsTable's
+     optional Slip column; absent on non-POS orders. */
+  slip_key?: string | null;
   so_date: string;
   debtor_name: string;
   debtor_code: string | null;
@@ -490,10 +499,11 @@ const SalesOrderDetailInlineEditor = lazy(() =>
    would break on navigation). */
 export function SalesOrderDetailV2() {
   const [params] = useSearchParams();
-  /* `payments=1` forwards to the same editor as `edit=1` — the payments ledger
-     only exists there. The editor decides what that flag unlocks (its payments
-     card, and nothing else); this router only decides WHICH body renders. */
-  if (params.get("edit") === "1" || params.get("payments") === "1") {
+  /* `payments=1` used to forward to the legacy editor; since 2026-08-09 the
+     read page hosts the SAME PaymentsTable component (owner: "点选 collect
+     payment … 全部 UI 都不一样" — one page, one look; the flag now just seeds
+     the payments Edit toggle below). Only full `edit=1` swaps bodies. */
+  if (params.get("edit") === "1") {
     return (
       <Suspense
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
@@ -575,16 +585,51 @@ function SalesOrderDetailV2ReadOnly() {
   // details page's back button goes to its relevant list, not wherever
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
-  const goBack = () => navigate(scmListReturnTo("/scm/sales-orders"));
+  const goBack = () => {
+    if (unsavedPayments > 0 && !window.confirm(
+      `${unsavedPayments} payment row${unsavedPayments === 1 ? " is" : "s are"} typed but not saved — leave anyway?`,
+    )) return;
+    navigate(scmListReturnTo("/scm/sales-orders"));
+  };
   // Edit always forwards to the full editor (?edit=1). When the SO is
   // amendment-eligible the editor opens in amendment mode (Save submits an
   // amendment request); when hard-locked the button is disabled here.
   const goEdit = () => docNo && navigate(`/scm/sales-orders/${docNo}?edit=1`);
-  /* Payments-only door into the same editor (owner 2026-08-07). Deliberately
-     NOT `?edit=1`: that opens every field, and on a hard-locked order the whole
-     point is that only the money moves. The editor reads `payments=1` and seeds
-     its payments-card toggle from it. */
-  const goPayments = () => docNo && navigate(`/scm/sales-orders/${docNo}?payments=1`);
+  /* Payments editing now lives ON this page (same PaymentsTable the editor
+     uses) — "Collect payment" just unlocks the card and scrolls to it. */
+  const location = useLocation();
+  const [payEditing, setPayEditing] = useState(params.get("payments") === "1");
+  const [unsavedPayments, setUnsavedPayments] = useState(0);
+  const paymentsRef = useRef<HTMLDivElement>(null);
+  const [paymentRetryState, setPaymentRetryState] = useState<{ documentId: string; drafts: PaymentDraft[] } | null>(null);
+  const paymentRetryDrafts = paymentRetryState && paymentRetryState.documentId === docNo
+    ? paymentRetryState.drafts
+    : [];
+  useEffect(() => {
+    if (!docNo) return;
+    const stored = readPaymentRetryHandoff("so", docNo)?.drafts ?? [];
+    const navigated = readPaymentRetryNavigationState(location.state, "so", docNo);
+    const byKey = new Map([...stored, ...navigated].map((draft) => [draft.idempotencyKey, draft]));
+    setPaymentRetryState({ documentId: docNo, drafts: [...byKey.values()] });
+    if (navigated.length > 0) {
+      navigate(
+        { pathname: location.pathname, search: location.search, hash: location.hash },
+        { replace: true, state: consumePaymentRetryNavigationState(location.state) },
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docNo]);
+  const paymentRetryCommitted = (draft: PaymentDraft) => {
+    if (!docNo || !draft.idempotencyKey) return;
+    completePaymentRetryDraft("so", docNo, draft.idempotencyKey);
+    setPaymentRetryState((current) => current?.documentId === docNo
+      ? { ...current, drafts: current.drafts.filter((row) => row.idempotencyKey !== draft.idempotencyKey) }
+      : current);
+  };
+  const goPayments = () => {
+    setPayEditing(true);
+    paymentsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const doCancel = () => {
     if (!salesOrder) return;
     if (
@@ -1203,83 +1248,38 @@ function SalesOrderDetailV2ReadOnly() {
               />
             </Section>
 
-            {/* Payments — the read page finally SHOWS the ledger it already
-                fetches for printing (owner 2026-08-07: "我的这个下面不能看到
-                payment 的那个 column 吗"). Read-only: rows + paid/balance
-                summary; adding or editing money goes through the ONE door,
-                the payments-unlocked editor (goPayments — same door as the
-                header "Collect payment" button). */}
-            <Section
-              title="Payments"
-              actions={
-                <Button variant="secondary" onClick={goPayments} icon={<Wallet size={14} />}>
-                  Collect payment
-                </Button>
-              }
-            >
-              {printPaymentsQ.isError ? (
-                <div className="rounded-md border border-err/40 bg-err/5 p-2.5 text-[12px] text-err">
-                  Couldn't load payments — refresh to retry.
+            {/* Payments — the SAME PaymentsTable the editor renders (Task #105
+                one-source rule), mounted here since 2026-08-09 so "Collect
+                payment" no longer swaps the whole page for the legacy editor
+                (owner: unify the SO surfaces). Adding/editing money follows the
+                no-naked-edits rule via the card's own Edit toggle; `?payments=1`
+                deep-links land with the toggle already open. */}
+            {(() => {
+              const soStatus = salesOrder.status?.toLowerCase() ?? "";
+              const canOfferPayEdit = !["cancelled", "draft"].includes(soStatus);
+              const canEditPayments = soStatus === "draft" || (soStatus !== "cancelled" && payEditing);
+              return (
+                <div ref={paymentsRef}>
+                  <PaymentsTable
+                    key={salesOrder.doc_no}
+                    docNo={salesOrder.doc_no}
+                    grandTotalCenti={salesOrder.local_total_centi ?? 0}
+                    currency={salesOrder.currency}
+                    locked={!canEditPayments}
+                    draftUnlocked={soStatus === "draft"}
+                    slip={{ slipKey: salesOrder.slip_key ?? null, fetcher: fetchSoSlipUrl }}
+                    initialDrafts={paymentRetryDrafts}
+                    onDraftCommitted={paymentRetryCommitted}
+                    onUnsavedChange={setUnsavedPayments}
+                    headerAction={canOfferPayEdit ? (
+                      <Button variant="secondary" onClick={() => setPayEditing((v) => !v)} icon={<Wallet size={14} />}>
+                        {payEditing ? "Done" : "Collect payment"}
+                      </Button>
+                    ) : null}
+                  />
                 </div>
-              ) : !Array.isArray(printPaymentsQ.data) ? (
-                <div className="py-3 text-[12px] text-ink-muted">Loading payments…</div>
-              ) : printPaymentsQ.data.length === 0 ? (
-                <div className="py-3 text-[12px] text-ink-muted">
-                  No payments recorded — collect the first one with the button above.
-                </div>
-              ) : (
-                <>
-                  <table className="w-full text-[12.5px]">
-                    <thead>
-                      <tr className="border-b border-border-subtle text-left font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
-                        <th className="py-1.5 pr-3">Date</th>
-                        <th className="py-1.5 pr-3">Method</th>
-                        <th className="py-1.5 pr-3">Collected by</th>
-                        <th className="py-1.5 pr-3">Note</th>
-                        <th className="py-1.5 text-right">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {printPaymentsQ.data.map((pmt) => (
-                        <tr key={pmt.id} className="border-b border-border-subtle/60">
-                          <td className="py-2 pr-3 font-mono text-[12px]">{formatDate(pmt.paid_at)}</td>
-                          <td className="py-2 pr-3">
-                            {pmt.method}
-                            {pmt.merchant_provider ? ` · ${pmt.merchant_provider}` : ""}
-                            {pmt.installment_months ? ` · ${pmt.installment_months} mo` : ""}
-                          </td>
-                          <td className="py-2 pr-3">{pmt.collected_by_name ?? "—"}</td>
-                          <td className="py-2 pr-3 text-ink-muted">{pmt.note ?? "—"}</td>
-                          <td className="py-2 text-right font-mono font-semibold">
-                            {fmtMoney(pmt.amount_centi, salesOrder.currency)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {(() => {
-                    const paidCenti = printPaymentsQ.data.reduce((n, r) => n + (r.amount_centi ?? 0), 0);
-                    const balanceCenti = (salesOrder.local_total_centi ?? 0) - paidCenti;
-                    return (
-                      <div className="mt-2.5 flex flex-wrap items-center justify-end gap-x-6 gap-y-1 text-[12.5px]">
-                        <span className="text-ink-muted">
-                          Paid{" "}
-                          <span className="font-mono font-semibold text-ink">
-                            {fmtMoney(paidCenti, salesOrder.currency)}
-                          </span>
-                        </span>
-                        <span className="text-ink-muted">
-                          Balance{" "}
-                          <span className={balanceCenti > 0 ? "font-mono font-semibold text-err" : "font-mono font-semibold text-primary"}>
-                            {fmtMoney(balanceCenti, salesOrder.currency)}
-                          </span>
-                        </span>
-                      </div>
-                    );
-                  })()}
-                </>
-              )}
-            </Section>
+              );
+            })()}
           </DetailMain>
 
           <DetailAside>
