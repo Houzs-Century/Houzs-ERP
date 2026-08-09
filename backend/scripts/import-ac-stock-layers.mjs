@@ -75,18 +75,28 @@ async function main() {
   // the flat lots this replaces — must be fully unconsumed
   const flat = await sql`SELECT l.id, l.product_code, l.warehouse_id, l.qty_received, l.qty_remaining, l.unit_cost_sen
     FROM scm.inventory_lots l WHERE l.source_doc_no = 'AC-BAL-2026-08-09'`;
-  const flatBy = new Map(flat.map((f) => [`${norm(f.product_code)}|${f.warehouse_id}`, f]));
+  // Several AC ItemCodes map onto ONE ERP code (HOK-/DSL-/AMN-SQUARE PILLOW ->
+  // SQUARE PILLOW), so a cell may hold SEVERAL flat lots — aggregate them and
+  // reconcile the SUM against the merged layers.
+  const flatBy = new Map();
+  for (const f of flat) {
+    const k = `${norm(f.product_code)}|${f.warehouse_id}`;
+    const agg = flatBy.get(k) ?? { received: 0, remaining: 0 };
+    agg.received += Number(f.qty_received);
+    agg.remaining += Number(f.qty_remaining);
+    flatBy.set(k, agg);
+  }
   let consumed = 0, noFlat = 0, ready = 0, layerCount = 0, costedUnits = 0, totalUnits = 0;
   const todo = [];
   for (const [k, c] of cells) {
     const f = flatBy.get(k);
     if (!f) { noFlat++; continue; }
-    if (Number(f.qty_remaining) !== Number(f.qty_received)) { consumed++; log(`  SKIP consumed cell ${c.code} @ ${c.wh.code}`); continue; }
+    if (f.remaining !== f.received) { consumed++; log(`  SKIP consumed cell ${c.code} @ ${c.wh.code}`); continue; }
     const lq = c.layers.reduce((s, x) => s + x.Qty, 0);
-    if (Math.round(lq) !== Number(f.qty_received)) { log(`  SKIP qty mismatch ${c.code} @ ${c.wh.code}: layers ${lq} vs lot ${f.qty_received}`); continue; }
+    if (Math.round(lq) !== f.received) { log(`  SKIP qty mismatch ${c.code} @ ${c.wh.code}: layers ${lq} vs lots ${f.received}`); continue; }
     ready++; layerCount += c.layers.length;
     for (const l of c.layers) { totalUnits += l.Qty; if (l.Cost > 0) costedUnits += l.Qty; }
-    todo.push({ ...c, flat: f });
+    todo.push({ ...c, flat: { qty_received: f.received } });
   }
   log(`cells: ${cells.size}; ready to relayer: ${ready}; already-consumed skipped: ${consumed}; no-flat-lot: ${noFlat}; unmapped: ${unmapped}; unresolved-wh: ${unWh}`);
   log(`layers to write: ${layerCount}; units with real cost: ${Math.round(costedUnits)}/${Math.round(totalUnits)}`);
