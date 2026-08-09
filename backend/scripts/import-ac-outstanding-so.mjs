@@ -72,7 +72,7 @@ function stateOf(pc) {
   const R = [[[1, 2], "Perlis"], [[5, 9], "Kedah"], [[10, 14], "Penang"], [[15, 18], "Kelantan"], [[20, 24], "Terengganu"], [[25, 28], "Pahang"], [[30, 36], "Perak"], [[39, 39], "Pahang"], [[40, 48], "Selangor"], [[49, 49], "Pahang"], [[50, 60], "Kuala Lumpur"], [[62, 62], "Putrajaya"], [[63, 64], "Selangor"], [[68, 68], "Selangor"], [[69, 69], "Pahang"], [[70, 73], "Negeri Sembilan"], [[75, 78], "Melaka"], [[79, 86], "Johor"], [[87, 87], "Labuan"], [[88, 91], "Sabah"], [[93, 98], "Sarawak"]];
   for (const [[a, b], s] of R) if (p >= a && p <= b) return s; return null;
 }
-const isPendingColour = (c) => /^(TBC|KIV)$/i.test((c || "").trim());
+const isPendingColour = (c) => /(TBC|KIV)/i.test(c || ""); // TBC/KIV anywhere = colour not chosen yet
 
 function parseBedframe(d2) {
   const s = (d2 || "").replace(/\s+/g, " ").trim();
