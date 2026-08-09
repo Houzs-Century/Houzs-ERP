@@ -54,7 +54,7 @@ async function main() {
   let n = 0;
   for (const r of todo) {
     await sql.begin(async (tx) => {
-      await tx`DELETE FROM scm.mfg_sales_order_payments WHERE doc_no = ${r.doc_no}`;
+      await tx`DELETE FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${r.doc_no}`;
       await tx`DELETE FROM scm.mfg_sales_order_items WHERE doc_no = ${r.doc_no}`;
       await tx`DELETE FROM scm.mfg_sales_orders WHERE doc_no = ${r.doc_no} AND company_id = 1`;
     });
