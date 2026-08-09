@@ -184,6 +184,110 @@ function parsePayment(p) {
   return { acct, appr, extra: kept.length > 1 ? kept.join(" | ") : null };
 }
 
+
+// ─── SOFA decomposition (owner 2026-08-09: 沙发单按件拆行) ────────────────
+// AutoCount writes one line per sofa; the ERP models a build as one line per
+// compartment SKU ({model}-{comp}). Rules, all owner-ruled:
+//  - token order = physical layout facing the sofa: 2L = L(RHF)+2A(LHF),
+//    L2 = L(LHF)+2A(RHF); 1L/L1, 3L/L3 analogous (3-seat side = 2A+1NA).
+//  - E = raised armrest (1EL=1A(LHF), 2ER=2A(RHF)); C = corner; C/T = Console;
+//    P = 1S(P) power chair; standalone R = 1S(R).
+//  - recliners are per-unit mechanisms: R819 "2S + RECLINER" = 1A(R) pair.
+//  - PROCESSED orders must decompose fully or fall back (never guess pieces).
+const SOFA_MODEL_ALIAS = { "5530": "9028", "5536": "9058", "5537": "8030", "5540": "8030" };
+const CM_TO_INCH = { 60: 24, 66: 26, 75: 30, 80: 32 };
+function parseSofa(d2raw, model) {
+  const o = { pieces: [], size: null, color: null, perPieceColor: {}, specials: [], conf: "high", why: [] };
+  if (!d2raw || !String(d2raw).trim()) { o.conf = "low"; o.why.push("empty Desc2"); return o; }
+  let d2 = String(d2raw).replace(/[\[\]{}]/g, " ").replace(/[”“″’‘′]/g, '"').replace(/\r/g, "").trim();
+  // protect composite tokens from the slash-splitter
+  d2 = d2.replace(/C\/T/gi, "CT").replace(/(\d?NA)\/(L|R)T/gi, "$1$2T").replace(/CONSOLE/gi, "CT");
+  // colours: per-piece "colour (2s): X" first, then general COL:/COLOUR:
+  d2 = d2.replace(/col(?:our|or)?\s*\(([^)]+)\)\s*[:：]\s*([^\/\n]+)/gi, (_, pc, val) => {
+    o.perPieceColor[pc.trim().toUpperCase()] = val.trim(); return " ";
+  });
+  d2 = d2.replace(/col(?:our|or)?\s*[:：]\s*([^\/\n]+)/gi, (_, val) => {
+    if (!o.color) o.color = val.trim(); return " ";
+  });
+  // seat size: inches or cm anywhere (also "(28'Inch)" / "28''" / "Size:28")
+  const sm = /(\d{2,3})\s*(cm)\b/i.exec(d2) || /(\d{2})\s*(?:"|''|\s*inch(?:es)?\b)/i.exec(d2) || /size\s*[:：]\s*(\d{2})/i.exec(d2);
+  if (sm) {
+    const n = Number(sm[1]);
+    o.size = sm[2] ? String(CM_TO_INCH[n] ?? n) : String(n);
+    d2 = d2.replace(sm[0], " ").replace(/['"]*\s*inch(?:es)?\b/gi, " ");
+  }
+  // specials that ride along
+  if (/nylon|nilon/i.test(d2)) o.specials.push("nylon");
+  if (/wooden\s*arm/i.test(d2)) o.specials.push("wooden arm");
+  const hasRecliner = /recliner/i.test(d2);
+  d2 = d2.replace(/bottom[^\/\n]*|wooden\s*arm[^\/\n]*|recliner/gi, " ");
+  // find the structure segment: the chunk with piece tokens
+  const segs = d2.split(/[\/\n,]+/).map((s) => s.trim()).filter(Boolean);
+  const P = (c) => o.pieces.push(c);
+  const seatSide = (n, side) => (n === "3"
+    ? (side === "L" ? ["2A(LHF)", "1NA"] : ["1NA", "2A(RHF)"])
+    : [`${n === "1" ? "1A" : "2A"}(${side === "L" ? "LHF" : "RHF"})`]);
+  let matched = false;
+  for (const seg of segs) {
+    let s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "");
+    // owner layout rule: bare "n+L" == "nL" (seats left, chaise RIGHT);
+    // "L+n" == "Ln" (chaise LEFT). Explicit nS+L stays literal.
+    s = s.replace(/(^|\+)([123])\+L(?=$|\+)/, "$1$2L").replace(/(^|\+)L\+([123])(?=$|\+)/, "$1L$2");
+    if (!s || /^[\d."']+$/.test(s)) continue;
+    const tokens = s.split("+").filter(Boolean);
+    const out = [];
+    let ok = tokens.length > 0;
+    for (const t0 of tokens) {
+      const t = t0.replace(/\([^)]*\)/g, "").replace(/["']/g, "");
+      let m;
+      if ((m = /^([123])L$/.exec(t))) { seatSide(m[1], "L").forEach((x) => out.push(x)); out.push("L(RHF)"); }
+      else if ((m = /^L([123])$/.exec(t))) { out.push("L(LHF)"); seatSide(m[1], "R").forEach((x) => out.push(x)); }
+      else if ((m = /^([123])$/.exec(t))) out.push(`${m[1]}S`);
+      else if ((m = /^([123])S(?:EATER)?$/.exec(t))) out.push(`${m[1]}S`);
+      else if (/^(RANDOM(COLOUR)?|COLOU?RTBC|TBC|KIV|WRAP|PERSEAT|X?\d*PILLOWS?|FOC\w*|FREE\w*)$/.test(t)) { o.why.push(`note "${t0}"`); continue; }
+      else if ((m = /^2\.5S?$/.exec(t))) { ok = false; o.why.push("2.5 seater (not sold)"); }
+      else if ((m = /^([12])NA$/.exec(t))) out.push(`${m[1]}NA`);
+      else if ((m = /^([123])R$/.exec(t)) && model === "R819") {
+        ({ "1": ["1S(R)"], "2": ["1A(R)(LHF)", "1A(R)(RHF)"], "3": ["1A(R)(LHF)", "1NA", "1A(R)(RHF)"] })[m[1]].forEach((x) => out.push(x));
+      }
+      else if ((m = /^([12])E?([LR])$/.exec(t))) out.push(`${m[1]}A(${m[2] === "L" ? "LHF" : "RHF"})`);
+      else if ((m = /^([12])NA([LR])T$/.exec(t))) out.push(`${m[1]}NA`);
+      else if (t === "L" || t === "LSHAPE") { ok = t === "L"; if (!ok) o.why.push("bare 'L shape'"); else out.push("L(RHF)"); }
+      else if (t === "C" || t === "CNR" || t === "CORNER") out.push("CNR");
+      else if (t === "CT" || t === "C-T") out.push("Console");
+      else if (t === "STOOL" || /^STOOL/.test(t)) out.push("STOOL");
+      else if (t === "P") out.push("1S(P)");
+      else if (t === "R") out.push("1S(R)");
+      else { ok = false; o.why.push(`token "${t0}"`); }
+    }
+    if (ok && out.length) { o._seg = seg; out.forEach(P); matched = true; break; }
+  }
+  if (matched) {
+    // GUARD (owner: proceed 单件必须对) — if any OTHER segment still contains
+    // piece-looking tokens, the structure was split by punctuation and we may
+    // have silently dropped pieces. Never half-parse: demote to placeholder.
+    const PIECE_RE = /(^|[+\s(])(?:[123]S?|[12]NA|[12]E?[LR]|L[123]?|CT|CNR|C|STOOL|P|R)(\)|[+\s]|$)/;
+    for (const seg of segs) {
+      if (seg === o._seg) continue;
+      const s = seg.replace(/\s+/g, "").toUpperCase();
+      if (/^[\d."']+$/.test(s)) continue;
+      if (s.includes("+") && PIECE_RE.test(s)) { o.pieces = []; o.conf = "low"; o.why.push(`structure split across segments ("${seg}")`); matched = false; break; }
+    }
+  }
+  // C/T sits inside a slash-split seg; catch it on the raw text
+  if (matched && /C\/T/i.test(d2raw) && !o.pieces.includes("Console")) o.pieces.push("Console");
+  if (hasRecliner) {
+    // mechanism rule: seats become per-unit recliner pieces
+    const conv = { "2S": ["1A(R)(LHF)", "1A(R)(RHF)"], "1S": ["1S(R)"], "3S": ["1A(R)(LHF)", "1NA", "1A(R)(RHF)"] };
+    const next = [];
+    for (const c of o.pieces) (conv[c] || [c]).forEach((x) => next.push(x));
+    o.pieces = next;
+  }
+  if (!matched) { o.conf = "low"; if (!o.why.length) o.why.push("no structure tokens"); }
+  else if (!o.size) { o.conf = "medium"; o.why.push("no seat size"); }
+  return o;
+}
+
 // free-text name resolver against the live pick list
 function buildNameResolver(products) {
   const byName = new Map(); // normalized name -> code
@@ -276,20 +380,26 @@ async function main() {
   // ---- group into orders, pick pure-non-sofa ----
   const orders = new Map();
   for (const r of rows) { if (!orders.has(r.DocNo)) orders.set(r.DocNo, []); orders.get(r.DocNo).push(r); }
-  let pure = [], skipMixed = 0, skipAllSofa = 0;
-  for (const [doc, ls] of orders) { const s = ls.filter((l) => isSofa(l.ItemCode)).length; if (s === 0) pure.push([doc, ls]); else if (s === ls.length) skipAllSofa++; else skipMixed++; }
+  const SOFA_ON = process.env.SOFA === "1";
+  let pure = [], skipMixed = 0, skipAllSofa = 0, sofaOrders = 0;
+  for (const [doc, ls] of orders) {
+    const s = ls.filter((l) => isSofa(l.ItemCode)).length;
+    if (s === 0) pure.push([doc, ls]);
+    else if (SOFA_ON) { sofaOrders++; pure.push([doc, ls]); }
+    else if (s === ls.length) skipAllSofa++; else skipMixed++;
+  }
   pure.sort((a, b) => (a[1][0].DocDate || "") < (b[1][0].DocDate || "") ? -1 : 1);
   const ONLY = (process.env.DOC || "").trim().replace(/^HC-/, ""); // import just one AutoCount DocNo (verification)
   if (ONLY) pure = pure.filter(([d]) => d === ONLY);
   if (LIMIT) pure = pure.slice(0, LIMIT);
 
   // ---- build ----
-  const built = []; const exceptions = []; const notInPickList = new Set();
-  const catTotals = { mattress: 0, bedframe: 0, accessory: 0, service: 0, others: 0 };
+  const built = []; const exceptions = []; const notInPickList = new Set(); const sofaDecode = [];
+  const catTotals = { mattress: 0, bedframe: 0, accessory: 0, service: 0, others: 0, sofa: 0 };
   let totAll = 0, balAll = 0, droppedZero = 0;
   for (const [acDoc, ls] of pure) {
     const h = ls[0];
-    const items = []; let total = 0; const bucket = { mattress: 0, bedframe: 0, accessory: 0, service: 0, others: 0 };
+    const items = []; let total = 0; const bucket = { mattress: 0, bedframe: 0, accessory: 0, service: 0, others: 0, sofa: 0 };
     let ln = 0;
     for (const l of ls) {
       ln++;
@@ -332,6 +442,46 @@ async function main() {
       }
       // description MUST be the ERP product name (what a picker-selected item stores),
       // not the AutoCount Description — else list shows item_code but Edit shows the AC text.
+      // ── SOFA: decompose one AutoCount sofa line into per-compartment lines ──
+      if (grp === "sofa" && process.env.SOFA === "1") {
+        let model = (erp || "").replace(/-1S$/i, "");
+        model = SOFA_MODEL_ALIAS[model] || model;
+        const ps = parseSofa(l.Desc2, model);
+        const pieceCodes = ps.pieces.map((c) => `${model}-${c}`);
+        const allExist = pieceCodes.length > 0 && pieceCodes.every((c) => codeSet.has(c.toUpperCase()));
+        const fullyOk = ps.conf !== "low" && allExist;
+        const colour = isPendingColour(ps.color) ? null : ps.color;
+        const fcHit = colour ? findColour(colour) : null;
+        sofaDecode.push({ ac: acDoc, code: l.ItemCode, d2: l.Desc2, model,
+          pieces: fullyOk ? ps.pieces : null, size: ps.size, colour: ps.color,
+          conf: fullyOk ? ps.conf : "low", why: fullyOk ? ps.why : [...ps.why, ...(allExist ? [] : ["piece SKU missing: " + pieceCodes.filter((c) => !codeSet.has(c.toUpperCase())).join(",")])] });
+        if (fullyOk) {
+          let first = true;
+          for (const comp of ps.pieces) {
+            const code = `${model}-${comp}`;
+            const pr = prodId.get(code.toUpperCase());
+            items.push({ erp: code, grp: "sofa", desc: (pr && pr.name) || code, d2: l.Desc2,
+              qty, up: first ? up : 0, lineTotal: first ? lineTotal : 0, loc: l.Location, bf: null,
+              variants: { seatHeight: ps.size, fabricId: fcHit ? fcHit.fabric_id : null,
+                colourId: fcHit ? fcHit.colour_id : null, fabricCode: fcHit ? fcHit.colour_id : null,
+                colourLabel: fcHit ? fcHit.label : (colour || null), fabricLabel: fcHit ? fcHit.fabric_id : null,
+                specials: ps.specials },
+              resolvedFree: false, unitCost: 0, lineCost: 0, warehouseId: whId(l.Location),
+              remark: ps.why.length ? "sofa: " + ps.why.join("; ") : null });
+            first = false;
+          }
+        } else {
+          // never guess pieces — placeholder on the base SKU, human completes
+          const base = `${model}-1S`;
+          const pr = prodId.get(base.toUpperCase());
+          items.push({ erp: base, grp: "sofa", desc: (pr && pr.name) || base, d2: l.Desc2,
+            qty, up, lineTotal, loc: l.Location, bf: null,
+            variants: { seatHeight: ps.size || null, colourLabel: colour || null, specials: ps.specials },
+            resolvedFree: false, unitCost: 0, lineCost: 0, warehouseId: whId(l.Location),
+            remark: "SOFA UNPARSED — 按图/原文补件: " + (ps.why.join("; ") || "unreadable") });
+        }
+        continue;
+      }
       const prodRow = prodId.get((erp || "").toUpperCase());
       const unitCost = prodRow && prodRow.cost_price_sen ? prodRow.cost_price_sen : 0; // per-unit cost (sen)
       const lineCost = unitCost * qty;
@@ -349,7 +499,7 @@ async function main() {
     const venue = findVenue(h.UDF_VENUE);
     const procDate = h.UDF_PDate || null; // present only after the re-export adds UDF_PDate
     // rule (owner): a PROCESSED order (has processing date) must carry full address + bedframe colour
-    if (procDate) { const bfMissing = items.some((i) => i.grp === "bedframe" && (!i.variants || !i.variants.colourId)); if (!addrStr || bfMissing) exceptions.push({ ac: acDoc, code: "(processed)", desc: `processed order missing ${!addrStr ? "address " : ""}${bfMissing ? "bedframe colour" : ""}`.trim(), price: 0 }); }
+    if (procDate) { const bfMissing = items.some((i) => i.grp === "bedframe" && (!i.variants || !i.variants.colourId)); const sofaUnparsed = items.some((i) => i.grp === "sofa" && /SOFA UNPARSED/.test(i.remark || "")); if (!addrStr || bfMissing || sofaUnparsed) exceptions.push({ ac: acDoc, code: "(processed)", desc: `processed order missing ${!addrStr ? "address " : ""}${bfMissing ? "bedframe colour " : ""}${sofaUnparsed ? "SOFA PIECES(看图补件!)" : ""}`.trim(), price: 0 }); }
     totAll += total; balAll += bal; for (const k in bucket) catTotals[k] += bucket[k];
     built.push({ docNo: "HC-" + acDoc, acDoc, h, items, total, bal, paid, pay, bucket, salespersonId, postcode, city, cState, emergency, venue, procDate });
   }
@@ -357,8 +507,21 @@ async function main() {
   // ---- report ----
   log("");
   log(`Source orders ${orders.size} / lines ${rows.length}`);
-  log(`  importing (pure non-sofa): ${built.length}${LIMIT ? ` (LIMIT ${LIMIT})` : ""}`);
+  log(`  importing: ${built.length}${LIMIT ? ` (LIMIT ${LIMIT})` : ""}${process.env.SOFA === "1" ? ` (incl ${sofaOrders} sofa orders)` : " (pure non-sofa)"}`);
   log(`  skipped mixed / all-sofa:  ${skipMixed} / ${skipAllSofa}`);
+  if (sofaDecode.length) {
+    const good = sofaDecode.filter((s) => s.pieces);
+    const bad = sofaDecode.filter((s) => !s.pieces);
+    log("");
+    log(`SOFA decode: ${good.length} decomposed, ${bad.length} placeholder (never guessed)`);
+    const pd = new Set(); // processed docs for flagging
+    for (const b of built) if (b.procDate) pd.add(b.acDoc);
+    for (const s of sofaDecode) {
+      const tag = pd.has(s.ac) ? "[PROC]" : "      ";
+      if (s.pieces) log(`  ${tag} ${s.ac} ${s.code} | ${JSON.stringify(s.d2).slice(0, 70)} -> ${s.pieces.join(" + ")} @${s.size ?? "?"} col=${s.colour ?? "-"}${s.why.length ? " (" + s.why.join("; ") + ")" : ""}`);
+      else log(`  ${tag} ${s.ac} ${s.code} | ${JSON.stringify(s.d2).slice(0, 70)} -> PLACEHOLDER ${s.model}-1S (${s.why.join("; ")})`);
+    }
+  }
   log(`Total RM ${(totAll / 100).toLocaleString()}  balance RM ${(balAll / 100).toLocaleString()}  paid RM ${((totAll - balAll) / 100).toLocaleString()}`);
   log(`Category RM: ` + Object.entries(catTotals).map(([k, v]) => `${k}=${(v / 100).toLocaleString()}`).join("  "));
   log(`Blank zero-value lines dropped: ${droppedZero}`);
@@ -436,7 +599,7 @@ async function main() {
         V(h.InvAddr1 || null), V(h.InvAddr2 || null), V(h.InvAddr3 || null), V(h.InvAddr4 || null), V(o.postcode || null), V(o.city || null), V(o.cState || null),
         V(h.Phone1 || null), V(o.emergency || null),
         V("CONFIRMED"), "1", V("MYR"), V(o.total), V(o.bal), V(o.paid), V(o.paid), V(o.items.length),
-        V(o.bucket.mattress), V(o.bucket.bedframe), V(o.bucket.accessory), V(o.bucket.service), V(o.bucket.others),
+        V(o.bucket.mattress + (o.bucket.sofa || 0)), V(o.bucket.bedframe), V(o.bucket.accessory), V(o.bucket.service), V(o.bucket.others),
         V(o.paid > 0 ? "imported" : null), V(o.pay.appr || null), o.paid > 0 ? (h.DocDate ? V(h.DocDate) : V(CUR)) : "NULL",
         o.procDate ? V(o.procDate) : "NULL",
       ].join(",") + ")");
@@ -445,7 +608,7 @@ async function main() {
         lineNo++;
         const variants = it.variants || null; // resolved {fabricId,colourId,colourLabel,gap,divanHeight,legHeight,specials}
         const specials = it.variants && it.variants.specials && it.variants.specials.length ? it.variants.specials : null;
-        iv.push("(" + [V(o.docNo), String(lineNo), V(it.grp), V(it.erp), V(it.desc || null), V(it.d2 || null), V(uomOf(it.grp)), V(it.loc || null), String(it.qty), V(it.up), V(it.lineTotal), V(it.lineTotal), "1", it.bf && isFinite(it.bf.gap) ? String(Math.round(it.bf.gap)) : "NULL", it.bf && isFinite(it.bf.divan) ? String(Math.round(it.bf.divan)) : "NULL", it.bf && isFinite(it.bf.leg) ? String(Math.round(it.bf.leg)) : "NULL", V({ __json: variants }), V({ __json: specials }), V(it.resolvedFree ? "name-matched from free-text" : null)].join(",") + ")");
+        iv.push("(" + [V(o.docNo), String(lineNo), V(it.grp), V(it.erp), V(it.desc || null), V(it.d2 || null), V(uomOf(it.grp)), V(it.loc || null), String(it.qty), V(it.up), V(it.lineTotal), V(it.lineTotal), "1", it.bf && isFinite(it.bf.gap) ? String(Math.round(it.bf.gap)) : "NULL", it.bf && isFinite(it.bf.divan) ? String(Math.round(it.bf.divan)) : "NULL", it.bf && isFinite(it.bf.leg) ? String(Math.round(it.bf.leg)) : "NULL", V({ __json: variants }), V({ __json: specials }), V(it.remark ?? (it.resolvedFree ? "name-matched from free-text" : null))].join(",") + ")");
         nItems++;
       }
       if (o.paid > 0) { pv.push("(" + [V(o.docNo), h.DocDate ? V(h.DocDate) : V(CUR), V("imported"), V(o.pay.appr || null), V(o.pay.acct || null), V(o.paid), "true", "1", V("imported from AutoCount " + o.acDoc + (o.pay.extra ? " [" + o.pay.extra + "]" : ""))].join(",") + ")"); nPay++; }
