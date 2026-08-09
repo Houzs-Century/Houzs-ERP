@@ -86,6 +86,49 @@ SELECT COUNT(*) FROM scm.purchase_order_items WHERE company_id = 1;
 - Scripts: `backend/scripts/import-ac-outstanding-so.mjs` + `import-ac-outstanding-po.mjs`
   (DRY-RUN default, APPLY=1, LIMIT=N), workflow `import-ac-outstanding-so.yml`.
 
+## F. FIELD-LEVEL tally (per order) — verify SKU / size / variants / payment are really aligned
+
+Counts tie out at the header; this is how you prove each FIELD imported correctly.
+Pick any order by its AutoCount DocNo and pull the ERP side:
+
+```sql
+-- header
+SELECT doc_no, linked_ac_docno, debtor_name, salesperson_id, postcode, city, customer_state,
+       venue, emergency_contact_phone, proceeded_at,
+       local_total_centi/100.0 total, balance_centi/100.0 balance, paid_centi/100.0 paid
+FROM scm.mfg_sales_orders WHERE linked_ac_docno = 'SO-0XXXXX';
+
+-- lines (SKU / size / variants)
+SELECT line_no, item_group, item_code, description2, qty, unit_price_centi/100.0 price,
+       gap_inches, divan_height_inches, leg_height_inches, variants, custom_specials
+FROM scm.mfg_sales_order_items WHERE doc_no = 'HC-SO-0XXXXX' ORDER BY line_no;
+
+-- payment
+SELECT paid_at, method, account_sheet, approval_code, amount_centi/100.0 amount
+FROM scm.mfg_sales_order_payments WHERE so_doc_no = 'HC-SO-0XXXXX';
+```
+
+Compare each field against the AutoCount SO/SODTL source line:
+
+| ERP field | must equal (AutoCount source) |
+|---|---|
+| **item_code (SKU)** | the binding-CSV `erp_code` for the AutoCount `ItemCode`. 0 non-sofa codes should be off the pick list. |
+| **size / spec** | the size suffix `(K)/(Q)/(S)/(SS)/(SK)` on the code = the AutoCount code's size; physical dims live in the product name. |
+| **variants.fabricId / colourId** | the colour code in `Desc2` (`Col:PC151-03`), normalized (`PC-151-01`==`PC151-01`, `151-03`->`PC151-03`, `SFAT4`->`SF-AT 04`, junk-after-code stripped). TBC/KIV -> BLANK (colour not chosen). |
+| **variants.gap / divanHeight / legHeight** | the `GAP:` / `DIVAN: N"+M"` numbers in Desc2 (M = leg; `NO LEG` -> 0). |
+| **custom_specials / variants.specials** | the special tokens in Desc2 — `HB ...`, `fully cover`, `push back` (245 SO lines carry one). |
+| **salesperson_id** | the AutoCount `SalesAgent`, resolved via `agent-staff-binding.csv` (resigned/no-account agents -> auto-created inactive sales staff). |
+| **postcode / city / customer_state** | parsed from `InvAddr1-4` (state from postcode prefix). |
+| **emergency_contact_phone** | the 2nd contact number (`DeliverPhone1`, else 2nd half of `Phone1`). |
+| **amount_centi (payment)** | (Σ line `Qty*UnitPrice`) − `UDF_BALANCE`, in sen. |
+| **account_sheet / approval_code** | the two halves of `UDF_PAYEMENT` `(accountsheet/approval)`. |
+| **paid_at / payment_date** | the SO `DocDate`. |
+| **proceeded_at (processing)** | `UDF_PDate`. RULE: if this is set, address + bedframe colour MUST be complete (else it is on the exceptions list). |
+
+PO field-level tally is the same shape against `scm.purchase_order_items`
+(material_code<-binding, supplier_id<-creditor, warehouse_id<-location, delivery_date,
+variants backfilled from the linked SO line where present else the PO's own Desc2).
+
 ## E. Finding what changed after the cut-off (the top-up query, for a later tally)
 
 After recording the freeze timestamp T, re-query AutoCount for rows modified after T
