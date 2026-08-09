@@ -65,19 +65,30 @@ const CATG = { MATTRESS: "mattress", BEDFRAME: "bedframe", ACC: "accessory", ACC
 const C1_ALIAS = { "SVC-DELIVERY": "TRANSPORTATION CHARGES", "SVC-DELIVERY-ADD": "TRANSPORTATION CHARGES", "SVC-DELIVERY-CROSS": "TRANSPORTATION CHARGES" };
 const isSofa = (c) => /SOFA/i.test(c || "");
 const uomOf = (g) => (g === "bedframe" ? "SET" : "UNIT");
+const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
+// Malaysian postcode (first 2 digits) -> state
+function stateOf(pc) {
+  if (!pc) return null; const p = +String(pc).slice(0, 2);
+  const R = [[[1, 2], "Perlis"], [[5, 9], "Kedah"], [[10, 14], "Penang"], [[15, 18], "Kelantan"], [[20, 24], "Terengganu"], [[25, 28], "Pahang"], [[30, 36], "Perak"], [[39, 39], "Pahang"], [[40, 48], "Selangor"], [[49, 49], "Pahang"], [[50, 60], "Kuala Lumpur"], [[62, 62], "Putrajaya"], [[63, 64], "Selangor"], [[68, 68], "Selangor"], [[69, 69], "Pahang"], [[70, 73], "Negeri Sembilan"], [[75, 78], "Melaka"], [[79, 86], "Johor"], [[87, 87], "Labuan"], [[88, 91], "Sabah"], [[93, 98], "Sarawak"]];
+  for (const [[a, b], s] of R) if (p >= a && p <= b) return s; return null;
+}
+const isPendingColour = (c) => /(TBC|KIV)/i.test(c || ""); // TBC/KIV anywhere = colour not chosen yet
 
 function parseBedframe(d2) {
   const s = (d2 || "").replace(/\s+/g, " ").trim();
   const o = { raw: s, specials: [] };
   let m;
   if ((m = /(?:MATT(?:RESS)?\.?\s*GAP|M\.?\s*GAP|\bGAP)\s*[:：]?\s*(\d+(?:\.\d+)?)/i.exec(s))) o.gap = parseFloat(m[1]);
-  if ((m = /\bDIV(?:AN)?\.?\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:"|INCH|IN)?\s*(?:\+\s*(\d+(?:\.\d+)?))?/i.exec(s))) { o.divan = parseFloat(m[1]); if (m[2]) o.leg = parseFloat(m[2]); }
+  if ((m = /\bDIV(?:AN)?\.?\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:["”"″'′]|INCH|IN)?\s*(?:\+\s*(\d+(?:\.\d+)?))?/i.exec(s))) { o.divan = parseFloat(m[1]); if (m[2] != null) o.leg = parseFloat(m[2]); }
   if (/NO\s*LEG/i.test(s)) o.leg = 0;
-  else if (o.leg === undefined && (m = /(\d+(?:\.\d+)?)\s*(?:"|INCH|IN)?\s*(?:WOODEN\s*)?LEG/i.exec(s))) o.leg = parseFloat(m[1]);
+  else if (o.leg === undefined && (m = /(\d+(?:\.\d+)?)\s*(?:["”"″'′]|INCH|IN)?\s*(?:WOODEN\s*)?LEG/i.exec(s))) o.leg = parseFloat(m[1]);
   if ((m = /COL(?:OUR)?(?:\s*CUSHION)?\s*[:：;]?\s*([A-Z0-9][A-Z0-9\- ]*?)(?:\s*[\/,;]|\s*DIVAN|\s*GAP|$)/i.exec(s))) o.color = m[1].trim();
-  if (/FULL\s*COVER|FULLCOVER/i.test(s)) o.specials.push("fully cover");
+  // specials -> variants.specials (the "Special Orders" picker). Capture all HB
+  // phrasings ("HB straight", "HB without panel", "HB & divan fully cover", "HB
+  // straight to wall"), fully-cover(ed), and push-back.
+  const hm = /\bHB\b[^\/,()]*/i.exec(s); if (hm) { const t = hm[0].replace(/\s+/g, " ").trim(); if (t.length > 2) o.specials.push(t); }
+  if (/FULL(?:Y)?\s*COVER(?:ED)?/i.test(s) && !o.specials.some((x) => /cover/i.test(x))) o.specials.push("fully cover");
   if (/PUSH\s*BACK/i.test(s)) o.specials.push("push back");
-  if (/HB\s+([A-Z ]+?STRAIGHT|DO\s+STRAIGHT|DIVAN)/i.test(s)) { const hm = /HB\s+([A-Z ]+)/i.exec(s); if (hm) o.specials.push("HB " + hm[1].trim().split(/[\/,]/)[0].trim()); }
   return o;
 }
 
@@ -135,8 +146,44 @@ async function main() {
   // ---- live pick list (company 1) ----
   const products = await sql`SELECT code, name FROM scm.mfg_products WHERE company_id = 1`;
   const codeSet = new Set(products.map((p) => p.code.toUpperCase()));
+  const prodId = new Map(products.map((p) => [p.code.toUpperCase(), p]));
   const resolveName = buildNameResolver(products);
   log(`mfg_products (company 1): ${products.length}`);
+
+  // ---- structured-field masters (salesperson / colour / venue) ----
+  const staff = await sql`SELECT id, name FROM scm.staff`;
+  const staffId = new Map(staff.map((s) => [norm(s.name), s.id]));
+  const bindCsv = fs.readFileSync(path.join(here, "data", "agent-staff-binding.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean); bindCsv.shift();
+  const agentBind = new Map(); // norm(agent) -> {name} | {create:true}
+  for (const ln of bindCsv) { const f = parseCsvLine(ln); const r = f[1] || ""; agentBind.set(norm(f[0]), r.startsWith("BIND:") ? { name: r.slice(5) } : { create: true }); }
+  const createAgents = new Set(); // agent display names needing an inactive staff row
+  const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
+  const fcx = new Map(); for (const r of fcRows) for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !fcx.has(k)) fcx.set(k, r);
+  const findColour = (c) => {
+    if (!c) return null;
+    const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1"); // SFAT4 -> SFAT04 (single trailing digit)
+    // try the full string, the first token, and a regex-extracted code — so a
+    // colour with junk jammed after it ("PC151-17 8 icnh 2 inch leg") still matches PC151-17
+    const toks = [c, (c.trim().split(/\s+/)[0] || "")];
+    const m = /[A-Z]{1,4}\s?\d{2,4}\s?-?\s?\d*/i.exec(c); if (m) toks.push(m[0]);
+    const cands = [];
+    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t))); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
+    for (const t of cands) { const h = fcx.get(t); if (h) return h; }
+    return null;
+  };
+  // product -> allowed colour_ids (so we don't set a colour the picker would drop).
+  // Best-effort: the colour-config table's product_id may reference a different
+  // product table/type; if the join fails we skip this check (colour still
+  // resolves via fabric_colours) rather than break the import.
+  const allowedColour = new Map();
+  try {
+    const pbc = await sql`SELECT p.code, bc.label AS colour_id FROM scm.product_bedframe_colours pc JOIN scm.mfg_products p ON p.id::text = pc.product_id::text JOIN scm.bedframe_colours bc ON bc.id::text = pc.colour_id::text WHERE pc.company_id = 1 AND pc.active`;
+    for (const r of pbc) { const k = r.code.toUpperCase(); if (!allowedColour.has(k)) allowedColour.set(k, new Set()); allowedColour.get(k).add(norm(r.colour_id)); }
+  } catch { /* skip product-colour validation */ }
+  let venues = []; try { venues = await sql`SELECT id, name FROM scm.venues WHERE company_id = 1`; } catch { /* venue is text */ }
+  const findVenue = (v) => { if (!v) return null; return venues.find((x) => norm(x.name) === norm(v)) || venues.find((x) => norm(x.name).includes(norm(v)) || norm(v).includes(norm(x.name))) || null; };
+  const resolveSalesperson = (agent) => { const b = agentBind.get(norm(agent)); if (!b) return null; if (b.name) return staffId.get(norm(b.name)) || null; createAgents.add((agent || "").trim()); return { create: norm(agent) }; };
+  log(`staff=${staff.length} agentBindings=${agentBind.size} fabric_colours=${fcRows.length} venues=${venues.length}`);
 
   // ---- group into orders, pick pure-non-sofa ----
   const orders = new Map();
@@ -144,6 +191,8 @@ async function main() {
   let pure = [], skipMixed = 0, skipAllSofa = 0;
   for (const [doc, ls] of orders) { const s = ls.filter((l) => isSofa(l.ItemCode)).length; if (s === 0) pure.push([doc, ls]); else if (s === ls.length) skipAllSofa++; else skipMixed++; }
   pure.sort((a, b) => (a[1][0].DocDate || "") < (b[1][0].DocDate || "") ? -1 : 1);
+  const ONLY = (process.env.DOC || "").trim().replace(/^HC-/, ""); // import just one AutoCount DocNo (verification)
+  if (ONLY) pure = pure.filter(([d]) => d === ONLY);
   if (LIMIT) pure = pure.slice(0, LIMIT);
 
   // ---- build ----
@@ -174,13 +223,37 @@ async function main() {
       if (!codeSet.has(erp.toUpperCase())) notInPickList.add(erp);
       const qty = Math.round(num(l.Qty)) || 1;
       const up = centi(l.UnitPrice); const lineTotal = up * qty; total += lineTotal; if (bucket[grp] !== undefined) bucket[grp] += lineTotal;
-      const bf = grp === "bedframe" ? parseBedframe(l.Desc2) : null;
-      items.push({ erp, grp, desc: l.Description, d2: l.Desc2, qty, up, lineTotal, loc: l.Location, bf, resolvedFree });
+      let bf = null, variants = null;
+      if (grp === "bedframe") {
+        bf = parseBedframe(l.Desc2);
+        const pending = isPendingColour(bf.color);          // TBC/KIV -> colour not chosen, leave blank (not a bug)
+        const fcHit = pending ? null : findColour(bf.color);
+        if (bf.color && !pending && !fcHit) exceptions.push({ ac: acDoc, code: l.ItemCode, desc: `colour "${bf.color}" not in fabric_colours`, price: 0 });
+        else if (fcHit) { const allow = allowedColour.get((erp || "").toUpperCase()); if (allow && !allow.has(norm(fcHit.colour_id))) exceptions.push({ ac: acDoc, code: l.ItemCode, desc: `colour ${fcHit.colour_id} not a configured option for ${erp}`, price: 0 }); }
+        variants = {
+          fabricId: fcHit ? fcHit.fabric_id : null, colourId: fcHit ? fcHit.colour_id : null,
+          colourLabel: fcHit ? fcHit.label : null, fabricLabel: fcHit ? fcHit.fabric_id : null,
+          gap: bf.gap != null ? bf.gap + '"' : null, divanHeight: bf.divan != null ? bf.divan + '"' : null,
+          legHeight: bf.leg != null ? bf.leg + '"' : null, specials: bf.specials || [],
+        };
+      }
+      items.push({ erp, grp, desc: l.Description, d2: l.Desc2, qty, up, lineTotal, loc: l.Location, bf, variants, resolvedFree });
     }
     const bal = centi(h.UDF_BALANCE); const paid = Math.max(0, total - bal);
     const pay = parsePayment(h.UDF_PAYEMENT);
+    // ---- structured picker fields ----
+    const salespersonId = resolveSalesperson(h.SalesAgent); // uuid | {create} | null
+    const addrStr = [h.InvAddr1, h.InvAddr2, h.InvAddr3, h.InvAddr4].filter(Boolean).join(", ");
+    const pcM = /\b(\d{5})\b/.exec(addrStr); const postcode = pcM ? pcM[1] : null;
+    const cState = stateOf(postcode);
+    let city = null; if (postcode) city = (addrStr.slice(addrStr.indexOf(postcode) + 5).split(",")[0] || "").replace(new RegExp(cState || "$^", "i"), "").trim() || null;
+    let emergency = null; { const dp = (h.DeliverPhone1 || "").trim(); if (dp && norm(dp) !== norm(h.Phone1)) emergency = dp; else { const parts = (h.Phone1 || "").split(/[\/,]/).map((x) => x.trim()).filter(Boolean); if (parts.length > 1) emergency = parts[1]; } }
+    const venue = findVenue(h.UDF_VENUE);
+    const procDate = h.UDF_PDate || null; // present only after the re-export adds UDF_PDate
+    // rule (owner): a PROCESSED order (has processing date) must carry full address + bedframe colour
+    if (procDate) { const bfMissing = items.some((i) => i.grp === "bedframe" && (!i.variants || !i.variants.colourId)); if (!addrStr || bfMissing) exceptions.push({ ac: acDoc, code: "(processed)", desc: `processed order missing ${!addrStr ? "address " : ""}${bfMissing ? "bedframe colour" : ""}`.trim(), price: 0 }); }
     totAll += total; balAll += bal; for (const k in bucket) catTotals[k] += bucket[k];
-    built.push({ docNo: "HC-" + acDoc, acDoc, h, items, total, bal, paid, pay, bucket });
+    built.push({ docNo: "HC-" + acDoc, acDoc, h, items, total, bal, paid, pay, bucket, salespersonId, postcode, city, cState, emergency, venue, procDate });
   }
 
   // ---- report ----
@@ -194,6 +267,15 @@ async function main() {
   log(`Unmatched lines (exceptions): ${exceptions.length}`);
   for (const e of exceptions.slice(0, 20)) log(`   ${e.ac}  code="${e.code}"  "${e.desc}"  RM${e.price}`);
   if (notInPickList.size) { log(`erp codes NOT in company-1 pick list: ${notInPickList.size}`); for (const c of [...notInPickList].slice(0, 20)) log(`   ${c}`); }
+  log(`staff to auto-create (inactive salesperson): ${createAgents.size}  [${[...createAgents].join(", ")}]`);
+
+  // ---- sample preview (structured picker fields) for owner Edit-verification ----
+  for (const o of built.filter((x) => ["HC-SO-013152", "HC-SO-013160", "HC-SO-013124"].includes(x.docNo))) {
+    log(`\nSAMPLE ${o.docNo}  ${o.h.DebtorName}`);
+    log(`  salesperson: "${o.h.SalesAgent}" -> ${o.salespersonId && o.salespersonId.create ? "(create inactive staff)" : "salesperson_id=" + o.salespersonId}`);
+    log(`  venue=${o.venue ? "venue_id=" + o.venue.id : '"' + (o.h.UDF_VENUE || "") + '" (text)'}  emergency=${o.emergency || "-"}  postcode/city/state=${o.postcode || "-"} / ${o.city || "-"} / ${o.cState || "-"}`);
+    for (const i of o.items.filter((x) => x.grp === "bedframe")) log(`  bedframe ${i.erp}: variants=${JSON.stringify(i.variants)}`);
+  }
 
   if (!APPLY) { log("\nDRY-RUN only — no writes. Set APPLY=1 to import."); await sql.end(); return; }
 
@@ -203,6 +285,8 @@ async function main() {
   log("\nAPPLYING (bulk)…");
   await sql`ALTER TABLE scm.mfg_sales_orders ADD COLUMN IF NOT EXISTS linked_ac_docno text`;
   await sql`CREATE INDEX IF NOT EXISTS mfg_so_linked_ac_docno_idx ON scm.mfg_sales_orders(linked_ac_docno)`;
+  // single-order verification (DOC=...): delete that one order first so it re-imports
+  if (ONLY) { const d = "HC-" + ONLY; await sql`DELETE FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${d}`; await sql`DELETE FROM scm.mfg_sales_order_items WHERE doc_no = ${d}`; await sql`DELETE FROM scm.mfg_sales_orders WHERE doc_no = ${d}`; log(`DOC mode: cleared existing ${d} for re-import`); }
 
   const esc = (s) => "'" + String(s).replace(/'/g, "''") + "'";
   const CUR = { __raw: "CURRENT_DATE" };
@@ -215,6 +299,17 @@ async function main() {
     return esc(v);
   };
 
+  // auto-create INACTIVE salesperson staff for AutoCount agents with no ERP account
+  const toCreate = [...createAgents].filter((n) => !staffId.has(norm(n)));
+  if (toCreate.length) {
+    const vals = toCreate.map((n) => "(" + [V("ACIMP-" + strip(n).slice(0, 12)), V(n), "'sales'", "false"].join(",") + ")").join(",");
+    await sql.unsafe(`INSERT INTO scm.staff (staff_code, name, role, active) VALUES ${vals} ON CONFLICT DO NOTHING`);
+    log(`created ${toCreate.length} inactive salesperson staff`);
+  }
+  if (createAgents.size) { const created = await sql`SELECT id, name FROM scm.staff WHERE name = ANY(${[...createAgents]})`; for (const r of created) staffId.set(norm(r.name), r.id); }
+  // resolve {create} salesperson placeholders now that staff exist
+  for (const o of built) { if (o.salespersonId && o.salespersonId.create) o.salespersonId = staffId.get(o.salespersonId.create) || null; }
+
   // idempotency: which doc_nos are already in?
   const allDocs = built.map((o) => o.docNo);
   const existing = new Set();
@@ -225,7 +320,7 @@ async function main() {
   const todo = built.filter((o) => !existing.has(o.docNo));
   log(`already imported: ${existing.size}; to insert: ${todo.length}`);
 
-  const HCOLS = "(doc_no,linked_ac_docno,so_date,debtor_name,debtor_code,agent,sales_location,ref,venue,branding,address1,address2,address3,address4,phone,status,company_id,currency,local_total_centi,balance_centi,paid_centi,deposit_centi,line_count,mattress_sofa_centi,bedframe_centi,accessories_centi,service_centi,others_centi,payment_method,approval_code,payment_date)";
+  const HCOLS = "(doc_no,linked_ac_docno,so_date,debtor_name,debtor_code,agent,salesperson_id,sales_location,ref,venue,venue_id,branding,address1,address2,address3,address4,postcode,city,customer_state,phone,emergency_contact_phone,status,company_id,currency,local_total_centi,balance_centi,paid_centi,deposit_centi,line_count,mattress_sofa_centi,bedframe_centi,accessories_centi,service_centi,others_centi,payment_method,approval_code,payment_date,proceeded_at)";
   const ICOLS = "(doc_no,line_no,item_group,item_code,description,description2,uom,location,qty,unit_price_centi,total_centi,balance_centi,company_id,gap_inches,divan_height_inches,leg_height_inches,variants,custom_specials,remark)";
   const PCOLS = "(so_doc_no,paid_at,method,approval_code,account_sheet,amount_centi,is_deposit,company_id,note)";
 
@@ -236,16 +331,25 @@ async function main() {
     const hv = [], iv = [], pv = [];
     for (const o of batch) {
       const h = o.h;
-      hv.push("(" + [V(o.docNo), V(o.acDoc), h.DocDate ? V(h.DocDate) : V(CUR), V(h.DebtorName || "CUSTOMER"), V(h.DebtorCode || null), V(h.SalesAgent || null), V(h.SalesLocation || null), V(h.Ref || null), V(h.UDF_VENUE || null), V(h.UDF_BRANDING || null), V(h.InvAddr1 || null), V(h.InvAddr2 || null), V(h.InvAddr3 || null), V(h.InvAddr4 || null), V(h.Phone1 || null), V("CONFIRMED"), "1", V("MYR"), V(o.total), V(o.bal), V(o.paid), V(o.paid), V(o.items.length), V(o.bucket.mattress), V(o.bucket.bedframe), V(o.bucket.accessory), V(o.bucket.service), V(o.bucket.others), V(o.paid > 0 ? "imported" : null), V(o.pay.appr || null), o.paid > 0 ? V(CUR) : "NULL"].join(",") + ")");
+      hv.push("(" + [
+        V(o.docNo), V(o.acDoc), h.DocDate ? V(h.DocDate) : V(CUR), V(h.DebtorName || "CUSTOMER"), V(h.DebtorCode || null), V(h.SalesAgent || null), V(o.salespersonId || null),
+        V(h.SalesLocation || null), V(h.Ref || null), V(h.UDF_VENUE || null), V(o.venue ? o.venue.id : null), V(h.UDF_BRANDING || null),
+        V(h.InvAddr1 || null), V(h.InvAddr2 || null), V(h.InvAddr3 || null), V(h.InvAddr4 || null), V(o.postcode || null), V(o.city || null), V(o.cState || null),
+        V(h.Phone1 || null), V(o.emergency || null),
+        V("CONFIRMED"), "1", V("MYR"), V(o.total), V(o.bal), V(o.paid), V(o.paid), V(o.items.length),
+        V(o.bucket.mattress), V(o.bucket.bedframe), V(o.bucket.accessory), V(o.bucket.service), V(o.bucket.others),
+        V(o.paid > 0 ? "imported" : null), V(o.pay.appr || null), o.paid > 0 ? (h.DocDate ? V(h.DocDate) : V(CUR)) : "NULL",
+        o.procDate ? V(o.procDate) : "NULL",
+      ].join(",") + ")");
       let lineNo = 0;
       for (const it of o.items) {
         lineNo++;
-        const variants = it.bf ? { color: it.bf.color || null, specials: it.bf.specials, raw: it.bf.raw || null } : null;
-        const specials = it.bf && it.bf.specials.length ? it.bf.specials : null;
+        const variants = it.variants || null; // resolved {fabricId,colourId,colourLabel,gap,divanHeight,legHeight,specials}
+        const specials = it.variants && it.variants.specials && it.variants.specials.length ? it.variants.specials : null;
         iv.push("(" + [V(o.docNo), String(lineNo), V(it.grp), V(it.erp), V(it.desc || null), V(it.d2 || null), V(uomOf(it.grp)), V(it.loc || null), String(it.qty), V(it.up), V(it.lineTotal), V(it.lineTotal), "1", it.bf && isFinite(it.bf.gap) ? String(Math.round(it.bf.gap)) : "NULL", it.bf && isFinite(it.bf.divan) ? String(Math.round(it.bf.divan)) : "NULL", it.bf && isFinite(it.bf.leg) ? String(Math.round(it.bf.leg)) : "NULL", V({ __json: variants }), V({ __json: specials }), V(it.resolvedFree ? "name-matched from free-text" : null)].join(",") + ")");
         nItems++;
       }
-      if (o.paid > 0) { pv.push("(" + [V(o.docNo), V(CUR), V("imported"), V(o.pay.appr || null), V(o.pay.acct || null), V(o.paid), "true", "1", V("imported from AutoCount " + o.acDoc + (o.pay.extra ? " [" + o.pay.extra + "]" : ""))].join(",") + ")"); nPay++; }
+      if (o.paid > 0) { pv.push("(" + [V(o.docNo), h.DocDate ? V(h.DocDate) : V(CUR), V("imported"), V(o.pay.appr || null), V(o.pay.acct || null), V(o.paid), "true", "1", V("imported from AutoCount " + o.acDoc + (o.pay.extra ? " [" + o.pay.extra + "]" : ""))].join(",") + ")"); nPay++; }
       nOrders++;
     }
     await sql.begin(async (tx) => {
