@@ -147,9 +147,13 @@ async function main() {
   log(`binding rows: ${byAc.size}`);
 
   // ---- live pick list (company 1) ----
-  const products = await sql`SELECT code, name FROM scm.mfg_products WHERE company_id = 1`;
+  const products = await sql`SELECT code, name, cost_price_sen FROM scm.mfg_products WHERE company_id = 1`;
   const codeSet = new Set(products.map((p) => p.code.toUpperCase()));
   const prodId = new Map(products.map((p) => [p.code.toUpperCase(), p]));
+  const SYS_USER = "00000000-0000-4000-8000-000000000001";
+  const wh = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = 1`;
+  const whByCode = new Map(wh.map((w) => [w.code.toUpperCase(), w.id]));
+  const whId = (loc) => { if (!loc) return null; const k = loc.trim().toUpperCase(); return whByCode.get((SALESLOC[k] || k).toUpperCase()) || whByCode.get(k) || null; };
   const resolveName = buildNameResolver(products);
   log(`mfg_products (company 1): ${products.length}`);
 
@@ -248,7 +252,9 @@ async function main() {
       // description MUST be the ERP product name (what a picker-selected item stores),
       // not the AutoCount Description — else list shows item_code but Edit shows the AC text.
       const prodRow = prodId.get((erp || "").toUpperCase());
-      items.push({ erp, grp, desc: (prodRow && prodRow.name) || l.Description, d2: l.Desc2, qty, up, lineTotal, loc: l.Location, bf, variants, resolvedFree });
+      const unitCost = prodRow && prodRow.cost_price_sen ? prodRow.cost_price_sen : 0; // per-unit cost (sen)
+      const lineCost = unitCost * qty;
+      items.push({ erp, grp, desc: (prodRow && prodRow.name) || l.Description, d2: l.Desc2, qty, up, lineTotal, loc: l.Location, bf, variants, resolvedFree, unitCost, lineCost, warehouseId: whId(l.Location) });
     }
     const bal = centi(h.UDF_BALANCE); const paid = Math.max(0, total - bal);
     const pay = parsePayment(h.UDF_PAYEMENT);
@@ -313,8 +319,8 @@ async function main() {
   // auto-create INACTIVE salesperson staff for AutoCount agents with no ERP account
   const toCreate = [...createAgents].filter((n) => !staffId.has(norm(n)));
   if (toCreate.length) {
-    const vals = toCreate.map((n) => "(" + [V("ACIMP-" + strip(n).slice(0, 12)), V(n), "'sales'", "false"].join(",") + ")").join(",");
-    await sql.unsafe(`INSERT INTO scm.staff (staff_code, name, role, active) VALUES ${vals} ON CONFLICT DO NOTHING`);
+    const vals = toCreate.map((n) => "(" + ["gen_random_uuid()", V("ACIMP-" + strip(n).slice(0, 12)), V(n), "'sales'", "false"].join(",") + ")").join(",");
+    await sql.unsafe(`INSERT INTO scm.staff (id, staff_code, name, role, active) VALUES ${vals} ON CONFLICT DO NOTHING`);
     log(`created ${toCreate.length} inactive salesperson staff`);
   }
   if (createAgents.size) { const created = await sql`SELECT id, name FROM scm.staff WHERE name = ANY(${[...createAgents]})`; for (const r of created) staffId.set(norm(r.name), r.id); }
