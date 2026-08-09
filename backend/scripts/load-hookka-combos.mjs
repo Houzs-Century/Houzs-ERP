@@ -30,25 +30,30 @@ try {
     WHERE c.code = 'HOUZS' AND s.code = '400-H004'`;
   if (!sup) throw new Error("supplier 400-H004 missing");
 
-  const existing = await sql`SELECT base_model, modules, tier, supplier_id, effective_from
+  // two scopes: supplier rows feed the PO cost path; MASTER rows are what the
+  // Products page shows (its list filters supplier_id IS NULL) and what SO
+  // costing reads — owner 2026-08-09: "hookka sofa combo dont have?"
+  const existing = await sql`SELECT base_model, modules, tier, supplier_id
     FROM scm.sofa_combo_pricing
-    WHERE supplier_id = ${sup.id} AND deleted_at IS NULL`;
-  const have = new Set(existing.map((e) => `${e.base_model}||${e.tier}||${key(e.modules)}`));
+    WHERE (supplier_id = ${sup.id} OR (supplier_id IS NULL AND customer_id IS NULL)) AND deleted_at IS NULL`;
+  const have = new Set(existing.map((e) => `${e.supplier_id ?? "master"}||${e.base_model}||${e.tier}||${key(e.modules)}`));
 
   let ins = 0, skip = 0;
   await sql.begin(async (tx) => {
     for (const r of rows) {
-      const k = `${r.base_model}||${r.tier}||${key(r.modules)}`;
-      if (have.has(k)) { skip++; continue; }
-      ins++;
-      if (APPLY) {
-        await tx`INSERT INTO scm.sofa_combo_pricing
-          (base_model, modules, tier, supplier_id, prices_by_height, label, effective_from, notes)
-          VALUES (${r.base_model}, ${tx.json(r.modules)}, ${r.tier}, ${sup.id},
-                  ${tx.json(r.prices_by_height)}, ${r.label}, ${EFFECTIVE}, ${r.notes})`;
+      for (const scope of [sup.id, null]) {
+        const k = `${scope ?? "master"}||${r.base_model}||${r.tier}||${key(r.modules)}`;
+        if (have.has(k)) { skip++; continue; }
+        ins++;
+        if (APPLY) {
+          await tx`INSERT INTO scm.sofa_combo_pricing
+            (base_model, modules, tier, supplier_id, prices_by_height, label, effective_from, notes)
+            VALUES (${r.base_model}, ${tx.json(r.modules)}, ${r.tier}, ${scope},
+                    ${tx.json(r.prices_by_height)}, ${r.label}, ${EFFECTIVE}, ${r.notes})`;
+        }
       }
     }
-    note(`${APPLY ? "APPLIED" : "DRY-RUN"}: insert ${ins}, skip-existing ${skip} of ${rows.length}`);
+    note(`${APPLY ? "APPLIED" : "DRY-RUN"}: insert ${ins}, skip-existing ${skip} of ${rows.length} x2 scopes`);
     if (!APPLY) throw new Error("DRY-RUN-ROLLBACK");
   }).catch((e) => { if (e.message !== "DRY-RUN-ROLLBACK") throw e; note("DRY-RUN: rolled back."); });
 } catch (e) {
