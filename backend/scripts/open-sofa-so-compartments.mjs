@@ -26,13 +26,20 @@ const sql = postgres(url, { ssl: "require", prepare: false, max: 1 });
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
 const OPENINGS = [
-  { model: "5527", comps: ["2S"] },
-  { model: "3068", comps: ["2S"] },
-  { model: "00913", comps: ["2S"] },
-  { model: "9021", comps: ["2S", "1A(LHF)", "1A(RHF)", "2A(LHF)", "2A(RHF)"] },
-  { model: "5119", comps: ["1S(P)", "1NA", "L(LHF)", "L(RHF)"] },
-  { model: "558", comps: ["1ABOX(LHF)", "1ABOX(RHF)"] },
-  { model: "822", comps: ["1ABOX(LHF)", "1ABOX(RHF)"] },
+  // round 2 (owner: 缺件都开 + 有R必有P; 1B/2B = Bench; dry-run 8 rollup)
+  { model: "3068", comps: ["1A(LHF)", "1A(RHF)", "2A(LHF)", "2A(RHF)"] },
+  { model: "5119", comps: ["1A(P)(LHF)", "1A(P)(RHF)"] },
+  { model: "5535", comps: ["1A(R)(LHF)", "1A(R)(RHF)", "1A(P)(LHF)", "1A(P)(RHF)"] },
+  { model: "8030", comps: ["1A(R)(LHF)", "1A(R)(RHF)", "1A(P)(LHF)", "1A(P)(RHF)", "1B"] },
+  { model: "8038", comps: ["1A(R)(LHF)", "1A(R)(RHF)", "1A(P)(LHF)", "1A(P)(RHF)"] },
+  { model: "8051", comps: ["1A(R)(LHF)", "1A(R)(RHF)", "1A(P)(LHF)", "1A(P)(RHF)"] },
+  { model: "8060", comps: ["1A(R)(LHF)", "1A(R)(RHF)", "1A(P)(LHF)", "1A(P)(RHF)", "1B"] },
+  { model: "8069", comps: ["1A(R)(LHF)", "1A(R)(RHF)", "1A(P)(LHF)", "1A(P)(RHF)", "1B", "2B"] },
+  { model: "9021", comps: ["1A(R)(LHF)", "1A(R)(RHF)", "1A(P)(LHF)", "1A(P)(RHF)"] },
+  { model: "9028", comps: ["1A(R)(LHF)", "1A(R)(RHF)", "1A(P)(LHF)", "1A(P)(RHF)"] },
+  { model: "9050", comps: ["1A(R)(LHF)", "1A(R)(RHF)", "1A(P)(LHF)", "1A(P)(RHF)", "1B"] },
+  { model: "9058", comps: ["1A(R)(LHF)", "1A(R)(RHF)", "1A(P)(LHF)", "1A(P)(RHF)", "1B"] },
+  { model: "7223", comps: ["CNR"] },
 ];
 
 const counts = {};
@@ -95,7 +102,7 @@ async function main() {
         const nextCfg = { ...cfg.config, sofaCompartments: [...cfg.config.sofaCompartments, ...poolAdd] };
         await tx`INSERT INTO scm.maintenance_config_history (id, scope, config, effective_from, notes, created_at, company_id)
                  VALUES (${"mch-" + randomBytes(6).toString("hex")}, 'master', ${tx.json(nextCfg)}, CURRENT_DATE,
-                         ${"sofa-so-import 2026-08-10: add " + poolAdd.join(", ")}, ${now}, ${cid})`;
+                         ${"sofa-so-import round2 2026-08-10: add " + poolAdd.join(", ")}, ${now}, ${cid})`;
       }
       bump("pool_append", "apply");
     }
