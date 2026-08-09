@@ -190,26 +190,6 @@
   "source": "SK=2xQ from ARIZONA 2.0 (A) (F)-(Q)"
  },
  {
-  "erp": "ARTI-(SK)",
-  "base_price_sen": 174960,
-  "source": "SK=2xQ from ARTI-(Q)"
- },
- {
-  "erp": "ARUNI-(SK)",
-  "base_price_sen": 53784,
-  "source": "SK=2xQ from ARUNI-(Q)"
- },
- {
-  "erp": "AURORA MATT (SK)",
-  "base_price_sen": 200000,
-  "source": "SK=2xQ from AURORA MATT (Q)"
- },
- {
-  "erp": "BACKSHIRE MATT (SK)",
-  "base_price_sen": 240000,
-  "source": "SK=2xQ from BACKSHIRE MATT (Q)"
- },
- {
   "erp": "CANVAS (A)-(SK)",
   "base_price_sen": 129000,
   "source": "SK=2xQ from CANVAS (A)-(Q)"
@@ -220,29 +200,14 @@
   "source": "SK=2xQ from CELENE 2.0 (A)(F)-(Q)"
  },
  {
-  "erp": "CELESTIA MATT (SK)",
-  "base_price_sen": 520000,
-  "source": "SK=2xQ from CELESTIA MATT (Q)"
- },
- {
   "erp": "CODY 2.0 (F)-(SK)",
   "base_price_sen": 85000,
   "source": "SK=2xQ from CODY 2.0 (F)-(Q)"
  },
  {
-  "erp": "CODYS-(SK)",
-  "base_price_sen": 34992,
-  "source": "SK=2xQ from CODYS-(Q)"
- },
- {
   "erp": "COTY 2.0 (F)-(SK)",
   "base_price_sen": 85000,
   "source": "SK=2xQ from COTY 2.0 (F)-(Q)"
- },
- {
-  "erp": "CRESTLAKE MATT (SK)",
-  "base_price_sen": 260000,
-  "source": "SK=2xQ from CRESTLAKE MATT (Q)"
  },
  {
   "erp": "CROWN-(SK)",
@@ -255,39 +220,9 @@
   "source": "SK=2xQ from DAISON (A)-(Q)"
  },
  {
-  "erp": "DUNLOPILLO COOLSILK 2.0 ELEGANCE SUITE MATT (SK)",
-  "base_price_sen": 475000,
-  "source": "SK=2xQ from DUNLOPILLO COOLSILK 2.0 ELEGANCE SUITE MATT (Q)"
- },
- {
-  "erp": "DUNLOPILLO OTHOREST AQUA SHIELD RELAXER 300 MATT (SK)",
-  "base_price_sen": 299800,
-  "source": "SK=2xQ from DUNLOPILLO OTHOREST AQUA SHIELD RELAXER 300 MATT (Q)"
- },
- {
-  "erp": "DUNLOPILLO TENCEL DREAM MATT (SK)",
-  "base_price_sen": 227800,
-  "source": "SK=2xQ from DUNLOPILLO TENCEL DREAM MATT (Q)"
- },
- {
   "erp": "ELEGANT (A)-(SK)",
   "base_price_sen": 117000,
   "source": "SK=2xQ from ELEGANT (A)-(Q)"
- },
- {
-  "erp": "ERGOTEX ERGOLITE MATT (SK)",
-  "base_price_sen": 159800,
-  "source": "SK=2xQ from ERGOTEX ERGOLITE MATT (Q)"
- },
- {
-  "erp": "ERGOTEX PUREZONE-C MATT (SK)",
-  "base_price_sen": 362000,
-  "source": "SK=2xQ from ERGOTEX PUREZONE-C MATT (Q)"
- },
- {
-  "erp": "ERGOTEX PUREZONE-S MATT (SK)",
-  "base_price_sen": 362000,
-  "source": "SK=2xQ from ERGOTEX PUREZONE-S MATT (Q)"
  },
  {
   "erp": "ESSENCE (A)-(SK)",
@@ -295,24 +230,9 @@
   "source": "SK=2xQ from ESSENCE (A)-(Q)"
  },
  {
-  "erp": "FENRIRS-(SK)",
-  "base_price_sen": 58320,
-  "source": "SK=2xQ from FENRIRS-(Q)"
- },
- {
-  "erp": "FINKA-(SK)",
-  "base_price_sen": 100440,
-  "source": "SK=2xQ from FINKA-(Q)"
- },
- {
   "erp": "FLAT-(SK)",
   "base_price_sen": 71000,
   "source": "SK=2xQ from FLAT-(Q)"
- },
- {
-  "erp": "FLORES-(SK)",
-  "base_price_sen": 93312,
-  "source": "SK=2xQ from FLORES-(Q)"
  },
  {
   "erp": "FLUFY-(SK)",
@@ -323,26 +243,6 @@
   "erp": "GOYO (A)-(SK)",
   "base_price_sen": 155000,
   "source": "SK=2xQ from GOYO (A)-(Q)"
- },
- {
-  "erp": "GRANDE-(SK)",
-  "base_price_sen": 151632,
-  "source": "SK=2xQ from GRANDE-(Q)"
- },
- {
-  "erp": "HAPPI SLEEP SOLACE MATT (SK)",
-  "base_price_sen": 167800,
-  "source": "SK=2xQ from HAPPI SLEEP SOLACE MATT (Q)"
- },
- {
-  "erp": "HAPPI SLEEP SOLITUDE MATT (SK)",
-  "base_price_sen": 167800,
-  "source": "SK=2xQ from HAPPI SLEEP SOLITUDE MATT (Q)"
- },
- {
-  "erp": "HIBANA-(SK)",
-  "base_price_sen": 77112,
-  "source": "SK=2xQ from HIBANA-(Q)"
  },
  {
   "erp": "HIPSTER (A)-(SK)",
@@ -370,39 +270,14 @@
   "source": "SK=2xQ from MACRO (A)-(Q)"
  },
  {
-  "erp": "MARVIS-(SK)",
-  "base_price_sen": 123768,
-  "source": "SK=2xQ from MARVIS-(Q)"
- },
- {
   "erp": "MASCO (A)-(SK)",
   "base_price_sen": 149000,
   "source": "SK=2xQ from MASCO (A)-(Q)"
  },
  {
-  "erp": "MAVERICK-(SK)",
-  "base_price_sen": 46656,
-  "source": "SK=2xQ from MAVERICK-(Q)"
- },
- {
-  "erp": "MINI-(SK)",
-  "base_price_sen": 142344,
-  "source": "SK=2xQ from MINI-(Q)"
- },
- {
   "erp": "MONDEO-(SK)",
   "base_price_sen": 115000,
   "source": "SK=2xQ from MONDEO-(Q)"
- },
- {
-  "erp": "MOZZIE-(SK)",
-  "base_price_sen": 151632,
-  "source": "SK=2xQ from MOZZIE-(Q)"
- },
- {
-  "erp": "PRINCE-(SK)",
-  "base_price_sen": 206000,
-  "source": "SK=2xQ from PRINCE-(Q)"
  },
  {
   "erp": "SIMPLE-(SK)",
@@ -418,21 +293,6 @@
   "erp": "TIFANNY 2.0 (F)-(SK)",
   "base_price_sen": 85000,
   "source": "SK=2xQ from TIFANNY 2.0 (F)-(Q)"
- },
- {
-  "erp": "VALKYRIE-(SK)",
-  "base_price_sen": 69984,
-  "source": "SK=2xQ from VALKYRIE-(Q)"
- },
- {
-  "erp": "VELVETON MATT (SK)",
-  "base_price_sen": 380000,
-  "source": "SK=2xQ from VELVETON MATT (Q)"
- },
- {
-  "erp": "ZOFIA-(SK)",
-  "base_price_sen": 77112,
-  "source": "SK=2xQ from ZOFIA-(Q)"
  },
  {
   "erp": "VALKYRIE (A)-(K)",
