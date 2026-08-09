@@ -116,6 +116,16 @@ async function main() {
     WHERE status = 'READY_TO_SHIP' AND proceeded_at IS NULL GROUP BY company_id ORDER BY company_id`;
   log(`READY_TO_SHIP without processing date (would regress under a global gate): ${gateRows.length ? gateRows.map((r) => `company ${r.company_id}: ${r.n}`).join("; ") : "none"}`);
 
+  // ---- 8. fabric master lookup for the hand-parse colour stragglers ----
+  // Owner 2026-08-10: "NB KS 都是 fabric 啊" + "silver cream 我们有什么 fabric?"
+  // — answer from the master itself so the patch uses verified codes.
+  const fab = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours
+    WHERE company_id = 1 AND (colour_id ILIKE 'NB%' OR colour_id ILIKE 'KS%'
+      OR label ILIKE '%SILVER%' OR label ILIKE '%CREAM%' OR colour_id ILIKE '%SILVER%' OR colour_id ILIKE '%CREAM%')
+    ORDER BY fabric_id, colour_id`;
+  log(`fabric master hits (NB*/KS*/silver/cream): ${fab.length}`);
+  for (const f of fab.slice(0, 40)) log(`   fabric ${f.fabric_id} | colour ${f.colour_id} | label ${f.label}`);
+
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });
