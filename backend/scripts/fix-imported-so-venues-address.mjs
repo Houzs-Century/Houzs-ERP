@@ -97,16 +97,26 @@ async function main() {
   };
   const texts = await sql`SELECT venue, count(*)::int n FROM scm.mfg_sales_orders WHERE company_id = 1 AND venue IS NOT NULL AND venue <> '' GROUP BY venue`;
   const pairs = []; const unmatched = [];
-  for (const t of texts) { const v = resolveVenue(t.venue); if (v) pairs.push([t.venue, v.id]); else unmatched.push(`${t.venue}(${t.n})`); }
+  for (const t of texts) { const v = resolveVenue(t.venue); if (v) pairs.push([t.venue, v.id, v.name]); else unmatched.push(`${t.venue}(${t.n})`); }
   log(`PMS venue master (project_venues): ${master.length}; order venue texts: ${texts.length}; matched: ${pairs.length}; UNMATCHED: ${unmatched.length}`);
   if (unmatched.length) log(`  unmatched venues (owner to map/add in PMS): ${unmatched.join(" | ")}`);
-  if (APPLY && pairs.length) {
+  /* CANONICALISE THE VENUE TEXT, don't write venue_id.
+     scm.mfg_sales_orders.venue_id is a UUID column, but the venue master the UI
+     actually uses is public.project_venues whose id is an INTEGER (the API
+     stringifies it) — so the master's id can never be stored there, which is why
+     even real orders carry venue_id NULL. The Edit dropdown resolves by NAME, so
+     the fix is to rewrite each order's venue TEXT to the master's exact spelling
+     ("MIDVALLEY EXHIBITION CENTRE" -> "MID VALLEY"). */
+  const renames = pairs.filter(([txt, , canon]) => canon && norm(txt) !== norm(canon));
+  log(`venue texts needing canonicalisation: ${renames.length}`);
+  for (const [txt, , canon] of renames.slice(0, 10)) log(`   "${txt}" -> "${canon}"`);
+  if (APPLY && renames.length) {
     let n = 0;
-    for (let i = 0; i < pairs.length; i += 100) {
-      const b = pairs.slice(i, i + 100);
-      await sql.begin(async (tx) => { for (const [txt, id] of b) { const r = await tx`UPDATE scm.mfg_sales_orders SET venue_id = ${id} WHERE company_id = 1 AND venue = ${txt}`; n += r.count; } });
+    for (let i = 0; i < renames.length; i += 100) {
+      const b = renames.slice(i, i + 100);
+      await sql.begin(async (tx) => { for (const [txt, , canon] of b) { const r = await tx`UPDATE scm.mfg_sales_orders SET venue = ${canon} WHERE company_id = 1 AND venue = ${txt}`; n += r.count; } });
     }
-    log(`venue_id backfilled on ${n} orders (from PMS master)`);
+    log(`venue text canonicalised on ${n} orders (now matches the PMS master exactly)`);
   }
 
   // ---------- 2. address postcode/city/state ----------
