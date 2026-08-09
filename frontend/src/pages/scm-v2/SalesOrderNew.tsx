@@ -1353,7 +1353,7 @@ export const SalesOrderNew = () => {
         });
         return;
       }
-      navigate(`/scm/sales-orders/${createdDocNo}?edit=1&retryPayments=1`, {
+      navigate(`/scm/sales-orders/${createdDocNo}?payments=1&retryPayments=1`, {
         state: paymentRetryNavigationState('so', createdDocNo, intents),
       });
       return;
@@ -1647,7 +1647,7 @@ export const SalesOrderNew = () => {
             return;
           }
           navigate(
-            `/scm/sales-orders/${res.docNo}${failed > 0 ? '?edit=1&retryPayments=1' : ''}`,
+            `/scm/sales-orders/${res.docNo}${failed > 0 ? '?payments=1&retryPayments=1' : ''}`,
             { state: failed > 0 ? paymentRetryNavigationState('so', res.docNo, failedDrafts) : undefined },
           );
         },
