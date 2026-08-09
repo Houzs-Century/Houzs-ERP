@@ -58,11 +58,41 @@ async function main() {
   const baseName = (s) => norm(s).replace(/\b(SOLO|ROADSHOW|EVENT|MALL|CONVENTION CENTRE|CONVENTION CENTER|SHOPPING CENTRE|AEON BIG|AEON)\b/g, " ").replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
   const byExact = new Map(master.map((v) => [norm(v.name), v]));
   const byBase = new Map(); for (const v of master) { const b = baseName(v.name); if (b && !byBase.has(b)) byBase.set(b, v); }
+  // Explicit aliases for the abbreviations/spelling variants AutoCount uses.
+  const VENUE_ALIAS = {
+    "MIDVALLEY EXHIBITION CENTRE": "MID VALLEY", "MIDVALLEY": "MID VALLEY",
+    "MIDVALLEY SOUTHKEY JB": "MVEC SOUTHKEY", "SOUTHKEY": "MVEC SOUTHKEY",
+    "PAVILLION BUKIT JALIL": "PAVILION BUKIT JALIL",
+    "BUKIT JALIL STADIUM": "STADIUM BUKIT JALIL",
+    "MITC MELAKA": "MELAKA INTERNATIONAL TRADE CENTRE", "MITC": "MELAKA INTERNATIONAL TRADE CENTRE",
+    "MITEC KL": "MALAYSIA INTERNATIONAL TRADE AND EXHIBITION CENTRE", "MITEC": "MALAYSIA INTERNATIONAL TRADE AND EXHIBITION CENTRE",
+    "SCCC": "SETIA CITY CONVENTION CENTRE", "SCCC SHAH ALAM": "SETIA CITY CONVENTION CENTRE",
+    "AICC AUSTIN JB": "AUSTIN INTERNATIONAL CONVENTION CENTRE", "AICC": "AUSTIN INTERNATIONAL CONVENTION CENTRE",
+    "JB PERSADA": "PERSADA JOHOR INTERNATIONAL CONVENTION CENTRE", "PERSADA JB": "PERSADA JOHOR INTERNATIONAL CONVENTION CENTRE",
+    "SUTRA SQUARE JOHOR": "SUTERA SQUARE", "SUTRA JOHOR SOLO": "SUTERA SQUARE",
+    "AEON TERBAU CITY SOLO": "AEON TEBRAU CITY",
+    "ITCC SABAH SOLO": "INTERNATIONAL TECHNOLOGY AND COMMERCIAL CENTRE", "ITCC": "INTERNATIONAL TECHNOLOGY AND COMMERCIAL CENTRE",
+    "SABAH AKEMI MEGAHOME SICC": "SABAH INTERNATIONAL CONVENTION CENTRE", "SICC": "SABAH INTERNATIONAL CONVENTION CENTRE",
+    "STRAIT QUAY SOLO": "STRAITS QUAY", "STRAIT QUAY": "STRAITS QUAY",
+    "AMANJAYA MALL SP SOLO": "AMANJAYA MALL SUNGAI PETANI",
+    "PWTC": "WORLD TRADE CENTRE KUALA LUMPUR",
+    "SP ARENA": "PISA SPICE ARENA CONVENTION CENTRE", "BUTTERWORTH ARENA": "AUTO CITY",
+    "SUNSHINE PENANG SOLO": "SUNSHINE CENTRAL",
+    "ZANOTTI LIVING(KELANA JAYA)": "PARADIGM MALL",
+  };
+  const squash = (s) => baseName(s).replace(/\s+/g, "");
+  const bySquash = new Map(); for (const v of master) { const k = squash(v.name); if (k && !bySquash.has(k)) bySquash.set(k, v); }
   const resolveVenue = (txt) => {
     const nm = norm(txt); if (byExact.has(nm)) return byExact.get(nm);
+    const al = VENUE_ALIAS[nm]; if (al && byExact.has(norm(al))) return byExact.get(norm(al));
     const b = baseName(txt); if (!b) return null;
     if (byBase.has(b)) return byBase.get(b);
-    for (const [k, v] of byBase) if (k.includes(b) || b.includes(k)) return v;
+    const sq = squash(txt); if (bySquash.has(sq)) return bySquash.get(sq);           // MIDVALLEY == MID VALLEY
+    for (const [k, v] of bySquash) if (k.includes(sq) || sq.includes(k)) return v;
+    // token-subset: every significant word of one appears in the other
+    const tk = (s) => baseName(s).split(" ").filter((w) => w.length > 2);
+    const tt = tk(txt);
+    if (tt.length) for (const v of master) { const mt = tk(v.name); if (mt.length && (tt.every((w) => mt.includes(w)) || mt.every((w) => tt.includes(w)))) return v; }
     return null;
   };
   const texts = await sql`SELECT venue, count(*)::int n FROM scm.mfg_sales_orders WHERE company_id = 1 AND venue IS NOT NULL AND venue <> '' GROUP BY venue`;
