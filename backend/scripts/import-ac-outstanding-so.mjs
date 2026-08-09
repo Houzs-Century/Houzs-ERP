@@ -195,13 +195,14 @@ function parsePayment(p) {
 //  - recliners are per-unit mechanisms: R819 "2S + RECLINER" = 1A(R) pair.
 //  - PROCESSED orders must decompose fully or fall back (never guess pieces).
 const SOFA_MODEL_ALIAS = { "5530": "9028", "5536": "9058", "5537": "8030", "5540": "8030" };
-const CM_TO_INCH = { 60: 24, 66: 26, 75: 30, 80: 32 };
+const CM_TO_INCH = { 60: 24, 66: 26, 70: 28, 75: 30, 80: 32 };
 function parseSofa(d2raw, model) {
   const o = { pieces: [], size: null, color: null, perPieceColor: {}, specials: [], conf: "high", why: [] };
   if (!d2raw || !String(d2raw).trim()) { o.conf = "low"; o.why.push("empty Desc2"); return o; }
   let d2 = String(d2raw).replace(/[\[\]{}]/g, " ").replace(/[”“″’‘′]/g, '"').replace(/\r/g, "").trim();
   // protect composite tokens from the slash-splitter
-  d2 = d2.replace(/NO\s*CONSOLE/gi, " NOCONS ")
+  d2 = d2.replace(/\bCORNER\s*\((?=[^)]*[A-Za-z])/gi, "(").replace(/NO\s*CONSOLE/gi, " NOCONS ")
+    .replace(/\bC\s+TABLE\b\.?/gi, "+CT+").replace(/([12])B\/S/gi, "$1B")
     .replace(/\bC\/?T\s*TABLE\.?/gi, "CT").replace(/CONSOLE\s*TABLE\.?/gi, "CT")
     .replace(/\bC\/T\b/gi, "CT").replace(/(\d?NA)\/(L|R)T/gi, "$1$2T").replace(/CONSOLE/gi, "CT");
   // colours: per-piece "colour (2s): X" first, then general COL:/COLOUR:
@@ -241,7 +242,8 @@ function parseSofa(d2raw, model) {
     // tokens ("(HANDLE MOVABLE)"->+HANDLEMOVABLE+); quotes are residue
     let s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "+").replace(/["'*]/g, "").replace(/:/g, "+");
     // owner layout rule: bare "n+L" == "nL"; "L+n" == "Ln"
-    s = s.replace(/(^|\+)([123])\+L(?=$|\+)/, "$1$2L").replace(/(^|\+)L\+([123])(?=$|\+)/, "$1L$2");
+    if (s.split("+").filter(Boolean).length === 2)
+      s = s.replace(/(^|\+)([123])\+L(?=$|\+)/, "$1$2L").replace(/(^|\+)L\+([123])(?=$|\+)/, "$1L$2");
     if (!s || /^[\d.]+\+*$/.test(s)) continue;
     const NOISE = /^(RANDOM(COLOU?R)?|COLOU?RTBC|COLOU?R|TBC|KIV|WRAP|PERSEAT|X?\d*PILLOWS?|FOC\w*|FREE\w*|NORMALARM\w*|NOCONS)$/;
     const quiet = [], rider = [];
@@ -273,14 +275,18 @@ function parseSofa(d2raw, model) {
       else if (t === "3R" && model !== "R819") U.push({ k: "r3", raw: t });        // owner: 3R = 1AR+2A
       else if (/^BACK(REST|CUSHION)\w*8030$/.test(t)) rider.push(t);               // special: backrest->8030
       else if ((m = /^1?NA([LR])T$/.exec(t))) U.push({ k: "box", side: m[1], raw: t }); // owner: 1ABOX
-      else if ((m = /^([12])E?([LR])$/.exec(t))) U.push({ k: "armed", n: m[1], side: m[2], raw: t });
+      else if ((m = /^([12])E([LR])$/.exec(t))) U.push({ k: "armed", n: m[1], side: m[2], raw: t });
+      else if (t === "1R") U.push({ k: "runit", raw: t }); // owner: 1R 现在是 1AR;单件=1S(R)
+      else if (t === "2R") U.push({ k: "armed", n: "2", side: "R", raw: t, flag2r: true });
+      else if (/^([12])E$/.test(t)) U.push({ k: "eside", raw: t }); // owner: E 少了 L/R
+      else if (t === "1P") U.push({ k: "pw", raw: t });
       else if (t === "L") U.push({ k: "chaise", raw: t });
       else if (t === "C" || t === "CNR" || t === "CORNER") U.push({ k: "corner", raw: t });
       else if (t === "CT" || t === "C-T") U.push({ k: "console", raw: t });
       else if (/^STOOL/.test(t)) U.push({ k: "stool", raw: t });
       else if (t === "P") U.push({ k: "pw", raw: t });
       else if (t === "R") U.push({ k: "rc", raw: t });
-      else if (t === "LSHAPE") { U.push({ k: "chaise", raw: t }); o._photo = "L shape 单件,左右看图"; }
+      else if (t === "LSHAPE") { U.push({ k: "nL", n: "2", dir: "R", raw: t }); o._photo = "L-shape≈2L,左右随放—看图可换"; }
       else if (!/\d/.test(t) && t.length >= 3 && !/(ARM|SEAT|CUSTOM|RECLIN|WOOD|SHAPE|CORNER|CHAISE)/.test(t)
                && !/^(CT|CNR|STOOL|NA)/.test(t)) rider.push(t);
       else { bad = `token "${t}"`; break; }
@@ -291,6 +297,8 @@ function parseSofa(d2raw, model) {
     const out = [];
     const single = U.length === 1;
     const hasConn = U.some((u) => ["chaise", "corner", "console", "nL", "box"].includes(u.k));
+    if (!U.some((u) => ["chaise", "corner", "console", "nL", "box"].includes(u.k)) && U.some((u) => u.k === "seat"))
+      for (const u of U) if (u.k === "unit") u.k = "seat";
     const seatUnits = U.filter((u) => u.k === "unit" || u.k === "seat");
     let hold = null;
     if (!single && U.length === 2 && seatUnits.length === 1 && U.some((u) => u.k === "console")) {
@@ -300,11 +308,17 @@ function parseSofa(d2raw, model) {
       else if (n === "3") { out.push("2A(LHF)", "Console", "1A(RHF)"); o._photo = "3拆2A+1A绕console(2A左按写序)"; }
       else { out.push("1A(LHF)", "Console"); o._photo = "1件+console 布局看图"; }
       if (seatUnits[0].note) o.why.push(seatUnits[0].note);
-    } else if (!single && U.some((u) => u.k === "nL")) {
-      // "2R+1L" — owner: 那是 2A+L; nL 与其他件并列时歧义,不猜
-      o.why.push(`"${U.find((u) => u.k === "nL").raw}" 与其他件并列 — 歧义,看图`);
+    } else if (!single && U.some((u) => u.k === "nL" && u.n !== "1")) {
+      // "2L" beside other pieces would fold a whole 2A+L set mid-row — still held
+      o.why.push(`"${U.find((u) => u.k === "nL" && u.n !== "1").raw}" 与其他件并列 — 歧义,看图`);
       continue;
     } else {
+      // "2R+1L" = 2A+L (owner): a 1L beside other pieces is ONE chaise at its
+      // position; side is provisional (owner: left/right 放先,之后让他们改)
+      if (!single && U.some((u) => u.k === "nL")) {
+        for (const u of U) if (u.k === "nL") u.k = "chaise";
+        o._photo = (o._photo ? o._photo + "; " : "") + "1L并排=贵妃,边先放—看图可换";
+      }
       for (let i = 0; i < U.length && !hold; i++) {
         const u = U[i];
         const end = i === 0 ? "L" : i === U.length - 1 ? "R" : null;
@@ -320,21 +334,38 @@ function parseSofa(d2raw, model) {
           case "unit": // bare digit: owner "1A+1A=1+1" — multi row means one-arm units
             if (single) { if (u.n === "4") out.push("2A(LHF)", "2A(RHF)"); else out.push(`${u.n}S`); }
             else if (end) { seatSide(u.n, end).forEach((x) => out.push(x)); if (u.n === "4") o._photo = "4S在连排,2A+2NA按端位—看图"; }
-            else hold = `裸 "${u.raw}" 在中排 — 看图`;
+            else { out.push(`${u.n === "1" ? "1" : "2"}NA`); o._photo = (o._photo ? o._photo + "; " : "") + `中排 ${u.raw}=NA—看图核`; }
             break;
           case "seat": // explicit nS: suite when standalone-ish, one-arm unit beside connectors
             if (single || !hasConn) { if (u.n === "4") out.push("2A(LHF)", "2A(RHF)"); else out.push(`${u.n}S`); } // owner: 4S=2A+2A
             else if (end) { seatSide(u.n, end).forEach((x) => out.push(x)); if (u.n === "4") o._photo = "4S在连排,2A+2NA按端位—看图"; }
-            else hold = `"${u.raw}" 在连排中排 — 看图`;
+            else { out.push(`${u.n === "1" ? "1" : "2"}NA`); o._photo = (o._photo ? o._photo + "; " : "") + `中排 ${u.raw}=NA—看图核`; }
             break;
           case "na": out.push(`${u.n}NA`); break;
           case "box": out.push(`1ABOX(${u.side === "L" ? "LHF" : "RHF"})`); break;
           case "armed":
+            if (single && u.n === "1") { out.push("1S"); break; } // owner: 单件 1ER = 一座
             out.push(`${u.n}A(${u.side === "L" ? "LHF" : "RHF"})`);
+            if (u.flag2r) o._photo = (o._photo ? o._photo + "; " : "") + "2R按右扶手解,若是recliner看图";
             if (!end && !single) o._midArm = true;
             break;
+          case "runit": // owner 2026-08-10: 2379 很多 1R 就是 1S(R)
+            if (single) out.push("1S(R)");
+            else if (end) out.push(`1A(R)(${end === "L" ? "LHF" : "RHF"})`);
+            else { out.push("1A(R)(RHF)"); o._photo = (o._photo ? o._photo + "; " : "") + "中排1R边先放—看图"; }
+            break;
+          case "eside": {
+            const n = u.raw[0] === "2" ? "2" : "1";
+            if (single && n === "1") out.push("1S");
+            else out.push(`${n}A(${end === "L" ? "LHF" : "RHF"})`);
+            o._photo = (o._photo ? o._photo + "; " : "") + "E没写左右,先放—看图可换";
+            break;
+          }
           case "chaise": out.push(i === 0 ? "L(LHF)" : "L(RHF)"); break;
-          case "corner": out.push("CNR"); break;
+          case "corner":
+            if (single) { out.push("2A(LHF)", "CNR", "1A(RHF)"); o._photo = "corner单写=2A+C+1A,左右看图"; }
+            else out.push("CNR");
+            break;
           case "bseat": out.push(`${u.n}B`); break;
           case "g2f1": out.push("2A(LHF)", "CNR", "1A(RHF)"); break;
           case "r3": // owner: 3R = 1AR+2A (写序左→右), photo-verify sides
@@ -355,6 +386,26 @@ function parseSofa(d2raw, model) {
         }
       }
       if (hold) { o.why.push(hold); continue; }
+    }
+    // owner 2026-08-10: "不可能两个扶手的,2NA 放在中间嘛" — an armed piece
+    // written mid-row swaps with an armless END piece (arms only ever close
+    // the run); side follows the end it lands on. Photo-flagged.
+    if (out.length >= 3) {
+      const isArm = (c) => /^\d?A/.test(c.replace(/^1S/, "X"));
+      const isNAp = (c) => /^\dNA$/.test(c);
+      for (let i = 1; i < out.length - 1; i++) {
+        if (!isArm(out[i])) continue;
+        const side = isNAp(out[0]) ? "L" : isNAp(out[out.length - 1]) ? "R" : null;
+        if (!side) continue;
+        const j = side === "L" ? 0 : out.length - 1;
+        const moved = out[i].replace(/\((LHF|RHF)\)\s*$/, "") + (side === "L" ? "(LHF)" : "(RHF)");
+        const na = out[j];
+        out.splice(i, 1, na);
+        out[j] = moved;
+        o._photo = (o._photo ? o._photo + "; " : "") + "扶手件归位到端(中间只能NA)—看图核";
+        o._midArm = false;
+        break;
+      }
     }
     quiet.forEach((n) => o.why.push(`note "${n}"`));
     rider.forEach((n) => { o.specials.push(n); o.why.push(`note "${n}"`); o._noteDemote = true; });
