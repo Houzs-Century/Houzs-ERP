@@ -64,8 +64,8 @@ try {
           if (uc > 0) {
             anyStamp = true; stamped++;
             if (APPLY) await tx`UPDATE scm.mfg_sales_order_items
-              SET unit_cost_centi = ${uc}, line_cost_centi = ${uc * (l.qty || 1)}, updated_at = ${now}
-              WHERE id = ${l.id}`;
+              SET unit_cost_centi = ${uc}, line_cost_centi = ${uc * (l.qty || 1)}
+              WHERE id = ${l.id}`;  // items table has created_at only
           } else noCost++;
         }
         const p = prodBy.get(l.item_code);
