@@ -51,6 +51,7 @@ jobs:
           APPLY: ${{ inputs.apply }}
           LIMIT: ${{ inputs.limit }}
           DOC: ${{ inputs.doc }}
+          SOFA: ${{ inputs.sofa == 'yes' && '1' || '' }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
