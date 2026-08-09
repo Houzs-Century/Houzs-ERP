@@ -246,7 +246,7 @@ function parseSofa(d2raw, model) {
     if (s.split("+").filter(Boolean).length === 2)
       s = s.replace(/(^|\+)([123])\+L(?=$|\+)/, "$1$2L").replace(/(^|\+)L\+([123])(?=$|\+)/, "$1L$2");
     if (!s || /^[\d.]+\+*$/.test(s)) continue;
-    const NOISE = /^(RANDOM(COLOU?R)?|COLOU?RTBC|COLOU?R|TBC|KIV|WRAP|PERSEAT|X?\d*PILLOWS?|FOC\w*|FREE\w*|NORMALARM\w*|NOCONS)$/;
+    const NOISE = /^(RANDOM(COLOU?R)?|COLOU?RTBC|COLOU?R|TBC|KIV|WRAP|PERSEAT|X?\d*PILLOWS?|FOC\w*|FREE\w*|NORMALARM\w*|NOCONS|X?\d+SETS?)$/;
     const quiet = [], rider = [];
     const toks = [];
     for (const t0 of s.split("+").filter(Boolean)) {
@@ -346,7 +346,7 @@ function parseSofa(d2raw, model) {
           case "na": out.push(`${u.n}NA`); break;
           case "box": out.push(`1ABOX(${u.side === "L" ? "LHF" : "RHF"})`); break;
           case "armed":
-            if (single && u.n === "1") { out.push("1S"); break; } // owner: 单件 1ER = 一座
+            if (single) { out.push(`${u.n}S`); break; } // owner: 单件 1ER=1S、2ER=2S
             out.push(`${u.n}A(${u.side === "L" ? "LHF" : "RHF"})`);
             if (u.flag2r) o._photo = (o._photo ? o._photo + "; " : "") + "2R按右扶手解,若是recliner看图";
             if (!end && !single) o._midArm = true;
@@ -407,6 +407,21 @@ function parseSofa(d2raw, model) {
         o._photo = (o._photo ? o._photo + "; " : "") + "扶手件归位到端(中间只能NA)—看图核";
         o._midArm = false;
         break;
+      }
+    }
+    // owner 2026-08-10: 一张单的扶手只会一左一右,不会 right+right / left+left.
+    // Same-side closures auto-correct by position (leftmost→LHF, rightmost→RHF).
+    {
+      const sided = [];
+      for (let i = 0; i < out.length; i++) if (/\((LHF|RHF)\)$/.test(out[i])) sided.push(i);
+      if (sided.length >= 2) {
+        const first = sided[0], last = sided[sided.length - 1];
+        const sideOf = (c) => (/\(LHF\)$/.test(c) ? "L" : "R");
+        if (sideOf(out[first]) === sideOf(out[last])) {
+          out[first] = out[first].replace(/\((LHF|RHF)\)$/, "(LHF)");
+          out[last] = out[last].replace(/\((LHF|RHF)\)$/, "(RHF)");
+          o._photo = (o._photo ? o._photo + "; " : "") + "同边扶手按位置纠正—看图核";
+        }
       }
     }
     quiet.forEach((n) => o.why.push(`note "${n}"`));
