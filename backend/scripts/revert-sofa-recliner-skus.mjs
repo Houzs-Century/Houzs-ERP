@@ -27,7 +27,7 @@ async function main() {
         const [p] = await tx`SELECT id, created_at FROM scm.mfg_products
           WHERE company_id = ${cid} AND code = ${code}`;
         if (!p) { kept++; continue; }
-        if (new Date(p.created_at) < new Date("2026-08-09T20:00:00Z")) {
+        if (new Date(p.created_at) < new Date("2026-08-09T12:00:00Z")) {
           note(`  !! ${code} pre-dates round 2 — NOT deleting`); kept++; continue;
         }
         const [ref] = await tx`SELECT 1 AS x FROM scm.mfg_sales_order_items WHERE item_code = ${code} LIMIT 1`;
