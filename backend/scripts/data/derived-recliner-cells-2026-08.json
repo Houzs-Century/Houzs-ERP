@@ -1,0 +1,226 @@
+[
+ {
+  "sku": "R819-1A(R)(LHF)",
+  "height": "22",
+  "tier": "PRICE_2",
+  "sen": 101789,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1A(R)(RHF)",
+  "height": "22",
+  "tier": "PRICE_2",
+  "sen": 101789,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1NA",
+  "height": "22",
+  "tier": "PRICE_2",
+  "sen": 60368,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1A(R)(LHF)",
+  "height": "22",
+  "tier": "PRICE_3",
+  "sen": 107053,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1A(R)(RHF)",
+  "height": "22",
+  "tier": "PRICE_3",
+  "sen": 107053,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1NA",
+  "height": "22",
+  "tier": "PRICE_3",
+  "sen": 63526,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1A(P)(LHF)",
+  "height": "30",
+  "tier": "PRICE_2",
+  "sen": 164947,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1A(P)(RHF)",
+  "height": "30",
+  "tier": "PRICE_2",
+  "sen": 164947,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1NA",
+  "height": "30",
+  "tier": "PRICE_2",
+  "sen": 79842,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1A(R)(LHF)",
+  "height": "30",
+  "tier": "PRICE_2",
+  "sen": 122842,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1A(R)(RHF)",
+  "height": "30",
+  "tier": "PRICE_2",
+  "sen": 122842,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1NA",
+  "height": "30",
+  "tier": "PRICE_2",
+  "sen": 79842,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1A(P)(LHF)",
+  "height": "30",
+  "tier": "PRICE_3",
+  "sen": 180942,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1A(P)(RHF)",
+  "height": "30",
+  "tier": "PRICE_3",
+  "sen": 180942,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1NA",
+  "height": "30",
+  "tier": "PRICE_3",
+  "sen": 87326,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1A(R)(LHF)",
+  "height": "30",
+  "tier": "PRICE_3",
+  "sen": 134626,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1A(R)(RHF)",
+  "height": "30",
+  "tier": "PRICE_3",
+  "sen": 134626,
+  "sup": "RDS"
+ },
+ {
+  "sku": "R819-1NA",
+  "height": "30",
+  "tier": "PRICE_3",
+  "sen": 87326,
+  "sup": "RDS"
+ },
+ {
+  "sku": "BS22-1A(R)(LHF)",
+  "height": "24",
+  "tier": "PRICE_2",
+  "sen": 66000,
+  "sup": "TD"
+ },
+ {
+  "sku": "BS22-1A(R)(RHF)",
+  "height": "24",
+  "tier": "PRICE_2",
+  "sen": 66000,
+  "sup": "TD"
+ },
+ {
+  "sku": "BS22-1NA",
+  "height": "24",
+  "tier": "PRICE_2",
+  "sen": 44000,
+  "sup": "TD"
+ },
+ {
+  "sku": "BS30-1A(R)(LHF)",
+  "height": "24",
+  "tier": "PRICE_2",
+  "sen": 66000,
+  "sup": "TD"
+ },
+ {
+  "sku": "BS30-1A(R)(RHF)",
+  "height": "24",
+  "tier": "PRICE_2",
+  "sen": 66000,
+  "sup": "TD"
+ },
+ {
+  "sku": "BS30-1NA",
+  "height": "24",
+  "tier": "PRICE_2",
+  "sen": 44000,
+  "sup": "TD"
+ },
+ {
+  "sku": "5071-1A(R)(LHF)",
+  "height": "24",
+  "tier": "PRICE_2",
+  "sen": 47500,
+  "sup": "TD"
+ },
+ {
+  "sku": "5071-1A(R)(RHF)",
+  "height": "24",
+  "tier": "PRICE_2",
+  "sen": 47500,
+  "sup": "TD"
+ },
+ {
+  "sku": "5071-1A(R)(LHF)",
+  "height": "28",
+  "tier": "PRICE_2",
+  "sen": 50000,
+  "sup": "TD"
+ },
+ {
+  "sku": "5071-1A(R)(RHF)",
+  "height": "28",
+  "tier": "PRICE_2",
+  "sen": 50000,
+  "sup": "TD"
+ },
+ {
+  "sku": "5083-1A(R)(LHF)",
+  "height": "24",
+  "tier": "PRICE_2",
+  "sen": 47500,
+  "sup": "TD"
+ },
+ {
+  "sku": "5083-1A(R)(RHF)",
+  "height": "24",
+  "tier": "PRICE_2",
+  "sen": 47500,
+  "sup": "TD"
+ },
+ {
+  "sku": "5083-1A(R)(LHF)",
+  "height": "28",
+  "tier": "PRICE_2",
+  "sen": 50000,
+  "sup": "TD"
+ },
+ {
+  "sku": "5083-1A(R)(RHF)",
+  "height": "28",
+  "tier": "PRICE_2",
+  "sen": 50000,
+  "sup": "TD"
+ }
+]
