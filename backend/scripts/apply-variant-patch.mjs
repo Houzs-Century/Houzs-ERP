@@ -73,7 +73,8 @@ async function main() {
   for (const p of poItems) {
     const [row] = await sql`SELECT i.id, i.variants FROM scm.purchase_order_items i
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
-      WHERE h.company_id = 1 AND h.po_number = ${p.po_number} AND upper(i.material_code) = ${(p.code || "").toUpperCase()} LIMIT 1`;
+      WHERE h.company_id = 1 AND (h.po_number = ${p.po_number} OR h.linked_ac_docno = ${p.po_number})
+        AND upper(i.material_code) = ${(p.code || "").toUpperCase()} LIMIT 1`;
     if (!row) { log(`  !! po item ${p.po_number} ${p.code} not found, skipped`); continue; }
     const v = { ...(row.variants || {}), ...(p.variants || {}) };
     await sql`UPDATE scm.purchase_order_items SET
