@@ -81,11 +81,31 @@ function parseBedframe(d2) {
   const s = (d2 || "").replace(/\s+/g, " ").trim();
   const o = { raw: s, specials: [] };
   let m;
-  if ((m = /(?:MATT(?:RESS)?\.?\s*GAP|M\.?\s*GAP|\bGAP)\s*[:：]?\s*(\d+(?:\.\d+)?)/i.exec(s))) o.gap = parseFloat(m[1]);
-  if ((m = /\bDIV(?:AN)?\.?\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:["”"″'′]|INCH|IN)?\s*(?:\+\s*(\d+(?:\.\d+)?))?/i.exec(s))) { o.divan = parseFloat(m[1]); if (m[2] != null) o.leg = parseFloat(m[2]); }
-  if (/NO\s*LEG/i.test(s)) o.leg = 0;
-  else if (o.leg === undefined && (m = /(\d+(?:\.\d+)?)\s*(?:["”"″'′]|INCH|IN)?\s*(?:WOODEN\s*)?LEG/i.exec(s))) o.leg = parseFloat(m[1]);
-  if ((m = /COL(?:OUR)?(?:\s*CUSHION)?\s*[:：;]?\s*([A-Z0-9][A-Z0-9\- ]*?)(?:\s*[\/,;]|\s*DIVAN|\s*GAP|$)/i.exec(s))) o.color = m[1].trim();
+  /* gap / divan / leg. AutoCount uses ", ”, '', ’’, "inch", "in" interchangeably
+     and sometimes runs them together ("Divan10/Gap14", "8''+2\"leg",
+     "10inch+NoLeg"). QUOTE = every quote-ish inch marker. */
+  const QUOTE = `["”“"″'’‘′]{1,2}`;
+  // gap: also "M'GP:", "M'Gap:", "M.Gap :", and runs-together "M.GAP:14INCHES"
+  if ((m = new RegExp(`(?:MATT(?:RESS)?|M)?\\s*['’.]?\\s*(?:GAP|GP)\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.gap = parseFloat(m[1]);
+  if ((m = new RegExp(`\\bDIV(?:AN)?\\.?\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)?\\s*(?:\\+\\s*(\\d+(?:\\.\\d+)?))?`, "i").exec(s))) { o.divan = parseFloat(m[1]); if (m[2] != null) o.leg = parseFloat(m[2]); }
+  if (/NO\s*LEGS?/i.test(s)) o.leg = 0;
+  else if (o.leg === undefined && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)?\\s*(?:WOODEN\\s*)?LEGS?`, "i").exec(s))) o.leg = parseFloat(m[1]);
+  // a divan stated with no leg mentioned at all = no leg (0), per owner's model
+  if (o.leg === undefined && o.divan != null && !/LEG/i.test(s)) o.leg = 0;
+  /* divan written WITHOUT the word "divan": "PC151-07/8inch+4inchLeg/Gap14inch"
+     or 'DIVAN"8"'. Take the height that sits right before the leg figure. */
+  if (o.divan == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${QUOTE}|INCH(?:ES)?|IN)\\s*\\+\\s*(?:NO\\s*LEGS?|(\\d+(?:\\.\\d+)?))`, "i").exec(s))) {
+    o.divan = parseFloat(m[1]); if (o.leg === undefined) o.leg = m[2] != null ? parseFloat(m[2]) : 0;
+  }
+  if (o.divan == null && (m = new RegExp(`DIVAN\\s*${QUOTE}?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.divan = parseFloat(m[1]);
+  /* SPECIAL SIZE (owner): anything outside S/SS/Q/K/SK is "SP" and MUST carry its
+     dimensions, e.g. 190x220 / 153x200. Capture them from Desc2 or Description. */
+  if ((m = /(\d{2,3})\s*[xX*]\s*(\d{2,3})/.exec(s))) o.size = `${m[1]}x${m[2]}`;
+  /* colour: AutoCount writes it many ways — "COL:", "COLOUR:", "Color:",
+     "COL CUSHION:", or the bare code first ("PC151-01/8inch+NoLeg/Gap12inch").
+     Missing the Color:/bare forms left 1,500+ lines with no colour. */
+  if ((m = /(?:COL(?:OUR|OR)?|CLR)(?:\s*CUSHION)?\s*[:：;]?\s*([A-Z0-9][A-Z0-9\- ]*?)(?:\s*[\/,;]|\s*DIVAN?\b|\s*GAP|\s*M['’.]|$)/i.exec(s))) o.color = m[1].trim();
+  else if ((m = /^\s*([A-Z]{2,4}\s?-?\s?\d{2,4}\s?-\s?\d{1,3})\b/i.exec(s))) o.color = m[1].trim(); // bare code at the start
   // specials -> variants.specials (the "Special Orders" picker). Capture all HB
   // phrasings ("HB straight", "HB without panel", "HB & divan fully cover", "HB
   // straight to wall"), fully-cover(ed), and push-back.
