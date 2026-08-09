@@ -36,13 +36,14 @@ function parseCsvLine(line) {
   out.push(cur); return out;
 }
 
-// AC location code -> how the ERP warehouse is usually named. Resolution below
-// is fuzzy (ILIKE on these fragments) and prints every unresolved code.
-const LOC_HINTS = {
-  "KL": ["KL"], "PG": ["PENANG", "PG"], "SBH": ["SABAH", "SBH", "KK"],
-  "SRW": ["SARAWAK", "SRW", "KUCHING"], "HQ": ["HQ", "KL"],
-  "KL DISP": ["KL DISPLAY", "DISPLAY"], "PG DISP": ["PENANG DISPLAY", "PG DISPLAY"],
-  "SBH DISP": ["SABAH DISPLAY", "SBH DISPLAY"],
+// AC location code -> ERP warehouse CODE — the exact map the PO import resolved
+// 100% with (import-ac-outstanding-po.mjs SALESLOC), extended with the extra
+// stock locations seen in vItemBalQty. Codes with no confident ERP home stay
+// UNRESOLVED and are reported, never guessed.
+const SALESLOC = {
+  KL: "KL WAREHOUSE", PG: "PG WAREHOUSE", SRW: "SRW WAREHOUSE", SBH: "SBH WAREHOUSE",
+  HQ: "HQ", "KL DISP": "KL DISPLAY", "PG DISP": "PG DISPLAY", "SBH DISP": "SBH DISPLAY",
+  "EM DISP": "EM DISPLAY", "C&C DISP": "C&C DISPLAY",
 };
 
 async function main() {
@@ -64,16 +65,17 @@ async function main() {
   const iucCost = new Map();
   for (const r of iuc) { const c = r.RealCost || r.Cost || r.RecentCost; if (c > 0 && !iucCost.has(norm(r.ItemCode))) iucCost.set(norm(r.ItemCode), c); }
 
-  // warehouse resolution
-  const whs = await sql`SELECT id, name FROM scm.warehouses WHERE company_id = 1`;
+  // warehouse resolution — by CODE, exactly like the PO import (100% there)
+  const whs = await sql`SELECT id, code, name FROM scm.warehouses WHERE company_id = 1`;
+  log(`ERP warehouse codes: ${whs.map((w) => w.code).join(", ")}`);
+  const whByCode = new Map(whs.map((w) => [String(w.code).toUpperCase(), w]));
   const resolveWh = (loc) => {
-    const hints = LOC_HINTS[norm(loc)] ?? [norm(loc)];
-    for (const h of hints) { const hit = whs.find((w) => norm(w.name).includes(h)); if (hit) return hit; }
-    return null;
+    const k = norm(loc);
+    return whByCode.get((SALESLOC[k] || k).toUpperCase()) ?? whByCode.get(k) ?? null;
   };
   const locs = [...new Set(bal.map((r) => norm(r.Location)))];
   const locMap = new Map();
-  for (const l of locs) { const w = resolveWh(l); locMap.set(l, w); log(`  location ${l} -> ${w ? w.name : "UNRESOLVED"}`); }
+  for (const l of locs) { const w = resolveWh(l); locMap.set(l, w); log(`  location ${l} -> ${w ? `${w.code} (${w.name})` : "UNRESOLVED"}`); }
 
   // ERP product cost fallback + product names
   const prodCols = await sql`SELECT column_name FROM information_schema.columns WHERE table_schema='scm' AND table_name='products'`;
