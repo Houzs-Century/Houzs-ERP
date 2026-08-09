@@ -2749,6 +2749,25 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   });
 
   const [form, setForm] = useState(() => initialFormFor(header));
+  /* Imported-order venue seeding (owner 2026-08-10 "点 edit 的时候它不会不见掉"):
+     AutoCount-migrated rows carry the venue as TEXT but nothing the picker's
+     option values recognise in venue_id, so the picker rendered "—" even though
+     the view header shows the venue — operators read that as the value having
+     vanished. When the venue master loads and the seeded venueId matches no
+     option, adopt the option whose name equals the stored text
+     (case-insensitive). The adoption marks the field dirty, so the operator's
+     next Save persists the master link — self-healing, no data migration. */
+  useEffect(() => {
+    const opts = venuesQ.data ?? [];
+    if (!opts.length) return;
+    setForm((s) => {
+      if (s.venueId && opts.some((v) => v.id === s.venueId)) return s;
+      const name = (s.venue ?? '').trim().toUpperCase();
+      if (!name) return s;
+      const hit = opts.find((v) => (v.name ?? '').trim().toUpperCase() === name);
+      return hit && s.venueId !== hit.id ? { ...s, venueId: hit.id } : s;
+    });
+  }, [venuesQ.data, form.venueId, form.venue]);
   const buildPayload = () => payloadFor(form);
   /* The header payload AS SEEDED (pristine) — trySave diffs the outgoing
      payload against this so an untouched field is never sent (the header mirror
