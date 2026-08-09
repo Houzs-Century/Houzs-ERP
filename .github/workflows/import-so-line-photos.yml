@@ -1,0 +1,53 @@
+name: Import SO line photos (AutoCount RTF)
+
+# Manual. RESOLVE prints the deterministic R2 upload list for the locally
+# extracted AutoCount photos; APPLY=1 appends the keys to the matched lines'
+# photo_urls (idempotent). Sofa lines are held for the sofa round.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write photo_urls, else RESOLVE"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: import-so-line-photos-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/import-so-line-photos.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/import-so-line-photos.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
