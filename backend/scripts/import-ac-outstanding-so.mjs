@@ -253,8 +253,9 @@ function parseSofa(d2raw, model) {
       if ((m = /^([123])L$/.exec(t))) { seatSide(m[1], "L").forEach((x) => out.push(x)); out.push("L(RHF)"); }
       else if ((m = /^L([123])$/.exec(t))) { out.push("L(LHF)"); seatSide(m[1], "R").forEach((x) => out.push(x)); }
       else if ((m = /^([123])$/.exec(t)) && conn) {
-        if (ti === 0) { seatSide(m[1], "L").forEach((x) => out.push(x)); o._layoutArms = true; }
-        else if (ti === tokens.length - 1) { seatSide(m[1], "R").forEach((x) => out.push(x)); o._layoutArms = true; }
+        // owner-confirmed 2026-08-10: "1+C+2 就是 1A+corner+2A" — arms outer-side
+        if (ti === 0) seatSide(m[1], "L").forEach((x) => out.push(x));
+        else if (ti === tokens.length - 1) seatSide(m[1], "R").forEach((x) => out.push(x));
         else { ok = false; o.why.push(`bare "${t0}" mid-row beside corner/chaise`); }
       }
       else if ((m = /^([123])$/.exec(t))) out.push(`${m[1]}S`);
@@ -267,7 +268,12 @@ function parseSofa(d2raw, model) {
         const M = m[2][0];
         ({ "1": [`1S(${M})`], "2": [`1A(${M})(LHF)`, `1A(${M})(RHF)`], "3": [`1A(${M})(LHF)`, "1NA", `1A(${M})(RHF)`] })[m[1]].forEach((x) => out.push(x));
       }
-      else if ((m = /^([12])E?([LR])$/.exec(t))) out.push(`${m[1]}A(${m[2] === "L" ? "LHF" : "RHF"})`);
+      else if ((m = /^([12])E?([LR])$/.exec(t))) {
+        out.push(`${m[1]}A(${m[2] === "L" ? "LHF" : "RHF"})`);
+        // owner 2026-08-10: "2NA+1R+L 可能是 1A+2NA+L" — an armed piece mid-row
+        // (arm against its neighbour) is suspect; keep as written, photo-verify
+        if (ti > 0 && ti < tokens.length - 1 && conn) o._midArm = true;
+      }
       else if ((m = /^([12])NA([LR])T$/.exec(t))) out.push(`${m[1]}NA`);
       else if (t === "L" || t === "LSHAPE") { ok = t === "L"; if (!ok) o.why.push("bare 'L shape'"); else out.push("L(RHF)"); }
       else if (t === "C" || t === "CNR" || t === "CORNER") out.push("CNR");
@@ -308,9 +314,9 @@ function parseSofa(d2raw, model) {
   }
   if (!matched) { o.conf = "low"; if (!o.why.length) o.why.push("no structure tokens"); }
   else if (!o.size) { o.conf = "medium"; o.why.push("no seat size"); }
-  else if (o._layoutArms || o._noteDemote) {
+  else if (o._midArm || o._noteDemote) {
     o.conf = "medium";
-    if (o._layoutArms) o.why.push("layout-derived arms (photo-verify)");
+    if (o._midArm) o.why.push("armed piece mid-row (owner: likely at outer end) — photo-verify");
   }
   return o;
 }
