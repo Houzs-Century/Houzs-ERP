@@ -94,8 +94,17 @@ import { salesAnalysis } from "./routes/sales-analysis";
 import { hr } from "./routes/hr";
 
 import { scmAreaGuard } from "./middleware/area-guard";
+import { scmWriteFreeze } from "./lib/write-freeze";
 
 export const scm = new Hono<{ Bindings: Env }>();
+
+/* ── GLOBAL WRITE FREEZE (owner 2026-08-10, go-live cutover) ────────────────
+   Non-GET requests are refused with 503 while app_config['scm.write_freeze']
+   is '1', so staff edits stop drifting the data being migrated from AutoCount
+   (the AutoCount side is already frozen). Reads stay open; owner / scm.admin
+   bypass so IT can still correct data. Toggle with the scm-write-freeze
+   workflow — no deploy needed. Mounted FIRST so it covers every sub-router. */
+scm.use('/*', scmWriteFreeze());
 
 // ── L2 per-area WRITE authorization (ADDITIVE on top of requireScmAccess) ────
 // Each sub-router is preceded by `scm.use('/<prefix>/*', scmAreaGuard('<area>'))`
