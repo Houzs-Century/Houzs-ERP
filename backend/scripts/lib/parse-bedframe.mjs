@@ -45,19 +45,6 @@ function parseBedframe(d2) {
      divan pattern so it cannot grab the 16" outer or a pump count. */
   if (/HYDRAULIC/i.test(s)) {
     let hm2;
-    /* Owner 2026-08-10, correcting the rule this block used to carry: "我们就以
-       12“ 14” 16“ divan 就可以了。然后 hydraulic 就开 hydraulic 的 special."
-       The DIVAN figure is the divan height. INNER is the storage depth inside
-       the box, not a divan specification — it must never override a stated
-       divan. The old rule read the inner first, so "hydraulic 16”/Inner 14”"
-       came out as a 14" divan.
-
-       Order: an explicit DIVAN figure, then the height stated on the word
-       HYDRAULIC itself, and only if neither exists, the inner. The inner form
-       may not cross a "+" — "12”Divan + 10”Inner + 1”legs" once read as
-       divan=1, and "Hydraulic2pcs12”inner/PC151-01" as divan=151, taking the
-       number out of the COLOUR CODE. A wrong height reaches the factory; a
-       blank one stops someone. */
     /* Two DIFFERENT numbers live in this text and telling them apart is the
        whole job: the OUTER height of the box (the divan the factory builds) and
        the INNER storage depth. Find each on its own terms, then decide.
