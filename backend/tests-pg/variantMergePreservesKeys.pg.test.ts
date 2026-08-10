@@ -85,11 +85,17 @@ const PATCH = {
   size: '6x8',
 };
 
+/* Seeded through `admin.json(...)`, never `JSON.stringify` bound to a jsonb
+   parameter — the fixture must not reproduce the very defect the assertions are
+   here to rule out. */
 async function seed(table: string, variants: unknown): Promise<string> {
-  const [row] = await admin.unsafe(
-    `INSERT INTO scm.${table} (variants, custom_specials) VALUES ($1, $2) RETURNING id::text`,
-    [variants === null ? null : JSON.stringify(variants), JSON.stringify(['LEAVE ME ALONE'])],
-  );
+  const v = variants === null ? null : admin.json(variants);
+  const cs = admin.json(['LEAVE ME ALONE']);
+  const [row] = table === 'mfg_sales_order_items'
+    ? await admin`INSERT INTO scm.mfg_sales_order_items (variants, custom_specials)
+                  VALUES (${v}, ${cs}) RETURNING id::text AS id`
+    : await admin`INSERT INTO scm.purchase_order_items (variants, custom_specials)
+                  VALUES (${v}, ${cs}) RETURNING id::text AS id`;
   return row.id as string;
 }
 
