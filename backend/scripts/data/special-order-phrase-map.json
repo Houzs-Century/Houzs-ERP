@@ -41,8 +41,8 @@
       "code": "No notch on Seat Cushion",
       "categories": ["SOFA"],
       "no": "\\bplane\\b|\\bplain\\b",
-      "yes": "\\bno\\b.*(\\bstitch\\w*|\\bstich\\w*|\\bholes?\\b|\\bnotch\\b).*(\\bsit\\w*|\\bseat\\w*|\\bcushion\\b)|(\\bsit\\w*|\\bseat\\w*|\\bcushion\\b).*\\bno\\b.*(\\bstitch\\w*|\\bstich\\w*|\\bholes?\\b|\\bnotch\\b)",
-      "why": "'notch' is the stitched dimple in a seat cushion; these slips all say do not put one there. Vetoed when the slip also says plain, which is the separate code below."
+      "yes": "^(?=.*\\bno\\b)(?=.*(\\bstitch\\w*|\\bstich\\w*|\\bholes?\\b|\\bnotch\\b))(?=.*(\\bsit\\w*|\\bseat\\w*|\\bcushion\\b|\\bstitch\\w*|\\bstich\\w*))",
+      "why": "'notch' is the stitched dimple in a seat cushion; these slips all say do not put one there. Vetoed when the slip also says plain, which is the separate code below. The three conditions are INDEPENDENT lookaheads, mirroring lib/sofa-special-map.mjs's three separate tests, and a stitch word satisfies the seat-part condition on its own — the stitching IS the cushion detail. The earlier ordered `a.*b.*c` form demanded three DISTINCT tokens in sequence and so missed 'NO HOLES ON STICHING' and 'NO STICHING', two real slip phrases (ac-outstanding-so), while the lib matched them: one owner ruling, two copies, drifted."
     },
     {
       "code": "Seat Cushion No Notch and Plain",
