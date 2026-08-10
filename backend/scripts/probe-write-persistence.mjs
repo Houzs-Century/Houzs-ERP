@@ -164,21 +164,47 @@ async function main() {
   // ---- D. every key that exists ----------------------------------------------
   log("");
   log("=== D. TOP-LEVEL variants KEYS ACROSS THE MIGRATED SOFA LINES ===");
-  for (const [which, q] of [
-    ["SO", sql`SELECT k, COUNT(*)::int n FROM (
-        SELECT jsonb_object_keys(i.variants) k
-          FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-         WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL
-      ) t GROUP BY k ORDER BY n DESC, k`],
-    ["PO", sql`SELECT k, COUNT(*)::int n FROM (
-        SELECT jsonb_object_keys(i.variants) k
-          FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
-         WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL
-      ) t GROUP BY k ORDER BY n DESC, k`],
+  /* jsonb_object_keys() ERRORS on anything that is not an object, which is how
+     the first prod run of this probe ended: "cannot call jsonb_object_keys on
+     an array". Report the shape first, then key only the objects. */
+  for (const [which, shapeQ, keyQ] of [
+    ["SO",
+      sql`SELECT COALESCE(jsonb_typeof(i.variants),'(null)') s, COUNT(*)::int n
+            FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+           WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL
+           GROUP BY 1 ORDER BY 2 DESC`,
+      sql`SELECT k, COUNT(*)::int n FROM (
+            SELECT jsonb_object_keys(i.variants) k
+              FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+             WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL
+               AND jsonb_typeof(i.variants) = 'object'
+          ) t GROUP BY k ORDER BY n DESC, k`],
+    ["PO",
+      sql`SELECT COALESCE(jsonb_typeof(i.variants),'(null)') s, COUNT(*)::int n
+            FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+           WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL
+           GROUP BY 1 ORDER BY 2 DESC`,
+      sql`SELECT k, COUNT(*)::int n FROM (
+            SELECT jsonb_object_keys(i.variants) k
+              FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+             WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL
+               AND jsonb_typeof(i.variants) = 'object'
+          ) t GROUP BY k ORDER BY n DESC, k`],
   ]) {
-    const ks = await q;
-    log(`  ${which}: ${ks.map((r) => `${r.k}=${r.n}`).join("  ")}`);
+    const shapes = await shapeQ;
+    log(`  ${which} variants SHAPE: ${shapes.map((r) => `${r.s}=${r.n}`).join("  ")}`);
+    const ks = await keyQ;
+    log(`  ${which} keys (objects only): ${ks.map((r) => `${r.k}=${r.n}`).join("  ")}`);
   }
+
+  /* the sibling exposure: the same double-encoding trap on the specials
+     columns, which two other scripts wrote through today */
+  const sp = await sql`SELECT COALESCE(jsonb_typeof(custom_specials),'(null)') s, COUNT(*)::int n
+    FROM scm.mfg_sales_order_items GROUP BY 1 ORDER BY 2 DESC`;
+  log(`  SO custom_specials SHAPE: ${sp.map((r) => `${r.s}=${r.n}`).join("  ")}`);
+  const sv = await sql`SELECT COALESCE(jsonb_typeof(variants->'specials'),'(absent)') s, COUNT(*)::int n
+    FROM scm.mfg_sales_order_items WHERE jsonb_typeof(variants) = 'object' GROUP BY 1 ORDER BY 2 DESC`;
+  log(`  SO variants->specials SHAPE: ${sv.map((r) => `${r.s}=${r.n}`).join("  ")}`);
 
   // ---- E. did the rest of 2026-08-10 land? -----------------------------------
   log("");
