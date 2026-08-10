@@ -54,7 +54,32 @@ const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const txt = (v) => (v === undefined || v === null ? "" : String(v).trim());
 const pick = (v, keys) => { for (const k of keys) { const x = txt((v || {})[k]); if (x) return x; } return ""; };
 const isPending = (c) => /(TBC|KIV)/i.test(c || "");
-const arr = (v) => (Array.isArray(v) ? v : v === null || v === undefined ? [] : [v]);
+
+/* custom_specials holds THREE shapes in production and a reader that assumes
+   one of them measures the wrong thing. The 2026-08-10 backfill bound
+   JSON.stringify(next) to a $1::jsonb parameter and postgres.js JSON-encodes a
+   value bound to jsonb anyway, so those rows hold a jsonb STRING whose text is
+   a JSON array - "[\"Nylon Fabric\"]" - not a jsonb array. Array.isArray() sees
+   nothing there, which is exactly how check-specials-and-ocr.mjs first read
+   those lines as carrying no specials at all (#1913). Coerce so the payload can
+   be MEASURED, and count the shape defect separately: the Special Orders picker
+   binds to an array, so a double-encoded line is invisible in the UI even
+   though the data is present. */
+const asList = (v) => {
+  if (Array.isArray(v)) return { list: v, wrapped: false };
+  if (typeof v === "string" && v) {
+    try { const p = JSON.parse(v); if (Array.isArray(p)) return { list: p, wrapped: true }; } catch { /* a bare string payload */ }
+    return { list: [v], wrapped: true };
+  }
+  return { list: [], wrapped: false };
+};
+// some rows carry { label | description } objects rather than plain strings
+const elText = (el) => {
+  if (el == null) return "";
+  if (typeof el === "string") return el;
+  if (typeof el === "object") { const v = el.label ?? el.description ?? el.name ?? el.value; return typeof v === "string" ? v : ""; }
+  return String(el);
+};
 
 const modelOf = (code) => {
   const c = norm(code);
@@ -273,7 +298,10 @@ async function main() {
         : r.grp === "sofa" ? parseSofa(r.d2, model, false).specials
         : parseBedframe(r.d2).specials;
       if (!phrases.length) { note(c, "no special-order phrase in Desc2 (out of scope)"); continue; }
-      const carried = [...arr(r.custom_specials), ...arr((r.variants || {}).specials)].map((x) => String(x));
+      const cs = asList(r.custom_specials), vs = asList((r.variants || {}).specials);
+      if (cs.wrapped) note(c, "custom_specials is a jsonb STRING, not an array — the picker cannot see it");
+      if (!vs.list.length && cs.list.length) note(c, "specials live in custom_specials only; variants.specials (what the picker reads) is empty");
+      const carried = [...cs.list, ...vs.list].map(elText).filter(Boolean);
       const carriedK = new Set(carried.map((x) => K(x)));
       const carriedS = carried.map((x) => skey(x)).filter(Boolean);
       const reasons = [];
