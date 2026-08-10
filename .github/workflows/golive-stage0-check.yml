@@ -1,0 +1,44 @@
+name: Go-live stage 0 check (read-only)
+
+# Answers three production-only questions without anyone opening a SQL console:
+#   Q1 does scm.inventory_movements carry any UNIQUE index (the DO deduction
+#      guard claims one exists),
+#   Q2 does the live table already hold duplicate rows in that bucket, which
+#      would make such an index un-creatable,
+#   Q3 which live accounts can write through the SCM write freeze.
+#
+# Every statement in the script is a SELECT. It never touches
+# app_config['scm.write_freeze'] except to READ it.
+#
+# Manual trigger only - a production DB read must never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT the deploy concurrency group: this touches nothing and must
+# never queue behind, or displace, a release.
+concurrency:
+  group: golive-stage0-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-golive-stage0.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml for
+          # the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
