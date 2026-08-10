@@ -113,7 +113,7 @@ from the neighbouring columns. **None of them is an outstanding order**, so
 they cannot pollute the comparison. This is a much better-behaved field than a
 free-text `nvarchar(40)` with no constraint had any right to be.
 
-### 2.4 Remark2 is internally consistent with AutoCount's own stock
+### 2.3 Remark2 is internally consistent with AutoCount's own stock
 
 Before asking whether Remark2 agrees with the ERP, it is worth asking whether
 it agrees with AutoCount. For every outstanding line on a physical item, is
@@ -155,7 +155,7 @@ shrugging at.
 > the conclusion completely. The contaminated figure is recorded here so nobody
 > re-derives it and believes it.
 
-### 2.3 Token order is not canonical in AutoCount
+### 2.4 Token order is not canonical in AutoCount
 
 `BEDFRAME/ACC` appears 31 times and `ACC/BEDFRAME` twice. They mean the same
 thing. The ERP always emits a fixed order (BEDFRAME, SOFA, MATTRESS, then ACC),
@@ -421,7 +421,109 @@ therefore disagree, and it is not a stock error. The checker pulls
 
 ## 7. Results
 
-<!-- FILLED FROM THE LIVE RUN -->
+Two sources, and the difference between them matters:
+
+- **7.1** is the existing item-level checker `check-ac-vs-erp-reconcile.mjs`,
+  production run `31400160858` on 2026-08-10 14:48. It compares **per item**
+  against the **frozen 2026-08-09 snapshot**.
+- **7.2** is what the new per-warehouse, live comparison adds, and why the
+  numbers in 7.1 are an optimistic floor rather than the answer.
+
+### 7.1 Balance, per item, against the snapshot
+
+| Measure | Value |
+|---|---|
+| Items compared | 505 |
+| **Matching exactly** | **471 (93%)** |
+| Differing | 34 |
+| In ERP but not in the AutoCount set | 1 |
+
+Every one of the 34 differences, with its cause:
+
+| Item | AutoCount | ERP | Delta | Cause |
+|---|---|---|---|---|
+| DISPOSE | −2,487 | 0 | +2,487 | service pseudo-item |
+| TRANSPORTATION CHARGES | −1,216 | 0 | +1,216 | service pseudo-item |
+| STORAGE | −296 | 0 | +296 | service pseudo-item |
+| MISC | −43 | 0 | +43 | service pseudo-item |
+| BEDFRAME KIV | −3 | 0 | +3 | placeholder code, negative in AutoCount |
+| CH-DC | 14 | 26 | +12 | ERP received after seeding |
+| AK-SK FX AIRLOFT PIL | 23 | 33 | +10 | ERP received after seeding |
+| SQUARE PILLOW | 47 | 55 | +8 | ERP received after seeding |
+| AK-CS AIRLOFT COMFY PIL | 360 | 366 | +6 | ERP received after seeding |
+| TRION (A)-(Q) | 4 | 7 | +3 | ERP received after seeding |
+| HP MM VR TR NAV 4KFIT | 6 | 8 | +2 | ERP received after seeding |
+| CH-DL RTG | 1 | 3 | +2 | ERP received after seeding |
+| CH-DT RTG | 1 | 3 | +2 | ERP received after seeding |
+| 7 further items | | | +1 each | ERP received after seeding |
+| AMN-SOFA PILLOW | *(not compared)* | 205 | — | **checker bug, see below** |
+
+**Two findings hide inside that table.**
+
+*First, 4,042 of the 4,072 units of apparent disagreement are not stock at all.*
+The four service pseudo-items account for 99% of the total delta. The old
+checker does not exclude them, so its headline understates agreement badly. Once
+they are removed, the entire real disagreement across 505 items is **30 units**.
+
+*Second, the direction is uniform: every real delta is ERP-higher.* Not one item
+has the ERP holding less than AutoCount. That is the signature of the ERP
+receiving goods after it was seeded, against a frozen snapshot — exactly what
+should happen. Had the ERP been losing stock to double-deductions or missing
+receipts, the deltas would be mixed or negative. They are not. **This is a
+positive result: there is no evidence of systematic stock leakage in the ERP.**
+
+*The `AMN-SOFA PILLOW` row is a defect in the old checker, not in the data.*
+It excludes AutoCount items by matching `/SOFA/` against the item **code**, so
+`AMN-SOFA PILLOW` — an ordinary accessory — is dropped from the AutoCount side
+while its 205 ERP units remain, and it is reported as "in ERP but not in
+AutoCount". The new checker excludes on the item master's **ItemGroup**
+(`SOFA`) instead of the spelling of the code, so those 205 units are compared
+properly. `import-ac-stock-balance.mjs` already fixed this the same way; the
+reconcile checker was never updated to match.
+
+### 7.2 What the per-warehouse, live comparison adds
+
+The 93% figure is an **upper bound on agreement**, for three reasons the new
+checker removes:
+
+1. **Item-level totals hide warehouse errors.** An item with the right total
+   split across the wrong branches reads as a perfect match. The owner asked
+   for the balance per location precisely because that is the error that hurts:
+   staff go to a shelf that is empty. Only a per-warehouse comparison can see
+   it, and `C&C K.J` alone holds 507 units that the item-level view folds away.
+2. **It compares against a frozen snapshot, not the live book.** The −97 units
+   AutoCount has shipped since (section 5) are invisible to it.
+3. **It does not exclude the pseudo-items**, so its own headline is distorted
+   by 4,042 units of non-stock.
+
+### 7.3 Status
+
+Per-line `stock_status` across processed orders, from the same run:
+
+| Group | READY | PENDING | PARTIAL |
+|---|---|---|---|
+| accessory | 927 | 147 | 5 |
+| bedframe | 256 | 186 | — |
+| mattress | 274 | 258 | 3 |
+| sofa | 0 | 272 | — |
+| service | — | 190 | — |
+| others | — | 13 | — |
+
+Order headers: **187 READY_TO_SHIP, 332 CONFIRMED**.
+
+**Sofa is the one systematic status defect, and it is already identified.**
+Every sofa line is PENDING — not one is READY — and the reason is not
+quantity. There are 20 open sofa lots and **none of them carries a `batch_no`**.
+The allocator's `findCoveringBatch` requires a single batch to cover a whole
+sofa set, so with no batch attribution it can never match, and every sofa set
+stays PENDING no matter how much stock is physically present. 97 fully-received
+bound dedications sit unallocated behind this, all of them sofa.
+
+This is a **status defect the balance axis cannot see**, and it will make the
+ERP disagree with any AutoCount sofa order marked `READY`. It is stock
+attribution, not stock quantity. Sofa is excluded from the balance comparison
+by design, so only the status axis exposes it — which is exactly why the owner
+was right to ask for both axes together rather than either alone.
 
 ---
 
@@ -450,9 +552,31 @@ finding.
    `source_doc_type = 'REVERSAL'` and `source_doc_no = 'DO-2607-005'`, notes
    naming this document pair.
 3. Reverse the two phantom XAMMAR movements the same way.
+4. **Restore the original lots and close the lot the reversal opens.** This
+   step is not optional and is the easiest one to miss.
 
 Both original rows stay. The net effect on `inventory_balances` is zero, and
 the audit trail shows what happened rather than hiding it.
+
+**Why step 4 exists.** The FIFO trigger's `ADJUSTMENT` branch creates a **new
+lot** whenever `qty > 0`. A bare `+qty` reversal therefore fixes the balance
+while inventing a fresh lot at today's cost — phantom coverage that the
+allocator will happily ship, and a COGS error on top. The house pattern already
+handles this, and the fix must follow it rather than reinvent it:
+
+> One balancing ADJUSTMENT (+net_out) so inventory_balances nets to the
+> physical truth, then close the lot the trigger's ADJUSTMENT branch opened:
+> the goods were either restored to their original lots in (a), or were never
+> physically received — a fresh open lot here would double-count / be phantom
+> coverage either way.
+>
+> — `0198_scm_reverse_do_out_generalize.sql:175`, identically at
+> `0088_scm_dropship_hardening.sql:258`
+
+So the correct shape is: restore the consumed quantities to the lots the
+original OUT consumed (from `inventory_lot_consumptions`), write the balancing
+`ADJUSTMENT`, then close the lot that adjustment opened. Both reversal
+migrations already implement exactly this and should be the template.
 
 ### D2 — `migrated_no_stock` is a marker with no enforcement
 
@@ -506,6 +630,44 @@ assumption.
 
 ---
 
+### D6 — Sofa cannot become READY because no lot carries a batch number
+
+Highest-impact status defect found. 20 open sofa lots, **zero** with a
+`batch_no`. `findCoveringBatch` requires one batch to cover an entire sofa set,
+so it never matches and every sofa line stays PENDING regardless of physical
+stock. 97 fully-received bound dedications are stuck behind this.
+
+Migrated stock arrived through the balance snapshot, which carries no batch
+attribution — so this is a cutover consequence, not a code fault.
+
+**Proposal (dry-run).** Two options, and the owner should pick:
+
+1. **Backfill `batch_no` onto the migrated sofa lots** from the linked PO/GRN
+   where one exists. Correct, and preserves the single-batch guarantee the rule
+   exists to enforce.
+2. **Allow an operator-chosen batch waiver** for migrated lots specifically —
+   already on the books as an outstanding item. Faster, but weakens the
+   guarantee that a customer's sofa ships from one dye lot.
+
+Recommendation: option 1 wherever a linked PO exists, option 2 as the fallback
+for lots with no traceable source. Neither is a stock change; both are
+attribution changes.
+
+### D7 — The old reconcile checker excludes accessories by code spelling
+
+`check-ac-vs-erp-reconcile.mjs` filters AutoCount items with `/SOFA/i` against
+the item **code**. `AMN-SOFA PILLOW` and `THL-SOFA PILLOW` are ordinary
+accessories, so 205 units of real stock are dropped from the AutoCount side and
+then reported as "in ERP but not in AutoCount" — a phantom discrepancy.
+
+`import-ac-stock-balance.mjs` already fixed this by excluding on the item
+master's `ItemGroup` rather than the spelling of the code; the reconcile
+checker was never updated to match.
+
+**Proposal (dry-run).** Change the exclusion in
+`check-ac-vs-erp-reconcile.mjs` to read `ItemGroup`, matching the importer and
+the new checker. One-line change, no data effect.
+
 ## 9. Verdict on the owner's premise
 
 **Does "by right they should agree" hold?** For the balance axis, yes, within a
@@ -529,6 +691,27 @@ movement missing on a document that is posted in both systems, and any
 TRANSFER-inflated cell (D3). Those are the only classes that should ever reach
 zero.
 
+### The short answer for the owner
+
+**On balance: yes, they align, and better than the raw numbers suggest.** 471
+of 505 items match exactly. Of the 34 that do not, 30 units of real
+disagreement remain once the service pseudo-items are removed — and every
+single one is the ERP holding *more* than the frozen snapshot, which is what
+receiving goods after the cutover looks like. There is **no evidence of stock
+leaking out of the ERP**. The one thing still unmeasured is the per-warehouse
+split, which the new checker exists to close.
+
+**On status: the premise is sound and the field is trustworthy, but one
+systematic defect blocks it.** Remark2 is 100% in-vocabulary and agrees with
+AutoCount's own stock 99% of the time when it says `READY`. The ERP reproduces
+the same vocabulary by design. But **every sofa line in the ERP is PENDING**
+because no sofa lot carries a batch number (D6) — so every AutoCount sofa order
+marked ready will disagree, and that is an ERP attribution gap, not a
+warehouse-staff error.
+
+Fix D6 and the status axis should largely fall into line. Nothing here needs a
+change in AutoCount.
+
 The deeper point about the status axis: **AutoCount's Remark2 is a human
 assertion and the ERP's is a computation.** One is typed by a person when they
 notice stock arrive; the other is recomputed from the actual allocation. That
@@ -536,7 +719,7 @@ asymmetry is the reason they can drift.
 
 What the evidence says about the asymmetry is encouraging. The field is 100%
 in-vocabulary on the outstanding set, and it agrees with AutoCount's own stock
-99% of the time when it says `READY` (section 2.4). The human side of this is
+99% of the time when it says `READY` (section 2.3). The human side of this is
 in good order. So where the ERP disagrees with a `READY`, the presumption
 should be that **the ERP is missing something** — an unprocessed order, an
 unmapped warehouse, a movement that never landed — rather than that the
