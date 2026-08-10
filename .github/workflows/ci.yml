@@ -11,12 +11,20 @@ name: CI
 # queued PR waits forever on a check that will never run. Shipping the trigger
 # first is inert on its own — with no queue configured GitHub emits no
 # merge_group event, so this line does nothing until the ruleset changes.
+# `push` was here too, and it made every commit on a PR branch run the WHOLE
+# suite TWICE — one run for the push, an identical one for the pull_request, ~10
+# jobs each including four 6-minute test shards. With several PRs open (and the
+# up-to-date-branch rule re-running them on every merge) the queue became the
+# slowest part of shipping. Dropping it loses no coverage: a branch is only ever
+# merged through a PR, and main is covered by deploy.yml, which typechecks and
+# tests before it deploys.
+#
+# A branch pushed with NO pull request now runs nothing. That is the trade, and
+# it is the right one here: the ruleset requires a green PR to merge, so an
+# un-PR'd branch cannot reach main anyway.
 on:
   pull_request:
   merge_group:
-  push:
-    branches-ignore:
-      - main # main is covered by deploy.yml (which also typechecks + tests)
 
 # github.ref is unique per merge group (refs/heads/gh-readonly-queue/main/...),
 # so queued groups get their own concurrency slot and do not cancel each other
