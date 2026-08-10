@@ -1,3 +1,31 @@
+## Every SO line photo rendered as "err" — the bucket name was never configured [high]
+
+**Symptom** — Line photos on the Sales Order edit screen have shown a broken
+`err` thumbnail in production. It was assumed to be a missing upload, and the
+sofa handoff doc recorded it that way. On 2026-08-10, 983 AutoCount photos were
+uploaded to R2 and attached to 775 lines — and every thumbnail still showed
+`err`.
+
+**Root cause** — Traced live in the browser, not guessed: the page calls
+`GET /:docNo/items/:itemId/photos/:photoKey/signed`, which returned **500** with
+`{"error":"signing_failed","reason":"SO_ITEM_PHOTOS_BUCKET_NAME not configured"}`.
+`soItemPhotoBindings` (src/scm/lib/r2.ts) requires four values to mint a SigV4
+URL, and the bucket NAME — the one that is not a secret — was in no `[vars]`
+block of `wrangler.toml`. The R2 objects were fine the whole time; the object
+this route was asked to sign downloads correctly with wrangler.
+
+**Fix** — `SO_ITEM_PHOTOS_BUCKET_NAME = "houzs-erp"` added to the prod and
+staging vars blocks, with a comment saying why the name belongs in vars while
+the credentials stay secrets.
+
+**The class, for next time** — a route that catches its own configuration error
+and returns 500 with a reason is only debuggable if someone READS the reason.
+Two sessions recorded "photos are broken, the files were never uploaded" from
+the thumbnail alone; one authenticated fetch of the failing endpoint gave the
+exact answer. Read the failing response before writing down a cause.
+
+**Ref** — 2026-08-10, PR fix/so-photo-bucket-var.
+
 ## SO to PO convert silently dropped the line photos [medium]
 
 **Symptom** — Owner 2026-08-10: "正常我们的 Sales Order 里面可以存放照片，PO 那边也

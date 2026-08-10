@@ -76,6 +76,14 @@ EMAIL_FROM = "Houzs ERP <no-reply@houzscentury.com>"
 # Reply-to: no-reply@ can't receive, so point customer replies at the real
 # company mailbox (Google Workspace). Applied to every email via deliverViaResend.
 EMAIL_REPLY_TO = "Houzs Century <hello@houzscentury.com>"
+# R2 bucket the SO / PO line photos live in. The signed-URL routes read this to
+# build the SigV4 request; without it soItemPhotoBindings throws and every photo
+# thumbnail renders as "err" — which is exactly what production did until
+# 2026-08-10, when 983 imported AutoCount photos landed in R2 and none of them
+# would display. The BUCKET NAME is not a secret (it is the same bucket the
+# [[r2_buckets]] bindings below name); only R2_ACCESS_KEY_ID /
+# R2_SECRET_ACCESS_KEY / R2_ENDPOINT are, and those stay wrangler secrets.
+SO_ITEM_PHOTOS_BUCKET_NAME = "houzs-erp"
 
 # D1 — REMOVED 2026-06-13 (write lockout). Prod is fully on Supabase/Postgres:
 # every request (dbInject) and every cron (withPgDb) runs through the d1-compat
@@ -283,6 +291,8 @@ HOUZS_OWNS_2990 = "true"
 PUBLIC_APP_URL = "https://houzs-erp-staging.pages.dev"
 EMAIL_FROM = "Houzs ERP Staging <no-reply@houzscentury.com>"
 EMAIL_REPLY_TO = "Houzs Century <hello@houzscentury.com>"
+# Same bucket as prod (staging shares the R2 bucket); see the prod vars block.
+SO_ITEM_PHOTOS_BUCKET_NAME = "houzs-erp"
 # Environment label stamped on every reported error (services/errorTracking.ts).
 # Inert on its own — nothing is reported until SENTRY_DSN is set. It exists so
 # that if staging ever gets a DSN, its noise lands under environment=staging and
