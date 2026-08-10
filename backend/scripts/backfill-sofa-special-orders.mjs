@@ -130,7 +130,11 @@ async function main() {
       await sql.begin(async (tx) => {
         for (const u of b)
           await tx.unsafe(`UPDATE scm.${table} SET custom_specials = $1::jsonb WHERE id = $2`,
-            [JSON.stringify(u.next), u.id]);
+            // tx.json, never JSON.stringify - see BUG-HISTORY 2026-08-10:
+            // postgres.js JSON-encodes any parameter it resolves to json/jsonb,
+            // so a pre-stringified value is encoded twice and lands as a jsonb
+            // STRING. This script is where that was first seen (#1913).
+            [tx.json(u.next), u.id]);
       });
       log(`  ${which} ..${Math.min(i + 200, list.length)}/${list.length}`);
     }
