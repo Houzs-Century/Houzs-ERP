@@ -6,7 +6,9 @@
 // (scm/lib/write-freeze.ts) reads it with a 30s cache, so a change takes
 // effect within half a minute WITHOUT a deploy. Reads stay open either way;
 // owner / scm.admin always bypass.
-//   STATE=on|off   MESSAGE="shown to staff"   (MESSAGE optional)
+// PER-COMPANY (owner 2026-08-10: "是 Houzs company 而已, 2990 remain") — the
+// stored value is the company id list to freeze ('1' = Houzs only), or 'all'.
+//   STATE=on|off   COMPANIES="1" | "all"   MESSAGE="shown to staff"
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;
@@ -20,7 +22,8 @@ const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 async function main() {
   const [before] = await sql`SELECT value, description FROM public.app_config WHERE key = 'scm.write_freeze'`;
   log(`current: ${before ? `value=${before.value} description=${before.description ?? "-"}` : "(row absent = open)"}`);
-  const value = STATE === "on" ? "1" : "0";
+  const COMPANIES = (process.env.COMPANIES || "1").trim() || "1";
+  const value = STATE === "on" ? COMPANIES : "off";
   const description = MESSAGE
     ?? (STATE === "on"
       ? "Editing is paused while the AutoCount data migration is completed. Please do not create or change orders — ask IT when you need something updated."
@@ -29,7 +32,10 @@ async function main() {
     VALUES ('scm.write_freeze', ${value}, ${description}, now())
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description, updated_at = now()`;
   const [after] = await sql`SELECT value, description FROM public.app_config WHERE key = 'scm.write_freeze'`;
-  log(`DONE. SCM writes are now ${after?.value === "1" ? "FROZEN (staff blocked, owner/scm.admin bypass)" : "OPEN"}`);
+  const scope = String(after?.value ?? "off");
+  log(`DONE. value=${scope} -> ${scope === "off" ? "OPEN for every company"
+    : scope === "all" ? "FROZEN for EVERY company"
+    : `FROZEN for company ${scope} only (others trade normally)`}`);
   log(`message: ${after?.description ?? "-"}`);
   log("takes effect within ~30s (middleware cache TTL)");
   await sql.end();

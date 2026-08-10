@@ -18,6 +18,11 @@ on:
         default: "on"
         type: choice
         options: [on, off]
+      companies:
+        description: "Company ids to freeze (1 = Houzs only) or 'all'"
+        required: false
+        default: "1"
+        type: string
       message:
         description: "Message shown to staff (optional)"
         required: false
@@ -41,6 +46,7 @@ jobs:
       - run: node scripts/set-write-freeze.mjs
         env:
           STATE: ${{ inputs.state }}
+          COMPANIES: ${{ inputs.companies }}
           MESSAGE: ${{ inputs.message }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
@@ -56,5 +62,6 @@ jobs:
       - run: node scripts/set-write-freeze.mjs
         env:
           STATE: ${{ inputs.state }}
+          COMPANIES: ${{ inputs.companies }}
           MESSAGE: ${{ inputs.message }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -13,8 +13,16 @@
 // every FREEZE_TTL_MS per isolate.
 //
 //   app_config.key   = 'scm.write_freeze'
-//   app_config.value = '1' (frozen) | anything else / row absent (open)
+//   app_config.value = 'off' / '' / row absent  → open
+//                    = 'all'                    → every company frozen
+//                    = comma-separated company ids ('1') → ONLY those frozen
 //   app_config.description = the message shown to staff (optional)
+//
+// PER-COMPANY IS THE POINT (owner 2026-08-10: "是 Houzs company 而已, 2990
+// remain"). Only Houzs is mid-migration; 2990 trades normally through the same
+// deployment, so a global freeze would stop a business that has no reason to
+// stop. The active company comes from the app-level companyContext middleware
+// (mounted on /api/*, i.e. before this one).
 //
 // SCOPE — deliberately narrow to what it must stop:
 //   • Only non-GET/HEAD/OPTIONS methods on /api/scm/*. Reads stay open so the
@@ -22,21 +30,35 @@
 //   • Bypassed for owner/`*` and anyone holding 'scm.admin' — IT must still be
 //     able to correct data during the freeze (and the cutover's own repairs run
 //     over DATABASE_URL, not this API, so they are unaffected either way).
+//   • An UNRESOLVED active company is NOT frozen: refusing writes we cannot
+//     attribute would take 2990 down on a companies-master blip, which is the
+//     exact outage this scoping exists to avoid.
 // ----------------------------------------------------------------------------
 import type { Context, Next } from 'hono';
 import { getSupabaseService } from '../../db/supabase';
+import { activeCompanyId } from './companyScope';
 
 const FREEZE_TTL_MS = 30_000;
 const FREEZE_KEY = 'scm.write_freeze';
 
-let cached: { at: number; on: boolean; message: string | null } | null = null;
+type FreezeState = { scope: 'off' | 'all' | number[]; message: string | null };
+let cached: { at: number; state: FreezeState } | null = null;
 
 /** Test seam — drop the cache so a toggle is observed immediately. */
 export function resetWriteFreezeCache(): void { cached = null; }
 
-async function readFreeze(sb: unknown): Promise<{ on: boolean; message: string | null }> {
+/** Parse the stored value into a scope. Exported for the unit test. */
+export function parseFreezeValue(raw: string | null | undefined): 'off' | 'all' | number[] {
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (!v || v === 'off' || v === '0' || v === 'false') return 'off';
+  if (v === 'all' || v === 'true') return 'all';
+  const ids = v.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+  return ids.length ? ids : 'off';
+}
+
+async function readFreeze(sb: unknown): Promise<FreezeState> {
   const now = Date.now();
-  if (cached && now - cached.at < FREEZE_TTL_MS) return { on: cached.on, message: cached.message };
+  if (cached && now - cached.at < FREEZE_TTL_MS) return cached.state;
   try {
     const { data } = await (sb as {
       from(t: string): {
@@ -45,17 +67,17 @@ async function readFreeze(sb: unknown): Promise<{ on: boolean; message: string |
         };
       };
     }).from('app_config').select('value, description').eq('key', FREEZE_KEY).maybeSingle();
-    const on = String(data?.value ?? '').trim() === '1';
-    const message = data?.description ?? null;
-    cached = { at: now, on, message };
-    return { on, message };
+    const state: FreezeState = { scope: parseFreezeValue(data?.value), message: data?.description ?? null };
+    cached = { at: now, state };
+    return state;
   } catch {
     /* FAIL OPEN, deliberately. A freeze is an operational convenience; a
        misconfigured/unreachable app_config must not take the whole SCM write
        surface down. The cutover's real protection is that staff were TOLD to
        stop — this makes that stick, it is not a security control. */
-    cached = { at: now, on: false, message: null };
-    return { on: false, message: null };
+    const state: FreezeState = { scope: 'off', message: null };
+    cached = { at: now, state };
+    return state;
   }
 }
 
@@ -71,8 +93,13 @@ export function scmWriteFreeze() {
        supabaseAuth, so it is NOT in the context this early. Reading one
        app_config row with the service client keeps the freeze ahead of every
        sub-router instead of having to repeat it inside each one. */
-    const { on, message } = await readFreeze(getSupabaseService(c.env));
-    if (!on) return next();
+    const { scope, message } = await readFreeze(getSupabaseService(c.env));
+    if (scope === 'off') return next();
+    if (scope !== 'all') {
+      const co = activeCompanyId(c);
+      // Unresolved company → let it through (see the header note).
+      if (co == null || !scope.includes(co)) return next();
+    }
 
     const hu = c.get('houzsUser') as { permissions?: string[]; is_owner?: boolean } | undefined;
     const perms = hu?.permissions ?? [];
