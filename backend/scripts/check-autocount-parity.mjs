@@ -270,6 +270,38 @@ async function main() {
   const shortAbsent = shortMissing.filter((p) => !poPresent.has(p)).length;
   log(`   for the ${poShort} partially-linked orders: ${shortMissing.length} named PO(s) not linked, of which ${shortAbsent} are absent from the ERP and ${shortMissing.length - shortAbsent} are present but undedicated to that SO`);
 
+  /* check-line-supply-trace reports "bound lines not READY with NO purchase
+     order raised at all". That is measured purely by so_item_id, and the lens
+     above just proved so_item_id is systematically absent on imported POs — so
+     the number must be split by whether AUTOCOUNT names a PO for the order
+     before anyone reads it as a buyer's backlog. This is the only place both
+     facts are available at once. */
+  log("");
+  log("   ── is \"bound lines with NO purchase order\" a backlog or a dedication artefact? ──");
+  const bnp = await sql`SELECT h.linked_ac_docno ac, COUNT(*)::int n
+    FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+    LEFT JOIN scm.purchase_order_items poi ON poi.so_item_id = i.id
+    WHERE h.company_id = ${CO} AND COALESCE(i.cancelled,false) = false
+      AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
+      AND i.item_group IN ('bedframe','sofa') AND i.stock_status <> 'READY' AND poi.id IS NULL
+    GROUP BY 1`;
+  let bnpNamed = 0, bnpUnnamed = 0, bnpNotInSnapshot = 0, bnpNoAcLink = 0, bnpTotal = 0;
+  for (const r of bnp) {
+    bnpTotal += r.n;
+    if (!r.ac) { bnpNoAcLink += r.n; continue; }
+    const acRow = byAcDoc.get(r.ac);
+    if (!acRow) { bnpNotInSnapshot += r.n; continue; }
+    if (acRow.ToPONo) bnpNamed += r.n; else bnpUnnamed += r.n;
+  }
+  log(`   bound (bedframe/sofa) lines not READY with no dedicated PO line: ${bnpTotal}`);
+  log(`      AutoCount names a PO for that order (so a PO exists and only the dedication is missing): ${bnpNamed}`);
+  log(`      AutoCount names NO PO for that order (nothing was ordered on either side): ${bnpUnnamed}`);
+  log(`      order is not in the outstanding-SO snapshot at all: ${bnpNotInSnapshot}; ERP-native order with no AutoCount link: ${bnpNoAcLink}`);
+  const [{ n: undedBound }] = await sql`SELECT COUNT(*)::int n
+    FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+    WHERE p.company_id = ${CO} AND i.so_item_id IS NULL AND i.item_group IN ('bedframe','sofa')`;
+  log(`   ceiling on how many of those could be hidden by the dedication gap: ${undedBound} undedicated bedframe/sofa PO line(s) exist company-wide`);
+
   log("");
   log("═══ 3. BALANCE — AutoCount UDF_BALANCE vs the ERP ═══");
   const so = gz("ac-outstanding-so.json.gz");
