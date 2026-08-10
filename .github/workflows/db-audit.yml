@@ -1,12 +1,22 @@
-name: DB view audit (read-only)
+name: Specials + OCR check (read-only, run-once from branch)
 
-# Manual, read-only. Lists scm/public VIEWs via the prod DATABASE_URL secret so
-# the Phase 0f multi-company migration can recreate any scoped view. No writes.
+# TEMPORARY, BRANCH-ONLY. This file is the db-audit.yml FILENAME because
+# workflow_dispatch can only address a workflow that exists on the default
+# branch; the RUN uses this branch's copy. It is never merged, so main's real
+# db-audit.yml is untouched. The permanent home for this check is
+# .github/workflows/specials-ocr-check.yml in PR #1901, which cannot be
+# dispatched until it lands.
+#
+# Read-only: SELECTs only, no DDL, no writes, no transaction.
 on:
   workflow_dispatch:
 
+concurrency:
+  group: specials-ocr-check-runonce
+  cancel-in-progress: false
+
 jobs:
-  audit:
+  check:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -17,6 +27,7 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: node scripts/audit-views.mjs
+      - run: node scripts/check-specials-and-ocr.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
