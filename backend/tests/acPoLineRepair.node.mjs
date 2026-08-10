@@ -26,7 +26,7 @@ import {
   isoDate,
   mergeAcPoLines,
 } from "../scripts/lib/ac-po-line.mjs";
-import { makeSoLineTaker } from "../scripts/lib/so-line-dedication.mjs";
+import { dedicationCandidates, makeSoLineTaker } from "../scripts/lib/so-line-dedication.mjs";
 import { matchAcLinesToErpRows } from "../scripts/lib/ac-po-line-match.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -143,6 +143,54 @@ test("the taker never crosses orders and never guesses a code", () => {
   assert.equal(t.take("SO-011207", "9028"), null);
   assert.equal(t.take(null, "9028-2A(LHF)"), null);
   assert.equal(t.take("SO-011207", "  9028-2a(lhf) "), "a1", "codes fold on case and space");
+});
+
+// ── the cross-product refusal ───────────────────────────────────────────────
+// Restore `base` as a blanket attempt in dedicationCandidates — i.e. drop the
+// sameProduct gate — and the next two tests fail: the cross-product case offers
+// "MYLATEX-LUMBARIA-K" as a candidate and reports crossProduct false, which is
+// exactly how a PO line for product A gets bound to an SO line for product B.
+
+test("the sales-order line's own code is offered ONLY when it names this PO line's product", () => {
+  // same product: the SO line and the PO line agree, so base is a real candidate
+  const same = dedicationCandidates("KHJ57-K", "KHJ57-K", null);
+  assert.deepEqual(same.attempts, ["KHJ57-K"]);
+  assert.equal(same.crossProduct, false);
+
+  // same product by sofa placeholder: the PO row is a compartment, the SO line
+  // is the model's placeholder, and that placeholder is derived from the PO
+  // line's OWN AutoCount item — so it cannot name someone else's product
+  const sofa = dedicationCandidates("9028-2A(LHF)", "9028-1S", "9028-1S");
+  assert.deepEqual(sofa.attempts, ["9028-2A(LHF)", "9028-1S"]);
+  assert.equal(sofa.crossProduct, false);
+
+  // unmapped SO code: nothing to cross, and nothing extra to try
+  const unmapped = dedicationCandidates("KHJ57-K", "", null);
+  assert.deepEqual(unmapped.attempts, ["KHJ57-K"]);
+  assert.equal(unmapped.crossProduct, false);
+});
+
+test("a sales-order line naming a DIFFERENT product is refused, not tried", () => {
+  // PO-000290's real shape: FromSODtlKey 60700 resolves to SO-000870
+  // "MYLATEX LUMBARIA (K)" while the PO line is "NB-KHJ57(K)". Offering the SO
+  // line's code here would dedicate a mattress PO line to a lumbar-support SO
+  // line and the ERP would show a link that never existed in AutoCount.
+  const cross = dedicationCandidates("KHJ57-K", "MYLATEX-LUMBARIA-K", null);
+  assert.deepEqual(cross.attempts, ["KHJ57-K"], "the other product's code must NOT be a candidate");
+  assert.ok(!cross.attempts.includes("MYLATEX-LUMBARIA-K"));
+  assert.equal(cross.crossProduct, true, "and the caller must be told, so the row is reported not silently blank");
+
+  // the placeholder still rides along — it is this PO line's own product
+  const withSofa = dedicationCandidates("9028-2A(LHF)", "MYLATEX-LUMBARIA-K", "9028-1S");
+  assert.deepEqual(withSofa.attempts, ["9028-2A(LHF)", "9028-1S"]);
+  assert.equal(withSofa.crossProduct, true);
+});
+
+test("codes fold on case and space before being called a different product", () => {
+  assert.equal(dedicationCandidates("khj57-k", "KHJ57-K", null).crossProduct, false);
+  assert.equal(dedicationCandidates("KHJ57-K", "  khj57-k ", null).crossProduct, false);
+  // and a candidate list never repeats a code
+  assert.deepEqual(dedicationCandidates("9028-1S", "9028-1S", "9028-1S").attempts, ["9028-1S"]);
 });
 
 // ── which ERP row descends from which AutoCount line ────────────────────────

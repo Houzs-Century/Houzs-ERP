@@ -48,7 +48,7 @@ import postgres from "postgres";
 import { SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
 import { acDeliveryDate, acDtlKey, acFromSoDtlKey, isoDate, mergeAcPoLines } from "./lib/ac-po-line.mjs";
 import { matchAcLinesToErpRows } from "./lib/ac-po-line-match.mjs";
-import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
+import { dedicationCandidates, makeSoLineTaker } from "./lib/so-line-dedication.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -225,31 +225,22 @@ async function main() {
         } else if (!src) {
           unresolved.push({ poNo: h.po_number, code: row.material_code, reason: `FromSODtlKey ${fromKey} names a sales-order line that is not in the cutover snapshot (its order was fully delivered and correctly never imported)` });
         } else {
-          /* Most specific first: the ERP row's OWN code, which for a sofa is
-             already the compartment. Then the sofa placeholder derived from
-             THIS PO line's own AutoCount item — the code the import falls back
-             to when a build could not be decoded.
-             `base` — the ERP code of the SALES ORDER line's AutoCount ItemCode —
-             is deliberately NOT a blanket third attempt. It names the SO line's
-             product, which is not always this PO line's product, and taking it
-             would bind a PO line for product A to an SO line for product B. It
-             is offered only when it names the same product this PO row already
-             names (or that row's sofa placeholder); otherwise the row is left
-             blank and listed for the owner. */
+          /* Which codes this row may claim, and whether the SO line names a
+             different product, is dedicationCandidates() in the shared lib —
+             one implementation, guarded by tests that fail without the
+             cross-product refusal. `base` is the SO line's ERP code; the
+             placeholder is derived from THIS PO line's own AutoCount item, so
+             it is the same product by construction. */
           const base = byAc.get(norm(src.code)) || "";
           const poBase = byAc.get(norm(ac.itemCode)) || "";
           let model = poBase.replace(/-1S$/i, "");
           model = SOFA_MODEL_ALIAS[model] || model;
-          const placeholder = model ? `${model}-1S` : null;
-          const sameProduct =
-            !!base && (norm(base) === norm(row.material_code) || (placeholder && norm(base) === norm(placeholder)));
-          const attempts = [...new Set(
-            [row.material_code, sameProduct ? base : null, placeholder].filter(Boolean).map(String),
-          )];
+          const { attempts, crossProduct: isCrossProduct } =
+            dedicationCandidates(row.material_code, base, model ? `${model}-1S` : null);
           let picked = null;
           for (const code of attempts) { picked = taker.take(src.doc, code); if (picked) break; }
           if (picked) { upd.soItemId = picked; upd.soDoc = src.doc; upd.fromKey = fromKey; want = true; }
-          else if (base && !sameProduct) {
+          else if (isCrossProduct) {
             /* The only reason left is the one this rule created, so name it
                rather than hiding it behind the taker's generic explanation. */
             crossProduct.push({ poNo: h.po_number, code: row.material_code, base, soDoc: src.doc, acCode: src.code, fromKey });
@@ -268,7 +259,7 @@ async function main() {
   log("");
   log(`matched ERP line -> AutoCount line: sole ${sole}; split by (qty, Desc2) ${split}; indistinguishable, zipped in DtlKey order ${indistinguishable}`);
   log(`unmatched: ERP rows ${unmatchedErp}; AutoCount lines with no ERP row ${unmatchedAc}; POs with no AutoCount document in the snapshots ${noAcDoc.length}`);
-  for (const p of noAcDoc.slice(0, 20)) log(`   ${p}`);
+  for (const p of noAcDoc) log(`   ${p}`);
   log("");
   log(`PLAN: ${plan.length} line(s) to update — so_item_id ${nSo}; delivery_date ${nDate}; linked_ac_dtlkey ${nKey}${has_dtlkey ? "" : " (COLUMN ABSENT — this is what it WOULD key once the migration is applied, and it is why those lines are not in the plan count above)"}`);
   const groupOf = new Map(rows.map((r) => [r.id, r.item_group ?? "?"]));

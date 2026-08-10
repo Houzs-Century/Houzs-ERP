@@ -414,7 +414,16 @@ makes `AcSyncService` APPEND a line instead of editing the operator's.
 For the same reason the dedication never crosses products: the sales-order
 line's own ERP code is only tried when it names the same product as the PO line
 (or that line's sofa placeholder). A cross-product candidate is left blank and
-listed for the owner.
+listed for the owner. Which codes a row may claim is one function —
+`dedicationCandidates()` in `scripts/lib/so-line-dedication.mjs`, beside the
+taker — so the rule and the script cannot drift apart.
+
+A cancelled sales-order line is never offered, and every query that builds the
+taker pool reads the column as **nullable** — `COALESCE(cancelled, false) =
+false`, the same way `check-po-so-links.mjs` (the checker for this exact link)
+reads it. A bare `cancelled = false` is NULL for a NULL row, which silently
+drops it out of a **claim-once** pool: that both under-repairs and hands a
+DIFFERENT line to the PO row that follows.
 
 Every UPDATE re-asserts that the column is still NULL, so the repair is
 idempotent and never overwrites a value a human has set by hand. It does NOT

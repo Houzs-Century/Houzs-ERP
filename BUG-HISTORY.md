@@ -78,14 +78,26 @@ match, and the side you are copying FROM is the one that has to be checked.*
 Two corollaries were fixed in the same pass. The `base` fallback could bind a PO
 line for product A to an SO line for product B, defended by a comment claiming
 the importer makes the same attempt — it does not: `import-ac-so-linked-pos.mjs`
-uses `base` only and never the PO row's own code. (Measured on the snapshots,
-exactly **1** of 579 resolvable lines is cross-product, and it is the same
-`PO-000290` line, so the guard costs nothing today and would have been the only
-wrong write.) And the zip's tie-break sorted a serial `id` with
+uses `base` only and never the PO row's own code. (Re-measured on the snapshots
+2026-08-11: exactly **1** of 579 resolvable lines is cross-product —
+`PO-000290` DtlKey 61216 `NB-KHJ57(K)` -> ERP `CODY-(K)`, pointed by
+`FromSODtlKey` at `SO-000870` "MYLATEX LUMBARIA (K)" -> ERP
+`LUMBARIA MATT (K)`. So the guard costs one link today and that link would have
+been the only wrong write.) That decision is no longer inline prose in the
+script: it is `dedicationCandidates()` in `scripts/lib/so-line-dedication.mjs`,
+one implementation with its own tests, so the rule and the comment defending it
+cannot drift apart again. And the zip's tie-break sorted a serial `id` with
 `localeCompare`, so ids `[9,10,11,12]` order as `[10,11,12,9]` and split a
 sofa's compartment rows across different AutoCount lines; it sorts numerically
-now. Guards: `tests/acPoLineRepair.node.mjs` — remove the refusal and 3 tests
-fail, restore the text sort and 1 fails.
+now.
+
+**Guards, each proven by breaking it** (`tests/acPoLineRepair.node.mjs`, 24
+tests, all passing): disable the coin-flip refusal -> **3 fail** (18/21 before
+the cross-product tests were added); drop the `sameProduct` gate so `base` is a
+blanket attempt again -> **1 fails** (23/24); restore the `localeCompare` row
+sort -> **1 fails**; point the date accessor back at the old `DelivDate` key ->
+**3 fail**. A test that does not fail without its fix proves nothing, so each
+was run both ways rather than asserted.
 
 Two smaller faults from the same review: `i.cancelled = false` (three queries)
 silently dropped NULL-cancelled SO lines out of a **claim-once** pool, which
@@ -116,18 +128,40 @@ they cannot be repaired by anyone — 143 have no `FromSODtlKey` at all (a stock
 PO) and 16 point at orders that were fully delivered and correctly never
 imported.
 
-**These numbers are now STALE and have NOT been re-measured.** The fixes above
-can only reduce them: 5 more groups refused (the ~12 rows behind them lose their
-key and dedication), possibly fewer dedications from the cross-product guard,
-possibly more from `COALESCE(cancelled, false)`. Re-running the DRY-RUN through
-`repair-migrated-po-lines.yml` is **blocked until this PR merges** — GitHub
-refuses `workflow_dispatch` for a workflow file that is not yet on the default
-branch (`HTTP 404: workflow ... not found on the default branch`), and this PR
-is what introduces it. **Nobody should run APPLY until a post-merge DRY-RUN has
-been read.** The AC-side facts that do not need the database were re-measured
-and are quoted above (5 buckets / 10 lines / 1 cross-product line).
+**These numbers are STALE and are STILL NOT re-measured.** The fixes above can
+only move them DOWN: 5 more groups refused (the rows behind them lose their key
+and their dedication), one fewer dedication from the cross-product guard, and
+`COALESCE(cancelled, false)` can only add SO lines back to the taker pool. The
+exact new figures are not in this file **because nobody has been able to produce
+them**, and a plausible guess in their place would be exactly the failure this
+whole review was about.
 
-**Ref** — 2026-08-10, PR #1905 (fix/po-dedication-and-dates).
+Re-running the DRY-RUN through `repair-migrated-po-lines.yml` is **blocked until
+this PR merges**, and that was retried and re-confirmed on 2026-08-11, not
+assumed:
+
+```
+$ gh workflow run repair-migrated-po-lines.yml --ref fix/po-dedication-and-dates -f target=prod -f apply=0
+HTTP 404: workflow repair-migrated-po-lines.yml not found on the default branch
+(https://api.github.com/repos/hello-houzs/Houzs-ERP/actions/workflows/repair-migrated-po-lines.yml)
+```
+
+GitHub will only dispatch a workflow whose file is already on `main`, and this
+PR is what introduces the file; `gh workflow list --all` does not list it, and
+`git ls-tree origin/main .github/workflows/` does not contain it. There is no
+other merged workflow that runs this script, so there is no back door either.
+**The first action after merge is a DRY-RUN through this workflow, and nobody
+runs APPLY until its output has been read.**
+
+What COULD be measured without the database was, on 2026-08-11, against the
+committed snapshots: 738 merged AutoCount PO lines; **5 indistinguishable
+buckets / 10 lines, all 5 disagreeing on `FromSODtlKey` and 0 on
+`DeliveryDate`** (so the refusal costs no delivery dates); **1 of 579**
+resolvable lines cross-product; **738/738** lines yield a delivery date and
+**0** still carry the old `DelivDate` key.
+
+**Ref** — 2026-08-10 / re-verified 2026-08-11, PR #1905
+(fix/po-dedication-and-dates).
 
 ## Duplicate-series detection paired five unrelated fabrics through "BR0WN" [low]
 
