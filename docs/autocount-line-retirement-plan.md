@@ -172,11 +172,17 @@ never needs to be addressed again after the retirement itself has synced.
 
 ## Observed on the first two cancelled rows
 
-Date: 2026-08-11. Everything here is a production read, not a reading of the
-code. The standing tool is **Actions → Cancelled SO line — reader check
-(read-only)** (`backend/scripts/check-cancelled-so-line-readers.mjs`), which
-replays each guard's own predicate against the live rows instead of arguing
-about them. Re-run it before touching any of this.
+Date: 2026-08-11, production run **31431319394**. Everything here is a
+production read, not a reading of the code. The standing tool is **Actions →
+Cancelled SO line — reader check (read-only)**
+(`backend/scripts/check-cancelled-so-line-readers.mjs`), which replays each
+guard's own predicate against the live rows instead of arguing about them.
+Re-run it before touching any of this.
+
+Section G of that run is the blast radius, and it is small: **exactly two**
+`cancelled = true` sales-order lines exist in the whole database, both listed
+below, both `stock_status = 'PENDING'`, and **zero** carry `'READY'` — the shape
+that makes gap 2 bite.
 
 ### The documents
 
@@ -185,18 +191,22 @@ about them. Re-run it before touching any of this.
 | header status | `READY_TO_SHIP` | `CONFIRMED` |
 | lines | `9050-1A(LHF)` READY · `9050-2A(RHF)` READY · **`9050-2S` CANCELLED** · `DISPOSE` PENDING | `8030-1A(RHF)` PENDING · **`8030-1S` CANCELLED** · `8030-2A(LHF)` PENDING |
 | delivery orders | none | none |
+| cancelled row's state | `stock_status` PENDING, `allocated_batch_no` NULL, `warehouse_id` NULL, RM 0 | same |
+| **can it ship?** | **YES** — both live modules are READY, bound to batch `HC-PO-009469` and warehoused, so the Type-A no-batch guard returns zero offenders and the Type-B set is exactly those two | **YES as regards the cancelled row** — but both live modules are PENDING with no bound batch, so the Type-A guard blocks them for the ordinary reason that the goods are not in yet. Nothing to do with the cancellation. |
 
 `HC-SO-012624` is the live risk: it is `READY_TO_SHIP` with two READY sofa
-modules, so it is the one an operator would try to deliver.
+modules, so it is the one an operator would try to deliver — and it can be
+delivered.
 
 ### Gap 2 (`sofa_partial_set`) — was NOT live, and is now impossible
 
 The set `findIncompleteSofaSets` builds is `stock_status = 'READY'` AND sofa.
 The restored rows escaped it only because `restore-deleted-so-lines.mjs`
 enumerates its INSERT columns and never writes `stock_status`, so both landed on
-the column default rather than inheriting the READY sibling's value. Nothing
-would then have moved them: `so-stock-allocation.ts` filters `cancelled = false`
-and so never re-derives them (that is gap 1, still open).
+the column default — measured as `'PENDING'::text NOT NULL` — instead of
+inheriting the READY sibling's value. Nothing would then have moved them:
+`so-stock-allocation.ts` filters `cancelled = false` and so never re-derives
+them (that is gap 1, still open). Both rows read PENDING in production today.
 
 That a cancelled line can never be ON a delivery order — and would therefore
 always be "missing" — is not an assumption: the deliverable-lines loader that
@@ -215,9 +225,12 @@ longer depends on how a row got written.
 the orphan step then follows `purchase_order_items.so_item_id`. Neither can
 reach these rows: the restore inserted **new** uuids, so no earlier snapshot
 names them, and the original ids were `ON DELETE SET NULL`-ed off the PO lines
-when the hard delete ran. There is no supplier obligation left pointing at a
-cancelled line on either document, so there is nothing for the orphan pass to
-skip. The gap itself is untouched and still blocks conversion.
+when the hard delete ran. Measured: **0** `so_revisions` snapshots exist for
+either document, and of the two `purchase_order_items` rows bound into
+`HC-SO-012624` (both on `HC-PO-009469`, RECEIVED) both point at LIVE lines;
+`HC-SO-013167` has none at all. So there is no supplier obligation pointing at a
+cancelled line and nothing for the orphan pass to skip. The gap itself is
+untouched and still blocks conversion.
 
 ### Gap 4 (customer PDF) — WAS live, on both documents
 
@@ -225,9 +238,13 @@ skip. The gap itself is untouched and still blocks conversion.
 the detail screen may want the history — so both restored rows were in the
 payload every print path consumes. Printing either document from the phone, or
 from the desktop list's bulk print, put a phantom sofa module on a customer
-document. The money was RM 0 in this instance because the importer puts a
-build's whole price on its first piece; the row was still there, and the next
-one need not be free. Fixed as described in gap 4 above (PR #1956).
+document. Measured: `GET /:docNo` returns 4 rows for `HC-SO-012624` and 3 for
+`HC-SO-013167`, one cancelled in each, and a PDF built from that payload printed
+4 and 3 line rows respectively. The **money did not move** — RM 5000.00 and
+RM 3800.00 either way — because the importer puts a build's whole price on its
+first piece, so the restored row carries RM 0. The phantom row was still on the
+customer's document, and the next one need not be free. Fixed as described in
+gap 4 above (PR #1956).
 
 ### What was NOT changed, and why
 
