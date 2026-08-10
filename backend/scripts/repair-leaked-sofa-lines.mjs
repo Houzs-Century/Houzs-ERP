@@ -20,6 +20,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { buildFabricColourIndex } from "./lib/fabric-colour-match.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 
 const MODE = (process.env.MODE || "dry-run").toLowerCase();
@@ -50,9 +51,7 @@ async function main() {
   const codeSet = new Set(prods.map((p) => p.code.toUpperCase()));
   const nameByCode = new Map(prods.map((p) => [p.code.toUpperCase(), p.name]));
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
-  const fcx = new Map();
-  for (const r of fcRows) for (const k of [norm(r.colour_id), norm(r.label)]) if (k && !fcx.has(k)) fcx.set(k, r);
-  const findColour = (c) => (c ? fcx.get(norm(c)) ?? null : null);
+  const { findColour } = buildFabricColourIndex(fcRows);
 
   const items = await sql`SELECT i.id, i.doc_no, i.line_no, i.item_code, i.item_group, i.qty,
                                  i.unit_price_centi, i.total_centi, i.remark, i.location, i.uom,

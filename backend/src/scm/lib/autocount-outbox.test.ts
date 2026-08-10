@@ -22,19 +22,25 @@ import { resetWritebackFlagCache } from './autocount-writeback-flag';
 type Row = Record<string, any>;
 
 /* PostgREST stand-in over in-memory tables. Supports the shapes this module
-   uses: select/eq/neq/in/lt/order/limit/maybeSingle, insert and update. */
-function fakeSb(tables: Record<string, Row[]>) {
+   uses: select/eq/neq/in/lt/order/limit/maybeSingle, insert and update.
+   `missing` names columns the table does NOT have: asking for one fails the
+   whole query with 42703 and a null body, exactly as PostgREST does — the only
+   way a test can catch a read that quietly becomes "this document has no
+   lines". */
+function fakeSb(tables: Record<string, Row[]>, missing: Record<string, string[]> = {}) {
   const from = (table: string) => {
     tables[table] ??= [];
     const filters: Array<(r: Row) => boolean> = [];
     let limitN: number | null = null;
     let pendingInsert: Row | null = null;
     let pendingUpdate: Row | null = null;
+    let columnError: { code: string; message: string } | null = null;
     const rows = () => {
       const rs = tables[table].filter((r) => filters.every((f) => f(r)));
       return limitN == null ? rs : rs.slice(0, limitN);
     };
     const settle = () => {
+      if (columnError) return { data: null, error: columnError };
       if (pendingInsert) {
         tables[table].push({ id: `row-${tables[table].length + 1}`, ...pendingInsert });
         return { data: null, error: null };
@@ -46,7 +52,11 @@ function fakeSb(tables: Record<string, Row[]>) {
       return { data: rows(), error: null };
     };
     const builder: any = {
-      select() { return builder; },
+      select(cols?: string) {
+        const gone = (missing[table] ?? []).filter((c) => (cols ?? '').split(',').map((x) => x.trim()).includes(c));
+        if (gone.length) columnError = { code: '42703', message: `column ${table}.${gone[0]} does not exist` };
+        return builder;
+      },
       insert(payload: Row) { pendingInsert = payload; return builder; },
       update(patch: Row) { pendingUpdate = patch; return builder; },
       eq(col: string, val: unknown) { filters.push((r) => String(r[col]) === String(val)); return builder; },
@@ -55,7 +65,7 @@ function fakeSb(tables: Record<string, Row[]>) {
       lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
       order() { return builder; },
       limit(n: number) { limitN = n; return builder; },
-      maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
+      maybeSingle: async () => (columnError ? { data: null, error: columnError } : { data: rows()[0] ?? null, error: null }),
       then(resolve: (v: unknown) => unknown) { return Promise.resolve(settle()).then(resolve); },
     };
     return builder;
@@ -64,12 +74,12 @@ function fakeSb(tables: Record<string, Row[]>) {
 }
 
 /** app_config seeded to whatever the test needs the toggle to say. */
-const withFlag = (value: string | null, extra: Record<string, Row[]> = {}) =>
+const withFlag = (value: string | null, extra: Record<string, Row[]> = {}, missing: Record<string, string[]> = {}) =>
   fakeSb({
     app_config: value == null ? [] : [{ key: 'scm.autocount_writeback', value }],
     autocount_outbox: [],
     ...extra,
-  });
+  }, missing);
 
 const outbox = (sb: { tables: Record<string, Row[]> }) => sb.tables.autocount_outbox ?? [];
 
@@ -129,10 +139,13 @@ describe('the six flows each queue their operation', () => {
     phone: '012', ref: 'R', po_doc_no: null, linked_ac_docno: null,
   };
   const soItem = { doc_no: 'HC-SO-9', item_code: 'SKU-1', description: 'Mattress', qty: 2, unit_price_centi: 12345 };
+  /* scm.purchase_orders as it ACTUALLY is: supplier_id, not a creditor code or
+     name, and no agent or ref at all. The creditor is one join away. */
   const po = {
-    id: 'po-1', po_number: 'HC-PO-9', po_date: '2026-08-10', creditor_code: '400-H004',
-    creditor_name: 'Supplier', agent: null, ref: null, notes: null, linked_ac_docno: null,
+    id: 'po-1', po_number: 'HC-PO-9', po_date: '2026-08-10',
+    supplier_id: 'sup-1', notes: 'a note', linked_ac_docno: null,
   };
+  const supplier = { id: 'sup-1', code: '400-H004', name: 'Supplier' };
 
   test('1. SO create', async () => {
     const sb = withFlag('1', { mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...soItem }] });
@@ -158,17 +171,46 @@ describe('the six flows each queue their operation', () => {
     expect(outbox(sb)).toHaveLength(0);
   });
 
-  test('2. PO create', async () => {
+  test('2. PO create — the creditor comes from scm.suppliers, through supplier_id', async () => {
     const sb = withFlag('1', {
       purchase_orders: [{ ...po }],
+      suppliers: [{ ...supplier }],
       purchase_order_items: [{ purchase_order_id: 'po-1', material_code: 'SKU-1', description: 'D', qty: 3, unit_price_centi: 5000 }],
+    }, {
+      /* The four columns the composer used to ask purchase_orders for and that
+         it has never had. Naming them here is what makes this test fail if one
+         comes back: PostgREST answers 42703 and the whole PO flow goes silent. */
+      purchase_orders: ['creditor_code', 'creditor_name', 'agent', 'ref'],
     });
     expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' })).toBe(true);
     const [row] = outbox(sb);
     expect(row.op).toBe('create_po');
     expect(row.doc_no).toBe('HC-PO-9');
+    /* AcSyncService assigns CreditorCode unconditionally (AcSyncService.cs:199)
+       and a purchase order with a blank creditor cannot be saved. */
+    expect(row.payload.body.CreditorCode).toBe('400-H004');
+    expect(row.payload.body.CreditorName).toBe('Supplier');
+    expect(row.payload.body.Description).toBe('a note');
+    expect(row.payload.body.Details).toHaveLength(1);
     expect(row.payload.body.Details[0].Qty).toBe(3);
     expect(row.payload.body.Details[0].UnitPrice).toBe(50);
+  });
+
+  test('a PO edit reaches AutoCount too, and leaves the book\'s own Ref alone', async () => {
+    const sb = withFlag('1', {
+      purchase_orders: [{ ...po, linked_ac_docno: 'PO-000042' }],
+      suppliers: [{ ...supplier }],
+      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: 'SKU-1', description: 'D', qty: 3, unit_price_centi: 5000 }],
+    }, { purchase_orders: ['creditor_code', 'creditor_name', 'agent', 'ref'] });
+    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-1' })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.op).toBe('edit');
+    expect(row.doc_no).toBe('HC-PO-9');
+    expect(row.payload.body.Header).toEqual({ CreditorName: 'Supplier', Description: 'a note' });
+    /* /edit applies only the header keys it is GIVEN (AcSyncService.cs:369), so
+       an absent Ref leaves AutoCount's alone; a null Ref would blank it. */
+    expect(Object.keys(row.payload.body.Header)).not.toContain('Ref');
+    expect(row.payload.body.Lines).toHaveLength(1);
   });
 
   test.each([
@@ -195,6 +237,59 @@ describe('the six flows each queue their operation', () => {
     expect(row.payload.body.DtlKeys).toBeUndefined();
     expect(row.payload.fromDoc.table).toBe(fromTable);
     expect(row.payload.writeback.table).toBe(toTable);
+  });
+
+  /* A read that FAILS is not a document with nothing on it. PostgREST answers a
+     column it does not have with 42703 and a NULL body; `data ?? []` then turns
+     that failure into an empty line list and the write-back pushes a header with
+     no Details into a live account book. Nothing on the AutoCount side can tell
+     that apart from an order the operator really did leave empty. */
+  describe('a failed read is never an empty document', () => {
+    const noDtlKey = { mfg_sales_order_items: ['linked_ac_dtlkey'], purchase_order_items: ['linked_ac_dtlkey'] };
+
+    test('SO create: the line read fails -> nothing is queued, and it is written down', async () => {
+      const sb = withFlag('1', {
+        mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...soItem }],
+      }, noDtlKey);
+      expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(false);
+      const rows = outbox(sb);
+      expect(rows.filter((r) => r.status === 'pending')).toHaveLength(0);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe('skipped');
+      expect(rows[0].last_error).toContain('42703');
+      // The point of the whole exercise: no document with an empty line list.
+      expect(rows.some((r) => Array.isArray(r.payload?.body?.Details))).toBe(false);
+    });
+
+    test('SO edit: the same, so an edit cannot blank an order either', async () => {
+      const sb = withFlag('1', {
+        mfg_sales_orders: [{ ...so, linked_ac_docno: 'SO-000021' }],
+        mfg_sales_order_items: [{ ...soItem }],
+      }, noDtlKey);
+      expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(false);
+      const rows = outbox(sb);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe('skipped');
+      expect(rows.some((r) => Array.isArray(r.payload?.body?.Lines))).toBe(false);
+    });
+
+    test('PO create: a header read that fails queues nothing', async () => {
+      const sb = withFlag('1', {
+        purchase_orders: [{ ...po }], suppliers: [{ ...supplier }],
+        purchase_order_items: [{ purchase_order_id: 'po-1', material_code: 'SKU-1', qty: 1, unit_price_centi: 1 }],
+      }, { purchase_orders: ['po_number'] });
+      expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' })).toBe(false);
+      const rows = outbox(sb);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe('skipped');
+      expect(rows[0].last_error).toContain('42703');
+    });
+
+    test('a read that finds NOTHING is still just nothing — no note, no row', async () => {
+      const sb = withFlag('1', { mfg_sales_orders: [], mfg_sales_order_items: [] });
+      expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-404' })).toBe(false);
+      expect(outbox(sb)).toHaveLength(0);
+    });
   });
 
   test('a merged conversion is written down as skipped, never silently dropped', async () => {

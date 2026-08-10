@@ -4,11 +4,10 @@
 // the exact/typo-folded hit or the nearest library entries, so the answer is
 // evidence rather than assumption. Read-only — no writes anywhere.
 import postgres from "postgres";
+import { buildFabricColourIndex, isPendingColour, foldColour } from "./lib/fabric-colour-match.mjs";
+import { parseBedframe } from "./lib/parse-bedframe.mjs";
 const sql = postgres(process.env.DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
-const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
-const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
-const fold = (x) => strip(x).replace(/([A-Z])\1+/g, "$1").replace(/O/g, "0");
 
 const QUERY = (process.env.NAMES || [
   "BOOBOO315-31", "grafield1-softlinen", "ZL-6 Lether", "ZL-20 BLACK",
@@ -21,6 +20,9 @@ const QUERY = (process.env.NAMES || [
 
 const rows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
 note(`fabric_colours rows: ${rows.length}`);
+const { findColour, folded, ambiguous } = buildFabricColourIndex(rows);
+
+const MODE = (process.env.DUMP || "0").toLowerCase();
 
 /* DUMP=1 prints the WHOLE library, grouped by series. Without it this probe can
    only answer "is THIS name in there?", one name at a time — which is no use
@@ -28,7 +30,7 @@ note(`fabric_colours rows: ${rows.length}`);
    is really "what does the library actually contain, and which of these are
    spacing/suffix variants of something that IS there?" (owner 2026-08-10:
    "这些你不能只能跟我们 fabrics matching?"). Read-only either way. */
-if (process.env.DUMP === "1") {
+if (MODE === "1" || MODE === "scan") {
   const bySeries = new Map();
   for (const r of rows) {
     const k = r.fabric_id ?? "(no fabric_id)";
@@ -44,29 +46,66 @@ if (process.env.DUMP === "1") {
     note(`SERIES ${series} (${cols.length}): ${cols.join(" | ")}`);
   }
 }
-const exact = new Map(), folded = new Map(), dup = new Set();
-for (const r of rows) {
-  for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !exact.has(k)) exact.set(k, r);
-  for (const k of [fold(r.colour_id), fold(r.label)]) { if (!k) continue; if (folded.has(k) && folded.get(k) !== r) dup.add(k); else folded.set(k, r); }
+note(`ambiguous folds dropped: ${ambiguous.size} (fold index ${folded.size})`);
+
+/* DUMP=scan additionally walks the LIVE migrated document lines that carry no
+   bound fabric and re-runs the shared matcher over the colour their AutoCount
+   Desc2 still holds. That is the only way to answer "which of these does the
+   library genuinely NOT have?" with evidence instead of a guess — and it is
+   what decides the create-missing-sofa-fabrics.mjs candidate list. Read-only. */
+if (MODE === "scan") {
+  const soLines = await sql`
+    SELECT i.item_group, i.description2, i.variants
+      FROM scm.mfg_sales_order_items i
+      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+     WHERE h.company_id = 1 AND i.item_group IN ('sofa', 'bedframe')
+       AND COALESCE(i.variants->>'fabricCode', '') = ''`;
+  const poLines = await sql`
+    SELECT i.item_group, i.description2, i.variants
+      FROM scm.purchase_order_items i
+      JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+     WHERE h.company_id = 1 AND i.item_group IN ('sofa', 'bedframe')
+       AND COALESCE(i.variants->>'fabricCode', '') = ''`;
+  const lines = [...soLines.map((r) => ({ ...r, src: "SO" })), ...poLines.map((r) => ({ ...r, src: "PO" }))];
+  note(`--- LIVE SCAN: ${lines.length} unbound lines (SO ${soLines.length} / PO ${poLines.length}) ---`);
+
+  // mirrors parse-sofa's colour arm; a bedframe goes through the real parser.
+  // Desc2 wraps the block in brackets ("[COL: X ]"), so the closer is stripped
+  // or "HM 3383-6 ]" and "HM 3383-6" count as two different colours.
+  const sofaColour = (d2) => {
+    const m = /col(?:our|or)?\s*[-:：]\s*([^\/\n]+)/i.exec(d2 || "");
+    return m ? m[1].replace(/[\])}\s]+$/, "").trim() : null;
+  };
+  const seen = new Map();
+  let withColour = 0, nowBinds = 0;
+  for (const l of lines) {
+    const raw = (l.item_group === "bedframe" ? parseBedframe(l.description2 || "").color : sofaColour(l.description2))
+      || (l.variants && l.variants.colourLabel) || null;
+    if (!raw || !String(raw).trim() || isPendingColour(raw)) continue;
+    withColour++;
+    const key = String(raw).trim();
+    if (!seen.has(key)) seen.set(key, { n: 0, group: l.item_group });
+    seen.get(key).n++;
+  }
+  const resolved = [], missing = [];
+  for (const [c, meta] of [...seen].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const h = findColour(c);
+    if (h) { resolved.push([c, meta, h]); nowBinds += meta.n; } else missing.push([c, meta]);
+  }
+  note(`lines carrying a colour: ${withColour}; distinct strings: ${seen.size}`);
+  note(`RESOLVED by the shared matcher: ${resolved.length} distinct / ${nowBinds} lines`);
+  for (const [c, meta, h] of resolved) note(`  BINDS   ${String(meta.n).padStart(3)}x [${meta.group}] ${c}  ->  ${h.fabric_id} / ${h.colour_id}`);
+  note(`STILL UNRESOLVED: ${missing.length} distinct / ${withColour - nowBinds} lines`);
+  for (const [c, meta] of missing) {
+    const f = foldColour(c);
+    const near = rows.filter((r) => { const k = foldColour(r.colour_id); return k && f && (k.startsWith(f.slice(0, 4)) || f.startsWith(k.slice(0, 4))); })
+      .slice(0, 4).map((r) => r.colour_id);
+    note(`  MISSING ${String(meta.n).padStart(3)}x [${meta.group}] ${c}   nearest: ${near.length ? near.join(", ") : "(no sibling series)"}`);
+  }
 }
-for (const k of dup) folded.delete(k);
-note(`ambiguous folds dropped: ${dup.size}`);
 
 for (const q of QUERY) {
-  const e = exact.get(norm(q)) || exact.get(strip(q));
-  if (e) { note(`EXACT   ${q}  ->  ${e.fabric_id} / ${e.colour_id} (${e.label})`); continue; }
-  const f = folded.get(fold(q));
-  if (f) { note(`TYPO-OK ${q}  ->  ${f.fabric_id} / ${f.colour_id} (${f.label})`); continue; }
-  const fq = fold(q);
-  let pre = null;
-  for (let n = Math.min(fq.length, 14); n >= 6 && !pre; n--) pre = folded.get(fq.slice(0, n));
-  if (pre) { note(`PREFIX  ${q}  ->  ${pre.fabric_id} / ${pre.colour_id} (${pre.label})`); continue; }
-  // nearest neighbours by shared prefix, for the owner to eyeball
-  const near = rows
-    .map((r) => ({ r, k: fold(r.colour_id) }))
-    .filter((x) => x.k && (x.k.startsWith(fq.slice(0, 4)) || fq.startsWith(x.k.slice(0, 4))))
-    .slice(0, 4)
-    .map((x) => `${x.r.colour_id}(${x.r.label})`);
-  note(`MISSING ${q}  ->  库里没有;最接近: ${near.length ? near.join(", ") : "(无同系列)"}`);
+  const h = findColour(q);
+  note(h ? `HIT     ${q}  ->  ${h.fabric_id} / ${h.colour_id} (${h.label})` : `MISSING ${q}  ->  库里没有`);
 }
 await sql.end({ timeout: 5 });

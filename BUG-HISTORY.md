@@ -1,3 +1,64 @@
+## The AutoCount write-back read four columns the PO table has never had, and one the SO items table did not have yet [critical]
+
+**Symptom** — with the write-back toggle on, a purchase order created in the ERP
+would reach AutoCount as NOTHING at all, and a sales order would reach it as a
+header with an EMPTY line list. Both silently: no error, no failed outbox row,
+nothing to notice it by. Found by the payload contract test in PR #1898 before
+the toggle was ever turned on, so no live document was affected.
+
+**Root cause (traced, not guessed)** — two selects naming columns that are not
+there, and one shared swallow.
+
+1. `enqueuePoCreate` and `composePoState` asked `scm.purchase_orders` for
+   `creditor_code, creditor_name, agent, ref`. That table is SUPPLIER-keyed —
+   `supplier_id` into `scm.suppliers`, which carries `code` and `name` — and it
+   has no `agent` or `ref` at all. Verified against the schema dump, not
+   assumed: its 18 columns are `id, po_number, supplier_id, status, po_date,
+   expected_at, purchase_location_id, currency, subtotal_centi, tax_centi,
+   total_centi, notes, submitted_at, received_at, cancelled_at, created_at,
+   created_by, updated_at`, plus `company_id`, `revision`, the supplier delivery
+   dates, the PO-email columns and the `linked_ac_*` refs from later migrations.
+2. The SO and PO line selects asked for `linked_ac_dtlkey`, which migration
+   0273 adds and which was still sitting in an unmerged PR (#1819).
+
+**PostgREST does not ignore an unknown column — it fails the whole query with
+42703 and returns a NULL body.** The code took only `data` and dropped `error`,
+so `header` became null (the PO functions returned false inside their own
+try/catch: a silent no-op) and `items ?? []` became an empty array (the SO
+composed a document with no Details). #1855's own body described the second one
+as "every line is new, correct-but-degraded"; it was every line MISSING.
+
+**Fix** — three parts, all in `scm/lib/autocount-outbox.ts`:
+
+- the PO reads name the real columns (`id, po_number, po_date, supplier_id,
+  notes, linked_ac_docno`) and join `scm.suppliers` for the creditor code and
+  name. `Agent` and `Ref` are null on a create because the ERP has no such
+  field; the PO EDIT omits `Ref` entirely rather than sending null, because
+  `/edit` applies only the keys it is given (`h.ContainsKey`, AcSyncService.cs:369)
+  and a null would blank whatever the account book has there.
+- every select's column list is named ONCE at the top of the file, so a phantom
+  column has one place to enter instead of four.
+- **a read that FAILS is no longer a read that found nothing.** `readOrThrow`
+  turns a PostgREST error into a throw; the enqueue logs it and writes a
+  `skipped` outbox row carrying the database's own message, and composes
+  nothing. Same rule `recordConvertSkipped` already followed: a divergence that
+  is written down can be found.
+
+PR #1819 (migration 0273, `linked_ac_dtlkey` on both item tables) was merged
+first — it is the real dependency, and the same column is what lets an edit
+address an existing AutoCount line instead of appending a duplicate.
+
+**The class, for next time** — a Supabase/PostgREST select is not a projection
+that degrades: one wrong column takes the whole row set with it. Two habits fall
+out of that. Never write `const { data } = await sb...` on a path whose empty
+result is meaningful — take `error` and decide. And check a column against the
+schema before selecting it: `autocount-outbox.test.ts` now runs its fake
+PostgREST with a list of columns the table does NOT have, and answers 42703 for
+them, which is what makes these two bugs fail a test instead of a live account
+book.
+
+**Ref** — 2026-08-10, PR #1855 (feat/ac-writeback-wiring-v2), found by #1898.
+
 ## The AutoCount write-back would have written orders with NO LINES, and no PO at all [critical]
 
 **Symptom** — None yet, and that is the point: the ERP -> AutoCount write-back
@@ -33,14 +94,17 @@ four that block:
 The unit tests in #1855 pass because their fake PostgREST does not know the
 schema — it returns whatever the fixture holds, whatever columns you ask for.
 
-**Fix** — **None of the thirteen is fixed here.** Each needs a decision that is
-not a test author's to make, and the mechanism is off. What this PR ships is the
-means to see them: a contract test that reads `AcSyncService.cs` at build time
-and extracts the keys it actually parses, a fake PostgREST that enforces `scm`'s
-real column lists, and a divergence register that fails if a fourteenth appears
-AND fails if one of these is fixed without being struck off. Plus
-`backend/scripts/ac-trial-dry-run.mjs`, which posts the same contract at a TEST
-book behind four gates and never runs by default.
+**Fix** — **Two of the thirteen are fixed, in #1855, and struck off the
+register: D11 and D13** — the two above that are plain bugs rather than
+decisions (the entry above this one carries them). **The other eleven stand.**
+Each needs a decision that is not a test author's to make, and the mechanism is
+off. What this PR ships is the means to see them: a contract test that reads
+`AcSyncService.cs` at build time and extracts the keys it actually parses, a
+fake PostgREST that enforces `scm`'s real column lists, and a divergence
+register that fails if a fourteenth appears AND fails if one of these is fixed
+without being struck off. Plus `backend/scripts/ac-trial-dry-run.mjs`, which
+posts the same contract at a TEST book behind four gates and never runs by
+default.
 
 **The class, for next time** — a fake database that accepts any column name will
 green-light a query against a table that does not exist. If a test double stands
@@ -85,6 +149,59 @@ because it has never run anywhere: #1855 is not merged, so no deployment has an
 `APPLIED 0276_scm_autocount_outbox.sql` line to be confused by the rename.
 
 **Ref** — 2026-08-10, PR test/ac-writeback-trial.
+
+## Five hand-copied colour matchers, and the weakest one is what production stored [high]
+
+**Symptom** — 138 migrated sofa/bedframe lines carry no resolved fabric while
+their AutoCount Desc2 names one. A live prod scan on 2026-08-10 put it at 223
+lines / 92 distinct colour strings that the writers could not bind, against a
+library that already holds 133 series / 724 colours.
+
+**Root cause (traced, not guessed)** — `findColour` existed FIVE times, one
+hand-written copy per script, and they had drifted apart.
+`import-ac-outstanding-so.mjs` had grown a typo-fold index, a transposition
+pass and an edit-distance pass; `refresh-so-variants.mjs`,
+`refresh-po-variants.mjs`, `import-ac-outstanding-po.mjs` and
+`import-ac-so-linked-pos.mjs` were still exact-index-only, and
+`repair-leaked-sofa-lines.mjs` matched the raw name. **The refresh scripts are
+what WRITE the migrated lines**, so the weakest copy decided what production
+holds — every improvement made to the importer's copy since #1806 never reached
+the rows. Exactly the class `CLAUDE.md` and the `parse-sofa` entry below already
+name: "Extracted verbatim" that was not verbatim.
+
+**And the fuzzy tail was silently swapping fabrics.** Measured against the live
+library, the inherited transposition / edit-distance / prefix passes bound
+`B0315-27` -> `BO315-2`, `B0315-29` -> `BO315-2`, `HR805-20` -> `HR805-40`,
+`Chantic141-5` -> `CHANTIC-141-2`, `GD8371-03` -> `GD8371-02` and `STAR-10` ->
+`STAR 01`. Every one is a real fabric replaced by a DIFFERENT real fabric, at
+`high` confidence, with nothing on the order to say so — worse than a blank,
+because a blank gets fixed by a human and this gets upholstered.
+
+**Fix** — one `backend/scripts/lib/fabric-colour-match.mjs`, imported by all
+six. Its ladder is purely lexical (drop a parenthesised name, treat `#` as a
+separator, drop the trailing colour NAME, drop spaces, pull SERIES+NUMBER out of
+prose, pad a one-digit tail, fold typos) and every rung only ADDS a spelling
+with the untouched original tried first. Two rules carry the weight:
+
+1. **Collapse doubled letters BEFORE reading letter-O as zero.** O->0 first
+   turns `BOO315` into `B00315`, whose doubled character is a ZERO, so the
+   collapse yields `B0315` and every `BOO*` spelling misses.
+2. **The fuzzy passes may correct LETTERS and may never move a DIGIT.** Digits
+   are compared in a mark space where letter-O is neither letter nor digit, so
+   `BO315` and `B0315` still agree while `10` and `01` do not. A library LABEL
+   under three characters is no longer matchable either — the SF series labels
+   its colours `"01".."19"`, so a bare `"03"` was claiming `SF-AT 03`.
+
+`tests/fabricColourMatch.test.ts` is the golden test: real document strings
+against a faithful slice of the real library, with every mis-bind above pinned
+as an explicit null.
+
+**The class, for next time** — when a rule is copied into a second script,
+copy the FILE, not the lines. Five copies of one parser means the surface a fix
+lands on is whichever copy you happened to open, and the one nobody opened is
+usually the one that writes.
+
+**Ref** — 2026-08-10, PR #1893 (fix/sofa-colour-matching).
 
 ## The sofa decoder DELETED every special order that mentioned the bottom [high]
 

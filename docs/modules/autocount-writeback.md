@@ -188,6 +188,20 @@ then correct it, which is visible to whoever is looking at AutoCount.
 `skipped` and queues nothing. Creating a document in a live account book only to
 cancel it is not a no-op to the people using that book.
 
+### What each side is composed FROM
+
+| Payload field | ERP source |
+|---|---|
+| SO header | `scm.mfg_sales_orders` — `debtor_name`, `agent`, `sales_location`, `ref`, `phone`, `address1-4`, and `branding` / `venue` / `po_doc_no` into UDF |
+| SO lines | `scm.mfg_sales_order_items`, including `linked_ac_dtlkey` (migration 0273) — the AutoCount line an edit addresses |
+| PO header | `scm.purchase_orders` — `po_number`, `po_date`, `notes`. **The creditor is a JOIN**: the table is supplier-keyed, so `CreditorCode` / `CreditorName` come from `scm.suppliers.code` / `.name` through `supplier_id`. It has no `agent` and no `ref` at all, so a create sends null for both and an edit omits `Ref` entirely rather than blanking AutoCount's |
+| PO lines | `scm.purchase_order_items`, same `linked_ac_dtlkey` |
+
+Every column these reads name is listed once at the top of
+`scm/lib/autocount-outbox.ts`. That is deliberate: PostgREST does not ignore a
+column a table does not have, it fails the whole query with **42703**, so a
+phantom column silences an entire flow (see `BUG-HISTORY.md`, 2026-08-10).
+
 ---
 
 ## 7. What the ERP can express and AutoCount cannot
@@ -211,6 +225,15 @@ SELECT doc_type, doc_no, op, last_error, created_at
  WHERE status = 'skipped'
  ORDER BY created_at DESC;
 ```
+
+**A compose that FAILED is written down the same way.** If a read the payload is
+built from errors — a column that is not there, a dead REST edge — the enqueue
+logs `[autocount-outbox] <op> compose read failed` and writes a `skipped` row
+carrying the database's own message, then returns false. It does **not** compose
+what it managed to read. `data ?? []` on a failed read is an empty line list,
+and an order pushed into a live account book with no lines on it is
+indistinguishable, from the AutoCount side, from one the operator really did
+leave empty.
 
 ---
 
@@ -259,7 +282,7 @@ SELECT doc_type, doc_no, op, attempts, last_error
 | File | Covers |
 |---|---|
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
-| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, and the drain's sent / retry / give-up / refusal / waiting paths |
+| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document |
 | `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, and the client's retryable/not-retryable read of a response |
 | `tests/autocountWritebackWiring.test.ts` | That every hook is still attached to its route |
 | `src/services/autocount-writeback.contract.test.ts` | The PAYLOAD CONTRACT — see section 11 |

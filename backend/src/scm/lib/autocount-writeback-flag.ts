@@ -12,7 +12,7 @@
 //                    = 'all'                    -> every company
 //                    = comma-separated ids ('1')-> ONLY those companies
 //
-// SHIPS OFF (0276 seeds 'off'). Turning it on is an explicit act.
+// SHIPS OFF (0277 seeds 'off'). Turning it on is an explicit act.
 //
 // FAILING OPEN, as write-freeze does, but read carefully — "open" means the
 // caller is never harmed, NOT that an unreadable flag turns the feature on:
