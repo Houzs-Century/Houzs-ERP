@@ -200,7 +200,7 @@ describe('the six flows each queue their operation', () => {
     const sb = withFlag('1', {
       purchase_orders: [{ ...po, linked_ac_docno: 'PO-000042' }],
       suppliers: [{ ...supplier }],
-      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: 'SKU-1', description: 'D', qty: 3, unit_price_centi: 5000 }],
+      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: 'SKU-1', description: 'D', qty: 3, unit_price_centi: 5000, linked_ac_dtlkey: 7001 }],
     }, { purchase_orders: ['creditor_code', 'creditor_name', 'agent', 'ref'] });
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-1' })).toBe(true);
     const [row] = outbox(sb);
@@ -392,19 +392,41 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
       mfg_sales_orders: [{ ...so, linked_ac_docno: 'SO-000021' }],
       mfg_sales_order_items: [
         { doc_no: 'HC-SO-9', item_code: 'SKU-1', description: 'known line', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 4242 },
-        { doc_no: 'HC-SO-9', item_code: 'SKU-2', description: 'new line', qty: 1, unit_price_centi: 200, linked_ac_dtlkey: null },
+        { doc_no: 'HC-SO-9', item_code: 'SKU-2', description: 'other line', qty: 1, unit_price_centi: 200, linked_ac_dtlkey: 4243 },
       ],
     });
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(true);
     const [row] = outbox(sb);
     expect(row.op).toBe('edit');
     expect(row.payload.body.Lines[0].DtlKey).toBe(4242);
-    /* No key = a genuinely new line. AutoCount appends it; sending a key it
-       does not have would fail the whole edit. */
-    expect(row.payload.body.Lines[1].DtlKey).toBeUndefined();
+    expect(row.payload.body.Lines[1].DtlKey).toBe(4243);
     /* Successive edits are separate intents and must both be applied, so an
        edit never carries a dedupe key. */
     expect(row.dedupe_key).toBeNull();
+  });
+
+  /* The guard, end to end through the enqueue path. A document AutoCount has,
+     holding a line with no DtlKey, must produce NO pending edit — and must not
+     vanish either: a refusal nobody can see reads exactly like a write-back
+     that quietly stopped working. */
+  test('an edit whose line has no DtlKey is REFUSED and recorded as skipped, not queued', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...so, linked_ac_docno: 'SO-000021' }],
+      mfg_sales_order_items: [
+        { doc_no: 'HC-SO-9', item_code: 'SKU-1', description: 'keyed', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 4242 },
+        { doc_no: 'HC-SO-9', item_code: 'SKU-2', description: 'keyless', qty: 1, unit_price_centi: 200, linked_ac_dtlkey: null },
+      ],
+    });
+    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(false);
+
+    const rows = outbox(sb);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('skipped');
+    expect(rows[0].op).toBe('edit');
+    expect(rows[0].last_error).toContain('refused, nothing sent');
+    expect(rows[0].last_error).toContain('SKU-2');
+    /* Nothing pending means nothing will ever be POSTed for this save. */
+    expect(rows.filter((r: Row) => r.status === 'pending')).toHaveLength(0);
   });
 
   test('editing a document AutoCount never received queues nothing', async () => {
@@ -445,6 +467,86 @@ describe('the drain', () => {
     expect(outbox(sb)[0].ac_doc_no).toBe('SO-000123');
     // The other half of the relationship map: ERP row -> AutoCount document.
     expect(sb.tables.mfg_sales_orders[0].linked_ac_docno).toBe('SO-000123');
+  });
+
+  /* Line identity, the half that closes the loop. A create that does not record
+     the DtlKeys it was given leaves the document keyless forever, and its first
+     edit is then refused by composeEdit. */
+  const lineRow = () => row({
+    payload: {
+      body: { DocNo: 'HC-SO-9' },
+      writeback: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+      lineWriteback: { table: 'mfg_sales_order_items', ids: ['li-1', 'li-2'], codes: ['SKU-1', 'SKU-2'] },
+    },
+  });
+
+  const twoLines = () => ({
+    autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }],
+    mfg_sales_orders: [{ doc_no: 'HC-SO-9', linked_ac_docno: null }],
+    mfg_sales_order_items: [
+      { id: 'li-1', item_code: 'SKU-1', linked_ac_dtlkey: null },
+      { id: 'li-2', item_code: 'SKU-2', linked_ac_dtlkey: null },
+    ],
+  });
+
+  test('the DtlKeys a create returns are stored onto the ERP lines', async () => {
+    const sb = withFlag('1', twoLines());
+    const fetchImpl = vi.fn(async () => jsonRes(200, {
+      ok: true,
+      docNo: 'SO-000123',
+      lines: [
+        { Seq: 0, DtlKey: 5001, ItemCode: 'SKU-1' },
+        { Seq: 1, DtlKey: 5002, ItemCode: 'SKU-2' },
+      ],
+    })) as never;
+
+    expect(await dispatchOne(env, sb as never, lineRow(), fetchImpl)).toBe('sent');
+    expect(sb.tables.mfg_sales_order_items[0].linked_ac_dtlkey).toBe(5001);
+    expect(sb.tables.mfg_sales_order_items[1].linked_ac_dtlkey).toBe(5002);
+  });
+
+  /* A WRONG key is worse than no key: no key is refused loudly by composeEdit,
+     a wrong key silently edits a different line in a live account book. So a
+     zip that cannot be proven correct stores NOTHING. */
+  test('a line list that does not correspond stores no keys at all', async () => {
+    const sb = withFlag('1', twoLines());
+    const fetchImpl = vi.fn(async () => jsonRes(200, {
+      ok: true,
+      docNo: 'SO-000123',
+      lines: [
+        { Seq: 0, DtlKey: 5001, ItemCode: 'SKU-1' },
+        { Seq: 1, DtlKey: 5002, ItemCode: 'SOMETHING-ELSE' },
+      ],
+    })) as never;
+
+    expect(await dispatchOne(env, sb as never, lineRow(), fetchImpl)).toBe('sent');
+    expect(sb.tables.mfg_sales_order_items[0].linked_ac_dtlkey).toBeNull();
+    expect(sb.tables.mfg_sales_order_items[1].linked_ac_dtlkey).toBeNull();
+  });
+
+  test('a count that disagrees stores no keys at all', async () => {
+    const sb = withFlag('1', twoLines());
+    const fetchImpl = vi.fn(async () => jsonRes(200, {
+      ok: true,
+      docNo: 'SO-000123',
+      lines: [{ Seq: 0, DtlKey: 5001, ItemCode: 'SKU-1' }],
+    })) as never;
+
+    expect(await dispatchOne(env, sb as never, lineRow(), fetchImpl)).toBe('sent');
+    expect(sb.tables.mfg_sales_order_items[0].linked_ac_dtlkey).toBeNull();
+  });
+
+  /* An AcSyncService built before 2026-08-11 returns no `lines` at all, and the
+     new one degrades to an empty array rather than losing the DocNo when its
+     own read-back fails. Neither is a failure of the create. */
+  test('a service that returns no lines still counts as sent', async () => {
+    const sb = withFlag('1', twoLines());
+    const fetchImpl = vi.fn(async () => jsonRes(200, { ok: true, docNo: 'SO-000123' })) as never;
+
+    expect(await dispatchOne(env, sb as never, lineRow(), fetchImpl)).toBe('sent');
+    expect(outbox(sb)[0].status).toBe('sent');
+    expect(sb.tables.mfg_sales_orders[0].linked_ac_docno).toBe('SO-000123');
+    expect(sb.tables.mfg_sales_order_items[0].linked_ac_dtlkey).toBeNull();
   });
 
   test('an unreachable AutoCount host is retried, not lost', async () => {
