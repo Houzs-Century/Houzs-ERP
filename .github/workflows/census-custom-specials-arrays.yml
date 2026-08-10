@@ -1,0 +1,80 @@
+name: Census the array-shaped custom_specials
+
+# Manual. #1944 NULLed the custom_specials values that the old sofa backfill
+# double-encoded into jsonb STRING scalars. It deliberately left every
+# ARRAY-shaped value alone, and jsonb_typeof cannot tell a correct
+# Array<{description, surchargeSen}> from a bare string[] of verbatim slip
+# phrases — both read as 'array'. This classifies them per row and reports
+# counts plus a sample of each class, with the evidence the verdict rests on:
+# whether each string is a LIVE picker code or raw slip text, whether the line
+# is migrated, and whether variants.specials (the field the picker reads)
+# already carries codes.
+#
+# DRY-RUN by default and read-only in that mode. apply=1 sets to NULL ONLY the
+# bare-string[] class — never the pricing engine's own correct output, never an
+# empty array, never the 'other' class. Every candidate's current value is
+# printed IN FULL before the write, so the prior state survives in the run log;
+# the count comes from RETURNING and is confirmed by a read-back on a fresh
+# connection.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      apply:
+        description: "1 to NULL the bare string[] rows, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      show:
+        description: "how many rows of the repairable classes to print"
+        required: false
+        default: "800"
+        type: string
+
+concurrency:
+  group: census-custom-specials-arrays-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/census-custom-specials-arrays.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/census-custom-specials-arrays.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
