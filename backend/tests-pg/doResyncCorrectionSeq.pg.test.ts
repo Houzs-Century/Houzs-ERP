@@ -161,7 +161,7 @@ describePg('editing a shipped DO reaches the stock ledger (migration 0278)', () 
     await admin`
       INSERT INTO scm.inventory_movements
         (movement_type, warehouse_id, product_code, variant_key, qty, source_doc_type, source_doc_id)
-      VALUES ('OUT', ${WH}, 'OTHER-SKU', '', 1, 'DO', ${DO_ID}, ${DO_ID})`;
+      VALUES ('OUT', ${WH}, 'OTHER-SKU', '', 1, 'DO', ${DO_ID})`;
     await expect(admin.unsafe(await correctionSeqMigrationSql())).resolves.toBeDefined();
 
     const idx = await admin`
