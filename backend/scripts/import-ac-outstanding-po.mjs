@@ -9,8 +9,8 @@
 // Qty > TransferedQty, same rule as SO.
 //
 // Owner rules:
-//  - Company 1 only. SOFA EXCLUDED (any line whose ItemCode contains SOFA is
-//    skipped; a PO left with no lines is skipped entirely).
+//  - Company 1 only. SOFA is EXCLUDED unless SOFA=1, in which case a sofa line
+//    decomposes into one ERP line per compartment (shared lib/parse-sofa.mjs).
 //  - po_number = "HC-" + AutoCount PO no; the raw number goes to linked_ac_docno
 //    so write-back updates that PO instead of creating a duplicate.
 //  - supplier_id  <- CreditorCode (matches scm.suppliers.code exactly)
@@ -28,6 +28,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -204,11 +205,12 @@ async function main() {
 
   // group by PO, drop sofa lines
   const groups = new Map();
-  for (const r of rows) { if (isSofa(r.ItemCode)) continue; if (!groups.has(r.DocNo)) groups.set(r.DocNo, []); groups.get(r.DocNo).push(r); }
+  const SOFA = process.env.SOFA === "1"; // owner 2026-08-10: 沙发 PO 也要进
+  for (const r of rows) { if (!SOFA && isSofa(r.ItemCode)) continue; if (!groups.has(r.DocNo)) groups.set(r.DocNo, []); groups.get(r.DocNo).push(r); }
   let pos = [...groups.entries()];
   if (LIMIT) pos = pos.slice(0, LIMIT);
 
-  const built = []; const exceptions = []; let noWh = 0, bfCol = 0, bfPending = 0;
+  const built = []; const exceptions = []; const sofaDecode = []; let noWh = 0, bfCol = 0, bfPending = 0;
   for (const [acPo, ls] of pos) {
     const h = ls[0];
     const supId = supByCode.get(h.CreditorCode) || null;
@@ -235,6 +237,49 @@ async function main() {
         const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
         variants = { fabricId: fc ? fc.fabric_id : null, colourId: fc ? fc.colour_id : null, fabricCode: fc ? fc.colour_id : null, colourLabel: fc ? fc.label : null, fabricLabel: fc ? fc.fabric_id : null, gap: bf.gap != null ? bf.gap + '"' : null, divanHeight: bf.divan != null ? bf.divan + '"' : null, legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null, specials: bf.specials || [] };
       }
+      if (grp === "sofa" && SOFA) {
+        /* One AutoCount sofa PO line -> one ERP line per compartment, exactly
+           like the SO import (same shared decoder). The supplier is whatever
+           AutoCount's CreditorCode resolved to above; supplier_sku keeps the
+           AutoCount code PLUS the compartment so the factory sheet names the
+           piece (owner's supplier-SKU rule, 2026-08-09). Price rides the lead
+           piece; the rest are 0 so the PO total still matches AutoCount. */
+        let model = (erp || "").replace(/-1S$/i, "");
+        model = SOFA_MODEL_ALIAS[model] || model;
+        const RECL_PROBE = ["-1S(R)", "-1A(R)(LHF)", "-1A(P)(LHF)", "-1S(P)"];
+        const reclOK = RECL_PROBE.some((sfx) => codeSet.has((model + sfx).toUpperCase()));
+        const ps = parseSofa(l.Desc2, model, reclOK);
+        const codes = ps.pieces.map((c) => `${model}-${c}`);
+        const allExist = codes.length > 0 && codes.every((c) => codeSet.has(c.toUpperCase()));
+        const colour = isPendingColour(ps.color) ? null : ps.color;
+        const fc = colour ? findColour(colour) : null;
+        sofaDecode.push({ po: acPo, code: l.ItemCode, d2: l.Desc2, model,
+          pieces: ps.conf !== "low" && allExist ? ps.pieces : null,
+          why: allExist ? ps.why : [...ps.why, "piece SKU missing: " + codes.filter((c) => !codeSet.has(c.toUpperCase())).join(",")] });
+        if (ps.conf !== "low" && allExist) {
+          let first = true;
+          for (const comp of ps.pieces) {
+            const code = `${model}-${comp}`;
+            const pr = prodByCode.get(code.toUpperCase());
+            items.push({ erp: code, grp, name: (pr && pr.name) || code, sku: `${l.ItemCode} ${comp}`,
+              desc: l.Description, d2: l.Desc2, qty, received: done,
+              up: first ? up : 0, lt: first ? lt : 0, w, deliv: l.DelivDate, bf: null,
+              variants: { seatHeight: ps.size, fabricId: fc ? fc.fabric_id : null, colourId: fc ? fc.colour_id : null,
+                fabricCode: fc ? fc.colour_id : null, colourLabel: fc ? fc.label : (colour || null),
+                fabricLabel: fc ? fc.fabric_id : null, specials: ps.specials } });
+            first = false;
+          }
+        } else {
+          const ph = `${model}-1S`;
+          const pr = prodByCode.get(ph.toUpperCase());
+          items.push({ erp: codeSet.has(ph.toUpperCase()) ? ph : erp, grp,
+            name: (pr && pr.name) || ph, sku: l.ItemCode, desc: l.Description, d2: l.Desc2,
+            qty, received: done, up, lt, w, deliv: l.DelivDate, bf: null,
+            variants: { seatHeight: ps.size || null, colourLabel: colour || null, specials: ps.specials },
+            note: "SOFA UNPARSED — 按图/原文补件: " + (ps.why.join("; ") || "unreadable") });
+        }
+        continue;
+      }
       const prod = prodByCode.get(erp.toUpperCase());
       items.push({ erp, grp, name: (prod && prod.name) || l.Description || erp, sku: l.ItemCode, desc: l.Description, d2: l.Desc2, qty, received: done, up, lt, w, deliv: l.DelivDate, bf, variants });
     }
@@ -243,7 +288,11 @@ async function main() {
   }
 
   log("");
-  log(`non-sofa POs to import: ${built.length}; lines: ${built.reduce((a, o) => a + o.items.length, 0)}; value RM ${(built.reduce((a, o) => a + o.subtotal, 0) / 100).toLocaleString()}`);
+  if (sofaDecode.length) {
+    log(`SOFA decode: ${sofaDecode.filter((d) => d.pieces).length} decomposed, ${sofaDecode.filter((d) => !d.pieces).length} placeholder (never guessed)`);
+    for (const d of sofaDecode) log(`   ${d.po} ${d.code} | ${JSON.stringify(d.d2).slice(0, 60)} -> ${d.pieces ? d.pieces.join(" + ") : "PLACEHOLDER"}${d.why.length ? " (" + d.why.join("; ") + ")" : ""}`);
+  }
+  log(`POs to import: ${built.length}; lines: ${built.reduce((a, o) => a + o.items.length, 0)}; value RM ${(built.reduce((a, o) => a + o.subtotal, 0) / 100).toLocaleString()}`);
   log(`bedframe colour resolved: ${bfCol}; pending (TBC/KIV): ${bfPending}; lines without a warehouse match: ${noWh}`);
   log(`exceptions: ${exceptions.length}`);
   for (const e of exceptions.slice(0, 15)) log(`   PO ${e.po} ${e.code ? `code="${e.code}" ` : ""}${e.reason}`);
@@ -284,7 +333,7 @@ async function main() {
           VALUES (${poId}, 'mfg_product', ${i.erp}, ${i.name}, ${i.sku},
            ${i.qty}, ${i.up}, ${i.lt}, ${i.received}, ${i.grp},
            ${i.desc || null}, ${i.d2 || null}, ${i.grp === "bedframe" ? "SET" : "UNIT"},
-           ${i.d2 || null},
+           ${i.note ? (i.d2 ? i.d2 + " | " + i.note : i.note) : (i.d2 || null)},
            ${i.bf && isFinite(i.bf.gap) ? Math.round(i.bf.gap) : null}, ${i.bf && isFinite(i.bf.divan) ? Math.round(i.bf.divan) : null}, ${i.bf && isFinite(i.bf.leg) ? Math.round(i.bf.leg) : null},
            ${i.variants && i.variants.specials && i.variants.specials.length ? sql.json(i.variants.specials) : null},
            ${i.variants ? sql.json(i.variants) : null}, ${i.w}, ${i.deliv || null}, false, 1)`;
