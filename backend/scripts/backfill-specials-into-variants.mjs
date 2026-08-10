@@ -230,6 +230,7 @@ async function main() {
   const skippedByCode = new Map();  // priced code -> lines held back because of it
   const skippedLines = [];          // one line per held-back line, for the report
   let forgoneZeroCodes = 0;         // 0/0 codes NOT stamped because their line was held back
+  const oddVariants = [];           // rows whose variants jsonb is not an object
   const hydraulic = { lines: [], withDivan: 0, codeInItem: 0 }; // DIAG only
 
   for (const [which, rows] of [["so", soLines], ["po", poLines]]) {
@@ -278,6 +279,22 @@ async function main() {
         unmapped.set(K(p), (unmapped.get(K(p)) || 0) + 1);
       }
       if (!gained.size) continue;
+
+      /* `variants` is not always a JSON OBJECT in production. jsonb_set's path
+         addresses object keys, so on a row holding a jsonb ARRAY it fails the
+         whole statement — "path element at position 1 is not an integer:
+         specials", which rolled back run 31417530815 entirely. Coercing such a
+         row to '{}' would DELETE whatever it holds, which the owner's
+         不可以删只可以 cancel rule forbids, so the line is skipped and reported
+         for a human to look at. */
+      const vtype = r.variants == null ? "null"
+        : Array.isArray(r.variants) ? "array"
+        : typeof r.variants === "object" ? "object" : typeof r.variants;
+      if (vtype !== "object" && vtype !== "null") {
+        oddVariants.push(`   ${which.toUpperCase()} ${String(r.doc ?? "").padEnd(14)} ${String(r.code ?? "").padEnd(18)} ` +
+                         `jsonb is ${vtype}: ${JSON.stringify(r.variants).slice(0, 120)}`);
+        continue;
+      }
 
       /* MERGE, never replace: keep every other key in the variants jsonb and
          every code the line already carries. `special` is the HOOKKA-compatible
@@ -368,6 +385,13 @@ async function main() {
         (hyAddon.length ? ` -> ${hyAddon.map((r) => `[${r.code}]`).join(" ")}` : " (none — no picker code exists)"));
   }
 
+  if (oddVariants.length) {
+    log("");
+    log(`SKIPPED — variants jsonb is not an object on ${oddVariants.length} lines. jsonb_set cannot address a`);
+    log(`key inside an array, and overwriting one would delete what it holds. Left exactly as found:`);
+    for (const s of oddVariants) log(s);
+  }
+
   log("");
   log(`lines that would change: SO ${updates.so.length}, PO ${updates.po.length}`);
 
@@ -407,10 +431,15 @@ async function main() {
   const writeBatch = async (tx, table, list) => {
     let touched = 0;
     for (const u of list) {
+      /* The type guard is in the WHERE, not a CASE in the SET: a row that turned
+         into an array between the read and this write must be LEFT ALONE, not
+         coerced. It then shows up as a shortfall in the row count below, which
+         rolls the transaction back rather than half-applying it. */
       const res = await tx.unsafe(
         `UPDATE scm.${table}
             SET variants = jsonb_set(COALESCE(variants, '{}'::jsonb), '{specials}', $1::jsonb, true)
-          WHERE id = $2`,
+          WHERE id = $2
+            AND (variants IS NULL OR jsonb_typeof(variants) = 'object')`,
         // tx.json, never JSON.stringify - see BUG-HISTORY / docs/jsonb-double-
         // encoding-coe.md, 2026-08-10. postgres.js applies its own
         // JSON.stringify to any parameter it resolves to json/jsonb, and with
