@@ -217,9 +217,26 @@ async function doDos() {
   };
 
   const byDo = new Map();
-  let noSoLine = 0, unmapped = 0;
+  let noSoLine = 0, unmapped = 0, exhausted = 0, collapsed = 0;
   const missExamples = [];
   const missCodes = new Map(); // a silent miss count hid this same class of bug twice already
+  /* TWO WAYS THIS WRITER INSERTED THE SAME DELIVERY LINE TWICE, both fixed here.
+     Measured on production 2026-08-11: 8 migrated documents, 18 surplus lines,
+     every one an EXACT duplicate of its twin - same item, same qty, same
+     so_item_id - so they are a double INSERT, not two real AutoCount lines.
+
+       1. `targets` took cands[0] unconditionally, so a SECOND AutoCount row of
+          the same item code on the same order produced a second delivery line
+          pointing at the FIRST sales-order line. Consuming the candidates in
+          order fixes the duplicate AND the mis-link underneath it: two rows of
+          one code are two deliveries against two different lines.
+       2. the sofa branch re-pushed EVERY compartment of a build each time
+          another AutoCount row named the same model, multiplying a 3-piece
+          sofa by however many rows AutoCount wrote.
+
+     HC-SO-001920 is the visible one: 1 unit ordered, 4 delivery lines. */
+  const taken = new Map();      // `DoNo|SoNo|code`  -> candidate SO lines already claimed
+  const modelDone = new Set();  // `DoNo|SoNo|model` -> the whole build is already on this DO
   for (const r of rows) {
     const erp = byAc.get(norm(r.ItemCode));
     if (!erp) { unmapped++; continue; }
@@ -227,9 +244,24 @@ async function doDos() {
        shipped as one whole unit corresponds to EVERY compartment of that build
        here, so all of them are marked delivered - otherwise the pieces stay
        outstanding and the set can be shipped a second time. */
-    const cands = soByKey.get(`${r.SoNo}|${norm(erp)}`);
-    const pieces = (cands && cands.length) ? null : soByModel.get(`${r.SoNo}|${sofaModelOf(erp)}`);
-    const targets = (cands && cands.length) ? [cands[0]] : pieces;
+    const cands = soByKey.get(`${r.SoNo}|${norm(erp)}`) ?? [];
+    let targets = null;
+    if (cands.length) {
+      const ck = `${r.DoNo}|${r.SoNo}|${norm(erp)}`;
+      const used = taken.get(ck) ?? 0;
+      /* Out of distinct sales-order lines to claim. Reusing one is what created
+         the duplicates, so the row is skipped and counted LOUDLY instead - the
+         same choice backfill-ac-line-keys.mjs makes when a group's counts
+         disagree, and for the same reason: a wrong link is worse than none. */
+      if (used >= cands.length) { exhausted++; continue; }
+      taken.set(ck, used + 1);
+      targets = [cands[used]];
+    } else {
+      const mk = `${r.DoNo}|${r.SoNo}|${sofaModelOf(erp)}`;
+      if (modelDone.has(mk)) { collapsed++; continue; }
+      const pieces = soByModel.get(`${r.SoNo}|${sofaModelOf(erp)}`);
+      if (pieces && pieces.length) { modelDone.add(mk); targets = pieces; }
+    }
     if (!targets || !targets.length) {
       noSoLine++;
       missCodes.set(erp, (missCodes.get(erp) ?? 0) + 1);
@@ -243,8 +275,23 @@ async function doDos() {
         soItemId: t.id, group: t.item_group ?? null, variants: t.variants ?? null, desc2: t.description2 ?? null });
     }
   }
+  /* The invariant, asserted rather than inferred. Whatever the mapping above
+     decides, one document may not carry the same sales-order line at the same
+     quantity twice. The two fixes above remove the known causes; this refuses
+     the SHAPE, so a future mapping path cannot reintroduce it silently. */
+  for (const d of byDo.values()) {
+    const seen = new Set(); const keep = [];
+    for (const it of d.items) {
+      const k = `${it.soItemId}|${norm(it.code)}|${it.qty}`;
+      if (seen.has(k)) { collapsed++; continue; }
+      seen.add(k); keep.push(it);
+    }
+    d.items = keep;
+  }
+
   const plan = [...byDo.values()].filter((d) => !done.has(d.doNo));
   log(`AutoCount delivery lines against open orders: ${rows.length}; unmapped code ${unmapped}; no ERP SO line ${noSoLine}`);
+  log(`duplicate-guard: ${exhausted} row(s) skipped for having no unclaimed SO line left; ${collapsed} duplicate line(s) refused`);
   for (const [code, n] of [...missCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`   no ERP line for ${code} x${n}`);
   /* A count of misses is not a diagnosis. For the first few, print what the ERP
      order ACTUALLY has on it, so the mismatch is visible instead of inferred. */
