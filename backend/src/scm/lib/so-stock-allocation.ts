@@ -304,7 +304,7 @@ export async function recomputeSoStockAllocation(
           line's existing stock_qty_ready — used to compute "did the value
           change". */
     const WH_NONE = 'NOWH';
-    type LineNeed = { id: string; doc_no: string; bucket: string; whId: string | null; need: number; current: string; curReady: number };
+    type LineNeed = { id: string; doc_no: string; bucket: string; whId: string | null; need: number; current: string; curReady: number; group: string };
     const needs: LineNeed[] = [];
     /* Sofa lines walk the batch-bound path instead of the per-line bucket
        fill. Keep the SKU + variant + remaining so we can check each module's
@@ -344,6 +344,7 @@ export async function recomputeSoStockAllocation(
         id: l.id, doc_no: l.doc_no, bucket, whId,
         need: remaining, current: l.stock_status,
         curReady: Number(l.stock_qty_ready ?? 0),
+        group: (l.item_group ?? '').toLowerCase(),
       });
     }
     if (needs.length === 0 && sofaLineRecs.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
@@ -405,9 +406,16 @@ export async function recomputeSoStockAllocation(
            variant first, then the blank-variant bucket the migration created),
            so a dedicated receipt can never be counted twice — once for its own
            SO here, and again for somebody else's line in the pooled walk below. */
+    /* Only the variant-bearing categories run bound. Owner 2026-08-10:
+       "SOFA 和 BEDFRAME 因为有变体的问题,所以要走 Convert to PO 的那个模式.
+        可是 MATTRESS 跟 Accessories 都是没有变体的 ... 走回我们正常 MRP 的模式".
+       Mattress and accessories are common stock: pooling them is correct and
+       is what the floor already expects, so they must NOT be diverted. */
+    const BOUND_GROUPS = new Set(['bedframe', 'sofa']);
     const dedicatedReady = new Map<string, number>();
-    if (needs.length > 0) {
-      const lineIds = needs.map((n) => n.id);
+    const boundNeeds = needs.filter((n) => BOUND_GROUPS.has(n.group));
+    if (boundNeeds.length > 0) {
+      const lineIds = boundNeeds.map((n) => n.id);
       const { data: poLinkRows } = await chunkIn<{ so_item_id: string; qty: number; received_qty: number | null }>(
         lineIds,
         (batch, from, to) => sb
@@ -430,7 +438,7 @@ export async function recomputeSoStockAllocation(
     const targetById = new Map<string, TargetState>();
     const remaining = new Map(onHandByBucket);
     // Bound lines first, so their units leave the pool before anyone else walks it.
-    for (const n of needs) {
+    for (const n of boundNeeds) {
       if (allocGated.has(n.doc_no)) continue;
       const got = dedicatedReady.get(n.id) ?? 0;
       if (got <= 0) continue;
