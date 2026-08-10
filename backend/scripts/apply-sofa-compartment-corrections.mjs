@@ -73,7 +73,18 @@ async function main() {
                       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                      WHERE h.company_id = ${CO} AND i.doc_no = ${doc} AND i.item_group = 'sofa'
                      ORDER BY i.line_no`;
-      if (!rows.length) { log(`  ${doc}: no sofa lines found — skipped`); continue; }
+      if (!rows.length) {
+        /* Say WHY, so a missing build is diagnosable instead of a shrug: does
+           the document exist at all, and what groups are its lines in? */
+        const probe = isPo
+          ? await sql`SELECT i.item_group g, COUNT(*)::int n FROM scm.purchase_order_items i
+                        JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+                       WHERE p.company_id = ${CO} AND p.po_number = ${doc} GROUP BY 1`
+          : await sql`SELECT i.item_group g, COUNT(*)::int n FROM scm.mfg_sales_order_items i
+                       WHERE i.company_id = ${CO} AND i.doc_no = ${doc} GROUP BY 1`;
+        log(`  ${doc}: no sofa lines — ${probe.length ? probe.map((x) => `${x.g}:${x.n}`).join(", ") : "the document itself is not in the ERP"}`);
+        continue;
+      }
 
       const model = K(c.model || modelOf(rows[0].code));
       const want = c.pieces.map((p) => (K(p).startsWith(model + "-") ? K(p) : `${model}-${K(p)}`));
@@ -111,7 +122,7 @@ async function main() {
           if (n) blockers.push(`${r.code}: ${n} GRN line(s)`);
         } else {
           const [{ n: a }] = await sql`SELECT COUNT(*)::int n FROM scm.purchase_order_items WHERE so_item_id = ${r.id}`;
-          const [{ n: b }] = await sql`SELECT COUNT(*)::int n FROM scm.mfg_delivery_order_items WHERE so_item_id = ${r.id}`;
+          const [{ n: b }] = await sql`SELECT COUNT(*)::int n FROM scm.delivery_order_items WHERE so_item_id = ${r.id}`;
           if (a + b) blockers.push(`${r.code}: ${a} PO line(s), ${b} DO line(s)`);
         }
       }
