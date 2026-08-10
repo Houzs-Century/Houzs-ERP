@@ -81,7 +81,14 @@ function parseSofa(d2raw, model, recl = false) {
     if (s.split("+").filter(Boolean).length === 2)
       s = s.replace(/(^|\+)([123])\+L(?=$|\+)/, "$1$2L").replace(/(^|\+)L\+([123])(?=$|\+)/, "$1L$2");
     if (!s || /^[\d.]+\+*$/.test(s)) continue;
-    const NOISE = /^(RANDOM(COLOU?R)?|COLOU?RTBC|COLOU?R|TBC|KIV|WRAP|PERSEAT|X?\d*PILLOWS?|FOC\w*|FREE\w*|NORMALARM\w*|NOCONS|X?\d+SETS?|CUSTOM|\d+X\d*|SEATERS?|[A-KM-OQ-Z])$/;
+    /* The single-letter arm of NOISE must exclude EVERY letter the grammar
+       classifies on its own: C (corner), L (chaise), P (power), R (recliner).
+       It was written [A-KM-OQ-Z] — L and P excluded, C and R NOT — so a bare
+       "C" and a bare "R" were dropped here, before reaching :125 / :129, and
+       the build then decoded at HIGH confidence one compartment short:
+       "1+C+2" came out as 1S + 2S with no corner, no placeholder, no flag.
+       35 SO / 4 PO / 10 SO-linked-PO lines in the committed exports. */
+    const NOISE = /^(RANDOM(COLOU?R)?|COLOU?RTBC|COLOU?R|TBC|KIV|WRAP|PERSEAT|X?\d*PILLOWS?|FOC\w*|FREE\w*|NORMALARM\w*|NOCONS|X?\d+SETS?|CUSTOM|\d+X\d*|SEATERS?|[A-BD-KM-OQS-Z])$/;
     const quiet = [], rider = [];
     const toks = [];
     for (const t0 of s.split("+").filter(Boolean)) {
