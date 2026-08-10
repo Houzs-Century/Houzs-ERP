@@ -10724,6 +10724,13 @@ function PhaseCrewEditor({
     save({ ...pc, lorryCrew: lorries.map((l, i) => (i === li ? { ...l, ...p } : l)) });
   const addLorry = () => save({ ...pc, lorryCrew: [...lorries, { plate: "", drivers: [], helpers: [] }] });
   const removeLorry = (li: number) => save({ ...pc, lorryCrew: lorries.filter((_, i) => i !== li) });
+  // Owner 2026-07-22: the Driver 2 / Helper 2 rows stay HIDDEN until needed —
+  // most lorries run one driver + one helper, so the empty second slots were
+  // noise. A filled slot always shows; an empty one shows only after its
+  // "+ Add …" button (styled like "+ Add lorry") is clicked. UI-only state:
+  // collapsing back happens by clearing the name (row hides on next open).
+  const [openSlot2, setOpenSlot2] = useState<Set<string>>(new Set());
+  const showSlot2 = (li: number, kind: "d" | "h") => setOpenSlot2((s) => new Set(s).add(`${li}${kind}`));
   return (
     <div className="mt-3 space-y-2">
       {emptyHint && <div className="text-[9px] italic text-ink-muted">{emptyHint}</div>}
@@ -10756,9 +10763,33 @@ function PhaseCrewEditor({
               )}
             </div>
             <CrewSlotRow label="Driver 1" color="text-synced" options={drivers} slot={lorry.drivers[0]} onChange={(s) => setLorrySlot(li, "drivers", 0, s)} readOnly={readOnly} />
-            <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
+            {(!!lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
+              <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
+            )}
             <CrewSlotRow label="Helper 1" color="text-warning-text" options={helpers} slot={lorry.helpers[0]} onChange={(s) => setLorrySlot(li, "helpers", 0, s)} readOnly={readOnly} />
-            <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            {(!!lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
+              <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            )}
+            {!readOnly && (!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) || !(lorry.helpers[1]?.name || openSlot2.has(`${li}h`))) && (
+              <div className="flex gap-1.5 pt-0.5">
+                {!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
+                  <button
+                    onClick={() => showSlot2(li, "d")}
+                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+                  >
+                    + Add driver
+                  </button>
+                )}
+                {!(lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
+                  <button
+                    onClick={() => showSlot2(li, "h")}
+                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+                  >
+                    + Add helper
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>
