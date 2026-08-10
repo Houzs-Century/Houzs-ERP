@@ -153,22 +153,39 @@ try {
      Service lines never moved stock by design; cancelled DOs are excluded (their
      movements are legitimately reversed). */
   head("4. DAMAGE — shipped, non-cancelled DOs whose stock ledger != their document");
+
+  /* MIGRATED delivery orders are excluded, and leaving them in was the single
+     biggest distortion in the first run of this check: scm.delivery_orders
+     carries `migrated_no_stock` (migration 0276) and a document flagged that way
+     moved NO stock BY DESIGN — its goods left the building before this ERP
+     existed, and the AutoCount cutover booked the balance instead. Counting
+     those as "ledger disagrees with document" reported 15 Houzs Century DOs as
+     damage when nothing is wrong with any of them. */
+  const haveMigFlag = await hasCol("delivery_orders", "migrated_no_stock");
+  notice(haveMigFlag
+    ? "4pre. delivery_orders.migrated_no_stock EXISTS — migrated DOs are excluded below (they move no stock by design)."
+    : "4pre. delivery_orders.migrated_no_stock NOT FOUND — cannot exclude migrated DOs; the count below is an UPPER BOUND.");
+
   const dmg = await pg`
-    WITH lines AS (
-      SELECT d.id AS doc_id, d.do_number AS doc_no, i.item_code,
-             SUM(i.qty)::numeric AS doc_qty
+    WITH eligible AS (
+      SELECT d.id, d.do_number
         FROM scm.delivery_orders d
-        JOIN scm.delivery_order_items i ON i.delivery_order_id = d.id
        WHERE upper(d.status::text) = ANY(${SHIPPED})
-         AND NOT (i.item_code ILIKE 'SVC-%' OR lower(COALESCE(i.item_group,'')) = 'service')
+         AND (${!haveMigFlag}::boolean OR COALESCE(d.migrated_no_stock, false) = false)
+    ), lines AS (
+      SELECT e.id AS doc_id, e.do_number AS doc_no, i.item_code,
+             SUM(i.qty)::numeric AS doc_qty
+        FROM eligible e
+        JOIN scm.delivery_order_items i ON i.delivery_order_id = e.id
+       WHERE NOT (i.item_code ILIKE 'SVC-%' OR lower(COALESCE(i.item_group,'')) = 'service')
        GROUP BY 1, 2, 3
     ), moves AS (
       SELECT m.source_doc_id AS doc_id, m.product_code AS item_code,
              SUM(CASE WHEN m.movement_type = 'OUT' THEN ABS(m.qty) ELSE 0 END)::numeric
            - SUM(CASE WHEN m.movement_type = 'IN'  THEN ABS(m.qty) ELSE 0 END)::numeric AS net_out
         FROM scm.inventory_movements m
-        JOIN scm.delivery_orders d ON d.id = m.source_doc_id
-       WHERE m.source_doc_type = 'DO' AND upper(d.status::text) = ANY(${SHIPPED})
+        JOIN eligible e ON e.id = m.source_doc_id
+       WHERE m.source_doc_type = 'DO'
        GROUP BY 1, 2
     )
     SELECT COALESCE(l.doc_id, m.doc_id) AS doc_id,
@@ -191,34 +208,67 @@ try {
     if (dmg.length > 120) console.log(`  ... and ${dmg.length - 120} more`);
   }
 
-  /* Of those, which were EDITED AFTER SHIPPING? That is the subset defect 1
-     actually caused, as opposed to the other known ledger faults (the duplicate
-     DO pair, the MAKOTO variant drift). Signal: a line row whose updated_at is
-     later than the header's shipped_at. Only run when both columns exist. */
-  const haveShipped = await hasCol("delivery_orders", "shipped_at");
-  const haveLineUpd = await hasCol("delivery_order_items", "updated_at");
+  /* Which shipped DOs were EDITED AFTER SHIPPING? That is the population defect
+     1 can silently mis-state, as distinct from the other known ledger faults
+     (the duplicate-DO pair, the MAKOTO variant drift).
+
+     There is no shipped_at on scm.delivery_orders and no updated_at on
+     scm.delivery_order_items — the first run of this check assumed both and got
+     nothing. The ship instant that DOES always exist is the DO's own first
+     inventory movement: deductInventoryForDo writes it at the moment of
+     dispatch. Any entity_audit_log row for the DO after that is an edit that
+     landed on an already-shipped document. */
   console.log("");
-  if (!haveShipped || !haveLineUpd) {
-    notice(`4b. Cannot attribute to edit-after-ship: delivery_orders.shipped_at=${haveShipped}, delivery_order_items.updated_at=${haveLineUpd}. Reporting the total only.`);
+  if (!(await hasTable("entity_audit_log"))) {
+    notice("4b. No scm.entity_audit_log — cannot attribute to edit-after-ship. Reporting the total only.");
   } else {
-    const edited = await pg`
-      SELECT d.do_number, d.status, d.shipped_at,
-             COUNT(*) FILTER (WHERE i.updated_at > d.shipped_at::timestamptz)::int AS edited_lines
-        FROM scm.delivery_orders d
-        JOIN scm.delivery_order_items i ON i.delivery_order_id = d.id
-       WHERE upper(d.status::text) = ANY(${SHIPPED})
-         AND d.shipped_at IS NOT NULL
-       GROUP BY 1, 2, 3
-      HAVING COUNT(*) FILTER (WHERE i.updated_at > d.shipped_at::timestamptz) > 0
-       ORDER BY 1`;
-    notice(`4b. ${edited.length} shipped DO(s) carry at least one line edited AFTER shipped_at — the population defect 1 can silently mis-state.`);
-    const gapSet = new Set(dmg.map((r) => r.doc_no));
-    const both = edited.filter((e) => gapSet.has(e.do_number));
-    notice(`4c. ${both.length} of those ALSO have a ledger/document gap — the DOs whose stock is provably wrong because of the edit.`);
-    for (const e of edited.slice(0, 60)) {
-      console.log(`    ${rpad(e.do_number, 24)}${rpad(e.status, 14)}lines edited after ship: ${e.edited_lines}${gapSet.has(e.do_number) ? "   <- LEDGER GAP" : ""}`);
+    const actions = await pg`
+      SELECT a.action, COUNT(*)::int AS n
+        FROM scm.entity_audit_log a
+       WHERE a.entity_type = 'DELIVERY_ORDER'
+       GROUP BY 1 ORDER BY 2 DESC`;
+    console.log("  entity_audit_log actions recorded for DELIVERY_ORDER:");
+    for (const a of actions) console.log(`    ${rpad(a.action, 30)}${lpad(a.n, 7)}`);
+    if (actions.length === 0) console.log("    (none)");
+
+    /* entity_id is text and delivery_orders.id is uuid, so the join casts both
+       to text. Wrapped because an attribution failure must not sink the DAMAGE
+       count above, which is the number that actually matters. */
+    let edited = [];
+    try {
+      edited = await pg`
+        WITH ship AS (
+          SELECT m.source_doc_id AS doc_id, MIN(m.created_at) AS shipped_at
+            FROM scm.inventory_movements m
+           WHERE m.source_doc_type = 'DO'
+           GROUP BY 1
+        )
+        SELECT d.do_number, d.status, s.shipped_at,
+               COUNT(a.id)::int AS post_ship_audit_rows
+          FROM scm.delivery_orders d
+          JOIN ship s ON s.doc_id = d.id
+          JOIN scm.entity_audit_log a
+            ON a.entity_type = 'DELIVERY_ORDER'
+           AND a.entity_id::text = d.id::text
+           AND a.created_at > s.shipped_at
+         WHERE upper(d.status::text) = ANY(${SHIPPED})
+         GROUP BY 1, 2, 3
+         ORDER BY 1`;
+    } catch (e) {
+      notice(`4b. Attribution query failed (${e?.message ?? e}) — the DAMAGE count above still stands.`);
+      edited = null;
     }
-    if (edited.length > 60) console.log(`    ... and ${edited.length - 60} more`);
+    if (edited) {
+      console.log("");
+      notice(`4b. ${edited.length} shipped DO(s) carry an audit row written AFTER their first stock movement — the population an edit-after-ship can silently mis-state.`);
+      const gapSet = new Set(dmg.map((r) => r.doc_no));
+      const both = edited.filter((e) => gapSet.has(e.do_number));
+      notice(`4c. ${both.length} of those ALSO have a ledger/document gap.`);
+      for (const e of edited.slice(0, 60)) {
+        console.log(`    ${rpad(e.do_number, 24)}${rpad(e.status, 14)}post-ship audit rows: ${lpad(e.post_ship_audit_rows, 3)}${gapSet.has(e.do_number) ? "   <- LEDGER GAP" : ""}`);
+      }
+      if (edited.length > 60) console.log(`    ... and ${edited.length - 60} more`);
+    }
   }
 
   /* ── 5. Could a partial UNIQUE index be added anywhere? ────────────────────

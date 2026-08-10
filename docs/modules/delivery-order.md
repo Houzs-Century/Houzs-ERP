@@ -194,7 +194,7 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, `line_cost_centi`, `line_margin_centi`, **`ship_cost_centi`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads). |
 | `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_centi`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
-| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key)` by `uq_inv_mov_do_source`, the partial unique index the reversal has to route around (`:4322-4328`). Verified live 2026-08-11 — full definition in §on idempotency below. |
+| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
 | `scm.mfg_sales_order_items` | Upstream: `warehouse_id` is the **authoritative** ship-from warehouse per line. |
 
 Status vocabulary (`:366-376`):
@@ -239,8 +239,9 @@ existence check on `(source_doc_type='DO', source_doc_id, movement_type='OUT')`
 collapses identical `(warehouse_id, product_code, variant_key, batch_no)` lines
 into one OUT row (`:881-905`).
 
-**The index, verbatim from production.** Read live from `pg_indexes` on
-2026-08-11 (Actions run 31417585775, *Duplicate movements check (read-only)*):
+**The index, verbatim.** Until migration **0279** this was prod-only DDL that
+appeared in no file in the repo — read live from `pg_indexes` on 2026-08-11
+(Actions runs 31417585775 and 31426819498):
 
 ```sql
 CREATE UNIQUE INDEX uq_inv_mov_do_source
@@ -249,34 +250,58 @@ CREATE UNIQUE INDEX uq_inv_mov_do_source
   WHERE (source_doc_type = 'DO'::text)
 ```
 
-Do not re-derive this from the migration tree — its DDL is prod-only (ported
-from 2990), and migration `0230:130-134` enumerates this table's indexes as the
-four NON-unique ones only, which is how a reader concludes the backstop does not
-exist. Production also carries `uq_inv_mov_dr_source`, `uq_inv_mov_cs_do_source`
-and `uq_inv_mov_cs_dr_source` in the same shape.
+`0230:130-134` enumerates this table's indexes as the four NON-unique ones only,
+which is how a reader concludes the backstop does not exist. **0279 ends that**:
+it records all four unique indexes in the migration tree (`IF NOT EXISTS`, a
+no-op against production) so the schema can be read from the repo again.
 
-**What the key does not contain: `movement_type`, `warehouse_id`, `batch_no`.**
-One `(DO, product_code, variant_key)` bucket may hold exactly ONE movement row
-of any kind, ever. That is what makes the first-ship deduction safe, and it is
-also what `resyncInventoryForDo` collides with — see below.
+**Since 0279 the DO one is `uq_inv_mov_do_source_v2`:**
 
-**Edit-after-ship resync is blocked by that same index.**
+```sql
+CREATE UNIQUE INDEX uq_inv_mov_do_source_v2
+  ON scm.inventory_movements
+  USING btree (source_doc_type, source_doc_id, product_code, variant_key,
+               COALESCE(correction_seq, 0))
+  WHERE (source_doc_type = 'DO'::text)
+```
+
+`correction_seq` is `NULL` on the document's PRIMARY posting (the first ship) and
+`1..N` on successive CORRECTIONS written by `resyncInventoryForDo`. The
+`COALESCE` is load-bearing: a bare nullable column in a UNIQUE key would let two
+NULL first-ship rows coexist (SQL NULLs are distinct) and the double-post
+backstop would be silently gone. `uq_inv_mov_dr_source`,
+`uq_inv_mov_cs_do_source` and `uq_inv_mov_cs_dr_source` keep the original
+four-column shape — the DR resync solved the same collision its own way, and the
+consignment paths write once.
+
+**Edit-after-ship resync — fixed by 0279; before it, it never worked at all.**
 `resyncInventoryForDo` writes DELTA rows (an extra OUT to take more, an IN to
-give back) reusing the DO's `source_doc_id`, and its own comment says migration
-0109 "dropped the per-bucket UNIQUE so we can freely write multiple delta rows
-over time". That is FALSE against this database — the index above is live and
-`movement_type` is not in its key, so any delta for a bucket the first ship
-already wrote is a duplicate key and is REJECTED. `writeMovements` returns
-`{ ok: false }` and the ledger does not move.
+give back) reusing the DO's `source_doc_id`. Because `movement_type` is not in
+the key, every delta for a bucket the first ship had already written was a
+duplicate key and was REJECTED — `writeMovements` returned `{ ok: false }` and
+the ledger did not move. Measured on production 2026-08-11: **ZERO** movements
+carried the function's own notes marker, so it had never landed one row. The
+function now stamps `correction_seq = max_for_bucket + 1`, and the corrections
+insert.
 
-What still lands: a delta for a bucket with no first-ship row — a newly ADDED
-line, or an existing line whose recomputed `variant_key` differs from the one it
-shipped under. The second of those is how the MAKOTO divergence produced an OUT
-that consumed no lot (`docs/inventory-ledger-divergence-coe.md`). Since
-2026-08-05 the rejection is at least logged rather than silent. Unfixed, and
-owner-owned: the remedy is either adding `movement_type` to the index or
-stopping the delta rows reusing the DO source key (which is exactly how the
-reversal path solved it — see below).
+The rows stay `source_doc_type='DO'` **on purpose** — see the rejected
+alternatives in `BUG-HISTORY.md`. Short version: `restampDoActualCost`,
+`fn_reverse_do_out` (whose step (c) exists specifically to close lots minted by
+this function's delta-INs), `fn_reconcile_uncosted_out` and
+`fn_reconcile_dropship_batch` all key on `'DO'`, and both cancel-path
+idempotency guards read "an ADJUSTMENT row exists for this DO id" as "already
+reversed" — so re-tagging these rows `ADJUSTMENT` would make cancelling an
+EDITED DO a silent no-op.
+
+Idempotency is unchanged and comes for free: the corrections are still `'DO'`
+rows, so they aggregate into `current_net_out` exactly like the first ship and a
+re-run with no line changes computes delta 0.
+
+What still lands outside all of this: a delta for a bucket whose recomputed
+`variant_key` differs from the one it shipped under. That is how the MAKOTO
+divergence produced an OUT that consumed no lot
+(`docs/inventory-ledger-divergence-coe.md`) — a different bug in a different
+place, untouched by 0279.
 
 **Which warehouse:** `resolveDoLineWarehouses` (`:645`), in order —
 (1) the linked SO line's `warehouse_id`, (2) the DO header's `warehouse_id`,
