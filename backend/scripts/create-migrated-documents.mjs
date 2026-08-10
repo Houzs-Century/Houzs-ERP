@@ -168,6 +168,11 @@ async function doDos() {
       WHERE company_id = ${CO} AND migrated_no_stock = true AND linked_ac_docno IS NOT NULL`)
     .map((r) => r.linked_ac_docno));
 
+  /* delivery_orders.debtor_name is NOT NULL - the document is addressed to
+     someone. The AutoCount note carries it; where it does not, the sales order
+     it delivers does. */
+  const soDebtor = new Map((await sql`SELECT doc_no, debtor_name FROM scm.mfg_sales_orders
+    WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`).map((r) => [r.doc_no, r.debtor_name]));
   const soItems = await sql`SELECT i.id, i.item_code, i.line_no, i.qty, h.doc_no, h.linked_ac_docno ac
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL ORDER BY i.line_no`;
@@ -213,7 +218,8 @@ async function doDos() {
       if (missExamples.length < 5) missExamples.push({ so: r.SoNo, erp: norm(erp) });
       continue;
     }
-    if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: targets[0].doc_no, items: [] });
+    if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: targets[0].doc_no,
+      debtorCode: r.DebtorCode || null, debtorName: (r.DebtorName || "").trim() || null, items: [] });
     for (const t of targets) {
       byDo.get(r.DoNo).items.push({ code: t.item_code, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)), soItemId: t.id });
     }
@@ -238,9 +244,11 @@ async function doDos() {
     const doNo = "HC-" + d.doNo;
     await sql.begin(async (tx) => {
       const [hdr] = await tx`INSERT INTO scm.delivery_orders
-          (do_number, so_doc_no, status, do_date, currency, company_id, created_by,
-           notes, migrated_no_stock, linked_ac_docno)
-        VALUES (${doNo}, ${d.so}, 'DELIVERED', ${(d.date || "").slice(0, 10) || null}, 'MYR',
+          (do_number, so_doc_no, debtor_code, debtor_name, status, do_date, currency,
+           company_id, created_by, notes, migrated_no_stock, linked_ac_docno)
+        VALUES (${doNo}, ${d.so}, ${d.debtorCode},
+                ${d.debtorName ?? soDebtor.get(d.so) ?? "(unnamed)"},
+                'DELIVERED', ${(d.date || "").slice(0, 10) || null}, 'MYR',
                 ${CO}, ${SYS_USER},
                 ${`mirrors AutoCount delivery ${d.doNo}. No stock movement: the balance snapshot already counts these units as delivered.`},
                 true, ${d.doNo})
