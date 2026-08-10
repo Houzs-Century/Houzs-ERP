@@ -119,7 +119,7 @@ run of their own colour, and those are **coincidence, not corruption** -
 Section B: every SO mismatch against its own text is accounted for by the
 collision (71) or by an unresolved colour (7), and none is a height.
 
-**Ref** - 2026-08-11, PR #1963 (fix/variant-collision-remainder). Prod evidence:
+**Ref** - 2026-08-11, PR #1964 (fix/variant-collision-remainder). Prod evidence:
 diagnostic run 31431814091. Tests in `tests/bedframeVariantLineIdentity.test.ts`.
 
 ## The GRN variant snapshot is written once and swept by nothing [med]
@@ -143,7 +143,7 @@ agreeing with its own AutoCount text. **A plausible difference is history and is
 left alone** - a receipt is a snapshot, and rewriting one to match its order
 today would destroy the record it exists to keep.
 
-**Ref** - 2026-08-11, PR #1963. Prod evidence: diagnostic run 31431814091.
+**Ref** - 2026-08-11, PR #1964. Prod evidence: diagnostic run 31431814091.
 
 ## The 7 variant mismatches that were never the collision: a colour left unresolved [low]
 
@@ -178,7 +178,7 @@ to `PC151-11` MOVES A DIGIT, which is exactly what the shared matcher was
 written to refuse (#1893). A 7-row backfill is not worth either risk without the
 owner ruling on the duplicate pairs first.
 
-**Ref** - 2026-08-11, PR #1963. Prod evidence: diagnostic run 31431814091,
+**Ref** - 2026-08-11, PR #1964. Prod evidence: diagnostic run 31431814091,
 Section B.
 
 ## The migrated-document writer inserted the same delivery line twice [high]
@@ -211,7 +211,7 @@ a recommendation are in `docs/migrated-do-duplicate-lines.md` for one owner
 decision. Not to be confused with AutoCount's `DO-006224`, which genuinely
 delivered a second unit - real data, a commercial question, not a defect.
 
-**Ref** - 2026-08-11, PR #1963. Prod evidence: diagnostic run 31431814091,
+**Ref** - 2026-08-11, PR #1964. Prod evidence: diagnostic run 31431814091,
 Section D.
 
 ## One owner ruling, two copies, and the copy the backfill reads had drifted [low]
@@ -484,7 +484,7 @@ lines carry no `DtlKey` at all and were NOT
 repaired by position: 13 of them were checked against their own `description2`
 and agree, and one (`HC-SO-000015 JAGER-(Q)`) has no text to check.
 
-**Ref** - 2026-08-11, PR #1951 (diagnostic), PR #1958 (writer), PR #1963
+**Ref** - 2026-08-11, PR #1951 (diagnostic), PR #1958 (writer), PR #1964
 (the remaining 71 + gate 3). Prod evidence: apply run 31432521529, verification
 run 31432632597.
 
