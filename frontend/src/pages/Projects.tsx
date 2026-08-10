@@ -8604,6 +8604,15 @@ function DocumentTable({
   onReload: () => void;
   toast?: ReturnType<typeof useToast>;
 }) {
+  const { user } = useAuth();
+  // Owner 2026-08-10: "kris can upload fill in floorplan". A view-only Sales
+  // Director has no projects.write, so canManage is false and the Attach button
+  // was hidden — for this ONE document they get it. Backend enforces the same
+  // narrow rule (salesDirectorMayAttach), this is just the affordance.
+  const isSalesDirectorPos =
+    (user?.position_name ?? "").trim().toLowerCase() === "sales director";
+  const mayAttach = (it: ChecklistItem) =>
+    canManage || (isSalesDirectorPos && /^filled floor\s*plan/i.test((it.title || "").trim()));
   return (
     <div className="p-2 sm:overflow-x-auto">
       <table className="w-full text-[11px]">
@@ -8624,7 +8633,7 @@ function DocumentTable({
               item={it}
               comments={comments.filter((c) => c.item_id === it.id)}
               attachments={attachmentsByItem.get(it.id) ?? []}
-              canManage={canManage}
+              canManage={mayAttach(it)}
               canApprove={canApproveFor(it)}
               onStatus={onStatus}
               onReview={onReview}
@@ -11381,6 +11390,9 @@ function ScheduleRef({
 }) {
   const toast = useToast();
   const [remarkDraft, setRemarkDraft] = useState(remark ?? "");
+  // Owner 2026-08-10: the remark editor is hidden until the Remark button is
+  // pressed (an always-open empty box was just noise on the panel).
+  const [remarkOpen, setRemarkOpen] = useState(false);
   useEffect(() => setRemarkDraft(remark ?? ""), [remark]);
   const fileRef = useRef<HTMLInputElement>(null);
   // Owner 2026-08-03: NO remark step before upload. Clicking Upload opens the
@@ -11471,31 +11483,49 @@ function ScheduleRef({
         </>
       )}
       {/* Standalone remark (owner 2026-07-23): solo events have no handbook —
-          logistics types the setup/dismantle times here instead. No file
-          needed; saves on blur. Read-only viewers still see the text. */}
-      {onSaveRemark && (readOnly ? (
-        (remark ?? "").trim() !== "" && (
-          <div className="mt-2 text-[11px] text-ink-secondary whitespace-pre-wrap break-words">
-            <span className="font-semibold text-ink-muted">Remark:</span> {remark}
-          </div>
-        )
-      ) : (
-        <label className="mt-2 block">
-          <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-ink-muted">
-            Remark (no handbook — type setup / dismantle times)
-          </span>
-          <textarea
-            value={remarkDraft}
-            rows={2}
-            onChange={(e) => setRemarkDraft(e.target.value)}
-            onBlur={() => {
-              if (remarkDraft !== (remark ?? "")) onSaveRemark(remarkDraft);
-            }}
-            placeholder="e.g. solo event — setup 15/8 9pm after mall close, dismantle 19/8 10pm"
-            className="w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40"
-          />
-        </label>
-      ))}
+          logistics types the setup/dismantle times here instead.
+          Owner 2026-08-10: the empty box no longer sits open taking space —
+          it hides behind a Remark button and appears only when clicked. A
+          SAVED remark still shows as text (hiding it would hide real data),
+          and the button then reads "Edit remark". */}
+      {onSaveRemark && (
+        <div className="mt-2">
+          {(remark ?? "").trim() !== "" && !remarkOpen && (
+            <div className="mb-1 text-[11px] text-ink-secondary whitespace-pre-wrap break-words">
+              <span className="font-semibold text-ink-muted">Remark:</span> {remark}
+            </div>
+          )}
+          {!readOnly && !remarkOpen && (
+            <button
+              type="button"
+              onClick={() => setRemarkOpen(true)}
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+            >
+              <MessageSquare size={12} />
+              {(remark ?? "").trim() ? "Edit remark" : "Remark"}
+            </button>
+          )}
+          {!readOnly && remarkOpen && (
+            <label className="block">
+              <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-ink-muted">
+                Remark (no handbook — type setup / dismantle times)
+              </span>
+              <textarea
+                autoFocus
+                value={remarkDraft}
+                rows={2}
+                onChange={(e) => setRemarkDraft(e.target.value)}
+                onBlur={() => {
+                  if (remarkDraft !== (remark ?? "")) onSaveRemark(remarkDraft);
+                  setRemarkOpen(false);
+                }}
+                placeholder="e.g. solo event — setup 15/8 9pm after mall close, dismantle 19/8 10pm"
+                className="w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40"
+              />
+            </label>
+          )}
+        </div>
+      )}
     </div>
   );
 }
