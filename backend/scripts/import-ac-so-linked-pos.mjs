@@ -289,10 +289,15 @@ async function main() {
     const poNo = "HC-" + p.acDoc;
     await sql.begin(async (tx) => {
       const subtotal = p.items.reduce((s2, it) => s2 + it.qty * it.priceCenti, 0);
+      /* The PO screen's EXPECTED DELIVERY reads the HEADER, and this import only
+         ever wrote the per-line date, so every migrated PO showed a blank
+         delivery date while AutoCount had one on all 579 lines. Derive it the
+         way the app's own SO->PO convert does: the earliest line date. */
+      const headerEta = p.items.map((it) => it.deliveryDate).filter(Boolean).sort()[0] ?? null;
       const [hdr] = await tx`INSERT INTO scm.purchase_orders
-          (po_number, linked_ac_docno, supplier_id, status, po_date, purchase_location_id, currency,
+          (po_number, linked_ac_docno, supplier_id, status, po_date, expected_at, purchase_location_id, currency,
            subtotal_centi, tax_centi, total_centi, revision, company_id, created_by, notes)
-        VALUES (${poNo}, ${p.acDoc}, ${p.supId}, ${p.status}, ${p.docDate ?? sql`CURRENT_DATE`},
+        VALUES (${poNo}, ${p.acDoc}, ${p.supId}, ${p.status}, ${p.docDate ?? sql`CURRENT_DATE`}, ${headerEta},
                 ${p.items[0]?.wh ?? null}, 'MYR', ${subtotal}, 0, ${subtotal}, 1, 1, ${SYS_USER},
                 ${"imported from AutoCount " + p.acDoc + " (already received; stock came in with the balance snapshot)"})
         RETURNING id`;

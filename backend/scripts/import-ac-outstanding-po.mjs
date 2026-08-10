@@ -211,10 +211,15 @@ async function main() {
   let nPo = 0, nItems = 0;
   for (const o of todo) {
     await sql.begin(async (tx) => {
+      /* EXPECTED DELIVERY on the PO screen reads the HEADER. This import wrote
+         only the per-line date, so every migrated PO showed a blank delivery
+         date although AutoCount had one on every line. Earliest line date, the
+         same derivation the app's own SO->PO convert uses. */
+      const headerEta = o.items.map((it) => it.deliv).filter(Boolean).map((d) => String(d).slice(0, 10)).sort()[0] ?? null;
       const ins = await tx`INSERT INTO scm.purchase_orders
-        (po_number, linked_ac_docno, supplier_id, status, po_date, purchase_location_id, currency,
+        (po_number, linked_ac_docno, supplier_id, status, po_date, expected_at, purchase_location_id, currency,
          subtotal_centi, tax_centi, total_centi, revision, company_id, created_by, notes)
-        VALUES (${o.poNo}, ${o.acPo}, ${o.supId}, ${o.status}, ${o.poDate || sql`CURRENT_DATE`}, ${o.locWh}, 'MYR',
+        VALUES (${o.poNo}, ${o.acPo}, ${o.supId}, ${o.status}, ${o.poDate || sql`CURRENT_DATE`}, ${headerEta}, ${o.locWh}, 'MYR',
          ${o.subtotal}, 0, ${o.subtotal}, 1, 1, ${SYS_USER}, ${"imported from AutoCount " + o.acPo})
         ON CONFLICT (po_number) DO NOTHING RETURNING id`;
       if (!ins.length) return;
