@@ -106,12 +106,12 @@ async function main() {
     ORDER BY linked_ac_docno`;
   const rows = has_dtlkey
     ? await sql`SELECT i.id, i.purchase_order_id, i.material_code, i.supplier_sku, i.qty,
-                       i.description2, i.delivery_date, i.so_item_id, i.linked_ac_dtlkey
+                       i.description2, i.delivery_date, i.so_item_id, i.item_group, i.linked_ac_dtlkey
                   FROM scm.purchase_order_items i
                   JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
                  WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`
     : await sql`SELECT i.id, i.purchase_order_id, i.material_code, i.supplier_sku, i.qty,
-                       i.description2, i.delivery_date, i.so_item_id, NULL::bigint AS linked_ac_dtlkey
+                       i.description2, i.delivery_date, i.so_item_id, i.item_group, NULL::bigint AS linked_ac_dtlkey
                   FROM scm.purchase_order_items i
                   JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
                  WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
@@ -148,7 +148,17 @@ async function main() {
     const erpRows = rowsByPo.get(h.id) ?? [];
     if (!erpRows.length) continue;
     const acLines = acByDoc.get(h.linked_ac_docno) ?? [];
-    if (!acLines.length) { noAcDoc.push(`${h.po_number} (AutoCount ${h.linked_ac_docno})`); continue; }
+    if (!acLines.length) {
+      noAcDoc.push(`${h.po_number} (AutoCount ${h.linked_ac_docno}, ${erpRows.length} line(s))`);
+      /* Every unrepaired line gets a reason, including these: the document was
+         imported by a round whose export is not one of the two committed here,
+         so this repair has nothing to read for it. */
+      for (const r of erpRows) {
+        if (r.so_item_id && r.delivery_date && r.linked_ac_dtlkey != null) continue;
+        unresolved.push({ poNo: h.po_number, code: r.material_code, reason: `AutoCount document ${h.linked_ac_docno} is not in either committed PO export, so there is nothing to read for this line` });
+      }
+      continue;
+    }
 
     const shaped = acLines.map((l) => ({
       key: acDtlKey(l), itemCode: l.ItemCode, qty: Number(l.Qty) || 0, desc2: l.Desc2,
@@ -218,6 +228,10 @@ async function main() {
   for (const p of noAcDoc.slice(0, 20)) log(`   ${p}`);
   log("");
   log(`PLAN: ${plan.length} line(s) to update — so_item_id ${nSo}; delivery_date ${nDate}; linked_ac_dtlkey ${nKey}${has_dtlkey ? "" : " (COLUMN ABSENT — counted, not written)"}`);
+  const groupOf = new Map(rows.map((r) => [r.id, r.item_group ?? "?"]));
+  const byGroup = new Map();
+  for (const p of plan) { if (!p.soItemId) continue; const g = groupOf.get(p.id) ?? "?"; byGroup.set(g, (byGroup.get(g) ?? 0) + 1); }
+  log(`       new dedications by item group: ${[...byGroup.entries()].sort((a, b) => b[1] - a[1]).map(([g, n]) => `${g} ${n}`).join("; ") || "none"}`);
 
   // Header date: earliest of the line dates this repair would leave in place.
   const dateByLine = new Map(plan.filter((p) => p.deliveryDate).map((p) => [p.id, p.deliveryDate]));

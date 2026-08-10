@@ -26,10 +26,12 @@ const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
  */
 export function makeSoLineTaker(soItems, taken = new Set()) {
   const byKey = new Map();
+  const knownDocs = new Set();
   for (const it of soItems ?? []) {
     const k = `${it.ac}|${norm(it.item_code)}`;
     if (!byKey.has(k)) byKey.set(k, []);
     byKey.get(k).push(it);
+    knownDocs.add(it.ac);
   }
   const handedOut = new Map();
 
@@ -51,11 +53,12 @@ export function makeSoLineTaker(soItems, taken = new Set()) {
   const explain = (acSoDoc, erpCode) => {
     if (!acSoDoc) return "no AutoCount sales order behind this PO line";
     if (!erpCode) return "PO line carries no item code";
+    if (!knownDocs.has(acSoDoc)) return `AutoCount sales order ${acSoDoc} has no live line in the ERP (never imported, or every line cancelled)`;
     const k = `${acSoDoc}|${norm(erpCode)}`;
     const cands = byKey.get(k);
-    if (!cands) return `${acSoDoc} has no ERP line with code ${erpCode}`;
+    if (!cands) return `${acSoDoc} is in the ERP but carries no line with code ${erpCode}`;
     return `every ${erpCode} line on ${acSoDoc} is already dedicated (${cands.length} line(s))`;
   };
 
-  return { take, explain, taken, size: byKey.size };
+  return { take, explain, taken, knownDocs, size: byKey.size };
 }
