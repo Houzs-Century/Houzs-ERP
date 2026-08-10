@@ -1954,14 +1954,18 @@ mfgSalesOrders.get('/my-mtd', async (c) => {
   const ymd = todayMyt();
   const { startUtc, endUtc } = monthBoundsMy(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1);
   // A single salesperson's monthly orders never approach the 1000-row cap.
-  const { data, error } = await sb
-    .from('mfg_sales_orders')
-    .select('local_total_centi, total_revenue_centi')
-    .eq('salesperson_id', myStaffId)
-    .not('status', 'in', '("CANCELLED","DRAFT")')
-    .gte('created_at', startUtc)
-    .lt('created_at', endUtc)
-    .limit(1000);
+  // Company-scoped too (owner 2026-08-10 audit): a rep granted to BOTH
+  // companies otherwise sees one pooled MTD figure instead of this company's.
+  const { data, error } = await scopeToCompany(
+    sb
+      .from('mfg_sales_orders')
+      .select('local_total_centi, total_revenue_centi')
+      .eq('salesperson_id', myStaffId)
+      .not('status', 'in', '("CANCELLED","DRAFT")')
+      .gte('created_at', startUtc)
+      .lt('created_at', endUtc),
+    c,
+  ).limit(1000);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const rows = (data ?? []) as Array<{ local_total_centi: number | null; total_revenue_centi: number | null }>;
   const mtd_sales_centi = rows.reduce(
@@ -2034,14 +2038,22 @@ mfgSalesOrders.get('/mine', async (c) => {
      whole book. */
   if (!targetSalespersonId && !viewingAll) return c.json({ salesOrders: [] });
 
-  let query = client
-    .from('mfg_sales_orders')
-    .select(
-      'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
-      'customer_delivery_date, internal_expected_dd, status, payment_method, approval_code, note, so_date, created_at, ' +
-      'proceeded_at, total_revenue_centi, line_count, deposit_centi',
-    )
-    .not('status', 'in', '("CANCELLED","ON_HOLD","DRAFT")');
+  let query = scopeToCompany(
+    client
+      .from('mfg_sales_orders')
+      .select(
+        'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
+        'customer_delivery_date, internal_expected_dd, status, payment_method, approval_code, note, so_date, created_at, ' +
+        'proceeded_at, total_revenue_centi, line_count, deposit_centi',
+      )
+      .not('status', 'in', '("CANCELLED","ON_HOLD","DRAFT")'),
+    c,
+  );
+  /* Company scope is NOT optional here (owner 2026-08-10 cross-company audit).
+     The view_all branch above swaps in a SERVICE-ROLE client and clears
+     targetSalespersonId, so without this wrap the query degrades to "every
+     non-cancelled SO in the database" — both companies, RLS bypassed, with
+     customer PII and total_revenue_centi. */
   if (targetSalespersonId) query = query.eq('salesperson_id', targetSalespersonId);
 
   if (q) {

@@ -833,7 +833,9 @@ salesInvoices.get('/', async (c) => {
 /* STATIC path MUST be registered BEFORE the `/:id` param route below. */
 salesInvoices.get('/invoiceable-do-lines', async (c) => {
   const sb = c.get('supabase');
-  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'));
+  // Company scope (owner 2026-08-10 audit) — without it the no-doIds path
+  // enumerated every company's delivery orders into this picker.
+  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
   if (doIds.length === 0) return c.json({ lines: [] });
   const remainingMap = await doInvoiceableRemaining(sb, doIds);
   const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
@@ -844,7 +846,9 @@ salesInvoices.get('/invoiceable-do-lines', async (c) => {
 salesInvoices.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i] = await Promise.all([
-    sb.from('sales_invoices').select(HEADER).eq('id', id).maybeSingle(),
+    // Company-scoped (owner 2026-08-10 audit) — a bare uuid must not read
+    // another company's invoice.
+    scopeToCompany(sb.from('sales_invoices').select(HEADER), c).eq('id', id).maybeSingle(),
     sb.from('sales_invoice_items').select(ITEM).eq('sales_invoice_id', id)
       .order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at'),

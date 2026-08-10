@@ -554,9 +554,11 @@ consignmentNotes.get('/', async (c) => {
 // lib/finance-keys warns that a camelCasing surface must strip in its own.
 consignmentNotes.get('/deliverable-order-lines', async (c) => {
   const sb = c.get('supabase');
-  const { data: orders, error: oErr } = await paginateAll<{ doc_no: string; debtor_code: string | null; debtor_name: string | null }>((from, to) => sb
+  // Company scope (owner 2026-08-10 audit): this picker enumerated EVERY
+  // company's consignment orders while the sibling GET / was scoped.
+  const { data: orders, error: oErr } = await paginateAll<{ doc_no: string; debtor_code: string | null; debtor_name: string | null }>((from, to) => scopeToCompany(sb
     .from('consignment_sales_orders')
-    .select('doc_no, debtor_code, debtor_name')
+    .select('doc_no, debtor_code, debtor_name'), c)
     .order('so_date', { ascending: false })
     .range(from, to));
   if (oErr) return c.json({ error: 'load_failed', reason: oErr.message }, 500);

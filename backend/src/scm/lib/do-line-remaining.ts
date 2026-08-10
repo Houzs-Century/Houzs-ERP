@@ -271,18 +271,31 @@ export async function doRemainingByItemId(
  * drops DRAFT headers, so a draft id can't yield invoiceable lines through either
  * entry point.
  */
-export async function resolveCandidateDoIds(sb: any, doIdsParam: string | undefined): Promise<string[]> {
+export async function resolveCandidateDoIds(
+  sb: any,
+  doIdsParam: string | undefined,
+  /* Company scope (owner 2026-08-10 cross-company audit). Both callers — the
+     sales-invoice "invoiceable DO lines" picker and the delivery-return
+     "returnable DO lines" picker — enumerated EVERY company's delivery orders
+     when no explicit doIds was passed, then cascaded that id set into the
+     header + line reads below. Same defect as the GRN pick-PO picker. Passed
+     as an id (not the Hono ctx) so this lib stays free of the route layer;
+     callers resolve it with requireActiveCompanyId/activeCompanyId. */
+  companyId?: number | null,
+): Promise<string[]> {
   if (doIdsParam && doIdsParam.trim()) {
     return [...new Set(doIdsParam.split(',').map((d) => d.trim()).filter(Boolean))];
   }
   // Page through so PostgREST's 1000-row cap can't drop DOs from the picker
   // (a shipped DO past row 1000 would be invisible to From-DO flows).
-  const { data: dos } = await paginateAll<{ id: string; status: string }>((from, to) => sb
-    .from('delivery_orders')
-    .select('id, status')
-    .not('status', 'in', '("CANCELLED","DRAFT")')
-    .order('do_date', { ascending: false })
-    .range(from, to));
+  const { data: dos } = await paginateAll<{ id: string; status: string }>((from, to) => {
+    let q = sb
+      .from('delivery_orders')
+      .select('id, status')
+      .not('status', 'in', '("CANCELLED","DRAFT")');
+    if (companyId != null) q = q.eq('company_id', companyId);
+    return q.order('do_date', { ascending: false }).range(from, to);
+  });
   return ((dos ?? []) as Array<{ id: string }>).map((d) => d.id).filter(Boolean);
 }
 

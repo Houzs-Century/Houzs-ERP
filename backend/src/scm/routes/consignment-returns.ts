@@ -532,9 +532,11 @@ consignmentReturns.get('/', async (c) => {
 // lib/finance-keys warns that a camelCasing surface must strip in its own.
 consignmentReturns.get('/returnable-note-lines', async (c) => {
   const sb = c.get('supabase');
-  const { data: notes, error: nErr } = await paginateAll<{ id: string; do_number: string; debtor_code: string | null; debtor_name: string | null }>((from, to) => sb
+  // Company scope (owner 2026-08-10 audit): sibling GET / was scoped, this
+  // picker was not — it listed every company's consignment notes.
+  const { data: notes, error: nErr } = await paginateAll<{ id: string; do_number: string; debtor_code: string | null; debtor_name: string | null }>((from, to) => scopeToCompany(sb
     .from('consignment_delivery_orders')
-    .select('id, do_number, debtor_code, debtor_name')
+    .select('id, do_number, debtor_code, debtor_name'), c)
     .order('do_number', { ascending: false })
     .range(from, to));
   if (nErr) return c.json({ error: 'load_failed', reason: nErr.message }, 500);

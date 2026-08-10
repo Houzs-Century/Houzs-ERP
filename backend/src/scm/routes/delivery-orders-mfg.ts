@@ -2912,7 +2912,9 @@ deliveryOrdersMfg.get('/so-source/:docNo', async (c) => {
 deliveryOrdersMfg.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i] = await Promise.all([
-    sb.from('delivery_orders').select(HEADER).eq('id', id).maybeSingle(),
+    // Company-scoped (owner 2026-08-10 audit) — a bare uuid must not read
+    // another company's delivery order.
+    scopeToCompany(sb.from('delivery_orders').select(HEADER), c).eq('id', id).maybeSingle(),
     sb.from('delivery_order_items').select(ITEM).eq('delivery_order_id', id)
       .order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at'),
