@@ -1,14 +1,19 @@
 import { describe, expect, test } from "vitest";
 // @ts-expect-error - plain .mjs, shared by the top-up repair and the completeness check
 import {
+  RECEIVED_INDETERMINATE,
+  RECEIVED_PER_LINE,
+  RECEIVED_ZERO_AGGREGATE,
   belongsToFamily,
   buildFamilies,
+  buildGrQtyGroups,
   claimErpRows,
   diffExpectedRows,
   familyShortfall,
   mergeAcPoLines,
   normSku,
   planFamilyInserts,
+  resolveReceivedQty,
 } from "../scripts/lib/po-line-topup-core.mjs";
 
 /* The incident this file pins, held still.
@@ -240,20 +245,95 @@ describe("the last guard before an INSERT", () => {
 });
 
 describe("merging the two AutoCount PO exports", () => {
-  test("a line in both exports appears once, and the received quantity survives whichever column carried it", () => {
+  test("a line in both exports appears once, and the PER-LINE column is the one that survives", () => {
     const outstanding = [acLine("PO-1", "A", { DtlKey: 99, TransferedQty: 2, UnitPrice: 100 })];
     const soLinked = [acLine("PO-1", "A", { DtlKey: 99, GrQty: 2, FromSODtlKey: 555 })];
     const merged = mergeAcPoLines(outstanding, soLinked);
     expect(merged).toHaveLength(1);
     expect(merged[0].receivedQty).toBe(2);
+    expect(merged[0].receivedSource).toBe(RECEIVED_PER_LINE);
     expect(merged[0].fromSoDtlKey).toBe("555"); // filled from the export that has it
     expect(merged[0].sources).toEqual(["outstanding", "so-linked"]);
   });
 
-  test("a line only the SO-linked export knows is still carried", () => {
+  test("a line only the SO-linked export knows is still carried, but without a received quantity", () => {
     const merged = mergeAcPoLines([], [acLine("PO-2", "B", { DtlKey: 7, GrQty: 1 })]);
     expect(merged).toHaveLength(1);
     expect(merged[0].docNo).toBe("PO-2");
+    expect(merged[0].receivedQty).toBeNull();
+  });
+
+  /* THE INCIDENT, held still. ac-so-linked-pos.json.gz reports GrQty aggregated
+     on (DocNo + ItemCode), so every line of a repeated ItemCode carries the
+     DOCUMENT's total. PO-008944 really does hold two DSL-8050 SOFA lines, Qty 2
+     and Qty 1, and the export puts GrQty 3 on BOTH - their sum. Live
+     PODTL.TransferedQty is 2 and 1. Reading that column per line is what wrote
+     65 production rows with received_qty > qty, a permanent negative
+     outstanding that no report surfaces.
+
+     Every test in this block fails against `receivedQty: acNum(r.TransferedQty
+     ?? r.GrQty)` except the zero-aggregate one, which is a regression guard
+     rather than a proof - see the PR for the measured pass/fail either way. */
+  const po8944 = [
+    { DocNo: "PO-008944", DtlKey: 819426, ItemCode: "DSL-8050 SOFA", Qty: 2, GrQty: 3 },
+    { DocNo: "PO-008944", DtlKey: 819428, ItemCode: "DSL-8050 SOFA", Qty: 1, GrQty: 3 },
+  ];
+
+  test("an aggregated GrQty yields NO received quantity, on every line of the group", () => {
+    const merged = mergeAcPoLines([], po8944);
+    expect(merged.map((l: { receivedQty: number | null }) => l.receivedQty)).toEqual([null, null]);
+    expect(merged.map((l: { receivedSource: string }) => l.receivedSource))
+      .toEqual([RECEIVED_INDETERMINATE, RECEIVED_INDETERMINATE]);
+  });
+
+  /* The invariant the 65 damaged rows violate, stated directly. */
+  test("no line is ever handed a received quantity greater than its own ordered quantity", () => {
+    for (const l of mergeAcPoLines([], po8944) as { receivedQty: number | null; qty: number }[]) {
+      expect(l.receivedQty === null || l.receivedQty <= l.qty).toBe(true);
+    }
+  });
+
+  /* The tempting rule this deliberately does NOT implement: "the group holds one
+     line, so the aggregate must be that line". It rests on the export holding
+     every line of that ItemCode on that document, which nothing available can
+     establish - the two exports never overlap on a received line. Refused. */
+  test("a single-line group is refused too - group size is diagnosis, never permission", () => {
+    const one = [{ DocNo: "PO-000254", DtlKey: 111, ItemCode: "RDS-5526 SOFA", Qty: 1, GrQty: 1 }];
+    const merged = mergeAcPoLines([], one);
+    expect(merged[0].receivedQty).toBeNull();
+    expect(merged[0].receivedSource).toBe(RECEIVED_INDETERMINATE);
+    expect(merged[0].aggregateSpans).toBe(1); // reported, so the operator can see why
+  });
+
+  /* Arithmetic, not trust: a sum of non-negative receipts that comes to zero
+     forces every member to zero. The export carries no negative GrQty. */
+  test("an aggregate of exactly zero does prove every line of the group is zero", () => {
+    const merged = mergeAcPoLines([], [
+      { DocNo: "PO-9", DtlKey: 1, ItemCode: "X", Qty: 1, GrQty: 0 },
+      { DocNo: "PO-9", DtlKey: 2, ItemCode: "X", Qty: 1, GrQty: 0 },
+    ]);
+    expect(merged.map((l: { receivedQty: number | null }) => l.receivedQty)).toEqual([0, 0]);
+    expect(merged[0].receivedSource).toBe(RECEIVED_ZERO_AGGREGATE);
+  });
+
+  test("a per-line figure beats an aggregate for the same line, and never the reverse", () => {
+    const merged = mergeAcPoLines(
+      [{ DocNo: "PO-008944", DtlKey: 819426, ItemCode: "DSL-8050 SOFA", Qty: 2, TransferedQty: 2 }],
+      po8944,
+    );
+    expect(merged).toHaveLength(2);
+    const keyed = merged.find((l: { dtlKey: string }) => l.dtlKey === "819426");
+    expect(keyed.receivedQty).toBe(2); // the truth, not the aggregate 3
+    expect(keyed.receivedSource).toBe(RECEIVED_PER_LINE);
+  });
+
+  test("the resolver is one shared rule - the importer and the top-up call the same function", () => {
+    const groups = buildGrQtyGroups(po8944);
+    expect(resolveReceivedQty(po8944[0], groups).receivedSource).toBe(RECEIVED_INDETERMINATE);
+    expect(resolveReceivedQty({ DocNo: "d", ItemCode: "i", TransferedQty: 4 }, groups))
+      .toMatchObject({ receivedQty: 4, receivedSource: RECEIVED_PER_LINE });
+    // neither column present is also "unknown", never a confident zero
+    expect(resolveReceivedQty({ DocNo: "d", ItemCode: "i" }, groups).receivedSource).toBe(RECEIVED_INDETERMINATE);
   });
 
   /* import-ac-outstanding-po.mjs:179 reads l.DelivDate, a column that exists in

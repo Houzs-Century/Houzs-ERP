@@ -111,6 +111,32 @@ It inserts only lines whose AutoCount ItemCode has ZERO rows on the document; an
 ItemCode with SOME rows is reported and left alone, because a half-written sofa
 build is just as likely a build somebody corrected by hand.
 
+### The received quantity: only ONE of the two exports can supply it per line
+
+`ac-outstanding-po.json.gz` carries `PODTL.TransferedQty`, which is per PO LINE.
+`ac-so-linked-pos.json.gz` carries `GrQty`, which is **aggregated on
+(DocNo + ItemCode)** — on a document holding two lines of one ItemCode, every
+line reports the DOCUMENT's total. Reading it per line put 65 production rows at
+`received_qty > qty` (`BUG-HISTORY.md`, top entry). The tell is in the file:
+59 lines carry `GrQty > Qty`, which is impossible for a single line, and all 59
+sit on a repeated-ItemCode group.
+
+So the tally treats a received quantity as UNKNOWN unless `TransferedQty` supplied
+it or the aggregate is exactly zero, and the top-up **withholds the whole family**
+rather than write a number nobody can stand behind — `received_qty` is
+`NOT NULL DEFAULT 0`, so there is no blank to write. Withheld rows are printed
+under `WITHHELD - no per-line received quantity in the export`, and they stay
+MISSING, which this same check keeps reporting. That is the intended trade: a
+missing row is visible and recoverable, an inflated one is a silent permanent
+negative outstanding.
+
+**To clear them properly, re-export with the per-line column** —
+`backend/scripts/data/autocount-refetch-so-linked-po.sql`, read-only, run on the
+AutoCount host against `AED_HOUZS`, then gzip over `ac-so-linked-pos.json.gz` and
+re-run the DRY-RUN. Note `GRDTL.FromDocDtlKey` is NULL in this book, so
+reconstructing a per-line figure from GR details is not an option;
+`PODTL.TransferedQty` is the only correct source.
+
 ---
 
 ## C. Three-way reconciliation (must tie out before go-live)

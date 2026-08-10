@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { RECEIVED_INDETERMINATE, buildGrQtyGroups, resolveReceivedQty } from "./lib/po-line-topup-core.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -129,9 +130,39 @@ async function main() {
     if (!groups.has(r.DocNo)) groups.set(r.DocNo, []);
     groups.get(r.DocNo).push({ ...r, erp });
   }
-  const toCreate = [...groups.entries()].filter(([doc]) => !existing.has(doc));
-  const alreadyIn = groups.size - toCreate.length;
+  const candidates = [...groups.entries()].filter(([doc]) => !existing.has(doc));
+  const alreadyIn = groups.size - candidates.length;
+
+  /* ⚠ GrQty IS AGGREGATED ON (DocNo + ItemCode) - IT IS NOT A PER-LINE FIGURE.
+     This line used to read `Math.round(Number(l.GrQty ?? 0))` per PO line, so on
+     a document holding two lines of one ItemCode every line was written with the
+     DOCUMENT's total. That is how 65 migrated purchase-order lines reached
+     production with received_qty > qty - a permanent negative outstanding that
+     no report surfaces. (Those 65 existing rows are a SEPARATE repair owned by
+     another lane; nothing here rewrites them.) The argument and the evidence are
+     in lib/po-line-topup-core.mjs; the rule is shared from there rather than
+     re-stated, so this importer and the top-up cannot drift apart.
+
+     A document is refused WHOLE, not line by line: received_qty is NOT NULL
+     DEFAULT 0 (migration 0090) so a blank cannot be written, and importing the
+     determinate lines only would recreate exactly the defect the top-up exists
+     to repair - a document that looks present and is short a line, which the
+     document-level idempotency guard below then skips forever. */
+  const grQtyGroups = buildGrQtyGroups(rows);
+  const blindDocs = [];
+  const toCreate = candidates.filter(([doc, lines]) => {
+    const blind = lines.filter((l) => resolveReceivedQty(l, grQtyGroups).receivedSource === RECEIVED_INDETERMINATE);
+    if (!blind.length) return true;
+    blindDocs.push({ doc, blind: blind.length, of: lines.length });
+    return false;
+  });
   log(`PO docs in file: ${groups.size}; already in ERP: ${alreadyIn}; to create: ${toCreate.length}; unmapped codes: ${unmapped}`);
+  if (blindDocs.length) {
+    log(`REFUSED - GrQty is aggregated and cannot give a per-line received quantity: ${blindDocs.length} document(s) NOT imported`);
+    log("   Re-export with PODTL.TransferedQty (data/autocount-refetch-so-linked-po.sql) and re-run.");
+    for (const b of blindDocs.slice(0, 25)) log(`   ${b.doc}: ${b.blind} of ${b.of} line(s) have no per-line received quantity`);
+    if (blindDocs.length > 25) log(`   ... and ${blindDocs.length - 25} more`);
+  }
 
   /* Resolve each PO line's SO line. Same-code lines on one SO are handed out in
      order and never reused, so two PO lines for the same SKU on one order bind
@@ -164,7 +195,13 @@ async function main() {
       };
       const wh = whId(l.Location);
       if (!wh) noWh++;
-      const recv = Math.round(Number(l.GrQty ?? 0));
+      /* Never Number(l.GrQty): that column is aggregated. Every document
+         reaching here was proven determinate by the filter above, so this can
+         only be a per-line TransferedQty or an aggregate that is exactly zero -
+         and the throw says so rather than writing a plausible wrong number. */
+      const rq = resolveReceivedQty(l, grQtyGroups);
+      if (rq.receivedSource === RECEIVED_INDETERMINATE) throw new Error(`no per-line received qty for ${doc} ${l.ItemCode}`);
+      const recv = Math.round(rq.receivedQty);
       const qty = Math.round(Number(l.Qty ?? 0));
       const priceCenti = Math.round(Number(l.UnitPrice ?? 0) * 100);
       const deliveryDate = l.DeliveryDate ? l.DeliveryDate.slice(0, 10) : null;

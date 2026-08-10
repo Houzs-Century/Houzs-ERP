@@ -33,10 +33,29 @@
 // sofa build is just as likely a build a human corrected, and guessing would
 // double a compartment. Under-repair, never duplicate.
 //
+// THE RECEIVED QUANTITY IS NEVER GUESSED. ac-outstanding-po.json.gz carries
+// PODTL.TransferedQty, which is per LINE. ac-so-linked-pos.json.gz carries
+// GrQty, which is AGGREGATED on (DocNo + ItemCode) - on a document holding two
+// lines of one ItemCode, every line reports the DOCUMENT's total. Reading it as
+// a per-line figure is what put 65 migrated lines into production with
+// received_qty > qty. TransferedQty is taken; a GrQty of zero is taken (a sum of
+// non-negative receipts at zero forces every member to zero); a GrQty above zero
+// yields NOTHING and the family is WITHHELD and reported. received_qty is
+// NOT NULL DEFAULT 0 (migration 0090), so there is no blank column to write -
+// the choice is a number nobody can stand behind or no row, and no row is the
+// one a human can still fix. Full argument in lib/po-line-topup-core.mjs.
+//
 // WHAT IT WRITES, and nothing else:
-//   - the missing scm.purchase_order_items rows, built by the SAME rules the
-//     importers use (shared lib/parse-sofa.mjs, lib/fabric-colour-match.mjs and
-//     lib/parse-bedframe.mjs - never a second decoder)
+//   - the missing scm.purchase_order_items rows. The DECODERS are shared with
+//     the importers, never re-implemented (lib/parse-sofa.mjs,
+//     lib/fabric-colour-match.mjs, lib/parse-bedframe.mjs). item_group is NOT
+//     shared, because the two importers do not agree with each other:
+//     import-ac-outstanding-po.mjs:119 reads the mapping CSV's category
+//     (`CATG[cat] || "others"`), import-ac-so-linked-pos.mjs:171 reads the
+//     catalogue's (`prodCat.get(erp) ?? "others"`). This script prefers the
+//     catalogue and falls back to the CSV, reports every line where the two
+//     rules differ, and REFUSES a line where they disagree about SOFA - that
+//     one flips a build between decomposed compartments and a single row.
 //   - so_item_id where the export gives a FromSODtlKey AND that SO line
 //     resolves AND is not already claimed; NULL otherwise, never wrong. The
 //     claim is re-checked inside the transaction so a concurrent sibling repair
@@ -64,6 +83,7 @@ import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-mat
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import {
+  RECEIVED_INDETERMINATE,
   buildFamilies, claimErpRows, diffExpectedRows, groupByDoc, mergeAcPoLines, planFamilyInserts,
 } from "./lib/po-line-topup-core.mjs";
 
@@ -105,6 +125,9 @@ async function main() {
   const acLines = mergeAcPoLines(gz("ac-outstanding-po.json.gz"), gz("ac-so-linked-pos.json.gz"));
   const acByDoc = groupByDoc(acLines);
   log(`AutoCount PO lines (outstanding + SO-linked, deduped on DtlKey): ${acLines.length} across ${acByDoc.size} documents`);
+  const prov = {};
+  for (const l of acLines) prov[l.receivedSource] = (prov[l.receivedSource] ?? 0) + 1;
+  log(`   received qty: per-line PODTL.TransferedQty ${prov["per-line"] ?? 0}; aggregate proven zero ${prov["zero-aggregate"] ?? 0}; INDETERMINATE (GrQty above zero, aggregated on DocNo+ItemCode) ${prov[RECEIVED_INDETERMINATE] ?? 0}`);
 
   const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
   csv.shift();
@@ -185,17 +208,30 @@ async function main() {
     const csvCat = hit ? hit.cat : null;
     if (erp && !codeSet.has(erp.toUpperCase()) && C1_ALIAS[erp.toUpperCase()]) erp = C1_ALIAS[erp.toUpperCase()];
     if (!erp) return null;
-    /* item_group: the catalogue's own category first (what bound-mode readiness
-       reads and what import-ac-so-linked-pos.mjs uses), the mapping CSV second. */
+    /* item_group. The two importers do NOT share a rule, so there is no single
+       "what the importers do" to copy - the honest thing is to name both and
+       make every divergence visible.
+         import-ac-outstanding-po.mjs:119   CATG[cat] || "others"        (CSV)
+         import-ac-so-linked-pos.mjs:171    prodCat.get(erp) ?? "others" (catalogue)
+       This script prefers the catalogue - it is what bound-mode readiness reads
+       and it is derived from the live products table rather than a static file -
+       and falls back to the CSV where the catalogue has nothing. */
     const fromCat = prodCat.get(norm(erp));
     const fromCsv = CATG[csvCat] ?? null;
     const grp = fromCat ?? fromCsv ?? "others";
+    const ruleOutstanding = fromCsv ?? "others";
+    const ruleSoLinked = fromCat ?? "others";
+    /* Only the SOFA axis can change the SHAPE of what gets written - a sofa line
+       decomposes into one row per compartment, anything else stays one row. A
+       divergence there is not a label to pick between, it is two different
+       repairs, so the line is refused. */
+    const sofaSplit = (ruleOutstanding === "sofa") !== (ruleSoLinked === "sofa");
     let sofaModel = null;
     if (grp === "sofa") {
       const m = String(erp).replace(/-1S$/i, "");
       sofaModel = SOFA_MODEL_ALIAS[m] || m;
     }
-    return { erp, grp, sofaModel, fromCat, fromCsv };
+    return { erp, grp, sofaModel, fromCat, fromCsv, ruleOutstanding, ruleSoLinked, sofaSplit };
   };
 
   const sofaDecode = [];
@@ -205,14 +241,22 @@ async function main() {
   const buildExpected = (l, doc) => {
     const r = resolveErp(l.itemCode);
     if (!r) return null;
-    if (r.fromCat && r.fromCsv && r.fromCat !== r.fromCsv) groupDisagree.push({ doc, code: l.itemCode, catalogue: r.fromCat, csv: r.fromCsv });
+    /* Report on the two IMPORTER rules, not on "both happen to be non-null" -
+       the old test could not see a line the catalogue knows and the CSV does
+       not, which is a real divergence between the two importers. */
+    if (r.ruleOutstanding !== r.ruleSoLinked) {
+      groupDisagree.push({ doc, code: l.itemCode, catalogue: r.ruleSoLinked, csv: r.ruleOutstanding, used: r.grp, sofaSplit: r.sofaSplit });
+    }
     const qty = Math.round(l.qty ?? 0) || 1;
-    const recv = Math.round(l.receivedQty ?? 0);
+    /* null, not 0, when the export cannot say. `?? 0` here is precisely the
+       shape of the bug being fixed: it turns "unknown" into a confident zero. */
+    const recv = l.receivedSource === RECEIVED_INDETERMINATE ? null : Math.round(l.receivedQty ?? 0);
     const up = centi(l.unitPrice ?? 0);
     const wh = whId(l.location);
     const deliv = l.deliveryDate ? String(l.deliveryDate).slice(0, 10) : null;
     const src = l.fromSoDtlKey ? soLineByDtl.get(l.fromSoDtlKey) : null;
-    const base = { doc, dtlKey: l.dtlKey, description: l.description, desc2: l.desc2, qty, recv, wh, deliv, grp: r.grp, src };
+    const base = { doc, dtlKey: l.dtlKey, description: l.description, desc2: l.desc2, qty, recv,
+      recvSource: l.receivedSource, wh, deliv, grp: r.grp, src };
 
     if (r.grp === "sofa") {
       const model = r.sofaModel;
@@ -270,6 +314,8 @@ async function main() {
   const plan = [];
   const unmapped = [];
   const partials = [];
+  const recvWithheld = [];
+  const groupWithheld = [];
   const docsNotInErp = [];
   let acConsidered = 0, expectedTotal = 0, unassignedRows = 0, ambiguousRows = 0;
 
@@ -299,6 +345,26 @@ async function main() {
       if (!expected.length) continue;
       const { verdict, insert } = planFamilyInserts(f, expected);
       if (verdict === "partial") partials.push({ doc, po, itemCode: f.itemCode, acLines: f.acLines, claimed: f.claimed, expected: expected.length });
+      if (!insert.length) continue;
+
+      /* WITHHOLD THE WHOLE FAMILY when the export cannot give a per-line
+         received quantity for any of its lines. Whole, not the blind rows only:
+         writing the determinate half would leave a partial family, and rule 4
+         makes every later run REPORT a partial and never complete it - so a
+         half-write here is permanent. */
+      const blind = f.lines.filter((l) => l.receivedSource === RECEIVED_INDETERMINATE);
+      if (blind.length) {
+        recvWithheld.push({ doc, po, itemCode: f.itemCode, lines: blind.length,
+          spans: blind[0].aggregateSpans, rows: insert.length });
+        continue;
+      }
+      /* Same refusal for the one item_group divergence that changes the SHAPE
+         of the repair rather than just its label. */
+      const split = f.lines.some((l) => (resolveErp(l.itemCode) || {}).sofaSplit);
+      if (split) {
+        groupWithheld.push({ doc, po, itemCode: f.itemCode, rows: insert.length });
+        continue;
+      }
       rows.push(...insert);
     }
     if (rows.length) plan.push({ po, doc, rows, acLines: lines.length, existingRows: existing.length });
@@ -326,6 +392,19 @@ async function main() {
   log(`MISSING ERP rows (their AutoCount ItemCode has ZERO rows on the document): ${rowsToInsert} across ${plan.length} purchase orders`);
   log(`   of those: sofa ${sofaRows}; other ${rowsToInsert - sofaRows}; carrying received qty ${recvRows}; value RM ${(valueCenti / 100).toFixed(2)}`);
   log(`   dedicated to an SO line ${dedicated}; no SO line resolved ${noSoLine}; no warehouse match ${noWarehouse}`);
+  const withheldRows = recvWithheld.reduce((a, w) => a + w.rows, 0);
+  log("");
+  log(`WITHHELD - no per-line received quantity in the export: ${recvWithheld.length} ItemCode(s), ${withheldRows} row(s) NOT written`);
+  log("   GrQty is aggregated on (DocNo + ItemCode); a value above zero cannot be split back to a line.");
+  log("   These rows stay MISSING on purpose. A missing row is visible to this same check; an inflated");
+  log("   received_qty is a permanent negative outstanding that nothing reports. Fix by re-exporting with");
+  log("   PODTL.TransferedQty - see data/autocount-refetch-so-linked-po.sql - then re-running.");
+  for (const w of recvWithheld) log(`   ${w.po.po_number} (AutoCount ${w.doc}) "${w.itemCode}": ${w.rows} row(s) withheld; GrQty spans ${w.spans ?? "?"} line(s) of this ItemCode${w.spans > 1 ? " - PROVABLY inflated" : ""}`);
+  if (groupWithheld.length) {
+    log(`WITHHELD - the two importers' item_group rules disagree about SOFA: ${groupWithheld.length}`);
+    for (const w of groupWithheld) log(`   ${w.po.po_number} (AutoCount ${w.doc}) "${w.itemCode}": ${w.rows} row(s) withheld`);
+  }
+  log("");
   log(`PARTIALLY represented AutoCount ItemCodes (some rows present, fewer than expected) - REPORTED, NOT TOUCHED: ${partials.length}`);
   for (const p of partials.slice(0, 25)) log(`   ${p.doc} "${p.itemCode}": AutoCount ${p.acLines} line(s), ERP rows ${p.claimed}, rebuild would be ${p.expected}`);
   if (partials.length > 25) log(`   ... and ${partials.length - 25} more`);
@@ -351,8 +430,11 @@ async function main() {
   log("");
   log(`SOFA decode over every AutoCount sofa line read: ${ok} decomposed, ${sofaDecode.length - ok} placeholder (never guessed); read from the SO's own text ${sofaDecode.filter((d) => d.usedSoText).length}`);
   if (groupDisagree.length) {
-    log(`item_group disagreements catalogue-vs-CSV (catalogue wins): ${groupDisagree.length}`);
-    for (const g of groupDisagree.slice(0, 10)) log(`   ${g.doc} "${g.code}" catalogue=${g.catalogue} csv=${g.csv}`);
+    log("");
+    log(`item_group: the two importers' rules disagree on ${groupDisagree.length} line(s)`);
+    log("   catalogue = import-ac-so-linked-pos.mjs:171; csv = import-ac-outstanding-po.mjs:119; this script prefers the catalogue");
+    for (const g of groupDisagree.slice(0, 10)) log(`   ${g.doc} "${g.code}" catalogue=${g.catalogue} csv=${g.csv} used=${g.used}${g.sofaSplit ? "  <- SOFA SPLIT, family withheld" : ""}`);
+    if (groupDisagree.length > 10) log(`   ... and ${groupDisagree.length - 10} more`);
   }
 
   if (!APPLY) {
@@ -377,6 +459,15 @@ async function main() {
       const { toInsert } = diffExpectedRows(p.rows, live);
       skippedRaced += p.rows.length - toInsert.length;
       if (!toInsert.length) return;
+      /* Belt and braces, inside the transaction: the family gate above already
+         withheld these, so reaching here means a later edit found a way past it.
+         received_qty is NOT NULL, so a null would be a database error rather
+         than a wrong number - but this aborts the whole run with the reason
+         named instead of a constraint violation nobody can read. */
+      const blind = toInsert.filter((r) => r.recv === null || r.recv === undefined || r.recvSource === RECEIVED_INDETERMINATE);
+      if (blind.length) {
+        throw new Error(`refusing to write ${blind.length} row(s) on ${p.po.po_number} with no per-line received quantity: ${blind.map((r) => r.supplierSku).join(", ")}`);
+      }
       let added = 0;
       for (const r of toInsert) {
         let soItemId = r.soItemId ?? null;

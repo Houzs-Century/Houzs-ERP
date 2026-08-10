@@ -70,11 +70,76 @@ const acNum = (v) => {
   return isFinite(n) ? n : null;
 };
 
-/* One AutoCount PO line, in the shape both exports can be read through.
-   ac-outstanding-po.json.gz calls the received quantity TransferedQty;
-   ac-so-linked-pos.json.gz calls it GrQty. They mean the same thing. */
-function normaliseAcPoLine(r) {
+/* ── THE RECEIVED QUANTITY: ONE COLUMN IS PER-LINE, THE OTHER IS NOT ─────────
+   These two columns do NOT mean the same thing, and reading them as if they did
+   is what put 65 lines into production with received_qty > qty.
+
+   ac-outstanding-po.json.gz carries PODTL.TransferedQty, which is per PO LINE.
+   data/autocount-refetch-po.sql is the query that produced it and selects
+   `pod.TransferedQty` straight off the detail row.
+
+   ac-so-linked-pos.json.gz carries GrQty, which is AGGREGATED on
+   (DocNo + ItemCode). It is not a per-line figure and must never be read as one.
+   The export proves it against itself:
+     - every one of the 38 (DocNo,ItemCode) groups holding 2+ lines carries an
+       IDENTICAL GrQty on all of them - an aggregate cannot vary within its
+       own group, a per-line quantity would;
+     - 59 lines carry GrQty > Qty, impossible for a single line, and all 59 sit
+       on such a group - ZERO on a single-line group;
+     - PO-008944 holds two DSL-8050 SOFA lines, Qty 2 and Qty 1; both report
+       GrQty 3, their SUM. Live PODTL.TransferedQty is 2 and 1.
+   Confirmed against live AutoCount in review (read-only ODBC, the 738 merged
+   DtlKeys joined to PODTL): 60 of 738 disagree with PODTL.TransferedQty, always
+   INFLATED, and 0 disagree wherever TransferedQty supplied the value.
+
+   So TransferedQty is taken and GrQty is REFUSED as a per-line quantity. The
+   one thing an aggregate does prove is a ZERO: a sum of non-negative receipts
+   that comes to 0 forces every member to 0. That inference is arithmetic, not
+   trust - and it holds here, the export carrying no negative GrQty at all and
+   all 163 overlapping zero rows agreeing at zero. A GrQty ABOVE zero yields no
+   received quantity; the line carries null and is reported.
+
+   Why not "trust it where the group holds one line" - the tempting rule that
+   would cover 333 more lines: it rests on the export holding EVERY line of that
+   ItemCode on that document, and nothing available here can establish that. The
+   two exports never overlap on a received line (0 of the 179 shared DtlKeys
+   have GrQty > 0), so the repo cannot check it even once, and
+   GRDTL.FromDocDtlKey is NULL in this book so a per-line GR join is impossible.
+   PODTL.TransferedQty is the only correct source. Until the export carries it
+   those lines have no received quantity here, and say so out loud. */
+const RECEIVED_PER_LINE = "per-line";
+const RECEIVED_ZERO_AGGREGATE = "zero-aggregate";
+const RECEIVED_INDETERMINATE = "indeterminate";
+const RECEIVED_RANK = {
+  [RECEIVED_PER_LINE]: 3, [RECEIVED_ZERO_AGGREGATE]: 2, [RECEIVED_INDETERMINATE]: 1,
+};
+
+/* Index the SO-linked export by the key GrQty is aggregated on. This is for the
+   REPORT only - so it can separate "provably inflated" from "merely unprovable"
+   - and the decision above never consults it. A rule that let group size decide
+   is exactly the rule the comment above refuses. */
+function buildGrQtyGroups(soLinked = []) {
+  const m = new Map();
+  for (const r of soLinked) {
+    const k = `${r.DocNo ?? ""}|${normSku(r.ItemCode)}`;
+    m.set(k, (m.get(k) ?? 0) + 1);
+  }
+  return m;
+}
+
+/* The per-line received quantity, or null when the export cannot supply one. */
+function resolveReceivedQty(r, grQtyGroups) {
+  const perLine = acNum(r.TransferedQty);
+  const spans = grQtyGroups ? grQtyGroups.get(`${r.DocNo ?? ""}|${normSku(r.ItemCode)}`) ?? null : null;
+  if (perLine !== null) return { receivedQty: perLine, receivedSource: RECEIVED_PER_LINE, aggregateSpans: null };
+  if (acNum(r.GrQty) === 0) return { receivedQty: 0, receivedSource: RECEIVED_ZERO_AGGREGATE, aggregateSpans: spans };
+  return { receivedQty: null, receivedSource: RECEIVED_INDETERMINATE, aggregateSpans: spans };
+}
+
+/* One AutoCount PO line, in the shape both exports can be read through. */
+function normaliseAcPoLine(r, grQtyGroups) {
   return {
+    ...resolveReceivedQty(r, grQtyGroups),
     docNo: r.DocNo ?? null,
     dtlKey: r.DtlKey === null || r.DtlKey === undefined ? null : String(r.DtlKey),
     docDate: r.DocDate ?? null,
@@ -83,7 +148,6 @@ function normaliseAcPoLine(r) {
     description: r.Description ?? null,
     desc2: r.Desc2 ?? null,
     qty: acNum(r.Qty),
-    receivedQty: acNum(r.TransferedQty ?? r.GrQty),
     unitPrice: acNum(r.UnitPrice),
     location: r.Location ?? null,
     /* DeliveryDate is the column both exports carry. DelivDate is read too
@@ -101,8 +165,9 @@ function normaliseAcPoLine(r) {
    a field already set by the first source is never overwritten. */
 function mergeAcPoLines(outstanding = [], soLinked = []) {
   const out = new Map();
+  const grQtyGroups = buildGrQtyGroups(soLinked);
   const put = (raw, src) => {
-    const n = normaliseAcPoLine(raw);
+    const n = normaliseAcPoLine(raw, grQtyGroups);
     if (!n.dtlKey) return;
     const prev = out.get(n.dtlKey);
     if (!prev) {
@@ -111,8 +176,18 @@ function mergeAcPoLines(outstanding = [], soLinked = []) {
       return;
     }
     prev.sources.push(src);
+    /* The received quantity moves as ONE unit and only ever UPGRADES - a
+       per-line figure replaces an aggregate, never the reverse. It is kept out
+       of the generic gap-fill below because that fills on null alone: an
+       indeterminate line's null quantity would be filled from the other export
+       while its label stayed "indeterminate", which is the worst of both. */
+    if (RECEIVED_RANK[n.receivedSource] > RECEIVED_RANK[prev.receivedSource]) {
+      prev.receivedQty = n.receivedQty;
+      prev.receivedSource = n.receivedSource;
+      prev.aggregateSpans = n.aggregateSpans;
+    }
     for (const k of Object.keys(n)) {
-      if (k === "sources") continue;
+      if (k === "sources" || k === "receivedQty" || k === "receivedSource" || k === "aggregateSpans") continue;
       if ((prev[k] === null || prev[k] === undefined || prev[k] === "") && n[k] !== null && n[k] !== undefined) prev[k] = n[k];
     }
   };
@@ -237,6 +312,11 @@ function diffExpectedRows(expected, existing) {
 }
 
 export {
+  RECEIVED_PER_LINE,
+  RECEIVED_ZERO_AGGREGATE,
+  RECEIVED_INDETERMINATE,
+  buildGrQtyGroups,
+  resolveReceivedQty,
   normSku,
   isSofaCode,
   belongsToFamily,
