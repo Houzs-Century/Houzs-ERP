@@ -2,7 +2,7 @@
 
 **Symptom** — 138 migrated sofa/bedframe lines carry no resolved fabric while
 their AutoCount Desc2 names one. A live prod scan on 2026-08-10 put it at 223
-lines / 93 distinct colour strings that the writers could not bind, against a
+lines / 92 distinct colour strings that the writers could not bind, against a
 library that already holds 133 series / 724 colours.
 
 **Root cause (traced, not guessed)** — `findColour` existed FIVE times, one
