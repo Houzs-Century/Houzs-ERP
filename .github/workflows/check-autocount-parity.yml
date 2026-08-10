@@ -45,15 +45,3 @@ jobs:
       - run: node scripts/check-autocount-parity.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      # TEMPORARY, this branch only — reverted in the next commit. A
-      # workflow_dispatch workflow is only registered from the DEFAULT branch,
-      # so check-status-disagreement-why.yml cannot be dispatched until it
-      # merges. Dispatching THIS already-registered workflow against the branch
-      # checks the branch out, which is how the new read-only check gets its
-      # one prod observation before review.
-      # !cancelled() — the parity script itself dies at its BALANCE section
-      # (h.total_centi does not exist), which would otherwise skip this step.
-      - if: ${{ !cancelled() }}
-        run: npx tsx scripts/check-status-disagreement-why.mjs
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
