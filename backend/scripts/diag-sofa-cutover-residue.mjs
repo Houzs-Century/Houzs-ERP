@@ -39,6 +39,33 @@
 //      How many of the unlinked PO lines are a stock purchase (legitimate:
 //      the link is procurement provenance, docs/modules/document-traceability.md)
 //      versus a link that was lost, and which document holds the dangling one.
+//
+//   F. LEG 2 (PO -> GRN) ADJUDICATED BY DIRECTION AND BY TIME
+//      A GRN is a SNAPSHOT of the PO at receipt. A difference is therefore not
+//      automatically a defect, and rewriting the GRN to match a later PO
+//      correction would destroy the receipt record. Every differing pair and
+//      every piece-set difference is classified:
+//        (a) the PO was CORRECTED AFTER the GRN was created — legitimate
+//            history. Proved by comparing the PO line's own age against the
+//            GRN's, not by assuming it.
+//        (b) the SNAPSHOT WAS WRITTEN WRONG at creation — the GRN predates no
+//            correction and still fails to carry what its PO line held.
+//        (c) a GENUINE CONFLICT — both sides state a value and they disagree.
+//      Only (b) and (c) get a proposed fix, and only as a proposal.
+//
+//   G. THE SO/PO VARIANT CONFLICTS, WITH AUTOCOUNT'S OWN TEXT AS THE TIE-BREAK
+//      Section C says 14 pairs name different values on the customer's order
+//      and the factory's order. This prints the decision table: model, axis,
+//      SO value, PO value, whether the build is already DOWNSTREAM (a GRN or a
+//      DO exists, so it may be built), and — the part that usually decides it —
+//      whether the AutoCount Desc2 TEXT on each document agrees with the SO or
+//      with the PO. No winner is chosen here. This is what the owner decides
+//      from.
+//
+//   H. THE CANCELLATION SURFACE, INTROSPECTED
+//      "不可以删只可以 cancel" needs a column to cancel INTO. The two line
+//      tables are NOT symmetrical and assuming they are is how a repair script
+//      dies at 42703 mid-run. Asked of information_schema, never assumed.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -425,6 +452,221 @@ async function main() {
     log("    PROPOSAL (nothing written): re-create each deleted piece as a CANCELLED line at 0 price so");
     log("    the document's history shows the piece existed and was withdrawn, and change the script's");
     log("    surplus branch from DELETE to a cancel. OWNER DECISION — see docs/sofa-document-chain-map.md.");
+  }
+
+  // ══ F. LEG 2 (PO -> GRN) ADJUDICATED ════════════════════════════════════
+  log("");
+  log("=== F. PO -> GRN: EVERY DIFFERENCE CLASSIFIED (a) history / (b) bad snapshot / (c) conflict");
+  log("    A GRN is a snapshot of the PO at RECEIPT. If the PO changed afterwards the GRN is");
+  log("    RIGHT to disagree, and rewriting it would destroy the receipt record. So the first");
+  log("    question is never 'do they differ' but 'which one is older'.");
+  /* to_jsonb(row) instead of a named column list: the timestamp columns on these
+     tables are not the same set, and a guessed name is a 42703 that kills the
+     whole diagnostic. Ask for everything and pick what is actually there. */
+  const grPairs = (await sql`
+    SELECT to_jsonb(gi) AS gi, to_jsonb(g) AS g, to_jsonb(i) AS i,
+           g.grn_number AS grn_doc, p.po_number AS po_doc
+      FROM scm.grn_items gi
+      JOIN scm.grns g ON g.id = gi.grn_id
+      JOIN scm.purchase_order_items i ON i.id = gi.purchase_order_item_id
+      JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+     WHERE g.company_id = ${CO} AND i.item_group IN ('bedframe', 'sofa')
+     ORDER BY p.po_number, g.grn_number`).map((r) => ({ ...r }));
+
+  const ts = (o, ...names) => {
+    for (const n of names) { const v = o?.[n]; if (v) { const d = new Date(v); if (!Number.isNaN(+d)) return d; } }
+    return null;
+  };
+  /* The compartment corrections ran as GitHub workflow 31393696809 and its
+     siblings between 13:35Z and 17:05Z on 2026-08-10. A PO line whose own
+     timestamp lands in that window was written BY a correction, which is the
+     single most common reason a GRN older than it disagrees. */
+  const CORR_FROM = new Date("2026-08-10T13:30:00Z"), CORR_TO = new Date("2026-08-10T18:00:00Z");
+  const inCorrWindow = (d) => d && d >= CORR_FROM && d <= CORR_TO;
+
+  const bkt = { a: [], bLost: [], bRicher: [], c: [] };
+  let same = 0, noTime = 0;
+  for (const r of grPairs) {
+    const P = r.i, G = r.gi, H = r.g;
+    const diffs = [];
+    for (const k of AXES) {
+      const a = vget(P.variants, k), b = vget(G.variants, k);
+      if (a === b) continue;
+      if (a !== null && b !== null && norm(a) === norm(b)) continue;
+      diffs.push({ k, po: a, grn: b });
+    }
+    const codeDiff = norm(P.material_code) !== norm(G.material_code);
+    if (!diffs.length && !codeDiff) { same++; continue; }
+
+    const poT = ts(P, "updated_at", "created_at");
+    const grT = ts(G, "created_at") ?? ts(H, "created_at", "posted_at", "received_at");
+    const head = `      ${r.po_doc} -> ${r.grn_doc}  ${P.item_group} ${modelOf(P.material_code)} ${compOf(P.material_code) || norm(P.material_code)}\n` +
+                 `         ${diffs.map((d) => `${d.k}: PO ${d.po ?? "-"} vs GRN ${d.grn ?? "-"}`).join("\n         ")}` +
+                 (codeDiff ? `\n         code: PO ${P.material_code} vs GRN ${G.material_code}` : "");
+    if (!poT || !grT) noTime++;
+    if (poT && grT && poT > grT) {
+      bkt.a.push(head + `\n         (a) PO line last written ${poT.toISOString()} — AFTER the GRN (${grT.toISOString()}).` +
+                        `${inCorrWindow(poT) ? " That is inside the 2026-08-10 compartment-correction window." : ""}` +
+                        " The receipt is a faithful record of what the PO said at the time. DO NOT TOUCH.");
+      continue;
+    }
+    /* NO TABLE IN THIS CHAIN HAS AN updated_at — section H proves it. So the
+       timestamp test can only catch a line that was INSERTED after the receipt,
+       never one that was UPDATED after it, and an UPDATE is exactly what a
+       backfill does. Where a script's own SCOPE settles it, that is the
+       evidence instead: backfill-sofa-leg-default.mjs (2026-08-10) writes
+       scm.mfg_sales_order_items (:148) and scm.purchase_order_items (:152) and
+       NEVER scm.grn_items, so a "Default" leg on the PO against an empty leg on
+       the GRN is that backfill reaching the parent after the child was taken.
+       It is history, not a lost snapshot. */
+    const legDefaultOnly = diffs.length > 0 && !codeDiff &&
+      diffs.every((d) => d.k === "legHeight" && d.grn === null && norm(d.po) === "DEFAULT");
+    if (legDefaultOnly) {
+      bkt.a.push(head + "\n         (a) legHeight 'Default' written onto the PO by backfill-sofa-leg-default.mjs AFTER this receipt;" +
+                        " that script writes the SO and PO arms only and never grn_items. The GRN correctly records a line that had no leg pick at receipt. DO NOT TOUCH.");
+      continue;
+    }
+    const conflicting = diffs.filter((d) => d.po !== null && d.grn !== null);
+    if (conflicting.length) { bkt.c.push(head + "\n         (c) both documents state a value and they disagree, and the PO is not the newer document."); continue; }
+    const grnEmpty = diffs.filter((d) => d.po !== null && d.grn === null).length;
+    const poEmpty = diffs.filter((d) => d.po === null && d.grn !== null).length;
+    if (grnEmpty && !poEmpty) bkt.bLost.push(head + "\n         (b) the GRN is the THIN one: the snapshot did not copy what the PO line held. Fixable — fill the GRN from its PO line.");
+    else if (poEmpty && !grnEmpty) bkt.bRicher.push(head + "\n         (b) the GRN is the RICH one: the receipt records something the PO line never held. Do NOT overwrite the receipt; the PO is the candidate to fill.");
+    else bkt.c.push(head + "\n         (c) each side is empty on a different axis — no single direction fits.");
+  }
+  log(`    linked PO -> GRN pairs examined                       ${grPairs.length}`);
+  log(`      identical                                           ${same}`);
+  log(`      (a) PO changed AFTER the GRN — legitimate history   ${bkt.a.length}`);
+  log(`      (b) snapshot thin: GRN lacks what the PO holds      ${bkt.bLost.length}`);
+  log(`      (b) snapshot rich: GRN holds what the PO lacks      ${bkt.bRicher.length}`);
+  log(`      (c) genuine conflict                                ${bkt.c.length}`);
+  log(`      pairs where no usable timestamp exists on either side: ${noTime}`);
+  show(bkt.a, "(a) legitimate history — NOT a defect, no fix proposed");
+  show(bkt.bLost, "(b) GRN thinner than its PO line — PROPOSED FIX: copy the PO line's variants onto the GRN line");
+  show(bkt.bRicher, "(b) GRN richer than its PO line — PROPOSED FIX: none on the GRN; the PO is what is thin");
+  show(bkt.c, "(c) genuine conflict — needs a human");
+
+  /* The build-level (piece-set) differences get the same time test: a piece the
+     correction ADDED to the PO after receipt cannot be on the GRN, and that is
+     not a receipt defect. */
+  log("");
+  log("    PIECE-SET differences on this leg, same test:");
+  const byPoLine = new Map(grPairs.map((r) => [r.i.id, r]));
+  const poByHdr = new Map();
+  for (const p of poRows) { if (!poByHdr.has(p.po_hdr_id)) poByHdr.set(p.po_hdr_id, []); poByHdr.get(p.po_hdr_id).push(p); }
+  let psA = 0, psB = 0;
+  const psLines = [];
+  for (const [, lines] of poByHdr) {
+    const received = lines.filter((p) => byPoLine.has(p.id));
+    if (!received.length || received.length === lines.length) continue;
+    const missing = lines.filter((p) => !byPoLine.has(p.id));
+    const grT = ts(byPoLine.get(received[0].id).gi, "created_at") ?? ts(byPoLine.get(received[0].id).g, "created_at", "posted_at", "received_at");
+    const newer = [], older = [];
+    for (const m of missing) {
+      const [row] = await sql`SELECT to_jsonb(i) AS i FROM scm.purchase_order_items i WHERE i.id = ${m.id}::uuid`;
+      const t = ts(row?.i, "created_at", "updated_at");
+      (t && grT && t > grT ? newer : older).push(`${compOf(m.code) || norm(m.code)}${t ? ` (line written ${t.toISOString()})` : " (no timestamp)"}`);
+    }
+    if (newer.length && !older.length) { psA++; psLines.push(`      ${lines[0].doc}: GRN lacks ${newer.join(", ")}\n         (a) that PO line was created AFTER the receipt. The GRN could not have received a piece that did not exist yet.`); }
+    else { psB++; psLines.push(`      ${lines[0].doc}: GRN lacks ${[...newer, ...older].join(", ")}\n         (b/c) at least one missing piece is OLDER than the receipt — either a partial receipt still outstanding, or a snapshot that dropped it.`); }
+  }
+  log(`      PO documents partially received                     ${psA + psB}`);
+  log(`        (a) the missing piece POSTDATES the receipt       ${psA}`);
+  log(`        (b/c) the missing piece PREDATES the receipt      ${psB}`);
+  show(psLines, "piece-set differences, adjudicated");
+
+  // ══ G. THE SO/PO CONFLICTS, WITH AUTOCOUNT'S TEXT AS THE TIE-BREAK ══════
+  log("");
+  log("=== G. THE SO/PO VARIANT CONFLICTS — the owner's decision table");
+  log("    No winner is chosen here. For each conflict: which side AutoCount's own Desc2 text");
+  log("    agrees with, and whether the build is already DOWNSTREAM (a GRN received it or a DO");
+  log("    shipped it), because a conflict on a line already built is a different problem.");
+  const soByIdG = new Map(soAll.map((r) => [r.id, r]));
+  const grnByPoLine = new Map();
+  for (const r of grPairs) { if (!grnByPoLine.has(r.i.id)) grnByPoLine.set(r.i.id, []); grnByPoLine.get(r.i.id).push(r.grn_doc); }
+  const doBySoLine = new Map();
+  for (const d of await sql`SELECT di.so_item_id::text AS so_item_id, dh.do_number AS doc
+                              FROM scm.delivery_order_items di
+                              JOIN scm.delivery_orders dh ON dh.id = di.delivery_order_id
+                             WHERE dh.company_id = ${CO} AND di.so_item_id IS NOT NULL`) {
+    if (!doBySoLine.has(d.so_item_id)) doBySoLine.set(d.so_item_id, []);
+    doBySoLine.get(d.so_item_id).push(d.doc);
+  }
+  /* Does the AutoCount text on a document actually contain the value that
+     document's structured field claims? A fabric code appears verbatim in
+     Desc2 ("COL:PC151-12"); a gap appears as a number near "gap"/inch marks, so
+     the digits are tested rather than the formatted string. */
+  const squash = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
+  const textSays = (d2, val) => {
+    if (!d2 || val === null) return null;
+    const t = norm(d2), v = norm(val);
+    if (t.includes(v)) return true;
+    /* AutoCount writes the same fabric a dozen ways — "PC-151-02", "PC151-02",
+       "pc151 02". Comparing the letters and digits alone is the only test that
+       survives that, and it is why the first pass called HC-SO-011886
+       "ambiguous" when its text plainly names the PO's colour. */
+    if (squash(t).includes(squash(v))) return true;
+    const digits = v.replace(/[^0-9.]/g, "");
+    if (digits && new RegExp(`(^|[^0-9])${digits.replace(".", "\\.")}([^0-9]|$)`).test(t)) return true;
+    return false;
+  };
+  const rows14 = [];
+  for (const p of poRows) {
+    if (!p.so_item_id) continue;
+    const s = soByIdG.get(p.so_item_id);
+    if (!s) continue;
+    for (const k of AXES) {
+      const a = vget(s.variants, k), b = vget(p.variants, k);
+      if (a === null || b === null || norm(a) === norm(b)) continue;
+      const grns = grnByPoLine.get(p.id) ?? [];
+      const dos = doBySoLine.get(s.id) ?? [];
+      const soText = textSays(s.d2, a), soTextPo = textSays(s.d2, b);
+      const poText = textSays(p.d2, b), poTextSo = textSays(p.d2, a);
+      /* "The text agrees with X" only means something when it names X and does
+         NOT also name the other side. Anything else is reported as silent. */
+      const verdict = (says, saysOther, side) => (says && !saysOther ? side : (!says && saysOther ? (side === "SO" ? "PO" : "SO") : "silent/ambiguous"));
+      rows14.push({
+        so: s.doc, po: p.doc, model: `${modelOf(s.code)} ${compOf(s.code) || norm(s.code)}`.trim(), grp: s.grp,
+        axis: k, soVal: a, poVal: b,
+        downstream: grns.length || dos.length ? `YES — ${[...grns.map((x) => `GRN ${x}`), ...dos.map((x) => `DO ${x}`)].join(", ")}` : "no",
+        soD2: String(s.d2 ?? "").replace(/\s+/g, " ").trim().slice(0, 90),
+        poD2: String(p.d2 ?? "").replace(/\s+/g, " ").trim().slice(0, 90),
+        soD2Says: verdict(soText, soTextPo, "SO"), poD2Says: verdict(poText, poTextSo, "PO"),
+      });
+    }
+  }
+  log(`    conflicting (SO value, PO value) axis pairs: ${rows14.length}`);
+  log("");
+  log("    SO doc | PO doc | group model piece | axis | SO says | PO says | already downstream | SO's own Desc2 backs | PO's own Desc2 backs");
+  for (const r of rows14) {
+    log(`      ${r.so} | ${r.po} | ${r.grp} ${r.model} | ${r.axis} | ${r.soVal} | ${r.poVal} | ${r.downstream} | ${r.soD2Says} | ${r.poD2Says}`);
+    log(`         SO Desc2: ${r.soD2 || "(empty)"}`);
+    log(`         PO Desc2: ${r.poD2 || "(empty)"}`);
+  }
+  if (!rows14.length) log("      0 rows — no linked pair states two different values on one axis.");
+
+  // ══ H. THE CANCELLATION SURFACE ═════════════════════════════════════════
+  log("");
+  log("=== H. WHAT CAN ACTUALLY BE CANCELLED — asked of information_schema, not assumed");
+  log('    "不可以删只可以 cancel" needs a column to cancel INTO, and the four line tables are');
+  log("    NOT symmetrical. A repair script that assumes they are dies at 42703 mid-run.");
+  const TABLES = ["mfg_sales_order_items", "purchase_order_items", "grn_items", "delivery_order_items"];
+  const cols = await sql`
+    SELECT table_name, column_name, data_type, is_nullable, column_default
+      FROM information_schema.columns
+     WHERE table_schema = 'scm' AND table_name = ANY(${TABLES})
+     ORDER BY table_name, ordinal_position`;
+  const WANT = ["cancelled", "cancelled_at", "cancel_reason", "created_at", "updated_at", "remark", "notes", "line_no", "description2", "item_group", "variants"];
+  for (const t of TABLES) {
+    const mine = cols.filter((c) => c.table_name === t);
+    if (!mine.length) { log(`    scm.${t}: TABLE NOT FOUND`); continue; }
+    const have = WANT.filter((w) => mine.some((c) => c.column_name === w));
+    const missing = WANT.filter((w) => !have.includes(w));
+    const canc = mine.find((c) => c.column_name === "cancelled");
+    log(`    scm.${t}  (${mine.length} columns)`);
+    log(`      has: ${have.join(", ") || "(none of the columns this repair needs)"}`);
+    log(`      LACKS: ${missing.join(", ") || "(nothing)"}`);
+    log(`      cancellable in place: ${canc ? `YES — cancelled ${canc.data_type}, nullable=${canc.is_nullable}, default ${canc.column_default ?? "(none)"}` : "NO — there is no cancelled column on this table"}`);
   }
 
   log("");

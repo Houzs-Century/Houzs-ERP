@@ -506,3 +506,29 @@ Watch as data grows:
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission
 inventory: `docs/generated/`.
+
+## A migrated DO line's snapshot columns (2026-08-11)
+
+`scm.delivery_order_items` carries `item_group`, `variants` and `description2`
+alongside the quantity, and the UI writer (`delivery-orders-mfg.ts:3484`) has
+always filled them. The **migrated** writer, `create-migrated-documents.mjs`,
+did not: until 2026-08-11 it named seven columns and left all three NULL on the
+entire company-1 cutover corpus.
+
+What that cost, and why it stayed hidden: `WHERE item_group IN ('sofa',
+'bedframe')` matched **zero** delivery-order lines, so every audit and report
+written against the parent's vocabulary returned an empty set and reported it
+as a clean chain. The GRN writer in the same file always copied `item_group`
+and `variants`, which is why the asymmetry went unnoticed.
+
+Both halves are fixed: the writer now copies all three, and
+`backfill-do-line-snapshot.mjs` filled the rows already written, taking them
+from the parent SO line — **a delivery order is a snapshot of the sales order
+at dispatch**, so `so_item_id` is the parent, not the GRN. A line whose
+`so_item_id` is NULL is reported and left alone; the product catalogue would
+supply a group, but a guess written into a snapshot column is indistinguishable
+from a fact afterwards.
+
+If you are classifying DO lines, still infer defensively — own tag, then the SO
+line, then `mfg_products.category` — because hand-made and pre-2026-08-11 rows
+both exist. See `docs/sofa-document-chain-map.md`.

@@ -16,6 +16,15 @@
 // the instruction to every future reconciliation and repair job: this document
 // has no movements ON PURPOSE. "Fixing" it doubles the inventory.
 //
+// BOTH WRITERS COPY item_group AND variants FROM THE PARENT, and the DO writer
+// copies description2 too. That is not decoration: an audit or a repair that
+// filters `WHERE item_group IN ('sofa','bedframe')` returns NOTHING when the
+// column is NULL, and reads the empty set as a clean chain. The DO writer
+// originally omitted all three and hid the entire SO -> DO leg for that reason
+// (2026-08-11, backfill-do-line-snapshot.mjs repaired the rows it had already
+// written). A child document here is a SNAPSHOT of its parent — copy the
+// classification with the quantity, always.
+//
 // KIND=grn | do | both (default both). DRY-RUN by default; APPLY=1 writes.
 import fs from "node:fs";
 import zlib from "node:zlib";
@@ -173,7 +182,16 @@ async function doDos() {
      it delivers does. */
   const soDebtor = new Map((await sql`SELECT doc_no, debtor_name FROM scm.mfg_sales_orders
     WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`).map((r) => [r.doc_no, r.debtor_name]));
-  const soItems = await sql`SELECT i.id, i.item_code, i.line_no, i.qty, h.doc_no, h.linked_ac_docno ac
+  /* item_group / variants / description2 are pulled BECAUSE A DELIVERY ORDER IS
+     A SNAPSHOT OF THE SALES ORDER AT DISPATCH. The first version of this writer
+     named seven columns and copied none of the three, and the failure mode was
+     silence: `WHERE item_group IN ('sofa','bedframe')` then matched ZERO
+     delivery-order lines corpus-wide, so the whole SO -> DO leg of
+     check-sofa-chain-alignment.mjs reported "aligned" while measuring an empty
+     set. The GRN writer above (:145) always copied them, which is exactly why
+     nobody noticed. Do not drop them again. */
+  const soItems = await sql`SELECT i.id, i.item_code, i.line_no, i.qty, i.item_group, i.variants,
+      i.description2, h.doc_no, h.linked_ac_docno ac
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL ORDER BY i.line_no`;
   const soByKey = new Map();
@@ -221,7 +239,8 @@ async function doDos() {
     if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: targets[0].doc_no,
       debtorCode: r.DebtorCode || null, debtorName: (r.DebtorName || "").trim() || null, items: [] });
     for (const t of targets) {
-      byDo.get(r.DoNo).items.push({ code: t.item_code, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)), soItemId: t.id });
+      byDo.get(r.DoNo).items.push({ code: t.item_code, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)),
+        soItemId: t.id, group: t.item_group ?? null, variants: t.variants ?? null, desc2: t.description2 ?? null });
     }
   }
   const plan = [...byDo.values()].filter((d) => !done.has(d.doNo));
@@ -255,8 +274,10 @@ async function doDos() {
         RETURNING id`;
       for (const it of d.items) {
         await tx`INSERT INTO scm.delivery_order_items
-            (delivery_order_id, so_item_id, item_code, description, uom, qty, company_id)
-          VALUES (${hdr.id}, ${it.soItemId}, ${it.code}, ${it.name || null}, 'UNIT', ${it.qty}, ${CO})`;
+            (delivery_order_id, so_item_id, item_code, description, uom, qty, company_id,
+             item_group, variants, description2)
+          VALUES (${hdr.id}, ${it.soItemId}, ${it.code}, ${it.name || null}, 'UNIT', ${it.qty}, ${CO},
+                  ${it.group}, ${it.variants ? sql.json(it.variants) : null}, ${it.desc2})`;
       }
     });
     made += 1;
