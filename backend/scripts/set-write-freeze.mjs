@@ -20,7 +20,7 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
 async function main() {
-  const [before] = await sql`SELECT value, description FROM public.app_config WHERE key = 'scm.write_freeze'`;
+  const [before] = await sql`SELECT value, description FROM scm.app_config WHERE key = 'scm.write_freeze'`;
   log(`current: ${before ? `value=${before.value} description=${before.description ?? "-"}` : "(row absent = open)"}`);
   const COMPANIES = (process.env.COMPANIES || "1").trim() || "1";
   const value = STATE === "on" ? COMPANIES : "off";
@@ -28,10 +28,10 @@ async function main() {
     ?? (STATE === "on"
       ? "Editing is paused while the AutoCount data migration is completed. Please do not create or change orders — ask IT when you need something updated."
       : null);
-  await sql`INSERT INTO public.app_config (key, value, description, updated_at)
+  await sql`INSERT INTO scm.app_config (key, value, description, updated_at)
     VALUES ('scm.write_freeze', ${value}, ${description}, now())
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description, updated_at = now()`;
-  const [after] = await sql`SELECT value, description FROM public.app_config WHERE key = 'scm.write_freeze'`;
+  const [after] = await sql`SELECT value, description FROM scm.app_config WHERE key = 'scm.write_freeze'`;
   const scope = String(after?.value ?? "off");
   log(`DONE. value=${scope} -> ${scope === "off" ? "OPEN for every company"
     : scope === "all" ? "FROZEN for EVERY company"
