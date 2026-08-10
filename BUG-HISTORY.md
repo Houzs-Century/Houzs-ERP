@@ -125,6 +125,107 @@ turning one into the other silently narrows it.
 
 **Ref** - 2026-08-11, PR #1952 (fix/specials-phrase-map-stiching).
 
+## The SO list said a document had NO purchase order while its own Relationship Map named one — the fix for the last version of this bug created this one [high]
+
+**Symptom** - live production, `/scm/sales-orders`, company Houzs Century:
+`HC-SO-011733` renders `—` in the PO No. column. The same document's
+Relationship Map shows `PURCHASE ORDER HC-PO-008783` linked, and
+`GRN HC-GR-004863` after it. Every row on the first page showed `—`.
+
+**Root cause (traced, not guessed)** - not a missing join. The column reads
+`source_po_union`, and that union is `soLineShippedSources` ∪
+`soLineReadySourcePos` — **both arms require EXECUTION**. The shipped arm needs
+a Delivery Order line carrying the `so_item_id`; the READY arm needs the line to
+be READY *and* its bucket to hold an open lot that still resolves to a PO.
+`HC-SO-011733` is CONFIRMED, all eight lines `stock_status='PENDING'`, zero DO
+lines — and four of its lines DO carry `purchase_order_items.so_item_id` →
+`HC-PO-008783` (status RECEIVED). That link was the old `converted_po_nos`
+content, which the 2026-08-02 fix demoted to a **tooltip on the em-dash**.
+
+Measured on production 2026-08-11 over the 2,723 Houzs Century sales orders:
+at most **53** can light either source arm (23 have any linked DO line; 30 have
+a READY line whose bucket holds a PO-resolvable open lot — 2,263 of the 2,366
+open lots are migrated with neither `batch_no` nor a GRN, so they resolve to
+nothing), while **277** carry a real non-cancelled PO on the line link. The
+column was therefore blank for **~91%** of the orders that have a purchase
+order. This is the SAME defect as the 2026-08-02 entry below, from the opposite
+side: that fix replaced one incomplete arm with two other incomplete arms.
+
+**Fix** - the cell renders the UNION of all three, with two chip identities that
+are never conflated: SOLID = goods source (`source_po_union`), MUTED = raised PO
+(`converted_po_nos`, filtered against the source set so a PO is never chipped
+twice), each carrying its own tooltip. `—` now means "no purchase order of any
+kind". Many-POs-to-one-SO is handled explicitly — the list cell caps at 3 and
+appends a `+N` chip whose title lists every PO (12 Houzs SOs carry 2, one
+carries 3), instead of rendering the first and staying silent. Before/after on
+production: **53 → 295** sales orders show a PO number, a gain of 242. One pure
+derivation (`frontend/src/lib/soPoChips.ts`) feeds desktop (`SoListPoCell` in
+`components/SoSourceChips.tsx`) and mobile (`SourcePosRowMobile`'s new `raised`
+slot), so the two surfaces cannot disagree about WHICH POs an order has. No
+backend change: `converted_po_nos` was already on the list payload.
+
+**The class, for next time** - a tooltip is not an answer. When a fix moves
+information OUT of a cell because the cell's new meaning is narrower, check
+what the cell now renders for the documents the new meaning cannot reach — here
+that was the entire un-shipped migrated corpus, i.e. the go-live corpus. And
+"the column is empty for every row on page one" is a population question, not a
+row question: measure the arms against production before theorising.
+
+**Ref** - 2026-08-11, `fix/so-list-po-and-specials-display`. Render tests for
+both surfaces in `frontend/src/components/SoListPoCell.test.tsx`.
+
+## A line's special orders printed twice — once as the raw slip phrase, once as the picker code the backfill derived from it [medium]
+
+**Symptom** - `HC-SO-011733`'s lead line renders
+`CH141-8-ARMY / SEAT 30 / LEG DEFAULT / SPECIAL: BACKCUSHIONCHANGE8030 + Change
+8030 Backcushion + Wooden Arm`. One request, printed twice. The other five
+lines of the same document are clean.
+
+**Root cause (traced, not guessed)** - the DATA is correct and must stay.
+`backfill-specials-into-variants.mjs` (PRs #1926/#1940) is deliberately
+MERGE-ONLY and machine-asserts that it never drops a pre-existing entry (the
+owner's 不可以删只可以 cancel rule), so a line whose slip already carried the
+parser's glued `BACKCUSHIONCHANGE8030` now also carries the picker code
+`Change 8030 Backcushion` the backfill mapped it to. `buildVariantSummary`
+(`scm/shared/variant-summary.ts`) maps `variants.specials` 1:1 into the SPECIAL
+segment with no dedupe and no validity filter, so both print.
+
+**Fix** - display-layer only, no stored data touched. `foldRedundantSpecials`
+hides an entry when another entry in the SAME list is a strictly richer twin of
+it — same identity, contains it, or is a re-ordering of its parts (`skey`, the
+parsers' own dedupe key: letters and digits only, nilon≡nylon, so the display
+agrees with the writer about what "the same phrase" means). Deliberately narrow:
+**only a SINGLE-TOKEN entry is ever hideable**, so a machine-glued artefact can
+be suppressed and an operator's multi-word request never can. Ranking picks the
+survivor — longer identity, then more word-parts (so the owner's spaced picker
+code beats the glued form), then original order — a strict total order, so the
+richest member of a twin group always survives and the segment can never be
+emptied. Verified by running the SHIPPED function over production: of **1,051**
+lines carrying specials, **216** rendered a redundant twin and now do not; **0**
+emptied, **0** live picker codes lost.
+
+**Where the phrase map was NOT put, and why** - folding the remaining **26**
+lines needs semantics, not lexicon: `NOSTICHINGINSITTINGAREA` beside
+`No notch on Seat Cushion`, `BACKRESTCHANGE8030` beside
+`Change 8030 Backcushion` (backrest≡backcushion is an owner ruling). Only
+`backend/scripts/data/special-order-phrase-map.json` knows that. It is a Node
+script data file; the browser needs it too, because the SO detail page
+(`SalesOrderDetailV2.tsx:733`) recomputes the summary client-side and PREFERS
+its result over the stored `description2`. Reaching it would mean a copy in the
+Worker bundle and a copy in the browser bundle — a fourth and fifth copy of a
+ruling that is already implemented twice and **already drifted** (the entry at
+the top of this file). Twenty-six lines is not worth that, so the residual is
+measured and reported rather than guessed at. If the owner wants it, the honest
+shape is: one canonical file + a mirror test, not two hand-kept copies.
+
+**Also fixed on the way** - `backend/src/scm/shared/variant-summary.ts` and
+`frontend/src/vendor/shared/variant-summary.ts` are byte-identical hand copies
+with **nothing** guarding them, and this fix had to land in both. A byte-equality
+test now pins them (`frontend/src/vendor/shared/variant-summary.test.ts`), which
+is also the first test this module has ever had for its specials output.
+
+**Ref** - 2026-08-11, `fix/so-list-po-and-specials-display`.
+
 ## The ERP composed an AutoCount edit that would append duplicate lines, and its own refusal would have been invisible [critical]
 
 **Symptom** - none observed: the write-back has never been switched on. Had it

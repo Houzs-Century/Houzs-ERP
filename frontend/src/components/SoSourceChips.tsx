@@ -24,6 +24,7 @@
 
 import { showDeliveredQty, sourcePoTitle, StockAdjChip } from "./DocumentLinesExpansion";
 import { cn, formatDate } from "../lib/utils";
+import { PO_CELL_MAX, poCellChips, type SoPoChipRow } from "../lib/soPoChips";
 
 export type ReadySourceChip = {
   po: string | null;
@@ -139,6 +140,57 @@ export function SoSourceChips({ line }: { line: SoLineSourceFields }) {
         </span>
       )}
     </span>
+  );
+}
+
+/* SO LIST "PO No." cell (2026-08-11) — a LIST surface, so unlike the drill
+   above it caps and shows a "+N". Two chip identities, never conflated:
+
+     solid  a GOODS SOURCE (`source_po_union`) — shipped consumed batch or
+            READY allocation. "他拿的货是谁的货".
+     muted  a RAISED PO (`converted_po_nos`) — this SO's lines were converted
+            into that purchase order. Procurement provenance, the same muted
+            dress the "bought for" chips wear on the purchase-doc rows.
+
+   The raised arm is visible because both source arms need EXECUTION (a DO line,
+   or an open lot that still resolves to a PO). A CONFIRMED order that has not
+   shipped satisfies neither, so the cell used to render "—" — with the raised
+   PO hidden in a tooltip ON the em-dash — for documents whose own Relationship
+   Map named a purchase order. Mobile twin: `SourcePosRowMobile`'s `raised`
+   slot in mobile/source-chips.tsx. Keep the two in lockstep. */
+export function SoListPoCell({ row }: { row: SoPoChipRow }) {
+  const { source, all } = poCellChips(row);
+  if (all.length === 0 && !row.source_po_adj) return <span className="text-ink-muted">—</span>;
+  const shown = all.slice(0, PO_CELL_MAX);
+  const hidden = all.length - shown.length;
+  const raisedTone =
+    "rounded border border-border-subtle bg-surface-dim px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary";
+  return (
+    <div className="flex flex-wrap gap-1">
+      {shown.map((n) => (source.includes(n) ? (
+        <span
+          key={n}
+          title={`Source PO ${n} — the goods on this order come from this purchase order (shipped batch or READY allocation).`}
+          className="rounded bg-primary-soft px-1.5 py-0.5 font-docno text-[11px] font-semibold text-primary-ink"
+        >
+          {n}
+        </span>
+      ) : (
+        <span
+          key={n}
+          title={`Raised PO ${n} — this order's lines were converted into this purchase order. Procurement provenance: the goods have not been drawn from stock yet, so it is not (yet) a goods source.`}
+          className={raisedTone}
+        >
+          {n}
+        </span>
+      )))}
+      {hidden > 0 && (
+        <span title={`All purchase orders on this sales order: ${all.join(", ")}`} className={raisedTone}>
+          {`+${hidden}`}
+        </span>
+      )}
+      {row.source_po_adj && <StockAdjChip />}
+    </div>
   );
 }
 
