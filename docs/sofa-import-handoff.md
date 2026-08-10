@@ -339,11 +339,26 @@ AutoCount 的 `vItemBalQty` 只有「AMN-SF9028 SOFA 在 KL 有 6 台」,**没�
 
 19 行原文没写件(只写了颜色/工艺,要看图)、6 行没写座深。清单在会话里发过 CSV。
 
-### 8.4 其他
+### 8.4 HC-SO-000814 少了整条沙发行(2026-08-10 dry-run 查到,**没人动过**)
+
+`open-5526-model.mjs` 的 prod dry-run 报:`HC-SO-000814 ... 0 sofa line(s) ...
+document lines: accessory:1`。单在 ERP 里,但**只剩一条 accessory 行**(RDS-SQUARE
+PILLOW),AutoCount 那条 `RDS-5526 SOFA`(DtlKey 58980,**UnitPrice 9,300**)不在。
+
+- 那条行 `TransferedQty 1 >= Qty 1`(已交货),但**整单**没交完(pillow 还欠 2),
+  按 §6 的 owner 规则整单该导、行也该在
+- importer 没有「逐行跳过已交货」的分支,`skipMixed` 又是整单跳,所以**不是导入时漏的那么简单**——
+  可能是后来某个清理/修复脚本删掉的。**没查出来,别猜**
+- 影响:这张 ERP 单的金额比 AutoCount 少 9,300。**先核对单头总额**再决定补行还是重导
+- 五个 5526 的 SO/PO 都对得上,只有这一条不在;`open-5526-model.mjs` 遇到它是 skip,不会瞎补
+
+### 8.5 其他
 
 - 89 行占位(含标记)等人工补件
 - 1 张已交货单留着没删(付款是人工录的)
 - 620 行的成本没盖上,因为产品本身还没有厂价
+- **5526 的供应商绑定没动**(见 §3.4):六个 8038 件的 `supplier_sku` 还是
+  `RDS-5526 SOFA`,`8038-1S` 还是 RED SOFA 的 main binding —— 等 owner 定
 
 ---
 
