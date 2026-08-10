@@ -1,11 +1,16 @@
 ## The sofa purchase orders were never dedicated, and the delivery dates were lost to a renamed key [high]
 
 **Symptom** — 274 of 714 processed bedframe/sofa sales-order lines (38%) have no
-dedicated purchase order, and 388 of 963 `scm.purchase_order_items` rows carry
-`so_item_id IS NULL`. Separately, 76 migrated PO lines and 37 headers show a
-blank EXPECTED DELIVERY although AutoCount has a date on every line, and
-`backfill-po-expected-at.mjs` cannot rescue them because it derives the header
-from the LINES and the lines are the thing that is null.
+dedicated purchase order. Measured live on 2026-08-10 rather than taken on
+trust: **400 of 975** `scm.purchase_order_items` rows carry `so_item_id IS
+NULL`, of which the existing three-tier backfill can stamp **zero** (Tier 1/2/3
+all 0; 392 have no delivered chain and no usable note). Separately **110** of
+the 864 migrated PO lines and **48** headers show a blank EXPECTED DELIVERY
+although AutoCount has a date on every line, and `backfill-po-expected-at.mjs`
+cannot rescue them — its own production dry-run says so in one line: `can be
+filled from their own lines: 0; still blank because no LINE carries a date
+either: 48`. It derives the header from the LINES, and the lines are the thing
+that is null.
 
 **Root cause, traced not guessed** — three faults on the same rows, and the
 first theory was REFUTED before any of them was found. It is NOT that the sofa
@@ -65,6 +70,12 @@ second half of the class: *a column missing from an INSERT is invisible to
 every reader* — nothing downstream can distinguish "never written" from
 "genuinely absent", which is why the second importer's skip-if-exists looked
 correct while it was silently the reason nothing ever went back.
+
+**What the production DRY-RUN plans** — 796 line keys, 87 delivery dates, 99
+dedications (sofa 66, accessory 27, bedframe 6) and 46 header dates; 1 group
+refused; 292 lines reported one-by-one with the reason they cannot be repaired
+by anyone — 143 have no `FromSODtlKey` at all (a stock PO) and 16 point at
+orders that were fully delivered and correctly never imported.
 
 **Ref** — 2026-08-10, PR #1905 (fix/po-dedication-and-dates).
 
