@@ -10,12 +10,25 @@ name: Census the array-shaped custom_specials
 # is migrated, and whether variants.specials (the field the picker reads)
 # already carries codes.
 #
-# DRY-RUN by default and read-only in that mode. apply=1 sets to NULL ONLY the
-# bare-string[] class — never the pricing engine's own correct output, never an
-# empty array, never the 'other' class. Every candidate's current value is
-# printed IN FULL before the write, so the prior state survives in the run log;
-# the count comes from RETURNING and is confirmed by a read-back on a fresh
-# connection.
+# WHAT THE FIRST PROD RUN FOUND (31428435434, 2026-08-11). All 604 array-shaped
+# rows (SO 511, PO 93) are bare string[]; none is the declared object shape.
+# But 679 of their 694 strings are LIVE picker codes, every row is migrated, and
+# every row's variants.specials holds exactly as many entries as its
+# custom_specials. So the content is RIGHT and only the shape is legacy — which
+# refutes the leg #1944's repair stood on ("valid jsonb holding wrong data is
+# worse than empty"). NULLing them would delete a correct, currently-rendering
+# line item from 604 historical documents. The script therefore reports those as
+# NOT candidates.
+#
+# The only wrong-content rows are the 15 carrying raw slip text (BOTHWANT,
+# FABRICHARRING, LSIDE, DAYBED, "request to normal leg and not fully cover") —
+# and the same text sits in variants.specials, the field the PICKER reads, so
+# nulling only the derived cache hides it from the report and leaves it in the
+# operator's view. That is an owner decision, so it needs apply=1 AND
+# apply_text=1 together. Every value is printed IN FULL before any write; the
+# count comes from RETURNING and is confirmed on a fresh connection.
+#
+# DRY-RUN by default and read-only in that mode.
 on:
   workflow_dispatch:
     inputs:
@@ -31,7 +44,12 @@ on:
         default: "1"
         type: string
       apply:
-        description: "1 to NULL the bare string[] rows, else DRY-RUN"
+        description: "1 to write, else DRY-RUN. Alone it does nothing: the only writable class also needs apply_text"
+        required: false
+        default: "0"
+        type: string
+      apply_text:
+        description: "1 ONLY after the owner has decided what happens to the same raw text in variants.specials"
         required: false
         default: "0"
         type: string
@@ -59,6 +77,7 @@ jobs:
       - run: node scripts/census-custom-specials-arrays.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          APPLY_TEXT: ${{ inputs.apply_text }}
           COMPANY: ${{ inputs.company }}
           SHOW: ${{ inputs.show }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
@@ -75,6 +94,7 @@ jobs:
       - run: node scripts/census-custom-specials-arrays.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          APPLY_TEXT: ${{ inputs.apply_text }}
           COMPANY: ${{ inputs.company }}
           SHOW: ${{ inputs.show }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
