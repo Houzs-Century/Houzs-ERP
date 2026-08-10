@@ -2042,9 +2042,13 @@ lines per document and names the shortfall — built on the SAME
 cannot drift apart.
 
 **Two things the first prod DRY-RUN corrected, which is why it is DRY-RUN
-first** — the ERP row does not store the AutoCount `DtlKey` (no such column), so
-lines are matched on `supplier_sku`. But 225 of the 862 migrated PO lines carry
-NO `supplier_sku` at all, written by neither importer —
+first** — the strongest handle, `linked_ac_dtlkey`, arrived in migration 0273
+(#1819) while this was being written and is not yet applied to production; it is
+nullable by design and `backfill-ac-line-keys` matches on (DocNo + ERP code),
+which cannot reach a sofa compartment whose code is `${model}-{piece}`. So it is
+used where it exists, set on every row this repair writes, and never relied on
+alone. Below it, lines are matched on `supplier_sku`. But 225 of the 862 migrated
+PO lines carry NO `supplier_sku` at all, written by neither importer —
 `apply-sofa-compartment-corrections.mjs:212-217` is one such writer, inserting a
 corrected compartment by SELECTing from the source row without carrying the
 column. Zero of those 225 duplicate a with-sku row's code on the same PO, so they

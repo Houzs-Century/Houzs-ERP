@@ -91,13 +91,19 @@ async function main() {
     const m = erp.replace(/-1S$/i, "");
     return { code: erp, sofaModel: SOFA_MODEL_ALIAS[m] || m };
   };
-  const poItemRows = await sql`SELECT p.linked_ac_docno ac, i.supplier_sku, i.material_code
-    FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-    WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
+  const HAS_DTLKEY = (await sql`SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'scm' AND table_name = 'purchase_order_items' AND column_name = 'linked_ac_dtlkey'`).length > 0;
+  const poItemRows = HAS_DTLKEY
+    ? await sql`SELECT p.linked_ac_docno ac, i.supplier_sku, i.material_code, i.linked_ac_dtlkey
+        FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+        WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`
+    : await sql`SELECT p.linked_ac_docno ac, i.supplier_sku, i.material_code, NULL::bigint AS linked_ac_dtlkey
+        FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+        WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
   const poItemsByAc = new Map();
   for (const r of poItemRows) {
     if (!poItemsByAc.has(r.ac)) poItemsByAc.set(r.ac, []);
-    poItemsByAc.get(r.ac).push({ supplierSku: r.supplier_sku, materialCode: r.material_code });
+    poItemsByAc.get(r.ac).push({ supplierSku: r.supplier_sku, materialCode: r.material_code, linkedAcDtlKey: r.linked_ac_dtlkey });
   }
   let poDocsChecked = 0, poDocsAbsent = 0, poAcLines = 0, poErpRows = 0, poShort = 0, poUnassigned = 0, poAmbiguous = 0;
   const poShortDocs = [];
@@ -120,7 +126,7 @@ async function main() {
   }
   log(`PO lines: AutoCount ${poAcLines} across ${poDocsChecked} documents present in the ERP; ERP rows ${poErpRows}; AutoCount lines with NO ERP row at all: ${poShort} across ${poShortDocs.length} documents`);
   log(`   (AutoCount PO documents not in the ERP at all: ${poDocsAbsent} - those are section 1's number, not a line shortfall)`);
-  log(`   ERP rows no AutoCount ItemCode on their document could claim: ${poUnassigned}; claimable by two ItemCodes so claimed by neither: ${poAmbiguous}`);
+  log(`   claimed by linked_ac_dtlkey ${HAS_DTLKEY ? poItemRows.filter((r) => r.linked_ac_dtlkey != null).length : "n/a (0273 not applied here)"}; rows no AutoCount ItemCode on their document could claim: ${poUnassigned}; claimable by two ItemCodes so claimed by neither: ${poAmbiguous}`);
   for (const d of poShortDocs.slice(0, 30)) log(`   ${d.doc}: AutoCount ${d.acLines} lines / ERP ${d.erpRows} rows -> short ${d.missing.join(", ")}`);
   if (poShortDocs.length > 30) log(`   ... and ${poShortDocs.length - 30} more documents`);
 
