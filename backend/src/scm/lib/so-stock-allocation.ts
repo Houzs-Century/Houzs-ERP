@@ -304,7 +304,7 @@ export async function recomputeSoStockAllocation(
           line's existing stock_qty_ready — used to compute "did the value
           change". */
     const WH_NONE = 'NOWH';
-    type LineNeed = { id: string; doc_no: string; bucket: string; whId: string | null; need: number; current: string; curReady: number };
+    type LineNeed = { id: string; doc_no: string; bucket: string; whId: string | null; need: number; current: string; curReady: number; group: string };
     const needs: LineNeed[] = [];
     /* Sofa lines walk the batch-bound path instead of the per-line bucket
        fill. Keep the SKU + variant + remaining so we can check each module's
@@ -344,6 +344,7 @@ export async function recomputeSoStockAllocation(
         id: l.id, doc_no: l.doc_no, bucket, whId,
         need: remaining, current: l.stock_status,
         curReady: Number(l.stock_qty_ready ?? 0),
+        group: (l.item_group ?? '').toLowerCase(),
       });
     }
     if (needs.length === 0 && sofaLineRecs.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
@@ -387,6 +388,48 @@ export async function recomputeSoStockAllocation(
       onHandByBucket.set(whKey, (onHandByBucket.get(whKey) ?? 0) + qty);
     }
 
+    /* 6b. BOUND MODE — a line whose OWN purchase order has been received is
+           ready, whatever the pooled buckets say (owner 2026-08-10: "Houzs 的
+           BEDFRAME 可以用 Convert To … 代表这个 PO 是 assign 给这个 SalesOrder
+           的", to run until the migrated stock is delivered off, then switch to
+           2990's pooled model).
+
+           This is not a nicety, it is the only way the migrated data can read
+           correctly: the AutoCount stock snapshot carries NO variant, so every
+           imported bedframe unit landed under a blank variant_key while its SO
+           line carries colour + heights. Pooled matching is
+           warehouse+code+variant_key, so those two can never meet and a
+           bedframe physically standing in the warehouse would report PENDING
+           forever.
+
+           Claimed units are also DECREMENTED from the pooled bucket (exact
+           variant first, then the blank-variant bucket the migration created),
+           so a dedicated receipt can never be counted twice — once for its own
+           SO here, and again for somebody else's line in the pooled walk below. */
+    /* Only the variant-bearing categories run bound. Owner 2026-08-10:
+       "SOFA 和 BEDFRAME 因为有变体的问题,所以要走 Convert to PO 的那个模式.
+        可是 MATTRESS 跟 Accessories 都是没有变体的 ... 走回我们正常 MRP 的模式".
+       Mattress and accessories are common stock: pooling them is correct and
+       is what the floor already expects, so they must NOT be diverted. */
+    const BOUND_GROUPS = new Set(['bedframe', 'sofa']);
+    const dedicatedReady = new Map<string, number>();
+    const boundNeeds = needs.filter((n) => BOUND_GROUPS.has(n.group));
+    if (boundNeeds.length > 0) {
+      const lineIds = boundNeeds.map((n) => n.id);
+      const { data: poLinkRows } = await chunkIn<{ so_item_id: string; qty: number; received_qty: number | null }>(
+        lineIds,
+        (batch, from, to) => sb
+          .from('purchase_order_items')
+          .select('so_item_id, qty, received_qty')
+          .in('so_item_id', batch)
+          .range(from, to),
+      );
+      for (const r of (poLinkRows ?? []) as Array<{ so_item_id: string; received_qty: number | null }>) {
+        const got = Number(r.received_qty ?? 0);
+        if (got > 0) dedicatedReady.set(r.so_item_id, (dedicatedReady.get(r.so_item_id) ?? 0) + got);
+      }
+    }
+
     /* 7. Walk needs in priority order. Partial fill (#4) — when bucket has
           some but not enough, allocate what's available and mark the line
           PARTIAL (stock_qty_ready = whatever fit). Full fill → READY. Zero
@@ -394,7 +437,28 @@ export async function recomputeSoStockAllocation(
     type TargetState = { status: 'READY' | 'PENDING' | 'PARTIAL'; qtyReady: number };
     const targetById = new Map<string, TargetState>();
     const remaining = new Map(onHandByBucket);
+    // Bound lines first, so their units leave the pool before anyone else walks it.
+    for (const n of boundNeeds) {
+      if (allocGated.has(n.doc_no)) continue;
+      const got = dedicatedReady.get(n.id) ?? 0;
+      if (got <= 0) continue;
+      const fill = Math.min(got, n.need);
+      targetById.set(n.id, fill >= n.need
+        ? { status: 'READY', qtyReady: n.need }
+        : { status: 'PARTIAL', qtyReady: fill });
+      // take the units out of the pool: exact bucket first, then blank-variant
+      let left = fill;
+      for (const key of [n.bucket, `${n.whId ?? WH_NONE}::${n.bucket.split('::')[1]}::`]) {
+        if (left <= 0) break;
+        const have = remaining.get(key) ?? 0;
+        if (have <= 0) continue;
+        const take = Math.min(have, left);
+        remaining.set(key, have - take);
+        left -= take;
+      }
+    }
     for (const n of needs) {
+      if (targetById.has(n.id)) continue; // settled by its dedicated PO above
       if (allocGated.has(n.doc_no)) {
         targetById.set(n.id, { status: 'PENDING', qtyReady: 0 });
         continue;

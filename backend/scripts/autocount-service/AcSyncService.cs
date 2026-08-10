@@ -40,7 +40,7 @@
 //     /r:System.Web.Extensions.dll /r:System.Data.dll ^
 //     /out:AcSyncService.exe AcSyncService.cs
 //
-// Run: AcSyncService.exe   (listens on http://localhost:8899/)
+// Run: AcSyncService.exe   (port from C:\Tempc-svc-port.txt, default 8900)
 // Routes (all POST, header X-API-KEY):
 //   /health          -> { ok, book }
 //   /create-so       -> { docNo }      payload = header + Details[]
@@ -66,7 +66,13 @@ using System.Web.Script.Serialization;
 class AcSyncService {
   const string AC   = @"C:\Program Files\AutoCount\Accounting 2.2";
   const string BOOK = "AED_HOUZS";
-  const string URL  = "http://localhost:8899/";
+  /* Port is a FILE, not a constant: 8899 turned out to be pinned inside
+     http.sys by an orphaned listener registration from the cutover file
+     server, and a service that cannot be moved without a recompile is a
+     service that fights the machine it runs on. Default 8900. */
+  static string Url =
+    "http://localhost:" + (File.Exists(@"C:\Tempc-svc-port.txt")
+      ? File.ReadAllText(@"C:\Tempc-svc-port.txt").Trim() : "8900") + "/";
   const string USER = "ADMIN";
 
   static string ApiKey =
@@ -83,9 +89,16 @@ class AcSyncService {
 
   static void Serve() {
     var l = new HttpListener();
-    l.Prefixes.Add(URL);
-    l.Start();
-    Console.WriteLine("AcSyncService listening on " + URL + "  (book=" + BOOK + ")");
+    l.Prefixes.Add(Url);
+    try { l.Start(); }
+    catch (Exception ex) {
+      /* Started detached, so an unlogged bind failure looks like "the service
+         silently did nothing". Record it where the operator will look. */
+      Log("LISTEN FAILED on " + Url + ": " + ex.Message);
+      throw;
+    }
+    Log("AcSyncService listening on " + Url + "  (book=" + BOOK + ")");
+    Console.WriteLine("AcSyncService listening on " + Url + "  (book=" + BOOK + ")");
     while (true) {
       var ctx = l.GetContext();
       try { Handle(ctx); }
