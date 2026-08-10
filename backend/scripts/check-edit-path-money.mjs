@@ -345,7 +345,31 @@ try {
           JOIN scm.mfg_sales_orders h
             ON h.doc_no = i.doc_no AND h.company_id = i.company_id
          WHERE h.linked_ac_docno IS NOT NULL`;
-      notice(`6b. Those orders hold ${z.lines} line(s), of which ${z.zero_priced} are priced 0 — the sofa-sibling shape (whole set on the lead module, 0 on the siblings) that a catalogue rewrite destroys.`);
+      const pct = z.lines > 0 ? Math.round((z.zero_priced / z.lines) * 1000) / 10 : 0;
+      notice(`6b. Those orders hold ${z.lines} line(s), of which ${z.zero_priced} (${pct}%) are priced 0. EVERY one of them would take a catalogue price on the next approved amendment before the 'including-zero' fix.`);
+
+      /* The first version of this line asserted that the 0-priced lines ARE "the
+         sofa-sibling shape (whole set on the lead module, 0 on the siblings)".
+         It never measured category, and 78% of all migrated lines being sofa
+         siblings was never plausible — most are simply lines the import carried
+         without a price. The sofa-sibling shape is the WORST case in here, not
+         the whole of it, and the difference matters: a stale fact in a
+         diagnostic is worse than no fact, because the diagnostic is what the
+         next person trusts. So measure it instead of asserting it. */
+      const byGroup = await pg`
+        SELECT COALESCE(NULLIF(lower(trim(i.item_group)), ''), '(none)') AS grp,
+               COUNT(*)::int AS lines,
+               COUNT(*) FILTER (WHERE COALESCE(i.unit_price_centi,0) = 0)::int AS zero_priced
+          FROM scm.mfg_sales_order_items i
+          JOIN scm.mfg_sales_orders h
+            ON h.doc_no = i.doc_no AND h.company_id = i.company_id
+         WHERE h.linked_ac_docno IS NOT NULL
+         GROUP BY 1 ORDER BY 3 DESC`;
+      console.log(`\n  ${rpad("item_group", 30)}${lpad("lines", 8)}${lpad("priced 0", 10)}`);
+      for (const g of byGroup) console.log(`  ${rpad(g.grp, 30)}${lpad(g.lines, 8)}${lpad(g.zero_priced, 10)}`);
+      const sofaZero = byGroup.filter((g) => g.grp.includes('sofa')).reduce((a, g) => a + g.zero_priced, 0);
+      console.log("");
+      notice(`6c. Of the 0-priced migrated lines, ${sofaZero} are SOFA — the lead-module/sibling shape where a catalogue rewrite bills the same set several times over. The rest are lines the import carried without a price; preserving them is still correct, but it is a different fact.`);
     } else {
       notice("6b. Could not measure 0-priced migrated lines: line table / unit_price_centi column not found under the expected names.");
     }
