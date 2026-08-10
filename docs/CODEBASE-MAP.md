@@ -365,5 +365,10 @@ re-check the cited file rather than trusting the line.
   artifact — see the script header).
 - `docs/PERMISSION-MATRIX.md`, `docs/ARCHITECTURE.md`, `docs/agents/operating-spec.md`.
 - `docs/modules/sales-order.md` for the SO document flow in depth.
+- `docs/autocount-cutover-ledger.md` — the permanent record of every row the AutoCount
+  go-live pushed into company 1: how to tell a migrated row from a real one (the exact
+  SQL predicates), what each import wave wrote with its run id, and — the one that bites —
+  which imported documents carry `received_qty` but deliberately no GRN, because posting
+  one would count the same stock twice.
 - `frontend/src/pages/scm-v2/_VENDORING_PROGRESS.md` for what was vendored, when, and
   with what caveats.
