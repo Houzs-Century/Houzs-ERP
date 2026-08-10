@@ -348,9 +348,17 @@ async function main() {
   }
   log(`ERP orders linked to an AutoCount DocNo: ${byOrder.size}`);
 
+  /* The ERP emits the category list in a fixed order (BEDFRAME, SOFA, MATTRESS,
+     then ACC). AutoCount's Remark2 is typed by hand, so the same meaning shows
+     up as "BEDFRAME/ACC" 31 times and "ACC/BEDFRAME" twice. Comparing the raw
+     strings would report the second spelling as a disagreement when the two
+     systems in fact agree. Order-insensitive is the honest comparison; the
+     raw-string count is kept beside it so the cosmetic gap stays visible. */
+  const canon = (s) => (s || "").split("/").map((t) => t.trim()).filter(Boolean).sort().join("/");
+
   const matrix = new Map();
   const mismatches = [];
-  let compared = 0, missingInAc = 0;
+  let compared = 0, missingInAc = 0, orderOnly = 0;
   for (const [doc, o] of byOrder) {
     const ac = acRem.get(doc);
     if (!ac) { missingInAc += 1; continue; }
@@ -358,10 +366,21 @@ async function main() {
     compared += 1;
     const key = `${ac.remark || "(blank)"} => ${erpRemark || "(blank)"}`;
     matrix.set(key, (matrix.get(key) ?? 0) + 1);
-    if ((ac.remark || "") !== (erpRemark || "")) mismatches.push({ doc, erpDoc: o.doc_no, ac: ac.remark, erp: erpRemark, status: o.status });
+    const sameCanon = canon(ac.remark) === canon(erpRemark);
+    if (sameCanon && (ac.remark || "") !== (erpRemark || "")) orderOnly += 1;
+    if (!sameCanon) mismatches.push({ doc, erpDoc: o.doc_no, ac: ac.remark, erp: erpRemark, status: o.status, outstanding: ac.outstanding });
   }
   log(`orders compared: ${compared}; linked but absent from the AutoCount export: ${missingInAc}`);
-  log(`AGREE: ${compared - mismatches.length}; DISAGREE: ${mismatches.length}`);
+  log(`AGREE: ${compared - mismatches.length}; DISAGREE: ${mismatches.length}; of the agreeing, differing only in token ORDER: ${orderOnly}`);
+
+  const byShape = new Map();
+  for (const m of mismatches) {
+    const k = `${m.ac || "(blank)"} => ${m.erp || "(blank)"}`;
+    byShape.set(k, (byShape.get(k) ?? 0) + 1);
+  }
+  log("");
+  log("disagreement shapes, most common first:");
+  for (const [k, n] of [...byShape.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25)) log(`  ${String(n).padStart(5)}  ${k}`);
   log("");
   log("agreement matrix (AutoCount Remark2 => ERP stock remark):");
   for (const [k, n] of [...matrix.entries()].sort((a, b) => b[1] - a[1])) {
