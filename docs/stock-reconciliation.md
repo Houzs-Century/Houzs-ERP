@@ -491,6 +491,22 @@ checker removes:
    for the balance per location precisely because that is the error that hurts:
    staff go to a shelf that is empty. Only a per-warehouse comparison can see
    it, and `C&C K.J` alone holds 507 units that the item-level view folds away.
+
+   This is not hypothetical. Before the cutover import, the ERP held stock in
+   essentially **one** warehouse — run `30743741237` (2026-08-02) reports 519
+   owned units at `KL WAREHOUSE` and nothing anywhere else. The import was
+   supposed to spread roughly 9,600 units across fifteen locations using the
+   `SALESLOC` map. **Whether it actually did has never been verified**, because
+   the only checker that looks at balances groups by `product_code` alone:
+
+   ```
+   -- check-ac-vs-erp-reconcile.mjs:125 — no warehouse dimension
+   SELECT product_code, SUM(qty)::int qty FROM scm.inventory_balances ...
+   ```
+
+   If every unit had landed at `KL WAREHOUSE`, the item-level check would still
+   report 93% agreement. That gap is the single largest unverified risk in the
+   balance axis, and closing it is the main reason the new checker exists.
 2. **It compares against a frozen snapshot, not the live book.** The −97 units
    AutoCount has shipped since (section 5) are invisible to it.
 3. **It does not exclude the pseudo-items**, so its own headline is distorted
