@@ -198,7 +198,7 @@ try {
     SELECT DISTINCT p.code AS product_code, m.allowed_options
       FROM scm.mfg_products p
       LEFT JOIN scm.product_models m ON m.id = p.model_id
-     WHERE p.company_id = ${CO} AND upper(p.category) = 'SOFA'`;
+     WHERE p.company_id = ${CO} AND upper(p.category::text) = 'SOFA'`;
   let restrictive = 0, permissive = 0, wouldRetire = 0;
   for (const m of models) {
     const pool = m.allowed_options?.specials;
@@ -219,22 +219,34 @@ try {
   // ==========================================================================
   // Q1 — three real lines, both fields side by side
   // ==========================================================================
-  log("");
-  log("================ Q1  three real backfilled SO lines ================");
-  const samples = soLines
-    .filter((r) => Array.isArray(r.custom_specials) && r.custom_specials.length >= 2)
-    .slice(0, 3);
-  if (samples.length === 0) log("  (no SO line carries 2+ custom_specials entries)");
-  for (const r of samples) {
+  const dump = (r) => {
     const vs = specialsList(r.variants?.specials ?? r.variants?.special);
     log("");
     log(`  ${r.doc_no}  line id ${r.id}  item ${r.code}`);
     log(`    description2      : ${String(r.d2 ?? "").replace(/\s+/g, " ").slice(0, 220)}`);
     log(`    custom_specials   : ${JSON.stringify(r.custom_specials)}`);
     log(`    variants.specials : ${JSON.stringify(r.variants?.specials ?? r.variants?.special ?? null)}`);
-    log(`    variants keys     : ${Object.keys(r.variants ?? {}).sort().join(", ") || "(none)"}`);
-    log(`    -> picker would show (${vs.length} selected)`);
-  }
+    log(`    extraAddonNote    : ${JSON.stringify(r.variants?.extraAddonNote ?? null)}`);
+    log(`    -> the picker header would read "Special Orders (${vs.length + (String(r.variants?.extraAddonNote ?? "").trim() ? 1 : 0)} selected)"`);
+    log(`       of which ticked picker codes: ${vs.filter((c) => live.has(K(c))).length}`);
+  };
+
+  log("");
+  log("=========== Q1  real SO lines that still carry custom_specials ===========");
+  const withCs = soLines.filter((r) => Array.isArray(r.custom_specials) && r.custom_specials.length > 0).slice(0, 3);
+  if (withCs.length === 0) log("  NONE — no migrated sofa SO line carries any custom_specials right now.");
+  withCs.forEach(dump);
+
+  /* The backfill's own population: a line whose description2 still decodes to a
+     special order. These are the lines it reported writing, so they are the
+     honest sample for "did the write land and does the picker show it". */
+  log("");
+  log("=========== Q1  real SO lines the backfill TARGETED (d2 carries a special) ===========");
+  const targeted = soLines
+    .filter((r) => /nilon|nylon|umbrella|fully cover|back ?rest|back ?cushion|firmer|wooden|bracket|notch|stitch/i.test(String(r.d2 ?? "")))
+    .slice(0, 3);
+  if (targeted.length === 0) log("  (no line matched the sample probe)");
+  targeted.forEach(dump);
 
   log("");
   await pg.end();
