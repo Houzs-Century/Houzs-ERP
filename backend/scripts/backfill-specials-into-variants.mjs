@@ -275,7 +275,11 @@ async function main() {
             `UPDATE scm.${table}
                 SET variants = jsonb_set(COALESCE(variants, '{}'::jsonb), '{specials}', $1::jsonb, true)
               WHERE id = $2`,
-            [JSON.stringify(u.next), u.id]);
+            // tx.json, never JSON.stringify - see BUG-HISTORY 2026-08-10.
+            // Pre-stringifying makes postgres.js encode the value twice, so
+            // jsonb_set writes variants.specials as a STRING and every
+            // Array.isArray() reader sees nothing.
+            [tx.json(u.next), u.id]);
       });
       log(`  ${which} ..${Math.min(i + 200, list.length)}/${list.length}`);
     }
