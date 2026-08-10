@@ -13,16 +13,28 @@
 // as machine-readable TSV, and a companion local script
 // (scratchpad ac-truth-scope.py) joins them to live AutoCount over read-only ODBC.
 //
-// THE JOIN PATH, and why it is trustworthy:
+// THE JOIN PATH — and the thing this check DISPROVED on its first run.
+//
+// The design assumed an exact line-to-line key existed:
 //   scm.grn_items.purchase_order_item_id
 //     -> scm.purchase_order_items.linked_ac_dtlkey   (migration 0273)
-//     == AutoCount PODTL.DtlKey                      EXACT, one-to-one
-// That is a real line-to-line key, not a fuzzy match. It only carries us to the
-// AutoCount PURCHASE ORDER line; the remaining PO -> GR -> PI hop inside
-// AutoCount has no line keys at all (PIDTL.FromDocDtlKey is populated on 0 of
-// 20,777 rows) and must use the three-part (doc, ItemCode, Desc2) key. The
-// ambiguity therefore lives entirely in that second hop and is measured there,
-// on the AutoCount side, not here.
+//     == AutoCount PODTL.DtlKey
+// Migration 0273 does add that column. IT WAS NEVER BACKFILLED: on production,
+// 2026-08-11, it is populated on 0 of 496 migrated GRN lines, 0 of 59 migrated
+// DO lines and 0 of 864 cutover PO lines. So the exact key does not exist in
+// data, and this script REPORTS that count rather than quietly falling back —
+// a join path that silently degrades is how a wrong cost gets written.
+//
+// What is left is document-level, and it is what the conversion must actually
+// use: grns.linked_ac_docno gives the AutoCount PO number, and
+// purchase_orders.linked_ac_grn_docnos gives the AutoCount GR number(s). From
+// there AutoCount itself has no line keys either (PIDTL.FromDocDtlKey populated
+// on 0 of 20,777 rows; IVDTL.FromDocDtlKey on 0 of 43,522), so the last hop
+// uses the three-part (document, ItemCode, Desc2) key. All of that lives on the
+// AutoCount side and is measured there, not here.
+//
+// This script therefore emits the DOCUMENT numbers and the line facts, and
+// leaves every price decision to the AutoCount half.
 //
 // STRICTLY READ-ONLY. SELECT only — no DDL, no writes, no transaction, no marker
 // rows. Every interpolated identifier is a schema/column name DISCOVERED from
@@ -256,29 +268,49 @@ async function main() {
   for (const r of bySrc) notice(`   source ${r.src}: ${r.lots} lot(s), ${r.units} unit(s)`);
 
   // Per-lot detail, so the RM value can be computed against real AutoCount
-  // prices rather than guessed in aggregate.
+  // prices rather than guessed in aggregate. The product's NAME and group come
+  // along because the "deliberately free" bucket (GWP / demo / display) is only
+  // identifiable from them — a free unit must never be counted as a costing gap.
+  const sProd = await schemaOf("products");
+  const prodCols = sProd ? await colsOf(sProd, "products") : new Set();
+  const joinProd = sProd && prodCols.has("code");
   const lotRows = await sql.unsafe(`
-    SELECT product_code, COALESCE(source_doc_type,'') AS src,
-           COALESCE(source_doc_no,'') AS docno, qty_remaining,
-           ${lotCols.has("variant_key") ? "COALESCE(variant_key,'')" : "''"} AS variant_key,
-           ${lotCols.has("warehouse_id") ? "COALESCE(warehouse_id::text,'')" : "''"} AS wh
-    FROM ${L} WHERE qty_remaining > 0 AND COALESCE(unit_cost_sen,0) <= 0 ${lotWhere}
-    ORDER BY product_code`);
-  for (const r of lotRows) row(`ZEROLOT\t${r.product_code}\t${r.variant_key}\t${r.src}\t${r.docno}\t${r.qty_remaining}\t${r.wh}`);
+    SELECT l.product_code, COALESCE(l.source_doc_type,'') AS src,
+           COALESCE(l.source_doc_no,'') AS docno, l.qty_remaining,
+           ${lotCols.has("variant_key") ? "COALESCE(l.variant_key,'')" : "''"} AS variant_key,
+           ${lotCols.has("warehouse_id") ? "COALESCE(l.warehouse_id::text,'')" : "''"} AS wh,
+           ${joinProd && prodCols.has("name") ? "COALESCE(p.name,'')" : "''"} AS pname,
+           ${joinProd && prodCols.has("item_group") ? "COALESCE(p.item_group,'')" : "''"} AS pgroup
+    FROM ${L} l
+    ${joinProd ? `LEFT JOIN "${ident(sProd)}"."products" p ON p.code = l.product_code` : ""}
+    WHERE l.qty_remaining > 0 AND COALESCE(l.unit_cost_sen,0) <= 0 ${lotWhere.replace(/company_id/g, "l.company_id")}
+    ORDER BY l.product_code`);
+  for (const r of lotRows) {
+    row(`ZEROLOT\t${r.product_code}\t${r.variant_key}\t${r.src}\t${r.docno}\t${r.qty_remaining}\t${r.wh}\t${String(r.pname).replace(/\s+/g, " ")}\t${r.pgroup}`);
+  }
 
   // ── Q5. Our already-priced lines, for the cross-check against AutoCount ────
   // If AutoCount's invoice disagrees with the cost we ALREADY hold on lines we
   // got right, then reading the invoice is not a safe source and the plan dies.
   notice("═══ Q5 — our already-priced PO lines, for the AutoCount cross-check ═══");
-  const priced = await sql.unsafe(`
-    SELECT i.linked_ac_dtlkey, COALESCE(i.unit_price_centi,0) AS unit_price_centi,
-           i.material_code
+  // linked_ac_dtlkey would have been the exact handle, but migration 0273's
+  // column was never backfilled (0 rows populated), so the cross-check has to
+  // key on the PO's AutoCount document number plus the item code — the same
+  // handle the conversion itself would use. That is the honest test: it
+  // exercises exactly the matching the plan depends on.
+  const poLines = await sql.unsafe(`
+    SELECT p.linked_ac_docno AS ac_po_no, i.material_code,
+           COALESCE(i.unit_price_centi,0) AS unit_price_centi,
+           COALESCE(i.qty,0) AS qty, COALESCE(i.received_qty,0) AS received_qty,
+           COALESCE(i.linked_ac_dtlkey::text,'') AS dtlkey
     FROM ${PI_} i JOIN ${P} p ON p.id = i.purchase_order_id
-    WHERE p.company_id = ${CO} AND i.linked_ac_dtlkey IS NOT NULL
-      AND COALESCE(i.unit_price_centi,0) > 0
-    ORDER BY i.linked_ac_dtlkey`);
-  for (const r of priced) row(`PRICED\t${r.linked_ac_dtlkey}\t${r.unit_price_centi}\t${r.material_code}`);
-  notice(`our PO lines with a non-zero cost AND an AutoCount line key: ${priced.length}`);
+    WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL
+    ORDER BY p.linked_ac_docno, i.material_code`);
+  for (const r of poLines) {
+    row(`POLINE\t${r.ac_po_no}\t${r.material_code}\t${r.unit_price_centi}\t${r.qty}\t${r.received_qty}\t${r.dtlkey}`);
+  }
+  const pricedN = poLines.filter((r) => Number(r.unit_price_centi) > 0).length;
+  notice(`our PO lines on cutover POs: ${poLines.length}; of those with a non-zero cost: ${pricedN}`);
 
   notice("END — read-only, nothing was written.");
   await sql.end();
