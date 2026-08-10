@@ -89,11 +89,21 @@ function sofaCompartmentIssues(build, reclOK, codeSet) {
     }
     return out;
   }
-  if (want.length !== build.length || want.join("+") !== have.join("+")) {
-    out.issues.push(`COMPARTMENT: doc has ${have.join("+") || "(none)"}; Desc2 now reads ${want.join("+")}`);
-    const missing = want.map((c) => `${model}-${c}`).filter((c) => !codeSet.has(norm(c)));
-    if (missing.length) out.issues.push(`  piece SKU not minted: ${missing.join(", ")}`);
-  }
+  /* Compare as a MULTISET, case-insensitively. Which side of the sofa a piece
+     closes is carried in the code itself ("1A(LHF)"), so the row order — which
+     is line_no, not a physical layout — means nothing, and "CONSOLE" vs
+     "Console" is one storage convention meeting another. Only a piece that is
+     actually present-or-absent is a finding. */
+  const bag = (xs) => xs.map((x) => norm(x)).sort();
+  const a = bag(have), b = bag(want);
+  if (a.join("|") === b.join("|")) return out;
+  const missPiece = b.filter((x) => { const i = a.indexOf(x); if (i < 0) return true; a.splice(i, 1); return false; });
+  const extraPiece = bag(have).filter((x) => { const i = b.indexOf(x); if (i < 0) return true; b.splice(i, 1); return false; });
+  out.issues.push(`COMPARTMENT: doc has ${have.join("+") || "(none)"}; Desc2 now reads ${want.join("+")}`);
+  if (missPiece.length) out.issues.push(`  MISSING from the document: ${missPiece.join(", ")}`);
+  if (extraPiece.length) out.issues.push(`  EXTRA on the document: ${extraPiece.join(", ")}`);
+  const notMinted = want.map((c) => `${model}-${c}`).filter((c) => !codeSet.has(norm(c)));
+  if (notMinted.length) out.issues.push(`  piece SKU not minted: ${notMinted.join(", ")}`);
   return out;
 }
 
