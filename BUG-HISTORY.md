@@ -74,6 +74,146 @@ narrow one, not the broad one.
 
 **Ref** - 2026-08-11, census tool PR #1953, finding + refusal PR #1960
 (fix/census-codes-are-not-damage). Prod evidence: read-only run 31428435434.
+
+## A fabric code was read as a bed height, because a measurement rule had no left boundary [high]
+
+**Symptom** - `HC-GR-005122-PO-009576` recorded `divanHeight 151"` and
+`totalHeight 160"`. No bed is 151 inches tall. The same row carries
+`colourId PC151-01`.
+
+**Root cause (traced, not guessed)** - the parse rules of the shape *number,
+then keyword* in `lib/parse-bedframe.mjs` began with a bare `(\d+)`. `\d+` will
+start in the MIDDLE of a token, so the digits of a fabric code qualified as a
+measurement:
+
+```
+"PC151 divan"     -> divan 151"     (the code's series number)
+"PC151-01 divan"  -> divan 1"       (the code's colour suffix)
+"PC151 LEG 4"     -> leg 151"       (instead of the 4" actually written)
+```
+
+The `-01` form is the dangerous one: it yields a perfectly plausible 1", so a
+range check can never see it. Reachable by every consumer of the parser - both
+importers and both refresh scripts - not by one arm.
+
+**The attribution that did NOT hold.** The handover recorded this row as that
+parser bug. It is not: the parent PO line's text is
+`"Hydraulic2pcs12”inner/PC151-01/gap9"`, and BOTH the pre-fix and post-fix
+parsers read it as divan 14" (inner + 2, per the owner's #1883 rule). The 151
+cannot be produced from that text by either. Its origin is **unproven** - most
+likely an earlier parser generation, this module having drifted twice before
+(a808bf36, 60125216). The correction stands on different evidence: the value is
+physically impossible and the parent PO line agrees with its own AutoCount text.
+Two true findings, one false link between them.
+
+**Fix** - a number now qualifies as a measurement two ways: it starts cleanly
+after a delimiter, OR it carries an explicit inch marker. The second alternative
+is load-bearing, not defensive - `HC-SO-012781` carries `Hydraulic2pcs12”inner`,
+a real 12" inner depth glued to the word before it, and a plain left-boundary
+guard silently dropped it. A fabric code satisfies neither. Eight rule sites.
+
+Scale, measured after the fix: **1** GRN line out of 442 holds an out-of-range
+axis. The SO arm reports 149 and the PO arm 42 lines whose axis equals a digit
+run of their own colour, and those are **coincidence, not corruption** -
+`legHeight 1"` beside `PC151-01` is a real 1" leg. The proof they are sound is
+Section B: every SO mismatch against its own text is accounted for by the
+collision (71) or by an unresolved colour (7), and none is a height.
+
+**Ref** - 2026-08-11, PR #1963 (fix/variant-collision-remainder). Prod evidence:
+diagnostic run 31431814091. Tests in `tests/bedframeVariantLineIdentity.test.ts`.
+
+## The GRN variant snapshot is written once and swept by nothing [med]
+
+**Symptom** - a purchase-order line was repaired and the goods receipt taken
+from it still showed the old value, with no check anywhere reporting the
+disagreement.
+
+**Root cause (traced, not guessed)** - `grn_items.variants` is copied from the
+parent PO line at receipt and never written again. `refresh-so-variants.mjs`
+writes `mfg_sales_order_items`, `refresh-po-variants.mjs` writes
+`purchase_order_items`, and **neither touches `grn_items`** - an unswept third
+arm that no parity check compared, so repairing a parent silently left its
+receipt stale.
+
+**Fix** - `diag-so-po-variant-divergence.mjs` Section E measures the arm:
+442 lines carry variants, 331 agree with their parent, 110 differ plausibly, 1
+holds an impossible figure. `repair-grn-variant-snapshot.mjs` restores only that
+last class, gated on the figure being unable to be a measurement AND the parent
+agreeing with its own AutoCount text. **A plausible difference is history and is
+left alone** - a receipt is a snapshot, and rewriting one to match its order
+today would destroy the record it exists to keep.
+
+**Ref** - 2026-08-11, PR #1963. Prod evidence: diagnostic run 31431814091.
+
+## The 7 variant mismatches that were never the collision: a colour left unresolved [low]
+
+**Symptom** - after the collision was fully repaired, 7 migrated bedframe SO
+lines still disagreed with their own AutoCount text. They had been counted since
+the first diagnostic and never named, so nobody could say what they were.
+
+**Root cause (traced, not guessed)** - one class, not seven problems. In every
+one of the 7 the ONLY disagreeing axis is `colourId`, the stored value is
+**NULL**, and the fabric matcher resolves the line's own text today:
+
+```
+HC-SO-009031 "Cream/Divan10/Gap13"                      -> KS-02
+HC-SO-009031 "sliver/Divan10/Gap13"                     -> KS-15   (misspelt silver)
+HC-SO-009614 "HC151-17/8inch+NoLeg/Gap14inch"           -> PC151-17 (HC typed for PC)
+HC-SO-011289 "divan:10inch+noleg/PC151-101"             -> PC151-11
+HC-SO-003154 "...Col:STAR-09"                           -> STAR-09
+HC-SO-003154 "...Col:STAR-10"                           -> STAR-10 NAVY
+HC-SO-010791 "...col:MB-04"                             -> MB-04
+```
+
+Every gap/divan/leg/size axis agrees. These are lines whose colour could not be
+resolved when they were written and can be now, because the shared matcher and
+the fabric library have both grown since (#1893, #1902). **Nothing is corrupt:
+NULL means "not bound", which is honest.**
+
+**Fix** - none applied, deliberately, and this is the finding rather than a
+deferral. Two of the seven are why: `STAR-10` resolves to `STAR-10 NAVY`, one
+half of the duplicate library pairs Section C censuses, so auto-filling would
+bind a document to whichever spelling happened to win; and `PC151-101` resolving
+to `PC151-11` MOVES A DIGIT, which is exactly what the shared matcher was
+written to refuse (#1893). A 7-row backfill is not worth either risk without the
+owner ruling on the duplicate pairs first.
+
+**Ref** - 2026-08-11, PR #1963. Prod evidence: diagnostic run 31431814091,
+Section B.
+
+## The migrated-document writer inserted the same delivery line twice [high]
+
+**Symptom** - `HC-SO-001920` ordered one `ELEPAHNE-(SK)` and showed four
+delivery lines. Stock was never deducted once.
+
+**Root cause (traced, not guessed)** - two independent mechanisms in
+`create-migrated-documents.mjs`, both in the AutoCount-row-to-SO-line mapping:
+`targets` took `cands[0]` for every row, so a second AutoCount row of one item
+code produced a second delivery line pointing at the FIRST sales-order line; and
+the sofa branch re-pushed every compartment of a build each time another row
+named the same model. The document-level `done` guard hid neither, because the
+duplication happens while ONE document is being built.
+
+**Fix** - candidates are consumed in order (which also corrects the mis-link
+underneath the duplicate: two rows of one code are two deliveries against two
+different lines), a build is covered once per document, and an identical
+`(so_item_id, item_code, qty)` on one document is refused outright so a future
+mapping path cannot reintroduce the shape. A row with no unclaimed SO line left
+is skipped and counted LOUDLY rather than reusing one - the same choice
+`backfill-ac-line-keys.mjs` makes, for the same reason: a wrong link is worse
+than none.
+
+**The 18 rows already written are NOT removed.** `scm.delivery_order_items` has
+no line-level cancel column and adding one is the deferred line-retirement work.
+They cost no stock (0 movements) but they do inflate the order's arithmetic:
+**11 sales-order lines read as over-delivered**. The exact rows, two options and
+a recommendation are in `docs/migrated-do-duplicate-lines.md` for one owner
+decision. Not to be confused with AutoCount's `DO-006224`, which genuinely
+delivered a second unit - real data, a commercial question, not a defect.
+
+**Ref** - 2026-08-11, PR #1963. Prod evidence: diagnostic run 31431814091,
+Section D.
+
 ## One owner ruling, two copies, and the copy the backfill reads had drifted [low]
 
 **Symptom** - `NO HOLES ON STICHING` (and `NO STICHING`) arrived at
@@ -326,7 +466,28 @@ survive, guarded by `jsonb_typeof(variants) = 'object'`, counting `RETURNING`
 rather than the command tag and re-reading every row on a fresh connection.
 `bedframeVariantLineIdentity.test.ts` pins the invariant.
 
-**Ref** - 2026-08-11, PR #1951 (diagnostic) + this PR.
+**CLOSED 2026-08-11.** The remaining 71 rows were repaired after the evidence
+that was missing arrived. The repair joins the line's own `linked_ac_dtlkey`,
+but that key was itself set by a POSITIONAL zip over the same
+`(DocNo | item code)` pair that collided (`backfill-ac-line-keys.mjs`), so
+joining on it inherits the guess rather than escaping it. A third gate settles
+it: the row's own `description2`, written per line by the importer from the very
+export row it created that line from and never written by either refresh script,
+must match the export row the stored key addresses. Production reads **2363
+corroborated, 0 contradicted** - the zip recovered every binding it claimed.
+
+All 71 passed the gate, 71/71 were returned by the UPDATE and read back on a
+fresh connection. The diagnostic moved **agree 2289 -> 2360, mismatch 78 -> 7,
+collision-attributable 71 -> 0**. The 7 that remain are a different fault
+entirely, recorded in its own entry (an unresolved colour, not wrong data). 14
+lines carry no `DtlKey` at all and were NOT
+repaired by position: 13 of them were checked against their own `description2`
+and agree, and one (`HC-SO-000015 JAGER-(Q)`) has no text to check.
+
+**Ref** - 2026-08-11, PR #1951 (diagnostic), PR #1958 (writer), PR #1963
+(the remaining 71 + gate 3). Prod evidence: apply run 31432521529, verification
+run 31432632597.
+
 ## The first cancelled sales-order line ever written would have printed on a customer PDF, and could have made a sofa order permanently un-shippable [high]
 
 **Symptom** - none seen yet by staff, and that is the point: the two conditions

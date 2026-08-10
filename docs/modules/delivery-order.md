@@ -560,3 +560,30 @@ both exist. See `docs/sofa-document-chain-map.md`.
 How this document's lines relate to the SO / PO / GRN / DO it was copied from,
 which columns the migrated writer did and did not copy, and what a correction
 applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.
+
+## The migrated DO writer inserted some lines twice (2026-08-11)
+
+The same writer double-inserted delivery lines two ways, and both are fixed in
+`create-migrated-documents.mjs`:
+
+1. `targets` took `cands[0]` for **every** AutoCount row, so a second row of the
+   same item code on one order produced a second delivery line pointing at the
+   **first** sales-order line. Candidates are now consumed in order.
+2. the sofa branch re-pushed **every compartment** of a build each time another
+   AutoCount row named the same model. A build is now covered once per document.
+
+A final guard refuses an identical `(so_item_id, item_code, qty)` on one
+document outright, so a future mapping path cannot reintroduce the shape.
+
+**The rows already written are still there**: 8 documents, 18 surplus lines, all
+`migrated_no_stock = true`, **0 inventory movements** — so no stock moved twice.
+What they do corrupt is the order's arithmetic: `soDeliverableRemaining` counts
+non-cancelled DO lines by `so_item_id`, so **11 sales-order lines currently read
+as over-delivered** (`HC-SO-001920` shows 1 ordered against 4 delivered).
+
+They are **not** removed, and not because it was overlooked:
+`scm.delivery_order_items` has no line-level cancel column, and adding one is
+entangled with the deferred line-retirement work
+(`docs/autocount-line-retirement-plan.md`). The exact 18 lines, the two options
+and the recommendation are in `docs/migrated-do-duplicate-lines.md` — an owner
+decision, laid out to be approved in one read.
