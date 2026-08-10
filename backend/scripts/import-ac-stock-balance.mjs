@@ -26,6 +26,9 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const isSofa = (c) => /SOFA/i.test(c || "");
+// set once the binding CSV is read (see main) — category, not spelling
+let sofaCategory = new Set();
+const isSofaFurniture = (c) => sofaCategory.has(norm(c));
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
 function parseCsvLine(line) {
@@ -51,13 +54,26 @@ const SALESLOC = {
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}${NEG ? " (+negative adjustments)" : ""}`);
-  const bal = gz("ac-stock-balance.json.gz").filter((r) => r.BalQty !== 0 && !isSofa(r.ItemCode));
   const utd = gz("ac-utd-stock-cost.json.gz");
   const iuc = gz("ac-item-costs.json.gz");
   const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
   csv.shift();
   const byAc = new Map();
   for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
+  // column 4 is the AutoCount category; only SOFA is furniture we skip
+  sofaCategory = new Set(csv.map(parseCsvLine).filter((f) => (f[3] || "").trim().toUpperCase() === "SOFA").map((f) => norm(f[0])));
+  log(`sofa furniture codes excluded: ${sofaCategory.size}`);
+  /* Sofa FURNITURE is excluded — owner 2026-08-10: "沙发库存不准的，因为我们
+     接下来跑 compartment 了". AutoCount counts a sofa as one whole unit and the
+     ERP counts it per compartment, so the balance cannot be decomposed without
+     inventing stock, and the owner does not trust the number anyway.
+
+     But "SOFA" in a code does not mean sofa furniture. AMN-SOFA PILLOW and
+     THL-SOFA PILLOW are ordinary accessories — 205 units of real, countable
+     stock that the literal /SOFA/ test threw away with the furniture. The
+     binding CSV already separates them (category SOFA vs ACC), so the
+     exclusion reads the CATEGORY instead of the spelling. Owner: "pillow 就ok". */
+  const bal = gz("ac-stock-balance.json.gz").filter((r) => r.BalQty !== 0 && !isSofaFurniture(r.ItemCode));
 
   // cost maps (RM -> sen)
   const utdCost = new Map(); // item -> avg cost

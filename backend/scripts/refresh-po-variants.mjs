@@ -16,6 +16,8 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -25,14 +27,11 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
-const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
-const isPendingColour = (c) => /(TBC|KIV)/i.test(c || "");
 
-// The parser + the special mapper are loaded from the import scripts so there is
-// exactly ONE definition of each and this can never drift from the importer.
-const soSrc = fs.readFileSync(path.join(here, "import-ac-outstanding-so.mjs"), "utf8");
+/* mapSpecial is still rebuilt from fix-so-specials.mjs by source-text slicing.
+   parseBedframe was too, until the end marker got a new comment line in front of
+   it and the appended `return` was swallowed by it - BUG-HISTORY.md 2026-08-10. */
 const fxSrc = fs.readFileSync(path.join(here, "fix-so-specials.mjs"), "utf8");
-const parseBedframe = new Function(`${soSrc.slice(soSrc.indexOf("function parseBedframe"), soSrc.indexOf("// free-text name resolver")).trim()}; return parseBedframe;`)();
 const mapSpecial = new Function(`${fxSrc.slice(fxSrc.indexOf("function mapSpecial"), fxSrc.indexOf("async function main")).trim()}; return mapSpecial;`)();
 
 function parseCsvLine(line) {
@@ -59,30 +58,23 @@ async function main() {
   }
 
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
-  const fcx = new Map(); for (const r of fcRows) for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !fcx.has(k)) fcx.set(k, r);
-  const findColour = (c) => {
-    if (!c) return null;
-    const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
-    /* SERIESNUM: split "PC151-2"/"PC151101" into series + number so a 1-digit or
-       over-long tail still finds PC151-02 / PC151-01 (owner data has both). */
-    const seriesNum = (x) => { const mm = /^([A-Z]{2,4})(\d{2,4})(\d{1,3})$/.exec(strip(x)); return mm ? [mm[1] + mm[2] + mm[3].padStart(2, "0"), mm[1] + mm[2] + mm[3].slice(-2)] : []; };
-    const toks = [c, (c.trim().split(/\s+/)[0] || "")];
-    const m = /[A-Z]{1,4}\s?\d{2,4}\s?-?\s?\d*/i.exec(c); if (m) toks.push(m[0]);
-    const cands = [];
-    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t)), ...seriesNum(t)); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
-    for (const t of cands) { const h = fcx.get(t); if (h) return h; }
-    return null;
-  };
+  const { findColour } = buildFabricColourIndex(fcRows);
   const validSpecials = new Set((await sql`SELECT code FROM scm.special_addons WHERE company_id = 1 AND 'BEDFRAME' = ANY(categories)`).map((r) => r.code));
 
-  const items = await sql`SELECT i.id, i.material_code AS item_code, i.variants, h.linked_ac_docno
+  const items = await sql`SELECT i.id, i.material_code AS item_code, i.variants, i.description2, h.linked_ac_docno
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = 1 AND i.item_group = 'bedframe' AND h.linked_ac_docno IS NOT NULL`;
   log(`imported PO bedframe lines: ${items.length}`);
 
   const updates = []; let gained = 0;
   for (const it of items) {
-    const bf = parsed.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`);
+    /* Fall back to the line's OWN Desc2 when the outstanding-PO export has no
+       entry for it. The SO-linked PO import (already-received POs, which that
+       export excludes by definition) stores the same AutoCount text on the
+       line, so a lookup miss must not mean "leave this bedframe without
+       variants" — the owner's rule is that a raised PO always has them. */
+    const bf = parsed.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`)
+      ?? (it.description2 ? parseBedframe(it.description2) : null);
     if (!bf) continue;
     const pending = isPendingColour(bf.color);
     const fc = pending ? null : findColour(bf.color);

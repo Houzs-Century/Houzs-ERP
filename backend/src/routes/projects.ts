@@ -994,6 +994,8 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   let pendingLogistic = false;
   let pendingApprove: string[] | undefined;
   let pendingDirector: { stock?: boolean; agreement?: boolean; sales_attending?: boolean; sales_pic?: boolean } | undefined;
+  /** Brands a brand-scoped approver owns (owner 2026-08-10). Empty = all. */
+  let approverBrands: string[] | undefined;
   let pendingSalesAttending = false;
   let pendingAgreement = false;
   let pendingDefectReview = false;
@@ -1051,6 +1053,17 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       // their list. (They do NOT hold projects.approve, so they previously
       // fell through to SALES PIC.)
       pendingDirector = { stock: true, sales_attending: true, sales_pic: true };
+      // Brand split (owner 2026-08-10: Kris takes AKEMI + ERGOTEX stock-outs,
+      // Peter takes ZANOTTI). A director configured with user_brands rows only
+      // sees those brands in the APPROVAL lane; one with no rows keeps every
+      // brand, so Peter / Kingsley are unaffected.
+      const kb = await c.env.DB.prepare(
+        `SELECT brand FROM user_brands WHERE user_id = ?`
+      )
+        .bind(user.id)
+        .all<{ brand: string }>();
+      const kbList = (kb.results ?? []).map((x) => (x.brand ?? "").trim()).filter(Boolean);
+      if (kbList.length) approverBrands = kbList;
     } else if (r === "purchaser") pendingLabel = "PURCHASER";
     else if (r === "logistic") pendingLogistic = true; // setup not arranged
     else if ((user.position_name ?? "").trim().toLowerCase() === "storekeeper supervisor") {
@@ -1077,6 +1090,7 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     pending_logistic: pendingLogistic,
     pending_approve: pendingApprove,
     pending_director: pendingDirector,
+    approver_brands: approverBrands,
     pending_sales_attending: pendingSalesAttending || undefined,
     pending_agreement: pendingAgreement || undefined,
     pending_defect_review: pendingDefectReview || undefined,
@@ -3687,6 +3701,59 @@ function isCrewScopedUser(user: { position_name?: string | null; permissions?: s
 // crew interchangeably — helpers/storekeepers are not individually assigned
 // to events (last-minute swaps), so they edit the driver part too (owner
 // 2026-07-16). Tasks are never badged HELPER/STOREKEEPER.
+/** BRAND-SCOPED APPROVAL (owner 2026-08-10: "kris approve stock out transfer
+ *  akemi and ergotex only, for zanotti peter approve").
+ *
+ *  Returns a 403 Response when the caller holds the approval key but is
+ *  configured for specific brands and THIS item's project isn't one of them;
+ *  null when the decision may proceed. An approver with NO `user_brands` rows
+ *  (Peter, HQ, the owner) is unrestricted — so this narrows only the people it
+ *  is explicitly configured for and can never lock out an existing approver.
+ *  Reuses `user_brands`, the per-user brand allow-list the app already keeps;
+ *  it does not affect what an unscoped director can SEE (getProjectScope only
+ *  applies brand_scope to scope_to_pic reps). */
+async function approverBrandBlocked(
+  env: Env,
+  userId: number | null | undefined,
+  itemId: number,
+): Promise<{ brands: string[]; brand: string } | null> {
+  if (!userId) return null;
+  const rows = await env.DB.prepare(
+    `SELECT brand FROM user_brands WHERE user_id = ?`
+  )
+    .bind(userId)
+    .all<{ brand: string }>();
+  const brands = (rows.results ?? [])
+    .map((r) => (r.brand ?? "").trim())
+    .filter(Boolean);
+  if (brands.length === 0) return null; // unrestricted approver
+  const proj = await env.DB.prepare(
+    `SELECT p.brand FROM project_checklist pc
+       JOIN projects p ON p.id = pc.project_id
+      WHERE pc.id = ?`
+  )
+    .bind(itemId)
+    .first<{ brand: string | null }>();
+  const brand = (proj?.brand ?? "").trim();
+  if (brand && brands.some((b) => b.toUpperCase() === brand.toUpperCase())) return null;
+  return { brands, brand };
+}
+
+/** Owner 2026-08-10: "kris can upload fill in floorplan". The Filled Floorplan
+ *  is the competitor-research plan the Sales Director annotates, but the row is
+ *  badged SALES PIC, so the role-badge rule blocked a view-only Sales Director
+ *  (no projects.write). Narrow exception: the Sales Director POSITION may
+ *  attach to / remove from that ONE document. Everything else still obeys the
+ *  badge — this does not open the other SALES PIC deliverables. */
+function salesDirectorMayAttach(
+  title: string | null | undefined,
+  positionName: string | null | undefined,
+): boolean {
+  const pos = (positionName ?? "").trim().toLowerCase();
+  if (pos !== "sales director") return false;
+  return /^filled floor\s*plan/i.test((title ?? "").trim());
+}
+
 function roleLabelAdmits(
   label: string | null | undefined,
   roleName: string | null | undefined,
@@ -3731,6 +3798,17 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
     if (!has) {
       return c.json({ error: `Requires ${item.required_perm}` }, 403);
     }
+    // Same brand scope as the review route (owner 2026-08-10) — a
+    // brand-configured approver can only tick their own brands' gated steps.
+    const denied = await approverBrandBlocked(c.env, user?.id, itemId);
+    if (denied) {
+      return c.json(
+        {
+          error: `You approve ${denied.brands.join(" / ")} events only — this one is ${denied.brand || "unbranded"}.`,
+        },
+        403,
+      );
+    }
   }
   // Per-function gate for tick-only roles (Sales-department visibility, rules
   // 4 & 6) — parity with the /attachments route. A user without projects.write
@@ -3741,7 +3819,13 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
   // unaffected (they manage the whole checklist).
   {
     const granted = user?.permissions_set ?? user?.permissions;
-    if (!hasPermission(granted, "projects.write")) {
+    // An APPROVER of a gated step is exempt (owner 2026-08-10): the
+    // required_perm + brand gate above already decided it, and the row is
+    // badged for the SUBMITTER's function (Stock Out = PURCHASER), so the badge
+    // test would otherwise block a view-only approver such as Kris.
+    const isGatedApprover =
+      !!item.required_perm && holdsChecklistApproval(user.permissions, item.required_perm);
+    if (!hasPermission(granted, "projects.write") && !isGatedApprover) {
       if (!roleLabelAdmits(item.role_label, user?.role_name)) {
         return c.json({ error: "You can only update tasks assigned to your role" }, 403);
       }
@@ -3775,6 +3859,20 @@ app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "p
     // not pass; see EXPLICIT_APPROVAL_KEYS.
     const has = holdsChecklistApproval(user.permissions, item.required_perm);
     if (!has) return c.json({ error: `Requires ${item.required_perm}` }, 403);
+    // BRAND-SCOPED approval (owner 2026-08-10): "kris approve stock out
+    // transfer akemi and ergotex only, for zanotti peter approve". An approver
+    // who has explicit brand rows may only decide on those brands; an approver
+    // with NO rows (Peter, HQ) keeps every brand, so this only ever narrows the
+    // people it is configured for.
+    const denied = await approverBrandBlocked(c.env, user?.id, itemId);
+    if (denied) {
+      return c.json(
+        {
+          error: `You approve ${denied.brands.join(" / ")} events only — this one is ${denied.brand || "unbranded"}.`,
+        },
+        403,
+      );
+    }
   }
   // Per-function gate for tick-only roles (Sales-department visibility, rules
   // 4 & 6) — parity with the status / attachments routes, so the review loop
@@ -3782,7 +3880,12 @@ app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "p
   // projects.write may only submit/amend a task badged for THEIR role.
   // `comment` stays open (collaboration); approve/reject are already
   // required_perm-gated above.
-  if (action !== "comment") {
+  // Owner 2026-08-10: approve/reject are EXEMPT — they are governed by the
+  // required_perm gate above (plus the brand scope), not by the task's role
+  // badge. Without this a permitted approver who lacks projects.write (a
+  // view-only Sales Director such as Kris) was blocked here, because the Stock
+  // Out row is badged PURCHASER, so granting the approval key alone did nothing.
+  if (action === "submit" || action === "amend") {
     const granted = user?.permissions_set ?? user?.permissions;
     if (!hasPermission(granted, "projects.write")) {
       if (!roleLabelAdmits(item.role_label, user?.role_name)) {
@@ -3951,10 +4054,10 @@ app.put(
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const item = await c.env.DB.prepare(
-      `SELECT required_perm, role_label FROM project_checklist WHERE id = ?`
+      `SELECT title, required_perm, role_label FROM project_checklist WHERE id = ?`
     )
       .bind(itemId)
-      .first<{ required_perm: string | null; role_label: string | null }>();
+      .first<{ title: string | null; required_perm: string | null; role_label: string | null }>();
     if (!item) return c.json({ error: "Not found" }, 404);
     // Owner 2026-07-21: required_perm gates the DECISION (approve/reject +
     // status flips), NOT the upload. The document's owner function uploads it
@@ -3965,7 +4068,7 @@ app.put(
     // Tick-only roles (no projects.write — i.e. drivers) may only attach to
     // tasks badged for THEIR role (item.role_label vs the user's role name).
     // Mirrors the mobile UI rule; owner 2026-07-09.
-    if (!hasPermission(granted, "projects.write")) {
+    if (!hasPermission(granted, "projects.write") && !salesDirectorMayAttach(item.title, user?.position_name)) {
       if (!roleLabelAdmits(item.role_label, user?.role_name)) {
         return c.json({ error: "You can only attach files to tasks assigned to your role" }, 403);
       }
@@ -4090,15 +4193,18 @@ app.patch(
     const granted = user?.permissions_set ?? user?.permissions;
     const body = await c.req.json<{ caption?: string | null }>();
     const row = await c.env.DB.prepare(
-      `SELECT pc.role_label
+      `SELECT pc.role_label, pc.title
          FROM project_checklist_attachments a
          JOIN project_checklist pc ON pc.id = a.item_id
         WHERE a.id = ?`
     )
       .bind(attId)
-      .first<{ role_label: string | null }>();
+      .first<{ role_label: string | null; title: string | null }>();
     if (!row) return c.json({ error: "Not found" }, 404);
-    if (!hasPermission(granted, "projects.write")) {
+    if (
+      !hasPermission(granted, "projects.write") &&
+      !salesDirectorMayAttach(row.title, user?.position_name)
+    ) {
       if (!roleLabelAdmits(row.role_label, user?.role_name)) {
         return c.json(
           { error: "You can only edit files on tasks assigned to your role" },

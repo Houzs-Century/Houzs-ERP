@@ -1706,13 +1706,22 @@ export const MaintenanceTab = ({
         resolved.data?.data?.sofaCompartments ?? masterFallback.data?.data?.sofaCompartments,
       );
       const next = maintValues(draft.sofaCompartments);
+      /* A rename is an IN-PLACE edit, so the row count cannot change. When it
+         does, the save is an add and/or a delete, and comparing by INDEX reads
+         the shift as a rename: deleting `1B` and `2B` while adding `DB` in the
+         same save slid DB up into 1B's old slot and offered to cascade
+         "1B -> DB" across SKU codes, sales orders INCLUDING HISTORY, delivery
+         orders, invoices, GRN/PO lines, Modular ticks, combos and quick picks —
+         with no dry run (owner, 2026-08-10). Length equality is the guard: on a
+         length change, do nothing and let the plain save handle it. */
       const renames: Array<{ from: string; to: string }> = [];
-      const len = Math.min(baseline.length, next.length);
-      for (let i = 0; i < len; i++) {
-        const from = (baseline[i] ?? '').trim();
-        const to = (next[i] ?? '').trim();
-        if (!from || !to || from === to) continue;
-        if (!next.includes(from) && !baseline.includes(to)) renames.push({ from, to });
+      if (baseline.length === next.length) {
+        for (let i = 0; i < baseline.length; i++) {
+          const from = (baseline[i] ?? '').trim();
+          const to = (next[i] ?? '').trim();
+          if (!from || !to || from === to) continue;
+          if (!next.includes(from) && !baseline.includes(to)) renames.push({ from, to });
+        }
       }
       if (renames.length > 0) {
         const summary = renames.map((r) => `${r.from} → ${r.to}`).join('\n');

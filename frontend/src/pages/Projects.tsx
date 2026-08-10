@@ -1944,6 +1944,32 @@ function ProjectsListView() {
             { name: null, options: STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label })) },
           ]}
         />
+        {/* Clear-all (owner 2026-08-10): one click unticks EVERY filter dropdown
+            — section, status/tasks, brand, year, month, project status. Each
+            dropdown keeps its own in-panel "Clear (n)"; this resets them all
+            together so the owner doesn't have to open each one. Shown only when
+            at least one dropdown is active. Search + My-pending are left alone. */}
+        {(section || taskPending || brand || year || month || status) && (
+          <button
+            type="button"
+            onClick={() =>
+              patchParams({
+                section: "",
+                task: "",
+                brand: "",
+                year: "",
+                month: "",
+                status: "",
+                page: "1",
+              })
+            }
+            title="Untick every filter dropdown"
+            className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-surface px-2 text-[12px] font-semibold text-ink-secondary hover:border-err hover:text-err"
+          >
+            <X size={13} />
+            Clear all
+          </button>
+        )}
         <label
           className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold text-ink-secondary"
           title="Show only projects with a task pending on your side (your role)"
@@ -8578,6 +8604,15 @@ function DocumentTable({
   onReload: () => void;
   toast?: ReturnType<typeof useToast>;
 }) {
+  const { user } = useAuth();
+  // Owner 2026-08-10: "kris can upload fill in floorplan". A view-only Sales
+  // Director has no projects.write, so canManage is false and the Attach button
+  // was hidden — for this ONE document they get it. Backend enforces the same
+  // narrow rule (salesDirectorMayAttach), this is just the affordance.
+  const isSalesDirectorPos =
+    (user?.position_name ?? "").trim().toLowerCase() === "sales director";
+  const mayAttach = (it: ChecklistItem) =>
+    canManage || (isSalesDirectorPos && /^filled floor\s*plan/i.test((it.title || "").trim()));
   return (
     <div className="p-2 sm:overflow-x-auto">
       <table className="w-full text-[11px]">
@@ -8598,7 +8633,7 @@ function DocumentTable({
               item={it}
               comments={comments.filter((c) => c.item_id === it.id)}
               attachments={attachmentsByItem.get(it.id) ?? []}
-              canManage={canManage}
+              canManage={mayAttach(it)}
               canApprove={canApproveFor(it)}
               onStatus={onStatus}
               onReview={onReview}
@@ -8808,32 +8843,42 @@ function DocRow({
                     ))}
                 </div>
               )}
-              {/* Approve/Reject visibility. A gated document (required_perm)
-                  offers the buttons to a permission holder whenever it still
-                  needs the decision (owner 2026-07-21); non-gated docs keep the
-                  submit-then-review flow. BUT only once a file is uploaded
-                  (owner 2026-07-27): there is nothing to approve before the
-                  document exists, so an empty row must not show the buttons. */}
-              {/* Owner 2026-07-31 (final): on a gated document the approver
-                  ALWAYS keeps the buttons once a file exists — approved ones
-                  included — so a decision can be reviewed or reversed. The
-                  decision itself stays visible as the approval badge. */}
-              {attachments.length > 0 && (item.required_perm
-                ? canApprove
-                : awaiting && canApprove) ? (
+              {/* Approve/Reject visibility. The control appears once a file is
+                  uploaded (owner 2026-07-27 — nothing to decide before that) AND
+                  the caller can approve: a gated document (required_perm) offers
+                  it to a permission holder at any time so a decision can be
+                  revisited (owner 2026-07-21/07-31); non-gated docs keep the
+                  submit-then-review flow (only while a submission awaits review).
+                  WHICH of the two buttons shows is the per-decision toggle just
+                  below (owner 2026-08-10). */}
+              {attachments.length > 0 && canApprove && (item.required_perm || awaiting) ? (
                 <div className="flex flex-wrap items-center gap-1">
-                  <button
-                    onClick={() => onReview(item, "approve", {})}
-                    className="rounded-md bg-synced/90 px-2 py-0.5 text-[9.5px] font-semibold text-white hover:bg-synced"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => setRejectOpen((x) => !x)}
-                    className="rounded-md border border-err/40 bg-surface px-2 py-0.5 text-[9.5px] font-semibold text-err hover:bg-err/5"
-                  >
-                    Reject…
-                  </button>
+                  {/* Toggle (owner 2026-08-10): show only the button that
+                      REVERSES the current decision. On upload (no decision) both
+                      show; once Approved the Approve button is HIDDEN and Reject
+                      stays (so an issue found later can still reject it); once
+                      Rejected the Reject button is HIDDEN and Approve stays (so
+                      it can be approved once fixed). Hiding Approve after an
+                      approval also closes the old double-approve bug (owner
+                      2026-08-08) for free. The decision itself stays visible as
+                      the "Approved/Rejected · name · date" trail in this column. */}
+                  {rs !== "approved" && (
+                    <button
+                      onClick={() => onReview(item, "approve", {})}
+                      title="Approve this document"
+                      className="rounded-md bg-synced/90 px-2 py-0.5 text-[9.5px] font-semibold text-white hover:bg-synced"
+                    >
+                      Approve
+                    </button>
+                  )}
+                  {rs !== "rejected" && (
+                    <button
+                      onClick={() => setRejectOpen((x) => !x)}
+                      className="rounded-md border border-err/40 bg-surface px-2 py-0.5 text-[9.5px] font-semibold text-err hover:bg-err/5"
+                    >
+                      Reject…
+                    </button>
+                  )}
                 </div>
               ) : (
                 comments.filter((c) => c.kind !== "submit").length === 0 && (
@@ -10679,6 +10724,13 @@ function PhaseCrewEditor({
     save({ ...pc, lorryCrew: lorries.map((l, i) => (i === li ? { ...l, ...p } : l)) });
   const addLorry = () => save({ ...pc, lorryCrew: [...lorries, { plate: "", drivers: [], helpers: [] }] });
   const removeLorry = (li: number) => save({ ...pc, lorryCrew: lorries.filter((_, i) => i !== li) });
+  // Owner 2026-07-22: the Driver 2 / Helper 2 rows stay HIDDEN until needed —
+  // most lorries run one driver + one helper, so the empty second slots were
+  // noise. A filled slot always shows; an empty one shows only after its
+  // "+ Add …" button (styled like "+ Add lorry") is clicked. UI-only state:
+  // collapsing back happens by clearing the name (row hides on next open).
+  const [openSlot2, setOpenSlot2] = useState<Set<string>>(new Set());
+  const showSlot2 = (li: number, kind: "d" | "h") => setOpenSlot2((s) => new Set(s).add(`${li}${kind}`));
   return (
     <div className="mt-3 space-y-2">
       {emptyHint && <div className="text-[9px] italic text-ink-muted">{emptyHint}</div>}
@@ -10711,9 +10763,33 @@ function PhaseCrewEditor({
               )}
             </div>
             <CrewSlotRow label="Driver 1" color="text-synced" options={drivers} slot={lorry.drivers[0]} onChange={(s) => setLorrySlot(li, "drivers", 0, s)} readOnly={readOnly} />
-            <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
+            {(!!lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
+              <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
+            )}
             <CrewSlotRow label="Helper 1" color="text-warning-text" options={helpers} slot={lorry.helpers[0]} onChange={(s) => setLorrySlot(li, "helpers", 0, s)} readOnly={readOnly} />
-            <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            {(!!lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
+              <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            )}
+            {!readOnly && (!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) || !(lorry.helpers[1]?.name || openSlot2.has(`${li}h`))) && (
+              <div className="flex gap-1.5 pt-0.5">
+                {!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
+                  <button
+                    onClick={() => showSlot2(li, "d")}
+                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+                  >
+                    + Add driver
+                  </button>
+                )}
+                {!(lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
+                  <button
+                    onClick={() => showSlot2(li, "h")}
+                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+                  >
+                    + Add helper
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -10789,6 +10865,92 @@ function PhaseCrewEditor({
             className="w-full resize-y whitespace-pre-wrap break-words rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40 disabled:bg-bg/40"
           />
         </label>
+      )}
+    </div>
+  );
+}
+
+// Service / Exchange as an OPTIONAL, collapsed block (owner 2026-08-10). The
+// crew-per-lorry fields used to sit permanently below Dismantle, which read to
+// Logistic staff as a compulsory third trip. Now it lives in its own divided
+// section: just a "+ Service / Exchange" button until opened, then a bordered
+// card (crew grid + outsourced + "what" remark + read-only service photos) with
+// a close X. It auto-opens only when it ALREADY holds data, so nothing keyed
+// earlier is hidden; closing never deletes — real data resurfaces on reload.
+function ServiceExchangeBlock({
+  serviceCrew,
+  projectId,
+  drivers,
+  helpers,
+  lorryOptions,
+  patch,
+  readOnly,
+}: {
+  serviceCrew: string | null | undefined;
+  projectId: number;
+  drivers: CrewMember[];
+  helpers: CrewMember[];
+  lorryOptions: string[];
+  patch: (body: Record<string, any>) => Promise<void>;
+  readOnly: boolean;
+}) {
+  const hasData = useMemo(() => {
+    const pc = parsePhaseCrew(serviceCrew);
+    return (
+      pc.lorryCrew.length > 0 ||
+      pc.outsourced.entries.length > 0 ||
+      !!pc.remark?.trim()
+    );
+  }, [serviceCrew]);
+  const [open, setOpen] = useState(hasData);
+  // If data arrives while the card is closed (e.g. saved on another device),
+  // reveal it — a filled Service / Exchange must never stay hidden.
+  useEffect(() => {
+    if (hasData) setOpen(true);
+  }, [hasData]);
+
+  // Sales / view-only: show the block only when it actually has content — never
+  // an empty optional section or an add button.
+  if (readOnly && !hasData) return null;
+
+  return (
+    <div className="mt-4 border-t border-border pt-3">
+      {open ? (
+        <div className="relative rounded-lg border border-border bg-surface p-3 pt-4 shadow-stone">
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              title="Close — anything already entered is kept"
+              aria-label="Close Service / Exchange"
+              className="absolute right-2 top-2 rounded p-0.5 text-ink-muted hover:text-err"
+            >
+              <X size={14} />
+            </button>
+          )}
+          <PhaseCrewEditor
+            title="Service / Exchange"
+            field="service_crew"
+            value={serviceCrew}
+            drivers={drivers}
+            helpers={helpers}
+            lorryOptions={lorryOptions}
+            patch={patch}
+            readOnly={readOnly}
+            emptyHint="Optional — a mid-fair service visit or part exchange"
+            showRemark
+            remarkLabel="Service / Exchange — what"
+          />
+          <ServicePhotos projectId={projectId} readOnly />
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="rounded-md border border-dashed border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+        >
+          + Service / Exchange
+        </button>
       )}
     </div>
   );
@@ -10922,27 +11084,21 @@ function LogisticsCrewSection({
           <DateTimeField label="Dismantle Time" value={project.dismantle_start_at} onSave={(v) => patch({ dismantle_start_at: v })} readOnly={readOnly} />
         }
       />
-      <div className="my-3 border-t border-dashed border-border" />
-      {/* Service / Exchange (owner 2026-07-22): a mid-fair trip — same crew grid
-          + outsourced (Lalamove/Grab), plus a "what service/exchange" remark and
-          service photos. Stored in service_crew JSON + phase='service' photos. */}
-      <PhaseCrewEditor
-        title="Service / Exchange"
-        field="service_crew"
-        value={project.service_crew}
+      {/* Service / Exchange (owner 2026-07-22; collapsible 2026-08-10): an
+          OPTIONAL mid-fair service visit or part exchange. Hidden behind its own
+          "+ Service / Exchange" button under a solid divider — no longer welded
+          below Dismantle's outsourced trips, where the always-on fields read as
+          a compulsory third trip to Logistic. The read-only desktop service
+          gallery moved inside the card (mobile still captures the photos). */}
+      <ServiceExchangeBlock
+        serviceCrew={project.service_crew}
+        projectId={project.id}
         drivers={drivers}
         helpers={helpers}
         lorryOptions={lorryOptions}
         patch={patch}
         readOnly={readOnly}
-        emptyHint="During the fair — a service visit or part exchange"
-        showRemark
-        remarkLabel="Service / Exchange — what"
       />
-      {/* Service photo upload moved to mobile-only (owner 2026-07-29): the
-          desktop keeps a read-only gallery, so force readOnly to drop the
-          "Add service photo" button here. Field staff attach on MobilePMS. */}
-      <ServicePhotos projectId={project.id} readOnly />
     </PanelSection>
   );
 }
@@ -11345,6 +11501,9 @@ function ScheduleRef({
 }) {
   const toast = useToast();
   const [remarkDraft, setRemarkDraft] = useState(remark ?? "");
+  // Owner 2026-08-10: the remark editor is hidden until the Remark button is
+  // pressed (an always-open empty box was just noise on the panel).
+  const [remarkOpen, setRemarkOpen] = useState(false);
   useEffect(() => setRemarkDraft(remark ?? ""), [remark]);
   const fileRef = useRef<HTMLInputElement>(null);
   // Owner 2026-08-03: NO remark step before upload. Clicking Upload opens the
@@ -11435,31 +11594,49 @@ function ScheduleRef({
         </>
       )}
       {/* Standalone remark (owner 2026-07-23): solo events have no handbook —
-          logistics types the setup/dismantle times here instead. No file
-          needed; saves on blur. Read-only viewers still see the text. */}
-      {onSaveRemark && (readOnly ? (
-        (remark ?? "").trim() !== "" && (
-          <div className="mt-2 text-[11px] text-ink-secondary whitespace-pre-wrap break-words">
-            <span className="font-semibold text-ink-muted">Remark:</span> {remark}
-          </div>
-        )
-      ) : (
-        <label className="mt-2 block">
-          <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-ink-muted">
-            Remark (no handbook — type setup / dismantle times)
-          </span>
-          <textarea
-            value={remarkDraft}
-            rows={2}
-            onChange={(e) => setRemarkDraft(e.target.value)}
-            onBlur={() => {
-              if (remarkDraft !== (remark ?? "")) onSaveRemark(remarkDraft);
-            }}
-            placeholder="e.g. solo event — setup 15/8 9pm after mall close, dismantle 19/8 10pm"
-            className="w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40"
-          />
-        </label>
-      ))}
+          logistics types the setup/dismantle times here instead.
+          Owner 2026-08-10: the empty box no longer sits open taking space —
+          it hides behind a Remark button and appears only when clicked. A
+          SAVED remark still shows as text (hiding it would hide real data),
+          and the button then reads "Edit remark". */}
+      {onSaveRemark && (
+        <div className="mt-2">
+          {(remark ?? "").trim() !== "" && !remarkOpen && (
+            <div className="mb-1 text-[11px] text-ink-secondary whitespace-pre-wrap break-words">
+              <span className="font-semibold text-ink-muted">Remark:</span> {remark}
+            </div>
+          )}
+          {!readOnly && !remarkOpen && (
+            <button
+              type="button"
+              onClick={() => setRemarkOpen(true)}
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+            >
+              <MessageSquare size={12} />
+              {(remark ?? "").trim() ? "Edit remark" : "Remark"}
+            </button>
+          )}
+          {!readOnly && remarkOpen && (
+            <label className="block">
+              <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-ink-muted">
+                Remark (no handbook — type setup / dismantle times)
+              </span>
+              <textarea
+                autoFocus
+                value={remarkDraft}
+                rows={2}
+                onChange={(e) => setRemarkDraft(e.target.value)}
+                onBlur={() => {
+                  if (remarkDraft !== (remark ?? "")) onSaveRemark(remarkDraft);
+                  setRemarkOpen(false);
+                }}
+                placeholder="e.g. solo event — setup 15/8 9pm after mall close, dismantle 19/8 10pm"
+                className="w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40"
+              />
+            </label>
+          )}
+        </div>
+      )}
     </div>
   );
 }

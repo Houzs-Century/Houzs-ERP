@@ -66,6 +66,8 @@ import {
   type PoEmailRow,
 } from '../lib/po-email';
 import { getSupabaseService } from '../../db/supabase';
+import { signSoItemPhotoUrl, soItemPhotoBindings } from '../lib/r2';
+import { thumbKeyFor } from '../../services/photoThumbs';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { supabaseAuth } from '../middleware/auth';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
@@ -387,7 +389,12 @@ const ITEM_COLS =
   /* Migration 0098 — source SO line link. The detail route resolves it to a
      per-line so_doc_no for the PO PDF's "For SO" provenance column
      (relabelled from "Transferred SO", owner 2026-08-07). */
-  'so_item_id';
+  'so_item_id, ' +
+  /* Migration 0274 — per-line photo keys, carried from the source SO line on
+     convert. Read like the SO's: the key alone is not viewable, so the client
+     trades it for a short-lived signed URL via
+     GET /:id/items/:itemId/photos/:photoKey/signed. */
+  'photo_urls';
 
 // ── List ──────────────────────────────────────────────────────────────
 mfgPurchaseOrders.get('/', async (c) => {
@@ -1305,7 +1312,30 @@ mfgPurchaseOrders.post('/', async (c) => {
   const header = headerData as unknown as { id: string; po_number: string };
 
   if (itemRows.length > 0) {
-    const itemsToInsert = itemRows.map((r) => ({ ...r, purchase_order_id: header.id }));
+    /* Owner 2026-08-10 (migration 0274) — a line raised from the From-SO picker
+       carries its source SO line's photos, exactly as /from-sos and
+       /:id/convert-from-so do. Derived SERVER-side from so_item_id rather than
+       taken from the request: the client never holds these keys, and trusting a
+       caller-supplied key array would let any PO line reference any R2 object.
+       One extra select, only when a line is SO-sourced; manual lines stay '{}'. */
+    const photoSoItemIds = [...new Set(
+      itemRows.map((r) => r.so_item_id).filter((x): x is string => Boolean(x)),
+    )];
+    const photosBySoItem = new Map<string, string[]>();
+    if (photoSoItemIds.length > 0) {
+      const { data: photoRows } = await supabase
+        .from('mfg_sales_order_items')
+        .select('id, photo_urls')
+        .in('id', photoSoItemIds);
+      for (const r of (photoRows ?? []) as Array<{ id: string; photo_urls: string[] | null }>) {
+        photosBySoItem.set(r.id, r.photo_urls ?? []);
+      }
+    }
+    const itemsToInsert = itemRows.map((r) => ({
+      ...r,
+      purchase_order_id: header.id,
+      photo_urls: (r.so_item_id ? photosBySoItem.get(r.so_item_id) : null) ?? [],
+    }));
     const { error: iErr } = await supabase.from('purchase_order_items').insert(stampCompany(itemsToInsert, c));
     if (iErr) {
       // Best-effort rollback of header so we don't leak a no-items PO.
@@ -1566,10 +1596,13 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     // it must flow through to the PO line so a KL SO line never lands stock in
     // PG. The SO header sales_location is only a last-resort fallback now.
     warehouse_id: string | null;
+    /* Owner 2026-08-10 (migration 0274) — the SO line's photos ride along to the
+       PO line. R2 keys, not bytes: the PO points at the SAME objects. */
+    photo_urls: string[] | null;
     so: { sales_location: string | null; customer_delivery_date: string | null } | null;
   };
   const SO_ITEM_SELECT =
-    'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_centi, line_delivery_date, warehouse_id, ' +
+    'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_centi, line_delivery_date, warehouse_id, photo_urls, ' +
     'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date )';
   // supabase-js returns the embedded parent as an object OR a 1-element array
   // depending on the relationship — normalise to a single object.
@@ -1630,7 +1663,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
           line_delivery_date: null, item_group: null, variants: null,
           // No SO line warehouse on the legacy fabricated row → falls back to
           // the SO header sales_location resolution below.
-          warehouse_id: null, so: null,
+          warehouse_id: null, photo_urls: null, so: null,
         },
         qty: it.qty,
         // Legacy path has no per-pick supplier → effectiveSupplierId falls back
@@ -1697,6 +1730,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       // Commander 2026-05-29 — the source SO line id, threaded to the PO line so
       // the append-to-existing-PO path can persist so_item_id (release-on-delete).
       soItemId:  row.id || null,
+      // Owner 2026-08-10 — the SO line's photo keys, carried to the PO line.
+      photoUrls: row.photo_urls ?? [],
       // Commander 2026-05-31 — per-pick supplier override (MRP), the highest
       // precedence input to effectiveSupplierId below.
       pickSupplierId,
@@ -2027,6 +2062,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     warehouseId: string | null; deliveryDate: string | null;
     itemGroup: string | null; variants: Record<string, unknown> | null;
     soItemId: string | null;
+    photoUrls: string[];
   };
   type Bucket = {
     supplierId: string; warehouseId: string | null; currency: string;
@@ -2103,6 +2139,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       itemGroup: it.itemGroup,
       variants: it.variants,
       soItemId: it.soItemId,
+      photoUrls: it.photoUrls,
     });
     bucket.soDocNos.add(it.soDocNo);
     byGroup.set(groupKey, bucket);
@@ -2160,6 +2197,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       description2: buildVariantSummary(String(l.itemGroup ?? ''), l.variants ?? null) || null,
       // Release-on-delete link (migration 0098).
       so_item_id: l.soItemId,
+      // Owner 2026-08-10 (migration 0274) — the source SO line's photos.
+      photo_urls: l.photoUrls,
       // Commander 2026-05-31 — MRP-origin lines are reference-only (no SO lock).
       from_mrp: fromMrp,
     }));
@@ -2295,6 +2334,15 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       // Release-on-delete link (migration 0098) — every from-SO line carries
       // its source SO line so recomputeSoPicked can release it on delete/cancel.
       so_item_id: l.soItemId,
+      /* Owner 2026-08-10 (migration 0274) — the source SO line's photo keys.
+         The array is copied, the R2 objects are not: SO line and PO line point
+         at the same objects, so a photo deleted on the SO also leaves the PO.
+         PER LINE, never deduplicated across the bucket — one sofa build is many
+         compartment lines that legitimately share the same build photo, and each
+         PO line must carry it or that compartment shows no photo at all. Lines
+         stay 1:1 with their SO line (see the merge note above), so this is
+         simply each line's own array. */
+      photo_urls: l.photoUrls,
       // Commander 2026-05-31 — MRP-origin lines are reference-only (no SO lock).
       from_mrp: fromMrp,
     }));
@@ -3365,6 +3413,55 @@ mfgPurchaseOrders.delete('/:id/items/:itemId/allocations/:allocationId', async (
   return c.json({ ok: true, allocations: map.get(itemId) ?? [] });
 });
 
+/* ── Per-line photos — read path (migration 0274) ──────────────────────
+   Owner 2026-08-10: a PO raised from an SO carries the SO line's photos, so the
+   PO detail must be able to SHOW them. The keys ride on the detail row
+   (ITEM_COLS), and this endpoint trades one key for a short-lived signed R2 GET
+   URL — the exact contract the SO side already uses
+   (mfg-sales-orders.ts `/:docNo/items/:itemId/photos/:photoKey/signed`), so a
+   client can drive both surfaces with one code path.
+
+   Deliberately READ-ONLY. Photos are authored elsewhere — the SO upload route
+   (`so-items/...` keys, copied here by the convert) and the AutoCount importer
+   (`po-items/<po_number>/<po item id>/ac-<DtlKey>-<n>.jpg`, appended directly).
+   Both land in the SAME bucket (SO_ITEM_PHOTOS), so this route signs either.
+
+   AUTHZ is MEMBERSHIP, never key shape: the key must be listed in THIS line's
+   photo_urls and the line must belong to THIS PO (and, unlike the SO route, to
+   the active company). A guessed key signs nothing, and no prefix rule exists to
+   lock out a producer — the importer's `po-items/...` keys are served unchanged.
+   The SO endpoint is untouched: it validates against mfg_sales_order_items and
+   would have had to be loosened to serve a PO line. */
+mfgPurchaseOrders.get('/:id/items/:itemId/photos/:photoKey/signed', async (c) => {
+  const sb = c.get('supabase');
+  const poId = c.req.param('id');
+  const itemId = c.req.param('itemId');
+  const photoKey = decodeURIComponent(c.req.param('photoKey'));
+
+  const { data: item } = await scopeToCompany(sb
+    .from('purchase_order_items')
+    .select('purchase_order_id, photo_urls')
+    .eq('id', itemId), c)
+    .maybeSingle();
+  if (!item) return c.json({ error: 'item_not_found' }, 404);
+  const i = item as { purchase_order_id: string; photo_urls: string[] | null };
+  if (i.purchase_order_id !== poId) return c.json({ error: 'item_doc_mismatch' }, 400);
+  if (!(i.photo_urls ?? []).includes(photoKey)) {
+    return c.json({ error: 'photo_not_in_item' }, 404);
+  }
+
+  try {
+    const bindings = soItemPhotoBindings(c.env);
+    const { signedUrl, expiresAt } = await signSoItemPhotoUrl(bindings, photoKey);
+    // Signed thumb sibling. A photo uploaded before thumbnails existed has no
+    // `.thumb` object — the URL 404s and the client falls back to signedUrl.
+    const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
+    return c.json({ signedUrl, thumbUrl, expiresAt });
+  } catch (e) {
+    return c.json({ error: 'signing_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
 /* ── PR #78 — Convert from Sales Order ─────────────────────────────────
    Commander 2026-05-26 (AutoCount parity): "可以点击 Convert from Sales
    Order，也可以点击 Convert from Purchase Request 或者 Quotation 这种
@@ -3412,7 +3509,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   // it used to re-copy full qty on every call → double-ordering).
   const { data: soItems, error: soErr } = await scopeToCompany(sb
     .from('mfg_sales_order_items')
-    .select('id, item_code, description, description2, item_group, qty, po_qty_picked, unit_price_centi, discount_centi, unit_cost_centi, variants, uom, remark')
+    .select('id, item_code, description, description2, item_group, qty, po_qty_picked, unit_price_centi, discount_centi, unit_cost_centi, variants, uom, remark, photo_urls')
     .eq('doc_no', soDocNo)
     .eq('cancelled', false), c);
   if (soErr) return c.json({ error: 'so_load_failed', reason: soErr.message }, 500);
@@ -3444,6 +3541,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     unit_price_centi: number;
     discount_centi: number | null; unit_cost_centi: number | null;
     variants: unknown; uom: string | null; remark: string | null;
+    photo_urls: string[] | null;
   };
   const notOnPo = (wanted as SoItem[]).filter((r) => !existingSet.has(r.item_code));
   /* F1 audit fix (2026-06-10) — convert ONLY the unpicked remainder. This path
@@ -3557,6 +3655,9 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
       // source SO line too, so these lines drop the SO from the picker and get
       // released on delete/cancel, consistent with the From-SO picker paths.
       so_item_id:       it.id,
+      // Owner 2026-08-10 (migration 0274) — carry the SO line's photos, same as
+      // the From-SO picker paths above.
+      photo_urls:       it.photo_urls ?? [],
     };
   });
 
