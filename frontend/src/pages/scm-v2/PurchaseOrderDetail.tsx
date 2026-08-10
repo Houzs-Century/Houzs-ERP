@@ -917,7 +917,9 @@ export const PurchaseOrderDetail = () => {
           )}
           {/* PR — Commander 2026-05-27: "Cancel/Delete PO 没反应".
               Cancel: any pre-receipt status (incl. DRAFT). API blocks RECEIVED.
-              Delete: only CANCELLED. */}
+              The Delete half of that report no longer exists: the endpoint and
+              both buttons were removed 2026-08-11 (#1939) under the owner rule
+              不可以删只可以 cancel. Cancel + Reopen are the whole surface. */}
           {(po.status === 'DRAFT' || po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
             <Button variant="ghost" size="md"
               onClick={async () => {
