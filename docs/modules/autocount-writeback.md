@@ -8,10 +8,6 @@ proven against the live `AED_HOUZS` book on 2026-08-07.
 > `'off'` by migration 0277, and `AC_SYNC_URL` is unset. With either of those
 > two, nothing is queued and nothing is sent.
 
-> **It is also not ready to be turned on.** Section 11 lists thirteen places
-> where the ERP's payload and `AcSyncService.cs` disagree, four of them
-> blocking. Read it before anyone touches that toggle.
-
 The one-time IMPORT that came the other way (AutoCount -> ERP) is a different
 thing entirely and is recorded in `docs/autocount-cutover-ledger.md`.
 
@@ -285,100 +281,6 @@ SELECT doc_type, doc_no, op, attempts, last_error
 | `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document |
 | `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, and the client's retryable/not-retryable read of a response |
 | `tests/autocountWritebackWiring.test.ts` | That every hook is still attached to its route |
-| `src/services/autocount-writeback.contract.test.ts` | The PAYLOAD CONTRACT — see section 11 |
-
----
-
-## 11. The payload contract, and the eleven places the two halves still disagree
-
-`src/services/autocount-writeback.contract.test.ts` does not test the composer
-against itself. It reads `AcSyncService.cs` at build time (`?raw`), extracts the
-keys that file actually parses, and holds the bytes `dispatchOne` would POST up
-against them — for all eight routes. It also runs the ERP's own schema over the
-queries: its fake PostgREST answers **42703 for a column `scm`'s schema dump
-does not have**, exactly as Supabase does, which is what catches a write-back
-that reads a column that was never there.
-
-**The good news first, because it is the larger half:** every key the ERP sends
-is a key the service reads. No typo, no renamed field, no wrong nesting, no
-wrong type. Dates cross as `YYYY-MM-DD` from `date` columns and `DateTime.TryParse`
-reads those the same in any culture; sen become the decimal AutoCount wants;
-`DtlKey` survives as a JSON number into `Convert.ToInt64`; every `DocType` the
-ERP can queue is a `case` the C# handles; and the response shape
-(`{ok, docNo, error}`) is the one the client parses.
-
-What does NOT agree is listed below. The register lives in the test file as
-`DIVERGENCES`, and the test **fails if a twelfth appears and fails if one of
-these is fixed without being removed** — so the list cannot rot in either
-direction.
-
-**Two of the original thirteen are STRUCK OFF, fixed in #1855: D11 and D13.**
-They were the two that were plain bugs rather than decisions — a select naming
-four columns `scm.purchase_orders` has never had, and a failed read becoming an
-empty line list. Their ids are retired, not reused, and `BUG-HISTORY.md` carries
-both. The eleven below are unfixed, and each needs a decision that is not a test
-author's to make.
-
-**Struck off — fixed in #1855. The ids are retired, not reused.**
-
-| id | Field | What it was, and what closed it |
-|---|---|---|
-| D13 (struck) | `Details[]` / `Lines[]`, all of them | The line select named `linked_ac_dtlkey` before migration 0273 existed. PostgREST 42703s the whole query, `items ?? []` turned that into an empty array, and **every SO would have gone over with no lines at all**. Closed on both sides: #1819 landed 0273, and a failed read now throws, is logged, and is written down as a `skipped` outbox row instead of composed (§7). The contract test still takes the column away again, because the mechanism is what has to stay fixed, not that one column. |
-| D11 (struck) | `CreditorCode` / `CreditorName` / `Agent` / `Ref` | `enqueuePoCreate` and `composePoState` selected four columns `scm.purchase_orders` does not have — 42703, `header` null, `return false` inside the function's own `try/catch`, so **PO create and PO edit were a silent no-op**. They now read the real columns and join `scm.suppliers` for the creditor code and name; the PO edit omits `Ref` rather than blanking the book's own, since the ERP has no ref of its own to send. |
-
-**Blocking — the write-back cannot work correctly until these two are fixed**
-
-| id | Field | The disagreement |
-|---|---|---|
-| D10 | `Details[].ItemCode` | `makeItemCodeResolver` is never called by anything but its own unit test — every `compose*` uses the default `identityResolver`, so the raw ERP `item_code` goes on the wire and AutoCount has no such item. |
-| D9 | `Details[]` for a sofa | The ERP stores a sold sofa as one row PER COMPARTMENT (`so-sofa-split.ts:83`, grouped by `variants.buildKey`, each `qty 1` with a share of the price) and `toDetails` is a plain 1:1 map. With D10 fixed, all N rows carry the SAME AutoCount sofa code — **one sofa sold books qty N and takes N off AutoCount's stock.** The fold to mirror is `groupSoLinesForDisplay` (`so-line-display.ts:155`): sum the price, SUM the discount, `Qty 1`, ItemCode = model token, composition into `Desc2`. |
-
-**Silent divergences — they will not fail, they will just be wrong**
-
-| id | Field | The disagreement |
-|---|---|---|
-| D1 | `UDF.*` | The ERP sends `BRANDING` / `VENUE` / `ToPONo`. Every other record in this repo spells them `SOUDF_BRANDING` / `SOUDF_VENUE` / `SOUDF_ToPONo` — `services/pull.ts:164,177,182`, `types.ts:236`, and `services/autocount.ts:249` which WRITES `POUDF_EDate` to the live book today. `ApplyUdf` wraps every write in `Set()`, which swallows an unknown key and logs "set skipped", so the wrong spelling is a no-op nobody sees. **The source cannot settle this — the `udf-probe` step of the trial sends both spellings so one look at the book decides it.** |
-| D4 | `Ref` / `Description` / `SupplierDONo` / `SupplierInvoiceNo` on a conversion | `Str()` returns `""` for an ABSENT key as well as a null one, and the conversion paths assign all four unconditionally. The ERP sends `{DocDate, Ref}` with both null at every call site, so a transferred DO/GRN/invoice has its `Ref` and `Description` blanked and a GRN/PI never carries the supplier's own document number. |
-| D6 | `Lines[].ItemCode` on an edit | The service applies `ItemCode` only to a line it is APPENDING; for a line addressed by `DtlKey` it never reads it. `tbc-swap` and `tbc-swap-sofa` change the product and are hooked to `enqueueEdit`, and section 6 above says AutoCount "takes it as `Desc2` + `ItemCode` on the same `DtlKey`". **It does not.** A SKU swap changes the description and the price and leaves the old product. |
-| D7 | A DELETED line | The service has no delete, deliberately (only `SalesOrder` exposes `DeleteDetail` in this SDK). The ERP hooks line delete to `queueAcSoEdit`, which composes the lines that still exist — so the deleted line stays in AutoCount for ever and nothing reports it. |
-| D12 | line discount | `discount_centi` exists on both item tables and is never sent, so the AutoCount total is the undiscounted one. On a sofa the discount sits on ONE compartment row, which makes it easy to miss. |
-
-**Smaller, but write them down**
-
-| id | Field | The disagreement |
-|---|---|---|
-| D2 | `Details[].Location` | Always null, and a null is `""` to the service — so it blanks the line location rather than leaving AutoCount's. `mfg_sales_order_items.warehouse_id` and the PO items' `warehouse_id` are what it should carry. |
-| D3 | `Details[].DeliveryDate` | Always null. `mfg_sales_order_items.line_delivery_date` and `purchase_order_items.delivery_date` both exist and are not selected. |
-| D5 | `DocNo` on a conversion | The service uses the ERP's number when it is sent, which is exactly what the two CREATE routes do. Conversions never send it, so AutoCount auto-numbers every DO / GRN / invoice and four of the six flows carry two different numbers for one document. |
-| D8 | `Header.Agent` / `SalesLocation` / `DocDate` / `UDF` on an edit | All four are in the C# allow-list and none is composed, so changing the salesperson, the sales location, the order date, the branding or the venue on a live order never reaches AutoCount. |
-
-One trap that is NOT a bug, but has bitten once already: **`/create-so` reads
-`Phone` and `/edit` reads `Phone1`** for the same ERP column. Both composers are
-right; they just do not match each other.
-
----
-
-## 12. The test-book trial
-
-`backend/scripts/ac-trial-dry-run.mjs` posts
-`backend/scripts/autocount-service/trial-payloads.json` — one document chain,
-SO -> DO -> Invoice and PO -> GRN -> Purchase Invoice, plus an edit, a cancel,
-and a cancel that AutoCount should REFUSE — printing every request and response.
-
-**It does not run by default.** With no environment it prints the payloads and
-makes no network call at all. To post, four independent gates must open:
-`AC_TRIAL_CONFIRM=yes-testing-book`; `AC_TRIAL_URL` set; that URL not being the
-one the Worker is configured with (`AC_SYNC_URL`, from the environment or
-uncommented in `wrangler.toml`, plus `AC_PROD_URL`); and `GET /health` naming a
-book that is **not** the production book and **is** `AC_TRIAL_EXPECT_BOOK`.
-
-The last gate is the one that counts, because it is an observation rather than a
-setting. It reads the production book name out of `AcSyncService.cs` itself, so
-it cannot drift. Note that the service reports a compile-time constant there:
-the build pointed at the test database must have had its `BOOK` constant changed
-to match, and if it was not, the harness refuses — which is the right way round.
-
-`AC_TRIAL_KEY` is a credential: it is sent as `X-API-KEY` and never printed.
 
 ---
 

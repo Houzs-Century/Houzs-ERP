@@ -1,0 +1,59 @@
+name: Probe write persistence (read-only)
+
+# Manual, READ-ONLY. Answers one question with data instead of log lines:
+# three `refresh-sofa-colours` apply runs reported "APPLIED - stamped N sofa
+# lines" with raced=0, and the dry-run 29 seconds later reported the identical
+# "already set 440 / TO FILL 146".
+#
+# Prints the connection identity, the relation identity in EVERY schema, the
+# raw `variants` jsonb of five lines an apply claims it stamped, the full
+# top-level key histogram, and whether the other applies of 2026-08-10 are in
+# the data. No write, no DDL, no transaction.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: probe-write-persistence-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-write-persistence.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-write-persistence.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
