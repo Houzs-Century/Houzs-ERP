@@ -1,0 +1,202 @@
+# AutoCount cutover — go-live handoff
+
+Status as of 2026-08-11. This is the index: one place to see where the cutover
+stands against the owner's own acceptance criteria, what landed, and what is
+still owed. Every number here came from a production read, not from a script's
+own log line — see *The three things that were wrong about what we believed*
+below for why that distinction is load-bearing.
+
+## The owner's acceptance criteria
+
+He set these himself. Nothing ships until all three pass.
+
+1. **Every document type syncs to AutoCount** — SO, PO, DO, GR, PI, SI — on
+   **create, convert AND edit**.
+2. **Compartment and variant aligned** on SO/PO, *and the relationships between
+   the documents aligned too*.
+3. **Stock** — (a) Stock Balance Record reconciles; (b) AutoCount **Remark 2**
+   (his stock status field) reconciles with ERP stock status, with a *cause* for
+   every disagreement.
+
+He later narrowed the go-live gate: **SO + PO, create + edit** is enough to open;
+DO/GR/PI/SI and convert can follow. Stock checked first makes it "more accurate".
+
+### Four hard rules
+
+- **不可以删，只可以 cancel.** Nothing is ever DELETED — not a document, not a
+  line, not a stock movement. This forbids implementing an edit as
+  delete-and-recreate (which also destroys AutoCount's own document links and
+  audit trail), and forbids fixing a duplicated stock movement by removing the
+  duplicate: use a compensating reversal that nets to zero.
+- **暂时只可以在 ERP 改.** The ERP is the only editing surface for now, so sync is
+  ONE-WAY with the ERP as master. This removes bidirectional conflict resolution
+  from v1 — but staff will edit in AutoCount out of habit, so drift detection is
+  still required.
+- **Cancel must not diverge.** Acceptance test: after a cancel, the owner's
+  outstanding rule (not converted to DO and not to IV) computes *identically* on
+  both sides.
+- **ZeroTier is the transport** and the only mitigation is keeping it up. Design
+  for that, but a save that succeeds in the ERP while its sync is silently lost
+  must be impossible.
+
+---
+
+## Criterion 1 — document sync
+
+**FAIL: built, gated shut, not wired.** The corruption path is closed, which is
+the part that mattered most.
+
+| | |
+|---|---|
+| The write-back stack | `#1855` merged — outbox (migration 0277), six enqueue hooks, drain cron, toggle, downstream lock |
+| Keyless-line guard | `#1935` + `#1945` merged. An edit whose lines carry no AutoCount identity is **refused**, not appended |
+| Line identity in prod | SO **12,910 / 13,909** (92.8%), PO 275 / 864. **2,316 of 2,723 SO** and 127 of 449 PO are fully covered, i.e. editable |
+| Still needed | The office-side tunnel, and the C# service compiled and deployed on the AutoCount host (runbook: `docs/autocount-service-deploy.md`) |
+
+**Three gates verified shut**, before and after merge, read back from `main`:
+`AC_SYNC_URL` commented at `backend/wrangler.toml:34` (0 uncommented
+occurrences); migration 0277 seeds `scm.autocount_writeback = 'off'`; and
+`callAcService` has one non-test caller, reachable only from
+`drainAutoCountOutbox`, which returns `ac_service_not_configured` *before* it
+reads the outbox.
+
+**What was nearly shipped.** `create` returned only the document number, never
+the line DtlKeys, and `edit` appends when it cannot find a key. So creating a
+document and then editing it would have **appended a duplicate set of lines into
+the live account book** — precisely the pair the owner named as his gate. On a
+purchase order those duplicates could never be removed, only zeroed, because the
+SDK has no `DeleteDetail` for `PurchaseOrder` at all.
+
+Open: adding a line to a document AutoCount already has is currently refused
+(`IsNewLine` is accepted by the C# but nothing sets it). There is no API or UI
+for the outbox. Coverage matrix and build plan: `docs/autocount-sync-coverage.md`
+(PR #1931).
+
+## Criterion 2 — compartment and variant
+
+**PARTIAL, and much better than the first measurement said.**
+
+| | PO sofa | SO sofa |
+|---|---|---|
+| Compartment | **213 / 219** | **262 / 272** |
+| Seat size | 191 / 219 | 253 / 272 |
+| Colour | 175 / 219 | 216 / 272 |
+
+The category "no compartment at all" is **empty** — no sofa line anywhere lacks
+a compartment or carries an unminted SKU. Six real defects remain, on
+`HC-PO-009469` and `HC-PO-009596`.
+
+Chain alignment (`docs/sofa-document-chain-map.md`, PR #1933): **company 2 is
+clean on all four legs.** Company 1 carries **0 wrong item codes on every leg**;
+SO→PO piece-set mismatches went 8 → 2 after link repair, and both survivors are
+correct outcomes (one refused to guess between two identical candidates, one is
+a genuine short order). PO→GRN holds 79 differences that are legitimate history
+— the PO was corrected after receipt — and must not be rewritten.
+
+**The root cause of the whole variant mess.** `refresh-so-variants.mjs` keyed its
+parsed-Desc2 lookup on `${DocNo}|${itemCode}`, which is not a line identity. An
+order with three lines of the same SKU in different colours collapsed to one
+entry, and the last row's parse was stamped onto all three. 183 keys collide,
+298 lines affected. The purchase-order arm escaped only because a *received* PO
+is not "outstanding" and so fell through to a per-line fallback — that accident
+is the entire reason AutoCount's Desc2 appeared to "back the PO". Fixed in
+`#1958`; both arms now key on `DtlKey`, which was in the export the whole time.
+
+## Criterion 3 — stock
+
+**Balance reconciles with every delta explained. Status axis moved and is still
+moving.**
+
+| | |
+|---|---|
+| Per-warehouse agreement | **917 of 976 cells (94%)**; 8 of 15 warehouses agree to the unit |
+| Did the import dump everything into KL? | **No** — ERP KL 52% against AutoCount's 51%, 15 of 16 warehouses hold stock |
+| `warehouse_id` correctness | 13,837 verified against AutoCount (7,800 on exact DtlKey), **0 miswarehoused**, 70 undetermined and left NULL |
+| Sofa readiness | READY **0 → 70**, PENDING 272 → 202, lots with `batch_no` 0/20 → **103/123** |
+| Status-axis disagreements | 151 → **126** |
+
+**Every remaining unit of the +157 net delta sits in a named class**: 83
+migration cut-off, 50 AutoCount negatives, 14 the known double-ship, 13 present
+at seeding. Nothing is unexplained, so the owner's "by right they should agree"
+premise holds.
+
+**Remark 2 is `SO.Remark2`**, nvarchar(40), on the AutoCount SO *header*,
+non-blank on 9,165 orders — and the mapping is an **identity** mapping, because
+`so-readiness.ts` was written to reproduce that convention. The trap: the tokens
+name what IS ready, not what is pending. Full detail:
+`docs/stock-reconciliation.md`.
+
+---
+
+## The three things that were wrong about what we believed
+
+Each was caught by measuring instead of reasoning. They are recorded here
+because the pattern matters more than the individual facts.
+
+1. **"The unique index on `inventory_movements` does not exist."** It does — four
+   partial unique indexes, DDL ported from 2990 by hand and present in **no file
+   in this repo**, which is why the migration reads as if none existed. The code
+   comment was telling the truth. *Verify schema claims against the live database,
+   not migration files.*
+2. **"A backfill introduced a truncation."** It did not. The fabric library holds
+   both `BO315-5` and `BO315-5-FOSSIL`; there are 56 bare-vs-named duplicate
+   pairs across 7 series and only one document pair actually disagrees. The
+   remedy is library de-duplication, not loosening a matcher — loosening is
+   exactly what the digit guard exists to prevent.
+3. **"604 array-shaped `custom_specials` rows are corrupt and should be nulled."**
+   679 of their 694 strings are live picker codes, the derived cache agrees with
+   its source on all 604 rows, and the renderer handles both shapes on purpose.
+   Nulling would have deleted a correct, currently-rendering line item from 604
+   historical documents.
+
+And one that was real and worse than diagnosed: `refresh-so-variants.mjs` and
+`refresh-po-variants.mjs` rebuilt `variants` from a fixed key list *and
+recomputed specials through a mapper with no price guard*. Dispatching either
+would have shrunk the specials backfill **and repriced historical migrated
+documents** — the thing the owner ruled out. Fixed in `#1949`: the sweeps now
+compute a patch and merge with `variants || patch` in the database, so a
+thirteenth key survives by construction.
+
+## Two bugs of the same class, one COE
+
+Binding `JSON.stringify(value)` to a `$1::jsonb` parameter through postgres.js
+encodes it twice, lands a jsonb string scalar, and then `object || non-object`
+**concatenates into an array** instead of merging. `->>'key'` on an array is
+NULL, so the guard re-admitted the same row every run — and `UPDATE 1` was
+perfectly true, so `res.count` answered the wrong question and the script
+reported success three times while corrupting the column.
+
+`docs/jsonb-double-encoding-coe.md` exists because the class was found earlier
+the same day and **documented rather than fixed**, which is how it reached a
+third script hours later. The API path was never affected:
+`pg-supabase-transaction.ts` routes every jsonb value through `sql.json()` and
+its comment already named the trap.
+
+---
+
+## What still needs the owner
+
+| # | Decision |
+|---|---|
+| 1 | **Fabric library**: `03#Straw` (HIRRING GD8371-03 or HIVE GD2034-03?), `J9833-2` (mistyped `J9883-2 CHIC`?), `Beetex harring gd 8371` (which of 10?), `ZanoLeather` (which ZL?), `GD8371` vs `HIRRING GD8371` (which survives?), and whether to merge the 32 duplicate series |
+| 2 | **Should the ERP charge for special add-ons at all?** AutoCount never did — it absorbed them into the negotiated line price. Today a priced SOFA add-on is **costed but never charged**, so it only reduces margin |
+| 3 | **HYDRAULIC** — a divan property with no home. A bedframe variant axis, a flag in the item code like ADJUSTABLE, or free text? It must not become a `special_addons` code |
+| 4 | **"Seat Softer"** (7 instances) — the direct opposite of the existing `Seat Firmer`, currently with nowhere to go. Create it? |
+| 5 | **18 duplicate DO lines across 8 migrated documents** — a double INSERT, 0 stock movements, nothing to compensate. `delivery_order_items` has no cancel column, so: add one, or a qty-0 correction with an audit note? |
+| 6 | **`HC-SO-012949`** — a customer ordered a super-single `CODY-(S)` that was never put on any purchase order. Raising it is a commercial act |
+| 7 | **The 27 held-back specials lines** keep their instructions as free text with no picker tick, matching his own fallback rule. Accept, or build migrated-immunity in the money path? |
+
+## Sequence to go live
+
+1. **Freeze stays ON.** It is already per-company (`value` is a company id list,
+   which is why 2990 never stopped trading). Per-module staging is being built.
+2. Finish criterion 3 residue, then criterion 2 residue.
+3. Stand up the tunnel and deploy the C# service — **needs the owner or IT**;
+   nothing else blocks it.
+4. Lift the freeze for `scm.sales.orders`, company 1 only, one pilot cohort,
+   and watch a document reach AutoCount.
+5. Widen one area at a time.
+
+The freeze lift is last because it is the only step that is hard to reverse:
+once staff edit, rolling back means reconciling human work, not re-running a
+script.
