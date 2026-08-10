@@ -17,7 +17,7 @@ on:
         required: true
         default: "on"
         type: choice
-        options: [on, off]
+        options: ["on", "off"]
       companies:
         description: "Company ids to freeze (1 = Houzs only) or 'all'"
         required: false
