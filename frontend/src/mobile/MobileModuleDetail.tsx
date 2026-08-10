@@ -1054,9 +1054,9 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       }
       if (st === "CANCELLED") {
         out.push({ key: "reopen", label: "Reopen", variant: "outline", request: { path: `/mfg-purchase-orders/${enc}/reopen`, method: "PATCH" } });
-        // Desktop parity — a CANCELLED PO offers a hard Delete (DELETE /:id,
-        // CANCELLED-only on the backend). Removes the record → navigate back.
-        out.push({ key: "delete", label: "Delete", variant: "danger", removes: true, request: { path: `/mfg-purchase-orders/${enc}`, method: "DELETE" }, confirm: { title: "Delete this purchase order?", body: "This permanently removes the cancelled PO. This cannot be undone.", confirmLabel: "Delete PO" } });
+        // A hard Delete used to sit here for desktop parity. Both are gone
+        // (owner rule 2026-08-11: 不可以删只可以 cancel) — CANCELLED is the
+        // terminal state and the record stays. Reopen is the only way back.
         return out;
       }
       // SUBMITTED / PARTIALLY_RECEIVED
