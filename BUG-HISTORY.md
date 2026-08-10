@@ -1,3 +1,42 @@
+## A bare "C" (corner) was filtered as noise, so 49 sofa builds lost their corner [high]
+
+**Symptom** — AutoCount sofa builds written `1+C+2` imported as two separate
+sofas. `"1+C+2(32'Inch)/Col:HR805-30"` on model 9050 produced `9050-1S` +
+`9050-2S` — no `CNR` line — at **`high` confidence**, so no `SOFA UNPARSED`
+placeholder, no exception, and nothing on the order says a compartment is
+missing. `docs/sofa-import-handoff.md` section 1 uses this exact string as its
+worked example of what the decode is supposed to produce.
+
+**Root cause** — Traced to one character class, not guessed. `parse-sofa.mjs`
+drops junk tokens with a NOISE regex whose last alternative is a single letter.
+It was written `[A-KM-OQ-Z]` — deliberately excluding `L` (chaise) and `P`
+(power), but **not** `C` (corner) or `R` (recliner). Both letters were therefore
+discarded at the filter, before reaching their own classification arms
+(`t === "C"` and `t === "R" && recl`), which have been unreachable dead code
+ever since. The class arrived in #1813, the commit that extracted the decoder
+out of `import-ac-outstanding-so.mjs` so the PO importers could share it — under
+a file header that still reads "Extracted verbatim". It was not verbatim.
+
+**Fix** — `[A-BD-KM-OQS-Z]`: every letter the grammar classifies on its own (C,
+L, P, R) is now excluded. Measured over the three committed exports, both
+recliner states: **102 decodes改善, 0 confidence downgrades** — the bar
+`docs/sofa-import-handoff.md` section 7 sets for a parser change, which #1813
+never ran. 49 lines regain a `CNR` (35 SO / 4 PO / 10 SO-linked PO); `R+R` on a
+recliner model now yields `1A(R)(LHF)+1A(R)(RHF)` instead of nothing; a bare `R`
+on a NON-recliner model correctly refuses and takes the placeholder path.
+
+**Also added** — `backend/tests/parseSofaGrammar.test.ts`, 23 golden cases taken
+straight from the handoff doc's own rule tables. There was no test on this
+parser at all, which is the real reason a one-character mistake survived a
+merge. The doc asked for it ("owner 给的每个新例子都补成金标测试"); now it exists.
+
+**The class, for next time** — the sibling extraction (`parse-bedframe.mjs`) WAS
+regression-tested over all 2,702 real strings and proved byte-identical, and its
+header says so. Same refactor, same week, opposite outcome. "Extracted verbatim"
+in a comment is a claim, not evidence; run the corpus.
+
+**Ref** — 2026-08-10, PR fix/sofa-corner-token.
+
 ## Every migrated sales-order line was saved without its warehouse [high]
 
 **Symptom** — All 248+ sofa sales-order lines from the AutoCount cutover read
