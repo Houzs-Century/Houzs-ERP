@@ -135,6 +135,22 @@ async function main() {
   log("");
   log(`migrated lines scanned: SO ${soLines.length}, PO ${poLines.length}`);
 
+  /* DOES THE SURCHARGE ACTUALLY REACH THE CHARGED PRICE?
+     `breakdown.specialsSurchargeSen` enters the charge ONLY through
+     `breakdown.unitPriceSen` at mfg-pricing-recompute.ts:435
+     (`authoritativeSellingSen = effectiveBaseSen + breakdown.unitPriceSen`),
+     and that value is used only when
+     `hasAuthoritativeSelling = category !== 'SOFA' && effectiveBaseSen > 0` (:436).
+     The SOFA branch prices from `computeSofaSellingSen + fabricAddonCenti +
+     extraSen` (:563) and never adds the specials surcharge; in the whole
+     recompute file `specialsSurchargeSen` appears only in a comment (:369) and
+     as the persisted reporting field `special_order_sen` (:603).
+     So a line only really reprices when it is BEDFRAME *and* its product row
+     carries sell_price_sen > 0. Everything else keeps the operator's price. */
+  const prods = await sql`SELECT code, sell_price_sen FROM scm.mfg_products WHERE company_id = ${CO}`;
+  const sellOf = new Map(prods.map((p) => [K(p.code), Number(p.sell_price_sen ?? 0)]));
+  log(`mfg_products loaded for the sell_price_sen test: ${prods.length}`);
+
   const byCode = new Map();          // code -> lines that would GAIN it
   const affected = [];               // per-line detail, priced codes only
 
@@ -173,11 +189,13 @@ async function main() {
       if (pricedAdded.length) {
         const delta = pricedAdded.reduce((a, c) => a + (priceOf.get(c)?.sell || 0), 0);
         const deltaCost = pricedAdded.reduce((a, c) => a + (priceOf.get(c)?.cost || 0), 0);
+        const sellBase = sellOf.get(K(r.code)) ?? 0;
+        const reprices = cat !== "SOFA" && sellBase > 0;
         affected.push({
           which, doc: r.doc, line_no: r.line_no, id: r.id, code: r.code, cat,
           unit_centi: Number(r.unit_centi ?? 0), tot_centi: Number(r.tot_centi ?? 0),
           acdoc: r.acdoc, acdtl: r.linked_ac_dtlkey, migrated: r.migrated,
-          codes: pricedAdded, delta, deltaCost,
+          codes: pricedAdded, delta, deltaCost, sellBase, reprices,
         });
       }
     }
@@ -194,18 +212,23 @@ async function main() {
 
   log("");
   log(`=== THE AFFECTED LINES (would gain a PRICED code) : ${affected.length} ===`);
-  log(`   ${"src".padEnd(3)} ${"doc".padEnd(16)} ${"item_code".padEnd(20)} ${"unit_price_centi".padStart(16)} ` +
-      `${"+delta_sen".padStart(10)} ${"ac_docno".padEnd(12)} ${"ac_dtlkey".padStart(10)}  codes`);
-  let totalDelta = 0, totalDeltaCost = 0;
+  log(`   ${"src".padEnd(3)} ${"doc".padEnd(16)} ${"item_code".padEnd(20)} ${"cat".padEnd(8)} ` +
+      `${"unit_centi".padStart(11)} ${"sellbase".padStart(9)} ${"+delta".padStart(7)} ${"REPRICES".padEnd(8)} ` +
+      `${"ac_docno".padEnd(12)} ${"ac_dtlkey".padStart(9)}  codes`);
+  let totalDelta = 0, totalDeltaCost = 0, realDelta = 0;
   for (const a of affected.sort((x, y) => String(x.doc).localeCompare(String(y.doc)))) {
     totalDelta += a.delta; totalDeltaCost += a.deltaCost;
+    if (a.reprices) realDelta += a.delta;
     log(`   ${a.which.padEnd(3)} ${String(a.doc ?? "").padEnd(16)} ${String(a.code ?? "").padEnd(20)} ` +
-        `${String(a.unit_centi).padStart(16)} ${String(a.delta).padStart(10)} ` +
-        `${String(a.acdoc ?? "").padEnd(12)} ${String(a.acdtl ?? "").padStart(10)}  ${a.codes.join("+")}`);
+        `${a.cat.padEnd(8)} ${String(a.unit_centi).padStart(11)} ${String(a.sellBase).padStart(9)} ` +
+        `${String(a.delta).padStart(7)} ${(a.reprices ? "YES" : "no").padEnd(8)} ` +
+        `${String(a.acdoc ?? "").padEnd(12)} ${String(a.acdtl ?? "").padStart(9)}  ${a.codes.join("+")}`);
   }
   log("");
-  log(`   TOTAL selling exposure: ${totalDelta} sen (RM ${(totalDelta / 100).toFixed(2)})`);
-  log(`   TOTAL cost exposure   : ${totalDeltaCost} sen (RM ${(totalDeltaCost / 100).toFixed(2)})`);
+  log(`   NOMINAL selling exposure (sum of stamped prices): ${totalDelta} sen (RM ${(totalDelta / 100).toFixed(2)})`);
+  log(`   NOMINAL cost exposure                           : ${totalDeltaCost} sen (RM ${(totalDeltaCost / 100).toFixed(2)})`);
+  log(`   REAL selling exposure (BEDFRAME with sell_price_sen>0 only): ${realDelta} sen (RM ${(realDelta / 100).toFixed(2)})`);
+  log(`   lines that would actually reprice: ${affected.filter((a) => a.reprices).length} of ${affected.length}`);
   const nonMigratedAffected = affected.filter((a) => a.migrated !== true).length;
   log(`   of these lines, header migrated_no_stock<>true: ${nonMigratedAffected}`);
 
