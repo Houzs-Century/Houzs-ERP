@@ -811,7 +811,8 @@ deliveryReturns.get('/', async (c) => {
    must strip in ITS OWN vocabulary. This is that surface. */
 deliveryReturns.get('/returnable-do-lines', async (c) => {
   const sb = c.get('supabase');
-  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'));
+  // Company scope (owner 2026-08-10 audit) — see resolveCandidateDoIds.
+  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
   if (doIds.length === 0) return c.json({ lines: [] });
   const remainingMap = await doReturnableRemaining(sb, doIds);
   const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);

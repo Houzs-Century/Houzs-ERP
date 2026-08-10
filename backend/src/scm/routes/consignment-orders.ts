@@ -500,15 +500,20 @@ consignmentOrders.get('/mine', async (c) => {
      always returns empty. Resolve the caller's OWN deterministic staff uuid
      (mig-0066 link) for the self-view. */
   const myStaffId = (await resolveCallerStaffId(sb, c.get('houzsUser')?.id)) ?? user.id;
-  const { data, error } = await sb
-    .from('consignment_sales_orders')
-    .select(
-      'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
-      'customer_delivery_date, internal_expected_dd, status, payment_method, approval_code, note, so_date, created_at, ' +
-      'total_revenue_centi, line_count, deposit_centi',
-    )
-    .eq('salesperson_id', myStaffId)
-    .not('status', 'in', '("CANCELLED","ON_HOLD")')
+  // Company-scoped (owner 2026-08-10 audit): a rep granted to both companies
+  // otherwise gets one pooled board instead of the active company's.
+  const { data, error } = await scopeToCompany(
+    sb
+      .from('consignment_sales_orders')
+      .select(
+        'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
+        'customer_delivery_date, internal_expected_dd, status, payment_method, approval_code, note, so_date, created_at, ' +
+        'total_revenue_centi, line_count, deposit_centi',
+      )
+      .eq('salesperson_id', myStaffId)
+      .not('status', 'in', '("CANCELLED","ON_HOLD")'),
+    c,
+  )
     .order('created_at', { ascending: false })
     .limit(80);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);

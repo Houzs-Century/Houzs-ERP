@@ -1,3 +1,32 @@
+## Seven more cross-company read leaks, same class as the GRN picker [high]
+
+**Symptom** — Follow-on audit after the owner spotted Houzs PO lines in 2990's
+GRN picker (entry above). A systematic sweep of every SCM list/detail GET found
+seven more queries on company_id-bearing tables with NO company predicate.
+
+**Root cause** — Same class, seven sites. Worst: GET /mfg-sales-orders/mine —
+its ?salesperson=all + scm.so.view_all branch swaps in a SERVICE-ROLE client
+(RLS bypassed) AND clears the salesperson filter, so with no company wrap the
+query degraded to "every non-cancelled SO in the database", both companies,
+with customer PII + total_revenue_centi. Also: resolveCandidateDoIds
+(lib/do-line-remaining) enumerated every company's delivery orders when called
+with no explicit doIds — feeding BOTH the sales-invoice invoiceable-DO picker
+and the delivery-return returnable-DO picker; the two consignment pickers
+(deliverable-order-lines, returnable-note-lines) whose sibling GET / lists were
+already scoped; consignment /mine and /my-mtd (pooled figures for a rep granted
+to both companies); and three detail-by-:id header reads (grns, delivery_orders,
+sales_invoices) that a bare uuid could read across companies.
+
+**Fix** — scopeToCompany on each list/detail query; resolveCandidateDoIds takes
+an explicit companyId (kept ctx-free, callers pass activeCompanyId(c)).
+Backend typecheck clean.
+
+**The class, for next time** — a picker/detail endpoint is NOT safe because its
+sibling list is scoped; scoping is per-query. Highest risk is any handler that
+swaps in a service-role client — that removes RLS, the only remaining backstop.
+
+**Ref** — 2026-08-10, go-live cross-company audit.
+
 ## GRN pick-PO picker listed EVERY company's PO lines [high]
 
 **Symptom** — Owner 2026-08-10, screenshot: with the company switcher on 2990's
