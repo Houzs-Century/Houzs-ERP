@@ -140,25 +140,53 @@ async function doDos() {
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL ORDER BY i.line_no`;
   const soByKey = new Map();
+  const soByModel = new Map();
   for (const it of soItems) {
-    const k = `${it.ac}|${norm(it.item_code)}`;
+    const code = norm(it.item_code);
+    const k = `${it.ac}|${code}`;
     if (!soByKey.has(k)) soByKey.set(k, []);
     soByKey.get(k).push(it);
+    /* A sofa arrives in the ERP as one line per COMPARTMENT, so an AutoCount
+       delivery line naming the whole model can never match a code. Index the
+       build by its model prefix as well, exactly as the photo importer does. */
+    const dash = code.indexOf("-");
+    if (dash < 0) continue;
+    const mk = `${it.ac}|${code.slice(0, dash)}`;
+    if (!soByModel.has(mk)) soByModel.set(mk, []);
+    soByModel.get(mk).push(it);
   }
+  const sofaModelOf = (erp) => {
+    const ALIAS = { "5530": "9028", "5536": "9058", "5537": "8030", "5540": "8030" };
+    const m = (erp || "").replace(/-1S$/i, "").toUpperCase();
+    return ALIAS[m] || m;
+  };
 
   const byDo = new Map();
   let noSoLine = 0, unmapped = 0;
+  const missCodes = new Map(); // a silent miss count hid this same class of bug twice already
   for (const r of rows) {
     const erp = byAc.get(norm(r.ItemCode));
     if (!erp) { unmapped++; continue; }
+    /* Exact code first, then the build's compartment lines. A sofa AutoCount
+       shipped as one whole unit corresponds to EVERY compartment of that build
+       here, so all of them are marked delivered - otherwise the pieces stay
+       outstanding and the set can be shipped a second time. */
     const cands = soByKey.get(`${r.SoNo}|${norm(erp)}`);
-    const pick = cands && cands.length ? cands[0] : null;
-    if (!pick) { noSoLine++; continue; }
-    if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: pick.doc_no, items: [] });
-    byDo.get(r.DoNo).items.push({ code: erp, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)), soItemId: pick.id });
+    const pieces = (cands && cands.length) ? null : soByModel.get(`${r.SoNo}|${sofaModelOf(erp)}`);
+    const targets = (cands && cands.length) ? [cands[0]] : pieces;
+    if (!targets || !targets.length) {
+      noSoLine++;
+      missCodes.set(erp, (missCodes.get(erp) ?? 0) + 1);
+      continue;
+    }
+    if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: targets[0].doc_no, items: [] });
+    for (const t of targets) {
+      byDo.get(r.DoNo).items.push({ code: t.item_code, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)), soItemId: t.id });
+    }
   }
   const plan = [...byDo.values()].filter((d) => !done.has(d.doNo));
   log(`AutoCount delivery lines against open orders: ${rows.length}; unmapped code ${unmapped}; no ERP SO line ${noSoLine}`);
+  for (const [code, n] of [...missCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`   no ERP line for ${code} x${n}`);
   log(`DO documents: ${byDo.size}; already mirrored: ${byDo.size - plan.length}; to create: ${plan.length} (${plan.reduce((s, d) => s + d.items.length, 0)} lines, ${plan.reduce((s, d) => s + d.items.reduce((t, i) => t + i.qty, 0), 0)} units)`);
   for (const d of plan.slice(0, 8)) log(`   ${d.doNo} <- ${d.so}: ${d.items.length} line(s)`);
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
