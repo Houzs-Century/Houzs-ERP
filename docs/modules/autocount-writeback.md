@@ -289,7 +289,7 @@ SELECT doc_type, doc_no, op, attempts, last_error
 
 ---
 
-## 11. The payload contract, and the thirteen places the two halves disagree
+## 11. The payload contract, and the eleven places the two halves still disagree
 
 `src/services/autocount-writeback.contract.test.ts` does not test the composer
 against itself. It reads `AcSyncService.cs` at build time (`?raw`), extracts the
@@ -308,17 +308,28 @@ ERP can queue is a `case` the C# handles; and the response shape
 (`{ok, docNo, error}`) is the one the client parses.
 
 What does NOT agree is listed below. The register lives in the test file as
-`DIVERGENCES`, and the test **fails if a fourteenth appears and fails if one of
+`DIVERGENCES`, and the test **fails if a twelfth appears and fails if one of
 these is fixed without being removed** — so the list cannot rot in either
-direction. Nothing here has been fixed: each needs a decision, and the whole
-mechanism is off.
+direction.
 
-**Blocking — the write-back cannot work at all until these four are fixed**
+**Two of the original thirteen are STRUCK OFF, fixed in #1855: D11 and D13.**
+They were the two that were plain bugs rather than decisions — a select naming
+four columns `scm.purchase_orders` has never had, and a failed read becoming an
+empty line list. Their ids are retired, not reused, and `BUG-HISTORY.md` carries
+both. The eleven below are unfixed, and each needs a decision that is not a test
+author's to make.
+
+**Struck off — fixed in #1855. The ids are retired, not reused.**
+
+| id | Field | What it was, and what closed it |
+|---|---|---|
+| D13 (struck) | `Details[]` / `Lines[]`, all of them | The line select named `linked_ac_dtlkey` before migration 0273 existed. PostgREST 42703s the whole query, `items ?? []` turned that into an empty array, and **every SO would have gone over with no lines at all**. Closed on both sides: #1819 landed 0273, and a failed read now throws, is logged, and is written down as a `skipped` outbox row instead of composed (§7). The contract test still takes the column away again, because the mechanism is what has to stay fixed, not that one column. |
+| D11 (struck) | `CreditorCode` / `CreditorName` / `Agent` / `Ref` | `enqueuePoCreate` and `composePoState` selected four columns `scm.purchase_orders` does not have — 42703, `header` null, `return false` inside the function's own `try/catch`, so **PO create and PO edit were a silent no-op**. They now read the real columns and join `scm.suppliers` for the creditor code and name; the PO edit omits `Ref` rather than blanking the book's own, since the ERP has no ref of its own to send. |
+
+**Blocking — the write-back cannot work correctly until these two are fixed**
 
 | id | Field | The disagreement |
 |---|---|---|
-| D13 | `Details[]` / `Lines[]`, all of them | The line select asks for `linked_ac_dtlkey`, which PR #1819 has not landed. PostgREST does not ignore an unknown column, it 42703s the whole query — so `items` is null, `items ?? []` is empty, and **every SO goes over with no lines at all**. #1855 describes this state as "every line is new ... correct-but-degraded"; it is every line MISSING. |
-| D11 | `CreditorCode` / `CreditorName` / `Agent` / `Ref` | `enqueuePoCreate` and `composePoState` select four columns `scm.purchase_orders` does not have (it is supplier-keyed: `supplier_id` + a join). 42703, `header` null, `return false` inside the function's own `try/catch`: **PO create and PO edit are a silent no-op.** |
 | D10 | `Details[].ItemCode` | `makeItemCodeResolver` is never called by anything but its own unit test — every `compose*` uses the default `identityResolver`, so the raw ERP `item_code` goes on the wire and AutoCount has no such item. |
 | D9 | `Details[]` for a sofa | The ERP stores a sold sofa as one row PER COMPARTMENT (`so-sofa-split.ts:83`, grouped by `variants.buildKey`, each `qty 1` with a share of the price) and `toDetails` is a plain 1:1 map. With D10 fixed, all N rows carry the SAME AutoCount sofa code — **one sofa sold books qty N and takes N off AutoCount's stock.** The fold to mirror is `groupSoLinesForDisplay` (`so-line-display.ts:155`): sum the price, SUM the discount, `Qty 1`, ItemCode = model token, composition into `Desc2`. |
 

@@ -187,29 +187,26 @@ function columnsOf(table: string): string[] {
 const LATER_MIGRATIONS: Record<string, string[]> = {
   // 0083 (company_id), 0271 (linked_ac_docno)
   mfg_sales_orders: ['company_id', 'linked_ac_docno'],
-  // 0083 (company_id). linked_ac_dtlkey belongs to PR #1819 and is NOT merged.
-  mfg_sales_order_items: ['company_id'],
+  // 0083 (company_id), 0273 (linked_ac_dtlkey — PR #1819)
+  mfg_sales_order_items: ['company_id', 'linked_ac_dtlkey'],
   // 0026, 0080, 0083, 0144, 0275, 0277
   purchase_orders: [
     'supplier_delivery_date_2', 'supplier_delivery_date_3', 'supplier_delivery_date_4',
     'revision', 'company_id', 'po_email_sent_at', 'po_email_sent_to',
     'linked_ac_grn_docnos', 'linked_ac_pinv_docnos', 'linked_ac_docno',
   ],
-  purchase_order_items: ['company_id'],
+  // 0083 (company_id), 0273 (linked_ac_dtlkey — PR #1819)
+  purchase_order_items: ['company_id', 'linked_ac_dtlkey'],
+  suppliers: ['company_id'],
 };
 
-/** What PR #1819 (migration 0273) adds and has not landed yet. */
-const PR_1819: Record<string, string[]> = {
-  mfg_sales_order_items: ['linked_ac_dtlkey'],
-  purchase_order_items: ['linked_ac_dtlkey'],
-};
-
-const schemaOf = (table: string, withPr1819 = false): Set<string> =>
-  new Set([
-    ...columnsOf(table),
-    ...(LATER_MIGRATIONS[table] ?? []),
-    ...(withPr1819 ? PR_1819[table] ?? [] : []),
-  ]);
+/**
+ * @param omit columns to pretend the table does NOT have. Only one test uses
+ *   it, and it is the important one: a read that 42703s must not turn into a
+ *   document with no lines.
+ */
+const schemaOf = (table: string, omit: string[] = []): Set<string> =>
+  new Set([...columnsOf(table), ...(LATER_MIGRATIONS[table] ?? [])].filter((c) => !omit.includes(c)));
 
 type Row = Record<string, any>;
 
@@ -219,12 +216,13 @@ type Row = Record<string, any>;
  * as Supabase does — which is the only way a test can catch a write-back that
  * reads a column the ERP has never had.
  */
-function fakeSb(tables: Record<string, Row[]>, withPr1819 = false) {
+function fakeSb(tables: Record<string, Row[]>, omit: Record<string, string[]> = {}) {
   const schemas: Record<string, Set<string>> = {
-    mfg_sales_orders: schemaOf('mfg_sales_orders', withPr1819),
-    mfg_sales_order_items: schemaOf('mfg_sales_order_items', withPr1819),
-    purchase_orders: schemaOf('purchase_orders', withPr1819),
-    purchase_order_items: schemaOf('purchase_order_items', withPr1819),
+    mfg_sales_orders: schemaOf('mfg_sales_orders', omit.mfg_sales_orders),
+    mfg_sales_order_items: schemaOf('mfg_sales_order_items', omit.mfg_sales_order_items),
+    purchase_orders: schemaOf('purchase_orders', omit.purchase_orders),
+    purchase_order_items: schemaOf('purchase_order_items', omit.purchase_order_items),
+    suppliers: schemaOf('suppliers', omit.suppliers),
   };
   const from = (table: string) => {
     tables[table] ??= [];
@@ -340,11 +338,16 @@ const SO_ITEMS = [
 ];
 
 /* A purchase order as scm.purchase_orders ACTUALLY is — supplier_id and notes,
-   no creditor columns. That is the point of this row; see DIVERGENCES B1. */
+   no creditor columns. The creditor is one join away, on scm.suppliers. */
 const PO_HEADER = {
   id: 'po-uuid-1', po_number: 'PO-2608-004', po_date: '2026-08-11',
   supplier_id: 'supplier-uuid-1', notes: 'Trial purchase order',
   company_id: 1, linked_ac_docno: null,
+};
+
+const SUPPLIER = {
+  id: 'supplier-uuid-1', code: '400-T001', name: 'Trial Supplier Sdn Bhd',
+  company_id: 1,
 };
 
 const PO_ITEMS = [
@@ -356,22 +359,23 @@ const PO_ITEMS = [
 ];
 
 /**
- * @param withPr1819 give the item tables the linked_ac_dtlkey column PR #1819
- *   adds. FALSE is production today; TRUE is what the write-back was written
- *   for. Both are asserted below, because they produce different payloads.
+ * @param omit columns to take AWAY from a table, so the fake answers 42703 for
+ *   them exactly as PostgREST would. Used by one test, to prove a failed read
+ *   is never composed into an empty document.
  */
-const seeded = (withPr1819 = false) => fakeSb({
+const seeded = (omit: Record<string, string[]> = {}) => fakeSb({
   app_config: [{ key: 'scm.autocount_writeback', value: 'all' }],
   autocount_outbox: [],
   mfg_sales_orders: [{ ...SO_HEADER }],
   mfg_sales_order_items: SO_ITEMS.map((r, i) => ({ ...r, linked_ac_dtlkey: i === 0 ? 4242 : null })),
   purchase_orders: [{ ...PO_HEADER }],
+  suppliers: [{ ...SUPPLIER }],
   purchase_order_items: PO_ITEMS.map((r) => ({ ...r, linked_ac_dtlkey: null })),
   delivery_orders: [{ id: 'do-uuid-1', do_number: 'DO-2608-009', linked_ac_docno: null }],
   grns: [{ id: 'grn-uuid-1', grn_number: 'GRN-2608-003', linked_ac_docno: null }],
   sales_invoices: [{ id: 'si-uuid-1', invoice_number: 'SI-2608-002', linked_ac_docno: null }],
   purchase_invoices: [{ id: 'pi-uuid-1', invoice_number: 'PI-2608-002', linked_ac_docno: null }],
-}, withPr1819);
+}, omit);
 
 const ENV = { AC_SYNC_URL: 'http://ac-test.invalid:8900', AC_SYNC_KEY: 'not-a-real-key' } as never;
 
@@ -476,46 +480,52 @@ export const DIVERGENCES: Divergence[] = [
     erp: 'sends the raw ERP item_code / material_code. makeItemCodeResolver exists and is never called by anything but its own unit test — every compose* call takes the default identityResolver, so no ERP code is ever mapped to an AutoCount one.',
     severity: 'critical',
   },
-  {
-    id: 'D11', flow: 'create_po + edit(PO)', field: 'CreditorCode / CreditorName / Agent / Ref',
-    service: 'assigns CreditorCode unconditionally (AcSyncService.cs:199); a purchase order with a blank creditor cannot be saved.',
-    erp: 'selects creditor_code, creditor_name, agent and ref from scm.purchase_orders (autocount-outbox.ts:198,:471). That table has NONE of them — it is supplier-keyed (supplier_id + a join). PostgREST answers 42703, header is null, and both functions return false inside their own try/catch: PO create and PO edit are a silent no-op.',
-    severity: 'critical',
-  },
+  /* D11 (create_po + edit(PO): CreditorCode / CreditorName / Agent / Ref read
+     off columns scm.purchase_orders has never had) is FIXED in #1855 and struck
+     off: the PO reads name the real columns and join scm.suppliers for the
+     creditor, and the PO edit omits Ref instead of blanking the book's own.
+     Proven by '/create-po — the creditor comes from scm.suppliers' below. */
   {
     id: 'D12', flow: 'create_so + create_po + edit', field: 'Details[] — line discount',
     service: 'reads no discount field; SalesOrderDetail exposes Discount and DiscountAmt (sdk-api-reference.txt:468) and neither is in the payload contract.',
     erp: 'has discount_centi on both item tables and never sends it, so the AutoCount document total is the undiscounted one. On a sofa the discount sits on ONE compartment row (mfg-sales-orders.ts:4398), which makes it easy to miss.',
     severity: 'high',
   },
-  {
-    id: 'D13', flow: 'create_so + edit (and every PO flow via D11)', field: 'Details[] / Lines[] — all of them',
-    service: 'CreateSo iterates List(p, "Details") (AcSyncService.cs:178); an empty list is an order with no lines.',
-    erp: 'selects linked_ac_dtlkey (autocount-outbox.ts:169,:447), a column PR #1819 has not landed. PostgREST does not ignore an unknown column, it fails the whole query with 42703 — so `items` is null, `items ?? []` is empty, and EVERY line is dropped. #1855 describes this state as "every line is new ... correct-but-degraded"; it is every line MISSING.',
-    severity: 'critical',
-  },
+  /* D13 (every line dropped, because the line select named linked_ac_dtlkey and
+     PostgREST fails the WHOLE query with 42703) is FIXED and struck off: PR
+     #1819 landed migration 0273 so the column exists, and #1855 no longer turns
+     a failed read into an empty line list — it throws, logs, and writes a
+     'skipped' outbox row instead of composing. Proven by 'a line read that
+     fails composes NOTHING' below, which takes the column away again. */
 ];
 
 // ── layer 2: the wire body, whole, for all eight routes ─────────────────────
 
 describe('/create-so — the body dispatchOne would POST', () => {
-  test('D13: as the ERP schema stands TODAY, the order goes over with NO LINES AT ALL', async () => {
-    /* The line select asks for linked_ac_dtlkey, which PR #1819 has not landed.
-       PostgREST does not ignore an unknown column, it fails the whole query with
-       42703 — so `items` is null, `items ?? []` is empty, and the payload is a
-       header with an empty Details array. The PR body describes this state as
-       "every line is new ... correct-but-degraded"; it is not degraded, it is
-       every line MISSING. This is the single most important thing to fix before
-       the toggle is ever turned on. */
-    const sb = seeded(/* withPr1819 */ false);
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' })).toBe(true);
-    const body = await wireBody(sb);
-    expect(body.Details).toEqual([]);
-    expect(body.DocNo).toBe('SO-2608-011');
+  test('D13 struck: a line read that fails composes NOTHING, and writes down why', async () => {
+    /* The old failure: the line select named linked_ac_dtlkey before migration
+       0273 existed, PostgREST failed the WHOLE query with 42703, `items ?? []`
+       made that an empty array, and the order went into the account book as a
+       header with no Details — indistinguishable, from AutoCount's side, from
+       an order the operator really did leave empty.
+
+       0273 landed, so take the column away again here: the mechanism, not that
+       one column, is what has to stay fixed. Any failed read must end the
+       compose. */
+    const sb = seeded({ mfg_sales_order_items: ['linked_ac_dtlkey'] });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' })).toBe(false);
+
+    const rows = sb.tables.autocount_outbox;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('skipped');
+    expect(rows[0].last_error).toContain('42703');
+    // Nothing that could be POSTed, and above all nothing with an empty Details.
+    expect(rows.filter((r) => r.status === 'pending')).toEqual([]);
+    expect(rows.some((r) => Array.isArray((r.payload as any)?.body?.Details))).toBe(false);
   });
 
-  test('every field, against the shape CreateSo parses (with PR #1819 landed)', async () => {
-    const sb = seeded(true);
+  test('every field, against the shape CreateSo parses', async () => {
+    const sb = seeded();
     expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' })).toBe(true);
 
     expect(await wireBody(sb)).toEqual({
@@ -572,7 +582,7 @@ describe('/create-so — the body dispatchOne would POST', () => {
   });
 
   test('no key is sent that CreateSo does not read — a typo would land here', async () => {
-    const sb = seeded(true);
+    const sb = seeded();
     await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' });
     const body = await wireBody(sb);
     const read = new Set(headerKeys(CS_CREATE_SO));
@@ -585,7 +595,7 @@ describe('/create-so — the body dispatchOne would POST', () => {
   });
 
   test('what CreateSo reads and the ERP never sends, and why each one is safe', async () => {
-    const sb = seeded(true);
+    const sb = seeded();
     await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' });
     const body = await wireBody(sb);
     const sent = new Set(Object.keys(body));
@@ -599,27 +609,95 @@ describe('/create-so — the body dispatchOne would POST', () => {
   });
 });
 
-describe('/create-po — and the reason nothing reaches it', () => {
-  test('D11: the header select names four columns scm.purchase_orders does not have', () => {
+describe('/create-po — the creditor comes from scm.suppliers', () => {
+  test('D11 struck: the four columns are still absent, and nothing asks for them', () => {
+    /* The bug was a select naming these. They do not exist and never did, so
+       this stays as the guard: if one comes back into a select, the fake
+       PostgREST 42703s and every assertion below goes red. */
     const cols = schemaOf('purchase_orders');
     for (const phantom of ['creditor_code', 'creditor_name', 'agent', 'ref']) {
       expect(cols.has(phantom), `purchase_orders.${phantom} should not exist`).toBe(false);
     }
-    // What it does have instead: the supplier is a foreign key, not a name.
+    // What it has instead: the supplier is a foreign key, not a name.
     expect(cols.has('supplier_id')).toBe(true);
     expect(cols.has('notes')).toBe(true);
+    expect(schemaOf('suppliers').has('code')).toBe(true);
+    expect(schemaOf('suppliers').has('name')).toBe(true);
   });
 
-  test('so a PO create queues NOTHING, and says nothing — the failure is swallowed', async () => {
+  test('a PO create queues, and the body carries the supplier CODE', async () => {
     const sb = seeded();
+    expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).toBe(true);
+    expect(sb.tables.autocount_outbox).toHaveLength(1);
+
+    const body = await wireBody(sb);
+    /* CreatePo assigns CreditorCode unconditionally (AcSyncService.cs:199) and a
+       purchase order with a blank creditor cannot be saved. */
+    expect(body.CreditorCode).toBe('400-T001');
+    expect(body).toEqual({
+      DocNo: 'PO-2608-004',
+      DocDate: '2026-08-11',
+      CreditorCode: '400-T001',
+      CreditorName: 'Trial Supplier Sdn Bhd',
+      // The ERP has no agent and no ref on a purchase order; a CREATE writes
+      // "" into a document that had nothing there anyway.
+      Agent: null,
+      Ref: null,
+      Description: 'Trial purchase order',
+      UDF: {},
+      Details: [
+        {
+          ItemCode: 'AKEMI-SOLITUDE-Q',              // D10 — not mapped
+          Description: 'AKEMI SOLITUDE MATTRESS QUEEN',
+          Desc2: null,
+          Qty: 2,
+          UnitPrice: 900,
+          Location: null,                             // D2
+          DeliveryDate: null,                         // D3
+        },
+      ],
+    });
+  });
+
+  test('no key is sent that CreatePo does not read', async () => {
+    const sb = seeded();
+    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+    const body = await wireBody(sb);
+    const read = new Set(headerKeys(CS_CREATE_PO));
+    expect(Object.keys(body).filter((k) => !read.has(k) && k !== 'UDF')).toEqual([]);
+    const detailRead = new Set(detailKeys(CS_CREATE_PO));
+    for (const d of body.Details as Record<string, unknown>[]) {
+      expect(Object.keys(d).filter((k) => !detailRead.has(k))).toEqual([]);
+    }
+  });
+
+  test('a PO edit reaches AutoCount too, and leaves the book\'s own Ref alone', async () => {
+    const sb = seeded();
+    sb.tables.purchase_orders[0].linked_ac_docno = 'AC-PO-7';
+    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-uuid-1' })).toBe(true);
+
+    const body = await wireBody(sb);
+    expect(body.DocType).toBe('PO');
+    expect(body.DocNo).toBe('AC-PO-7');
+    /* /edit applies ONLY the header keys it is given (AcSyncService.cs:369), so
+       an absent Ref leaves AutoCount's own; a null Ref would blank it, and the
+       ERP has no ref of its own to put there. */
+    expect(body.Header).toEqual({
+      CreditorName: 'Trial Supplier Sdn Bhd',
+      Description: 'Trial purchase order',
+    });
+    const allow = new Set(csEditHeaderAllowList());
+    expect(Object.keys(body.Header as object).filter((k) => !allow.has(k))).toEqual([]);
+    expect(body.Lines).toHaveLength(1);
+  });
+
+  test('a PO whose supplier read fails composes NOTHING — the D13 mechanism, on the PO side', async () => {
+    const sb = seeded({ suppliers: ['code'] });
     expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).toBe(false);
-    expect(sb.tables.autocount_outbox).toEqual([]);
-  });
-
-  test('a PO edit is dead for exactly the same reason', async () => {
-    const sb = seeded();
-    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-uuid-1' })).toBe(false);
-    expect(sb.tables.autocount_outbox).toEqual([]);
+    const rows = sb.tables.autocount_outbox;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('skipped');
+    expect(rows[0].last_error).toContain('42703');
   });
 });
 
@@ -727,7 +805,7 @@ describe('/edit', () => {
     /* With PR #1819 landed. Without it the line select 42703s and the edit goes
        over with NO Lines at all — the same D13 the create path has, asserted at
        the end of this block. */
-    const sb = seeded(true);
+    const sb = seeded();
     sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-SO-9';
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'SO-2608-011' })).toBe(true);
 
@@ -773,11 +851,16 @@ describe('/edit', () => {
     expect(CS_EDIT.indexOf('d.ItemCode')).toBeLessThan(CS_EDIT.indexOf('it.ContainsKey("Description")'));
   });
 
-  test('D13 again: without PR #1819 the edit carries no lines either', async () => {
-    const sb = seeded(false);
+  test('D13 struck on the edit path too: a failed line read queues no edit at all', async () => {
+    const sb = seeded({ mfg_sales_order_items: ['linked_ac_dtlkey'] });
     sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-SO-9';
-    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'SO-2608-011' })).toBe(true);
-    expect((await wireBody(sb)).Lines).toEqual([]);
+    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'SO-2608-011' })).toBe(false);
+    const rows = sb.tables.autocount_outbox;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('skipped');
+    /* An edit with an empty Lines list is not harmless either — it would be a
+       document the ERP claims to have corrected and did not. */
+    expect(rows.some((r) => Array.isArray((r.payload as any)?.body?.Lines))).toBe(false);
   });
 
   test('D8: the fields /edit would apply and the ERP never sends', () => {
@@ -787,9 +870,11 @@ describe('/edit', () => {
     }
   });
 
-  test('linked_ac_dtlkey is NOT in the schema yet, so today every line reads as new', () => {
-    expect(schemaOf('mfg_sales_order_items').has('linked_ac_dtlkey')).toBe(false);
-    expect(schemaOf('purchase_order_items').has('linked_ac_dtlkey')).toBe(false);
+  test('linked_ac_dtlkey IS in the schema now (migration 0273), on both item tables', () => {
+    /* Without it every line reads as new and an edit APPENDS a duplicate
+       instead of changing the line the operator changed. */
+    expect(schemaOf('mfg_sales_order_items').has('linked_ac_dtlkey')).toBe(true);
+    expect(schemaOf('purchase_order_items').has('linked_ac_dtlkey')).toBe(true);
   });
 });
 
@@ -808,12 +893,18 @@ describe('the divergence register', () => {
   });
 
   test('the count is pinned — a new divergence has to be written down to land', () => {
-    /* If this fails you have either found a thirteenth or fixed one of the
-       twelve. Both are good news; update the list and section 11 of
-       docs/modules/autocount-writeback.md together. */
-    expect(DIVERGENCES).toHaveLength(13);
+    /* If this fails you have either found a twelfth or fixed one of the eleven.
+       Both are good news; update the list and section 11 of
+       docs/modules/autocount-writeback.md together.
+
+       Started at thirteen. D11 and D13 were struck off when #1855 fixed them —
+       they were plain bugs, not decisions; the eleven that remain each need one. */
+    expect(DIVERGENCES).toHaveLength(11);
     expect(DIVERGENCES.filter((d) => d.severity === 'critical').map((d) => d.id))
-      .toEqual(['D9', 'D10', 'D11', 'D13']);
+      .toEqual(['D9', 'D10']);
+    // The struck ids are not reused: a register is a ledger, not a list.
+    expect(DIVERGENCES.map((d) => d.id)).not.toContain('D11');
+    expect(DIVERGENCES.map((d) => d.id)).not.toContain('D13');
   });
 });
 
@@ -887,7 +978,7 @@ describe('mutation proof — each field is load-bearing', () => {
   }
 
   test('drop any one field of the /create-so body and the contract assertion fails', async () => {
-    const sb = seeded(true);
+    const sb = seeded();
     await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'SO-2608-011' });
     const body = await wireBody(sb);
     const all = paths(body);
@@ -912,7 +1003,7 @@ describe('mutation proof — each field is load-bearing', () => {
       expect(() => expect(without(cancel, p)).toEqual(cancel), p.join('.')).toThrow();
     }
 
-    const sb2 = seeded(true);
+    const sb2 = seeded();
     sb2.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-SO-9';
     await enqueueEdit(sb2 as never, { companyId: 1, docType: 'SO', docNo: 'SO-2608-011' });
     const edit = await wireBody(sb2);
