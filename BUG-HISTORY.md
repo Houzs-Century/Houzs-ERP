@@ -34,6 +34,34 @@ compartment but the first.
 
 **Ref** — 2026-08-10, PR feat/po-line-photos (migration 0274).
 
+## Allocation recompute died on a Date where a string was declared [high]
+
+**Symptom** — The go-live allocation recompute (2026-08-10, run 31359781959)
+finished all its work and then refused to commit: `canonical result: ok=false
+linesFlipped=0 reason=ad.localeCompare is not a function`. Every migrated line
+stayed PENDING even though its dedicated purchase order was fully received, so
+nothing could be shipped.
+
+**Root cause** — `so-stock-allocation.ts` sorts the demand queue by
+`customer_delivery_date` with `.localeCompare`. The row type declares that column
+`string | null`, and under PostgREST it IS a string. The repair script drives the
+same canonical function through `scripts/lib/pgrest-shim.mjs`, which talks to
+`postgres` directly — and node-postgres hands back **Date objects** for date and
+timestamp columns. A Date has no `localeCompare`, so the comparator threw at the
+sort, after the allocator had already read everything and computed the answer.
+The type annotation made the mismatch invisible to both the compiler and review.
+
+**Fix** — Normalise before comparing: `dateKey`/`stampKey` coerce a Date to its
+ISO form and leave a string alone, at both sort sites. The priority order is now
+identical whichever transport delivered the row.
+
+**The class, for next time** — a type annotation describes ONE transport. The
+moment a second one (a shim, a raw driver, a fixture) feeds the same function,
+the annotation is a claim, not a guarantee. Anything a repair script can drive
+must coerce at the boundary rather than trust the declared type.
+
+**Ref** — 2026-08-10, PR fix/allocation-date-sort.
+
 ## PO variant refresh died on "parseBedframe is not a function" [medium]
 
 **Symptom** — The go-live production run of `backend/scripts/refresh-po-variants.mjs`

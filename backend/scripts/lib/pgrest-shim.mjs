@@ -41,6 +41,12 @@
 //                               for hetero batches close enough for these
 //                               best-effort audit writes)
 //
+// 2026-08-10 growth (the go-live allocation recompute):
+//   .gt/.gte/.lt/.lte(col, v)  — scalar comparisons, the allocator's open-lot
+//                               filter .gt('qty', 0). Same shape as .eq with no
+//                               PostgREST-specific semantics; covered by
+//                               tests/pgrestShim.node.mjs
+//
 // NOT a general client. No embedded selects (`a, rel(b)`), no `.rpc()`, no
 // deletes — the day a canonical function needs one, the gap list names it and
 // the shim grows a tested method.
@@ -90,6 +96,7 @@ export function pgrestShim(sql, schema = "scm") {
             }
             if (f.op === "not-is-null") return `${q(f.col)} IS NOT NULL`;
             if (f.op === "is-null") return `${q(f.col)} IS NULL`;
+            if (f.op === "cmp") return `${q(f.col)} ${f.cmp} ${p(f.v)}`;
             if (f.op === "or") {
               // f.v: [{ col, op: 'is-null' | 'lt', v? }] — parsed in .or().
               const parts = f.v.map((d) => (d.op === "is-null" ? `${q(d.col)} IS NULL` : `${q(d.col)} < ${p(d.v)}`));
@@ -177,6 +184,13 @@ export function pgrestShim(sql, schema = "scm") {
       insert(rows) { state.mode = "insert"; state.insertRows = rows; return proxied; },
       eq(col, v) { state.filters.push({ op: "eq", col, v }); return proxied; },
       in(col, arr) { state.filters.push({ op: "in", col, v: arr }); return proxied; },
+      /* Scalar comparisons. The allocator filters open lots with .gt('qty', 0);
+         these four are the same shape as .eq and carry no PostgREST-specific
+         semantics, so they are safe to translate literally. */
+      gt(col, v) { state.filters.push({ op: "cmp", cmp: ">", col, v }); return proxied; },
+      gte(col, v) { state.filters.push({ op: "cmp", cmp: ">=", col, v }); return proxied; },
+      lt(col, v) { state.filters.push({ op: "cmp", cmp: "<", col, v }); return proxied; },
+      lte(col, v) { state.filters.push({ op: "cmp", cmp: "<=", col, v }); return proxied; },
       not(col, op, v) {
         if (op === "is" && v === null) { state.filters.push({ op: "not-is-null", col }); return proxied; }
         if (op === "in" && typeof v === "string" && v.startsWith("(") && v.endsWith(")")) {
