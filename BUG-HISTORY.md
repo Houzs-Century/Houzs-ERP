@@ -47,8 +47,7 @@ SHARED `scripts/lib/so-line-dedication.mjs` (the taker was extracted from the
 one script that had it right), and both now write `linked_ac_dtlkey`
 — **#1819's `0273` already added exactly that column**, so this PR adds no
 migration of its own; a second column would have been the real mistake.
-Recovering which ERP row
-descends from which AutoCount line lives in `scripts/lib/ac-po-line-match.mjs`
+Recovering which ERP row descends from which AutoCount line lives in `scripts/lib/ac-po-line-match.mjs`
 and refuses rather than guesses: identical rows are zipped in `DtlKey` order and
 REPORTED as indistinguishable, and a group whose two sides do not split the same
 way is refused whole.
