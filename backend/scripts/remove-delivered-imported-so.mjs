@@ -55,12 +55,17 @@ async function main() {
     if (direct) reasons.push("PO line linked 1:1");
     const [pay] = await sql`SELECT count(*)::int AS c, coalesce(sum(amount_centi),0)::bigint AS amt
                             FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${h.doc_no}`;
-    if (pay && pay.c > 0) reasons.push(`${pay.c} payment(s) RM${(Number(pay.amt) / 100).toFixed(2)}`);
+    const [manual] = await sql`SELECT count(*)::int AS c
+                               FROM scm.mfg_sales_order_payments
+                               WHERE so_doc_no = ${h.doc_no}
+                                 AND NOT (method = 'imported' AND note LIKE 'imported from AutoCount%')`;
+    if (manual && manual.c > 0) reasons.push(`${manual.c} manually-entered payment(s)`);
+    h._payInfo = pay && pay.c > 0 ? `${pay.c} imported payment(s) RM${(Number(pay.amt) / 100).toFixed(2)}` : "";
     (reasons.length ? keep : del).push({ ...h, reasons });
   }
 
   note(`DELETABLE (nothing downstream): ${del.length}`);
-  for (const d of del.slice(0, 60)) note(`   ${d.linked_ac_docno} -> ${d.doc_no}  RM${(Number(d.total_revenue_centi || 0) / 100).toFixed(2)}  ${d.status}`);
+  for (const d of del.slice(0, 100)) note(`   ${d.linked_ac_docno} -> ${d.doc_no}  RM${(Number(d.total_revenue_centi || 0) / 100).toFixed(2)}  ${d.status}${d._payInfo ? "  (" + d._payInfo + ")" : ""}`);
   note(`HELD BACK (has downstream refs — owner decides): ${keep.length}`);
   for (const k of keep.slice(0, 60)) note(`   ${k.linked_ac_docno} -> ${k.doc_no}  ${k.reasons.join(" + ")}`);
 
