@@ -629,3 +629,6 @@ Three things it will not do, and the reasons are the rule rather than caution:
 - **A wrong link is corrected to NULL when the right target is not certain.**
   `scm.purchase_order_items` has no `cancelled` column (unlike
   `scm.mfg_sales_order_items`), so there is no third state to park it in.
+How this document's lines relate to the SO / PO / GRN / DO it was copied from,
+which columns the migrated writer did and did not copy, and what a correction
+applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.
