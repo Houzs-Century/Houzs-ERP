@@ -72,7 +72,7 @@ the column type that named them. Classify by CONTENT before extending a fix by
 SHAPE - and when a script offers to delete, make the class it will delete the
 narrow one, not the broad one.
 
-**Ref** - 2026-08-11, census tool PR #1953, finding + refusal PR #PRNUM
+**Ref** - 2026-08-11, census tool PR #1953, finding + refusal PR #1960
 (fix/census-codes-are-not-damage). Prod evidence: read-only run 31428435434.
 ## One owner ruling, two copies, and the copy the backfill reads had drifted [low]
 
