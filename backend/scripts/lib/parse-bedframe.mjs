@@ -45,14 +45,21 @@ function parseBedframe(d2) {
      divan pattern so it cannot grab the 16" outer or a pump count. */
   if (/HYDRAULIC/i.test(s)) {
     let hm2;
-    if ((hm2 = /INNER[^0-9]{0,4}(\d+(?:\.\d+)?)/i.exec(s))) o.divan = parseFloat(hm2[1]);
-    else if ((hm2 = /(\d+(?:\.\d+)?)[^0-9]{0,4}INNER/i.exec(s))) o.divan = parseFloat(hm2[1]);
+    /* "10”Inner" is written as often as "Inner 10”", and the after-form used to
+       run across a "+" into the LEG figure: "12”Divan + 10”Inner + 1”legs" was
+       read as divan=1 — a WRONG height on the factory sheet, which is worse
+       than a blank one. Try the before-form first; the after-form may no longer
+       cross a "+". */
+    if ((hm2 = /(\d+(?:\.\d+)?)\s*["”“"″'’‘′]{0,2}\s*(?:INCH(?:ES)?)?\s*INNER/i.exec(s))) o.divan = parseFloat(hm2[1]);
+    else if ((hm2 = /INNER[^0-9+]{0,4}(\d+(?:\.\d+)?)/i.exec(s))) o.divan = parseFloat(hm2[1]);
     else if ((hm2 = /HYDRAULIC[^0-9]{0,4}(\d+(?:\.\d+)?)/i.exec(s))) o.divan = parseFloat(hm2[1]);
     if (o.divan != null) o.leg = 0;
     o.specials.push("hydraulic");
   }
+  // "10”gap" / "12 INCH GAP" — the figure sits BEFORE the word as often as after
   // gap: also "M'GP:", "M'Gap:", "M.Gap :", and runs-together "M.GAP:14INCHES"
   if ((m = new RegExp(`(?:MATT(?:RESS)?|M)?\\s*['’.]?\\s*(?:GAP|GP)\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.gap = parseFloat(m[1]);
+  if (o.gap == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:MATT(?:RESS)?|M)?\\s*['’.]?\\s*(?:GAP|GP)\\b`, "i").exec(s))) o.gap = parseFloat(m[1]);
   if (o.divan == null && (m = new RegExp(`\\bDIV(?:AN)?\\.?\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:\\+\\s*(\\d+(?:\\.\\d+)?))?`, "i").exec(s))) { o.divan = parseFloat(m[1]); if (m[2] != null) o.leg = parseFloat(m[2]); }
   if (/NO\s*LEGS?/i.test(s)) o.leg = 0;
   else if (o.leg === undefined && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:WOODEN\\s*)?LEGS?`, "i").exec(s))) o.leg = parseFloat(m[1]);
@@ -64,6 +71,11 @@ function parseBedframe(d2) {
     o.divan = parseFloat(m[1]); if (o.leg === undefined) o.leg = m[2] != null ? parseFloat(m[2]) : 0;
   }
   if (o.divan == null && (m = new RegExp(`DIVAN\\s*${QUOTE}?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.divan = parseFloat(m[1]);
+  /* Staff run words together, so DIVAN is not always preceded by a boundary
+     ("frontdrawerdivan12”"), and the height is often written FIRST ("12”Divan").
+     Both are the same fact stated in a different order. */
+  if (o.divan == null && (m = new RegExp(`DIV(?:AN)?\\.?\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.divan = parseFloat(m[1]);
+  if (o.divan == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*DIV(?:AN)?\\b`, "i").exec(s))) o.divan = parseFloat(m[1]);
   /* hydraulic beds state the height inside the note: "hydraulic 16”/Inner 14”",
      "12”innerhydraulic", "Hydraulic (Inner 10\")" — the INNER figure is the divan. */
   /* SPECIAL SIZE (owner): anything outside S/SS/Q/K/SK is "SP" and MUST carry its
@@ -79,6 +91,14 @@ function parseBedframe(d2) {
   else if ((m = /^\s*([A-Z]{2,4}\s?-?\s?\d{2,4}\s?-\s?\d{1,3})\b/i.exec(s))) o.color = m[1].trim(); // bare code at the start
   // a colour code anywhere in the text (e.g. "Mgap 14 inch / colour PC151-01 / ...")
   if (!o.color && (m = /\b((?:PC|KS|BF|NB|SF|BO|AM|CH|CX|SC|DC|PU|HR|GD|FG|ZL|NV|RU)\s?-?\s?\d{2,4}\s?-\s?\d{1,3}|SF-AT\s?\d{1,3})\b/i.exec(s))) o.color = m[1].trim();
+  /* The same two-group code GLUED to the word before it — staff write
+     "DivanabovefullcoverPC151-01" with no space — has no word boundary, so the
+     rule above walked straight past a colour that was sitting right there. */
+  if (!o.color && (m = /((?:PC|KS|BF|NB|SF|BO|AM|CH|CX|SC|DC|PU|HR|GD|FG|ZL|NV|RU)\s?-?\s?\d{2,4}\s?-\s?\d{1,3})\b/i.exec(s))) o.color = m[1].trim();
+  /* SINGLE-group codes — KS-01, NB-04 (owner 2026-08-10: "KS 01 有的啊"). Only at
+     the very start or right after a delimiter, so a measurement inside a
+     sentence can never be mistaken for a colour. */
+  if (!o.color && (m = /(?:^|[/,;(]\s*)((?:PC|KS|BF|NB|SF|BO|AM|CH|CX|SC|DC|PU|HR|GD|FG|ZL|NV|RU)\s?-\s?\d{2,3})(?!\s?-\s?\d)/i.exec(s))) o.color = m[1].trim();
   if (o.color && /^(TBC|KIV)$/i.test(o.color)) o.color = null;   // "COL: KIV" = not chosen
   // colour written as a plain word ("Cream/Divan10/Gap13", ")Cream/...", "sliver/...")
   if (!o.color && (m = /(?:^|[\/)\s])\s*(CREAM|SILVER|SLIVER|WHITE|BLACK|GREY|GRAY|BEIGE|BROWN|BLUE|GREEN|PINK|IVORY|CHARCOAL)\b/i.exec(s))) o.color = m[1].trim();
