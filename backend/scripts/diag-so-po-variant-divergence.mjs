@@ -257,6 +257,42 @@ async function main() {
   log(`  SO value is a strict PREFIX of the PO's: ${hits.soShorter.length}`);
   for (const h of hits.soShorter.slice(0, 60)) log(`    ${h}`);
 
+  /* Is the shorter value a TRUNCATION, or a SECOND LIBRARY ROW for the same
+     physical colour? findColour only ever returns a whole scm.fabric_colours
+     row, so if both spellings exist there the disagreement is a duplicate in
+     the library, not a string being clipped - and the remedy is completely
+     different. Print the library rows for every series named in a prefix hit. */
+  const series = new Set();
+  for (const h of [...hits.poShorter, ...hits.soShorter]) {
+    const m = /SO="([A-Z0-9]+)/i.exec(h); if (m) series.add(m[1].replace(/[0-9]+$/, "").toUpperCase());
+    const m2 = /SO="([A-Z]{2,6}\s?[0-9]{2,4})/i.exec(h); if (m2) series.add(m2[1].toUpperCase());
+  }
+  log(`  library rows for the series involved (${[...series].join(", ") || "none"}):`);
+  for (const s of series) {
+    const rows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours
+                            WHERE company_id = 1 AND (UPPER(colour_id) LIKE ${s + "%"} OR UPPER(fabric_id) LIKE ${s + "%"})
+                            ORDER BY colour_id`;
+    for (const r of rows) log(`    fabric_id=${j(r.fabric_id)} colour_id=${j(r.colour_id)} label=${j(r.label)}`);
+    if (!rows.length) log(`    (no rows matching ${s})`);
+  }
+
+  /* The handover reported a GRN on HC-PO-009576 recording divanHeight 151".
+     Both PO lines read 14" and 12", so print what the GRN actually holds. */
+  log("");
+  log("  GRN variant heights on the documents named in the audit:");
+  const grn = await sql`
+    SELECT g.grn_number, gi.material_code AS code, gi.variants, p.po_number
+      FROM scm.grn_items gi
+      JOIN scm.grns g ON g.id = gi.grn_id
+      JOIN scm.purchase_order_items pi ON pi.id = gi.purchase_order_item_id
+      JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
+     WHERE p.po_number = ANY(${sql.array(["HC-PO-009576", "HC-PO-009428", "HC-PO-009273"])})`;
+  for (const r of grn) {
+    const v = asObj(r.variants);
+    log(`    ${r.po_number} ${r.grn_number} ${r.code}: divanHeight=${j(v.divanHeight ?? null)} gap=${j(v.gap ?? null)} legHeight=${j(v.legHeight ?? null)} colourId=${j(v.colourId ?? null)}`);
+  }
+  if (!grn.length) log("    (no GRN lines found for those POs)");
+
   // ── D: duplicated delivery-order lines ─────────────────────────────────────
   /* HC-SO-001920 shows ONE ordered ELEPAHNE-(SK) against FOUR delivery lines.
      The SO->DO drill already proved zero inventory movements, so the question
