@@ -86,7 +86,10 @@ async function main() {
       code: t.code,
       label: t.label,
       so_description: "",
-      categories: sql.json(["sofa"]),
+      /* text[] in this table, NOT jsonb - the first APPLY threw
+         "column categories is of type text[] but expression is of type jsonb"
+         on the very first row, so nothing was written. */
+      categories: ["sofa"],
       selling_price_sen: 0,
       cost_price_sen: 0,
       option_groups: sql.json([]),
