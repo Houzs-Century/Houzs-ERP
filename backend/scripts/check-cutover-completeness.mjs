@@ -30,7 +30,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
-import { buildFamilies, claimErpRows, familyShortfall, groupByDoc, isSofaCode, mergeAcPoLines, normSku } from "./lib/po-line-topup-core.mjs";
+import { RECEIVED_INDETERMINATE, buildFamilies, claimErpRows, familyShortfall, groupByDoc, isSofaCode, mergeAcPoLines, normSku } from "./lib/po-line-topup-core.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -107,6 +107,14 @@ async function main() {
   }
   let poDocsChecked = 0, poDocsAbsent = 0, poAcLines = 0, poErpRows = 0, poShort = 0, poUnassigned = 0, poAmbiguous = 0;
   const poShortDocs = [];
+  /* Of the shortfall, how much the top-up would REFUSE to write rather than
+     invent a received quantity. topup-ac-po-lines.yml is added by that PR and
+     `workflow_dispatch` needs the workflow on the default branch, so its own
+     DRY-RUN cannot be dispatched before merge - this check is the only
+     read-only path to the number that exists today, and it must be read before
+     anyone believes a stale DRY-RUN. */
+  let poShortWithheld = 0;
+  const poWithheldFamilies = [];
   for (const [doc, lines] of acPoByDoc) {
     if (!poIn.has(doc)) { poDocsAbsent++; continue; } // a PO present with ZERO lines still gets counted below
     poDocsChecked++;
@@ -122,11 +130,20 @@ async function main() {
       poShort += r.short;
       poShortDocs.push({ doc, acLines: lines.length, erpRows: rows.length,
         missing: r.families.filter((f) => f.short > 0).map((f) => `${f.itemCode} x${f.short}`) });
+      for (const f of r.families) {
+        if (f.short <= 0) continue;
+        const blind = f.lines.filter((l) => l.receivedSource === RECEIVED_INDETERMINATE).length;
+        if (!blind) continue;
+        poShortWithheld += f.short;
+        poWithheldFamilies.push({ doc, itemCode: f.itemCode, short: f.short, blind, spans: f.lines.find((l) => l.receivedSource === RECEIVED_INDETERMINATE)?.aggregateSpans ?? null });
+      }
     }
   }
   log(`PO lines: AutoCount ${poAcLines} across ${poDocsChecked} documents present in the ERP; ERP rows ${poErpRows}; AutoCount lines with NO ERP row at all: ${poShort} across ${poShortDocs.length} documents`);
   log(`   (AutoCount PO documents not in the ERP at all: ${poDocsAbsent} - those are section 1's number, not a line shortfall)`);
   log(`   claimed by linked_ac_dtlkey ${HAS_DTLKEY ? poItemRows.filter((r) => r.linked_ac_dtlkey != null).length : "n/a (0273 not applied here)"}; rows no AutoCount ItemCode on their document could claim: ${poUnassigned}; claimable by two ItemCodes so claimed by neither: ${poAmbiguous}`);
+  log(`   of that shortfall, WITHHELD by the top-up because the export has no per-line received quantity: ${poShortWithheld} line(s) across ${poWithheldFamilies.length} ItemCode(s) - these stay missing ON PURPOSE`);
+  for (const w of poWithheldFamilies) log(`      ${w.doc} "${w.itemCode}": short ${w.short}, ${w.blind} line(s) blind, GrQty spans ${w.spans ?? "?"} line(s)${w.spans > 1 ? " - PROVABLY inflated" : ""}`);
   for (const d of poShortDocs.slice(0, 30)) log(`   ${d.doc}: AutoCount ${d.acLines} lines / ERP ${d.erpRows} rows -> short ${d.missing.join(", ")}`);
   if (poShortDocs.length > 30) log(`   ... and ${poShortDocs.length - 30} more documents`);
 
