@@ -21,6 +21,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 
 const sql = postgres(process.env.DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -56,7 +57,7 @@ for (const l of raw) {
 
 const heads = await sql`SELECT doc_no, linked_ac_docno, total_revenue_centi FROM scm.mfg_sales_orders
                         WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`;
-const items = await sql`SELECT i.doc_no, i.item_code, i.qty, h.linked_ac_docno
+const items = await sql`SELECT i.doc_no, i.item_code, i.qty, i.remark, i.description2, h.linked_ac_docno
                         FROM scm.mfg_sales_order_items i
                         JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                         WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL`;
@@ -147,6 +148,35 @@ for (const d of drift.slice(0, 15)) note(`   ${d.ac}: ERP ${d.erp} vs AC ${d.ac_
   const missing = [...want].filter((d) => !have.has(d));
   note(`6 PO-CONVERTED (still outstanding): ${want.size} orders expected; missing from the ERP: ${missing.length}`);
   for (const d of missing.slice(0, 40)) note(`   MISSING ${d}  AC lines: ${(acLines.get(d) || []).map((l) => l.ItemCode).join(", ").slice(0, 80)}`);
+}
+
+
+// 7 TRUE LEAK vs HONEST PLACEHOLDER — a {model}-1S line is a LEAK only when the
+// AutoCount text actually decodes into 2+ pieces AND the line carries no
+// "SOFA UNPARSED" remark (i.e. it came in through the old non-sofa round, not
+// through the sofa lane's deliberate fallback).
+{
+  let leak = 0, placeholder = 0, oneSeat = 0;
+  for (const [ac, codes] of acSofa) {
+    const list = perOrder.get(ac);
+    if (!list) continue;
+    for (const l of (acLines.get(ac) || [])) {
+      const erpCode = byAc.get(norm(l.ItemCode)) || "";
+      if (!/^\w{2,6}-1S$/i.test(erpCode)) continue;
+      let model = erpCode.replace(/-1S$/i, "");
+      model = SOFA_MODEL_ALIAS[model] || model;
+      const line = list.find((it) => norm(it.item_code) === norm(`${model}-1S`));
+      if (!line) continue;
+      const ps = parseSofa(l.Desc2, model, false);
+      const multi = ps.conf !== "low" && ps.pieces.length > 1;
+      const flagged = /SOFA UNPARSED/i.test(line.remark || "");
+      if (multi && !flagged) { leak++; if (leak <= 25) note(`   LEAK ${ac} ${l.ItemCode} -> kept as ${line.item_code}, decodes to ${ps.pieces.join("+")}`); }
+      else if (flagged) placeholder++;
+      else oneSeat++;
+    }
+  }
+  note(`7 TRUE LEAK (undecomposed sofa line, no placeholder flag): ${leak}`);
+  note(`   honest placeholders (flagged for manual fill): ${placeholder}; genuine single-seat builds: ${oneSeat}`);
 }
 
 await sql.end({ timeout: 5 });
