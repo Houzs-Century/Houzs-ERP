@@ -50,9 +50,13 @@ const SALESLOC = {
    category error, not a discrepancy. */
 const SERVICE_GROUPS = new Set(["OTHER", "TRANS"]);
 
-/* Known-unfixed defect, already traced and pending an owner decision. Listed so
-   it is labelled as the known case instead of being re-reported as new. */
-const KNOWN_DOUBLE_SHIP = { doc: "SO-2606-019", dos: ["DO-2607-005", "DO-2607-017"], codes: new Set(["KETTA", "NTYR", "TRION", "XAMMAR"]) };
+/* Known-unfixed defect, already traced and pending an owner decision. Labelled
+   so it reads as the known case instead of a new finding.
+   These are MODEL names, not whole product codes — the ERP codes they appear in
+   look like "TRION (A) (HB STR)-(K)" — so the test must be a prefix match. An
+   exact-set test silently never fires. */
+const KNOWN_DOUBLE_SHIP_MODELS = ["KETTA", "NTYR", "TRION", "XAMMAR"];
+const isKnownDoubleShip = (code) => KNOWN_DOUBLE_SHIP_MODELS.some((m) => code.startsWith(m));
 
 function parseCsvLine(line) {
   const out = []; let cur = ""; let q = false;
@@ -256,8 +260,18 @@ async function main() {
     return [...m.entries()].map(([t, v]) => `${t}x${v.n}=${v.units}`).join(" ");
   };
 
+  /* The known double-ship, identified by the actual movement rows rather than
+     by product name. DO-2607-005 and DO-2607-017 both dispatched SO-2606-019;
+     DO-2607-017 additionally carries two phantom XAMMAR movements. Traced and
+     confirmed already — it is labelled, not re-litigated. */
+  const knownDo = await sql`SELECT DISTINCT product_code, warehouse_id, source_doc_no
+    FROM scm.inventory_movements
+    WHERE company_id = ${CO} AND source_doc_no IN ('DO-2607-005','DO-2607-017')`;
+  const knownCells = new Set(knownDo.map((r) => `${norm(r.product_code)}|${r.warehouse_id}`));
+  log(`cells touched by the known double-ship pair (DO-2607-005 / DO-2607-017): ${knownCells.size}`);
+
   const causeOf = (r) => {
-    if (KNOWN_DOUBLE_SHIP.codes.has(r.code)) return "KNOWN DOUBLE-SHIP (SO-2606-019, DO-2607-005 + DO-2607-017) — traced, owner decision pending";
+    if (knownCells.has(`${r.code}|${r.whId}`) || isKnownDoubleShip(r.code)) return "KNOWN DOUBLE-SHIP (SO-2606-019, DO-2607-005 + DO-2607-017) — traced, owner decision pending";
     if (dupCell.has(`${r.code}|${r.whId}`)) return "DUPLICATED MOVEMENT — the same source document is posted more than once against this cell";
     if (movedSinceSnapshot.has(`${r.code}|${r.whId}`)) return "MIGRATION CUT-OFF — AutoCount moved after the cutover snapshot the ERP was seeded from";
     const m = mvBy.get(`${r.code}|${r.whId}`);
