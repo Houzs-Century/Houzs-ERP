@@ -73,20 +73,30 @@ async function main() {
   const plan = [];
   const seenN = new Map();
   let sofaHeld = 0, noOrder = 0, noLine = 0, unmapped = 0;
+  const heldDocs = []; // named, not just counted — a silent count hid a real bug on the SO side
   for (const m of manifest) {
     const erp = byAc.get(norm(m.ItemCode));
     if (!erp) { unmapped++; log(`  unmapped AC code: ${m.ItemCode} (${m.DocNo})`); continue; }
     let targets = null;
     if (isSofa(m.ItemCode)) {
+      /* SOFA in the code does not always mean a BUILD — "AMN-SOFA PILLOW" is an
+         accessory that imports as one literal line, and byDocModel is keyed on
+         the code up to the FIRST dash, so its model key can never match. Try
+         compartments, then the exact code, before calling the PO missing. */
       targets = byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
-      if (!targets || !targets.length) { sofaHeld++; continue; } // PO not imported yet
+      if (!targets || !targets.length) targets = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
+      if (!targets || !targets.length) { sofaHeld++; heldDocs.push(`${m.DocNo} ${m.ItemCode}`); continue; }
+      /* Owner 2026-08-10: "我开 PO 每个 SKU 的照片都一样,留第一个就可以了" -
+         one AutoCount sofa line is one photograph of one build, so it belongs
+         on the first compartment row, not copied onto all of them. */
+      targets = targets.slice(0, 1);
     } else {
       const exact = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
       /* Not every sofa's AutoCount code says SOFA — "THL-2379" is one too, and
          the literal path would look for a whole "2379-1S" line that a
          decomposed PO does not have. Fall back to the build's compartment
          lines before calling it missing. */
-      targets = exact && exact.length ? [exact[0]] : byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
+      targets = exact && exact.length ? [exact[0]] : (byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`) ?? []).slice(0, 1);
       if (!targets || !targets.length) {
         if (items.some((it) => it.linked_ac_docno === m.DocNo)) { noLine++; log(`  line not found: ${m.DocNo} ${m.ItemCode} -> ${erp}`); }
         else noOrder++;
@@ -101,6 +111,7 @@ async function main() {
   }
   const todo = plan.filter((p) => !p.already);
   log(`manifest rows: ${manifest.length}; sofa held (PO not imported): ${sofaHeld}; unmapped: ${unmapped}; PO-not-imported: ${noOrder}; line-missing: ${noLine}`);
+  for (const d of heldDocs) log(`  sofa held (no ERP line): ${d}`);
   log(`photo keys planned: ${plan.length} (already attached: ${plan.length - todo.length})`);
 
   if (!APPLY) {

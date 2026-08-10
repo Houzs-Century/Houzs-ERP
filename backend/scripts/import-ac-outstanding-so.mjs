@@ -464,7 +464,14 @@ async function main() {
   log(`already imported: ${existing.size}; to insert: ${todo.length}`);
 
   const HCOLS = "(doc_no,linked_ac_docno,so_date,debtor_name,debtor_code,agent,salesperson_id,sales_location,ref,customer_so_no,venue,venue_id,branding,address1,address2,address3,address4,postcode,city,customer_state,phone,emergency_contact_phone,status,company_id,currency,local_total_centi,balance_centi,paid_centi,deposit_centi,line_count,mattress_sofa_centi,bedframe_centi,accessories_centi,service_centi,others_centi,payment_method,approval_code,payment_date,proceeded_at)";
-  const ICOLS = "(doc_no,line_no,item_group,item_code,description,description2,uom,location,qty,unit_price_centi,total_centi,balance_centi,company_id,gap_inches,divan_height_inches,leg_height_inches,variants,custom_specials,remark)";
+  /* warehouse_id was resolved per line (`warehouseId: whId(l.Location)`) and then
+     left OUT of this list, so every migrated line landed with the location as
+     text and no warehouse. Stock is bucketed by warehouse_id, so nothing could
+     ever be allocated to them — sofa hardest of all, because
+     sofa-set-coverage.findCoveringBatch returns null on a null warehouse before
+     it reads any stock. Existing rows are repaired by
+     backfill-so-line-warehouse.mjs; this stops it recurring. */
+  const ICOLS = "(doc_no,line_no,item_group,item_code,description,description2,uom,location,warehouse_id,qty,unit_price_centi,total_centi,balance_centi,company_id,gap_inches,divan_height_inches,leg_height_inches,variants,custom_specials,remark)";
   const PCOLS = "(so_doc_no,paid_at,method,approval_code,account_sheet,amount_centi,is_deposit,company_id,note)";
 
   let nOrders = 0, nItems = 0, nPay = 0;
@@ -489,7 +496,7 @@ async function main() {
         lineNo++;
         const variants = it.variants || null; // resolved {fabricId,colourId,colourLabel,gap,divanHeight,legHeight,specials}
         const specials = it.variants && it.variants.specials && it.variants.specials.length ? it.variants.specials : null;
-        iv.push("(" + [V(o.docNo), String(lineNo), V(it.grp), V(it.erp), V(it.desc || null), V(it.d2 || null), V(uomOf(it.grp)), V(it.loc || null), String(it.qty), V(it.up), V(it.lineTotal), V(it.lineTotal), "1", it.bf && isFinite(it.bf.gap) ? String(Math.round(it.bf.gap)) : "NULL", it.bf && isFinite(it.bf.divan) ? String(Math.round(it.bf.divan)) : "NULL", it.bf && isFinite(it.bf.leg) ? String(Math.round(it.bf.leg)) : "NULL", V({ __json: variants }), V({ __json: specials }), V(it.remark ?? (it.resolvedFree ? "name-matched from free-text" : null))].join(",") + ")");
+        iv.push("(" + [V(o.docNo), String(lineNo), V(it.grp), V(it.erp), V(it.desc || null), V(it.d2 || null), V(uomOf(it.grp)), V(it.loc || null), V(it.warehouseId || null), String(it.qty), V(it.up), V(it.lineTotal), V(it.lineTotal), "1", it.bf && isFinite(it.bf.gap) ? String(Math.round(it.bf.gap)) : "NULL", it.bf && isFinite(it.bf.divan) ? String(Math.round(it.bf.divan)) : "NULL", it.bf && isFinite(it.bf.leg) ? String(Math.round(it.bf.leg)) : "NULL", V({ __json: variants }), V({ __json: specials }), V(it.remark ?? (it.resolvedFree ? "name-matched from free-text" : null))].join(",") + ")");
         nItems++;
       }
       if (o.paid > 0) { pv.push("(" + [V(o.docNo), h.DocDate ? V(h.DocDate) : V(CUR), V("imported"), V(o.pay.appr || null), V(o.pay.acct || null), V(o.paid), "true", "1", V("imported from AutoCount " + o.acDoc + (o.pay.extra ? " [" + o.pay.extra + "]" : ""))].join(",") + ")"); nPay++; }

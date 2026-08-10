@@ -1,3 +1,215 @@
+## Deleting a compartment row offered to RENAME it across all history [high]
+
+**Symptom** — The owner deleted the sideless bench codes `1B` and `2B` from the
+sofa compartment pool and, in the same save, added a new `DB` (Daybed). The
+maintenance page answered with a red confirm: **"Rename compartment code? 1B ->
+DB — This cascades EVERYWHERE: SKU codes + names, sales orders (incl. history),
+delivery orders, invoices, GRN/PO lines, Modular ticks, Combos and Quick
+Picks."** He had not renamed anything. One click would have rewritten every
+historical `1B` into `DB`, and the cascade has no dry run.
+
+**Root cause** — `Products.tsx` inferred renames by comparing the old and new
+pool arrays **BY INDEX**. A rename is an in-place edit, so the row count cannot
+change — but the detector never checked that. Deleting rows 29 (`1B`) and 30
+(`2B`) slid the freshly-added row 31 (`DB`) up into index 28, so `baseline[28] =
+"1B"`, `next[28] = "DB"`, `"1B"` was absent from the new list and `"DB"` from
+the old — every condition for "this is a rename" satisfied by a delete plus an
+add.
+
+**Fix** — Only look for renames when `baseline.length === next.length`. A length
+change is an add and/or a delete; the plain save already handles it.
+
+**Also shipped** — `fix-sofa-compartment-pool.mjs` + workflow, so the removal
+can be done on its own (append-only new config row, dry-run default) and refuses
+to drop a code any SKU or document line still uses. Sideless `1B`/`2B` are
+leftovers from before the owner's ruling that a bench always carries a side
+("1B 都是要 direction 的啊,扶手在哪里"); the decoder has always EMITTED
+`1B(LHF)`/`1B(RHF)` and never a bare `1B`, so nothing depends on them.
+
+**The class, for next time** — a positional diff cannot tell an edit from an
+insert. Anything that infers "this row was renamed" needs row identity, or at
+minimum a length guard, before it is allowed to touch history.
+
+**Ref** — 2026-08-10, PR fix/sofa-pool-sideless-bench.
+
+## A bare "C" (corner) was filtered as noise, so 49 sofa builds lost their corner [high]
+
+**Symptom** — AutoCount sofa builds written `1+C+2` imported as two separate
+sofas. `"1+C+2(32'Inch)/Col:HR805-30"` on model 9050 produced `9050-1S` +
+`9050-2S` — no `CNR` line — at **`high` confidence**, so no `SOFA UNPARSED`
+placeholder, no exception, and nothing on the order says a compartment is
+missing. `docs/sofa-import-handoff.md` section 1 uses this exact string as its
+worked example of what the decode is supposed to produce.
+
+**Root cause** — Traced to one character class, not guessed. `parse-sofa.mjs`
+drops junk tokens with a NOISE regex whose last alternative is a single letter.
+It was written `[A-KM-OQ-Z]` — deliberately excluding `L` (chaise) and `P`
+(power), but **not** `C` (corner) or `R` (recliner). Both letters were therefore
+discarded at the filter, before reaching their own classification arms
+(`t === "C"` and `t === "R" && recl`), which have been unreachable dead code
+ever since. The class arrived in #1813, the commit that extracted the decoder
+out of `import-ac-outstanding-so.mjs` so the PO importers could share it — under
+a file header that still reads "Extracted verbatim". It was not verbatim.
+
+**Fix** — `[A-BD-KM-OQS-Z]`: every letter the grammar classifies on its own (C,
+L, P, R) is now excluded. Measured over the three committed exports, both
+recliner states: **102 decodes改善, 0 confidence downgrades** — the bar
+`docs/sofa-import-handoff.md` section 7 sets for a parser change, which #1813
+never ran. 49 lines regain a `CNR` (35 SO / 4 PO / 10 SO-linked PO); `R+R` on a
+recliner model now yields `1A(R)(LHF)+1A(R)(RHF)` instead of nothing; a bare `R`
+on a NON-recliner model correctly refuses and takes the placeholder path.
+
+**Also added** — `backend/tests/parseSofaGrammar.test.ts`, 23 golden cases taken
+straight from the handoff doc's own rule tables. There was no test on this
+parser at all, which is the real reason a one-character mistake survived a
+merge. The doc asked for it ("owner 给的每个新例子都补成金标测试"); now it exists.
+
+**The class, for next time** — the sibling extraction (`parse-bedframe.mjs`) WAS
+regression-tested over all 2,702 real strings and proved byte-identical, and its
+header says so. Same refactor, same week, opposite outcome. "Extracted verbatim"
+in a comment is a claim, not evidence; run the corpus.
+
+**Ref** — 2026-08-10, PR fix/sofa-corner-token.
+
+## Every migrated sales-order line was saved without its warehouse [high]
+
+**Symptom** — All 248+ sofa sales-order lines from the AutoCount cutover read
+PENDING and could not ship. It looked like a stock problem (sofa stock genuinely
+was never imported — see the sofa opening below), but filling the stock changed
+nothing: the projection stayed at zero sets.
+
+**Root cause** — Traced against production, not guessed:
+`SELECT count(warehouse_id) FROM scm.mfg_sales_order_items` over the migrated
+orders returns **0 of 13,881**. `import-ac-outstanding-so.mjs` resolves the
+warehouse for every line (`warehouseId: whId(l.Location)`, three call sites) and
+then omits `warehouse_id` from its INSERT column list (`ICOLS`), writing only the
+free-text `location`. Stock is bucketed by
+`(warehouse_id, product_code, variant_key)`, so a warehouse-less line lands in
+so-stock-allocation's `NOWH` bucket, which can match no lot. Sofa fails one step
+earlier still: `sofa-set-coverage.findCoveringBatch` returns `null` for a null
+warehouse before it looks at any stock at all. So NO migrated line — sofa,
+bedframe, mattress or accessory — could ever be allocated, whatever the on-hand.
+
+**Fix** — `warehouse_id` added to `ICOLS` and to the per-line VALUES tuple, so a
+re-import cannot drop it again; `backfill-so-line-warehouse.mjs` +
+`backfill-so-line-warehouse.yml` repair the existing rows from the `location`
+text already stored (KL 9,434 / PG 3,502 / SRW 722 / SBH 223 — all four resolve
+through the same SALESLOC table the importers use, zero unresolved). It only
+ever fills a NULL, so it cannot move goods between warehouses. Scoped to
+`group=sofa` by default; `group=all` is an owner decision because it flips
+thousands of non-sofa lines on the next allocation run.
+
+**The class, for next time** — a value that is computed and then not persisted
+is invisible to every test that checks the computation. The importer's own
+dry-run printed warehouse resolutions that were correct and then threw them
+away. When a field is resolved in a script, assert it lands: the cheap version is
+one post-import `count(col)` in the same run log.
+
+**Ref** — 2026-08-10, PR feat/sofa-stock-import.
+
+## Sofa stock was excluded from the AutoCount opening, and sofa lots carry no batch [high]
+
+**Symptom** — 20 open sofa lots in the ERP against 76 whole sofas in AutoCount,
+and every one of those 20 lots has `batch_no` NULL. Sofa allocation reads
+`batch_no` in three places (`findCoveringBatch`, the DO ship gate, and
+`loadSofaBatchStock`, which filters `batch_no IS NOT NULL`), so a null-batch sofa
+lot is invisible to allocation even when the quantity is right.
+
+**Root cause** — `import-ac-stock-balance.mjs:54` filters `!isSofa(ItemCode)` and
+`import-ac-stock-layers.mjs:50` does the same. Sofa was deliberately held for a
+later round (the file header says so) and that round was never built. Nothing was
+double-counted; the units are simply absent. The missing `batch_no` follows from
+the same gap: a batch is stamped at GRN from the source PO (migration 0120), and
+these units never came in through a GRN.
+
+**Fix** — `import-ac-sofa-stock.mjs` + workflow. It does NOT decompose the
+balance snapshot: AutoCount tracks a sofa as one whole unit per model and carries
+no serial and no batch for it (measured live: 0 of 1,337 sofa GRDTL rows), so a
+balance row cannot say which configurations are on the floor. It drives off the
+already-imported, already-decomposed SO-linked PO lines that carry
+`received_qty > 0`, stamping `batch_no` = that PO's own `po_number` — the exact
+value a GRN would have stamped — and caps the result against the AutoCount
+balance per item code.
+
+**The class, for next time** — the same regex that excluded sofa also excluded
+`AMN-SOFA PILLOW` (205 units), which is a plain accessory with no compartments.
+A filter written for a category should test the category, not a substring of the
+name.
+
+**Ref** — 2026-08-10, PR feat/sofa-stock-import.
+
+## AutoCount picture extraction silently lost every image whose \pichgoal had three digits [medium]
+
+**Symptom** — Four AutoCount lines that visibly carry a picture produced no jpg
+and no error: SO-000383 / SO-008544 (HOK-2009(A) (K)), SO-003567 and PO-002425
+(both RDS-5526 SOFA). The manifests recorded 551 SO and 167 PO pictures while
+the live book held 554 and 168.
+
+**Root cause** — Traced by dumping the RTF straight from the live book, not
+guessed. The extractor grabs the picture payload with
+`re.findall(r"[0-9a-fA-F\s]{400,}", seg)` — but the digits of the preceding
+`\pichgoalNNN` control word are themselves hex characters, so they land at the
+FRONT of the run. When the goal has four digits (`\pichgoal3600`) the prefix is
+even-length and the payload stays byte-aligned; the four failures all have a
+THREE-digit goal (750 / 900 / 645 / 900), so every byte decoded a nibble off,
+no `BITMAPINFOHEADER` was ever recognised, and the carve returned an empty list
+that nothing checked.
+
+**Fix** — Anchor on the WMF memory-metafile header (`0100 0900 0003`) inside
+the run instead of trusting where the regex started, then carve unchanged. All
+four re-extracted and verified as real content (one is a hand-drawn sofa
+elevation reading `Wood ... 28" ... Cushion`). Manifests topped up in this PR.
+
+**The class, for next time** — a parser whose failure mode is "returns nothing"
+needs a count check against the source. The gap only surfaced because the live
+book was queried for `FurtherDescription LIKE '%pict%'` and compared with the
+manifest row count; nothing in the pipeline itself would ever have reported it.
+
+**Ref** — 2026-08-10, PR fix/ac-photo-topup.
+
+## PO photo export was scoped narrower than the PO import, so 15 pictures were never pulled [medium]
+
+**Symptom** — 180 of the purchase-order lines the ERP imported carry a picture
+in AutoCount; the manifest held 164 of them.
+
+**Root cause** — The export query filtered `PODTL` by
+`FromSODtlKey IN (outstanding SO lines)` — "POs raised from a still-outstanding
+SO line". The ERP's imported PO set is wider than that: it is the W3 outstanding
+POs PLUS the W7 SO-linked already-received POs (re-exported again in #1845). Any
+imported PO line outside the narrower predicate was never looked at, so its
+picture was not missing — it was never requested.
+
+**Fix** — Re-extracted against the union of `ac-outstanding-po.json.gz` and
+`ac-so-linked-pos.json.gz`, which is exactly what the importer writes; 16
+pictures recovered (15 scope + 1 carve, above), 0 failures. Manifest 174 -> 190.
+
+**The class, for next time** — when a satellite export is filtered by its own
+predicate, that predicate has to be the SAME SET the importer uses, or it drifts
+the moment the import scope widens. Diff the two key sets, do not assume.
+
+**Ref** — 2026-08-10, PR fix/ac-photo-topup.
+
+## Sofa-named ACCESSORIES never got their photo attached [low]
+
+**Symptom** — Three SO photos (SO-010716 THL-SOFA PILLOW, SO-011454 and
+SO-011991 AMN-SOFA PILLOW) were reported as "sofa held", i.e. order not
+imported. The orders were imported and the lines were sitting right there.
+
+**Root cause** — `import-so-line-photos.mjs` sends anything whose AutoCount code
+contains SOFA down the compartment path. A pillow is an accessory that imports
+as ONE literal line, and `byDocModel` is keyed on the ERP code up to the FIRST
+dash (`AMN`), while `sofaModelOf("AMN-SOFA PILLOW")` returns the whole string —
+the two can never meet. The literal branch already falls back to compartments;
+the sofa branch had no fallback the other way.
+
+**Fix** — Sofa branch now tries compartments, then the exact code, before
+declaring the line missing (both the SO and the PO script). Separately, both
+scripts now PRINT the held documents instead of only counting them — the silent
+counter is what let this hide, and the count had to be reverse-engineered by
+arithmetic to find it.
+
+**Ref** — 2026-08-10, PR fix/ac-photo-topup.
+
 ## Every SO line photo rendered as "err" — the bucket name was never configured [high]
 
 **Symptom** — Line photos on the Sales Order edit screen have shown a broken
