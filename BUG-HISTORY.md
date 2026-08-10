@@ -35,7 +35,7 @@ would import today. It changes NOTHING about the rows already stored. Every such
 fix needs its sweep named in the same PR, or the improvement is real and
 invisible.
 
-**Ref** — 2026-08-10, PR #1900 (feat/restamp-sofa-colours).
+**Ref** — 2026-08-10, PR #1903 (feat/restamp-sofa-colours).
 
 ## Five hand-copied colour matchers, and the weakest one is what production stored [high]
 
