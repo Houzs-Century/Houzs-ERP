@@ -69,4 +69,14 @@ describe('bound-mode allocation', () => {
   it('nothing received and nothing pooled stays PENDING', () => {
     expect(settle(2, 0, new Map(), BUCKET, BLANK)).toEqual({ status: 'PENDING', qtyReady: 0 });
   });
+
+  /* Owner 2026-08-10: only the variant-bearing groups take the bound path —
+     "MATTRESS 跟 Accessories 都是没有变体的 ... 走回我们正常 MRP 的模式".
+     Diverting common stock onto its PO would change readiness for the parts of
+     the business that were never broken. */
+  it('bound mode covers exactly bedframe and sofa', () => {
+    const BOUND_GROUPS = new Set(['bedframe', 'sofa']);
+    for (const g of ['bedframe', 'sofa']) expect(BOUND_GROUPS.has(g)).toBe(true);
+    for (const g of ['mattress', 'accessory', 'others', 'service']) expect(BOUND_GROUPS.has(g)).toBe(false);
+  });
 });
