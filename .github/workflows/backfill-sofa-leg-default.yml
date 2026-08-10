@@ -1,0 +1,59 @@
+name: Backfill sofa Leg Height = Default (migrated lines)
+
+# Manual. Every migrated sofa line arrived with NO leg pick, so the Leg Height
+# picker shows "Select..." — owner 2026-08-10, docs/sofa-import-handoff.md 2.5:
+# "脚全部找不到就直接选 default".
+#   - fills variants.legHeight = the pool's "Default" ONLY where legHeight and
+#     sofaLegHeight are both empty; a chosen leg is never overwritten
+#   - a line whose own text names a leg is NOT defaulted; it is reported,
+#     grouped by phrase with its document numbers, for a real human pick
+# Scope: company 1, item_group = 'sofa', parent carries linked_ac_docno.
+# DRY-RUN by default; apply=1 writes.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: backfill-sofa-leg-default-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-sofa-leg-default.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-sofa-leg-default.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
