@@ -50,6 +50,10 @@ const CAP = Number(process.env.CAP || 40);
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const MIGRATED_ONLY = SCOPE !== "all";
+/* A postgres.js FRAGMENT, not a bound boolean: `AND ($1 OR ...)` leaves the
+   parameter untyped and makes the planner infer it, which is a needless way for
+   a read-only survey to fail. An empty fragment simply disappears. */
+const SCOPED = MIGRATED_ONLY ? sql`AND d.migrated_no_stock = true` : sql``;
 
 const shortJson = (v) => (v == null ? "-" : JSON.stringify(v).slice(0, 70));
 
@@ -62,8 +66,7 @@ async function survey(label) {
            COUNT(*) FILTER (WHERE di.description2 IS NULL)::int    AS d2_null
       FROM scm.delivery_order_items di
       JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
-     WHERE d.company_id = ${CO}
-       AND (${!MIGRATED_ONLY} OR d.migrated_no_stock = true)`;
+     WHERE d.company_id = ${CO} ${SCOPED}`;
   log(`   ${label}: ${r.lines} DO line(s) in scope · no so_item_id ${r.no_parent}` +
       ` · item_group NULL ${r.grp_null} · variants NULL ${r.var_null} · description2 NULL ${r.d2_null}`);
   return r;
@@ -97,8 +100,7 @@ async function main() {
       FROM scm.delivery_order_items di
       JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
       LEFT JOIN scm.mfg_sales_order_items si ON si.id = di.so_item_id
-     WHERE d.company_id = ${CO}
-       AND (${!MIGRATED_ONLY} OR d.migrated_no_stock = true)
+     WHERE d.company_id = ${CO} ${SCOPED}
        AND (di.item_group IS NULL OR di.variants IS NULL OR di.description2 IS NULL)
      ORDER BY d.do_number, di.item_code`;
 
