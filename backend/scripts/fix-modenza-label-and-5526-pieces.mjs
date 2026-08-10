@@ -80,10 +80,17 @@ async function main() {
     await sql`UPDATE scm.product_models SET allowed_options = ${sql.json({ ...opts, compartments: [...comps, ...addComp] })}
       WHERE id = ${model.id}`;
   }
+  /* mfg_products.id has NO default - the first APPLY threw "null value in
+     column id violates not-null constraint" here. Every other minting script
+     supplies it explicitly; follow open-sofa-so-compartments.mjs, which also
+     sets model_id so the SKU belongs to the model rather than floating. */
   for (const c of mint) {
     const comp = c.slice(MODEL.length + 1);
-    await sql`INSERT INTO scm.mfg_products (code, name, category, branding, company_id, base_model, status)
-      VALUES (${c}, ${`SOFA ${MODEL} ${comp}`}, 'SOFA', ${model.branding ?? ""}, ${CO}, ${MODEL}, 'ACTIVE')
+    const id = "mp-" + randomBytes(8).toString("hex");
+    await sql`INSERT INTO scm.mfg_products
+      (id, code, name, category, status, branding, base_model, model_id, company_id, created_at, updated_at)
+      VALUES (${id}, ${c}, ${`SOFA ${MODEL} ${comp}`}, 'SOFA', 'ACTIVE',
+              ${model.branding ?? ""}, ${MODEL}, ${model.id}, ${CO}, now(), now())
       ON CONFLICT DO NOTHING`;
   }
   if (addPool.length && cfg) {
