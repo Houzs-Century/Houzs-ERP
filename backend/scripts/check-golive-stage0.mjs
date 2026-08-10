@@ -20,6 +20,13 @@
 //     UNIQUE index mean this never double-deducts". If there is no unique index,
 //     the guard is a bare TOCTOU check with no backstop.
 //
+//     ANSWERED 2026-08-11, run 31417585775: it DOES. uq_inv_mov_do_source is
+//     live, partial on source_doc_type='DO', keyed (source_doc_type,
+//     source_doc_id, product_code, variant_key). Migration 0230's comment
+//     enumerating this table's indexes lists only the four non-unique ones and
+//     is what makes the tree read as if none existed. This block stays so the
+//     answer is re-checkable rather than remembered.
+//
 // Q2  Would a unique index over the natural DO movement bucket be creatable at
 //     all — i.e. does the live table already contain duplicate rows in that
 //     bucket? A unique index cannot be built over duplicates. The answer also
@@ -173,6 +180,30 @@ try {
       ? "Q2 VERDICT: zero duplicate DO buckets. A unique index over that key would be creatable today - but see the resync-delta note in the PR before adding one."
       : `Q2 VERDICT: ${dupDoTotals[0].dup_buckets} DO buckets hold more than one movement row (${dupDoTotals[0].extra_rows} extra rows). A unique index over that key CANNOT be created without resolving them first.`,
   );
+
+  // ── Q2b — did a DO resync delta EVER land? ──────────────────────────────────
+  // The live index uq_inv_mov_do_source is keyed (source_doc_type, source_doc_id,
+  // product_code, variant_key) and is partial on source_doc_type='DO' - it does
+  // NOT include movement_type, warehouse_id or batch_no. So ANY second row for a
+  // (DO, product, variant) bucket is rejected, which is precisely what
+  // resyncInventoryForDo tries to write when an operator edits a line qty on an
+  // already-shipped DO. delivery-orders-mfg.ts claims the opposite ("Migration
+  // 0109 dropped the per-bucket UNIQUE so we can freely write multiple delta
+  // rows over time"). Count the rows the resync path stamps with its own note:
+  // if edit-after-ship deltas were landing, they would be here.
+  const resyncLanded = await pg`
+    SELECT source_doc_type, movement_type, count(*) AS rows, min(created_at) AS first_at, max(created_at) AS last_at
+      FROM scm.inventory_movements
+     WHERE notes ILIKE 'Resync%'
+     GROUP BY 1, 2
+     ORDER BY count(*) DESC`;
+
+  line("");
+  line("== Q2b  movements written by the resync delta path (notes ILIKE 'Resync%') ==");
+  for (const r of resyncLanded) {
+    line(`    ${r.source_doc_type}/${r.movement_type}: ${r.rows} rows  first=${r.first_at}  last=${r.last_at}`);
+  }
+  if (resyncLanded.length === 0) line("    (none — no resync delta movement has ever landed)");
 
   // ── Q3 — who can write through the freeze ───────────────────────────────────
   // roles.permissions is a JSON string array (services/permissions.parsePermissions),
