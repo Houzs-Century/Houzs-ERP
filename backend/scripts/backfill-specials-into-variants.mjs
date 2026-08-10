@@ -306,7 +306,14 @@ async function main() {
       }
 
       for (const c of addedNow) byCode.set(c, (byCode.get(c) || 0) + 1);
-      updates[which].push({ id: r.id, next });
+      /* OWNER RULE 2026-08-11: 不可以删只可以 cancel — nothing is ever deleted.
+         `next` must be a strict SUPERSET of what the line already carried, so a
+         code a human picked can never be dropped by this sweep. Checked here
+         per line, and again after the commit against what the DB actually
+         holds. A violation is a bug in this script, so it stops the run. */
+      const lost = had.filter((h) => !next.includes(h));
+      if (lost.length) throw new Error(`merge-only violated on ${which} ${r.id}: would drop ${JSON.stringify(lost)}`);
+      updates[which].push({ id: r.id, had, next });
       if (samples.length < SHOW)
         samples.push(`   ${which.toUpperCase()} ${String(r.doc ?? "").padEnd(14)} ${String(r.code ?? "").padEnd(18)} ` +
                      `${JSON.stringify(had)} + ${JSON.stringify(addedNow)}`);
@@ -478,10 +485,14 @@ async function main() {
           const got = new Map(rows.map((r) => [r.id, asArray(r.specials).map((x) => K(x))]));
           for (const u of b) {
             const have = got.get(String(u.id)) || [];
+            // every code we wrote is there, AND every code the line already had
+            // is STILL there — merge only, nothing deleted (owner 2026-08-11)
             const missing = u.next.filter((c) => !have.includes(K(c)));
-            if (missing.length) {
+            const dropped = u.had.filter((c) => !have.includes(K(c)));
+            if (missing.length || dropped.length) {
               bad++;
-              if (badSamples.length < 10) badSamples.push(`   ${which} ${u.id} missing ${JSON.stringify(missing)} have ${JSON.stringify(have)}`);
+              if (badSamples.length < 10) badSamples.push(
+                `   ${which} ${u.id} missing=${JSON.stringify(missing)} DROPPED=${JSON.stringify(dropped)} have=${JSON.stringify(have)}`);
             } else ok++;
           }
         }
