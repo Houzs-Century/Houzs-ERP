@@ -32,7 +32,6 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
-const isSofa = (c) => /SOFA/i.test(c || "");
 const SYS_USER = "00000000-0000-4000-8000-000000000001";
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
@@ -68,9 +67,10 @@ async function main() {
   /* item_group must match the vocabulary the SO/PO line tables use, because
      bound-mode readiness gates on it. Take it from the catalogue rather than
      re-deriving it from the code, so PO lines and SO lines can never disagree. */
-  const CATG = { MATTRESS: "mattress", BEDFRAME: "bedframe", ACC: "accessory", ACCESSORY: "accessory",
-    BEDLINES: "accessory", DIFFUSER: "others", CARPET: "others", DINING: "others", OTHER: "others",
-    SERVICE: "service", TRANS: "service", SOFA: "sofa" };
+  /* scm.mfg_product_category is an enum with exactly these five members;
+     anything else is a value the catalogue cannot hold. */
+  const CATG = { SOFA: "sofa", BEDFRAME: "bedframe", ACCESSORY: "accessory",
+    MATTRESS: "mattress", SERVICE: "service" };
   const prodCat = new Map(
     (await sql`SELECT code, category::text AS category FROM scm.mfg_products WHERE company_id = 1`)
       .map((r) => [norm(r.code), CATG[String(r.category ?? "").toUpperCase()] ?? "others"]),
@@ -104,9 +104,13 @@ async function main() {
 
   // group by PO, dropping sofa lines (sofa is a later round) and unmapped codes
   const groups = new Map();
-  let unmapped = 0, sofaSkipped = 0;
+  /* Sofa is IN now (owner 2026-08-10: 沙发的 SO 已经进完了). It was held back
+     only while the sofa sales orders were still being imported by the parallel
+     round — a PO line whose SO line does not exist yet cannot be dedicated, and
+     an undedicated sofa PO is exactly the thing that leaves a sofa set stuck on
+     PENDING. Their SO lines are in, so their POs come in with everything else. */
+  let unmapped = 0;
   for (const r of rows) {
-    if (isSofa(r.ItemCode)) { sofaSkipped++; continue; }
     const erp = byAc.get(norm(r.ItemCode));
     if (!erp) { unmapped++; continue; }
     if (!groups.has(r.DocNo)) groups.set(r.DocNo, []);
@@ -114,7 +118,7 @@ async function main() {
   }
   const toCreate = [...groups.entries()].filter(([doc]) => !existing.has(doc));
   const alreadyIn = groups.size - toCreate.length;
-  log(`PO docs in file: ${groups.size}; already in ERP: ${alreadyIn}; to create: ${toCreate.length}; sofa lines skipped: ${sofaSkipped}; unmapped codes: ${unmapped}`);
+  log(`PO docs in file: ${groups.size}; already in ERP: ${alreadyIn}; to create: ${toCreate.length}; unmapped codes: ${unmapped}`);
 
   /* Resolve each PO line's SO line. Same-code lines on one SO are handed out in
      order and never reused, so two PO lines for the same SKU on one order bind
@@ -193,10 +197,11 @@ async function main() {
       for (const it of p.items) {
         await tx`INSERT INTO scm.purchase_order_items
             (purchase_order_id, material_kind, material_code, material_name, description, description2,
-             qty, received_qty, unit_price_centi, line_total_centi, item_group,
+             qty, received_qty, unit_price_centi, line_total_centi, item_group, uom,
              warehouse_id, so_item_id, company_id, delivery_date, from_mrp)
-          VALUES (${hdr.id}, 'PRODUCT', ${it.code}, ${it.description}, ${it.description}, ${it.desc2},
+          VALUES (${hdr.id}, 'mfg_product', ${it.code}, ${it.description}, ${it.description}, ${it.desc2},
                   ${it.qty}, ${it.recv}, ${it.priceCenti}, ${it.qty * it.priceCenti}, ${it.group},
+                  ${it.group === "bedframe" ? "SET" : "UNIT"},
                   ${it.wh}, ${it.soItemId}, 1, ${it.deliveryDate}, false)`;
       }
     });
