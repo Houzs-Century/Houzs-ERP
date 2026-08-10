@@ -40,7 +40,7 @@ async function main() {
 
   log("");
   log("═══ B. what stock actually landed ═══");
-  const grp = await sql`SELECT COALESCE(p.item_group, '(unmapped)') grp,
+  const grp = await sql`SELECT COALESCE(p.category, '(unmapped)') grp,
       COUNT(DISTINCT b.product_code)::int skus, SUM(b.qty)::int units,
       COUNT(*) FILTER (WHERE COALESCE(b.variant_key, '') = '')::int no_variant_rows
     FROM scm.inventory_balances b
