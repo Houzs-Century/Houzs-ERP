@@ -1,4 +1,4 @@
-name: Sofa completeness audit (read-only)
+name: PO + SO completeness audit (read-only)
 
 # Manual, read-only. Which sofa documents are not fully specified?
 # Scope is the owner's rule (2026-08-10): EVERY sofa line on a purchase order,
@@ -25,7 +25,7 @@ on:
         type: string
 
 concurrency:
-  group: check-sofa-completeness-${{ inputs.target }}
+  group: check-po-so-completeness-${{ inputs.target }}
   cancel-in-progress: false
 
 jobs:
@@ -39,7 +39,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/check-sofa-completeness.mjs
+      - run: node scripts/check-po-so-completeness.mjs
         env:
           COMPANY: ${{ inputs.company }}
           LIST: ${{ inputs.list }}
@@ -54,7 +54,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/check-sofa-completeness.mjs
+      - run: node scripts/check-po-so-completeness.mjs
         env:
           COMPANY: ${{ inputs.company }}
           LIST: ${{ inputs.list }}
