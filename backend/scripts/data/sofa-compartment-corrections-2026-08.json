@@ -1,0 +1,49 @@
+{
+  "_note": "Owner-approved compartment + seat-size corrections for the AutoCount cutover, 2026-08-10. Every entry names the DOCUMENTS it applies to (SO and the PO raised from it are corrected together so they stay aligned), the MODEL, the target piece list left-to-right, and where known the seat depth in inches and the colour string as written on the source. `why` records how the answer was reached, because a year from now the reason matters more than the value.",
+  "_rules": "Money never moves: the price rides the FIRST piece and every other piece is 0, exactly as the importer wrote it. Lines are matched to target pieces and UPDATED in place wherever the code already exists, so an id - and any PO allocation hanging off it - survives.",
+  "corrections": [
+    { "docs": ["HC-PO-009550", "HC-SO-010882"], "model": "9058", "pieces": ["1A(LHF)", "CNR", "2A(RHF)"], "seat": "32", "why": "Desc2 1R+C+2R - the corner was eaten by the NOISE regex (#1856)" },
+    { "docs": ["HC-PO-009679", "HC-SO-010955"], "model": "9058", "pieces": ["2A(LHF)", "CNR", "1A(RHF)"], "seat": "28", "why": "Desc2 2ER+C+1ER" },
+    { "docs": ["HC-PO-009712", "HC-SO-012629"], "model": "8030", "pieces": ["1A(LHF)", "CNR", "2A(RHF)"], "seat": "30", "why": "Desc2 1R+C+2R" },
+    { "docs": ["HC-PO-010026", "HC-SO-011660"], "model": "8030", "pieces": ["1B(LHF)", "CNR", "2A(RHF)"], "seat": "30", "why": "Desc2 1B+C+2R" },
+    { "docs": ["HC-PO-010045", "HC-SO-012525"], "model": "9058", "pieces": ["1A(LHF)", "1NA", "CNR", "1A(RHF)"], "seat": "30", "why": "Desc2 1R+1NA+C+1R" },
+    { "docs": ["HC-PO-010025", "HC-SO-011965"], "model": "9058", "pieces": ["1A(LHF)", "1NA", "1NA", "CNR"], "seat": "30", "why": "Desc2 1+1NA+1NA+C" },
+    { "docs": ["HC-PO-010140"], "model": "9058", "pieces": ["1A(LHF)", "1NA", "1NA", "CNR", "1A(RHF)"], "seat": "30", "why": "Desc2 1R+1NA+1NA+C+1R" },
+    { "docs": ["HC-PO-010143"], "model": "9058", "pieces": ["1A(LHF)", "1NA", "CNR", "1A(RHF)"], "seat": "30", "why": "Desc2 1+1NA+C+1" },
+    { "docs": ["HC-SO-013164"], "model": "8030", "pieces": ["2A(LHF)", "CNR", "2NA", "Console"], "seat": "28", "why": "Desc2 2+C+2NA+C TABLE" },
+
+    { "docs": ["HC-PO-010061", "HC-SO-012774"], "model": "9050", "pieces": ["CNR", "2A(RHF)"], "seat": "28", "why": "photo: slip reads Sofa Model 9050 (C+2) 28\" each, drawn [C]+[28|28] with one arm at the right" },
+    { "docs": ["HC-PO-010062", "HC-SO-012775"], "model": "9050", "pieces": ["CNR", "2A(RHF)"], "seat": "28", "why": "same slip, HR805-90" },
+
+    { "docs": ["HC-SO-012624"], "model": "9050", "pieces": ["1A(LHF)", "2A(RHF)"], "seat": "28", "why": "photo: 9050 (28 inch) 1+2, drawn [|28]+[28|28] with arms only at the two ends - the document's third piece (a surplus 2S) goes" },
+    { "docs": ["HC-SO-013167"], "model": "8030", "pieces": ["2A(LHF)", "1A(RHF)"], "seat": "28", "why": "photo: 8030 (2+1) 28 inch - the document's surplus 2S goes" },
+
+    { "docs": ["HC-PO-007709"], "model": "9058", "pieces": ["1A(LHF)", "1NA", "CNR", "1NA", "1A(RHF)"], "seat": "30", "why": "photo: the slip writes the string out by hand - 1EL + 1NA + C + 1NA + 1ER" },
+    { "docs": ["HC-PO-010027", "HC-SO-011957"], "model": "9028", "pieces": ["STOOL"], "why": "photo: one box labelled Stool, 32 x 49" },
+    { "docs": ["HC-SO-012929"], "model": "9028", "pieces": ["1S", "1A(LHF)", "2A(RHF)"], "seat": "26", "why": "photo: slip writes 3S: Size 26\" / 1S: Size 28\"; owner split the 3S because 26\" is not 24\"" },
+    { "docs": ["HC-PO-009781", "HC-SO-012107"], "model": "9058", "pieces": ["1A(LHF)", "1A(RHF)"], "seat": "32", "why": "photo: two 32\" boxes, one arm on each outer edge, 273cm overall" },
+    { "docs": ["HC-PO-010029", "HC-SO-012113"], "model": "8030", "pieces": ["1A(LHF)", "1A(RHF)"], "seat": "35", "why": "photo: two 35\" boxes, arms on the outer edges" },
+    { "docs": ["HC-SO-012361"], "model": "8030", "pieces": ["1A(LHF)", "1A(RHF)"], "seat": "30", "why": "photo: two 30\" boxes" },
+    { "docs": ["HC-SO-012922"], "model": "8030", "pieces": ["1A(LHF)", "1A(RHF)"], "seat": "35", "why": "photo: two 35\" boxes, 7.8 feet overall" },
+    { "docs": ["HC-SO-012634"], "model": "8030", "pieces": ["1A(LHF)", "1A(RHF)"], "seat": "30", "why": "photo: two 30\" boxes, noted 'no this stitching'" },
+    { "docs": ["HC-PO-010059", "HC-SO-012636"], "model": "8030", "pieces": ["1A(LHF)", "1NA", "1A(RHF)"], "seat": "24", "why": "photo: three 24\" boxes, arms only at the two ends" },
+    { "docs": ["HC-SO-012179"], "model": "9058", "pieces": ["1A(LHF)", "CNR", "2A(RHF)"], "seat": "32", "why": "photo at 5x: slip says Corner; triangle = the corner, right leg two 32\" boxes, left leg one" },
+    { "docs": ["HC-PO-009597", "HC-SO-012828"], "model": "8030", "pieces": ["1A(LHF)", "CNR", "1NA", "1NA", "1A(RHF)"], "seat": "28", "why": "photo at 5x, corner position corrected by the owner" },
+    { "docs": ["HC-PO-010060", "HC-SO-012715"], "model": "8030", "pieces": ["1A(LHF)", "1A(RHF)"], "seat": "35", "why": "photo at 5x: left box hatched on the left, right box on the right, labelled (2 seater)" },
+    { "docs": ["HC-PO-009827", "HC-SO-002861"], "model": "8060", "pieces": ["1A(LHF)", "1NA", "1NA", "CNR", "2A(RHF)"], "seat": "28", "why": "photo at 5x; the wooden arm is a special order, not a compartment (owner)" },
+    { "docs": ["HC-PO-009587", "HC-SO-010209"], "pieces": ["1A(LHF)", "1NA", "1A(RHF)"], "seat": "26", "why": "photo: three boxes all marked 26, arms only at the two ends" },
+    { "docs": ["HC-PO-010024", "HC-SO-011449"], "model": "8030", "pieces": ["1A(LHF)", "1NA", "1A(RHF)"], "seat": "35", "why": "photo: [hatch|35][ ][35|hatch]" },
+    { "docs": ["HC-SO-011099"], "pieces": ["1A(LHF)", "1A(RHF)"], "seat": "30", "why": "photo: two 30\" boxes, a small arm at each end" },
+    { "docs": ["HC-PO-010117"], "pieces": ["1ABOX(LHF)", "1NA", "2A(RHF)"], "seat": "28", "why": "Desc2 (1 ELT/T + NA + 2ER)(28\") - the ELT/T spelling has no parser rule" },
+    { "docs": ["HC-PO-000136"], "pieces": ["STOOL"], "why": "Desc2 says (STOOL); the brackets hid it from the parser" },
+
+    { "docs": ["HC-SO-008942", "HC-PO-010034"], "model": "9058", "pieces": ["1A(LHF)", "1NA", "CNR", "1A(RHF)"], "seat": "30", "colour": "modenza 05", "why": "owner read the original slip (our photo is cropped)" },
+    { "docs": ["HC-PO-010153"], "model": "9050", "pieces": ["1A(LHF)", "1NA", "CNR", "1A(RHF)", "1S"], "seat": "30", "why": "owner read the original slip (our photo is cropped)" },
+    { "docs": ["HC-SO-011733", "HC-PO-010023"], "model": "9058", "pieces": ["2A(LHF)", "CNR", "1NA", "1NA", "Console", "1A(RHF)"], "seat": "30", "colour": "ch141-8S", "why": "owner" },
+    { "docs": ["HC-SO-012877"], "pieces": ["L(LHF)", "2A(RHF)"], "seat": "30", "why": "owner; ready stock, colour is the physical unit's" }
+  ],
+  "_held": [
+    { "docs": ["HC-PO-010056", "HC-SO-012696"], "seat": "30", "why": "photo shows a corner plus three 30\" seats but the piece ORDER is not readable - left for the owner" },
+    { "docs": ["HC-PO-000162"], "model": "5526", "pieces": ["DB"], "why": "blocked: 5526 must first exist as its own model (the mapping wrongly points it at 8038) and DB must be in the compartment pool" }
+  ]
+}
