@@ -18,7 +18,11 @@
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { soItemPhotoSignedHandler } from '../src/scm/routes/mfg-sales-orders';
-import { poItemPhotoSignedHandler, poItemPhotoProxyHandler } from '../src/scm/routes/mfg-purchase-orders';
+import {
+  mfgPurchaseOrders,
+  poItemPhotoSignedHandler,
+  poItemPhotoProxyHandler,
+} from '../src/scm/routes/mfg-purchase-orders';
 import { consignmentItemPhotoSignedHandler } from '../src/scm/routes/consignment-orders';
 import { resetSigningWarnLog } from '../src/scm/lib/photoProxyFallback';
 
@@ -261,6 +265,22 @@ describe('PO photo proxy route (new) — serves bytes from the R2 binding', () =
     );
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('JPEGBYTES');
+  });
+
+  /* The tests above mount the handler directly, so they would still pass if the
+     route were never registered on the real router — which is exactly the
+     pre-fix state, where the PO side had /signed and nothing else. Assert the
+     mount itself. This is a STRUCTURAL check against the real router's route
+     table rather than a dispatch, because mfgPurchaseOrders applies
+     `supabaseAuth` at '*', which cannot run in this harness (the same
+     limitation companyScopeConsignmentPo.test.ts documents). */
+  test('is actually REGISTERED on the real router, not just exported', async () => {
+    const paths = mfgPurchaseOrders.routes
+      .filter((r) => r.method === 'GET' || r.method === 'ALL')
+      .map((r) => r.path);
+    expect(paths).toContain('/:id/items/:itemId/photos/:photoKey');
+    // and the signed route it backs up is still there
+    expect(paths).toContain('/:id/items/:itemId/photos/:photoKey/signed');
   });
 
   test('404s when the object is genuinely absent from R2', async () => {
