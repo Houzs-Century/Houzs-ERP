@@ -941,7 +941,16 @@ same cells and called the remainder a surplus.
 | genuine residual (`SQUARE PILLOW @ BALAKONG`, ERP 46 vs AutoCount 38) | **+8** |
 
 Eleven of the twelve cells reconcile **exactly** once the excluded codes are
-summed. **Corrected net delta over comparable cells: +72 units, not +149.**
+summed.
+
+**What the fix does to the headline is worth stating precisely, because the
+obvious guess is wrong.** Removing the filter does not subtract 77 from the net
+— it adds the missing rows to *both* sides. Measured across the two prod runs:
+AutoCount 9,641 -> 9,706 (+65) and ERP 9,790 -> 9,863 (+73), so the net moves
+**+149 -> +157**. That +8 difference is exactly the genuine residual predicted
+above, arriving independently. The gap the filter was inventing was never in the
+net; it was in the **ERP-only** bucket, where 12 cells claimed AutoCount held
+nothing at all.
 
 This is D7 one layer up — D7 excluded accessories by matching `/SOFA/` against
 the item CODE, this excluded them by matching `SOFA` against the item GROUP. The
@@ -951,7 +960,51 @@ be compared, or the check manufactures the discrepancy it exists to find. Fixed;
 the checker now excludes on the binding CSV's category and reports how many units
 it compares despite an `ItemGroup` of `SOFA`.
 
-### 11.5 Still open after this work
+### 11.5 Opening the sofa stock exposed a second, opposite asymmetry
+
+The sofa exclusion was **one-sided**. AutoCount's whole-sofa rows were held out;
+the ERP's per-COMPARTMENT stock was not, so every compartment cell sat in the
+comparison with nothing to match against. Harmless while the ERP held no sofa
+stock — and no longer harmless the moment 11.3 opened 103 compartment lots. The
+very next run:
+
+| | before the sofa import | after | after the symmetry fix |
+|---|---|---|---|
+| cells compared | 988 | 1,053 | 976 |
+| **ERP-only cells** | 21 | **78** | **1** |
+| AGREE | 910 | 917 | 917 |
+| DISAGREE | 34 | 35 | 35 |
+
+A representative phantom row:
+`8030-1A(RHF) @ BALAKONG WAREHOUSE: AutoCount - vs ERP 5`. There is no
+`8030-1A(RHF)` in AutoCount and there never will be — AutoCount holds one
+`DSL-8030 SOFA`.
+
+Fixed by excluding on `scm.mfg_products.category = 'SOFA'` on the ERP side too,
+holding out 77 cells / 123 units and reporting the figure. Verified on prod:
+**ERP-only 78 -> 1**, and `CUTOVER ADJUSTMENT ONLY` collapses from 83 cells /
+136 units to **6 cells / 13 units**.
+
+**917 of 976 cells now agree (94%)**, and every unit of the remaining +157 sits
+in a class that already has a name:
+
+| cause | cells | units |
+|---|---|---|
+| MIGRATION CUT-OFF — AutoCount traded after the seeding snapshot | 28 | 83 |
+| NO ERP MOVEMENT — AutoCount negatives the ERP cannot represent (D4) | 20 | 50 |
+| KNOWN DOUBLE-SHIP — SO-2606-019 (D1) | 5 | 14 |
+| CUTOVER ADJUSTMENT ONLY — present at seeding | 6 | 13 |
+
+Nothing in the balance axis is now unexplained.
+
+**Three variants of one mistake, in one file, in one week.** D7 excluded
+accessories by matching `/SOFA/` against the item CODE; 11.4 excluded them by
+matching `SOFA` against the item GROUP; this one excluded sofa on the AutoCount
+side only. The invariant: **an exclusion must use the same predicate as the
+importer, and must be symmetric.** Applied to one side of a comparison, it does
+not narrow the comparison — it fabricates a difference.
+
+### 11.6 Still open after this work
 
 | item | state |
 |---|---|
@@ -961,7 +1014,7 @@ it compares despite an `ItemGroup` of `SOFA`.
 | D7's 205 `SOFA PILLOW` units | still absent from the ERP — `import-ac-stock-balance.mjs` skips them; narrow the filter and re-run (it is delta-based, so it tops up) |
 | `ready-no-open-lots` lens: 59 lines | unchanged before and after, and **every one is a `SVC-*` service line** on 2990. Service lines have no lots by construction, so this is a false-positive class in the lens, not a defect |
 | the 12 placeholder sofa builds | `SOFA UNPARSED`; a human must decode them before `PLACEHOLDER=1` is safe |
-| status axis: 151 of 2,723 orders disagree | 48 `READY => (blank)`, 26 `READY => ACC`, 10 `READY => BEDFRAME/ACC`; the sofa fix should move a share of these, and the run should be repeated to see how many |
+| status axis: 126 of 2,723 orders disagree | was 151 before the sofa work; the recompute moved **25 orders into agreement** (AGREE 2,572 -> 2,597). The rest are `READY => (blank)` / `READY => ACC` shapes that need the same per-order treatment |
 
 ---
 
