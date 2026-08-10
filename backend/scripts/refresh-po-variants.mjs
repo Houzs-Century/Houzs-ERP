@@ -75,14 +75,20 @@ async function main() {
   };
   const validSpecials = new Set((await sql`SELECT code FROM scm.special_addons WHERE company_id = 1 AND 'BEDFRAME' = ANY(categories)`).map((r) => r.code));
 
-  const items = await sql`SELECT i.id, i.material_code AS item_code, i.variants, h.linked_ac_docno
+  const items = await sql`SELECT i.id, i.material_code AS item_code, i.variants, i.description2, h.linked_ac_docno
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = 1 AND i.item_group = 'bedframe' AND h.linked_ac_docno IS NOT NULL`;
   log(`imported PO bedframe lines: ${items.length}`);
 
   const updates = []; let gained = 0;
   for (const it of items) {
-    const bf = parsed.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`);
+    /* Fall back to the line's OWN Desc2 when the outstanding-PO export has no
+       entry for it. The SO-linked PO import (already-received POs, which that
+       export excludes by definition) stores the same AutoCount text on the
+       line, so a lookup miss must not mean "leave this bedframe without
+       variants" — the owner's rule is that a raised PO always has them. */
+    const bf = parsed.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`)
+      ?? (it.description2 ? parseBedframe(it.description2) : null);
     if (!bf) continue;
     const pending = isPendingColour(bf.color);
     const fc = pending ? null : findColour(bf.color);
