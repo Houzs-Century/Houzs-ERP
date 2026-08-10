@@ -96,6 +96,73 @@ half.
 
 **Ref** - fix/do-deduct-guard-truth, 2026-08-11 (evidence: Actions run 31417585775)
 
+## The migrated DO writer copied no classification, so the whole SO -> DO leg audited an empty set [high]
+
+**Symptom** - `check-sofa-chain-alignment.mjs` reported LEG 3 (SO -> DO) as "10
+pairs, 0 aligned, 10 carry no variants", and every earlier report filtering
+delivery-order lines with `WHERE item_group IN ('sofa','bedframe')` returned
+nothing at all and read as clean. Company 2's 41 sofa/bedframe DO lines all
+carry their own tag; company 1's carry none.
+
+**Root cause (traced, not guessed)** - `create-migrated-documents.mjs:257`
+inserts a delivery-order line with SEVEN columns - `delivery_order_id`,
+`so_item_id`, `item_code`, `description`, `uom`, `qty`, `company_id` - and never
+`item_group`, `variants` or `description2`. The GRN writer in the SAME FILE
+(`:142`) copies `item_group` and `variants` from its PO line, which is exactly
+why nobody noticed: one arm of one script was right and the other was silent.
+`scm.delivery_order_items` has all three columns - the UI's own writer
+(`delivery-orders-mfg.ts:3484`) fills them - so this was never a schema gap.
+The contrast with company 2, whose DO lines were not made by this writer, is the
+proof that the NULLs are the writer's doing and not drift.
+
+**Fix** - the writer now pulls `item_group`, `variants` and `description2` with
+the SO line and writes all three, and `backfill-do-line-snapshot.mjs` fills the
+rows it already wrote from their parent SO line (`so_item_id`), because a
+delivery order is a SNAPSHOT OF THE SALES ORDER AT DISPATCH. Lines whose
+`so_item_id` is NULL are reported and LEFT ALONE - inferring the group from
+`mfg_products.category` would work and would also be a guess written into a
+snapshot column, indistinguishable from a fact afterwards.
+
+**Lesson** - a child document is a snapshot, so a writer that copies the
+quantity and not the classification produces rows that are invisible to every
+filter written against the parent's vocabulary. The failure mode is not an
+error, it is a zero - and a zero reads as "clean". When two writers in one file
+copy different column sets, that asymmetry is the bug.
+
+**Ref** - fix/chain-residue-repair, 2026-08-11
+
+## A compartment correction hard-DELETED two sales-order lines, against the owner's cancel-only rule [medium]
+
+**Symptom** - `HC-SO-012624` and `HC-SO-013167` each hold two live sofa lines
+and no cancelled third, while production run 31393696809 logged `removed 2`.
+The record that a third piece was ever on either order is gone.
+
+**Root cause (traced, not guessed)** - `apply-sofa-compartment-corrections.mjs`
+pairs existing rows to the corrected piece list and DELETEs whatever is left
+over (`:182`, `:198-199`). It refuses when a PO, GRN or DO line points at the
+surplus row, and it aborts the build if the document total would move, so the
+deletion was guarded on money and on references - but not on the owner's rule
+`不可以删只可以 cancel`, which arrived after the run. Confirmed against the
+DATABASE rather than the log, because a log line is not evidence:
+`diag-sofa-cutover-residue.mjs` section E prints both documents' current rows
+and finds no cancelled row to recover.
+
+**Fix** - `restore-deleted-so-lines.mjs` reinstates each row CANCELLED at 0
+price. `scm.mfg_sales_order_items.cancelled` is `boolean NOT NULL DEFAULT
+false`, so no schema change was needed - but `scm.purchase_order_items`,
+`scm.grn_items` and `scm.delivery_order_items` have NO `cancelled` column at
+all (asked of `information_schema`, section H), so the two arms of that script
+are NOT symmetrical and the PO arm cannot simply mirror the SO arm. The restore
+snapshots the whole header row as jsonb before and after, inside the same
+transaction, compares every key plus the line sums, and ROLLS BACK if anything
+moved.
+
+**Lesson** - "no money moved" is not the same as "nothing was lost". A guard
+that checks totals and foreign keys still lets a document forget its own
+history. And never assume two line tables are symmetrical: ask
+`information_schema`, or the second arm dies at 42703 mid-run.
+
+**Ref** - fix/chain-residue-repair, 2026-08-11
 ## A frozen write reads as an outage on every path that is not the vendored SCM client [medium]
 
 **Symptom** - with the go-live write freeze ON, a refused write answered
