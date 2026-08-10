@@ -106,6 +106,13 @@ export interface ErpSoHeader {
   linked_ac_docno?: string | null;
 }
 
+/**
+ * NOT a row shape. `scm.purchase_orders` is supplier-keyed and has none of the
+ * four fields below: the creditor is `scm.suppliers.code` / `.name` behind
+ * `supplier_id`, and agent and ref do not exist on the ERP side at all.
+ * `readPoHeader` (scm/lib/autocount-outbox.ts) is what assembles this — reading
+ * these names off the table is the bug in BUG-HISTORY, 2026-08-10.
+ */
 export interface ErpPoHeader {
   po_number: string;
   po_date: string | null;
