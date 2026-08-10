@@ -135,4 +135,18 @@ for (const d of drift.slice(0, 15)) note(`   ${d.ac}: ERP ${d.erp} vs AC ${d.ac_
   for (const h of imported.slice(0, 40)) note(`   ${h.linked_ac_docno} -> ${h.doc_no}  RM${(Number(h.total_revenue_centi || 0) / 100).toFixed(2)}${(acSofa.get(h.linked_ac_docno) || []).length ? "  [SOFA]" : ""}`);
 }
 
+
+// 6 PO-CONVERTED MUST BE PRESENT — the owner's other half of the rule: a line
+// turned into a PO is STILL outstanding until it becomes a DO, so every such
+// order must be in the ERP. Anything missing here is a real gap, not noise.
+{
+  const n = (v) => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
+  const want = new Set();
+  for (const [doc, ls] of acLines) if (ls.some((x) => n(x.TransferedPOQty) > 0 && n(x.Qty) > n(x.TransferedQty))) want.add(doc);
+  const have = new Set(heads.map((h) => h.linked_ac_docno));
+  const missing = [...want].filter((d) => !have.has(d));
+  note(`6 PO-CONVERTED (still outstanding): ${want.size} orders expected; missing from the ERP: ${missing.length}`);
+  for (const d of missing.slice(0, 40)) note(`   MISSING ${d}  AC lines: ${(acLines.get(d) || []).map((l) => l.ItemCode).join(", ").slice(0, 80)}`);
+}
+
 await sql.end({ timeout: 5 });
