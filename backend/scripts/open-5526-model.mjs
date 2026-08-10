@@ -252,7 +252,17 @@ async function main() {
                       AND i.item_group = 'sofa' ORDER BY i.line_no`;
       const rows = all.filter((r) => String(r.description2 ?? "").includes(e.desc2));
       if (!rows.length) {
-        note(`  ${doc} dtl ${e.dtl}: no sofa line whose description2 holds this build (${all.length} sofa line(s) on the document) — skipped`);
+        /* Say WHY, so a missing build is diagnosable instead of a shrug: is the
+           document in the ERP at all, and what groups are its lines in?
+           (apply-sofa-compartment-corrections.mjs set this precedent.) */
+        const probe = e.kind === "po"
+          ? await tx`SELECT i.item_group g, COUNT(*)::int n FROM scm.purchase_order_items i
+                      WHERE i.purchase_order_id = ${poId} GROUP BY 1`
+          : await tx`SELECT i.item_group g, COUNT(*)::int n FROM scm.mfg_sales_order_items i
+                      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+                     WHERE h.company_id = ${cid} AND (i.doc_no = ${doc} OR h.linked_ac_docno = ${e.ac}) GROUP BY 1`;
+        note(`  ${doc} dtl ${e.dtl}: ${all.length} sofa line(s), none holding this build — ${
+          probe.length ? "document lines: " + probe.map((x) => `${x.g}:${x.n}`).join(", ") : "the document itself is not in the ERP"} — skipped`);
         bump("repoint", "build_absent"); continue;
       }
       const before = rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
