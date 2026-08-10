@@ -510,6 +510,22 @@ async function main() {
                         " The receipt is a faithful record of what the PO said at the time. DO NOT TOUCH.");
       continue;
     }
+    /* NO TABLE IN THIS CHAIN HAS AN updated_at — section H proves it. So the
+       timestamp test can only catch a line that was INSERTED after the receipt,
+       never one that was UPDATED after it, and an UPDATE is exactly what a
+       backfill does. Where a script's own SCOPE settles it, that is the
+       evidence instead: backfill-sofa-leg-default.mjs (2026-08-10) writes
+       scm.mfg_sales_order_items (:148) and scm.purchase_order_items (:152) and
+       NEVER scm.grn_items, so a "Default" leg on the PO against an empty leg on
+       the GRN is that backfill reaching the parent after the child was taken.
+       It is history, not a lost snapshot. */
+    const legDefaultOnly = diffs.length > 0 && !codeDiff &&
+      diffs.every((d) => d.k === "legHeight" && d.grn === null && norm(d.po) === "DEFAULT");
+    if (legDefaultOnly) {
+      bkt.a.push(head + "\n         (a) legHeight 'Default' written onto the PO by backfill-sofa-leg-default.mjs AFTER this receipt;" +
+                        " that script writes the SO and PO arms only and never grn_items. The GRN correctly records a line that had no leg pick at receipt. DO NOT TOUCH.");
+      continue;
+    }
     const conflicting = diffs.filter((d) => d.po !== null && d.grn !== null);
     if (conflicting.length) { bkt.c.push(head + "\n         (c) both documents state a value and they disagree, and the PO is not the newer document."); continue; }
     const grnEmpty = diffs.filter((d) => d.po !== null && d.grn === null).length;
@@ -580,10 +596,16 @@ async function main() {
      document's structured field claims? A fabric code appears verbatim in
      Desc2 ("COL:PC151-12"); a gap appears as a number near "gap"/inch marks, so
      the digits are tested rather than the formatted string. */
+  const squash = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
   const textSays = (d2, val) => {
     if (!d2 || val === null) return null;
     const t = norm(d2), v = norm(val);
     if (t.includes(v)) return true;
+    /* AutoCount writes the same fabric a dozen ways — "PC-151-02", "PC151-02",
+       "pc151 02". Comparing the letters and digits alone is the only test that
+       survives that, and it is why the first pass called HC-SO-011886
+       "ambiguous" when its text plainly names the PO's colour. */
+    if (squash(t).includes(squash(v))) return true;
     const digits = v.replace(/[^0-9.]/g, "");
     if (digits && new RegExp(`(^|[^0-9])${digits.replace(".", "\\.")}([^0-9]|$)`).test(t)) return true;
     return false;
