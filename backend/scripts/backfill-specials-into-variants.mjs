@@ -411,7 +411,14 @@ async function main() {
         `UPDATE scm.${table}
             SET variants = jsonb_set(COALESCE(variants, '{}'::jsonb), '{specials}', $1::jsonb, true)
           WHERE id = $2`,
-        [JSON.stringify(u.next), u.id]);
+        // tx.json, never JSON.stringify - see BUG-HISTORY / docs/jsonb-double-
+        // encoding-coe.md, 2026-08-10. postgres.js applies its own
+        // JSON.stringify to any parameter it resolves to json/jsonb, and with
+        // prepare:false + parameters it always learns that type from the server
+        // before binding, so a pre-stringified value is encoded TWICE and
+        // jsonb_set writes variants.specials as a STRING - invisible to every
+        // Array.isArray() reader, which is exactly how custom_specials broke.
+        [tx.json(u.next), u.id]);
       touched += res.count ?? 0;
     }
     return touched;

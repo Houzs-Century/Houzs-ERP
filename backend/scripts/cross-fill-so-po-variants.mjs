@@ -86,7 +86,11 @@ async function main() {
         (f.specialsChanged ? `, custom_specials = $3::jsonb` : ``) +
         Object.keys(f.cols).map((c, i) => `, ${c} = ${f.cols[c]}`).join("") +
         ` WHERE id = $2`,
-        f.specialsChanged ? [JSON.stringify(f.variants), f.id, JSON.stringify(f.specials)] : [JSON.stringify(f.variants), f.id],
+        // sql.json, never JSON.stringify - see BUG-HISTORY 2026-08-10. postgres.js
+        // JSON-encodes any parameter it resolves to json/jsonb, so a
+        // pre-stringified value is encoded twice and `variants = $1::jsonb`
+        // would replace the object with a jsonb STRING.
+        f.specialsChanged ? [sql.json(f.variants), f.id, sql.json(f.specials)] : [sql.json(f.variants), f.id],
       );
     }
   };
