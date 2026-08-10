@@ -43,18 +43,34 @@
 // Run: AcSyncService.exe   (port from C:\Tempc-svc-port.txt, default 8900)
 // Routes (all POST, header X-API-KEY):
 //   /health          -> { ok, book }
-//   /create-so       -> { docNo }      payload = header + Details[]
-//   /create-po       -> { docNo }
-//   /so-to-do        -> { docNo }      { FromDocNo, DtlKeys[]?, DocDate?, ... }
-//   /po-to-gr        -> { docNo }
-//   /do-to-iv        -> { docNo }
-//   /gr-to-pi        -> { docNo }
+//   /create-so       -> { docNo, lines[] }  payload = header + Details[]
+//   /create-po       -> { docNo, lines[] }
+//   /so-to-do        -> { docNo, lines[] }  { FromDocNo, DtlKeys[]?, DocDate?, ... }
+//   /po-to-gr        -> { docNo, lines[] }
+//   /do-to-iv        -> { docNo, lines[] }
+//   /gr-to-pi        -> { docNo, lines[] }
 //   /cancel          -> { ok }         { DocType, DocNo }
 //   /edit            -> { ok }         { DocType, DocNo, Header{}, Lines[] }
 //
+// ── LINE IDENTITY (2026-08-11) ─────────────────────────────────────────────
+// `lines` on every create/convert response is
+//     [ { Seq, DtlKey, ItemCode, Desc2 }, ... ]   ordered by DtlKey
+// so the ERP can store scm.*_items.linked_ac_dtlkey at the moment the document
+// is created. These routes previously answered with the DocNo alone, which left
+// EVERY ERP-created document with NULL line identity — and /edit then APPENDED
+// duplicate lines into the live book instead of updating them. Measured on prod
+// 2026-08-11: 0 of 13,907 SO lines and 0 of 864 PO lines carried a DtlKey.
+//
+// /edit now REFUSES a line that has neither a DtlKey nor an explicit IsNewLine,
+// and a line can be retired in place with Retire:true (Qty = 0, Transferable =
+// false, Desc2 marked) because this SDK offers no line-level cancel on any
+// class and no line delete at all on PO / GRN / PI / DO / IV.
+//
 // The SQL connection line (__DBLINE__) is injected at build time so the DB
 // password never lives in source control; the API key is read from
-// C:\Temp\ac-svc-key.txt.
+// C:\Temp\ac-svc-key.txt. It now appears in THREE methods — Session, DtlKeys
+// and CreatedLines — so the build step must replace EVERY occurrence, not the
+// first one.
 using System;
 using System.IO;
 using System.Net;
@@ -77,6 +93,13 @@ class AcSyncService {
 
   static string ApiKey =
     File.Exists(@"C:\Temp\ac-svc-key.txt") ? File.ReadAllText(@"C:\Temp\ac-svc-key.txt").Trim() : null;
+
+  /* Prefixed to Desc2 when the ERP retires a line. A line-level Cancelled flag
+     does not exist in this SDK (whole-file check of sdk-api-reference.txt: the
+     string "Cancelled" appears zero times), so a retired line is recognised by
+     Qty = 0 plus this marker. Keep it greppable and keep it ASCII — it is read
+     off a printed document and out of SQL by people, not by code. */
+  const string RETIRED_MARK = "[ERP-CANCELLED]";
 
   static void Main() {
     AppDomain.CurrentDomain.AssemblyResolve += (s, e) => {
@@ -127,19 +150,78 @@ class AcSyncService {
     var p = (Dictionary<string, object>) new JavaScriptSerializer().DeserializeObject(body);
     Log(path + " " + (body.Length > 400 ? body.Substring(0, 400) + "..." : body));
 
+    /* Every route that CREATES a document answers with the created line keys
+       as well as the DocNo. The DocNo alone is not enough: without the DtlKeys
+       the ERP stores NULL line identity, and the next /edit of that very
+       document is refused by the keyless-line guard (or, before that guard
+       existed, silently appended duplicates into the account book). */
     string docNo;
+    string dtlTable;
     switch (path) {
-      case "/create-so": docNo = CreateSo(p); break;
-      case "/create-po": docNo = CreatePo(p); break;
-      case "/so-to-do":  docNo = Convert_("SO", "DO", p); break;
-      case "/po-to-gr":  docNo = Convert_("PO", "GR", p); break;
-      case "/do-to-iv":  docNo = Convert_("DO", "IV", p); break;
-      case "/gr-to-pi":  docNo = Convert_("GR", "PI", p); break;
+      case "/create-so": docNo = CreateSo(p); dtlTable = "SODTL"; break;
+      case "/create-po": docNo = CreatePo(p); dtlTable = "PODTL"; break;
+      case "/so-to-do":  docNo = Convert_("SO", "DO", p); dtlTable = "DODTL"; break;
+      case "/po-to-gr":  docNo = Convert_("PO", "GR", p); dtlTable = "GRDTL"; break;
+      case "/do-to-iv":  docNo = Convert_("DO", "IV", p); dtlTable = "IVDTL"; break;
+      case "/gr-to-pi":  docNo = Convert_("GR", "PI", p); dtlTable = "PIDTL"; break;
       case "/cancel":    Cancel(p); Json(ctx, 200, Ok(null)); return;
       case "/edit":      Edit(p);   Json(ctx, 200, Ok(null)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
-    Json(ctx, 200, Ok(docNo));
+    Json(ctx, 200, Ok(docNo, CreatedLines(dtlTable, docNo)));
+  }
+
+  /* The DtlKeys of the document we just created, in the order AutoCount stored
+     them, each with its ItemCode and Desc2.
+
+     Read back from the book's own detail table rather than off the SDK detail
+     objects: DtlKey is assigned by the database at Save() and is not a settable
+     property on any detail class, so the entity wrapper is not a dependable
+     source for it — the same reason DtlKeys() below reads SQL directly.
+
+     ItemCode and Seq travel with each key ON PURPOSE. The ERP zips this array
+     onto its own lines by index; shipping the code alongside lets it ASSERT the
+     zip is right and refuse to store anything if the two disagree, instead of
+     writing a confidently wrong line identity that would later edit the wrong
+     line in a live book. A wrong DtlKey is worse than no DtlKey: no key is
+     refused loudly, a wrong key silently edits somebody else's line. */
+  static List<Dictionary<string, object>> CreatedLines(string dtlTable, string docNo) {
+    var hdr = dtlTable.Substring(0, dtlTable.Length - 3);
+    var outp = new List<Dictionary<string, object>>();
+    if (string.IsNullOrEmpty(docNo)) return outp;
+    try {
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandText =
+            "SELECT d.DtlKey, d.ItemCode, d.Desc2 FROM " + dtlTable + " d " +
+            "JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
+            "WHERE h.DocNo = @no ORDER BY d.DtlKey";
+          var pr = cmd.CreateParameter(); pr.ParameterName = "@no"; pr.Value = docNo;
+          cmd.Parameters.Add(pr);
+          using (var rd = cmd.ExecuteReader()) {
+            var seq = 0;
+            while (rd.Read()) {
+              outp.Add(new Dictionary<string, object> {
+                { "Seq", seq++ },
+                { "DtlKey", rd.GetInt64(0) },
+                { "ItemCode", rd.IsDBNull(1) ? "" : rd.GetString(1) },
+                { "Desc2", rd.IsDBNull(2) ? "" : rd.GetString(2) },
+              });
+            }
+          }
+        }
+      }
+    } catch (Exception ex) {
+      /* Never fail a CREATE that already succeeded just because the read-back
+         did not. The document exists in AutoCount and the ERP must be told its
+         DocNo; missing keys degrade to the refusal path on a later edit, which
+         is visible and recoverable. Losing the DocNo would not be. */
+      Log("  CreatedLines(" + dtlTable + ", " + docNo + ") failed: " + ex.Message);
+      return new List<Dictionary<string, object>>();
+    }
+    return outp;
   }
 
   // ── session ───────────────────────────────────────────────────────────────
@@ -384,13 +466,39 @@ class AcSyncService {
     }
 
     /* Lines are addressed by the AutoCount DtlKey the ERP stored at import, so
-       an edit updates the SAME line instead of appending a duplicate. A line
-       with no DtlKey is a genuinely new line. Deleting lines is NOT offered:
-       only SalesOrder exposes DeleteDetail in this SDK, so a "delete" would
-       behave differently per document type — the ERP cancels and re-issues
-       instead, which is what the accounts expect anyway. */
-    foreach (var od in List(p, "Lines")) {
-      var it = (Dictionary<string, object>) od;
+       an edit updates the SAME line instead of appending a duplicate.
+
+       A KEYLESS LINE IS REFUSED unless the ERP explicitly asserts IsNewLine.
+       This is the whole point of the guard and it is not defensive padding:
+       every migrated document in production carries NULL DtlKeys on every line
+       (measured 2026-08-11 on prod: 0 of 13,907 SO lines and 0 of 864 PO lines
+       had one), so a fallback to AddDetail() does not add "the new line" — it
+       appends a SECOND COPY of every line the operator did not change, into a
+       live licensed account book. On a PO that duplicate can never be removed:
+       PurchaseOrder exposes neither DeleteDetail nor any line-level Cancelled
+       flag in this SDK, only SalesOrder has DeleteDetail. Refusing costs a
+       failed outbox row the operator can see; appending costs an account book
+       nobody can repair.
+
+       Validated in a PRE-FLIGHT PASS, before a single detail is touched, so a
+       refusal leaves the document exactly as AutoCount already had it rather
+       than half-applied and discarded. */
+    var lines = new List<Dictionary<string, object>>();
+    foreach (var od in List(p, "Lines")) lines.Add((Dictionary<string, object>) od);
+    for (var i = 0; i < lines.Count; i++) {
+      var it = lines[i];
+      var hasKey = it.ContainsKey("DtlKey") && it["DtlKey"] != null;
+      if (hasKey) continue;
+      if (Bool(it, "IsNewLine")) continue;
+      throw new Exception(
+        "REFUSED: line " + (i + 1) + " of " + lines.Count + " on " + type + " " + docNo +
+        " (ItemCode '" + Str(it, "ItemCode") + "') carries no DtlKey and does not declare " +
+        "IsNewLine. Appending it would duplicate a line in the live account book, and on a " +
+        "PO a duplicate cannot be removed. Store the line's AutoCount DtlKey " +
+        "(scm.*_items.linked_ac_dtlkey) or mark the line IsNewLine, then retry.");
+    }
+
+    foreach (var it in lines) {
       dynamic d;
       if (it.ContainsKey("DtlKey") && it["DtlKey"] != null) {
         d = doc.EditDetail(System.Convert.ToInt64(it["DtlKey"]));
@@ -399,6 +507,34 @@ class AcSyncService {
         d = doc.AddDetail();
         Set(() => d.ItemCode = Str(it, "ItemCode"));
       }
+
+      /* RETIREMENT. The owner's rule is that nothing is ever deleted, only
+         cancelled — and no detail class in this SDK exposes Cancelled/Void/
+         Status at line level, so "cancelled" has to be expressed in the fields
+         that do exist. Qty = 0 is the load-bearing one, not a cosmetic touch:
+         AutoCount's own outstanding predicate is
+             Qty - ISNULL(TransferedQty, 0) > 0
+         (the same one DtlKeys() reads above), so ONLY zeroing the quantity
+         makes AutoCount's outstanding set agree with an ERP line that has been
+         retired. Transferable = false stops it being pulled into a later DO or
+         GRN, and the Desc2 marker is what a human reads.
+
+         Deliberately NOT wrapped in Set(): Set swallows the exception, and a
+         silently-skipped Qty = 0 would leave the line outstanding in AutoCount
+         while the ERP believes it is cancelled — the precise divergence this
+         exists to prevent. It must fail the whole edit instead.
+
+         PrintOut is left alone on purpose. A retired line stays visible on the
+         printed document, marked; hiding it would be deletion wearing a
+         different hat. */
+      if (Bool(it, "Retire")) {
+        d.Qty = 0;
+        Set(() => d.Transferable = false);
+        var keep = it.ContainsKey("Desc2") ? Str(it, "Desc2") : SafeDesc2(d);
+        Set(() => d.Desc2 = (RETIRED_MARK + " " + keep).Trim());
+        continue;
+      }
+
       if (it.ContainsKey("Description")) Set(() => d.Description = Str(it, "Description"));
       if (it.ContainsKey("Desc2"))       Set(() => d.Desc2 = Str(it, "Desc2"));
       if (it.ContainsKey("Qty"))         Set(() => d.Qty = Dec(it, "Qty", 1));
@@ -423,6 +559,14 @@ class AcSyncService {
     if (docNo != null) d["docNo"] = docNo;
     return d;
   }
+  /* Create answers with the line keys too — see CreatedLines(). Without them a
+     document the ERP creates has NULL DtlKeys forever, and the very next edit
+     of it hits the keyless-line refusal in Edit(). */
+  static Dictionary<string, object> Ok(string docNo, List<Dictionary<string, object>> lines) {
+    var d = Ok(docNo);
+    if (lines != null) d["lines"] = lines;
+    return d;
+  }
   static Dictionary<string, object> Err(string m) { return new Dictionary<string, object> { { "ok", false }, { "error", m } }; }
   static string Str(Dictionary<string, object> d, string k) { object v; return d.TryGetValue(k, out v) && v != null ? v.ToString() : ""; }
   static string Or(string a, string b) { return string.IsNullOrEmpty(a) ? b : a; }
@@ -432,6 +576,16 @@ class AcSyncService {
     DateTime dt; return DateTime.TryParse(v.ToString(), out dt) ? dt : (DateTime?) null;
   }
   static Dictionary<string, object> Dict(Dictionary<string, object> d, string k) { object v; return d.TryGetValue(k, out v) ? v as Dictionary<string, object> : null; }
+  static bool Bool(Dictionary<string, object> d, string k) {
+    object v; if (!d.TryGetValue(k, out v) || v == null) return false;
+    if (v is bool) return (bool) v;
+    var s = v.ToString().Trim();
+    return s == "1" || s.Equals("true", StringComparison.OrdinalIgnoreCase);
+  }
+  /* Desc2 is a settable property on every detail class, but reading it back off
+     the dynamic wrapper is not guaranteed on every one — fall back to empty
+     rather than losing the retirement over a missing getter. */
+  static string SafeDesc2(dynamic d) { try { return (string) d.Desc2 ?? ""; } catch { return ""; } }
   static IEnumerable<object> List(Dictionary<string, object> d, string k) { object v; if (d.TryGetValue(k, out v) && v is object[]) return (object[]) v; return new object[0]; }
   static void Set(Action a) { try { a(); } catch (Exception ex) { Log("  set skipped: " + ex.Message); } }
 
