@@ -745,6 +745,33 @@ async function selfScopedSalesBlocked(c: any, docNo: string): Promise<boolean> {
   return salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, sp);
 }
 
+/* THE venue_id coercion — every writer of mfg_sales_orders.venue_id goes
+   through this. The column is a UUID FK to the (empty/unused) scm.venues, but
+   the Venue picker is fed from TWO other masters whose ids are not uuids:
+   public.project_venues (INTEGER ids, stringified by the FE) and, since the
+   showroom feed (owner 2026-07-19), synthetic `showroom:<warehouse-uuid>`
+   ids minted by GET /api/projects/venues?includeShowrooms=1. Either one posted
+   into the uuid column aborts the whole statement with
+   "invalid input syntax for type uuid" — a 500, not a validation message.
+
+   The create path has carried this guard since #154; the header PATCH did NOT,
+   and on 2026-08-10 the imported-order venue-seeding effect (SalesOrderDetail)
+   started ADOPTING the matching picker option into form.venueId, which made
+   every Save on a showroom-venue SO post `showroom:…` and 500. Hence one shared
+   helper rather than a second copy of the regex.
+
+   Returning NULL rather than throwing is deliberate: the venue TEXT column +
+   the venue_source marker already carry the venue's identity, and scm.venues is
+   unused, so nothing downstream reads venue_id for these rows. What each caller
+   DOES with a NULL differs — create stamps it, the header PATCH skips the
+   column — and each says why at its own callsite. */
+export function venueIdUuidOrNull(value: unknown): string | null {
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : null;
+}
+
 /* Anti-tamper (Task 6) — Strip variants.freeItem from a client-supplied
    variants blob. The freeItem marker is ONLY ever stamped by the validated
    POST /mfg-sales-orders create path (campaign check + cap). Any SO-EDIT
@@ -3511,18 +3538,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   }
 
 
-  /* Houzs venue_id guard — the New-SO Venue dropdown is sourced from
-     public.project_venues (INTEGER ids, mapped to string in the FE), but
-     mfg_sales_orders.venue_id is a UUID FK to the (empty/unused) scm.venues.
-     Writing a project_venues integer id into the uuid column 500s the insert
-     ("invalid input syntax for type uuid"). So only stamp venue_id when it is a
-     real uuid (a legacy scm.venues id); else NULL it — the venue TEXT column
-     (resolvedVenueName) is the source of truth for the venue. */
-  const venueIdUuid =
-    typeof venueIdToStamp === 'string' &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(venueIdToStamp)
-      ? venueIdToStamp
-      : null;
+  /* Houzs venue_id guard — only a real uuid reaches the uuid column; a
+     project_venues integer id or a `showroom:…` synthetic id becomes NULL and
+     the venue TEXT column (resolvedVenueName) carries the venue. See
+     venueIdUuidOrNull for the full rationale; the header PATCH shares it. */
+  const venueIdUuid = venueIdUuidOrNull(venueIdToStamp);
 
   /* ── Confirm gate on the DIRECT-TO-CONFIRMED create (owner 2026-08-08) ────
      Every create that is not asDraft lands CONFIRMED (PR #154), so the same
@@ -6459,6 +6479,28 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     if (PHONE_FIELDS.has(from) && typeof body[from] === 'string') {
       const raw = body[from] as string;
       updates[to] = normalizePhone(raw) ?? raw;
+    } else if (from === 'venueId') {
+      /* Normalise BEFORE the change-detection compare below, exactly as
+         customer_state is canonicalized. Three cases, and the middle one is the
+         load-bearing distinction:
+           • a real uuid            -> written
+           • blank / null           -> written as NULL (a deliberate clear)
+           • a foreign picker id    -> NOT WRITTEN AT ALL (skip the column)
+         The third must not collapse to NULL: 18 live rows hold a genuine uuid,
+         and their picker option is a project/showroom id that matches no uuid,
+         so writing the coercion result would silently WIPE a good FK on every
+         unrelated save. Leaving the column untouched keeps the stored value and
+         still lets the rest of the header save. */
+      const venueIdValue = venueIdUuidOrNull(body[from]);
+      const venueIdBlank = body[from] == null || String(body[from]).trim() === '';
+      if (venueIdValue === null && !venueIdBlank) {
+        /* Drop it from `body` as well: diffFields() audits from `body` via the
+           same map, so a key left behind would write an UPDATE_DETAILS row
+           claiming venueId changed to a value nothing stored. */
+        delete body[from];
+        continue;
+      }
+      updates[to] = venueIdValue;
     } else if (from === 'depositCenti') {
       /* Clamp >= 0, matching the create path: the header deposit is still added
          on top of the ledger for legacy SOs whose deposit never landed as an

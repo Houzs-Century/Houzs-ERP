@@ -1,0 +1,532 @@
+{
+ "_note": "Owner-approved compartment + seat-size corrections for the AutoCount cutover, 2026-08-10. Every entry names the DOCUMENTS it applies to (SO and the PO raised from it are corrected together so they stay aligned), the MODEL, the target piece list left-to-right, and where known the seat depth in inches and the colour string as written on the source. `why` records how the answer was reached, because a year from now the reason matters more than the value.",
+ "_rules": "Money never moves: the price rides the FIRST piece and every other piece is 0, exactly as the importer wrote it. Lines are matched to target pieces and UPDATED in place wherever the code already exists, so an id - and any PO allocation hanging off it - survives. A document can hold MORE THAN ONE sofa build, so every entry carries desc2Match: only the lines whose description2 contains it are touched. Without that the script treats a second, perfectly good build as surplus and tries to delete it (caught on HC-SO-011957, which holds a 1R+1NA+1R sofa AND a Stool).",
+ "corrections": [
+  {
+   "docs": [
+    "HC-PO-009550",
+    "HC-SO-010882"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "2A(RHF)"
+   ],
+   "seat": "32",
+   "why": "Desc2 1R+C+2R - the corner was eaten by the NOISE regex (#1856)",
+   "desc2Match": "BO315-23 (BEIGE)/32”/1R+C+2R"
+  },
+  {
+   "docs": [
+    "HC-PO-009679",
+    "HC-SO-010955"
+   ],
+   "model": "9058",
+   "pieces": [
+    "2A(LHF)",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "seat": "28",
+   "why": "Desc2 2ER+C+1ER",
+   "desc2Match": "{SIZE:2ER+C+1ER+(28\")}/{COL:CH141-12 MET"
+  },
+  {
+   "docs": [
+    "HC-PO-009712",
+    "HC-SO-012629"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "2A(RHF)"
+   ],
+   "seat": "30",
+   "why": "Desc2 1R+C+2R",
+   "desc2Match": "1R+C+2R (30\") / COL: BO315-3 BEIGE / BOT"
+  },
+  {
+   "docs": [
+    "HC-PO-010026",
+    "HC-SO-011660"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1B(LHF)",
+    "CNR",
+    "2A(RHF)"
+   ],
+   "seat": "30",
+   "why": "Desc2 1B+C+2R",
+   "desc2Match": "GD2502#09-SANDY/30”/1B+C+2R"
+  },
+  {
+   "docs": [
+    "HC-PO-010045",
+    "HC-SO-012525"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "why": "Desc2 1R+1NA+C+1R",
+   "desc2Match": "1R+1NA+C+1R/Size:30”/Col:GD2502#18-Grey/"
+  },
+  {
+   "docs": [
+    "HC-PO-010025",
+    "HC-SO-011965"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1NA",
+    "CNR"
+   ],
+   "seat": "30",
+   "why": "Desc2 1+1NA+1NA+C",
+   "desc2Match": "1+1NA+1NA+C(30'INCH)/COL:CH141-3"
+  },
+  {
+   "docs": [
+    "HC-PO-010140"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "why": "Desc2 1R+1NA+1NA+C+1R",
+   "desc2Match": "CH141-1 (CREAM)/30”/1R+1NA+1NA+C+1R"
+  },
+  {
+   "docs": [
+    "HC-PO-010143"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "why": "Desc2 1+1NA+C+1",
+   "desc2Match": "1+1NA+C+1(30’Inch)/Col:HR805-90/BackRest"
+  },
+  {
+   "docs": [
+    "HC-SO-013164"
+   ],
+   "model": "8030",
+   "pieces": [
+    "2A(LHF)",
+    "CNR",
+    "2NA",
+    "Console"
+   ],
+   "seat": "28",
+   "why": "Desc2 2+C+2NA+C TABLE",
+   "desc2Match": "2+C+2NA+C TABLE(28'INCH)/COL:BOO315-31/B"
+  },
+  {
+   "docs": [
+    "HC-PO-010061",
+    "HC-SO-012774"
+   ],
+   "model": "9050",
+   "pieces": [
+    "CNR",
+    "2A(RHF)"
+   ],
+   "seat": "28",
+   "why": "photo: slip reads Sofa Model 9050 (C+2) 28\" each, drawn [C]+[28|28] with one arm at the right",
+   "desc2Match": "C+2(28'INCH)/COL:BOO315-23/BOTTOM USE UM"
+  },
+  {
+   "docs": [
+    "HC-PO-010062",
+    "HC-SO-012775"
+   ],
+   "model": "9050",
+   "pieces": [
+    "CNR",
+    "2A(RHF)"
+   ],
+   "seat": "28",
+   "why": "same slip, HR805-90",
+   "desc2Match": "C+2(28'INCH)/COL:HR805-90/BOTTOM USE UMB"
+  },
+  {
+   "docs": [
+    "HC-SO-012624"
+   ],
+   "model": "9050",
+   "pieces": [
+    "1A(LHF)",
+    "2A(RHF)"
+   ],
+   "seat": "28",
+   "why": "photo: 9050 (28 inch) 1+2, drawn [|28]+[28|28] with arms only at the two ends - the document's third piece (a surplus 2S) goes",
+   "desc2Match": "1+2(28'INCH)/COL:BOO315-2"
+  },
+  {
+   "docs": [
+    "HC-SO-013167"
+   ],
+   "model": "8030",
+   "pieces": [
+    "2A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "28",
+   "why": "photo: 8030 (2+1) 28 inch - the document's surplus 2S goes",
+   "desc2Match": "2+1(28'INCH)/COL:BOO315-25/BOTTOM USE UM"
+  },
+  {
+   "docs": [
+    "HC-PO-007709"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "why": "photo: the slip writes the string out by hand - 1EL + 1NA + C + 1NA + 1ER",
+   "desc2Match": "colour : HR 805-9\\nwrap bottom to Nilon "
+  },
+  {
+   "docs": [
+    "HC-PO-010027",
+    "HC-SO-011957"
+   ],
+   "model": "9028",
+   "pieces": [
+    "STOOL"
+   ],
+   "why": "photo: one box labelled Stool, 32 x 49 — this document holds TWO sofa builds; the key picks the Stool line only",
+   "desc2Match": "X 49"
+  },
+  {
+   "docs": [
+    "HC-SO-012929"
+   ],
+   "model": "9028",
+   "pieces": [
+    "1S",
+    "1A(LHF)",
+    "2A(RHF)"
+   ],
+   "seat": "26",
+   "why": "photo: slip writes 3S: Size 26\" / 1S: Size 28\"; owner split the 3S because 26\" is not 24\"",
+   "desc2Match": "Size:26”/Col:Modenza 02 Barley/Bottom wr"
+  },
+  {
+   "docs": [
+    "HC-PO-009781",
+    "HC-SO-012107"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "32",
+   "why": "photo: two 32\" boxes, one arm on each outer edge, 273cm overall",
+   "desc2Match": "back rest change 8030 \\nbottom wrap to N"
+  },
+  {
+   "docs": [
+    "HC-PO-010029",
+    "HC-SO-012113"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "35",
+   "why": "photo: two 35\" boxes, arms on the outer edges",
+   "desc2Match": "fully cover replace the leg \\nbottom Nil"
+  },
+  {
+   "docs": [
+    "HC-SO-012361"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "why": "photo: two 30\" boxes",
+   "desc2Match": "Col: CHINO -12 \\n30 icnh per seat \\nwrap"
+  },
+  {
+   "docs": [
+    "HC-SO-012922"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "35",
+   "why": "photo: two 35\" boxes, 7.8 feet overall",
+   "desc2Match": "35 inch per seat \\nNilon bottom \\nCol : "
+  },
+  {
+   "docs": [
+    "HC-SO-012634"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "why": "photo: two 30\" boxes, noted 'no this stitching'",
+   "desc2Match": "Nilon bottom \\nback rest need separate i"
+  },
+  {
+   "docs": [
+    "HC-PO-010059",
+    "HC-SO-012636"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "24",
+   "why": "photo: three 24\" boxes, arms only at the two ends",
+   "desc2Match": "Col: modenza 04: mustard \\nNilon bottom"
+  },
+  {
+   "docs": [
+    "HC-SO-012179"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "2A(RHF)"
+   ],
+   "seat": "32",
+   "why": "photo at 5x: slip says Corner; triangle = the corner, right leg two 32\" boxes, left leg one",
+   "desc2Match": "Size:32”/Col:HR805-40/Bottom wrap nylon"
+  },
+  {
+   "docs": [
+    "HC-PO-009597",
+    "HC-SO-012828"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "1NA",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "28",
+   "why": "photo at 5x, corner position corrected by the owner",
+   "desc2Match": "28 inch per seat \\nfully cover replace t"
+  },
+  {
+   "docs": [
+    "HC-PO-010060",
+    "HC-SO-012715"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "35",
+   "why": "photo at 5x: left box hatched on the left, right box on the right, labelled (2 seater)",
+   "desc2Match": "Nilon botom \\ncol: B0315-21 \\n35 inch pe"
+  },
+  {
+   "docs": [
+    "HC-PO-009827",
+    "HC-SO-002861"
+   ],
+   "model": "8060",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1NA",
+    "CNR",
+    "2A(RHF)"
+   ],
+   "seat": "28",
+   "why": "photo at 5x; the wooden arm is a special order, not a compartment (owner)",
+   "desc2Match": "Size:28”/Col:Modenza-Houston Cream/Botto"
+  },
+  {
+   "docs": [
+    "HC-PO-009587",
+    "HC-SO-010209"
+   ],
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "26",
+   "why": "photo: three boxes all marked 26, arms only at the two ends",
+   "desc2Match": "L shape \\nbottom Nilon \\nColour : modenz"
+  },
+  {
+   "docs": [
+    "HC-PO-010024",
+    "HC-SO-011449"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "35",
+   "why": "photo: [hatch|35][ ][35|hatch]",
+   "desc2Match": "colour : B0315-2 feather \\nwrap bottom t"
+  },
+  {
+   "docs": [
+    "HC-SO-011099"
+   ],
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "why": "photo: two 30\" boxes, a small arm at each end",
+   "desc2Match": "2S / colour :BO315-4"
+  },
+  {
+   "docs": [
+    "HC-PO-010117"
+   ],
+   "pieces": [
+    "1ABOX(LHF)",
+    "1NA",
+    "2A(RHF)"
+   ],
+   "seat": "28",
+   "why": "Desc2 (1 ELT/T + NA + 2ER)(28\") - the ELT/T spelling has no parser rule",
+   "desc2Match": "[ (1 ELT / T + NA +2ER) (28\") / COL: J98"
+  },
+  {
+   "docs": [
+    "HC-PO-000136"
+   ],
+   "pieces": [
+    "STOOL"
+   ],
+   "why": "Desc2 says (STOOL); the brackets hid it from the parser",
+   "desc2Match": "(STOOL) / (L 38' x W 30\") / Col: Harring"
+  },
+  {
+   "docs": [
+    "HC-SO-008942",
+    "HC-PO-010034"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "colour": "modenza 05",
+   "why": "owner read the original slip (our photo is cropped)",
+   "desc2Match": "colour  : MODENZA 05- DARK OLIVE \\nchang"
+  },
+  {
+   "docs": [
+    "HC-PO-010153"
+   ],
+   "model": "9050",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)",
+    "1S"
+   ],
+   "seat": "30",
+   "why": "owner read the original slip (our photo is cropped)",
+   "desc2Match": "bottom to Nilon \\n30 inch , all adjustab"
+  },
+  {
+   "docs": [
+    "HC-SO-011733",
+    "HC-PO-010023"
+   ],
+   "model": "9058",
+   "pieces": [
+    "2A(LHF)",
+    "CNR",
+    "1NA",
+    "1NA",
+    "Console",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "colour": "ch141-8S",
+   "why": "owner",
+   "desc2Match": "{COL:CH141-8 ARMY}/{SEAT HEIGHT: +1\"INCH"
+  },
+  {
+   "docs": [
+    "HC-SO-012877"
+   ],
+   "pieces": [
+    "L(LHF)",
+    "2A(RHF)"
+   ],
+   "seat": "30",
+   "why": "owner; ready stock, colour is the physical unit's",
+   "desc2Match": "SL0095 Ready Stock"
+  }
+ ],
+ "_held": [
+  {
+   "docs": [
+    "HC-PO-010056",
+    "HC-SO-012696"
+   ],
+   "seat": "30",
+   "why": "photo shows a corner plus three 30\" seats but the piece ORDER is not readable - left for the owner"
+  },
+  {
+   "docs": [
+    "HC-PO-000162"
+   ],
+   "model": "5526",
+   "pieces": [
+    "DB"
+   ],
+   "why": "blocked: 5526 must first exist as its own model (the mapping wrongly points it at 8038) and DB must be in the compartment pool"
+  }
+ ]
+}

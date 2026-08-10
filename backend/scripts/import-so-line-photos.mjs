@@ -54,7 +54,8 @@ async function main() {
 
   const items = await sql`SELECT i.id, i.doc_no, i.item_code, i.photo_urls, h.linked_ac_docno
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL`;
+    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL
+    ORDER BY i.doc_no, i.line_no`;
   const byDocCode = new Map();
   for (const it of items) {
     const k = `${it.linked_ac_docno}|${norm(it.item_code)}`;
@@ -74,13 +75,27 @@ async function main() {
     byDocModel.get(k).push(it);
   }
   let sofaHeld = 0, noOrder = 0, noLine = 0, unmapped = 0;
+  const heldDocs = []; // named, not just counted — a silent count hid a real bug
   for (const m of manifest) {
     const erp = byAc.get(norm(m.ItemCode));
     if (isSofa(m.ItemCode)) {
       if (!erp) { unmapped++; log(`  unmapped AC sofa code: ${m.ItemCode} (${m.DocNo})`); continue; }
-      const pieces = byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
-      if (!pieces || !pieces.length) { sofaHeld++; continue; } // order not imported yet
-      for (const it of pieces) {
+      /* Not everything whose AutoCount code says SOFA is a BUILD: "AMN-SOFA
+         PILLOW" / "THL-SOFA PILLOW" are accessories that import as one literal
+         line. byDocModel is keyed on the code up to the FIRST dash, so their
+         model key ("AMN-SOFA PILLOW") can never match its index entry ("AMN")
+         and three photos were being counted as held with the line sitting
+         right there. Mirror of the literal branch below: try compartments,
+         then fall back to the exact code. */
+      let pieces = byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
+      if (!pieces || !pieces.length) pieces = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
+      if (!pieces || !pieces.length) { sofaHeld++; heldDocs.push(`${m.DocNo} ${m.ItemCode}`); continue; }
+      /* Owner 2026-08-10: "沙发的照片不需要每个 SKU 都进的 ... 每个 SKU 的照片
+         都一样,留第一个就可以了". One AutoCount sofa line is one photograph of
+         one build; copying it onto all N compartment rows stored the same image
+         N times and made the operator scroll past duplicates. Anchor it on the
+         FIRST piece - the same row the importer hangs the price on. */
+      for (const it of pieces.slice(0, 1)) {
         const n = (seenN.get(it.id) ?? 0) + 1; seenN.set(it.id, n);
         const key = `so-items/${it.doc_no}/${it.id}/ac-${m.DtlKey}-${n}.jpg`;
         plan.push({ file: m.file, key, itemId: it.id, already: (it.photo_urls ?? []).includes(key) });
@@ -97,7 +112,7 @@ async function main() {
     if (!cands) {
       const pieces = byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
       if (pieces && pieces.length) {
-        for (const it of pieces) {
+        for (const it of pieces.slice(0, 1)) {   // first piece only - see above
           const n = (seenN.get(it.id) ?? 0) + 1; seenN.set(it.id, n);
           const key = `so-items/${it.doc_no}/${it.id}/ac-${m.DtlKey}-${n}.jpg`;
           plan.push({ file: m.file, key, itemId: it.id, already: (it.photo_urls ?? []).includes(key) });
@@ -119,6 +134,7 @@ async function main() {
   }
   const todo = plan.filter((p) => !p.already);
   log(`manifest rows: ${manifest.length}; sofa held: ${sofaHeld}; unmapped: ${unmapped}; order-not-imported: ${noOrder}; line-missing: ${noLine}`);
+  for (const d of heldDocs) log(`  sofa held (no ERP line): ${d}`);
   log(`photo keys planned: ${plan.length} (already attached: ${plan.length - todo.length})`);
 
   if (!APPLY) {

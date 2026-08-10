@@ -9,6 +9,16 @@ on:
         default: "prod"
         type: choice
         options: [prod, staging]
+      names:
+        description: "pipe-separated colour strings to resolve (blank = the built-in list)"
+        required: false
+        default: ""
+        type: string
+      dump:
+        description: "1 = also print the whole library by series; scan = that plus a live scan of every unbound migrated line"
+        required: false
+        default: "0"
+        type: string
 
 concurrency:
   group: probe-fabric-colours
@@ -28,8 +38,14 @@ jobs:
       - run: npm ci
       - name: Run read-only probe
         env:
+          NAMES: ${{ inputs.names }}
+          DUMP: ${{ inputs.dump }}
           DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
-        run: node scripts/probe-fabric-colours.mjs | tee probe-out.ndjson
+        # pipefail, or `tee` swallows the script's exit code and a probe that
+        # crashed half way through reports success with a truncated answer.
+        run: |
+          set -o pipefail
+          node scripts/probe-fabric-colours.mjs | tee probe-out.ndjson
       - uses: actions/upload-artifact@v4
         with:
           name: probe-fabric-colours

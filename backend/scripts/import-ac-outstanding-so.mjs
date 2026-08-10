@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -77,7 +78,6 @@ function stateOf(pc) {
   const R = [[[1, 2], "Perlis"], [[5, 9], "Kedah"], [[10, 14], "Penang"], [[15, 18], "Kelantan"], [[20, 24], "Terengganu"], [[25, 28], "Pahang"], [[30, 36], "Perak"], [[39, 39], "Pahang"], [[40, 48], "Selangor"], [[49, 49], "Pahang"], [[50, 60], "Kuala Lumpur"], [[62, 62], "Putrajaya"], [[63, 64], "Selangor"], [[68, 68], "Selangor"], [[69, 69], "Pahang"], [[70, 73], "Negeri Sembilan"], [[75, 78], "Melaka"], [[79, 86], "Johor"], [[87, 87], "Labuan"], [[88, 91], "Sabah"], [[93, 98], "Sarawak"]];
   for (const [[a, b], s] of R) if (p >= a && p <= b) return s; return null;
 }
-const isPendingColour = (c) => /(TBC|KIV)/i.test(c || ""); // TBC/KIV anywhere = colour not chosen yet
 
 function parsePayment(p) {
   const s = (p || "").trim();
@@ -151,83 +151,7 @@ async function main() {
   for (const ln of bindCsv) { const f = parseCsvLine(ln); const r = f[1] || ""; agentBind.set(norm(f[0]), r.startsWith("BIND:") ? { name: r.slice(5) } : { create: true }); }
   const createAgents = new Set(); // agent display names needing an inactive staff row
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
-  const fcx = new Map(); for (const r of fcRows) for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !fcx.has(k)) fcx.set(k, r);
-  /* TYPO INDEX (owner audit 2026-08-10 — 39 PROC lines "not in fabric_colours"):
-     the same code gets typed many ways — letter-O for zero (B0315 vs BO315),
-     doubled letters (BOO315), Mordenza for Modenza, plus a free-text rider
-     ("Modenza 01*Bottom wrap..."). Folding runs as a SECOND pass only (the
-     exact index always wins) and any fold key produced by TWO different
-     library rows is DROPPED, so an ambiguous typo never resolves to a guess.
-     Repeats collapse on LETTERS only: BO315-11 must not fold onto BO315-1. */
-  /* owner 2026-08-10 named these himself: BOOBOO315-31 = BO315-31 (the code
-     typed twice), grafield1-softlinen = Garfield (letters transposed),
-     "ZL-6 Lether" = the ZL series (leather misspelt). Fold a doubled leading
-     token and drop material words before the letter-repeat collapse. */
-  const dedupHead = (x) => {
-    for (let n = 2; n * 2 <= x.length; n++) if (x.slice(0, n) === x.slice(n, n * 2)) return x.slice(0, n) + x.slice(n * 2);
-    return x;
-  };
-  const fold = (x) => dedupHead(strip(x).replace(/(LETH?ER|LEATHER|FABRIC|VELVET)/g, ""))
-    .replace(/([A-Z])\1+/g, "$1").replace(/O/g, "0");
-  const fcz = new Map(); const dup = new Set();
-  for (const r of fcRows) for (const k of [fold(r.colour_id), fold(r.label)]) {
-    if (!k) continue;
-    if (fcz.has(k) && fcz.get(k) !== r) dup.add(k); else fcz.set(k, r);
-  }
-  for (const k of dup) fcz.delete(k);
-  const fzKeys = [...fcz.keys()];
-  const swap1 = (q) => { // one unique library key one TRANSPOSITION away
-    let hit = null;
-    for (let i = 0; i + 1 < q.length; i++) {
-      const t = q.slice(0, i) + q[i + 1] + q[i] + q.slice(i + 2);
-      const h = fcz.get(t);
-      if (!h) continue;
-      if (hit && hit !== h) return null;
-      hit = h;
-    }
-    return hit;
-  };
-  const dist1 = (q) => { // one unique library key at edit distance 1
-    let hit = null;
-    for (const k of fzKeys) {
-      if (Math.abs(k.length - q.length) > 1) continue;
-      let i = 0, j = 0, edits = 0;
-      while (i < q.length && j < k.length) {
-        if (q[i] === k[j]) { i++; j++; continue; }
-        if (++edits > 1) break;
-        if (q.length > k.length) i++; else if (q.length < k.length) j++; else { i++; j++; }
-      }
-      if (edits + (q.length - i) + (k.length - j) > 1) continue;
-      if (hit && hit !== fcz.get(k)) return null; // ambiguous — refuse
-      hit = fcz.get(k);
-    }
-    return hit;
-  };
-  const findColour = (c) => {
-    if (!c) return null;
-    const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
-    /* SERIESNUM: split "PC151-2"/"PC151101" into series + number so a 1-digit or
-       over-long tail still finds PC151-02 / PC151-01 (owner data has both). */
-    const seriesNum = (x) => { const mm = /^([A-Z]{2,4})(\d{2,4})(\d{1,3})$/.exec(strip(x)); return mm ? [mm[1] + mm[2] + mm[3].padStart(2, "0"), mm[1] + mm[2] + mm[3].slice(-2)] : []; };
-    const toks = [c, (c.trim().split(/\s+/)[0] || "")];
-    const m = /[A-Z]{1,4}\s?\d{2,4}\s?-?\s?\d*/i.exec(c); if (m) toks.push(m[0]);
-    const cands = [];
-    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t)), ...seriesNum(t)); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
-    for (const t of cands) { const h = fcx.get(t); if (h) return h; }
-    for (const t of toks) { if (!t) continue; const h = fcz.get(fold(t)); if (h) return h; }
-    // free-text rider ("Modenza 01*Bottom wrap...") — longest folded prefix
-    // that indexes uniquely, min 6 chars so a series prefix can't win alone.
-    // free-text rider ("grafield1-softlinen", "Modenza 01*Bottom wrap...") —
-    // try each folded prefix (longest first, min 6) exactly, then one
-    // transposition away. Both passes refuse on ambiguity.
-    const f = fold(c);
-    for (let len = Math.min(f.length, 14); len >= 6; len--) {
-      const pre = f.slice(0, len);
-      const h = fcz.get(pre) || swap1(pre);
-      if (h) return h;
-    }
-    return f.length >= 6 ? dist1(f) : null;
-  };
+  const { findColour } = buildFabricColourIndex(fcRows);
   // product -> allowed colour_ids (so we don't set a colour the picker would drop).
   // Best-effort: the colour-config table's product_id may reference a different
   // product table/type; if the join fails we skip this check (colour still
@@ -464,7 +388,14 @@ async function main() {
   log(`already imported: ${existing.size}; to insert: ${todo.length}`);
 
   const HCOLS = "(doc_no,linked_ac_docno,so_date,debtor_name,debtor_code,agent,salesperson_id,sales_location,ref,customer_so_no,venue,venue_id,branding,address1,address2,address3,address4,postcode,city,customer_state,phone,emergency_contact_phone,status,company_id,currency,local_total_centi,balance_centi,paid_centi,deposit_centi,line_count,mattress_sofa_centi,bedframe_centi,accessories_centi,service_centi,others_centi,payment_method,approval_code,payment_date,proceeded_at)";
-  const ICOLS = "(doc_no,line_no,item_group,item_code,description,description2,uom,location,qty,unit_price_centi,total_centi,balance_centi,company_id,gap_inches,divan_height_inches,leg_height_inches,variants,custom_specials,remark)";
+  /* warehouse_id was resolved per line (`warehouseId: whId(l.Location)`) and then
+     left OUT of this list, so every migrated line landed with the location as
+     text and no warehouse. Stock is bucketed by warehouse_id, so nothing could
+     ever be allocated to them — sofa hardest of all, because
+     sofa-set-coverage.findCoveringBatch returns null on a null warehouse before
+     it reads any stock. Existing rows are repaired by
+     backfill-so-line-warehouse.mjs; this stops it recurring. */
+  const ICOLS = "(doc_no,line_no,item_group,item_code,description,description2,uom,location,warehouse_id,qty,unit_price_centi,total_centi,balance_centi,company_id,gap_inches,divan_height_inches,leg_height_inches,variants,custom_specials,remark)";
   const PCOLS = "(so_doc_no,paid_at,method,approval_code,account_sheet,amount_centi,is_deposit,company_id,note)";
 
   let nOrders = 0, nItems = 0, nPay = 0;
@@ -489,7 +420,7 @@ async function main() {
         lineNo++;
         const variants = it.variants || null; // resolved {fabricId,colourId,colourLabel,gap,divanHeight,legHeight,specials}
         const specials = it.variants && it.variants.specials && it.variants.specials.length ? it.variants.specials : null;
-        iv.push("(" + [V(o.docNo), String(lineNo), V(it.grp), V(it.erp), V(it.desc || null), V(it.d2 || null), V(uomOf(it.grp)), V(it.loc || null), String(it.qty), V(it.up), V(it.lineTotal), V(it.lineTotal), "1", it.bf && isFinite(it.bf.gap) ? String(Math.round(it.bf.gap)) : "NULL", it.bf && isFinite(it.bf.divan) ? String(Math.round(it.bf.divan)) : "NULL", it.bf && isFinite(it.bf.leg) ? String(Math.round(it.bf.leg)) : "NULL", V({ __json: variants }), V({ __json: specials }), V(it.remark ?? (it.resolvedFree ? "name-matched from free-text" : null))].join(",") + ")");
+        iv.push("(" + [V(o.docNo), String(lineNo), V(it.grp), V(it.erp), V(it.desc || null), V(it.d2 || null), V(uomOf(it.grp)), V(it.loc || null), V(it.warehouseId || null), String(it.qty), V(it.up), V(it.lineTotal), V(it.lineTotal), "1", it.bf && isFinite(it.bf.gap) ? String(Math.round(it.bf.gap)) : "NULL", it.bf && isFinite(it.bf.divan) ? String(Math.round(it.bf.divan)) : "NULL", it.bf && isFinite(it.bf.leg) ? String(Math.round(it.bf.leg)) : "NULL", V({ __json: variants }), V({ __json: specials }), V(it.remark ?? (it.resolvedFree ? "name-matched from free-text" : null))].join(",") + ")");
         nItems++;
       }
       if (o.paid > 0) { pv.push("(" + [V(o.docNo), h.DocDate ? V(h.DocDate) : V(CUR), V("imported"), V(o.pay.appr || null), V(o.pay.acct || null), V(o.paid), "true", "1", V("imported from AutoCount " + o.acDoc + (o.pay.extra ? " [" + o.pay.extra + "]" : ""))].join(",") + ")"); nPay++; }
