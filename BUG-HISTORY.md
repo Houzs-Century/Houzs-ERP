@@ -1,3 +1,39 @@
+## SO to PO convert silently dropped the line photos [medium]
+
+**Symptom** — Owner 2026-08-10: "正常我们的 Sales Order 里面可以存放照片，PO 那边也
+可以存放照片。因为当我们将 Sales Order 转换成 PO（convert to PO）时，那个 PO 也会自动
+带着这张照片。" A line photo attached on the Sales Order — the colour swatch, sketch
+or customer-supplied reference the buyer needs to send the supplier — was gone the
+moment the SO became a PO, and had to be re-attached by hand or sent separately.
+
+**Root cause** — Not a lossy copy: `scm.purchase_order_items` had **no photo
+column at all**. `scm.mfg_sales_order_items.photo_urls text[]` has existed since
+the per-line photos work, but the PO table was never given the twin, so all four
+SO-to-PO line-insert sites had nothing to write to. Every one of them faithfully
+carried `variants`, `delivery_date`, `warehouse_id` and `so_item_id` — the photo
+was the only SO line fact with nowhere to land.
+
+**Fix** — Migration 0274 adds `photo_urls text[] NOT NULL DEFAULT '{}'`, the same
+shape as the SO's. Every path that turns an SO line into a PO line now carries the
+array: `POST /` (derived server-side from `so_item_id`, never taken from the
+request), both `/from-sos` branches, `/:id/convert-from-so`, and `reviseBoundPo`.
+Keys are copied, objects are not — both documents point at the same R2 objects, so
+deleting the photo on the SO also removes it from the PO. Read path: `photo_urls`
+joins `ITEM_COLS`, and a new `GET /:id/items/:itemId/photos/:photoKey/signed`
+mints a short-lived signed URL, authorising by MEMBERSHIP of the row's array and
+never by key shape — the AutoCount importer writes `po-items/...` keys into the
+same column and must not be locked out.
+
+**The class, for next time** — when a document CONVERTS into another, which facts
+survive is decided by the destination table's COLUMNS, and a missing column fails
+silently: no error, no log, just a fact that stops existing. Before adding a
+per-line field to one document, ask what it must do on convert. Photos are per
+LINE and are never deduplicated across a PO — one sofa build is many compartment
+lines legitimately sharing one build photo, and folding them would blank every
+compartment but the first.
+
+**Ref** — 2026-08-10, PR feat/po-line-photos (migration 0274).
+
 ## Seven more cross-company read leaks, same class as the GRN picker [high]
 
 **Symptom** — Follow-on audit after the owner spotted Houzs PO lines in 2990's

@@ -140,6 +140,7 @@ All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 | POST | `/:id/items/:itemId/allocations` | | Add one slice `{ qty, soItemId\|null }` (null = STOCK). seq auto-assigned dense. |
 | PATCH | `/:id/items/:itemId/allocations/:allocationId` | | Edit a slice (`qty?`, `soItemId?` — explicit null → STOCK; absent keeps). |
 | DELETE | `/:id/items/:itemId/allocations/:allocationId` | | Remove a slice + resequence the survivors dense 1..n. |
+| GET | `/:id/items/:itemId/photos/:photoKey/signed` | | Trade one key from the line's `photo_urls` for a short-lived signed R2 GET URL (`{ signedUrl, thumbUrl, expiresAt }`). READ-ONLY — see §4 *Line photos*. |
 | POST | `/` | `:911` | Create (`asDraft: true` → DRAFT, else SUBMITTED). SO-sourced lines (carrying `soItemId`, e.g. the desktop New-PO-from-SO flow) are capped at the SO line's remaining (`qty - po_qty_picked`): over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (pre-write guard, marks idempotency no-write). Manual lines (no `soItemId`) unaffected. |
 | POST | `/from-sos` | `:2139` | Batch convert whole SOs; groups by supplier, can emit N POs. |
 | POST | `/:id/convert-from-so` | `:2694` | Append SO lines onto an existing PO. |
@@ -394,7 +395,7 @@ those are what the route actually selects.
 | Table | Role |
 |-------|------|
 | `scm.purchase_orders` | PO header. `po_number` (UNIQUE), `supplier_id`, `status`, `po_date`, `expected_at`, `purchase_location_id` (FK → `warehouses.id`), `currency`, `subtotal_centi` / `tax_centi` / `total_centi`, `submitted_at` / `received_at` / `cancelled_at`, `revision`, `supplier_delivery_date_2..4`, `company_id`. |
-| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `material_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`. |
+| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `material_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below). |
 | `scm.purchase_order_item_allocations` | mig 0235 — sub-line slices of ONE PO line across customers + stock: `company_id` (NOT NULL), `purchase_order_item_id` FK CASCADE, `seq` (1-based dense, UNIQUE per line), `qty` (>0, SUM <= line qty via triggers), `so_item_id` FK SET NULL (NULL = stock), `created_by`, `created_at`. Attribution only — no stock/money/quota. |
 | `scm.po_revisions` | Full header+items snapshot per revision, keyed `(po_id, revision)`. Written by `snapshotPo` / `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:595`, `:725`). |
 | `scm.mfg_sales_order_items` | Upstream. `po_qty_picked` is written by this module. |
@@ -405,6 +406,46 @@ numbering, which does not line up with `backend/src/db/migrations-pg/`. Verified
 matches: `0082_scm_fx_landed_cost.sql`, `0143_scm_do_ship_cost_snapshot.sql`,
 `0154_scm_oversell_retrocost.sql`. Do not trust a bare "migration NNNN" in a
 comment without checking the filename.
+
+### Line photos (mig 0274)
+
+Owner 2026-08-10: an SO line can hold photos, a PO line must too, and converting
+an SO into a PO carries them across automatically. `photo_urls text[] NOT NULL
+DEFAULT '{}'` — the same column shape as `mfg_sales_order_items.photo_urls`.
+
+**Two producers, one column, and no key-shape rule anywhere.**
+
+| Producer | Key shape |
+|---|---|
+| SO->PO convert (copies the source line's array) | `so-items/<soDocNo>/<soItemId>/<uuid>.<ext>` |
+| AutoCount photo importer (appends its own) | `po-items/<po_number>/<po item id>/ac-<DtlKey>-<n>.jpg` |
+
+Both live in the SAME R2 bucket (binding `SO_ITEM_PHOTOS`). Nothing in the schema
+or the read path may depend on the prefix — no CHECK constraint, and the signed
+URL route authorises by MEMBERSHIP of the row's `photo_urls`, never by key shape.
+The importer's append (`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') ||
+<keys>))`) is why the column must stay NOT NULL with a `'{}'` default.
+
+**The convert copies KEYS, not objects.** SO line and PO line point at the same
+R2 objects — one photo, two documents, no duplicated bytes and no R2 round-trip
+inside the convert. Consequence, deliberate: deleting a photo from the SO line
+removes the object, so it also leaves any PO raised from that line.
+
+**Per line, never deduplicated across a PO.** One sofa build is several
+compartment lines that legitimately share one build photo; folding them would
+blank every compartment but the first. Lines stay 1:1 with their SO line, so each
+carries its own array.
+
+Every path that turns an SO line into a PO line carries them: `POST /` (derived
+server-side from `so_item_id` — the client never holds these keys, and trusting a
+caller-supplied array would let any PO line reference any R2 object),
+`POST /from-sos` (both the create-new-POs and append-to-existing-PO branches),
+`POST /:id/convert-from-so`, and the SO-amendment path `reviseBoundPo`
+(`backend/src/scm/lib/so-revision.ts`).
+
+**Read-only on the PO side.** Photos are authored on the Sales Order (or by the
+importer); there is no PO upload or delete route to drift from the SO's
+lease/audit rules. The frontend does not render them yet — see §8.
 
 ### Status vocabulary
 
@@ -500,6 +541,18 @@ A rule change to the PO touches both surfaces. The pairs:
 | SO→PO conversion | `pages/scm-v2/PurchaseOrderFromSo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "po"`) |
 | Line allocations (mig 0235) | `PurchaseOrderDetailV2.tsx` Allocations column + `components/scm-v2/PoLineAllocationsModal.tsx` (editor) | `mobile/MobileModuleDetail.tsx` `LineItem` chips — DISPLAY-ONLY (the phone PO surface has no per-line editor, same precedent as the SO-link picker) |
 | Cache invalidation after a write | the mutation hooks in `vendor/scm/lib/suppliers-queries.ts` | `mobile/sharedInvalidate.ts:71` |
+| Line photos (mig 0274) | NOT BUILT — see below | NOT BUILT — there is no mobile PO detail surface at all (only PO amendments) |
+
+**Line photos are backend-only today, deliberately.** The keys are on the detail
+row and the signed-URL route serves them, but no surface renders them yet. The
+SO's `PhotoThumb` is ~110 lines defined INSIDE
+`vendor/scm/components/SoLineCard.tsx`, hard-wired to
+`fetchSoItemPhotoSignedUrl(docNo, itemId, key)` plus two module-level caches
+(`signedUrlCache`, `thumbMissingKeys`) and its own CSS-module classes. Reusing it
+for the PO means extracting it with an injectable fetcher, adding a PO signed-URL
+query, threading `photoUrls` through the PO detail type into `PoLineCard.tsx`, and
+building the phone surface that does not exist. That is a UI project, not a field
+add — do it as its own PR, extracting the thumb rather than copying it.
 
 Shared, so a change lands on both at once: the backend route, and the
 `suppliers-queries.ts` hooks (mobile's convert wizard and POD screens call
