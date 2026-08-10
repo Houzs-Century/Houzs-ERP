@@ -41,6 +41,7 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           TOP: ${{ inputs.top }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
 
   run-prod:
     if: ${{ inputs.target == 'prod' }}
@@ -55,3 +56,4 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           TOP: ${{ inputs.top }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

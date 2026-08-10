@@ -75,7 +75,13 @@ function normCategory(raw) {
   if (g.includes("SERVICE")) return "SERVICE";
   return "OTHERS";
 }
-const isServiceLine = (l) => normCategory(l.item_group) === "SERVICE" || /^SVC-/i.test(l.item_code ?? "");
+/* Ported verbatim from backend/src/scm/shared/service-sku.ts. The length test
+   matters: the bare string "SVC-" is NOT a service line there, and a looser
+   prefix test here would silently drop real lines out of the comparison. */
+const N = (s) => (s ?? "").trim().toUpperCase();
+const isServiceLine = (l) =>
+  N(l.item_group).includes("SERVICE") || N(l.category) === "SERVICE" ||
+  (N(l.item_code).length > 4 && N(l.item_code).startsWith("SVC-"));
 function summariseReadiness(lines) {
   const live = lines.filter((l) => !l.cancelled);
   let mainCount = 0, mainReady = 0, accCount = 0, accReady = 0;
@@ -168,6 +174,29 @@ async function main() {
   const [cut] = await sql`SELECT COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
     FROM scm.inventory_movements WHERE source_doc_type = 'AC_CUTOVER'`;
   log(`cutover adjustment movements present in ERP: ${cut.n} (${cut.units} units)`);
+
+  /* scm.inventory_balances (migration 0084) sums TRANSFER as +qty with no
+     compensating branch, and the FIFO trigger has no TRANSFER case at all. If
+     any TRANSFER rows exist, the view over-counts them at the destination and
+     the lots disagree with the balance. Measured, because "no TRANSFER rows
+     exist" is the only reading under which the view is currently safe. */
+  const [xf] = await sql`SELECT COUNT(*)::int n, COALESCE(SUM(qty),0)::int units,
+      COUNT(*) FILTER (WHERE qty < 0)::int negatives
+    FROM scm.inventory_movements WHERE company_id = ${CO} AND movement_type = 'TRANSFER'`;
+  log(`TRANSFER movements: ${xf.n} (${xf.units} units, ${xf.negatives} negative)`);
+  if (xf.n > 0 && xf.negatives === 0) log("   -> every TRANSFER is positive and the view adds them, so transferred stock is counted at BOTH ends. This inflates the ERP balance.");
+
+  /* Migrated paperwork carries migrated_no_stock = true and deliberately has NO
+     inventory movement (migration 0276): the balance snapshot already counts
+     those units. Their absence from the movement ledger is correct, and any
+     detector that reads it as an orphan is wrong. Counted so the balance
+     arithmetic below can be reasoned about. */
+  for (const t of ["delivery_orders", "grns"]) {
+    const [m] = await sql.unsafe(
+      `SELECT COUNT(*)::int n, COUNT(*) FILTER (WHERE migrated_no_stock)::int migrated
+       FROM scm.${t} WHERE company_id = $1`, [CO]);
+    log(`scm.${t}: ${m.n} rows, ${m.migrated} migrated_no_stock (no movement by design)`);
+  }
 
   // snapshot drift = AutoCount activity AFTER the cutover snapshot
   const snap = new Map();
