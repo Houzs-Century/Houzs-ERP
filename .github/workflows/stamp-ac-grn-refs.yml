@@ -1,0 +1,54 @@
+name: Stamp AutoCount GR refs on imported POs
+
+# Manual. Writes the AutoCount GR / Purchase Invoice document numbers onto the
+# imported POs as a cross-reference. Reference ONLY: it creates no ERP goods
+# received document and no stock movement, because the units are already in from
+# the balance snapshot and a GRN would double-count them.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write the references, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: stamp-ac-grn-refs-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/stamp-ac-grn-refs.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/stamp-ac-grn-refs.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
