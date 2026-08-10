@@ -1,0 +1,57 @@
+name: Stock vs AutoCount reconcile (read-only)
+
+# Manual. Compares the ERP stock balance and the ERP stock status against the
+# committed LIVE AutoCount export, per item and per warehouse, and names a cause
+# for every disagreement. SELECT only, no writes, no DDL.
+#
+# The AutoCount half is a snapshot: the AutoCount host sits behind ZeroTier on
+# the office network and a GitHub runner cannot reach it. Refresh it first with
+#   python backend/scripts/export-ac-live.py
+# from a machine on that network, and commit the data/ac-live-* files.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      top:
+        description: "How many rows to list per section"
+        required: false
+        default: "40"
+
+concurrency:
+  group: check-stock-vs-autocount-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-stock-vs-autocount.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          TOP: ${{ inputs.top }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-stock-vs-autocount.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TOP: ${{ inputs.top }}
