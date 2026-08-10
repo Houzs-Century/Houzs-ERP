@@ -122,9 +122,6 @@ async function main() {
       .map((r) => r.so_item_id),
   );
   const taker = makeSoLineTaker(soItems, takenSoItem);
-  /* One PO line, tried most-specific first: the ERP code this line becomes
-     (for a sofa that is already the compartment), then the sales order's own
-     item, then the sofa placeholder the decode falls back to. */
   /* A document already in the ERP is skipped at insert time, so it must not
      CLAIM sales-order lines while planning either — an undedicated PO already
      in the database would otherwise take a line out of the pool in memory and
@@ -135,6 +132,9 @@ async function main() {
       .map((r) => r.linked_ac_docno),
   );
   let skipDedication = false;
+  /* One PO line, tried most-specific first: the ERP code this line becomes
+     (for a sofa that is already the compartment), then the sales order's own
+     item, then the sofa placeholder the decode falls back to. */
   const dedicate = (l, ...codes) => {
     if (skipDedication) return null;
     const src = soByDtl.get(acFromSoDtlKey(l) ?? "");
