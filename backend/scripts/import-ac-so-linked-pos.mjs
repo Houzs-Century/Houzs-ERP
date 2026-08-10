@@ -33,6 +33,7 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const isSofa = (c) => /SOFA/i.test(c || "");
+const SYS_USER = "00000000-0000-4000-8000-000000000001";
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
 function parseCsvLine(line) {
@@ -64,6 +65,16 @@ async function main() {
   const soLineByDtl = new Map();
   for (const r of soRows) soLineByDtl.set(String(r.DtlKey), { doc: r.DocNo, code: r.ItemCode });
 
+  /* item_group must match the vocabulary the SO/PO line tables use, because
+     bound-mode readiness gates on it. Take it from the catalogue rather than
+     re-deriving it from the code, so PO lines and SO lines can never disagree. */
+  const CATG = { MATTRESS: "mattress", BEDFRAME: "bedframe", ACC: "accessory", ACCESSORY: "accessory",
+    BEDLINES: "accessory", DIFFUSER: "others", CARPET: "others", DINING: "others", OTHER: "others",
+    SERVICE: "service", TRANS: "service", SOFA: "sofa" };
+  const prodCat = new Map(
+    (await sql`SELECT code, category::text AS category FROM scm.mfg_products WHERE company_id = 1`)
+      .map((r) => [norm(r.code), CATG[String(r.category ?? "").toUpperCase()] ?? "others"]),
+  );
   const suppliers = await sql`SELECT id, code FROM scm.suppliers WHERE company_id = 1`;
   const supByCode = new Map(suppliers.map((s) => [norm(s.code), s.id]));
   const whs = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = 1`;
@@ -139,6 +150,7 @@ async function main() {
       recvUnits += recv;
       items.push({
         code: l.erp, description: l.Description, desc2: l.Desc2,
+        group: prodCat.get(norm(l.erp)) ?? "others",
         qty: Math.round(Number(l.Qty ?? 0)), recv,
         priceCenti: Math.round(Number(l.UnitPrice ?? 0) * 100),
         wh, soItemId, dtlKey: Number(l.DtlKey),
@@ -170,17 +182,22 @@ async function main() {
     seq += 1;
     const poNo = prefix + String(seq).padStart(6, "0");
     await sql.begin(async (tx) => {
+      const subtotal = p.items.reduce((s2, it) => s2 + it.qty * it.priceCenti, 0);
       const [hdr] = await tx`INSERT INTO scm.purchase_orders
-          (po_number, supplier_id, status, po_status, po_date, currency, company_id, linked_ac_docno, notes)
-        VALUES (${poNo}, ${p.supId}, ${p.status}, ${p.status}, ${p.docDate}, 'MYR', 1, ${p.acDoc},
+          (po_number, linked_ac_docno, supplier_id, status, po_date, purchase_location_id, currency,
+           subtotal_centi, tax_centi, total_centi, revision, company_id, created_by, notes)
+        VALUES (${poNo}, ${p.acDoc}, ${p.supId}, ${p.status}, ${p.docDate ?? sql`CURRENT_DATE`},
+                ${p.items[0]?.wh ?? null}, 'MYR', ${subtotal}, 0, ${subtotal}, 1, 1, ${SYS_USER},
                 ${"imported from AutoCount " + p.acDoc + " (already received; stock came in with the balance snapshot)"})
         RETURNING id`;
       for (const it of p.items) {
         await tx`INSERT INTO scm.purchase_order_items
-            (purchase_order_id, material_kind, material_code, material_name, description2, qty, received_qty,
-             unit_price_centi, warehouse_id, so_item_id, company_id, delivery_date, linked_ac_dtlkey)
-          VALUES (${hdr.id}, 'PRODUCT', ${it.code}, ${it.description}, ${it.desc2}, ${it.qty}, ${it.recv},
-                  ${it.priceCenti}, ${it.wh}, ${it.soItemId}, 1, ${it.deliveryDate}, ${it.dtlKey})`;
+            (purchase_order_id, material_kind, material_code, material_name, description, description2,
+             qty, received_qty, unit_price_centi, line_total_centi, item_group,
+             warehouse_id, so_item_id, company_id, delivery_date, from_mrp)
+          VALUES (${hdr.id}, 'PRODUCT', ${it.code}, ${it.description}, ${it.description}, ${it.desc2},
+                  ${it.qty}, ${it.recv}, ${it.priceCenti}, ${it.qty * it.priceCenti}, ${it.group},
+                  ${it.wh}, ${it.soItemId}, 1, ${it.deliveryDate}, false)`;
       }
     });
     made++;
