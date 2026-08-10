@@ -285,6 +285,24 @@ owner 2026-08-10 定的 outstanding 规则,原话:
 所以:**你在 ERP 里找不到 2026-08 之前的 Houzs Century 历史销售 —— 那是 AutoCount 的事,
 不是 ERP 少了数据。**
 
+### (2b) 沙发是「实物库存只进过一次」的唯一例外 —— 2026-08-10 补记
+
+上面那句「实物库存只进过一次」有一个**必须写下来的例外:沙发根本没进过**。
+
+`import-ac-stock-balance.mjs:54` 是 `!isSofa(r.ItemCode)`,`import-ac-stock-layers.mjs:50`
+一样。W4 的 9,679 units / 1,020 cell **一个沙发都没有** —— 脚本头部写明「sofa held for the
+sofa round」,而那一轮**没有被做出来**。
+
+所以:
+
+> **给一年后的人:**看到有人要「补一批沙发开账库存」——**那不是重复入账,那是补一个从来没做过的动作。**
+> 判断依据只有一条:`scm.inventory_lots` 里有没有 `source_doc_no = 'AC-BAL-SOFA-*'` 的行。
+> 没有 = 还没做。W4/W5 的总数(9,679 / 2,261 层)**不包含沙发**,拿它去对沙发会得出错误结论。
+
+同一个 `/SOFA/i` 正则还顺手排掉了 **`AMN-SOFA PILLOW` 205 units**(KL 130 / PG 75)——
+那是 ACCESSORY,不是沙发,没有 compartment。它缺货的原因跟沙发完全一样,但修法不一样:
+把那个过滤条件收窄成「真沙发」,然后重跑余额导入(它是 delta 的,重跑只补差)。
+
 ### (3) 负数差异只报不做
 
 W4 里有 **45 个 cell** 的 AutoCount 余额比 ERP 少。脚本**没有**去扣。
@@ -338,6 +356,10 @@ BUG-HISTORY 里跟这次割接直接相关的三条(都在文件最上面):GRN p
 | 10 | 22 个 venue 值仍不在下拉里;17 条 processed bedframe 行 variant 不全;3 条 SP 行没尺寸 | `check-cutover-metrics` 31328189329 | 逐条人工 |
 | 11 | 沙发 89 行占位 + 61 行 PO 没导 + 25 行 PROC 要人写 | `probe-sofa-import-duplicates` 31355923502:`honest placeholders 113` | 见 `sofa-import-handoff.md` §8 |
 | 12 | **write freeze 还开着(company 1)** | `scm.app_config['scm.write_freeze'] = '1'`,run 31353906110 | **owner** 决定什么时候关 |
+| 13 | **导入的 SO 行一条都没有 warehouse_id(13,881 / 13,881)** | 2026-08-10 prod 只读实测;`import-ac-outstanding-so.mjs` 三处算出了 `warehouseId`,`ICOLS`(:467)里**没有这一列**,只写了 `location` 文字 | 库存按 `(warehouse_id, product_code, variant_key)` 分桶,沙发更早一步:`findCoveringBatch` 见到 null warehouse 直接返回 null。**所有**导入行(不只沙发)因此永远 PENDING。修:`backfill-so-line-warehouse.mjs`(默认只补 sofa 981 行,`GROUP=all` 补全 13,881 行 = **owner 决定**);导入脚本已补上该列防复发 |
+| 14 | **沙发实物库存从来没进过(见 §3 (2b))** | `import-ac-stock-balance.mjs:54` / `import-ac-stock-layers.mjs:50` 的 `isSofa` 过滤;prod 只有 20 个 open sofa lot、**0 个带 batch_no** | `import-ac-sofa-stock.mjs` 已写好,**只跑过 DRY-RUN**:97 lots / 97 units / 43 batches,45 个 build;drop = 超余额 4、占位 9。**apply 由 owner 决定** |
+| 15 | 沙发 build 里 **29 个拿不到真实收货成本** | 同一次 DRY-RUN:priced 13 / 收货价互相矛盾 3 / 找不到 29(AutoCount 的沙发 PO **不写价**,121/122 行 `PODTL.UnitPrice` 为 NULL) | 不猜价、留 0;`ac-last-purchase-costs.json.gz` 覆盖 44 个沙发码,交给 #4 的 `backfill-zero-cost-lots.mjs` |
+| 16 | **`AMN-SOFA PILLOW` 205 units 也不在 ERP 里** | 同一个 `/SOFA/i` 过滤(§3 (2b)) | 收窄过滤条件后重跑余额导入(delta 的,安全) |
 
 ---
 
@@ -360,6 +382,7 @@ BUG-HISTORY 里跟这次割接直接相关的三条(都在文件最上面):GRN p
 | `ac-item-costs.json.gz` | `ItemUOM` 的 `Cost`/`RealCost`/`RecentCost` —— 开账成本第二顺位 | 944 | 2026-08-10 (#1780) | `import-ac-stock-balance` |
 | `ac-last-purchase-costs.json.gz` | 每个 item **最近一次有价**的采购发票行 | 890 | 2026-08-10 (#1823) | `backfill-zero-cost-lots`(**还没跑**) |
 | `ac-photo-manifest.json.gz` | AutoCount Further Description 里抽出来的实拍图清单(档名 `SO-xxxxx__<DtlKey>_<n>.jpg`) | 551 | 2026-08-09 (#1779),08-10 换过 (#1802) | `import-so-line-photos` |
+| `ac-sofa-gr-po.json.gz` | 沙发 GR 明细行 → 它的来源 PO(`GRDTL.FromDocNo`)。`ac-stock-layers` 只按 GR 记成本,这张表补上「哪张 PO」那一跳,让一个 build 能用**它自己那次收货的真实成本**定价 | 97 行 / 56 张 GR / 87 张 PO | 2026-08-10(本 PR) | `import-ac-sofa-stock` |
 
 不是从 AutoCount 抽出来的,但同属这次割接的写入依据:
 
@@ -383,6 +406,8 @@ Actions → 手动触发,报告在 run log 的 `##[notice]` 行里
 | 能不能上线:成本覆盖、零成本 lot、readiness | `check-golive-readiness.yml` |
 | 沙发导入有没有重复 / 漏拆 / 误导已交货单 | `probe-sofa-import-duplicates.yml`(7 项体检) |
 | 库存账本本身有没有对不上 | `inventory-integrity-check.yml` / `ledger-divergence-check.yml` / `duplicate-movements-check.yml` |
+| 沙发库存缺多少、补了会有几套 SO 变 READY | `import-ac-sofa-stock.yml`(**dry-run 就是报告**:余额 vs 单据、每个被丢弃的 build 及原因、两段 projection) |
+| 导入的 SO 行缺 warehouse 缺到什么程度 | `backfill-so-line-warehouse.yml`(dry-run 按 item_group × location 列全表) |
 
 要数「有多少行是导进来的」,直接用 §1 的谓词。
 
