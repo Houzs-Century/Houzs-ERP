@@ -270,7 +270,7 @@ again is what caused this. `backend/scripts/check-cancelled-so-line-readers.mjs`
 + **Cancelled SO line — reader check (read-only)** replays each guard's own
 predicate against the live rows so the next person measures instead of arguing.
 
-**Ref** - 2026-08-11, PR #1948. Evidence and the remaining gaps in
+**Ref** - 2026-08-11, PR #1956. Evidence and the remaining gaps in
 `docs/autocount-line-retirement-plan.md`.
 
 ## A CANCELLED purchase order could be hard-purged from the database [high]

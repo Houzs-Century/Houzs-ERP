@@ -222,7 +222,7 @@ payload every print path consumes. Printing either document from the phone, or
 from the desktop list's bulk print, put a phantom sofa module on a customer
 document. The money was RM 0 in this instance because the importer puts a
 build's whole price on its first piece; the row was still there, and the next
-one need not be free. Fixed as described in gap 4 above.
+one need not be free. Fixed as described in gap 4 above (PR #1956).
 
 ### What was NOT changed, and why
 
