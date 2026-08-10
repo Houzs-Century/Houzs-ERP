@@ -91,6 +91,46 @@ postgres.js — pass the value and let `sql.json()` type it.
 run 31416469998; damage confirmed by the database itself refusing
 `jsonb_object_keys` on those rows.
 
+## The variant refresh scripts REPLACE the whole variants jsonb, so any key they do not know about is dropped [medium]
+
+**Symptom** - not yet observed in production; found while landing the
+zero-priced half of the specials backfill, which merges picker codes into
+`variants.specials` and is therefore directly exposed to it.
+
+**Root cause (traced, not guessed)** - `backend/scripts/refresh-so-variants.mjs`
+builds `const variants = {...}` from scratch at `:89-96` - eleven keys, no
+spread of the row's existing `it.variants` - and then writes the whole column:
+`UPDATE scm.mfg_sales_order_items SET variants = ${sql.json(u.variants)}`
+(`:114-116`). `backend/scripts/refresh-po-variants.mjs` is the same shape
+(`:83`, `:104-105`). A bedframe row's twelfth key does not survive the next
+refresh run, whoever wrote it and for whatever reason.
+
+The script itself shows the merge was understood and simply not applied on the
+main path: the non-bedframe `sizeOnly` branch three lines earlier DOES spread,
+`variants: { ...(it.variants || {}), size: bf.size }` (`:77`).
+
+A concrete casualty, provable from the code rather than hypothetical:
+`variants.special`, the HOOKKA-compatible singular the picker reads beside the
+plural - `specialsList(variants.specials ?? variants.special)`,
+`SpecialOrders.tsx:91`. `backfill-specials-into-variants.mjs` deliberately reads
+and preserves it; neither refresh script carries it, so a refresh run silently
+deletes a pick the picker was showing. Sofa lines are NOT exposed - they take
+the spreading `sizeOnly` branch - so this is a bedframe-line defect.
+
+**Fix** - NOT fixed here; this PR only records it. Landing the fix inside a
+data-backfill PR would put a write-path change and a one-off data change on the
+same merge, and the refresh scripts are dispatched by hand rather than on a
+schedule, so nothing is running against production while it waits.
+
+**The class, for next time** - `SET jsonb_col = <fresh object>` is a delete of
+every key the fresh object does not mention. When a jsonb column has more than
+one writer - and `variants` has the importers, both refresh sweeps, the POS
+configurator, the SO/PO line editors and now a backfill - the only safe write
+is a merge on the keys you own: `jsonb_set` on one key, or `col || patch`.
+Rebuilding the object is only correct when you are the sole writer, and here
+nobody is.
+
+**Ref** - 2026-08-11, PR #1926 (fix/specials-zero-priced-subset).
 ## Duplicate-series detection paired five unrelated fabrics through "BR0WN" [low]
 
 **Symptom** - the first prod run of merge-duplicate-fabric-series reported 41

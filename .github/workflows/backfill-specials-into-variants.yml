@@ -14,6 +14,12 @@ name: Backfill specials into variants
 # code it would stamp is priced — that reprices historical documents and is an
 # owner decision.
 #
+# skip_priced=1 lands the money-neutral majority WITHOUT that decision: only
+# codes priced 0/0 in the live read are stamped, and any line that would newly
+# receive a priced code is held back whole. That write runs in one transaction
+# that sums the affected lines' money columns before and after and rolls back on
+# any difference.
+#
 # DRY-RUN unless apply=1; the report is the ##[notice] lines.
 on:
   workflow_dispatch:
@@ -39,6 +45,16 @@ on:
         required: false
         default: "40"
         type: string
+      skip_priced:
+        description: "1 to stamp ONLY 0/0-priced codes and hold back every line that would gain a priced one"
+        required: false
+        default: "0"
+        type: string
+      diag:
+        description: "1 to add the HYDRAULIC / unmapped-tail diagnostic (read-only)"
+        required: false
+        default: "0"
+        type: string
 
 concurrency:
   group: backfill-specials-into-variants-${{ inputs.target }}
@@ -58,6 +74,8 @@ jobs:
       - run: node scripts/backfill-specials-into-variants.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          SKIP_PRICED: ${{ inputs.skip_priced }}
+          DIAG: ${{ inputs.diag }}
           COMPANY: ${{ inputs.company }}
           SHOW: ${{ inputs.show }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
@@ -74,6 +92,8 @@ jobs:
       - run: node scripts/backfill-specials-into-variants.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          SKIP_PRICED: ${{ inputs.skip_priced }}
+          DIAG: ${{ inputs.diag }}
           COMPANY: ${{ inputs.company }}
           SHOW: ${{ inputs.show }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
