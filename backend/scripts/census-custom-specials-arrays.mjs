@@ -10,16 +10,36 @@
 // from a bare `string[]` of verbatim slip phrases. Both read as 'array'.
 // Nobody has looked. This script looks.
 //
-// THE FOUR CLASSES, decided per ROW from the elements themselves:
+// WHAT THE FIRST PROD RUN FOUND (31428435434, 2026-08-11), and why this script
+// no longer offers to NULL most of what it finds. All 604 array-shaped rows
+// (SO 511, PO 93) are bare `string[]`; none is the declared object shape and
+// none is empty. But 679 of their 694 strings are LIVE picker codes, every row
+// is a migrated line, and every row's `variants.specials` holds exactly as many
+// entries as its `custom_specials` — the derived cache AGREES with its source.
+// So the leg #1944's repair stood on — "valid jsonb holding WRONG DATA is worse
+// than empty because it looks repaired" — does not carry here: the data is
+// right, only the shape is legacy, and the one consumer that renders it
+// (SalesOrderDetailListing.formatSpecials, mirrored by check-specials-and-ocr's
+// elText) handles a plain string and an object alike. NULLing those rows would
+// delete a correct, currently-rendering line item from 604 historical documents
+// until someone edited each one. That is a regression, not a repair.
+//
+// THE FIVE CLASSES, decided per ROW from the elements themselves:
 //   correct  every element is an OBJECT carrying `description` and a NUMERIC
 //            `surchargeSen` — the shape mfg-pricing-recompute.ts:117 declares.
 //            This is what the recompute emits, so these rows are the pricing
 //            engine's own output and are none of our business.
 //   empty    `[]`. Honest: no specials. Not damage, not repaired.
-//   string[] every element is a STRING. This is the old sofa backfill's output
-//            shape (backfill-sofa-special-orders.mjs wrote the verbatim slip
-//            phrases parseSofa returns) surviving WITHOUT the double encoding.
-//            Same wrong content, same wrong shape, one bug earlier in the chain.
+//   codes[]  every element is a STRING and every one of them is a LIVE
+//            scm.special_addons code. Legacy SHAPE, correct CONTENT. NOT a
+//            repair candidate — see above.
+//   text[]   every element is a STRING and at least one is NOT a live code
+//            (raw slip text: BOTHWANT, FABRICHARRING, LSIDE, DAYBED, ...).
+//            Wrong content — but the SAME text sits in `variants.specials`,
+//            which is the field the picker actually reads, so NULLing only the
+//            derived cache hides it from the report while leaving it in the
+//            operator's view. Reported for an OWNER decision; APPLY refuses it
+//            unless APPLY_TEXT=1 says the owner has made that call.
 //   other    anything else — mixed elements, objects missing a key, a
 //            surchargeSen that is not a number. Described element by element in
 //            the report; never repaired blind.
@@ -36,21 +56,15 @@
 //   - for `correct` rows, how many carry a NON-ZERO surchargeSen — those are
 //     money-bearing and must never be touched by a data script.
 //
-// WHY THE ONLY CANDIDATE FOR REPAIR IS `string[]`, AND WHY THE REPAIR IS NULL.
-// The same three reasons #1944 recorded, unchanged:
-//   1. custom_specials is a DERIVED OUTPUT. The recompute reads
-//      variants.specials (mfg-pricing-recompute.ts:283) and EMITS
-//      custom_specials from it (:604); the SO line PATCH overwrites it wholesale
-//      (mfg-sales-orders.ts:8234). NULL is exactly the state of a line that has
-//      not been recomputed yet — honest and self-healing.
-//   2. Valid jsonb holding wrong data is WORSE than empty, because it looks
-//      repaired. A bare string[] of slip phrases is not the declared shape and
-//      is not picker codes; leaving it lets a report print a special order that
-//      the picker does not know exists.
-//   3. Writing the "correct" derived value here would mean computing
-//      surchargeSen OUTSIDE the pricing engine and stamping it on historical
-//      documents. That is the repricing the owner ruled out on 2026-08-11.
-//      NULL cannot move money.
+// WHAT IS NEVER ON THE TABLE, WHATEVER THE CLASS. Writing the "correct" derived
+// value would mean computing `surchargeSen` OUTSIDE the pricing engine and
+// stamping it on historical documents. That is the repricing the owner ruled out
+// on 2026-08-11, so no class is ever "upgraded" from string[] to the object
+// shape here. The only edit this script can make is to NULL — which is exactly
+// the state of a line that has not been recomputed yet, since the recompute
+// reads variants.specials (mfg-pricing-recompute.ts:283) and re-emits
+// custom_specials from it (:604), and the SO line PATCH overwrites it wholesale
+// (mfg-sales-orders.ts:8234).
 //
 // NOTHING IS LOST (owner: 不可以删只可以 cancel). Every candidate row's current
 // value is PRINTED IN FULL before any write, so the prior state survives in the
@@ -64,6 +78,12 @@ import postgres from "postgres";
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
+/* A second, separate switch. APPLY alone can no longer null anything, because
+   the only rows with wrong CONTENT also carry that same text in
+   variants.specials — nulling the derived cache would hide it from the report
+   and leave it in the picker. That is an owner decision, and this is where the
+   owner's answer is recorded. */
+const APPLY_TEXT = process.env.APPLY_TEXT === "1";
 const CO = Number(process.env.COMPANY || 1);
 const SHOW = Number(process.env.SHOW || 800);
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -80,13 +100,20 @@ const TABLES = [
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
+const CLASSES = ["correct", "empty", "codes[]", "text[]", "other", "not-an-array"];
+
 /** Decide the class of one array value, and describe it when it is `other`. */
-function classify(arr) {
+function classify(arr, liveCodes = new Set()) {
   if (!Array.isArray(arr)) return { klass: "not-an-array", why: `jsonb_typeof said array but the driver gave ${typeof arr}` };
   if (arr.length === 0) return { klass: "empty", why: "" };
 
   const allStrings = arr.every((e) => typeof e === "string");
-  if (allStrings) return { klass: "string[]", why: "" };
+  if (allStrings) {
+    const strays = arr.filter((s) => !liveCodes.has(String(s).trim().toUpperCase()));
+    return strays.length
+      ? { klass: "text[]", why: `not a live picker code: ${strays.map((s) => JSON.stringify(s)).join(", ")}` }
+      : { klass: "codes[]", why: "" };
+  }
 
   const allObjects = arr.every(isObj);
   if (allObjects) {
@@ -114,6 +141,7 @@ async function rowsOf(db, t) {
             i.custom_specials AS cs,
             i.custom_specials #>> '{}' AS raw,
             (h.linked_ac_docno IS NOT NULL) AS migrated,
+            i.variants -> 'specials' AS vspec,
             CASE WHEN jsonb_typeof(i.variants -> 'specials') = 'array'
                  THEN jsonb_array_length(i.variants -> 'specials') ELSE -1 END AS variant_specials_n
        FROM scm.${t.table} i ${t.join}
@@ -150,7 +178,7 @@ async function main() {
     const rows = await rowsOf(sql, t);
     const byClass = new Map();
     for (const r of rows) {
-      const { klass, why } = classify(r.cs);
+      const { klass, why } = classify(r.cs, liveCodes);
       r._class = klass; r._why = why;
       if (!byClass.has(klass)) byClass.set(klass, []);
       byClass.get(klass).push(r);
@@ -158,7 +186,7 @@ async function main() {
     found[t.key] = { rows, byClass };
 
     log(`   array-shaped rows: ${rows.length}`);
-    for (const klass of ["correct", "empty", "string[]", "other", "not-an-array"]) {
+    for (const klass of CLASSES) {
       const g = byClass.get(klass);
       if (!g) continue;
       const migrated = g.filter((r) => r.migrated).length;
@@ -171,38 +199,59 @@ async function main() {
     const priced = correct.filter((r) => (r.cs || []).some((e) => Number(e.surchargeSen) !== 0));
     log(`      of the 'correct' rows, ${priced.length} carry a NON-ZERO surchargeSen (money-bearing, never touched here)`);
 
-    // are the strings picker codes, or raw slip phrases?
-    const strs = byClass.get("string[]") || [];
+    const strs = [...(byClass.get("codes[]") || []), ...(byClass.get("text[]") || [])];
     const allStrings = strs.flatMap((r) => r.cs);
     const known = allStrings.filter((s) => liveCodes.has(String(s).trim().toUpperCase()));
-    log(`      of the ${allStrings.length} strings in the 'string[]' rows, ${known.length} are a LIVE picker code and ${allStrings.length - known.length} are raw slip text`);
-    if (known.length) {
-      log(`      the ones that ARE codes (these change the verdict — read them):`);
-      for (const s of [...new Set(known)].slice(0, 40)) log(`         [${s}]`);
-    }
+    log(`      of the ${allStrings.length} strings in the bare-string rows, ${known.length} are a LIVE picker code and ${allStrings.length - known.length} are raw slip text`);
   }
 
   // ── samples, so the classification is checkable and not just counted ──────
-  for (const klass of ["correct", "empty", "string[]", "other", "not-an-array"]) {
+  for (const klass of CLASSES) {
     const all = TABLES.flatMap((t) => (found[t.key].byClass.get(klass) || []).map((r) => [t.key, r]));
     if (!all.length) continue;
+    const n = klass === "text[]" || klass === "other" ? SHOW : 12;
     log("");
-    log(`SAMPLE — ${klass} (${all.length} rows across SO+PO, showing ${Math.min(all.length, klass === "string[]" || klass === "other" ? SHOW : 12)}):`);
-    const n = klass === "string[]" || klass === "other" ? SHOW : 12;
+    log(`SAMPLE — ${klass} (${all.length} rows across SO+PO, showing ${Math.min(all.length, n)}):`);
     for (const [key, r] of all.slice(0, n))
       log(`   ${key.toUpperCase()} ${String(r.doc ?? "").padEnd(14)} ${String(r.code ?? "").padEnd(24)}` +
-          ` mig=${r.migrated ? "Y" : "n"} vspec=${r.variant_specials_n < 0 ? "-" : r.variant_specials_n}  ${r.raw}` +
+          ` mig=${r.migrated ? "Y" : "n"}  custom_specials=${r.raw}` +
+          `  variants.specials=${JSON.stringify(r.vspec ?? null)}` +
           (r._why ? `   << ${r._why}` : ""));
   }
 
-  const candidates = TABLES.map((t) => [t, found[t.key].byClass.get("string[]") || []]);
-  const total = candidates.reduce((a, [, g]) => a + g.length, 0);
-  log("");
-  log(`REPAIR CANDIDATES (class 'string[]' only): ${candidates.map(([t, g]) => `${t.key.toUpperCase()} ${g.length}`).join(", ")} — total ${total}`);
-  log(`NOT candidates, deliberately: 'correct' (the pricing engine's own output), 'empty' (honest), 'other' (described above, needs a human read).`);
+  /* THE VERDICT, recomputed from THIS run rather than quoted from the last one.
+     `codes[]` is legacy shape with correct content and is never a candidate;
+     `text[]` is the only wrong-content class, and even that is held behind its
+     own switch because the same text sits in variants.specials. */
+  const codesRows = TABLES.flatMap((t) => (found[t.key].byClass.get("codes[]") || []));
+  const textRows = TABLES.map((t) => [t, found[t.key].byClass.get("text[]") || []]);
+  const textTotal = textRows.reduce((a, [, g]) => a + g.length, 0);
+  const textAlsoInVariants = textRows.flatMap(([, g]) => g).filter((r) => {
+    const v = Array.isArray(r.vspec) ? r.vspec.map((x) => String(x)) : [];
+    return (r.cs || []).some((s) => !liveCodes.has(String(s).trim().toUpperCase()) && v.includes(String(s)));
+  }).length;
 
-  if (!total) { log("nothing to repair."); await sql.end(); return; }
-  if (!APPLY) { log(""); log("DRY-RUN — set APPLY=1 to NULL the 'string[]' rows."); await sql.end(); return; }
+  log("");
+  log(`NOT a repair candidate — codes[]: ${codesRows.length} rows. Legacy SHAPE, correct CONTENT: every string is a`);
+  log(`   live picker code, and the renderer (SalesOrderDetailListing.formatSpecials) handles a plain string`);
+  log(`   and an object alike. NULLing them would delete a correct, currently-rendering line item.`);
+  log(`NOT a repair candidate — 'correct' (the pricing engine's own output), 'empty' (honest), 'other' (needs a human read).`);
+  log(`ONLY wrong-content class — text[]: ${textTotal} rows; of those, ${textAlsoInVariants} carry the SAME raw text in`);
+  log(`   variants.specials, the field the PICKER reads. For those, NULLing custom_specials hides the junk from`);
+  log(`   the report and leaves it in the operator's view — a half-fix. That is an OWNER decision.`);
+
+  const candidates = textRows;
+  const total = textTotal;
+  if (!total) { log(""); log("nothing this script is willing to repair."); await sql.end(); return; }
+  if (!APPLY) { log(""); log("DRY-RUN — APPLY=1 alone does nothing here; the text[] rows also need APPLY_TEXT=1 (owner decision)."); await sql.end(); return; }
+  if (!APPLY_TEXT) {
+    log("");
+    log(`REFUSING TO WRITE. APPLY=1 was given but APPLY_TEXT=1 was not, and the only class this script would`);
+    log(`   touch is text[]. Set APPLY_TEXT=1 only once the owner has decided what should happen to the raw`);
+    log(`   text in variants.specials as well — nulling the derived cache on its own is not a repair.`);
+    await sql.end();
+    return;
+  }
 
   /* Print every candidate's current value IN FULL before touching it. The
      repair sets NULL, so this log is the only place the old value survives. */
@@ -239,9 +288,9 @@ async function main() {
   try {
     for (const t of TABLES) {
       const after = await rowsOf(v, t);
-      const still = after.filter((r) => classify(r.cs).klass === "string[]").length;
+      const still = after.filter((r) => classify(r.cs, liveCodes).klass === "text[]").length;
       left += still;
-      log(`READ-BACK on a NEW connection — ${t.key}: ${still} string[] rows remain; array-shaped total now ${after.length}`);
+      log(`READ-BACK on a NEW connection — ${t.key}: ${still} text[] rows remain; array-shaped total now ${after.length}`);
       const shapes = await shapeCensus(v, t);
       log(`   post-repair shape census: ${shapes.map((r) => `${r.shape}=${r.n}`).join(" ") || "(all null)"}`);
     }
