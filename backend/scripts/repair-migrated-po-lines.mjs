@@ -176,7 +176,9 @@ async function main() {
         if (d) { upd.deliveryDate = d; want = true; }
         else unresolved.push({ poNo: h.po_number, code: row.material_code, reason: `AutoCount line ${ac.key} carries no delivery date` });
       }
-      if (has_dtlkey && row.linked_ac_dtlkey == null) { upd.dtlKey = ac.key; want = true; }
+      /* Planned even when the column is not there yet, so the DRY-RUN still
+         REPORTS how many lines it would key. The writer is what skips it. */
+      if (row.linked_ac_dtlkey == null) { upd.dtlKey = ac.key; want = has_dtlkey || want; }
 
       if (!row.so_item_id) {
         const fromKey = acFromSoDtlKey(ac.raw);
@@ -215,7 +217,7 @@ async function main() {
   log(`unmatched: ERP rows ${unmatchedErp}; AutoCount lines with no ERP row ${unmatchedAc}; POs with no AutoCount document in the snapshots ${noAcDoc.length}`);
   for (const p of noAcDoc.slice(0, 20)) log(`   ${p}`);
   log("");
-  log(`PLAN: ${plan.length} line(s) to update — so_item_id ${nSo}; delivery_date ${nDate}; linked_ac_dtlkey ${nKey}`);
+  log(`PLAN: ${plan.length} line(s) to update — so_item_id ${nSo}; delivery_date ${nDate}; linked_ac_dtlkey ${nKey}${has_dtlkey ? "" : " (COLUMN ABSENT — counted, not written)"}`);
 
   // Header date: earliest of the line dates this repair would leave in place.
   const dateByLine = new Map(plan.filter((p) => p.deliveryDate).map((p) => [p.id, p.deliveryDate]));
@@ -266,7 +268,7 @@ async function main() {
           WHERE id = ${p.id} AND so_item_id IS NULL`).count;
         if (p.deliveryDate) await tx`UPDATE scm.purchase_order_items SET delivery_date = ${p.deliveryDate}
           WHERE id = ${p.id} AND delivery_date IS NULL`;
-        if (p.dtlKey != null) await tx`UPDATE scm.purchase_order_items SET linked_ac_dtlkey = ${p.dtlKey}
+        if (has_dtlkey && p.dtlKey != null) await tx`UPDATE scm.purchase_order_items SET linked_ac_dtlkey = ${p.dtlKey}
           WHERE id = ${p.id} AND linked_ac_dtlkey IS NULL`;
       }
     });
