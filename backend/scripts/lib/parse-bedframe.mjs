@@ -58,14 +58,29 @@ function parseBedframe(d2) {
        divan=1, and "Hydraulic2pcs12”inner/PC151-01" as divan=151, taking the
        number out of the COLOUR CODE. A wrong height reaches the factory; a
        blank one stops someone. */
-    if ((hm2 = new RegExp(`DIV(?:AN)?\\.?\\s*[:：]?\\s*(?:HYDRAUL\\w*\\s*)?(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.divan = parseFloat(hm2[1]);
+    /* Two DIFFERENT numbers live in this text and telling them apart is the
+       whole job: the OUTER height of the box (the divan the factory builds) and
+       the INNER storage depth. Find each on its own terms, then decide.
+
+       Owner 2026-08-10, ruling on both: "我们就以12“ 14” 16“ divan 就可以了" and
+       "inner的话就是inner+2 就是total了". So the outer wins when it is written,
+       and an inner-only line converts at +2. The data agrees with him without
+       exception - every line stating both reads "hydraulic 16”/Inner 14”". */
+    const innerM = /(\d+(?:\.\d+)?)\s*["”“"″'’‘′]{0,2}\s*(?:INCH(?:ES)?)?\s*INNER/i.exec(s)
+      || /INNER[^0-9+]{0,14}?(\d+(?:\.\d+)?)/i.exec(s);
+    const inner = innerM ? parseFloat(innerM[1]) : null;
+    /* An outer height: stated on DIVAN, or on the word HYDRAULIC when INNER is
+       not what that word is qualifying ("INNER HYDRAULIC: 12" is an inner). The
+       figure must carry an inch marker, so "Hydraulic2pcs12”" cannot read the
+       PIECE COUNT as a height. */
+    if ((hm2 = /DIV(?:AN)?\.?\s*[:：]?\s*(?:HYDRAUL[A-Z]*\s*)?(\d+(?:\.\d+)?)/i.exec(s))) o.divan = parseFloat(hm2[1]);
     else if ((hm2 = /(\d+(?:\.\d+)?)\s*["”“"″'’‘′]{0,2}\s*(?:INCH(?:ES)?)?\s*DIV(?:AN)?\b/i.exec(s))) o.divan = parseFloat(hm2[1]);
-    /* A height on the word HYDRAULIC itself — but NOT a piece count.
-       "Hydraulic2pcs12”inner" must not read 2; the figure that follows has to
-       carry an inch marker or the word INNER, never "pcs"/"pump". */
-    else if ((hm2 = /HYDRAUL[A-Z]*(?:\s*TOTAL)?[^0-9A-Za-z]{0,4}(\d+(?:\.\d+)?)\s*(?:["”“"″'’‘′]|INCH)/i.exec(s))) o.divan = parseFloat(hm2[1]);
-    else if ((hm2 = /(\d+(?:\.\d+)?)\s*["”“"″'’‘′]{0,2}\s*(?:INCH(?:ES)?)?\s*INNER/i.exec(s))) o.divan = parseFloat(hm2[1]);
-    else if ((hm2 = /INNER[^0-9+]{0,4}(\d+(?:\.\d+)?)/i.exec(s))) o.divan = parseFloat(hm2[1]);
+    else if ((hm2 = /(?<!INNER[^0-9]{0,14})HYDRAUL[A-Z]*(?:\s*TOTAL)?[^0-9A-Za-z]{0,4}(\d+(?:\.\d+)?)\s*(?:["”“"″'’‘′]|INCH)/i.exec(s))) o.divan = parseFloat(hm2[1]);
+    // no outer height written anywhere: the inner is what we have, +2
+    if (o.divan == null && inner != null) o.divan = inner + 2;
+    // the outer figure WAS the inner (e.g. "Div:HydraulicInner(10\")") - convert
+    else if (o.divan != null && inner != null && o.divan === inner
+             && /INNER[^0-9]{0,4}$|INNER\s*\(?\s*$/i.test(s.slice(0, s.indexOf(String(inner))))) o.divan = inner + 2;
     /* A hydraulic divan normally sits on no legs, but "DIVAN:10'INCH 1'INCH
        LEG/HYDRAULIC" states one — defaulting to 0 there overwrote a height the
        salesperson actually wrote. Only default when the text is silent. */
@@ -79,6 +94,8 @@ function parseBedframe(d2) {
   if (o.divan == null && (m = new RegExp(`\\bDIV(?:AN)?\\.?\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:\\+\\s*(\\d+(?:\\.\\d+)?))?`, "i").exec(s))) { o.divan = parseFloat(m[1]); if (m[2] != null) o.leg = parseFloat(m[2]); }
   if (/NO\s*LEGS?/i.test(s)) o.leg = 0;
   else if (o.leg === undefined && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:WOODEN\\s*)?LEGS?`, "i").exec(s))) o.leg = parseFloat(m[1]);
+  // "Leg:4”" — the figure after the word, the mirror of the form above
+  else if (o.leg === undefined && (m = new RegExp(`LEGS?\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.leg = parseFloat(m[1]);
   // a divan stated with no leg mentioned at all = no leg (0), per owner's model
   if (o.leg === undefined && o.divan != null && !/LEG/i.test(s)) o.leg = 0;
   /* divan written WITHOUT the word "divan": "PC151-07/8inch+4inchLeg/Gap14inch"
@@ -154,6 +171,12 @@ function parseBedframe(d2) {
   // "pull out" = a pull-out drawer
   if (/PULL\s*OUT|PULLOUT|PUT\s*OUT/i.test(s) && !o.specials.some((x) => /drawer/i.test(x))) o.specials.push("Front Drawer");
   o.specials = [...new Set(o.specials)];
+  /* The no-leg default runs early, when several divan rules have not fired yet:
+     "frontdrawerdivan12”/PC151-01/gap9" mentions no leg at all, but its divan
+     was only found by a later rule, so the default had nothing to key off and
+     the line came out with no leg rather than none. Re-apply it once every
+     divan rule has had its turn. */
+  if (o.leg === undefined && o.divan != null && !/LEG/i.test(s)) o.leg = 0;
   return o;
 }
 
