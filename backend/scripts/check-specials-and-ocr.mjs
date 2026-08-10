@@ -65,6 +65,26 @@ const elText = (el) => {
   return "";
 };
 
+/* The 2026-08-10 run of backfill-sofa-special-orders.mjs bound
+   `JSON.stringify(next)` to a `$1::jsonb` parameter, and postgres.js already
+   JSON-encodes a value bound to jsonb. The column therefore holds a jsonb
+   STRING whose text happens to be a JSON array — `"[\"Nylon Fabric\"]"` — not
+   a jsonb array. Every consumer that does Array.isArray() sees nothing, which
+   is why the first run of this check reported those lines as carrying no
+   specials at all. Coerce so the payload can be MEASURED; the shape defect is
+   reported separately rather than being papered over. */
+const asArray = (v) => {
+  if (Array.isArray(v)) return { list: v, doubleEncoded: false };
+  if (typeof v === "string") {
+    try {
+      const p = JSON.parse(v);
+      if (Array.isArray(p)) return { list: p, doubleEncoded: true };
+    } catch { /* not JSON — a bare string payload */ }
+    return { list: v ? [v] : [], doubleEncoded: true };
+  }
+  return { list: [], doubleEncoded: false };
+};
+
 try {
   // ==========================================================================
   // Q2 — the hand-written OCR rules row
@@ -210,8 +230,7 @@ try {
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO}
        AND ( (i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL)
-             OR (jsonb_typeof(i.custom_specials) = 'array'
-                 AND jsonb_array_length(i.custom_specials) > 0) )`;
+             OR i.custom_specials IS NOT NULL )`;
   // The PO header numbers itself `po_number`; only mfg_sales_orders has doc_no.
   const poLines = await pg`
     SELECT i.id, h.po_number AS doc_no, i.material_code AS code, i.item_group, i.description2 AS d2,
@@ -221,8 +240,7 @@ try {
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
      WHERE h.company_id = ${CO}
        AND ( (i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL)
-             OR (jsonb_typeof(i.custom_specials) = 'array'
-                 AND jsonb_array_length(i.custom_specials) > 0) )`;
+             OR i.custom_specials IS NOT NULL )`;
 
   /* Q2 — is every stamped element a REAL add-on? An element is an ORPHAN when
      its text resolves to no special_addons row at all; WRONG-FAMILY when the
@@ -232,7 +250,7 @@ try {
   const wrongFamily = new Map();
   const auditElements = (rows) => {
     for (const r of rows) {
-      const cs = Array.isArray(r.custom_specials) ? r.custom_specials : [];
+      const cs = asArray(r.custom_specials).list;
       const pool = famOf(r) === "BEDFRAME" ? liveBed : live;
       for (const el of cs) {
         const t = elText(el);
@@ -252,39 +270,69 @@ try {
     let withSpecials = 0, elements = 0, codeEls = 0, freeEls = 0;
     let withVariantSpecials = 0, variantCodeEls = 0;
     let objShaped = 0, strShaped = 0;
+    /* Storage shape is the headline finding, so it is counted, not assumed:
+       ARRAY = a usable jsonb array, DOUBLE = a jsonb string that has to be
+       JSON.parse'd before anything can read it. */
+    let shapeArray = 0, shapeDouble = 0;
+    const groups = new Map();
     for (const r of rows) {
-      const cs = Array.isArray(r.custom_specials) ? r.custom_specials : [];
-      if (cs.length) withSpecials++;
+      const { list: cs, doubleEncoded } = asArray(r.custom_specials);
+      if (cs.length) {
+        withSpecials++;
+        if (doubleEncoded) shapeDouble++; else shapeArray++;
+        const g = `${r.item_group ?? "null"}/${r.migrated ? "migrated" : "native"}/${doubleEncoded ? "DOUBLE-ENCODED" : "array"}`;
+        groups.set(g, (groups.get(g) || 0) + 1);
+      }
       for (const el of cs) {
         elements++;
         if (typeof el === "string") strShaped++;
         else if (el && typeof el === "object") objShaped++;
         const t = elText(el);
-        if (t && live.has(K(t))) codeEls++;
+        // Family-aware: a bedframe line's codes live in the BEDFRAME pool.
+        const pool = famOf(r) === "BEDFRAME" ? liveBed : live;
+        if (t && pool.has(K(t))) codeEls++;
         else freeEls++;
       }
       const vs = specialsList(r.variants?.specials ?? r.variants?.special);
       if (vs.length) withVariantSpecials++;
-      for (const c of vs) if (live.has(K(c))) variantCodeEls++;
+      const vpool = famOf(r) === "BEDFRAME" ? liveBed : live;
+      for (const c of vs) if (vpool.has(K(c))) variantCodeEls++;
     }
     const backfillScope = rows.filter((r) => r.migrated && String(r.item_group) === "sofa").length;
-    const groups = new Map();
-    for (const r of rows) {
-      if (!Array.isArray(r.custom_specials) || r.custom_specials.length === 0) continue;
-      const g = `${r.item_group ?? "null"}/${r.migrated ? "migrated" : "native"}`;
-      groups.set(g, (groups.get(g) || 0) + 1);
-    }
     log("");
     log(`  ${name}: ${rows.length} lines in scope (${backfillScope} inside the backfill's own migrated-sofa filter)`);
-    log(`     lines with custom_specials, by item_group/origin: ${[...groups.entries()].sort().map(([g, n]) => `${g}=${n}`).join("  ") || "(none)"}`);
+    log(`     lines with custom_specials, by item_group/origin/SHAPE: ${[...groups.entries()].sort().map(([g, n]) => `${g}=${n}`).join("  ") || "(none)"}`);
     log(`     custom_specials non-empty ............... ${withSpecials} lines, ${elements} elements`);
+    log(`        stored as a real jsonb ARRAY ......... ${shapeArray} lines`);
+    log(`        stored DOUBLE-ENCODED (jsonb string) . ${shapeDouble} lines  <-- unreadable to every consumer`);
     log(`        elements that ARE a live picker code . ${codeEls}`);
     log(`        elements that are free text .......... ${freeEls}`);
     log(`        element shape: ${strShaped} plain strings, ${objShaped} objects`);
     log(`     variants.specials non-empty (what the`);
     log(`        picker actually reads) ............... ${withVariantSpecials} lines, ${variantCodeEls} live codes`);
-    return { withSpecials, elements, codeEls, freeEls, withVariantSpecials, strShaped, objShaped };
+    return { withSpecials, elements, codeEls, freeEls, withVariantSpecials, strShaped, objShaped, shapeArray, shapeDouble };
   };
+
+  /* Authoritative shape tally straight from Postgres, so the JS coercion above
+     can never be the thing that decides the verdict. */
+  log("");
+  log("=========== SHAPE  jsonb_typeof(custom_specials) over the backfill's scope ===========");
+  const soTypes = await pg`
+    SELECT jsonb_typeof(i.custom_specials) AS t, count(*)::int AS n
+      FROM scm.mfg_sales_order_items i
+      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+     WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL
+     GROUP BY 1 ORDER BY 2 DESC`;
+  const poTypes = await pg`
+    SELECT jsonb_typeof(i.custom_specials) AS t, count(*)::int AS n
+      FROM scm.purchase_order_items i
+      JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+     WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL
+     GROUP BY 1 ORDER BY 2 DESC`;
+  log(`  SO migrated sofa: ${soTypes.map((r) => `${r.t ?? "NULL"}=${r.n}`).join("  ")}`);
+  log(`  PO migrated sofa: ${poTypes.map((r) => `${r.t ?? "NULL"}=${r.n}`).join("  ")}`);
+  const strOf = (rowsT) => rowsT.find((r) => r.t === "string")?.n ?? 0;
+  notice(`SHAPE: custom_specials stored as a jsonb STRING (double-encoded, unreadable) — SO ${strOf(soTypes)}, PO ${strOf(poTypes)}.`);
 
   log("");
   log("========= Q1 + Q3  custom_specials (written) vs variants.specials (read) =========");
@@ -317,7 +365,7 @@ try {
   log("");
   log("  Model option-pool restriction (decides NORMAL tick vs 'retired' row):");
   const codesUsed = new Set(soLines.concat(poLines).flatMap((r) =>
-    (Array.isArray(r.custom_specials) ? r.custom_specials : [])
+    asArray(r.custom_specials).list
       .map((el) => live.get(K(elText(el)))).filter(Boolean)));
   const models = await pg`
     SELECT DISTINCT p.code AS product_code, m.allowed_options
@@ -337,7 +385,7 @@ try {
   log(`     distinct picker codes the backfill actually landed: ${codesUsed.size}`);
 
   log("");
-  notice(`Q3: lines carrying custom_specials — SO ${so.withSpecials} (dry-run promised 375), PO ${po.withSpecials} (promised 103).`);
+  notice(`Q3: lines carrying custom_specials — SO ${so.withSpecials} (dry-run promised 375), PO ${po.withSpecials} (promised 103); of those, DOUBLE-ENCODED SO ${so.shapeDouble} / PO ${po.shapeDouble}.`);
   notice(`Q3: elements matching a live picker code ${so.codeEls + po.codeEls} (dry-run promised 498 matched); free text ${so.freeEls + po.freeEls} (promised 164).`);
   notice(`Q1: lines whose variants.specials is non-empty — SO ${so.withVariantSpecials}, PO ${po.withVariantSpecials}. This is what the picker renders as ticked.`);
 
@@ -346,10 +394,12 @@ try {
   // ==========================================================================
   const dump = (r) => {
     const vs = specialsList(r.variants?.specials ?? r.variants?.special);
+    const { list, doubleEncoded } = asArray(r.custom_specials);
     log("");
-    log(`  ${r.doc_no}  line id ${r.id}  item ${r.code}`);
+    log(`  ${r.doc_no}  line id ${r.id}  item ${r.code}  [${r.item_group}]`);
     log(`    description2      : ${String(r.d2 ?? "").replace(/\s+/g, " ").slice(0, 220)}`);
     log(`    custom_specials   : ${JSON.stringify(r.custom_specials)}`);
+    log(`    stored shape      : ${doubleEncoded ? `jsonb STRING (double-encoded) -> parses to ${JSON.stringify(list)}` : "jsonb array"}`);
     log(`    variants.specials : ${JSON.stringify(r.variants?.specials ?? r.variants?.special ?? null)}`);
     log(`    extraAddonNote    : ${JSON.stringify(r.variants?.extraAddonNote ?? null)}`);
     log(`    -> the picker header would read "Special Orders (${vs.length + (String(r.variants?.extraAddonNote ?? "").trim() ? 1 : 0)} selected)"`);
@@ -357,10 +407,16 @@ try {
   };
 
   log("");
-  log("=========== Q1  real SO lines that still carry custom_specials ===========");
+  log("=========== Q1  real SO lines whose custom_specials is a proper jsonb ARRAY ===========");
   const withCs = soLines.filter((r) => Array.isArray(r.custom_specials) && r.custom_specials.length > 0).slice(0, 3);
-  if (withCs.length === 0) log("  NONE — no migrated sofa SO line carries any custom_specials right now.");
+  if (withCs.length === 0) log("  NONE — no SO line in scope carries a proper custom_specials array.");
   withCs.forEach(dump);
+
+  log("");
+  log("=========== Q1  real SO lines whose custom_specials is DOUBLE-ENCODED ===========");
+  const dbl = soLines.filter((r) => typeof r.custom_specials === "string" && r.custom_specials.length > 0).slice(0, 3);
+  if (dbl.length === 0) log("  NONE — no SO line in scope stores custom_specials as a jsonb string.");
+  dbl.forEach(dump);
 
   /* The backfill's own population: a line whose description2 still decodes to a
      special order. These are the lines it reported writing, so they are the
