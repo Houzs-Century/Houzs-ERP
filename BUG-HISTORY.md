@@ -1,3 +1,45 @@
+## PO variant refresh died on "parseBedframe is not a function" [medium]
+
+**Symptom** — The go-live production run of `backend/scripts/refresh-po-variants.mjs`
+failed with `TypeError: parseBedframe is not a function` before it read a single
+row. `refresh-so-variants.mjs` carried the identical defect.
+
+**Root cause** — Neither refresh script imported the parser. Each read the SOURCE
+TEXT of `import-ac-outstanding-so.mjs` and rebuilt the function with `new Function`,
+slicing between two comment markers (`"function parseBedframe"` and
+`"// free-text name resolver"`) and appending `; return parseBedframe;`. Both
+markers still existed and the slice still contained the whole function — the
+failure is subtler than a moved marker. #1813, the sofa-decoder extraction, added
+a breadcrumb line `// SOFA decomposition lives in scripts/lib/parse-sofa.mjs
+(shared with the PO import).` immediately ABOVE the end marker. After `.trim()`
+that line comment is the last content of the slice, so the appended
+`; return parseBedframe;` lands on the SAME LINE and is commented out. The
+constructed function returns nothing, `new Function(...)()` yields `undefined`,
+and the first call throws. Traced by replaying the exact expression against the
+file at HEAD and printing the constructed body, not inferred from the message.
+
+**Fix** — one shared module, `backend/scripts/lib/parse-bedframe.mjs`, imported by
+all four callers (both AutoCount importers, both variant-refresh scripts); the
+`new Function` reconstruction and the duplicate definition in
+`import-ac-outstanding-po.mjs` are deleted. The two definitions were byte-for-byte
+identical at extraction so no owner rule was dropped — but they had already
+drifted twice and been resynced by hand: a808bf36 (the first PO import shipped an
+older parser) and 60125216 (parser v5's HYDROLIC/HYDRAULLIC and NOLEG spelling
+normalisations plus the leg-stated-after-divan rules landed in the SO copy only,
+so POs raised in that window parsed with a weaker ruleset than SOs of the same
+week). Regression: all 2,702 real Desc2/Desc strings in the committed AutoCount
+exports plus 77 cases lifted from the parser's own comments, run through the old
+and the new function — zero differences.
+
+**The class, for next time** — never reconstruct code from another file's SOURCE
+TEXT. Marker-delimited slicing has no compiler behind it: a comment added near a
+boundary, or a marker that moves, degrades silently into wrong code instead of
+failing to build. Shared logic gets a module in `backend/scripts/lib/` and a real
+`import`. Note `mapSpecial` in these same two scripts is STILL rebuilt this way
+from `fix-so-specials.mjs`, and is one stray comment away from the same failure.
+
+**Ref** — 2026-08-10, PR #1833, go-live cutover.
+
 ## Seven more cross-company read leaks, same class as the GRN picker [high]
 
 **Symptom** — Follow-on audit after the owner spotted Houzs PO lines in 2990's
