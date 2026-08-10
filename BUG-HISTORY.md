@@ -317,7 +317,7 @@ The regression guard is behavioural rather than structural: three tests drive
 `recomputeOneLine` through a stubbed client, and dropping the forwarded argument
 fails two of them (verified by reverting the line).
 
-**Ref** - 2026-08-11, PR #1951 (fix/so-amendment-migrated-price).
+**Ref** - 2026-08-11, PR #1954 (fix/so-amendment-migrated-price).
 ## A CANCELLED purchase order could be hard-purged from the database [high]
 
 **Symptom** - not a crash; a capability that should never have existed.
