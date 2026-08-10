@@ -71,9 +71,13 @@ const CREATE = [
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} company=${CO}`);
-  const rows = await sql`SELECT id, code, label FROM scm.special_addons WHERE company_id = ${CO} ORDER BY code`;
+  const rows = await sql`SELECT id, code, label, categories, active FROM scm.special_addons WHERE company_id = ${CO} ORDER BY code`;
   const by = new Map(rows.map((r) => [K(r.code), r]));
   log(`specials on file: ${rows.length}`);
+  /* categories is what splits the maintenance page into its BEDFRAME and SOFA
+     lists, so a code with the wrong token is invisible even though the row is
+     there. Print it. */
+  for (const r of rows) log(`   [${r.code}] cat=${JSON.stringify(r.categories)} active=${r.active}`);
 
   const uses = async (code) => {
     const [{ n: a }] = await sql`SELECT COUNT(*)::int n FROM scm.mfg_sales_order_items
