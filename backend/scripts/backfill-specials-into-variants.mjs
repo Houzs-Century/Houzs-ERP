@@ -25,6 +25,18 @@
 // So: APPLY refuses to run if any code this map would stamp carries a non-zero
 // price. That is an owner decision, not this script's.
 //
+// THE SPLIT. SKIP_PRICED=1 lands the money-neutral majority without waiting on
+// that owner decision: a code is stamped only when BOTH selling_price_sen and
+// cost_price_sen are 0 in the LIVE scm.special_addons read, and any line that
+// would RECEIVE a priced code is skipped WHOLE — not partly stamped — and
+// reported separately. Priced-ness is never hard-coded, so a code the owner
+// prices tomorrow is skipped automatically from that moment.
+// Under SKIP_PRICED the write runs in ONE transaction that sums the affected
+// lines' money columns before and after and ROLLS BACK on any difference: a
+// zero-priced code contributes specialsSurchargeSen 0 (mfg-pricing.ts:396-415),
+// so the sums must be identical, and the transaction proves it rather than
+// asserting it.
+//
 // DRY-RUN by default; APPLY=1 writes.
 import fs from "node:fs";
 import path from "node:path";
@@ -36,6 +48,8 @@ import { parseBedframe } from "./lib/parse-bedframe.mjs";
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
+const SKIP_PRICED = process.env.SKIP_PRICED === "1";
+const DIAG = process.env.DIAG === "1";
 const CO = Number(process.env.COMPANY || 1);
 const SHOW = Number(process.env.SHOW || 40); // per-line change lines to print
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -108,8 +122,44 @@ function phrasesOf(list) {
 
 const asArray = (v) => (Array.isArray(v) ? v : v == null || v === "" ? [] : [v]);
 
+/* The money columns of the two line tables. NOTE the name: the authoritative
+   selling figure the recompute calls `unit_price_sen`
+   (mfg-pricing-recompute.ts:600) is PERSISTED into the column
+   `unit_price_centi` (mfg-sales-orders.ts:4291) — the column name is a legacy
+   misnomer, the unit is sen. Summing the wrong column would prove nothing. */
+const MONEY_COLS = {
+  mfg_sales_order_items: ["unit_price_centi", "total_centi", "total_inc_centi", "discount_centi",
+    "unit_cost_centi", "line_cost_centi", "special_order_price_sen", "divan_price_sen", "leg_price_sen"],
+  purchase_order_items: ["unit_price_centi", "line_total_centi", "discount_centi",
+    "unit_cost_centi", "special_order_price_sen", "divan_price_sen", "leg_price_sen"],
+};
+
+async function moneySums(tx, table, ids) {
+  const cols = MONEY_COLS[table];
+  if (!ids.length) return { n: 0, ...Object.fromEntries(cols.map((c) => [c, "0"])) };
+  const sel = cols.map((c) => `COALESCE(SUM(${c}),0)::text AS ${c}`).join(", ");
+  const [row] = await tx.unsafe(
+    `SELECT COUNT(*)::int AS n, ${sel} FROM scm.${table} WHERE id = ANY($1::uuid[])`, [ids]);
+  return row;
+}
+
+/* Verification read — how many migrated lines actually carry picker codes in
+   the field the picker reads, counted from the DB rather than from our own
+   update list. Read-only, safe to run in DRY-RUN too. */
+async function carryingCounts() {
+  const [so] = await sql`SELECT COUNT(*)::int AS n FROM scm.mfg_sales_order_items i
+      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL
+       AND jsonb_typeof(i.variants->'specials') = 'array' AND jsonb_array_length(i.variants->'specials') > 0`;
+  const [po] = await sql`SELECT COUNT(*)::int AS n FROM scm.purchase_order_items i
+      JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL
+       AND jsonb_typeof(i.variants->'specials') = 'array' AND jsonb_array_length(i.variants->'specials') > 0`;
+  return { so: so.n, po: po.n };
+}
+
 async function main() {
-  log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} company=${CO}`);
+  log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} skipPriced=${SKIP_PRICED ? 1 : 0} diag=${DIAG ? 1 : 0} company=${CO}`);
 
   // ── the picker master, read LIVE, WITH PRICES ────────────────────────────────
   const addons = await sql`SELECT code, label, categories, active, selling_price_sen, cost_price_sen
@@ -135,6 +185,14 @@ async function main() {
   const priceOf = new Map(addons.map((r) => [r.code, {
     sell: Number(r.selling_price_sen ?? 0), cost: Number(r.cost_price_sen ?? 0),
   }]));
+  /* Priced-ness comes from THIS live read every run — never a list in the
+     source. A code the owner prices tomorrow starts being skipped tomorrow. */
+  const isPriced = (c) => { const p = priceOf.get(c) || { sell: 0, cost: 0 }; return p.sell !== 0 || p.cost !== 0; };
+  const livePriced = addons.filter((r) => isPriced(r.code));
+  log("");
+  log(`live price split of scm.special_addons: ${addons.length - livePriced.length} zero-priced, ${livePriced.length} priced`);
+  for (const r of livePriced) log(`   PRICED  sell=${r.selling_price_sen} cost=${r.cost_price_sen}  [${r.code}]`);
+  if (SKIP_PRICED) log(`SKIP_PRICED=1 — only 0/0 codes will be stamped; any line receiving a priced code is skipped whole.`);
 
   // families whose code the owner has not created (or has re-categorised away)
   const missing = [];
@@ -169,6 +227,10 @@ async function main() {
   const excludedHits = new Map(); // excluded rule why -> occurrences
   const updates = { so: [], po: [] };
   const samples = [];
+  const skippedByCode = new Map();  // priced code -> lines held back because of it
+  const skippedLines = [];          // one line per held-back line, for the report
+  let forgoneZeroCodes = 0;         // 0/0 codes NOT stamped because their line was held back
+  const hydraulic = { lines: [], withDivan: 0, codeInItem: 0 }; // DIAG only
 
   for (const [which, rows] of [["so", soLines], ["po", poLines]]) {
     for (const r of rows) {
@@ -188,6 +250,22 @@ async function main() {
       }
       const phrases = phrasesOf(raw);
       if (!phrases.length) continue;
+
+      /* HYDRAULIC is the biggest unmapped phrase. It is not obviously an
+         add-on: parse-bedframe.mjs:46-75 uses the word to DERIVE the divan
+         height (outer wins, inner+2) and only then pushes it as a "special".
+         Report what those lines already carry so the owner can rule on whether
+         it is a picker code at all — this script never invents one. */
+      if (DIAG && phrases.some((p) => /HYDRAUL/i.test(p))) {
+        const vv = (r.variants && typeof r.variants === "object" && !Array.isArray(r.variants)) ? r.variants : {};
+        const dh = vv.divanHeight;
+        if (!(dh === undefined || dh === null || String(dh).trim() === "")) hydraulic.withDivan++;
+        if (/HYDRAUL/i.test(String(r.code || ""))) hydraulic.codeInItem++;
+        hydraulic.lines.push({
+          which, doc: r.doc, code: r.code, divanHeight: dh ?? null,
+          specialsNow: asArray(vv.specials).length, d2: String(r.d2 || "").slice(0, 90),
+        });
+      }
 
       const gained = new Set();
       for (const p of phrases) {
@@ -210,6 +288,22 @@ async function main() {
       const addedNow = [];
       for (const c of gained) if (!next.some((x) => K(x) === K(c))) { next.push(c); addedNow.push(c); }
       if (!addedNow.length) continue;
+
+      /* THE SPLIT. "Would receive" is addedNow, not gained: a line that ALREADY
+         carries the priced code is not being repriced by us, so it stays in the
+         safe set. A line that would newly receive one is held back WHOLE — its
+         0/0 codes are forgone too, so the line is never left half-stamped. */
+      if (SKIP_PRICED) {
+        const pricedNow = addedNow.filter(isPriced);
+        if (pricedNow.length) {
+          const zeroNow = addedNow.filter((c) => !isPriced(c));
+          forgoneZeroCodes += zeroNow.length;
+          for (const c of pricedNow) skippedByCode.set(c, (skippedByCode.get(c) || 0) + 1);
+          skippedLines.push(`   SKIP ${which.toUpperCase()} ${String(r.doc ?? "").padEnd(14)} ${String(r.code ?? "").padEnd(18)} ` +
+                            `priced=${JSON.stringify(pricedNow)}` + (zeroNow.length ? ` forgone=${JSON.stringify(zeroNow)}` : ""));
+          continue;
+        }
+      }
 
       for (const c of addedNow) byCode.set(c, (byCode.get(c) || 0) + 1);
       updates[which].push({ id: r.id, next });
@@ -239,6 +333,34 @@ async function main() {
   log("");
   log(`UNMAPPED phrases — no owner code, left alone: ${[...unmapped.values()].reduce((a, b) => a + b, 0)} (${unmapped.size} distinct)`);
   for (const [p, n] of [...unmapped.entries()].sort((a, b) => b[1] - a[1])) log(`   ${String(n).padStart(4)}  ${p}`);
+  if (SKIP_PRICED) {
+    log("");
+    log(`HELD BACK for carrying a priced code: ${skippedLines.length} lines ` +
+        `(and ${forgoneZeroCodes} zero-priced codes forgone with them):`);
+    for (const s of skippedLines) log(s);
+    log(`   per priced code (lines held back BECAUSE of it):`);
+    let heldSell = 0;
+    for (const [c, n] of [...skippedByCode.entries()].sort((a, b) => b[1] - a[1])) {
+      const p = priceOf.get(c) || { sell: 0, cost: 0 };
+      heldSell += p.sell * n;
+      log(`   ${String(n).padStart(4)}  ${c}  sell=${p.sell} cost=${p.cost}`);
+    }
+    log(`   selling exposure NOT taken: ${heldSell} sen (RM ${(heldSell / 100).toFixed(2)})`);
+  }
+
+  if (DIAG) {
+    log("");
+    log(`HYDRAULIC diagnostic: ${hydraulic.lines.length} lines whose parsed specials include it`);
+    log(`   already carry variants.divanHeight: ${hydraulic.withDivan}/${hydraulic.lines.length}`);
+    log(`   item_code itself contains HYDRAULIC: ${hydraulic.codeInItem}/${hydraulic.lines.length}`);
+    for (const h of hydraulic.lines.slice(0, 25))
+      log(`   ${h.which.toUpperCase()} ${String(h.doc ?? "").padEnd(14)} ${String(h.code ?? "").padEnd(24)} ` +
+          `divanHeight=${JSON.stringify(h.divanHeight)} specials=${h.specialsNow}  d2="${h.d2}"`);
+    const hyAddon = addons.filter((r) => /HYDRAUL/i.test(String(r.code || "") + " " + String(r.label || "")));
+    log(`   scm.special_addons rows matching HYDRAUL: ${hyAddon.length}` +
+        (hyAddon.length ? ` -> ${hyAddon.map((r) => `[${r.code}]`).join(" ")}` : " (none — no picker code exists)"));
+  }
+
   log("");
   log(`lines that would change: SO ${updates.so.length}, PO ${updates.po.length}`);
 
@@ -255,6 +377,10 @@ async function main() {
     log(`so specialsSurchargeSen stays 0 and no line total can move (mfg-pricing.ts:396-415).`);
   }
 
+  const before0 = await carryingCounts();
+  log("");
+  log(`lines ALREADY carrying a non-empty variants.specials: SO ${before0.so}, PO ${before0.po}`);
+
   if (!APPLY) { log(""); log("DRY-RUN — set APPLY=1 to write."); await sql.end(); return; }
   if (priced.length) {
     log("");
@@ -263,20 +389,73 @@ async function main() {
     return;
   }
 
+  const TABLES = [["so", "mfg_sales_order_items"], ["po", "purchase_order_items"]];
+
   /* jsonb_set on the ONE key, so every other key in variants survives even if
      another writer touched the row between the read and this write. */
-  for (const [which, table] of [["so", "mfg_sales_order_items"], ["po", "purchase_order_items"]]) {
+  const writeBatch = async (tx, table, list) => {
+    for (const u of list)
+      await tx.unsafe(
+        `UPDATE scm.${table}
+            SET variants = jsonb_set(COALESCE(variants, '{}'::jsonb), '{specials}', $1::jsonb, true)
+          WHERE id = $2`,
+        [JSON.stringify(u.next), u.id]);
+  };
+
+  if (SKIP_PRICED) {
+    /* Belt and braces: the split already excluded them, so a priced code
+       reaching here would mean the classifier is wrong, not the data. */
+    const leak = [...byCode.keys()].filter(isPriced);
+    if (leak.length) {
+      log("");
+      log(`ABORT: priced codes reached the safe set — ${leak.join(", ")}. Not writing.`);
+      await sql.end();
+      return;
+    }
+    /* ONE transaction: sum the money columns of exactly the rows about to be
+       written, write, sum again, and throw on any difference so the whole thing
+       rolls back. Proof, not assertion. */
+    let proved = false;
+    try {
+      await sql.begin(async (tx) => {
+        const before = {}, after = {};
+        for (const [which, table] of TABLES) before[which] = await moneySums(tx, table, updates[which].map((u) => u.id));
+        for (const [which, table] of TABLES) await writeBatch(tx, table, updates[which]);
+        for (const [which, table] of TABLES) after[which] = await moneySums(tx, table, updates[which].map((u) => u.id));
+        const diffs = [];
+        for (const [which, table] of TABLES) {
+          log("");
+          log(`money proof ${which.toUpperCase()} (${before[which].n} rows locked in this transaction):`);
+          for (const c of MONEY_COLS[table]) {
+            const b = String(before[which][c]), a = String(after[which][c]);
+            log(`   ${c.padEnd(24)} before=${b.padStart(12)}  after=${a.padStart(12)}  ${b === a ? "IDENTICAL" : "MOVED"}`);
+            if (b !== a) diffs.push(`${which}.${c} ${b} -> ${a}`);
+          }
+        }
+        if (diffs.length) throw new Error(`MONEY MOVED, rolling back: ${diffs.join("; ")}`);
+        proved = true;
+      });
+    } catch (e) {
+      log("");
+      log(`ROLLED BACK — ${e.message}`);
+      await sql.end();
+      process.exit(1);
+    }
+    log("");
+    log(`APPLIED (SKIP_PRICED) — SO ${updates.so.length} lines, PO ${updates.po.length} lines, ` +
+        `${skippedLines.length} lines held back as priced. Money columns proved identical: ${proved}. custom_specials untouched.`);
+    const after0 = await carryingCounts();
+    log(`VERIFY — lines now carrying a non-empty variants.specials: SO ${after0.so} (was ${before0.so}), ` +
+        `PO ${after0.po} (was ${before0.po})`);
+    await sql.end();
+    return;
+  }
+
+  for (const [which, table] of TABLES) {
     const list = updates[which];
     for (let i = 0; i < list.length; i += 200) {
       const b = list.slice(i, i + 200);
-      await sql.begin(async (tx) => {
-        for (const u of b)
-          await tx.unsafe(
-            `UPDATE scm.${table}
-                SET variants = jsonb_set(COALESCE(variants, '{}'::jsonb), '{specials}', $1::jsonb, true)
-              WHERE id = $2`,
-            [JSON.stringify(u.next), u.id]);
-      });
+      await sql.begin(async (tx) => { await writeBatch(tx, table, b); });
       log(`  ${which} ..${Math.min(i + 200, list.length)}/${list.length}`);
     }
   }
