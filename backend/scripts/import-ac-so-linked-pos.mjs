@@ -24,6 +24,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -32,7 +33,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
-const isSofa = (c) => /SOFA/i.test(c || "");
+const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
+const isPendingColour = (c) => /(TBC|KIV)/i.test(c || "");
 const SYS_USER = "00000000-0000-4000-8000-000000000001";
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
@@ -61,20 +63,44 @@ async function main() {
   const byAc = new Map();
   for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
 
-  // AutoCount SO DtlKey -> (SO doc, item code) so a PO line can find its SO line
+  /* AutoCount SO DtlKey -> (SO doc, item code, Desc2) so a PO line can find its
+     SO line. Desc2 rides along because a sofa PO line sometimes carries a
+     thinner spec than the order it was raised from, and the order's own text is
+     the first fallback before the photo (owner 2026-08-10: 如果遇到解析不出来的
+     部分，你还可以再结合照片去进行解析). */
   const soLineByDtl = new Map();
-  for (const r of soRows) soLineByDtl.set(String(r.DtlKey), { doc: r.DocNo, code: r.ItemCode });
+  for (const r of soRows) soLineByDtl.set(String(r.DtlKey), { doc: r.DocNo, code: r.ItemCode, d2: r.Desc2 });
 
   /* item_group must match the vocabulary the SO/PO line tables use, because
      bound-mode readiness gates on it. Take it from the catalogue rather than
      re-deriving it from the code, so PO lines and SO lines can never disagree. */
-  const CATG = { MATTRESS: "mattress", BEDFRAME: "bedframe", ACC: "accessory", ACCESSORY: "accessory",
-    BEDLINES: "accessory", DIFFUSER: "others", CARPET: "others", DINING: "others", OTHER: "others",
-    SERVICE: "service", TRANS: "service", SOFA: "sofa" };
-  const prodCat = new Map(
-    (await sql`SELECT code, category::text AS category FROM scm.mfg_products WHERE company_id = 1`)
-      .map((r) => [norm(r.code), CATG[String(r.category ?? "").toUpperCase()] ?? "others"]),
-  );
+  /* scm.mfg_product_category is an enum with exactly these five members;
+     anything else is a value the catalogue cannot hold. */
+  const CATG = { SOFA: "sofa", BEDFRAME: "bedframe", ACCESSORY: "accessory",
+    MATTRESS: "mattress", SERVICE: "service" };
+  const products = await sql`SELECT code, name, category::text AS category FROM scm.mfg_products WHERE company_id = 1`;
+  const prodCat = new Map(products.map((r) => [norm(r.code), CATG[String(r.category ?? "").toUpperCase()] ?? "others"]));
+  const prodByCode = new Map(products.map((p) => [p.code.toUpperCase(), p]));
+  const codeSet = new Set(products.map((p) => p.code.toUpperCase()));
+
+  /* Colour resolver — same folding rules as the SO/outstanding-PO importers, so
+     one AutoCount colour string lands on the same fabric_colours row whichever
+     document carries it. Ambiguity is not resolved by guessing: no hit means the
+     colour rides as a label only. */
+  const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
+  const fcx = new Map();
+  for (const r of fcRows) for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !fcx.has(k)) fcx.set(k, r);
+  const findColour = (c) => {
+    if (!c) return null;
+    const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
+    const seriesNum = (x) => { const mm = /^([A-Z]{2,4})(\d{2,4})(\d{1,3})$/.exec(strip(x)); return mm ? [mm[1] + mm[2] + mm[3].padStart(2, "0"), mm[1] + mm[2] + mm[3].slice(-2)] : []; };
+    const toks = [c, (c.trim().split(/\s+/)[0] || "")];
+    const m = /[A-Z]{1,4}\s?\d{2,4}\s?-?\s?\d*/i.exec(c); if (m) toks.push(m[0]);
+    const cands = [];
+    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t)), ...seriesNum(t)); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
+    for (const t of cands) { const h = fcx.get(t); if (h) return h; }
+    return null;
+  };
   const suppliers = await sql`SELECT id, code FROM scm.suppliers WHERE company_id = 1`;
   const supByCode = new Map(suppliers.map((s) => [norm(s.code), s.id]));
   const whs = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = 1`;
@@ -104,9 +130,13 @@ async function main() {
 
   // group by PO, dropping sofa lines (sofa is a later round) and unmapped codes
   const groups = new Map();
-  let unmapped = 0, sofaSkipped = 0;
+  /* Sofa is IN now (owner 2026-08-10: 沙发的 SO 已经进完了). It was held back
+     only while the sofa sales orders were still being imported by the parallel
+     round — a PO line whose SO line does not exist yet cannot be dedicated, and
+     an undedicated sofa PO is exactly the thing that leaves a sofa set stuck on
+     PENDING. Their SO lines are in, so their POs come in with everything else. */
+  let unmapped = 0;
   for (const r of rows) {
-    if (isSofa(r.ItemCode)) { sofaSkipped++; continue; }
     const erp = byAc.get(norm(r.ItemCode));
     if (!erp) { unmapped++; continue; }
     if (!groups.has(r.DocNo)) groups.set(r.DocNo, []);
@@ -114,14 +144,15 @@ async function main() {
   }
   const toCreate = [...groups.entries()].filter(([doc]) => !existing.has(doc));
   const alreadyIn = groups.size - toCreate.length;
-  log(`PO docs in file: ${groups.size}; already in ERP: ${alreadyIn}; to create: ${toCreate.length}; sofa lines skipped: ${sofaSkipped}; unmapped codes: ${unmapped}`);
+  log(`PO docs in file: ${groups.size}; already in ERP: ${alreadyIn}; to create: ${toCreate.length}; unmapped codes: ${unmapped}`);
 
   /* Resolve each PO line's SO line. Same-code lines on one SO are handed out in
      order and never reused, so two PO lines for the same SKU on one order bind
      to two DIFFERENT SO lines instead of both claiming the first. */
   const handedOut = new Map();
   const plan = [];
-  let noSoLine = 0, noWh = 0, noSupplier = 0, recvUnits = 0;
+  let noSoLine = 0, noWh = 0, noSupplier = 0, recvUnits = 0, sofaPlaceholderBind = 0;
+  const sofaDecode = [];
   for (const [doc, lines] of toCreate) {
     const first = lines[0];
     const supId = supByCode.get(norm(first.CreditorCode)) ?? null;
@@ -129,32 +160,113 @@ async function main() {
     const items = [];
     for (const l of lines) {
       const src = soLineByDtl.get(String(l.FromSODtlKey));
-      let soItemId = null;
-      if (src) {
-        const erpSoCode = byAc.get(norm(src.code));
-        const cands = erpSoCode ? soByKey.get(`${src.doc}|${norm(erpSoCode)}`) : null;
-        if (cands) {
-          const used = handedOut.get(`${src.doc}|${norm(erpSoCode)}`) ?? 0;
-          const pick = cands.find((c, i) => i >= used && !takenSoItem.has(c.id));
-          if (pick) {
-            soItemId = pick.id;
-            handedOut.set(`${src.doc}|${norm(erpSoCode)}`, cands.indexOf(pick) + 1);
-            takenSoItem.add(pick.id);
-          }
-        }
-      }
-      if (!soItemId) noSoLine++;
+      /* Hand out the SO line for one ERP code on one AutoCount order: same-code
+         lines are consumed in order and never reused, so two PO lines for the
+         same SKU bind to two DIFFERENT SO lines. */
+      const takeSoLine = (erpCode) => {
+        if (!src || !erpCode) return null;
+        const k = `${src.doc}|${norm(erpCode)}`;
+        const cands = soByKey.get(k);
+        if (!cands) return null;
+        const used = handedOut.get(k) ?? 0;
+        const pick = cands.find((c, i) => i >= used && !takenSoItem.has(c.id));
+        if (!pick) return null;
+        handedOut.set(k, cands.indexOf(pick) + 1);
+        takenSoItem.add(pick.id);
+        return pick.id;
+      };
       const wh = whId(l.Location);
       if (!wh) noWh++;
       const recv = Math.round(Number(l.GrQty ?? 0));
+      const qty = Math.round(Number(l.Qty ?? 0));
+      const priceCenti = Math.round(Number(l.UnitPrice ?? 0) * 100);
+      const deliveryDate = l.DeliveryDate ? l.DeliveryDate.slice(0, 10) : null;
+      const group = prodCat.get(norm(l.erp)) ?? "others";
+
+      /* SOFA — one AutoCount line is one BUILD; the ERP models it as one line
+         per compartment, exactly like the sales order it came from (grammar and
+         owner rulings: docs/sofa-import-handoff.md, decoder lib/parse-sofa.mjs).
+         Owner 2026-08-10: "在 PO 那边带进来的时候，你需要把它解析成 compartment、
+         颜色、脚等维度". Price rides the lead piece and the rest are 0, so the PO
+         total still equals AutoCount's to the cent. Each piece then dedicates to
+         the SO line carrying the SAME compartment code, which is what flips that
+         line to READY under bound mode. */
+      if (group === "sofa") {
+        let model = (l.erp || "").replace(/-1S$/i, "");
+        model = SOFA_MODEL_ALIAS[model] || model;
+        const reclOK = ["-1S(R)", "-1A(R)(LHF)", "-1A(P)(LHF)", "-1S(P)"]
+          .some((sfx) => codeSet.has((model + sfx).toUpperCase()));
+        // the PO's own spec first, then the order it was raised from
+        let ps = parseSofa(l.Desc2, model, reclOK);
+        let usedSoText = false;
+        if ((ps.conf === "low" || !ps.pieces.length) && src && src.d2) {
+          const alt = parseSofa(src.d2, model, reclOK);
+          if (alt.pieces.length && alt.conf !== "low") { ps = alt; usedSoText = true; }
+        }
+        const codes = ps.pieces.map((cmp) => `${model}-${cmp}`);
+        const allExist = codes.length > 0 && codes.every((cd) => codeSet.has(cd.toUpperCase()));
+        const colour = isPendingColour(ps.color) ? null : ps.color;
+        const fc = colour ? findColour(colour) : null;
+        const variants = {
+          seatHeight: ps.size || null,
+          fabricId: fc ? fc.fabric_id : null, colourId: fc ? fc.colour_id : null,
+          fabricCode: fc ? fc.colour_id : null, colourLabel: fc ? fc.label : (colour || null),
+          fabricLabel: fc ? fc.fabric_id : null, specials: ps.specials,
+        };
+        sofaDecode.push({ po: doc, code: l.ItemCode, d2: l.Desc2, model, usedSoText,
+          pieces: ps.conf !== "low" && allExist ? ps.pieces : null,
+          why: allExist ? ps.why : [...ps.why, "piece SKU missing: " + codes.filter((cd) => !codeSet.has(cd.toUpperCase())).join(",")] });
+
+        if (ps.conf !== "low" && allExist) {
+          let first = true;
+          for (const cmp of ps.pieces) {
+            const code = `${model}-${cmp}`;
+            let soItemId = takeSoLine(code);
+            /* The order may have landed as a placeholder while this PO decodes
+               cleanly (or the reverse). Falling back to the placeholder line
+               keeps the dedication rather than losing it — the operator swaps
+               the SO line's piece later and the link still points at the right
+               order line. */
+            if (!soItemId) { soItemId = takeSoLine(`${model}-1S`); if (soItemId) sofaPlaceholderBind++; }
+            if (!soItemId) noSoLine++;
+            recvUnits += recv;
+            items.push({
+              code, description: l.Description, desc2: l.Desc2, group,
+              name: (prodByCode.get(code.toUpperCase()) || {}).name || code,
+              supplierSku: `${l.ItemCode} ${cmp}`,
+              qty, recv, priceCenti: first ? priceCenti : 0,
+              wh, soItemId, dtlKey: Number(l.DtlKey), deliveryDate, variants, note: null,
+            });
+            first = false;
+          }
+          continue;
+        }
+        // never guess a build: a real, existing code carries the money, the
+        // original text stays on the line, and a human finishes the pieces
+        const ph = `${model}-1S`;
+        const code = codeSet.has(ph.toUpperCase()) ? ph : l.erp;
+        const soItemId = takeSoLine(code) ?? takeSoLine(l.erp);
+        if (!soItemId) noSoLine++;
+        recvUnits += recv;
+        items.push({
+          code, description: l.Description, desc2: l.Desc2, group,
+          name: (prodByCode.get(code.toUpperCase()) || {}).name || code,
+          supplierSku: l.ItemCode, qty, recv, priceCenti, wh, soItemId,
+          dtlKey: Number(l.DtlKey), deliveryDate,
+          variants: { seatHeight: ps.size || null, colourLabel: colour || null, specials: ps.specials },
+          note: "SOFA UNPARSED — 按图/原文补件: " + (ps.why.join("; ") || "unreadable"),
+        });
+        continue;
+      }
+
+      const soItemId = takeSoLine(byAc.get(norm(src ? src.code : "")));
+      if (!soItemId) noSoLine++;
       recvUnits += recv;
       items.push({
-        code: l.erp, description: l.Description, desc2: l.Desc2,
-        group: prodCat.get(norm(l.erp)) ?? "others",
-        qty: Math.round(Number(l.Qty ?? 0)), recv,
-        priceCenti: Math.round(Number(l.UnitPrice ?? 0) * 100),
-        wh, soItemId, dtlKey: Number(l.DtlKey),
-        deliveryDate: l.DeliveryDate ? l.DeliveryDate.slice(0, 10) : null,
+        code: l.erp, description: l.Description, desc2: l.Desc2, group,
+        name: (prodByCode.get(String(l.erp).toUpperCase()) || {}).name || l.Description || l.erp,
+        supplierSku: l.ItemCode, qty, recv, priceCenti,
+        wh, soItemId, dtlKey: Number(l.DtlKey), deliveryDate, variants: null, note: null,
       });
     }
     const anyRecv = items.some((i) => i.recv > 0);
@@ -170,6 +282,12 @@ async function main() {
   log(`to create: ${plan.length} POs / ${lineCount} lines; dedicated to an SO line: ${linked}; received units carried: ${recvUnits}`);
   log(`unresolved -> SO line ${noSoLine}; warehouse ${noWh}; supplier ${noSupplier}`);
   for (const p of plan.slice(0, 10)) log(`   ${p.acDoc} [${p.status}] ${p.items.length} lines, recv ${p.items.reduce((s, i) => s + i.recv, 0)}`);
+  if (sofaDecode.length) {
+    const ok = sofaDecode.filter((d) => d.pieces);
+    log("");
+    log(`SOFA decode: ${ok.length} decomposed, ${sofaDecode.length - ok.length} placeholder (never guessed); read from the SO's own text: ${sofaDecode.filter((d) => d.usedSoText).length}; bound to a placeholder SO line: ${sofaPlaceholderBind}`);
+    for (const d of sofaDecode) log(`   ${d.po} ${d.code} | ${JSON.stringify(d.d2 || "").slice(0, 60)} -> ${d.pieces ? d.pieces.join(" + ") : "PLACEHOLDER"}${d.why.length ? " (" + d.why.join("; ") + ")" : ""}`);
+  }
 
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to write. NOTE: no stock movements are created; the balance snapshot already holds these units."); await sql.end(); return; }
 
@@ -192,11 +310,18 @@ async function main() {
         RETURNING id`;
       for (const it of p.items) {
         await tx`INSERT INTO scm.purchase_order_items
-            (purchase_order_id, material_kind, material_code, material_name, description, description2,
-             qty, received_qty, unit_price_centi, line_total_centi, item_group,
+            (purchase_order_id, material_kind, material_code, material_name, supplier_sku,
+             description, description2, notes,
+             qty, received_qty, unit_price_centi, line_total_centi, item_group, uom,
+             custom_specials, variants,
              warehouse_id, so_item_id, company_id, delivery_date, from_mrp)
-          VALUES (${hdr.id}, 'PRODUCT', ${it.code}, ${it.description}, ${it.description}, ${it.desc2},
+          VALUES (${hdr.id}, 'mfg_product', ${it.code}, ${it.name ?? it.description}, ${it.supplierSku ?? null},
+                  ${it.description}, ${it.desc2},
+                  ${it.note ? (it.desc2 ? it.desc2 + " | " + it.note : it.note) : (it.desc2 || null)},
                   ${it.qty}, ${it.recv}, ${it.priceCenti}, ${it.qty * it.priceCenti}, ${it.group},
+                  ${it.group === "bedframe" ? "SET" : "UNIT"},
+                  ${it.variants && it.variants.specials && it.variants.specials.length ? sql.json(it.variants.specials) : null},
+                  ${it.variants ? sql.json(it.variants) : null},
                   ${it.wh}, ${it.soItemId}, 1, ${it.deliveryDate}, false)`;
       }
     });

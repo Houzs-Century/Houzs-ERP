@@ -88,7 +88,23 @@ async function main() {
       continue;
     }
     if (!erp) { unmapped++; log(`  unmapped AC code: ${m.ItemCode} (${m.DocNo})`); continue; }
-    const cands = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
+    /* Not every sofa's AutoCount code says SOFA — "THL-2379" is a sofa too, and
+       taking the literal path for it looks for a whole "2379-1S" line that a
+       decomposed order does not have. So when the exact code is not on the
+       order, fall back to the build's compartment lines before calling it
+       missing. */
+    let cands = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
+    if (!cands) {
+      const pieces = byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
+      if (pieces && pieces.length) {
+        for (const it of pieces) {
+          const n = (seenN.get(it.id) ?? 0) + 1; seenN.set(it.id, n);
+          const key = `so-items/${it.doc_no}/${it.id}/ac-${m.DtlKey}-${n}.jpg`;
+          plan.push({ file: m.file, key, itemId: it.id, already: (it.photo_urls ?? []).includes(key) });
+        }
+        continue;
+      }
+    }
     if (!cands) {
       // order not imported at all vs line missing
       const anyDoc = items.some((it) => it.linked_ac_docno === m.DocNo);

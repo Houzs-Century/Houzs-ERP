@@ -169,7 +169,7 @@ for (const d of drift.slice(0, 15)) note(`   ${d.ac}: ERP ${d.erp} vs AC ${d.ac_
       if (!line) continue;
       const ps = parseSofa(l.Desc2, model, false);
       const multi = ps.conf !== "low" && ps.pieces.length > 1;
-      const flagged = /SOFA UNPARSED/i.test(line.remark || "");
+      const flagged = /SOFA UNPARSED|补拆件/i.test(line.remark || "");
       if (multi && !flagged) { leak++; if (leak <= 25) note(`   LEAK ${ac} ${l.ItemCode} -> kept as ${line.item_code}, decodes to ${ps.pieces.join("+")}`); }
       else if (flagged) placeholder++;
       else oneSeat++;
