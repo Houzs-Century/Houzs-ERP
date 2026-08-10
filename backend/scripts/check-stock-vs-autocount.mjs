@@ -349,7 +349,11 @@ async function main() {
   const acRem = new Map();
   for (const r of gz("ac-live-so-remark2.json.gz")) acRem.set(r.DocNo.trim().toUpperCase(), { remark: (r.Remark2 || "").trim().toUpperCase(), outstanding: r.Outstanding });
 
-  const lines = await sql`SELECT h.linked_ac_docno, h.doc_no, h.status,
+  /* proceeded_at matters: recomputeSoStockAllocation gates on it. An SO with a
+     NULL processing date has every line FORCED to PENDING and consumes no
+     stock, so the ERP emits "" no matter how much stock is physically there.
+     Without this column a whole class of disagreement looks inexplicable. */
+  const lines = await sql`SELECT h.linked_ac_docno, h.doc_no, h.status, h.proceeded_at,
       i.item_group, i.item_code, i.stock_status, COALESCE(i.cancelled,false) cancelled
     FROM scm.mfg_sales_orders h
     JOIN scm.mfg_sales_order_items i ON i.doc_no = h.doc_no
@@ -357,7 +361,7 @@ async function main() {
   const byOrder = new Map();
   for (const l of lines) {
     const k = String(l.linked_ac_docno).trim().toUpperCase();
-    if (!byOrder.has(k)) byOrder.set(k, { doc_no: l.doc_no, status: l.status, lines: [] });
+    if (!byOrder.has(k)) byOrder.set(k, { doc_no: l.doc_no, status: l.status, proceeded_at: l.proceeded_at, lines: [] });
     byOrder.get(k).lines.push(l);
   }
   log(`ERP orders linked to an AutoCount DocNo: ${byOrder.size}`);
@@ -382,8 +386,23 @@ async function main() {
     matrix.set(key, (matrix.get(key) ?? 0) + 1);
     const sameCanon = canon(ac.remark) === canon(erpRemark);
     if (sameCanon && (ac.remark || "") !== (erpRemark || "")) orderOnly += 1;
-    if (!sameCanon) mismatches.push({ doc, erpDoc: o.doc_no, ac: ac.remark, erp: erpRemark, status: o.status, outstanding: ac.outstanding });
+    if (!sameCanon) mismatches.push({ doc, erpDoc: o.doc_no, ac: ac.remark, erp: erpRemark, status: o.status, outstanding: ac.outstanding, proceeded: o.proceeded_at != null });
   }
+
+  const statusCause = (m) => {
+    if (!m.proceeded) return "NOT PROCESSED IN ERP — proceeded_at is NULL, so the allocator forces every line PENDING and the ERP cannot report readiness regardless of stock";
+    if (m.ac && !m.erp) return "AUTOCOUNT AHEAD — staff marked it ready in AutoCount but the ERP allocator found no stock to allocate";
+    if (!m.ac && m.erp) return "ERP AHEAD — the ERP allocated stock but nobody typed it back into AutoCount's Remark2";
+    return "BOTH SET, DIFFERENT — the two systems disagree on WHICH categories are ready";
+  };
+  const causeTally = new Map();
+  for (const m of mismatches) {
+    const c = statusCause(m).split(" — ")[0];
+    causeTally.set(c, (causeTally.get(c) ?? 0) + 1);
+  }
+  log("");
+  log("status disagreement causes:");
+  for (const [c, n] of [...causeTally.entries()].sort((a, b) => b[1] - a[1])) log(`  ${String(n).padStart(5)}  ${c}`);
   log(`orders compared: ${compared}; linked but absent from the AutoCount export: ${missingInAc}`);
   log(`AGREE: ${compared - mismatches.length}; DISAGREE: ${mismatches.length}; of the agreeing, differing only in token ORDER: ${orderOnly}`);
 
@@ -404,7 +423,7 @@ async function main() {
   log("");
   log(`sample disagreements (max ${TOP}):`);
   for (const m of mismatches.slice(0, TOP)) {
-    log(`  ${m.doc} (${m.erpDoc}, ${m.status}): AutoCount "${m.ac || "(blank)"}" vs ERP "${m.erp || "(blank)"}"`);
+    log(`  ${m.doc} (${m.erpDoc}, ${m.status}${m.proceeded ? "" : ", NOT PROCESSED"}): AutoCount "${m.ac || "(blank)"}" vs ERP "${m.erp || "(blank)"}" :: ${statusCause(m).split(" — ")[0]}`);
   }
 
   await sql.end();
