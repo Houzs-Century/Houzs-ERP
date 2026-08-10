@@ -21,6 +21,13 @@ on:
         default: "0"
         type: string
 
+      sofa:
+        description: "yes = include held sofa POs (per-compartment decomposition)"
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+
 concurrency:
   group: fix-imported-so-venues-${{ inputs.target }}
   cancel-in-progress: false
@@ -39,6 +46,7 @@ jobs:
       - run: node scripts/import-ac-outstanding-po.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          SOFA: ${{ inputs.sofa == 'yes' && '1' || '' }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
@@ -53,4 +61,5 @@ jobs:
       - run: node scripts/import-ac-outstanding-po.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          SOFA: ${{ inputs.sofa == 'yes' && '1' || '' }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
