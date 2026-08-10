@@ -2489,8 +2489,14 @@ function TaskRow({
       {canTick && !done && files.length > 0 &&
         (it.required_perm ? holdsChecklistApproval(user?.permissions, it.required_perm) : awaitingReview) && (
         <>
-          <button className="tinybtn" style={{ background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={() => review("approve")}>Approve</button>
-          <button className="tinybtn" style={{ background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => review("reject")}>Reject</button>
+          {/* Toggle (owner 2026-08-10): show only the reversing action — Approve
+              hidden once approved, Reject hidden once rejected. */}
+          {reviewStatus !== "approved" && (
+            <button className="tinybtn" style={{ background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={() => review("approve")}>Approve</button>
+          )}
+          {reviewStatus !== "rejected" && (
+            <button className="tinybtn" style={{ background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => review("reject")}>Reject</button>
+          )}
         </>
       )}
     </div>
@@ -3310,10 +3316,19 @@ function ReviewButtons({
       setBusy(false);
     }
   };
+  // Toggle (owner 2026-08-10): show only the button that REVERSES the current
+  // decision. Approve hidden once approved (Reject stays, to re-open); Reject
+  // hidden once rejected (Approve stays, to approve the fix). The status itself
+  // stays visible via the ReviewBadge next to these buttons.
+  const rs = (item.review_status ?? "").toLowerCase();
   return (
     <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-      <button className="tinybtn" style={{ flex: 1, background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("approve"); }}>Approve</button>
-      <button className="tinybtn" style={{ flex: 1, background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("reject"); }}>Reject</button>
+      {rs !== "approved" && (
+        <button className="tinybtn" style={{ flex: 1, background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("approve"); }}>Approve</button>
+      )}
+      {rs !== "rejected" && (
+        <button className="tinybtn" style={{ flex: 1, background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("reject"); }}>Reject</button>
+      )}
     </div>
   );
 }

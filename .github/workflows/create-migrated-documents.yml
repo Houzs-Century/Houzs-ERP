@@ -1,0 +1,64 @@
+name: Create migrated GR and DO documents (no stock)
+
+# Manual. Creates the AutoCount paperwork the ERP is missing: goods receipts for
+# purchase orders AutoCount already received, and delivery orders for the part
+# of an order AutoCount already delivered. Both are stamped migrated_no_stock
+# and write NO inventory movement - the balance snapshot already counts those
+# receipts as IN and those deliveries as OUT, so posting either would apply the
+# same movement twice. DRY-RUN by default; apply=1 writes.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      kind:
+        description: "grn, do, or both"
+        required: true
+        default: "both"
+        type: choice
+        options: [both, grn, do]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: create-migrated-documents-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/create-migrated-documents.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          KIND: ${{ inputs.kind }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/create-migrated-documents.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          KIND: ${{ inputs.kind }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
