@@ -1,0 +1,117 @@
+{
+  "_": "Phrase -> Special Orders picker code map for the migrated SO/PO backfill.",
+  "_field": "The picker reads variants.specials (SpecialOrders.tsx:91). custom_specials is a DERIVED OUTPUT of mfg-pricing-recompute (mfg-pricing-recompute.ts:283/604) and is overwritten on the first UI edit (mfg-sales-orders.ts:8234), so it is NOT a place to store an operator choice.",
+  "_phrases": "The phrase side is what the parsers actually emit: parseSofa's special-order sweep (parse-sofa.mjs:45-60, pinned in backend/tests/parseSofaGrammar.test.ts:117-160) and parse-bedframe's specials block (parse-bedframe.mjs:134-160).",
+  "_matching": "Each phrase is normalised to ' words separated by single spaces ' (lower case, every non [a-z0-9] run -> space, wrapped in spaces) before `yes`/`no` are tested. `no` is a veto and runs first. Codes are resolved against the LIVE scm.special_addons read; a family whose code is not live is reported MISSING and its phrases fall through to UNMAPPED. Never invent a code.",
+  "_owner": "Owner rulings 2026-08-10 are recorded per family in `why`, and the deliberate non-mappings are in `excluded` (they are NOT gaps).",
+
+  "families": [
+    {
+      "code": "Nylon Fabric",
+      "categories": ["SOFA", "BEDFRAME"],
+      "yes": "\\b(nylon|nilon|nilonn|umbrella|umb)\\b",
+      "why": "Owner: nylon 和 umbrella fabric 一样的 — one request, one code. Covers 'BOTTOM USE UMBRELLA FABRIC', 'WRAP BOTTOM TO NILON', 'BOTTOM WRAP NYLON' (parseSofaGrammar.test.ts:126-148) and parse-bedframe.mjs:151 which already emits this exact code."
+    },
+    {
+      "code": "Seat Base Fully Cover with no Leg",
+      "categories": ["SOFA"],
+      "no": "\\bnot fully cover\\b|\\bnormal leg\\b",
+      "yes": "(\\bfully cover(ed)?\\b.*(\\bno leg\\b|\\bto floor\\b|\\breplace the leg\\b|\\bchange for the leg\\b))|((\\bno leg\\b|\\bto floor\\b|\\breplace the leg\\b).*\\bfully cover(ed)?\\b)|(\\bextend to floor\\b.*\\bleg\\b)|\\bno leg\\b",
+      "why": "Owner: both 'fully cover to floor no leg' and 'fully cover replace the leg' mean the same no-leg treatment, so both phrasings route to this one code. The `no` veto exists because 'REQUEST TO NORMAL LEG AND NOT FULLY COVER' (2 lines) says the opposite."
+    },
+    {
+      "code": "Seat Behind Extend 5\"",
+      "categories": ["SOFA"],
+      "yes": "\\bpush back\\b.*\\balign to seat\\b",
+      "why": "Owner named this code from the phrase 'after push back align to seat' (parseSofaGrammar.test.ts:140)."
+    },
+    {
+      "code": "Seat Behind Extend 4\"",
+      "categories": ["SOFA"],
+      "yes": "\\bseat behind\\b.*\\bextend 4\\b",
+      "why": "Literal wording of the code."
+    },
+    {
+      "code": "Wooden Arm",
+      "categories": ["SOFA"],
+      "yes": "\\bwood\\w*\\b.*(\\barm\\w*\\b|\\bplate\\b)|(\\barm\\w*\\b|\\bplate\\b).*\\bwood\\w*\\b",
+      "why": "parseSofa emits 'wooden arm' (parse-sofa.mjs:100) and the raw slip wording. Fabric colour codes ending in WOOD ('CH141-4 WOOD') never reach here — parseSofa drops them as COLOUR_LIKE (parseSofaGrammar.test.ts:152)."
+    },
+    {
+      "code": "No notch on Seat Cushion",
+      "categories": ["SOFA"],
+      "no": "\\bplane\\b|\\bplain\\b",
+      "yes": "\\bno\\b.*(\\bstitch\\w*|\\bstich\\w*|\\bholes?\\b|\\bnotch\\b).*(\\bsit\\w*|\\bseat\\w*|\\bcushion\\b)|(\\bsit\\w*|\\bseat\\w*|\\bcushion\\b).*\\bno\\b.*(\\bstitch\\w*|\\bstich\\w*|\\bholes?\\b|\\bnotch\\b)",
+      "why": "'notch' is the stitched dimple in a seat cushion; these slips all say do not put one there. Vetoed when the slip also says plain, which is the separate code below."
+    },
+    {
+      "code": "Seat Cushion No Notch and Plain",
+      "categories": ["SOFA"],
+      "yes": "\\bno line\\b.*(\\bplane\\b|\\bplain\\b)|(\\bplane\\b|\\bplain\\b).*\\bno line\\b",
+      "why": "Owner named this code from the exact phrase 'seat cushion no line do plane' (seed-sofa-special-addons.mjs)."
+    },
+    {
+      "code": "Seat Firmer",
+      "categories": ["SOFA"],
+      "no": "\\bless firm\\b|\\bsofter\\b|\\bmore soft\\b|\\bback\\b",
+      "yes": "(\\bseat\\w*\\b|\\bsitting\\b).*(\\bfirmer\\b|\\bharder\\b|\\bdo hard\\b)|(\\bfirmer\\b|\\bharder\\b|\\bdo hard\\b).*(\\bseat\\w*\\b|\\bsitting\\b)",
+      "why": "Seat-only firmness. Vetoed by 'back' so a seat+back slip falls to the combined code, and by the softer wordings which are the opposite request."
+    },
+    {
+      "code": "Backcushion Firmer",
+      "categories": ["SOFA"],
+      "no": "\\bless firm\\b|\\bsofter\\b|\\bmore soft\\b|\\bseat\\b",
+      "yes": "\\bback\\b.*(\\bfirmer\\b|\\bharder\\b)|(\\bfirmer\\b|\\bharder\\b).*\\bback\\b",
+      "why": "Owner: backrest and back cushion are the same word, so 'back' alone carries it. Vetoed by 'seat' so a seat+back slip falls to the combined code."
+    },
+    {
+      "code": "Seat and Backcushion Firmer",
+      "categories": ["SOFA"],
+      "no": "\\bless firm\\b|\\bsofter\\b|\\bmore soft\\b",
+      "yes": "\\bseat\\w*\\b.*\\bback\\b.*(\\bfirmer\\b|\\bharder\\b)|\\bback\\b.*\\bseat\\w*\\b.*(\\bfirmer\\b|\\bharder\\b)|(\\bfirmer\\b|\\bharder\\b).*\\bseat\\w*\\b.*\\bback\\b",
+      "why": "Both parts named in one instruction."
+    },
+    {
+      "code": "Separate Backrest Packing",
+      "categories": ["SOFA", "BEDFRAME"],
+      "yes": "(\\bback ?rest\\b|\\bback ?cushion\\b).*\\bseparate\\b|\\bseparate\\b.*(\\bback ?rest\\b|\\bback ?cushion\\b)",
+      "why": "Owner: backrest and back cushion are the same word. parse-bedframe.mjs:155 already emits this exact code for the bedframe side."
+    },
+    { "code": "No bracket", "categories": ["SOFA"], "yes": "\\bno bracket\\b", "why": "Literal (parseSofaGrammar.test.ts:142)." },
+    { "code": "Short Backrest", "categories": ["SOFA"], "yes": "\\bshort back ?rest\\b|\\bshort back ?cushion\\b", "why": "Literal; backrest == back cushion per the owner." },
+    { "code": "Seat Add 1ft", "categories": ["SOFA"], "yes": "\\bseat\\b.*(\\badd 1 ?f?t\\b|\\badd one foot\\b)", "why": "Literal wording of the code." },
+    { "code": "5537 Backrest", "categories": ["SOFA"], "yes": "\\b5537\\b.*(\\bback ?rest\\b|\\bback ?cushion\\b)|(\\bback ?rest\\b|\\bback ?cushion\\b).*\\b5537\\b", "why": "Its own product code, tested BEFORE the cushion-swap family so 5537/5540 never fall through to a change-to-model rule." },
+    { "code": "5540 Backrest", "categories": ["SOFA"], "yes": "\\b5540\\b.*(\\bback ?rest\\b|\\bback ?cushion\\b)|(\\bback ?rest\\b|\\bback ?cushion\\b).*\\b5540\\b", "why": "Same as 5537." },
+
+    { "code": "HB Straight", "categories": ["BEDFRAME"], "yes": "\\bstraight to (the )?wall\\b|\\bh ?b straight\\b|\\bheadboard straight\\b|\\bflip on wall\\b|\\bstaright\\b", "why": "parse-bedframe.mjs:157 emits this code; the phrasings and the 'staright' typo come from fix-so-specials.mjs:32." },
+    { "code": "No Side Panel", "categories": ["BEDFRAME"], "yes": "\\bno side panel\\b|\\bwithout (side )?panel\\b", "why": "parse-bedframe.mjs:149." },
+    { "code": "Headboard Only", "categories": ["BEDFRAME"], "yes": "\\bheadboard only\\b|\\bhb only\\b", "why": "parse-bedframe.mjs:148." },
+    { "code": "Left Drawer", "categories": ["BEDFRAME"], "yes": "\\bleft drawer\\b|\\bdrawer (at )?left\\b", "why": "parse-bedframe.mjs:143." },
+    { "code": "Right Drawer", "categories": ["BEDFRAME"], "yes": "\\bright drawer\\b|\\bdrawer (at )?right\\b", "why": "parse-bedframe.mjs:144." },
+    { "code": "Front Drawer", "categories": ["BEDFRAME"], "no": "\\bleft drawer\\b|\\bright drawer\\b|\\bdrawer (at )?(left|right)\\b", "yes": "\\bfront drawer\\b|\\bdrawer (at )?front\\b|\\bdrawer\\b|\\bpull ?out\\b|\\bput out\\b", "why": "parse-bedframe.mjs:145-146/159 — an unqualified drawer, and a pull-out, are a front drawer. Vetoed when the slip named a side." },
+    { "code": "1 Piece Divan", "categories": ["BEDFRAME"], "yes": "\\b1 piece divan\\b|\\bone piece divan\\b", "why": "parse-bedframe.mjs:150." },
+    { "code": "Divan Curve", "categories": ["BEDFRAME"], "yes": "\\bdivan curve\\b|\\bcurve divan\\b|\\bdo curve\\b|\\bedge\\b.*\\bcurve\\b", "why": "parse-bedframe.mjs:147." },
+    { "code": "Divan A11", "categories": ["BEDFRAME"], "yes": "\\bdivan a11\\b", "why": "parse-bedframe.mjs:154." },
+    { "code": "Divan Top(W)", "categories": ["BEDFRAME"], "yes": "\\bdivan top ?w\\b", "why": "parse-bedframe.mjs:153." },
+    { "code": "Add 1\" Infront L", "categories": ["BEDFRAME"], "yes": "\\bin ?front l\\b|\\badd 1\\b.*\\binfront\\b", "why": "parse-bedframe.mjs:152." },
+    { "code": "HB Fully Cover", "categories": ["BEDFRAME"], "no": "\\bnot fully cover\\b", "yes": "\\bcover\\b.*(\\bhb\\b|\\bheadboard\\b)|(\\bhb\\b|\\bheadboard\\b).*\\bcover\\b|^ (fully )?cover", "why": "fix-so-specials.mjs:34-37 — on a bedframe a bare 'fully cover' is the headboard. parse-bedframe.mjs:137-138 emits the raw 'HB ...' capture and the literal 'fully cover'." },
+    { "code": "Divan Full Cover", "categories": ["BEDFRAME"], "no": "\\bnot fully cover\\b|\\btop\\b", "yes": "\\bcover\\b.*(\\bdivan\\b|\\bdiv\\b)|(\\bdivan\\b|\\bdiv\\b).*\\bcover\\b", "why": "fix-so-specials.mjs:36." },
+    { "code": "Divan Top Fully Cover", "categories": ["BEDFRAME"], "no": "\\bnot fully cover\\b", "yes": "\\btop\\b.*\\bcover\\b.*(\\bdivan\\b|\\bdiv\\b)|(\\bdivan\\b|\\bdiv\\b).*\\btop\\b.*\\bcover\\b|(\\bdivan\\b|\\bdiv\\b).*\\bcover\\b.*\\btop\\b", "why": "fix-so-specials.mjs:36 — 'top' narrows Divan Full Cover to the top-only code." }
+  ],
+
+  "cushionSwapModels": [
+    ["8030", "Change 8030 Backcushion"],
+    ["9028", "change to 9028 back cushion"],
+    ["9050", "change to 9050 back cushion"],
+    ["9058", "change to 9058 back cushion"],
+    ["5535", "change to 5535 back cushion"]
+  ],
+  "_cushionSwap": "Owner: backrest and back cushion are the same word, and the picker carries exactly one code per model number, so both wordings route to the model's code. Applies only when the phrase says back rest / back cushion. When the phrase names two model numbers ('9058 sofa backrest change 9028') the LAST one is the model being changed TO. 5537/5540 are their own products and are matched by the families above, which run first. Codes follow the owner's own spelling, which is deliberately inconsistent (fix-sofa-special-addon-names.mjs) — do not tidy it.",
+
+  "excluded": [
+    { "match": "\\bpower slider\\b", "why": "Owner: a power slider is a COMPARTMENT, not a special. Never map it to a special code. ('1 SIDE POWER SLIDER', 6 lines)" },
+    { "match": "\\barm ?rest\\b.*\\breplace\\b.*\\bseat\\b|\\barm\\b.*\\bchange to seat\\b|\\barm ?rest\\b.*\\breplace to sit\\b", "why": "Owner: armrest-replace-seat is a COMPARTMENT, not a special. Never map it to a special code. ('2R ARMREST REPLACE SEAT' 6, 'ONE SIDE ARMREST REPLACE SEAT' 1, 'ARM REST REPLACE TO SIT AREA' 1, 'ARM CHANGE TO SEAT AREA' 1)" },
+    { "match": "(\\bseat\\w*|\\bsitting\\b).*\\bcushion\\b.*\\badd\\b.*\\bheight\\b|\\bseat height\\b.*\\b1\\b|\\bseating up 1|\\bseat 1 ?inch height\\b", "why": "Owner: 'seat cushion add height 1 inch' goes to FREE TEXT, not a code — 不要太多选项. ('SEAT HEIGHT: +1\\\"INCH' 12, 'SITTING CUSHION ADD HEIGHT 1\\\"INCH' 3, 'SEATING UP 1INCH' 2, 'SEAT:+1\\\"INCH HEIGHT' 1)" },
+    { "match": "\\bleg\\b", "why": "A leg change belongs to the sofa LEG pool, not the Specials picker — the owner moved Altay Leg out of Specials for exactly this reason. Only the no-leg fully-cover family above claims a leg phrase, and it is tested first. ('LEG CHANGE ALTAY LEG GROSSY BLACK LEG' 8, 'LEG CHANGE 101MIDDLE LEG(8\\\")' 8, 'ADD 1INCH LEG' 4, ...)" }
+  ]
+}
