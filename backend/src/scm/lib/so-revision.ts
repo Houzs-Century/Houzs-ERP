@@ -954,13 +954,16 @@ export async function reviseBoundPo(
   //     Houzs: the per-line delivery date column is `line_delivery_date`.
   const { data: revisedSoRows, error: revErr } = await sb
     .from('mfg_sales_order_items')
-    .select('id, item_code, item_group, qty, variants, warehouse_id, line_delivery_date, description')
+    .select('id, item_code, item_group, qty, variants, warehouse_id, line_delivery_date, description, photo_urls')
     .in('id', soItemIds);
   if (revErr) throw new Error(`reviseBoundPo: revised SO lines load failed: ${revErr.message}`);
   type RevisedLine = {
     item_code: string | null; item_group: string | null; qty: number | null;
     variants: Record<string, unknown> | null; warehouse_id: string | null;
     line_delivery_date: string | null; description: string | null;
+    // Owner 2026-08-10 (migration 0274) — an SO line's photos follow it onto the
+    // PO line, the same on this amendment path as on the convert paths.
+    photo_urls: string[] | null;
   };
   const revisedById = new Map<string, RevisedLine>();
   for (const r of (revisedSoRows ?? []) as Array<Record<string, unknown>>) {
@@ -972,6 +975,7 @@ export async function reviseBoundPo(
       warehouse_id:       (r.warehouse_id as string | null) ?? null,
       line_delivery_date: (r.line_delivery_date as string | null) ?? null,
       description:        (r.description as string | null) ?? null,
+      photo_urls:         (r.photo_urls as string[] | null) ?? null,
     });
   }
 
@@ -1167,6 +1171,8 @@ export async function reviseBoundPo(
         variants,
         description2:      buildVariantSummary(String(itemGroup ?? ''), variants ?? null) || null,
         so_item_id:        add.soItemId,
+        // Migration 0274 — carry the SO line's photo keys (same R2 objects).
+        photo_urls:        line.photo_urls ?? [],
         from_mrp:          false,
       });
       if (insErr) throw new Error(`reviseBoundPo: added PO line insert failed for SO line ${add.soItemId}: ${insErr.message}`);
