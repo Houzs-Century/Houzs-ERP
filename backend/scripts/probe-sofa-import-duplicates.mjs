@@ -118,4 +118,21 @@ drift.sort((a, b) => Math.abs(b.d) - Math.abs(a.d));
 note(`4 LINE-COUNT DRIFT (expected for decomposed sofa builds): ${drift.length} orders`);
 for (const d of drift.slice(0, 15)) note(`   ${d.ac}: ERP ${d.erp} vs AC ${d.ac_n} (${d.d > 0 ? "+" : ""}${d.d})`);
 
+
+// 5 DELIVERED-BUT-IMPORTED — owner's rule (2026-08-10): outstanding means NOT
+// yet turned into a DO; converting to a PO keeps it outstanding. An order whose
+// every line has TransferedQty >= Qty is fully delivered and must not sit in
+// the ERP as an outstanding SO. (TransferedPOQty is deliberately ignored.)
+{
+  const n = (v) => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
+  const full = [];
+  for (const [doc, ls] of acLines) if (ls.length && !ls.some((x) => n(x.Qty) > n(x.TransferedQty))) full.push(doc);
+  const fullSet = new Set(full);
+  const imported = heads.filter((h) => fullSet.has(h.linked_ac_docno));
+  note(`5 DELIVERED-BUT-IMPORTED: export carries ${full.length} fully-delivered orders; ${imported.length} of them are in the ERP`);
+  const sofaOnes = imported.filter((h) => (acSofa.get(h.linked_ac_docno) || []).length);
+  note(`   of those, with sofa lines: ${sofaOnes.length}`);
+  for (const h of imported.slice(0, 40)) note(`   ${h.linked_ac_docno} -> ${h.doc_no}  RM${(Number(h.total_revenue_centi || 0) / 100).toFixed(2)}${(acSofa.get(h.linked_ac_docno) || []).length ? "  [SOFA]" : ""}`);
+}
+
 await sql.end({ timeout: 5 });
