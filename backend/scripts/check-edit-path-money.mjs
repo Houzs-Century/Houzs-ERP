@@ -79,19 +79,36 @@ try {
      WHERE schemaname = 'scm' AND tablename = 'inventory_movements'
      ORDER BY indexname`;
   let uniqueOnSourceKey = [];
+  /* Does the DO index carry the correction slot migration 0279 added? That is
+     the single thing separating "an edit after shipping is silently refused"
+     from "it lands", so the verdict has to READ it rather than restate what the
+     index used to be. */
+  let withCorrectionSlot = [];
   for (const r of idx) {
     const isUnique = /CREATE UNIQUE/i.test(r.indexdef);
     const onSourceKey = /source_doc_type[\s\S]*source_doc_id[\s\S]*product_code[\s\S]*variant_key/i.test(r.indexdef);
-    if (isUnique && onSourceKey) uniqueOnSourceKey.push(r.indexname);
+    if (isUnique && onSourceKey) {
+      uniqueOnSourceKey.push(r.indexname);
+      if (/correction_seq/i.test(r.indexdef)) withCorrectionSlot.push(r.indexname);
+    }
     console.log(`  ${isUnique ? "UNIQUE " : "       "}${r.indexname}`);
     console.log(`          ${r.indexdef}`);
   }
   console.log("");
-  notice(
-    uniqueOnSourceKey.length === 0
-      ? "1. VERDICT: NO unique index on (source_doc_type, source_doc_id, product_code, variant_key). Defect 1's premise is REFUTED — delta rows would insert."
-      : `1. VERDICT: ${uniqueOnSourceKey.length} UNIQUE index(es) on the source key: ${uniqueOnSourceKey.join(", ")}. movement_type is NOT among their columns, so one (doc, product, variant) bucket holds exactly ONE row.`,
-  );
+  if (uniqueOnSourceKey.length === 0) {
+    notice("1. VERDICT: NO unique index on (source_doc_type, source_doc_id, product_code, variant_key). Defect 1's premise is REFUTED — delta rows would insert.");
+  } else {
+    const plain = uniqueOnSourceKey.filter((n) => !withCorrectionSlot.includes(n));
+    notice(`1. VERDICT: ${uniqueOnSourceKey.length} UNIQUE index(es) on the source key: ${uniqueOnSourceKey.join(", ")}.`);
+    notice(
+      withCorrectionSlot.length > 0
+        ? `1a. ${withCorrectionSlot.join(", ")} carr${withCorrectionSlot.length === 1 ? "ies" : "y"} COALESCE(correction_seq, 0) (migration 0279): ONE primary posting per bucket -- the double-post backstop -- plus one row per numbered correction, so an edit after shipping REACHES the ledger.`
+        : "1a. NONE of them carries correction_seq. Migration 0279 has not been applied here, so every edit-after-ship delta is still silently REFUSED.",
+    );
+    if (plain.length > 0) {
+      notice(`1b. Still four-column (one row per bucket, ever): ${plain.join(", ")}. Correct for these paths -- the DR resync posts under source_doc_type='ADJUSTMENT' instead, and the consignment paths write once.`);
+    }
+  }
 
   /* ── 2. Is source_doc_type constrained? ────────────────────────────────────
      Decides whether a NEW source_doc_type value is even available as a fix
