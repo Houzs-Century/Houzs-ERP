@@ -36,6 +36,93 @@ Two follow-on findings, both caught by tests rather than by reasoning:
   wrong one silently edits a different line in a live account book.
 
 **Ref** - 2026-08-11, PR #1936 (feat/ac-erp-line-identity). C# half in #1935.
+## `String(pgDate).slice(0,10)` produced "Wed Jun 24", and it aborted the sofa stock opening on its first INSERT [medium]
+
+**Symptom** - the first-ever APPLY run of `import-ac-sofa-stock.mjs` against
+production (run 31420345698, 2026-08-11) died immediately with
+`PostgresError: invalid input syntax for type timestamp with time zone:
+"Wed Jun 24T00:00:00Z"`. None of the 109 planned sofa lots were written.
+
+**Root cause (traced, not guessed)** - `:169` built the build's receipt date as
+`String(l.po_date).slice(0, 10)`. `po_date` comes back from the `postgres`
+driver as a **JS `Date`**, and `Date.prototype.toString()` is the locale form
+`"Wed Jun 24 2026 08:00:00 GMT+0800 (…)"` - not ISO. Slicing ten characters
+yields `"Wed Jun 24"`. The writer then pasted that straight into the SQL text as
+`` `'${p.receivedAt}T00:00:00Z'` ``, so Postgres received the literal
+`'Wed Jun 24T00:00:00Z'`.
+
+The other date source was fine and is worth recording so nobody "fixes" it too:
+`ac-stock-layers.json.gz` stores `Date` as a clean `"YYYY-MM-DD"` **string**, so
+the same slice was correct there. One expression, two callers, only one of them
+holding a `Date` - which is exactly why it survived every dry-run: the dry-run
+never reaches the INSERT, and the projection does not touch the date.
+
+**Fix** - one `isoDay()` helper that branches on `instanceof Date` (ISO via
+`toISOString()`) versus a string with a leading `YYYY-MM-DD`, returning null
+rather than a malformed value, applied to BOTH date sources. The INSERT now
+**binds every value** instead of interpolating any of them into the SQL text,
+so a bad value can no longer become syntactically-valid-looking SQL. Progress
+logging tightened from every 50 rows to every 25 so a partial write is visible.
+
+**Verified** - a re-run of the DRY-RUN read `already opened by an earlier run: 0`,
+confirming from an independent query that the aborted APPLY wrote **nothing** and
+left no partial state to compensate for.
+
+**The class, for next time** - `String(x).slice(0,10)` is only an ISO date when
+`x` is already an ISO string. Against a driver that hydrates `date`/`timestamp`
+columns into `Date` objects it silently produces a weekday-prefixed fragment.
+Use `toISOString()`, and **bind dates as parameters** - had the value been bound
+rather than interpolated, the driver would have serialised the `Date` correctly
+and the bug would never have existed.
+
+**Ref** - 2026-08-11, PR #1942 (fix/stock-criterion-close).
+
+## The stock reconciler excluded sofa by AutoCount's ItemGroup, so 85 units of pillows and stools read as a phantom ERP surplus [medium]
+
+**Symptom** - the per-warehouse reconcile (`check-stock-vs-autocount.mjs`, prod
+run 31419069241) reported the ERP holding 149 units MORE than live AutoCount
+over the comparable cells, and named a 25-cell / 98-unit class
+`CUTOVER ADJUSTMENT ONLY - seeded once and untouched since`. Twelve of those
+cells claimed AutoCount held NOTHING at all against real ERP stock, the largest
+being `SQUARE PILLOW @ BALAKONG WAREHOUSE: AutoCount - vs ERP 46`.
+
+**Root cause (traced, not guessed)** - the exclusion at `:152` was
+`if (g === "SOFA")`, where `g` is the AutoCount item master's `ItemGroup`.
+AutoCount files 41 codes under `ItemGroup = SOFA`; only 22 of them are whole
+sofa sets. The other 19 - `DSL-SQUARE PILLOW`, `AMN-LONG PILLOW`,
+`HOK-SQUARE PILLOW`, `RDS-SGABELLO`, `DSL-STOOL 1`, `LV-3068 BOLSTER`, the
+`THL-xxxx` single-seaters and the rest, 85 units - are pillows, bolsters and
+stools that `data/autocount-erp-mapping-1561.csv` correctly categorises as
+`ACCESSORY`.
+
+`import-ac-stock-balance.mjs` excludes on that CSV category
+(`isSofaFurniture`, built at `:64` from column 4), NOT on the ItemGroup. So the
+importer BROUGHT THOSE 85 UNITS IN, the ERP holds them, and the checker then
+refused to look at the AutoCount side of the same cells - reporting real,
+correctly-imported stock as a surplus the other system did not have.
+
+Measured against the live export: of the 85 units, **77 are present on both
+sides** and 11 of the 12 cells reconcile exactly once the excluded codes are
+summed. The genuine residual is **+8 units**, all on
+`SQUARE PILLOW @ BALAKONG WAREHOUSE` (ERP 46 vs AutoCount 38). So the corrected
+net delta over comparable cells is **+72 units, not +149** - 52% of the reported
+gap was the checker's own filter.
+
+**Fix** - exclude on the binding CSV's category column, byte-identical to
+`import-ac-stock-balance.mjs:64`, and report separately how many units are
+compared despite carrying `ItemGroup = SOFA`. The `g === "SOFA"` test is gone.
+
+**The class, for next time** - this is `D7` in `docs/stock-reconciliation.md`
+one layer up. D7 was "excluded accessories by matching /SOFA/ against the item
+CODE"; this is "excluded accessories by matching SOFA against the item GROUP".
+The invariant both violate: **a reconciler's exclusion must be the same
+predicate as the importer's.** If the importer brought a row in, the ERP holds
+it and it must be compared - otherwise the check manufactures the very
+discrepancy it exists to find. Categorise by the field the importer used, never
+by a field that merely sounds like it means the same thing.
+
+**Ref** - 2026-08-11, PR #1942 (fix/stock-criterion-close). Found by an
+independent read while closing go-live criterion 3.
 ## /edit appended a duplicate of every line into the live account book, and a line could not be retired without deleting it [critical]
 
 **Symptom** - none yet, and that is the point: the ERP -> AutoCount write-back
