@@ -1,3 +1,377 @@
+## Duplicate-series detection paired five unrelated fabrics through "BR0WN" [low]
+
+**Symptom** - the first prod run of merge-duplicate-fabric-series reported 41
+duplicate fabric series pairs, among them 311 <-> A201, 311 <-> KS, 311 <->
+M2402 and 311 <-> XQ#18. Those are five unrelated fabrics.
+
+**Root cause (traced, not guessed)** - all five collided on one key, `BR0WN`.
+`foldColour` maps letter-O to "0" (that is what puts BO315 and B0315 on one
+key), so a colour whose label is only a NAME - "BROWN", "DARK BROWN", "WOOD
+BROWN" - folds to a string containing a "0". The detector gated its keys on a
+digit test run against the FOLD, which that fake zero satisfies, so a plain
+colour name was admitted as a colour CODE and every series holding a BROWN
+matched every other one.
+
+**Fix** - run the digit test in MARK space (`markColour`, where letter-O is "@"
+and only a written zero stays a digit), which is the space the matcher's own
+digit guard already compares in. 41 pairs became 31, and all 10 that vanished
+were false. The same pass added a written-tail pad before folding, because
+"J9226-2" folds to "J92262" and nothing downstream can then tell the series
+digits from the colour digit - which is why ARMANI J9226 / J9226, one of the
+two duplicate pairs this work started from, had gone undetected. Final: 32 real
+pairs, no false ones.
+
+**Lesson** - foldColour is lossy by design and its output is not safe to ask
+structural questions of. Anything deciding "is this a code or a name" must ask
+markColour, not the fold.
+
+**Ref** - fix/dup-fabric-series-detection, 2026-08-10
+
+## A probe copied the SO join onto the PO table and crashed on a column that is not there [low]
+
+**Symptom** — `probe-sofa-colour-misses.mjs`, dispatched read-only against prod
+the moment it merged, printed the fabric-library line and then died:
+`PostgresError: column h.doc_no does not exist` (SQLSTATE 42703), run
+31406187136. It reported nothing at all.
+
+**Root cause (traced, not guessed)** — the two document headers number their
+documents differently and the join hides it. `scm.mfg_sales_orders` carries
+`doc_no` and its items join ON that column, so `h.doc_no` is right there in the
+SO query being copied. `scm.purchase_orders` numbers its documents `po_number`
+and its items join on the surrogate `h.id = i.purchase_order_id` — so the PO
+query it was copied from never had to name the column, and the copy carried the
+SO's name across into a table that has no such column.
+
+**Fix** — `SELECT h.po_number AS doc_no` on the PO arm, aliased so the report
+keeps one shape for both. PR #1910.
+
+**The class, for next time** — copying a query between the SO and PO arms is
+safe for the item columns and unsafe for the header ones. `item_code` vs
+`material_code` differs loudly enough that it gets noticed; `doc_no` vs
+`po_number` is hidden behind a join that never spells it out. Two arms of the
+same sweep are two queries, not one query twice.
+
+**Ref** — 2026-08-10, PR #1910 (fix/probe-po-number).
+## The special-order backfill wrote a field the picker never reads, and recompute erases [high]
+
+**Symptom** — the sofa special orders were "backfilled" and the Special Orders
+accordion on every migrated SO/PO line still showed `(0 selected)`.
+
+**Root cause (traced, not guessed)** — the backfill wrote `custom_specials`.
+The picker binds to `variants.specials`: `SpecialOrders.tsx:91` reads
+`specialsList(variants.specials ?? variants.special)` and `toggleCode` patches
+`specials` back (callers `SoLineCard.tsx:944`, `PoLineCard.tsx:493` and `:541`).
+`custom_specials` is the opposite direction — a DERIVED OUTPUT of the pricing
+recompute: `mfg-pricing-recompute.ts:283` normalises `variants.specials` and
+`:604` emits `custom_specials` from it. Nothing anywhere reads it back into the
+picker; in `frontend/src` it appears only as report columns. It is also
+VOLATILE: `mfg-sales-orders.ts:8234` sets
+`updates.custom_specials = recomputedPatch.custom_specials ?? null` on every
+line recompute, so the first UI edit of a migrated line would have erased the
+backfill even where it had landed.
+
+Three defects, not one. The field was wrong (derived output, not the picker's
+input); the CONTENT was wrong (`backfill-sofa-special-orders.mjs:237` wrote the
+verbatim slip phrases parseSofa returns — "BOTTOM USE UMBRELLA FABRIC" — beside
+the codes, and a phrase is not a pickable code); and the SHAPE was wrong —
+`mfg-pricing-recompute.ts:117` declares
+`custom_specials: Array<{ description: string; surchargeSen: number }> | null`,
+objects, while the script wrote a bare `string[]`. Production as of 2026-08-10
+carried any `custom_specials` at all on only 9 of 1005 migrated sofa SO lines
+and 6 of 217 PO lines, and not one of those was a picker code.
+
+**Fix** — `backend/scripts/backfill-specials-into-variants.mjs` +
+`.github/workflows/backfill-specials-into-variants.yml`, re-deriving each line's
+specials from its own `description2` and merging picker CODES into
+`variants.specials` via `jsonb_set` on that one key. The phrase -> code map is a
+data file (`backend/scripts/data/special-order-phrase-map.json`) carrying the
+owner ruling behind each family; codes resolve against a LIVE
+`scm.special_addons` read and a phrase with no owner code is REPORTED, never
+invented. Covers SO + PO, sofa + bedframe. `custom_specials` is left alone —
+recompute regenerates it from variants.
+
+**The class, for next time** — before backfilling a user-visible choice, find
+the line in the COMPONENT that reads it. A derived column and the field it is
+derived FROM look identical in the database and behave in opposite directions:
+writing the derived one is invisible, and is deleted by the next recompute.
+
+**The money check that has to come with it** — a picked code's
+`selling_price_sen` is folded into the authoritative unit price
+(`mfg-pricing.ts:396/400/405` -> `unitPriceSen` at `:408-415`, charged at
+`mfg-pricing-recompute.ts:435`). Stamping a PRICED code onto a migrated line
+silently reprices that historical document on its next edit, so the backfill
+script refuses to APPLY when any code it would stamp carries a non-zero price.
+
+**Ref** — 2026-08-10, PR fix/specials-into-variants.
+## Five sofa colour strings named a fabric the library already held [medium]
+
+**Symptom** - after the shared matcher landed and 18 missing colours were
+created, `refresh-sofa-colours.mjs` still could not resolve 31 migrated sofa
+lines across 13 colour strings. The create script had been run to APPLY the
+same day, so the assumption was that the remaining 13 were fabrics nobody had
+entered yet.
+
+**Root cause (traced, not guessed)** - a prod `DUMP=1` dump of
+`scm.fabric_colours` (probe-fabric-colours, run 31405758677) shows the library
+DOES hold the fabric for 6 of the 13 strings / 19 of the 31 lines. Nothing was
+missing; the document writes the identity a different way than the library
+stores it, in four shapes no lexical rung can bridge:
+
+- the colour NUMBER is absent - "Modenza-Houston Cream" vs MODENZA-01, whose
+  label already reads "MODENZA-01 HOUSTON CREAM"
+- the SERIES letters are absent - "141-1" vs CH141-1, "9226-13" vs
+  ARMANI J9226-13 WARM GREY
+- the BRAND is written instead of the series code - "Harring 02# Beige" vs
+  HIRRING GD8371-02# BEIGE
+- the number TRAILS the colour name instead of leading it - "Phoenix-oyster1"
+  vs PHOENIX-1 OYSTER. This one is the sharpest evidence: PHOENIX-1 OYSTER was
+  created by create-missing-sofa-fabrics at 14:57 and the string was STILL
+  unresolved in the 15:23 dry-run, so creating it had never been the fix.
+
+Widening a rung to cover these would have to let a query match a library key it
+shares no number with, which is the exact door the digit guard closes after it
+bound B0315-27 -> BO315-2 and HR805-20 -> HR805-40.
+
+**Fix** - `COLOUR_ALIAS` in `backend/scripts/lib/fabric-colour-match.mjs`: five
+named facts, each carrying its document string and live line count, resolved
+against the live library at index-build time so an entry whose row is absent
+goes inert rather than binding to nothing. It runs LAST, only after every
+lexical pass returned null, so it cannot displace an existing answer - verified
+by replaying all 61 bindings from dry-run 31403271270 against the real prod
+library: 61 unchanged, 0 changed. Unresolved fell 31 -> 12 lines, 13 -> 7
+strings.
+
+The remaining 7 strings are NOT library gaps and must stay blank: "03#Straw" /
+"03-Straw#" are ambiguous between HIRRING GD8371-03# STRAW and HIVE
+GD2034-03# STRAW; "J9833-2" is J9883-2 with two digits transposed; "Beetex
+harring gd 8371" and "ZanoLeather" name a series with no colour chosen;
+"Bottom Use Nylon Fabric" is a construction instruction; "ninja - 02,03,07,09"
+is a choice the salesperson never narrowed.
+
+**Ref** - fix/unresolved-sofa-fabrics, 2026-08-10
+
+## The fixed colour matcher could not reach a single migrated SOFA line [high]
+
+**Symptom** — the shared matcher landed and 18 genuinely-missing colours were
+created on the same day, and the number of migrated sofa lines carrying a bound
+fabric did not move. Both fixes were real; neither was visible in the data.
+
+**Root cause (traced, not guessed)** — nothing sweeps sofa.
+`refresh-so-variants.mjs` re-parses and re-stamps the migrated lines, but its
+`WHERE` is `item_group = 'bedframe' OR item_code ILIKE '%(SP)%'`, and
+`refresh-po-variants.mjs` is `item_group = 'bedframe'` alone. There has never
+been a sofa equivalent, so a matcher improvement could only ever reach rows
+created AFTER it — and company 1's sofa rows were all created during the
+cutover, before it. The entry below fixed which matcher the writers call; this
+one is about there being no writer at all for these rows.
+
+**Fix** — `backend/scripts/refresh-sofa-colours.mjs` +
+`.github/workflows/refresh-sofa-colours.yml`. It reads the colour out of the
+line's OWN `description2` through the shared sofa decoder (`parse-sofa.mjs`,
+`o.color` — not a private regex, that extraction has been copied enough times
+already), resolves it through the shared matcher, and writes the same five keys
+the SO importer writes (`fabricId`, `colourId`, `fabricCode`, `colourLabel`,
+`fabricLabel`) on both `scm.mfg_sales_order_items` and
+`scm.purchase_order_items`. Three rules it holds to:
+
+1. **Fill only, never overwrite.** A line holding any of fabricId / colourId /
+   fabricCode is skipped, and the UPDATE repeats that test in SQL so a pick made
+   between the scan and the write still wins.
+2. **Merge, do not rewrite.** `variants = variants || $1::jsonb`, so seatHeight,
+   specials and buildKey survive. A sofa line's variants block is not ours alone.
+3. **TBC / KIV is an answer.** It means not chosen yet; those lines are counted
+   and left blank rather than being reported as a matcher miss.
+
+**The class, for next time** — a fix to a shared decoder changes what the system
+would import today. It changes NOTHING about the rows already stored. Every such
+fix needs its sweep named in the same PR, or the improvement is real and
+invisible.
+
+**Ref** — 2026-08-10, PR #1903 (feat/restamp-sofa-colours).
+
+## Five hand-copied colour matchers, and the weakest one is what production stored [high]
+
+**Symptom** — 138 migrated sofa/bedframe lines carry no resolved fabric while
+their AutoCount Desc2 names one. A live prod scan on 2026-08-10 put it at 223
+lines / 92 distinct colour strings that the writers could not bind, against a
+library that already holds 133 series / 724 colours.
+
+**Root cause (traced, not guessed)** — `findColour` existed FIVE times, one
+hand-written copy per script, and they had drifted apart.
+`import-ac-outstanding-so.mjs` had grown a typo-fold index, a transposition
+pass and an edit-distance pass; `refresh-so-variants.mjs`,
+`refresh-po-variants.mjs`, `import-ac-outstanding-po.mjs` and
+`import-ac-so-linked-pos.mjs` were still exact-index-only, and
+`repair-leaked-sofa-lines.mjs` matched the raw name. **The refresh scripts are
+what WRITE the migrated lines**, so the weakest copy decided what production
+holds — every improvement made to the importer's copy since #1806 never reached
+the rows. Exactly the class `CLAUDE.md` and the `parse-sofa` entry below already
+name: "Extracted verbatim" that was not verbatim.
+
+**And the fuzzy tail was silently swapping fabrics.** Measured against the live
+library, the inherited transposition / edit-distance / prefix passes bound
+`B0315-27` -> `BO315-2`, `B0315-29` -> `BO315-2`, `HR805-20` -> `HR805-40`,
+`Chantic141-5` -> `CHANTIC-141-2`, `GD8371-03` -> `GD8371-02` and `STAR-10` ->
+`STAR 01`. Every one is a real fabric replaced by a DIFFERENT real fabric, at
+`high` confidence, with nothing on the order to say so — worse than a blank,
+because a blank gets fixed by a human and this gets upholstered.
+
+**Fix** — one `backend/scripts/lib/fabric-colour-match.mjs`, imported by all
+six. Its ladder is purely lexical (drop a parenthesised name, treat `#` as a
+separator, drop the trailing colour NAME, drop spaces, pull SERIES+NUMBER out of
+prose, pad a one-digit tail, fold typos) and every rung only ADDS a spelling
+with the untouched original tried first. Two rules carry the weight:
+
+1. **Collapse doubled letters BEFORE reading letter-O as zero.** O->0 first
+   turns `BOO315` into `B00315`, whose doubled character is a ZERO, so the
+   collapse yields `B0315` and every `BOO*` spelling misses.
+2. **The fuzzy passes may correct LETTERS and may never move a DIGIT.** Digits
+   are compared in a mark space where letter-O is neither letter nor digit, so
+   `BO315` and `B0315` still agree while `10` and `01` do not. A library LABEL
+   under three characters is no longer matchable either — the SF series labels
+   its colours `"01".."19"`, so a bare `"03"` was claiming `SF-AT 03`.
+
+`tests/fabricColourMatch.test.ts` is the golden test: real document strings
+against a faithful slice of the real library, with every mis-bind above pinned
+as an explicit null.
+
+**The class, for next time** — when a rule is copied into a second script,
+copy the FILE, not the lines. Five copies of one parser means the surface a fix
+lands on is whichever copy you happened to open, and the one nobody opened is
+usually the one that writes.
+
+**Ref** — 2026-08-10, PR #1893 (fix/sofa-colour-matching).
+
+## The sofa decoder DELETED every special order that mentioned the bottom [high]
+
+**Symptom** — 53 AutoCount sofa lines say `bottom use umbrella fabric` /
+`bottom upgrade to umbrella fabric` / `wrap bottom to umbrella fabric`. Not one
+of those instructions existed anywhere in the ERP — not as a picker code, not as
+free text, not as a remark. The factory sheet for those orders simply did not
+carry the request. `seed-sofa-special-addons.mjs` had already counted the 53 and
+opened a code for them; the code had nothing pointing at it because the phrase
+never survived the decode.
+
+**Root cause** — Two holes in `parse-sofa.mjs`, both traced by re-running the
+three committed exports, not guessed. (1) The preprocessing line
+`d2.replace(/bottom[^\/\n]*|.../, " ")` deletes from the word `bottom` to the
+end of its segment, and it runs BEFORE specials are collected — the phrase is
+gone before anything can read it. (2) Everything else was collected on the
+`rider` path inside the structure loop, and that loop **breaks at the first
+segment that yields pieces**. A phrase sharing the structure's segment was
+caught; the identical phrase alone in its own segment (`/BACK CUSHION CHANGE
+8030`) was never visited.
+
+**Fix** — A special-order sweep that runs on the ORIGINAL text before the
+pipeline strips anything and writes ONLY to `o.specials`: split on `/`, newline
+and `*`, and any chunk carrying an instruction word is pushed verbatim. The
+structure parse is untouched by construction. Deduped on letters-and-digits
+(`nilon` = `nylon`) so one instruction written three ways — swept phrase,
+rule token, glued rider — is carried once, in its fullest wording.
+
+Measured over all three exports in both recliner states (716 lines x 2):
+**0 piece-list changes, 0 confidence downgrades, 0 size/colour/`why` changes,
+0 phrases lost**; 96 lines that carried no special now carry one, and 57 lines
+regain an umbrella-fabric instruction that had been 0.
+
+**Also shipped** — `backfill-sofa-special-orders.mjs` + workflow, which maps the
+recovered phrases onto migrated SO and PO lines as `scm.special_addons` picker
+codes, free text verbatim where the owner has not opened a code. Six more golden
+cases in `backend/tests/parseSofaGrammar.test.ts`.
+
+**The class, for next time** — a `strip` and a `collect` over the same text are
+order-dependent, and the strip was written first for a different reason (keeping
+`bottom...` out of the structure tokens). Collecting must never depend on
+surviving another rule's cleanup: read what you need off the original, then let
+the cleanup run. The same shape hid inside the loop — `break` on success means
+every later segment is unread, so anything you also want from those segments has
+to be gathered outside the loop.
+
+**Ref** — 2026-08-10, PR feat/sofa-special-order-backfill.
+
+## Every migrated sofa line has an EMPTY Leg Height [medium]
+
+**Symptom** — Open any sofa line that came in from AutoCount and the Leg Height
+picker reads "Select...". Seat depth, fabric and compartment are all filled; the
+leg alone is blank, on every single migrated line.
+
+**Root cause** — Nothing ever writes `variants.legHeight` for a sofa.
+`parse-sofa.mjs` (lines 52-55) deliberately lifts a leg PHRASE out of Desc2 and
+pushes it into `specials` — "leg text never sets a size, it rides as a special
+so the factory sheet still shows the request" — and neither
+`import-ac-outstanding-so.mjs` nor the PO importers put a leg key in the
+variants object they build. So the axis is absent, not empty-because-unknown.
+The gap went unseen because the sofa Leg Height axis is `required: false` in
+`so-variant-rule.ts`, and it is `required: false` for exactly the opposite
+reason — the comment there says the axis "always defaults to the Default option
+(RM 0.00) at create/edit time, so it is never empty". That premise held for
+POS/coordinator-created lines and was never true for imported ones, so the one
+gate that would have caught it had been told to look away.
+
+**Fix** — `backfill-sofa-leg-default.mjs` + `backfill-sofa-leg-default.yml`
+(dry-run default, `apply=1` writes) fills `variants.legHeight` with the master
+config pool's own "Default" entry across `scm.mfg_sales_order_items` and
+`scm.purchase_order_items`, for company 1 sofa lines whose parent carries
+`linked_ac_docno`. Owner's ruling, `docs/sofa-import-handoff.md` section 2.5:
+"脚全部找不到就直接选 default". Two refusals are built in: a line that already
+carries `legHeight` or `sofaLegHeight` is never overwritten, and a line whose
+own text names a leg ("Leg Change 101Middle Leg(8')", "FULLY COVER NO LEG",
+`6” wooden leg`) is left alone and reported by phrase with its document numbers,
+because the source said something specific and a default would erase it. An inch
+height counts as a leg only INSIDE the leg phrase — a bare `28"` in a sofa Desc2
+is the seat depth.
+
+**The class, for next time** — an axis marked not-required "because it is always
+pre-filled" is a claim about a write path, and it only covers the write paths
+that existed when it was written. An importer is a new write path.
+
+**Ref** — 2026-08-10, PR fix/sofa-leg-default.
+
+## A first-pass NAME match made RDS-5526 into someone else's sofa [high]
+
+**Symptom** — Two 5526 sofa builds could not be corrected: the correction tool
+answers `piece SKU not minted`, because the piece it needs is on a model that
+does not exist. Nine cutover document lines were sitting on `8038-*` codes, and
+the AutoCount item they came from is `RDS-5526 SOFA`. Owner 2026-08-10: **"5526
+就是 5526 啊,你应该要 remain ... 8038 原本都不是 5526."**
+
+**Root cause** — One row of `backend/scripts/data/autocount-erp-mapping-1561.csv`:
+`RDS-5526 SOFA,8038-1S,EXISTS(1st-pass),SOFA,400-R001`. The status column says
+what it is — a fuzzy match on NAME, both models being called DISCOVERY — and
+`400-R001` (RED SOFA) vs 8038's `400-D004` (DSL) says they are different
+suppliers' products. The row contradicts its own neighbour: `RDS-5526 CONSOLE`
+was mapped `NEW/ACCESSORY`, not to `8038-Console`, which exists. Because the
+importers read the mapping to derive the model (`erp.replace(/-1S$/,"")`), 5526
+never got the `scm.product_models` row every other AutoCount sofa code got —
+`align-models-houzs-century.json` seeded 69 of them, each `name = model_code`,
+`compartments: ["1S"]` — so there was no 5526 SKU for a line to point at, and
+the 2026-08 supplier price list then bound RED SOFA's 5526 prices onto 8038
+SKUs on top.
+
+**Fix** — `backend/scripts/open-5526-model.mjs` + workflow: creates model 5526
+(name `5526`, the convention its sibling RED SOFA model 5527 and 8133 were
+seeded with — reusing `DISCOVERY` is the bug), opens the nine compartments its
+own documents need, mints `SOFA 5526 {comp}` SKUs, appends new codes to the
+master pool, and re-points the nine AutoCount source lines off 8038, carrying
+the change down SO -> PO -> GRN and SO -> DO. The mapping row now reads
+`5526-1S,NEW`, and the script refuses to run unless it does. Same pass mints
+`8133-STOOL`, the piece `HC-PO-000136`'s correction was refusing on.
+
+**What was deliberately NOT done** — the supplier bindings. `8038-1A(LHF)`,
+`8038-1NA`, `8038-2A(RHF)`, `8038-CNR`, `8038-Console`, `8038-STOOL` all carry
+`supplier_sku = "RDS-5526 SOFA"`, and `8038-1S` is RED SOFA's main binding for
+it. Moving those moves prices, so it is the owner's decision. Two builds also
+stay `SOFA UNPARSED` on purpose: `"1 ELT / T + NA +2ER"` is not readable, and
+the rule is never guess a piece.
+
+**The class, for next time** — `EXISTS(1st-pass)` in that CSV is a machine's
+guess wearing the same clothes as an owner's answer; 319 rows carry it. A
+first-pass NAME match between two products from DIFFERENT suppliers deserves
+the supplier column read before it is trusted, and a model that ends up with no
+row of its own is the symptom that one was wrong.
+
+**Ref** — 2026-08-10, PR feat/open-5526-model.
+
 ## Deleting a compartment row offered to RENAME it across all history [high]
 
 **Symptom** — The owner deleted the sideless bench codes `1B` and `2B` from the
@@ -598,7 +972,6 @@ lockstep so the two surfaces cannot drift.
   2. **The allocations column and modal now show the EFFECTIVE assignment.** No slices → the coarse Source-SO link (or STOCK) renders as a muted implicit chip with the whole-line qty, instead of a dash that contradicted the Assigned SO one column over.
 - **The workflow for the live CODY case (recorded as the answer to "接下来怎么操作"):** revise the SO (amendment); the raised follow-up lands in PO Amendments; purchaser REJECTS it with "supplier cannot change" → old PO auto-releases to STOCK (arrives as own inventory: clearance or purchase-return); MRP re-shows the shortage → Proceed a fresh PO with the corrected spec; run PO-SO link check after.
 - **Ref:** #<PR>. `feat/split-own-consignment`… superseded branches; this change `fix/reject-releases-to-stock` 2026-08-06.
-
 
 
 ### [LOW] The privacy policy page shipped unreachable — Pages' clean-URL redirect fed it to the SPA fallback
@@ -2300,7 +2673,6 @@ lockstep so the two surfaces cannot drift.
 - **Ref:** #1059 (this PR).
 
 
-
 ### [CRITICAL] Mig 0175 referenced a non-existent `customers.country` column and blocked EVERY subsequent migration
 - **Symptom.** After #1040 merged (state canonicalize) the next deploy failed with `FAILED 0175_scm_state_canonicalize.sql: column c.country does not exist`. pg-migrate stops on the first failing file, so mig 0176 (#1042 region seed + sales_location snapshot backfill) never ran either. Prod state → region for 2990 stayed at 0 rows even after the "fix" was merged. My subsequent completeness report to the owner said the region mapping still looked empty and I initially attributed it to timing; the owner asked "我们不是调整了吗" and the answer was NO — it never applied.
 - **Root cause (traced).** The original migration filtered the customer backfill by country to avoid touching foreign-country rows:
@@ -2309,7 +2681,6 @@ lockstep so the two surfaces cannot drift.
 - **Fix.** #1052 (this PR) — drop the country filter from both the customer and supplier backfill blocks. Redundant anyway: `scm.canonicalize_my_state()` returns its input UNCHANGED for any string outside the 16 canonical MY states + known aliases (Guangdong, Central, etc.), so a foreign state name is already foreign-safe without a caller-side filter. Editing 0175 in place is correct because pg-migrate never recorded it as applied; the next deploy will retry with the fixed SQL.
 - **The class, for next time.** A `to_regclass` guard is not a schema guard. When a migration references a column the code hasn't proven exists in every environment it might run against, either (a) add an `information_schema.columns` presence check before the UPDATE, or (b) drop the column reference. This is the same class as the mig 067/069 seed → 079 delete cycle recorded earlier: don't assume schema, verify it in the migration itself.
 - **Ref:** #1052 (hotfix). Original: #1040 mig 0175.
-
 
 
 ### [HIGH] Five migration-number collisions on one file in one day, and a whitelist used to hide the fifth

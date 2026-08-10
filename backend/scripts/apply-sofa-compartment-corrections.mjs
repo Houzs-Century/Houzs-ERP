@@ -67,11 +67,26 @@ async function main() {
       let poId = null;
       if (isPo) {
         const ac = doc.replace(/^HC-/, "");
-        const [hit] = await sql`SELECT id, po_number FROM scm.purchase_orders
+        let [hit] = await sql`SELECT id, po_number FROM scm.purchase_orders
           WHERE company_id = ${CO} AND (po_number = ${doc} OR linked_ac_docno = ${ac}) LIMIT 1`;
-        if (!hit) { log(`  ${doc}: not in the ERP under that number nor linked to ${ac} — skipped`); continue; }
+        /* Some of the numbers in this file were invented by the SO-linked PO
+           import (HC-PO- plus its own running sequence) and no longer exist:
+           the migrated POs have been renumbered so every number follows
+           AutoCount. Neither the number nor the AutoCount link can find those.
+           The AutoCount TEXT can - it is the same build either way, so fall
+           back to the Desc2 this correction already carries. */
+        if (!hit && c.desc2Match) {
+          const [byText] = await sql`SELECT p.id, p.po_number FROM scm.purchase_orders p
+            JOIN scm.purchase_order_items i ON i.purchase_order_id = p.id
+           WHERE p.company_id = ${CO} AND i.item_group = 'sofa'
+             AND i.description2 LIKE ${"%" + c.desc2Match + "%"}
+           GROUP BY p.id, p.po_number LIMIT 2`;
+          if (byText) { hit = byText; log(`  ${doc}: found as ${byText.po_number} by its AutoCount text`); }
+        }
+        if (!hit) { log(`  ${doc}: not in the ERP by number, by AutoCount link, or by its text — skipped`); continue; }
         poId = hit.id;
-        if (hit.po_number !== doc) log(`  ${doc}: found as ${hit.po_number} via linked_ac_docno`);
+        if (hit.po_number !== doc && !String(hit.po_number).includes(ac)) { /* already reported above */ }
+        else if (hit.po_number !== doc) log(`  ${doc}: found as ${hit.po_number} via linked_ac_docno`);
       }
       let rows = isPo
         ? await sql`SELECT i.id, i.material_code AS code, i.qty, i.unit_price_centi, i.line_total_centi AS total,
