@@ -21,6 +21,29 @@ const QUERY = (process.env.NAMES || [
 
 const rows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
 note(`fabric_colours rows: ${rows.length}`);
+
+/* DUMP=1 prints the WHOLE library, grouped by series. Without it this probe can
+   only answer "is THIS name in there?", one name at a time — which is no use
+   when 138 document lines carry a colour that would not bind and the question
+   is really "what does the library actually contain, and which of these are
+   spacing/suffix variants of something that IS there?" (owner 2026-08-10:
+   "这些你不能只能跟我们 fabrics matching?"). Read-only either way. */
+if (process.env.DUMP === "1") {
+  const bySeries = new Map();
+  for (const r of rows) {
+    const k = r.fabric_id ?? "(no fabric_id)";
+    if (!bySeries.has(k)) bySeries.set(k, []);
+    bySeries.get(k).push(r);
+  }
+  note(`--- LIBRARY DUMP: ${bySeries.size} series / ${rows.length} colours ---`);
+  for (const [series, list] of [...bySeries].sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
+    const cols = list
+      .map((r) => (r.label && String(r.label).trim() && String(r.label) !== String(r.colour_id)
+        ? `${r.colour_id}=${r.label}` : `${r.colour_id}`))
+      .sort();
+    note(`SERIES ${series} (${cols.length}): ${cols.join(" | ")}`);
+  }
+}
 const exact = new Map(), folded = new Map(), dup = new Set();
 for (const r of rows) {
   for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !exact.has(k)) exact.set(k, r);
