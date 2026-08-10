@@ -38,7 +38,7 @@ failing to build. Shared logic gets a module in `backend/scripts/lib/` and a rea
 `import`. Note `mapSpecial` in these same two scripts is STILL rebuilt this way
 from `fix-so-specials.mjs`, and is one stray comment away from the same failure.
 
-**Ref** — 2026-08-10, go-live cutover.
+**Ref** — 2026-08-10, PR #1833, go-live cutover.
 
 ## Seven more cross-company read leaks, same class as the GRN picker [high]
 
