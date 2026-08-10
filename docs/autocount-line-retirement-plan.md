@@ -198,6 +198,11 @@ the column default rather than inheriting the READY sibling's value. Nothing
 would then have moved them: `so-stock-allocation.ts` filters `cancelled = false`
 and so never re-derives them (that is gap 1, still open).
 
+That a cancelled line can never be ON a delivery order — and would therefore
+always be "missing" — is not an assumption: the deliverable-lines loader that
+feeds every DO picker filters `cancelled = false`
+(`backend/src/scm/routes/delivery-orders-mfg.ts:2043`).
+
 So the shipping block was avoided by an omission in a repair script, not by any
 guard. It would have bitten the first time a row was cancelled while READY —
 which is exactly what converting `DELETE /:docNo/items/:itemId` would do. Both
