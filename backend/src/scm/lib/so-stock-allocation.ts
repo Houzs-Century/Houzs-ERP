@@ -354,14 +354,25 @@ export async function recomputeSoStockAllocation(
           before SO-2605-002) so same-day allocation is deterministic, matching
           the MRP engine. created_at + line id break any remaining ties. */
     const FAR_FUTURE = '9999-12-31';
+    /* The row types say these are strings, and under PostgREST they are. A
+       repair script driving this same function through the postgres shim gets
+       Date OBJECTS for date/timestamp columns, and `.localeCompare` on a Date
+       throws — which killed a production allocation recompute on 2026-08-10
+       with "ad.localeCompare is not a function", after the allocator had
+       already done all its work. Compare on a normalised string so the priority
+       order is identical whichever transport delivered the row. */
+    const dateKey = (v: unknown): string =>
+      v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '');
+    const stampKey = (v: unknown): string =>
+      v instanceof Date ? v.toISOString() : String(v ?? '');
     needs.sort((a, b) => {
       const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
-      const ad = A?.customer_delivery_date ?? FAR_FUTURE;
-      const bd = B?.customer_delivery_date ?? FAR_FUTURE;
+      const ad = dateKey(A?.customer_delivery_date) || FAR_FUTURE;
+      const bd = dateKey(B?.customer_delivery_date) || FAR_FUTURE;
       if (ad !== bd) return ad.localeCompare(bd);                         // a) delivery date
       if (a.doc_no !== b.doc_no) return a.doc_no.localeCompare(b.doc_no); // b) SO doc number
-      const ac = A?.created_at ?? '';
-      const bc = B?.created_at ?? '';
+      const ac = stampKey(A?.created_at);
+      const bc = stampKey(B?.created_at);
       return ac.localeCompare(bc) || a.id.localeCompare(b.id);            // c) created_at + line id
     });
 
@@ -504,8 +515,8 @@ export async function recomputeSoStockAllocation(
       const orderedSets = [...setLines.values()].sort((ga, gb) => {
         const a = ga[0]!; const b = gb[0]!;
         const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
-        const ad = A?.customer_delivery_date ?? FAR_FUTURE;
-        const bd = B?.customer_delivery_date ?? FAR_FUTURE;
+        const ad = dateKey(A?.customer_delivery_date) || FAR_FUTURE;
+        const bd = dateKey(B?.customer_delivery_date) || FAR_FUTURE;
         if (ad !== bd) return ad.localeCompare(bd);
         return a.doc_no.localeCompare(b.doc_no);
       });
