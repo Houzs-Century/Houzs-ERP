@@ -565,6 +565,37 @@ async function main() {
   const createAgents = new Set(); // agent display names needing an inactive staff row
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const fcx = new Map(); for (const r of fcRows) for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !fcx.has(k)) fcx.set(k, r);
+  /* TYPO INDEX (owner audit 2026-08-10 — 39 PROC lines "not in fabric_colours"):
+     the same code gets typed many ways — letter-O for zero (B0315 vs BO315),
+     doubled letters (BOO315), Mordenza for Modenza, plus a free-text rider
+     ("Modenza 01*Bottom wrap..."). Folding runs as a SECOND pass only (the
+     exact index always wins) and any fold key produced by TWO different
+     library rows is DROPPED, so an ambiguous typo never resolves to a guess.
+     Repeats collapse on LETTERS only: BO315-11 must not fold onto BO315-1. */
+  const fold = (x) => strip(x).replace(/([A-Z])\1+/g, "$1").replace(/O/g, "0");
+  const fcz = new Map(); const dup = new Set();
+  for (const r of fcRows) for (const k of [fold(r.colour_id), fold(r.label)]) {
+    if (!k) continue;
+    if (fcz.has(k) && fcz.get(k) !== r) dup.add(k); else fcz.set(k, r);
+  }
+  for (const k of dup) fcz.delete(k);
+  const fzKeys = [...fcz.keys()];
+  const dist1 = (q) => { // one unique library key at edit distance 1
+    let hit = null;
+    for (const k of fzKeys) {
+      if (Math.abs(k.length - q.length) > 1) continue;
+      let i = 0, j = 0, edits = 0;
+      while (i < q.length && j < k.length) {
+        if (q[i] === k[j]) { i++; j++; continue; }
+        if (++edits > 1) break;
+        if (q.length > k.length) i++; else if (q.length < k.length) j++; else { i++; j++; }
+      }
+      if (edits + (q.length - i) + (k.length - j) > 1) continue;
+      if (hit && hit !== fcz.get(k)) return null; // ambiguous — refuse
+      hit = fcz.get(k);
+    }
+    return hit;
+  };
   const findColour = (c) => {
     if (!c) return null;
     const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
@@ -576,7 +607,12 @@ async function main() {
     const cands = [];
     for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t)), ...seriesNum(t)); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
     for (const t of cands) { const h = fcx.get(t); if (h) return h; }
-    return null;
+    for (const t of toks) { if (!t) continue; const h = fcz.get(fold(t)); if (h) return h; }
+    // free-text rider ("Modenza 01*Bottom wrap...") — longest folded prefix
+    // that indexes uniquely, min 6 chars so a series prefix can't win alone.
+    const f = fold(c);
+    for (let len = Math.min(f.length, 14); len >= 6; len--) { const h = fcz.get(f.slice(0, len)); if (h) return h; }
+    return f.length >= 6 ? dist1(f) : null;
   };
   // product -> allowed colour_ids (so we don't set a colour the picker would drop).
   // Best-effort: the colour-config table's product_id may reference a different
