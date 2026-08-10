@@ -45,8 +45,9 @@ re-run plans nothing. Both importers are fixed too, not only the data: the
 date is read through `scripts/lib/ac-po-line.mjs`, the dedication through the
 SHARED `scripts/lib/so-line-dedication.mjs` (the taker was extracted from the
 one script that had it right), and both now write `linked_ac_dtlkey`
-(migration 0278, same column as PR #1819's 0273 — same name, same type, both
-idempotent, so whichever lands first does the work). Recovering which ERP row
+— **#1819's `0273` already added exactly that column**, so this PR adds no
+migration of its own; a second column would have been the real mistake.
+Recovering which ERP row
 descends from which AutoCount line lives in `scripts/lib/ac-po-line-match.mjs`
 and refuses rather than guesses: identical rows are zipped in `DtlKey` order and
 REPORTED as indistinguishable, and a group whose two sides do not split the same

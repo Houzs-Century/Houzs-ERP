@@ -30,7 +30,8 @@
 //   delivery_date      PODTL.DeliveryDate
 //   linked_ac_dtlkey   PODTL.DtlKey (bigint PRIMARY KEY, all 738 snapshot keys
 //                      still resolve in the live book) so no future repair has
-//                      to re-derive this link by fuzzy matching
+//                      to re-derive this link by fuzzy matching. The COLUMN is
+//                      #1819's migration 0273 — this fills it.
 // and then, per header, expected_at = the earliest of its own line dates —
 // exactly the rule backfill-po-expected-at.mjs and the app's SO->PO convert use.
 //
@@ -89,11 +90,10 @@ async function main() {
     acByDoc.get(l.DocNo).push(l);
   }
 
-  /* linked_ac_dtlkey arrives with the migration in this PR (and with #1819,
-     which adds the SAME column for the write-back edit path — same name, same
-     type, both idempotent). Probe rather than assume, so a run against a
-     database that has not taken either one reports the gap instead of dying
-     mid-plan. */
+  /* linked_ac_dtlkey is #1819's migration 0273, added for the write-back's edit
+     path; this repair fills it rather than adding a second column of its own.
+     Probe rather than assume, so a run against a database that has not taken
+     0273 yet reports the gap instead of dying mid-plan. */
   const [{ has_dtlkey }] = await sql`SELECT EXISTS (
       SELECT 1 FROM information_schema.columns
        WHERE table_schema = 'scm' AND table_name = 'purchase_order_items'
