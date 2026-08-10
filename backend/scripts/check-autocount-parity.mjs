@@ -465,7 +465,10 @@ async function main() {
   };
 
   let cAgree = 0, cAcOnly = 0, cErpOnly = 0, cDiffer = 0, cPartial = 0, cNative = 0;
-  const chainBad = [];
+  /* One capped list per bucket. A single shared list let the first bucket to
+     fill it hide the others entirely — the ERP-only rows crowded out every
+     example of the AutoCount-only gap, which is the one a buyer must act on. */
+  const badAcOnly = [], badErpOnly = [], badDiffer = [];
   for (const p of pos) {
     const acGrs = acPoGr.get(p.ac_po) ?? new Set();
     const rows = erpGrn.get(p.ac_po) ?? [];
@@ -478,19 +481,19 @@ async function main() {
     if (!acGrs.size && !rows.length) { cAgree++; continue; }               // neither received
     if (acGrs.size && !rows.length) {
       cAcOnly++;
-      if (chainBad.length < 12) chainBad.push(`${p.po_number} (${p.ac_po}): AutoCount received it (${[...acGrs].join(", ")}) but the ERP has no GRN`);
+      if (badAcOnly.length < 10) badAcOnly.push(`${p.po_number} (${p.ac_po}): AutoCount received it (${[...acGrs].join(", ")}) but the ERP has no GRN`);
       continue;
     }
     if (!acGrs.size && rows.length) {
       cErpOnly++;
-      if (chainBad.length < 12) chainBad.push(`${p.po_number} (${p.ac_po}): the ERP has GRN ${rows.map((r) => r.grn_number).join(", ")} but AutoCount records no receipt for it`);
+      if (badErpOnly.length < 6) badErpOnly.push(`${p.po_number} (${p.ac_po}): the ERP has GRN ${rows.map((r) => r.grn_number).join(", ")} but AutoCount records no receipt for it`);
       continue;
     }
     if (!named.size) { cNative++; continue; }                              // received both sides, ERP names no AC doc
     const stray = [...named].filter((g) => !acGrs.has(g));
     if (stray.length) {
       cDiffer++;
-      if (chainBad.length < 12) chainBad.push(`${p.po_number} (${p.ac_po}): the ERP names receipt(s) ${[...named].join(", ")}; AutoCount says ${[...acGrs].join(", ")} -> not in AutoCount: ${stray.join(", ")}`);
+      if (badDiffer.length < 10) badDiffer.push(`${p.po_number} (${p.ac_po}): the ERP names receipt(s) ${[...named].join(", ")}; AutoCount says ${[...acGrs].join(", ")} -> not in AutoCount: ${stray.join(", ")}`);
       continue;
     }
     cAgree++;
@@ -505,7 +508,9 @@ async function main() {
   log(`   the ERP has a GRN AutoCount does not know: ${cErpOnly}`);
   log(`   the two name DIFFERENT receipts: ${cDiffer}`);
   log(`   both received, but the ERP's GRN names no AutoCount document (ERP-native receipt): ${cNative}`);
-  for (const b of chainBad) log(`   ${b}`);
+  for (const b of badAcOnly) log(`   ${b}`);
+  for (const b of badDiffer) log(`   ${b}`);
+  for (const b of badErpOnly) log(`   ${b}`);
   const migrated = grns.filter((g) => g.migrated).length;
   log(`   GRN rows on imported POs: ${grns.length}, of which migrated_no_stock (paperwork carried over, counted as received): ${migrated}`);
 
