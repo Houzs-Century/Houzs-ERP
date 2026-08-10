@@ -70,33 +70,67 @@ async function main() {
     ? (Number(r.BoundPoReceived) === 1 && Number(r.BoundPoGrQty) >= Number(r.Need) ? "READY" : "PENDING")
     : null);
 
-  /* ── 2. The ERP's answer, per line, joined on the exact line key ──────────── */
-  const dtlKeys = ac.map((r) => Number(r.DtlKey));
+  /* ── 2. The ERP's answer, per line ───────────────────────────────────────────
+     The EXACT key exists — scm.mfg_sales_order_items.linked_ac_dtlkey, migration
+     0273 — but its backfill has never run, so it is NULL on all 14,188 rows.
+
+     ItemCode cannot stand in for it: the two systems use DIFFERENT item-code
+     vocabularies. AutoCount carries the supplier SKU, the ERP carries the model
+     name — AC "NB-KHJ21(Q)" is ERP "VICTORIA-(Q)", AC "NB-DIVAN ONLY (K)" is ERP
+     "DIVAN ONLY-(K)". Measured: 0 of the 515 bound (DocNo,ItemCode) pairs exist in
+     the ERP. Desc2 by contrast is stored verbatim on both sides.
+
+     So the key is (AutoCount SO number, group, Desc2), and it is MEASURED rather
+     than trusted: a key is used only when it identifies exactly ONE line on BOTH
+     sides. Anything ambiguous is reported as its own class and never matched,
+     because a wrong pairing would silently invent an ERP answer for the wrong
+     line. */
+  const norm = (v) => String(v ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+  const grpOf = (r) => (r.ItemGroup === "SOFA" ? "sofa" : "bedframe");
+  const acKey = (r) => `${r.DocNo}|${grpOf(r)}|${norm(r.Desc2)}`;
+
+  const docs = [...new Set(ac.map((r) => r.DocNo))];
   const erpRows = await sql`
-    SELECT i.id::text id, i.doc_no, i.linked_ac_dtlkey::text dtlkey,
-           i.item_code, LOWER(COALESCE(i.item_group,'')) item_group,
+    SELECT i.id::text id, i.doc_no, i.item_code, i.description2,
+           LOWER(COALESCE(i.item_group,'')) item_group,
            i.stock_status, i.qty::numeric qty,
            i.stock_qty_ready::numeric stock_qty_ready,
            i.warehouse_id::text warehouse_id,
-           i.variants,
            h.proceeded_at, h.status::text so_status, h.linked_ac_docno,
            h.customer_delivery_date
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO}
        AND COALESCE(i.cancelled,false) = false
-       AND i.linked_ac_dtlkey = ANY(${dtlKeys}::bigint[])`;
-  const erpByKey = new Map(erpRows.map((r) => [String(r.dtlkey), r]));
+       AND h.linked_ac_docno = ANY(${docs})
+       AND LOWER(COALESCE(i.item_group,'')) IN ('bedframe','sofa')`;
+
+  const keyed = await sql`SELECT COUNT(linked_ac_dtlkey)::int n FROM scm.mfg_sales_order_items`;
   log("--- join ---");
-  log(`ERP lines matched by linked_ac_dtlkey: ${erpByKey.size} of ${ac.length} AutoCount lines`);
-  const unmatched = ac.filter((r) => !erpByKey.has(String(r.DtlKey)));
-  log(`UNMATCHED (no ERP line carries this AutoCount DtlKey): ${unmatched.length}`);
-  if (unmatched.length) {
-    const byG = new Map();
-    for (const r of unmatched) byG.set(r.ItemGroup, (byG.get(r.ItemGroup) ?? 0) + 1);
-    log(`   by group: ${[...byG].map(([g, n]) => `${g}=${n}`).join(", ")}`);
-    log(`   these are REPORTED, never guessed at — a line the ERP does not hold has no ERP answer`);
+  log(`exact key scm.mfg_sales_order_items.linked_ac_dtlkey (migration 0273) populated on: ${keyed[0].n} rows`);
+  log(`   its backfill has never run, so the exact key is unusable; keying on (AutoCount DocNo, group, Desc2)`);
+
+  const acBuckets = new Map();
+  for (const r of ac) {
+    if (norm(r.Desc2) === "") continue;
+    const k = acKey(r);
+    if (!acBuckets.has(k)) acBuckets.set(k, []);
+    acBuckets.get(k).push(r);
   }
+  const erpBuckets = new Map();
+  for (const e of erpRows) {
+    if (norm(e.description2) === "") continue;
+    const k = `${e.linked_ac_docno}|${e.item_group}|${norm(e.description2)}`;
+    if (!erpBuckets.has(k)) erpBuckets.set(k, []);
+    erpBuckets.get(k).push(e);
+  }
+  const acAmbig = [...acBuckets.values()].filter((v) => v.length > 1).reduce((a, v) => a + v.length, 0);
+  const erpAmbig = [...erpBuckets.values()].filter((v) => v.length > 1).length;
+  log(`   AutoCount keys: ${acBuckets.size} (${acAmbig} lines sit on a key holding several lines)`);
+  log(`   ERP keys:       ${erpBuckets.size} (${erpAmbig} keys hold several lines)`);
+  const erpByKey = new Map();
+  for (const [k, v] of erpBuckets) if (v.length === 1) erpByKey.set(k, v[0]);
+  log(`   usable 1:1 ERP keys: ${erpByKey.size}`);
   log("");
 
   /* ── 3. Evidence the ERP's own rule would have consulted ─────────────────── */
@@ -138,6 +172,8 @@ async function main() {
   const PRECEDENCE = [
     "AGREE",
     "AC_HAS_NO_BOUND_ANSWER",
+    "NO_DESC2_CANNOT_KEY",
+    "KEY_AMBIGUOUS_NOT_MATCHED",
     "ERP_LINE_MISSING",
     "GATE_NO_PROCESSING_DATE",
     "SOFA_BOUND_MODE_UNREACHABLE",
@@ -158,13 +194,18 @@ async function main() {
   let comparable = 0, agreeN = 0, divergeN = 0;
 
   for (const r of ac) {
-    const key = String(r.DtlKey);
+    const key = acKey(r);
     const e = erpByKey.get(key);
     const acA = acAnswer(r);
     const grp = r.ItemGroup === "SOFA" ? "sofa" : "bedframe";
 
     if (acA === null) { bump("AC_HAS_NO_BOUND_ANSWER", `${r.DocNo} ${r.ItemCode} (${grp}) — no Convert-to-PO bind in AutoCount either`); continue; }
-    if (!e) { bump("ERP_LINE_MISSING", `${r.DocNo} DtlKey ${key} ${r.ItemCode} — AutoCount says ${acA}, the ERP holds no line with this key`); continue; }
+    if (norm(r.Desc2) === "") { bump("NO_DESC2_CANNOT_KEY", `${r.DocNo} ${r.ItemCode} (${grp}) — AutoCount says ${acA}, but the line has no Desc2 so it cannot be keyed to an ERP line`); continue; }
+    if ((acBuckets.get(key)?.length ?? 0) > 1 || (erpBuckets.get(key)?.length ?? 0) > 1) {
+      bump("KEY_AMBIGUOUS_NOT_MATCHED", `${r.DocNo} ${r.ItemCode} "${r.Desc2}" — the key holds several lines on one side, so it is NOT matched rather than matched wrongly`);
+      continue;
+    }
+    if (!e) { bump("ERP_LINE_MISSING", `${r.DocNo} ${r.ItemCode} "${r.Desc2}" — AutoCount says ${acA}, no ERP bedframe/sofa line carries this key`); continue; }
 
     const erpA = e.stock_status === "READY" ? "READY" : "PENDING";
     comparable += 1;
@@ -225,12 +266,41 @@ async function main() {
 
   log("");
   log("--- CROSS-CHECK: does the ERP hold the bind at all? ---");
-  const boundKeys = acBound.map((r) => String(r.DtlKey));
-  const boundErp = boundKeys.map((k) => erpByKey.get(k)).filter(Boolean);
+  const boundErp = acBound.map((r) => erpByKey.get(acKey(r))).filter(Boolean);
   const withDed = boundErp.filter((e) => dedById.has(e.id)).length;
   log(`AutoCount-bound lines the ERP holds: ${boundErp.length}`);
   log(`   of those, an ERP purchase_order_items row carries so_item_id = the line: ${withDed}`);
   log(`   MISSING the bind in the ERP: ${boundErp.length - withDed}  <- BOUND mode is blind on these`);
+
+  /* ── 6. PROOF that sofa never reaches BOUND mode, counted BOTH WAYS ────────
+     BOUND mode (step 6b) makes a line READY when its OWN purchase_order_items row
+     is received. So if the group really ran bound, "PENDING despite a fully
+     received dedicated PO" would be ~0 for it. Bedframe is the control. */
+  log("");
+  log("--- PROOF: does BOUND mode actually run for each group? (counted both ways) ---");
+  const allErp = await sql`
+    SELECT i.id::text id, LOWER(COALESCE(i.item_group,'')) g, i.stock_status, i.qty::numeric qty
+      FROM scm.mfg_sales_order_items i
+      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+     WHERE h.company_id = ${CO} AND COALESCE(i.cancelled,false) = false
+       AND h.linked_ac_docno = ANY(${docs})
+       AND LOWER(COALESCE(i.item_group,'')) IN ('bedframe','sofa')`;
+  const allDed = await sql`
+    SELECT pi.so_item_id::text sid, SUM(COALESCE(pi.received_qty,0))::numeric got
+      FROM scm.purchase_order_items pi WHERE pi.so_item_id IS NOT NULL GROUP BY 1`;
+  const dedAll = new Map(allDed.map((r) => [r.sid, Number(r.got)]));
+  for (const grp of ["bedframe", "sofa"]) {
+    const ls = allErp.filter((e) => e.g === grp);
+    const full = (e) => (dedAll.get(e.id) ?? 0) >= Number(e.qty);
+    const readyFull = ls.filter((e) => e.stock_status === "READY" && full(e)).length;
+    const pendFull = ls.filter((e) => e.stock_status !== "READY" && full(e)).length;
+    log(`   ${grp}: ${ls.length} lines, ${ls.filter((e) => e.stock_status !== "READY").length} PENDING`);
+    log(`      READY   with a fully received dedicated PO: ${readyFull}`);
+    log(`      PENDING despite a fully received dedicated PO: ${pendFull}   <- would be ~0 if BOUND ran`);
+  }
+  log("   Reading: BOUND_GROUPS in so-stock-allocation.ts contains 'sofa', but step 4 diverts every");
+  log("   sofa line into sofaLineRecs BEFORE `needs` is built, and step 6b filters `needs` — so a");
+  log("   sofa line can never appear in boundNeeds. The counts above are that dead branch, measured.");
 
   await sql.end();
 }
