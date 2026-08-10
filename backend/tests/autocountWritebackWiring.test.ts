@@ -94,6 +94,18 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
     expect(tail).toContain("docType: 'PO'");
   });
 
+  test('DO cancel queues a cancel', () => {
+    const tail = between(doSource, 'post-do-cancel failed', 'return c.json({');
+    expect(tail).toContain('enqueueCancel(sb, {');
+    expect(tail).toContain("docType: 'DO'");
+  });
+
+  test('GRN cancel queues a cancel', () => {
+    const tail = between(grnSource, 'await recomputePoReceived(sb, lineList.map', "return c.json({ grn: data ?? { id, status: 'CANCELLED' } });");
+    expect(tail).toContain('enqueueCancel(sb, {');
+    expect(tail).toContain("docType: 'GR'");
+  });
+
   test('every SO mutation path queues an edit — header, line add/edit/delete, and the variant/SKU swaps', () => {
     // Header CAS save.
     expect(between(soSource, 'header saved but edit lease was no longer ours', 'version: savedVersion,'))

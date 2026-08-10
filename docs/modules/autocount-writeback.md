@@ -160,6 +160,8 @@ Each hook sits at the point the document becomes permanent — after the
 | GRN -> PI | `scm/routes/purchase-invoices.ts` | `POST /from-grn` and `POST /from-grn-items` (per bucket) |
 | SO cancel | `mfg-sales-orders.ts` | `PATCH /:docNo/status` when the transition is to CANCELLED |
 | PO cancel | `mfg-purchase-orders.ts` | `PATCH /:id/cancel` |
+| DO cancel | `delivery-orders-mfg.ts` | `PATCH /:id/status` when the transition is to CANCELLED |
+| GRN cancel | `grns.ts` | `PATCH /:id/cancel`, after the atomic flip won the race |
 | SO edit | `mfg-sales-orders.ts` | `queueAcSoEdit` from the header PATCH, line add/edit/delete, and `tbc-update` / `tbc-swap` / `tbc-swap-sofa` |
 | PO edit | `mfg-purchase-orders.ts` | `queueAcPoEdit` from the header PATCH and line add/edit/delete |
 

@@ -6,7 +6,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
 import { grnHasDownstream } from '../lib/downstream-lock';
-import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, enqueueCancel } from '../lib/autocount-outbox';
 import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
@@ -2538,6 +2538,19 @@ grns.patch('/:id/cancel', async (c) => {
   } catch { /* best-effort */ }
 
   const { data } = await sb.from('grns').select(HEADER).eq('id', id).maybeSingle();
+
+  /* ERP -> AutoCount cancel. Reached only for a GRN the downstream lock let
+     through (grnHasDownstream, checked above) — the same rule AutoCount
+     applies, so this can never ask it to cancel an invoiced receipt. */
+  await enqueueCancel(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'GR',
+    docNo: head.grn_number ?? id,
+    docId: id,
+    self: { table: 'grns', keyCol: 'id', key: id },
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   return c.json({ grn: data ?? { id, status: 'CANCELLED' } });
 });
 

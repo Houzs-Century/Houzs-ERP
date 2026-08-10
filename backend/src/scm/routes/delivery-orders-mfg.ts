@@ -19,7 +19,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { doHasDownstream } from '../lib/downstream-lock';
-import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, enqueueCancel } from '../lib/autocount-outbox';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
 import { loadIncomingLines, pickIncomingForBucket, pickIncomingForSofaSet, incomingBucketKey } from '../lib/do-live-allocator';
@@ -5221,6 +5221,18 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
       const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
       await recomputeSoStockAllocation(sb);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-do-cancel failed:', e); }
+    /* ERP -> AutoCount cancel. Reached only for a DO the downstream lock let
+       through (doHasDownstream, checked above) — the same rule AutoCount
+       applies, so this can never ask it to cancel an invoiced delivery. */
+    const { data: doRow } = await sb.from('delivery_orders').select('do_number').eq('id', id).maybeSingle();
+    await enqueueCancel(sb, {
+      companyId: co.companyId,
+      docType: 'DO',
+      docNo: (doRow as { do_number?: string } | null)?.do_number ?? id,
+      docId: id,
+      self: { table: 'delivery_orders', keyCol: 'id', key: id },
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
   }
 
   return c.json({
