@@ -296,25 +296,25 @@ async function main() {
       /* Downstream documents took a SNAPSHOT of the code when they were created,
          so the parent alone would leave them stating 8038. These rows carry
          migrated_no_stock: this is paperwork, no movement is written. */
+      const grnFollow = async (poItemId, code) => (APPLY
+        ? tx`UPDATE scm.grn_items SET material_code = ${code} WHERE purchase_order_item_id = ${poItemId} RETURNING id`
+        : tx`SELECT id FROM scm.grn_items WHERE purchase_order_item_id = ${poItemId}`);
       for (const t of touched) {
         if (e.kind === "po") {
-          const g = await tx`UPDATE scm.grn_items SET material_code = ${t.code}
-                             WHERE purchase_order_item_id = ${t.id} RETURNING id`;
+          const g = await grnFollow(t.id, t.code);
           if (g.length) { nGr += g.length; note(`      -> ${g.length} GRN line(s) follow ${compOf(t.code)}`); }
         } else {
-          const po = await tx`UPDATE scm.purchase_order_items SET material_code = ${t.code}
-                              WHERE so_item_id = ${t.id} RETURNING id`;
+          const po = APPLY
+            ? await tx`UPDATE scm.purchase_order_items SET material_code = ${t.code} WHERE so_item_id = ${t.id} RETURNING id`
+            : await tx`SELECT id FROM scm.purchase_order_items WHERE so_item_id = ${t.id}`;
           if (po.length) {
             nPo += po.length;
             note(`      -> ${po.length} PO line(s) follow ${compOf(t.code)}`);
-            for (const r of po) {
-              const g = await tx`UPDATE scm.grn_items SET material_code = ${t.code}
-                                 WHERE purchase_order_item_id = ${r.id} RETURNING id`;
-              nGr += g.length;
-            }
+            for (const r of po) nGr += (await grnFollow(r.id, t.code)).length;
           }
-          const d = await tx`UPDATE scm.delivery_order_items SET item_code = ${t.code}
-                             WHERE so_item_id = ${t.id} RETURNING id`;
+          const d = APPLY
+            ? await tx`UPDATE scm.delivery_order_items SET item_code = ${t.code} WHERE so_item_id = ${t.id} RETURNING id`
+            : await tx`SELECT id FROM scm.delivery_order_items WHERE so_item_id = ${t.id}`;
           if (d.length) { nDo += d.length; note(`      -> ${d.length} DO line(s) follow ${compOf(t.code)}`); }
         }
       }
