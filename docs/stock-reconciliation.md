@@ -113,6 +113,43 @@ from the neighbouring columns. **None of them is an outstanding order**, so
 they cannot pollute the comparison. This is a much better-behaved field than a
 free-text `nvarchar(40)` with no constraint had any right to be.
 
+### 2.4 Remark2 is internally consistent with AutoCount's own stock
+
+Before asking whether Remark2 agrees with the ERP, it is worth asking whether
+it agrees with AutoCount. For every outstanding line on a physical item, is
+there enough on-hand in AutoCount to cover it?
+
+| Remark2 | Outstanding orders | Short | Short % |
+|---|---|---|---|
+| `READY` | 171 | 1 | **1%** |
+| `BEDFRAME` | 14 | 0 | 0% |
+| `MATTRESS` | 5 | 0 | 0% |
+| `ACC/BEDFRAME` | 2 | 0 | 0% |
+| `BEDFRAME/ACC` | 31 | 1 | 3% |
+| `READY (PARTIAL)` | 16 | 1 | 6% |
+| `ACC` | 89 | 15 | 17% |
+| `MATTRESS/ACC` | 16 | 4 | 25% |
+| *(blank)* | 1,976 | 364 | 18% |
+| **all** | **2,320** | **386** | **17%** |
+
+This is the single strongest piece of evidence for the owner's premise.
+When staff type `READY`, the stock is genuinely present **99% of the time**.
+The category values behave exactly as their semantics predict: `BEDFRAME` and
+`MATTRESS` are never short, while `ACC` — which asserts only that accessories
+are ready and the main item is not — is short 17% of the time, as it should be.
+Blank orders are short 18% of the time, consistent with "nothing ready yet".
+
+Remark2 is not a stale annotation. It is a disciplined, accurate field, and
+that is why a disagreement with the ERP is worth investigating rather than
+shrugging at.
+
+> Method note, because the first run of this check was wrong. Including the
+> service pseudo-items put the `READY` shortage at 36% and made Remark2 look
+> uncorrelated with stock. Every one of those "shortages" was a `DISPOSE` line
+> against a permanently negative balance. Excluding non-physical items reversed
+> the conclusion completely. The contaminated figure is recorded here so nobody
+> re-derives it and believes it.
+
 ### 2.3 Token order is not canonical in AutoCount
 
 `BEDFRAME/ACC` appears 31 times and `ACC/BEDFRAME` twice. They mean the same
@@ -443,11 +480,18 @@ zero.
 
 The deeper point about the status axis: **AutoCount's Remark2 is a human
 assertion and the ERP's is a computation.** One is typed by a person when they
-notice stock arrive; the other is recomputed from the actual allocation. They
-can only agree when staff kept the field current. That the outstanding set is
-100% in-vocabulary shows the discipline is real — but it also means every
-disagreement is either a stale hand-typed value or a genuine allocation
-difference, and the checker's job is to say which.
+notice stock arrive; the other is recomputed from the actual allocation. That
+asymmetry is the reason they can drift.
+
+What the evidence says about the asymmetry is encouraging. The field is 100%
+in-vocabulary on the outstanding set, and it agrees with AutoCount's own stock
+99% of the time when it says `READY` (section 2.4). The human side of this is
+in good order. So where the ERP disagrees with a `READY`, the presumption
+should be that **the ERP is missing something** — an unprocessed order, an
+unmapped warehouse, a movement that never landed — rather than that the
+warehouse staff were careless. That is the opposite of the usual assumption
+when a manual field meets a computed one, and it is worth stating plainly
+because it changes where to look first.
 
 ---
 
