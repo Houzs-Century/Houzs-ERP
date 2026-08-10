@@ -1183,16 +1183,25 @@ grns.get('/outstanding-po-items', async (c) => {
      parent PO's purchase_location_id so the picker can group/lock by warehouse,
      and resolve the warehouse code/name in a second round trip (Supabase nested
      selects can't reach warehouses through the items→po hop cleanly). */
-  const { data: items, error } = await sb
-    .from('purchase_order_items')
-    .select(`
+  /* Cross-company leak fix (owner 2026-08-10 "为什么 houzs 的数据进到去 2990"):
+     this picker returned EVERY company's outstanding PO lines — the AutoCount
+     import raised Houzs POs from a handful to 135 and made the leak visible in
+     2990's GRN picker. The consignment mirror already wrapped with
+     scopeToCompany; do the same here (items carry company_id since mig 0083,
+     fail-closed when the company context can't resolve). */
+  const { data: items, error } = await scopeToCompany(
+    sb
+      .from('purchase_order_items')
+      .select(`
       id, purchase_order_id, material_kind, material_code, material_name, supplier_sku, item_group,
       description, qty, received_qty, unit_price_centi, warehouse_id, variants, delivery_date,
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
       po:purchase_orders!inner ( id, po_number, supplier_id, status, po_date, expected_at,
         supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
         purchase_location_id, supplier:suppliers ( code, name ) )
-    `)
+    `),
+    c,
+  )
     .order('purchase_order_id', { ascending: false })
     .limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
