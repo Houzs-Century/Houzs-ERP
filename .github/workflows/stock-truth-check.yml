@@ -1,0 +1,81 @@
+name: Stock truth check (read-only)
+
+# Answers, on demand, the three questions the owner asked on 2026-08-11:
+#   (A) is the stock BALANCE right?  ERP on-hand vs AutoCount's own vItemBalQty,
+#       cell by cell, per item AND per location — agree / ERP higher / ERP lower /
+#       item-not-mapped / location-not-mapped / ERP-only. Sofa FURNITURE is
+#       EXCLUDED by his ruling and the report says so with counts, rather than
+#       skipping it quietly.
+#   (B) is the FIFO ledger sound?  Layer arithmetic, no impossible layers, every
+#       consumed unit costed, layers reconcile to movements, total value equals
+#       the sum of the layers. Zero-cost open layers reported with their units
+#       and the documents behind them.
+#   (C) is COGS real?  Delivered units carrying zero cost, and the RM impact.
+#
+# The value of this job is that it is RE-RUNNABLE. A repair lane is judged by
+# running it before and after and comparing the three VERDICT lines. An answer
+# produced once by hand cannot do that.
+#
+# The AutoCount side is a COMMITTED SNAPSHOT (backend/scripts/data/
+# ac-item-location-balance.json.gz) because the AutoCount box is reachable only
+# from the owner's machine over ZeroTier while the production database is
+# reachable only from here. Refresh it first, on that machine:
+#   AC_DB_CRED_FILE=<cred file> python backend/scripts/export-ac-item-location-balance.py
+# The check prints the snapshot's age on every run and marks it STALE past
+# AC_SNAPSHOT_MAX_AGE_DAYS, so a divergence caused by the days in between can
+# never be mistaken for an ERP defect.
+#
+# STRICTLY READ-ONLY — SELECT only, no writes, no DDL, no transaction. Manual
+# trigger only: a production read is a question, not a gate, and must never
+# become routine CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "Company id to check (1 = Houzs Century, the AED_HOUZS book)"
+        required: false
+        default: "1"
+        type: string
+      max_age_days:
+        description: "Mark the AutoCount snapshot STALE past this many days"
+        required: false
+        default: "2"
+        type: string
+      sample:
+        description: "Rows to print per detail list (counts and totals are always full)"
+        required: false
+        default: "25"
+        type: string
+
+# Own concurrency group — this touches nothing, and must never queue behind or
+# displace a release.
+concurrency:
+  group: stock-truth-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-stock-truth.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          AC_SNAPSHOT_MAX_AGE_DAYS: ${{ inputs.max_age_days }}
+          SAMPLE: ${{ inputs.sample }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks (inventory-integrity-check.yml,
+          # costless-stock-check.yml, uncosted-cogs-check.yml).
+          NODE_OPTIONS: --dns-result-order=ipv4first
