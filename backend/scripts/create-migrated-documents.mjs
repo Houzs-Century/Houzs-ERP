@@ -126,7 +126,7 @@ async function doDos() {
       WHERE company_id = ${CO} AND migrated_no_stock = true AND linked_ac_docno IS NOT NULL`)
     .map((r) => r.linked_ac_docno));
 
-  const soItems = await sql`SELECT i.id, i.item_code, i.line_no, i.qty, h.doc_no, h.linked_ac_docno ac, h.id AS so_id
+  const soItems = await sql`SELECT i.id, i.item_code, i.line_no, i.qty, h.doc_no, h.linked_ac_docno ac
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL ORDER BY i.line_no`;
   const soByKey = new Map();
@@ -144,7 +144,7 @@ async function doDos() {
     const cands = soByKey.get(`${r.SoNo}|${norm(erp)}`);
     const pick = cands && cands.length ? cands[0] : null;
     if (!pick) { noSoLine++; continue; }
-    if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: pick.doc_no, soId: pick.so_id, items: [] });
+    if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: pick.doc_no, items: [] });
     byDo.get(r.DoNo).items.push({ code: erp, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)), soItemId: pick.id });
   }
   const plan = [...byDo.values()].filter((d) => !done.has(d.doNo));
