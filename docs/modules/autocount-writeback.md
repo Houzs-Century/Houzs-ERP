@@ -233,6 +233,109 @@ leave empty.
 
 ---
 
+## 7a. Line identity — the DtlKey, and why an edit can be REFUSED
+
+An AutoCount document line has no identity the ERP can set. The SDK's only
+handle is `DtlKey`, assigned by AutoCount at save, and `/edit` addresses a line
+with `doc.EditDetail(dtlKey)`. The ERP stores it in
+`scm.mfg_sales_order_items.linked_ac_dtlkey` and
+`scm.purchase_order_items.linked_ac_dtlkey` (migration 0273).
+
+### The defect this section exists for
+
+`/edit` used to fall through to `doc.AddDetail()` for a line with no key —
+reading a keyless line as "genuinely new". **Measured on production 2026-08-11,
+before any backfill: 0 of 13,907 SO lines and 0 of 864 PO lines on
+AutoCount-linked documents carried a key.** Every line was keyless, so the first
+edit of any document would have appended a second copy of every line the
+operator did not touch into the live account book. On a purchase order those
+copies are permanent — `PurchaseOrder` exposes neither `DeleteDetail` nor any
+line-level `Cancelled` in the 2.2 SDK.
+
+Two causes, both now closed:
+
+| cause | fix |
+|---|---|
+| Create routes returned only the DocNo, so an ERP-created document had NULL line identity forever | Create and convert routes now answer `lines: [{Seq, DtlKey, ItemCode, Desc2}]`, and the drain stores them |
+| The cutover-migrated documents were never backfilled | `backend/scripts/backfill-ac-line-keys.mjs` + the **Backfill AutoCount line keys** workflow |
+
+### The refusal
+
+`composeEdit` throws `KeylessLineError` when **any** line lacks a usable
+`DtlKey`, and the whole edit is refused. `enqueueEdit` catches it and writes a
+`skipped` outbox row whose `last_error` starts `refused, nothing sent:` and names
+the offending line. Nothing is POSTed.
+
+```sql
+SELECT doc_type, doc_no, last_error, created_at
+  FROM scm.autocount_outbox
+ WHERE status = 'skipped' AND last_error LIKE 'refused, nothing sent:%'
+ ORDER BY created_at DESC;
+```
+
+The remedy for a row in that list is to backfill that document's line keys, then
+save it again.
+
+`AcSyncService` carries the **same** refusal, so a service binary that has not
+been rebuilt is also safe. The ERP copy exists so the request is never sent.
+
+**A partial edit is not offered.** One keyless line refuses the whole document.
+Sending the keyed lines and dropping the rest would push a payload that does not
+describe the order.
+
+**Composed lazily, on purpose.** When the document's `create` is still sitting
+unsent in the outbox, an edit REPLACES that create's payload instead of queueing
+an edit — and a document that has never reached AutoCount cannot have line keys
+yet. Composing the edit eagerly would refuse that entirely legitimate path.
+
+### Storing what a create returns
+
+`persistLineKeys` (`scm/lib/autocount-outbox.ts`) zips the returned keys onto the
+ERP rows **by index** — `toDetails` is a strict 1:1 map, so the Nth detail sent
+is the Nth row. It **verifies before it writes**: the counts must match and every
+`ItemCode` must match, or nothing is stored at all.
+
+That asymmetry is deliberate. A **missing** key is refused loudly by
+`composeEdit`. A **wrong** key is not refused at all — it silently edits a
+different line in a live account book. So an unprovable zip stores nothing, and
+the document keeps NULL keys.
+
+Failing to record identity never changes the dispatch outcome: the document IS
+in AutoCount and the row IS `sent`. It is logged, not retried.
+
+### Known limitation — adding a line to a document AutoCount already has
+
+A genuinely new line on an existing AutoCount document is refused too, because
+the ERP cannot yet tell it apart from a legacy line whose key was never stored.
+
+`AcSyncService` accepts an explicit `IsNewLine: true` marker on a line for
+exactly this case, and **nothing in the ERP sets it**. Before anything does, the
+ERP needs positive evidence that a keyless line is new rather than unbackfilled —
+the honest signal is a document whose every other line is keyed AND whose backfill
+is known to have covered it completely. Setting `IsNewLine` on a guess re-opens
+the duplicate-append defect one line at a time.
+
+### Retirement — `Retire: true`
+
+No detail class in the SDK has a line-level `Cancelled` (the string appears zero
+times in `sdk-api-reference.txt`), and only `SalesOrder` has `DeleteDetail`. So
+`AcSyncService` retires a line in place: `Qty = 0`, `Transferable = false`, and
+an `[ERP-CANCELLED]` prefix on `Desc2`.
+
+`Qty = 0` is the load-bearing part. AutoCount's own outstanding predicate is
+`Qty - ISNULL(TransferedQty,0) > 0`, so only zeroing the quantity makes
+AutoCount's outstanding set agree with a retired ERP line.
+
+**Nothing in the ERP sends `Retire` yet** — it needs a soft-cancel flag on the
+ERP line first. `scm.mfg_sales_order_items.cancelled` exists and is read in ~85
+places, but no code ever sets it and production has zero such rows; the line
+delete routes still hard-delete. See
+`docs/autocount-line-retirement-plan.md` for what has to change before that flag
+can be turned into a retirement, and why doing it halfway is worse than the hard
+delete it replaces.
+
+---
+
 ## 8. Configuration
 
 | Name | Kind | Notes |

@@ -9,6 +9,8 @@ import {
   composeCreateSo,
   composeCreatePo,
   composeEdit,
+  KeylessLineError,
+  parseCreatedLines,
   composeDescription2,
   makeItemCodeResolver,
   mapOrPassthrough,
@@ -140,24 +142,86 @@ describe('composeCreatePo', () => {
   });
 });
 
+/* The DtlKeys a create/convert reports back. Anything not completely usable is
+   DROPPED rather than coerced — a key guessed off a malformed row would be
+   stored as line identity and used to overwrite a live AutoCount line. */
+describe('parseCreatedLines', () => {
+  test('reads well-formed entries', () => {
+    expect(parseCreatedLines([
+      { Seq: 0, DtlKey: 11, ItemCode: 'A', Desc2: 'x' },
+      { Seq: 1, DtlKey: 12, ItemCode: 'B' },
+    ])).toEqual([
+      { Seq: 0, DtlKey: 11, ItemCode: 'A', Desc2: 'x' },
+      { Seq: 1, DtlKey: 12, ItemCode: 'B', Desc2: null },
+    ]);
+  });
+
+  test('an absent or non-array lines field is simply no lines, not an error', () => {
+    expect(parseCreatedLines(undefined)).toEqual([]);
+    expect(parseCreatedLines(null)).toEqual([]);
+    expect(parseCreatedLines('nope')).toEqual([]);
+  });
+
+  test('an unusable DtlKey is dropped rather than coerced', () => {
+    expect(parseCreatedLines([
+      { Seq: 0, DtlKey: 'abc', ItemCode: 'A' },
+      { Seq: 1, DtlKey: 0, ItemCode: 'B' },
+      { Seq: 2, DtlKey: -5, ItemCode: 'C' },
+      { Seq: 3, DtlKey: 13, ItemCode: 'D' },
+    ])).toEqual([{ Seq: 3, DtlKey: 13, ItemCode: 'D', Desc2: null }]);
+  });
+});
+
 describe('composeEdit', () => {
   test('a known line is addressed by its AutoCount DtlKey so the edit updates it', () => {
-    // Without the key AcSyncService APPENDS, which is the duplicate-line bug
-    // PR #1819 stores linked_ac_dtlkey to prevent.
     const p = composeEdit('SO', 'SO-000021', { Ref: 'R2' }, [
       line({ linked_ac_dtlkey: 991 }),
-      line({ item_code: 'SKU-NEW' }),
+      line({ item_code: 'SKU-2', linked_ac_dtlkey: 992 }),
     ]);
     expect(p.DocType).toBe('SO');
     expect(p.DocNo).toBe('SO-000021');
     expect(p.Header).toEqual({ Ref: 'R2' });
     expect(p.Lines[0].DtlKey).toBe(991);
-    expect(p.Lines[1].DtlKey).toBeUndefined();
+    expect(p.Lines[1].DtlKey).toBe(992);
   });
 
-  test('a non-numeric key is treated as no key rather than sent as garbage', () => {
-    const p = composeEdit('SO', 'SO-1', {}, [line({ linked_ac_dtlkey: 'not-a-key' })]);
-    expect(p.Lines[0].DtlKey).toBeUndefined();
+  /* The defect this refusal exists for. AcSyncService's /edit used to fall
+     through to AddDetail() for a keyless line, and on 2026-08-11 EVERY line in
+     production was keyless (0 of 13,907 SO, 0 of 864 PO) — so an edit appended
+     a second copy of every line into the live account book. On a PO those
+     copies are permanent: the SDK gives PurchaseOrder no DeleteDetail and no
+     line-level Cancelled. */
+  test('a keyless line REFUSES the whole edit rather than appending a duplicate', () => {
+    expect(() => composeEdit('SO', 'SO-000021', { Ref: 'R2' }, [
+      line({ linked_ac_dtlkey: 991 }),
+      line({ item_code: 'SKU-NEW' }),
+    ])).toThrow(KeylessLineError);
+  });
+
+  test('the refusal names the document and the offending line, because an operator reads it', () => {
+    let msg = '';
+    try {
+      composeEdit('PO', 'PO-2608-004', {}, [line({ item_code: 'SKU-NEW' })]);
+    } catch (e) { msg = (e as Error).message; }
+    expect(msg).toContain('PO-2608-004');
+    expect(msg).toContain('SKU-NEW');
+    expect(msg).toContain('1 of 1');
+  });
+
+  test('one keyless line among many still refuses — a partial edit is not offered', () => {
+    expect(() => composeEdit('SO', 'SO-9', {}, [
+      line({ linked_ac_dtlkey: 1 }),
+      line({ item_code: 'B' }),
+      line({ item_code: 'C', linked_ac_dtlkey: 3 }),
+    ])).toThrow(/2 \(B\)/);
+  });
+
+  /* A garbage key must never be coerced into a number and shipped: DtlKey is
+     how AutoCount finds the row to overwrite, so a wrong one edits somebody
+     else's line. It is treated as NO key, which now means the edit is refused. */
+  test('a non-numeric key is treated as no key, and therefore refused', () => {
+    expect(() => composeEdit('SO', 'SO-1', {}, [line({ linked_ac_dtlkey: 'not-a-key' })]))
+      .toThrow(KeylessLineError);
   });
 });
 
