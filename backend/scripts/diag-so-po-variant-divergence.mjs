@@ -198,6 +198,23 @@ async function main() {
      WHERE h.company_id = 1 AND i.item_group = 'bedframe' AND h.linked_ac_docno IS NOT NULL`;
   let noKey = 0, noText = 0, agree = 0, mism = 0, attributable = 0;
   const examples = [];
+  /* IS THE DtlKey ITSELF TRUSTWORTHY? backfill-ac-line-keys.mjs did not read a
+     key off each row - it grouped by (DocNo | item code), the SAME pair that
+     collided, and ZIPPED the ordered DtlKeys onto the ERP lines by line_no,
+     writing nothing when the two counts disagreed. So "join on linked_ac_dtlkey"
+     is a recorded positional guess, not an independently observed fact, and a
+     repair resting on it is only as good as that zip.
+
+     description2 is the witness that settles it. The importer wrote it per line
+     from the very export row it created that line from (import-ac-outstanding-
+     so.mjs, `d2: l.Desc2`), and NEITHER refresh script has ever written the
+     column - they only read it. So if the export row addressed by the stored
+     DtlKey carries the same text as the row's own description2, the zip
+     recovered the original binding and the repair target is a fact. Where they
+     disagree the key is wrong for that row and nothing may be written from it. */
+  let corrob = 0, contra = 0, noD2 = 0, keyMissingFromExport = 0;
+  const contraExamples = [];
+  const otherMismatch = [];   // the mismatches the collision does NOT explain
   for (const l of all) {
     if (l.linked_ac_dtlkey == null) { noKey++; continue; }
     const ex = byDtl.get(Number(l.linked_ac_dtlkey));
@@ -206,15 +223,42 @@ async function main() {
     const shouldBe = blockFor(parseBedframe(own), findColour);
     const cur = asObj(l.variants);
     const d = diffAxes(cur, shouldBe);
+
+    // provenance of this row's stored DtlKey, independent of the collision
+    let prov;
+    if (!ex) { keyMissingFromExport++; prov = "KEY-NOT-IN-EXPORT"; }
+    else if (l.d2 == null) { noD2++; prov = "NO-DESCRIPTION2"; }
+    else if (norm2(l.d2) === norm2(ex.Desc2)) { corrob++; prov = "CORROBORATED"; }
+    else {
+      contra++; prov = "CONTRADICTED";
+      if (contraExamples.length < 20) contraExamples.push(`${l.doc_no} ${l.item_code} dtl=${l.linked_ac_dtlkey}
+        description2 = ${j(norm2(l.d2))}
+        export[dtl]  = ${j(norm2(ex.Desc2))}`);
+    }
+
     if (!d.length) { agree++; continue; }
     mism++;
     const bug = buggy.get(`${l.ac}|${(l.item_code || "").toUpperCase()}`);
+    let explained = false;
     if (bug && norm2(bug.Desc2) !== norm2(own)) {
       const wouldBe = blockFor(parseBedframe(bug.Desc2), findColour);
       if (!diffAxes(cur, wouldBe).length) {
+        explained = true;
         attributable++;
-        if (examples.length < 25) examples.push(`${l.doc_no} ${l.item_code} dtl=${l.linked_ac_dtlkey} axes=${d.join(",")} now=${j(d.reduce((o, k) => (o[k] = cur[k] ?? null, o), {}))} own=${j(d.reduce((o, k) => (o[k] = shouldBe[k] ?? null, o), {}))}`);
+        if (examples.length < 25) examples.push(`${l.doc_no} ${l.item_code} dtl=${l.linked_ac_dtlkey} prov=${prov} axes=${d.join(",")} now=${j(d.reduce((o, k) => (o[k] = cur[k] ?? null, o), {}))} own=${j(d.reduce((o, k) => (o[k] = shouldBe[k] ?? null, o), {}))}`);
       }
+    }
+    /* The residue. These were counted and never named, so nobody could say what
+       they were. Print everything needed to classify each one on sight. */
+    if (!explained) {
+      otherMismatch.push([
+        `${l.doc_no} ${l.item_code} dtl=${l.linked_ac_dtlkey} prov=${prov} axes=${d.join(",")}`,
+        `        own Desc2   ${j(norm2(own))}`,
+        `        description2 ${j(norm2(l.d2))}`,
+        `        collided-on ${bug ? j(norm2(bug.Desc2)) : "(no collided key for this row)"}`,
+        `        now  ${j(AXES.reduce((o, k) => (o[k] = cur[k] ?? null, o), {}))}`,
+        `        own  ${j(shouldBe)}`,
+      ].join("\n"));
     }
   }
   log(`migrated bedframe SO lines: ${all.length}`);
@@ -226,6 +270,18 @@ async function main() {
   log(`    remaining mismatches (other causes): ${mism - attributable}`);
   log("  examples (up to 25):");
   for (const e of examples) log(`    ${e}`);
+
+  log("");
+  log("  --- is the stored DtlKey itself corroborated? (description2 vs export[DtlKey].Desc2) ---");
+  log(`    CORROBORATED (same text, zip recovered the binding): ${corrob}`);
+  log(`    CONTRADICTED (different text - key is WRONG for that row): ${contra}`);
+  log(`    row has no description2 to check against:            ${noD2}`);
+  log(`    stored DtlKey not present in the export at all:      ${keyMissingFromExport}`);
+  for (const e of contraExamples) log(`      ${e}`);
+
+  log("");
+  log(`  --- the ${otherMismatch.length} mismatches the collision does NOT explain ---`);
+  for (const e of otherMismatch) log(`    ${e}`);
 
   // ── C: truncation sweep ────────────────────────────────────────────────────
   log("");
@@ -333,6 +389,126 @@ async function main() {
   }
   if (!grn.length) log("    (no GRN lines found for those POs)");
 
+  // ── E: the GRN variant arm, which nothing has ever swept ───────────────────
+  log("");
+  log("################ SECTION E - GRN variants: the arm neither refresh script touches ################");
+  /* refresh-so-variants.mjs writes mfg_sales_order_items and
+     refresh-po-variants.mjs writes purchase_order_items. NOTHING writes
+     grn_items.variants after create-migrated-documents.mjs copies it off the PO
+     line at receipt. A GRN is a SNAPSHOT of the PO at that moment, so a value
+     that was wrong when the snapshot was taken stays wrong after the PO line
+     itself is repaired - and no existing check looks. */
+  const NUMAX = ["gap", "divanHeight", "legHeight", "totalHeight"];
+  const RANGE = { gap: [1, 24], divanHeight: [1, 24], legHeight: [0, 12], totalHeight: [1, 48] };
+  const numOf = (v) => { const m = /^\s*(\d+(?:\.\d+)?)/.exec(String(v ?? "")); return m ? parseFloat(m[1]) : null; };
+  const implausible = (k, v) => {
+    const n = numOf(v); if (n == null) return false;
+    const [lo, hi] = RANGE[k]; return n < lo || n > hi;
+  };
+  /* The tell that a figure came out of a FABRIC CODE rather than a tape measure:
+     it equals a digit run inside the colour bound on the very same row.
+     "PC151-01" yields 1", which sits inside every plausible range - a bounds
+     check alone is blind to it, which is why the shape is tested two ways. */
+  const codeNums = (v) => new Set(([v.colourId, v.fabricCode, v.fabricId, v.colourLabel]
+    .filter((x) => typeof x === "string").join(" ").match(/\d+/g) ?? []).map(Number));
+
+  const grnAll = await sql`
+    SELECT g.grn_number, g.migrated_no_stock AS mig, gi.id::text AS id, gi.material_code AS code,
+           gi.item_group AS grp, gi.variants AS gv,
+           pi.id::text AS po_item_id, pi.variants AS pv, pi.description2 AS pd2,
+           pi.linked_ac_dtlkey AS pdtl, p.po_number
+      FROM scm.grn_items gi
+      JOIN scm.grns g ON g.id = gi.grn_id
+      LEFT JOIN scm.purchase_order_items pi ON pi.id = gi.purchase_order_item_id
+      LEFT JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
+     WHERE g.company_id = ${1} AND jsonb_typeof(gi.variants) = 'object'`;
+  log(`GRN lines carrying an object-shaped variants block: ${grnAll.length}`);
+
+  const buckets = { artefact: [], driftPlausible: [], sameAsParent: 0, noParent: 0, clean: 0 };
+  const axisHist = new Map();      // "axis=value" -> count, so the normal range is visible not assumed
+  for (const r of grnAll) {
+    const gv = asObj(r.gv);
+    for (const k of NUMAX) if (gv[k] != null) {
+      const key = `${k}=${gv[k]}`; axisHist.set(key, (axisHist.get(key) ?? 0) + 1);
+    }
+    const cn = codeNums(gv);
+    const suspectAxes = NUMAX.filter((k) => gv[k] != null
+      && (implausible(k, gv[k]) || cn.has(numOf(gv[k]))));
+    if (!r.po_item_id) { if (suspectAxes.length) buckets.noParent++; else buckets.clean++; continue; }
+
+    const pv = asObj(r.pv);
+    const pex = r.pdtl != null ? byDtl.get(Number(r.pdtl)) : null;
+    const parentText = pex ? pex.Desc2 : r.pd2;
+    const parentShould = parentText != null ? blockFor(parseBedframe(parentText), findColour) : null;
+    const drift = NUMAX.concat("colourId").filter((k) => (gv[k] ?? null) !== (pv[k] ?? null));
+    if (!drift.length) { buckets.sameAsParent++; if (!suspectAxes.length) buckets.clean++; continue; }
+
+    const row = {
+      line: `${r.grn_number} <- ${r.po_number ?? "?"} ${r.code} grp=${r.grp ?? "-"} mig=${r.mig}`,
+      grn: j(NUMAX.concat("colourId").reduce((o, k) => (o[k] = gv[k] ?? null, o), {})),
+      po: j(NUMAX.concat("colourId").reduce((o, k) => (o[k] = pv[k] ?? null, o), {})),
+      should: parentShould ? j(parentShould) : "(parent has no source text)",
+      text: j(norm2(parentText)),
+      drift: drift.join(","), suspect: suspectAxes.join(",") || "(none)",
+    };
+    /* PARSE ARTEFACT vs REAL HISTORY. Correcting a GRN is only "restoring the
+       snapshot" when the GRN's own value could not have been a measurement -
+       it is out of range, or it is a digit run of the colour on the same row -
+       AND the parent PO line now agrees with its own AutoCount text. Anything
+       else could be a genuine difference at receipt and is left alone. */
+    const parentSound = parentShould
+      && !NUMAX.some((k) => (pv[k] ?? null) !== (parentShould[k] ?? null));
+    if (suspectAxes.length && parentSound) buckets.artefact.push(row);
+    else buckets.driftPlausible.push(row);
+  }
+  log(`  GRN line agrees with its parent PO line on every axis: ${buckets.sameAsParent}`);
+  log(`  GRN line has no parent PO line and a suspect axis:     ${buckets.noParent}`);
+  log("");
+  log(`  A. PARSE ARTEFACT - suspect figure, parent PO sound (correcting RESTORES the snapshot): ${buckets.artefact.length}`);
+  for (const r of buckets.artefact) {
+    log(`    ${r.line}`);
+    log(`       suspect axes: ${r.suspect}   drift vs parent: ${r.drift}`);
+    log(`       GRN  ${r.grn}`);
+    log(`       PO   ${r.po}`);
+    log(`       text ${r.text}`);
+  }
+  log("");
+  log(`  B. DRIFT, both sides plausible - COULD be real history, LEFT UNTOUCHED: ${buckets.driftPlausible.length}`);
+  for (const r of buckets.driftPlausible.slice(0, 40)) {
+    log(`    ${r.line}`);
+    log(`       drift vs parent: ${r.drift}   suspect axes: ${r.suspect}`);
+    log(`       GRN  ${r.grn}`);
+    log(`       PO   ${r.po}`);
+    log(`       should ${r.should}`);
+  }
+  if (buckets.driftPlausible.length > 40) log(`    ... and ${buckets.driftPlausible.length - 40} more`);
+  log("");
+  log("  every distinct numeric axis value present on a GRN line (so the normal range is observed, not assumed):");
+  for (const [k, n] of [...axisHist.entries()].sort((a, b) => b[1] - a[1])) log(`    ${k}  x${n}`);
+
+  /* The same misparse shape on the two arms that ARE swept. If the parser wrote
+     a fabric code into a height here it did so wherever that text appears. */
+  log("");
+  log("  the same shape on the SO and PO arms (a numeric axis equal to a digit run of the row's own colour, or out of range):");
+  for (const [label, rows] of [
+    ["SO", await sql`SELECT i.doc_no AS doc, i.item_code AS code, i.variants AS v
+                       FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+                      WHERE h.company_id = ${1} AND jsonb_typeof(i.variants) = 'object'`],
+    ["PO", await sql`SELECT p.po_number AS doc, pi.material_code AS code, pi.variants AS v
+                       FROM scm.purchase_order_items pi JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
+                      WHERE p.company_id = ${1} AND jsonb_typeof(pi.variants) = 'object'`],
+  ]) {
+    const hits = [];
+    for (const r of rows) {
+      const v = asObj(r.v); const cn = codeNums(v);
+      const ax = NUMAX.filter((k) => v[k] != null && (implausible(k, v[k]) || cn.has(numOf(v[k]))));
+      if (ax.length) hits.push(`${r.doc} ${r.code} ${ax.map((k) => `${k}=${v[k]}`).join(" ")} colour=${j(v.colourId ?? null)}`);
+    }
+    log(`    ${label}: ${hits.length} of ${rows.length} lines`);
+    for (const h of hits.slice(0, 30)) log(`      ${h}`);
+    if (hits.length > 30) log(`      ... and ${hits.length - 30} more`);
+  }
+
   // ── D: duplicated delivery-order lines ─────────────────────────────────────
   /* HC-SO-001920 shows ONE ordered ELEPAHNE-(SK) against FOUR delivery lines.
      The SO->DO drill already proved zero inventory movements, so the question
@@ -377,6 +553,54 @@ async function main() {
        SELECT DISTINCT delivery_order_id FROM scm.delivery_order_items
         GROUP BY delivery_order_id, item_code, qty, so_item_id HAVING COUNT(*) > 1)`;
   log(`  inventory movements posted by ANY duplicated-line DO: ${dupMoves[0].n}`);
+
+  /* THE REMEDIATION LIST. The owner has to approve a correction to real
+     delivery documents, so name every surplus line once, with the document it
+     sits on and the twin it duplicates. A count is not something anyone can
+     approve. */
+  log("");
+  log("  EXACT remediation list - every surplus delivery-order line, by document:");
+  const dupLines = await sql`
+    SELECT d.do_number, d.id::text AS do_id, d.migrated_no_stock AS mig,
+           UPPER(COALESCE(d.status::text, '')) AS status, d.so_doc_no, d.linked_ac_docno AS ac,
+           t.item_code, t.qty, t.so_item_id::text AS so_item_id, t.copies, t.ids
+      FROM scm.delivery_orders d
+      JOIN (SELECT delivery_order_id, item_code, qty, so_item_id,
+                   COUNT(*)::int AS copies,
+                   ARRAY_AGG(id::text ORDER BY id) AS ids
+              FROM scm.delivery_order_items
+             GROUP BY delivery_order_id, item_code, qty, so_item_id
+            HAVING COUNT(*) > 1) t ON t.delivery_order_id = d.id
+     WHERE d.company_id = ${1}
+     ORDER BY d.do_number, t.item_code`;
+  let surplus = 0;
+  const docsSeen = new Set();
+  for (const r of dupLines) {
+    docsSeen.add(r.do_number);
+    surplus += r.copies - 1;
+    log(`    ${r.do_number} (SO ${r.so_doc_no ?? "-"}, AC ${r.ac ?? "-"}, status=${r.status}, migrated=${r.mig})`);
+    log(`       ${r.item_code} qty=${r.qty} so_item_id=${r.so_item_id ? r.so_item_id.slice(0, 8) : "NULL"} - ${r.copies} copies, ${r.copies - 1} SURPLUS`);
+    log(`       keep ${r.ids[0]}   surplus ${r.ids.slice(1).join(", ")}`);
+  }
+  log(`  TOTAL: ${docsSeen.size} documents, ${surplus} surplus lines, ${dupLines.length} duplicate groups`);
+
+  /* A surplus line only costs the owner money if something reads it. Prove what
+     does: the SO's delivered arithmetic counts non-cancelled DO lines by
+     so_item_id, so a duplicate inflates "delivered" even with no movement. */
+  const overDel = await sql`
+    SELECT s.doc_no, s.item_code, s.qty AS ordered,
+           COALESCE(SUM(di.qty), 0)::numeric AS do_qty
+      FROM scm.mfg_sales_order_items s
+      JOIN scm.delivery_order_items di ON di.so_item_id = s.id
+      JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+      JOIN scm.mfg_sales_orders h ON h.doc_no = s.doc_no
+     WHERE h.company_id = ${1} AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'
+     GROUP BY s.doc_no, s.item_code, s.qty
+    HAVING COALESCE(SUM(di.qty), 0) > s.qty
+     ORDER BY s.doc_no`;
+  log("");
+  log(`  sales-order lines whose non-cancelled DO quantity EXCEEDS the ordered quantity: ${overDel.length}`);
+  for (const r of overDel) log(`    ${r.doc_no} ${r.item_code}: ordered ${r.ordered}, delivered ${r.do_qty}`);
 
   log("");
   log("DONE (read-only). Nothing was written.");
