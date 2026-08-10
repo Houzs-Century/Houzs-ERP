@@ -1,3 +1,29 @@
+## GRN pick-PO picker listed EVERY company's PO lines [high]
+
+**Symptom** — Owner 2026-08-10, screenshot: with the company switcher on 2990's
+Home, Procurement -> Goods Receipt -> "Pick PO lines for this GRN" listed Houzs
+POs (HC-PO-009765/009770, OHANA/DIGLANT lines). The AutoCount go-live import
+raised Houzs POs from a handful to 135, which is what made a pre-existing leak
+suddenly visible in 2990's picker.
+
+**Root cause** — GET /grns/outstanding-po-items queried purchase_order_items
+with NO company predicate at all: no scopeToCompany, no company_id filter. Its
+two siblings were both already scoped (mfg-purchase-orders /outstanding-so-items
+and purchase-consignment-receives' picker both wrap with scopeToCompany); this
+one endpoint was simply missed. The GRN CREATE path carries a cross-company
+guard, so the wrong receive was blocked — but the listing itself is a
+cross-company READ leak and invites the attempt.
+
+**Fix** — wrap the picker query in scopeToCompany(query, c) exactly like the
+consignment mirror (purchase_order_items carries company_id since mig 0083;
+fail-closed when the company context cannot resolve).
+
+**The class, for next time** — every "outstanding X items" picker endpoint
+must be born wrapped in scopeToCompany; grep new .from('*_items') list routes
+for a missing wrap during review.
+
+**Ref** — 2026-08-10, go-live cutover.
+
 ## DIVAN ONLY lines demanded a mattress Gap [medium]
 
 **Symptom** — Owner 2026-08-09: bedframe lines for DIVAN ONLY products were reported
