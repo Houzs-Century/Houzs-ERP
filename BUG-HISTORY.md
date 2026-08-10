@@ -384,7 +384,7 @@ merely been EDITED could never be CANCELLED: consumptions never deleted, lots
 never restored, stock permanently deducted. That is a worse bug than the one
 being fixed and it is invisible from the resync function alone.
 
-**Ref** - 2026-08-11, PR #1955 (fix/do-resync-ledger). Comments corrected earlier
+**Ref** - 2026-08-11, PR #1957 (fix/do-resync-ledger). Comments corrected earlier
 in #1941; see the entry below for that.
 ## A CANCELLED purchase order could be hard-purged from the database [high]
 
