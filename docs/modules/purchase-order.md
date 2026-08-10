@@ -151,7 +151,16 @@ All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 | POST | `/:id/send-to-supplier` | `:3019` | Email the PO PDF. Fail-closed on the `purchase_order` email channel (`:3032`). |
 | PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). |
 | PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. |
-| DELETE | `/:id` | `:3345` | Hard delete, **CANCELLED only** (`:3362`). |
+
+**There is no document-level DELETE.** `DELETE /:id` existed until 2026-08-11 and
+hard-purged a CANCELLED PO. It was removed under the owner's rule
+不可以删只可以 cancel: a PO is cancelled, never deleted. `PATCH /:id/cancel` is
+the terminal action and the row stays, which is also what makes an AutoCount
+reconcile possible — a purged PO has nothing to reconcile against. Line-level
+`DELETE /:id/items/:itemId` and the allocation DELETE are unaffected; so are the
+create-time rollback deletes inside `POST /` and `POST /from-sos`, which remove a
+document that never successfully existed (supabase-js has no transaction, and
+they are the only thing preventing a headerless orphan).
 
 Auth note (same as SO): inside `/api/scm/*`, `user.id` is the caller's **scm.staff
 UUID**; use `houzsUser.id` for the public bigint.
@@ -219,9 +228,9 @@ UUID**; use `houzsUser.id` for the public bigint.
   (`:3214`). Releases every converted SO line's quota via `recomputeSoPicked`
   (`:3251-3259`).
 - **Reopen** (`:3276`). CANCELLED → SUBMITTED only (`:3294`); re-claims the quota.
-- **Delete** (`:3345`). CANCELLED only; items cascade by FK (`:3376`); the audit
-  row snapshots number/supplier/total because nothing can be joined back to
-  afterwards (`:3380-3400`).
+- **Delete** — GONE (2026-08-11). CANCELLED is terminal. The removed endpoint's
+  own comment called the audit row it left behind "the ONLY remaining evidence
+  that the PO existed", which is the argument against it, not for it.
 
 ### The two guards worth knowing
 
@@ -490,7 +499,7 @@ The inventory IN for purchased goods happens one document later, at **GRN post**
 | Any non-cancelled **GRN** exists on the PO | Header PATCH, line add, line edit, line delete, **and cancel** | `poHasDownstream`, now imported from `scm/lib/downstream-lock.ts` (see below) |
 | Status `RECEIVED` | Cancel refused outright | `:3200` |
 | Status `RECEIVED` or `CANCELLED` | Whole page read-only (frontend) | `PurchaseOrderDetail.tsx:254-255` — `isEditableStatus` is DRAFT / SUBMITTED / PARTIALLY_RECEIVED; `isLocked = !isEditableStatus || hasChildren` |
-| Status ≠ `CANCELLED` | Hard DELETE refused | `:3362` |
+| Any status | Document-level DELETE — the endpoint no longer exists (2026-08-11) | n/a |
 | Drop-ship DO shipped against this PO's expected batch | Cancel refused | `:3214` |
 | Status `DRAFT` or `CANCELLED` | Send-to-supplier refused | `poSendRefusalForStatus`, `:3052` |
 
@@ -547,7 +556,7 @@ A rule change to the PO touches both surfaces. The pairs:
 | List columns / filters | `pages/scm-v2/PurchaseOrdersListV2.tsx` | `mobile/MobileModuleList.tsx` `MODULE_CONFIGS["mfg-purchase-orders"]` (`:1198`) |
 | Server pagination opt-in | the `usePurchaseOrdersPaged` hook | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` set (`:328`) |
 | Detail fields | `pages/scm-v2/PurchaseOrderDetailV2.tsx` (read) + `PurchaseOrderDetail.tsx` (edit) | `mobile/MobileModuleDetail.tsx` config `:354` |
-| Status actions (Confirm / Cancel / Reopen / Delete) | `PurchaseOrderDetailV2.tsx` action bar | `mobile/MobileModuleDetail.tsx:515-532` |
+| Status actions (Confirm / Cancel / Reopen) | `PurchaseOrderDetailV2.tsx` action bar | `mobile/MobileModuleDetail.tsx` `mfg-purchase-orders` case — Delete was removed from BOTH surfaces on 2026-08-11 |
 | SO→PO conversion | `pages/scm-v2/PurchaseOrderFromSo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "po"`) |
 | Line allocations (mig 0235) | `PurchaseOrderDetailV2.tsx` Allocations column + `components/scm-v2/PoLineAllocationsModal.tsx` (editor) | `mobile/MobileModuleDetail.tsx` `LineItem` chips — DISPLAY-ONLY (the phone PO surface has no per-line editor, same precedent as the SO-link picker) |
 | Cache invalidation after a write | the mutation hooks in `vendor/scm/lib/suppliers-queries.ts` | `mobile/sharedInvalidate.ts:71` |
