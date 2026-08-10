@@ -1,0 +1,45 @@
+name: Repair GRN variant snapshot (DRY-RUN gated)
+
+# Restores a goods-receipt line's variant snapshot where the figure it holds
+# could not have been a measurement - out of the observed range, or equal to a
+# digit run of the fabric code on the same row - AND the parent purchase-order
+# line agrees with its own AutoCount text. Everything else is left alone and
+# listed, because a GRN is a snapshot and a plausible difference is history.
+# Merges into variants, never replaces. Re-reads every row on a fresh
+# connection and fails the job if a write did not land.
+# See backend/scripts/repair-grn-variant-snapshot.mjs.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to WRITE. Anything else is a dry run."
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-grn-variant-snapshot
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-grn-variant-snapshot.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          # GitHub-hosted runners have no IPv6 egress; mirror soak-gate/deploy so
+          # an IPv4-only pooler host resolves.
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -13,12 +13,27 @@
 
      1. its variants DISAGREE with the AutoCount text of its OWN line, reached
         by linked_ac_dtlkey -> DtlKey (an exact key, not a positional guess at
-        read time), and
-     2. its variants are EXACTLY what the collided key would have produced.
+        read time),
+     2. its variants are EXACTLY what the collided key would have produced, and
+     3. the stored DtlKey is CORROBORATED by the row's own description2.
 
    Gate 2 is the proof of provenance. Without it this would be a general
    "re-parse everything" sweep that could overwrite a value a human chose; with
    it, every row written is one we can show came from another line's text.
+
+   GATE 3 EXISTS BECAUSE THE KEY IS NOT SELF-EVIDENTLY TRUE. linked_ac_dtlkey
+   was not read off each row - backfill-ac-line-keys.mjs grouped by
+   (DocNo | item code), the SAME pair that collided, and ZIPPED the ordered
+   DtlKeys onto the ERP lines by line_no, writing nothing only when the two
+   counts disagreed. So "join on the DtlKey" is a RECORDED positional guess, and
+   a repair resting on it inherits that guess. description2 is what settles it:
+   the importer wrote it per line from the very export row it created that line
+   from, and neither refresh script has ever written the column - they only read
+   it. When the export row addressed by the stored key carries the same text as
+   the row's own description2, the zip demonstrably recovered the original
+   binding. Measured on production 2026-08-11: 2363 corroborated, 0 contradicted,
+   4 rows with no description2 to check. The gate refuses those 4 rather than
+   assuming them.
 
    MERGE, NEVER REPLACE. The column is patched with `variants || patch` so keys
    this script does not own - specials above all - survive untouched. Rebuilding
@@ -129,8 +144,24 @@ async function main() {
    WHERE h.company_id = 1 AND i.item_group = 'bedframe' AND h.linked_ac_docno IS NOT NULL`;
 
   const plan = []; let skippedShape = 0, notCollided = 0, agrees = 0;
+  let noKey = 0, uncorroborated = 0;
+  const uncorroboratedRows = [];
+  /* The keyless lines are NOT written here, but leaving them merely counted is
+     how a gap stays invisible. They can still be ASSESSED without guessing:
+     description2 is the line's own AutoCount text, so it says whether the row
+     agrees with itself. Position is never used - that is the fallback this
+     repair exists to avoid. */
+  const keyless = [];
   for (const it of items) {
-    if (it.linked_ac_dtlkey == null) continue;
+    if (it.linked_ac_dtlkey == null) {
+      noKey++;
+      const cur0 = asObj(it.variants);
+      if (it.d2 != null && cur0) {
+        const d0 = differs(cur0, blockFor(parseBedframe(it.d2), findColour));
+        keyless.push(`${it.doc_no} ${it.item_code} ${d0.length ? `DISAGREES with its own description2 on ${d0.join(",")}` : "agrees with its own description2"}  d2=${JSON.stringify(norm2(it.d2))}`);
+      } else keyless.push(`${it.doc_no} ${it.item_code} cannot be assessed (no description2 or damaged variants shape)`);
+      continue;
+    }
     const ex = byDtl.get(Number(it.linked_ac_dtlkey));
     const own = ex ? ex.Desc2 : it.d2;
     if (own == null) continue;
@@ -144,6 +175,14 @@ async function main() {
     if (!bad || norm2(bad.Desc2) === norm2(own)) { notCollided++; continue; }
     const wouldBe = blockFor(parseBedframe(bad.Desc2), findColour);
     if (differs(cur, wouldBe).length) { notCollided++; continue; }
+    /* gate 3: prove the stored DtlKey belongs to THIS row before writing from
+       it. No export row, or no description2 to check, means unproven - and an
+       unproven key is exactly what this repair refuses to act on. */
+    if (!ex || it.d2 == null || norm2(it.d2) !== norm2(ex.Desc2)) {
+      uncorroborated++;
+      uncorroboratedRows.push(`${it.doc_no} ${it.code ?? it.item_code} dtl=${it.linked_ac_dtlkey} reason=${!ex ? "key not in export" : it.d2 == null ? "no description2" : "description2 disagrees with export[DtlKey]"}`);
+      continue;
+    }
     if (SCOPE === "named" && !NAMED.has(it.doc_no)) continue;
 
     const patch = {};
@@ -155,6 +194,10 @@ async function main() {
   }
 
   log(`bedframe SO lines: ${items.length}; agree with own line text: ${agrees}; not attributable to the collision: ${notCollided}; damaged variants shape (left alone): ${skippedShape}`);
+  log(`no linked_ac_dtlkey at all (cannot be settled by the real key, left alone): ${noKey}`);
+  for (const k of keyless) log(`   KEYLESS ${k}`);
+  log(`collided but the stored DtlKey is UNCORROBORATED (gate 3 refused): ${uncorroborated}`);
+  for (const r of uncorroboratedRows) log(`   REFUSED ${r}`);
   log(`TO REPAIR (scope=${SCOPE}): ${plan.length}`);
   for (const p of plan) log(`   ${p.doc} ${p.code} dtl=${p.dtl} ${p.axes.join(",")}  ${JSON.stringify(p.from)} -> ${JSON.stringify(p.to)}`);
 
