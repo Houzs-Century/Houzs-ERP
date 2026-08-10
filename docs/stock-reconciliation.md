@@ -668,6 +668,22 @@ checker was never updated to match.
 `check-ac-vs-erp-reconcile.mjs` to read `ItemGroup`, matching the importer and
 the new checker. One-line change, no data effect.
 
+**Worked example, because it demonstrates both this bug and the cut-off cause
+in one row.** `AMN-SOFA PILLOW` (`ItemGroup = ACC`, an ordinary pillow):
+
+| Source | KL | PG | Total |
+|---|---|---|---|
+| AutoCount snapshot 2026-08-09 | 130 | 75 | **205** |
+| AutoCount live | 115 | 75 | **190** |
+| ERP | | | **205** |
+
+The ERP matches the snapshot **exactly**. There was never a discrepancy — the
+checker simply refused to look at the AutoCount side because the code contains
+the letters `SOFA`, then reported the ERP's 205 units as unmatched. Against the
+*live* book the difference is +15, and it is entirely the post-cutoff delivery
+orders shipping 15 units out of KL (section 5). One row, two causes, zero
+defects — and it would have read as a 205-unit hole.
+
 ## 9. Verdict on the owner's premise
 
 **Does "by right they should agree" hold?** For the balance axis, yes, within a
