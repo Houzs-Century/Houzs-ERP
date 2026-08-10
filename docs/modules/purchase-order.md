@@ -397,14 +397,30 @@ carries `<ItemCode> <compartment>`); the rule lives in
 `scripts/lib/ac-po-line-match.mjs`. **One AutoCount sofa line owns SEVERAL ERP
 rows** — one per compartment — and all of them carry its `DtlKey`, which is why
 `linked_ac_dtlkey` is indexed and never unique. Where one document has several
-AutoCount lines sharing an ItemCode they are split further on `(qty, Desc2)`;
-where even that does not separate them the ERP rows are identical in every
-stored field, so they are zipped in `DtlKey` order and REPORTED as
-indistinguishable rather than presented as resolved. A group whose two sides do
-not split the same way is refused whole.
+AutoCount lines sharing an ItemCode they are split further on `(qty, Desc2)`.
+A group whose two sides do not split the same way is refused whole.
+
+**Where even `(qty, Desc2)` does not separate them, the ERP rows are identical
+but the AUTOCOUNT LINES USUALLY ARE NOT — and the AutoCount side is where every
+written value comes from.** All 5 such buckets in the committed snapshots carry
+different `FromSODtlKey`s, and on `PO-000290` the two keys name two different
+PRODUCTS on one sales order. So a bucket is zipped only when its AutoCount lines
+agree on `FromSODtlKey` and `DeliveryDate`; otherwise it is REFUSED with both
+candidates printed. On today's data that refuses all 5 and repairs none of their
+rows, which is the correct outcome — **a wrong `linked_ac_dtlkey` is strictly
+worse than NULL**, because NULL tells the write-back to CREATE while a wrong one
+makes `AcSyncService` APPEND a line instead of editing the operator's.
+
+For the same reason the dedication never crosses products: the sales-order
+line's own ERP code is only tried when it names the same product as the PO line
+(or that line's sofa placeholder). A cross-product candidate is left blank and
+listed for the owner.
 
 Every UPDATE re-asserts that the column is still NULL, so the repair is
-idempotent and never overwrites a value a human has set by hand.
+idempotent and never overwrites a value a human has set by hand. It does NOT
+recompute `po_qty_picked` — `recomputeSoPicked` only ever runs from a route
+handler — so the SO lines it dedicates keep reading as still-needing-ordering in
+the From-SO picker until something touches them. The DRY-RUN lists every one.
 
 ### The SO-quota counter — `recomputeSoPicked` (`:2352-2398`)
 

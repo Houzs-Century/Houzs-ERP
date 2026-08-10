@@ -53,9 +53,47 @@ one script that had it right), and both now write `linked_ac_dtlkey`
 — **#1819's `0273` already added exactly that column**, so this PR adds no
 migration of its own; a second column would have been the real mistake.
 Recovering which ERP row descends from which AutoCount line lives in `scripts/lib/ac-po-line-match.mjs`
-and refuses rather than guesses: identical rows are zipped in `DtlKey` order and
-REPORTED as indistinguishable, and a group whose two sides do not split the same
-way is refused whole.
+and refuses rather than guesses: a group whose two sides do not split the same
+way is refused whole, and so is one whose AutoCount lines disagree on anything
+the repair would write.
+
+**The zip's premise was FALSE, and review caught it before it wrote anything.**
+The first version of this fix zipped "indistinguishable" rows in `DtlKey` order,
+justified as *"identical on every field the ERP stores... any bijection is the
+same set of facts."* That is true of the ERP rows and false of the AutoCount
+lines, which is the side every written value is read from. Measured against the
+committed snapshots: **all 5 surviving buckets (10 AutoCount lines) carry
+DIFFERENT `FromSODtlKey`s** — `PO-000290` 60700/60702, `PO-009024`
+829179/829180, `PO-009596` 871212/871213, `PO-009746` 796552/796553, `PO-009767`
+887681/887682. Delivery dates agree in all 5, so `delivery_date` was never at
+risk; `so_item_id` and `linked_ac_dtlkey` were a coin flip on 12 rows. Worse,
+`PO-000290`'s two keys resolve to two different PRODUCTS on one order (60700 ->
+`SO-000870` "MYLATEX LUMBARIA (K)", 60702 -> `SO-000870` "NB-KHJ57(K)"). The fix
+refuses any bucket whose AutoCount lines disagree on `FromSODtlKey` or
+`DeliveryDate` and prints both candidates; on today's data that repairs 0 of
+those 12 rows.
+
+**The class** — *"the rows are indistinguishable" is a claim about ONE side of a
+match, and the side you are copying FROM is the one that has to be checked.*
+Two corollaries were fixed in the same pass. The `base` fallback could bind a PO
+line for product A to an SO line for product B, defended by a comment claiming
+the importer makes the same attempt — it does not: `import-ac-so-linked-pos.mjs`
+uses `base` only and never the PO row's own code. (Measured on the snapshots,
+exactly **1** of 579 resolvable lines is cross-product, and it is the same
+`PO-000290` line, so the guard costs nothing today and would have been the only
+wrong write.) And the zip's tie-break sorted a serial `id` with
+`localeCompare`, so ids `[9,10,11,12]` order as `[10,11,12,9]` and split a
+sofa's compartment rows across different AutoCount lines; it sorts numerically
+now. Guards: `tests/acPoLineRepair.node.mjs` — remove the refusal and 3 tests
+fail, restore the text sort and 1 fails.
+
+Two smaller faults from the same review: `i.cancelled = false` (three queries)
+silently dropped NULL-cancelled SO lines out of a **claim-once** pool, which
+both under-repairs and can hand a different line to the next PO row — this repo
+reads the column as nullable everywhere else, `check-po-so-links.mjs` (the
+checker for this exact link) included, so all three now use
+`COALESCE(cancelled, false) = false`. And the APPLY log reported `plan.length`
+as the RESULT; it now prints the three affected-row counts the database returns.
 
 **The class, for next time** — *a field you read by name from a file you did not
 write is a silent dependency, and JavaScript will not tell you when it breaks.*
@@ -71,11 +109,23 @@ every reader* — nothing downstream can distinguish "never written" from
 "genuinely absent", which is why the second importer's skip-if-exists looked
 correct while it was silently the reason nothing ever went back.
 
-**What the production DRY-RUN plans** — 796 line keys, 87 delivery dates, 99
-dedications (sofa 66, accessory 27, bedframe 6) and 46 header dates; 1 group
-refused; 292 lines reported one-by-one with the reason they cannot be repaired
-by anyone — 143 have no `FromSODtlKey` at all (a stock PO) and 16 point at
-orders that were fully delivered and correctly never imported.
+**What the production DRY-RUN planned, BEFORE the review fixes** — 796 line
+keys, 87 delivery dates, 99 dedications (sofa 66, accessory 27, bedframe 6) and
+46 header dates; 1 group refused; 292 lines reported one-by-one with the reason
+they cannot be repaired by anyone — 143 have no `FromSODtlKey` at all (a stock
+PO) and 16 point at orders that were fully delivered and correctly never
+imported.
+
+**These numbers are now STALE and have NOT been re-measured.** The fixes above
+can only reduce them: 5 more groups refused (the ~12 rows behind them lose their
+key and dedication), possibly fewer dedications from the cross-product guard,
+possibly more from `COALESCE(cancelled, false)`. Re-running the DRY-RUN through
+`repair-migrated-po-lines.yml` is **blocked until this PR merges** — GitHub
+refuses `workflow_dispatch` for a workflow file that is not yet on the default
+branch (`HTTP 404: workflow ... not found on the default branch`), and this PR
+is what introduces it. **Nobody should run APPLY until a post-merge DRY-RUN has
+been read.** The AC-side facts that do not need the database were re-measured
+and are quoted above (5 buckets / 10 lines / 1 cross-product line).
 
 **Ref** — 2026-08-10, PR #1905 (fix/po-dedication-and-dates).
 
