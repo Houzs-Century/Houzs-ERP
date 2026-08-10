@@ -98,7 +98,9 @@ token 的书写顺序 = 面对沙发时的实际摆位。解析器最后有一�
 - **座深**:认 `28"`、`28'`、`35”`、`30'INCH`、`60cm`(=24")、`70cm`(=28")、`Size: 28`;
   笔误 `icnh`/`inhc`/`ich` 一律当 `inch`(救回过 PROC 单)。多个不同尺寸 → 标「多尺寸分件」
 - **脚**:带 `leg` 的整句**先摘出来当 special order**,绝不能被当成座深
-  (`Leg Change 101Middle Leg(8')` 里的 8' 是脚高)。没写脚 = 用默认(owner:"脚全部找不到就直接选 default")
+  (`Leg Change 101Middle Leg(8')` 里的 8' 是脚高)。没写脚 = 用默认(owner:"脚全部找不到就直接选 default")。
+  **导入器从来没写过 `variants.legHeight`**,所以已导入的行脚位是空的 —— 补法见 §7 的
+  `backfill-sofa-leg-default.mjs`:只补两个 key 都空的行,**原文写了脚的不补**,单独列出来等人挑
 - **颜色**:`COL:` / `Colour:` / `COL-`,支持分件颜色 `colour (2s): X`;
   `TBC` / `KIV` = 还没选,留空不算错
 - **special order**:nylon 底、伞布、`backrest change to 8030`、`fully cover replace the leg`
@@ -141,6 +143,26 @@ SKU 名字格式:`SOFA {型号名} {件}`(不带品牌前缀)。
 
 **教训**:第二批一度给 8030/8060/9058/9028/9050/8069/5535 开了 recliner/power 件,
 owner 指出这些款根本没有 → 已用 `revert-sofa-recliner-skus.mjs` 撤掉 28 个。**开件前先问型号有没有这个机构**。
+
+### 3.4 型号本身缺了怎么办 —— 对照表的 `EXISTS(1st-pass)` 会吃掉一个型号
+
+`piece SKU not minted` 有两种成因:件没开(§3.3),或者**整个型号从来没建**。
+后者的根在对照表:`RDS-5526 SOFA` 那行原本写 `8038-1S / EXISTS(1st-pass)` —— 名字都叫
+DISCOVERY 的一次模糊匹配,但供应商一个是 `400-R001`(RED SOFA)一个是 `400-D004`(DSL)。
+importer 是从对照表的 `-1S` 反推型号的(`erp.replace(/-1S$/,"")`),所以 5526 没拿到
+`scm.product_models` 行,九条单据行全落在 8038 上。owner 2026-08-10:**"5526 就是 5526 啊,
+你应该要 remain … 8038 原本都不是 5526."**
+
+修:`open-5526-model.mjs` + 同名 workflow —— 建型号(`name` 用型号码本身,跟
+`align-models-houzs-century.json` 给 5527/8133 的写法一致;**不要**沿用 DISCOVERY,那正是
+出事的原因)、开件、铸 SKU、补池子,再把九条行从 `8038-*` 改到 `5526-*`,并顺着
+SO→PO→GRN、SO→DO 带下去。**金额一分不动**(只改 code 和名字,脚本逐单核对总额)。
+
+**留给 owner 决定的**:供应商绑定没动。`8038-1A(LHF)/1NA/2A(RHF)/CNR/Console/STOOL` 的
+`supplier_sku` 全是 `RDS-5526 SOFA`,`8038-1S` 还是 RED SOFA 对它的 main binding —— 一动就动价。
+
+**对照表里还有 318 行 `EXISTS(1st-pass)`**,都是同一类机器猜测。碰到"型号不见了"先看这一列,
+再看 supplier 列对不对得上。
 
 ---
 
@@ -202,6 +224,7 @@ HR805-31/-40、NX007/010/011、ZL-6/-20、Garfield、Wowsons、Chantic、J9883-2
 | SO 导入(沙发用 `sofa=yes`) | `import-ac-outstanding-so.mjs` | `import-ac-outstanding-so.yml` |
 | PO 导入(沙发用 `sofa=yes`) | `import-ac-outstanding-po.mjs` | `import-ac-outstanding-po.yml` |
 | 开件 | `open-sofa-so-compartments.mjs` | 同名 yml |
+| **建型号 + 开件 + 改单据行**(5526) | `open-5526-model.mjs` | 同名 yml |
 | 撤错开的 R/P 件 | `revert-sofa-recliner-skus.mjs` | 同名 yml |
 | Bench 改分左右 | `fix-bench-sides.mjs` | 同名 yml |
 | 建缺的布料 | `add-missing-sofa-fabrics.mjs` | 同名 yml |
@@ -213,6 +236,7 @@ HR805-31/-40、NX007/010/011、ZL-6/-20、Garfield、Wowsons、Chantic、J9883-2
 | 行照片挂载 | `import-so-line-photos.mjs` | 同名 yml |
 | **沙发实物库存开账** | `import-ac-sofa-stock.mjs` | 同名 yml |
 | **补 SO 行的 warehouse** | `backfill-so-line-warehouse.mjs` | 同名 yml |
+| **补脚高 = Default(见 2.5)** | `backfill-sofa-leg-default.mjs` | 同名 yml |
 
 ### 体检脚本的 7 项
 
@@ -315,11 +339,26 @@ AutoCount 的 `vItemBalQty` 只有「AMN-SF9028 SOFA 在 KL 有 6 台」,**没�
 
 19 行原文没写件(只写了颜色/工艺,要看图)、6 行没写座深。清单在会话里发过 CSV。
 
-### 8.4 其他
+### 8.4 HC-SO-000814 少了整条沙发行(2026-08-10 dry-run 查到,**没人动过**)
+
+`open-5526-model.mjs` 的 prod dry-run 报:`HC-SO-000814 ... 0 sofa line(s) ...
+document lines: accessory:1`。单在 ERP 里,但**只剩一条 accessory 行**(RDS-SQUARE
+PILLOW),AutoCount 那条 `RDS-5526 SOFA`(DtlKey 58980,**UnitPrice 9,300**)不在。
+
+- 那条行 `TransferedQty 1 >= Qty 1`(已交货),但**整单**没交完(pillow 还欠 2),
+  按 §6 的 owner 规则整单该导、行也该在
+- importer 没有「逐行跳过已交货」的分支,`skipMixed` 又是整单跳,所以**不是导入时漏的那么简单**——
+  可能是后来某个清理/修复脚本删掉的。**没查出来,别猜**
+- 影响:这张 ERP 单的金额比 AutoCount 少 9,300。**先核对单头总额**再决定补行还是重导
+- 五个 5526 的 SO/PO 都对得上,只有这一条不在;`open-5526-model.mjs` 遇到它是 skip,不会瞎补
+
+### 8.5 其他
 
 - 89 行占位(含标记)等人工补件
 - 1 张已交货单留着没删(付款是人工录的)
 - 620 行的成本没盖上,因为产品本身还没有厂价
+- **5526 的供应商绑定没动**(见 §3.4):六个 8038 件的 `supplier_sku` 还是
+  `RDS-5526 SOFA`,`8038-1S` 还是 RED SOFA 的 main binding —— 等 owner 定
 
 ---
 

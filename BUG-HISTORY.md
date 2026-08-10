@@ -86,6 +86,89 @@ because it has never run anywhere: #1855 is not merged, so no deployment has an
 
 **Ref** — 2026-08-10, PR test/ac-writeback-trial.
 
+## Every migrated sofa line has an EMPTY Leg Height [medium]
+
+**Symptom** — Open any sofa line that came in from AutoCount and the Leg Height
+picker reads "Select...". Seat depth, fabric and compartment are all filled; the
+leg alone is blank, on every single migrated line.
+
+**Root cause** — Nothing ever writes `variants.legHeight` for a sofa.
+`parse-sofa.mjs` (lines 52-55) deliberately lifts a leg PHRASE out of Desc2 and
+pushes it into `specials` — "leg text never sets a size, it rides as a special
+so the factory sheet still shows the request" — and neither
+`import-ac-outstanding-so.mjs` nor the PO importers put a leg key in the
+variants object they build. So the axis is absent, not empty-because-unknown.
+The gap went unseen because the sofa Leg Height axis is `required: false` in
+`so-variant-rule.ts`, and it is `required: false` for exactly the opposite
+reason — the comment there says the axis "always defaults to the Default option
+(RM 0.00) at create/edit time, so it is never empty". That premise held for
+POS/coordinator-created lines and was never true for imported ones, so the one
+gate that would have caught it had been told to look away.
+
+**Fix** — `backfill-sofa-leg-default.mjs` + `backfill-sofa-leg-default.yml`
+(dry-run default, `apply=1` writes) fills `variants.legHeight` with the master
+config pool's own "Default" entry across `scm.mfg_sales_order_items` and
+`scm.purchase_order_items`, for company 1 sofa lines whose parent carries
+`linked_ac_docno`. Owner's ruling, `docs/sofa-import-handoff.md` section 2.5:
+"脚全部找不到就直接选 default". Two refusals are built in: a line that already
+carries `legHeight` or `sofaLegHeight` is never overwritten, and a line whose
+own text names a leg ("Leg Change 101Middle Leg(8')", "FULLY COVER NO LEG",
+`6” wooden leg`) is left alone and reported by phrase with its document numbers,
+because the source said something specific and a default would erase it. An inch
+height counts as a leg only INSIDE the leg phrase — a bare `28"` in a sofa Desc2
+is the seat depth.
+
+**The class, for next time** — an axis marked not-required "because it is always
+pre-filled" is a claim about a write path, and it only covers the write paths
+that existed when it was written. An importer is a new write path.
+
+**Ref** — 2026-08-10, PR fix/sofa-leg-default.
+
+## A first-pass NAME match made RDS-5526 into someone else's sofa [high]
+
+**Symptom** — Two 5526 sofa builds could not be corrected: the correction tool
+answers `piece SKU not minted`, because the piece it needs is on a model that
+does not exist. Nine cutover document lines were sitting on `8038-*` codes, and
+the AutoCount item they came from is `RDS-5526 SOFA`. Owner 2026-08-10: **"5526
+就是 5526 啊,你应该要 remain ... 8038 原本都不是 5526."**
+
+**Root cause** — One row of `backend/scripts/data/autocount-erp-mapping-1561.csv`:
+`RDS-5526 SOFA,8038-1S,EXISTS(1st-pass),SOFA,400-R001`. The status column says
+what it is — a fuzzy match on NAME, both models being called DISCOVERY — and
+`400-R001` (RED SOFA) vs 8038's `400-D004` (DSL) says they are different
+suppliers' products. The row contradicts its own neighbour: `RDS-5526 CONSOLE`
+was mapped `NEW/ACCESSORY`, not to `8038-Console`, which exists. Because the
+importers read the mapping to derive the model (`erp.replace(/-1S$/,"")`), 5526
+never got the `scm.product_models` row every other AutoCount sofa code got —
+`align-models-houzs-century.json` seeded 69 of them, each `name = model_code`,
+`compartments: ["1S"]` — so there was no 5526 SKU for a line to point at, and
+the 2026-08 supplier price list then bound RED SOFA's 5526 prices onto 8038
+SKUs on top.
+
+**Fix** — `backend/scripts/open-5526-model.mjs` + workflow: creates model 5526
+(name `5526`, the convention its sibling RED SOFA model 5527 and 8133 were
+seeded with — reusing `DISCOVERY` is the bug), opens the nine compartments its
+own documents need, mints `SOFA 5526 {comp}` SKUs, appends new codes to the
+master pool, and re-points the nine AutoCount source lines off 8038, carrying
+the change down SO -> PO -> GRN and SO -> DO. The mapping row now reads
+`5526-1S,NEW`, and the script refuses to run unless it does. Same pass mints
+`8133-STOOL`, the piece `HC-PO-000136`'s correction was refusing on.
+
+**What was deliberately NOT done** — the supplier bindings. `8038-1A(LHF)`,
+`8038-1NA`, `8038-2A(RHF)`, `8038-CNR`, `8038-Console`, `8038-STOOL` all carry
+`supplier_sku = "RDS-5526 SOFA"`, and `8038-1S` is RED SOFA's main binding for
+it. Moving those moves prices, so it is the owner's decision. Two builds also
+stay `SOFA UNPARSED` on purpose: `"1 ELT / T + NA +2ER"` is not readable, and
+the rule is never guess a piece.
+
+**The class, for next time** — `EXISTS(1st-pass)` in that CSV is a machine's
+guess wearing the same clothes as an owner's answer; 319 rows carry it. A
+first-pass NAME match between two products from DIFFERENT suppliers deserves
+the supplier column read before it is trusted, and a model that ends up with no
+row of its own is the symptom that one was wrong.
+
+**Ref** — 2026-08-10, PR feat/open-5526-model.
+
 ## Deleting a compartment row offered to RENAME it across all history [high]
 
 **Symptom** — The owner deleted the sideless bench codes `1B` and `2B` from the
@@ -686,7 +769,6 @@ lockstep so the two surfaces cannot drift.
   2. **The allocations column and modal now show the EFFECTIVE assignment.** No slices → the coarse Source-SO link (or STOCK) renders as a muted implicit chip with the whole-line qty, instead of a dash that contradicted the Assigned SO one column over.
 - **The workflow for the live CODY case (recorded as the answer to "接下来怎么操作"):** revise the SO (amendment); the raised follow-up lands in PO Amendments; purchaser REJECTS it with "supplier cannot change" → old PO auto-releases to STOCK (arrives as own inventory: clearance or purchase-return); MRP re-shows the shortage → Proceed a fresh PO with the corrected spec; run PO-SO link check after.
 - **Ref:** #<PR>. `feat/split-own-consignment`… superseded branches; this change `fix/reject-releases-to-stock` 2026-08-06.
-
 
 
 ### [LOW] The privacy policy page shipped unreachable — Pages' clean-URL redirect fed it to the SPA fallback
@@ -2388,7 +2470,6 @@ lockstep so the two surfaces cannot drift.
 - **Ref:** #1059 (this PR).
 
 
-
 ### [CRITICAL] Mig 0175 referenced a non-existent `customers.country` column and blocked EVERY subsequent migration
 - **Symptom.** After #1040 merged (state canonicalize) the next deploy failed with `FAILED 0175_scm_state_canonicalize.sql: column c.country does not exist`. pg-migrate stops on the first failing file, so mig 0176 (#1042 region seed + sales_location snapshot backfill) never ran either. Prod state → region for 2990 stayed at 0 rows even after the "fix" was merged. My subsequent completeness report to the owner said the region mapping still looked empty and I initially attributed it to timing; the owner asked "我们不是调整了吗" and the answer was NO — it never applied.
 - **Root cause (traced).** The original migration filtered the customer backfill by country to avoid touching foreign-country rows:
@@ -2397,7 +2478,6 @@ lockstep so the two surfaces cannot drift.
 - **Fix.** #1052 (this PR) — drop the country filter from both the customer and supplier backfill blocks. Redundant anyway: `scm.canonicalize_my_state()` returns its input UNCHANGED for any string outside the 16 canonical MY states + known aliases (Guangdong, Central, etc.), so a foreign state name is already foreign-safe without a caller-side filter. Editing 0175 in place is correct because pg-migrate never recorded it as applied; the next deploy will retry with the fixed SQL.
 - **The class, for next time.** A `to_regclass` guard is not a schema guard. When a migration references a column the code hasn't proven exists in every environment it might run against, either (a) add an `information_schema.columns` presence check before the UPDATE, or (b) drop the column reference. This is the same class as the mig 067/069 seed → 079 delete cycle recorded earlier: don't assume schema, verify it in the migration itself.
 - **Ref:** #1052 (hotfix). Original: #1040 mig 0175.
-
 
 
 ### [HIGH] Five migration-number collisions on one file in one day, and a whitelist used to hide the fifth
