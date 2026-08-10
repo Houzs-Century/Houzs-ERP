@@ -17,6 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -26,8 +27,6 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
-const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
-const isPendingColour = (c) => /(TBC|KIV)/i.test(c || "");
 
 /* mapSpecial is still rebuilt from fix-so-specials.mjs by source-text slicing.
    parseBedframe was too, until the end marker got a new comment line in front of
@@ -59,20 +58,7 @@ async function main() {
   }
 
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
-  const fcx = new Map(); for (const r of fcRows) for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !fcx.has(k)) fcx.set(k, r);
-  const findColour = (c) => {
-    if (!c) return null;
-    const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
-    /* SERIESNUM: split "PC151-2"/"PC151101" into series + number so a 1-digit or
-       over-long tail still finds PC151-02 / PC151-01 (owner data has both). */
-    const seriesNum = (x) => { const mm = /^([A-Z]{2,4})(\d{2,4})(\d{1,3})$/.exec(strip(x)); return mm ? [mm[1] + mm[2] + mm[3].padStart(2, "0"), mm[1] + mm[2] + mm[3].slice(-2)] : []; };
-    const toks = [c, (c.trim().split(/\s+/)[0] || "")];
-    const m = /[A-Z]{1,4}\s?\d{2,4}\s?-?\s?\d*/i.exec(c); if (m) toks.push(m[0]);
-    const cands = [];
-    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t)), ...seriesNum(t)); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
-    for (const t of cands) { const h = fcx.get(t); if (h) return h; }
-    return null;
-  };
+  const { findColour } = buildFabricColourIndex(fcRows);
   const validSpecials = new Set((await sql`SELECT code FROM scm.special_addons WHERE company_id = 1 AND 'BEDFRAME' = ANY(categories)`).map((r) => r.code));
 
   // (SP) special-size lines are included whatever their group — a custom-size

@@ -15,7 +15,7 @@ on:
         default: ""
         type: string
       dump:
-        description: "1 to also print the whole library grouped by series"
+        description: "1 = also print the whole library by series; scan = that plus a live scan of every unbound migrated line"
         required: false
         default: "0"
         type: string
