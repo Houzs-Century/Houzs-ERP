@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
+import { mapSpecial } from "./lib/bedframe-special-map.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -27,12 +28,6 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
-
-/* mapSpecial is still rebuilt from fix-so-specials.mjs by source-text slicing.
-   parseBedframe was too, until the end marker got a new comment line in front of
-   it and the appended `return` was swallowed by it - BUG-HISTORY.md 2026-08-10. */
-const fxSrc = fs.readFileSync(path.join(here, "fix-so-specials.mjs"), "utf8");
-const mapSpecial = new Function(`${fxSrc.slice(fxSrc.indexOf("function mapSpecial"), fxSrc.indexOf("async function main")).trim()}; return mapSpecial;`)();
 
 function parseCsvLine(line) {
   const out = []; let cur = ""; let q = false;

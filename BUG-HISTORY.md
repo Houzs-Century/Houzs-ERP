@@ -1,3 +1,57 @@
+## Duplicate-series detection paired five unrelated fabrics through "BR0WN" [low]
+
+**Symptom** - the first prod run of merge-duplicate-fabric-series reported 41
+duplicate fabric series pairs, among them 311 <-> A201, 311 <-> KS, 311 <->
+M2402 and 311 <-> XQ#18. Those are five unrelated fabrics.
+
+**Root cause (traced, not guessed)** - all five collided on one key, `BR0WN`.
+`foldColour` maps letter-O to "0" (that is what puts BO315 and B0315 on one
+key), so a colour whose label is only a NAME - "BROWN", "DARK BROWN", "WOOD
+BROWN" - folds to a string containing a "0". The detector gated its keys on a
+digit test run against the FOLD, which that fake zero satisfies, so a plain
+colour name was admitted as a colour CODE and every series holding a BROWN
+matched every other one.
+
+**Fix** - run the digit test in MARK space (`markColour`, where letter-O is "@"
+and only a written zero stays a digit), which is the space the matcher's own
+digit guard already compares in. 41 pairs became 31, and all 10 that vanished
+were false. The same pass added a written-tail pad before folding, because
+"J9226-2" folds to "J92262" and nothing downstream can then tell the series
+digits from the colour digit - which is why ARMANI J9226 / J9226, one of the
+two duplicate pairs this work started from, had gone undetected. Final: 32 real
+pairs, no false ones.
+
+**Lesson** - foldColour is lossy by design and its output is not safe to ask
+structural questions of. Anything deciding "is this a code or a name" must ask
+markColour, not the fold.
+
+**Ref** - fix/dup-fabric-series-detection, 2026-08-10
+
+## A probe copied the SO join onto the PO table and crashed on a column that is not there [low]
+
+**Symptom** — `probe-sofa-colour-misses.mjs`, dispatched read-only against prod
+the moment it merged, printed the fabric-library line and then died:
+`PostgresError: column h.doc_no does not exist` (SQLSTATE 42703), run
+31406187136. It reported nothing at all.
+
+**Root cause (traced, not guessed)** — the two document headers number their
+documents differently and the join hides it. `scm.mfg_sales_orders` carries
+`doc_no` and its items join ON that column, so `h.doc_no` is right there in the
+SO query being copied. `scm.purchase_orders` numbers its documents `po_number`
+and its items join on the surrogate `h.id = i.purchase_order_id` — so the PO
+query it was copied from never had to name the column, and the copy carried the
+SO's name across into a table that has no such column.
+
+**Fix** — `SELECT h.po_number AS doc_no` on the PO arm, aliased so the report
+keeps one shape for both. PR #1910.
+
+**The class, for next time** — copying a query between the SO and PO arms is
+safe for the item columns and unsafe for the header ones. `item_code` vs
+`material_code` differs loudly enough that it gets noticed; `doc_no` vs
+`po_number` is hidden behind a join that never spells it out. Two arms of the
+same sweep are two queries, not one query twice.
+
+**Ref** — 2026-08-10, PR #1910 (fix/probe-po-number).
 ## The special-order backfill wrote a field the picker never reads, and recompute erases [high]
 
 **Symptom** — the sofa special orders were "backfilled" and the Special Orders
@@ -49,6 +103,52 @@ silently reprices that historical document on its next edit, so the backfill
 script refuses to APPLY when any code it would stamp carries a non-zero price.
 
 **Ref** — 2026-08-10, PR fix/specials-into-variants.
+## Five sofa colour strings named a fabric the library already held [medium]
+
+**Symptom** - after the shared matcher landed and 18 missing colours were
+created, `refresh-sofa-colours.mjs` still could not resolve 31 migrated sofa
+lines across 13 colour strings. The create script had been run to APPLY the
+same day, so the assumption was that the remaining 13 were fabrics nobody had
+entered yet.
+
+**Root cause (traced, not guessed)** - a prod `DUMP=1` dump of
+`scm.fabric_colours` (probe-fabric-colours, run 31405758677) shows the library
+DOES hold the fabric for 6 of the 13 strings / 19 of the 31 lines. Nothing was
+missing; the document writes the identity a different way than the library
+stores it, in four shapes no lexical rung can bridge:
+
+- the colour NUMBER is absent - "Modenza-Houston Cream" vs MODENZA-01, whose
+  label already reads "MODENZA-01 HOUSTON CREAM"
+- the SERIES letters are absent - "141-1" vs CH141-1, "9226-13" vs
+  ARMANI J9226-13 WARM GREY
+- the BRAND is written instead of the series code - "Harring 02# Beige" vs
+  HIRRING GD8371-02# BEIGE
+- the number TRAILS the colour name instead of leading it - "Phoenix-oyster1"
+  vs PHOENIX-1 OYSTER. This one is the sharpest evidence: PHOENIX-1 OYSTER was
+  created by create-missing-sofa-fabrics at 14:57 and the string was STILL
+  unresolved in the 15:23 dry-run, so creating it had never been the fix.
+
+Widening a rung to cover these would have to let a query match a library key it
+shares no number with, which is the exact door the digit guard closes after it
+bound B0315-27 -> BO315-2 and HR805-20 -> HR805-40.
+
+**Fix** - `COLOUR_ALIAS` in `backend/scripts/lib/fabric-colour-match.mjs`: five
+named facts, each carrying its document string and live line count, resolved
+against the live library at index-build time so an entry whose row is absent
+goes inert rather than binding to nothing. It runs LAST, only after every
+lexical pass returned null, so it cannot displace an existing answer - verified
+by replaying all 61 bindings from dry-run 31403271270 against the real prod
+library: 61 unchanged, 0 changed. Unresolved fell 31 -> 12 lines, 13 -> 7
+strings.
+
+The remaining 7 strings are NOT library gaps and must stay blank: "03#Straw" /
+"03-Straw#" are ambiguous between HIRRING GD8371-03# STRAW and HIVE
+GD2034-03# STRAW; "J9833-2" is J9883-2 with two digits transposed; "Beetex
+harring gd 8371" and "ZanoLeather" name a series with no colour chosen;
+"Bottom Use Nylon Fabric" is a construction instruction; "ninja - 02,03,07,09"
+is a choice the salesperson never narrowed.
+
+**Ref** - fix/unresolved-sofa-fabrics, 2026-08-10
 
 ## The fixed colour matcher could not reach a single migrated SOFA line [high]
 
