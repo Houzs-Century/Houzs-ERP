@@ -16,6 +16,16 @@ VOLATILE: `mfg-sales-orders.ts:8234` sets
 line recompute, so the first UI edit of a migrated line would have erased the
 backfill even where it had landed.
 
+Three defects, not one. The field was wrong (derived output, not the picker's
+input); the CONTENT was wrong (`backfill-sofa-special-orders.mjs:237` wrote the
+verbatim slip phrases parseSofa returns — "BOTTOM USE UMBRELLA FABRIC" — beside
+the codes, and a phrase is not a pickable code); and the SHAPE was wrong —
+`mfg-pricing-recompute.ts:117` declares
+`custom_specials: Array<{ description: string; surchargeSen: number }> | null`,
+objects, while the script wrote a bare `string[]`. Production as of 2026-08-10
+carried any `custom_specials` at all on only 9 of 1005 migrated sofa SO lines
+and 6 of 217 PO lines, and not one of those was a picker code.
+
 **Fix** — `backend/scripts/backfill-specials-into-variants.mjs` +
 `.github/workflows/backfill-specials-into-variants.yml`, re-deriving each line's
 specials from its own `description2` and merging picker CODES into
