@@ -8822,11 +8822,27 @@ function DocRow({
                 ? canApprove
                 : awaiting && canApprove) ? (
                 <div className="flex flex-wrap items-center gap-1">
+                  {/* Already approved → the Approve button goes inert (owner
+                      2026-08-08 "approve button have bug": re-pressing it added
+                      a second identical Approved line). Reject… stays live so
+                      the decision can still be reversed, which is the whole
+                      point of keeping the buttons after a decision. */}
                   <button
                     onClick={() => onReview(item, "approve", {})}
-                    className="rounded-md bg-synced/90 px-2 py-0.5 text-[9.5px] font-semibold text-white hover:bg-synced"
+                    disabled={item.review_status === "approved"}
+                    title={
+                      item.review_status === "approved"
+                        ? "Already approved — use Reject… to reverse it"
+                        : "Approve this document"
+                    }
+                    className={cn(
+                      "rounded-md px-2 py-0.5 text-[9.5px] font-semibold",
+                      item.review_status === "approved"
+                        ? "cursor-default border border-synced/40 bg-synced/10 text-synced"
+                        : "bg-synced/90 text-white hover:bg-synced",
+                    )}
                   >
-                    Approve
+                    {item.review_status === "approved" ? "Approved" : "Approve"}
                   </button>
                   <button
                     onClick={() => setRejectOpen((x) => !x)}
