@@ -16,6 +16,8 @@ const pieces = (d2: string, model = '8030', recl = false): string[] =>
   (parseSofa(d2, model, recl) as { pieces: string[] }).pieces;
 const conf = (d2: string, model = '8030', recl = false): string =>
   (parseSofa(d2, model, recl) as { conf: string }).conf;
+const specials = (d2: string, model = '8030', recl = false): string[] =>
+  (parseSofa(d2, model, recl) as { specials: string[] }).specials;
 
 describe('parse-sofa: the single-letter tokens the grammar owns', () => {
   /* The regression this file exists for. C, L, P and R each have their own
@@ -112,6 +114,53 @@ describe('parse-sofa: arms only ever close the run (owner 2026-08-10)', () => {
   });
 });
 
+describe('parse-sofa: a special order is never deleted', () => {
+  /* The second regression this file exists for. `bottom[^\/\n]*` deleted the
+     whole segment before specials were collected, so all 53 umbrella-fabric
+     instructions in the cutover exports reached the ERP as nothing at all. */
+  test('the umbrella-fabric bottom survives, and the structure is unaffected', () => {
+    const r = parseSofa('2+L(28")/BOTTOM USE UMBRELLA FABRIC/COL:BO315-21', '9058', false) as
+      { pieces: string[]; specials: string[]; conf: string };
+    expect(r.pieces).toEqual(['2A(LHF)', 'L(RHF)']);
+    expect(r.conf).toBe('high');
+    expect(r.specials).toEqual(['BOTTOM USE UMBRELLA FABRIC']);
+  });
+
+  test('every wording of the bottom instruction is kept verbatim', () => {
+    expect(specials('2S(28")/BOTTOM UPGRADE TO UMBRELLA FABRIC')).toEqual(['BOTTOM UPGRADE TO UMBRELLA FABRIC']);
+    expect(specials('2S(28")/WRAP BOTTOM TO UMBRELLA FABRIC')).toEqual(['WRAP BOTTOM TO UMBRELLA FABRIC']);
+    expect(specials('2S(28")/BOTTOM WRAP NYLON')).toEqual(['BOTTOM WRAP NYLON']);
+  });
+
+  /* A phrase alone in its own slash segment was dropped too: the structure
+     loop breaks at the segment that carried the pieces and never visits the
+     rest. */
+  test('a phrase alone in its own segment is recorded', () => {
+    expect(specials('SIZE:3S(28")/*BACK CUSHION CHANGE 8030')).toEqual(['BACK CUSHION CHANGE 8030']);
+    expect(specials('2L(28")/AFTER PUSH BACK ALIGN TO SEAT')).toEqual(['AFTER PUSH BACK ALIGN TO SEAT']);
+    expect(specials('2L(28")/*FULLY COVERED TO FLOOR NO LEG')).toEqual(['FULLY COVERED TO FLOOR NO LEG']);
+    expect(specials('1+1(28")/NO BRACKET')).toEqual(['NO BRACKET']);
+  });
+
+  test('one instruction written twice is carried once, in its fullest wording', () => {
+    expect(specials('2S(28")/BACKREST CHANGE 8030/BACK REST CHANGE 8030')).toEqual(['BACKREST CHANGE 8030']);
+    // "nylon" is the parser's own token for the same request as "NILON"
+    expect(specials('2S(28")/WRAP BOTTOM TO NILON')).toEqual(['WRAP BOTTOM TO NILON']);
+  });
+
+  test('a fabric colour is not read as an instruction', () => {
+    expect(specials('3S(28")/CH141-4 WOOD')).toEqual([]);
+    expect(specials('1+C+2(32\'Inch)/Col:HR805-30', '9050')).toEqual([]);
+  });
+
+  test('a leg request still rides as a special and never sets the seat size', () => {
+    const r = parseSofa('2S(28")/Leg Change 101Middle Leg(8\')', '8030', false) as
+      { size: string; specials: string[] };
+    expect(r.size).toBe('28');
+    expect(r.specials).toEqual(["Leg Change 101Middle Leg(8')"]);
+  });
+});
+
 describe('parse-sofa: never guess', () => {
   test('an empty Desc2 is low confidence, not an empty build', () => {
     const r = parseSofa('', '8030', false) as { conf: string; pieces: string[] };
@@ -156,7 +205,10 @@ describe('parse-sofa: the 5526 cutover builds', () => {
     const r = parseSofa('2S+WOODEN ARM  (28") / COL-HARRING GD 8371 02-BEIGE', '5526', false) as
       { pieces: string[]; specials: string[] };
     expect(r.pieces).toEqual(['2S']);
-    expect(r.specials).toContain('wooden arm');
+    /* The sweep carries the request VERBATIM, so the parser's own canonical
+       "wooden arm" token is deduped away by the fuller wording that contains
+       it. Both spellings map to the same Wooden Arm picker code. */
+    expect(r.specials.join(' | ')).toMatch(/wooden arm/i);
   });
 
   /* Two builds deliberately stay placeholders: "1 ELT / T" is not readable, and
