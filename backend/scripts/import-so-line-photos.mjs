@@ -74,12 +74,21 @@ async function main() {
     byDocModel.get(k).push(it);
   }
   let sofaHeld = 0, noOrder = 0, noLine = 0, unmapped = 0;
+  const heldDocs = []; // named, not just counted — a silent count hid a real bug
   for (const m of manifest) {
     const erp = byAc.get(norm(m.ItemCode));
     if (isSofa(m.ItemCode)) {
       if (!erp) { unmapped++; log(`  unmapped AC sofa code: ${m.ItemCode} (${m.DocNo})`); continue; }
-      const pieces = byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
-      if (!pieces || !pieces.length) { sofaHeld++; continue; } // order not imported yet
+      /* Not everything whose AutoCount code says SOFA is a BUILD: "AMN-SOFA
+         PILLOW" / "THL-SOFA PILLOW" are accessories that import as one literal
+         line. byDocModel is keyed on the code up to the FIRST dash, so their
+         model key ("AMN-SOFA PILLOW") can never match its index entry ("AMN")
+         and three photos were being counted as held with the line sitting
+         right there. Mirror of the literal branch below: try compartments,
+         then fall back to the exact code. */
+      let pieces = byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
+      if (!pieces || !pieces.length) pieces = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
+      if (!pieces || !pieces.length) { sofaHeld++; heldDocs.push(`${m.DocNo} ${m.ItemCode}`); continue; }
       for (const it of pieces) {
         const n = (seenN.get(it.id) ?? 0) + 1; seenN.set(it.id, n);
         const key = `so-items/${it.doc_no}/${it.id}/ac-${m.DtlKey}-${n}.jpg`;
@@ -119,6 +128,7 @@ async function main() {
   }
   const todo = plan.filter((p) => !p.already);
   log(`manifest rows: ${manifest.length}; sofa held: ${sofaHeld}; unmapped: ${unmapped}; order-not-imported: ${noOrder}; line-missing: ${noLine}`);
+  for (const d of heldDocs) log(`  sofa held (no ERP line): ${d}`);
   log(`photo keys planned: ${plan.length} (already attached: ${plan.length - todo.length})`);
 
   if (!APPLY) {
