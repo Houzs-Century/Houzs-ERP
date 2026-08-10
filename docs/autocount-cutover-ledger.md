@@ -14,8 +14,8 @@
 **范围**:`company_id = 1`(Houzs Century)。2990(company 2)的割接是另一件事,
 看 `docs/2990-cutover/`。
 
-**状态截止:2026-08-10 13:45 UTC**(上一版截止 05:00,§2 W1~W8 是那一版写的,原样保留)。
-05:00 之后又走了九波,全部记在 **§2 W9~W17**;当天 owner 定下来的六件事记在 **§9**。
+**状态截止:2026-08-10 13:53 UTC**(上一版截止 05:00,§2 W1~W8 是那一版写的,原样保留)。
+05:00 之后又走了十波,全部记在 **§2B W9~W18**;当天 owner 定下来的六件事记在 **§9**。
 要看现状就跑 §7 的只读工具;**不要改这份文件里的历史行**,历史行是账本,不是仪表盘。
 
 > **2026-08-10 收盘时那句「还没跑完」已经不成立了。** §2 W7 / §5 #1 写的「SO-linked PO 半截」
@@ -90,6 +90,7 @@
 | W15 | 沙发照片去重 | 否 |
 | W16 | 迁移单据编号回归 AutoCount | 否(只改 `doc_no` / `po_number`) |
 | W17 | bedframe 解析修正 + variants 重解析 | 否 |
+| W18 | 迁移 PO 的单头交期从自己的明细补回来 | 否(只写单头一个日期栏) |
 
 > **上面那句「动库存的只有两波」在 2026-08-10 11:30 之后不再成立。** 第三波是 **W14**,
 > `AMN-SOFA PILLOW` / `THL-SOFA PILLOW` 的 **205 units**。W4/W5 那两行不改(它记录的是
@@ -254,9 +255,9 @@ or change orders — ask IT when you need something updated."*
 
 ---
 
-## 2B. 2026-08-10 05:00 之后的九波(W9 ~ W17)
+## 2B. 2026-08-10 05:00 之后的十波(W9 ~ W18)
 
-上一版写到 05:00 就停了。下面是同一天剩下的九波,按时间排。
+上一版写到 05:00 就停了。下面是同一天剩下的十波,按时间排。
 **每个数字都是从该 run 的 `##[notice]` 抄回来的**,抄错比不写更糟。
 
 ### W9 — SO-linked PO:回滚沙发那一截,然后补完 (05:38 ~ 08:42 UTC)
@@ -385,8 +386,11 @@ owner 原话两句都要留着:**"沙发库存不准的,因为我们接下来跑
 和 **"pillow 就ok"**(枕头是 accessory,要导)。
 
 > **两处要留意的更正:**
-> 1. PR #1858 的正文写「排除 21 个家具码」,**run log 报的是 85**。**以 run log 为准**
->    —— 正文写的是当时手上那份 CSV 的样子,跑的时候 CSV 已经不是那一份了。
+> 1. **PR #1858 的正文写「排除 21 个家具码」,run log 报的是 85。以 run log 为准,真值是 85。**
+>    正文那个 21 是**错的** —— 写的时候手上那份 CSV 不是跑的时候那一份。
+>    **一个错数字躺在一个已合并的 PR 正文里,正是最容易变成传说的东西**:
+>    它看起来有出处、可以被引用、而且永远不会有人回头改它。
+>    所以这里把它点名钉住 —— **下次有人拿「#1858 说 21」来对账,请把他带回这一行。**
 > 2. **负数差异从 §5 #3 的 45 个涨到 156 个。** 不是变坏了,是**基准动了**:快照停在
 >    2026-08-09,而 ERP 从那之后一直在出货 / 分配。`report-only` 没变,**一个都没扣**(§3 (3))。
 >    要拿它当结论前先想清楚在跟哪一天的 AutoCount 比。
@@ -444,6 +448,29 @@ SO-linked PO 导入和迁移 GR/DO 生成器自己续号,于是 `PO-000596` 在 
 | 31393092330 (13:28) | `refresh-po-variants` | 406 行;有颜色 405(**新拿到 1**);specials 87 |
 
 「新拿到」一路从 263 → 44 → 1,**这就是解析器收敛的样子**;收敛到 1 才停手。
+
+### W18 — 迁移 PO 的单头交期:一个**从来没丢过**的日期,在画面上看起来丢了 (13:53 UTC)
+
+`backfill-po-expected-at` / **31395645232** APPLY
+
+| | |
+|---|---|
+| 迁移 PO | **449** 张 |
+| 单头交期是空的 | **449 张 —— 一张不漏,全空** |
+| 能从自己的明细补回来 | **401** |
+| 补不了,因为**明细也没有任何一行带日期** | **48** |
+| **结果** | **`DONE. purchase orders given their delivery date: 401`** |
+
+**为什么这件事值得单独记一笔。** 日期**一直都在**,在明细行上。
+两个 importer 都只写了**行**上的交期,**没写单头那一栏**;而 PO 画面读的是**单头**。
+于是**每一张**迁移 PO 在画面上都显示「没有交期」——
+**一个从来没有丢失的数据,看起来像丢了。**
+
+> **给一年后的人:**这类 bug 最贵的地方不是修它,是**它会让人不相信这批数据**。
+> 看到 449 张 PO 全部没交期,正常反应是「导入坏了,重导吧」——
+> 而重导会把已经建立的 `so_item_id` dedication 全部打散。
+> **真相是:一个显示层的字段没被写,底下的数据一直是完整的。**
+> 剩下那 **48** 张是真的没有日期(明细行上也没有),**不是这次没补到**。
 
 ### 同一天的沙发件修正(不是导入,是按 owner 逐条核对后的更正)
 
@@ -644,6 +671,7 @@ BUG-HISTORY 里跟这次割接直接相关的三条(都在文件最上面):GRN p
 | 21 | 沙发件修正 **2 个 HELD 留给 owner** | 31393696809:`HELD HC-PO-010056 / HC-SO-012696`(件的顺序读不出来)、`HELD HC-PO-000162`(`5526` 要先自己成为 model) | **owner** |
 | 22 | 库存余额跟 AutoCount 比,**505 项里 34 项对不上** | `check-ac-vs-erp-reconcile` 31375330233 §3:`items compared: 505; MATCHING exactly: 471; differing: 34` | 跟 #3 是同一件事的两个面 |
 | 23 | **write freeze(#12)在 07:51 开过一分钟,07:52 又关回去。收盘时仍是「冻着」** | 31367561664 (07:51):`DONE. value=off -> OPEN for every company`;31367667779 (07:52):`DONE. value=1 -> FROZEN for company 1 only (others trade normally)` | **owner** 决定什么时候真正开闸。**闸门生效有 ~30s 的 middleware cache TTL**,那一分钟里 company 1 是可以写的 |
+| 24 | **48 张迁移 PO 到收盘仍然没有交期** —— 明细行上也没有,**不是补漏了** | 31395645232:`still blank because no LINE carries a date either: 48`(另外 401 张已补,§2B W18) | AutoCount 那边本来就没写。要填只能人工问供应商 |
 
 ---
 
@@ -712,10 +740,21 @@ Actions → 手动触发,报告在 run log 的 `##[notice]` 行里
 | **`check-ac-vs-erp-reconcile.yml`**(AC vs ERP reconcile) | **AutoCount 跟 ERP 现在差多少?**三段:PO↔SO dedication、库存状态(含「已全收却还不是 READY」那个必须归零的数)、库存余额逐项比对 |
 | **`so-source-trace-check.yml`**(SO source trace check) | **每一条 READY / SHIPPED / DELIVERED 的行,追不追得回它的来源 PO?**已交货的走 consumption → lot → batch 那条链。`recompute-so-allocation` 的 run log 里那个 `ready-no-open-lots` 镜头,量的就是这个东西 |
 
-> **一个命名上的坑,写下来免得下次再找。** 这四个里**没有**叫 `check-line-supply-trace` 的东西
-> —— 那个名字**不存在**,`.github/workflows/` 里没有,`grep -r "line-supply"` 全树 0 命中。
-> 会被误记成它的是上面第四个 **`so-source-trace-check.yml`**,以及 **`check-po-so-completeness.yml`**
-> (PO + SO completeness audit —— 每条沙发 PO 行 + 已过账 SO 行的规格完整度,加 SO→PO 对齐)。
+**第五个,写这份文件的时候还在路上:**
+
+| workflow | 它回答的**一个**问题 |
+|---|---|
+| **`check-line-supply-trace.yml`**(PR **#1861**) | **每一条还没 ready 的 SO 行,在等哪一张 PO、那张 PO 几时到?**owner 2026-08-10 原话:*"不 ready 的是什么 PO、几时到?然后我出 DO 的时候,要能看得到对应的是什么 PO。这些信息都要准确."* 报告把 **BOUND**(bedframe / sofa,靠 `purchase_order_items.so_item_id` 的硬链接,PO 的 `delivery_date` 就是 ETA)跟 **POOLED**(mattress / accessories,没有 dedication,得等 lot 被消耗才答得出「哪张 PO」)**分开讲** —— 分清楚这两者正是这份报告的重点 |
+
+> **状态要说准:写这一行的时候 PR #1861 还是 OPEN,没有合并。**
+> 也就是说 `main` 的 `.github/workflows/` 里**还没有**这个档案,
+> 你 checkout `main` 之后 `gh run list --workflow check-line-supply-trace.yml` 会是空的。
+> **合并之后它就是上面那四个的第五个**;在那之前,别把「找不到」当成「不存在」。
+>
+> **会被误记成它的两个邻居:** **`so-source-trace-check.yml`**(上面第四个)和
+> **`check-po-so-completeness.yml`**(PO + SO completeness audit —— 每条沙发 PO 行 +
+> 已过账 SO 行的规格完整度,加 SO→PO 对齐)。三个名字都带 "trace" 或 "completeness",
+> **问的却是三件不同的事**,别互相代用。
 
 **跑完怎么读:** 报告在 run log 的 `##[notice]` 行里,`gh run view <id> --log | grep '##\[notice\]'`。
 **只读检查一律 exit 0** —— 红了代表检查自己坏了,不代表答案是坏的;**答案就是输出本身。**
@@ -759,13 +798,31 @@ owner 原话:**"这个不要"**。
 
 **AutoCount 里有的(整个 book 的规模):**
 
-| 单别 | AutoCount 里有多少 |
-|---|---|
-| Sales Order | **13,010** 张(未取消;含取消是 13,015) |
-| Purchase Order | 约 **9,080** 张 |
-| Invoice (IV) | 约 **9,783** 张 |
-| Delivery Order (DO) | 约 **11,134** 张 |
-| Purchase Invoice (PI) | 约 **5,120** 张 |
+**量过的,不是估的。** 2026-08-10 直接连 live `AED_HOUZS` 数出来的,每张单别一句:
+
+```sql
+SELECT COUNT(*) FROM <TABLE> WHERE Cancelled = 'F'
+```
+
+| 代号 | 单别 | AutoCount 里有多少 |
+|---|---|---|
+| SO | Sales Order | **13,010** |
+| DO | Delivery Order | **11,134** |
+| IV | Sales Invoice | **9,783** |
+| CN | Credit Note | **4** |
+| DN | Debit Note | **0** |
+| PO | Purchase Order | **9,080** |
+| GR | Goods Received | **5,179** |
+| PI | Purchase Invoice | **5,120** |
+| PR | Purchase Return | **4** |
+| QT | Quotation | **3** |
+| CS | Cash Sales | **0** |
+
+同一次读出来的主档:**Debtor 32 / Creditor 108 / Item 1,561 / ItemUOM 1,566**。
+(Item 那个 1,561 跟 `autocount-erp-mapping-1561.csv` 的行数**正好对上** —— 那张翻译表是全量的。)
+
+真正进 ERP 的那一小片:**outstanding SO 2,710**;对这些 outstanding SO 开出去的
+**DO 59 张**,其中 **25 张**在 ERP 里找得到对应的行,变成了 W13 的迁移 DO。
 
 **ERP 里有的:**
 
@@ -785,12 +842,26 @@ owner 原话:**"这个不要"**。
 > 历史留在 AutoCount,ERP 从「还没做完的生意」接手。要查历史,去 AutoCount 查,
 > **不要试图把它补进 ERP** —— 补进来的每一张已交货 DO 都会再出一次货(§3 (4) 同理)。
 
-**证据链的诚实说明:** SO 那两个数(13,015 / 13,010 / outstanding 2,710)是 **PR #1846**
-在 live AutoCount 上逐条筛出来的,可查。**PO 9,080 / IV 9,783 / DO 11,134 / PI 5,120
-这四个数,在 Actions 的 run log 和这个 repo 里都找不到出处** —— 它们来自 owner 那边
-直接读 live `AED_HOUZS` 的结果。**照这份文件的规矩,这里明说:这四个数没有 run id 可以指。**
-量级是对的(`ac-gr-refs.json.gz` 全量索引报的 `8,920 PO / 4,939 GR / 4,589 PI` 跟它们同一个数量级),
-但**要用它们下结论之前,自己去 AutoCount 重数一次。**
+**证据链的诚实说明 —— 这一段请连着上表一起读。**
+
+上面那张表**没有 run id 可以指**,因为它不是 workflow 跑出来的:是 2026-08-10 经
+**ZeroTier 的 SQL 链路直接读 live `AED_HOUZS`** 数出来的。查询就写在表上面,
+**所以它是可以重跑的,只是不能从 Actions 的历史里翻出来。** 这两件事不一样,别混:
+「没有 run id」≠「没有证据」,但也**确实**代表**你不能靠这个 repo 自证它** ——
+要复核就得再连一次那条链路。
+
+能在这个 repo 里自证的部分,已经跟它对上了,而且是三条独立的路:
+
+| 表上的数 | repo 里能自证的对照 | 关系 |
+|---|---|---|
+| SO 13,010 | **PR #1846** 在 live AutoCount 上逐条筛的结果:header 13,015 → 未取消 **13,010** → outstanding **2,710** | **完全一致** |
+| outstanding SO 2,710 | `ac-outstanding-now.json.gz` 的 `so` 栏 = **2,710** | **完全一致** |
+| PO 9,080 / GR 5,179 / PI 5,120 | `ac-gr-refs.json.gz`(全量收货索引)报 **8,920 PO / 4,939 GR / 4,589 PI** | **每一项都 ≤ 总数,方向对**。索引是**按 PO 串起来的**,所以本来就装不下「没连 PO 的 GR/PI」和「从没收过货的 PO」;差的 160 / 240 / 531 正是那三类 |
+| DO 59 张(对 outstanding SO 开的) | `ac-partial-dos.json.gz` 自己数:**275 行 / 59 张 DO / 50 张 SO / 405 units** | **完全一致**(PR #1850 正文的数字也是这个) |
+
+> **一个数字要更正:**交办口径里那 59 张 DO 写成了 **61**。
+> **档案自己数出来是 59**(`ac-partial-dos.json.gz`,distinct `DoNo`),PR #1850 正文写的也是 59。
+> **以档案为准,记 59。**(其中 25 张成为迁移 DO,这个数字是 run 31393950819 的 `DOs created: 25`。)
 
 ---
 
