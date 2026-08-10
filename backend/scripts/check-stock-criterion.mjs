@@ -89,31 +89,48 @@ async function main() {
     const acByDtl = new Map(acRows.map((r) => [String(r.DtlKey), r]));
     const acHdrLoc = new Map();
     for (const r of acRows) if (!acHdrLoc.has(norm(r.DocNo))) acHdrLoc.set(norm(r.DocNo), r.SalesLocation);
+    /* The backfill has already run against production (APPLY group=all,
+       2026-08-10 09:13 and 14:24), and it filled from the line's `location`
+       TEXT with no AutoCount cross-check. So the open question is no longer
+       "which lines can be filled" but "is what was already written CORRECT".
+       Every migrated line — filled or not — is audited against AutoCount's own
+       record for the SAME line, keyed on DtlKey. A wrong warehouse is worse
+       than a null: it sends staff to a shelf that is empty. */
     const verdict = new Map();
-    const conflicts = [], noEvidence = [];
+    const mis = [], noEvidence = [], acUnres = [];
     for (const l of lines) {
-      if (l.warehouse_id) { verdict.set("ALREADY SET", (verdict.get("ALREADY SET") ?? 0) + 1); continue; }
       const ac = l.linked_ac_dtlkey != null ? acByDtl.get(String(l.linked_ac_dtlkey)) : null;
       const acLoc = ac ? ac.Location : acHdrLoc.get(norm(l.linked_ac_docno));
       const via = ac ? "dtlkey" : (acLoc ? "header" : null);
+      const acWh = acLoc ? resolve(acLoc) : null;
+      const filled = !!l.warehouse_id;
       let v;
-      if (!acLoc) { v = "NO AC EVIDENCE"; noEvidence.push(l); }
-      else if (!resolve(acLoc)) v = "AC LOC UNRESOLVED";
-      else if (norm(acLoc) !== norm(l.location)) { v = "CONFLICT erp!=ac"; conflicts.push({ ...l, acLoc, via }); }
-      else v = `CONFIRMED (${via})`;
+      if (!acLoc) { v = filled ? "FILLED, no AC evidence" : "NULL, no AC evidence"; noEvidence.push(l); }
+      else if (!acWh) { v = filled ? "FILLED, AC loc unresolved" : "NULL, AC loc unresolved"; acUnres.push({ ...l, acLoc }); }
+      else if (!filled) v = `NULL (AC says ${whById.get(acWh)})`;
+      else if (String(l.warehouse_id) === String(acWh)) v = `AGREES with AutoCount (${via})`;
+      else { v = "MISWAREHOUSED vs AutoCount"; mis.push({ ...l, acLoc, acWh, via }); }
       verdict.set(v, (verdict.get(v) ?? 0) + 1);
     }
     log("");
-    log(`  AutoCount cross-check (${acRows.length} AC detail rows loaded):`);
-    for (const [v, n] of [...verdict].sort((a, b) => b[1] - a[1])) log(`    ${pad(v, 22)} ${num(n, 6)}`);
-    if (conflicts.length) {
-      log(`  CONFLICT lines (ERP location text disagrees with AutoCount for the same line) — first ${Math.min(TOP, conflicts.length)}:`);
-      for (const c of conflicts.slice(0, TOP)) log(`    ${c.doc_no} line ${c.line_no} ${c.item_code}: ERP ${JSON.stringify(c.location)} vs AC ${JSON.stringify(c.acLoc)} (via ${c.via})`);
+    log(`  AutoCount cross-check of the CURRENT warehouse_id (${acRows.length} AC detail rows, ${acHdrLoc.size} documents):`);
+    for (const [v, n] of [...verdict].sort((a, b) => b[1] - a[1])) log(`    ${pad(v, 30)} ${num(n, 6)}`);
+    if (mis.length) {
+      log(`  MISWAREHOUSED — the ERP points at a different warehouse than AutoCount for the same line (first ${Math.min(TOP, mis.length)} of ${mis.length}):`);
+      for (const c of mis.slice(0, TOP)) log(`    ${c.doc_no} line ${c.line_no} ${c.item_code}: ERP ${whById.get(String(c.warehouse_id)) ?? c.warehouse_id} vs AC ${c.acLoc} (via ${c.via})`);
+    } else {
+      log("  MISWAREHOUSED: 0 — every filled warehouse_id matches AutoCount's own location for that line.");
+    }
+    if (acUnres.length) {
+      const g = new Map();
+      for (const c of acUnres) g.set(String(c.acLoc), (g.get(String(c.acLoc)) ?? 0) + 1);
+      log("  AC LOCATION UNRESOLVED — no ERP warehouse maps to these AutoCount locations:");
+      for (const [loc, n] of [...g].sort((a, b) => b[1] - a[1])) log(`    ${loc}: ${n} lines`);
     }
     if (noEvidence.length) {
       const g = new Map();
       for (const l of noEvidence) g.set(l.linked_ac_docno, (g.get(l.linked_ac_docno) ?? 0) + 1);
-      log(`  NO AC EVIDENCE lines: ${noEvidence.length} across ${g.size} AutoCount documents — first ${Math.min(TOP, g.size)} docs:`);
+      log(`  NO AC EVIDENCE: ${noEvidence.length} lines across ${g.size} AutoCount documents (the export covers OUTSTANDING orders only, so a line on a since-completed order legitimately has no row) — first ${Math.min(TOP, g.size)}:`);
       for (const [doc, n] of [...g].slice(0, TOP)) log(`    ${doc}: ${n} line(s)`);
     }
   }
