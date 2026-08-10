@@ -1,3 +1,207 @@
+## The DO code disagrees with itself about a UNIQUE index, and production settled it against the resync path [high]
+
+**Symptom** - two comments in `delivery-orders-mfg.ts` assert opposite facts
+about the same index. `deductInventoryForDo` says "the existence check + UNIQUE
+index mean this never double-deducts"; `resyncInventoryForDo` says "Migration
+0109 dropped the per-bucket UNIQUE so we can freely write multiple delta rows
+over time". Both cannot be true. Migration `0230:130-134` enumerates this
+table's indexes as `warehouse_id/product_code`, `source_doc_type/source_doc_id`,
+`created_at`, `company_id` and calls out that `batch_no` "had no index at all" -
+four non-unique indexes, no mention of a unique one - so reading the migration
+tree makes the deduction guard look like a bare TOCTOU check.
+
+**Root cause (traced, not guessed)** - the migration tree is not the schema. The
+index's DDL is prod-only, ported from 2990, and exists in no file in this repo.
+Read live from `pg_indexes` on 2026-08-11 (Actions run 31417585775, the existing
+read-only *Duplicate movements check*):
+
+```
+CREATE UNIQUE INDEX uq_inv_mov_do_source ON scm.inventory_movements
+  USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+  WHERE (source_doc_type = 'DO'::text)
+```
+
+Four such indexes are live (`_do_`, `_dr_`, `_cs_do_`, `_cs_dr_`). So the
+deduction comment is TRUE and the resync comment is FALSE. Which matters,
+because `movement_type` is NOT in that key: one `(DO, product_code,
+variant_key)` bucket may hold exactly one movement row of any kind, ever. Every
+delta `resyncInventoryForDo` writes for a bucket the first ship already wrote is
+a duplicate key, is rejected, and the ledger does not move. The same run
+confirms it empirically - zero DO buckets anywhere in production hold more than
+one movement row, which is what an enforced index looks like, not what a
+"freely write multiple delta rows" design looks like.
+
+What still lands is a delta for a bucket with NO first-ship row: a newly added
+line, or an existing line whose recomputed `variant_key` differs from the one it
+shipped under. That second case is how the MAKOTO divergence
+(`docs/inventory-ledger-divergence-coe.md`) wrote an OUT that consumed no lot -
+it got through the index precisely because its key had drifted.
+
+**Fix** - documentation only, deliberately. Every comment that named "migration
+0100" / "migration 0109" now carries the live-verified definition and the run id
+instead of a migration number that does not exist in this tree;
+`resyncInventoryForDo` and the line-delete handler carry an explicit warning
+that their delta write is rejected for an already-shipped bucket;
+`docs/modules/delivery-order.md` quotes the index verbatim. The ACTUAL defect -
+edit-after-ship qty changes never reaching the ledger - is NOT fixed here. It is
+an owner-owned, staging-first change to the money-critical FIFO layer, and there
+are exactly two shapes (add `movement_type` to the index, or stop the delta rows
+reusing the DO source key, which is how the reversal path already solved it with
+signed ADJUSTMENT rows). Since 2026-08-05 the rejection is at least logged
+rather than silent.
+
+**Lesson** - this repo's own rule, earned twice now: verify schema claims
+against the live database, not migration files. The second half of the lesson is
+new - when two comments in one file contradict each other about a constraint,
+that is not a documentation defect, it is a design that was built on the losing
+half.
+
+**Ref** - fix/do-deduct-guard-truth, 2026-08-11 (evidence: Actions run 31417585775)
+
+## A frozen write reads as an outage on every path that is not the vendored SCM client [medium]
+
+**Symptom** - with the go-live write freeze ON, a refused write answered
+"The service is briefly unavailable. Please try again in a moment." That is an
+outage sentence for a deliberate business decision, and it instructs the person
+to do the one thing the freeze exists to stop. The SCM pages did NOT show it -
+they showed the operator's real explanation - and that asymmetry is what pointed
+at the client rather than the server.
+
+**Scope, measured rather than assumed.** Every SCM document write goes through
+`vendor/scm/lib/authed-fetch.ts`, whose `humanApiError` reads `reason` and
+therefore already showed the right sentence. The core `api/client.ts` makes
+exactly ONE write to `/api/scm/*` today - `pages/Team.tsx:3243`, the
+showroom-parking PATCH - so that is the only surface currently mis-reporting the
+freeze. The bug is nonetheless worth fixing rather than noting: `api/client.ts`
+is the DEFAULT client for anything not vendored from 2990, so every future SCM
+write written outside the vendor layer inherits it, and the operator-message cap
+below closes a hole that DOES hit the main SCM path.
+
+**Root cause (traced, not guessed)** - `scm/lib/write-freeze.ts` returned the
+explanation in a field called `reason` only. `authed-fetch.ts` `humanApiError`
+reads `reason`; `api/client.ts` `humanHttpMessage` read only `error` / `message`
+/ `detail`, and `write_frozen` is not in its `ERROR_CODE_MESSAGES`, so the
+sentence was dropped and the generic 503 line spoke instead.
+
+The second half is worse than the copy, and it is confined to the same client:
+`isColdPool503` decides whether a MUTATION may be retried by regex-testing that
+humanised message for "briefly unavailable | warming up | try again in a
+moment". The generic 503 line contains two of them, so a frozen write on that
+path was silently re-sent four more times over about ten seconds before the
+operator was told anything - five refusals per press. (`authed-fetch` tests the
+raw BODY instead of the humanised message, which is why it never retried a
+freeze.)
+
+The hole that DOES reach the SCM floor: both clients discard a server sentence
+of 200 characters or more and fall back to their generic 5xx line. The freeze
+message is operator-typed in `app_config.description`, so a long one would have
+put "The system hit a problem. Please try again" in front of every SCM save.
+
+**Fix** - the backend sends the same sentence in `message` AND `reason`, so
+neither client can miss it, and `freezeMessage()` caps an operator-typed
+description at the 200 characters both clients will render, falling back to a
+default that says saving is paused, that nothing is broken, and that retrying
+will not help. `humanHttpMessage` now also reads `reason`. The mutation retry
+stops firing on a freeze as a CONSEQUENCE of the copy no longer containing the
+cold-pool phrases, not as a second special case. `write_frozen` was deliberately
+NOT added to `ERROR_CODE_MESSAGES` in either client: both maps are consulted
+BEFORE the server sentence, so an entry there would override the operator's own
+`app_config.description`, which is the entire purpose of that column.
+
+**Lesson** - a refusal's wording is part of its contract. When retry logic keys
+off humanised copy, a missing message field is not cosmetic: it changes what the
+client DOES. And two error humanisers that read different fields will diverge
+silently - the one you are not looking at is the one that is wrong.
+
+**Ref** - fix/freeze-message-not-outage, 2026-08-11
+
+## `String(pgDate).slice(0,10)` produced "Wed Jun 24", and it aborted the sofa stock opening on its first INSERT [medium]
+
+**Symptom** - the first-ever APPLY run of `import-ac-sofa-stock.mjs` against
+production (run 31420345698, 2026-08-11) died immediately with
+`PostgresError: invalid input syntax for type timestamp with time zone:
+"Wed Jun 24T00:00:00Z"`. None of the 109 planned sofa lots were written.
+
+**Root cause (traced, not guessed)** - `:169` built the build's receipt date as
+`String(l.po_date).slice(0, 10)`. `po_date` comes back from the `postgres`
+driver as a **JS `Date`**, and `Date.prototype.toString()` is the locale form
+`"Wed Jun 24 2026 08:00:00 GMT+0800 (…)"` - not ISO. Slicing ten characters
+yields `"Wed Jun 24"`. The writer then pasted that straight into the SQL text as
+`` `'${p.receivedAt}T00:00:00Z'` ``, so Postgres received the literal
+`'Wed Jun 24T00:00:00Z'`.
+
+The other date source was fine and is worth recording so nobody "fixes" it too:
+`ac-stock-layers.json.gz` stores `Date` as a clean `"YYYY-MM-DD"` **string**, so
+the same slice was correct there. One expression, two callers, only one of them
+holding a `Date` - which is exactly why it survived every dry-run: the dry-run
+never reaches the INSERT, and the projection does not touch the date.
+
+**Fix** - one `isoDay()` helper that branches on `instanceof Date` (ISO via
+`toISOString()`) versus a string with a leading `YYYY-MM-DD`, returning null
+rather than a malformed value, applied to BOTH date sources. The INSERT now
+**binds every value** instead of interpolating any of them into the SQL text,
+so a bad value can no longer become syntactically-valid-looking SQL. Progress
+logging tightened from every 50 rows to every 25 so a partial write is visible.
+
+**Verified** - a re-run of the DRY-RUN read `already opened by an earlier run: 0`,
+confirming from an independent query that the aborted APPLY wrote **nothing** and
+left no partial state to compensate for.
+
+**The class, for next time** - `String(x).slice(0,10)` is only an ISO date when
+`x` is already an ISO string. Against a driver that hydrates `date`/`timestamp`
+columns into `Date` objects it silently produces a weekday-prefixed fragment.
+Use `toISOString()`, and **bind dates as parameters** - had the value been bound
+rather than interpolated, the driver would have serialised the `Date` correctly
+and the bug would never have existed.
+
+**Ref** - 2026-08-11, PR #1942 (fix/stock-criterion-close).
+
+## The stock reconciler excluded sofa by AutoCount's ItemGroup, so 85 units of pillows and stools read as a phantom ERP surplus [medium]
+
+**Symptom** - the per-warehouse reconcile (`check-stock-vs-autocount.mjs`, prod
+run 31419069241) reported the ERP holding 149 units MORE than live AutoCount
+over the comparable cells, and named a 25-cell / 98-unit class
+`CUTOVER ADJUSTMENT ONLY - seeded once and untouched since`. Twelve of those
+cells claimed AutoCount held NOTHING at all against real ERP stock, the largest
+being `SQUARE PILLOW @ BALAKONG WAREHOUSE: AutoCount - vs ERP 46`.
+
+**Root cause (traced, not guessed)** - the exclusion at `:152` was
+`if (g === "SOFA")`, where `g` is the AutoCount item master's `ItemGroup`.
+AutoCount files 41 codes under `ItemGroup = SOFA`; only 22 of them are whole
+sofa sets. The other 19 - `DSL-SQUARE PILLOW`, `AMN-LONG PILLOW`,
+`HOK-SQUARE PILLOW`, `RDS-SGABELLO`, `DSL-STOOL 1`, `LV-3068 BOLSTER`, the
+`THL-xxxx` single-seaters and the rest, 85 units - are pillows, bolsters and
+stools that `data/autocount-erp-mapping-1561.csv` correctly categorises as
+`ACCESSORY`.
+
+`import-ac-stock-balance.mjs` excludes on that CSV category
+(`isSofaFurniture`, built at `:64` from column 4), NOT on the ItemGroup. So the
+importer BROUGHT THOSE 85 UNITS IN, the ERP holds them, and the checker then
+refused to look at the AutoCount side of the same cells - reporting real,
+correctly-imported stock as a surplus the other system did not have.
+
+Measured against the live export: of the 85 units, **77 are present on both
+sides** and 11 of the 12 cells reconcile exactly once the excluded codes are
+summed. The genuine residual is **+8 units**, all on
+`SQUARE PILLOW @ BALAKONG WAREHOUSE` (ERP 46 vs AutoCount 38). So the corrected
+net delta over comparable cells is **+72 units, not +149** - 52% of the reported
+gap was the checker's own filter.
+
+**Fix** - exclude on the binding CSV's category column, byte-identical to
+`import-ac-stock-balance.mjs:64`, and report separately how many units are
+compared despite carrying `ItemGroup = SOFA`. The `g === "SOFA"` test is gone.
+
+**The class, for next time** - this is `D7` in `docs/stock-reconciliation.md`
+one layer up. D7 was "excluded accessories by matching /SOFA/ against the item
+CODE"; this is "excluded accessories by matching SOFA against the item GROUP".
+The invariant both violate: **a reconciler's exclusion must be the same
+predicate as the importer's.** If the importer brought a row in, the ERP holds
+it and it must be compared - otherwise the check manufactures the very
+discrepancy it exists to find. Categorise by the field the importer used, never
+by a field that merely sounds like it means the same thing.
+
+**Ref** - 2026-08-11, PR #1942 (fix/stock-criterion-close). Found by an
+independent read while closing go-live criterion 3.
 ## /edit appended a duplicate of every line into the live account book, and a line could not be retired without deleting it [critical]
 
 **Symptom** - none yet, and that is the point: the ERP -> AutoCount write-back
