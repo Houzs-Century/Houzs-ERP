@@ -74,16 +74,43 @@ async function main() {
   /* Lines that SHOULD be ready by the bound rule but are not — after the
      allocation has run, this list must be empty. Anything left is a real
      defect, not a timing artefact. */
-  const shouldBe = await sql`SELECT h.doc_no, i.item_code, i.stock_status, poi.received_qty, i.qty
+  const shouldBe = await sql`SELECT h.doc_no, i.item_code, i.item_group, i.stock_status, poi.received_qty, i.qty
     FROM scm.mfg_sales_order_items i
     JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     JOIN scm.purchase_order_items poi ON poi.so_item_id = i.id
     WHERE h.company_id = ${CO} AND h.proceeded_at IS NOT NULL AND COALESCE(i.cancelled,false) = false
       AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
       AND COALESCE(poi.received_qty,0) >= i.qty AND i.stock_status <> 'READY'
-    ORDER BY h.doc_no LIMIT 25`;
-  log(`fully-received dedications still not READY (must be 0 after a recompute): ${shouldBe.length}`);
-  for (const r of shouldBe) log(`   ${r.doc_no} ${r.item_code} ${r.stock_status} recv ${r.received_qty}/${r.qty}`);
+    ORDER BY h.doc_no LIMIT 200`;
+  /* Bound mode is bedframe + sofa ONLY (owner 2026-08-10: "SOFA 和 BEDFRAME…要走
+     Convert to PO 的那个模式。可是 MATTRESS 跟 Accessories…走回我们正常 MRP 的
+     模式"). A pooled line with a received dedication is NOT a defect: its units
+     went into the shared pool and may legitimately have been taken by an older
+     order. Only the bound groups have to be READY. */
+  const boundLate = shouldBe.filter((r) => ['bedframe', 'sofa'].includes(r.item_group));
+  const pooledLate = shouldBe.filter((r) => !['bedframe', 'sofa'].includes(r.item_group));
+  log(`fully-received BOUND dedications still not READY (must be 0 after a recompute): ${boundLate.length}`);
+  for (const r of boundLate.slice(0, 20)) log(`   ${r.doc_no} ${r.item_code} [${r.item_group}] ${r.stock_status} recv ${r.received_qty}/${r.qty}`);
+  if (boundLate.length > 20) log(`   ... and ${boundLate.length - 20} more`);
+  log(`pooled lines with a received dedication and not READY (informational, pooled stock may be spoken for): ${pooledLate.length}`);
+
+  /* Sofa ships only from ONE batch, and both the allocator and the DO gate read
+     batch_no off the lot. Migrated stock that arrived through the balance
+     snapshot has no batch_no, which would leave every sofa set unallocatable no
+     matter how much of it is on hand — so measure the coverage rather than
+     assume it. */
+  const [sofaLots] = await sql`SELECT
+      COUNT(*)::int lots,
+      COUNT(*) FILTER (WHERE l.batch_no IS NOT NULL)::int with_batch,
+      COALESCE(SUM(l.qty_remaining), 0)::int qty,
+      COALESCE(SUM(l.qty_remaining) FILTER (WHERE l.batch_no IS NOT NULL), 0)::int qty_with_batch
+    FROM scm.v_inventory_lots_open l
+    JOIN scm.mfg_products p ON p.code = l.product_code AND p.company_id = ${CO}
+    WHERE p.category::text = 'SOFA' AND l.qty_remaining > 0`;
+  log(`sofa open lots: ${sofaLots.lots} (${sofaLots.with_batch} carry a batch_no); units ${sofaLots.qty} (${sofaLots.qty_with_batch} batched)`);
+  if (sofaLots.lots > 0 && sofaLots.with_batch === 0) {
+    log("   -> no sofa lot carries a batch_no, so findCoveringBatch can never match and every sofa set stays PENDING regardless of stock. Batch attribution is the blocker, not quantity.");
+  }
 
   log("");
   log("═══ 3. stock balance vs AutoCount ═══");
