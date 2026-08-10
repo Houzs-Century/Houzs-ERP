@@ -234,7 +234,15 @@ HR805-31/-40、NX007/010/011、ZL-6/-20、Garfield、Wowsons、Chantic、J9883-2
 
 ## 8. 还没做完的(下一个 session 接手)
 
-### 8.1 照片(Further Description)— 最大的一块
+### 8.1 照片(Further Description)— **已完成 2026-08-10**,本节保留作历史
+
+> **这一节下面的「卡点」已经不成立了。** 那批 jpg 一直在开发机的 scratchpad 里;
+> 2026-08-10 已经全部传进 R2 并挂上:**SO 983 个 key(逐个查过 R2,0 缺)、PO 242 个 key**。
+> 对 live `AED_HOUZS` 逐条核对过:SO 端 554 行有图、全部抽出;PO 端 190 张(比原本多 16 张,
+> 原因见 `BUG-HISTORY.md` 的「scope」与「\pichgoal」两条)。
+> 现在还挂不上的只剩:**SO 18 张在已交货单上**(按 DO 规则不导,正确)+ **PO 36 张的单本身没导进来**(见 §8.2)。
+> 缩略图曾经全是 `err`,那是 `SO_ITEM_PHOTOS_BUCKET_NAME` 没配,不是没上传 —— 已修。
+
 
 - AutoCount 每张沙发单的 Further Description 里有实拍图,**图里能看出件和左右**
 - 图已经在 AutoCount 主机上抽成 jpg(档名 `SO-xxxxx__<DtlKey>_<n>.jpg`),
