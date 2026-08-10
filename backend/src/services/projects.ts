@@ -1351,6 +1351,12 @@ export interface ListProjectsFilters {
    *  assigned, and the Sales PIC not yet assigned. The staffing lanes
    *  (attending + pic) only fire once the CONTRACT section is cleared. */
   pending_director?: { stock?: boolean; agreement?: boolean; sales_attending?: boolean; sales_pic?: boolean };
+  /** Brands this approver is responsible for (owner 2026-08-10: Kris approves
+   *  AKEMI + ERGOTEX stock-outs, Peter takes ZANOTTI). When non-empty the
+   *  director APPROVAL lanes only surface events of these brands, so each
+   *  director's My Pending shows just their own queue. Empty/absent = every
+   *  brand, which keeps the existing unrestricted approvers unchanged. */
+  approver_brands?: string[];
   /** Sales-attending "pending" = the project has no sales attendees assigned
    *  yet (Sales PIC + directors). Standalone predicate (not a checklist item). */
   pending_sales_attending?: boolean;
@@ -1560,11 +1566,22 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   const SALES_PIC_EMPTY = `(substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?
         AND ${CONTRACT_CLEAR}
         AND NOT EXISTS (SELECT 1 FROM users pu WHERE pu.id = p.pic_id AND pu.id <> 1))`;
+  // Brand scope for the APPROVAL lanes (owner 2026-08-10). Interpolated, not
+  // bound, because these lanes are assembled into one OR list whose bind order
+  // is already fixed by dueToday; the values come from user_brands and are
+  // quote-escaped here. Empty list = no restriction.
+  const approverBrands = (f.approver_brands ?? [])
+    .map((b) => String(b).trim())
+    .filter(Boolean)
+    .map((b) => `'${b.replace(/'/g, "''")}'`);
+  const APPROVER_BRAND_GATE = approverBrands.length
+    ? ` AND p.brand IN (${approverBrands.join(",")})`
+    : "";
   // Stock-out record submitted by the purchaser, now awaiting director approval.
-  const STOCK_OUT_AWAITING_APPROVAL = `EXISTS (SELECT 1 FROM project_checklist pc
+  const STOCK_OUT_AWAITING_APPROVAL = `(EXISTS (SELECT 1 FROM project_checklist pc
                 WHERE pc.project_id = p.id AND pc.title = 'Stock Out Transfer Record'
                   AND pc.status = 'pending'
-                  AND pc.review_status IN ('pending_review', 'amended') AND ${DUE_GATE})`;
+                  AND pc.review_status IN ('pending_review', 'amended') AND ${DUE_GATE})${APPROVER_BRAND_GATE})`;
   // The Agreement / Quotation is the APPROVER's pending only once it has been
   // SUBMITTED for review (owner 2026-07-23, weisiang report): before BD uploads
   // it, it sits on BD's own lane, not the approver's. Mirror STOCK_OUT above —
