@@ -17,13 +17,23 @@
 /** Every key an export has ever used for PODTL.DeliveryDate, newest first. */
 export const AC_PO_DELIVERY_DATE_KEYS = ["DeliveryDate", "DelivDate"];
 
+/* `YYYY-MM-DD` from either shape a date reaches us in: the export's
+   "2026-08-15 00:00:00" text, or the JS Date the postgres driver returns for a
+   `date` column. The Date case is not hypothetical — `String(date).slice(0,10)`
+   yields "Tue Mar 25", which sorts wrong and is not a value any date column
+   accepts. Anything else is null, never a guess. */
+export function isoDate(v) {
+  if (v === null || v === undefined || v === "") return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+  const s = String(v).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
 /** `YYYY-MM-DD`, or null when the line genuinely carries no delivery date. */
 export function acDeliveryDate(line) {
   for (const k of AC_PO_DELIVERY_DATE_KEYS) {
-    const v = line?.[k];
-    if (v === null || v === undefined || v === "") continue;
-    const s = String(v).slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const d = isoDate(line?.[k]);
+    if (d) return d;
   }
   return null;
 }

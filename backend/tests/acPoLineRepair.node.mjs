@@ -23,6 +23,7 @@ import {
   acDeliveryDate,
   acDtlKey,
   acFromSoDtlKey,
+  isoDate,
   mergeAcPoLines,
 } from "../scripts/lib/ac-po-line.mjs";
 import { makeSoLineTaker } from "../scripts/lib/so-line-dedication.mjs";
@@ -71,6 +72,22 @@ test("acDeliveryDate normalises to YYYY-MM-DD and refuses anything else", () => 
   assert.equal(acDeliveryDate({ DeliveryDate: null }), null);
   assert.equal(acDeliveryDate({}), null);
   assert.equal(acDeliveryDate({ DeliveryDate: "15/08/2026" }), null);
+});
+
+test("isoDate survives the JS Date the postgres driver returns for a date column", () => {
+  // String(new Date(...)).slice(0, 10) is "Tue Mar 25" — sorts wrong, and no
+  // date column accepts it. The header ETA is picked by sorting these.
+  assert.equal(String(new Date("2003-03-25T00:00:00Z")).slice(0, 10), "Tue Mar 25");
+  assert.equal(isoDate(new Date("2003-03-25T00:00:00Z")), "2003-03-25");
+  assert.equal(isoDate("2026-08-15 00:00:00"), "2026-08-15");
+  assert.equal(isoDate(new Date("nonsense")), null);
+  assert.equal(isoDate("Tue Mar 25 2003"), null);
+  assert.equal(isoDate(null), null);
+  // and the sort the header fill depends on is only correct in this shape
+  assert.deepEqual(
+    [new Date("2026-08-15T00:00:00Z"), new Date("2003-03-25T00:00:00Z")].map(isoDate).sort(),
+    ["2003-03-25", "2026-08-15"],
+  );
 });
 
 test("DtlKey identifies a PODTL row, so it de-duplicates the two overlapping exports", () => {

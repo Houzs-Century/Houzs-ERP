@@ -45,7 +45,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
-import { acDeliveryDate, acDtlKey, acFromSoDtlKey, mergeAcPoLines } from "./lib/ac-po-line.mjs";
+import { acDeliveryDate, acDtlKey, acFromSoDtlKey, isoDate, mergeAcPoLines } from "./lib/ac-po-line.mjs";
 import { matchAcLinesToErpRows } from "./lib/ac-po-line-match.mjs";
 import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
 
@@ -142,7 +142,7 @@ async function main() {
   const unresolved = [];      // { poNo, code, reason }
   const refusals = [];
   const noAcDoc = [];
-  let sole = 0, split = 0, indistinguishable = 0, unmatchedErp = 0, unmatchedAc = 0;
+  let sole = 0, split = 0, indistinguishable = 0, unmatchedErp = 0, unmatchedAc = 0, wouldKey = 0;
 
   for (const h of headers) {
     const erpRows = rowsByPo.get(h.id) ?? [];
@@ -186,9 +186,10 @@ async function main() {
         if (d) { upd.deliveryDate = d; want = true; }
         else unresolved.push({ poNo: h.po_number, code: row.material_code, reason: `AutoCount line ${ac.key} carries no delivery date` });
       }
-      /* Planned even when the column is not there yet, so the DRY-RUN still
-         REPORTS how many lines it would key. The writer is what skips it. */
-      if (row.linked_ac_dtlkey == null) { upd.dtlKey = ac.key; want = has_dtlkey || want; }
+      /* Counted even when the column is not applied yet, so the DRY-RUN reports
+         the true number it would key rather than only the lines it happens to
+         be touching for another reason. */
+      if (row.linked_ac_dtlkey == null) { wouldKey++; upd.dtlKey = ac.key; want = has_dtlkey || want; }
 
       if (!row.so_item_id) {
         const fromKey = acFromSoDtlKey(ac.raw);
@@ -221,25 +222,28 @@ async function main() {
 
   const nSo = plan.filter((p) => p.soItemId).length;
   const nDate = plan.filter((p) => p.deliveryDate).length;
-  const nKey = plan.filter((p) => p.dtlKey != null).length;
+  const nKey = has_dtlkey ? plan.filter((p) => p.dtlKey != null).length : wouldKey;
   log("");
   log(`matched ERP line -> AutoCount line: sole ${sole}; split by (qty, Desc2) ${split}; indistinguishable, zipped in DtlKey order ${indistinguishable}`);
   log(`unmatched: ERP rows ${unmatchedErp}; AutoCount lines with no ERP row ${unmatchedAc}; POs with no AutoCount document in the snapshots ${noAcDoc.length}`);
   for (const p of noAcDoc.slice(0, 20)) log(`   ${p}`);
   log("");
-  log(`PLAN: ${plan.length} line(s) to update — so_item_id ${nSo}; delivery_date ${nDate}; linked_ac_dtlkey ${nKey}${has_dtlkey ? "" : " (COLUMN ABSENT — counted, not written)"}`);
+  log(`PLAN: ${plan.length} line(s) to update — so_item_id ${nSo}; delivery_date ${nDate}; linked_ac_dtlkey ${nKey}${has_dtlkey ? "" : " (COLUMN ABSENT — this is what it WOULD key once the migration is applied, and it is why those lines are not in the plan count above)"}`);
   const groupOf = new Map(rows.map((r) => [r.id, r.item_group ?? "?"]));
   const byGroup = new Map();
   for (const p of plan) { if (!p.soItemId) continue; const g = groupOf.get(p.id) ?? "?"; byGroup.set(g, (byGroup.get(g) ?? 0) + 1); }
   log(`       new dedications by item group: ${[...byGroup.entries()].sort((a, b) => b[1] - a[1]).map(([g, n]) => `${g} ${n}`).join("; ") || "none"}`);
 
-  // Header date: earliest of the line dates this repair would leave in place.
+  /* Header date: earliest of the line dates this repair would leave in place.
+     A `date` column comes back from postgres as a JS Date, whose String() is
+     "Wed Mar 25 2003 ..." - slicing that to 10 characters yields "Wed Mar 25",
+     which sorts wrong and is not a date any column would accept. */
   const dateByLine = new Map(plan.filter((p) => p.deliveryDate).map((p) => [p.id, p.deliveryDate]));
   const headerFill = [];
   for (const h of headers) {
     if (h.expected_at) continue;
     const dates = (rowsByPo.get(h.id) ?? [])
-      .map((r) => (r.delivery_date ? String(r.delivery_date).slice(0, 10) : dateByLine.get(r.id)))
+      .map((r) => isoDate(r.delivery_date) ?? dateByLine.get(r.id))
       .filter(Boolean).sort();
     if (dates.length) headerFill.push({ id: h.id, poNo: h.po_number, eta: dates[0] });
   }
