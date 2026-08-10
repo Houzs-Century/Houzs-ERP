@@ -160,6 +160,22 @@ describePg('variant merge against real PostgreSQL', () => {
       expect(row.gap_inches).toBeNull();
     });
 
+    test(`${table}: a row whose variants is a jsonb STRING scalar is skipped too`, async () => {
+      /* The exact shape the double-encoding produced, and the shape this very
+         test file seeded by accident on its first CI run (job 93576610056)
+         before the fixture was moved to sql.json — the trap is that easy to
+         fall into, and the guard is what makes it harmless. */
+      const [seeded] = table === 'mfg_sales_order_items'
+        ? await admin`INSERT INTO scm.mfg_sales_order_items (variants)
+                      VALUES (to_jsonb(${JSON.stringify(EXISTING)}::text)) RETURNING id::text AS id`
+        : await admin`INSERT INTO scm.purchase_order_items (variants)
+                      VALUES (to_jsonb(${JSON.stringify(EXISTING)}::text)) RETURNING id::text AS id`;
+      const id = seeded.id as string;
+      expect((await readRow(table, id)).shape).toBe('string');
+      expect(await mergeVariantPatch(admin, { table, id, patch: PATCH, geometry: null })).toBe(0);
+      expect((await readRow(table, id)).shape).toBe('string');
+    });
+
     test(`${table}: a NULL variants column becomes exactly the patch`, async () => {
       const id = await seed(table, null);
       expect(await mergeVariantPatch(admin, { table, id, patch: PATCH, geometry: null })).toBe(1);
