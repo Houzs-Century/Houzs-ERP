@@ -16,6 +16,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { parseBedframe } from "./lib/parse-bedframe.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -28,11 +29,10 @@ const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
 const isPendingColour = (c) => /(TBC|KIV)/i.test(c || "");
 
-// The parser + the special mapper are loaded from the import scripts so there is
-// exactly ONE definition of each and this can never drift from the importer.
-const soSrc = fs.readFileSync(path.join(here, "import-ac-outstanding-so.mjs"), "utf8");
+/* mapSpecial is still rebuilt from fix-so-specials.mjs by source-text slicing.
+   parseBedframe was too, until the end marker got a new comment line in front of
+   it and the appended `return` was swallowed by it - BUG-HISTORY.md 2026-08-10. */
 const fxSrc = fs.readFileSync(path.join(here, "fix-so-specials.mjs"), "utf8");
-const parseBedframe = new Function(`${soSrc.slice(soSrc.indexOf("function parseBedframe"), soSrc.indexOf("// free-text name resolver")).trim()}; return parseBedframe;`)();
 const mapSpecial = new Function(`${fxSrc.slice(fxSrc.indexOf("function mapSpecial"), fxSrc.indexOf("async function main")).trim()}; return mapSpecial;`)();
 
 function parseCsvLine(line) {
