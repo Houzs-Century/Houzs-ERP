@@ -48,6 +48,16 @@ PR #1819 (migration 0273, `linked_ac_dtlkey` on both item tables) was merged
 first — it is the real dependency, and the same column is what lets an edit
 address an existing AutoCount line instead of appending a duplicate.
 
+**Where the phantom columns came from** — there are TWO tables named
+`purchase_orders` in this database, in different schemas and with different
+shapes. `scm.purchase_orders` is the ERP's own, supplier-keyed. The one in the
+default schema (`db/schema.pg.ts:440`) is the **AutoCount mirror** — `doc_no`,
+`creditor_code`, `creditor_name`, `remaining_qty` — filled from AutoCount's own
+outstanding-PO export. The composer was written against the mirror's shape and
+run against the ERP's, and the SCM Supabase client is pinned to
+`db: { schema: 'scm' }`, so `sb.from('purchase_orders')` was never going to
+reach the table those four columns live on.
+
 **The class, for next time** — a Supabase/PostgREST select is not a projection
 that degrades: one wrong column takes the whole row set with it. Two habits fall
 out of that. Never write `const { data } = await sb...` on a path whose empty
