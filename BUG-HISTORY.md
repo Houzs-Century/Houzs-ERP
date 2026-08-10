@@ -1,3 +1,41 @@
+## Every migrated sofa line has an EMPTY Leg Height [medium]
+
+**Symptom** — Open any sofa line that came in from AutoCount and the Leg Height
+picker reads "Select...". Seat depth, fabric and compartment are all filled; the
+leg alone is blank, on every single migrated line.
+
+**Root cause** — Nothing ever writes `variants.legHeight` for a sofa.
+`parse-sofa.mjs` (lines 52-55) deliberately lifts a leg PHRASE out of Desc2 and
+pushes it into `specials` — "leg text never sets a size, it rides as a special
+so the factory sheet still shows the request" — and neither
+`import-ac-outstanding-so.mjs` nor the PO importers put a leg key in the
+variants object they build. So the axis is absent, not empty-because-unknown.
+The gap went unseen because the sofa Leg Height axis is `required: false` in
+`so-variant-rule.ts`, and it is `required: false` for exactly the opposite
+reason — the comment there says the axis "always defaults to the Default option
+(RM 0.00) at create/edit time, so it is never empty". That premise held for
+POS/coordinator-created lines and was never true for imported ones, so the one
+gate that would have caught it had been told to look away.
+
+**Fix** — `backfill-sofa-leg-default.mjs` + `backfill-sofa-leg-default.yml`
+(dry-run default, `apply=1` writes) fills `variants.legHeight` with the master
+config pool's own "Default" entry across `scm.mfg_sales_order_items` and
+`scm.purchase_order_items`, for company 1 sofa lines whose parent carries
+`linked_ac_docno`. Owner's ruling, `docs/sofa-import-handoff.md` section 2.5:
+"脚全部找不到就直接选 default". Two refusals are built in: a line that already
+carries `legHeight` or `sofaLegHeight` is never overwritten, and a line whose
+own text names a leg ("Leg Change 101Middle Leg(8')", "FULLY COVER NO LEG",
+`6” wooden leg`) is left alone and reported by phrase with its document numbers,
+because the source said something specific and a default would erase it. An inch
+height counts as a leg only INSIDE the leg phrase — a bare `28"` in a sofa Desc2
+is the seat depth.
+
+**The class, for next time** — an axis marked not-required "because it is always
+pre-filled" is a claim about a write path, and it only covers the write paths
+that existed when it was written. An importer is a new write path.
+
+**Ref** — 2026-08-10, PR fix/sofa-leg-default.
+
 ## A first-pass NAME match made RDS-5526 into someone else's sofa [high]
 
 **Symptom** — Two 5526 sofa builds could not be corrected: the correction tool
@@ -643,7 +681,6 @@ lockstep so the two surfaces cannot drift.
   2. **The allocations column and modal now show the EFFECTIVE assignment.** No slices → the coarse Source-SO link (or STOCK) renders as a muted implicit chip with the whole-line qty, instead of a dash that contradicted the Assigned SO one column over.
 - **The workflow for the live CODY case (recorded as the answer to "接下来怎么操作"):** revise the SO (amendment); the raised follow-up lands in PO Amendments; purchaser REJECTS it with "supplier cannot change" → old PO auto-releases to STOCK (arrives as own inventory: clearance or purchase-return); MRP re-shows the shortage → Proceed a fresh PO with the corrected spec; run PO-SO link check after.
 - **Ref:** #<PR>. `feat/split-own-consignment`… superseded branches; this change `fix/reject-releases-to-stock` 2026-08-06.
-
 
 
 ### [LOW] The privacy policy page shipped unreachable — Pages' clean-URL redirect fed it to the SPA fallback
@@ -2345,7 +2382,6 @@ lockstep so the two surfaces cannot drift.
 - **Ref:** #1059 (this PR).
 
 
-
 ### [CRITICAL] Mig 0175 referenced a non-existent `customers.country` column and blocked EVERY subsequent migration
 - **Symptom.** After #1040 merged (state canonicalize) the next deploy failed with `FAILED 0175_scm_state_canonicalize.sql: column c.country does not exist`. pg-migrate stops on the first failing file, so mig 0176 (#1042 region seed + sales_location snapshot backfill) never ran either. Prod state → region for 2990 stayed at 0 rows even after the "fix" was merged. My subsequent completeness report to the owner said the region mapping still looked empty and I initially attributed it to timing; the owner asked "我们不是调整了吗" and the answer was NO — it never applied.
 - **Root cause (traced).** The original migration filtered the customer backfill by country to avoid touching foreign-country rows:
@@ -2354,7 +2390,6 @@ lockstep so the two surfaces cannot drift.
 - **Fix.** #1052 (this PR) — drop the country filter from both the customer and supplier backfill blocks. Redundant anyway: `scm.canonicalize_my_state()` returns its input UNCHANGED for any string outside the 16 canonical MY states + known aliases (Guangdong, Central, etc.), so a foreign state name is already foreign-safe without a caller-side filter. Editing 0175 in place is correct because pg-migrate never recorded it as applied; the next deploy will retry with the fixed SQL.
 - **The class, for next time.** A `to_regclass` guard is not a schema guard. When a migration references a column the code hasn't proven exists in every environment it might run against, either (a) add an `information_schema.columns` presence check before the UPDATE, or (b) drop the column reference. This is the same class as the mig 067/069 seed → 079 delete cycle recorded earlier: don't assume schema, verify it in the migration itself.
 - **Ref:** #1052 (hotfix). Original: #1040 mig 0175.
-
 
 
 ### [HIGH] Five migration-number collisions on one file in one day, and a whitelist used to hide the fifth

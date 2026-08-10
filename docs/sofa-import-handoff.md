@@ -98,7 +98,9 @@ token 的书写顺序 = 面对沙发时的实际摆位。解析器最后有一�
 - **座深**:认 `28"`、`28'`、`35”`、`30'INCH`、`60cm`(=24")、`70cm`(=28")、`Size: 28`;
   笔误 `icnh`/`inhc`/`ich` 一律当 `inch`(救回过 PROC 单)。多个不同尺寸 → 标「多尺寸分件」
 - **脚**:带 `leg` 的整句**先摘出来当 special order**,绝不能被当成座深
-  (`Leg Change 101Middle Leg(8')` 里的 8' 是脚高)。没写脚 = 用默认(owner:"脚全部找不到就直接选 default")
+  (`Leg Change 101Middle Leg(8')` 里的 8' 是脚高)。没写脚 = 用默认(owner:"脚全部找不到就直接选 default")。
+  **导入器从来没写过 `variants.legHeight`**,所以已导入的行脚位是空的 —— 补法见 §7 的
+  `backfill-sofa-leg-default.mjs`:只补两个 key 都空的行,**原文写了脚的不补**,单独列出来等人挑
 - **颜色**:`COL:` / `Colour:` / `COL-`,支持分件颜色 `colour (2s): X`;
   `TBC` / `KIV` = 还没选,留空不算错
 - **special order**:nylon 底、伞布、`backrest change to 8030`、`fully cover replace the leg`
@@ -234,6 +236,7 @@ HR805-31/-40、NX007/010/011、ZL-6/-20、Garfield、Wowsons、Chantic、J9883-2
 | 行照片挂载 | `import-so-line-photos.mjs` | 同名 yml |
 | **沙发实物库存开账** | `import-ac-sofa-stock.mjs` | 同名 yml |
 | **补 SO 行的 warehouse** | `backfill-so-line-warehouse.mjs` | 同名 yml |
+| **补脚高 = Default(见 2.5)** | `backfill-sofa-leg-default.mjs` | 同名 yml |
 
 ### 体检脚本的 7 项
 
