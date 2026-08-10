@@ -125,7 +125,18 @@ async function main() {
   /* One PO line, tried most-specific first: the ERP code this line becomes
      (for a sofa that is already the compartment), then the sales order's own
      item, then the sofa placeholder the decode falls back to. */
+  /* A document already in the ERP is skipped at insert time, so it must not
+     CLAIM sales-order lines while planning either — an undedicated PO already
+     in the database would otherwise take a line out of the pool in memory and
+     deny it to a document this run really does insert. Its real dedication is
+     the repair's job, not this importer's. */
+  const existingDocs = new Set(
+    (await sql`SELECT linked_ac_docno FROM scm.purchase_orders WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`)
+      .map((r) => r.linked_ac_docno),
+  );
+  let skipDedication = false;
   const dedicate = (l, ...codes) => {
+    if (skipDedication) return null;
     const src = soByDtl.get(acFromSoDtlKey(l) ?? "");
     if (!src) return null;
     const base = byAc.get(norm(src.code));
@@ -152,6 +163,7 @@ async function main() {
 
   const built = []; const exceptions = []; const sofaDecode = []; let noWh = 0, bfCol = 0, bfPending = 0;
   for (const [acPo, ls] of pos) {
+    skipDedication = existingDocs.has(acPo);
     const h = ls[0];
     const supId = supByCode.get(h.CreditorCode) || null;
     if (!supId) { exceptions.push({ po: acPo, reason: `supplier ${h.CreditorCode} not in scm.suppliers` }); continue; }
@@ -202,7 +214,7 @@ async function main() {
             const code = `${model}-${comp}`;
             const pr = prodByCode.get(code.toUpperCase());
             const soItemId = dedicate(l, code, `${model}-1S`);
-            if (!soItemId) noSoLine++;
+            if (!soItemId && !skipDedication) noSoLine++;
             items.push({ erp: code, grp, name: (pr && pr.name) || code, sku: `${l.ItemCode} ${comp}`,
               desc: l.Description, d2: l.Desc2, qty, received: done, soItemId, dtlKey: acDtlKey(l),
               up: first ? up : 0, lt: first ? lt : 0, w, deliv: acDeliveryDate(l), bf: null,
@@ -216,7 +228,7 @@ async function main() {
           const pr = prodByCode.get(ph.toUpperCase());
           const phCode = codeSet.has(ph.toUpperCase()) ? ph : erp;
           const soItemId = dedicate(l, phCode, erp);
-          if (!soItemId) noSoLine++;
+          if (!soItemId && !skipDedication) noSoLine++;
           items.push({ erp: phCode, grp,
             name: (pr && pr.name) || ph, sku: l.ItemCode, desc: l.Description, d2: l.Desc2,
             qty, received: done, soItemId, dtlKey: acDtlKey(l), up, lt, w, deliv: acDeliveryDate(l), bf: null,
@@ -227,7 +239,7 @@ async function main() {
       }
       const prod = prodByCode.get(erp.toUpperCase());
       const soItemId = dedicate(l, erp);
-      if (!soItemId) noSoLine++;
+      if (!soItemId && !skipDedication) noSoLine++;
       items.push({ erp, grp, name: (prod && prod.name) || l.Description || erp, sku: l.ItemCode, desc: l.Description, d2: l.Desc2, qty, received: done, soItemId, dtlKey: acDtlKey(l), up, lt, w, deliv: acDeliveryDate(l), bf, variants });
     }
     if (!items.length) continue;
@@ -241,9 +253,11 @@ async function main() {
   }
   log(`POs to import: ${built.length}; lines: ${built.reduce((a, o) => a + o.items.length, 0)}; value RM ${(built.reduce((a, o) => a + o.subtotal, 0) / 100).toLocaleString()}`);
   log(`bedframe colour resolved: ${bfCol}; pending (TBC/KIV): ${bfPending}; lines without a warehouse match: ${noWh}`);
-  const dedicated = built.reduce((a, o) => a + o.items.filter((i) => i.soItemId).length, 0);
+  const fresh = built.filter((o) => !existingDocs.has(o.acPo));
+  const dedicated = fresh.reduce((a, o) => a + o.items.filter((i) => i.soItemId).length, 0);
   const dated = built.reduce((a, o) => a + o.items.filter((i) => i.deliv).length, 0);
-  log(`dedicated to an SO line: ${dedicated}; no SO line found: ${noSoLine}; lines carrying a delivery date: ${dated}`);
+  log(`POs already in the ERP (dedication left to the repair): ${built.length - fresh.length}`);
+  log(`dedicated to an SO line: ${dedicated} of ${fresh.reduce((a, o) => a + o.items.length, 0)} new lines; no SO line found: ${noSoLine}; lines carrying a delivery date: ${dated}`);
   log(`exceptions: ${exceptions.length}`);
   for (const e of exceptions.slice(0, 15)) log(`   PO ${e.po} ${e.code ? `code="${e.code}" ` : ""}${e.reason}`);
   const s = built.find((o) => o.items.some((i) => i.grp === "bedframe" && i.variants && i.variants.colourId)) || built[0];
