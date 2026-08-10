@@ -367,8 +367,13 @@ re-check the cited file rather than trusting the line.
 - `docs/modules/sales-order.md` for the SO document flow in depth.
 - `docs/autocount-cutover-ledger.md` — the permanent record of every row the AutoCount
   go-live pushed into company 1: how to tell a migrated row from a real one (the exact
-  SQL predicates), what each import wave wrote with its run id, and — the one that bites —
-  which imported documents carry `received_qty` but deliberately no GRN, because posting
-  one would count the same stock twice.
+  SQL predicates), what each import wave wrote with its run id, and — the ones that bite —
+  which imported documents carry `received_qty` but deliberately no GRN, and which
+  migrated GRNs and DOs carry `migrated_no_stock = true` and deliberately no inventory
+  movement at all. Posting either would count the same stock twice. Its section 9 records
+  the owner's own cutover decisions in his words — historical documents are NOT imported,
+  whole-sofa stock is NOT imported, and one AutoCount order whose header disagrees with
+  its own lines is recorded rather than corrected. **Read section 9 before "fixing" any
+  gap between AutoCount and the ERP**: most of those gaps are decisions.
 - `frontend/src/pages/scm-v2/_VENDORING_PROGRESS.md` for what was vendored, when, and
   with what caveats.
