@@ -34,6 +34,8 @@ import {
 } from '../shared/so-line-display';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { resolveMaintenanceConfigForSupplier } from '../lib/po-pricing';
+import { poHasDownstream } from '../lib/downstream-lock';
+import { enqueuePoCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -233,18 +235,25 @@ mfgPurchaseOrders.use('*', supabaseAuth);
    A PO locks (read-only — no header edit / no line edit / no cancel) once it
    has ANY non-cancelled GRN. The convert-to-GRN path is NOT gated by this:
    partial receiving is still allowed (i.e. the PO can keep emitting GRNs);
-   only header/line MUTATIONS + CANCEL are blocked, mirroring grnHasDownstream
-   in apps/api/src/routes/grns.ts. Returns the blocking JSON, or null if the
-   PO is free to edit. */
-async function poHasDownstream(sb: any, poId: string): Promise<{ error: string; message: string } | null> {
-  const { count } = await sb.from('grns')
-    .select('id', { head: true, count: 'exact' })
-    .eq('purchase_order_id', poId)
-    .neq('status', 'CANCELLED');
-  if ((count ?? 0) > 0) {
-    return { error: 'po_has_downstream', message: 'PO has a Goods Receipt — delete or cancel it first to edit' };
-  }
-  return null;
+   only header/line MUTATIONS + CANCEL are blocked, mirroring grnHasDownstream.
+   The rule now lives in scm/lib/downstream-lock.ts with its three siblings,
+   which had drifted into four private copies in four route files. Same
+   signature, same JSON, same behaviour — and see that module for why it is
+   also the ERP half of AutoCount's transferred-document rule. */
+
+/* -- ERP -> AutoCount edit --------------------------------------------------
+   Every PO mutation route funnels through this, so exactly one snapshot of the
+   SAVED order is queued per successful save -- header edits and line
+   add/edit/delete alike. Only ever reached for a PO the downstream lock let
+   through, which is the same rule AutoCount enforces on its side. Never
+   throws. */
+async function queueAcPoEdit(c: any, poId: string): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'PO',
+    docId: poId,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
 }
 
 /* ── Drop-ship OUT guard (audit C3, 2026-07-13) ──────────────────────────────
@@ -1361,6 +1370,18 @@ mfgPurchaseOrders.post('/', async (c) => {
   if (!asDraft && pickedQtyBySoItem.size > 0) {
     try { await recomputeSoPicked(supabase, [...pickedQtyBySoItem.keys()]); }
     catch { /* PO already created — don't fail on counter recount */ }
+  }
+
+  /* ERP -> AutoCount write-back. Queued, never pushed inline. No-op while the
+     flag is off, which is how it ships. NOT for a DRAFT PO — it is
+     reference-only until confirmed (the same reason recomputeSoPicked skips
+     it above); PATCH /:id/confirm queues it. */
+  if (!asDraft) {
+    await enqueuePoCreate(supabase, {
+      companyId: activeCompanyId(c),
+      poId: header.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
   }
 
   return c.json({ id: header.id, poNumber: header.po_number }, 201);
@@ -2523,6 +2544,8 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
       console.error('[mfg-po PATCH] header date cascade failed', { id, col, error: e });
     }
   }
+  await queueAcPoEdit(c, id);
+
   return c.json({ purchaseOrder: data });
 });
 
@@ -2952,6 +2975,8 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     });
   }
 
+  await queueAcPoEdit(c, poId);
+
   return c.json({ item: data }, 201);
 });
 
@@ -3111,6 +3136,9 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     try { await recomputeSoPicked(sb, touchedSoItems); }
     catch { /* don't fail the edit on a counter recount */ }
   }
+
+  await queueAcPoEdit(c, poId);
+
   return c.json({ ok: true });
 });
 
@@ -3173,6 +3201,8 @@ mfgPurchaseOrders.delete('/:id/items/:itemId', async (c) => {
     try { await recomputeSoPicked(sb, [releasedSoItem]); }
     catch { /* line already deleted — don't fail on counter recount */ }
   }
+
+  await queueAcPoEdit(c, poId);
 
   return c.body(null, 204);
 });
@@ -3814,6 +3844,16 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
     .select('id, status, submitted_at')
     .eq('id', id), co.companyId)
     .maybeSingle();
+
+  /* The draft just became a real order — this is the moment it belongs in
+     AutoCount. enqueuePoCreate refuses a PO that already has an AutoCount
+     counterpart, so a re-entered confirm cannot duplicate it. */
+  await enqueuePoCreate(supabase, {
+    companyId: co.companyId,
+    poId: id,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' } });
 };
 mfgPurchaseOrders.patch('/:id/confirm', confirmMfgPurchaseOrderHandler);
@@ -4099,9 +4139,22 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
 
   const { data: after } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .select('id, status, cancelled_at')
+    .select('id, status, cancelled_at, po_number')
     .eq('id', id), co.companyId)
     .maybeSingle();
+
+  /* ERP -> AutoCount cancel. Reached only for a PO the downstream lock let
+     through (poHasDownstream, checked above) — the same rule AutoCount applies
+     on its side, so this can never ask it to cancel a received PO. */
+  await enqueueCancel(supabase, {
+    companyId: co.companyId,
+    docType: 'PO',
+    docNo: (after as { po_number?: string } | null)?.po_number ?? id,
+    docId: id,
+    self: { table: 'purchase_orders', keyCol: 'id', key: id },
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   return c.json({ purchaseOrder: after ?? { id, status: 'CANCELLED' } });
 });
 
