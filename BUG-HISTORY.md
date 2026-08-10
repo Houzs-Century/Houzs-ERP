@@ -1,3 +1,57 @@
+## Duplicate-series detection paired five unrelated fabrics through "BR0WN" [low]
+
+**Symptom** - the first prod run of merge-duplicate-fabric-series reported 41
+duplicate fabric series pairs, among them 311 <-> A201, 311 <-> KS, 311 <->
+M2402 and 311 <-> XQ#18. Those are five unrelated fabrics.
+
+**Root cause (traced, not guessed)** - all five collided on one key, `BR0WN`.
+`foldColour` maps letter-O to "0" (that is what puts BO315 and B0315 on one
+key), so a colour whose label is only a NAME - "BROWN", "DARK BROWN", "WOOD
+BROWN" - folds to a string containing a "0". The detector gated its keys on a
+digit test run against the FOLD, which that fake zero satisfies, so a plain
+colour name was admitted as a colour CODE and every series holding a BROWN
+matched every other one.
+
+**Fix** - run the digit test in MARK space (`markColour`, where letter-O is "@"
+and only a written zero stays a digit), which is the space the matcher's own
+digit guard already compares in. 41 pairs became 31, and all 10 that vanished
+were false. The same pass added a written-tail pad before folding, because
+"J9226-2" folds to "J92262" and nothing downstream can then tell the series
+digits from the colour digit - which is why ARMANI J9226 / J9226, one of the
+two duplicate pairs this work started from, had gone undetected. Final: 32 real
+pairs, no false ones.
+
+**Lesson** - foldColour is lossy by design and its output is not safe to ask
+structural questions of. Anything deciding "is this a code or a name" must ask
+markColour, not the fold.
+
+**Ref** - fix/dup-fabric-series-detection, 2026-08-10
+
+## A probe copied the SO join onto the PO table and crashed on a column that is not there [low]
+
+**Symptom** — `probe-sofa-colour-misses.mjs`, dispatched read-only against prod
+the moment it merged, printed the fabric-library line and then died:
+`PostgresError: column h.doc_no does not exist` (SQLSTATE 42703), run
+31406187136. It reported nothing at all.
+
+**Root cause (traced, not guessed)** — the two document headers number their
+documents differently and the join hides it. `scm.mfg_sales_orders` carries
+`doc_no` and its items join ON that column, so `h.doc_no` is right there in the
+SO query being copied. `scm.purchase_orders` numbers its documents `po_number`
+and its items join on the surrogate `h.id = i.purchase_order_id` — so the PO
+query it was copied from never had to name the column, and the copy carried the
+SO's name across into a table that has no such column.
+
+**Fix** — `SELECT h.po_number AS doc_no` on the PO arm, aliased so the report
+keeps one shape for both. PR #1910.
+
+**The class, for next time** — copying a query between the SO and PO arms is
+safe for the item columns and unsafe for the header ones. `item_code` vs
+`material_code` differs loudly enough that it gets noticed; `doc_no` vs
+`po_number` is hidden behind a join that never spells it out. Two arms of the
+same sweep are two queries, not one query twice.
+
+**Ref** — 2026-08-10, PR #1910 (fix/probe-po-number).
 ## The special-order backfill wrote a field the picker never reads, and recompute erases [high]
 
 **Symptom** — the sofa special orders were "backfilled" and the Special Orders
