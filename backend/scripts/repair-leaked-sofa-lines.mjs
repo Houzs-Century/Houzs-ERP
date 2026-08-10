@@ -79,8 +79,9 @@ async function main() {
     const codes = ps.pieces.map((c) => `${model}-${c}`);
     const missing = codes.filter((c) => !codeSet.has(c.toUpperCase()));
     if (missing.length) { blocked.push({ doc: line.doc_no, ac: l.DocNo, reason: `piece SKU missing: ${missing.join(",")}` }); continue; }
-    const [alloc] = await sql`SELECT 1 AS x FROM scm.po_item_allocations WHERE so_item_id = ${line.id} LIMIT 1`;
-    if (alloc) { blocked.push({ doc: line.doc_no, ac: l.DocNo, reason: "line already allocated to a PO — left alone" }); continue; }
+    const [alloc] = await sql`SELECT 1 AS x FROM scm.purchase_order_item_allocations WHERE so_item_id = ${line.id} LIMIT 1`;
+    const [direct] = await sql`SELECT 1 AS x FROM scm.purchase_order_items WHERE so_item_id = ${line.id} LIMIT 1`;
+    if (alloc || direct) { blocked.push({ doc: line.doc_no, ac: l.DocNo, reason: "line already tied to a PO — left alone" }); continue; }
     plan.push({ line, ac: l.DocNo, d2: l.Desc2, model, pieces: ps.pieces, codes, size: ps.size,
                 colour: ps.color, fc: findColour(ps.color), specials: ps.specials });
   }

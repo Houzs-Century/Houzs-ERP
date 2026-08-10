@@ -45,10 +45,14 @@ async function main() {
   const del = [], keep = [];
   for (const h of heads) {
     const reasons = [];
-    const [alloc] = await sql`SELECT 1 AS x FROM scm.po_item_allocations a
+    const [alloc] = await sql`SELECT 1 AS x FROM scm.purchase_order_item_allocations a
                               JOIN scm.mfg_sales_order_items i ON i.id = a.so_item_id
                               WHERE i.doc_no = ${h.doc_no} LIMIT 1`;
     if (alloc) reasons.push("PO allocation");
+    const [direct] = await sql`SELECT 1 AS x FROM scm.purchase_order_items p
+                               JOIN scm.mfg_sales_order_items i ON i.id = p.so_item_id
+                               WHERE i.doc_no = ${h.doc_no} LIMIT 1`;
+    if (direct) reasons.push("PO line linked 1:1");
     const [pay] = await sql`SELECT count(*)::int AS c, coalesce(sum(amount_centi),0)::bigint AS amt
                             FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${h.doc_no}`;
     if (pay && pay.c > 0) reasons.push(`${pay.c} payment(s) RM${(Number(pay.amt) / 100).toFixed(2)}`);
