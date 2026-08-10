@@ -593,3 +593,29 @@ Watch as data grows:
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission
 inventory: `docs/generated/`.
+
+## `so_item_id` on a MIGRATED purchase-order line (2026-08-11)
+
+`backfill-po-so-item-links.mjs` resolves this link from the PO's `From SOs:`
+note, written at raise time by the SO -> PO convert. A migrated PO has no such
+note — measured, not assumed: of the 181 company-1 sofa/bedframe PO lines with
+a NULL `so_item_id`, the notes of **zero** name a sales order. That script's
+three tiers are structurally blind to the cutover corpus.
+
+`repair-po-so-links-autocount-text.mjs` covers it with the evidence a migrated
+line does carry, under the same 1:1 discipline: the line sits on a purchase
+order where OTHER lines are linked (so it is not a stock buy), and exactly one
+unclaimed, non-cancelled SO line carries the same item code AND the same
+AutoCount `description2`.
+
+Three things it will not do, and the reasons are the rule rather than caution:
+
+- **168 lines on POs where nothing is linked are left alone.** A stock purchase
+  is not raised for any order. Per `docs/modules/document-traceability.md` this
+  column is procurement *provenance* and binds no execution; filling it would
+  invent a dedication that never existed.
+- **Anything that does not pair 1:1 is reported, never written.** A guess
+  stamped into `so_item_id` is indistinguishable from a fact afterwards.
+- **A wrong link is corrected to NULL when the right target is not certain.**
+  `scm.purchase_order_items` has no `cancelled` column (unlike
+  `scm.mfg_sales_order_items`), so there is no third state to park it in.
