@@ -24,6 +24,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 
 const DST = process.env.DATABASE_URL;
@@ -33,8 +34,6 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
-const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
-const isPendingColour = (c) => /(TBC|KIV)/i.test(c || "");
 const SYS_USER = "00000000-0000-4000-8000-000000000001";
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
@@ -88,19 +87,7 @@ async function main() {
      document carries it. Ambiguity is not resolved by guessing: no hit means the
      colour rides as a label only. */
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
-  const fcx = new Map();
-  for (const r of fcRows) for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !fcx.has(k)) fcx.set(k, r);
-  const findColour = (c) => {
-    if (!c) return null;
-    const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
-    const seriesNum = (x) => { const mm = /^([A-Z]{2,4})(\d{2,4})(\d{1,3})$/.exec(strip(x)); return mm ? [mm[1] + mm[2] + mm[3].padStart(2, "0"), mm[1] + mm[2] + mm[3].slice(-2)] : []; };
-    const toks = [c, (c.trim().split(/\s+/)[0] || "")];
-    const m = /[A-Z]{1,4}\s?\d{2,4}\s?-?\s?\d*/i.exec(c); if (m) toks.push(m[0]);
-    const cands = [];
-    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t)), ...seriesNum(t)); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
-    for (const t of cands) { const h = fcx.get(t); if (h) return h; }
-    return null;
-  };
+  const { findColour } = buildFabricColourIndex(fcRows);
   const suppliers = await sql`SELECT id, code FROM scm.suppliers WHERE company_id = 1`;
   const supByCode = new Map(suppliers.map((s) => [norm(s.code), s.id]));
   const whs = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = 1`;
