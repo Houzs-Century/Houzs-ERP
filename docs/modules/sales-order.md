@@ -311,6 +311,32 @@ local stamps), so they verdict `mirror-source` — reported with the exact stamp
 for the 2990 SOURCE database, never written here. Rule:
 `classifySoLineWarehouse`, `backend/scripts/lib/doc-evidence-core.mjs`.
 
+**Historical backfill for the MIGRATED AutoCount lines (2026-08-11, applied).**
+A different population and a different rule. `import-ac-outstanding-so.mjs`
+resolved every imported line's warehouse and then left `warehouse_id` out of its
+INSERT column list, so all 13,881 migrated lines carried the AutoCount location
+as free TEXT and a NULL `warehouse_id` — every one of them in the `WH_NONE`
+bucket, unable to allocate, with sofa failing one step earlier because
+`findCoveringBatch` returns null on a null warehouse before it looks at stock.
+The column-list bug itself was fixed in #1848.
+
+`backend/scripts/backfill-so-line-warehouse.mjs` (workflow **Backfill SO line
+warehouse (migrated orders)**) filled them; all 13,907 migrated lines now carry
+a warehouse. **The evidence rule is AutoCount, not the line's own text.** The
+`location` text is the importer's transcription — the same script's output — so
+each line is re-read from the committed AutoCount export by its own
+`linked_ac_dtlkey` -> `DtlKey` (header `SalesLocation` only as a named fallback)
+and filled ONLY where AutoCount independently reports the same location.
+`CONFLICT`, no-evidence and unresolvable-location lines are left NULL and listed:
+a null surfaces as a pending line, a guessed warehouse sends staff to an empty
+shelf. The apply writes an explicit id list, never a `WHERE location = ...`
+predicate, so the refused set cannot be swept back in.
+
+Audited after the fact against AutoCount: 7,800 lines agree on the exact
+`DtlKey`, 6,037 on the header, 70 have no AutoCount row (documents absent from
+the outstanding-only export), and **0 are miswarehoused**. Verify with
+**Stock criterion census (read-only)** — `check-stock-criterion.mjs`, section A.
+
 ### Processing-Date save gates (aggregated `validation_failed`)
 
 Setting or changing the Processing Date (`internal_expected_dd` — the UI's
