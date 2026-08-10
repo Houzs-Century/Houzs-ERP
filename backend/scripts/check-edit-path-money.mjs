@@ -231,32 +231,44 @@ try {
     for (const a of actions) console.log(`    ${rpad(a.action, 30)}${lpad(a.n, 7)}`);
     if (actions.length === 0) console.log("    (none)");
 
-    const edited = await pg`
-      WITH ship AS (
-        SELECT m.source_doc_id AS doc_id, MIN(m.created_at) AS shipped_at
-          FROM scm.inventory_movements m
-         WHERE m.source_doc_type = 'DO'
-         GROUP BY 1
-      )
-      SELECT d.do_number, d.status, s.shipped_at,
-             COUNT(a.id)::int AS post_ship_audit_rows
-        FROM scm.delivery_orders d
-        JOIN ship s ON s.doc_id = d.id
-        JOIN scm.entity_audit_log a
-          ON a.entity_type = 'DELIVERY_ORDER' AND a.entity_id = d.id
-         AND a.created_at > s.shipped_at
-       WHERE upper(d.status::text) = ANY(${SHIPPED})
-       GROUP BY 1, 2, 3
-       ORDER BY 1`;
-    console.log("");
-    notice(`4b. ${edited.length} shipped DO(s) carry an audit row written AFTER their first stock movement — the population an edit-after-ship can silently mis-state.`);
-    const gapSet = new Set(dmg.map((r) => r.doc_no));
-    const both = edited.filter((e) => gapSet.has(e.do_number));
-    notice(`4c. ${both.length} of those ALSO have a ledger/document gap.`);
-    for (const e of edited.slice(0, 60)) {
-      console.log(`    ${rpad(e.do_number, 24)}${rpad(e.status, 14)}post-ship audit rows: ${lpad(e.post_ship_audit_rows, 3)}${gapSet.has(e.do_number) ? "   <- LEDGER GAP" : ""}`);
+    /* entity_id is text and delivery_orders.id is uuid, so the join casts both
+       to text. Wrapped because an attribution failure must not sink the DAMAGE
+       count above, which is the number that actually matters. */
+    let edited = [];
+    try {
+      edited = await pg`
+        WITH ship AS (
+          SELECT m.source_doc_id AS doc_id, MIN(m.created_at) AS shipped_at
+            FROM scm.inventory_movements m
+           WHERE m.source_doc_type = 'DO'
+           GROUP BY 1
+        )
+        SELECT d.do_number, d.status, s.shipped_at,
+               COUNT(a.id)::int AS post_ship_audit_rows
+          FROM scm.delivery_orders d
+          JOIN ship s ON s.doc_id = d.id
+          JOIN scm.entity_audit_log a
+            ON a.entity_type = 'DELIVERY_ORDER'
+           AND a.entity_id::text = d.id::text
+           AND a.created_at > s.shipped_at
+         WHERE upper(d.status::text) = ANY(${SHIPPED})
+         GROUP BY 1, 2, 3
+         ORDER BY 1`;
+    } catch (e) {
+      notice(`4b. Attribution query failed (${e?.message ?? e}) — the DAMAGE count above still stands.`);
+      edited = null;
     }
-    if (edited.length > 60) console.log(`    ... and ${edited.length - 60} more`);
+    if (edited) {
+      console.log("");
+      notice(`4b. ${edited.length} shipped DO(s) carry an audit row written AFTER their first stock movement — the population an edit-after-ship can silently mis-state.`);
+      const gapSet = new Set(dmg.map((r) => r.doc_no));
+      const both = edited.filter((e) => gapSet.has(e.do_number));
+      notice(`4c. ${both.length} of those ALSO have a ledger/document gap.`);
+      for (const e of edited.slice(0, 60)) {
+        console.log(`    ${rpad(e.do_number, 24)}${rpad(e.status, 14)}post-ship audit rows: ${lpad(e.post_ship_audit_rows, 3)}${gapSet.has(e.do_number) ? "   <- LEDGER GAP" : ""}`);
+      }
+      if (edited.length > 60) console.log(`    ... and ${edited.length - 60} more`);
+    }
   }
 
   /* ── 5. Could a partial UNIQUE index be added anywhere? ────────────────────

@@ -57,6 +57,17 @@ type MovementInput = {
    *  batch and can be shipped as a whole set from one dye lot. Omit for
    *  un-batched stock. */
   batch_no?: string | null;
+  /** Migration 0278 — NULL (omit) = this row is the document's PRIMARY posting.
+   *  1..N = a numbered CORRECTION to it, written by resyncInventoryForDo when a
+   *  line is edited on an already-shipped DO.
+   *
+   *  It exists for exactly one reason: uq_inv_mov_do_source_v2 keys on
+   *  COALESCE(correction_seq, 0), so a correction no longer collides with the
+   *  first ship while a double-post of the first ship is still rejected. Before
+   *  0278 the prod-only uq_inv_mov_do_source had no such discriminator and every
+   *  edit-after-ship delta was silently refused. Do not set it on any other
+   *  path. */
+  correction_seq?: number | null;
   performed_by?: string | null;
   notes?: string | null;
 };
@@ -199,6 +210,23 @@ export async function writeMovements(
         if (!retry.error) return { ok: true };
         // eslint-disable-next-line no-console
         console.error('[inventory] movement insert failed (post batch_no strip):', retry.error.message);
+        return { ok: false, reason: retry.error.message };
+      }
+      /* Migration 0278 forward-compat, same shape as batch_no above: on a DB that
+         has not applied 0278 yet, strip correction_seq and retry so the write is
+         attempted rather than lost to an unknown-column error. The retry then
+         behaves exactly as it did before 0278 — a resync delta on an
+         already-shipped bucket collides with uq_inv_mov_do_source and is
+         refused, which the caller records as RECOUNT_FAILED. Degrading to the
+         old, LOUD failure is correct; degrading to a silent success would not
+         be. */
+      const seqMissing = msg.includes('correction_seq');
+      if (seqMissing && rows.some((r) => 'correction_seq' in r)) {
+        const stripped = rows.map(({ correction_seq: _s, ...rest }) => rest);
+        const retry = await sb.from('inventory_movements').insert(stripped);
+        if (!retry.error) return { ok: true };
+        // eslint-disable-next-line no-console
+        console.error('[inventory] movement insert failed (post correction_seq strip):', retry.error.message);
         return { ok: false, reason: retry.error.message };
       }
       // eslint-disable-next-line no-console
