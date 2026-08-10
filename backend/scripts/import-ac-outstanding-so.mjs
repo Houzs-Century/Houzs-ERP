@@ -199,7 +199,8 @@ const CM_TO_INCH = { 60: 24, 66: 26, 70: 28, 75: 30, 80: 32 };
 function parseSofa(d2raw, model, recl = false) {
   const o = { pieces: [], size: null, color: null, perPieceColor: {}, specials: [], conf: "high", why: [] };
   if (!d2raw || !String(d2raw).trim()) { o.conf = "low"; o.why.push("empty Desc2"); return o; }
-  let d2 = String(d2raw).replace(/[\[\]{}]/g, " ").replace(/[”“″’‘′]/g, '"').replace(/\r/g, "").trim();
+  let d2 = String(d2raw).replace(/[\[\]{}]/g, " ").replace(/[”“″’‘′]/g, '"').replace(/\r/g, "")
+    .replace(/\b(?:icnh|inhc|inchs|inc?h?es|ich)\b/gi, "inch").trim();
   // protect composite tokens from the slash-splitter
   d2 = d2.replace(/\bCUSTOM\b/gi, " ").replace(/([123])S?\s*P\s*\+\s*P\b/gi, "$1PP")
     .replace(/\bCORNER\s*\((?=[^)]*[A-Za-z])/gi, "(").replace(/NO\s*CONSOLE/gi, " NOCONS ")
@@ -228,6 +229,12 @@ function parseSofa(d2raw, model, recl = false) {
   }
   d2 = d2.replace(/size\s*[:：]/gi, " "); // bare label left behind ("Size:3S(28\")")
   d2 = d2.replace(/\b(TBC|KIV|RANDOM\s*COLOU?R)\b/gi, " "); // noise words glue onto piece tokens ("L2 TBC")
+  // owner 2026-08-10: 脚找不到就用 default — leg text never sets a size, it
+  // rides as a special so the factory sheet still shows the request.
+  {
+    const lg = /[^\/\n]*\bleg\b[^\/\n]*/gi.exec(d2);
+    if (lg) { o.specials.push(lg[0].trim().replace(/^[*\s]+/, "")); d2 = d2.replace(/[^\/\n]*\bleg\b[^\/\n]*/gi, " "); }
+  }
   // specials that ride along
   if (/nylon|nilon/i.test(d2)) o.specials.push("nylon");
   if (/(left|right)?\s*side?\s*woo[rd]+e?r?n?\s*arm/i.test(d2) || /wood\w*\s*arm/i.test(d2)) o.specials.push("wooden arm");
@@ -572,7 +579,16 @@ async function main() {
      exact index always wins) and any fold key produced by TWO different
      library rows is DROPPED, so an ambiguous typo never resolves to a guess.
      Repeats collapse on LETTERS only: BO315-11 must not fold onto BO315-1. */
-  const fold = (x) => strip(x).replace(/([A-Z])\1+/g, "$1").replace(/O/g, "0");
+  /* owner 2026-08-10 named these himself: BOOBOO315-31 = BO315-31 (the code
+     typed twice), grafield1-softlinen = Garfield (letters transposed),
+     "ZL-6 Lether" = the ZL series (leather misspelt). Fold a doubled leading
+     token and drop material words before the letter-repeat collapse. */
+  const dedupHead = (x) => {
+    for (let n = 2; n * 2 <= x.length; n++) if (x.slice(0, n) === x.slice(n, n * 2)) return x.slice(0, n) + x.slice(n * 2);
+    return x;
+  };
+  const fold = (x) => dedupHead(strip(x).replace(/(LETH?ER|LEATHER|FABRIC|VELVET)/g, ""))
+    .replace(/([A-Z])\1+/g, "$1").replace(/O/g, "0");
   const fcz = new Map(); const dup = new Set();
   for (const r of fcRows) for (const k of [fold(r.colour_id), fold(r.label)]) {
     if (!k) continue;
@@ -580,6 +596,17 @@ async function main() {
   }
   for (const k of dup) fcz.delete(k);
   const fzKeys = [...fcz.keys()];
+  const swap1 = (q) => { // one unique library key one TRANSPOSITION away
+    let hit = null;
+    for (let i = 0; i + 1 < q.length; i++) {
+      const t = q.slice(0, i) + q[i + 1] + q[i] + q.slice(i + 2);
+      const h = fcz.get(t);
+      if (!h) continue;
+      if (hit && hit !== h) return null;
+      hit = h;
+    }
+    return hit;
+  };
   const dist1 = (q) => { // one unique library key at edit distance 1
     let hit = null;
     for (const k of fzKeys) {
@@ -610,8 +637,15 @@ async function main() {
     for (const t of toks) { if (!t) continue; const h = fcz.get(fold(t)); if (h) return h; }
     // free-text rider ("Modenza 01*Bottom wrap...") — longest folded prefix
     // that indexes uniquely, min 6 chars so a series prefix can't win alone.
+    // free-text rider ("grafield1-softlinen", "Modenza 01*Bottom wrap...") —
+    // try each folded prefix (longest first, min 6) exactly, then one
+    // transposition away. Both passes refuse on ambiguity.
     const f = fold(c);
-    for (let len = Math.min(f.length, 14); len >= 6; len--) { const h = fcz.get(f.slice(0, len)); if (h) return h; }
+    for (let len = Math.min(f.length, 14); len >= 6; len--) {
+      const pre = f.slice(0, len);
+      const h = fcz.get(pre) || swap1(pre);
+      if (h) return h;
+    }
     return f.length >= 6 ? dist1(f) : null;
   };
   // product -> allowed colour_ids (so we don't set a colour the picker would drop).
