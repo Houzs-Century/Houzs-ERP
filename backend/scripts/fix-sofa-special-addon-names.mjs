@@ -24,10 +24,16 @@ const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
 // from -> to, following the owner's spelling. `null` = delete, it duplicates one of his.
 const RENAME = [
-  ["Back Cushion Change 5535 Design", "Change to 5535 backcushion", "his four existing swaps are all 'Change to <model> backcushion'"],
+  // Owner dictated these spellings himself, 2026-08-10. His own list is not
+  // internally consistent ("Change 8030 Backcushion" beside "change to 9028
+  // back cushion") - that is his call, not something to tidy. Follow it.
+  ["Back Cushion Change 5535 Design", "change to 5535 back cushion", "his four existing swaps read 'change to <model> back cushion'"],
+  ["Extend To Floor With 1inch Leg", "Seat Fully Cover with 1inches leg", "owner's own wording"],
   ["Sitting Cushion Add Height 1inch", "Seat Cushion Add Height 1inch", "he writes 'Seat ...', not 'Sitting ...'"],
   ["Leg Change - Altay Glossy Black", "Leg Change Altay Glossy Black", "he does not use ' - ' in a code"],
+  ["Umbrella Fabric Bottom (Sofa)", "Umbrella Fabric Bottom", "match his 'Nylon Fabric Bottom'"],
 ];
+
 const DELETE = [
   ["Fully Cover To Floor No Leg", "duplicates his 'Seat Base Fully Cover with no Leg'"],
 ];
