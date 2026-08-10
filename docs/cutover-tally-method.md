@@ -65,6 +65,52 @@ SELECT COUNT(*) FROM scm.purchase_order_items WHERE company_id = 1;
 
 ---
 
+## B2. Count LINES, not only documents (added 2026-08-10, after a miss)
+
+A document-count tally cannot see a document that arrived with some of its lines
+missing, and on 2026-08-10 that is exactly what had happened: `PO 407 = 407
+MISSING 0` while 35 AutoCount PO lines (60 ERP rows) had no row at all. Both PO
+importers are idempotent at DOCUMENT level, so a document created by an earlier
+run was skipped WHOLE by the later one and the lines the earlier run did not
+carry were never written. See `BUG-HISTORY.md`, top entry.
+
+So the tally now has a line altitude, and it is a script, not a query to run by
+hand:
+
+```
+node backend/scripts/check-cutover-completeness.mjs      # section 1b
+```
+
+The two rules it counts by, both of which are load-bearing:
+
+- **PO — one AutoCount line must have AT LEAST ONE ERP row.** A sofa line
+  decomposes into its compartments, everything else is one-for-one, so fewer
+  rows than lines proves rows are missing without the check having to predict
+  the piece count. Rows are claimed for an AutoCount `ItemCode` by
+  `supplier_sku` (the importers write the ItemCode there, and
+  `${ItemCode} ${compartment}` for a piece), falling back to `material_code` for
+  the ~225 migrated lines that carry no `supplier_sku` at all. There is no
+  `DtlKey` column on `scm.purchase_order_items`, so `DtlKey` cannot be used.
+  Rule in full: `backend/scripts/lib/po-line-topup-core.mjs`.
+- **SO — the denominator is the OUTSTANDING lines, not every line.** An imported
+  order holds the AutoCount lines where `Qty > TransferedQty`. SO-000013 is the
+  clearest read: 8 AutoCount lines, 7 fully transferred, exactly the 1
+  untransfered line in the ERP. Counting all 13,588 lines calls 243 lines missing
+  on 65 orders, and every one of them is a delivered line that was never meant to
+  come; against the 13,342 outstanding ones the gap is 1 line.
+
+Repair for what it finds on the PO side, DRY-RUN by default:
+
+```
+Actions -> "Top up missing AutoCount PO lines (line level)" -> target=prod, apply=0
+```
+
+It inserts only lines whose AutoCount ItemCode has ZERO rows on the document; an
+ItemCode with SOME rows is reported and left alone, because a half-written sofa
+build is just as likely a build somebody corrected by hand.
+
+---
+
 ## C. Three-way reconciliation (must tie out before go-live)
 
 | check | rule |

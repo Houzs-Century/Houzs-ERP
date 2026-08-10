@@ -14,12 +14,23 @@
 // records what AutoCount said at export time and nothing here pretends
 // otherwise.
 //
+// NOTE - QUESTION 1 IS ASKED TWICE, AT TWO ALTITUDES, AND THE SECOND ONE IS WHY.
+// Until 2026-08-10 this file compared DOCUMENT-NUMBER SETS only, so it reported
+// "PO 407 = 407 MISSING 0" while 51 purchase-order LINES were absent: both PO
+// importers are idempotent at document level, an already-present document is
+// skipped WHOLE, and the 26 sofa lines riding 25 MIXED documents were never
+// written. The document was there. The lines were not, and this check could not
+// see it. Section 1b is that blind spot closed - it counts lines per document
+// and names the shortfall.
+//
 // Read-only. One statement at a time, no writes, no DDL.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
+import { buildFamilies, claimErpRows, familyShortfall, groupByDoc, isSofaCode, mergeAcPoLines, normSku } from "./lib/po-line-topup-core.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -54,6 +65,104 @@ async function main() {
   log(`PO: AutoCount wants ${wantPo.length} (outstanding ${ac.po.length} + raised-from-an-outstanding-SO ${ac.so_linked_po.length}); in ERP ${wantPo.length - poMissing.length}; MISSING ${poMissing.length}`);
   for (const d of poMissing.slice(0, 20)) log(`   missing PO: ${d}`);
   if (poMissing.length > 20) log(`   ... and ${poMissing.length - 20} more`);
+
+  log("");
+  log("═══ 1b. Line level: is every AutoCount LINE represented in the ERP? ═══");
+
+  /* PO side. Union of both PO exports, deduped on DtlKey (they overlap on 121
+     documents and agree line-for-line there). The test is decoder-independent:
+     one AutoCount line can only ever produce ONE OR MORE ERP rows - a sofa line
+     decomposes into its compartments, everything else is one-for-one - so an
+     ItemCode holding FEWER ERP rows than it has AutoCount lines is proof of
+     missing rows whatever the sofa decoder does today. Rows are claimed by
+     supplier_sku, falling back to material_code for the 225 migrated lines that
+     carry no supplier_sku at all; the full rule is in lib/po-line-topup-core.mjs
+     and is the SAME code the top-up repair writes from, deliberately. */
+  const acPo = mergeAcPoLines(gz("ac-outstanding-po.json.gz"), gz("ac-so-linked-pos.json.gz"));
+  const acPoByDoc = groupByDoc(acPo);
+  const mapCsv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8")
+    .replace(/^﻿/, "").split(/\r?\n/).filter(Boolean).slice(1);
+  const erpByAc = new Map();
+  for (const ln of mapCsv) { const f = ln.split(","); if (f[0]) erpByAc.set(normSku(f[0]), (f[1] || "").trim()); }
+  const resolveErp = (itemCode) => {
+    const erp = erpByAc.get(normSku(itemCode));
+    if (!erp) return {};
+    if (!isSofaCode(itemCode)) return { code: erp };
+    const m = erp.replace(/-1S$/i, "");
+    return { code: erp, sofaModel: SOFA_MODEL_ALIAS[m] || m };
+  };
+  const poItemRows = await sql`SELECT p.linked_ac_docno ac, i.supplier_sku, i.material_code
+    FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+    WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
+  const poItemsByAc = new Map();
+  for (const r of poItemRows) {
+    if (!poItemsByAc.has(r.ac)) poItemsByAc.set(r.ac, []);
+    poItemsByAc.get(r.ac).push({ supplierSku: r.supplier_sku, materialCode: r.material_code });
+  }
+  let poDocsChecked = 0, poDocsAbsent = 0, poAcLines = 0, poErpRows = 0, poShort = 0, poUnassigned = 0, poAmbiguous = 0;
+  const poShortDocs = [];
+  for (const [doc, lines] of acPoByDoc) {
+    if (!poIn.has(doc)) { poDocsAbsent++; continue; } // a PO present with ZERO lines still gets counted below
+    poDocsChecked++;
+    const rows = poItemsByAc.get(doc) ?? [];
+    poAcLines += lines.length;
+    poErpRows += rows.length;
+    const families = buildFamilies(lines, resolveErp);
+    const claim = claimErpRows(families, rows);
+    poUnassigned += claim.unassigned.length;
+    poAmbiguous += claim.ambiguous.length;
+    const r = familyShortfall(families);
+    if (r.short > 0) {
+      poShort += r.short;
+      poShortDocs.push({ doc, acLines: lines.length, erpRows: rows.length,
+        missing: r.families.filter((f) => f.short > 0).map((f) => `${f.itemCode} x${f.short}`) });
+    }
+  }
+  log(`PO lines: AutoCount ${poAcLines} across ${poDocsChecked} documents present in the ERP; ERP rows ${poErpRows}; AutoCount lines with NO ERP row at all: ${poShort} across ${poShortDocs.length} documents`);
+  log(`   (AutoCount PO documents not in the ERP at all: ${poDocsAbsent} - those are section 1's number, not a line shortfall)`);
+  log(`   ERP rows no AutoCount ItemCode on their document could claim: ${poUnassigned}; claimable by two ItemCodes so claimed by neither: ${poAmbiguous}`);
+  for (const d of poShortDocs.slice(0, 30)) log(`   ${d.doc}: AutoCount ${d.acLines} lines / ERP ${d.erpRows} rows -> short ${d.missing.join(", ")}`);
+  if (poShortDocs.length > 30) log(`   ... and ${poShortDocs.length - 30} more documents`);
+
+  /* SO side. A sales-order line carries no AutoCount code - item_code is the ERP
+     code and nothing on the row names the source line - so the supplier_sku
+     family test cannot run here. The one-line-at-least-one-row invariant still
+     holds, but against the right denominator, and the right denominator is NOT
+     every line of the order.
+     WHAT PRODUCTION ACTUALLY HOLDS, measured 2026-08-10: an imported order
+     carries the AutoCount lines that are still OUTSTANDING (Qty >
+     TransferedQty), not the delivered ones. SO-000013 is the clearest read - 8
+     AutoCount lines, 7 of them fully transferred, and exactly the 1 untransfered
+     line in the ERP. Counting all 13,588 lines calls 243 lines missing on 65
+     orders and every one of them is a delivered line that was never meant to
+     come; counting the 13,342 outstanding ones leaves exactly 1. The ALL-lines
+     figure is printed too, so the denominator is visible rather than assumed. */
+  const acSo = gz("ac-outstanding-so.json.gz");
+  const qn = (v) => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
+  const acSoAll = new Map(), acSoOutstanding = new Map();
+  for (const r of acSo) {
+    acSoAll.set(r.DocNo, (acSoAll.get(r.DocNo) ?? 0) + 1);
+    if (qn(r.Qty) > qn(r.TransferedQty)) acSoOutstanding.set(r.DocNo, (acSoOutstanding.get(r.DocNo) ?? 0) + 1);
+  }
+  const soLineCounts = await sql`SELECT h.linked_ac_docno ac, COUNT(i.doc_no)::int n
+    FROM scm.mfg_sales_orders h LEFT JOIN scm.mfg_sales_order_items i ON i.doc_no = h.doc_no
+    WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL GROUP BY 1`;
+  let soAcAll = 0, soAcOut = 0, soErpRows = 0, soShort = 0, soDocsChecked = 0;
+  const soShortDocs = [];
+  for (const r of soLineCounts) {
+    if (!acSoAll.has(r.ac)) continue;
+    soDocsChecked++;
+    const all = acSoAll.get(r.ac);
+    const out = acSoOutstanding.get(r.ac) ?? 0;
+    soAcAll += all; soAcOut += out; soErpRows += r.n;
+    if (r.n < out) {
+      soShort += out - r.n;
+      soShortDocs.push({ doc: r.ac, all, out, erpRows: r.n });
+    }
+  }
+  log(`SO lines: AutoCount ${soAcAll} across ${soDocsChecked} orders present in the ERP, of which ${soAcOut} are still outstanding; ERP rows ${soErpRows}; MISSING ${soShort} across ${soShortDocs.length} orders`);
+  for (const d of soShortDocs.slice(0, 30)) log(`   ${d.doc}: AutoCount outstanding ${d.out} lines (of ${d.all}) / ERP ${d.erpRows} rows -> short ${d.out - d.erpRows}`);
+  if (soShortDocs.length > 30) log(`   ... and ${soShortDocs.length - 30} more orders`);
 
   log("");
   log("═══ 2. Do bedframe and sofa lines carry their variants? ═══");
