@@ -123,3 +123,50 @@ describe('parse-sofa: never guess', () => {
     expect(conf('1AP+2(28")')).toBe('low');
   });
 });
+
+/* The nine AutoCount lines that opened model 5526 (owner 2026-08-10: "5526 就是
+   5526 啊 ... 8038 原本都不是 5526"). These are the strings the 5526 compartment
+   list was DERIVED from, so a parser change that alters any of them changes
+   which SKUs that model is supposed to own — pin them. Verbatim from
+   ac-outstanding-so / ac-outstanding-po / ac-so-linked-pos. */
+describe('parse-sofa: the 5526 cutover builds', () => {
+  const p = (d2: string) => pieces(d2, '5526', false);
+
+  test('SO-001112 2S+2.5+C/T splits around the console', () => {
+    expect(p('[ 2S(28") + 2.5(35") + C/T / COL: 7# CHARCOAL]')).toEqual(['2A(LHF)', 'Console', '2A(RHF)']);
+  });
+
+  test('SO-001526 1EL+2ER', () => {
+    expect(p('[ 1EL(35") + 2ER(35") / COL: BEETEX HARRING GD8371 02# BEIGE ]')).toEqual(['1A(LHF)', '2A(RHF)']);
+  });
+
+  test('SO-001526 2EL+STOOL', () => {
+    expect(p('[ 2EL(28") + STOOL(28")(NO BACK CUSHION) / COL: BEETEX HARRING GD8371 02# BEIGE')).toEqual(['2A(LHF)', 'STOOL']);
+  });
+
+  test('SO-001526 bare 2S stays a whole two-seater', () => {
+    expect(p('[ 2S(28") / COL: BEETEX HARRING GD8371 02# BEIGE')).toEqual(['2S']);
+  });
+
+  test('PO-001662 3S+C/T becomes 2A+Console+1A', () => {
+    expect(p('COL: J9883-2-Chic  (PREMIUM) / 3S(35") + C/T')).toEqual(['2A(LHF)', 'Console', '1A(RHF)']);
+  });
+
+  test('PO-002425 wooden arm rides as a special, the build is still 2S', () => {
+    const r = parseSofa('2S+WOODEN ARM  (28") / COL-HARRING GD 8371 02-BEIGE', '5526', false) as
+      { pieces: string[]; specials: string[] };
+    expect(r.pieces).toEqual(['2S']);
+    expect(r.specials).toContain('wooden arm');
+  });
+
+  /* Two builds deliberately stay placeholders: "1 ELT / T" is not readable, and
+     DAYBED is a word the grammar has no token for (the owner supplied the piece
+     by hand: PO-000162 = 5526-DB). Refusing is the correct answer for both. */
+  test('SO-000814 / PO-000254 "1 ELT / T + NA + 2ER" refuses', () => {
+    expect(conf('[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]', '5526')).toBe('low');
+  });
+
+  test('PO-000162 DAYBED refuses rather than inventing a piece', () => {
+    expect(conf('[DAYBED/COL:J9833-2]', '5526')).toBe('low');
+  });
+});
