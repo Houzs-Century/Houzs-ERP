@@ -1738,11 +1738,18 @@ const GLOBAL_ALIAS_KEY = '__GLOBAL__';
 // rules every scan — including a brand-new rep's first scan — benefits from.
 // Same table/shape (just another reserved row), so NO migration.
 const GLOBAL_RULES_KEY = '__GLOBAL_RULES__';
+// Reserved so_scan_rules key for HAND-WRITTEN shared rules - knowledge the
+// distiller can never produce because it is not in the corrections. The sofa
+// sketch grammar forced it: the drawing on a slip carries the compartment
+// layout, and no amount of diffing extracted JSON against corrected JSON
+// teaches that a hatched strip on a box edge is the armrest. Injected exactly
+// like the distilled layer and NEVER regenerated.
+const GLOBAL_MANUAL_KEY = '__GLOBAL_MANUAL__';
 // Either reserved row must be kept out of the salesperson datalist / per-rep
 // enumeration / weekly per-rep pass.
 const isGlobalKey = (v: string): boolean => {
   const k = v.trim().toUpperCase();
-  return k === GLOBAL_ALIAS_KEY || k === GLOBAL_RULES_KEY;
+  return k === GLOBAL_ALIAS_KEY || k === GLOBAL_RULES_KEY || k === GLOBAL_MANUAL_KEY;
 };
 
 const buildDistillMetaPrompt = (companyName: string) => `You are reviewing extraction sessions of HANDWRITTEN showroom sale-order slips at ${companyName}, a Malaysian furniture retailer. ALL the examples below were written by ONE salesperson. Each example is a PAIR: what the AI initially extracted, followed by what the human operator corrected it to (the confirmed truth). Each salesperson has their own handwriting and notation habits, and those habits DIFFER per product category. Write a concise salesperson-specific OCR rule block so future extractions of this rep's slips apply their conventions automatically.
@@ -2549,6 +2556,33 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
         `(they complement, never override, the universal extraction rules, the catalog and the ` +
         `never-invent-codes rule):\n\n` +
         gr.rules;
+      globalRulesApplied = true;
+    }
+  } catch {
+    /* best-effort */
+  }
+
+  /* The HAND-WRITTEN shared layer, appended after the distilled one. The
+     distiller learns by diffing extracted JSON against corrected JSON, which
+     can never teach a reading TECHNIQUE — that a hatched strip on a box edge
+     in the slip's drawing IS the armrest, and which edge it sits on IS LHF or
+     RHF. That knowledge came from reading the slips; it lives here, and
+     distillGlobalRules never regenerates this row. */
+  try {
+    const { data: gmRow } = await svc
+      .from('so_scan_rules')
+      .select('rules')
+      .eq('salesperson', GLOBAL_MANUAL_KEY)
+      .limit(1)
+      .maybeSingle();
+    const gm = gmRow as { rules: string } | null;
+    if (gm && gm.rules.trim() !== '') {
+      const gap = globalRulesText ? `${globalRulesText}\n\n` : '';
+      globalRulesText =
+        `${gap}HOW TO READ THE DRAWING ON A SLIP (hand-written, authored by the owner — ` +
+        `reading techniques, not distilled patterns; they never override the catalog ` +
+        `or the never-invent-codes rule):\n\n` +
+        gm.rules;
       globalRulesApplied = true;
     }
   } catch {
