@@ -1944,6 +1944,32 @@ function ProjectsListView() {
             { name: null, options: STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label })) },
           ]}
         />
+        {/* Clear-all (owner 2026-08-10): one click unticks EVERY filter dropdown
+            — section, status/tasks, brand, year, month, project status. Each
+            dropdown keeps its own in-panel "Clear (n)"; this resets them all
+            together so the owner doesn't have to open each one. Shown only when
+            at least one dropdown is active. Search + My-pending are left alone. */}
+        {(section || taskPending || brand || year || month || status) && (
+          <button
+            type="button"
+            onClick={() =>
+              patchParams({
+                section: "",
+                task: "",
+                brand: "",
+                year: "",
+                month: "",
+                status: "",
+                page: "1",
+              })
+            }
+            title="Untick every filter dropdown"
+            className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-surface px-2 text-[12px] font-semibold text-ink-secondary hover:border-err hover:text-err"
+          >
+            <X size={13} />
+            Clear all
+          </button>
+        )}
         <label
           className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold text-ink-secondary"
           title="Show only projects with a task pending on your side (your role)"
