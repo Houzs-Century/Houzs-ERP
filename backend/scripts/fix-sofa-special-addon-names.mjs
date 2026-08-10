@@ -42,6 +42,10 @@ async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} company=${CO}`);
   const rows = await sql`SELECT id, code, label FROM scm.special_addons WHERE company_id = ${CO} ORDER BY code`;
   log(`specials on file: ${rows.length}`);
+  /* Print the WHOLE list. The owner's picker is a curated vocabulary, not a
+     transcript of the slips - merging correctly needs to see every code he
+     already has, not the twenty visible in a screenshot. */
+  for (const r of rows) log(`   [${r.code}]  label="${r.label}"`);
   const byCode = new Map(rows.map((r) => [r.code.trim().toUpperCase(), r]));
 
   /* A code is only safe to touch while nothing points at it. custom_specials is
