@@ -343,6 +343,18 @@ async function main() {
   const orders = new Map();
   for (const r of rows) { if (!orders.has(r.DocNo)) orders.set(r.DocNo, []); orders.get(r.DocNo).push(r); }
   const SOFA_ON = process.env.SOFA === "1";
+  /* OWNER'S DO RULE (2026-08-10): "outstanding 指的是还没有转成 DO ... 如果
+     convert to PO,它其实依然算作 outstanding". The export still carries orders
+     whose every line is fully DO-transferred; importing those puts DELIVERED
+     work into the ERP as outstanding. Drop them here — and never look at
+     TransferedPOQty, which must NOT disqualify a line. Set ALLOW_DELIVERED=1
+     only to reproduce the old behaviour for a comparison run. */
+  const qn = (v) => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
+  const fullyDelivered = (ls) => ls.length > 0 && !ls.some((l) => qn(l.Qty) > qn(l.TransferedQty));
+  let skipDelivered = 0;
+  if (process.env.ALLOW_DELIVERED !== "1") {
+    for (const [doc, ls] of [...orders]) if (fullyDelivered(ls)) { orders.delete(doc); skipDelivered++; }
+  }
   let pure = [], skipMixed = 0, skipAllSofa = 0, sofaOrders = 0;
   for (const [doc, ls] of orders) {
     const s = ls.filter((l) => isSofa(l.ItemCode)).length;
@@ -472,6 +484,7 @@ async function main() {
   // ---- report ----
   log("");
   log(`Source orders ${orders.size} / lines ${rows.length}`);
+  log(`  skipped fully-delivered (already a DO, owner's rule): ${skipDelivered}`);
   log(`  importing: ${built.length}${LIMIT ? ` (LIMIT ${LIMIT})` : ""}${process.env.SOFA === "1" ? ` (incl ${sofaOrders} sofa orders)` : " (pure non-sofa)"}`);
   log(`  skipped mixed / all-sofa:  ${skipMixed} / ${skipAllSofa}`);
   if (sofaDecode.length) {
