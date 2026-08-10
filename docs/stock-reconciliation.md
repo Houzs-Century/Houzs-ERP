@@ -132,6 +132,11 @@ there enough on-hand in AutoCount to cover it?
 | *(blank)* | 1,976 | 364 | 18% |
 | **all** | **2,320** | **386** | **17%** |
 
+The 2,320 here is smaller than the 2,712 outstanding orders because 392 orders
+have no outstanding *physical* line left at all — what remains open on them is
+only a service charge or a sofa. They are excluded rather than counted as
+agreeing, which would have flattered the result.
+
 This is the single strongest piece of evidence for the owner's premise.
 When staff type `READY`, the stock is genuinely present **99% of the time**.
 The category values behave exactly as their semantics predict: `BEDFRAME` and
@@ -328,9 +333,44 @@ Corroborated on the document side: of 13 stock document types checked, **only
 latest dated 2026-08-14 (future-dated). `GR`, `IV`, `ADJ`, `CS`, `CP`, `PI`,
 `ISS`, `GT`, `CN`, `DN` are all zero.
 
-This is a clean, fully explained cut-off effect: goods shipped out of KL after
-the seed. It is not a defect, and it is not something to patch — the cutover
-procedure is to re-export at the freeze moment and apply one delta batch.
+This is a cut-off effect, not a defect, and not something to patch — the
+cutover procedure is to re-export at the freeze moment and apply one delta
+batch.
+
+### 5.1 Document dates do not explain the drift, and that matters
+
+The obvious next step is to attribute the −97 to those 23 delivery orders. It
+does not reconcile, and the reason is worth recording because it changes how a
+recurring check has to be built.
+
+| | Units |
+|---|---|
+| Expected from post-cutoff DOs (by `DocDate`), 53 cells | −169 |
+| Observed drift (balance diff), 32 cells | **−97** |
+| Unexplained | **+72** |
+
+The cause is **back-dating**. Filtering by `DocDate` finds zero GR and zero ADJ
+documents after the snapshot, but filtering by `LastModified` finds both:
+
+| Document | Dated | Modified | Qty | Back-dated by |
+|---|---|---|---|---|
+| GR-005213 | 2026-08-07 | 2026-08-09 12:52 | +12 | 2 days |
+| GR-005215 | 2026-08-05 | 2026-08-09 12:52 | +5 | 4 days |
+| ADJ-000226 | 2026-08-04 | 2026-08-10 11:27 | −30 | 5 days |
+| ADJ-000228 | **2026-04-26** | 2026-08-10 11:28 | +1 | **105 days** |
+
+Across all document types, 142 documents carry a `LastModified` after the
+snapshot (SO 77, IV 49, DO 12, GR 2, ADJ 2) while the `DocDate` filter sees
+only 23. One adjustment was entered 105 days after its own document date.
+
+**The lesson: never compute expected stock drift from documents dated after a
+cut-off.** Staff back-date routinely, so a date-filtered query silently misses
+real stock movement. Only a balance-to-balance diff is sound, and only
+`LastModified` is usable for finding what changed. `docs/cutover-tally-method.md`
+already anticipated this in its top-up section; this is the measured proof.
+
+The −97 figure above is a balance diff and therefore stands. The −169 is the
+figure that would have been wrong.
 
 Largest movers:
 
@@ -528,10 +568,18 @@ channel a human actually reads, plus a **tolerance threshold** so ordinary
 in-flight drift does not page anyone — the −97-unit cut-off drift above would
 otherwise fire every single day.
 
+**It must diff balances, not replay documents.** Section 5.1 is the proof: a
+`DocDate`-filtered document sweep expected −169 units where the balance diff
+measured −97, because staff back-date (one adjustment by 105 days). A daily
+check built on "documents since yesterday" would drift out of true and then
+report noise forever. Diff the balance; use `LastModified` only to point at
+what to look at.
+
 The remaining prerequisites are already satisfied: the SKU binding is complete,
 the warehouse map resolves every location, the exclusion buckets are defined
 and measured, and the readiness port is differentially tested. What is missing
-is only the runner and the alerting policy.
+is the runner, the alerting policy, and the owner's decision on the scheduling
+exemption.
 
 ---
 
