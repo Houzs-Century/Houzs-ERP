@@ -10724,6 +10724,13 @@ function PhaseCrewEditor({
     save({ ...pc, lorryCrew: lorries.map((l, i) => (i === li ? { ...l, ...p } : l)) });
   const addLorry = () => save({ ...pc, lorryCrew: [...lorries, { plate: "", drivers: [], helpers: [] }] });
   const removeLorry = (li: number) => save({ ...pc, lorryCrew: lorries.filter((_, i) => i !== li) });
+  // Owner 2026-07-22: the Driver 2 / Helper 2 rows stay HIDDEN until needed —
+  // most lorries run one driver + one helper, so the empty second slots were
+  // noise. A filled slot always shows; an empty one shows only after its
+  // "+ Add …" button (styled like "+ Add lorry") is clicked. UI-only state:
+  // collapsing back happens by clearing the name (row hides on next open).
+  const [openSlot2, setOpenSlot2] = useState<Set<string>>(new Set());
+  const showSlot2 = (li: number, kind: "d" | "h") => setOpenSlot2((s) => new Set(s).add(`${li}${kind}`));
   return (
     <div className="mt-3 space-y-2">
       {emptyHint && <div className="text-[9px] italic text-ink-muted">{emptyHint}</div>}
@@ -10756,9 +10763,33 @@ function PhaseCrewEditor({
               )}
             </div>
             <CrewSlotRow label="Driver 1" color="text-synced" options={drivers} slot={lorry.drivers[0]} onChange={(s) => setLorrySlot(li, "drivers", 0, s)} readOnly={readOnly} />
-            <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
+            {(!!lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
+              <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
+            )}
             <CrewSlotRow label="Helper 1" color="text-warning-text" options={helpers} slot={lorry.helpers[0]} onChange={(s) => setLorrySlot(li, "helpers", 0, s)} readOnly={readOnly} />
-            <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            {(!!lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
+              <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            )}
+            {!readOnly && (!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) || !(lorry.helpers[1]?.name || openSlot2.has(`${li}h`))) && (
+              <div className="flex gap-1.5 pt-0.5">
+                {!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
+                  <button
+                    onClick={() => showSlot2(li, "d")}
+                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+                  >
+                    + Add driver
+                  </button>
+                )}
+                {!(lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
+                  <button
+                    onClick={() => showSlot2(li, "h")}
+                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+                  >
+                    + Add helper
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -10834,6 +10865,92 @@ function PhaseCrewEditor({
             className="w-full resize-y whitespace-pre-wrap break-words rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40 disabled:bg-bg/40"
           />
         </label>
+      )}
+    </div>
+  );
+}
+
+// Service / Exchange as an OPTIONAL, collapsed block (owner 2026-08-10). The
+// crew-per-lorry fields used to sit permanently below Dismantle, which read to
+// Logistic staff as a compulsory third trip. Now it lives in its own divided
+// section: just a "+ Service / Exchange" button until opened, then a bordered
+// card (crew grid + outsourced + "what" remark + read-only service photos) with
+// a close X. It auto-opens only when it ALREADY holds data, so nothing keyed
+// earlier is hidden; closing never deletes — real data resurfaces on reload.
+function ServiceExchangeBlock({
+  serviceCrew,
+  projectId,
+  drivers,
+  helpers,
+  lorryOptions,
+  patch,
+  readOnly,
+}: {
+  serviceCrew: string | null | undefined;
+  projectId: number;
+  drivers: CrewMember[];
+  helpers: CrewMember[];
+  lorryOptions: string[];
+  patch: (body: Record<string, any>) => Promise<void>;
+  readOnly: boolean;
+}) {
+  const hasData = useMemo(() => {
+    const pc = parsePhaseCrew(serviceCrew);
+    return (
+      pc.lorryCrew.length > 0 ||
+      pc.outsourced.entries.length > 0 ||
+      !!pc.remark?.trim()
+    );
+  }, [serviceCrew]);
+  const [open, setOpen] = useState(hasData);
+  // If data arrives while the card is closed (e.g. saved on another device),
+  // reveal it — a filled Service / Exchange must never stay hidden.
+  useEffect(() => {
+    if (hasData) setOpen(true);
+  }, [hasData]);
+
+  // Sales / view-only: show the block only when it actually has content — never
+  // an empty optional section or an add button.
+  if (readOnly && !hasData) return null;
+
+  return (
+    <div className="mt-4 border-t border-border pt-3">
+      {open ? (
+        <div className="relative rounded-lg border border-border bg-surface p-3 pt-4 shadow-stone">
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              title="Close — anything already entered is kept"
+              aria-label="Close Service / Exchange"
+              className="absolute right-2 top-2 rounded p-0.5 text-ink-muted hover:text-err"
+            >
+              <X size={14} />
+            </button>
+          )}
+          <PhaseCrewEditor
+            title="Service / Exchange"
+            field="service_crew"
+            value={serviceCrew}
+            drivers={drivers}
+            helpers={helpers}
+            lorryOptions={lorryOptions}
+            patch={patch}
+            readOnly={readOnly}
+            emptyHint="Optional — a mid-fair service visit or part exchange"
+            showRemark
+            remarkLabel="Service / Exchange — what"
+          />
+          <ServicePhotos projectId={projectId} readOnly />
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="rounded-md border border-dashed border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+        >
+          + Service / Exchange
+        </button>
       )}
     </div>
   );
@@ -10967,27 +11084,21 @@ function LogisticsCrewSection({
           <DateTimeField label="Dismantle Time" value={project.dismantle_start_at} onSave={(v) => patch({ dismantle_start_at: v })} readOnly={readOnly} />
         }
       />
-      <div className="my-3 border-t border-dashed border-border" />
-      {/* Service / Exchange (owner 2026-07-22): a mid-fair trip — same crew grid
-          + outsourced (Lalamove/Grab), plus a "what service/exchange" remark and
-          service photos. Stored in service_crew JSON + phase='service' photos. */}
-      <PhaseCrewEditor
-        title="Service / Exchange"
-        field="service_crew"
-        value={project.service_crew}
+      {/* Service / Exchange (owner 2026-07-22; collapsible 2026-08-10): an
+          OPTIONAL mid-fair service visit or part exchange. Hidden behind its own
+          "+ Service / Exchange" button under a solid divider — no longer welded
+          below Dismantle's outsourced trips, where the always-on fields read as
+          a compulsory third trip to Logistic. The read-only desktop service
+          gallery moved inside the card (mobile still captures the photos). */}
+      <ServiceExchangeBlock
+        serviceCrew={project.service_crew}
+        projectId={project.id}
         drivers={drivers}
         helpers={helpers}
         lorryOptions={lorryOptions}
         patch={patch}
         readOnly={readOnly}
-        emptyHint="During the fair — a service visit or part exchange"
-        showRemark
-        remarkLabel="Service / Exchange — what"
       />
-      {/* Service photo upload moved to mobile-only (owner 2026-07-29): the
-          desktop keeps a read-only gallery, so force readOnly to drop the
-          "Add service photo" button here. Field staff attach on MobilePMS. */}
-      <ServicePhotos projectId={project.id} readOnly />
     </PanelSection>
   );
 }
