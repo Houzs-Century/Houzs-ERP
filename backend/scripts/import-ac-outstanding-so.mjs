@@ -199,7 +199,8 @@ const CM_TO_INCH = { 60: 24, 66: 26, 70: 28, 75: 30, 80: 32 };
 function parseSofa(d2raw, model, recl = false) {
   const o = { pieces: [], size: null, color: null, perPieceColor: {}, specials: [], conf: "high", why: [] };
   if (!d2raw || !String(d2raw).trim()) { o.conf = "low"; o.why.push("empty Desc2"); return o; }
-  let d2 = String(d2raw).replace(/[\[\]{}]/g, " ").replace(/[”“″’‘′]/g, '"').replace(/\r/g, "").trim();
+  let d2 = String(d2raw).replace(/[\[\]{}]/g, " ").replace(/[”“″’‘′]/g, '"').replace(/\r/g, "")
+    .replace(/\b(?:icnh|inhc|inchs|inc?h?es|ich)\b/gi, "inch").trim();
   // protect composite tokens from the slash-splitter
   d2 = d2.replace(/\bCUSTOM\b/gi, " ").replace(/([123])S?\s*P\s*\+\s*P\b/gi, "$1PP")
     .replace(/\bCORNER\s*\((?=[^)]*[A-Za-z])/gi, "(").replace(/NO\s*CONSOLE/gi, " NOCONS ")
@@ -228,6 +229,12 @@ function parseSofa(d2raw, model, recl = false) {
   }
   d2 = d2.replace(/size\s*[:：]/gi, " "); // bare label left behind ("Size:3S(28\")")
   d2 = d2.replace(/\b(TBC|KIV|RANDOM\s*COLOU?R)\b/gi, " "); // noise words glue onto piece tokens ("L2 TBC")
+  // owner 2026-08-10: 脚找不到就用 default — leg text never sets a size, it
+  // rides as a special so the factory sheet still shows the request.
+  {
+    const lg = /[^\/\n]*\bleg\b[^\/\n]*/gi.exec(d2);
+    if (lg) { o.specials.push(lg[0].trim().replace(/^[*\s]+/, "")); d2 = d2.replace(/[^\/\n]*\bleg\b[^\/\n]*/gi, " "); }
+  }
   // specials that ride along
   if (/nylon|nilon/i.test(d2)) o.specials.push("nylon");
   if (/(left|right)?\s*side?\s*woo[rd]+e?r?n?\s*arm/i.test(d2) || /wood\w*\s*arm/i.test(d2)) o.specials.push("wooden arm");
