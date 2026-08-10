@@ -15,14 +15,17 @@
 // the next run says "already imported: 160; to insert: 0". The same shape sits
 // at import-ac-so-linked-pos.mjs:132, so this top-up reads BOTH exports.
 //
-// MATCHING RULE - in full in lib/po-line-topup-core.mjs, in short: the ERP row
-// does not store the AutoCount DtlKey (no such column), so rows are claimed for
-// an AutoCount ItemCode by supplier_sku first (the importers write the ItemCode
-// there, and `${ItemCode} ${compartment}` for a sofa piece) and, only for a row
-// carrying NO supplier_sku, by material_code / sofa model prefix. 225 of the 862
-// migrated PO lines have no supplier_sku, written by neither importer, and they
-// are real AutoCount lines - matching on supplier_sku alone would have inserted
-// 183 duplicates.
+// MATCHING RULE - in full in lib/po-line-topup-core.mjs, in short: a row is
+// claimed for an AutoCount ItemCode by linked_ac_dtlkey where it has one
+// (migration 0273 / #1819 - the column is nullable and backfill-ac-line-keys
+// cannot reach a decomposed sofa compartment, so it is the strongest signal and
+// never the only one), then by supplier_sku (the importers write the ItemCode
+// there, and `${ItemCode} ${compartment}` for a sofa piece), then - only for a
+// row carrying NO supplier_sku - by material_code / sofa model prefix. 225 of
+// the 862 migrated PO lines have no supplier_sku, written by neither importer,
+// and they are real AutoCount lines: matching on supplier_sku alone would have
+// inserted 183 duplicates. Every row this script writes is given its
+// linked_ac_dtlkey, which is the one place a new row can get the key for free.
 //
 // AND IT IS ALL-OR-NOTHING PER FAMILY. One AutoCount ItemCode on one document
 // with ZERO claimed rows is the confirmed defect and gets written. One with
@@ -152,16 +155,27 @@ async function main() {
   const poRows = await sql`SELECT id, po_number, linked_ac_docno, status FROM scm.purchase_orders
     WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`;
   const poByAc = new Map(poRows.map((p) => [p.linked_ac_docno, p]));
-  const itemRows = await sql`SELECT i.purchase_order_id, i.supplier_sku, i.material_code
-    FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-    WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
+  /* linked_ac_dtlkey arrived with migration 0273 (#1819) and is the strongest
+     claim there is. Guarded because a DRY-RUN can legitimately run against a
+     database the migration has not reached yet. */
+  const HAS_DTLKEY = (await sql`SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'scm' AND table_name = 'purchase_order_items' AND column_name = 'linked_ac_dtlkey'`).length > 0;
+  const itemRows = HAS_DTLKEY
+    ? await sql`SELECT i.purchase_order_id, i.supplier_sku, i.material_code, i.linked_ac_dtlkey
+        FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+        WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`
+    : await sql`SELECT i.purchase_order_id, i.supplier_sku, i.material_code, NULL::bigint AS linked_ac_dtlkey
+        FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+        WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
   const itemsByPo = new Map();
   for (const r of itemRows) {
     if (!itemsByPo.has(r.purchase_order_id)) itemsByPo.set(r.purchase_order_id, []);
-    itemsByPo.get(r.purchase_order_id).push({ supplierSku: r.supplier_sku, materialCode: r.material_code });
+    itemsByPo.get(r.purchase_order_id).push({ supplierSku: r.supplier_sku, materialCode: r.material_code, linkedAcDtlKey: r.linked_ac_dtlkey });
   }
   const noSku = itemRows.filter((r) => !r.supplier_sku).length;
-  log(`ERP: purchase orders carrying linked_ac_docno ${poRows.length}; their lines ${itemRows.length} (of which ${noSku} carry no supplier_sku and are claimed by material_code)`);
+  const keyed = itemRows.filter((r) => r.linked_ac_dtlkey != null).length;
+  log(`ERP: purchase orders carrying linked_ac_docno ${poRows.length}; their lines ${itemRows.length}`);
+  log(`   linked_ac_dtlkey column ${HAS_DTLKEY ? "present" : "NOT YET APPLIED here"}; lines carrying a key ${keyed}; lines with no supplier_sku (claimed by material_code) ${noSku}`);
 
   /* One AutoCount ItemCode -> the ERP terms every stage needs. Returns null when
      the mapping CSV does not know the code: never guessed. */
@@ -350,13 +364,16 @@ async function main() {
 
   log("");
   log("APPLYING...");
-  let wrote = 0, docsWritten = 0, deltaCenti = 0, dedicationsWritten = 0, skippedRaced = 0;
+  let wrote = 0, docsWritten = 0, deltaCenti = 0, dedicationsWritten = 0, keysWritten = 0, skippedRaced = 0;
   for (const p of plan) {
     await sql.begin(async (tx) => {
       /* Re-read inside the transaction: if another run - or the sibling repair -
          wrote these rows since the read above, this inserts nothing. */
       const live = (await tx`SELECT supplier_sku, material_code FROM scm.purchase_order_items WHERE purchase_order_id = ${p.po.id}`)
         .map((r) => ({ supplierSku: r.supplier_sku, materialCode: r.material_code }));
+      /* NB this last guard keys on supplier_sku only, deliberately - it is the
+         column this script always writes, so it is the one that can prove a row
+         it is about to write is already there. */
       const { toInsert } = diffExpectedRows(p.rows, live);
       skippedRaced += p.rows.length - toInsert.length;
       if (!toInsert.length) return;
@@ -367,7 +384,7 @@ async function main() {
           const claimed = await tx`SELECT 1 FROM scm.purchase_order_items WHERE so_item_id = ${soItemId} LIMIT 1`;
           if (claimed.length) soItemId = null; // never wrong: leave it NULL rather than steal
         }
-        await tx`INSERT INTO scm.purchase_order_items
+        const [ins] = await tx`INSERT INTO scm.purchase_order_items
             (purchase_order_id, material_kind, material_code, material_name, supplier_sku,
              description, description2, notes,
              qty, received_qty, unit_price_centi, line_total_centi, item_group, uom,
@@ -384,7 +401,17 @@ async function main() {
                   ${r.bf && isFinite(r.bf.leg) ? Math.round(r.bf.leg) : null},
                   ${r.variants && r.variants.specials && r.variants.specials.length ? sql.json(r.variants.specials) : null},
                   ${r.variants ? sql.json(r.variants) : null},
-                  ${r.wh}, ${soItemId}, ${CO}, ${r.deliv}, false)`;
+                  ${r.wh}, ${soItemId}, ${CO}, ${r.deliv}, false)
+          RETURNING id`;
+        /* Give the new row the AutoCount line key straight away. Nothing else
+           can: backfill-ac-line-keys matches on (DocNo + ERP code) and a sofa
+           compartment's code is `${model}-{piece}`, which no AutoCount ItemCode
+           maps to - so a compartment written without it would stay keyless and
+           the write-back's /edit could never address it. */
+        if (HAS_DTLKEY && ins && r.dtlKey) {
+          await tx`UPDATE scm.purchase_order_items SET linked_ac_dtlkey = ${Number(r.dtlKey)} WHERE id = ${ins.id}`;
+          keysWritten++;
+        }
         if (soItemId) dedicationsWritten++;
         added += r.up * r.qty;
         wrote++;
@@ -399,7 +426,7 @@ async function main() {
       docsWritten++;
     });
   }
-  log(`DONE. rows inserted ${wrote} across ${docsWritten} purchase orders; SO dedications written ${dedicationsWritten}; header value added RM ${(deltaCenti / 100).toFixed(2)}; rows already present at write time ${skippedRaced}`);
+  log(`DONE. rows inserted ${wrote} across ${docsWritten} purchase orders; SO dedications written ${dedicationsWritten}; AutoCount line keys written ${keysWritten}; header value added RM ${(deltaCenti / 100).toFixed(2)}; rows already present at write time ${skippedRaced}`);
   log("no inventory movement written, no document created, no status changed - by design.");
   await sql.end();
 }

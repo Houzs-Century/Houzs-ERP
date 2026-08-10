@@ -83,16 +83,18 @@ node backend/scripts/check-cutover-completeness.mjs      # section 1b
 
 The two rules it counts by, both of which are load-bearing:
 
-- **PO — one AutoCount line must have AT LEAST ONE ERP row.** A sofa line
+- **PO - one AutoCount line must have AT LEAST ONE ERP row.** A sofa line
   decomposes into its compartments, everything else is one-for-one, so fewer
   rows than lines proves rows are missing without the check having to predict
   the piece count. Rows are claimed for an AutoCount `ItemCode` by
   `supplier_sku` (the importers write the ItemCode there, and
   `${ItemCode} ${compartment}` for a piece), falling back to `material_code` for
-  the ~225 migrated lines that carry no `supplier_sku` at all. There is no
-  `DtlKey` column on `scm.purchase_order_items`, so `DtlKey` cannot be used.
+  the ~225 migrated lines that carry no `supplier_sku` at all. Above both sits
+  `linked_ac_dtlkey` (migration 0273), used where a row has one and written onto
+  every row the top-up inserts — but never relied on alone, because it is
+  nullable and its backfill cannot reach a sofa compartment.
   Rule in full: `backend/scripts/lib/po-line-topup-core.mjs`.
-- **SO — the denominator is the OUTSTANDING lines, not every line.** An imported
+- **SO - the denominator is the OUTSTANDING lines, not every line.** An imported
   order holds the AutoCount lines where `Qty > TransferedQty`. SO-000013 is the
   clearest read: 8 AutoCount lines, 7 fully transferred, exactly the 1
   untransfered line in the ERP. Counting all 13,588 lines calls 243 lines missing

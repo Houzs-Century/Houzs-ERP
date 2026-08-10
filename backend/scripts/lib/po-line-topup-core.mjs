@@ -11,12 +11,17 @@
 //
 // ── THE MATCHING RULE (read this before trusting any number here) ────────────
 //
-// 1. DtlKey CANNOT be the join key. scm.purchase_order_items has no AutoCount
-//    DtlKey column - the only DtlKey in the whole migrations-pg tree sits inside
-//    a photo-object key comment (0274). The AutoCount line identity never
-//    reached the database, so it has to be reconstructed.
+// 1. linked_ac_dtlkey FIRST, WHERE IT EXISTS. Migration 0273 (#1819, merged
+//    2026-08-10) gave scm.purchase_order_items a linked_ac_dtlkey, so the
+//    AutoCount line identity finally has a home. It is only as good as its
+//    coverage: it is nullable by design, backfill-ac-line-keys fills it by
+//    matching (AutoCount DocNo + ERP code), and that match cannot reach a
+//    decomposed sofa compartment, whose ERP code is `${model}-{piece}` and not
+//    the mapped code. So it is the strongest signal and never the only one -
+//    and the top-up SETS it on every row it writes, which is the one place a
+//    new row can be given the key for free.
 //
-// 2. supplier_sku FIRST. Both cutover importers write the AutoCount ItemCode
+// 2. supplier_sku NEXT. Both cutover importers write the AutoCount ItemCode
 //    there, and a decomposed sofa piece writes `${ItemCode} ${compartment}`
 //    (import-ac-outstanding-po.mjs:159, import-ac-so-linked-pos.mjs:224). A row
 //    is claimed by the LONGEST matching ItemCode, so a code that prefixes
@@ -137,13 +142,14 @@ function buildFamilies(acLines, resolve) {
       const r = (resolve ? resolve(l.itemCode) : null) || {};
       m.set(key, {
         key, itemCode: l.itemCode, sofa: isSofaCode(l.itemCode),
-        code: r.code ?? null, sofaModel: r.sofaModel ?? null,
-        acLines: 0, lines: [], skuRows: 0, codeRows: 0, claimed: 0, rows: [],
+        code: r.code ?? null, sofaModel: r.sofaModel ?? null, dtlKeys: new Set(),
+        acLines: 0, lines: [], keyRows: 0, skuRows: 0, codeRows: 0, claimed: 0, rows: [],
       });
     }
     const f = m.get(key);
     f.acLines++;
     f.lines.push(l);
+    if (l.dtlKey !== null && l.dtlKey !== undefined) f.dtlKeys.add(String(l.dtlKey));
   }
   return [...m.values()];
 }
@@ -151,11 +157,22 @@ function buildFamilies(acLines, resolve) {
 /* Claim the document's ERP rows for its families. erpRows are
    { supplierSku, materialCode, ... }. Rules 2 and 3 above. */
 function claimErpRows(families, erpRows) {
-  for (const f of families) { f.skuRows = 0; f.codeRows = 0; f.claimed = 0; f.rows = []; }
+  for (const f of families) { f.keyRows = 0; f.skuRows = 0; f.codeRows = 0; f.claimed = 0; f.rows = []; }
   const byLongestKey = [...families].sort((a, b) => b.key.length - a.key.length);
   const unassigned = [];
   const ambiguous = [];
   for (const row of erpRows) {
+    // rule 1: the AutoCount line key, when the row carries one
+    const dk = row.linkedAcDtlKey === null || row.linkedAcDtlKey === undefined ? null : String(row.linkedAcDtlKey);
+    if (dk) {
+      const owner = families.find((f) => f.dtlKeys.has(dk));
+      if (owner) { owner.keyRows++; owner.claimed++; owner.rows.push(row); continue; }
+      /* A key naming a line that is not on this document is not a licence to
+         fall through to a weaker signal - it is a fact that disagrees with the
+         export, and it gets reported. */
+      unassigned.push(row);
+      continue;
+    }
     const sku = normSku(row.supplierSku);
     if (sku) {
       const hit = byLongestKey.find((f) => belongsToFamily(sku, f.key));

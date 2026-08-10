@@ -85,6 +85,41 @@ describe("the mixed-document shortfall the document-level check could not see", 
   });
 });
 
+describe("linked_ac_dtlkey, the strongest claim - migration 0273 (#1819)", () => {
+  const keyed = [{ itemCode: "AMN-SF9028 SOFA", dtlKey: "886047" }, { itemCode: "AMN-SQUARE PILLOW", dtlKey: "886051" }];
+
+  test("a row carrying the line key is claimed by it, whatever its supplier_sku says", () => {
+    const r = claim(keyed, [
+      { supplierSku: "SOMETHING-ELSE-ENTIRELY", materialCode: "9028-CNR", linkedAcDtlKey: 886047 },
+      { supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" },
+    ]);
+    expect(r.short).toBe(0);
+    expect(r.fam("AMN-SF9028 SOFA").keyRows).toBe(1);
+  });
+
+  /* A key naming a line that is not on this document is a fact that disagrees
+     with the export. Falling through to a weaker signal would let it quietly
+     cover a different line. */
+  test("a key naming a line not on this document claims nothing and is reported", () => {
+    const r = claim(keyed, [
+      { supplierSku: "AMN-SF9028 SOFA 1S", materialCode: "9028-1S", linkedAcDtlKey: 999999 },
+      { supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" },
+    ]);
+    expect(r.unassigned).toHaveLength(1);
+    expect(r.short).toBe(1);
+  });
+
+  test("every compartment of one sofa line shares that line's key", () => {
+    const r = claim(keyed, [
+      { supplierSku: null, materialCode: "9028-2A(LHF)", linkedAcDtlKey: 886047 },
+      { supplierSku: null, materialCode: "9028-1A(RHF)", linkedAcDtlKey: 886047 },
+      { supplierSku: null, materialCode: "SQP-01", linkedAcDtlKey: 886051 },
+    ]);
+    expect(r.short).toBe(0);
+    expect(r.fam("AMN-SF9028 SOFA").keyRows).toBe(2);
+  });
+});
+
 describe("rows that carry no supplier_sku - 225 of the 862 live migrated lines", () => {
   /* apply-sofa-compartment-corrections.mjs:212-217 INSERTs a corrected
      compartment by SELECTing from the source row and never carries
