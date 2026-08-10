@@ -63,7 +63,7 @@ if (MODE === "scan") {
   const poLines = await sql`
     SELECT i.item_group, i.description2, i.variants
       FROM scm.purchase_order_items i
-      JOIN scm.purchase_orders h ON h.doc_no = i.doc_no
+      JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
      WHERE h.company_id = 1 AND i.item_group IN ('sofa', 'bedframe')
        AND COALESCE(i.variants->>'fabricCode', '') = ''`;
   const lines = [...soLines.map((r) => ({ ...r, src: "SO" })), ...poLines.map((r) => ({ ...r, src: "PO" }))];

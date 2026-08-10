@@ -41,7 +41,11 @@ jobs:
           NAMES: ${{ inputs.names }}
           DUMP: ${{ inputs.dump }}
           DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
-        run: node scripts/probe-fabric-colours.mjs | tee probe-out.ndjson
+        # pipefail, or `tee` swallows the script's exit code and a probe that
+        # crashed half way through reports success with a truncated answer.
+        run: |
+          set -o pipefail
+          node scripts/probe-fabric-colours.mjs | tee probe-out.ndjson
       - uses: actions/upload-artifact@v4
         with:
           name: probe-fabric-colours
