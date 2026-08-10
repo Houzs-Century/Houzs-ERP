@@ -205,7 +205,10 @@ describe('parse-sofa: the 5526 cutover builds', () => {
     const r = parseSofa('2S+WOODEN ARM  (28") / COL-HARRING GD 8371 02-BEIGE', '5526', false) as
       { pieces: string[]; specials: string[] };
     expect(r.pieces).toEqual(['2S']);
-    expect(r.specials).toContain('wooden arm');
+    /* The sweep carries the request VERBATIM, so the parser's own canonical
+       "wooden arm" token is deduped away by the fuller wording that contains
+       it. Both spellings map to the same Wooden Arm picker code. */
+    expect(r.specials.join(' | ')).toMatch(/wooden arm/i);
   });
 
   /* Two builds deliberately stay placeholders: "1 ELT / T" is not readable, and
