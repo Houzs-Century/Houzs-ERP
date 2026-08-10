@@ -198,12 +198,45 @@ async function main() {
     else differ.push(row);
   }
 
+  /* Movement provenance per cell. This is the evidence that separates the cause
+     categories from each other: a cell whose only movement is the cutover
+     adjustment cannot have drifted through trading, and a cell carrying the
+     same source_doc_no twice is a duplicate rather than a missing posting. */
+  const mv = await sql`SELECT product_code, warehouse_id, source_doc_type,
+      COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
+    FROM scm.inventory_movements WHERE company_id = ${CO}
+    GROUP BY product_code, warehouse_id, source_doc_type`;
+  const mvBy = new Map();
+  for (const r of mv) {
+    const k = `${norm(r.product_code)}|${r.warehouse_id}`;
+    if (!mvBy.has(k)) mvBy.set(k, new Map());
+    mvBy.get(k).set(r.source_doc_type ?? "(null)", { n: r.n, units: Number(r.units) });
+  }
+  const dup = await sql`SELECT product_code, warehouse_id, source_doc_type, source_doc_no,
+      COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
+    FROM scm.inventory_movements WHERE company_id = ${CO} AND source_doc_no IS NOT NULL
+    GROUP BY product_code, warehouse_id, source_doc_type, source_doc_no
+    HAVING COUNT(*) > 1 ORDER BY COUNT(*) DESC LIMIT 200`;
+  const dupCell = new Set(dup.map((r) => `${norm(r.product_code)}|${r.warehouse_id}`));
+  log(`cells carrying the same source document more than once: ${dupCell.size} (${dup.length} document groups)`);
+  for (const r of dup.slice(0, 15)) log(`  DUP ${r.product_code} @ ${whName.get(String(r.warehouse_id)) ?? r.warehouse_id} ${r.source_doc_type} ${r.source_doc_no} x${r.n} = ${r.units} units`);
+
+  const provenance = (r) => {
+    const m = mvBy.get(`${r.code}|${r.whId}`);
+    if (!m) return "no movements";
+    return [...m.entries()].map(([t, v]) => `${t}x${v.n}=${v.units}`).join(" ");
+  };
+
   const causeOf = (r) => {
     if (KNOWN_DOUBLE_SHIP.codes.has(r.code)) return "KNOWN DOUBLE-SHIP (SO-2606-019, DO-2607-005 + DO-2607-017) — traced, owner decision pending";
+    if (dupCell.has(`${r.code}|${r.whId}`)) return "DUPLICATED MOVEMENT — the same source document is posted more than once against this cell";
     if (movedSinceSnapshot.has(`${r.code}|${r.whId}`)) return "MIGRATION CUT-OFF — AutoCount moved after the cutover snapshot the ERP was seeded from";
-    if (r.ac === null) return "ERP-ONLY — no AutoCount balance for this cell";
-    if (r.erp === null) return "AC-ONLY — AutoCount holds stock the ERP has no balance row for";
-    return "UNEXPLAINED — needs a document-level trace";
+    const m = mvBy.get(`${r.code}|${r.whId}`);
+    if (!m) return "NO ERP MOVEMENT — the cutover adjustment never reached this cell";
+    const types = new Set(m.keys());
+    if (types.size === 1 && types.has("AC_CUTOVER")) return "CUTOVER ADJUSTMENT ONLY — seeded once and untouched since, so the delta was present at seeding";
+    if (!types.has("AC_CUTOVER")) return "ERP-NATIVE STOCK — this cell was never seeded from AutoCount; it exists only in the ERP";
+    return "POSTED IN ONE SYSTEM ONLY — the ERP traded this cell after seeding; match against the AutoCount document list";
   };
 
   const totalAc = [...acCell.values()].reduce((s, x) => s + x, 0);
@@ -223,10 +256,47 @@ async function main() {
     log(`  ${v.n} cells / ${v.units} units — ${c}`);
   }
 
+  // per-warehouse rollup — the owner asks for the balance per location, not
+  // only per item, because a branch that is wholly wrong reads differently
+  // from the same units scattered across every branch.
+  const perWh = new Map();
+  for (const k of keys) {
+    const [code, whId] = k.split("|");
+    const a = acCell.has(k) ? Math.round(acCell.get(k)) : 0;
+    const e = erpCell.get(k) ?? 0;
+    const cell = perWh.get(whId) ?? { wh: whName.get(whId) ?? whId, cells: 0, agree: 0, ac: 0, erp: 0 };
+    cell.cells += 1; cell.ac += a; cell.erp += e;
+    if (a === e) cell.agree += 1;
+    perWh.set(whId, cell);
+  }
   log("");
-  log(`top disagreements by absolute unit delta (max ${TOP}):`);
-  for (const r of [...differ, ...acOnly, ...erpOnly].sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, TOP)) {
-    log(`  ${r.code} @ ${r.wh}: AutoCount ${r.ac ?? "-"} vs ERP ${r.erp ?? "-"} (${r.d > 0 ? "+" : ""}${r.d}) :: ${causeOf(r).split(" — ")[0]}`);
+  log("per-warehouse rollup:");
+  log(`  ${"warehouse".padEnd(20)} ${"cells".padStart(6)} ${"agree".padStart(6)} ${"AutoCount".padStart(10)} ${"ERP".padStart(8)} ${"delta".padStart(8)}`);
+  for (const c of [...perWh.values()].sort((a, b) => Math.abs(b.erp - b.ac) - Math.abs(a.erp - a.ac))) {
+    log(`  ${String(c.wh).padEnd(20)} ${String(c.cells).padStart(6)} ${String(c.agree).padStart(6)} ${String(c.ac).padStart(10)} ${String(c.erp).padStart(8)} ${String(c.erp - c.ac).padStart(8)}`);
+  }
+
+  // value ranking — cost per ERP product, so a 1-unit delta on a bedframe does
+  // not rank below a 40-unit delta on pillows.
+  const costByErp = new Map();
+  const addCost = (acCode, rm) => { const e = byAc.get(norm(acCode)); if (e && rm > 0 && !costByErp.has(norm(e))) costByErp.set(norm(e), rm); };
+  for (const r of gz("ac-utd-stock-cost.json.gz")) if (r.UTDQty > 0) addCost(r.ItemCode, r.AverageCost ?? (r.UTDCost / r.UTDQty));
+  for (const r of gz("ac-item-costs.json.gz")) addCost(r.ItemCode, r.RealCost || r.Cost || r.RecentCost);
+
+  const all = [...differ, ...acOnly, ...erpOnly];
+  log("");
+  log(`top disagreements by absolute UNIT delta (max ${TOP}):`);
+  for (const r of [...all].sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, TOP)) {
+    log(`  ${r.code} @ ${r.wh}: AutoCount ${r.ac ?? "-"} vs ERP ${r.erp ?? "-"} (${r.d > 0 ? "+" : ""}${r.d}) :: ${causeOf(r).split(" — ")[0]} :: ${provenance(r)}`);
+  }
+  log("");
+  log(`top disagreements by VALUE (max ${TOP}):`);
+  const valued = all.map((r) => ({ ...r, rm: Math.abs(r.d) * (costByErp.get(r.code) ?? 0) }))
+    .filter((r) => r.rm > 0).sort((a, b) => b.rm - a.rm);
+  const totalRm = valued.reduce((s, r) => s + r.rm, 0);
+  log(`  total value at risk across all disagreeing cells: RM ${totalRm.toFixed(2)} (costed cells: ${valued.length}/${all.length})`);
+  for (const r of valued.slice(0, TOP)) {
+    log(`  RM ${r.rm.toFixed(2).padStart(10)}  ${r.code} @ ${r.wh}: AutoCount ${r.ac ?? "-"} vs ERP ${r.erp ?? "-"} (${r.d > 0 ? "+" : ""}${r.d}) :: ${causeOf(r).split(" — ")[0]}`);
   }
 
   // ================= PART B — STATUS / REMARK 2 =================
