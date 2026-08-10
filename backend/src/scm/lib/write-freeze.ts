@@ -16,7 +16,10 @@
 //   app_config.value = 'off' / '' / row absent  → open
 //                    = 'all'                    → every company frozen
 //                    = comma-separated company ids ('1') → ONLY those frozen
-//   app_config.description = the message shown to staff (optional)
+//   app_config.description = the message shown to staff (optional; must be
+//                            under 200 characters or both clients discard it
+//                            and fall back to a generic 5xx line — see
+//                            freezeMessage at the bottom of this file)
 //
 // PER-COMPANY IS THE POINT (owner 2026-08-10: "是 Houzs company 而已, 2990
 // remain"). Only Houzs is mid-migration; 2990 trades normally through the same
@@ -105,10 +108,38 @@ export function scmWriteFreeze() {
     const perms = hu?.permissions ?? [];
     if (hu?.is_owner || BYPASS_PERMS.some((p) => perms.includes(p))) return next();
 
-    return c.json({
-      error: 'write_frozen',
-      reason: message
-        ?? 'Editing is paused while the AutoCount data migration is completed. Please do not create or change orders — ask IT when you need something updated.',
-    }, 503);
+    /* Both fields carry the SAME sentence on purpose. The vendored SCM client
+       reads `reason` (vendor/scm/lib/authed-fetch.ts humanApiError) and has
+       always shown this correctly; the core api/client.ts reads
+       `message`/`detail` and, sending only `reason`, showed the generic 503
+       line instead — "The service is briefly unavailable. Please try again in a
+       moment.", an outage sentence for a deliberate business pause. That line
+       also matches api/client.ts isColdPool503, so that client silently re-sent
+       the refused write four more times. Only one /api/scm write goes through
+       it today (pages/Team.tsx showroom parking), but it is the default client
+       for anything not vendored, so send both fields and let neither drift. */
+    const text = freezeMessage(message);
+    return c.json({ error: 'write_frozen', reason: text, message: text }, 503);
   };
+}
+
+/* Says the three things the floor needs and nothing else: saving is OFF, the
+   system is not broken, retrying will not help. Kept under OPERATOR_MESSAGE_MAX
+   so it survives both clients' length guard. */
+const DEFAULT_FROZEN_MESSAGE =
+  'Saving is paused while the AutoCount data is brought across. '
+  + 'Nothing is broken and retrying will not help. '
+  + 'Editing reopens after the cutover — ask IT if something must change today.';
+
+/* BOTH clients discard a server sentence of 200 characters or more and fall
+   back to their generic 5xx line, which reads as an outage — so an
+   operator-typed app_config.description that runs long would silently undo this
+   fix. The cap belongs here, the one place that holds both the operator's text
+   and the default. */
+const OPERATOR_MESSAGE_MAX = 200;
+
+/** Exported for the unit test. */
+export function freezeMessage(description: string | null | undefined): string {
+  const v = String(description ?? '').trim();
+  return v.length > 0 && v.length < OPERATOR_MESSAGE_MAX ? v : DEFAULT_FROZEN_MESSAGE;
 }
