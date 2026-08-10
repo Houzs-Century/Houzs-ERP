@@ -557,3 +557,6 @@ from a fact afterwards.
 If you are classifying DO lines, still infer defensively — own tag, then the SO
 line, then `mfg_products.category` — because hand-made and pre-2026-08-11 rows
 both exist. See `docs/sofa-document-chain-map.md`.
+How this document's lines relate to the SO / PO / GRN / DO it was copied from,
+which columns the migrated writer did and did not copy, and what a correction
+applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.
