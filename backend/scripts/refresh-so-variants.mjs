@@ -27,30 +27,21 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
-const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
-
-function parseCsvLine(line) {
-  const out = []; let cur = ""; let q = false;
-  for (let i = 0; i < line.length; i++) { const c = line[i];
-    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
-    else { if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; } }
-  out.push(cur); return out;
-}
-
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}`);
   const rows = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", "ac-outstanding-so.json.gz"))).toString("utf8").replace(/^﻿/, ""));
-  const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
-  csv.shift();
-  const byAc = new Map();
-  for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
-
-  // AutoCount DocNo|erp_code -> the freshly parsed variant block
+  /* AutoCount DtlKey -> the freshly parsed variant block.
+     DtlKey is the LINE's own identity and is unique across the whole export
+     (13,588 rows, 13,588 distinct keys). The pair (DocNo | erp_code) that this
+     lookup used until 2026-08-11 is NOT unique: one order routinely carries
+     several rows of the same SKU in different colours or heights, so Map.set
+     kept only the LAST of them and the write below then stamped that single
+     parse onto EVERY line sharing the key. 183 keys collided with a DIFFERENT
+     Desc2 and 298 export lines were lost that way - see BUG-HISTORY.md.
+     Keying on DtlKey also retires the AutoCount->ERP item-code CSV here: the
+     line identity needs no code translation to find its own text. */
   const parsed = new Map();
-  for (const r of rows) {
-    const erp = byAc.get(norm(r.ItemCode)); if (!erp) continue;
-    parsed.set(`${r.DocNo}|${erp.toUpperCase()}`, parseBedframe(r.Desc2));
-  }
+  for (const r of rows) parsed.set(Number(r.DtlKey), parseBedframe(r.Desc2));
 
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const { findColour } = buildFabricColourIndex(fcRows);
@@ -58,19 +49,21 @@ async function main() {
 
   // (SP) special-size lines are included whatever their group — a custom-size
   // MATTRESS carries its dimensions in Desc2 too and must show them.
-  const items = await sql`SELECT i.id, i.item_code, i.item_group, i.variants, i.description2, h.linked_ac_docno
+  const items = await sql`SELECT i.id, i.item_code, i.item_group, i.variants, i.description2, i.linked_ac_dtlkey, h.linked_ac_docno
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = 1 AND (i.item_group = 'bedframe' OR i.item_code ILIKE '%(SP)%') AND h.linked_ac_docno IS NOT NULL`;
   log(`imported bedframe lines: ${items.length}`);
 
-  const updates = []; let gained = 0;
+  const updates = []; let gained = 0; let byKey = 0, byOwnText = 0, noSource = 0;
   for (const it of items) {
-    // The line stores the original AutoCount Desc2 in description2, so when the
-    // export/CSV lookup misses (e.g. an (SP) code absent from the binding CSV),
-    // parse the line's own text instead of skipping it.
-    const bf = parsed.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`)
-      ?? (it.description2 ? parseBedframe(it.description2) : null);
-    if (!bf) continue;
+    /* Resolve by the LINE's identity, never by (document + item code). A line
+       with no stored DtlKey falls back to its OWN description2, which the
+       import wrote per line and is therefore line-accurate too; what must never
+       happen again is one line's text being applied to another's. */
+    const viaKey = it.linked_ac_dtlkey != null ? parsed.get(Number(it.linked_ac_dtlkey)) : undefined;
+    const bf = viaKey ?? (it.description2 ? parseBedframe(it.description2) : null);
+    if (!bf) { noSource++; continue; }
+    if (viaKey) byKey++; else byOwnText++;
     if (it.item_group !== "bedframe") {
       // non-bedframe (SP) line: only the dimensions apply — no fabric/gap/divan/leg
       if (!bf.size) continue;
@@ -101,6 +94,7 @@ async function main() {
   const withColour = updates.filter((u) => u.variants.colourId).length;
   const withSpecials = updates.filter((u) => u.specials.length).length;
   log(`lines to refresh: ${updates.length}; with colour: ${withColour} (newly gained ${gained}); with real special options: ${withSpecials}`);
+  log(`source of truth: ${byKey} by AutoCount DtlKey, ${byOwnText} by the line's own description2, ${noSource} skipped for having neither`);
 
   if (!APPLY) { log("\nDRY-RUN — set APPLY=1 to write."); await sql.end(); return; }
   for (let i = 0; i < updates.length; i += 200) {
