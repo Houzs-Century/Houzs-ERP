@@ -4230,69 +4230,33 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
   return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' } });
 });
 
-// ── Delete ────────────────────────────────────────────────────────────
-// Hard-delete a PO + its line items. PR-DRAFT-removal: DRAFT no longer
-// exists. Only CANCELLED POs may be deleted (SUBMITTED+ have downstream
-// docs that reference them — use Cancel first).
-mfgPurchaseOrders.delete('/:id', async (c) => {
-  const id = c.req.param('id');
-  const supabase = c.get('supabase');
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  // Status guard first — get current row.
-  const { data: cur, error: readErr } = await scopeToCompanyId(supabase
-    .from('purchase_orders')
-    .select('id, status, po_number, company_id, supplier_id, total_centi, po_date')
-    .eq('id', id), co.companyId)
-    .maybeSingle();
-  if (readErr) return c.json({ error: 'read_failed', reason: readErr.message }, 500);
-  if (!cur)    return c.json(NOT_THIS_COMPANY, 404);
-  const row = cur as {
-    id: string; status: string; po_number: string;
-    company_id?: number | null; supplier_id?: string | null; total_centi?: number | null; po_date?: string | null;
-  };
-  if (row.status !== 'CANCELLED') {
-    return c.json({
-      error: 'cannot_delete',
-      message: `PO ${row.po_number} is ${row.status}. Only CANCELLED POs can be deleted. Use Cancel first.`,
-    }, 409);
-  }
-  /* Capture the source SO links before the cascade wipes the lines, so we can
-     recount after. Cancel already released them, but this self-heals any legacy
-     CANCELLED PO whose SO lines were never released. */
-  const { data: doomedLines } = await supabase
-    .from('purchase_order_items')
-    .select('so_item_id')
-    .eq('purchase_order_id', id);
+/* ── Delete: REMOVED (owner rule, 2026-08-11) ──────────────────────────────
+   There was a DELETE /:id here that hard-purged a CANCELLED PO, header and
+   lines, from the database. It is gone, and it must not come back.
 
-  // Items cascade via FK ON DELETE CASCADE.
-  const { error: delErr } = await scopeToCompanyId(supabase.from('purchase_orders').delete().eq('id', id), co.companyId);
-  if (delErr) return c.json({ error: 'delete_failed', reason: delErr.message }, 500);
+   The owner's rule is 不可以删只可以 cancel — nothing is ever deleted, only
+   cancelled. This endpoint was the one place in the purchase chain that broke
+   it, and its own code said so: the audit row it wrote was documented as "the
+   ONLY remaining evidence that the PO existed", with number, supplier and
+   total snapshotted into field_changes precisely because nothing could be
+   joined back to afterwards. An audit row that has to carry a copy of the
+   document is not an audit trail, it is an obituary.
 
-  /* The one action whose subject no longer exists once it is recorded — the
-     purchase_orders row is gone, so this entry is the ONLY remaining evidence
-     that the PO existed. Hence the snapshot of number / supplier / total in
-     field_changes: nothing can be joined back to afterwards. entity_id is kept
-     regardless so a later document cannot silently inherit this history. */
-  await recordEntityAudit(supabase, {
-    entityType: 'PURCHASE_ORDER',
-    entityId: id,
-    entityDocNo: row.po_number,
-    action: 'DELETE',
-    actor: c.get('houzsUser'),
-    companyId: row.company_id ?? activeCompanyId(c),
-    statusSnapshot: 'CANCELLED',
-    fieldChanges: compactChanges([
-      fieldChange('poNumber', row.po_number, null),
-      fieldChange('supplierId', row.supplier_id ?? null, null),
-      fieldChange('totalCenti', Number(row.total_centi ?? 0), null),
-      fieldChange('poDate', row.po_date ?? null, null),
-      fieldChange('status', 'CANCELLED', null),
-    ]),
-  });
+   It is also a cancel-divergence generator the moment AutoCount sync goes
+   live. AutoCount keeps a cancelled PO; a purged one has no row to reconcile
+   against, so the two systems disagree with no way to tell whether the ERP
+   ever had that document. CANCELLED already achieves everything the delete was
+   used for: the PO leaves every working list, releases its SO quota, and
+   clears its allocation sub-lines. The only thing delete added was the loss of
+   the record.
 
-  try { await recomputeSoPicked(supabase, ((doomedLines ?? []) as Array<{ so_item_id: string | null }>).map((l) => l.so_item_id)); }
-  catch { /* PO already deleted — don't fail on counter recount */ }
+   NOT touched, deliberately: the create-time rollback deletes at :1342 and
+   :2351. supabase-js has no transaction, so those compensating deletes are the
+   ONLY thing standing between a failed line insert and a headerless orphan
+   document. They remove a document that never successfully existed; this
+   endpoint removed one that did.
 
-  return c.json({ ok: true, deleted: row.po_number });
-});
+   The SO equivalent (mfg-sales-orders.ts DELETE /:docNo) is DRAFT-only and
+   stays: discarding a draft that was never confirmed is not deleting a
+   business record, and it refuses anything else with so_not_draft ("A
+   confirmed order must be cancelled, not deleted"). */
