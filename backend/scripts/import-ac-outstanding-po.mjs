@@ -206,7 +206,13 @@ async function main() {
   // group by PO, drop sofa lines
   const groups = new Map();
   const SOFA = process.env.SOFA === "1"; // owner 2026-08-10: 沙发 PO 也要进
-  for (const r of rows) { if (!SOFA && isSofa(r.ItemCode)) continue; if (!groups.has(r.DocNo)) groups.set(r.DocNo, []); groups.get(r.DocNo).push(r); }
+  /* NO received-filter on the purchasing side (owner 2026-08-10: "沙发还没送货,
+     但已经有了 PO,那个 PO 可能已经被收货,也可能还没被收货,这些也全都要拉进
+     来"). A received PO still belongs in the ERP — the goods exist and the
+     customer leg is still open. The SO side's DO rule governs the CUSTOMER
+     delivery only and deliberately does not mirror onto purchasing. */
+  const doneDocs = new Set();
+  for (const r of rows) { if (doneDocs.has(r.DocNo)) continue; if (!SOFA && isSofa(r.ItemCode)) continue; if (!groups.has(r.DocNo)) groups.set(r.DocNo, []); groups.get(r.DocNo).push(r); }
   let pos = [...groups.entries()];
   if (LIMIT) pos = pos.slice(0, LIMIT);
 
