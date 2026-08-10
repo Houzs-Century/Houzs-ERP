@@ -1,0 +1,33 @@
+name: Over-receipt check
+
+# READ-ONLY forensic measurement of PO lines received beyond what they ordered,
+# and of the same shape on the delivery side.
+#
+# MANUAL TRIGGER ONLY — deliberately no schedule. This is a one-off
+# investigation of the 2026-08 cutover import, not a standing guard, and a
+# production read has no business running unattended on a timer.
+on:
+  workflow_dispatch:
+    inputs:
+      grn_no:
+        description: "GRN to dump in full (§4)"
+        required: false
+        default: "HC-GR-004913"
+        type: string
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/check-over-receipt.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GRN_NO: ${{ inputs.grn_no }}
