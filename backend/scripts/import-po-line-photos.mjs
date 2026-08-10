@@ -86,13 +86,17 @@ async function main() {
       targets = byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
       if (!targets || !targets.length) targets = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
       if (!targets || !targets.length) { sofaHeld++; heldDocs.push(`${m.DocNo} ${m.ItemCode}`); continue; }
+      /* Owner 2026-08-10: "我开 PO 每个 SKU 的照片都一样,留第一个就可以了" -
+         one AutoCount sofa line is one photograph of one build, so it belongs
+         on the first compartment row, not copied onto all of them. */
+      targets = targets.slice(0, 1);
     } else {
       const exact = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
       /* Not every sofa's AutoCount code says SOFA — "THL-2379" is one too, and
          the literal path would look for a whole "2379-1S" line that a
          decomposed PO does not have. Fall back to the build's compartment
          lines before calling it missing. */
-      targets = exact && exact.length ? [exact[0]] : byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
+      targets = exact && exact.length ? [exact[0]] : (byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`) ?? []).slice(0, 1);
       if (!targets || !targets.length) {
         if (items.some((it) => it.linked_ac_docno === m.DocNo)) { noLine++; log(`  line not found: ${m.DocNo} ${m.ItemCode} -> ${erp}`); }
         else noOrder++;
