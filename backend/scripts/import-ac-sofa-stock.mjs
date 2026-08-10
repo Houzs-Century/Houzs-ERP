@@ -72,6 +72,19 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
+/* A calendar day as YYYY-MM-DD, from either a pg `Date` or a string.
+   `String(d).slice(0,10)` is WRONG on a Date: the postgres driver hands back a
+   JS Date whose toString() is "Wed Jun 24 2026 08:00:00 GMT+0800", so slicing
+   ten characters yields "Wed Jun 24". That value reached the INSERT as
+   'Wed Jun 24T00:00:00Z' and aborted the first APPLY run (2026-08-11). */
+const isoDay = (v) => {
+  if (v === null || v === undefined || v === "") return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v));
+  if (m) return m[1];
+  const d = new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+};
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
 /* A sofa SET, not a sofa-shaped accessory. `AMN-SOFA PILLOW` matches /SOFA/ and
@@ -153,7 +166,7 @@ async function main() {
     if (!builds.has(k)) {
       builds.set(k, {
         key: k, acItem: ac, acPo: l.linked_ac_docno, poNumber: l.po_number,
-        poDate: l.po_date ? String(l.po_date).slice(0, 10) : null, lines: [],
+        poDate: isoDay(l.po_date), lines: [],
       });
     }
     builds.get(k).lines.push(l);
@@ -251,7 +264,7 @@ async function main() {
         costSen: lead ? costSen : 0,
         acPo: b.acPo,
         soItemId: l.so_item_id,
-        receivedAt: (c && c.date) || b.poDate,
+        receivedAt: isoDay(c && c.date) || b.poDate,
       });
       lead = false;
     }
@@ -359,18 +372,21 @@ async function main() {
   const hasCo = mvCols.includes("company_id");
   let done = 0;
   for (const p of todo) {
-    const base = ["movement_type", "warehouse_id", "product_code", "product_name", "variant_key",
+    /* Every value is BOUND, not interpolated. The previous version pasted the
+       date straight into the SQL text as `'${p.receivedAt}T00:00:00Z'`, which is
+       how a `Date` object that stringified to "Wed Jun 24" became the literal
+       `'Wed Jun 24T00:00:00Z'` and aborted the run on its first insert. */
+    const cols = ["movement_type", "warehouse_id", "product_code", "product_name", "variant_key",
       "qty", "unit_cost_sen", "batch_no", "source_doc_type", "source_doc_no", "notes"];
-    const vals = ["'ADJUSTMENT'", `'${p.whId}'`, "$1", "$2", "$3", `${p.qty}`, `${p.costSen}`, "$4",
-      "'AC_CUTOVER'", `'${SRC_DOC}'`, "$5"];
-    const cols = [...base];
-    if (p.receivedAt) { cols.push("created_at"); vals.push(`'${p.receivedAt}T00:00:00Z'`); }
-    if (hasCo) { cols.push("company_id"); vals.push("1"); }
+    const args = ["ADJUSTMENT", p.whId, p.code, p.name, p.variantKey, p.qty, p.costSen, p.batch,
+      "AC_CUTOVER", SRC_DOC, `AutoCount sofa opening: ${p.acPo} received, batch ${p.batch}`];
+    if (p.receivedAt) { cols.push("created_at"); args.push(`${p.receivedAt}T00:00:00Z`); }
+    if (hasCo) { cols.push("company_id"); args.push(1); }
     await sql.unsafe(
-      `INSERT INTO scm.inventory_movements (${cols.join(",")}) VALUES (${vals.join(",")})`,
-      [p.code, p.name, p.variantKey, p.batch, `AutoCount sofa opening: ${p.acPo} received, batch ${p.batch}`]);
+      `INSERT INTO scm.inventory_movements (${cols.join(",")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(",")})`,
+      args);
     done++;
-    if (done % 50 === 0) log(`  ..${done}/${todo.length}`);
+    if (done % 25 === 0) log(`  ..${done}/${todo.length}`);
   }
   log(`DONE. sofa opening lots written: ${done} / ${units} units.`);
   log("Run the allocation recompute afterwards — the lines flip on the next allocation pass, not here.");
