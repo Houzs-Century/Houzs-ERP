@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:pg": "vitest run --config vitest.pg.config.ts",
     "test:watch": "vitest",
-    "test:scale-contract": "node --test tests/scaleTargetGuard.node.mjs tests/scaleRealSchemaContract.node.mjs tests/scaleRouteDrift.node.mjs tests/routeMatrixDrift.node.mjs",
+    "test:scale-contract": "node --test tests/scaleTargetGuard.node.mjs tests/scaleRealSchemaContract.node.mjs tests/scaleRouteDrift.node.mjs tests/routeMatrixDrift.node.mjs tests/pgrestShim.node.mjs",
     "perf:scale": "node scripts/scale-harness.mjs",
     "audit:routes": "node scripts/generate-route-capability-matrix.mjs --check",
     "audit:job-types": "node scripts/check-job-type-parity.mjs",
