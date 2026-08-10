@@ -69,10 +69,12 @@ if (MODE === "scan") {
   const lines = [...soLines.map((r) => ({ ...r, src: "SO" })), ...poLines.map((r) => ({ ...r, src: "PO" }))];
   note(`--- LIVE SCAN: ${lines.length} unbound lines (SO ${soLines.length} / PO ${poLines.length}) ---`);
 
-  // mirrors parse-sofa's colour arm; a bedframe goes through the real parser
+  // mirrors parse-sofa's colour arm; a bedframe goes through the real parser.
+  // Desc2 wraps the block in brackets ("[COL: X ]"), so the closer is stripped
+  // or "HM 3383-6 ]" and "HM 3383-6" count as two different colours.
   const sofaColour = (d2) => {
     const m = /col(?:our|or)?\s*[-:：]\s*([^\/\n]+)/i.exec(d2 || "");
-    return m ? m[1].trim() : null;
+    return m ? m[1].replace(/[\])}\s]+$/, "").trim() : null;
   };
   const seen = new Map();
   let withColour = 0, nowBinds = 0;
