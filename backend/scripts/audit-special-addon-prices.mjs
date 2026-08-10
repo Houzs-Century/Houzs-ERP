@@ -122,14 +122,20 @@ async function main() {
      column on either line table. Reading a `_sen` column here would just error;
      summing one would prove nothing. SO totals live in `total_centi`, PO totals
      in `line_total_centi`. */
+  /* WHAT MARKS A LINE AS MIGRATED. Not `migrated_no_stock` — that column exists
+     only on scm.grns and scm.delivery_orders. On the SO and PO headers the
+     marker is `linked_ac_docno IS NOT NULL`, which is what
+     check-migrated-numbering.mjs:28/33 uses and what the specials backfill
+     already filters on, so the flag this query read was redundant with its own
+     WHERE clause. Selecting it failed outright on prod (42703, run 31420902643). */
   const soLines = await sql`SELECT i.id, i.doc_no AS doc, i.item_code AS code, i.item_group AS grp,
       i.description2 AS d2, i.variants, i.unit_price_centi AS unit_centi, i.total_centi AS tot_centi,
-      i.line_no, i.linked_ac_dtlkey, h.linked_ac_docno AS acdoc, h.migrated_no_stock AS migrated
+      i.line_no, i.linked_ac_dtlkey, h.linked_ac_docno AS acdoc
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;
   const poLines = await sql`SELECT i.id, h.po_number AS doc, i.material_code AS code, i.item_group AS grp,
       i.description2 AS d2, i.variants, i.unit_price_centi AS unit_centi, i.line_total_centi AS tot_centi,
-      NULL::int AS line_no, i.linked_ac_dtlkey, h.linked_ac_docno AS acdoc, h.migrated_no_stock AS migrated
+      NULL::int AS line_no, i.linked_ac_dtlkey, h.linked_ac_docno AS acdoc
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;
   log("");
@@ -194,7 +200,7 @@ async function main() {
         affected.push({
           which, doc: r.doc, line_no: r.line_no, id: r.id, code: r.code, cat,
           unit_centi: Number(r.unit_centi ?? 0), tot_centi: Number(r.tot_centi ?? 0),
-          acdoc: r.acdoc, acdtl: r.linked_ac_dtlkey, migrated: r.migrated,
+          acdoc: r.acdoc, acdtl: r.linked_ac_dtlkey,
           codes: pricedAdded, delta, deltaCost, sellBase, reprices,
         });
       }
@@ -236,8 +242,8 @@ async function main() {
   log(`       and the sofa module-cost branch re-adds the same surcharges (:490-491,`);
   log(`       "line-level cost surcharges (sofa leg / specials) stay on top").`);
   log(`     - so MARGIN moves on every affected line even where the price does not.`);
-  const nonMigratedAffected = affected.filter((a) => a.migrated !== true).length;
-  log(`   of these lines, header migrated_no_stock<>true: ${nonMigratedAffected}`);
+  log(`   every line above is migrated by definition — the query filters on`);
+  log(`   h.linked_ac_docno IS NOT NULL, the SO/PO migrated marker.`);
 
   // machine-readable, for joining against AutoCount off-line
   log("");
