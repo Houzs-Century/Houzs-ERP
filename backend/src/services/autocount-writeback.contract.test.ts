@@ -483,16 +483,16 @@ export const DIVERGENCES: Divergence[] = [
     severity: 'critical',
   },
   {
-    id: 'D13', flow: 'create_so + edit (and every PO flow via D11)', field: 'Details[] / Lines[] — all of them',
-    service: 'CreateSo iterates List(p, "Details") (AcSyncService.cs:178); an empty list is an order with no lines.',
-    erp: 'selects linked_ac_dtlkey (autocount-outbox.ts:169,:447), a column PR #1819 has not landed. PostgREST does not ignore an unknown column, it fails the whole query with 42703 — so `items` is null, `items ?? []` is empty, and EVERY line is dropped. #1855 describes this state as "every line is new ... correct-but-degraded"; it is every line MISSING.',
-    severity: 'critical',
-  },
-  {
     id: 'D12', flow: 'create_so + create_po + edit', field: 'Details[] — line discount',
     service: 'reads no discount field; SalesOrderDetail exposes Discount and DiscountAmt (sdk-api-reference.txt:468) and neither is in the payload contract.',
     erp: 'has discount_centi on both item tables and never sends it, so the AutoCount document total is the undiscounted one. On a sofa the discount sits on ONE compartment row (mfg-sales-orders.ts:4398), which makes it easy to miss.',
     severity: 'high',
+  },
+  {
+    id: 'D13', flow: 'create_so + edit (and every PO flow via D11)', field: 'Details[] / Lines[] — all of them',
+    service: 'CreateSo iterates List(p, "Details") (AcSyncService.cs:178); an empty list is an order with no lines.',
+    erp: 'selects linked_ac_dtlkey (autocount-outbox.ts:169,:447), a column PR #1819 has not landed. PostgREST does not ignore an unknown column, it fails the whole query with 42703 — so `items` is null, `items ?? []` is empty, and EVERY line is dropped. #1855 describes this state as "every line is new ... correct-but-degraded"; it is every line MISSING.',
+    severity: 'critical',
   },
 ];
 
