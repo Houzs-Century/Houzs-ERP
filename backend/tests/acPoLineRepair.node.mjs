@@ -193,10 +193,10 @@ test("two AutoCount lines sharing a code split on Desc2, which is what the ERP c
   assert.deepEqual([...new Set(m.pairs.map((p) => p.how))], ["split"]);
 });
 
-test("rows identical in every stored field are zipped in DtlKey order and FLAGGED, not presented as resolved", () => {
+test("rows identical in every stored field are zipped ONLY when the AutoCount lines agree on every written value", () => {
   const ac = [
-    { key: 60702, itemCode: "NB-KHJ57(K)", qty: 1, desc2: "" },
-    { key: 60700, itemCode: "NB-KHJ57(K)", qty: 1, desc2: "" },
+    { key: 60702, itemCode: "NB-KHJ57(K)", qty: 1, desc2: "", fromSoKey: "60700", deliveryDate: "2024-05-21" },
+    { key: 60700, itemCode: "NB-KHJ57(K)", qty: 1, desc2: "", fromSoKey: "60700", deliveryDate: "2024-05-21" },
   ];
   const rows = [erp("r2", "NB-KHJ57(K)", "KHJ57-K"), erp("r1", "NB-KHJ57(K)", "KHJ57-K")];
   const m = matchAcLinesToErpRows(ac, rows);
@@ -206,6 +206,102 @@ test("rows identical in every stored field are zipped in DtlKey order and FLAGGE
   const byRow = new Map(m.pairs.map((p) => [p.row.id, p.ac.key]));
   assert.equal(byRow.get("r1"), 60700);
   assert.equal(byRow.get("r2"), 60702);
+});
+
+// ── the zip's premise, which the real data refutes ───────────────────────────
+// Delete the `distinct.length > 1` refusal in ac-po-line-match.mjs and the next
+// three tests fail: the first two zip 2 pairs instead of refusing, and the
+// snapshot test reports 5 zipped buckets instead of 5 refusals.
+
+test("two AutoCount lines that disagree on FromSODtlKey are REFUSED, never zipped", () => {
+  // PO-000290's real shape: same code, same qty, same Desc2, same date — and
+  // two different origin SO lines, which on that document are two different
+  // PRODUCTS. A zip here is a coin flip on so_item_id and on the write-back's
+  // edit handle, and a wrong DtlKey makes AcSyncService APPEND instead of edit.
+  const ac = [
+    { key: 61216, itemCode: "NB-KHJ57(K)", qty: 1, desc2: "COL:PC151-02", fromSoKey: "60700", deliveryDate: "2024-05-21" },
+    { key: 61217, itemCode: "NB-KHJ57(K)", qty: 1, desc2: "COL:PC151-02", fromSoKey: "60702", deliveryDate: "2024-05-21" },
+  ];
+  const rows = [erp("r1", "NB-KHJ57(K)", "KHJ57-K", { description2: "COL:PC151-02" }),
+                erp("r2", "NB-KHJ57(K)", "KHJ57-K", { description2: "COL:PC151-02" })];
+  const m = matchAcLinesToErpRows(ac, rows);
+  assert.equal(m.pairs.length, 0, "nothing may be paired out of a coin-flip bucket");
+  assert.equal(m.refused.length, 1);
+  assert.match(m.refused[0].reason, /FromSODtlKey/);
+  // the report must carry BOTH candidates, or the owner cannot adjudicate it
+  assert.deepEqual(m.refused[0].candidates.map((c) => c.key), [61216, 61217]);
+  assert.deepEqual(m.refused[0].candidates.map((c) => c.fromSoKey), ["60700", "60702"]);
+  assert.deepEqual(m.refused[0].rowIds, ["r1", "r2"]);
+});
+
+test("two AutoCount lines that disagree on DeliveryDate are REFUSED, never zipped", () => {
+  const ac = [
+    { key: 10, itemCode: "AK-X (K)", qty: 1, desc2: "", fromSoKey: "5", deliveryDate: "2026-01-01" },
+    { key: 11, itemCode: "AK-X (K)", qty: 1, desc2: "", fromSoKey: "5", deliveryDate: "2026-09-09" },
+  ];
+  const m = matchAcLinesToErpRows(ac, [erp("r1", "AK-X (K)", "X-K"), erp("r2", "AK-X (K)", "X-K")]);
+  assert.equal(m.pairs.length, 0);
+  assert.equal(m.refused.length, 1);
+  assert.match(m.refused[0].reason, /DeliveryDate/);
+});
+
+test("EVERY indistinguishable bucket in the committed exports disagrees on FromSODtlKey", () => {
+  // This is the fact that refutes the zip's original premise, pinned against
+  // the real snapshots rather than a fixture. 5 buckets, 10 AutoCount lines,
+  // all 5 disagreeing — so the correct repair count for them is ZERO.
+  const merged = [...mergeAcPoLines(SO_LINKED, OUTSTANDING).values()];
+  const nrm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
+  const buckets = new Map();
+  for (const l of merged) {
+    if (acDtlKey(l) === null) continue;
+    const k = `${l.DocNo}|${nrm(l.ItemCode)}|${Number(l.Qty) || 0}|${nrm(l.Desc2)}`;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(l);
+  }
+  const ambiguous = [...buckets.values()].filter((v) => v.length > 1);
+  assert.equal(ambiguous.length, 5, "5 buckets survive the (qty, Desc2) split");
+  assert.equal(ambiguous.reduce((n, v) => n + v.length, 0), 10);
+  for (const acs of ambiguous) {
+    assert.ok(
+      new Set(acs.map((a) => acFromSoDtlKey(a) ?? "-")).size > 1,
+      `${acs[0].DocNo} "${acs[0].ItemCode}" must disagree on FromSODtlKey — the zip's premise was that it would not`,
+    );
+  }
+  // and the matcher must refuse all of them rather than zip any
+  for (const acs of ambiguous) {
+    const shaped = acs.map((l) => ({
+      key: acDtlKey(l), itemCode: l.ItemCode, qty: Number(l.Qty) || 0, desc2: l.Desc2,
+      fromSoKey: acFromSoDtlKey(l), deliveryDate: acDeliveryDate(l),
+    }));
+    const rows = shaped.map((s, i) => erp(`row${i}`, s.itemCode, "ANY", { qty: s.qty, description2: s.desc2 }));
+    const m = matchAcLinesToErpRows(shaped, rows);
+    assert.equal(m.pairs.length, 0, `${acs[0].DocNo} must repair 0 rows`);
+    assert.equal(m.refused.length, 1);
+  }
+});
+
+// ── the tie-break sort ───────────────────────────────────────────────────────
+// Restore `String(a.id).localeCompare(String(b.id))` in ac-po-line-match.mjs and
+// this fails: [9,10,11,12] sorts as [10,11,12,9], so the sofa's two compartment
+// rows land under different AutoCount lines.
+
+test("row ids are ordered numerically, so a sofa's compartment rows are not split by text sort", () => {
+  const ac = [
+    { key: 100, itemCode: "HOK-5530 SOFA", qty: 1, desc2: "", fromSoKey: "7", deliveryDate: "2026-08-15" },
+    { key: 101, itemCode: "HOK-5530 SOFA", qty: 1, desc2: "", fromSoKey: "7", deliveryDate: "2026-08-15" },
+  ];
+  // two PO lines, each fanned out into two compartment rows: ids 9,10 and 11,12
+  const rows = [
+    erp(11, "HOK-5530 SOFA 2A(LHF)", "9028-2A(LHF)"), erp(9, "HOK-5530 SOFA 2A(LHF)", "9028-2A(LHF)"),
+    erp(12, "HOK-5530 SOFA L(RHF)", "9028-L(RHF)"), erp(10, "HOK-5530 SOFA L(RHF)", "9028-L(RHF)"),
+  ];
+  const m = matchAcLinesToErpRows(ac, rows);
+  assert.equal(m.pairs.length, 4);
+  const byRow = new Map(m.pairs.map((p) => [p.row.id, p.ac.key]));
+  assert.equal(byRow.get(9), 100);
+  assert.equal(byRow.get(10), 100, "9 and 10 are one PO line's compartments — they must share an AutoCount line");
+  assert.equal(byRow.get(11), 101);
+  assert.equal(byRow.get(12), 101);
 });
 
 test("a group whose two sides do not split the same way is refused whole, never guessed", () => {

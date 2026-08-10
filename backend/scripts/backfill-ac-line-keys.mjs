@@ -92,10 +92,19 @@ async function main() {
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL`;
   await run("SO lines", soRows, soAc, "mfg_sales_order_items");
 
-  const poRows = await sql`SELECT i.id, i.material_code AS code, NULL::int AS line_no, i.linked_ac_dtlkey, h.linked_ac_docno AS ac
-    FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
-    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL`;
-  await run("PO lines", poRows, poAc, "purchase_order_items");
+  /* THE PO HALF IS RETIRED — repair-migrated-po-lines.mjs owns purchase-order
+     linked_ac_dtlkey now, and two writers with different rules would fight.
+     This one was the weaker rule and it never ran, so nothing is lost:
+       - it matched on (DocNo, ERP item code), which cannot tell apart two PO
+         lines of the same code, where the repair splits them on (qty, Desc2)
+         and REFUSES what that does not separate;
+       - it zipped by line_no, which it selected as `NULL::int` for PO rows, so
+         the sort was a no-op and the pairing was whatever order postgres
+         happened to return — not reproducible between runs;
+       - it had no notion of a sofa line fanning out into compartment rows.
+     The SO half above is untouched and still the only writer for SO lines. */
+  log("PO lines: skipped — repair-migrated-po-lines.mjs is the single writer for purchase-order linked_ac_dtlkey.");
+  void poAc;
 
   if (!APPLY) log("DRY-RUN — set APPLY=1 to write.");
   await sql.end();

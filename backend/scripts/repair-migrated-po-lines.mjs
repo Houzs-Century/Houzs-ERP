@@ -125,11 +125,17 @@ async function main() {
   log(`  headers missing expected_at: ${headers.filter((h) => !h.expected_at).length}`);
 
   /* A cancelled sales-order line is not a thing a purchase order can serve, so
-     it is not offered — the repair may only refuse a link, never invent one. */
+     it is not offered — the repair may only refuse a link, never invent one.
+     COALESCE, not `= false`: the column is nullable and this repo reads it as
+     nullable everywhere it matters, check-po-so-links.mjs — the checker for
+     THIS link — included. A bare `= false` is NULL for a NULL row, so the row
+     drops out of the taker pool; that both under-repairs and, because the pool
+     is claim-once, can hand a DIFFERENT line to the PO row that follows. */
   const soItems = await sql`SELECT i.id, i.item_code, i.line_no, h.linked_ac_docno AS ac
     FROM scm.mfg_sales_order_items i
     JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-   WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL AND i.cancelled = false
+   WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL
+     AND COALESCE(i.cancelled, false) = false
    ORDER BY i.line_no`;
   const taken = new Set(
     (await sql`SELECT DISTINCT so_item_id FROM scm.purchase_order_items WHERE so_item_id IS NOT NULL`)
@@ -141,6 +147,7 @@ async function main() {
   const plan = [];            // { id, poNo, soItemId?, deliveryDate?, dtlKey? }
   const unresolved = [];      // { poNo, code, reason }
   const refusals = [];
+  const crossProduct = [];    // dedications refused because the SO line is another product
   const noAcDoc = [];
   let sole = 0, split = 0, indistinguishable = 0, unmatchedErp = 0, unmatchedAc = 0, wouldKey = 0;
 
@@ -160,25 +167,44 @@ async function main() {
       continue;
     }
 
+    /* fromSoKey and deliveryDate ride along because they are what this repair
+       WRITES off the AutoCount line, and the matcher must refuse to zip two
+       otherwise-identical lines that disagree on them. */
     const shaped = acLines.map((l) => ({
       key: acDtlKey(l), itemCode: l.ItemCode, qty: Number(l.Qty) || 0, desc2: l.Desc2,
-      erpCodes: [byAc.get(norm(l.ItemCode))].filter(Boolean), raw: l,
+      erpCodes: [byAc.get(norm(l.ItemCode))].filter(Boolean),
+      fromSoKey: acFromSoDtlKey(l), deliveryDate: acDeliveryDate(l), raw: l,
     })).filter((l) => l.key !== null);
 
     const m = matchAcLinesToErpRows(shaped, erpRows);
     unmatchedErp += m.unmatchedErp.length;
     unmatchedAc += m.unmatchedAc.length;
-    for (const r of m.refused) refusals.push({ poNo: h.po_number, ...r });
+    /* A refused group's rows are not in m.pairs, so they would otherwise fall
+       out of the per-line reason list silently. Every unrepaired line gets a
+       reason — that is the promise this report makes. */
+    const rowById = new Map(erpRows.map((r) => [r.id, r]));
+    for (const r of m.refused) {
+      refusals.push({ poNo: h.po_number, ...r });
+      for (const id of r.rowIds ?? []) {
+        const row = rowById.get(id);
+        if (row && row.so_item_id && row.delivery_date && row.linked_ac_dtlkey != null) continue;
+        unresolved.push({ poNo: h.po_number, code: row?.material_code, reason: `REFUSED group "${r.code}": ${r.reason}` });
+      }
+    }
     for (const r of m.unmatchedErp) unresolved.push({ poNo: h.po_number, code: r.material_code, reason: `no AutoCount line on ${h.linked_ac_docno} owns supplier_sku "${r.supplier_sku ?? "-"}"` });
 
     /* Deterministic order so a re-run hands the same SO lines to the same PO
        lines: AutoCount DtlKey ascending, then ERP row id. */
     const pairs = m.pairs.slice().sort((a, b) =>
-      Number(a.ac.key) - Number(b.ac.key) || String(a.row.id).localeCompare(String(b.row.id)));
+      Number(a.ac.key) - Number(b.ac.key) || Number(a.row.id) - Number(b.row.id) ||
+      String(a.row.id).localeCompare(String(b.row.id)));
 
     for (const { row, ac, how } of pairs) {
       if (how === "sole") sole++; else if (how === "split") split++; else indistinguishable++;
-      const upd = { id: row.id, poNo: h.po_number };
+      /* Carries the evidence, not just the values: the DRY-RUN prints one line
+         per planned write so a human can check any single one against
+         AutoCount before the write happens. */
+      const upd = { id: row.id, poNo: h.po_number, code: row.material_code, acKey: ac.key, how };
       let want = false;
 
       if (!row.delivery_date) {
@@ -200,19 +226,35 @@ async function main() {
           unresolved.push({ poNo: h.po_number, code: row.material_code, reason: `FromSODtlKey ${fromKey} names a sales-order line that is not in the cutover snapshot (its order was fully delivered and correctly never imported)` });
         } else {
           /* Most specific first: the ERP row's OWN code, which for a sofa is
-             already the compartment. Then the sales order's own item, which is
-             what the SO-linked importer uses for a plain line. Then the sofa
-             placeholder the import falls back to when a build could not be
-             decoded — same derivation, so the link lands on the same line the
-             importer would have chosen. */
+             already the compartment. Then the sofa placeholder derived from
+             THIS PO line's own AutoCount item — the code the import falls back
+             to when a build could not be decoded.
+             `base` — the ERP code of the SALES ORDER line's AutoCount ItemCode —
+             is deliberately NOT a blanket third attempt. It names the SO line's
+             product, which is not always this PO line's product, and taking it
+             would bind a PO line for product A to an SO line for product B. It
+             is offered only when it names the same product this PO row already
+             names (or that row's sofa placeholder); otherwise the row is left
+             blank and listed for the owner. */
           const base = byAc.get(norm(src.code)) || "";
           const poBase = byAc.get(norm(ac.itemCode)) || "";
           let model = poBase.replace(/-1S$/i, "");
           model = SOFA_MODEL_ALIAS[model] || model;
-          const attempts = [row.material_code, base, model ? `${model}-1S` : null].filter(Boolean);
+          const placeholder = model ? `${model}-1S` : null;
+          const sameProduct =
+            !!base && (norm(base) === norm(row.material_code) || (placeholder && norm(base) === norm(placeholder)));
+          const attempts = [...new Set(
+            [row.material_code, sameProduct ? base : null, placeholder].filter(Boolean).map(String),
+          )];
           let picked = null;
           for (const code of attempts) { picked = taker.take(src.doc, code); if (picked) break; }
-          if (picked) { upd.soItemId = picked; want = true; }
+          if (picked) { upd.soItemId = picked; upd.soDoc = src.doc; upd.fromKey = fromKey; want = true; }
+          else if (base && !sameProduct) {
+            /* The only reason left is the one this rule created, so name it
+               rather than hiding it behind the taker's generic explanation. */
+            crossProduct.push({ poNo: h.po_number, code: row.material_code, base, soDoc: src.doc, acCode: src.code, fromKey });
+            unresolved.push({ poNo: h.po_number, code: row.material_code, reason: `REFUSED cross-product dedication: AutoCount SO ${src.doc} line "${src.code}" maps to ERP code ${base}, which is a DIFFERENT product from this PO line's ${row.material_code} (tried ${attempts.join(" / ")})` });
+          }
           else unresolved.push({ poNo: h.po_number, code: row.material_code, reason: `${taker.explain(src.doc, row.material_code)} (AutoCount SO ${src.doc}, tried ${attempts.join(" / ")})` });
         }
       }
@@ -234,6 +276,21 @@ async function main() {
   for (const p of plan) { if (!p.soItemId) continue; const g = groupOf.get(p.id) ?? "?"; byGroup.set(g, (byGroup.get(g) ?? 0) + 1); }
   log(`       new dedications by item group: ${[...byGroup.entries()].sort((a, b) => b[1] - a[1]).map(([g, n]) => `${g} ${n}`).join("; ") || "none"}`);
 
+  /* EVERY planned write, one line each. A summary count cannot be checked by a
+     human: to approve the risky half of this repair the owner has to see the PO
+     number, the material code, the AutoCount line it read, and the exact values
+     it would put in the row — not "so_item_id 99". Nothing is truncated. */
+  log("");
+  log(`PLANNED WRITES — one line per row, nothing truncated (${plan.length}):`);
+  log("   po / material_code / AC DtlKey / match / -> so_item_id (AC SO, FromSODtlKey) / date / dtlkey");
+  for (const p of plan) {
+    const bits = [];
+    if (p.soItemId) bits.push(`so_item_id=${p.soItemId} (from AC SO ${p.soDoc}, FromSODtlKey ${p.fromKey})`);
+    if (p.deliveryDate) bits.push(`delivery_date=${p.deliveryDate}`);
+    if (p.dtlKey != null) bits.push(`linked_ac_dtlkey=${p.dtlKey}${has_dtlkey ? "" : " (column absent — NOT written)"}`);
+    log(`   ${p.poNo}  ${p.code ?? "-"}  AC:${p.acKey}  [${p.how}]  ${bits.join("; ")}`);
+  }
+
   /* Header date: earliest of the line dates this repair would leave in place.
      A `date` column comes back from postgres as a JS Date, whose String() is
      "Wed Mar 25 2003 ..." - slicing that to 10 characters yields "Wed Mar 25",
@@ -247,14 +304,30 @@ async function main() {
       .filter(Boolean).sort();
     if (dates.length) headerFill.push({ id: h.id, poNo: h.po_number, eta: dates[0] });
   }
-  log(`       ${headerFill.length} header(s) to give an expected_at (earliest of their own line dates)`);
-  for (const f of headerFill.slice(0, 10)) log(`   ${f.poNo} -> ${f.eta}`);
-  if (headerFill.length > 10) log(`   ... and ${headerFill.length - 10} more`);
+  /* All of them, not the first ten. Some of these dates are pre-cutover and
+     land on screen as permanently overdue (HC-PO-000136 -> 2003-03-25), which
+     is faithful to AutoCount but is a decision the owner has to be able to
+     make — and he cannot make it on a truncated list. Flagged, not filtered. */
+  const today = new Date().toISOString().slice(0, 10);
+  const stale = headerFill.filter((f) => f.eta < today);
+  log(`       ${headerFill.length} header(s) to give an expected_at (earliest of their own line dates); ${stale.length} of them are in the PAST and will read as overdue`);
+  for (const f of headerFill) log(`   ${f.poNo} -> ${f.eta}${f.eta < today ? "   <<< already past" : ""}`);
 
   if (refusals.length) {
     log("");
-    log(`REFUSED — the AutoCount lines and the ERP rows do not split the same way, so which is which is not recorded: ${refusals.length} group(s)`);
-    for (const r of refusals) log(`   ${r.poNo} "${r.code}": ${r.acLines} AutoCount line(s) vs ${r.erpRows} ERP row(s) — ${r.reason}`);
+    log(`REFUSED groups — nothing is written for any row below: ${refusals.length}`);
+    for (const r of refusals) {
+      log(`   ${r.poNo} "${r.code}": ${r.acLines} AutoCount line(s) vs ${r.erpRows} ERP row(s) — ${r.reason}`);
+      for (const c of r.candidates ?? []) log(`      candidate DtlKey ${c.key}: FromSODtlKey ${c.fromSoKey ?? "-"}, DeliveryDate ${c.deliveryDate ?? "-"}`);
+      if (r.rowIds?.length) log(`      ERP rows left untouched: ${r.rowIds.join(", ")}`);
+    }
+  }
+
+  if (crossProduct.length) {
+    log("");
+    log(`REFUSED cross-product dedications — the sales-order line names a DIFFERENT product than the PO line, so no link was written: ${crossProduct.length}`);
+    log("   Each of these would need the owner's approval before any link is made.");
+    for (const c of crossProduct) log(`   ${c.poNo}  PO line ${c.code}  <-  ${c.soDoc} line "${c.acCode}" (ERP ${c.base}), FromSODtlKey ${c.fromKey}`);
   }
 
   if (unresolved.length) {
@@ -270,6 +343,22 @@ async function main() {
     for (const u of unresolved) log(`   ${u.poNo}  ${u.code ?? "-"}  ${u.reason}`);
   }
 
+  /* po_qty_picked is NOT recomputed here, and that is a real gap, named so it
+     is not discovered later. The app keeps it as a live count: recomputeSoPicked
+     (backend/src/scm/routes/mfg-purchase-orders.ts) re-sums
+     purchase_order_items.qty per so_item_id, and it only ever runs from a route
+     handler. A dedication stamped by this script therefore does not move the
+     counter, so these SO lines keep reading as still-needing-ordering in the
+     From-SO picker (qty - picked > 0) — a duplicate-PO risk until something
+     touches them. backfill-po-so-item-links.mjs has the same gap, so this is
+     precedent rather than a regression. Every affected line is listed. */
+  const dedicated = [...new Set(plan.filter((p) => p.soItemId).map((p) => p.soItemId))];
+  if (dedicated.length) {
+    log("");
+    log(`po_qty_picked NOT RECOMPUTED for the ${dedicated.length} sales-order line(s) this would newly dedicate:`);
+    for (const p of plan.filter((x) => x.soItemId)) log(`   ${p.soItemId}  <- ${p.poNo} ${p.code ?? "-"} (AC SO ${p.soDoc})`);
+  }
+
   if (!APPLY) {
     log("");
     log("DRY-RUN — nothing was written. Re-run with apply=1. Every UPDATE re-asserts the column is still NULL, so this is safe to repeat.");
@@ -277,17 +366,20 @@ async function main() {
     return;
   }
 
-  let lines = 0, hdrs = 0;
+  /* Three separate counters. The old log reported plan.length as the RESULT,
+     which is the PLAN — an UPDATE whose IS NULL guard did not match still
+     counted. Only what the database says it changed is reported. */
+  let nSoWritten = 0, nDateWritten = 0, nKeyWritten = 0, hdrs = 0;
   for (let i = 0; i < plan.length; i += 200) {
     const batch = plan.slice(i, i + 200);
     await sql.begin(async (tx) => {
       for (const p of batch) {
-        if (p.soItemId) lines += (await tx`UPDATE scm.purchase_order_items SET so_item_id = ${p.soItemId}
+        if (p.soItemId) nSoWritten += (await tx`UPDATE scm.purchase_order_items SET so_item_id = ${p.soItemId}
           WHERE id = ${p.id} AND so_item_id IS NULL`).count;
-        if (p.deliveryDate) await tx`UPDATE scm.purchase_order_items SET delivery_date = ${p.deliveryDate}
-          WHERE id = ${p.id} AND delivery_date IS NULL`;
-        if (has_dtlkey && p.dtlKey != null) await tx`UPDATE scm.purchase_order_items SET linked_ac_dtlkey = ${p.dtlKey}
-          WHERE id = ${p.id} AND linked_ac_dtlkey IS NULL`;
+        if (p.deliveryDate) nDateWritten += (await tx`UPDATE scm.purchase_order_items SET delivery_date = ${p.deliveryDate}
+          WHERE id = ${p.id} AND delivery_date IS NULL`).count;
+        if (has_dtlkey && p.dtlKey != null) nKeyWritten += (await tx`UPDATE scm.purchase_order_items SET linked_ac_dtlkey = ${p.dtlKey}
+          WHERE id = ${p.id} AND linked_ac_dtlkey IS NULL`).count;
       }
     });
     log(`  ..${Math.min(i + 200, plan.length)}/${plan.length}`);
@@ -296,7 +388,11 @@ async function main() {
     hdrs += (await sql`UPDATE scm.purchase_orders SET expected_at = ${f.eta}
       WHERE id = ${f.id} AND expected_at IS NULL`).count;
   }
-  log(`DONE. lines updated ${plan.length} (of which dedications actually stamped ${lines}); headers given a date ${hdrs}`);
+  log(`DONE — rows the database reports as changed (planned in brackets):`);
+  log(`   so_item_id ${nSoWritten} [${nSo}]; delivery_date ${nDateWritten} [${nDate}]; linked_ac_dtlkey ${nKeyWritten} [${has_dtlkey ? nKey : 0}]; headers given a date ${hdrs} [${headerFill.length}]`);
+  if (nSoWritten !== nSo || nDateWritten !== nDate || (has_dtlkey && nKeyWritten !== nKey) || hdrs !== headerFill.length) {
+    log("   a written count below its planned count means the column stopped being NULL between the plan and the write — the guard did its job, nothing was overwritten.");
+  }
   log("no inventory movements written — this repair is paperwork on rows that already exist.");
   await sql.end();
 }

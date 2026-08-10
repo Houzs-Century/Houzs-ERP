@@ -115,7 +115,8 @@ async function main() {
   const soItems = await sql`SELECT i.id, i.item_code, i.line_no, h.linked_ac_docno AS ac
     FROM scm.mfg_sales_order_items i
     JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-   WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND i.cancelled = false
+   WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL
+     AND COALESCE(i.cancelled, false) = false
    ORDER BY i.line_no`;
   const takenSoItem = new Set(
     (await sql`SELECT DISTINCT so_item_id FROM scm.purchase_order_items WHERE so_item_id IS NOT NULL`)

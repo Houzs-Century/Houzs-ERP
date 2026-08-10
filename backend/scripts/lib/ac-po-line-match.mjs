@@ -17,11 +17,25 @@
 // Ambiguity is real only where one document has SEVERAL AutoCount lines sharing
 // an ItemCode (59 of 663 groups in the committed snapshots). Those are split
 // further by the fields the ERP faithfully copied — qty and Desc2 — which
-// separates 56 of the 59. Where even that does not separate them the ERP rows
-// are identical in every stored field, so no evidence exists to prefer one
-// assignment over the other; they are zipped in DtlKey order and REPORTED as
-// indistinguishable rather than presented as a resolved fact. A group whose two
-// sides do not partition the same way is refused whole.
+// separates 56 of the 59. A group whose two sides do not partition the same way
+// is refused whole.
+//
+// WHAT IS LEFT AFTER THAT SPLIT IS NOT INTERCHANGEABLE, AND AN EARLIER VERSION
+// OF THIS FILE CLAIMED IT WAS. The claim was "identical on every field the ERP
+// stores, so any bijection is the same set of facts" — and it is false in the
+// real data. All 5 surviving buckets in the committed snapshots (10 AutoCount
+// lines) carry DIFFERENT FromSODtlKeys, and on PO-000290 the two keys name two
+// DIFFERENT PRODUCTS on the same sales order (60700 -> SO-000870 "MYLATEX
+// LUMBARIA (K)", 60702 -> SO-000870 "NB-KHJ57(K)"). Zipping picks one by
+// coin flip. The ERP rows are indistinguishable; the AUTOCOUNT lines are not,
+// and the AutoCount side is where every value this repair writes comes from.
+//
+// So a bucket is zipped ONLY when its AutoCount lines agree on every value the
+// repair would write from them — FromSODtlKey and DeliveryDate. When they
+// disagree the bucket is REFUSED and both candidates are reported, because a
+// wrong so_item_id or a wrong linked_ac_dtlkey is strictly worse than a NULL:
+// NULL means "unknown, create" to the write-back, while a wrong DtlKey makes it
+// APPEND a line instead of editing the one the operator changed.
 
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 
@@ -45,9 +59,26 @@ function bucketErpRows(erpRows, acCodes) {
   return { byCode, unmatched };
 }
 
+/* scm.purchase_order_items.id is a serial. localeCompare on its String() sorts
+   [9, 10, 11, 12] as [10, 11, 12, 9] and [999, 1000] as [1000, 999], which
+   splits one PO line's compartment rows across different AutoCount lines. Sort
+   numerically when both ids are numbers; fall back to text for anything else. */
+function byRowId(a, b) {
+  const na = Number(a.id);
+  const nb = Number(b.id);
+  if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+  return String(a.id).localeCompare(String(b.id));
+}
+
+/** The values this repair would copy off an AutoCount line onto an ERP row. */
+const writtenValues = (l) => `${l.fromSoKey ?? "-"}|${l.deliveryDate ?? "-"}`;
+
 /**
  * @param acLines  AutoCount PODTL rows for ONE document, each shaped
- *                 { key, itemCode, qty, desc2, erpCodes? } — `key` is DtlKey.
+ *                 { key, itemCode, qty, desc2, erpCodes?, fromSoKey?, deliveryDate? }
+ *                 — `key` is DtlKey. `fromSoKey` and `deliveryDate` are what the
+ *                 repair would write from this line; they decide whether two
+ *                 otherwise-identical lines are genuinely interchangeable.
  * @param erpRows  ERP purchase_order_items rows for that document, each shaped
  *                 { id, supplier_sku, material_code, qty, description2 }.
  * @returns { pairs, unmatchedErp, unmatchedAc, refused }
@@ -70,7 +101,7 @@ export function matchAcLinesToErpRows(acLines, erpRows) {
   const seenAc = new Set();
 
   for (const [code, group] of acByCode) {
-    const rows = (byCode.get(code) ?? []).slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const rows = (byCode.get(code) ?? []).slice().sort(byRowId);
     if (rows.length === 0) continue;
 
     // ONE AutoCount line: every ERP row under this code descends from it,
@@ -115,19 +146,43 @@ export function matchAcLinesToErpRows(acLines, erpRows) {
         seenAc.add(acs[0].key);
         continue;
       }
-      /* Identical on every field the ERP stores, so which row is which
-         AutoCount line is recorded NOWHERE. Any bijection is the same set of
-         facts; zip in DtlKey order and say so. Refusing here would strand rows
-         whose values are, in the ambiguous fields, interchangeable. */
+      /* The ERP rows are identical in every stored field, so which row is which
+         AutoCount line is recorded NOWHERE. That is only harmless if the
+         AutoCount lines AGREE on everything this repair would copy off them. */
+      const distinct = [...new Set(acs.map(writtenValues))];
+      if (distinct.length > 1) {
+        refused.push({
+          code,
+          acLines: acs.length,
+          erpRows: rs.length,
+          candidates: acs.map((a) => ({ key: a.key, fromSoKey: a.fromSoKey ?? null, deliveryDate: a.deliveryDate ?? null })),
+          rowIds: rs.map((r) => r.id),
+          reason:
+            "the ERP rows are identical in every stored field, but the AutoCount lines are NOT: they disagree on " +
+            [
+              new Set(acs.map((a) => a.fromSoKey ?? "-")).size > 1 ? "FromSODtlKey" : null,
+              new Set(acs.map((a) => a.deliveryDate ?? "-")).size > 1 ? "DeliveryDate" : null,
+            ].filter(Boolean).join(" and ") +
+            ", so assigning one to a row would be a coin flip on a value that is written",
+        });
+        continue;
+      }
       if (rs.length % acs.length !== 0) {
         refused.push({
           code,
           acLines: acs.length,
           erpRows: rs.length,
+          candidates: acs.map((a) => ({ key: a.key, fromSoKey: a.fromSoKey ?? null, deliveryDate: a.deliveryDate ?? null })),
+          rowIds: rs.map((r) => r.id),
           reason: `indistinguishable group does not divide evenly (${rs.length} rows over ${acs.length} AutoCount lines)`,
         });
         continue;
       }
+      /* Past both refusals: the AutoCount lines agree on every value that gets
+         written, so the only thing the zip still chooses is which DtlKey lands
+         on which row — and every candidate carries the same facts. Rows are in
+         numeric id order, so one PO line's consecutive compartment rows stay
+         together in the same slice instead of being scattered by text sort. */
       const per = rs.length / acs.length;
       acs.forEach((ac, i) => {
         for (const row of rs.slice(i * per, (i + 1) * per)) {
