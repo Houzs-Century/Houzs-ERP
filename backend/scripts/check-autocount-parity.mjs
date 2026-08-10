@@ -302,6 +302,45 @@ async function main() {
     WHERE p.company_id = ${CO} AND i.so_item_id IS NULL AND i.item_group IN ('bedframe','sofa')`;
   log(`   ceiling on how many of those could be hidden by the dedication gap: ${undedBound} undedicated bedframe/sofa PO line(s) exist company-wide`);
 
+  /* ── The dedication gap has TWO populations and they are not the same number.
+     A prior finding recorded "274 of 714 processed bedframe/sofa lines are
+     undedicated"; the PO-line measure above says 382 of 864 (181 of 625 in the
+     bedframe/sofa groups). Both can be true — one counts SALES-ORDER lines that
+     ought to point at a PO, the other counts PURCHASE-ORDER lines that ought to
+     point back at an SO. Printing them together, each with its exact predicate,
+     is the only way the two stop looking like a contradiction.
+
+     "Processed" is the ERP's own definition, not a new one: an order past DRAFT
+     and not CANCELLED (mfg-sales-orders.ts soProcessingLocked). Both the
+     status-based and the proceeded_at-based readings are printed, because the
+     original 714 could have used either. */
+  log("");
+  log("   ── the dedication gap, both populations, side by side ──");
+  /* COUNT(DISTINCT i.id), not COUNT(*): one SO line can carry several dedicated
+     PO lines, and a plain count would inflate BOTH sides of this ratio. */
+  const [soPop] = await sql`SELECT
+      COUNT(DISTINCT i.id)::int processed_lines,
+      COUNT(DISTINCT i.id) FILTER (WHERE poi.id IS NOT NULL)::int dedicated,
+      COUNT(DISTINCT i.id) FILTER (WHERE h.proceeded_at IS NOT NULL)::int proceeded_lines,
+      COUNT(DISTINCT i.id) FILTER (WHERE h.proceeded_at IS NOT NULL AND poi.id IS NOT NULL)::int proceeded_dedicated
+    FROM scm.mfg_sales_order_items i
+    JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+    LEFT JOIN scm.purchase_order_items poi ON poi.so_item_id = i.id
+    WHERE h.company_id = ${CO} AND COALESCE(i.cancelled,false) = false
+      AND i.item_group IN ('bedframe','sofa')
+      AND h.status::text NOT IN ('DRAFT','CANCELLED')`;
+  log(`   POPULATION 1 — SALES-ORDER lines that ought to point at a PO`);
+  log(`      predicate: item_group IN (bedframe,sofa), not cancelled, order status NOT IN (DRAFT,CANCELLED)`);
+  log(`      ${soPop.processed_lines} line(s); ${soPop.dedicated} have a dedicated PO line; ${soPop.processed_lines - soPop.dedicated} UNDEDICATED`);
+  log(`      same, narrowed to orders actually stamped proceeded_at: ${soPop.proceeded_lines} line(s); ${soPop.proceeded_dedicated} dedicated; ${soPop.proceeded_lines - soPop.proceeded_dedicated} UNDEDICATED`);
+  const [poPop] = await sql`SELECT COUNT(*)::int lines, COUNT(i.so_item_id)::int dedicated
+    FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+    WHERE p.company_id = ${CO} AND i.item_group IN ('bedframe','sofa')`;
+  log(`   POPULATION 2 — PURCHASE-ORDER lines that ought to point back at an SO line`);
+  log(`      predicate: item_group IN (bedframe,sofa) on any company-${CO} purchase order`);
+  log(`      ${poPop.lines} line(s); ${poPop.dedicated} carry so_item_id; ${poPop.lines - poPop.dedicated} UNDEDICATED`);
+  log(`   the two measure opposite ends of the SAME missing link: a PO line without so_item_id is exactly why an SO line has no dedicated PO.`);
+
   log("");
   log("═══ 3. BALANCE — AutoCount UDF_BALANCE vs the ERP ═══");
   const so = gz("ac-outstanding-so.json.gz");
@@ -352,32 +391,166 @@ async function main() {
   for (const b of balBad) log(`   ${b}`);
 
   log("");
-  log("═══ 4. DOCUMENT FLOW — SO -> PO -> GR on both sides ═══");
+  log("═══ 4. DOCUMENT FLOW — SO -> PO -> GR -> PI on both sides ═══");
+  /* This section compared `scm.grns.linked_ac_docno` against AutoCount GR
+     numbers and reported 291 of 449 POs as "disagree about which receipt",
+     printing `PO-009304: the ERP's GRN points at PO-009304; AutoCount says
+     GR-004996` — a PO number tested against a GR number, so it could only ever
+     disagree. That column holds the PO's AutoCount number, not the receipt's
+     (create-migrated-documents.mjs writes `g.po.linked_ac_docno` into it, which
+     contradicts migration 0276's own COMMENT — reported, not changed here).
+
+     The ERP's real statement about which AutoCount receipts a PO carries is
+     `scm.purchase_orders.linked_ac_grn_docnos` (stamp-ac-grn-refs.mjs), backed
+     up by the migrated GRN's number, which is minted as `HC-<AC GR>` when that
+     receipt covers one imported PO and `HC-<AC GR>-<AC PO>` when it covers
+     several. ONE AutoCount receipt legitimately spans many POs — 1250 of them do
+     — so the test is SET MEMBERSHIP, never string equality. Migrated GRNs
+     (migrated_no_stock) are real documents and count as received: they carry no
+     stock movement on purpose, which is a costing fact, not a paperwork one. */
+  const normDoc = (s) => String(s ?? "").trim().replace(/\s+/g, "-");
   const refs = gz("ac-gr-refs.json.gz");
-  const acPoGr = new Map();
+  const acPoGr = new Map(), acPoPi = new Map();
   for (const r of refs) {
-    if (!acPoGr.has(r.PoNo)) acPoGr.set(r.PoNo, new Set());
-    if (r.GrNo) acPoGr.get(r.PoNo).add(r.GrNo);
+    const po = normDoc(r.PoNo);
+    if (!acPoGr.has(po)) { acPoGr.set(po, new Set()); acPoPi.set(po, new Set()); }
+    if (r.GrNo) acPoGr.get(po).add(normDoc(r.GrNo));
+    if (r.PiNo) acPoPi.get(po).add(normDoc(r.PiNo));
   }
-  const erpChain = await sql`SELECT p.linked_ac_docno po, g.linked_ac_docno gr, g.grn_number
-    FROM scm.purchase_orders p LEFT JOIN scm.grns g ON g.purchase_order_id = p.id
+  const acGrSpan = new Map();
+  for (const r of refs) { if (!r.GrNo) continue; const g = normDoc(r.GrNo); if (!acGrSpan.has(g)) acGrSpan.set(g, new Set()); acGrSpan.get(g).add(normDoc(r.PoNo)); }
+  log(`AutoCount snapshot: ${refs.length} receipt rows over ${acPoGr.size} PO(s), ${acGrSpan.size} GR doc(s), of which ${[...acGrSpan.values()].filter((s) => s.size > 1).length} span more than one PO`);
+
+  /* 4a — the reference data itself. If the stamp never ran, every "disagreement"
+     below would be an artefact of an empty column, so this is checked FIRST and
+     the section refuses to draw a conclusion it has not earned. */
+  const pos = await sql`SELECT p.linked_ac_docno ac_po, p.po_number,
+      COALESCE(p.linked_ac_grn_docnos, '{}') ac_grs, COALESCE(p.linked_ac_pinv_docnos, '{}') ac_pis
+    FROM scm.purchase_orders p
     WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
-  let chainOk = 0, chainNoGrn = 0, chainMismatch = 0; const chainBad = [];
-  const seenPo = new Set();
-  for (const r of erpChain) {
-    if (seenPo.has(r.po) && !r.gr) continue;
-    seenPo.add(r.po);
-    const acGrs = acPoGr.get(r.po);
-    if (!acGrs || !acGrs.size) { if (!r.gr) chainOk++; else { chainMismatch++; if (chainBad.length < 15) chainBad.push(`${r.po}: the ERP has GRN ${r.grn_number} but AutoCount records no receipt`); } continue; }
-    if (!r.gr) { chainNoGrn++; if (chainBad.length < 15) chainBad.push(`${r.po}: AutoCount received it (${[...acGrs].join(", ")}) but the ERP has no GRN`); continue; }
-    if (acGrs.has(r.gr)) chainOk++;
-    else { chainMismatch++; if (chainBad.length < 15) chainBad.push(`${r.po}: the ERP's GRN points at ${r.gr}; AutoCount says ${[...acGrs].join(", ")}`); }
+  const stamped = pos.filter((p) => (p.ac_grs ?? []).length).length;
+  const expected = pos.filter((p) => (acPoGr.get(p.ac_po) ?? new Set()).size).length;
+  log("");
+  log("   ── 4a. is the AutoCount receipt reference actually stamped? ──");
+  log(`   imported POs: ${pos.length}; carrying a non-empty linked_ac_grn_docnos: ${stamped}; the snapshot says ${expected} of them were received`);
+  const stampWrong = pos.filter((p) => {
+    const want = acPoGr.get(p.ac_po) ?? new Set();
+    const have = new Set((p.ac_grs ?? []).map(normDoc));
+    return want.size !== have.size || [...want].some((g) => !have.has(g));
+  });
+  log(`   stamped value disagrees with the snapshot on: ${stampWrong.length} PO(s)`);
+  for (const p of stampWrong.slice(0, 6)) log(`      ${p.po_number} (${p.ac_po}): stamped {${(p.ac_grs ?? []).join(", ")}}; snapshot {${[...(acPoGr.get(p.ac_po) ?? [])].join(", ")}}`);
+  if (stamped === 0) log("   VERDICT: stamp-ac-grn-refs has NOT been run — no receipt comparison below can be trusted.");
+
+  /* 4b — PO -> GR. What the ERP NAMES as the AutoCount receipt behind a GRN is
+     read from the stamp and cross-checked against the number the GRN was minted
+     with, so a stamp that drifted from the document is visible rather than
+     silently believed. */
+  const grns = await sql`SELECT p.linked_ac_docno ac_po, g.grn_number, g.status::text st,
+      COALESCE(g.migrated_no_stock,false) migrated
+    FROM scm.grns g JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
+    WHERE g.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
+  const erpGrn = new Map();
+  for (const r of grns) {
+    if (!erpGrn.has(r.ac_po)) erpGrn.set(r.ac_po, []);
+    erpGrn.get(r.ac_po).push(r);
   }
-  log(`purchase orders whose chain was compared: ${chainOk + chainNoGrn + chainMismatch}`);
-  log(`   chain agrees (both received, same receipt - or neither received): ${chainOk}`);
-  log(`   AutoCount received it, the ERP has no GRN: ${chainNoGrn}`);
-  log(`   the two disagree about which receipt: ${chainMismatch}`);
+  /* `HC-GR-004913` -> GR-004913; `HC-GR-000017-PO-000038` -> GR-000017;
+     `HC-GRN-000001` -> null, an ERP-native receipt that names no AutoCount doc. */
+  const grIdentity = (grnNumber, acPo) => {
+    if (!grnNumber || !grnNumber.startsWith("HC-")) return null;
+    let s = grnNumber.slice(3);
+    if (acPo && s.endsWith(`-${acPo}`)) s = s.slice(0, -(acPo.length + 1));
+    return /^G+R-\d+$/.test(s) ? s : null;
+  };
+
+  let cAgree = 0, cAcOnly = 0, cErpOnly = 0, cDiffer = 0, cPartial = 0, cNative = 0;
+  const chainBad = [];
+  for (const p of pos) {
+    const acGrs = acPoGr.get(p.ac_po) ?? new Set();
+    const rows = erpGrn.get(p.ac_po) ?? [];
+    const named = new Set();
+    for (const g of rows) {
+      const id = grIdentity(g.grn_number, p.ac_po);
+      if (id) named.add(id);
+    }
+    for (const g of (p.ac_grs ?? [])) named.add(normDoc(g));
+    if (!acGrs.size && !rows.length) { cAgree++; continue; }               // neither received
+    if (acGrs.size && !rows.length) {
+      cAcOnly++;
+      if (chainBad.length < 12) chainBad.push(`${p.po_number} (${p.ac_po}): AutoCount received it (${[...acGrs].join(", ")}) but the ERP has no GRN`);
+      continue;
+    }
+    if (!acGrs.size && rows.length) {
+      cErpOnly++;
+      if (chainBad.length < 12) chainBad.push(`${p.po_number} (${p.ac_po}): the ERP has GRN ${rows.map((r) => r.grn_number).join(", ")} but AutoCount records no receipt for it`);
+      continue;
+    }
+    if (!named.size) { cNative++; continue; }                              // received both sides, ERP names no AC doc
+    const stray = [...named].filter((g) => !acGrs.has(g));
+    if (stray.length) {
+      cDiffer++;
+      if (chainBad.length < 12) chainBad.push(`${p.po_number} (${p.ac_po}): the ERP names receipt(s) ${[...named].join(", ")}; AutoCount says ${[...acGrs].join(", ")} -> not in AutoCount: ${stray.join(", ")}`);
+      continue;
+    }
+    cAgree++;
+    if ([...acGrs].some((g) => !named.has(g))) cPartial++;
+  }
+  log("");
+  log("   ── 4b. PO -> GR ──");
+  log(`purchase orders whose chain was compared: ${pos.length}`);
+  log(`   chain agrees (same receipt by set membership, or neither side received it): ${cAgree}`);
+  log(`      of those, the ERP names only SOME of AutoCount's receipts for that PO: ${cPartial}`);
+  log(`   AutoCount received it, the ERP has no GRN: ${cAcOnly}`);
+  log(`   the ERP has a GRN AutoCount does not know: ${cErpOnly}`);
+  log(`   the two name DIFFERENT receipts: ${cDiffer}`);
+  log(`   both received, but the ERP's GRN names no AutoCount document (ERP-native receipt): ${cNative}`);
   for (const b of chainBad) log(`   ${b}`);
+  const migrated = grns.filter((g) => g.migrated).length;
+  log(`   GRN rows on imported POs: ${grns.length}, of which migrated_no_stock (paperwork carried over, counted as received): ${migrated}`);
+
+  /* 4c — PO -> PI. The ERP was never given AutoCount's purchase invoices as
+     documents; the cutover kept them as a POINTER on the PO. Stating both makes
+     the absence a design decision on the report rather than a silent zero. */
+  log("");
+  log("   ── 4c. PO -> PI ──");
+  const [{ n: hasPiTable }] = await sql`SELECT COUNT(*)::int n FROM information_schema.tables
+    WHERE table_schema = 'scm' AND table_name = 'purchase_invoices'`;
+  const acPiPos = pos.filter((p) => (acPoPi.get(p.ac_po) ?? new Set()).size).length;
+  const piStamped = pos.filter((p) => (p.ac_pis ?? []).length).length;
+  log(`   POs AutoCount has a purchase invoice for: ${acPiPos}; POs carrying linked_ac_pinv_docnos in the ERP: ${piStamped}`);
+  if (!hasPiTable) log("   scm.purchase_invoices does not exist in this database");
+  else {
+    const pis = await sql`SELECT p.linked_ac_docno ac_po, COUNT(*)::int n
+      FROM scm.purchase_invoices i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+      WHERE i.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL GROUP BY 1`;
+    log(`   imported POs carrying an actual ERP purchase-invoice document: ${pis.length}`);
+    log(`   -> ${pis.length === 0 ? "none: AutoCount's invoices live in the ERP as a reference on the PO, not as documents (cutover design)" : "some invoices were created as ERP documents"}`);
+  }
+
+  /* 4d — the whole chain, for the orders AutoCount names a PO for. Two different
+     questions, and conflating them is what made section 1 and section 4 look
+     like they contradicted each other: does the DOCUMENT exist in the ERP, and
+     is it LINKED to the order. Lens (A) proved the link is what is missing. */
+  log("");
+  log("   ── 4d. full chain SO -> PO -> GR, for the orders AutoCount names a PO for ──");
+  let full = 0, chainSoMissing = 0, chainPoMissing = 0, chainGrMissing = 0, chainLinkMissing = 0;
+  for (const r of acStatus) {
+    if (!r.ToPONo) continue;
+    const want = [...acPoSet(r.ToPONo)].map(normDoc);
+    if (!soByAc.has(r.DocNo)) { chainSoMissing++; continue; }
+    if (want.some((p) => !poPresent.has(p))) { chainPoMissing++; continue; }
+    const grMissing = want.some((p) => (acPoGr.get(p) ?? new Set()).size && !(erpGrn.get(p) ?? []).length);
+    if (grMissing) { chainGrMissing++; continue; }
+    if (!(erpPos.get(r.DocNo) ?? new Set()).size) { chainLinkMissing++; continue; }
+    full++;
+  }
+  log(`   orders AutoCount names a PO for: ${acStatus.filter((r) => r.ToPONo).length}`);
+  log(`   every document exists AND the SO->PO link is present: ${full}`);
+  log(`   the SO is not in the ERP: ${chainSoMissing}`);
+  log(`   a named PO document is not in the ERP: ${chainPoMissing}`);
+  log(`   AutoCount received a named PO but the ERP has no GRN for it: ${chainGrMissing}`);
+  log(`   every document exists but the SO->PO link is missing (the dedication gap from lens A): ${chainLinkMissing}`);
 
   await sql.end();
 }
