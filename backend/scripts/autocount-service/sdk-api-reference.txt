@@ -1,0 +1,485 @@
+AutoCount 2.2 SDK — the API surface the write-back service uses.
+Extracted 2026-08-10 by reflecting the INSTALLED assemblies on the AutoCount
+host (37 DLLs), not from documentation. Keep this next to AcSyncService.cs:
+the SDK has no published reference, so this file IS the reference, and the next
+person to touch the service should check a signature here before guessing.
+
+Note the dump was taken with BindingFlags.DeclaredOnly, so inherited members
+(notably InvoicingCommonCommand.CancelDocument and the document Save()) do not
+repeat under each subclass.
+
+AutoCount.Invoicing.InvoicingCommonCommand
+    DataTable GetDocumentInfoTable(Int64[] docKeys)
+    Void SaveDocumentInfoTable(DataTable table)
+    Void Refresh()
+    Void SaveReportOption()
+    Int64 GetDocKeyByDocNo(String docNo)
+    String GetDocumentNo(Int64 docKey)
+    Boolean IsGSTOnDeliveryOrder(Int64 docKey)
+    InvoicingDocument LoadFromKIVFolder(Int64 docKey)
+    Void SaveToKIVFolder(InvoicingDocument document, String saveReason)
+    Boolean CancelDocument(Int64 docKey, String userID)
+    Boolean CancelDocument(String docNo, String userID)
+    Void Delete(Int64 docKey)
+    Void Delete(String docNo)
+    Void LoadItemPackageCodeColumn(DataSet ds)
+    Boolean get_UseTaxCode()
+    Boolean get_MustSpecifyTaxCode()
+    Boolean get_UseTransferedDocumentDate()
+    String get_TaxCodeDisplayName()
+    String get_TaxBaseCurrencyCode()
+    Boolean get_IsAutomaticMergeSameItemCode()
+    Boolean get_UseFontStyleInInvoicing()
+    Boolean get_ShowAboveMaximumPriceColorIndication()
+    Boolean get_ShowBelowMinimumPriceColorIndication()
+    Footer get_Footer()
+    TaxCode get_TaxCode()
+    WithholdingTaxHelper get_WithholdingTax()
+    FiscalYear get_FiscalYear()
+    Boolean get_AllowDuplicateYourPONo()
+    UserSession get_UserSession()
+    DBSetting get_DBSetting()
+    StockPrice get_StockPrice()
+    ItemHelper get_ItemHelper()
+    BasicReportOption get_ReportOption()
+    GeneralSetting get_GeneralSetting()
+    Boolean get_AllowByPassTaxTransSeverity()
+    Void set_AllowByPassTaxTransSeverity(Boolean value)
+    Boolean get_AllowByPassCheckKnockOffPaymentBasisTax()
+    Void set_AllowByPassCheckKnockOffPaymentBasisTax(Boolean value)
+    Boolean get_AllowByPassCheckKnockOffWithholdingTax()
+    Void set_AllowByPassCheckKnockOffWithholdingTax(Boolean value)
+    Boolean get_AllowEditValidEInvoiceUUID()
+    Void set_AllowEditValidEInvoiceUUID(Boolean value)
+    Void CalculateFOCQty(String debtorCode, DataRow detailRow)
+    Void CheckAndFixDocumentStructure(DataSet ds)
+    String BuildSalesSQLFromCommaSeparatedString(String columnNames, Boolean needDebtor)
+    String BuildPurchaseSQLFromCommaSeparatedString(String columnNames, Boolean needCreditor)
+    FooterRecord GetFooterRecord(Int32 footerIndex)
+
+AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand
+    static PurchaseOrderCommand Create(UserSession userSession, DBSetting dbSetting)
+    static AsyncDataSetUpdate get_DataSetUpdate()
+    CmdFormStartupSetting get_CmdFormStartupSetting()
+    Void set_CmdFormStartupSetting(CmdFormStartupSetting value)
+    Void CheckAndFixDocumentStructure(DataSet ds)
+    DataTable LoadAllMasterData(String ColumnName, Boolean isLoadSchema)
+    DataTable LoadMasterData(String columnName, Nullable`1 docStatus)
+    Int32 GetDocStatusCount(DocumentStatus docStatus)
+    Void BasicSearch(PurchaseOrderCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    Void AdvSearch2(PurchaseOrderAdvanceCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    Void OutStandingDocumentListingAdvanceSearch(PurchaseOrderAdvanceCriteria criteria, DataTable table, OutStandingPrintingOption outStandingPrintingOption, String checkEditColumnName)
+    Void BasicSearchForOutStandingDocumentListing(PurchaseOrderReportingCriteria criteria, DataTable table, String checkEditColumnName)
+    PurchaseOrder AddNewFromDocumentTemplate()
+    PurchaseOrder AddNew()
+    PurchaseOrder AddNew(Boolean suppressFormulaException)
+    PurchaseOrder View(Int64 docKey)
+    PurchaseOrder View(String docNo)
+    PurchaseOrder Edit(Int64 docKey)
+    PurchaseOrder Edit(String docNo)
+    PurchaseOrder ViewFirst()
+    PurchaseOrder ViewLast()
+    PurchaseOrder ViewNext(String docNo)
+    PurchaseOrder ViewPrev(String docNo)
+
+AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand
+    static PurchaseInvoiceCommand Create(UserSession userSession, DBSetting dbSetting)
+    static AsyncDataSetUpdate get_DataSetUpdate()
+    CmdFormStartupSetting get_CmdFormStartupSetting()
+    Void set_CmdFormStartupSetting(CmdFormStartupSetting value)
+    Void CheckAndFixDocumentStructure(DataSet ds)
+    DataTable LoadAllMasterData(String ColumnName, Boolean isLoadSchema)
+    DataTable LoadMasterData(String columnName, Nullable`1 docStatus)
+    Int32 GetDocStatusCount(DocumentStatus docStatus)
+    DataSet LoadUnpostedMasterData(String columnName)
+    Void BasicSearch(PurchaseInvoiceCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    Void AdvSearch2(PurchaseInvoiceAdvanceCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    PurchaseInvoice AddNewFromDocumentTemplate()
+    PurchaseInvoice AddNew()
+    PurchaseInvoice AddNew(Boolean suppressFormulaException)
+    PurchaseInvoice View(Int64 docKey)
+    PurchaseInvoice View(String docNo)
+    PurchaseInvoice Edit(Int64 docKey)
+    PurchaseInvoice Edit(String docNo)
+    PurchaseInvoice ViewFirst()
+    PurchaseInvoice ViewLast()
+    PurchaseInvoice ViewNext(String docNo)
+    PurchaseInvoice ViewPrev(String docNo)
+    Boolean CheckPurchaseInvoiceHasPayment(DataSet ds, DBSetting dbSetting)
+    Boolean CheckPaymentOverPay(DataSet ds, APPaymentEntity apPayment, DBSetting dbSetting)
+
+AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand
+    static GoodsReceivedNoteCommand Create(UserSession userSession, DBSetting dbSetting)
+    static AsyncDataSetUpdate get_DataSetUpdate()
+    CmdFormStartupSetting get_CmdFormStartupSetting()
+    Void set_CmdFormStartupSetting(CmdFormStartupSetting value)
+    Void CheckAndFixDocumentStructure(DataSet ds)
+    DataTable LoadAllMasterData(String ColumnName, Boolean isLoadSchema)
+    DataTable LoadMasterData(String columnName, Nullable`1 docStatus)
+    Int32 GetDocStatusCount(DocumentStatus docStatus)
+    Void BasicSearch(GoodsReceivedNoteCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    Void AdvSearch2(GoodsReceivedNoteAdvanceCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    Void OutStandingDocumentListingAdvanceSearch(GoodsReceivedNoteAdvanceCriteria criteria, DataTable table, OutStandingPrintingOption outStandingPrintingOption, String checkEditColumnName)
+    Void BasicSearchForOutStandingDocumentListing(GoodsReceivedNoteReportingCriteria criteria, DataTable table, String checkEditColumnName)
+    GoodsReceivedNote AddNewFromDocumentTemplate()
+    GoodsReceivedNote AddNew()
+    GoodsReceivedNote AddNew(Boolean suppressFormulaException)
+    GoodsReceivedNote View(Int64 docKey)
+    GoodsReceivedNote View(String docNo)
+    GoodsReceivedNote Edit(Int64 docKey)
+    GoodsReceivedNote Edit(String docNo)
+    GoodsReceivedNote ViewFirst()
+    GoodsReceivedNote ViewLast()
+    GoodsReceivedNote ViewNext(String docNo)
+    GoodsReceivedNote ViewPrev(String docNo)
+
+AutoCount.Invoicing.Sales.SalesOrder.SalesOrderCommand
+    static SalesOrderCommand Create(UserSession userSession, DBSetting dbSetting)
+    static StartBusinessFlowEventHandler get_StartBussinessFlowEvent()
+    static Void set_StartBussinessFlowEvent(StartBusinessFlowEventHandler value)
+    static AsyncDataSetUpdate get_DataSetUpdate()
+    CmdFormStartupSetting get_CmdFormStartupSetting()
+    Void set_CmdFormStartupSetting(CmdFormStartupSetting value)
+    Void CheckAndFixDocumentStructure(DataSet ds)
+    DataTable QueryTransferedSODTL_That_XferToPO(String docKeyList)
+    DataTable LoadAllMasterData(String ColumnName, Boolean isLoadSchema)
+    DataTable LoadMasterData(String columnName, Nullable`1 docStatus)
+    Int32 GetDocStatusCount(DocumentStatus docStatus)
+    Void BasicSearch(SalesOrderCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    Void AdvanceSearch(SalesOrderAdvanceCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    Void StartBusinessFlow(Int64 docKey)
+    SalesOrder AddNewFromDocumentTemplate()
+    SalesOrder AddNew()
+    SalesOrder AddNew(Boolean suppressFormulaException)
+    SalesOrder View(Int64 docKey)
+    SalesOrder View(String docNo)
+    SalesOrder Edit(Int64 docKey)
+    SalesOrder Edit(String docNo)
+    SalesOrder ViewFirst()
+    SalesOrder ViewLast()
+    SalesOrder ViewNext(String docNo)
+    SalesOrder ViewPrev(String docNo)
+    Void OutStandingDocumentListingAdvanceSearch(SalesOrderAdvanceCriteria criteria, DataTable table, OutStandingPrintingOption outStandingPrintingOption, String checkEditColumnName)
+    Void OutStandingDocumentListingBasicSearch(SalesOrderReportingCriteria criteria, DataTable table, String checkEditColumnName)
+
+AutoCount.Invoicing.Sales.Invoice.InvoiceCommand
+    static InvoiceCommand Create(UserSession userSession, DBSetting dbSetting)
+    static AsyncDataSetUpdate get_DataSetUpdate()
+    CmdFormStartupSetting get_CmdFormStartupSetting()
+    Void set_CmdFormStartupSetting(CmdFormStartupSetting value)
+    Void CheckAndFixDocumentStructure(DataSet ds)
+    DataTable LoadAllMasterData(String ColumnName, Boolean isLoadSchema)
+    DataTable LoadMasterData(String columnName, Nullable`1 docStatus)
+    Int32 GetDocStatusCount(DocumentStatus docStatus)
+    DataSet LoadUnpostedMasterData(String columnName)
+    Void BasicSearch(InvoiceCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    Void AdvancedSearch(InvoiceAdvanceCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    Boolean IsPartialTransferToCN(Int64 dtlKey)
+    Boolean CheckPaymentOverPay(DataSet ds, ARPaymentEntity arPayment, DBSetting dbSetting)
+    Invoice AddNewFromDocumentTemplates()
+    Invoice AddNew()
+    Invoice AddNew(Boolean suppressFormulaException)
+    Invoice View(Int64 docKey)
+    Invoice View(String docNo)
+    Invoice Edit(Int64 docKey)
+    Invoice Edit(String docNo)
+    Invoice ViewFirst()
+    Invoice ViewLast()
+    Invoice ViewNext(String docNo)
+    Invoice ViewPrev(String docNo)
+    Void PostToJE(DataSet ds, DBSetting newDBSetting)
+    Void DeletePostToJE(Object dockey, DBSetting newDBSetting)
+
+AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderCommand
+    static DeliveryOrderCommand Create(UserSession userSession, DBSetting dbSetting)
+    static AsyncDataSetUpdate get_DataSetUpdate()
+    CmdFormStartupSetting get_CmdFormStartupSetting()
+    Void set_CmdFormStartupSetting(CmdFormStartupSetting value)
+    Void CheckAndFixDocumentStructure(DataSet ds)
+    Boolean Update(String columnName, DataTable resultDataTable)
+    DataTable LoadAllMasterData(String ColumnName, Boolean isLoadSchema)
+    DataTable LoadMasterData(String columnName, Nullable`1 docStatus)
+    Int32 GetDocStatusCount(DocumentStatus docStatus)
+    Void BasicSearch(DeliveryOrderCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    Void AdvanceSearch(DeliveryOrderAdvanceCriteria criteria, String columnName, DataTable resultDataTable, String checkEditColumnName)
+    Void OutStandingDocumentListingAdvanceSearch(DeliveryOrderAdvanceCriteria criteria, DataTable table, OutStandingPrintingOption outStandingPrintingOption, String checkEditColumnName)
+    Void OutStandingDocumentListingBasicSearch(DeliveryOrderReportingCriteria criteria, DataTable table, String checkEditColumnName)
+    DeliveryOrder AddNewFromDocumentTemplate()
+    DeliveryOrder AddNew()
+    DeliveryOrder AddNew(Boolean suppressFormulaException)
+    DeliveryOrder View(Int64 docKey)
+    DeliveryOrder View(String docNo)
+    DeliveryOrder Edit(Int64 docKey)
+    DeliveryOrder Edit(String docNo)
+    DeliveryOrder ViewFirst()
+    DeliveryOrder ViewLast()
+    DeliveryOrder ViewNext(String docNo)
+    DeliveryOrder ViewPrev(String docNo)
+
+AutoCount.Invoicing.PartialTransferHelper
+    static DataTable GetPartialTransferSummarizedTableFromSO(DataTable detailTable, DataRow masterRow)
+    static DataTable GetPartialTransferSummarizedTableFromAO(DataTable detailTable, DataRow masterRow)
+    static DataTable GetPartialTransferSummarizedTable(DataTable detailTable, DataRow masterRow, DataTable transferTable)
+    static Void UpdatePartialTransfer(DBSetting newDBSetting, InvoicingDocument doc)
+    static DataTable GetOverTransferTable(DBSetting newDBSetting, DataTable detailTable, DataRow masterRow, DataTable transferTable)
+    static DataTable GetOverTransferTableForSOToPO(DBSetting newDBSetting, DataTable detailTable, DataRow masterRow)
+    static DataTable GetOverTransferTableForAOToPO(DBSetting newDBSetting, DataTable detailTable, DataRow masterRow)
+    static Void CheckIfQtyLessThanTransferedQty(DataTable detailTable)
+
+AutoCount.Invoicing.FullTransferHelper
+    static Void UpdateFullTransferFrom(DBSetting newDBSetting, DataRow masterRow, DataTable transferTable)
+
+AutoCount.Invoicing.DocumentTransferHelper
+    static DataTable GetPartialTransferItemFromCGTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromCRTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromOutstandingIVTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromSOTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromDOTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromIVTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetFullTransferItemFromRQTable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromPOTable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromPGTable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromNRTable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromOutstandingPITable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromGRTable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromPITable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetPartialTransferItemFromPQTable(DBSetting newDBSetting, String creditorCode, String[] purchaseAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromRQTable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromPOTable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromPGTable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromNRTable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromGRTable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromPITable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, Int64[] includeDtlKeys)
+    static DataTable GetPartialTransferItemFromOutstandingPITable(UserSession userSession, String creditorCode, String[] purchaseAgentFilter, Int64[] includeDtlKeys)
+    static DataRow GetMasterDataRow(DBSetting newDBSetting, String documentType, Int64 docKey)
+    static DataRow GetDetailDataRow(DBSetting newDBSetting, String documentType, Int64 dtlKey)
+    static Boolean CheckExistenceOfTransferedDocument(DBSetting newDBSetting, DataTable detailTable, DataTable transferDetailTable, String toDocType, Int64 toDocKey)
+    static DataTable GetTransferDetailTable(DBSetting newDBSetting, String docType, Int64 docKey)
+    static Void UpdateToDocumentTransferTable(DBSetting newDBSetting, InvoicingDocument doc)
+    static Void CheckTransferDetailQtyNotMatch(DataTable detailTable, DataTable transferDetailTable)
+    static HashSet`1 GetFullTransferDocKeys(DBSetting dbSetting, DataTable transferDetailTable)
+    static HashSet`1 GetFullTransferDocKeys(DBSetting dbSetting, DataTable transferDetailTable, String fromDocType)
+    static HashSet`1 GetTransferredSpecialDtlTypeDtlKey(DBSetting dbSetting, String docType, Int64 docKey)
+    static String PerformUDFTransfer(String fromTableName, String toTableName, DataRow fromRow, DataRow toRow, UserSession userSession, Boolean isDetail)
+    static String PerformUDFTransfer(String fromTableName, DataRow fromRow, DataRow toRow, UserSession userSession)
+    static Void TransferUDF(UserSession userSession, String fromTableName, String toTableName, DataRow fromRow, DataRow toRow)
+    static Void TransferUDF(UserSession userSession, String fromTableName, DataRow fromRow, DataRow toRow)
+    static String CopyUDF(UDFColumn[] udfFrom, DataRow fromRow, DataRow toRow)
+    static Void CheckIsQtyLessThanTransfered(DataTable dtDetail, String docType, DBSetting dbSetting)
+    static Void CheckIsQtyLessThanTransfered(DataTable dtDetail)
+    static String GetFullPendingTransferredQtySQL(String docType)
+    static String GetOtherTransferOptionFullPendingTransferredQtySQL(String docType)
+    static String GetPartialPendingTransferredQtySQL(String docType, Nullable`1 docKey)
+    static String GetPendingTransferredPOQtyFromSOSQL(Nullable`1 docKey)
+    static String GetPendingTransferredPOQtyFromAOSQL(Nullable`1 docKey)
+    static Boolean IsSOPartialTransferedToPO(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsSOPartialTransferedToAO(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsSODtlPartialTransferedToPO(DBSetting newDBSetting, Int64 dtlKey)
+    static Boolean IsSODtlPartialTransferedToAO(DBSetting newDBSetting, Int64 dtlKey)
+    static Boolean IsSOTransferedToDeliveryRequest(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsSOTransferedToPurchaseRequest(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsSOTransferedToAssemblyOrderRequest(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsSOTransferedToBusinessFlow(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsPQTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsRQTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsPOTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsPGTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsNRTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsGRTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsPITransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCPTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsRQFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsPOFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsPGFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsNRFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsGRFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsPIFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCPFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsRQPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsPOPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsPGPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsNRPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsGRPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsPIPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCPPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static String IsRQDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsPODetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsPGDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsNRDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsGRDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsPIDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsCPDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsPQDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static Boolean IsADVQTTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsQTTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsSOTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCGTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCRTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsDOTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsIVTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCSTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsQTFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsADVQTFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsSOFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCGFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCRFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsDOFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsIVFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCSFullTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsQTPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsADVQTPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsSOPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCGPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCRPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsDOPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsIVPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static Boolean IsCSPartialTransfered(DBSetting newDBSetting, Int64 docKey)
+    static String IsDetailPartialTransfered(DBSetting newDBSetting, String docType, Int64 dtlKey)
+    static String IsQTDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsADVQTDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsSODetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsCGDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsCRDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsDODetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsIVDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static String IsCSDetailPartialTransfered(DBSetting newDBSetting, Int64 dtlKey)
+    static DataTable GetFullTransferItemFromQTTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromCGTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromCRTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromOutstandingIVTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromSOTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromDOTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetFullTransferItemFromIVTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, String columns, Int64[] includeDocKeys, Int64[] excludeDtlKeys)
+    static DataTable GetPartialTransferItemFromQTTable(UserSession userSession, String debtorCode, String[] salesAgentFilter, Int64[] includeDtlKeys)
+
+AutoCount.Invoicing.Purchase.GeneralPurchasePartialTransferDetail
+
+AutoCount.Invoicing.Purchase.PurchaseOrderPartialTransferDetail
+    static PurchaseOrderPartialTransferDetail Create(PurchaseDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Purchase.GoodsReceivedNotePartialTransferDetail
+    static GoodsReceivedNotePartialTransferDetail Create(PurchaseDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Purchase.PurchaseInvoicePartialTransferDetail
+    static PurchaseInvoicePartialTransferDetail Create(PurchaseDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Purchase.CashPurchasePartialTransferDetail
+    static CashPurchasePartialTransferDetail Create(PurchaseDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Purchase.PurchaseReturnPartialTransferDetail
+    static PurchaseReturnPartialTransferDetail Create(PurchaseDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Purchase.GoodsReturnPartialTransferDetail
+    static GoodsReturnPartialTransferDetail Create(PurchaseDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Purchase.CancelPOPartialTransferDetail
+    static CancelPOPartialTransferDetail Create(PurchaseDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Purchase.PurchaseConsignmentReturnPartialTransferDetail
+    static PurchaseConsignmentReturnPartialTransferDetail Create(PurchaseDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Purchase.PurchaseConsignmentPartialTransferDetail
+    static PurchaseConsignmentPartialTransferDetail Create(PurchaseDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Purchase.TransferHelper
+    static String TransferFromToDocumentType(TransferFrom transferFrom)
+    static TransferFrom DocumentTypeToTransferFrom(String docType)
+    static DataTable CheckAndGetValidPartialTransferItem(String fromDocType, Int64[] fromDocDtlKeys, DBSetting dbSetting)
+    static TransferHelper Create(DBSetting dbSetting, TransferFrom transferFrom)
+    static DataTable LoadWantToFullTransferData(String[] fromdocNoList, String creditorCode, TransferFrom transferFrom, DBSetting dbSetting)
+    static DataRow CheckAndGetValidSOTransferItem(Int64 fromSODocDtlKey, DBSetting dbSetting)
+    static DataRow CheckAndGetValidAOTransferItem(Int64 fromAODtlKey, DBSetting dbSetting)
+
+AutoCount.Invoicing.Purchase.TransferHelperSQL
+
+AutoCount.Invoicing.Purchase.PurchaseTransferHelper
+    static PurchaseTransferHelper Create(DBSetting dbSetting, TransferFrom transferFrom, PurchaseDocument document)
+
+AutoCount.Invoicing.Sales.GeneralSalesPartialTransferDetail
+
+AutoCount.Invoicing.Sales.SalesOrderPartialTransferDetail
+    static SalesOrderPartialTransferDetail Create(SalesDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Sales.DeliveryOrderPartialTransferDetail
+    static DeliveryOrderPartialTransferDetail Create(SalesDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Sales.InvoicePartialTransferDetail
+    static InvoicePartialTransferDetail Create(SalesDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Sales.CashSalePartialTransferDetail
+    static CashSalePartialTransferDetail Create(SalesDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Sales.CreditNotePartialTransferDetail
+    static CreditNotePartialTransferDetail Create(SalesDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Sales.DeliveryReturnPartialTransferDetail
+    static DeliveryReturnPartialTransferDetail Create(SalesDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Sales.CancelSOPartialTransferDetail
+    static CancelSOPartialTransferDetail Create(SalesDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Sales.ConsignmentReturnPartialTransferDetail
+    static ConsignmentReturnPartialTransferDetail Create(SalesDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Sales.ConsignmentPartialTransferDetail
+    static ConsignmentPartialTransferDetail Create(SalesDocument document, String fromDocType, Int64[] fromDocDtlKeys, Boolean transferMaster, Boolean mergeTransferDetail, Boolean showConflictScreen)
+
+AutoCount.Invoicing.Sales.TransferHelper
+    static TransferHelper Create(DBSetting dbSetting, TransferFrom transferFrom)
+    static String TransferFromToDocumentType(TransferFrom transferFrom)
+    static TransferFrom DocumentTypeToTransferFrom(String docType)
+    static DataTable CheckAndGetValidPartialTransferItem(String fromDocType, Int64[] fromDocDtlKeys, DBSetting dbSetting)
+    static DataTable LoadWantToFullTransferData(String[] fromdocNoList, String debtorCode, TransferFrom transferFrom, DBSetting dbSetting)
+
+AutoCount.Invoicing.Sales.TransferHelperSQL
+
+AutoCount.Invoicing.Sales.SalesTransferHelper
+    static SalesTransferHelper Create(DBSetting dbSetting, TransferFrom transferFrom, SalesDocument document)
+
+--- AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrder
+    SET: Agent:String, Attention:String, BranchCode:String, CalcDiscountOnUnitPrice:Boolean, CanSync:Boolean, CreditorCode:String, CreditorName:String, CurrencyCode:String, CurrencyRate:Nullable`1, DeliverAddr1:String, DeliverAddr2:String, DeliverAddr3:String, DeliverAddr4:String, DeliverContact:String, DeliverFax1:String, DeliverPhone1:String, Description:String, DisplayTerm:String, DocDate:Nullable`1, DocDate2:Nullable`1, DocNo:String, DocNoFormatName:String, DocumentStatusAction:Nullable`1, EInvoiceIssueDateTime:Nullable`1, EnableAutoLoadItemDetail:Boolean, EnableAutoPrice:Boolean, EnableNoDetailItemChecking:Boolean, EnableZeroNetTotalChecking:Boolean, ExternalLinkText:String, Fax1:String, Footer1Amt:Nullable`1, Footer1Param:Nullable`1, Footer1Tax:Nullable`1, Footer1TaxCode:String, Footer1TaxRate:Nullable`1, Footer2Amt:Nullable`1, Footer2Param:Nullable`1, Footer2Tax:Nullable`1, Footer2TaxCode:String, Footer2TaxRate:Nullable`1, Footer3Amt:Nullable`1, Footer3Param:Nullable`1, Footer3Tax:Nullable`1, Footer3TaxCode:String, Footer3TaxRate:Nullable`1, ForeignCharges:Nullable`1, InclusiveTax:Boolean, InvAddr1:String, InvAddr2:String, InvAddr3:String, InvAddr4:String, IsAllowSuspendedAcc:Boolean, IsCalculateFOCQty:Boolean, IsInvoiceAddressEditedManually:Boolean, IsRoundAdj:Boolean, KeepLastModifiedInfo:Boolean, KeepShowSerialNumberList:Boolean, LandedCostMethod:LandedCostOption, LocalCharges:Nullable`1, NeedReupdateEInvoiceDocument:Boolean, Note:String, Phone1:String, PurchaseLocation:String, Ref:String, RefDocNo:String, Remark1:String, Remark2:String, Remark3:String, Remark4:String, RoundingMethod:DocumentRoundingMethod, SetSubTotalToNullWhenAllNull:Boolean, ShipInfo:String, ShipVia:String, ShowCreditControlForm:Boolean, ShowOverdueControlForm:Boolean, SubmitInvoiceNow:Boolean, Tax:Nullable`1, TaxDate:Nullable`1, TaxEntityID:Nullable`1, ToTaxCurrencyRate:Nullable`1, Transferable:Boolean, TriggerFOCQtySerialNumEntryForm:Boolean, TriggerFromLimitControl:Boolean, TriggerQtySerialNumEntryForm:Boolean, UserData:Object, WHTPostingDate:Nullable`1, WithholdingTax:Nullable`1, WithholdingTaxRoundingMethod:WithholdingTaxRoundingMethod, WithholdingTaxVersion:EntryDocWithholdingTaxVersion, WithholdingVAT:Nullable`1
+    METH: add_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler), add_UpdateProcessingStatusEvent(UpdateProcessingStatusEventHandler), AddAOToPOTransferDetail(Int64), AddDetail(), AddDiscountDetail(String, Decimal, String, Int32), AddPackage(Int64), AddPackage(String), AddPackageDetail(Int64), AddPackageTemplate(Int64, Decimal), AddPartialTransferDetail(String, Int64, Boolean), AddPartialTransferDetail(String, Int64[], Boolean), AddSOToPOTransferDetail(Int64), AddSubTotalDetail(Int32), AddValueDiscountDetail(String, Decimal, String, Int32), CheckDocIsTransfered(), CheckIsTransferable(), EditDetail(Int64), InsertDetailBefore(Int32), InsertPackageDetailBefore(Int64, Int32), remove_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler), remove_UpdateProcessingStatusEvent(UpdateProcessingStatusEventHandler)
+
+--- AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderDetail
+    SET: AddToSubTotal:Boolean, CalcByPercent:Nullable`1, DeliveryDate:Nullable`1, DeptNo:String, Desc2:String, Description:String, Discount:String, DiscountAmt:Nullable`1, DtlType:String, EstimatedDeliveryDate:String, FOCQty:Nullable`1, FurtherDescription:String, ItemCode:String, LocalTaxAdjustment:Nullable`1, Location:String, Numbering:String, PrintOut:Boolean, ProjNo:String, Qty:Nullable`1, SalesExemptionNo:String, SubTotal:Nullable`1, TaxableAmt:Nullable`1, TaxAdjustment:Nullable`1, TaxCode:String, TaxRate:Nullable`1, Transferable:Boolean, UnitPrice:Nullable`1, UOM:String, UserUOM:String
+    METH: 
+
+--- AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoice
+    SET: Agent:String, ATMSJEDocNoFormat:String, Attention:String, AuthorisationNumberForCertifiedExporter:String, BranchCode:String, CalcDiscountOnUnitPrice:Boolean, CanSync:Boolean, CreditorCode:String, CreditorName:String, CurrencyCode:String, CurrencyRate:Nullable`1, DeliveryTaxEntityID:Nullable`1, Description:String, DisplayTerm:String, DocDate:Nullable`1, DocDate2:Nullable`1, DocNo:String, DocNoFormatName:String, DocumentStatusAction:Nullable`1, EInvoiceIssueDateTime:Nullable`1, EnableAutoLoadItemDetail:Boolean, EnableAutoPrice:Boolean, EnableNoDetailItemChecking:Boolean, EnableZeroNetTotalChecking:Boolean, ExternalLinkText:String, Fax1:String, Footer1Amt:Nullable`1, Footer1Param:Nullable`1, Footer1Tax:Nullable`1, Footer1TaxCode:String, Footer1TaxRate:Nullable`1, Footer2Amt:Nullable`1, Footer2Param:Nullable`1, Footer2Tax:Nullable`1, Footer2TaxCode:String, Footer2TaxRate:Nullable`1, Footer3Amt:Nullable`1, Footer3Param:Nullable`1, Footer3Tax:Nullable`1, Footer3TaxCode:String, Footer3TaxRate:Nullable`1, ForeignCharges:Nullable`1, FreeTradeAgreementInformation:String, FreightAllowanceChargeAmt:Nullable`1, FreightAllowanceChargeReason:String, InclusiveTax:Boolean, Incoterms:String, InvAddr1:String, InvAddr2:String, InvAddr3:String, InvAddr4:String, IsAllowSuspendedAcc:Boolean, IsCalculateFOCQty:Boolean, IsInvoiceAddressEditedManually:Boolean, ISJEDocNoFormat:String, IsRoundAdj:Boolean, KeepLastModifiedInfo:Boolean, KeepShowSerialNumberList:Boolean, LandedCostMethod:LandedCostOption, LocalCharges:Nullable`1, NeedReupdateEInvoiceDocument:Boolean, Note:String, Phone1:String, PostToGL:Boolean, PostToStock:Boolean, PurchaseLocation:String, Ref:String, RefDocNo:String, ReferATMSJEDocNo:String, ReferATMSJEIsNonTaxableSupply:String, ReferCAJEDocNo:String, ReferenceNumberOfCustomsFormNo1And9:String, ReferenceNumberOfCustomsFormNo2:String, ReferISJEDocNo:String, ReferISJEIsNonTaxableSupply:String, ReferPaymentDocKey:Int64, ReferSSTISJEDocNo:String, ReferSSTSDJEDocNo:String, Remark1:String, Remark2:String, Remark3:String, Remark4:String, RoundingMethod:DocumentRoundingMethod, SetSubTotalToNullWhenAllNull:Boolean, ShipInfo:String, ShipVia:String, ShowCreditControlForm:Boolean, ShowOverdueControlForm:Boolean, SSTISJEDocNoFormat:String, SSTSDJEDocNoFormat:String, SubmitInvoiceNow:Boolean, SupplierDONo:String, SupplierInvoiceNo:String, Tax:Nullable`1, TaxDate:Nullable`1, TaxEntityID:Nullable`1, ToTaxCurrencyRate:Nullable`1, Transferable:Boolean, TriggerFOCQtySerialNumEntryForm:Boolean, TriggerFromLimitControl:Boolean, TriggerQtySerialNumEntryForm:Boolean, UserData:Object, WHTPostingDate:Nullable`1, WithholdingTax:Nullable`1, WithholdingTaxRoundingMethod:WithholdingTaxRoundingMethod, WithholdingTaxVersion:EntryDocWithholdingTaxVersion, WithholdingVAT:Nullable`1
+    METH: add_ConfirmChangeEvent(ConfirmChangeEventHandler), add_ConfirmOverPaymentEvent(ConfirmOverPaymentEventHandler), add_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler), add_InvalidAccountNoEvent(InvalidAccountNoEventHandler), add_OpenPurchaseInvoicePaymentEvent(OpenPurchasePaymentWindowDelegate), add_PurchaseInvoiceAfterSaveEvent(PurchaseInvoiceAfterSaveEventHandler), AddDetail(), AddDetailFromUCInquiry(ConsignmentCarrierCollection), AddDiscountDetail(String, Decimal, String, Int32), AddPackage(Int64), AddPackage(String), AddPackageDetail(Int64), AddPackageTemplate(Int64, Decimal), AddPartialTransferDetail(String, Int64, Boolean), AddPartialTransferDetail(String, Int64[], Boolean), AddSubTotalDetail(Int32), AddValueDiscountDetail(String, Decimal, String, Int32), CanChangeMasterAccountNo(), DoPayment(), EditDetail(Int64), HasPayment(), InsertDetailBefore(Int32), InsertPackageDetailBefore(Int64, Int32), RefreshAccNo(), RefreshTariffCode(Boolean), remove_ConfirmChangeEvent(ConfirmChangeEventHandler), remove_ConfirmOverPaymentEvent(ConfirmOverPaymentEventHandler), remove_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler), remove_InvalidAccountNoEvent(InvalidAccountNoEventHandler), remove_OpenPurchaseInvoicePaymentEvent(OpenPurchasePaymentWindowDelegate), remove_PurchaseInvoiceAfterSaveEvent(PurchaseInvoiceAfterSaveEventHandler)
+
+--- AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceDetail
+    SET: AccNo:String, AddToSubTotal:Boolean, BatchNo:String, CalcByPercent:Nullable`1, CNAmt:Nullable`1, DeferredTax:Nullable`1, DeliveryDate:Nullable`1, DeptNo:String, Desc2:String, Description:String, Discount:String, DiscountAmt:Nullable`1, DtlType:String, Duty:Nullable`1, EstimatedDeliveryDate:String, FOCQty:Nullable`1, ForeignCharges:Nullable`1, FurtherDescription:String, ItemCode:String, LocalCharges:Nullable`1, LocalTaxAdjustment:Nullable`1, Location:String, Numbering:String, OurPODate:Nullable`1, OurPONo:String, PrintOut:Boolean, ProjNo:String, Qty:Nullable`1, SalesExemptionNo:String, SerialNoList:String, SubTotal:Nullable`1, TariffCode:String, TaxableAmt:Nullable`1, TaxAdjustment:Nullable`1, TaxCode:String, TaxPermitNo:String, TaxRate:Nullable`1, Transferable:Boolean, UnitPrice:Nullable`1, UOM:String, UserUOM:String
+    METH: 
+
+--- AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNote
+    SET: Agent:String, Attention:String, BranchCode:String, CalcDiscountOnUnitPrice:Boolean, CanSync:Boolean, CreditorCode:String, CreditorName:String, CurrencyCode:String, CurrencyRate:Nullable`1, Description:String, DisplayTerm:String, DocDate:Nullable`1, DocDate2:Nullable`1, DocNo:String, DocNoFormatName:String, DocumentStatusAction:Nullable`1, EInvoiceIssueDateTime:Nullable`1, EnableAutoLoadItemDetail:Boolean, EnableAutoPrice:Boolean, EnableNoDetailItemChecking:Boolean, EnableZeroNetTotalChecking:Boolean, ExternalLinkText:String, Fax1:String, Footer1Amt:Nullable`1, Footer1Param:Nullable`1, Footer1Tax:Nullable`1, Footer1TaxCode:String, Footer1TaxRate:Nullable`1, Footer2Amt:Nullable`1, Footer2Param:Nullable`1, Footer2Tax:Nullable`1, Footer2TaxCode:String, Footer2TaxRate:Nullable`1, Footer3Amt:Nullable`1, Footer3Param:Nullable`1, Footer3Tax:Nullable`1, Footer3TaxCode:String, Footer3TaxRate:Nullable`1, ForeignCharges:Nullable`1, InclusiveTax:Boolean, InvAddr1:String, InvAddr2:String, InvAddr3:String, InvAddr4:String, IsAllowSuspendedAcc:Boolean, IsCalculateFOCQty:Boolean, IsInvoiceAddressEditedManually:Boolean, IsRoundAdj:Boolean, KeepLastModifiedInfo:Boolean, KeepShowSerialNumberList:Boolean, LandedCostMethod:LandedCostOption, LocalCharges:Nullable`1, NeedReupdateEInvoiceDocument:Boolean, Note:String, Phone1:String, PostToStock:Boolean, PurchaseLocation:String, Ref:String, RefDocNo:String, Remark1:String, Remark2:String, Remark3:String, Remark4:String, RoundingMethod:DocumentRoundingMethod, SetSubTotalToNullWhenAllNull:Boolean, ShipInfo:String, ShipVia:String, ShowCreditControlForm:Boolean, ShowOverdueControlForm:Boolean, SupplierDONo:String, Tax:Nullable`1, TaxDate:Nullable`1, TaxEntityID:Nullable`1, ToTaxCurrencyRate:Nullable`1, Transferable:Boolean, TriggerFOCQtySerialNumEntryForm:Boolean, TriggerFromLimitControl:Boolean, TriggerQtySerialNumEntryForm:Boolean, UserData:Object, WHTPostingDate:Nullable`1, WithholdingTax:Nullable`1, WithholdingTaxRoundingMethod:WithholdingTaxRoundingMethod, WithholdingTaxVersion:EntryDocWithholdingTaxVersion, WithholdingVAT:Nullable`1
+    METH: add_ConfirmChangeEvent(ConfirmChangeEventHandler), add_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler), AddDetail(), AddDiscountDetail(String, Decimal, String, Int32), AddPackage(Int64), AddPackage(String), AddPackageDetail(Int64), AddPackageTemplate(Int64, Decimal), AddPartialTransferDetail(String, Int64, Boolean), AddPartialTransferDetail(String, Int64[], Boolean), AddSubTotalDetail(Int32), AddValueDiscountDetail(String, Decimal, String, Int32), EditDetail(Int64), InsertDetailBefore(Int32), InsertPackageDetailBefore(Int64, Int32), remove_ConfirmChangeEvent(ConfirmChangeEventHandler), remove_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler)
+
+--- AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteDetail
+    SET: AddToSubTotal:Boolean, BatchNo:String, CalcByPercent:Nullable`1, CNAmt:Nullable`1, DeliveryDate:Nullable`1, DeptNo:String, Desc2:String, Description:String, Discount:String, DiscountAmt:Nullable`1, DtlType:String, Duty:Nullable`1, EstimatedDeliveryDate:String, FOCQty:Nullable`1, ForeignCharges:Nullable`1, FurtherDescription:String, ItemCode:String, LocalCharges:Nullable`1, LocalTaxAdjustment:Nullable`1, Location:String, Numbering:String, OurPODate:Nullable`1, OurPONo:String, PrintOut:Boolean, ProjNo:String, Qty:Nullable`1, SalesExemptionNo:String, SerialNoList:String, SubTotal:Nullable`1, TaxableAmt:Nullable`1, TaxAdjustment:Nullable`1, TaxCode:String, TaxRate:Nullable`1, Transferable:Boolean, UnitPrice:Nullable`1, UOM:String, UserUOM:String
+    METH: 
+
+--- AutoCount.Invoicing.Sales.SalesOrder.SalesOrder
+    SET: Agent:String, Attention:String, BranchCode:String, CalcDiscountOnUnitPrice:Boolean, CanSync:Boolean, CanTransferByValue:Boolean, CurrencyCode:String, CurrencyRate:Nullable`1, DebtorCode:String, DebtorName:String, DeliverAddr1:String, DeliverAddr2:String, DeliverAddr3:String, DeliverAddr4:String, DeliverContact:String, DeliverFax1:String, DeliverPhone1:String, Description:String, DisplayTerm:String, DocDate:Nullable`1, DocDate2:Nullable`1, DocNo:String, DocNoFormatName:String, DocumentStatusAction:Nullable`1, EInvoiceIssueDateTime:Nullable`1, EnableAutoLoadItemDetail:Boolean, EnableAutoPrice:Boolean, EnableMultiDimensionalPriceBook:Boolean, EnableNoDetailItemChecking:Boolean, EnableZeroNetTotalChecking:Boolean, ExternalLinkText:String, Fax1:String, Footer1Amt:Nullable`1, Footer1Param:Nullable`1, Footer1Tax:Nullable`1, Footer1TaxCode:String, Footer1TaxRate:Nullable`1, Footer2Amt:Nullable`1, Footer2Param:Nullable`1, Footer2Tax:Nullable`1, Footer2TaxCode:String, Footer2TaxRate:Nullable`1, Footer3Amt:Nullable`1, Footer3Param:Nullable`1, Footer3Tax:Nullable`1, Footer3TaxCode:String, Footer3TaxRate:Nullable`1, InclusiveTax:Boolean, InvAddr1:String, InvAddr2:String, InvAddr3:String, InvAddr4:String, IsAllowSuspendedAcc:Boolean, IsCalculateFOCQty:Boolean, IsDeliveryAddressEditedManually:Boolean, IsInvoiceAddressEditedManually:Boolean, IsRoundAdj:Boolean, KeepLastModifiedInfo:Boolean, KeepShowSerialNumberList:Boolean, MemberNo:String, NeedReupdateEInvoiceDocument:Boolean, Note:String, Phone1:String, RecalculateMemberPoint:Boolean, Ref:String, RefDocNo:String, Remark1:String, Remark2:String, Remark3:String, Remark4:String, RoundingMethod:DocumentRoundingMethod, SalesCreditControl:CreditControl, SalesExemptionExpiryDate:Nullable`1, SalesExemptionNo:String, SalesLocation:String, SetSubTotalToNullWhenAllNull:Boolean, ShipInfo:String, ShipVia:String, ShowCreditControlForm:Boolean, ShowOverdueControlForm:Boolean, Tax:Nullable`1, TaxDate:Nullable`1, TaxEntityID:Nullable`1, ToTaxCurrencyRate:Nullable`1, Transferable:Boolean, TriggerFOCQtySerialNumEntryForm:Boolean, TriggerFromLimitControl:Boolean, TriggerQtySerialNumEntryForm:Boolean, UserData:Object, WHTPostingDate:Nullable`1, WithholdingTax:Nullable`1, WithholdingTaxRoundingMethod:WithholdingTaxRoundingMethod, WithholdingTaxVersion:EntryDocWithholdingTaxVersion, WithholdingVAT:Nullable`1
+    METH: add_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler), add_UpdateProcessingStatusEvent(UpdateProcessingStatusEventHandler), AddDetail(), AddDiscountDetail(String, Decimal, String, Int32), AddPackage(Int64), AddPackage(String), AddPackageDetail(Int64), AddPackageTemplate(Int64, Decimal), AddPartialTransferDetail(String, Int64, Boolean), AddPartialTransferDetail(String, Int64[], Boolean), AddSubTotalDetail(Int32), AddValueDiscountDetail(String, Decimal, String, Int32), DeleteDetail(Int64), DeletePackageDetail(Int64), EditDetail(Int64), InsertDetailBefore(Int32), InsertPackageDetailBefore(Int64, Int32), IsBFProcessing(DataRow), remove_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler), remove_UpdateProcessingStatusEvent(UpdateProcessingStatusEventHandler)
+
+--- AutoCount.Invoicing.Sales.SalesOrder.SalesOrderDetail
+    SET: AddToSubTotal:Boolean, CalcByPercent:Nullable`1, DeliveryDate:Nullable`1, DeptNo:String, Desc2:String, Description:String, Discount:String, DiscountAmt:Nullable`1, DtlType:String, EstimatedDeliveryDate:String, FOCQty:Nullable`1, FurtherDescription:String, ItemCode:String, LocalTaxAdjustment:Nullable`1, Location:String, Numbering:String, PrintOut:Boolean, ProjNo:String, Qty:Nullable`1, SalesExemptionNo:String, SubTotal:Nullable`1, TaxableAmt:Nullable`1, TaxAdjustment:Nullable`1, TaxCode:String, TaxRate:Nullable`1, Transferable:Boolean, UnitPrice:Nullable`1, UOM:String, UserUOM:String, YourPODate:Nullable`1, YourPONo:String
+    METH: 
+
+--- AutoCount.Invoicing.Sales.Invoice.Invoice
+    SET: Agent:String, Attention:String, AuthorisationNumberForCertifiedExporter:String, BranchCode:String, CalcDiscountOnUnitPrice:Boolean, CanSync:Boolean, ConsolidatedEInvoice:Boolean, CurrencyCode:String, CurrencyRate:Nullable`1, DebtorCode:String, DebtorName:String, DeliverAddr1:String, DeliverAddr2:String, DeliverAddr3:String, DeliverAddr4:String, DeliverContact:String, DeliverFax1:String, DeliverPhone1:String, DeliveryTaxEntityID:Nullable`1, Description:String, DisplayTerm:String, DocDate:Nullable`1, DocDate2:Nullable`1, DocNo:String, DocNoFormatName:String, DocumentStatusAction:Nullable`1, EInvoiceCancelReason:String, EInvoiceIssueDateTime:Nullable`1, EInvoiceSubmissionUuid:String, EInvoiceUuid:String, EInvoiceValidatedDateTime:Nullable`1, EInvoiceValidationLink:String, EnableAutoLoadItemDetail:Boolean, EnableAutoPrice:Boolean, EnableMultiDimensionalPriceBook:Boolean, EnableNoDetailItemChecking:Boolean, EnableZeroNetTotalChecking:Boolean, ExternalLinkText:String, Fax1:String, Footer1Amt:Nullable`1, Footer1Param:Nullable`1, Footer1Tax:Nullable`1, Footer1TaxCode:String, Footer1TaxRate:Nullable`1, Footer2Amt:Nullable`1, Footer2Param:Nullable`1, Footer2Tax:Nullable`1, Footer2TaxCode:String, Footer2TaxRate:Nullable`1, Footer3Amt:Nullable`1, Footer3Param:Nullable`1, Footer3Tax:Nullable`1, Footer3TaxCode:String, Footer3TaxRate:Nullable`1, FreeTradeAgreementInformation:String, FreightAllowanceChargeAmt:Nullable`1, FreightAllowanceChargeReason:String, InclusiveTax:Boolean, Incoterms:String, InvAddr1:String, InvAddr2:String, InvAddr3:String, InvAddr4:String, IsAllowSuspendedAcc:Boolean, IsCalculateFOCQty:Boolean, IsDeliveryAddressEditedManually:Boolean, IsInvoiceAddressEditedManually:Boolean, IsRoundAdj:Boolean, KeepLastModifiedInfo:Boolean, KeepShowSerialNumberList:Boolean, LocalTotalCost:Nullable`1, MemberNo:String, NeedReupdateEInvoiceDocument:Boolean, Note:String, Phone1:String, PostToGL:Boolean, PostToStock:Boolean, ReallocatePurchaseByProject:Boolean, ReallocatePurchaseByProjectNo:String, RecalculateMemberPoint:Boolean, Ref:String, RefDocNo:String, ReferenceNumberOfCustomsFormNo1And9:String, ReferenceNumberOfCustomsFormNo2:String, Remark1:String, Remark2:String, Remark3:String, Remark4:String, RoundingMethod:DocumentRoundingMethod, SalesCreditControl:CreditControl, SalesExemptionExpiryDate:Nullable`1, SalesExemptionNo:String, SalesLocation:String, SetSubTotalToNullWhenAllNull:Boolean, SGEInvoiceSendToPeppol:Boolean, ShipInfo:String, ShipVia:String, ShowCreditControlForm:Boolean, ShowOverdueControlForm:Boolean, SubmitEInvoice:Boolean, SubmitInvoiceNow:Boolean, Tax:Nullable`1, TaxDate:Nullable`1, TaxDocNo:String, TaxEntityID:Nullable`1, ToTaxCurrencyRate:Nullable`1, Transferable:Boolean, TriggerFOCQtySerialNumEntryForm:Boolean, TriggerFromLimitControl:Boolean, TriggerQtySerialNumEntryForm:Boolean, UserData:Object, WHTPostingDate:Nullable`1, WithholdingTax:Nullable`1, WithholdingTaxRoundingMethod:WithholdingTaxRoundingMethod, WithholdingTaxVersion:EntryDocWithholdingTaxVersion, WithholdingVAT:Nullable`1
+    METH: add_ConfirmOverPaymentEvent(ConfirmOverPaymentEventHandler), add_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler), add_InvalidAccountNoEvent(InvalidAccountNoEventHandler), add_OpenInvoicePaymentEvent(OpenInvoicePaymentWindowEventHandler), AddChangeUnitPriceAudit(Int64, String, Decimal, Decimal, String), AddDetail(), AddDetailFromUCInquiry(ConsignmentCarrierCollection), AddDiscountDetail(String, Decimal, String, Int32), AddPackage(Int64), AddPackage(String), AddPackageDetail(Int64), AddPackageTemplate(Int64, Decimal), AddPartialTransferDetail(String, Int64, Boolean), AddPartialTransferDetail(String, Int64[], Boolean), AddSubTotalDetail(Int32), AddValueDiscountDetail(String, Decimal, String, Int32), AllowEditEInvoice(), CanChangeMasterAccountNo(), DoPayment(), EditDetail(Int64), HasPayment(), InsertDetailBefore(Int32), InsertPackageDetailBefore(Int64, Int32), LoadTransferByValueFromSO(), RefreshAccNo(), RefreshTariffCode(Boolean), remove_ConfirmOverPaymentEvent(ConfirmOverPaymentEventHandler), remove_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler), remove_InvalidAccountNoEvent(InvalidAccountNoEventHandler), remove_OpenInvoicePaymentEvent(OpenInvoicePaymentWindowEventHandler), ResubmitEInvoice(), ShowBonusPointControls(), ValueTransfer(DataTable)
+
+--- AutoCount.Invoicing.Sales.Invoice.InvoiceDetail
+    SET: AccNo:String, AddToSubTotal:Boolean, ATC:String, BatchNo:String, BonusPoint:Nullable`1, CalcByPercent:Nullable`1, Classification:String, DeferredTax:Nullable`1, DeliveryDate:Nullable`1, DeptNo:String, Desc2:String, Description:String, Discount:String, DiscountAmt:Nullable`1, DtlType:String, EstimatedDeliveryDate:String, FOCQty:Nullable`1, FurtherDescription:String, ItemCode:String, LocalFOCTotalCost:Nullable`1, LocalTaxAdjustment:Nullable`1, LocalTotalCost:Nullable`1, Location:String, Numbering:String, OurDODate:Nullable`1, OurDONo:String, PrintOut:Boolean, ProjNo:String, Qty:Nullable`1, SalesExemptionNo:String, SubTotal:Nullable`1, TariffCode:String, TaxableAmt:Nullable`1, TaxAdjustment:Nullable`1, TaxCode:String, TaxExportCountry:String, TaxPermitNo:String, TaxRate:Nullable`1, Transferable:Boolean, UnitPrice:Nullable`1, UOM:String, UserUOM:String, YourPODate:Nullable`1, YourPONo:String
+    METH: 
+
+--- AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrder
+    SET: Agent:String, Attention:String, BranchCode:String, CalcDiscountOnUnitPrice:Boolean, CanSync:Boolean, CurrencyCode:String, CurrencyRate:Nullable`1, DebtorCode:String, DebtorName:String, DeliverAddr1:String, DeliverAddr2:String, DeliverAddr3:String, DeliverAddr4:String, DeliverContact:String, DeliverFax1:String, DeliverPhone1:String, Description:String, DisplayTerm:String, DocDate:Nullable`1, DocDate2:Nullable`1, DocNo:String, DocNoFormatName:String, DocumentStatusAction:Nullable`1, EInvoiceIssueDateTime:Nullable`1, EnableAutoLoadItemDetail:Boolean, EnableAutoPrice:Boolean, EnableMultiDimensionalPriceBook:Boolean, EnableNoDetailItemChecking:Boolean, EnableZeroNetTotalChecking:Boolean, ExternalLinkText:String, Fax1:String, Footer1Amt:Nullable`1, Footer1Param:Nullable`1, Footer1Tax:Nullable`1, Footer1TaxCode:String, Footer1TaxRate:Nullable`1, Footer2Amt:Nullable`1, Footer2Param:Nullable`1, Footer2Tax:Nullable`1, Footer2TaxCode:String, Footer2TaxRate:Nullable`1, Footer3Amt:Nullable`1, Footer3Param:Nullable`1, Footer3Tax:Nullable`1, Footer3TaxCode:String, Footer3TaxRate:Nullable`1, InclusiveTax:Boolean, InvAddr1:String, InvAddr2:String, InvAddr3:String, InvAddr4:String, IsAllowSuspendedAcc:Boolean, IsCalculateFOCQty:Boolean, IsDeliveryAddressEditedManually:Boolean, IsInvoiceAddressEditedManually:Boolean, IsRoundAdj:Boolean, KeepLastModifiedInfo:Boolean, KeepShowSerialNumberList:Boolean, MemberNo:String, NeedReupdateEInvoiceDocument:Boolean, Note:String, Phone1:String, PostToStock:Boolean, RecalculateMemberPoint:Boolean, Ref:String, RefDocNo:String, Remark1:String, Remark2:String, Remark3:String, Remark4:String, RoundingMethod:DocumentRoundingMethod, SalesCreditControl:CreditControl, SalesExemptionExpiryDate:Nullable`1, SalesExemptionNo:String, SalesLocation:String, SetSubTotalToNullWhenAllNull:Boolean, ShipInfo:String, ShipVia:String, ShowCreditControlForm:Boolean, ShowOverdueControlForm:Boolean, Tax:Nullable`1, TaxDate:Nullable`1, TaxEntityID:Nullable`1, ToTaxCurrencyRate:Nullable`1, Transferable:Boolean, TriggerFOCQtySerialNumEntryForm:Boolean, TriggerFromLimitControl:Boolean, TriggerQtySerialNumEntryForm:Boolean, UserData:Object, WHTPostingDate:Nullable`1, WithholdingTax:Nullable`1, WithholdingTaxRoundingMethod:WithholdingTaxRoundingMethod, WithholdingTaxVersion:EntryDocWithholdingTaxVersion, WithholdingVAT:Nullable`1
+    METH: add_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler), add_InvalidAccountNoEvent(InvalidAccountNoEventHandler), add_UpdateProcessingStatusEvent(UpdateProcessingStatusEventHandler), AddDetail(), AddDiscountDetail(String, Decimal, String, Int32), AddPackage(Int64), AddPackage(String), AddPackageDetail(Int64), AddPackageTemplate(Int64, Decimal), AddPartialTransferDetail(String, Int64, Boolean), AddPartialTransferDetail(String, Int64[], Boolean), AddSubTotalDetail(Int32), AddValueDiscountDetail(String, Decimal, String, Int32), EditDetail(Int64), InsertDetailBefore(Int32), InsertPackageDetailBefore(Int64, Int32), RefreshAccNo(), remove_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler), remove_InvalidAccountNoEvent(InvalidAccountNoEventHandler), remove_UpdateProcessingStatusEvent(UpdateProcessingStatusEventHandler)
+
+--- AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderDetail
+    SET: AccNo:String, AddToSubTotal:Boolean, BatchNo:String, CalcByPercent:Nullable`1, DeliveryDate:Nullable`1, DeptNo:String, Desc2:String, Description:String, Discount:String, DiscountAmt:Nullable`1, DtlType:String, EstimatedDeliveryDate:String, FOCQty:Nullable`1, FurtherDescription:String, IsValueTransferedItem:Object, ItemCode:String, LocalFOCTotalCost:Nullable`1, LocalTaxAdjustment:Nullable`1, LocalTotalCost:Nullable`1, Location:String, Numbering:String, PrintOut:Boolean, ProjNo:String, Qty:Nullable`1, SalesExemptionNo:String, SubTotal:Nullable`1, TaxableAmt:Nullable`1, TaxAdjustment:Nullable`1, TaxCode:String, TaxRate:Nullable`1, Transferable:Boolean, UnitPrice:Nullable`1, UOM:String, UserUOM:String, YourPODate:Nullable`1, YourPONo:String
+    METH: 
