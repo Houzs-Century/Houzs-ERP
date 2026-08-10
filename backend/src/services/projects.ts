@@ -2361,6 +2361,20 @@ export async function amendChecklistItem(env: Env, itemId: number, note: string 
 }
 
 export async function approveChecklistItem(env: Env, itemId: number, userId: number) {
+  // IDEMPOTENT (owner 2026-08-08 "approve button have bug"): the approver keeps
+  // the Approve button after a decision (2026-07-31 rule, so it can be revisited),
+  // but pressing it again on an ALREADY-approved item used to stack another
+  // identical "Approved · name · time" line on the row — three clicks, three
+  // lines, no state change. Re-approving an approved item is a no-op now: the
+  // first decision and its timestamp stand, and the audit trail stays honest.
+  // A rejection flips review_status away from 'approved', so re-approving after
+  // a reject still records the new decision.
+  const cur = await env.DB.prepare(
+    `SELECT review_status FROM project_checklist WHERE id = ?`
+  )
+    .bind(itemId)
+    .first<{ review_status: string | null }>();
+  if ((cur?.review_status ?? "") === "approved") return;
   await env.DB.prepare(
     `UPDATE project_checklist
         SET review_status = 'approved',
