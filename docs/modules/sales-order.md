@@ -378,6 +378,20 @@ same contract as the Processing-Date gates), all reasons at once:
 | `venue_required` | `venue` text OR `venue_id` set (owner: *"venue is compulsory的"*). No venue-less order class exists in code — venue-binding's "empty is honest" rule governs AUTO-resolution only; when it resolves nothing, confirm demands a human pick |
 | `variants_incomplete` | every goods line's required axes via `missingConfirmVariantAxes` (shared, both frontends + backend): sofa Seat Height + Fabrics, bedframe Divan/Leg/Gap/Fabrics. **Colour-KIV satisfies the fabric axis** — KIV blocks the Processing Date (2026-07-24 rule), never confirm. Mattress / accessory / service / others carry no axes |
 
+**Who may write which key of the `variants` jsonb.** The column has several
+writers and no schema, so ownership is by convention and the convention is
+enforced in code:
+
+| keys | owner |
+|---|---|
+| `fabricId` / `colourId` / `fabricCode` / `colourLabel` / `fabricLabel` / `gap` / `divanHeight` / `legHeight` / `totalHeight` / `size` | the AutoCount re-parse sweeps — `OWNED_VARIANT_KEYS` in `backend/scripts/lib/variant-merge.mjs` |
+| `specials` (and the HOOKKA singular `special`) | `backend/scripts/backfill-specials-into-variants.mjs`, the only writer with the money guard — a picked add-on's surcharge folds into the authoritative unit price, so stamping a PRICED code reprices a historical document |
+| everything else (POS configurator, line editors) | its own writer |
+
+A sweep MERGES its patch (`variants = variants || patch`) and never rebuilds the
+object; rebuilding deletes every key it has not heard of. `custom_specials` is a
+DERIVED output of the pricing recompute and is written by no script at all.
+
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.
 ON_HOLD-resume and reopen re-enter CONFIRMED without re-gating (legacy orders
