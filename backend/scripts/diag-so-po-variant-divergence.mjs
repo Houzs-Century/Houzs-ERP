@@ -257,6 +257,82 @@ async function main() {
   log(`  SO value is a strict PREFIX of the PO's: ${hits.soShorter.length}`);
   for (const h of hits.soShorter.slice(0, 60)) log(`    ${h}`);
 
+  /* Is the shorter value a TRUNCATION, or a SECOND LIBRARY ROW for the same
+     physical colour? findColour only ever returns a whole scm.fabric_colours
+     row, so if both spellings exist there the disagreement is a duplicate in
+     the library, not a string being clipped - and the remedy is completely
+     different. Print the library rows for every series named in a prefix hit. */
+  const series = new Set();
+  for (const h of [...hits.poShorter, ...hits.soShorter]) {
+    const m = /SO="([A-Z0-9]+)/i.exec(h); if (m) series.add(m[1].replace(/[0-9]+$/, "").toUpperCase());
+    const m2 = /SO="([A-Z]{2,6}\s?[0-9]{2,4})/i.exec(h); if (m2) series.add(m2[1].toUpperCase());
+  }
+  log(`  library rows for the series involved (${[...series].join(", ") || "none"}):`);
+  for (const s of series) {
+    const rows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours
+                            WHERE company_id = 1 AND (UPPER(colour_id) LIKE ${s + "%"} OR UPPER(fabric_id) LIKE ${s + "%"})
+                            ORDER BY colour_id`;
+    for (const r of rows) log(`    fabric_id=${j(r.fabric_id)} colour_id=${j(r.colour_id)} label=${j(r.label)}`);
+    if (!rows.length) log(`    (no rows matching ${s})`);
+  }
+
+  /* The BO315 series turned out to hold BOTH "BO315-5" and "BO315-5-FOSSIL" -
+     the same physical colour entered twice, once bare and once with its name.
+     Any line binding to one and its counterpart binding to the other reads as a
+     disagreement forever. Census the whole library so the owner can see the
+     latent exposure in one read rather than one document at a time. */
+  log("");
+  log("  library colour pairs where one colour_id is the other plus a trailing NAME:");
+  const allFc = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
+  const byId = new Map(allFc.map((r) => [String(r.colour_id).toUpperCase(), r]));
+  const dupPairs = [];
+  for (const r of allFc) {
+    const id = String(r.colour_id).toUpperCase();
+    const m = /^(.*?[0-9])[\s-]+[A-Z][A-Z ]*$/.exec(id);
+    if (m && byId.has(m[1])) dupPairs.push([m[1], id, r.fabric_id]);
+  }
+  const bySeries = new Map();
+  for (const [bare, named, fid] of dupPairs) {
+    if (!bySeries.has(fid)) bySeries.set(fid, []);
+    bySeries.get(fid).push(`${bare} = ${named}`);
+  }
+  log(`  ${dupPairs.length} duplicate pairs across ${bySeries.size} series`);
+  for (const [fid, list] of [...bySeries.entries()].sort((a, b) => b[1].length - a[1].length))
+    log(`    ${fid} (${list.length}): ${list.join(" | ")}`);
+  // how many live lines are bound to either half of a duplicate pair?
+  const halves = [...new Set(dupPairs.flatMap(([a, b]) => [a, b]))];
+  if (halves.length) {
+    const exposure = await sql`
+      SELECT UPPER(v) AS cid, COUNT(*)::int AS n FROM (
+        SELECT i.variants ->> 'colourId' AS v FROM scm.mfg_sales_order_items i
+          JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+         WHERE h.company_id = 1 AND jsonb_typeof(i.variants) = 'object'
+        UNION ALL
+        SELECT pi.variants ->> 'colourId' FROM scm.purchase_order_items pi
+          JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
+         WHERE p.company_id = 1 AND jsonb_typeof(pi.variants) = 'object') t
+       WHERE UPPER(v) = ANY(${sql.array(halves)}) GROUP BY 1 ORDER BY 2 DESC`;
+    log(`  live SO+PO lines bound to either half of a duplicate pair: ${exposure.reduce((a, r) => a + r.n, 0)}`);
+    for (const r of exposure) log(`    ${r.cid}: ${r.n}`);
+  }
+
+  /* The handover reported a GRN on HC-PO-009576 recording divanHeight 151".
+     Both PO lines read 14" and 12", so print what the GRN actually holds. */
+  log("");
+  log("  GRN variant heights on the documents named in the audit:");
+  const grn = await sql`
+    SELECT g.grn_number, gi.material_code AS code, gi.variants, p.po_number
+      FROM scm.grn_items gi
+      JOIN scm.grns g ON g.id = gi.grn_id
+      JOIN scm.purchase_order_items pi ON pi.id = gi.purchase_order_item_id
+      JOIN scm.purchase_orders p ON p.id = pi.purchase_order_id
+     WHERE p.po_number = ANY(${sql.array(["HC-PO-009576", "HC-PO-009428", "HC-PO-009273"])})`;
+  for (const r of grn) {
+    const v = asObj(r.variants);
+    log(`    ${r.po_number} ${r.grn_number} ${r.code}: divanHeight=${j(v.divanHeight ?? null)} gap=${j(v.gap ?? null)} legHeight=${j(v.legHeight ?? null)} colourId=${j(v.colourId ?? null)}`);
+  }
+  if (!grn.length) log("    (no GRN lines found for those POs)");
+
   // ── D: duplicated delivery-order lines ─────────────────────────────────────
   /* HC-SO-001920 shows ONE ordered ELEPAHNE-(SK) against FOUR delivery lines.
      The SO->DO drill already proved zero inventory movements, so the question
