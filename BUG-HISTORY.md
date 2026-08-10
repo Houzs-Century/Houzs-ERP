@@ -1,3 +1,42 @@
+## A bare "C" (corner) was filtered as noise, so 49 sofa builds lost their corner [high]
+
+**Symptom** — AutoCount sofa builds written `1+C+2` imported as two separate
+sofas. `"1+C+2(32'Inch)/Col:HR805-30"` on model 9050 produced `9050-1S` +
+`9050-2S` — no `CNR` line — at **`high` confidence**, so no `SOFA UNPARSED`
+placeholder, no exception, and nothing on the order says a compartment is
+missing. `docs/sofa-import-handoff.md` section 1 uses this exact string as its
+worked example of what the decode is supposed to produce.
+
+**Root cause** — Traced to one character class, not guessed. `parse-sofa.mjs`
+drops junk tokens with a NOISE regex whose last alternative is a single letter.
+It was written `[A-KM-OQ-Z]` — deliberately excluding `L` (chaise) and `P`
+(power), but **not** `C` (corner) or `R` (recliner). Both letters were therefore
+discarded at the filter, before reaching their own classification arms
+(`t === "C"` and `t === "R" && recl`), which have been unreachable dead code
+ever since. The class arrived in #1813, the commit that extracted the decoder
+out of `import-ac-outstanding-so.mjs` so the PO importers could share it — under
+a file header that still reads "Extracted verbatim". It was not verbatim.
+
+**Fix** — `[A-BD-KM-OQS-Z]`: every letter the grammar classifies on its own (C,
+L, P, R) is now excluded. Measured over the three committed exports, both
+recliner states: **102 decodes改善, 0 confidence downgrades** — the bar
+`docs/sofa-import-handoff.md` section 7 sets for a parser change, which #1813
+never ran. 49 lines regain a `CNR` (35 SO / 4 PO / 10 SO-linked PO); `R+R` on a
+recliner model now yields `1A(R)(LHF)+1A(R)(RHF)` instead of nothing; a bare `R`
+on a NON-recliner model correctly refuses and takes the placeholder path.
+
+**Also added** — `backend/tests/parseSofaGrammar.test.ts`, 23 golden cases taken
+straight from the handoff doc's own rule tables. There was no test on this
+parser at all, which is the real reason a one-character mistake survived a
+merge. The doc asked for it ("owner 给的每个新例子都补成金标测试"); now it exists.
+
+**The class, for next time** — the sibling extraction (`parse-bedframe.mjs`) WAS
+regression-tested over all 2,702 real strings and proved byte-identical, and its
+header says so. Same refactor, same week, opposite outcome. "Extracted verbatim"
+in a comment is a claim, not evidence; run the corpus.
+
+**Ref** — 2026-08-10, PR fix/sofa-corner-token.
+
 ## Every migrated sales-order line was saved without its warehouse [high]
 
 **Symptom** — All 248+ sofa sales-order lines from the AutoCount cutover read
@@ -64,6 +103,78 @@ A filter written for a category should test the category, not a substring of the
 name.
 
 **Ref** — 2026-08-10, PR feat/sofa-stock-import.
+
+## AutoCount picture extraction silently lost every image whose \pichgoal had three digits [medium]
+
+**Symptom** — Four AutoCount lines that visibly carry a picture produced no jpg
+and no error: SO-000383 / SO-008544 (HOK-2009(A) (K)), SO-003567 and PO-002425
+(both RDS-5526 SOFA). The manifests recorded 551 SO and 167 PO pictures while
+the live book held 554 and 168.
+
+**Root cause** — Traced by dumping the RTF straight from the live book, not
+guessed. The extractor grabs the picture payload with
+`re.findall(r"[0-9a-fA-F\s]{400,}", seg)` — but the digits of the preceding
+`\pichgoalNNN` control word are themselves hex characters, so they land at the
+FRONT of the run. When the goal has four digits (`\pichgoal3600`) the prefix is
+even-length and the payload stays byte-aligned; the four failures all have a
+THREE-digit goal (750 / 900 / 645 / 900), so every byte decoded a nibble off,
+no `BITMAPINFOHEADER` was ever recognised, and the carve returned an empty list
+that nothing checked.
+
+**Fix** — Anchor on the WMF memory-metafile header (`0100 0900 0003`) inside
+the run instead of trusting where the regex started, then carve unchanged. All
+four re-extracted and verified as real content (one is a hand-drawn sofa
+elevation reading `Wood ... 28" ... Cushion`). Manifests topped up in this PR.
+
+**The class, for next time** — a parser whose failure mode is "returns nothing"
+needs a count check against the source. The gap only surfaced because the live
+book was queried for `FurtherDescription LIKE '%pict%'` and compared with the
+manifest row count; nothing in the pipeline itself would ever have reported it.
+
+**Ref** — 2026-08-10, PR fix/ac-photo-topup.
+
+## PO photo export was scoped narrower than the PO import, so 15 pictures were never pulled [medium]
+
+**Symptom** — 180 of the purchase-order lines the ERP imported carry a picture
+in AutoCount; the manifest held 164 of them.
+
+**Root cause** — The export query filtered `PODTL` by
+`FromSODtlKey IN (outstanding SO lines)` — "POs raised from a still-outstanding
+SO line". The ERP's imported PO set is wider than that: it is the W3 outstanding
+POs PLUS the W7 SO-linked already-received POs (re-exported again in #1845). Any
+imported PO line outside the narrower predicate was never looked at, so its
+picture was not missing — it was never requested.
+
+**Fix** — Re-extracted against the union of `ac-outstanding-po.json.gz` and
+`ac-so-linked-pos.json.gz`, which is exactly what the importer writes; 16
+pictures recovered (15 scope + 1 carve, above), 0 failures. Manifest 174 -> 190.
+
+**The class, for next time** — when a satellite export is filtered by its own
+predicate, that predicate has to be the SAME SET the importer uses, or it drifts
+the moment the import scope widens. Diff the two key sets, do not assume.
+
+**Ref** — 2026-08-10, PR fix/ac-photo-topup.
+
+## Sofa-named ACCESSORIES never got their photo attached [low]
+
+**Symptom** — Three SO photos (SO-010716 THL-SOFA PILLOW, SO-011454 and
+SO-011991 AMN-SOFA PILLOW) were reported as "sofa held", i.e. order not
+imported. The orders were imported and the lines were sitting right there.
+
+**Root cause** — `import-so-line-photos.mjs` sends anything whose AutoCount code
+contains SOFA down the compartment path. A pillow is an accessory that imports
+as ONE literal line, and `byDocModel` is keyed on the ERP code up to the FIRST
+dash (`AMN`), while `sofaModelOf("AMN-SOFA PILLOW")` returns the whole string —
+the two can never meet. The literal branch already falls back to compartments;
+the sofa branch had no fallback the other way.
+
+**Fix** — Sofa branch now tries compartments, then the exact code, before
+declaring the line missing (both the SO and the PO script). Separately, both
+scripts now PRINT the held documents instead of only counting them — the silent
+counter is what let this hide, and the count had to be reverse-engineered by
+arithmetic to find it.
+
+**Ref** — 2026-08-10, PR fix/ac-photo-topup.
 
 ## Every SO line photo rendered as "err" — the bucket name was never configured [high]
 
