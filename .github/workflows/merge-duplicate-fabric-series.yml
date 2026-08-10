@@ -1,0 +1,47 @@
+name: merge-duplicate-fabric-series
+
+# Read-only. Reports the fabric series that exist twice, which side production
+# references more, and what merging would move. There is deliberately no apply
+# input: merging repoints which colour a live document names, so the decision
+# is the owner's. See backend/scripts/merge-duplicate-fabric-series.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: merge-duplicate-fabric-series
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: Report duplicate fabric series (read-only)
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+        run: |
+          set -o pipefail
+          node scripts/merge-duplicate-fabric-series.mjs | tee dup-series.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: merge-duplicate-fabric-series
+          path: backend/dup-series.txt
+          retention-days: 7
