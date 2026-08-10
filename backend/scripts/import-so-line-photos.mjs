@@ -25,6 +25,16 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const isSofa = (c) => /SOFA/i.test(c || "");
+/* One AutoCount sofa line becomes MANY ERP lines (one per compartment), so a
+   sofa photo attaches to every piece of that build — the operator opens any
+   piece and sees the reference shot (owner 2026-08-10: "import 进来的时候需要
+   连那个照片一起 import 进来"). Model comes from the same mapping + alias the
+   SO importer uses. */
+const SOFA_MODEL_ALIAS = { "5530": "9028", "5536": "9058", "5537": "8030", "5540": "8030" };
+const sofaModelOf = (erp) => {
+  const m = (erp || "").replace(/-1S$/i, "").toUpperCase();
+  return SOFA_MODEL_ALIAS[m] || m;
+};
 
 function parseCsvLine(line) {
   const out = []; let cur = ""; let q = false;
@@ -52,12 +62,31 @@ async function main() {
     byDocCode.get(k).push(it);
   }
 
-  let sofaHeld = 0, noOrder = 0, noLine = 0, unmapped = 0;
   const plan = []; // {file, key, itemId, already}
   const seenN = new Map(); // itemId -> next n (photos per line keep manifest order)
+  const byDocModel = new Map(); // "<ac doc>|<model>" -> sofa piece lines
+  for (const it of items) {
+    const code = norm(it.item_code);
+    const dash = code.indexOf("-");
+    if (dash < 0) continue;
+    const k = `${it.linked_ac_docno}|${code.slice(0, dash)}`;
+    if (!byDocModel.has(k)) byDocModel.set(k, []);
+    byDocModel.get(k).push(it);
+  }
+  let sofaHeld = 0, noOrder = 0, noLine = 0, unmapped = 0;
   for (const m of manifest) {
-    if (isSofa(m.ItemCode)) { sofaHeld++; continue; }
     const erp = byAc.get(norm(m.ItemCode));
+    if (isSofa(m.ItemCode)) {
+      if (!erp) { unmapped++; log(`  unmapped AC sofa code: ${m.ItemCode} (${m.DocNo})`); continue; }
+      const pieces = byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
+      if (!pieces || !pieces.length) { sofaHeld++; continue; } // order not imported yet
+      for (const it of pieces) {
+        const n = (seenN.get(it.id) ?? 0) + 1; seenN.set(it.id, n);
+        const key = `so-items/${it.doc_no}/${it.id}/ac-${m.DtlKey}-${n}.jpg`;
+        plan.push({ file: m.file, key, itemId: it.id, already: (it.photo_urls ?? []).includes(key) });
+      }
+      continue;
+    }
     if (!erp) { unmapped++; log(`  unmapped AC code: ${m.ItemCode} (${m.DocNo})`); continue; }
     const cands = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
     if (!cands) {
