@@ -1,0 +1,69 @@
+name: Refresh sofa colours (stamp the Desc2 fabric)
+
+# Manual. Sweeps the migrated SOFA lines - scm.mfg_sales_order_items and
+# scm.purchase_order_items, company 1, parent carrying linked_ac_docno - and
+# stamps the fabric colour their own AutoCount Desc2 already names, using the
+# ONE shared matcher (scripts/lib/fabric-colour-match.mjs).
+#
+# Nothing else swept those rows: refresh-so-variants.mjs covers bedframe and
+# (SP) sizes only, so every matcher improvement reached new imports and never
+# an existing line.
+#
+# A colour somebody already chose is never overwritten, TBC/KIV is left blank
+# on purpose, and the colour keys are MERGED into variants.
+# DRY-RUN unless apply=1; the report is the ##[notice] lines.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: refresh-sofa-colours-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/refresh-sofa-colours.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/refresh-sofa-colours.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
