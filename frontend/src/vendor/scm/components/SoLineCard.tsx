@@ -50,6 +50,8 @@ import {
   useUploadSoItemPhoto,
   useDeleteSoItemPhoto,
   fetchSoItemPhotoSignedUrl,
+  fetchSoItemPhotoBlobUrl,
+  isDirectlyLoadableUrl,
 } from '../lib/sales-order-queries';
 import { useDebouncedValue } from '../lib/hooks';
 import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
@@ -1445,6 +1447,29 @@ export function missingRequiredVariants(
        MIGHT have expired between cache check and HTTP fetch, or the
        cached entry pre-dated some R2 token-rotation event. One retry
        is enough; a second failure means the photo is genuinely gone.
+
+   PROXY FALLBACK (2026-08-10 incident)
+   ────────────────────────────────────
+   Signing needs the R2 S3-API credentials (R2_ACCESS_KEY_ID /
+   R2_SECRET_ACCESS_KEY / R2_ENDPOINT) as wrangler SECRETS. Production never
+   had them, so /signed answers 500 {"error":"signing_failed"} for EVERY
+   photo and every tile rendered the literal text "err" — while the objects
+   were sitting in R2, readable, and the Worker's R2 BINDING could serve them
+   through the proxy route the whole time.
+
+   So a signing failure is not evidence the photo is missing. When /signed
+   fails (or hands back something not directly loadable), fall back to
+   streaming the bytes through the authed proxy route.
+
+   The proxy URL CANNOT be an <img src>: it is behind bearer auth and an <img>
+   tag sends no Authorization header — this app has no cookie session at all
+   (see slip.ts + lorries-queries.ts, same constraint, same solution). The
+   bytes are fetched with the token and handed to <img> as a blob: object URL,
+   which MUST be revoked on unmount or every tile leaks its image.
+
+   "err" is deliberately KEPT for the genuinely-broken case: if the proxy also
+   fails (404 missing key, 401/403 refused), a missing photo must still be
+   visible AS missing rather than silently rendering nothing.
    ────────────────────────────────────────────────────────────────────── */
 
 const SIGNED_URL_SKEW_BUFFER_MS = 30_000;
@@ -1458,7 +1483,10 @@ const thumbMissingKeys = new Set<string>();
 const isCachedUrlFresh = (entry: { expiresAt: number } | undefined): boolean =>
   !!entry && entry.expiresAt - SIGNED_URL_SKEW_BUFFER_MS > Date.now();
 
-const PhotoThumb = ({
+/* Exported as a test seam only — SoLineCard is the sole production consumer.
+   Rendering the whole card in a test would need the full query/auth graph
+   just to reach one tile. */
+export const PhotoThumb = ({
   photoKey, docNo, itemId, canDelete, onDelete,
 }: {
   photoKey:  string;
@@ -1480,12 +1508,64 @@ const PhotoThumb = ({
   // Tracks whether we've already retried after a 403/error. Prevents
   // a permanently-broken key from looping forever.
   const retriedRef = useRef(false);
+  /* The blob: URL currently handed to <img>, if we fell back to the proxy.
+     Held in a ref (not state) purely so unmount cleanup can revoke it without
+     re-running on every render. */
+  const objectUrlRef = useRef<string | null>(null);
+  // One proxy attempt per tile. Without this, a 404 from the proxy could be
+  // re-triggered by the <img onError> path and loop.
+  const proxyTriedRef = useRef(false);
+  /* The <img onError> retry paths are NOT effects, so they have no cleanup to
+     cancel them. Without this flag a proxy fetch that resolves after unmount
+     would hand back a blob nobody revokes — the exact leak the unmount
+     cleanup exists to prevent. */
+  const unmountedRef = useRef(false);
+
+  const releaseObjectUrl = () => {
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+  };
+
+  /* Signing is unavailable or the signed URL is unusable — stream the bytes
+     through the authed proxy instead. A failure HERE is the genuinely-broken
+     case, so it surfaces as "err". */
+  const loadViaProxy = async (cancelled: () => boolean, reason: string) => {
+    if (!docNo || !itemId) return;
+    if (proxyTriedRef.current) {
+      if (!cancelled()) setError(reason);
+      return;
+    }
+    proxyTriedRef.current = true;
+    try {
+      const blobUrl = await fetchSoItemPhotoBlobUrl(docNo, itemId, photoKey);
+      // Unmounted mid-flight: revoke immediately, otherwise this blob leaks
+      // with no component left to clean it up.
+      if (cancelled()) { URL.revokeObjectURL(blobUrl); return; }
+      releaseObjectUrl();
+      objectUrlRef.current = blobUrl;
+      // Proxy bytes are the FULL object; there is no separate thumb tier here.
+      setUseFull(true);
+      setUrls({ signedUrl: blobUrl });
+      setError(null);
+    } catch (e) {
+      if (!cancelled()) setError(e instanceof Error ? e.message : reason);
+    }
+  };
 
   const loadSignedUrl = async (cancelled: () => boolean) => {
     if (!docNo || !itemId) return;
     try {
       const { signedUrl, thumbUrl, expiresAt } = await fetchSoItemPhotoSignedUrl(docNo, itemId, photoKey);
       if (cancelled()) return;
+      /* Signing "succeeded" but handed back something an <img> cannot load
+         directly (the upload route's relative-path proxy fallback). Not a
+         cacheable signed URL — go straight to the proxy. */
+      if (!isDirectlyLoadableUrl(signedUrl)) {
+        await loadViaProxy(cancelled, 'image_load_failed');
+        return;
+      }
       signedUrlCache.set(photoKey, {
         signedUrl,
         thumbUrl,
@@ -1494,7 +1574,10 @@ const PhotoThumb = ({
       setUrls({ signedUrl, thumbUrl });
       setError(null);
     } catch (e) {
-      if (!cancelled()) setError(e instanceof Error ? e.message : 'Something went wrong.');
+      /* THE 2026-08-10 CASE: /signed 500s because the R2 S3-API secrets were
+         never provisioned. The photo itself is fine — serve it via the proxy
+         rather than showing "err". */
+      await loadViaProxy(cancelled, e instanceof Error ? e.message : 'Something went wrong.');
     }
   };
 
@@ -1503,13 +1586,22 @@ const PhotoThumb = ({
     const cached = signedUrlCache.get(photoKey);
     if (isCachedUrlFresh(cached)) {
       setUrls(cached!);
-      return;
+    } else {
+      // Cache miss or stale entry — fetch a fresh signed URL.
+      loadSignedUrl(() => cancelled);
     }
-    // Cache miss or stale entry — fetch a fresh signed URL.
-    loadSignedUrl(() => cancelled);
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docNo, itemId, photoKey]);
+
+  /* Revoke the proxy blob on unmount. Unlike slip.ts's view-then-navigate
+     callers, a photo GRID is mounted and unmounted repeatedly (drawer
+     open/close, line add/remove) — leaking one image blob per tile per open
+     is a real leak, so this is not optional here. Runs on unmount only; the
+     ref is mutated in place, never a dependency. */
+  useEffect(() => () => { unmountedRef.current = true; releaseObjectUrl(); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []);
 
   const showingThumb = !useFull && !!urls?.thumbUrl;
 
@@ -1528,18 +1620,22 @@ const PhotoThumb = ({
     // once. retriedRef prevents an infinite onError → setState loop
     // if the new URL also fails.
     if (retriedRef.current) {
-      setError('image_load_failed');
+      /* A freshly-minted signed URL still would not load. The object may yet
+         be readable through the R2 binding (the signing credential and the
+         binding are different access paths), so try the proxy before
+         declaring the photo broken. */
+      signedUrlCache.delete(photoKey);
+      setUrls(null);
+      void loadViaProxy(() => unmountedRef.current, 'image_load_failed');
       return;
     }
     retriedRef.current = true;
     signedUrlCache.delete(photoKey);
     setUrls(null);
-    const cancelled = false;
-    loadSignedUrl(() => cancelled);
-    // No cleanup return — this isn't an effect; the cancelled flag
-    // is only meaningful if the component unmounts mid-fetch, which
-    // would also blow away the setState calls harmlessly.
-    void cancelled;
+    // No cleanup return — this isn't an effect, so unmountedRef (set by the
+    // unmount effect) is what stops a late resolve from touching state or
+    // stranding an unrevoked blob.
+    void loadSignedUrl(() => unmountedRef.current);
   };
 
   const src = urls ? (showingThumb ? urls.thumbUrl! : urls.signedUrl) : null;

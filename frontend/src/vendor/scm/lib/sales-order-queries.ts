@@ -18,7 +18,18 @@
 //     dialog-service serviceNotify.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { authedFetch } from './authed-fetch';
+import { API_URL, authedFetch, humanApiError } from './authed-fetch';
+// The photo PROXY fallback streams raw bytes, which authedFetch would try to
+// JSON-parse — so it uses the shared correlated transport + token accessor
+// directly, exactly as slip.ts does for the same reason.
+import { readAuthToken } from '../../../lib/authToken';
+import {
+  consumeCorrelated,
+  correlateError,
+  correlatedFetch,
+  requestIdFromResponse,
+} from '../../../lib/requestCorrelation';
+import { companyHeader } from '../../../lib/activeCompany';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -618,4 +629,59 @@ export async function fetchSoItemPhotoSignedUrl(
   return authedFetch<SignedPhotoUrlResponse>(
     `/mfg-sales-orders/${docNo}/items/${itemId}/photos/${encodeURIComponent(photoKey)}/signed`,
   );
+}
+
+/** A signed URL is only usable as <img src> if it is an ABSOLUTE http(s) URL —
+ *  the signature travels in the query string, so no header is needed. The
+ *  upload route's own signing-failure fallback returns a RELATIVE proxy path
+ *  instead; handing that to <img src> would resolve against the SPA origin
+ *  (no /api/scm prefix) and 404. Treat anything non-absolute as "signing did
+ *  not really succeed" and let the caller take the proxy path. */
+export const isDirectlyLoadableUrl = (url: string | undefined | null): boolean =>
+  !!url && /^https?:\/\//i.test(url);
+
+/** Carries the HTTP status so the caller can tell a genuinely-missing photo
+ *  (404) or a refused one (401/403) from a transient server fault. */
+export class PhotoProxyError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'PhotoProxyError';
+    this.status = status;
+  }
+}
+
+/* Bytes, not JSON — authedFetch unconditionally res.json()s its response, so
+   this reuses the exported API_URL + the shared correlated transport directly.
+   Same shape as slip.ts's fetchScanSlipImageBlobUrl, and for the same reason:
+   the Worker proxy route is behind bearer auth, and an <img src> sends no
+   Authorization header (there is no cookie session in this app), so the bytes
+   must be fetched and handed to <img> as a blob: object URL.
+
+   THE CALLER MUST URL.revokeObjectURL() THE RESULT ON UNMOUNT — a grid of
+   photo tiles that leaks one blob per tile per open is a real memory leak,
+   unlike slip.ts's view-then-navigate callers that deliberately do not. */
+export async function fetchSoItemPhotoBlobUrl(
+  docNo: string,
+  itemId: string,
+  photoKey: string,
+): Promise<string> {
+  const token = readAuthToken();
+  if (!token) throw new PhotoProxyError(401, 'Your session has expired — please sign in again.');
+
+  const res = await correlatedFetch(
+    `${API_URL}/mfg-sales-orders/${encodeURIComponent(docNo)}/items/${encodeURIComponent(itemId)}`
+      + `/photos/${encodeURIComponent(photoKey)}`,
+    { headers: { authorization: `Bearer ${token}`, ...companyHeader() } },
+  );
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '<no body>');
+    throw correlateError(
+      new PhotoProxyError(res.status, humanApiError(res.status, text)),
+      requestIdFromResponse(res),
+    );
+  }
+
+  return consumeCorrelated(res, async () => URL.createObjectURL(await res.blob()));
 }
