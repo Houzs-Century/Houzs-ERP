@@ -47,7 +47,7 @@ detail nobody would think to re-check: whether the same TOKEN may satisfy two
 conditions. Ordered `a.*b.*c` is not the same predicate as `a AND b AND c`, and
 turning one into the other silently narrows it.
 
-**Ref** - 2026-08-11, PR #PRNUM (fix/specials-phrase-map-stiching).
+**Ref** - 2026-08-11, PR #1952 (fix/specials-phrase-map-stiching).
 
 ## The ERP composed an AutoCount edit that would append duplicate lines, and its own refusal would have been invisible [critical]
 
