@@ -140,7 +140,7 @@ async function main() {
       const blockers = [];
       for (const r of surplus) {
         if (isPo) {
-          const [{ n }] = await sql`SELECT COUNT(*)::int n FROM scm.goods_received_note_items WHERE purchase_order_item_id = ${r.id}`;
+          const [{ n }] = await sql`SELECT COUNT(*)::int n FROM scm.grn_items WHERE purchase_order_item_id = ${r.id}`;
           if (n) blockers.push(`${r.code}: ${n} GRN line(s)`);
         } else {
           const [{ n: a }] = await sql`SELECT COUNT(*)::int n FROM scm.purchase_order_items WHERE so_item_id = ${r.id}`;
@@ -221,7 +221,7 @@ async function main() {
          movement is written or implied. */
       for (const t of touched) {
         if (isPo) {
-          const g = await sql`UPDATE scm.goods_received_note_items
+          const g = await sql`UPDATE scm.grn_items
             SET material_code = ${t.code}, variants = ${sql.json(t.v)}
             WHERE purchase_order_item_id = ${t.id} RETURNING id`;
           if (g.length) { nGr += g.length; log(`      -> ${g.length} GRN line(s) follow ${compOf(t.code)}`); }
@@ -233,7 +233,7 @@ async function main() {
             nPo += po.length;
             log(`      -> ${po.length} PO line(s) follow ${compOf(t.code)}`);
             for (const r of po) {
-              const g = await sql`UPDATE scm.goods_received_note_items
+              const g = await sql`UPDATE scm.grn_items
                 SET material_code = ${t.code}, variants = ${sql.json(t.v)}
                 WHERE purchase_order_item_id = ${r.id} RETURNING id`;
               nGr += g.length;
