@@ -63,6 +63,67 @@ rather than fail, when one exists at zero configuration.
 - **Test.** `backend/src/scm/lib/convert-ceilings.test.ts` — 42 cases covering the ceiling on all six paths, each with a partial (allowed) and an over-quantity (refused) case, plus cancel/draft release, the invoice-XOR-return exclusion, the amendment fail-safe, and the two unlinked-line exposures. **Mutation-verified, both numbers:** with the fix **42 pass**; with both production files reverted to `main`, **13 fail / 26 pass**; with the lib helper kept but ONLY the two call sites removed, exactly the **2** wiring cases fail (**2 fail / 37 pass**) — so the suite fails for the right reason, not merely because a new export is missing. The wiring cases assert the call sites against the router SOURCE (a `?raw` import, typed by `backend/src/raw-import.d.ts`) because scm routes cannot be exercised end to end in this harness: they ride Supabase Postgres and the harness rebuilds only the D1 side.
 - **NOT proven by test.** No case drives the two handlers over HTTP, for the harness reason above — the guard function is tested directly and its invocation is asserted structurally. Nothing was run against production data.
 - **Ref:** #1920. `chore/convert-guard-proof` 2026-08-11.
+## A zero-priced purchase order opens a zero-cost stock layer [high, money]
+
+**Symptom** — imported purchase orders carry `unit_price_centi = 0` on 565 of
+the 579 SO-linked lines. The books are clean TODAY only because those POs
+deliberately have no ERP GRN: costless-stock PENDING(GRN) = 0, PERMANENT = 0,
+"OUT movements with no cost: 0". The exposure is the NEXT receipt — 234 open
+units across 180 lines / 121 POs / 67 AutoCount item codes are waiting to be
+received, and every one of them would book at RM0.
+
+**Root cause (traced, not guessed)** — Houzs suppliers genuinely do not price a
+purchase order; the price appears on the GOODS RECEIVED document. Live AutoCount
+confirms it is the norm, not corruption: HOOKKA 2,264/2,264 PO lines unpriced,
+OHANA 100%, DORSETTLOFT 100%, while GRDTL is 17,377/19,013 priced (91.4%). The
+cutover copied that faithfully. What is missing is any fallback afterwards —
+the zero rides the whole chain untouched:
+
+`purchase_order_items.unit_price_centi = 0` -> `grns.ts` `/from-pos` and
+`/from-po-items` copy it verbatim -> `postGrnAndRollup` computes
+`unit_cost_sen = landedUnitCostMyr ?? toMyrSen(unit_price_centi, rate)` ->
+the FIFO trigger's **IN** branch is `COALESCE(NEW.unit_cost_sen, 0)` (the
+weighted-average fallback exists only in the **ADJUSTMENT** branch, migration
+0195) -> the OUT consumes that lot at RM0 COGS -> DO line cost 0 ->
+`sales_invoice_items.line_cost_centi` 0 -> the margin report reads 100%.
+`grep` for `cost_required` / `price_required` in `grns.ts` returned nothing:
+there was no zero-price guard anywhere on the receipt path.
+
+**Fix** — a gate at the receipt, because it is the last moment the cost is
+still changeable: once the unit ships the COGS is settled and must never be
+rewritten. `scm/lib/zero-cost-receipt-guard.ts` refuses a post whose line would
+open a zero-cost lot, wired into `postGrnAndRollup` BEFORE the CAS status flip
+so a refusal writes nothing, plus a rollback on the three create-as-POSTED
+paths so a refused receipt leaves no POSTED-but-unbooked document behind.
+
+The discriminator is the SKU's own purchase history, not a flag: there is no
+`is_free_gift` on the purchase side (`default_free_gifts` is entirely
+sales-side), so a SKU never received at a non-zero cost is treated as genuinely
+free — GWP, demo, display — and allowed silently, while a SKU that HAS carried
+money before is refused. Same rule `backfill-zero-cost-lots.mjs` already uses
+and the owner already confirmed. `grn_items.zero_cost_ack` (migration 0277) is
+the per-line escape hatch, because a refusal with no override trains people to
+type a fake price, which is worse than a recorded zero.
+
+**The class, for next time** — *a COALESCE to 0 on a money column is a silent
+default, not a safe one.* The same trigger already knew better one branch away:
+ADJUSTMENT falls back to the weighted average, IN falls back to zero, and
+nothing flagged the asymmetry for as long as it has existed. When a fallback
+value is indistinguishable from a legitimate value — free really is zero here —
+no downstream report can ever tell them apart, so the check has to happen at
+the point of entry or not at all.
+
+**And do not price a repair from `MAX(UnitPrice)` or last-cost.** Backtested
+over all 11,239 priced AutoCount purchase lines for the 67 affected item codes,
+predicting each line from the others: `MAX` by item code is 112.5% mean error
+and overstates 97.6% of the time; last-cost by item code is 32.2% and overstates
+57.2%; item + Desc2 signature is 0.4% and exact on 97.3%. Desc2 — the
+compartment/colour signature — IS the price key. `stamp-po-line-costs.mjs`
+therefore prices only what it can price accurately and reports the rest, since a
+plausible wrong cost is worse than a visible zero the gate will catch.
+
+**Ref** — PR fix/zero-cost-po-exposure, 2026-08-10.
+
 ## The array-shaped custom_specials are NOT the same damage, and NULLing them would have deleted correct data [med]
 
 **Symptom** - #1944 NULLed the 478 `custom_specials` values the old sofa

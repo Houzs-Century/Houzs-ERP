@@ -305,6 +305,7 @@ Return** (`/purchase-returns`), a separate module.
 | Status not DRAFT / (POSTED without children) | the whole page read-only (frontend) | `GoodsReceivedDetail.tsx:246` — `isLocked = !(status === 'DRAFT' || (status === 'POSTED' && !hasChildren))`; the page drops out of edit mode automatically if it locks mid-edit (`:253-258`) |
 | Source PO belongs to another company | all three create paths | `firstCrossCompanyPo` (`:30-48`) — receiving another company's PO would post the stock and its cost into the active company's books |
 | An **unlinked line for a material the header's PO already orders** | `POST /` and `POST /:id/items` | `findUnlinkedPoLines` (`lib/grn-unlinked-po-lines.ts`) → 409 `unlinked_po_lines` |
+| A line would receive stock at **zero cost** while that SKU has been received at a real price before | confirm, and all three create paths | `checkGrnZeroCost` → `lib/zero-cost-receipt-guard.ts` → 409 `zero_cost_receipt`, carrying the offending lines and each SKU's known cost |
 
 **Why that last one exists, and what it is NOT.** `grn_items.purchase_order_item_id`
 is nullable so a free/manual receipt can land stock with no PO behind it — that
@@ -315,6 +316,27 @@ again. It is the receiving-side mirror of the delivery-side defect in
 `docs/unlinked-line-duplicate-coe.md` (owner: *"包括 GR 那边也是"*). A production
 scan on 2026-08-04 found **no** GRN in this state — the guard is preventative
 here, corrective on the delivery side.
+
+**Why the zero-cost refusal exists.** Houzs suppliers price the GOODS RECEIVED
+document, not the purchase order, so an unpriced PO line is normal paperwork
+(live AutoCount: HOOKKA 2,264/2,264 PO lines unpriced, OHANA and DORSETTLOFT
+100%). Nothing downstream puts the cost back: the zero reaches the FIFO
+trigger's IN branch, which is `COALESCE(NEW.unit_cost_sen, 0)` — the
+weighted-average fallback exists only in the ADJUSTMENT branch — so the lot
+opens at zero, the OUT consumes it at RM0 COGS, and the margin report reads
+100%. Once the unit ships that COGS is settled and must never be rewritten, so
+the receipt is the last moment the cost is still changeable.
+
+The rule does not need a free-gift flag, and there is none on the purchase side
+anyway (`default_free_gifts` is entirely sales-side). A SKU that has **never**
+been received at a non-zero cost is genuinely free — GWP pillows, demo units,
+display furniture — and posts silently; a SKU that **has** carried money before
+is refused, because on that one a zero is a missing price. `grn_items.zero_cost_ack`
+(migration 0277) is the per-line override for the rare genuine freebie of an
+item that normally costs money; it exists so nobody types a fake price to get
+past the gate. A GRN carrying a non-zero service/freight pool is skipped, since
+the landed allocation can lift a zero-priced goods line off zero and the
+allocation is computed after this point.
 
 **The header PATCH is the exception**: it is NOT gated by `grnHasDownstream`. A
 GRN with a downstream PI can still have its header edited, including a warehouse
