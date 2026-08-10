@@ -206,7 +206,17 @@ async function main() {
   // group by PO, drop sofa lines
   const groups = new Map();
   const SOFA = process.env.SOFA === "1"; // owner 2026-08-10: 沙发 PO 也要进
-  for (const r of rows) { if (!SOFA && isSofa(r.ItemCode)) continue; if (!groups.has(r.DocNo)) groups.set(r.DocNo, []); groups.get(r.DocNo).push(r); }
+  /* Mirror of the SO side's DO rule: a PO line fully transferred (received) is
+     no longer outstanding. Same shape so the two importers agree. */
+  const qn = (v) => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
+  const doneDocs = new Set();
+  if (process.env.ALLOW_DELIVERED !== "1") {
+    const byDoc = new Map();
+    for (const r of rows) { if (!byDoc.has(r.DocNo)) byDoc.set(r.DocNo, []); byDoc.get(r.DocNo).push(r); }
+    for (const [doc, ls] of byDoc) if (ls.length && !ls.some((l) => qn(l.Qty) > qn(l.TransferedQty))) doneDocs.add(doc);
+  }
+  for (const r of rows) { if (doneDocs.has(r.DocNo)) continue; if (!SOFA && isSofa(r.ItemCode)) continue; if (!groups.has(r.DocNo)) groups.set(r.DocNo, []); groups.get(r.DocNo).push(r); }
+  if (doneDocs.size) log(`skipped fully-received POs: ${doneDocs.size}`);
   let pos = [...groups.entries()];
   if (LIMIT) pos = pos.slice(0, LIMIT);
 
