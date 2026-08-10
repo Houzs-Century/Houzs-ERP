@@ -62,7 +62,7 @@ exactly this trap after `backfill-sofa-special-orders.mjs` did it to
 *tolerate* the bad shape; nobody fixed the writers, so a third script walked
 into it hours later.
 
-**Fix** — PR #1929.
+**Fix** — PR #1938.
 - `tx.json(u.patch)` instead of `JSON.stringify(u.patch)`. An explicit
   `Parameter` carries its own type, so `ParameterDescription` does not overwrite
   it (`connection.js:632` only fills types that are falsy) and the object is
@@ -87,7 +87,7 @@ a fresh connection; the script that just wrote is the worst available witness.
 And: never hand a pre-serialized string to a json/jsonb parameter in
 postgres.js — pass the value and let `sql.json()` type it.
 
-**Ref** — 2026-08-10, PR #1929 (fix/colour-write-persistence). Evidence: probe
+**Ref** — 2026-08-10, PR #1938 (fix/colour-write-persistence). Evidence: probe
 run 31416469998; damage confirmed by the database itself refusing
 `jsonb_object_keys` on those rows.
 
