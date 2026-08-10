@@ -183,6 +183,33 @@ try {
   const so = report("SO  scm.mfg_sales_order_items", soLines);
   const po = report("PO  scm.purchase_order_items", poLines);
 
+  /* Would a code moved into variants.specials render as a NORMAL ticked row, or
+     as a "retired - untick to remove" row? SoLineCard.specialOptions restricts
+     the pool to the Model's allowed_options.specials WHENEVER that array is
+     non-empty, so a restrictive Model turns a legitimate pick into a retired
+     one. Counted over the products these sofa lines actually reference. */
+  log("");
+  log("  Model option-pool restriction (decides NORMAL tick vs 'retired' row):");
+  const codesUsed = new Set(soLines.concat(poLines).flatMap((r) =>
+    (Array.isArray(r.custom_specials) ? r.custom_specials : [])
+      .map((el) => live.get(K(elText(el)))).filter(Boolean)));
+  const models = await pg`
+    SELECT DISTINCT p.code AS product_code, m.allowed_options
+      FROM scm.mfg_products p
+      LEFT JOIN scm.product_models m ON m.id = p.model_id
+     WHERE p.company_id = ${CO} AND upper(p.category) = 'SOFA'`;
+  let restrictive = 0, permissive = 0, wouldRetire = 0;
+  for (const m of models) {
+    const pool = m.allowed_options?.specials;
+    if (!Array.isArray(pool) || pool.length === 0) { permissive++; continue; }
+    restrictive++;
+    const allowed = new Set(pool);
+    if ([...codesUsed].some((c) => !allowed.has(c))) wouldRetire++;
+  }
+  log(`     SOFA products: ${models.length} — ${permissive} with an OPEN specials pool (any code ticks normally),`);
+  log(`     ${restrictive} with a RESTRICTED pool, of which ${wouldRetire} would show at least one backfilled code as "retired".`);
+  log(`     distinct picker codes the backfill actually landed: ${codesUsed.size}`);
+
   log("");
   notice(`Q3: lines carrying custom_specials — SO ${so.withSpecials} (dry-run promised 375), PO ${po.withSpecials} (promised 103).`);
   notice(`Q3: elements matching a live picker code ${so.codeEls + po.codeEls} (dry-run promised 498 matched); free text ${so.freeEls + po.freeEls} (promised 164).`);
