@@ -932,7 +932,7 @@ to remember: the list that must stay in step with reality is the short one you
 own, never the open-ended one you do not.
 
 **Ref** - recorded 2026-08-11 in PR #1926 (fix/specials-zero-priced-subset);
-fixed 2026-08-11 in PR #1947 (fix/variant-refresh-preserve-keys). Neither sweep
+fixed 2026-08-11 in PR #1949 (fix/variant-refresh-preserve-keys). Neither sweep
 had been dispatched between the two, so nothing was lost in production.
 
 ## A priced SOFA special add-on is costed but never charged [med]
