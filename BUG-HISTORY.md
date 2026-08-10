@@ -1,3 +1,70 @@
+## Every migrated sales-order line was saved without its warehouse [high]
+
+**Symptom** — All 248+ sofa sales-order lines from the AutoCount cutover read
+PENDING and could not ship. It looked like a stock problem (sofa stock genuinely
+was never imported — see the sofa opening below), but filling the stock changed
+nothing: the projection stayed at zero sets.
+
+**Root cause** — Traced against production, not guessed:
+`SELECT count(warehouse_id) FROM scm.mfg_sales_order_items` over the migrated
+orders returns **0 of 13,881**. `import-ac-outstanding-so.mjs` resolves the
+warehouse for every line (`warehouseId: whId(l.Location)`, three call sites) and
+then omits `warehouse_id` from its INSERT column list (`ICOLS`), writing only the
+free-text `location`. Stock is bucketed by
+`(warehouse_id, product_code, variant_key)`, so a warehouse-less line lands in
+so-stock-allocation's `NOWH` bucket, which can match no lot. Sofa fails one step
+earlier still: `sofa-set-coverage.findCoveringBatch` returns `null` for a null
+warehouse before it looks at any stock at all. So NO migrated line — sofa,
+bedframe, mattress or accessory — could ever be allocated, whatever the on-hand.
+
+**Fix** — `warehouse_id` added to `ICOLS` and to the per-line VALUES tuple, so a
+re-import cannot drop it again; `backfill-so-line-warehouse.mjs` +
+`backfill-so-line-warehouse.yml` repair the existing rows from the `location`
+text already stored (KL 9,434 / PG 3,502 / SRW 722 / SBH 223 — all four resolve
+through the same SALESLOC table the importers use, zero unresolved). It only
+ever fills a NULL, so it cannot move goods between warehouses. Scoped to
+`group=sofa` by default; `group=all` is an owner decision because it flips
+thousands of non-sofa lines on the next allocation run.
+
+**The class, for next time** — a value that is computed and then not persisted
+is invisible to every test that checks the computation. The importer's own
+dry-run printed warehouse resolutions that were correct and then threw them
+away. When a field is resolved in a script, assert it lands: the cheap version is
+one post-import `count(col)` in the same run log.
+
+**Ref** — 2026-08-10, PR feat/sofa-stock-import.
+
+## Sofa stock was excluded from the AutoCount opening, and sofa lots carry no batch [high]
+
+**Symptom** — 20 open sofa lots in the ERP against 76 whole sofas in AutoCount,
+and every one of those 20 lots has `batch_no` NULL. Sofa allocation reads
+`batch_no` in three places (`findCoveringBatch`, the DO ship gate, and
+`loadSofaBatchStock`, which filters `batch_no IS NOT NULL`), so a null-batch sofa
+lot is invisible to allocation even when the quantity is right.
+
+**Root cause** — `import-ac-stock-balance.mjs:54` filters `!isSofa(ItemCode)` and
+`import-ac-stock-layers.mjs:50` does the same. Sofa was deliberately held for a
+later round (the file header says so) and that round was never built. Nothing was
+double-counted; the units are simply absent. The missing `batch_no` follows from
+the same gap: a batch is stamped at GRN from the source PO (migration 0120), and
+these units never came in through a GRN.
+
+**Fix** — `import-ac-sofa-stock.mjs` + workflow. It does NOT decompose the
+balance snapshot: AutoCount tracks a sofa as one whole unit per model and carries
+no serial and no batch for it (measured live: 0 of 1,337 sofa GRDTL rows), so a
+balance row cannot say which configurations are on the floor. It drives off the
+already-imported, already-decomposed SO-linked PO lines that carry
+`received_qty > 0`, stamping `batch_no` = that PO's own `po_number` — the exact
+value a GRN would have stamped — and caps the result against the AutoCount
+balance per item code.
+
+**The class, for next time** — the same regex that excluded sofa also excluded
+`AMN-SOFA PILLOW` (205 units), which is a plain accessory with no compartments.
+A filter written for a category should test the category, not a substring of the
+name.
+
+**Ref** — 2026-08-10, PR feat/sofa-stock-import.
+
 ## Every SO line photo rendered as "err" — the bucket name was never configured [high]
 
 **Symptom** — Line photos on the Sales Order edit screen have shown a broken

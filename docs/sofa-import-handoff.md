@@ -5,6 +5,7 @@
 所有规则都是 owner 2026-08-09/10 亲口定的,原话保留在下面,改规则前先看这里。
 
 状态(2026-08-10):**SO 已全部导入并体检通过**;PO 已导 37 张,还缺 61 行(见 §8);照片未进(见 §8)。
+**沙发一台都发不出去的两个原因(库存从没进 + SO 行没有 warehouse)看 §8.0,两个修都只跑过 dry-run。**
 
 ---
 
@@ -210,6 +211,8 @@ HR805-31/-40、NX007/010/011、ZL-6/-20、Garfield、Wowsons、Chantic、J9883-2
 | 布料库探针(只读) | `probe-fabric-colours.mjs` | 同名 yml |
 | **导入后体检(只读)** | `probe-sofa-import-duplicates.mjs` | 同名 yml |
 | 行照片挂载 | `import-so-line-photos.mjs` | 同名 yml |
+| **沙发实物库存开账** | `import-ac-sofa-stock.mjs` | 同名 yml |
+| **补 SO 行的 warehouse** | `backfill-so-line-warehouse.mjs` | 同名 yml |
 
 ### 体检脚本的 7 项
 
@@ -233,6 +236,52 @@ HR805-31/-40、NX007/010/011、ZL-6/-20、Garfield、Wowsons、Chantic、J9883-2
 ---
 
 ## 8. 还没做完的(下一个 session 接手)
+
+### 8.0 沙发为什么一张都发不出去 —— 2026-08-10 查清,两个原因不是一个
+
+沙发 SO 行全部 PENDING,**不是**一个问题,是两个叠在一起。两个都只跑过 DRY-RUN,**都还没 apply**。
+
+**原因一:沙发实物库存从来没进过 ERP。**
+`import-ac-stock-balance.mjs:54` 的 `!isSofa(ItemCode)` 把沙发整个排掉了(层重铺 `:50` 同样)。
+prod 只有 20 个 open sofa lot,而且 **batch_no 全是 NULL** —— 沙发配货三处都读 `batch_no`
+(`findCoveringBatch`、DO 闸门、`loadSofaBatchStock` 直接 `batch_no IS NOT NULL`),没有 batch 就等于没有货。
+AutoCount 那边是 76 台整沙发。修:`import-ac-sofa-stock.mjs`。
+
+**沙发的 batch_no 应该是什么 —— 结论 + 证据。**
+= **那张 PO 自己的 ERP `po_number`**。理由不是约定,是三处现成代码都这么说:GRN 就是这么盖的
+(`grns.ts resolvePoBatchByItem` → `purchase_orders.po_number`,mig 0120);`sofa-set-coverage.ts`
+开头写死「batch_no = source PO number = one dye lot」;`source-po-trace.ts` 把它当 Source PO 芯片渲染。
+AutoCount **自己没有 batch**(实测 `GRDTL.BatchNo` 1,337 行沙发**全空**,`SerialNoList` 也全空),
+所以只能从单据推,而 PO 就是那个「一张单 = 一个染缸」的单位。ERP 的 PO 行上有 `linked_ac_docno`,
+一跳就能回到 AutoCount 原单号,追溯不丢。
+
+**整沙发余额能不能拆成 compartment —— 不能,也不需要。**
+AutoCount 的 `vItemBalQty` 只有「AMN-SF9028 SOFA 在 KL 有 6 台」,**没有配置、没有序号、没有批次**。
+6 台是 6 个**不同的 build**,快照说不出是哪 6 个。**照余额行拆件 = 编库存**,不做。
+真正的做法是**不拆余额,改走单据**:每台在手沙发都是订制的(97 条 GR 行里 94 条的 PO 带
+`FromSODtlKey`),这些 PO 已经被 `import-ac-so-linked-pos.mjs` 带 `received_qty` 导进来、
+**已经按 parse-sofa 拆好件**、已经认领了 SO 行。一条 `received_qty > 0` 的沙发 PO 行 = 一件实物,
+按它开 lot 即可,余额只当**上限**用(按 AutoCount item code 封顶,超的丢掉并逐条打印)。
+解不出件的 `SOFA UNPARSED` 占位 build **默认不开库存**(`PLACEHOLDER=1` 才开)——
+用 `{型号}-1S` 顶一台其实是双人位的沙发,那是一个**错的库存数**,比缺货更糟。
+展厅 display 那几台(没有 PO,Desc2 就写 `DISPLAY REF: ADJ0052/00148`)同理:只报,不开。
+
+**原因二(更要命):导入的 SO 行一条都没有 warehouse。**
+13,881 行导入 SO 行,`warehouse_id` **全是 NULL**(`import-ac-outstanding-so.mjs` 算了却没写进
+`ICOLS`)。库存按 warehouse 分桶,沙发更早一步就死:`findCoveringBatch` 见到 null warehouse
+**先返回 null 再谈库存**。所以**光补库存一套都变不了 READY**。修:`backfill-so-line-warehouse.mjs`。
+
+**DRY-RUN 实测(2026-08-10,prod 只读):**
+
+| | 数字 |
+|---|---|
+| 会开的 lot | **97 lots / 97 units / 43 个 batch**(45 个 build) |
+| 丢弃 | 超 AutoCount 余额 **4**、占位 **9**、缺 warehouse **0** |
+| AutoCount 有、单据背不了的 | **31 units**(展厅 display + SO 已交货的收货) |
+| 成本 | 拿到真实收货价 **13** build;收货价互相矛盾 **3**;找不到 **29**(留 0,不猜) |
+| 只补库存 | **0 套 / 0 行**变 READY |
+| 补库存 **+** 补 warehouse | **30 套 / 70 行**变 READY |
+
 
 ### 8.1 照片(Further Description)— 最大的一块
 
