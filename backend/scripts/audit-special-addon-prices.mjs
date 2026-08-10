@@ -226,9 +226,16 @@ async function main() {
   }
   log("");
   log(`   NOMINAL selling exposure (sum of stamped prices): ${totalDelta} sen (RM ${(totalDelta / 100).toFixed(2)})`);
-  log(`   NOMINAL cost exposure                           : ${totalDeltaCost} sen (RM ${(totalDeltaCost / 100).toFixed(2)})`);
-  log(`   REAL selling exposure (BEDFRAME with sell_price_sen>0 only): ${realDelta} sen (RM ${(realDelta / 100).toFixed(2)})`);
-  log(`   lines that would actually reprice: ${affected.filter((a) => a.reprices).length} of ${affected.length}`);
+  log(`   REAL SELLING exposure: ${realDelta} sen (RM ${(realDelta / 100).toFixed(2)}) on ` +
+      `${affected.filter((a) => a.reprices).length} of ${affected.length} lines`);
+  log(`     - only a BEDFRAME line with mfg_products.sell_price_sen > 0 takes the`);
+  log(`       authoritative path (recompute :435/:436); SOFA prices from`);
+  log(`       computeSofaSellingSen + fabric + extraSen (:563) and never adds specials.`);
+  log(`   REAL COST exposure   : ${totalDeltaCost} sen (RM ${(totalDeltaCost / 100).toFixed(2)}) on ALL ${affected.length} lines`);
+  log(`     - cost has no SOFA exemption: unitCostSen = costBreakdown.unitPriceSen (:463),`);
+  log(`       and the sofa module-cost branch re-adds the same surcharges (:490-491,`);
+  log(`       "line-level cost surcharges (sofa leg / specials) stay on top").`);
+  log(`     - so MARGIN moves on every affected line even where the price does not.`);
   const nonMigratedAffected = affected.filter((a) => a.migrated !== true).length;
   log(`   of these lines, header migrated_no_stock<>true: ${nonMigratedAffected}`);
 
