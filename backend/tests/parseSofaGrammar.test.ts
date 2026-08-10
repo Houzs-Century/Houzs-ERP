@@ -16,6 +16,8 @@ const pieces = (d2: string, model = '8030', recl = false): string[] =>
   (parseSofa(d2, model, recl) as { pieces: string[] }).pieces;
 const conf = (d2: string, model = '8030', recl = false): string =>
   (parseSofa(d2, model, recl) as { conf: string }).conf;
+const specials = (d2: string, model = '8030', recl = false): string[] =>
+  (parseSofa(d2, model, recl) as { specials: string[] }).specials;
 
 describe('parse-sofa: the single-letter tokens the grammar owns', () => {
   /* The regression this file exists for. C, L, P and R each have their own
@@ -112,6 +114,53 @@ describe('parse-sofa: arms only ever close the run (owner 2026-08-10)', () => {
   });
 });
 
+describe('parse-sofa: a special order is never deleted', () => {
+  /* The second regression this file exists for. `bottom[^\/\n]*` deleted the
+     whole segment before specials were collected, so all 53 umbrella-fabric
+     instructions in the cutover exports reached the ERP as nothing at all. */
+  test('the umbrella-fabric bottom survives, and the structure is unaffected', () => {
+    const r = parseSofa('2+L(28")/BOTTOM USE UMBRELLA FABRIC/COL:BO315-21', '9058', false) as
+      { pieces: string[]; specials: string[]; conf: string };
+    expect(r.pieces).toEqual(['2A(LHF)', 'L(RHF)']);
+    expect(r.conf).toBe('high');
+    expect(r.specials).toEqual(['BOTTOM USE UMBRELLA FABRIC']);
+  });
+
+  test('every wording of the bottom instruction is kept verbatim', () => {
+    expect(specials('2S(28")/BOTTOM UPGRADE TO UMBRELLA FABRIC')).toEqual(['BOTTOM UPGRADE TO UMBRELLA FABRIC']);
+    expect(specials('2S(28")/WRAP BOTTOM TO UMBRELLA FABRIC')).toEqual(['WRAP BOTTOM TO UMBRELLA FABRIC']);
+    expect(specials('2S(28")/BOTTOM WRAP NYLON')).toEqual(['BOTTOM WRAP NYLON']);
+  });
+
+  /* A phrase alone in its own slash segment was dropped too: the structure
+     loop breaks at the segment that carried the pieces and never visits the
+     rest. */
+  test('a phrase alone in its own segment is recorded', () => {
+    expect(specials('SIZE:3S(28")/*BACK CUSHION CHANGE 8030')).toEqual(['BACK CUSHION CHANGE 8030']);
+    expect(specials('2L(28")/AFTER PUSH BACK ALIGN TO SEAT')).toEqual(['AFTER PUSH BACK ALIGN TO SEAT']);
+    expect(specials('2L(28")/*FULLY COVERED TO FLOOR NO LEG')).toEqual(['FULLY COVERED TO FLOOR NO LEG']);
+    expect(specials('1+1(28")/NO BRACKET')).toEqual(['NO BRACKET']);
+  });
+
+  test('one instruction written twice is carried once, in its fullest wording', () => {
+    expect(specials('2S(28")/BACKREST CHANGE 8030/BACK REST CHANGE 8030')).toEqual(['BACKREST CHANGE 8030']);
+    // "nylon" is the parser's own token for the same request as "NILON"
+    expect(specials('2S(28")/WRAP BOTTOM TO NILON')).toEqual(['WRAP BOTTOM TO NILON']);
+  });
+
+  test('a fabric colour is not read as an instruction', () => {
+    expect(specials('3S(28")/CH141-4 WOOD')).toEqual([]);
+    expect(specials('1+C+2(32\'Inch)/Col:HR805-30', '9050')).toEqual([]);
+  });
+
+  test('a leg request still rides as a special and never sets the seat size', () => {
+    const r = parseSofa('2S(28")/Leg Change 101Middle Leg(8\')', '8030', false) as
+      { size: string; specials: string[] };
+    expect(r.size).toBe('28');
+    expect(r.specials).toEqual(["Leg Change 101Middle Leg(8')"]);
+  });
+});
+
 describe('parse-sofa: never guess', () => {
   test('an empty Desc2 is low confidence, not an empty build', () => {
     const r = parseSofa('', '8030', false) as { conf: string; pieces: string[] };
@@ -121,5 +170,55 @@ describe('parse-sofa: never guess', () => {
 
   test('an unreadable token refuses rather than dropping it', () => {
     expect(conf('1AP+2(28")')).toBe('low');
+  });
+});
+
+/* The nine AutoCount lines that opened model 5526 (owner 2026-08-10: "5526 就是
+   5526 啊 ... 8038 原本都不是 5526"). These are the strings the 5526 compartment
+   list was DERIVED from, so a parser change that alters any of them changes
+   which SKUs that model is supposed to own — pin them. Verbatim from
+   ac-outstanding-so / ac-outstanding-po / ac-so-linked-pos. */
+describe('parse-sofa: the 5526 cutover builds', () => {
+  const p = (d2: string) => pieces(d2, '5526', false);
+
+  test('SO-001112 2S+2.5+C/T splits around the console', () => {
+    expect(p('[ 2S(28") + 2.5(35") + C/T / COL: 7# CHARCOAL]')).toEqual(['2A(LHF)', 'Console', '2A(RHF)']);
+  });
+
+  test('SO-001526 1EL+2ER', () => {
+    expect(p('[ 1EL(35") + 2ER(35") / COL: BEETEX HARRING GD8371 02# BEIGE ]')).toEqual(['1A(LHF)', '2A(RHF)']);
+  });
+
+  test('SO-001526 2EL+STOOL', () => {
+    expect(p('[ 2EL(28") + STOOL(28")(NO BACK CUSHION) / COL: BEETEX HARRING GD8371 02# BEIGE')).toEqual(['2A(LHF)', 'STOOL']);
+  });
+
+  test('SO-001526 bare 2S stays a whole two-seater', () => {
+    expect(p('[ 2S(28") / COL: BEETEX HARRING GD8371 02# BEIGE')).toEqual(['2S']);
+  });
+
+  test('PO-001662 3S+C/T becomes 2A+Console+1A', () => {
+    expect(p('COL: J9883-2-Chic  (PREMIUM) / 3S(35") + C/T')).toEqual(['2A(LHF)', 'Console', '1A(RHF)']);
+  });
+
+  test('PO-002425 wooden arm rides as a special, the build is still 2S', () => {
+    const r = parseSofa('2S+WOODEN ARM  (28") / COL-HARRING GD 8371 02-BEIGE', '5526', false) as
+      { pieces: string[]; specials: string[] };
+    expect(r.pieces).toEqual(['2S']);
+    /* The sweep carries the request VERBATIM, so the parser's own canonical
+       "wooden arm" token is deduped away by the fuller wording that contains
+       it. Both spellings map to the same Wooden Arm picker code. */
+    expect(r.specials.join(' | ')).toMatch(/wooden arm/i);
+  });
+
+  /* Two builds deliberately stay placeholders: "1 ELT / T" is not readable, and
+     DAYBED is a word the grammar has no token for (the owner supplied the piece
+     by hand: PO-000162 = 5526-DB). Refusing is the correct answer for both. */
+  test('SO-000814 / PO-000254 "1 ELT / T + NA + 2ER" refuses', () => {
+    expect(conf('[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]', '5526')).toBe('low');
+  });
+
+  test('PO-000162 DAYBED refuses rather than inventing a piece', () => {
+    expect(conf('[DAYBED/COL:J9833-2]', '5526')).toBe('low');
   });
 });

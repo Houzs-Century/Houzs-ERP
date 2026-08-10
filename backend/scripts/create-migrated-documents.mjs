@@ -79,11 +79,55 @@ async function doGrns() {
   for (const g of plan.slice(0, 8)) log(`   ${g.po.po_number} <- ${g.po.linked_ac_docno}: ${g.items.length} line(s), ${g.items.reduce((t, i) => t + Number(i.received_qty || 0), 0)} unit(s)`);
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
 
+  /* Migrated documents KEEP AutoCount's number (owner 2026-08-10). A GRN here
+     belongs to ONE purchase order while an AutoCount receipt can span several,
+     so a bare AC GR number is not always unique: when it covers more than one
+     imported PO the ERP number carries the PO too. Either way the number a
+     human reads starts from the AutoCount document, not a fresh sequence. */
+  /* An AutoCount receipt routinely covers SEVERAL purchase orders while an ERP
+     GRN covers ONE, and only the POs belonging to an undelivered sales order
+     were imported. Measured on the reference snapshot: of the 187 AutoCount
+     receipts touching an imported PO, 118 also cover POs the ERP does not hold
+     - GR-000201 receives ten and the ERP holds two of them.
+
+     So the ERP document is legitimately SMALLER than the AutoCount one with the
+     same number, and someone reconciling the two will see it. Saying so on the
+     document turns a discrepancy into a stated scope. */
+  const acPoCount = new Map();   // AutoCount GR doc -> how many POs it receives, AutoCount-side
+  try {
+    const refs = gz("ac-gr-refs.json.gz");
+    const byGr = new Map();
+    for (const r of refs) {
+      if (!r.GrNo) continue;
+      if (!byGr.has(r.GrNo)) byGr.set(r.GrNo, new Set());
+      byGr.get(r.GrNo).add(r.PoNo);
+    }
+    for (const [gr, pos] of byGr) acPoCount.set(gr, pos.size);
+  } catch { /* reference snapshot absent: the note simply omits the scope line */ }
+
+  const grnNote = (g) => {
+    const acGrs = g.po.linked_ac_grn_docnos ?? [];
+    const parts = [`mirrors the AutoCount receipt for ${g.po.linked_ac_docno}`];
+    if (acGrs.length) parts[0] += ` (AutoCount GR ${acGrs.join(", ")})`;
+    const spans = acGrs.filter((gr) => (acPoCount.get(gr) ?? 1) > 1)
+      .map((gr) => `${gr} receives ${acPoCount.get(gr)} purchase orders in AutoCount`);
+    if (spans.length) {
+      parts.push(`SCOPE: ${spans.join("; ")}; this document covers ONLY ${g.po.linked_ac_docno}, so its quantity is smaller than the AutoCount document of the same number. That is correct, not a shortfall.`);
+    }
+    parts.push("No stock movement: the units are already on hand from the balance snapshot.");
+    return parts.join(" ");
+  };
+
+  const grUse = new Map();
+  for (const g of plan) for (const gr of (g.po.linked_ac_grn_docnos ?? [])) grUse.set(gr, (grUse.get(gr) ?? 0) + 1);
   let seq = await nextSeq("grns", "grn_number", "HC-GRN-");
   let made = 0;
   for (const g of plan) {
-    seq += 1;
-    const grnNo = `HC-GRN-${String(seq).padStart(6, "0")}`;
+    const acGrs = g.po.linked_ac_grn_docnos ?? [];
+    let grnNo;
+    if (acGrs.length === 1 && grUse.get(acGrs[0]) === 1) grnNo = "HC-" + acGrs[0];
+    else if (acGrs.length >= 1) grnNo = "HC-" + acGrs[0] + "-" + g.po.linked_ac_docno;
+    else { seq += 1; grnNo = `HC-GRN-${String(seq).padStart(6, "0")}`; }
     await sql.begin(async (tx) => {
       const [hdr] = await tx`INSERT INTO scm.grns
           (grn_number, purchase_order_id, supplier_id, warehouse_id, status, posted_at, received_at,
@@ -91,9 +135,7 @@ async function doGrns() {
         VALUES (${grnNo}, ${g.po.purchase_order_id}, ${g.po.supplier_id},
                 ${g.items[0].warehouse_id ?? g.po.purchase_location_id}, 'POSTED', NOW(), CURRENT_DATE, 'MYR',
                 ${CO}, ${SYS_USER},
-                ${`mirrors the AutoCount receipt for ${g.po.linked_ac_docno}` +
-                   (g.po.linked_ac_grn_docnos?.length ? ` (AutoCount GR ${g.po.linked_ac_grn_docnos.join(", ")})` : "") +
-                   ". No stock movement: the units are already on hand from the balance snapshot."},
+                ${grnNote(g)},
                 true, ${g.po.linked_ac_docno})
         RETURNING id`;
       for (const it of g.items) {
@@ -126,43 +168,87 @@ async function doDos() {
       WHERE company_id = ${CO} AND migrated_no_stock = true AND linked_ac_docno IS NOT NULL`)
     .map((r) => r.linked_ac_docno));
 
+  /* delivery_orders.debtor_name is NOT NULL - the document is addressed to
+     someone. The AutoCount note carries it; where it does not, the sales order
+     it delivers does. */
+  const soDebtor = new Map((await sql`SELECT doc_no, debtor_name FROM scm.mfg_sales_orders
+    WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`).map((r) => [r.doc_no, r.debtor_name]));
   const soItems = await sql`SELECT i.id, i.item_code, i.line_no, i.qty, h.doc_no, h.linked_ac_docno ac
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL ORDER BY i.line_no`;
   const soByKey = new Map();
+  const soByModel = new Map();
   for (const it of soItems) {
-    const k = `${it.ac}|${norm(it.item_code)}`;
+    const code = norm(it.item_code);
+    const k = `${it.ac}|${code}`;
     if (!soByKey.has(k)) soByKey.set(k, []);
     soByKey.get(k).push(it);
+    /* A sofa arrives in the ERP as one line per COMPARTMENT, so an AutoCount
+       delivery line naming the whole model can never match a code. Index the
+       build by its model prefix as well, exactly as the photo importer does. */
+    const dash = code.indexOf("-");
+    if (dash < 0) continue;
+    const mk = `${it.ac}|${code.slice(0, dash)}`;
+    if (!soByModel.has(mk)) soByModel.set(mk, []);
+    soByModel.get(mk).push(it);
   }
+  const sofaModelOf = (erp) => {
+    const ALIAS = { "5530": "9028", "5536": "9058", "5537": "8030", "5540": "8030" };
+    const m = (erp || "").replace(/-1S$/i, "").toUpperCase();
+    return ALIAS[m] || m;
+  };
 
   const byDo = new Map();
   let noSoLine = 0, unmapped = 0;
+  const missExamples = [];
+  const missCodes = new Map(); // a silent miss count hid this same class of bug twice already
   for (const r of rows) {
     const erp = byAc.get(norm(r.ItemCode));
     if (!erp) { unmapped++; continue; }
+    /* Exact code first, then the build's compartment lines. A sofa AutoCount
+       shipped as one whole unit corresponds to EVERY compartment of that build
+       here, so all of them are marked delivered - otherwise the pieces stay
+       outstanding and the set can be shipped a second time. */
     const cands = soByKey.get(`${r.SoNo}|${norm(erp)}`);
-    const pick = cands && cands.length ? cands[0] : null;
-    if (!pick) { noSoLine++; continue; }
-    if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: pick.doc_no, items: [] });
-    byDo.get(r.DoNo).items.push({ code: erp, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)), soItemId: pick.id });
+    const pieces = (cands && cands.length) ? null : soByModel.get(`${r.SoNo}|${sofaModelOf(erp)}`);
+    const targets = (cands && cands.length) ? [cands[0]] : pieces;
+    if (!targets || !targets.length) {
+      noSoLine++;
+      missCodes.set(erp, (missCodes.get(erp) ?? 0) + 1);
+      if (missExamples.length < 5) missExamples.push({ so: r.SoNo, erp: norm(erp) });
+      continue;
+    }
+    if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: targets[0].doc_no,
+      debtorCode: r.DebtorCode || null, debtorName: (r.DebtorName || "").trim() || null, items: [] });
+    for (const t of targets) {
+      byDo.get(r.DoNo).items.push({ code: t.item_code, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)), soItemId: t.id });
+    }
   }
   const plan = [...byDo.values()].filter((d) => !done.has(d.doNo));
   log(`AutoCount delivery lines against open orders: ${rows.length}; unmapped code ${unmapped}; no ERP SO line ${noSoLine}`);
+  for (const [code, n] of [...missCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`   no ERP line for ${code} x${n}`);
+  /* A count of misses is not a diagnosis. For the first few, print what the ERP
+     order ACTUALLY has on it, so the mismatch is visible instead of inferred. */
+  for (const ex of missExamples.slice(0, 5)) {
+    const have = (soByKey.get(`${ex.so}|${ex.erp}`) ?? []).length;
+    const onOrder = soItems.filter((it) => it.ac === ex.so).map((it) => it.item_code);
+    log(`   MISS ${ex.so} wanted "${ex.erp}" (exact hits ${have}); that order's ERP lines: ${onOrder.length ? onOrder.join(" | ") : "(no lines found for this linked_ac_docno)"}`);
+  }
   log(`DO documents: ${byDo.size}; already mirrored: ${byDo.size - plan.length}; to create: ${plan.length} (${plan.reduce((s, d) => s + d.items.length, 0)} lines, ${plan.reduce((s, d) => s + d.items.reduce((t, i) => t + i.qty, 0), 0)} units)`);
   for (const d of plan.slice(0, 8)) log(`   ${d.doNo} <- ${d.so}: ${d.items.length} line(s)`);
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
 
-  let seq = await nextSeq("delivery_orders", "do_number", "HC-DO-");
+  // one AutoCount delivery note = one ERP DO, so the number carries over intact
   let made = 0;
   for (const d of plan) {
-    seq += 1;
-    const doNo = `HC-DO-${String(seq).padStart(6, "0")}`;
+    const doNo = "HC-" + d.doNo;
     await sql.begin(async (tx) => {
       const [hdr] = await tx`INSERT INTO scm.delivery_orders
-          (do_number, so_doc_no, status, do_date, currency, company_id, created_by,
-           notes, migrated_no_stock, linked_ac_docno)
-        VALUES (${doNo}, ${d.so}, 'DELIVERED', ${(d.date || "").slice(0, 10) || null}, 'MYR',
+          (do_number, so_doc_no, debtor_code, debtor_name, status, do_date, currency,
+           company_id, created_by, notes, migrated_no_stock, linked_ac_docno)
+        VALUES (${doNo}, ${d.so}, ${d.debtorCode},
+                ${d.debtorName ?? soDebtor.get(d.so) ?? "(unnamed)"},
+                'DELIVERED', ${(d.date || "").slice(0, 10) || null}, 'MYR',
                 ${CO}, ${SYS_USER},
                 ${`mirrors AutoCount delivery ${d.doNo}. No stock movement: the balance snapshot already counts these units as delivered.`},
                 true, ${d.doNo})

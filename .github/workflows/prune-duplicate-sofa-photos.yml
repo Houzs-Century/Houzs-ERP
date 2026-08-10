@@ -1,9 +1,8 @@
-name: PO + SO completeness audit (read-only)
+name: Prune duplicate sofa photos
 
-# Manual, read-only. Which sofa documents are not fully specified?
-# Scope is the owner's rule (2026-08-10): EVERY sofa line on a purchase order,
-# plus sofa lines on sales orders that have already been proceeded. An
-# un-proceeded SO is deliberately out of scope.
+# Manual. One AutoCount sofa line is ONE photograph of ONE build; the importers
+# used to copy it onto every compartment row. This removes the copies, keeping
+# the one on the first row of each build. DRY-RUN unless apply=1.
 on:
   workflow_dispatch:
     inputs:
@@ -18,19 +17,14 @@ on:
         required: false
         default: "1"
         type: string
-      list:
-        description: "1 for the per-line detail, 0 for counts only"
+      apply:
+        description: "1 to write, else DRY-RUN"
         required: false
-        default: "1"
-        type: string
-      cap:
-        description: "max detail lines per section (raise to see everything)"
-        required: false
-        default: "60"
+        default: "0"
         type: string
 
 concurrency:
-  group: check-po-so-completeness-${{ inputs.target }}
+  group: prune-duplicate-sofa-photos-${{ inputs.target }}
   cancel-in-progress: false
 
 jobs:
@@ -44,11 +38,10 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/check-po-so-completeness.mjs
+      - run: node scripts/prune-duplicate-sofa-photos.mjs
         env:
+          APPLY: ${{ inputs.apply }}
           COMPANY: ${{ inputs.company }}
-          LIST: ${{ inputs.list }}
-          CAP: ${{ inputs.cap }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
@@ -60,9 +53,8 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/check-po-so-completeness.mjs
+      - run: node scripts/prune-duplicate-sofa-photos.mjs
         env:
+          APPLY: ${{ inputs.apply }}
           COMPANY: ${{ inputs.company }}
-          LIST: ${{ inputs.list }}
-          CAP: ${{ inputs.cap }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -1,0 +1,79 @@
+name: Fix sofa compartment pool (drop sideless bench codes)
+
+# Manual. Drops the sideless bench codes (1B / 2B) from the master sofa
+# compartment pool and makes sure DB is present exactly once. Append-only: it
+# writes a NEW maintenance_config_history row. Refuses to drop a code any SKU
+# or document line still uses. DRY-RUN unless apply=1.
+#
+# Do this here rather than in the maintenance page: deleting a row while also
+# adding one in the same save makes the UI's positional rename detector read
+# the pair as a rename and offer to cascade it across SKUs and history.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      drop:
+        description: "comma-separated pool codes to remove"
+        required: false
+        default: "1B,2B"
+        type: string
+      keep:
+        description: "comma-separated pool codes that must exist"
+        required: false
+        default: "DB"
+        type: string
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: fix-sofa-compartment-pool-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/fix-sofa-compartment-pool.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DROP: ${{ inputs.drop }}
+          KEEP: ${{ inputs.keep }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/fix-sofa-compartment-pool.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DROP: ${{ inputs.drop }}
+          KEEP: ${{ inputs.keep }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
