@@ -163,6 +163,7 @@ async function doDos() {
 
   const byDo = new Map();
   let noSoLine = 0, unmapped = 0;
+  const missExamples = [];
   const missCodes = new Map(); // a silent miss count hid this same class of bug twice already
   for (const r of rows) {
     const erp = byAc.get(norm(r.ItemCode));
@@ -177,6 +178,7 @@ async function doDos() {
     if (!targets || !targets.length) {
       noSoLine++;
       missCodes.set(erp, (missCodes.get(erp) ?? 0) + 1);
+      if (missExamples.length < 5) missExamples.push({ so: r.SoNo, erp: norm(erp) });
       continue;
     }
     if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: targets[0].doc_no, items: [] });
@@ -187,6 +189,13 @@ async function doDos() {
   const plan = [...byDo.values()].filter((d) => !done.has(d.doNo));
   log(`AutoCount delivery lines against open orders: ${rows.length}; unmapped code ${unmapped}; no ERP SO line ${noSoLine}`);
   for (const [code, n] of [...missCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`   no ERP line for ${code} x${n}`);
+  /* A count of misses is not a diagnosis. For the first few, print what the ERP
+     order ACTUALLY has on it, so the mismatch is visible instead of inferred. */
+  for (const ex of missExamples.slice(0, 5)) {
+    const have = (soByKey.get(`${ex.so}|${ex.erp}`) ?? []).length;
+    const onOrder = soItems.filter((it) => it.ac === ex.so).map((it) => it.item_code);
+    log(`   MISS ${ex.so} wanted "${ex.erp}" (exact hits ${have}); that order's ERP lines: ${onOrder.length ? onOrder.join(" | ") : "(no lines found for this linked_ac_docno)"}`);
+  }
   log(`DO documents: ${byDo.size}; already mirrored: ${byDo.size - plan.length}; to create: ${plan.length} (${plan.reduce((s, d) => s + d.items.length, 0)} lines, ${plan.reduce((s, d) => s + d.items.reduce((t, i) => t + i.qty, 0), 0)} units)`);
   for (const d of plan.slice(0, 8)) log(`   ${d.doNo} <- ${d.so}: ${d.items.length} line(s)`);
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
