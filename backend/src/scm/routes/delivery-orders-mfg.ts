@@ -18,6 +18,8 @@ import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shar
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { doHasDownstream } from '../lib/downstream-lock';
+import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
 import { loadIncomingLines, pickIncomingForBucket, pickIncomingForSofaSet, incomingBucketKey } from '../lib/do-live-allocator';
@@ -286,24 +288,10 @@ async function prepareSoAmendMirrorAudit(
    ANY non-cancelled Delivery Return (DR) OR Sales Invoice (SI) referencing it.
    Convert-to-DR / convert-to-SI is NOT gated by this: the DO can keep emitting
    children; only line MUTATIONS + the CANCELLED status transition are blocked,
-   mirroring grnHasDownstream in apps/api/src/routes/grns.ts. Returns the
-   blocking JSON, or null if the DO is free to edit. */
-async function doHasDownstream(sb: any, doId: string): Promise<{ error: string; message: string } | null> {
-  const [{ count: drCount }, { count: siCount }] = await Promise.all([
-    sb.from('delivery_returns')
-      .select('id', { head: true, count: 'exact' })
-      .eq('delivery_order_id', doId)
-      .neq('status', 'CANCELLED'),
-    sb.from('sales_invoices')
-      .select('id', { head: true, count: 'exact' })
-      .eq('delivery_order_id', doId)
-      .neq('status', 'CANCELLED'),
-  ]);
-  if ((drCount ?? 0) > 0 || (siCount ?? 0) > 0) {
-    return { error: 'do_has_downstream', message: 'DO has a Delivery Return / Sales Invoice — delete or cancel it first to edit' };
-  }
-  return null;
-}
+   mirroring grnHasDownstream. The rule now lives in scm/lib/downstream-lock.ts
+   with its three siblings, which had drifted into four private copies in four
+   route files. Same signature, same JSON, same behaviour — and see that module
+   for why it is also the ERP half of AutoCount's transferred-document rule. */
 
 /* Full DO header — mirrors the editable SO header shape. The pre-rebuild
    columns (driver / vehicle / pod / signature / m3 / dispatched-signed-
@@ -3412,6 +3400,22 @@ deliveryOrdersMfg.post('/', async (c) => {
      on every remaining exit and this CREATE row is true. */
   await recordDoCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
+  /* ERP -> AutoCount SO->DO. Only an SO-linked DO can be expressed: AutoCount
+     builds a DO by transferring lines FROM a source document, so a DO with no
+     SO behind it has nothing to convert from. Queued, never pushed inline. */
+  if ((body.soDocNo as string | undefined) ?? null) {
+    await enqueueConvert(sb, {
+      companyId: activeCompanyId(c),
+      op: 'so_to_do',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: String(body.soDocNo) },
+      to: { table: 'delivery_orders', keyCol: 'id', key: h.id },
+      docType: 'DO',
+      docNo: h.do_number,
+      docId: h.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
+
   /* A DO = goods shipped on creation → deduct stock now (idempotent: the
      existence check + UNIQUE index mean this never double-deducts even if the
      status is later advanced). LEAK GUARD (DRAFT): a DRAFT DO has NOT shipped —
@@ -3930,6 +3934,32 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
     sb, c.get('houzsUser'), activeCompanyId(c), dh.id, doRows.length,
     `Converted from Sales Order${docNos.length === 1 ? '' : 's'} ${docNos.join(', ')}`,
   );
+
+  /* ERP -> AutoCount SO->DO. A MERGED DO (several source SOs) has no AutoCount
+     shape — see recordConvertSkipped — so it is written down as skipped instead
+     of being invented or dropped. */
+  if (docNos.length === 1) {
+    await enqueueConvert(sb, {
+      companyId: activeCompanyId(c),
+      op: 'so_to_do',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNos[0] },
+      to: { table: 'delivery_orders', keyCol: 'id', key: dh.id },
+      docType: 'DO',
+      docNo: dh.do_number,
+      docId: dh.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else if (docNos.length > 1) {
+    await recordConvertSkipped(sb, {
+      companyId: activeCompanyId(c),
+      op: 'so_to_do',
+      docType: 'DO',
+      docNo: dh.do_number,
+      docId: dh.id,
+      reason: `merged from ${docNos.length} Sales Orders (${docNos.join(', ')}) — AutoCount transfers from ONE source document, so this DO has no AutoCount counterpart`,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
 
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;

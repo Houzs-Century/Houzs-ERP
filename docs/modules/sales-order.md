@@ -150,6 +150,25 @@ customer's vouchers on an order that is still live. So a cancel needs
 `DATABASE_URL`: without it the endpoint fails closed with
 `503 scm_pg_command_required`. See `BUG-HISTORY.md` 2026-07-29.
 
+### The downstream lock — and why AutoCount cares
+
+An SO with any non-cancelled Delivery Order or Sales Invoice against it cannot
+be cancelled and its lines cannot be edited (`soHasDownstream`, 409
+`so_has_downstream`). Emitting the NEXT DO is still allowed — only mutation and
+cancel are blocked.
+
+Owner, 2026-08-10, on the AutoCount cutover:
+*"已经转到下游的单据, AutoCount 不许取消/改动 ... 是的 我们也是要这样"*.
+AutoCount refuses to cancel or edit a transferred document, so the ERP must
+refuse the same or the two systems disagree the first time someone edits a
+shipped order — with the ERP wrong, because the stock has already moved.
+
+`soHasDownstream` used to be a private copy inside this router; it now lives in
+`backend/src/scm/lib/downstream-lock.ts` with its PO / DO / GRN siblings, same
+signature and same JSON, and is unit-tested for the first time. Every SO
+mutation that gets past it also queues an ERP -> AutoCount edit — see
+`docs/modules/autocount-writeback.md`.
+
 ### The SO line's downstream links — `so_item_id`, and what deletes it
 
 `scm.mfg_sales_order_items.id` is referenced by **three** tables, and all three

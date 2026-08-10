@@ -81,6 +81,7 @@ import mailInbound from "./routes/mail-inbound";
 import { soMirror } from "./scm/routes/so-mirror";
 import { drainCommands } from "./scm/lib/amendment-command";
 import { drainStockAllocationRecompute } from "./scm/lib/stock-allocation-job";
+import { drainAutoCountOutbox } from "./scm/lib/autocount-outbox";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
 import { staffMirror } from "./scm/routes/staff-mirror";
@@ -515,6 +516,21 @@ export default {
             if (r.processed) console.log(`[cron amendment-cmd] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron amendment-cmd]", e))
+      );
+      // ERP -> AutoCount write-back drain. Ships dark twice over: no-op without
+      // AC_SYNC_URL, and no-op while scm.app_config 'scm.autocount_writeback'
+      // is off (which 0276 seeds it to). Best-effort — a drain failure can
+      // never break the slot.
+      ctx.waitUntil(
+        drainAutoCountOutbox(env)
+          .then((r) => {
+            /* A FAILED row means a document exists in the ERP and does not
+               exist in AutoCount. That is the divergence this whole mechanism
+               is built to prevent, so it can never read as routine. */
+            if (r.failed) console.error(`[cron ac-writeback] FAILED ${JSON.stringify(r)}`);
+            else if (r.processed) console.log(`[cron ac-writeback] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron ac-writeback]", e))
       );
       // Durable SO allocation projection: every source-data mutation first
       // queues the singleton invalidation in its own DB transaction. This sweep

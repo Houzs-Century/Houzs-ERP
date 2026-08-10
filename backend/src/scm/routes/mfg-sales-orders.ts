@@ -25,6 +25,8 @@ import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricin
    variant | compartment | combo matcher shared with the POS, used at BOTH
    recompute sites (create + cross-category re-detect). */
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
+import { soHasDownstream } from '../lib/downstream-lock';
+import { enqueueSoCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
 /* Per-compartment fabric-tier Δ (migration 0025) — reconstruct a split sofa
    build's compartment codes from its persisted module lines for the TBC path. */
 import { buildCompartmentsFromModuleLines } from '../lib/compartments-from-module-lines';
@@ -239,23 +241,34 @@ mfgSalesOrders.use('*', async (c, next) => {
    ANY non-cancelled Delivery Order OR Sales Invoice referencing it. Convert-to-
    DO (partial delivery) is NOT gated by this: the SO can keep emitting DOs;
    only line MUTATIONS + the CANCELLED status transition are blocked. Mirrors
-   grnHasDownstream in apps/api/src/routes/grns.ts. Returns the blocking JSON,
-   or null if the SO is free to edit. */
-async function soHasDownstream(sb: any, soDocNo: string): Promise<{ error: string; message: string } | null> {
-  const [{ count: doCount }, { count: siCount }] = await Promise.all([
-    sb.from('delivery_orders')
-      .select('id', { head: true, count: 'exact' })
-      .eq('so_doc_no', soDocNo)
-      .neq('status', 'CANCELLED'),
-    sb.from('sales_invoices')
-      .select('id', { head: true, count: 'exact' })
-      .eq('so_doc_no', soDocNo)
-      .neq('status', 'CANCELLED'),
-  ]);
-  if ((doCount ?? 0) > 0 || (siCount ?? 0) > 0) {
-    return { error: 'so_has_downstream', message: 'SO has a Delivery Order / Sales Invoice — delete or cancel it first to edit' };
-  }
-  return null;
+   grnHasDownstream. The rule now lives in scm/lib/downstream-lock.ts with its
+   three siblings, which had drifted into four private copies in four route
+   files. Same signature, same JSON, same behaviour — and see that module for
+   why it is also the ERP half of AutoCount's transferred-document rule. */
+
+/* -- ERP -> AutoCount edit --------------------------------------------------
+   Every SO mutation route funnels through one of these two, so exactly one
+   snapshot of the SAVED order is queued per successful save -- header edits,
+   line add/edit/delete and the tbc variant/SKU swaps alike. A variant or SKU
+   change IS a line change: AutoCount takes it as Desc2 + ItemCode on the same
+   DtlKey, which is why they need no operation of their own.
+
+   Only ever reached for an order the downstream lock let through, which is the
+   same rule AutoCount enforces on its side. Never throws. */
+async function queueAcSoEdit(c: any, docNo: string): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'SO',
+    docNo,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
+
+/* The same, for a route whose body runs inside runScmPgCommand: queue only
+   when the transaction actually committed (a non-2xx rolls it back). */
+async function queueAcSoEditAfter(c: any, docNo: string, res: Response): Promise<Response> {
+  if (res.ok) await queueAcSoEdit(c, docNo);
+  return res;
 }
 
 /* ── SO processing-date lock (Owner 2026-06-12) ─────────────────────────────
@@ -5448,6 +5461,17 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-create failed:', e); }
 
+  /* ERP -> AutoCount write-back. Queued, never pushed inline: the AutoCount
+     host must not be able to fail a salesperson's Save. No-op while the flag is
+     off, which is how it ships.
+
+     NOT for a DRAFT. A draft is the scan job's guess awaiting an operator's
+     verdict; it may be rewritten or thrown away, and neither belongs in a live
+     account book. The DRAFT -> live transition below queues it instead. */
+  if ((body as { asDraft?: unknown }).asDraft !== true) {
+    await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null });
+  }
+
   return c.json({ docNo }, 201);
 }
 
@@ -5764,6 +5788,30 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
      also drop it out. Other PENDING SOs may move into READY. Best-effort. */
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-status failed:', e); }
+
+  /* ERP -> AutoCount cancel. Reached only for an SO the downstream lock let
+     through (soHasDownstream, checked above), which is the same rule AutoCount
+     applies on its side — so this can never ask AutoCount to cancel something
+     it has already shipped. Outside the transaction on purpose: the queue row
+     must describe a cancel that actually committed. */
+  if (isCancel) {
+    await enqueueCancel(sb, {
+      companyId: activeCompanyId(c),
+      docType: 'SO',
+      docNo,
+      self: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNo },
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else if (fromNorm === 'DRAFT') {
+    /* The draft just became a real order — this is the moment it belongs in
+       AutoCount. enqueueSoCreate refuses an SO that already has an AutoCount
+       counterpart, so a re-entered transition cannot duplicate it. */
+    await enqueueSoCreate(sb, {
+      companyId: activeCompanyId(c),
+      docNo,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
 
   /* Edge #B — SO cancel with deposit paid turns the deposit into a customer
      credit. Idempotent on (source_type, source_doc_no). Best-effort. */
@@ -7016,6 +7064,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     console.warn('[mfg-so] header saved but edit lease was no longer ours to release:', docNo, savedVersion);
   }
 
+  await queueAcSoEdit(c, docNo);
+
   return c.json({
     ok: true,
     docNo,
@@ -7852,6 +7902,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-add failed:', e); }
 
+  await queueAcSoEdit(c, docNo);
+
   return c.json({ item: data }, 201);
 });
 
@@ -8302,6 +8354,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-patch failed:', e); }
 
+  await queueAcSoEdit(c, docNo);
+
   return c.json({ ok: true });
 });
 
@@ -8414,6 +8468,8 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   /* Line delete = demand drops → other queued SOs may move into READY. */
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-delete failed:', e); }
+
+  await queueAcSoEdit(c, docNo);
 
   return c.body(null, 204);
 });
@@ -8667,14 +8723,14 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   await scheduleStockAllocationAfterCommand(c, sb, `tbc-update:${docNo}`);
   return c.json({ ok: true, unitPriceCenti: newUnit, deltaCenti: sellingDeltaCenti, totalCenti: newTotal });
 }
-mfgSalesOrders.post('/:docNo/items/:itemId/tbc-update', (c) => {
+mfgSalesOrders.post('/:docNo/items/:itemId/tbc-update', async (c) => {
   const company = requireActiveCompanyId(c);
   if (!company.ok) return c.json(company.refusal, 409);
-  return runScmPgCommand(c, (sb) => tbcUpdateCommandHandler(c, sb), {
+  return queueAcSoEditAfter(c, c.req.param('docNo'), await runScmPgCommand(c, (sb) => tbcUpdateCommandHandler(c, sb), {
     docNo: c.req.param('docNo'),
     leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null,
     companyId: company.companyId,
-  });
+  }));
 });
 
 /* TBC product swap (Loo 2026-06-11) — exchange a line for a DIFFERENT product
@@ -9125,14 +9181,14 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     },
   });
 }
-mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap', (c) => {
+mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap', async (c) => {
   const company = requireActiveCompanyId(c);
   if (!company.ok) return c.json(company.refusal, 409);
-  return runScmPgCommand(c, (sb) => tbcSwapCommandHandler(c, sb), {
+  return queueAcSoEditAfter(c, c.req.param('docNo'), await runScmPgCommand(c, (sb) => tbcSwapCommandHandler(c, sb), {
     docNo: c.req.param('docNo'),
     leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null,
     companyId: company.companyId,
-  });
+  }));
 });
 
 /* ── Sofa-reward revert plan (Loo 2026-06-12) ──
@@ -9926,14 +9982,14 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     },
   });
 }
-mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap-sofa', (c) => {
+mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap-sofa', async (c) => {
   const company = requireActiveCompanyId(c);
   if (!company.ok) return c.json(company.refusal, 409);
-  return runScmPgCommand(c, (sb) => tbcSwapSofaCommandHandler(c, sb), {
+  return queueAcSoEditAfter(c, c.req.param('docNo'), await runScmPgCommand(c, (sb) => tbcSwapSofaCommandHandler(c, sb), {
     docNo: c.req.param('docNo'),
     leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null,
     companyId: company.companyId,
-  });
+  }));
 });
 
 // ── Per-line photos — PR-F (migration 0076) ──────────────────────────

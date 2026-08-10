@@ -404,6 +404,7 @@ Actions → 手动触发,报告在 run log 的 `##[notice]` 行里
 
 ## 相关文件
 
+- `docs/modules/autocount-writeback.md` — **反方向**:割接之后 ERP 是 master,每一张单怎么写回 AutoCount(outbox + 下游锁)。跟这份账本是两件事,不要混
 - `docs/sofa-import-handoff.md` — 沙发那一路的语法、开件、管线与未完事项(PR #1831)
 - `docs/2990-cutover/` — 2990(company 2)的割接,跟这一份是两件事
 - `docs/cutover-tally-method.md` — 对数的方法论

@@ -487,7 +487,7 @@ The inventory IN for purchased goods happens one document later, at **GRN post**
 
 | Trigger | What stops being editable | Enforced at |
 |---------|---------------------------|-------------|
-| Any non-cancelled **GRN** exists on the PO | Header PATCH, line add, line edit, line delete, **and cancel** | `poHasDownstream` called at `:2228`, `:2412`, `:2512`, `:2624`, `:3208` |
+| Any non-cancelled **GRN** exists on the PO | Header PATCH, line add, line edit, line delete, **and cancel** | `poHasDownstream`, now imported from `scm/lib/downstream-lock.ts` (see below) |
 | Status `RECEIVED` | Cancel refused outright | `:3200` |
 | Status `RECEIVED` or `CANCELLED` | Whole page read-only (frontend) | `PurchaseOrderDetail.tsx:254-255` — `isEditableStatus` is DRAFT / SUBMITTED / PARTIALLY_RECEIVED; `isLocked = !isEditableStatus || hasChildren` |
 | Status ≠ `CANCELLED` | Hard DELETE refused | `:3362` |
@@ -496,6 +496,16 @@ The inventory IN for purchased goods happens one document later, at **GRN post**
 
 The frontend drops out of edit mode automatically if the PO locks while the user
 is editing (`PurchaseOrderDetail.tsx:261-267`).
+
+**The GRN lock is also the AutoCount rule.** Owner, 2026-08-10:
+*"已经转到下游的单据, AutoCount 不许取消/改动 ... 是的 我们也是要这样"* —
+AutoCount refuses to cancel or edit a document it has already transferred
+downstream, so the ERP must refuse the same or the two systems diverge the
+first time someone edits a received PO. `poHasDownstream` used to be a private
+copy inside this router; it now lives in `backend/src/scm/lib/downstream-lock.ts`
+alongside its SO / DO / GRN siblings, with the same signature, the same JSON and
+the same 409 — and, for the first time, a unit test. See
+`docs/modules/autocount-writeback.md` §5.
 
 **Amendment path — yes.** The PO is revised **in place** with a bumped `revision`
 column, and the prior version is snapshotted into `scm.po_revisions`. The engine
