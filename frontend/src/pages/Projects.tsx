@@ -8692,6 +8692,39 @@ function DocRow({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const reviewable = REVIEWABLE_TITLES.has(item.title);
   const latest = attachments[0];
+  // Per-file decision status (owner 2026-08-10, Part 2): tie each uploaded
+  // VERSION to the approve/reject decision made while it was the newest file, so
+  // the FILES list shows "Approved/Rejected · who · when" per version and greys a
+  // rejected one — instead of only the item-level trail. No schema change:
+  // uploaded_at and comment.created_at are both ISO-Z, so a plain lexical compare
+  // is correct. A decision in [thisUpload, nextUpload) belongs to this version;
+  // the current newest file with no later decision stays unlabelled (still
+  // pending). Batch uploads take the last decision inside their window. Merged
+  // crew photos (id < 0) are excluded — they're not review versions.
+  const versionStatus = useMemo(() => {
+    const decisions = comments
+      .filter((c) => c.kind === "approve" || c.kind === "reject")
+      .slice()
+      .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+    const asc = attachments
+      .filter((a) => a.id > 0)
+      .sort((a, b) => ((a.uploaded_at || "") < (b.uploaded_at || "") ? -1 : 1));
+    const m = new Map<number, { kind: "approve" | "reject"; who: string; at: string }>();
+    asc.forEach((att, i) => {
+      const ta = att.uploaded_at || "";
+      const tnext = i + 1 < asc.length ? asc[i + 1].uploaded_at || "" : "￿";
+      const d = decisions
+        .filter((dec) => dec.created_at >= ta && dec.created_at < tnext)
+        .pop();
+      if (d)
+        m.set(att.id, {
+          kind: d.kind as "approve" | "reject",
+          who: d.user_name || "—",
+          at: d.created_at,
+        });
+    });
+    return m;
+  }, [comments, attachments]);
   const rs = item.review_status;
   const awaiting = rs === "pending_review" || rs === "amended";
   const naActive = item.status === "na";
@@ -9025,18 +9058,36 @@ function DocRow({
         <tr>
           <td colSpan={6} className="px-3 pb-2">
             <div className="overflow-hidden rounded-md border border-border-subtle">
-              {attachments.map((a) => (
-                <TaskAttachmentRow
-                  key={a.id}
-                  attachment={a}
-                  /* id < 0 = merged crew phase photo — view/download only. */
-                  canManage={canManage && a.id > 0}
-                  showRemark={remarkOpen}
-                  itemTitle={item.title}
-                  onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
-                  toast={toast}
-                />
-              ))}
+              {attachments.map((a) => {
+                // Part 2 (owner 2026-08-10): a rejected version stays in the list,
+                // greyed, tagged with who rejected it and when; an approved one is
+                // tagged in green. Undecided current file: no tag.
+                const vs = versionStatus.get(a.id);
+                return (
+                  <div key={a.id} className={vs?.kind === "reject" ? "opacity-60" : undefined}>
+                    <TaskAttachmentRow
+                      attachment={a}
+                      /* id < 0 = merged crew phase photo — view/download only. */
+                      canManage={canManage && a.id > 0}
+                      showRemark={remarkOpen}
+                      itemTitle={item.title}
+                      onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
+                      toast={toast}
+                    />
+                    {vs && (
+                      <div
+                        className={cn(
+                          "px-2 pb-1.5 text-[9px] font-semibold",
+                          vs.kind === "approve" ? "text-synced" : "text-err",
+                        )}
+                      >
+                        {vs.kind === "approve" ? "Approved" : "Rejected"} · {vs.who} ·{" "}
+                        {formatDateTime(vs.at)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </td>
         </tr>
