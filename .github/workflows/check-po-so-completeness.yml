@@ -23,6 +23,11 @@ on:
         required: false
         default: "1"
         type: string
+      cap:
+        description: "max detail lines per section (raise to see everything)"
+        required: false
+        default: "60"
+        type: string
 
 concurrency:
   group: check-po-so-completeness-${{ inputs.target }}
@@ -43,6 +48,7 @@ jobs:
         env:
           COMPANY: ${{ inputs.company }}
           LIST: ${{ inputs.list }}
+          CAP: ${{ inputs.cap }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
@@ -58,4 +64,5 @@ jobs:
         env:
           COMPANY: ${{ inputs.company }}
           LIST: ${{ inputs.list }}
+          CAP: ${{ inputs.cap }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
