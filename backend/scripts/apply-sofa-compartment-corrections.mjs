@@ -52,7 +52,7 @@ async function main() {
   const prods = await sql`SELECT code FROM scm.mfg_products WHERE company_id = ${CO}`;
   const codeSet = new Set(prods.map((p) => K(p.code)));
 
-  let nBuilds = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0;
+  let nBuilds = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0, nPo = 0, nGr = 0, nDo = 0;
 
   for (const c of DATA.corrections) {
     const docs = ONLY ? c.docs.filter((d) => d === ONLY) : c.docs;
@@ -60,12 +60,24 @@ async function main() {
 
     for (const doc of docs) {
       const isPo = /^HC-PO-/.test(doc);
-      const rows = isPo
+      /* Another session is renumbering the migrated POs so every number follows
+         AutoCount (#1875), which stranded the po_numbers written into this data
+         file. Resolve a PO by its number OR by the AutoCount document it links
+         to - linked_ac_docno is the fact that survives a renumber. */
+      let poId = null;
+      if (isPo) {
+        const ac = doc.replace(/^HC-/, "");
+        const [hit] = await sql`SELECT id, po_number FROM scm.purchase_orders
+          WHERE company_id = ${CO} AND (po_number = ${doc} OR linked_ac_docno = ${ac}) LIMIT 1`;
+        if (!hit) { log(`  ${doc}: not in the ERP under that number nor linked to ${ac} — skipped`); continue; }
+        poId = hit.id;
+        if (hit.po_number !== doc) log(`  ${doc}: found as ${hit.po_number} via linked_ac_docno`);
+      }
+      let rows = isPo
         ? await sql`SELECT i.id, i.material_code AS code, i.qty, i.unit_price_centi, i.line_total_centi AS total,
                            i.variants, i.description2, i.received_qty, i.so_item_id
                       FROM scm.purchase_order_items i
-                      JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-                     WHERE p.company_id = ${CO} AND p.po_number = ${doc} AND i.item_group = 'sofa'
+                     WHERE i.purchase_order_id = ${poId} AND i.item_group = 'sofa'
                      ORDER BY i.id`
         : await sql`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_centi, i.total_centi AS total,
                            i.variants, i.description2, i.line_no
@@ -73,13 +85,23 @@ async function main() {
                       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                      WHERE h.company_id = ${CO} AND i.doc_no = ${doc} AND i.item_group = 'sofa'
                      ORDER BY i.line_no`;
+      /* A DOCUMENT can hold more than one sofa build. Narrow to the build this
+         correction is about by its AutoCount text, or a second, perfectly good
+         build looks like surplus and the script tries to delete it. Caught on
+         HC-SO-011957, which holds a 1R+1NA+1R sofa AND a Stool. */
+      if (c.desc2Match) {
+        const keep = rows.filter((r) => String(r.description2 ?? "").includes(c.desc2Match));
+        if (keep.length && keep.length !== rows.length)
+          log(`  ${doc}: ${rows.length} sofa lines on the document, ${keep.length} belong to this build`);
+        if (!keep.length) { log(`  ${doc}: no line matches "${c.desc2Match}" — skipped, the build is not on this document`); continue; }
+        rows.length = 0; rows.push(...keep);
+      }
       if (!rows.length) {
         /* Say WHY, so a missing build is diagnosable instead of a shrug: does
            the document exist at all, and what groups are its lines in? */
         const probe = isPo
           ? await sql`SELECT i.item_group g, COUNT(*)::int n FROM scm.purchase_order_items i
-                        JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-                       WHERE p.company_id = ${CO} AND p.po_number = ${doc} GROUP BY 1`
+                       WHERE i.purchase_order_id = ${poId} GROUP BY 1`
           : await sql`SELECT i.item_group g, COUNT(*)::int n FROM scm.mfg_sales_order_items i
                        WHERE i.company_id = ${CO} AND i.doc_no = ${doc} GROUP BY 1`;
         log(`  ${doc}: no sofa lines — ${probe.length ? probe.map((x) => `${x.g}:${x.n}`).join(", ") : "the document itself is not in the ERP"}`);
@@ -154,6 +176,7 @@ async function main() {
       }
 
       if (!APPLY) continue;
+      const touched = [];
       await sql.begin(async (tx) => {
         for (const p of plan) {
           if (p.op === "delete") {
@@ -168,6 +191,7 @@ async function main() {
             else await tx`UPDATE scm.mfg_sales_order_items SET item_code = ${p.to}, description = ${name},
                             unit_price_centi = ${p.price}, total_centi = ${p.tot}, balance_centi = ${p.tot},
                             variants = ${tx.json(p.v)} WHERE id = ${p.id}`;
+            touched.push({ id: p.id, code: p.to, v: p.v });
           } else {
             const src = rows[0];
             if (isPo) await tx`INSERT INTO scm.purchase_order_items
@@ -187,11 +211,46 @@ async function main() {
           }
         }
       });
+
+      /* Carry it down the chain. A PO line copies the SO line it is dedicated
+         to; a GRN line copies the PO line it received; a DO line copies the SO
+         line it delivered. All three took a SNAPSHOT of the code and variants
+         when they were created (create-migrated-documents.mjs), so correcting
+         the parent alone would leave them stating the old build. These
+         documents carry migrated_no_stock, so this is paperwork only - no
+         movement is written or implied. */
+      for (const t of touched) {
+        if (isPo) {
+          const g = await sql`UPDATE scm.goods_received_note_items
+            SET material_code = ${t.code}, variants = ${sql.json(t.v)}
+            WHERE purchase_order_item_id = ${t.id} RETURNING id`;
+          if (g.length) { nGr += g.length; log(`      -> ${g.length} GRN line(s) follow ${compOf(t.code)}`); }
+        } else {
+          const po = await sql`UPDATE scm.purchase_order_items
+            SET material_code = ${t.code}, variants = ${sql.json(t.v)}
+            WHERE so_item_id = ${t.id} RETURNING id`;
+          if (po.length) {
+            nPo += po.length;
+            log(`      -> ${po.length} PO line(s) follow ${compOf(t.code)}`);
+            for (const r of po) {
+              const g = await sql`UPDATE scm.goods_received_note_items
+                SET material_code = ${t.code}, variants = ${sql.json(t.v)}
+                WHERE purchase_order_item_id = ${r.id} RETURNING id`;
+              nGr += g.length;
+            }
+          }
+          const d = await sql`UPDATE scm.delivery_order_items
+            SET item_code = ${t.code}, variants = ${sql.json(t.v)}
+            WHERE so_item_id = ${t.id} RETURNING id`;
+          if (d.length) { nDo += d.length; log(`      -> ${d.length} DO line(s) follow ${compOf(t.code)}`); }
+        }
+      }
     }
   }
 
   log("");
   log(`builds touched ${nBuilds} · lines updated ${nUpd} · added ${nIns} · removed ${nDel}`);
+  log(`downstream carried: PO lines ${nPo} · GRN lines ${nGr} · DO lines ${nDo}`);
   log(`refused ${nRefused} (downstream reference or the money would move) · piece SKU not minted ${nMissingSku}`);
   for (const h of DATA._held ?? []) log(`HELD ${h.docs.join(" / ")} — ${h.why}`);
   if (!APPLY) log("\nDRY-RUN — set APPLY=1 to write.");
