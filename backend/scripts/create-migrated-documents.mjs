@@ -79,11 +79,21 @@ async function doGrns() {
   for (const g of plan.slice(0, 8)) log(`   ${g.po.po_number} <- ${g.po.linked_ac_docno}: ${g.items.length} line(s), ${g.items.reduce((t, i) => t + Number(i.received_qty || 0), 0)} unit(s)`);
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
 
+  /* Migrated documents KEEP AutoCount's number (owner 2026-08-10). A GRN here
+     belongs to ONE purchase order while an AutoCount receipt can span several,
+     so a bare AC GR number is not always unique: when it covers more than one
+     imported PO the ERP number carries the PO too. Either way the number a
+     human reads starts from the AutoCount document, not a fresh sequence. */
+  const grUse = new Map();
+  for (const g of plan) for (const gr of (g.po.linked_ac_grn_docnos ?? [])) grUse.set(gr, (grUse.get(gr) ?? 0) + 1);
   let seq = await nextSeq("grns", "grn_number", "HC-GRN-");
   let made = 0;
   for (const g of plan) {
-    seq += 1;
-    const grnNo = `HC-GRN-${String(seq).padStart(6, "0")}`;
+    const acGrs = g.po.linked_ac_grn_docnos ?? [];
+    let grnNo;
+    if (acGrs.length === 1 && grUse.get(acGrs[0]) === 1) grnNo = "HC-" + acGrs[0];
+    else if (acGrs.length >= 1) grnNo = "HC-" + acGrs[0] + "-" + g.po.linked_ac_docno;
+    else { seq += 1; grnNo = `HC-GRN-${String(seq).padStart(6, "0")}`; }
     await sql.begin(async (tx) => {
       const [hdr] = await tx`INSERT INTO scm.grns
           (grn_number, purchase_order_id, supplier_id, warehouse_id, status, posted_at, received_at,
@@ -153,11 +163,10 @@ async function doDos() {
   for (const d of plan.slice(0, 8)) log(`   ${d.doNo} <- ${d.so}: ${d.items.length} line(s)`);
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
 
-  let seq = await nextSeq("delivery_orders", "do_number", "HC-DO-");
+  // one AutoCount delivery note = one ERP DO, so the number carries over intact
   let made = 0;
   for (const d of plan) {
-    seq += 1;
-    const doNo = `HC-DO-${String(seq).padStart(6, "0")}`;
+    const doNo = "HC-" + d.doNo;
     await sql.begin(async (tx) => {
       const [hdr] = await tx`INSERT INTO scm.delivery_orders
           (do_number, so_doc_no, status, do_date, currency, company_id, created_by,

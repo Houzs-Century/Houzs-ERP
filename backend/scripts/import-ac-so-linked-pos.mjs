@@ -292,13 +292,14 @@ async function main() {
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to write. NOTE: no stock movements are created; the balance snapshot already holds these units."); await sql.end(); return; }
 
   // next document number, continuing the imported series
-  const [{ maxno }] = await sql`SELECT COALESCE(MAX(po_number), '') maxno FROM scm.purchase_orders
-    WHERE company_id = 1 AND po_number LIKE ${prefix + "%"}`;
-  let seq = Number(String(maxno).replace(prefix, "")) || 0;
+  /* Migrated documents KEEP AutoCount's number (owner 2026-08-10: 我们从
+     AutoCount 搬进来的东西全部 numbering 都跟着 AutoCount 的). The sales-order
+     import and the outstanding-PO import both do this already; minting a fresh
+     sequence here meant PO-000596 arrived as HC-PO-009844 and nobody could find
+     it by the number printed on the AutoCount document. */
   let made = 0;
   for (const p of plan) {
-    seq += 1;
-    const poNo = prefix + String(seq).padStart(6, "0");
+    const poNo = "HC-" + p.acDoc;
     await sql.begin(async (tx) => {
       const subtotal = p.items.reduce((s2, it) => s2 + it.qty * it.priceCenti, 0);
       const [hdr] = await tx`INSERT INTO scm.purchase_orders
