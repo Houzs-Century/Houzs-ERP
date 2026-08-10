@@ -1,0 +1,79 @@
+name: Backfill specials into variants
+
+# Manual. Redo of "Backfill sofa special orders", into the field the picker
+# actually reads: variants.specials. The earlier pass wrote custom_specials,
+# which the picker never reads and which the SO line PATCH regenerates from
+# variants on the first edit.
+#
+# Covers SO + PO lines, sofa + bedframe. Merges into variants.specials as a
+# de-duplicated string[] of picker codes, preserving every other variants key
+# and every code already there. custom_specials is left alone.
+#
+# The picker master (scm.special_addons) is read LIVE with its prices; a phrase
+# with no owner code is REPORTED, never invented. APPLY refuses to run if any
+# code it would stamp is priced — that reprices historical documents and is an
+# owner decision.
+#
+# DRY-RUN unless apply=1; the report is the ##[notice] lines.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      show:
+        description: "how many per-line changes to print"
+        required: false
+        default: "40"
+        type: string
+
+concurrency:
+  group: backfill-specials-into-variants-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-specials-into-variants.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-specials-into-variants.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
