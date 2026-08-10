@@ -393,13 +393,21 @@ async function main() {
 
   /* jsonb_set on the ONE key, so every other key in variants survives even if
      another writer touched the row between the read and this write. */
+  /* Count the rows each UPDATE actually touched. An UPDATE whose WHERE matches
+     nothing is silent, and "APPLIED" printed from a loop counter is not
+     evidence — refresh-sofa-colours.mjs logged "stamped 146 sofa lines" three
+     times and a read 29 seconds later found nothing (BUG-HISTORY.md). */
   const writeBatch = async (tx, table, list) => {
-    for (const u of list)
-      await tx.unsafe(
+    let touched = 0;
+    for (const u of list) {
+      const res = await tx.unsafe(
         `UPDATE scm.${table}
             SET variants = jsonb_set(COALESCE(variants, '{}'::jsonb), '{specials}', $1::jsonb, true)
           WHERE id = $2`,
         [JSON.stringify(u.next), u.id]);
+      touched += res.count ?? 0;
+    }
+    return touched;
   };
 
   if (SKIP_PRICED) {
@@ -416,12 +424,19 @@ async function main() {
        written, write, sum again, and throw on any difference so the whole thing
        rolls back. Proof, not assertion. */
     let proved = false;
+    const touchedBy = {};
     try {
       await sql.begin(async (tx) => {
         const before = {}, after = {};
         for (const [which, table] of TABLES) before[which] = await moneySums(tx, table, updates[which].map((u) => u.id));
-        for (const [which, table] of TABLES) await writeBatch(tx, table, updates[which]);
+        for (const [which, table] of TABLES) touchedBy[which] = await writeBatch(tx, table, updates[which]);
         for (const [which, table] of TABLES) after[which] = await moneySums(tx, table, updates[which].map((u) => u.id));
+        /* Rows the UPDATE actually matched must equal rows we meant to write.
+           A shortfall means the WHERE found nothing — roll back, do not log a
+           success. */
+        for (const [which] of TABLES)
+          if (touchedBy[which] !== updates[which].length)
+            throw new Error(`${which}: UPDATE touched ${touchedBy[which]} rows, expected ${updates[which].length}`);
         const diffs = [];
         for (const [which, table] of TABLES) {
           log("");
@@ -442,22 +457,67 @@ async function main() {
       process.exit(1);
     }
     log("");
-    log(`APPLIED (SKIP_PRICED) — SO ${updates.so.length} lines, PO ${updates.po.length} lines, ` +
-        `${skippedLines.length} lines held back as priced. Money columns proved identical: ${proved}. custom_specials untouched.`);
+    log(`transaction committed — UPDATE touched SO ${touchedBy.so}/${updates.so.length}, ` +
+        `PO ${touchedBy.po}/${updates.po.length}. Money columns identical: ${proved}.`);
+
+    /* READ-BACK ON A NEW CONNECTION. Everything above happened inside the
+       transaction that wrote it, so it cannot prove the commit is visible to
+       anybody else. Open a SEPARATE session and read the rows back. If this
+       does not show the codes, the run reports NOT LANDED. */
+    const v = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+    let ok = 0, bad = 0;
+    const badSamples = [];
+    try {
+      for (const [which, table] of TABLES) {
+        const list = updates[which];
+        for (let i = 0; i < list.length; i += 500) {
+          const b = list.slice(i, i + 500);
+          const rows = await v.unsafe(
+            `SELECT id::text AS id, COALESCE(variants->'specials', '[]'::jsonb) AS specials
+               FROM scm.${table} WHERE id = ANY($1::uuid[])`, [b.map((u) => u.id)]);
+          const got = new Map(rows.map((r) => [r.id, asArray(r.specials).map((x) => K(x))]));
+          for (const u of b) {
+            const have = got.get(String(u.id)) || [];
+            const missing = u.next.filter((c) => !have.includes(K(c)));
+            if (missing.length) {
+              bad++;
+              if (badSamples.length < 10) badSamples.push(`   ${which} ${u.id} missing ${JSON.stringify(missing)} have ${JSON.stringify(have)}`);
+            } else ok++;
+          }
+        }
+      }
+    } finally { await v.end(); }
+
+    log("");
+    log(`READ-BACK on a NEW connection: ${ok} lines carry every code we wrote, ${bad} do not.`);
+    for (const s of badSamples) log(s);
+
     const after0 = await carryingCounts();
-    log(`VERIFY — lines now carrying a non-empty variants.specials: SO ${after0.so} (was ${before0.so}), ` +
+    log(`VERIFY — lines carrying a non-empty variants.specials: SO ${after0.so} (was ${before0.so}), ` +
         `PO ${after0.po} (was ${before0.po})`);
+
+    if (bad || ok !== updates.so.length + updates.po.length) {
+      log("");
+      log(`NOT LANDED — the read-back does not account for every line. Do not treat this run as applied.`);
+      await sql.end();
+      process.exit(1);
+    }
+    log("");
+    log(`APPLIED (SKIP_PRICED) — SO ${updates.so.length} lines, PO ${updates.po.length} lines, ` +
+        `${skippedLines.length} lines held back as priced, PROVEN by read-back. custom_specials untouched.`);
     await sql.end();
     return;
   }
 
   for (const [which, table] of TABLES) {
     const list = updates[which];
+    let touched = 0;
     for (let i = 0; i < list.length; i += 200) {
       const b = list.slice(i, i + 200);
-      await sql.begin(async (tx) => { await writeBatch(tx, table, b); });
+      await sql.begin(async (tx) => { touched += await writeBatch(tx, table, b); });
       log(`  ${which} ..${Math.min(i + 200, list.length)}/${list.length}`);
     }
+    log(`  ${which} rows actually touched by UPDATE: ${touched}/${list.length}`);
   }
   log(`APPLIED — SO ${updates.so.length} lines, PO ${updates.po.length} lines. custom_specials untouched.`);
   await sql.end();
