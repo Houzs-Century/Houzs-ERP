@@ -232,6 +232,32 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
     expect(rows[0].status).toBe('skipped');
   });
 
+  test('cancelling a DO whose SO->DO conversion is still queued skips the conversion', async () => {
+    /* A DO has no create of its own — the conversion is what would bring it
+       into AutoCount, so that is the row a cancel has to catch. */
+    const sb = withFlag('1');
+    await enqueueConvert(sb as never, {
+      companyId: 1,
+      op: 'so_to_do',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      docType: 'DO',
+      docNo: 'HC-DO-1',
+      docId: 'do-1',
+    });
+    resetWritebackFlagCache();
+
+    expect(await enqueueCancel(sb as never, {
+      companyId: 1, docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
+      self: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+    })).toBe(false);
+
+    const rows = outbox(sb);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].op).toBe('so_to_do');
+    expect(rows[0].status).toBe('skipped');
+  });
+
   test('cancelling a document AutoCount already has queues a cancel', async () => {
     const sb = withFlag('1', { mfg_sales_orders: [{ ...so, linked_ac_docno: 'SO-000021' }] });
     expect(await enqueueCancel(sb as never, {

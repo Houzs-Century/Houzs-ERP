@@ -297,9 +297,13 @@ export async function recordConvertSkipped(
 }
 
 /**
- * Cancel. If the create for this document has not left the outbox yet, the
- * right answer is not to create-then-cancel in the live book: mark the pending
- * create 'skipped' and queue nothing.
+ * Cancel.
+ *
+ * If the operation that would BRING this document into AutoCount is still
+ * sitting in the outbox, the right answer is not to create-then-cancel in a
+ * live account book: mark that row 'skipped' and queue nothing. For an SO or PO
+ * that operation is its create; for a DO or GRN it is the conversion that
+ * produces it, since neither has a create of its own.
  */
 export async function enqueueCancel(
   sb: Sb,
@@ -315,7 +319,7 @@ export async function enqueueCancel(
   try {
     if (opts.companyId == null) return false;
     if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
-    const pending = await findPendingCreate(sb, opts.companyId, opts.docType, opts.docNo);
+    const pending = await findPendingOriginatingOp(sb, opts.companyId, opts.docType, opts.docNo, opts.docId ?? null);
     if (pending) {
       await sb.from('autocount_outbox')
         .update({
@@ -376,7 +380,7 @@ export async function enqueueEdit(
        human document number so it lines up with the create row. */
     const docNo = composed.docNo;
 
-    const pending = await findPendingCreate(sb, opts.companyId, opts.docType, docNo, opts.docId ?? null);
+    const pending = await findPendingOriginatingOp(sb, opts.companyId, opts.docType, docNo, opts.docId ?? null);
     if (pending) {
       const { error } = await sb.from('autocount_outbox')
         .update({
@@ -409,7 +413,7 @@ export async function enqueueEdit(
   }
 }
 
-async function findPendingCreate(
+async function findPendingOriginatingOp(
   sb: Sb,
   companyId: number,
   docType: string,
@@ -420,7 +424,11 @@ async function findPendingCreate(
     .select('id, payload')
     .eq('company_id', companyId)
     .eq('doc_type', docType)
-    .in('op', ['create_so', 'create_po'])
+    /* The op that BRINGS this document into AutoCount. For an SO or PO that is
+       its create; for a DO / invoice / GRN / purchase invoice it is the
+       conversion that produces it — a DO has no create of its own. Either way,
+       a still-pending one means AutoCount does not have the document yet. */
+    .in('op', ['create_so', 'create_po', 'so_to_do', 'po_to_gr', 'do_to_iv', 'gr_to_pi'])
     .eq('status', 'pending');
   /* A PO is addressed by id everywhere in its router; an SO by its number.
      Match on whichever the caller actually has, or a PO edit would miss its own
