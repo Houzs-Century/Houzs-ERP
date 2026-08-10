@@ -245,14 +245,25 @@ async function main() {
     if (!mvBy.has(k)) mvBy.set(k, new Map());
     mvBy.get(k).set(r.source_doc_type ?? "(null)", { n: r.n, units: Number(r.units) });
   }
+  /* Double-post definition taken from backend/scripts/check-duplicate-movements.mjs
+     rather than invented here. The bucket is the full identity
+     (doc_type, doc_id, warehouse, product, variant, batch, movement_type), and
+     only SINGLE-POST types count: a DO/DR edit legitimately writes additional
+     delta rows after shipping, so counting those as duplicates would flag
+     normal resyncs as corruption. A multi-line document posting the same
+     product twice is likewise not a duplicate — hence doc_id, not doc_no. */
+  const SINGLE_POST = ["GRN", "PURCHASE_RETURN", "STOCK_TRANSFER", "STOCK_TAKE"];
   const dup = await sql`SELECT product_code, warehouse_id, source_doc_type, source_doc_no,
-      COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
-    FROM scm.inventory_movements WHERE company_id = ${CO} AND source_doc_no IS NOT NULL
-    GROUP BY product_code, warehouse_id, source_doc_type, source_doc_no
+      movement_type, COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
+    FROM scm.inventory_movements
+    WHERE company_id = ${CO} AND source_doc_id IS NOT NULL
+      AND source_doc_type = ANY(${SINGLE_POST})
+    GROUP BY product_code, warehouse_id, variant_key, batch_no, movement_type,
+             source_doc_type, source_doc_id, source_doc_no
     HAVING COUNT(*) > 1 ORDER BY COUNT(*) DESC LIMIT 200`;
   const dupCell = new Set(dup.map((r) => `${norm(r.product_code)}|${r.warehouse_id}`));
-  log(`cells carrying the same source document more than once: ${dupCell.size} (${dup.length} document groups)`);
-  for (const r of dup.slice(0, 15)) log(`  DUP ${r.product_code} @ ${whName.get(String(r.warehouse_id)) ?? r.warehouse_id} ${r.source_doc_type} ${r.source_doc_no} x${r.n} = ${r.units} units`);
+  log(`single-post documents posted more than once (hard double-post signal): ${dup.length} buckets over ${dupCell.size} cells`);
+  for (const r of dup.slice(0, 15)) log(`  DOUBLE-POST ${r.product_code} @ ${whName.get(String(r.warehouse_id)) ?? r.warehouse_id} ${r.source_doc_type} ${r.source_doc_no} ${r.movement_type} x${r.n} = ${r.units} units`);
 
   const provenance = (r) => {
     const m = mvBy.get(`${r.code}|${r.whId}`);
@@ -272,7 +283,7 @@ async function main() {
 
   const causeOf = (r) => {
     if (knownCells.has(`${r.code}|${r.whId}`) || isKnownDoubleShip(r.code)) return "KNOWN DOUBLE-SHIP (SO-2606-019, DO-2607-005 + DO-2607-017) — traced, owner decision pending";
-    if (dupCell.has(`${r.code}|${r.whId}`)) return "DUPLICATED MOVEMENT — the same source document is posted more than once against this cell";
+    if (dupCell.has(`${r.code}|${r.whId}`)) return "DOUBLE-POSTED DOCUMENT — a single-post document type posted this cell more than once";
     if (movedSinceSnapshot.has(`${r.code}|${r.whId}`)) return "MIGRATION CUT-OFF — AutoCount moved after the cutover snapshot the ERP was seeded from";
     const m = mvBy.get(`${r.code}|${r.whId}`);
     if (!m) return "NO ERP MOVEMENT — the cutover adjustment never reached this cell";
