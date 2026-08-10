@@ -256,6 +256,12 @@ async function main() {
         bump("repoint", "build_absent"); continue;
       }
       const before = rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
+      /* `expect` is what parse-sofa.mjs makes of this Desc2. A difference is not
+         fatal — the import ran against whatever SKUs existed that day, so a
+         placeholder is a legitimate answer — but it must be visible. */
+      const found = rows.map((r) => compOf(r.code));
+      if (JSON.stringify(found) !== JSON.stringify(e.expect.map(K)))
+        note(`  ${doc} dtl ${e.dtl}: NOTE — the document holds ${found.join("+") || "(none)"}, the decoder says ${e.expect.join("+")}`);
 
       const plan = [];
       let refused = null;
