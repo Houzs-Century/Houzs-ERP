@@ -675,3 +675,36 @@ SO-specific wiring:
 - **Audit:** `lib/so-revision.ts` stamps a `routing` field-change + a `routing …`
   note on the `AMENDMENT_SO_APPROVED` row recording which departments the single
   approval covered.
+
+### What an approved amendment does to the LINE PRICE
+
+Approving an amendment re-runs the honest-pricing recompute on every changed
+line (`so-revision.ts` -> `recomputeOneLine`), and that recompute is
+**authoritative by default**: it rewrites `unit_price_centi` to
+`mfg_products.sell_price_sen` (+ fabric-tier delta + extras). That is deliberate
+for a NATIVE order — the catalogue is the truth for an order this ERP priced —
+and it applies even to a QTY-ONLY amendment, because the recompute is per-line,
+not per-changed-field.
+
+**A MIGRATED order is exempt.** When the SO header carries `linked_ac_docno`
+(migration 0271 — the marker that actually exists; `migrated_no_stock` lives only
+on `scm.grns` / `scm.delivery_orders`, never on the SO or PO header), the apply
+passes `trustOperatorSelling: 'including-zero'` and the stored price is kept. Two
+reasons, both money:
+
+- that unit price is what AutoCount recorded as negotiated with the customer, and
+  `sell_price_sen` is in no sense a better answer for an order this ERP never
+  priced;
+- `'including-zero'` rather than plain `true` because a migrated sofa is
+  routinely carried as the **whole-set price on ONE lead module line with 0 on its
+  siblings**. Plain trust reads a stored 0 as "not provided" and hands the sibling
+  a catalogue price anyway, which bills the set several times over.
+
+If a migrated line's price genuinely must change, the amendment carries
+`new_unit_price_sen` and THAT is what persists — a SPEC change alone does not
+re-price a migrated line.
+
+Note the reachability gate: a migrated SO is only `amendment_eligible` once it is
+processing-locked, and the importer does not set `internal_expected_dd`, so today
+most migrated orders cannot reach this path at all. The exemption exists so that
+giving one a Processing Date does not silently destroy its price later.
