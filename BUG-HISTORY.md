@@ -49,7 +49,7 @@ first N. A wrong DtlKey is strictly worse than no DtlKey - no key is refused
 loudly by the new guard, a wrong key silently edits a different line in a live
 book.
 
-**Ref** - 2026-08-11, PR #1930 (feat/ac-line-identity). C# half needs a manual
+**Ref** - 2026-08-11, PR #1935 (feat/ac-line-identity). C# half needs a manual
 build on the AutoCount host: `docs/autocount-service-deploy.md`.
 
 ## Duplicate-series detection paired five unrelated fabrics through "BR0WN" [low]
