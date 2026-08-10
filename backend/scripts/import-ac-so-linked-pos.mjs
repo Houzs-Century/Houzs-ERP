@@ -68,9 +68,11 @@ async function main() {
   /* item_group must match the vocabulary the SO/PO line tables use, because
      bound-mode readiness gates on it. Take it from the catalogue rather than
      re-deriving it from the code, so PO lines and SO lines can never disagree. */
-  const CATG = { MATTRESS: "mattress", BEDFRAME: "bedframe", ACC: "accessory", ACCESSORY: "accessory",
-    BEDLINES: "accessory", DIFFUSER: "others", CARPET: "others", DINING: "others", OTHER: "others",
-    SERVICE: "service", TRANS: "service", SOFA: "sofa" };
+  /* scm.mfg_product_category is an enum with exactly these five members
+     (SOFA / BEDFRAME / ACCESSORY / MATTRESS / SERVICE); anything else would be
+     a value the catalogue cannot hold. Map them to the line-table vocabulary. */
+  const CATG = { SOFA: "sofa", BEDFRAME: "bedframe", ACCESSORY: "accessory",
+    MATTRESS: "mattress", SERVICE: "service" };
   const prodCat = new Map(
     (await sql`SELECT code, category::text AS category FROM scm.mfg_products WHERE company_id = 1`)
       .map((r) => [norm(r.code), CATG[String(r.category ?? "").toUpperCase()] ?? "others"]),
@@ -193,10 +195,11 @@ async function main() {
       for (const it of p.items) {
         await tx`INSERT INTO scm.purchase_order_items
             (purchase_order_id, material_kind, material_code, material_name, description, description2,
-             qty, received_qty, unit_price_centi, line_total_centi, item_group,
+             qty, received_qty, unit_price_centi, line_total_centi, item_group, uom,
              warehouse_id, so_item_id, company_id, delivery_date, from_mrp)
-          VALUES (${hdr.id}, 'PRODUCT', ${it.code}, ${it.description}, ${it.description}, ${it.desc2},
+          VALUES (${hdr.id}, 'mfg_product', ${it.code}, ${it.description}, ${it.description}, ${it.desc2},
                   ${it.qty}, ${it.recv}, ${it.priceCenti}, ${it.qty * it.priceCenti}, ${it.group},
+                  ${it.group === "bedframe" ? "SET" : "UNIT"},
                   ${it.wh}, ${it.soItemId}, 1, ${it.deliveryDate}, false)`;
       }
     });
