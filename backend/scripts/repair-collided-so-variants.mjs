@@ -146,8 +146,22 @@ async function main() {
   const plan = []; let skippedShape = 0, notCollided = 0, agrees = 0;
   let noKey = 0, uncorroborated = 0;
   const uncorroboratedRows = [];
+  /* The keyless lines are NOT written here, but leaving them merely counted is
+     how a gap stays invisible. They can still be ASSESSED without guessing:
+     description2 is the line's own AutoCount text, so it says whether the row
+     agrees with itself. Position is never used - that is the fallback this
+     repair exists to avoid. */
+  const keyless = [];
   for (const it of items) {
-    if (it.linked_ac_dtlkey == null) { noKey++; continue; }
+    if (it.linked_ac_dtlkey == null) {
+      noKey++;
+      const cur0 = asObj(it.variants);
+      if (it.d2 != null && cur0) {
+        const d0 = differs(cur0, blockFor(parseBedframe(it.d2), findColour));
+        keyless.push(`${it.doc_no} ${it.item_code} ${d0.length ? `DISAGREES with its own description2 on ${d0.join(",")}` : "agrees with its own description2"}  d2=${JSON.stringify(norm2(it.d2))}`);
+      } else keyless.push(`${it.doc_no} ${it.item_code} cannot be assessed (no description2 or damaged variants shape)`);
+      continue;
+    }
     const ex = byDtl.get(Number(it.linked_ac_dtlkey));
     const own = ex ? ex.Desc2 : it.d2;
     if (own == null) continue;
@@ -181,6 +195,7 @@ async function main() {
 
   log(`bedframe SO lines: ${items.length}; agree with own line text: ${agrees}; not attributable to the collision: ${notCollided}; damaged variants shape (left alone): ${skippedShape}`);
   log(`no linked_ac_dtlkey at all (cannot be settled by the real key, left alone): ${noKey}`);
+  for (const k of keyless) log(`   KEYLESS ${k}`);
   log(`collided but the stored DtlKey is UNCORROBORATED (gate 3 refused): ${uncorroborated}`);
   for (const r of uncorroboratedRows) log(`   REFUSED ${r}`);
   log(`TO REPAIR (scope=${SCOPE}): ${plan.length}`);
