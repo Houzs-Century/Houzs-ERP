@@ -509,6 +509,29 @@ async function main() {
   const migrated = grns.filter((g) => g.migrated).length;
   log(`   GRN rows on imported POs: ${grns.length}, of which migrated_no_stock (paperwork carried over, counted as received): ${migrated}`);
 
+  /* "The ERP has a GRN AutoCount does not know" is only alarming if AutoCount
+     also says nothing was received. The outstanding-PO snapshot carries
+     TransferedQty per line — AutoCount's own record of what came in — so the
+     bucket is scored against that rather than left as an accusation. A PO fully
+     transferred in AutoCount but absent from the GR-doc export means the receipt
+     happened through a document the export does not carry, NOT that the ERP
+     invented a receipt. */
+  const acPoQty = new Map();
+  try {
+    for (const r of gz("ac-outstanding-po.json.gz")) {
+      const k = normDoc(r.DocNo);
+      const cur = acPoQty.get(k) ?? { qty: 0, xfer: 0 };
+      cur.qty += Number(r.Qty) || 0;
+      cur.xfer += Number(r.TransferedQty) || 0;
+      acPoQty.set(k, cur);
+    }
+  } catch { /* snapshot absent: the lens is skipped, the counts above still stand */ }
+  if (acPoQty.size && cErpOnly) {
+    const erpOnlyPos = pos.filter((p) => !(acPoGr.get(p.ac_po) ?? new Set()).size && (erpGrn.get(p.ac_po) ?? []).length);
+    const xferred = erpOnlyPos.filter((p) => (acPoQty.get(p.ac_po)?.xfer ?? 0) > 0).length;
+    log(`   of the ${cErpOnly} with an ERP GRN and no AutoCount receipt document: ${xferred} are recorded in AutoCount as TRANSFERRED (received through a document the GR export does not carry — the ERP is right), ${cErpOnly - xferred} show no transfer on either side`);
+  }
+
   /* 4c — PO -> PI. The ERP was never given AutoCount's purchase invoices as
      documents; the cutover kept them as a POINTER on the PO. Stating both makes
      the absence a design decision on the report rather than a silent zero. */
