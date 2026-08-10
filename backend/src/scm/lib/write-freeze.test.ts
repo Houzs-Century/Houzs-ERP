@@ -1,25 +1,39 @@
 import { describe, it, expect } from 'vitest';
 import { parseFreezeValue, freezeMessage } from './write-freeze';
+import { SCM_AREAS, areaLabel } from './scm-areas';
+
+// The company/area GRAMMAR is specified in tests/writeFreezeScope.test.ts and
+// the middleware behaviour in tests/writeFreezeMiddleware.test.ts. What is left
+// here is the sentence staff actually read, plus the handful of parse shapes
+// this file has always pinned.
 
 describe('parseFreezeValue', () => {
   it('treats absent / empty / off as open', () => {
     for (const raw of [null, undefined, '', '   ', 'off', 'OFF', '0', 'false']) {
-      expect(parseFreezeValue(raw)).toBe('off');
+      expect(parseFreezeValue(raw).scope, String(raw)).toBe('off');
     }
   });
 
   it('freezes every company on all / true', () => {
-    expect(parseFreezeValue('all')).toBe('all');
-    expect(parseFreezeValue('TRUE')).toBe('all');
+    expect(parseFreezeValue('all').scope).toBe('all');
+    expect(parseFreezeValue('TRUE').scope).toBe('all');
   });
 
   it('parses a company id list', () => {
-    expect(parseFreezeValue('1')).toEqual([1]);
-    expect(parseFreezeValue(' 1 , 3 ')).toEqual([1, 3]);
+    expect(parseFreezeValue('1').scope).toEqual([1]);
+    expect(parseFreezeValue(' 1 , 3 ').scope).toEqual([1, 3]);
   });
 
-  it('falls OPEN on an unparseable value rather than freezing everything', () => {
-    expect(parseFreezeValue('yes please')).toBe('off');
+  it('FREEZES on an unparseable value rather than opening', () => {
+    /* CHANGED DELIBERATELY. This used to resolve to 'off', so a typo in the
+       config row silently reopened production writes — the worst outcome this
+       switch has, because it is invisible: nothing errors, staff simply start
+       saving into data the cutover is mid-way through migrating. Freezing
+       instead is loud, is reported within the cache TTL, and is undone by one
+       UPDATE (docs/write-freeze-staged-lift.md). The OUTAGE case is unchanged
+       and still fails open — see readFreeze. */
+    expect(parseFreezeValue('yes please').scope).toBe('all');
+    expect(parseFreezeValue('yes please').malformed).toBe(true);
   });
 });
 
@@ -56,5 +70,34 @@ describe('freezeMessage', () => {
 
   it('stays inside the length both clients will render', () => {
     expect(freezeMessage(null).length).toBeLessThan(200);
+  });
+});
+
+describe('freezeMessage during a staged lift', () => {
+  it('names the module that is still shut', () => {
+    const m = freezeMessage(null, 'scm.procurement.po', true);
+    expect(m).toMatch(/purchase orders/);
+    expect(m).toMatch(/other areas have reopened/i);
+  });
+
+  it('says nothing about areas before the first lift', () => {
+    // Naming one area is noise while every area is shut, and the row holds a
+    // plain '1' today — so this is the sentence production is still sending.
+    expect(freezeMessage(null, 'scm.procurement.po', false)).toBe(freezeMessage(null));
+    expect(freezeMessage(null, null, true)).toBe(freezeMessage(null));
+  });
+
+  it('EVERY area produces a sentence both clients will render', () => {
+    // A label long enough to breach the 200-char cap would make both clients
+    // fall back to their generic 5xx line — the outage wording again.
+    for (const area of SCM_AREAS) {
+      const m = freezeMessage(null, area, true);
+      expect(m.length, `${area} -> ${m.length}`).toBeLessThan(200);
+      expect(m, area).toMatch(new RegExp(areaLabel(area).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+  });
+
+  it('an operator sentence still wins', () => {
+    expect(freezeMessage('Ask Ah Meng.', 'scm.procurement.po', true)).toBe('Ask Ah Meng.');
   });
 });

@@ -988,6 +988,7 @@ PATCH,/api/scm/warehouse/racks/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"aut
 POST,/api/scm/warehouse/stock-in,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.warehouse.inventory"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/warehouse.ts
 POST,/api/scm/warehouse/stock-out,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.warehouse.inventory"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/warehouse.ts
 POST,/api/scm/warehouse/transfer,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.warehouse.inventory"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/warehouse.ts
+GET,/api/scm/write-freeze,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,,,,NO,DECLARED_GATE,backend/src/scm/routes/write-freeze-status.ts
 GET,/api/search,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/search.ts
 GET,/api/settings/email,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""settings.manage"")",,NO,DECLARED_GATE,backend/src/routes/settings.ts
 PATCH,/api/settings/email,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""settings.manage"")",,YES,DECLARED_GATE,backend/src/routes/settings.ts

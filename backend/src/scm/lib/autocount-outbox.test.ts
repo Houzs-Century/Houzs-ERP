@@ -121,6 +121,39 @@ describe('the runtime toggle', () => {
     })).toBe(true);
   });
 
+  test('a value nobody can parse leaves the push OFF, it does not turn it on', async () => {
+    /* THE SHARED-PARSER TRAP. This flag reuses parseFreezeValue so the two
+       switches speak one dialect — but the write FREEZE fails closed by
+       resolving an unreadable value to 'all', and inheriting that here would
+       mean a typo in this row starts pushing every company's documents into a
+       LIVE licensed AutoCount book. Opposite safe direction, same parser:
+       readWritebackScope maps `malformed` to 'off'. */
+    for (const raw of ['yes', 'houzs', 'on', '1;2', 'company 1']) {
+      resetWritebackFlagCache();
+      const sb = withFlag(raw);
+      expect(await enqueueAcOp(sb as never, {
+        companyId: 1, op: 'create_so', docType: 'SO', docNo: 'HC-SO-1', payload: { body: {} },
+      }), raw).toBe(false);
+      expect(outbox(sb), raw).toHaveLength(0);
+    }
+  });
+
+  test('a freeze value pasted into this row turns the push OFF, not on', async () => {
+    /* 'scm.write_freeze' and 'scm.autocount_writeback' are adjacent keys in the
+       same table sharing one grammar, so pasting one row's value into the other
+       is a live operator error, not a hypothetical. '1 - scm.sales.orders' is a
+       FREEZE instruction; this switch has no per-module meaning, so rather than
+       reading it as "company 1 on" it declines to act on it at all. */
+    for (const raw of ['1 - scm.sales.orders', 'all - scm.procurement.po', 'true-ish']) {
+      resetWritebackFlagCache();
+      const sb = withFlag(raw);
+      expect(await enqueueAcOp(sb as never, {
+        companyId: 1, op: 'create_so', docType: 'SO', docNo: 'HC-SO-1', payload: { body: {} },
+      }), raw).toBe(false);
+      expect(outbox(sb), raw).toHaveLength(0);
+    }
+  });
+
   test('a save is never failed by the outbox: a dead DB returns false, it does not throw', async () => {
     const dead = {
       from() { throw new Error('connection refused'); },
