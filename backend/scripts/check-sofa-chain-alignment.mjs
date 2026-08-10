@@ -110,6 +110,17 @@ function pairVerdict(parent, child, grp) {
 
 const count = (n, unit) => (n === 0 ? `0 ${unit}` : `${n} ${unit}`);
 
+/* A build can legitimately be received across two GRNs or shipped across two
+   DOs. The union of those children then holds each piece twice, which the
+   multiset correctly calls a difference and a reader would wrongly call a
+   defect. Tag it instead of hiding it: the count stays in the mismatch column,
+   and the tag says the union spans several documents so partial receipts and
+   split deliveries are read as what they are. */
+const spanTag = (rows) => {
+  const n = new Set(rows.map((r) => r.doc)).size;
+  return n > 1 ? `  [SPANS ${n} DOCUMENTS — a duplicated piece here may be a partial receipt / split delivery, not a defect]` : "";
+};
+
 function printLeg(name, link, s, mismatchLines, buildLines) {
   log("");
   log(`=== ${name}   (link: ${link})`);
@@ -285,7 +296,7 @@ async function main() {
     const d = multisetDiff(b.so.map((r) => pieceOf(b.grp, r.code)), b.po.map((r) => pieceOf(b.grp, r.code)));
     if (!d) { s1.buildsAligned++; continue; }
     s1.buildsMismatch++;
-    b1.push(`      ${b.doc} -> ${[...new Set(b.po.map((r) => r.doc))].join(",")}  ${b.grp} ${b.model}\n` +
+    b1.push(`      ${b.doc} -> ${[...new Set(b.po.map((r) => r.doc))].join(",")}  ${b.grp} ${b.model}${spanTag(b.po)}\n` +
             `         SO  ${b.so.map((r) => pieceOf(b.grp, r.code)).join("+")}\n` +
             `         PO  ${b.po.map((r) => pieceOf(b.grp, r.code)).join("+")}\n` +
             `         PO lacks: ${d.childLacks.join(", ") || "(none)"}   PO has that the SO never had: ${d.childExtra.join(", ") || "(none)"}`);
@@ -328,7 +339,7 @@ async function main() {
     const d = multisetDiff(b.po.map((r) => pieceOf(b.grp, r.code)), b.gr.map((r) => pieceOf(b.grp, r.code)));
     if (!d) { s2.buildsAligned++; continue; }
     s2.buildsMismatch++;
-    b2.push(`      ${b.doc} -> ${[...new Set(b.gr.map((r) => r.doc))].join(",")}  ${b.grp} ${b.model}\n` +
+    b2.push(`      ${b.doc} -> ${[...new Set(b.gr.map((r) => r.doc))].join(",")}  ${b.grp} ${b.model}${spanTag(b.gr)}\n` +
             `         PO   ${b.po.map((r) => pieceOf(b.grp, r.code)).join("+")}\n` +
             `         GRN  ${b.gr.map((r) => pieceOf(b.grp, r.code)).join("+")}\n` +
             `         GRN lacks: ${d.childLacks.join(", ") || "(none)"}   GRN has that the PO never had: ${d.childExtra.join(", ") || "(none)"}`);
@@ -358,7 +369,7 @@ async function main() {
     const d = multisetDiff(b.so.map((r) => pieceOf(b.grp, r.code)), b.do.map((r) => pieceOf(b.grp, r.code)));
     if (!d) { s3.buildsAligned++; continue; }
     s3.buildsMismatch++;
-    b3.push(`      ${b.doc} -> ${[...new Set(b.do.map((r) => r.doc))].join(",")}  ${b.grp} ${b.model}\n` +
+    b3.push(`      ${b.doc} -> ${[...new Set(b.do.map((r) => r.doc))].join(",")}  ${b.grp} ${b.model}${spanTag(b.do)}\n` +
             `         SO  ${b.so.map((r) => pieceOf(b.grp, r.code)).join("+")}\n` +
             `         DO  ${b.do.map((r) => pieceOf(b.grp, r.code)).join("+")}\n` +
             `         DO lacks: ${d.childLacks.join(", ") || "(none)"}   DO has that the SO never had: ${d.childExtra.join(", ") || "(none)"}`);
@@ -380,7 +391,7 @@ async function main() {
       const d = multisetDiff(b.gr.map((r) => pieceOf(b.grp, r.code)), b.do.map((r) => pieceOf(b.grp, r.code)));
       if (!d) { agree++; continue; }
       disagree++;
-      l4.push(`      ${b.doc}  ${b.grp} ${b.model}\n` +
+      l4.push(`      ${b.doc}  ${b.grp} ${b.model}${spanTag([...b.gr, ...b.do])}\n` +
               `         GRN ${[...new Set(b.gr.map((r) => r.doc))].join(",")}: ${b.gr.map((r) => pieceOf(b.grp, r.code)).join("+")}\n` +
               `         DO  ${[...new Set(b.do.map((r) => r.doc))].join(",")}: ${b.do.map((r) => pieceOf(b.grp, r.code)).join("+")}\n` +
               `         DO lacks: ${d.childLacks.join(", ") || "(none)"}   DO has that the GRN never had: ${d.childExtra.join(", ") || "(none)"}`);
