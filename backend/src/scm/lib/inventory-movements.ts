@@ -426,7 +426,8 @@ export async function reconcileDropshipBatches(
  * the balancing rows insert cleanly.
  *
  * Do NOT route DO or DR cancel through here: uq_inv_mov_do_source /
- * uq_inv_mov_dr_source (migrations 0100/0102, keyed WITHOUT movement_type) reject
+ * uq_inv_mov_dr_source (prod-only DDL, verified live 2026-08-11 via pg_indexes,
+ * Actions run 31417585775; keyed WITHOUT movement_type) reject
  * this helper's same-key opposite row (see the idempotency note below), so the
  * reversal would silently fail (swallowed by the caller's best-effort catch) and
  * the stock would be left mis-stated. DO/DR cancel instead post signed-ADJUSTMENT
@@ -445,7 +446,7 @@ export async function reconcileDropshipBatches(
  * inserted INDIVIDUALLY (not one batch) so a single failure — e.g. a partial
  * UNIQUE index that keys on (source_doc_type, source_doc_id, product_code,
  * variant_key) and therefore rejects a same-key opposite row, as DO/DR have
- * (uq_inv_mov_do_source / uq_inv_mov_dr_source, migrations 0100/0102) — does not
+ * (uq_inv_mov_do_source / uq_inv_mov_dr_source, both confirmed live) — does not
  * sink the rest. We report counts so the caller can log without rolling back.
  *
  * ADJUSTMENT / non-IN/OUT rows are left alone (there's no well-defined opposite

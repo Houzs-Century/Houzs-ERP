@@ -952,9 +952,30 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
 /* Deduct inventory for a DO exactly once. ROBUST: fires on the first
    transition into ANY shipped state (not only DISPATCHED). IDEMPOTENT: a
    pre-insert existence check on the DO id skips re-deduction, and the partial
-   UNIQUE index uq_inv_mov_do_source (migration 0100) is the hard backstop
-   against a race. Best-effort — a movement failure never rolls back the
-   status change (audit-DLQ pattern, same as the rest of inventory-movements). */
+   UNIQUE index uq_inv_mov_do_source is the hard backstop against a race.
+   Best-effort — a movement failure never rolls back the status change
+   (audit-DLQ pattern, same as the rest of inventory-movements).
+
+   THE INDEX IS REAL, and this is the only place in the tree that says so with
+   evidence. Read live from pg_indexes on 2026-08-11 (Actions run 31417585775,
+   "Duplicate movements check (read-only)"):
+
+     CREATE UNIQUE INDEX uq_inv_mov_do_source
+       ON scm.inventory_movements
+       USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+       WHERE (source_doc_type = 'DO'::text)
+
+   Do not re-derive this from the migration tree. Its DDL is prod-only (ported
+   from 2990) and migration 0230's own comment enumerates this table's indexes
+   as "(warehouse_id, product_code), (source_doc_type, source_doc_id),
+   (created_at) and (company_id)" — four non-unique indexes, no mention of the
+   four unique ones that are actually there. Reading 0230 is how you conclude
+   this guard has no backstop. It has one.
+
+   NOTE WHAT THE KEY DOES NOT CONTAIN: movement_type, warehouse_id, batch_no.
+   One (DO, product_code, variant_key) bucket may hold exactly ONE movement row
+   of any kind, ever. That is what makes this deduction safe, and it is also
+   what resyncInventoryForDo collides with — see the note there. */
 /* ── resolveDoLineWarehouses (Agent D 2026-05-31, TASK #32) ───────────────────
    PER-WAREHOUSE CORRECTNESS for the OUTBOUND side. A DO line MUST deduct from
    the warehouse of the Sales Order LINE it delivers (mfg_sales_order_items.
@@ -1519,8 +1540,31 @@ async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, doNo: str
    0053) fires AFTER INSERT, not UPDATE. Updating qty on an existing OUT row
    would leave the lot/consumption ledger stale. A fresh IN insert lets the
    trigger create a new lot at the original cost basis; a fresh OUT insert lets
-   it consume more lots. Migration 0109 dropped the per-bucket UNIQUE so we can
-   freely write multiple delta rows over time.
+   it consume more lots.
+
+   THIS PATH CANNOT DO WHAT ITS DESIGN ASSUMES. The comment here used to
+   read "Migration 0109 dropped the per-bucket UNIQUE so we can freely write
+   multiple delta rows over time". That is FALSE against production. pg_indexes
+   read live on 2026-08-11 (Actions run 31417585775) shows
+   uq_inv_mov_do_source ALIVE and keyed (source_doc_type, source_doc_id,
+   product_code, variant_key) partial on source_doc_type='DO' — see
+   deductInventoryForDo for the verbatim definition. movement_type is NOT in
+   that key, so a delta row for a bucket the first ship already wrote is a
+   duplicate key and is REJECTED. writeMovements returns { ok: false } and the
+   ledger never moves.
+
+   What still gets through: a delta for a bucket that has no first-ship row —
+   a newly ADDED line, or an existing line whose recomputed variant_key differs
+   from the one shipped under. The second of those is how the MAKOTO divergence
+   landed an OUT that consumed no lot (docs/inventory-ledger-divergence-coe.md).
+
+   So an edit-after-ship qty change on an already-shipped bucket does not reach
+   the ledger at all. Since 2026-08-05 the failure is at least LOGGED (the write
+   result is no longer discarded; see BUG-HISTORY) rather than silent. The fix
+   is an owner-owned, staging-first change to the money-critical FIFO layer —
+   either the index gains movement_type, or the delta rows stop reusing the DO
+   source key (the reversal path already solved it that way, with ADJUSTMENT).
+   Do NOT change either from a comment.
 
    IDEMPOTENT: re-running with no line changes yields delta 0 everywhere — no
    writes. Cancel-reversal still works via reverseMovements (it nets per
@@ -1734,7 +1778,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
 
    We CANNOT reuse reverseMovements: it writes a balancing IN that reuses the DO's
    (source_doc_type, source_doc_id, product_code, variant_key) key, which the
-   partial UNIQUE index uq_inv_mov_do_source (migration 0100, keyed WITHOUT
+   partial UNIQUE index uq_inv_mov_do_source (prod-only DDL, verified live; keyed WITHOUT
    movement_type) rejects → the insert silently fails (swallowed by the cancel
    path's best-effort catch) and the shipped stock is left permanently deducted.
 
@@ -3417,7 +3461,8 @@ deliveryOrdersMfg.post('/', async (c) => {
   }
 
   /* A DO = goods shipped on creation → deduct stock now (idempotent: the
-     existence check + UNIQUE index mean this never double-deducts even if the
+     existence check + the uq_inv_mov_do_source UNIQUE index — VERIFIED live,
+     see deductInventoryForDo — mean this never double-deducts even if the
      status is later advanced). LEAK GUARD (DRAFT): a DRAFT DO has NOT shipped —
      skip the deduction AND the SO-delivered sync; both fire on Confirm. */
   let movementErrors: string[] = [];
@@ -4611,7 +4656,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
      needs more stock OUT. Check that delta against the warehouse, gated by
      confirmShortStock. Decreases and non-qty edits skip the check.
 
-     ⚠ AND THE DELTA BINDS, mig 0230. This was the FOURTH write path and the one
+     AND THE DELTA BINDS, mig 0230. This was the FOURTH write path and the one
      left open: POST /, POST /from-sos and POST /:id/items all bind, so a
      qty-increase that shipped short went out attached to nothing — the exact
      hole this change exists to close, surviving on one route. The delta is now
@@ -4790,13 +4835,16 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
    Commander 2026-05-30 (TASK #24): unblocked on shipped DOs.
 
    Earlier this returned 409 do_shipped_line_locked because the partial UNIQUE
-   index uq_inv_mov_do_source (migration 0100) made a per-line balancing IN
-   structurally impossible — a reversing IN that reused the DO's bucket key
-   collided with the original OUT. Migrations 0108 (key includes movement_type)
-   and 0109 (drop the per-bucket UNIQUE so multiple delta rows can coexist)
-   removed that constraint, and resyncInventoryForDo writes the per-bucket
-   delta IN here. The FIFO trigger handles the new IN row by creating a fresh
-   lot at the original cost basis (weighted avg from the OUT rows).
+   index uq_inv_mov_do_source made a per-line balancing IN structurally
+   impossible — a reversing IN that reused the DO's bucket key collided with
+   the original OUT. This comment then claimed migrations 0108 (key includes
+   movement_type) and 0109 (drop the per-bucket UNIQUE) removed that
+   constraint. THEY DID NOT, in this database. pg_indexes read live on
+   2026-08-11 (Actions run 31417585775) shows the index still keyed
+   (source_doc_type, source_doc_id, product_code, variant_key) with NO
+   movement_type. The delete is unblocked, but the delta IN
+   resyncInventoryForDo writes for an already-shipped bucket is rejected by
+   that key — see the warning on resyncInventoryForDo.
 
    Guard: if the deleted line has already been invoiced or returned (downstream
    papers reference its do_item_id and qty), we refuse the delete — those Invoice
@@ -5193,7 +5241,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      wrote an OUT (source_doc_type:'DO'), so cancel must put the goods back on the
      shelf. We do NOT use reverseMovements here: its balancing IN reuses the DO's
      (source_doc_type, source_doc_id, product_code, variant_key) key, which the
-     partial UNIQUE index uq_inv_mov_do_source (migration 0100, keyed WITHOUT
+     partial UNIQUE index uq_inv_mov_do_source (prod-only DDL, verified live; keyed WITHOUT
      movement_type) rejects → the insert silently fails and the shipped stock is
      left permanently deducted. reverseInventoryForDo writes a FIFO-neutral
      positive ADJUSTMENT (unindexed by the DO source key, carrying variant_key) so

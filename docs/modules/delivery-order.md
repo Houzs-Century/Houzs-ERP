@@ -194,7 +194,7 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, `line_cost_centi`, `line_margin_centi`, **`ship_cost_centi`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads). |
 | `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_centi`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
-| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key)` by the partial unique index the reversal has to route around (`:4322-4328`). |
+| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key)` by `uq_inv_mov_do_source`, the partial unique index the reversal has to route around (`:4322-4328`). Verified live 2026-08-11 — full definition in §on idempotency below. |
 | `scm.mfg_sales_order_items` | Upstream: `warehouse_id` is the **authoritative** ship-from warehouse per line. |
 
 Status vocabulary (`:366-376`):
@@ -238,6 +238,45 @@ existence check on `(source_doc_type='DO', source_doc_id, movement_type='OUT')`
 (`:832-839`), and a partial UNIQUE index as the hard backstop against a race. It
 collapses identical `(warehouse_id, product_code, variant_key, batch_no)` lines
 into one OUT row (`:881-905`).
+
+**The index, verbatim from production.** Read live from `pg_indexes` on
+2026-08-11 (Actions run 31417585775, *Duplicate movements check (read-only)*):
+
+```sql
+CREATE UNIQUE INDEX uq_inv_mov_do_source
+  ON scm.inventory_movements
+  USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+  WHERE (source_doc_type = 'DO'::text)
+```
+
+Do not re-derive this from the migration tree — its DDL is prod-only (ported
+from 2990), and migration `0230:130-134` enumerates this table's indexes as the
+four NON-unique ones only, which is how a reader concludes the backstop does not
+exist. Production also carries `uq_inv_mov_dr_source`, `uq_inv_mov_cs_do_source`
+and `uq_inv_mov_cs_dr_source` in the same shape.
+
+**What the key does not contain: `movement_type`, `warehouse_id`, `batch_no`.**
+One `(DO, product_code, variant_key)` bucket may hold exactly ONE movement row
+of any kind, ever. That is what makes the first-ship deduction safe, and it is
+also what `resyncInventoryForDo` collides with — see below.
+
+**Edit-after-ship resync is blocked by that same index.**
+`resyncInventoryForDo` writes DELTA rows (an extra OUT to take more, an IN to
+give back) reusing the DO's `source_doc_id`, and its own comment says migration
+0109 "dropped the per-bucket UNIQUE so we can freely write multiple delta rows
+over time". That is FALSE against this database — the index above is live and
+`movement_type` is not in its key, so any delta for a bucket the first ship
+already wrote is a duplicate key and is REJECTED. `writeMovements` returns
+`{ ok: false }` and the ledger does not move.
+
+What still lands: a delta for a bucket with no first-ship row — a newly ADDED
+line, or an existing line whose recomputed `variant_key` differs from the one it
+shipped under. The second of those is how the MAKOTO divergence produced an OUT
+that consumed no lot (`docs/inventory-ledger-divergence-coe.md`). Since
+2026-08-05 the rejection is at least logged rather than silent. Unfixed, and
+owner-owned: the remedy is either adding `movement_type` to the index or
+stopping the delta rows reusing the DO source key (which is exactly how the
+reversal path solved it — see below).
 
 **Which warehouse:** `resolveDoLineWarehouses` (`:645`), in order —
 (1) the linked SO line's `warehouse_id`, (2) the DO header's `warehouse_id`,
