@@ -259,18 +259,29 @@ the resolver falls back to the raw code and never guesses. Any location that
 truly fails to resolve is reported as `UNMAPPED` with its unit count rather
 than being silently dropped.
 
-Per-location on-hand in live AutoCount:
+Per-location on-hand in live AutoCount. The raw column is every stock-controlled
+row; the comparable column excludes the service pseudo-items and sofa. Note
+that SBH and SRW look negative raw and are perfectly ordinary once the
+pseudo-items come out — the negative was never physical stock.
 
-| Location | Units | | Location | Units |
-|---|---|---|---|---|
-| KL | 2,877 | | KELANA.J | 58 |
-| PG | 1,065 | | SERV KL | 51 |
-| C&C DISP | 666 | | SBH DISP | 47 |
-| C&C K.J | 507 | | SERV PG | 14 |
-| KL DISP | 475 | | HQ | 7 |
-| PG DISP | 351 | | SBH | −285 |
-| SUNWAY | 175 | | SRW | −350 |
-| EM DISP | 94 | | | |
+| Location | Comparable cells | Comparable units | Raw units |
+|---|---|---|---|
+| KL | 237 | 4,951 | 2,877 |
+| PG | 239 | 2,168 | 1,065 |
+| C&C DISP | 78 | 666 | 666 |
+| C&C K.J | 66 | 507 | 507 |
+| KL DISP | 95 | 449 | 475 |
+| PG DISP | 103 | 349 | 351 |
+| SUNWAY | 34 | 175 | 175 |
+| EM DISP | 50 | 94 | 94 |
+| KELANA.J | 18 | 58 | 58 |
+| SBH | 18 | 55 | −285 |
+| SERV KL | 27 | 51 | 51 |
+| SBH DISP | 26 | 47 | 47 |
+| SRW | 14 | 46 | −350 |
+| SERV PG | 13 | 14 | 14 |
+| HQ | 7 | 11 | 7 |
+| **total** | **1,025** | **9,641** | **5,752** |
 
 ### 4.3 AutoCount's own stock goes negative
 
