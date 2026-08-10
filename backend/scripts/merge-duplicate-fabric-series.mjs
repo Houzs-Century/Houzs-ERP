@@ -27,7 +27,7 @@
    path here on purpose: it prints the plan, the counts and the exposure, and
    stops. Read-only, one connection, no transaction. */
 import postgres from "postgres";
-import { normColour, foldColour } from "./lib/fabric-colour-match.mjs";
+import { normColour, foldColour, markColour } from "./lib/fabric-colour-match.mjs";
 
 const sql = postgres(process.env.DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -41,6 +41,12 @@ const dropName = (s) => {
 };
 const padTail = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
 const dropBrand = (s) => s.replace(/^[A-Z]+\s+(?=[A-Z]*\d)/, "");
+/* Pad a one-digit tail while the SEPARATOR is still there: "J9226-2" ->
+   "J9226-02". It has to happen before folding, because the fold runs the series
+   number into the colour number ("J92262") and nothing downstream can then tell
+   which digits are which - which is why ARMANI J9226 / J9226 went undetected on
+   the first prod run. Same rule as the matcher's rung 6. */
+const padWrittenTail = (s) => s.replace(/([\s-])(\d)$/, "$10$2");
 
 /* every key this colour could be recognised by, from colour_id AND label */
 const codeKeys = (r) => {
@@ -48,9 +54,16 @@ const codeKeys = (r) => {
   for (const src of [r.colour_id, r.label]) {
     if (!src) continue;
     const base = dropName(normColour(src));
-    for (const v of [base, dropBrand(base)]) {
+    for (const v of [base, dropBrand(base), padWrittenTail(base), dropBrand(padWrittenTail(base))]) {
       const f = foldColour(v);
-      if (f && /\d/.test(f) && f.length >= 3) { out.add(f); out.add(padTail(f)); }
+      /* The digit test MUST run in MARK space. foldColour turns letter-O into
+         "0", so a colour whose label is only a NAME - "BROWN", "GOLD" - folds to
+         "BR0WN", passes a digit test on the fold, and then collides with every
+         other series that holds a BROWN. That one false key paired 311 with
+         A201, KS, M2402 and XQ#18 on the first prod run. In mark space letter-O
+         is "@", so only a WRITTEN digit counts - the same reason the matcher's
+         own digit guard compares in mark space. */
+      if (f && /\d/.test(markColour(v)) && f.length >= 3) { out.add(f); out.add(padTail(f)); }
     }
   }
   return [...out];
