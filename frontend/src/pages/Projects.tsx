@@ -8834,48 +8834,42 @@ function DocRow({
                     ))}
                 </div>
               )}
-              {/* Approve/Reject visibility. A gated document (required_perm)
-                  offers the buttons to a permission holder whenever it still
-                  needs the decision (owner 2026-07-21); non-gated docs keep the
-                  submit-then-review flow. BUT only once a file is uploaded
-                  (owner 2026-07-27): there is nothing to approve before the
-                  document exists, so an empty row must not show the buttons. */}
-              {/* Owner 2026-07-31 (final): on a gated document the approver
-                  ALWAYS keeps the buttons once a file exists — approved ones
-                  included — so a decision can be reviewed or reversed. The
-                  decision itself stays visible as the approval badge. */}
-              {attachments.length > 0 && (item.required_perm
-                ? canApprove
-                : awaiting && canApprove) ? (
+              {/* Approve/Reject visibility. The control appears once a file is
+                  uploaded (owner 2026-07-27 — nothing to decide before that) AND
+                  the caller can approve: a gated document (required_perm) offers
+                  it to a permission holder at any time so a decision can be
+                  revisited (owner 2026-07-21/07-31); non-gated docs keep the
+                  submit-then-review flow (only while a submission awaits review).
+                  WHICH of the two buttons shows is the per-decision toggle just
+                  below (owner 2026-08-10). */}
+              {attachments.length > 0 && canApprove && (item.required_perm || awaiting) ? (
                 <div className="flex flex-wrap items-center gap-1">
-                  {/* Already approved → the Approve button goes inert (owner
-                      2026-08-08 "approve button have bug": re-pressing it added
-                      a second identical Approved line). Reject… stays live so
-                      the decision can still be reversed, which is the whole
-                      point of keeping the buttons after a decision. */}
-                  <button
-                    onClick={() => onReview(item, "approve", {})}
-                    disabled={item.review_status === "approved"}
-                    title={
-                      item.review_status === "approved"
-                        ? "Already approved — use Reject… to reverse it"
-                        : "Approve this document"
-                    }
-                    className={cn(
-                      "rounded-md px-2 py-0.5 text-[9.5px] font-semibold",
-                      item.review_status === "approved"
-                        ? "cursor-default border border-synced/40 bg-synced/10 text-synced"
-                        : "bg-synced/90 text-white hover:bg-synced",
-                    )}
-                  >
-                    {item.review_status === "approved" ? "Approved" : "Approve"}
-                  </button>
-                  <button
-                    onClick={() => setRejectOpen((x) => !x)}
-                    className="rounded-md border border-err/40 bg-surface px-2 py-0.5 text-[9.5px] font-semibold text-err hover:bg-err/5"
-                  >
-                    Reject…
-                  </button>
+                  {/* Toggle (owner 2026-08-10): show only the button that
+                      REVERSES the current decision. On upload (no decision) both
+                      show; once Approved the Approve button is HIDDEN and Reject
+                      stays (so an issue found later can still reject it); once
+                      Rejected the Reject button is HIDDEN and Approve stays (so
+                      it can be approved once fixed). Hiding Approve after an
+                      approval also closes the old double-approve bug (owner
+                      2026-08-08) for free. The decision itself stays visible as
+                      the "Approved/Rejected · name · date" trail in this column. */}
+                  {rs !== "approved" && (
+                    <button
+                      onClick={() => onReview(item, "approve", {})}
+                      title="Approve this document"
+                      className="rounded-md bg-synced/90 px-2 py-0.5 text-[9.5px] font-semibold text-white hover:bg-synced"
+                    >
+                      Approve
+                    </button>
+                  )}
+                  {rs !== "rejected" && (
+                    <button
+                      onClick={() => setRejectOpen((x) => !x)}
+                      className="rounded-md border border-err/40 bg-surface px-2 py-0.5 text-[9.5px] font-semibold text-err hover:bg-err/5"
+                    >
+                      Reject…
+                    </button>
+                  )}
                 </div>
               ) : (
                 comments.filter((c) => c.kind !== "submit").length === 0 && (
