@@ -136,6 +136,14 @@ type LineDraft = {
   materialName: string;
   itemGroup: string | null;
   variants: Record<string, unknown> | null;
+  /* Migration 0277 — the zero-cost receipt gate's escape hatch. The gate
+     refuses a receipt that would open a zero-cost stock layer for a SKU the
+     company has bought at a real price before; this tick is the operator
+     saying the line genuinely arrived free (GWP, demo, display). It is the
+     ONLY way past the refusal that does not involve inventing a price, so it
+     has to be reachable from the same screen the refusal is read on. */
+  zeroCostAck: boolean;
+  zeroCostReason: string;
 };
 
 type GrnItemRow = Record<string, unknown> & {
@@ -157,6 +165,9 @@ type GrnItemRow = Record<string, unknown> & {
   /* Commander 2026-06-04 — destination rack chosen at receiving time (nullable).
      Resolved to its label via the GRN's warehouse racks for display. */
   rack_id?: string | null;
+  /* Migration 0277 — zero-cost receipt acknowledgement + who set it. */
+  zero_cost_ack?: boolean | null;
+  zero_cost_reason?: string | null;
   /* Bug #2 (2026-05-31) — server-resolved per-line source PO number + the GRN's
      receive date, so each line surfaces "received from which PO" + "receive date". */
   source_po_number?: string | null;
@@ -183,6 +194,8 @@ const lineSnapshot = (it: GrnItemRow): LineDraft => ({
   materialName:   it.description ?? it.material_name ?? '',
   itemGroup:      it.item_group ?? null,
   variants:       (it.variants as Record<string, unknown> | null) ?? null,
+  zeroCostAck:    it.zero_cost_ack === true,
+  zeroCostReason: it.zero_cost_reason ?? '',
 });
 
 export const GoodsReceivedDetail = () => {
@@ -352,7 +365,12 @@ export const GoodsReceivedDetail = () => {
           /* T12 — identity/variant edits participate in the dirty check. */
           d.materialName !== snap.materialName ||
           (d.itemGroup ?? '') !== (snap.itemGroup ?? '') ||
-          JSON.stringify(d.variants ?? {}) !== JSON.stringify(snap.variants ?? {});
+          JSON.stringify(d.variants ?? {}) !== JSON.stringify(snap.variants ?? {}) ||
+          /* The zero-cost waiver participates: without this a line ticked and
+             saved on its own would look unchanged and never reach the server,
+             leaving the operator to hit the same refusal again. */
+          d.zeroCostAck !== snap.zeroCostAck ||
+          d.zeroCostReason.trim() !== snap.zeroCostReason.trim();
         if (changed) {
           await updateItem.mutateAsync({
             grnId: grn.id, itemId: it.id,
@@ -365,6 +383,10 @@ export const GoodsReceivedDetail = () => {
             description:  d.materialName,
             itemGroup:    d.itemGroup ?? undefined,
             variants:     d.variants ?? {},
+            /* Migration 0277 — the server stamps who and when from the session;
+               the client only ever sends the decision and the reason. */
+            zeroCostAck:    d.zeroCostAck,
+            zeroCostReason: d.zeroCostReason.trim() || null,
           });
         }
       }
@@ -784,6 +806,37 @@ export const GoodsReceivedDetail = () => {
                         />
                       )}
                     </label>
+                    {/* Zero-cost acknowledgement (migration 0277). Rendered only
+                        while the line actually carries no price — on a priced
+                        line the gate cannot fire, and a permanent "received
+                        free" tick next to every line is exactly the kind of
+                        control people learn to tick without reading. */}
+                    {(isEditing ? d.unitPriceCenti : it.unit_price_centi) === 0 && (
+                      <label className={styles.field}>
+                        <span className={styles.fieldLabel}>Received free</span>
+                        {isEditing ? (
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input
+                              type="checkbox" checked={d.zeroCostAck} disabled={isLocked}
+                              onChange={(e) => setLine(it, { zeroCostAck: e.target.checked })}
+                            />
+                            <input
+                              type="text" className={styles.fieldInput}
+                              placeholder="Why free? e.g. GWP, demo unit"
+                              value={d.zeroCostReason} disabled={isLocked || !d.zeroCostAck}
+                              onChange={(e) => setLine(it, { zeroCostReason: e.target.value })}
+                            />
+                          </span>
+                        ) : (
+                          <input
+                            type="text" readOnly
+                            value={it.zero_cost_ack ? (it.zero_cost_reason || 'Confirmed received free') : '—'}
+                            className={styles.fieldInput}
+                            style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
+                          />
+                        )}
+                      </label>
+                    )}
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Discount</span>
                       {isEditing ? (

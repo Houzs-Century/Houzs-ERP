@@ -9,6 +9,13 @@ name: Stamp supplier cost on imported PO lines
 # measured at 112.5% and 32.2% mean error. Lines with no defensible price stay
 # at zero and are listed; the receipt gate refuses them at the GRN.
 # DRY-RUN by default; apply=1 writes.
+#
+# NOT DISPATCHABLE UNTIL THIS FILE IS ON main. workflow_dispatch resolves the
+# workflow from the DEFAULT branch, so `gh workflow run stamp-po-line-costs.yml
+# --ref fix/zero-cost-po-exposure` answers `HTTP 404: workflow ... not found on
+# the default branch` even though the file exists on the branch. The production
+# DRY-RUN is therefore the FIRST thing to run after merge and BEFORE apply=1 —
+# read its "planned writes" list, which is exactly the set apply=1 writes.
 on:
   workflow_dispatch:
     inputs:

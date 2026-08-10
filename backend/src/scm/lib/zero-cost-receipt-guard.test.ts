@@ -12,6 +12,7 @@ import {
   checkReceiptCosts,
   loadKnownPurchaseCostSen,
   zeroCostReceiptResponse,
+  zeroCostAckColumns,
   ZERO_COST_RECEIPT_ERROR,
   type ReceiptCostLine,
 } from './zero-cost-receipt-guard';
@@ -106,6 +107,67 @@ describe('zeroCostReceiptResponse', () => {
     ]);
     expect(body.error).toBe(ZERO_COST_RECEIPT_ERROR);
     expect(body.lines).toHaveLength(1);
+  });
+
+  test('tells the operator both ways out and names the field that carries one', () => {
+    // A refusal with no route out is what trains people to type a fake price,
+    // which is the one outcome strictly worse than the recorded zero.
+    const body = zeroCostReceiptResponse([
+      { id: 'a', materialCode: 'REGAL (A)-(Q)', qtyAccepted: 2, knownUnitCostSen: 70000 },
+    ]);
+    expect(body.remedy).toHaveLength(2);
+    expect(body.remedy.join(' ')).toMatch(/unit price/i);
+    expect(body.remedy.join(' ')).toMatch(/Received free/i);
+    expect(body.ackField).toBe('zeroCostAck');
+  });
+});
+
+describe('zeroCostAckColumns — what the write paths persist', () => {
+  const NOW = '2026-08-11T00:00:00.000Z';
+
+  test('a tick records WHO and WHEN, not just that somebody ticked', () => {
+    expect(zeroCostAckColumns({ zeroCostAck: true, zeroCostReason: 'GWP pillow' }, 'user-7', NOW)).toEqual({
+      zero_cost_ack: true,
+      zero_cost_ack_by: 'user-7',
+      zero_cost_ack_at: NOW,
+      zero_cost_reason: 'GWP pillow',
+    });
+  });
+
+  test('removing the tick clears the name, the time and the reason with it', () => {
+    // A stale acknowledger left on an un-ticked line is an audit trail that
+    // lies — worse than an empty one, because it reads as a real decision.
+    expect(zeroCostAckColumns({ zeroCostAck: false }, 'user-7', NOW)).toEqual({
+      zero_cost_ack: false,
+      zero_cost_ack_by: null,
+      zero_cost_ack_at: null,
+      zero_cost_reason: null,
+    });
+  });
+
+  test('a request that never mentions the ack changes none of its columns', () => {
+    // The PATCH path spreads this into `updates`; emitting a false here would
+    // silently un-waive a line whose operator only edited the quantity.
+    expect(zeroCostAckColumns({}, 'user-7', NOW)).toEqual({});
+  });
+
+  test('a blank reason is stored as null, not as an empty string', () => {
+    expect(zeroCostAckColumns({ zeroCostAck: true, zeroCostReason: '   ' }, 'u', NOW).zero_cost_reason).toBeNull();
+  });
+
+  test('the string "true" a form sends is a tick', () => {
+    expect(zeroCostAckColumns({ zeroCostAck: 'true' }, 'u', NOW).zero_cost_ack).toBe(true);
+  });
+
+  test('an anonymous session ticks nobody, and the column says so', () => {
+    expect(zeroCostAckColumns({ zeroCostAck: true }, null, NOW).zero_cost_ack_by).toBeNull();
+  });
+
+  test('the columns it emits are exactly the ones the gate and the read use', () => {
+    // Guards the whitelist: a column added here but not to migration 0277 (or
+    // to ITEM) fails the insert at runtime, where nothing else would catch it.
+    const cols = Object.keys(zeroCostAckColumns({ zeroCostAck: true, zeroCostReason: 'x' }, 'u', NOW)).sort();
+    expect(cols).toEqual(['zero_cost_ack', 'zero_cost_ack_at', 'zero_cost_ack_by', 'zero_cost_reason']);
   });
 });
 

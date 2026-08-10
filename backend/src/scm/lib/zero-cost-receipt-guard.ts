@@ -76,6 +76,34 @@ export function normalizeMaterialCode(code: string | null | undefined): string {
   return (code ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
 }
 
+/* ── The acknowledgement, as it is written ─────────────────────────────────
+   Every write path that can carry a tick goes through here, so the four
+   columns can never drift apart: an ack with nobody's name on it, or a name
+   left behind after the tick was removed, would both be worse than no column
+   at all. `undefined` in means "the request did not mention it" — the caller
+   spreads the result, so an untouched line keeps whatever it already had. */
+export function zeroCostAckColumns(
+  body: { zeroCostAck?: unknown; zeroCostReason?: unknown },
+  userId: string | null,
+  now: string = new Date().toISOString(),
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const reasonGiven = body.zeroCostReason !== undefined;
+  const reason = reasonGiven ? (String(body.zeroCostReason ?? '').trim() || null) : undefined;
+  if (body.zeroCostAck === undefined) {
+    // A reason on its own is still worth keeping next to the line.
+    if (reasonGiven) out.zero_cost_reason = reason;
+    return out;
+  }
+  const ack = body.zeroCostAck === true || body.zeroCostAck === 'true' || body.zeroCostAck === 1;
+  out.zero_cost_ack = ack;
+  out.zero_cost_ack_by = ack ? userId : null;
+  out.zero_cost_ack_at = ack ? now : null;
+  if (reasonGiven) out.zero_cost_reason = reason;
+  else if (!ack) out.zero_cost_reason = null;
+  return out;
+}
+
 /* The pure rule, kept free of any client so it can be tested directly. Given
    the receipt's lines and what each SKU is known to have cost, return the lines
    that would open a zero-cost stock layer. Empty array = safe to post. */
@@ -104,13 +132,27 @@ export function findUncostedReceiptLines(
 }
 
 /** The 409 body. Shaped like the file's other refusals (`qty_exceeds_remaining`)
- *  so the frontend's existing error handling reads it without a special case. */
+ *  so the frontend's existing error handling reads it without a special case.
+ *
+ *  `remedy` names the two ways out in the operator's own vocabulary, and
+ *  `ackField` names the request field that carries the second one. A refusal
+ *  that does not say what to do next is a dead end, and a dead end is what
+ *  trains people to type a fake price — the one outcome this guard exists to
+ *  prevent. */
 export function zeroCostReceiptResponse(lines: UncostedReceiptLine[]) {
   return {
     error: ZERO_COST_RECEIPT_ERROR,
     message:
       'These lines would receive stock at zero cost, but the item has been purchased at a real price before. ' +
-      'Enter the unit price from the supplier goods-received document, or tick "received free" on the line.',
+      'Enter the unit price from the supplier goods-received document, or tick "Received free" on the line.',
+    remedy: [
+      'Open the receipt, edit the line, and enter the unit price shown on the supplier goods-received document; or',
+      'if the line really did arrive free (GWP, demo, display), tick "Received free" on that line and say why, then confirm again.',
+    ],
+    /* The line PATCH field the tick maps to: PATCH /scm/grns/:id/items/:itemId
+       { zeroCostAck: true, zeroCostReason: "..." }. Named in the body so the
+       remedy is discoverable from the refusal itself. */
+    ackField: 'zeroCostAck',
     lines,
   };
 }

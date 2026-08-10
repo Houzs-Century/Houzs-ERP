@@ -338,6 +338,39 @@ past the gate. A GRN carrying a non-zero service/freight pool is skipped, since
 the landed allocation can lift a zero-priced goods line off zero and the
 allocation is computed after this point.
 
+**How an operator clears the refusal.** Two ways, and the 409 body names both in
+its `remedy` array so the answer travels with the refusal:
+
+1. enter the unit price from the supplier's goods-received document, or
+2. tick **Received free** on the line and say why.
+
+The tick is a per-line field on the receipt screen (`GoodsReceivedDetail.tsx`,
+which `GoodsReceivedDetailV2` loads as its inline editor) and renders only while
+the line carries no price — a permanently visible waiver next to every line is
+the control people learn to tick without reading. It is deliberately NOT a
+button on the refusal dialog: one click waiving a whole receipt is the reflex
+the gate exists to prevent.
+
+| surface | field | route |
+| --- | --- | --- |
+| create a receipt | `items[].zeroCostAck`, `items[].zeroCostReason` | `POST /scm/grns` |
+| add a line | `zeroCostAck`, `zeroCostReason` | `POST /scm/grns/:id/items` |
+| tick an existing line | `zeroCostAck`, `zeroCostReason` | `PATCH /scm/grns/:id/items/:itemId` |
+
+All three go through `zeroCostAckColumns` (`lib/zero-cost-receipt-guard.ts`), the
+single place that writes the four columns together: the tick, the reason, and
+**who** ticked it plus **when** (`zero_cost_ack_by` / `zero_cost_ack_at`, stamped
+from the session, never from the request body). Removing the tick clears all
+three — a name left on an un-ticked line is an audit trail that lies. Both
+`POST /scm/grns` and `POST /scm/grns/:id/items` build their insert from an
+EXPLICIT column whitelist, so a field missing from that list is silently dropped;
+that is why the acknowledgement is spread into both rather than assumed.
+
+The refusal renders in one place for every caller — desktop Confirm, the mobile
+convert wizard and the from-PO batch receive — in `vendor/scm/lib/authed-fetch.ts`
+alongside the sofa hard stops, which is what keeps desktop and mobile saying the
+same thing.
+
 **The header PATCH is the exception**: it is NOT gated by `grnHasDownstream`. A
 GRN with a downstream PI can still have its header edited, including a warehouse
 change that physically relocates stock — that path is gated only by

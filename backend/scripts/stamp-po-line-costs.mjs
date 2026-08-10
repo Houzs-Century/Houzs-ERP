@@ -51,19 +51,30 @@
 // AMN-SF9021 SOFA, BC-CBK818(SK), DSL-8069 SOFA, HOK-1051 (Q), HOK-1052 (SP),
 // HOK-2038 (A)(HF)(W) (SS).
 //
+// ── WHICH ERP LINE EACH PRICE LANDS ON ─────────────────────────────────────
+// scripts/lib/po-cost-plan.mjs decides that, and is the whole of the decision:
+// three keys, all of which carry the ITEM CODE, because Desc2 alone does not.
+// Desc2 is the fabric, the leg and the gap; the SIZE is in the code, so keying
+// the target on the document + Desc2 alone let a king's price land on a queen.
+// That module is unit-tested (tests/poCostPlan.node.mjs) against the two live
+// lines it used to get wrong.
+//
 // SAFETY -- only touches lines that are all of:
 //   . on a PO imported from AutoCount (purchase_orders.linked_ac_docno set),
 //   . still unpriced (unit_price_centi = 0), so a hand-entered price is never
 //     overwritten, and
 //   . still open (received_qty < qty), so no settled receipt is re-costed.
+// A line two AutoCount lines want at DIFFERENT prices is refused, not resolved.
 // Idempotent: the unit_price_centi = 0 predicate means a second run finds
 // nothing left to do.
-// DRY-RUN by default; APPLY=1 writes.
+// DRY-RUN by default; APPLY=1 writes. The dry-run prints ONE LINE PER PLANNED
+// WRITE -- the same list APPLY walks -- so what a reviewer reads is what runs.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { planStamps, normCode, SKIP } from "./lib/po-cost-plan.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -74,64 +85,41 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
-/* Desc2 carries curly quotes, inch marks written three different ways, stray
-   newlines and doubled spaces. Fold all of that away so the same physical build
-   keyed by two different typists still matches. */
-const sig = (s) => (s ?? "").toString().toUpperCase()
-  .replace(/[‘’“”`]/g, '"')
-  .replace(/''/g, '"')
-  .replace(/[^A-Z0-9"#+]/g, "");
-
-const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2; };
-
-function buildPricer(book) {
-  const hist = [...book.history].sort((a, b) => (a.DocDate < b.DocDate ? -1 : 1));
-  const byItemSig = new Map();
-  for (const h of hist) {
-    const k = `${h.ItemCode}|${sig(h.Desc2)}`;
-    if (!byItemSig.has(k)) byItemSig.set(k, []);
-    byItemSig.get(k).push(h);
-  }
-  const samePo = new Map();
-  for (const g of book.samePoGr) {
-    if (Number(g.UnitPrice) > 0) samePo.set(`${g.PoNo}|${g.ItemCode}|${sig(g.Desc2)}`, Number(g.UnitPrice));
-  }
-  /* PRICE-STABLE items only: enough recent evidence, and that evidence agrees.
-     A bespoke sofa never qualifies, which is the point -- its price is a
-     property of the build, not of the code. */
-  const cutoff = Date.now() - 24 * 30 * 24 * 3600 * 1000;
-  const stable = new Map();
-  for (const item of new Set(hist.map((h) => h.ItemCode))) {
-    const ps = hist.filter((h) => h.ItemCode === item && new Date(h.DocDate).getTime() >= cutoff).map((h) => Number(h.UnitPrice));
-    if (ps.length < 4) continue;
-    const m = median(ps);
-    if (ps.filter((p) => Math.abs(p - m) / m <= 0.02).length / ps.length >= 0.8) stable.set(item, m);
-  }
-  return (line) => {
-    const s = sig(line.Desc2);
-    const t1 = samePo.get(`${line.PoNo}|${line.ItemCode}|${s}`);
-    if (t1 > 0) return { tier: "T1_gr_for_this_po_line", price: t1 };
-    const t2 = byItemSig.get(`${line.ItemCode}|${s}`);
-    if (t2 && t2.length) return { tier: "T2_item_desc2_signature", price: Number(t2[t2.length - 1].UnitPrice) };
-    const t3 = stable.get(line.ItemCode);
-    if (t3 > 0) return { tier: "T3_price_stable_item", price: t3 };
-    return null;
-  };
+function parseCsvLine(line) {
+  const out = []; let cur = ""; let q = false;
+  for (let i = 0; i < line.length; i++) { const c = line[i];
+    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else { if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; } }
+  out.push(cur); return out;
 }
+
+/** AutoCount ItemCode -> ERP material_code, the pair every cutover script uses. */
+function loadCodeMap() {
+  const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8")
+    .replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
+  csv.shift();
+  const m = new Map();
+  for (const ln of csv) { const f = parseCsvLine(ln); if (f[0] && f[1]) m.set(normCode(f[0]), normCode(f[1])); }
+  return m;
+}
+
+const rm = (centi) => `RM${(centi / 100).toFixed(2)}`;
+const short = (s, n) => { const t = (s ?? "").toString().replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n - 1) + "…" : t; };
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}`);
   const book = gz("ac-po-line-costs.json.gz");
   log(`AutoCount evidence: ${book.poLines.length} unpriced open PO lines, ${book.samePoGr.length} same-PO GR lines, ${book.history.length} priced history lines`);
-  const priceOf = buildPricer(book);
 
-  /* Match the ERP line by the AutoCount document it came from plus its Desc2,
-     which the importer stored verbatim in description2. The PO NUMBER is not a
-     key -- the ERP renumbers on import -- and the AutoCount DtlKey was never
-     stored, so (linked_ac_docno, description2) is the identifying pair. Two ERP
-     lines sharing both are the same physical build and take the same price. */
+  /* The ERP line is addressed by its AutoCount document plus its item code plus
+     its Desc2 -- see lib/po-cost-plan.mjs for why all three. supplier_sku holds
+     the RAW AutoCount ItemCode (the importer stores it verbatim) and
+     linked_ac_dtlkey is the line's AutoCount identity where the key backfill
+     has reached it, so both are read here and both are preferred over the
+     mapping CSV. */
   const rows = await sql`
-    SELECT i.id, i.material_code, i.description2, i.qty, i.received_qty, i.unit_price_centi,
+    SELECT i.id, i.material_code, i.supplier_sku, i.description2, i.qty, i.received_qty,
+           i.unit_price_centi, i.linked_ac_dtlkey,
            h.linked_ac_docno AS ac_doc, h.po_number
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
@@ -141,45 +129,48 @@ async function main() {
        AND COALESCE(i.received_qty, 0) < i.qty`;
   log(`ERP imported PO lines still unpriced and still open: ${rows.length}`);
 
-  const bySigKey = new Map();
-  for (const r of rows) {
-    const k = `${r.ac_doc}|${sig(r.description2)}`;
-    if (!bySigKey.has(k)) bySigKey.set(k, []);
-    bySigKey.get(k).push(r);
-  }
+  const { plan, skipped, stats } = planStamps({ book, erpRows: rows, codeMap: loadCodeMap() });
 
-  const plan = [];
   const tiers = {};
-  const unmatchedItems = new Map();
-  let unmatchedUnits = 0, noErpLine = 0;
-  for (const line of book.poLines) {
-    const open = Number(line.Qty) - Number(line.TransferedQty ?? 0);
-    if (!(open > 0)) continue;
-    const hit = priceOf(line);
-    if (!hit) {
-      unmatchedUnits += open;
-      unmatchedItems.set(line.ItemCode, (unmatchedItems.get(line.ItemCode) ?? 0) + open);
-      continue;
-    }
-    const targets = bySigKey.get(`${line.PoNo}|${sig(line.Desc2)}`) ?? [];
-    if (targets.length === 0) { noErpLine++; continue; }
-    for (const t of targets) {
-      plan.push({ id: t.id, poNumber: t.po_number, acDoc: line.PoNo, code: t.material_code, tier: hit.tier, centi: Math.round(hit.price * 100), qty: Number(t.qty) - Number(t.received_qty ?? 0) });
-      tiers[hit.tier] = (tiers[hit.tier] ?? 0) + 1;
-    }
+  for (const p of plan) tiers[p.tier] = (tiers[p.tier] ?? 0) + 1;
+  const units = plan.reduce((s, p) => s + p.qty, 0);
+  const value = plan.reduce((s, p) => s + p.centi * p.qty, 0) / 100;
+
+  log(`AutoCount open lines considered: ${stats.acOpenLines}; matched to an ERP line by dtlkey ${stats.matchedByDtlKey}, by supplier_sku+Desc2 ${stats.matchedBySupplierSku}, by material_code+Desc2 ${stats.matchedByMaterialCode}; no ERP line ${stats.acLinesWithNoErpLine}; no defensible price ${stats.acLinesWithNoPrice}`);
+  for (const k of Object.keys(tiers).sort()) log(`priced by ${k}: ${tiers[k]} ERP lines`);
+  log(`TO STAMP: ${plan.length} ERP PO lines, ${units} open units, RM ${value.toFixed(2)} of committed purchase value`);
+  log(`LEFT AT ZERO: ${skipped.length} ERP PO lines, ${skipped.reduce((s, k) => s + (Number(k.row.qty) - Number(k.row.received_qty ?? 0)), 0)} open units`);
+
+  /* EXACTLY what APPLY writes, one line each, with the AutoCount line the money
+     came from. The previous version printed a per-AutoCount-line narrative that
+     could say "LEFT AT ZERO x3" about a line the plan then stamped; this list
+     IS the plan, so the two can no longer disagree. */
+  log(`-- planned writes (${plan.length}) --`);
+  for (const p of plan) {
+    log(`   UPDATE ${p.id} ${p.poNumber} (${p.acDoc}) ${p.code} x${p.qty} := ${rm(p.centi)} [${p.tier} via ${p.route}] from AC ${p.fromAcItemCode}${p.fromAcDtlKey ? ` #${p.fromAcDtlKey}` : ""} "${short(p.fromAcDesc2, 48)}"`);
   }
 
-  const value = plan.reduce((s, p) => s + p.centi * p.qty, 0) / 100;
-  for (const k of Object.keys(tiers).sort()) log(`priced by ${k}: ${tiers[k]} ERP lines`);
-  log(`to stamp: ${plan.length} ERP PO lines, ${plan.reduce((s, p) => s + p.qty, 0)} open units, RM ${value.toFixed(2)} of committed purchase value`);
-  log(`left at zero (no defensible price -- bespoke build, or no price anywhere): ${unmatchedItems.size} item codes / ${unmatchedUnits} units`);
-  log(`AutoCount lines with no matching open ERP line (already received or not imported): ${noErpLine}`);
-  for (const p of plan) log(`   ${p.poNumber} (${p.acDoc}) ${p.code} x${p.qty} @ RM${(p.centi / 100).toFixed(2)} [${p.tier}]`);
-  const worst = [...unmatchedItems.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
-  for (const [code, units] of worst) log(`   LEFT AT ZERO ${code} x${units}`);
+  const byReason = new Map();
+  for (const s of skipped) {
+    if (!byReason.has(s.reason)) byReason.set(s.reason, []);
+    byReason.get(s.reason).push(s);
+  }
+  log(`-- left at zero, by reason --`);
+  for (const [reason, list] of [...byReason.entries()].sort((a, b) => b[1].length - a[1].length)) {
+    const u = list.reduce((s, k) => s + (Number(k.row.qty) - Number(k.row.received_qty ?? 0)), 0);
+    log(`   ${reason}: ${list.length} lines / ${u} units`);
+    const worst = new Map();
+    for (const k of list) worst.set(k.row.material_code, (worst.get(k.row.material_code) ?? 0) + (Number(k.row.qty) - Number(k.row.received_qty ?? 0)));
+    for (const [code, u2] of [...worst.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`      ${code} x${u2}`);
+  }
+  /* An ambiguous line is the one a reviewer must see in full: it is where two
+     AutoCount lines wanted different money on the same ERP row. */
+  for (const s of skipped.filter((k) => k.reason === SKIP.AMBIGUOUS)) {
+    log(`   AMBIGUOUS ${s.row.id} ${s.row.po_number} (${s.row.ac_doc}) ${s.row.material_code}: ${s.prices.map(rm).join(" vs ")} from ${s.from.map((f) => f.ItemCode).join(", ")} -- refused, left at zero`);
+  }
 
   if (!APPLY) { log("DRY-RUN -- set APPLY=1 to write."); await sql.end(); return; }
-  let done = 0;
+  let done = 0, skippedWrite = 0;
   for (const p of plan) {
     /* Re-assert the zero predicate inside the write so a price entered by hand
        between the read and here is never clobbered, and a re-run is a no-op. */
@@ -188,9 +179,12 @@ async function main() {
          SET unit_price_centi = ${p.centi},
              line_total_centi = ${p.centi} * qty
        WHERE id = ${p.id} AND COALESCE(unit_price_centi, 0) = 0`;
-    done += res.count;
+    if (res.count > 0) done += res.count; else skippedWrite++;
   }
-  log(`DONE. PO lines priced: ${done} (of ${plan.length} planned)`);
+  /* plan holds one entry per ERP id, so `done` short of plan.length is never a
+     partial failure -- it is a line that acquired a price between the read and
+     the write, and the predicate correctly declined to overwrite it. */
+  log(`DONE. PO lines priced: ${done}; already priced by someone else since the read, left alone: ${skippedWrite}; planned: ${plan.length}`);
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });

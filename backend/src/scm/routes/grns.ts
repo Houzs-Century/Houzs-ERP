@@ -18,7 +18,7 @@ import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurren
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
-import { checkReceiptCosts, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
+import { checkReceiptCosts, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -698,7 +698,11 @@ const ITEM =
   /* Migration 0082 — landed freight allocated to this goods line (MYR sen) */
   'allocated_charge_centi, ' +
   /* Migration 0151 — physical rack placement */
-  'rack_id';
+  'rack_id, ' +
+  /* Migration 0277 — the zero-cost acknowledgement, read back so the receipt
+     screen can show WHICH line was waived and by whom, rather than the waiver
+     being invisible everywhere except the gate that honours it. */
+  'zero_cost_ack, zero_cost_reason, zero_cost_ack_by, zero_cost_ack_at';
 
 const nextNumber = async (sb: ReturnType<Variables['supabase']['valueOf']> extends never ? never : any, prefix: string, table: string, col: string, c: any): Promise<string> => {
   const d = new Date();
@@ -1759,6 +1763,11 @@ grns.post('/', async (c) => {
       description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
       /* Migration 0151 — physical rack this received line is placed onto. */
       rack_id: (it.rackId as string | undefined) || null,
+      /* Migration 0277 — the zero-cost gate's escape hatch. It is in the
+         EXPLICIT whitelist because this insert is explicit: a field absent
+         here is silently dropped, and a tick the operator set but the server
+         dropped would refuse the receipt they just acknowledged. */
+      ...zeroCostAckColumns(it, user.id),
     };
   });
   const { error: iErr } = await sb.from('grn_items').insert(stampCompany(rows, c));
@@ -2939,6 +2948,8 @@ grns.post('/:id/items', async (c) => {
     description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
     uom: (it.uom as string) ?? 'UNIT',
     delivery_date: (it.deliveryDate as string) ?? null,
+    /* Migration 0277 — see the create path: this insert is a whitelist too. */
+    ...zeroCostAckColumns(it, user.id),
   };
   const { data, error } = await sb.from('grn_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
@@ -3161,6 +3172,12 @@ grns.patch('/:id/items/:itemId', async (c) => {
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
   }
+  /* Migration 0277 — the zero-cost gate's escape hatch, and the ONLY route by
+     which an operator clears the 409 without inventing a price. Deliberately
+     NOT in the from->to loop above: the tick also stamps who and when, and the
+     three columns must move together or the audit trail lies. */
+  Object.assign(updates, zeroCostAckColumns(it, user.id));
+
   /* description2 is server-owned: recompute from effective itemGroup + variants. */
   {
     const effGroup = (it.itemGroup ?? (prev as { item_group?: string }).item_group) as string | null | undefined;
