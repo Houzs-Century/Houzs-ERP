@@ -92,7 +92,7 @@ async function main() {
   const sfSo = await sql`SELECT
       COUNT(*)::int total,
       COUNT(*) FILTER (WHERE h.proceeded_at IS NOT NULL)::int proc,
-      COUNT(*) FILTER (WHERE COALESCE(i.notes,'') LIKE '%SOFA UNPARSED%')::int placeholder,
+      COUNT(*) FILTER (WHERE COALESCE(i.remark,'') LIKE '%SOFA UNPARSED%')::int placeholder,
       COUNT(*) FILTER (WHERE h.proceeded_at IS NOT NULL AND (i.variants->>'seatHeight') IS NULL)::int proc_no_size,
       COUNT(*) FILTER (WHERE h.proceeded_at IS NOT NULL AND (i.variants->>'colourId') IS NULL)::int proc_no_colour
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
