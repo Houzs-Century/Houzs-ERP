@@ -84,6 +84,40 @@ async function doGrns() {
      so a bare AC GR number is not always unique: when it covers more than one
      imported PO the ERP number carries the PO too. Either way the number a
      human reads starts from the AutoCount document, not a fresh sequence. */
+  /* An AutoCount receipt routinely covers SEVERAL purchase orders while an ERP
+     GRN covers ONE, and only the POs belonging to an undelivered sales order
+     were imported. Measured on the reference snapshot: of the 187 AutoCount
+     receipts touching an imported PO, 118 also cover POs the ERP does not hold
+     - GR-000201 receives ten and the ERP holds two of them.
+
+     So the ERP document is legitimately SMALLER than the AutoCount one with the
+     same number, and someone reconciling the two will see it. Saying so on the
+     document turns a discrepancy into a stated scope. */
+  const acPoCount = new Map();   // AutoCount GR doc -> how many POs it receives, AutoCount-side
+  try {
+    const refs = gz("ac-gr-refs.json.gz");
+    const byGr = new Map();
+    for (const r of refs) {
+      if (!r.GrNo) continue;
+      if (!byGr.has(r.GrNo)) byGr.set(r.GrNo, new Set());
+      byGr.get(r.GrNo).add(r.PoNo);
+    }
+    for (const [gr, pos] of byGr) acPoCount.set(gr, pos.size);
+  } catch { /* reference snapshot absent: the note simply omits the scope line */ }
+
+  const grnNote = (g) => {
+    const acGrs = g.po.linked_ac_grn_docnos ?? [];
+    const parts = [`mirrors the AutoCount receipt for ${g.po.linked_ac_docno}`];
+    if (acGrs.length) parts[0] += ` (AutoCount GR ${acGrs.join(", ")})`;
+    const spans = acGrs.filter((gr) => (acPoCount.get(gr) ?? 1) > 1)
+      .map((gr) => `${gr} receives ${acPoCount.get(gr)} purchase orders in AutoCount`);
+    if (spans.length) {
+      parts.push(`SCOPE: ${spans.join("; ")}; this document covers ONLY ${g.po.linked_ac_docno}, so its quantity is smaller than the AutoCount document of the same number. That is correct, not a shortfall.`);
+    }
+    parts.push("No stock movement: the units are already on hand from the balance snapshot.");
+    return parts.join(" ");
+  };
+
   const grUse = new Map();
   for (const g of plan) for (const gr of (g.po.linked_ac_grn_docnos ?? [])) grUse.set(gr, (grUse.get(gr) ?? 0) + 1);
   let seq = await nextSeq("grns", "grn_number", "HC-GRN-");
@@ -101,9 +135,7 @@ async function doGrns() {
         VALUES (${grnNo}, ${g.po.purchase_order_id}, ${g.po.supplier_id},
                 ${g.items[0].warehouse_id ?? g.po.purchase_location_id}, 'POSTED', NOW(), CURRENT_DATE, 'MYR',
                 ${CO}, ${SYS_USER},
-                ${`mirrors the AutoCount receipt for ${g.po.linked_ac_docno}` +
-                   (g.po.linked_ac_grn_docnos?.length ? ` (AutoCount GR ${g.po.linked_ac_grn_docnos.join(", ")})` : "") +
-                   ". No stock movement: the units are already on hand from the balance snapshot."},
+                ${grnNote(g)},
                 true, ${g.po.linked_ac_docno})
         RETURNING id`;
       for (const it of g.items) {
