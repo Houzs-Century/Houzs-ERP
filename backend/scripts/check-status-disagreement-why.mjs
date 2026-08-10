@@ -130,11 +130,14 @@ async function main() {
 
   /* ── 3. What the allocator would have seen ────────────────────────────────── */
   // 3a. Every live line's competing claim on the pooled buckets (ALLOCATOR lens).
+  /* NOT company-scoped, exactly like the allocator's own walk — it is a global
+     job across both companies. The bucket key carries warehouse_id, and a
+     warehouse belongs to one company, so the buckets separate themselves. */
   const claimRows = await sql`SELECT i.id::text id, i.doc_no, i.item_code, i.item_group,
       i.variants, i.qty::numeric qty, i.warehouse_id::text warehouse_id,
       h.customer_delivery_date, h.created_at, h.proceeded_at
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-    WHERE h.company_id = ${CO} AND COALESCE(i.cancelled,false) = false
+    WHERE COALESCE(i.cancelled,false) = false
       AND UPPER(h.status::text) <> ALL(${ALLOC_EXCLUDED})`;
   // delivered/returned per line, so "need" matches the allocator's deliverable_remaining
   const delivered = await sql`SELECT di.so_item_id::text so_item_id, SUM(di.qty)::numeric q
@@ -226,6 +229,12 @@ async function main() {
   for (const r of claimRows) {
     if ((r.item_group ?? "").toLowerCase() === "service") continue;
     if ((r.item_group ?? "").toLowerCase() === "sofa") continue;   // sofa is BATCH, not POOL
+    /* A gated line (no proceeded_at) is set PENDING and DOES NOT decrement the
+       bucket — so it is not a competing claim. Counting it as one would blame
+       "an earlier order took it" for stock that is in fact still sitting free,
+       and 2,204 of the migrated open orders are gated, so this is not a rounding
+       error. Mirrors the allocGated branch in so-stock-allocation.ts step 7. */
+    if (!r.proceeded_at) continue;
     if (needOf(r) <= 0) continue;
     const k = bucketOf(r);
     if (!claimants.has(k)) claimants.set(k, []);
@@ -274,7 +283,11 @@ async function main() {
     /* MISC is a charge posted as a goods line — it has no stock and never will.
        Any OTHER `others` code is a real good and is judged on stock like the rest. */
     if (grp === "others" && /^MISC|MISCELLANEOUS/i.test(line.item_code ?? "")) return { cause: "CLASSIFICATION_MISC", note: `${line.item_code} is a charge posted as an item_group=others goods line, so it can never read READY` };
-    if (need <= 0) return { cause: "CANNOT_DETERMINE", note: `deliverable_remaining ${need} <= 0 yet the line is ${line.stock_status}` };
+    /* The allocator drops any line with deliverable_remaining <= 0 (`if
+       (remaining <= 0) continue`), so a fully- or over-delivered line keeps
+       whatever stock_status it last had, forever. Not "unknown" — known, and it
+       never self-heals. */
+    if (need <= 0) return { cause: "ALREADY_DELIVERED_STATUS_FROZEN", note: `deliverable_remaining is ${need} (qty ${Number(line.qty)} already shipped); the allocator skips such lines, so its ${line.stock_status} flag is frozen` };
 
     const ded = dedById.get(line.id);
     if (grp === "sofa") {
@@ -304,8 +317,13 @@ async function main() {
     const vk = computeVariantKey(line.item_group ?? null, line.variants ?? null);
     const anywhere = onHandCode.get(line.item_code) ?? 0;
     if (anywhere <= 0) {
-      if (ded && Number(ded.got) > 0) return { cause: "CANNOT_DETERMINE", note: `no on-hand anywhere yet its PO reports received ${ded.got}` };
-      return { cause: "NO_STOCK_ANYWHERE", note: `${line.item_code}: on-hand across every warehouse of company ${CO} is ${anywhere}` };
+      /* A pooled line's own PO receipt is paperwork, not stock: the AutoCount
+         PO import deliberately writes received_qty WITHOUT an inventory event
+         (the balance snapshot already carries the units), and only bedframe /
+         sofa read that receipt via BOUND mode. So for a pooled group this is
+         still plainly "no stock", with the paperwork noted. */
+      const paper = ded && Number(ded.got) > 0 ? ` (its PO ${ded.po_number} records received ${ded.got}, but ${grp} is POOLED — only bedframe/sofa read a PO receipt)` : "";
+      return { cause: "NO_STOCK_ANYWHERE", note: `${line.item_code}: on-hand across every warehouse of company ${CO} is ${anywhere}${paper}` };
     }
     if (!line.warehouse_id) return { cause: "LINE_HAS_NO_WAREHOUSE", note: `${line.item_code}: ${anywhere} on hand, but the SO line has NO warehouse_id, so it draws from the empty NOWH bucket` };
     const inWh = onHandWh.get(`${line.warehouse_id}::${line.item_code}`) ?? 0;
@@ -341,6 +359,7 @@ async function main() {
     "STOCK_IN_ANOTHER_WAREHOUSE",
     "VARIANT_KEY_MISMATCH",
     "CLAIMED_BY_EARLIER_ORDER",
+    "ALREADY_DELIVERED_STATUS_FROZEN",
     "STALE_STATUS_SHOULD_BE_READY",
     "CANNOT_DETERMINE",
     "NO_BLOCKING_LINE_FOUND",
@@ -470,7 +489,8 @@ async function main() {
   log(`   once the so_item_id backfill runs:      ${willGo("DEDICATION_GAP")} order(s) (DEDICATION_GAP)`);
   log(`   once the sofa compartment round lands:  ${willGo("SOFA_NO_STOCK_IMPORTED") + willGo("SOFA_STOCK_UNBATCHED") + willGo("SOFA_NO_COVERING_BATCH")} order(s) (the three SOFA_* causes)`);
   log(`   once an allocator recompute runs:       ${willGo("STALE_STATUS_SHOULD_BE_READY")} order(s) (STALE_STATUS_SHOULD_BE_READY)`);
-  log(`   needs a HUMAN decision, will not self-heal: ${willGo("SO_IS_DRAFT") + willGo("GATE_NO_PROCESSING_DATE") + willGo("CLASSIFICATION_MISC") + willGo("NO_STOCK_ANYWHERE") + willGo("LINE_HAS_NO_WAREHOUSE") + willGo("STOCK_IN_ANOTHER_WAREHOUSE") + willGo("VARIANT_KEY_MISMATCH") + willGo("CLAIMED_BY_EARLIER_ORDER") + willGo("DEDICATED_PO_PARTIAL")} order(s)`);
+  log(`   needs a HUMAN decision, will not self-heal: ${willGo("SO_IS_DRAFT") + willGo("GATE_NO_PROCESSING_DATE") + willGo("CLASSIFICATION_MISC") + willGo("NO_STOCK_ANYWHERE") + willGo("LINE_HAS_NO_WAREHOUSE") + willGo("STOCK_IN_ANOTHER_WAREHOUSE") + willGo("VARIANT_KEY_MISMATCH") + willGo("CLAIMED_BY_EARLIER_ORDER") + willGo("DEDICATED_PO_PARTIAL") + willGo("ALREADY_DELIVERED_STATUS_FROZEN")} order(s)`);
+  log(`      of which simply WAITING FOR GOODS (real shortage, nothing is wrong): ${willGo("NO_STOCK_ANYWHERE") + willGo("CLAIMED_BY_EARLIER_ORDER")} order(s)`);
   log(`   cannot yet be explained by this check:  ${willGo("CANNOT_DETERMINE") + willGo("NO_BLOCKING_LINE_FOUND")} order(s)`);
 
   await sql.end();
