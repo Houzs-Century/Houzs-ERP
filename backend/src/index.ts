@@ -519,7 +519,7 @@ export default {
       );
       // ERP -> AutoCount write-back drain. Ships dark twice over: no-op without
       // AC_SYNC_URL, and no-op while scm.app_config 'scm.autocount_writeback'
-      // is off (which 0276 seeds it to). Best-effort — a drain failure can
+      // is off (which 0277 seeds it to). Best-effort — a drain failure can
       // never break the slot.
       ctx.waitUntil(
         drainAutoCountOutbox(env)

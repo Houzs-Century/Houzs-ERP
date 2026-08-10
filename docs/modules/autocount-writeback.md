@@ -5,7 +5,7 @@ AutoCount. This is the ERP half. The AutoCount half already exists and was
 proven against the live `AED_HOUZS` book on 2026-08-07.
 
 > **It ships OFF.** `scm.app_config` key `scm.autocount_writeback` is seeded
-> `'off'` by migration 0276, and `AC_SYNC_URL` is unset. With either of those
+> `'off'` by migration 0277, and `AC_SYNC_URL` is unset. With either of those
 > two, nothing is queued and nothing is sent.
 
 The one-time IMPORT that came the other way (AutoCount -> ERP) is a different
@@ -54,7 +54,7 @@ runs, not a third to learn.
 
 ---
 
-## 3. The table — `scm.autocount_outbox` (migration 0276)
+## 3. The table — `scm.autocount_outbox` (migration 0277)
 
 | Column | Meaning |
 |---|---|
@@ -78,14 +78,14 @@ Two things are resolved LATE, at drain, and only two:
 
 ### `linked_ac_docno` — the map, both ways
 
-The drain writes the returned number onto the ERP row. 0276 adds the column to
+The drain writes the returned number onto the ERP row. 0277 adds the column to
 `purchase_orders`, `delivery_orders`, `grns`, `sales_invoices` and
 `purchase_invoices`; `mfg_sales_orders` already had it from 0271.
 
 `purchase_orders.linked_ac_docno` is a **known recording gap being closed**, not
 a new column: `import-ac-outstanding-po.mjs:314` added it at runtime with its
 own `ALTER`, so it exists in production but appeared in no migration
-(cutover ledger §1 "坑二"). `IF NOT EXISTS` makes 0276 a no-op against the live
+(cutover ledger §1 "坑二"). `IF NOT EXISTS` makes 0277 a no-op against the live
 database and makes the column real everywhere else.
 
 ---
@@ -139,7 +139,7 @@ A **cancelled** child does not lock: an SO whose only DO was cancelled is free
 again.
 
 The rule is not new — it existed as four private copies inside four
-multi-thousand-line route files, where no test could reach it. 0276's PR moved
+multi-thousand-line route files, where no test could reach it. 0277's PR moved
 it into one module with a pure `downstreamVerdict` underneath, and the four
 routers now import it. Same signatures, same JSON, same 409s.
 
@@ -184,6 +184,20 @@ then correct it, which is visible to whoever is looking at AutoCount.
 `skipped` and queues nothing. Creating a document in a live account book only to
 cancel it is not a no-op to the people using that book.
 
+### What each side is composed FROM
+
+| Payload field | ERP source |
+|---|---|
+| SO header | `scm.mfg_sales_orders` — `debtor_name`, `agent`, `sales_location`, `ref`, `phone`, `address1-4`, and `branding` / `venue` / `po_doc_no` into UDF |
+| SO lines | `scm.mfg_sales_order_items`, including `linked_ac_dtlkey` (migration 0273) — the AutoCount line an edit addresses |
+| PO header | `scm.purchase_orders` — `po_number`, `po_date`, `notes`. **The creditor is a JOIN**: the table is supplier-keyed, so `CreditorCode` / `CreditorName` come from `scm.suppliers.code` / `.name` through `supplier_id`. It has no `agent` and no `ref` at all, so a create sends null for both and an edit omits `Ref` entirely rather than blanking AutoCount's |
+| PO lines | `scm.purchase_order_items`, same `linked_ac_dtlkey` |
+
+Every column these reads name is listed once at the top of
+`scm/lib/autocount-outbox.ts`. That is deliberate: PostgREST does not ignore a
+column a table does not have, it fails the whole query with **42703**, so a
+phantom column silences an entire flow (see `BUG-HISTORY.md`, 2026-08-10).
+
 ---
 
 ## 7. What the ERP can express and AutoCount cannot
@@ -207,6 +221,15 @@ SELECT doc_type, doc_no, op, last_error, created_at
  WHERE status = 'skipped'
  ORDER BY created_at DESC;
 ```
+
+**A compose that FAILED is written down the same way.** If a read the payload is
+built from errors — a column that is not there, a dead REST edge — the enqueue
+logs `[autocount-outbox] <op> compose read failed` and writes a `skipped` row
+carrying the database's own message, then returns false. It does **not** compose
+what it managed to read. `data ?? []` on a failed read is an empty line list,
+and an order pushed into a live account book with no lines on it is
+indistinguishable, from the AutoCount side, from one the operator really did
+leave empty.
 
 ---
 
@@ -255,7 +278,7 @@ SELECT doc_type, doc_no, op, attempts, last_error
 | File | Covers |
 |---|---|
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
-| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, and the drain's sent / retry / give-up / refusal / waiting paths |
+| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document |
 | `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, and the client's retryable/not-retryable read of a response |
 | `tests/autocountWritebackWiring.test.ts` | That every hook is still attached to its route |
 

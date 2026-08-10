@@ -1,11 +1,23 @@
 import { describe, expect, test } from 'vitest';
-import soSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
-import poSource from '../src/scm/routes/mfg-purchase-orders.ts?raw';
-import doSource from '../src/scm/routes/delivery-orders-mfg.ts?raw';
-import grnSource from '../src/scm/routes/grns.ts?raw';
-import siSource from '../src/scm/routes/sales-invoices.ts?raw';
-import piSource from '../src/scm/routes/purchase-invoices.ts?raw';
-import cronSource from '../src/index.ts?raw';
+import rawSo from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import rawPo from '../src/scm/routes/mfg-purchase-orders.ts?raw';
+import rawDo from '../src/scm/routes/delivery-orders-mfg.ts?raw';
+import rawGrn from '../src/scm/routes/grns.ts?raw';
+import rawSi from '../src/scm/routes/sales-invoices.ts?raw';
+import rawPi from '../src/scm/routes/purchase-invoices.ts?raw';
+import rawCron from '../src/index.ts?raw';
+
+/* ?raw hands back the WORKING TREE bytes, and on Windows (core.autocrlf=true)
+   that is CRLF while git stores LF. Any anchor below containing a newline then
+   matches in CI and not on the machine the owner actually runs this on. */
+const lf = (s: string) => s.replace(/\r\n/g, '\n');
+const soSource = lf(rawSo);
+const poSource = lf(rawPo);
+const doSource = lf(rawDo);
+const grnSource = lf(rawGrn);
+const siSource = lf(rawSi);
+const piSource = lf(rawPi);
+const cronSource = lf(rawCron);
 
 /* ERP -> AutoCount write-back: the WIRING.
  *

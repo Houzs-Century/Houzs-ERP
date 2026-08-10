@@ -1,6 +1,6 @@
 // ----------------------------------------------------------------------------
 // autocount-outbox — enqueue side and drain side of the ERP -> AutoCount
-// write-back (table: scm.autocount_outbox, migration 0276).
+// write-back (table: scm.autocount_outbox, migration 0277).
 //
 // THE ONE RULE THIS MODULE EXISTS TO KEEP: a write to AutoCount can never fail
 // a user's save. Every enqueue function here swallows its own errors and
@@ -93,7 +93,7 @@ export interface EnqueueInput {
   docNo: string;
   docId?: string | null;
   payload: AcOutboxPayload;
-  /** NULL means "always enqueue" — see 0276. */
+  /** NULL means "always enqueue" — see 0277. */
   dedupeKey?: string | null;
   createdBy?: number | null;
   /**
@@ -137,6 +137,76 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
   }
 }
 
+// ── reads ───────────────────────────────────────────────────────────────────
+
+/* Column lists, named once. A select that asks PostgREST for a column the table
+   does not have fails the WHOLE query with 42703 — it does not drop the column
+   and carry on — so these are the single place a phantom column can enter. */
+const SO_HEADER_COLS =
+  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, linked_ac_docno';
+const SO_ITEM_COLS =
+  'item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey';
+/* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
+   agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
+   and the other two do not exist at all on the ERP side. */
+const PO_HEADER_COLS = 'id, po_number, po_date, supplier_id, notes, linked_ac_docno';
+const PO_ITEM_COLS =
+  'material_code, item_group, description, qty, unit_price_centi, variants, linked_ac_dtlkey';
+
+/**
+ * A read that FAILED, as opposed to a read that found nothing.
+ *
+ * The distinction is the whole point. PostgREST answers a bad column with an
+ * error and a null body; `data ?? []` then turns a failure into "this document
+ * has no lines", and the write-back composes a header with an empty Details
+ * array — an order pushed into a live account book with nothing on it. Every
+ * read below therefore throws this instead of defaulting.
+ */
+class AcReadError extends Error {}
+
+async function readOrThrow<T>(
+  what: string,
+  q: PromiseLike<{ data: T; error: { code?: string; message?: string } | null }>,
+): Promise<T> {
+  const { data, error } = await q;
+  if (error) throw new AcReadError(`${what}: ${error.code ?? ''} ${error.message ?? ''}`.trim());
+  return data;
+}
+
+/**
+ * Write a failed compose down instead of dropping it.
+ *
+ * Same rule as recordConvertSkipped: an operation the ERP will not send is
+ * recorded with its reason, because a divergence that is written down can be
+ * found and one that is silently dropped cannot. Best-effort and never throws —
+ * the caller is a route handler that has already committed the user's document.
+ */
+async function noteReadFailure(
+  sb: Sb,
+  e: unknown,
+  ctx: { companyId: number; op: AcOp; docType: EnqueueInput['docType']; docNo: string; docId?: string | null },
+): Promise<void> {
+  if (!(e instanceof AcReadError)) return;
+  // eslint-disable-next-line no-console
+  console.error(
+    `[autocount-outbox] ${ctx.op} compose read failed — NOTHING queued for AutoCount:`,
+    ctx.docNo,
+    e.message,
+  );
+  try {
+    await enqueueAcOp(sb, {
+      companyId: ctx.companyId,
+      op: ctx.op,
+      docType: ctx.docType,
+      docNo: ctx.docNo,
+      docId: ctx.docId ?? null,
+      payload: { body: {} },
+      status: 'skipped',
+      reason: `compose failed, nothing sent: ${e.message}`,
+    });
+  } catch { /* the note is best-effort; the log above is the floor */ }
+}
+
 // ── enqueue helpers, one per flow ───────────────────────────────────────────
 
 const soLine = (r: Record<string, unknown>): ErpLine => ({
@@ -158,16 +228,14 @@ export async function enqueueSoCreate(
   try {
     if (opts.companyId == null) return false;
     if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
-    const { data: header } = await sb.from('mfg_sales_orders')
-      .select('doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, linked_ac_docno')
-      .eq('doc_no', opts.docNo).maybeSingle();
+    const header = await readOrThrow('mfg_sales_orders header',
+      sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', opts.docNo).maybeSingle());
     if (!header) return false;
     /* A cutover-imported SO ALREADY exists in AutoCount (mig 0271). Creating it
        again would duplicate the order in the live book. */
     if ((header as { linked_ac_docno?: string | null }).linked_ac_docno) return false;
-    const { data: items } = await sb.from('mfg_sales_order_items')
-      .select('item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey')
-      .eq('doc_no', opts.docNo);
+    const items = await readOrThrow('mfg_sales_order_items',
+      sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
     const body = composeCreateSo(header as never, ((items ?? []) as Record<string, unknown>[]).map(soLine));
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
@@ -181,9 +249,41 @@ export async function enqueueSoCreate(
       dedupeKey: `create_so:${opts.docNo}`,
       createdBy: opts.createdBy ?? null,
     });
-  } catch {
+  } catch (e) {
+    await noteReadFailure(sb, e, { companyId: opts.companyId as number, op: 'create_so', docType: 'SO', docNo: opts.docNo });
     return false;
   }
+}
+
+/**
+ * Read a purchase order in the shape composeCreatePo wants.
+ *
+ * The creditor comes from scm.suppliers through supplier_id — the PO table
+ * carries the foreign key, not the code or the name. Agent and Ref are null
+ * because the ERP has no such field on a purchase order at all; on a CREATE
+ * that writes "" into a document that had nothing there anyway.
+ */
+async function readPoHeader(sb: Sb, poId: string) {
+  const header = await readOrThrow('purchase_orders header',
+    sb.from('purchase_orders').select(PO_HEADER_COLS).eq('id', poId).maybeSingle());
+  if (!header) return null;
+  const h = header as Record<string, unknown>;
+  const supplier = h.supplier_id
+    ? await readOrThrow('suppliers',
+      sb.from('suppliers').select('code, name').eq('id', String(h.supplier_id)).maybeSingle())
+    : null;
+  const s = supplier as { code?: string | null; name?: string | null } | null;
+  return {
+    id: String(h.id ?? poId),
+    po_number: String(h.po_number ?? ''),
+    po_date: (h.po_date as string | null) ?? null,
+    creditor_code: s?.code ?? null,
+    creditor_name: s?.name ?? null,
+    agent: null,
+    ref: null,
+    notes: (h.notes as string | null) ?? null,
+    linked_ac_docno: (h.linked_ac_docno as string | null) ?? null,
+  };
 }
 
 /** PO create. */
@@ -191,24 +291,24 @@ export async function enqueuePoCreate(
   sb: Sb,
   opts: { companyId: number | null | undefined; poId: string; createdBy?: number | null },
 ): Promise<boolean> {
+  /* Falls back to the id: a header read that FAILED has no number to name the
+     note row by, and the id is what every PO route addresses anyway. */
+  let poNumber = opts.poId;
   try {
     if (opts.companyId == null) return false;
     if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
-    const { data: header } = await sb.from('purchase_orders')
-      .select('id, po_number, po_date, creditor_code, creditor_name, agent, ref, notes, linked_ac_docno')
-      .eq('id', opts.poId).maybeSingle();
+    const header = await readPoHeader(sb, opts.poId);
     if (!header) return false;
-    if ((header as { linked_ac_docno?: string | null }).linked_ac_docno) return false;
-    const { data: items } = await sb.from('purchase_order_items')
-      .select('material_code, item_group, description, qty, unit_price_centi, variants, linked_ac_dtlkey')
-      .eq('purchase_order_id', opts.poId);
-    const h = header as { po_number: string };
-    const body = composeCreatePo(header as never, ((items ?? []) as Record<string, unknown>[]).map(soLine));
+    poNumber = header.po_number || opts.poId;
+    if (header.linked_ac_docno) return false;
+    const items = await readOrThrow('purchase_order_items',
+      sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
+    const body = composeCreatePo(header, ((items ?? []) as Record<string, unknown>[]).map(soLine));
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_po',
       docType: 'PO',
-      docNo: h.po_number,
+      docNo: header.po_number,
       docId: opts.poId,
       payload: {
         body: body as unknown as Record<string, unknown>,
@@ -217,7 +317,10 @@ export async function enqueuePoCreate(
       dedupeKey: `create_po:${opts.poId}`,
       createdBy: opts.createdBy ?? null,
     });
-  } catch {
+  } catch (e) {
+    await noteReadFailure(sb, e, {
+      companyId: opts.companyId as number, op: 'create_po', docType: 'PO', docNo: poNumber, docId: opts.poId,
+    });
     return false;
   }
 }
@@ -408,7 +511,14 @@ export async function enqueueEdit(
       dedupeKey: null,
       createdBy: opts.createdBy ?? null,
     });
-  } catch {
+  } catch (e) {
+    await noteReadFailure(sb, e, {
+      companyId: opts.companyId as number,
+      op: 'edit',
+      docType: opts.docType,
+      docNo: String(opts.docNo ?? opts.docId ?? ''),
+      docId: opts.docId ?? null,
+    });
     return false;
   }
 }
@@ -439,13 +549,11 @@ async function findPendingOriginatingOp(
 }
 
 async function composeSoState(sb: Sb, docNo: string) {
-  const { data: header } = await sb.from('mfg_sales_orders')
-    .select('doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, linked_ac_docno')
-    .eq('doc_no', docNo).maybeSingle();
+  const header = await readOrThrow('mfg_sales_orders header',
+    sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
-  const { data: items } = await sb.from('mfg_sales_order_items')
-    .select('item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey')
-    .eq('doc_no', docNo);
+  const items = await readOrThrow('mfg_sales_order_items',
+    sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo));
   const lines = ((items ?? []) as Record<string, unknown>[]).map(soLine);
   const h = header as Record<string, unknown>;
   return {
@@ -467,24 +575,22 @@ async function composeSoState(sb: Sb, docNo: string) {
 }
 
 async function composePoState(sb: Sb, poId: string) {
-  const { data: header } = await sb.from('purchase_orders')
-    .select('id, po_number, po_date, creditor_code, creditor_name, agent, ref, notes, linked_ac_docno')
-    .eq('id', poId).maybeSingle();
+  const header = await readPoHeader(sb, poId);
   if (!header) return null;
-  const { data: items } = await sb.from('purchase_order_items')
-    .select('material_code, item_group, description, qty, unit_price_centi, variants, linked_ac_dtlkey')
-    .eq('purchase_order_id', poId);
+  const items = await readOrThrow('purchase_order_items',
+    sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId));
   const lines = ((items ?? []) as Record<string, unknown>[]).map(soLine);
-  const h = header as Record<string, unknown>;
   return {
-    docNo: String(h.po_number ?? poId),
-    linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
+    docNo: header.po_number || poId,
+    linkedAcDocNo: header.linked_ac_docno,
     self: { table: 'purchase_orders', keyCol: 'id', key: poId } as AcDocRef,
-    create: composeCreatePo(header as never, lines) as unknown as Record<string, unknown>,
-    edit: composeEdit('PO', String(h.linked_ac_docno ?? h.po_number), {
-      CreditorName: (h.creditor_name as string) ?? null,
-      Ref: (h.ref as string) ?? null,
-      Description: (h.notes as string) ?? null,
+    create: composeCreatePo(header, lines) as unknown as Record<string, unknown>,
+    /* No Ref: the ERP has no such field on a purchase order, and /edit applies
+       only the keys it is GIVEN (AcSyncService.cs:369 `h.ContainsKey`). Sending
+       null would blank whatever the account book has there. */
+    edit: composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), {
+      CreditorName: header.creditor_name,
+      Description: header.notes,
     }, lines),
   };
 }
