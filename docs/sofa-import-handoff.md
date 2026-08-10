@@ -144,6 +144,26 @@ SKU 名字格式:`SOFA {型号名} {件}`(不带品牌前缀)。
 **教训**:第二批一度给 8030/8060/9058/9028/9050/8069/5535 开了 recliner/power 件,
 owner 指出这些款根本没有 → 已用 `revert-sofa-recliner-skus.mjs` 撤掉 28 个。**开件前先问型号有没有这个机构**。
 
+### 3.4 型号本身缺了怎么办 —— 对照表的 `EXISTS(1st-pass)` 会吃掉一个型号
+
+`piece SKU not minted` 有两种成因:件没开(§3.3),或者**整个型号从来没建**。
+后者的根在对照表:`RDS-5526 SOFA` 那行原本写 `8038-1S / EXISTS(1st-pass)` —— 名字都叫
+DISCOVERY 的一次模糊匹配,但供应商一个是 `400-R001`(RED SOFA)一个是 `400-D004`(DSL)。
+importer 是从对照表的 `-1S` 反推型号的(`erp.replace(/-1S$/,"")`),所以 5526 没拿到
+`scm.product_models` 行,九条单据行全落在 8038 上。owner 2026-08-10:**"5526 就是 5526 啊,
+你应该要 remain … 8038 原本都不是 5526."**
+
+修:`open-5526-model.mjs` + 同名 workflow —— 建型号(`name` 用型号码本身,跟
+`align-models-houzs-century.json` 给 5527/8133 的写法一致;**不要**沿用 DISCOVERY,那正是
+出事的原因)、开件、铸 SKU、补池子,再把九条行从 `8038-*` 改到 `5526-*`,并顺着
+SO→PO→GRN、SO→DO 带下去。**金额一分不动**(只改 code 和名字,脚本逐单核对总额)。
+
+**留给 owner 决定的**:供应商绑定没动。`8038-1A(LHF)/1NA/2A(RHF)/CNR/Console/STOOL` 的
+`supplier_sku` 全是 `RDS-5526 SOFA`,`8038-1S` 还是 RED SOFA 对它的 main binding —— 一动就动价。
+
+**对照表里还有 318 行 `EXISTS(1st-pass)`**,都是同一类机器猜测。碰到"型号不见了"先看这一列,
+再看 supplier 列对不对得上。
+
 ---
 
 ## 4. 颜色怎么对上布料库
@@ -204,6 +224,7 @@ HR805-31/-40、NX007/010/011、ZL-6/-20、Garfield、Wowsons、Chantic、J9883-2
 | SO 导入(沙发用 `sofa=yes`) | `import-ac-outstanding-so.mjs` | `import-ac-outstanding-so.yml` |
 | PO 导入(沙发用 `sofa=yes`) | `import-ac-outstanding-po.mjs` | `import-ac-outstanding-po.yml` |
 | 开件 | `open-sofa-so-compartments.mjs` | 同名 yml |
+| **建型号 + 开件 + 改单据行**(5526) | `open-5526-model.mjs` | 同名 yml |
 | 撤错开的 R/P 件 | `revert-sofa-recliner-skus.mjs` | 同名 yml |
 | Bench 改分左右 | `fix-bench-sides.mjs` | 同名 yml |
 | 建缺的布料 | `add-missing-sofa-fabrics.mjs` | 同名 yml |
