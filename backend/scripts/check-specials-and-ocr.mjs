@@ -141,8 +141,9 @@ try {
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL`;
+  // The PO header numbers itself `po_number`; only mfg_sales_orders has doc_no.
   const poLines = await pg`
-    SELECT i.id, h.doc_no, i.material_code AS code, i.description2 AS d2,
+    SELECT i.id, h.po_number AS doc_no, i.material_code AS code, i.description2 AS d2,
            i.custom_specials, i.variants
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
