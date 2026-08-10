@@ -1,0 +1,62 @@
+name: MODENZA-01 label + the two 5526 pieces
+
+# Manual. Creates the sofa special-order codes the AutoCount slips use but the
+# Specials master does not have yet. Counted from the 1,456 sofa Desc2 strings
+# in the cutover exports; prices are left at 0 for the owner to set.
+# Writes scm.special_addons directly - NOT the snapshot route, which deactivates
+# every code missing from the payload. DRY-RUN unless apply=1.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      apply:
+        description: "1 to create them, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: fix-modenza-label-and-5526-pieces-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/fix-modenza-label-and-5526-pieces.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/fix-modenza-label-and-5526-pieces.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

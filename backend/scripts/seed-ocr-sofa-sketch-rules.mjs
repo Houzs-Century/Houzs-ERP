@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Teach the SO scanner to read the DRAWING on a sofa slip.
+// Teach the SO scanner to read a handwritten slip: the sofa DRAWING and the
+// bedframe numbers.
 //
 // Owner 2026-08-10: "你看了那么多图片和解析了那么多 ... 所以你应该可以用这个去
 // train 我们的 salesorder OCR 到很厉害很准了 ... 会的话教我们的 salesorder OCR
@@ -77,6 +78,57 @@ SOFA — WHAT ELSE THE SLIP CARRIES
   a miss.
 - Lines like "dispose 3S sofa" or "Free Pillow (Random)" are a SERVICE or a
   giveaway, not a compartment and not a special order.
+
+BEDFRAME — WHAT THE SLIP STATES AND WHAT THE DRAWING SHOWS
+
+A bedframe line is a MODEL plus a SIZE plus four numbers. Read all four; a
+missing one is what blocks the order later.
+
+1. SIZE is the suffix on the code and the words on the slip:
+      (K) 6FT / 183x190    (Q) 5FT / 152x190    (SS) 3.5FT / 107x190
+      (S) 3FT / 90x190     (SK) 200x200 — the owner calls 200x200 superking
+   Anything outside those five is a SPECIAL size and MUST carry its dimensions.
+   Do not round a stated dimension to the nearest standard size.
+
+2. THE THREE HEIGHTS, all in inches, written every way a human writes them:
+      DIVAN  the box height       Divan 10, Divan10", DIAVAN, 10inch
+      LEG    the leg              +2" leg, 2inch leg, NO LEG / NOLEG
+      GAP    the mattress gap     Gap 14, M.GAP, MGAP, MATTRESS GAP
+   They are often run together with no spaces: "Divan10/Gap14", "8''+2\"leg",
+   "10inch+NoLeg". Read the number that sits with each word, not the first
+   number on the line.
+
+3. A DIVAN STATED WITH NO LEG MENTIONED MEANS NO LEG — zero, not unknown.
+   That is an owner ruling, and it is the difference between a complete line
+   and one that blocks.
+
+4. HYDRAULIC (storage) beds carry TWO heights and telling them apart is the
+   whole job: an OUTER box height and an INNER storage depth, usually written
+   "hydraulic 16\"/Inner 14\"". Owner's rulings: the outer wins when it is
+   written, and an inner-only line converts at INNER + 2. Standard divans are
+   12", 14", 16".
+
+5. THESE FRAMES HAVE NO DIVAN BASE AT ALL, so divan height, leg height and gap
+   do not apply and their absence is not a gap in the data: DIVAN ONLY (no
+   mattress, so no gap either), ADJUSTABLE / electric, pull-out and trundle
+   combos written (S+S) or (SS+S), and DOUBLE DECKER bunks.
+
+6. AN UNQUALIFIED "DRAWER" MEANS FRONT DRAWER. Left and right drawers are
+   always written as such.
+
+7. COLOUR is a fabric code — PC151-01, AMBER 01, MEDITEX Silver. TBC or KIV
+   means the colour is not chosen yet: a real state, not a miss.
+
+8. ON THE DRAWING, a bedframe is sketched side-on as a headboard with the bed
+   beside it, and the numbers are dimension marks against the parts: the tall
+   one against the headboard is the TOTAL height, the one against the box is
+   the DIVAN, the short one under it is the LEG, the one between the box top
+   and the mattress top is the GAP. If only a total is written, say so rather
+   than splitting it.
+
+9. SPECIAL ORDERS on a bedframe read like: HB (headboard) fully cover, HB
+   straight, headboard only, side panel none, no bracket, front / left / right
+   drawer, divan top fully cover, 1 piece divan, fully cover to floor.
 
 IMAGE QUALITY
 
