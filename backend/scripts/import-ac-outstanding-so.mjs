@@ -259,6 +259,9 @@ async function main() {
     for (const [doc, ls] of [...orders]) if (fullyDelivered(ls)) { orders.delete(doc); skipDelivered++; }
   }
   let pure = [], skipMixed = 0, skipAllSofa = 0, sofaOrders = 0;
+  /* Partial-delivery bookkeeping — see the qty block below. */
+  let partialLines = 0, deliveredLinesDropped = 0;
+  const partialNote = new Map();
   for (const [doc, ls] of orders) {
     const s = ls.filter((l) => isSofa(l.ItemCode)).length;
     if (s === 0) pure.push([doc, ls]);
@@ -296,7 +299,22 @@ async function main() {
       }
       const grp = CATG[cat] || "others";
       if (!codeSet.has(erp.toUpperCase())) notInPickList.add(erp);
-      const qty = Math.round(num(l.Qty)) || 1;
+      /* PARTIAL DELIVERIES (owner 2026-08-10: "partially delivery 也是要进来").
+         The order comes in, but only what is still OWED comes in — importing the
+         full quantity would put 365 already-delivered units back on the floor to
+         be shipped a second time, across 52 orders. The delivered part is
+         history and stays in AutoCount, where the delivery note lives; the ERP
+         carries the balance it has to ship. A line with nothing left is dropped,
+         and every adjusted line says so on its face so nobody reads the reduced
+         quantity as the original order. */
+      const acQty = Math.round(num(l.Qty));
+      const doneQty = Math.round(num(l.TransferedQty));
+      const qty = doneQty > 0 ? acQty - doneQty : (acQty || 1);
+      if (doneQty > 0) {
+        if (qty <= 0) { deliveredLinesDropped++; continue; }
+        partialLines++;
+        partialNote.set(`${acDoc}|${l.DtlKey}`, `AutoCount qty ${acQty}, ${doneQty} already delivered before the cutover`);
+      }
       const up = centi(l.UnitPrice); const lineTotal = up * qty; total += lineTotal; if (bucket[grp] !== undefined) bucket[grp] += lineTotal;
       let bf = null, variants = null;
       if (grp === "bedframe") {
@@ -365,7 +383,7 @@ async function main() {
       const prodRow = prodId.get((erp || "").toUpperCase());
       const unitCost = prodRow && prodRow.cost_price_sen ? prodRow.cost_price_sen : 0; // per-unit cost (sen)
       const lineCost = unitCost * qty;
-      items.push({ erp, grp, desc: (prodRow && prodRow.name) || l.Description, d2: l.Desc2, qty, up, lineTotal, loc: l.Location, bf, variants, resolvedFree, unitCost, lineCost, warehouseId: whId(l.Location) });
+      items.push({ erp, grp, desc: (prodRow && prodRow.name) || l.Description, d2: l.Desc2, qty, up, lineTotal, loc: l.Location, bf, variants, resolvedFree, unitCost, lineCost, warehouseId: whId(l.Location), remark: partialNote.get(`${acDoc}|${l.DtlKey}`) ?? null });
     }
     const bal = centi(h.UDF_BALANCE); const paid = Math.max(0, total - bal);
     const pay = parsePayment(h.UDF_PAYEMENT);
@@ -503,6 +521,7 @@ async function main() {
     log(`  ..${Math.min(i + CHUNK, todo.length)}/${todo.length}`);
   }
   log(`DONE. inserted orders=${nOrders} items=${nItems} payments=${nPay}; skipped-existing=${existing.size}; exceptions=${exceptions.length}`);
+  log(`partial deliveries: ${partialLines} line(s) imported at their REMAINING quantity; ${deliveredLinesDropped} fully-delivered line(s) dropped from otherwise-outstanding orders`);
   await sql.end();
 }
 
