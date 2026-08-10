@@ -36,7 +36,9 @@ import {
   composeCreateSo,
   composeEdit,
   acServiceConfig,
+  KeylessLineError,
   type AcOp,
+  type AcCreatedLine,
   type ErpLine,
 } from '../../services/autocount-writeback';
 
@@ -71,6 +73,19 @@ export interface AcOutboxPayload {
   selfDoc?: AcDocRef;
   /** Write the AutoCount document number the call returns back onto this row. */
   writeback?: AcDocRef;
+  /**
+   * Store the DtlKeys the call returns onto these ERP line rows.
+   *
+   * `ids` are the ERP line row ids IN THE ORDER their details were put into the
+   * payload, so the Nth returned key belongs to the Nth id. `codes` is the same
+   * list of AutoCount ItemCodes, kept so the zip can be CHECKED rather than
+   * trusted — see persistLineKeys.
+   */
+  lineWriteback?: {
+    table: 'mfg_sales_order_items' | 'purchase_order_items';
+    ids: string[];
+    codes: string[];
+  };
 }
 
 export interface AcOutboxRow {
@@ -145,13 +160,13 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
 const SO_HEADER_COLS =
   'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, linked_ac_docno';
 const SO_ITEM_COLS =
-  'item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey';
+  'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
 const PO_HEADER_COLS = 'id, po_number, po_date, supplier_id, notes, linked_ac_docno';
 const PO_ITEM_COLS =
-  'material_code, item_group, description, qty, unit_price_centi, variants, linked_ac_dtlkey';
+  'id, material_code, item_group, description, qty, unit_price_centi, variants, linked_ac_dtlkey';
 
 /**
  * A read that FAILED, as opposed to a read that found nothing.
@@ -180,18 +195,35 @@ async function readOrThrow<T>(
  * recorded with its reason, because a divergence that is written down can be
  * found and one that is silently dropped cannot. Best-effort and never throws —
  * the caller is a route handler that has already committed the user's document.
+ *
+ * TWO kinds of refusal reach here and they are not the same thing:
+ *
+ *   AcReadError      — the ERP could not read its own document. The operation
+ *                      was never composed. Transient, or a schema bug.
+ *   KeylessLineError — the ERP read the document perfectly well and DECLINED to
+ *                      send it, because a line has no AutoCount DtlKey and
+ *                      sending it would append duplicates into the live account
+ *                      book. A data gap with a known remedy: backfill the line
+ *                      keys for that document.
+ *
+ * Both must land in the outbox. A refusal nobody can see is indistinguishable
+ * from a write-back that quietly stopped working.
  */
 async function noteReadFailure(
   sb: Sb,
   e: unknown,
   ctx: { companyId: number; op: AcOp; docType: EnqueueInput['docType']; docNo: string; docId?: string | null },
 ): Promise<void> {
-  if (!(e instanceof AcReadError)) return;
+  const refused = e instanceof KeylessLineError;
+  if (!refused && !(e instanceof AcReadError)) return;
+  const message = (e as Error).message;
   // eslint-disable-next-line no-console
   console.error(
-    `[autocount-outbox] ${ctx.op} compose read failed — NOTHING queued for AutoCount:`,
+    refused
+      ? `[autocount-outbox] ${ctx.op} REFUSED, nothing queued for AutoCount (line identity missing):`
+      : `[autocount-outbox] ${ctx.op} compose read failed — NOTHING queued for AutoCount:`,
     ctx.docNo,
-    e.message,
+    message,
   );
   try {
     await enqueueAcOp(sb, {
@@ -202,7 +234,9 @@ async function noteReadFailure(
       docId: ctx.docId ?? null,
       payload: { body: {} },
       status: 'skipped',
-      reason: `compose failed, nothing sent: ${e.message}`,
+      reason: refused
+        ? `refused, nothing sent: ${message}`
+        : `compose failed, nothing sent: ${message}`,
     });
   } catch { /* the note is best-effort; the log above is the floor */ }
 }
@@ -236,7 +270,8 @@ export async function enqueueSoCreate(
     if ((header as { linked_ac_docno?: string | null }).linked_ac_docno) return false;
     const items = await readOrThrow('mfg_sales_order_items',
       sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
-    const body = composeCreateSo(header as never, ((items ?? []) as Record<string, unknown>[]).map(soLine));
+    const rows = (items ?? []) as Record<string, unknown>[];
+    const body = composeCreateSo(header as never, rows.map(soLine));
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
@@ -245,6 +280,14 @@ export async function enqueueSoCreate(
       payload: {
         body: body as unknown as Record<string, unknown>,
         writeback: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: opts.docNo },
+        /* toDetails is a strict 1:1 map over these rows, so the Nth detail in
+           the payload is the Nth row here, and the Nth DtlKey AutoCount reports
+           belongs to it. persistLineKeys re-checks that by ItemCode anyway. */
+        lineWriteback: {
+          table: 'mfg_sales_order_items',
+          ids: rows.map((r) => String(r.id)),
+          codes: rows.map((r) => String(r.item_code ?? '')),
+        },
       },
       dedupeKey: `create_so:${opts.docNo}`,
       createdBy: opts.createdBy ?? null,
@@ -303,7 +346,8 @@ export async function enqueuePoCreate(
     if (header.linked_ac_docno) return false;
     const items = await readOrThrow('purchase_order_items',
       sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
-    const body = composeCreatePo(header, ((items ?? []) as Record<string, unknown>[]).map(soLine));
+    const rows = (items ?? []) as Record<string, unknown>[];
+    const body = composeCreatePo(header, rows.map(soLine));
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_po',
@@ -313,6 +357,11 @@ export async function enqueuePoCreate(
       payload: {
         body: body as unknown as Record<string, unknown>,
         writeback: { table: 'purchase_orders', keyCol: 'id', key: opts.poId },
+        lineWriteback: {
+          table: 'purchase_order_items',
+          ids: rows.map((r) => String(r.id)),
+          codes: rows.map((r) => String(r.material_code ?? '')),
+        },
       },
       dedupeKey: `create_po:${opts.poId}`,
       createdBy: opts.createdBy ?? null,
@@ -503,7 +552,7 @@ export async function enqueueEdit(
       docNo,
       docId: opts.docId ?? null,
       payload: {
-        body: composed.edit as unknown as Record<string, unknown>,
+        body: composed.edit() as unknown as Record<string, unknown>,
         selfDoc: composed.self,
       },
       /* NULL: two successive saves are two different intents and must both be
@@ -561,7 +610,12 @@ async function composeSoState(sb: Sb, docNo: string) {
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
     self: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNo } as AcDocRef,
     create: composeCreateSo(header as never, lines) as unknown as Record<string, unknown>,
-    edit: composeEdit('SO', String(h.linked_ac_docno ?? docNo), {
+    /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
+       the caller does not always need an edit: when the create is still sitting
+       unsent in the outbox it replaces that create's payload instead, and a
+       document that has never reached AutoCount cannot possibly have line keys
+       yet. Composing eagerly would refuse that legitimate path. */
+    edit: () => composeEdit('SO', String(h.linked_ac_docno ?? docNo), {
       DebtorName: (h.debtor_name as string) ?? null,
       Attention: (h.debtor_name as string) ?? null,
       Ref: (h.ref as string) ?? null,
@@ -588,7 +642,7 @@ async function composePoState(sb: Sb, poId: string) {
     /* No Ref: the ERP has no such field on a purchase order, and /edit applies
        only the keys it is GIVEN (AcSyncService.cs:369 `h.ContainsKey`). Sending
        null would blank whatever the account book has there. */
-    edit: composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), {
+    edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), {
       CreditorName: header.creditor_name,
       Description: header.notes,
     }, lines),
@@ -608,6 +662,78 @@ async function mark(sb: Sb, id: string, patch: Record<string, unknown>): Promise
   await sb.from('autocount_outbox')
     .update({ ...patch, updated_at: new Date().toISOString() })
     .eq('id', id);
+}
+
+/**
+ * Store the DtlKeys a create/convert returned onto the ERP line rows.
+ *
+ * VERIFIES BEFORE IT WRITES, and writes nothing at all if the check fails.
+ *
+ * The zip is by index: the Nth line AutoCount reports is the Nth detail we sent.
+ * That is true because AcSyncService returns them ordered by DtlKey, which is
+ * creation order, and we created them in payload order. But "true because of a
+ * chain of reasoning" is not good enough for line identity — a wrong DtlKey does
+ * not fail, it silently edits a DIFFERENT line in a live account book on the
+ * next save. A missing key is refused loudly by composeEdit; a wrong one is not
+ * refused at all. So the count must match and every ItemCode must match, or the
+ * whole batch is abandoned and the document simply keeps NULL keys.
+ *
+ * Never throws and never changes the outcome of the dispatch: the document IS in
+ * AutoCount and the row IS sent. Failing to record identity is a degradation to
+ * be logged, not a reason to re-send a document that already exists.
+ */
+async function persistLineKeys(
+  sb: Sb,
+  row: AcOutboxRow,
+  target: NonNullable<AcOutboxPayload['lineWriteback']>,
+  lines: AcCreatedLine[],
+): Promise<void> {
+  const label = `[autocount-outbox] ${row.op} ${row.doc_no} line keys`;
+  try {
+    /* Not an error. An AcSyncService built before 2026-08-11 returns no lines,
+       and the service also degrades to an empty array rather than losing the
+       DocNo when its own read-back fails. */
+    if (!lines.length) return;
+
+    if (lines.length !== target.ids.length) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `${label}: NOT STORED — AutoCount reported ${lines.length} line(s), the ERP sent `
+        + `${target.ids.length}. Storing them by position would attach a key to the wrong line.`,
+      );
+      return;
+    }
+
+    const ordered = [...lines].sort((a, b) => a.Seq - b.Seq);
+    const norm = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase();
+    for (let i = 0; i < ordered.length; i += 1) {
+      const got = norm(ordered[i].ItemCode);
+      const want = norm(target.codes[i]);
+      /* An older service may omit ItemCode; only a PRESENT and DIFFERENT code
+         is evidence the zip is wrong. */
+      if (got && want && got !== want) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `${label}: NOT STORED — position ${i + 1} is '${ordered[i].ItemCode}' in AutoCount but `
+          + `'${target.codes[i]}' in the ERP. The two line lists do not correspond.`,
+        );
+        return;
+      }
+    }
+
+    for (let i = 0; i < ordered.length; i += 1) {
+      const { error } = await sb.from(target.table)
+        .update({ linked_ac_dtlkey: ordered[i].DtlKey })
+        .eq('id', target.ids[i]);
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error(`${label}: partial — row ${target.ids[i]} failed: ${error.message}`);
+      }
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(`${label}: not stored:`, e instanceof Error ? e.message : String(e));
+  }
 }
 
 export type DispatchOutcome = 'sent' | 'failed' | 'retry' | 'waiting';
@@ -665,6 +791,12 @@ export async function dispatchOne(
       await sb.from(payload.writeback.table)
         .update({ linked_ac_docno: result.docNo })
         .eq(payload.writeback.keyCol, payload.writeback.key);
+    }
+    /* The same map one level down. Without it a document the ERP creates has
+       NULL line identity forever, and its first edit is refused by composeEdit
+       (or, before that refusal existed, appended duplicates into the book). */
+    if (payload.lineWriteback) {
+      await persistLineKeys(sb, row, payload.lineWriteback, result.lines);
     }
     return 'sent';
   }

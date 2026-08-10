@@ -203,6 +203,32 @@ export interface AcEditPayload {
   Lines: Array<AcDetail & { DtlKey?: number }>;
 }
 
+/**
+ * One line AutoCount created, as the create and convert routes now report them.
+ * Ordered by DtlKey, which is creation order. ItemCode travels with the key so
+ * the caller can ASSERT its index-zip before storing anything: a wrong DtlKey
+ * silently edits a different line in a live book, which is strictly worse than
+ * no DtlKey (no key is refused loudly by composeEdit).
+ */
+export interface AcCreatedLine {
+  Seq: number;
+  DtlKey: number;
+  ItemCode: string;
+  Desc2?: string | null;
+}
+
+/**
+ * Thrown when an edit cannot be expressed without risking a duplicate line in
+ * the live account book. Carries no document data — the message is what an
+ * operator reads off the outbox row.
+ */
+export class KeylessLineError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'KeylessLineError';
+  }
+}
+
 /** Resolves an ERP item_code to its AutoCount ItemCode. Injected so the
  *  composer stays database-free. */
 export type ItemCodeResolver = (erpItemCode: string) => { acItemCode: string | null };
@@ -317,10 +343,31 @@ export function composeCreatePo(
 }
 
 /**
- * An edit payload. Lines that carry an AutoCount DtlKey UPDATE that same line;
- * a line without one is genuinely new and AcSyncService appends it. Omitting the
- * key would append a duplicate instead of changing what the operator changed —
- * which is the whole reason PR #1819 stores it.
+ * An edit payload. Lines that carry an AutoCount DtlKey UPDATE that same line.
+ *
+ * A LINE WITHOUT A KEY IS REFUSED, and the whole edit with it.
+ *
+ * The obvious reading of a keyless line — "this one is new, append it" — is the
+ * bug. AcSyncService's /edit acted on exactly that reading and called
+ * AddDetail(). Measured against production on 2026-08-11, BEFORE the backfill:
+ * 0 of 13,907 SO lines and 0 of 864 PO lines on AutoCount-linked documents
+ * carried a DtlKey. Every line was keyless, so "append the new one" meant
+ * appending a SECOND COPY OF EVERY LINE into a live licensed account book. On a
+ * purchase order those copies are permanent — PurchaseOrder exposes neither
+ * DeleteDetail nor any line-level Cancelled in the 2.2 SDK.
+ *
+ * Refusing costs a visible skipped outbox row and one document that does not
+ * sync. Appending costs an account book nobody can repair.
+ *
+ * AcSyncService carries the SAME refusal (see its Edit()), so a service binary
+ * that has not been rebuilt yet is also safe. This copy exists so the request is
+ * never even sent.
+ *
+ * KNOWN LIMITATION, deliberate: a genuinely new line added to a document that
+ * AutoCount already has is refused too, because the ERP cannot yet tell it apart
+ * from a legacy line whose key was never stored. AcSyncService accepts an
+ * explicit IsNewLine marker for that case and nothing sets it yet — see
+ * docs/modules/autocount-writeback.md for what has to be true first.
  */
 export function composeEdit(
   docType: 'SO' | 'PO',
@@ -329,16 +376,25 @@ export function composeEdit(
   lines: ErpLine[],
   resolve: ItemCodeResolver = identityResolver,
 ): AcEditPayload {
-  return {
-    DocType: docType,
-    DocNo: docNo,
-    Header: header,
-    Lines: toDetails(lines, resolve).map((d, i) => {
-      const key = lines[i].linked_ac_dtlkey;
-      const n = key == null ? null : Number(key);
-      return n != null && Number.isFinite(n) ? { ...d, DtlKey: n } : d;
-    }),
-  };
+  const keyed: Array<AcDetail & { DtlKey?: number }> = toDetails(lines, resolve).map((d, i) => {
+    const key = lines[i].linked_ac_dtlkey;
+    const n = key == null ? null : Number(key);
+    return n != null && Number.isFinite(n) ? { ...d, DtlKey: n } : d;
+  });
+
+  const keyless: number[] = [];
+  keyed.forEach((d, i) => { if (d.DtlKey == null) keyless.push(i); });
+  if (keyless.length) {
+    const which = keyless.map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'})`).join(', ');
+    throw new KeylessLineError(
+      `${docType} ${docNo}: ${keyless.length} of ${keyed.length} line(s) carry no AutoCount `
+      + `DtlKey — line(s) ${which}. Sending this edit would append duplicate lines to the live `
+      + `account book, and on a PO a duplicate cannot be removed. Backfill `
+      + `scm.*_items.linked_ac_dtlkey for this document, then save it again.`,
+    );
+  }
+
+  return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed };
 }
 
 // ── the HTTP client ─────────────────────────────────────────────────────────
@@ -363,9 +419,41 @@ export interface AcCallResult {
   status: number;
   /** AutoCount's document number, when the route returns one. */
   docNo: string | null;
+  /**
+   * The lines AutoCount created, when the route returns them. EMPTY is a
+   * legitimate answer and must not be treated as a failure: an older
+   * AcSyncService binary does not send them at all, and the service degrades to
+   * an empty array when its own read-back fails rather than losing the DocNo.
+   */
+  lines: AcCreatedLine[];
   error: string | null;
   /** False for a refusal a retry cannot fix (a 4xx, or AutoCount saying no). */
   retryable: boolean;
+}
+
+/**
+ * Read the `lines` array off a service response, keeping only entries that are
+ * completely usable. A half-parsed entry is dropped rather than coerced: a
+ * DtlKey guessed from a malformed row would be stored as line identity and used
+ * to edit a live document.
+ */
+export function parseCreatedLines(raw: unknown): AcCreatedLine[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AcCreatedLine[] = [];
+  raw.forEach((entry, i) => {
+    if (!entry || typeof entry !== 'object') return;
+    const r = entry as Record<string, unknown>;
+    const key = Number(r.DtlKey);
+    if (!Number.isFinite(key) || key <= 0) return;
+    const seq = Number(r.Seq);
+    out.push({
+      Seq: Number.isFinite(seq) ? seq : i,
+      DtlKey: key,
+      ItemCode: typeof r.ItemCode === 'string' ? r.ItemCode : '',
+      Desc2: typeof r.Desc2 === 'string' ? r.Desc2 : null,
+    });
+  });
+  return out;
 }
 
 /** Config, not a secret. Absent = the write-back cannot run, and says so. */
@@ -394,7 +482,7 @@ export async function callAcService(
 ): Promise<AcCallResult> {
   const cfg = acServiceConfig(env);
   if (!cfg) {
-    return { ok: false, status: 0, docNo: null, error: 'AC_SYNC_URL is not configured', retryable: false };
+    return { ok: false, status: 0, docNo: null, lines: [], error: 'AC_SYNC_URL is not configured', retryable: false };
   }
   let res: Response;
   try {
@@ -412,23 +500,32 @@ export async function callAcService(
       ok: false,
       status: 0,
       docNo: null,
+      lines: [],
       error: e instanceof Error ? e.message : String(e),
       retryable: true,
     };
   }
 
   const text = await res.text().catch(() => '');
-  let body: { ok?: boolean; docNo?: string; error?: string } = {};
+  let body: { ok?: boolean; docNo?: string; error?: string; lines?: unknown } = {};
   try { body = text ? JSON.parse(text) : {}; } catch { /* keep the raw text below */ }
 
   if (res.ok && body.ok !== false) {
-    return { ok: true, status: res.status, docNo: body.docNo ?? null, error: null, retryable: false };
+    return {
+      ok: true,
+      status: res.status,
+      docNo: body.docNo ?? null,
+      lines: parseCreatedLines(body.lines),
+      error: null,
+      retryable: false,
+    };
   }
   const error = body.error ?? (text || `AutoCount service responded ${res.status}`);
   return {
     ok: false,
     status: res.status,
     docNo: null,
+    lines: [],
     error,
     /* 4xx is configuration or a bad payload — a retry cannot fix either, so
        fail it now with the message intact. 5xx is ambiguous by construction:
