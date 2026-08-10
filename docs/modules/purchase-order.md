@@ -374,6 +374,38 @@ above refused. Idempotent (linked or already-allocated lines skip); one SO
 line is never double-served (links and allocations both count as taken). Rule:
 `planFifoAttribution`, `backend/scripts/lib/doc-evidence-core.mjs`.
 
+### The MIGRATED purchase orders — a fourth source of evidence, above all three
+
+The tiers above recover a link from what the ERP itself recorded. A purchase
+order imported from AutoCount has something stronger: AutoCount's own
+`PODTL.FromSODtlKey`, which names the sales-order line the PO was raised from as
+a matter of record. `backend/scripts/repair-migrated-po-lines.mjs` (workflow
+**Repair migrated PO lines (dedication, dates, line key)**) walks it, and in the
+same pass fills the two other things those rows lost. All three are one repair
+because they are one row and one cause.
+
+| What it writes | Where it comes from |
+|---|---|
+| `so_item_id` | `PODTL.FromSODtlKey` -> the AutoCount sales order -> the ERP line with the matching code, through the SHARED taker `scripts/lib/so-line-dedication.mjs` — so a sales-order line is claimed exactly once across every importer and this repair. |
+| `delivery_date` | `PODTL.DeliveryDate`, via `scripts/lib/ac-po-line.mjs`. |
+| `linked_ac_dtlkey` | `PODTL.DtlKey` — AutoCount's PRIMARY KEY for the line. |
+| `purchase_orders.expected_at` | Earliest of the header's own line dates, the same rule `backfill-po-expected-at.mjs` and the SO->PO convert use. |
+
+Matching an already-imported ERP row back to its AutoCount line is done from
+`supplier_sku`, which carries AutoCount's `ItemCode` verbatim (a sofa line
+carries `<ItemCode> <compartment>`); the rule lives in
+`scripts/lib/ac-po-line-match.mjs`. **One AutoCount sofa line owns SEVERAL ERP
+rows** — one per compartment — and all of them carry its `DtlKey`, which is why
+`linked_ac_dtlkey` is indexed and never unique. Where one document has several
+AutoCount lines sharing an ItemCode they are split further on `(qty, Desc2)`;
+where even that does not separate them the ERP rows are identical in every
+stored field, so they are zipped in `DtlKey` order and REPORTED as
+indistinguishable rather than presented as resolved. A group whose two sides do
+not split the same way is refused whole.
+
+Every UPDATE re-asserts that the column is still NULL, so the repair is
+idempotent and never overwrites a value a human has set by hand.
+
 ### The SO-quota counter — `recomputeSoPicked` (`:2352-2398`)
 
 Live-count, not arithmetic: it re-sums `purchase_order_items.qty` per
@@ -395,7 +427,7 @@ those are what the route actually selects.
 | Table | Role |
 |-------|------|
 | `scm.purchase_orders` | PO header. `po_number` (UNIQUE), `supplier_id`, `status`, `po_date`, `expected_at`, `purchase_location_id` (FK → `warehouses.id`), `currency`, `subtotal_centi` / `tax_centi` / `total_centi`, `submitted_at` / `received_at` / `cancelled_at`, `revision`, `supplier_delivery_date_2..4`, `company_id`. |
-| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `material_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below). |
+| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `material_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
 | `scm.purchase_order_item_allocations` | mig 0235 — sub-line slices of ONE PO line across customers + stock: `company_id` (NOT NULL), `purchase_order_item_id` FK CASCADE, `seq` (1-based dense, UNIQUE per line), `qty` (>0, SUM <= line qty via triggers), `so_item_id` FK SET NULL (NULL = stock), `created_by`, `created_at`. Attribution only — no stock/money/quota. |
 | `scm.po_revisions` | Full header+items snapshot per revision, keyed `(po_id, revision)`. Written by `snapshotPo` / `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:595`, `:725`). |
 | `scm.mfg_sales_order_items` | Upstream. `po_qty_picked` is written by this module. |

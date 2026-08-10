@@ -20,7 +20,17 @@
 //    the SO import uses (KL -> KL WAREHOUSE ...)
 //  - bedframe variants <- Desc2, parsed exactly like the SO import
 //    (colour -> fabric_colours fabricId/colourId, gap/divan/leg, specials)
-//  - delivery_date <- the line's DeliveryDate
+//  - delivery_date <- the line's DeliveryDate, read through lib/ac-po-line.mjs.
+//    It used to be read as `l.DelivDate`, the name the FIRST export cut used;
+//    the re-cut in a5f51653 (PR #1779) renamed it and 0 of 338 rows carry the
+//    old key, so every line imported with a blank date and JavaScript said
+//    nothing. The accessor is shared and tested against the committed snapshots.
+//  - so_item_id <- FromSODtlKey -> the AutoCount sales order -> the ERP line
+//    with the matching code, via the SHARED taker (lib/so-line-dedication.mjs)
+//    so a sales-order line is claimed exactly once across every importer. This
+//    column was missing from the INSERT entirely, which is why 267 documents
+//    came in undedicated and no later script went back for them.
+//  - linked_ac_dtlkey <- PODTL.DtlKey, so the link never has to be re-derived
 //  - qty = ordered; received_qty = ordered - outstanding
 // Idempotent: skips po_numbers already present. DRY-RUN by default; APPLY=1.
 import fs from "node:fs";
@@ -31,6 +41,8 @@ import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { acDeliveryDate, acDtlKey, acFromSoDtlKey } from "./lib/ac-po-line.mjs";
+import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -91,6 +103,39 @@ async function main() {
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const { findColour } = buildFabricColourIndex(fcRows);
   log(`suppliers=${sup.length} warehouses=${wh.length} products=${products.length} fabric_colours=${fcRows.length}`);
+
+  /* DEDICATION. AutoCount SO DtlKey -> the order it sits on, so a PO line can
+     find the sales-order line it was raised for. The taker is shared with
+     import-ac-so-linked-pos.mjs and the repair, so a line is claimed once
+     across all of them; a cancelled line is never offered. */
+  const soByDtl = new Map(
+    JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", "ac-outstanding-so.json.gz"))).toString("utf8").replace(/^﻿/, ""))
+      .map((r) => [String(r.DtlKey), { doc: r.DocNo, code: r.ItemCode }]),
+  );
+  const soItems = await sql`SELECT i.id, i.item_code, i.line_no, h.linked_ac_docno AS ac
+    FROM scm.mfg_sales_order_items i
+    JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+   WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND i.cancelled = false
+   ORDER BY i.line_no`;
+  const takenSoItem = new Set(
+    (await sql`SELECT DISTINCT so_item_id FROM scm.purchase_order_items WHERE so_item_id IS NOT NULL`)
+      .map((r) => r.so_item_id),
+  );
+  const taker = makeSoLineTaker(soItems, takenSoItem);
+  /* One PO line, tried most-specific first: the ERP code this line becomes
+     (for a sofa that is already the compartment), then the sales order's own
+     item, then the sofa placeholder the decode falls back to. */
+  const dedicate = (l, ...codes) => {
+    const src = soByDtl.get(acFromSoDtlKey(l) ?? "");
+    if (!src) return null;
+    const base = byAc.get(norm(src.code));
+    for (const c of [...codes, base ? base.erp : null].filter(Boolean)) {
+      const id = taker.take(src.doc, c);
+      if (id) return id;
+    }
+    return null;
+  };
+  let noSoLine = 0;
 
   // group by PO, drop sofa lines
   const groups = new Map();
@@ -156,9 +201,11 @@ async function main() {
           for (const comp of ps.pieces) {
             const code = `${model}-${comp}`;
             const pr = prodByCode.get(code.toUpperCase());
+            const soItemId = dedicate(l, code, `${model}-1S`);
+            if (!soItemId) noSoLine++;
             items.push({ erp: code, grp, name: (pr && pr.name) || code, sku: `${l.ItemCode} ${comp}`,
-              desc: l.Description, d2: l.Desc2, qty, received: done,
-              up: first ? up : 0, lt: first ? lt : 0, w, deliv: l.DelivDate, bf: null,
+              desc: l.Description, d2: l.Desc2, qty, received: done, soItemId, dtlKey: acDtlKey(l),
+              up: first ? up : 0, lt: first ? lt : 0, w, deliv: acDeliveryDate(l), bf: null,
               variants: { seatHeight: ps.size, fabricId: fc ? fc.fabric_id : null, colourId: fc ? fc.colour_id : null,
                 fabricCode: fc ? fc.colour_id : null, colourLabel: fc ? fc.label : (colour || null),
                 fabricLabel: fc ? fc.fabric_id : null, specials: ps.specials } });
@@ -167,16 +214,21 @@ async function main() {
         } else {
           const ph = `${model}-1S`;
           const pr = prodByCode.get(ph.toUpperCase());
-          items.push({ erp: codeSet.has(ph.toUpperCase()) ? ph : erp, grp,
+          const phCode = codeSet.has(ph.toUpperCase()) ? ph : erp;
+          const soItemId = dedicate(l, phCode, erp);
+          if (!soItemId) noSoLine++;
+          items.push({ erp: phCode, grp,
             name: (pr && pr.name) || ph, sku: l.ItemCode, desc: l.Description, d2: l.Desc2,
-            qty, received: done, up, lt, w, deliv: l.DelivDate, bf: null,
+            qty, received: done, soItemId, dtlKey: acDtlKey(l), up, lt, w, deliv: acDeliveryDate(l), bf: null,
             variants: { seatHeight: ps.size || null, colourLabel: colour || null, specials: ps.specials },
             note: "SOFA UNPARSED — 按图/原文补件: " + (ps.why.join("; ") || "unreadable") });
         }
         continue;
       }
       const prod = prodByCode.get(erp.toUpperCase());
-      items.push({ erp, grp, name: (prod && prod.name) || l.Description || erp, sku: l.ItemCode, desc: l.Description, d2: l.Desc2, qty, received: done, up, lt, w, deliv: l.DelivDate, bf, variants });
+      const soItemId = dedicate(l, erp);
+      if (!soItemId) noSoLine++;
+      items.push({ erp, grp, name: (prod && prod.name) || l.Description || erp, sku: l.ItemCode, desc: l.Description, d2: l.Desc2, qty, received: done, soItemId, dtlKey: acDtlKey(l), up, lt, w, deliv: acDeliveryDate(l), bf, variants });
     }
     if (!items.length) continue;
     built.push({ poNo: "HC-" + acPo, acPo, supId, poDate: h.DocDate, locWh: whId(h.Location), subtotal, status: anyReceived ? "PARTIALLY_RECEIVED" : "SUBMITTED", items });
@@ -189,6 +241,9 @@ async function main() {
   }
   log(`POs to import: ${built.length}; lines: ${built.reduce((a, o) => a + o.items.length, 0)}; value RM ${(built.reduce((a, o) => a + o.subtotal, 0) / 100).toLocaleString()}`);
   log(`bedframe colour resolved: ${bfCol}; pending (TBC/KIV): ${bfPending}; lines without a warehouse match: ${noWh}`);
+  const dedicated = built.reduce((a, o) => a + o.items.filter((i) => i.soItemId).length, 0);
+  const dated = built.reduce((a, o) => a + o.items.filter((i) => i.deliv).length, 0);
+  log(`dedicated to an SO line: ${dedicated}; no SO line found: ${noSoLine}; lines carrying a delivery date: ${dated}`);
   log(`exceptions: ${exceptions.length}`);
   for (const e of exceptions.slice(0, 15)) log(`   PO ${e.po} ${e.code ? `code="${e.code}" ` : ""}${e.reason}`);
   const s = built.find((o) => o.items.some((i) => i.grp === "bedframe" && i.variants && i.variants.colourId)) || built[0];
@@ -229,14 +284,16 @@ async function main() {
           (purchase_order_id, material_kind, material_code, material_name, supplier_sku,
            qty, unit_price_centi, line_total_centi, received_qty, item_group,
            description, description2, uom, notes, gap_inches, divan_height_inches, leg_height_inches,
-           custom_specials, variants, warehouse_id, delivery_date, from_mrp, company_id)
+           custom_specials, variants, warehouse_id, delivery_date, from_mrp, company_id,
+           so_item_id, linked_ac_dtlkey)
           VALUES (${poId}, 'mfg_product', ${i.erp}, ${i.name}, ${i.sku},
            ${i.qty}, ${i.up}, ${i.lt}, ${i.received}, ${i.grp},
            ${i.desc || null}, ${i.d2 || null}, ${i.grp === "bedframe" ? "SET" : "UNIT"},
            ${i.note ? (i.d2 ? i.d2 + " | " + i.note : i.note) : (i.d2 || null)},
            ${i.bf && isFinite(i.bf.gap) ? Math.round(i.bf.gap) : null}, ${i.bf && isFinite(i.bf.divan) ? Math.round(i.bf.divan) : null}, ${i.bf && isFinite(i.bf.leg) ? Math.round(i.bf.leg) : null},
            ${i.variants && i.variants.specials && i.variants.specials.length ? sql.json(i.variants.specials) : null},
-           ${i.variants ? sql.json(i.variants) : null}, ${i.w}, ${i.deliv || null}, false, 1)`;
+           ${i.variants ? sql.json(i.variants) : null}, ${i.w}, ${i.deliv || null}, false, 1,
+           ${i.soItemId ?? null}, ${i.dtlKey ?? null})`;
         nItems++;
       }
       nPo++;
