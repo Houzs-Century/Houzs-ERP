@@ -209,6 +209,8 @@ export、同一批 doc_no** 上报的是 `already imported: 0; to insert: 2275` 
 | 成本回盖 | `restamp-imported-so-costs.mjs` | 31316793446 (08-09 13:49) | 行 **11,633** / 单头 **2,217**;**620** 行盖不上(产品本身没成本) |
 | 同上 | 同上 | 31352494948 (08-10 03:24) | 行 **911** / 单头 **383** |
 | 沙发行照片挂载 | `import-so-line-photos.mjs` | 31322997602 (08-09 16:08) | **138 行 / 152 个 key** —— **但 jpg 从来没上传到 R2**,缩略图是坏的(§5 #5) |
+| SO 行照片补挂(jpg 已上传) | 同上 | 31358095030 (08-10 05:16) | 行 **775** / key **853**;累计 **983 / 983** |
+| PO 行照片挂载(第一次) | `import-po-line-photos.mjs` | 31371394117 (08-10 08:26) | 行 **209** / key **242** |
 
 **重解析是 UPDATE,不是重导。** owner 2026-08-09:*"为什么要清旧的SO 不能update进去用旧的"* ——
 从那之后解析器改进一律走 in-place UPDATE,单据、付款、日期全部原样保留,只重算 variant 字段。
@@ -348,7 +350,8 @@ BUG-HISTORY 里跟这次割接直接相关的三条(都在文件最上面):GRN p
 | 2 | **`scm.purchase_orders.linked_ac_docno` 没有 migration** | 只有 `import-ac-outstanding-po.mjs:314` 的 `ALTER TABLE`;migration 树只有 0271(SO 那一列) | 补一条 migration 收口,否则新环境重建不出这一列 |
 | 3 | 45 个负数库存差异没做 | run 31327230655:`negative deltas: 45 (report-only)` | **owner**:要不要扣 |
 | 4 | 138 个零成本 lot / 317 units | `check-golive-readiness` 31353686328 §A | `backfill-zero-cost-lots.mjs` + workflow **写好了但一次都没跑**(`gh run list --workflow backfill-zero-cost-lots.yml` 是空的) |
-| 5 | **照片:key 挂上了,jpg 没上传** | 31322997602 挂了 152 个 key;31357071047 (08-10 04:56) RESOLVE 报 `planned 983 / already attached 130` | 卡在拿不到那批 jpg(本机、repo、Actions artifact 全查过)。见 `sofa-import-handoff.md` §8.1 |
+| 5 | ~~照片:key 挂上了,jpg 没上传~~ **已解决 2026-08-10** | SO:983/983 key 已挂(31358095030)且 R2 里 983 个 object **逐个查过,0 缺**;PO:242 个 key 已挂(31371394117)。缩略图坏是另一回事,是 `SO_ITEM_PHOTOS_BUCKET_NAME` 没配(见 `BUG-HISTORY.md` 最上面那条),已修 | 无 —— 这一行留着,因为 `sofa-import-handoff.md` §8.1 还写着旧结论 |
+| 5b | **AutoCount 里有图、但 ERP 挂不上的还剩 39 张** | 对 live `AED_HOUZS` 逐条比过:SO 端 554 行有图 / 已抽 554,其中 **18 张在已交货单上**(按 DO 规则本来就不导,正确);PO 端 190 张已抽,`import-po-line-photos` RESOLVE 报 **sofa held 36**(这些 PO 根本没导进 ERP) | 沙发 PO 补导之后重跑挂载即可(`sofa-import-handoff.md` §8.2) |
 | 6 | 1 张已交货的单没删(`HC-SO-009988`) | 31354773325:`HELD BACK ... 1` | **owner** |
 | 7 | 620 行的成本盖不上 | 31352494948:`product-has-no-cost 620` | 产品本身还没有厂价 |
 | 8 | 25 条「PO 全收了但行还是 PENDING」 | `check-ac-vs-erp-reconcile` 31356787188 §1 | 跑一次 recompute |

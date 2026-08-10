@@ -73,13 +73,19 @@ async function main() {
   const plan = [];
   const seenN = new Map();
   let sofaHeld = 0, noOrder = 0, noLine = 0, unmapped = 0;
+  const heldDocs = []; // named, not just counted — a silent count hid a real bug on the SO side
   for (const m of manifest) {
     const erp = byAc.get(norm(m.ItemCode));
     if (!erp) { unmapped++; log(`  unmapped AC code: ${m.ItemCode} (${m.DocNo})`); continue; }
     let targets = null;
     if (isSofa(m.ItemCode)) {
+      /* SOFA in the code does not always mean a BUILD — "AMN-SOFA PILLOW" is an
+         accessory that imports as one literal line, and byDocModel is keyed on
+         the code up to the FIRST dash, so its model key can never match. Try
+         compartments, then the exact code, before calling the PO missing. */
       targets = byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
-      if (!targets || !targets.length) { sofaHeld++; continue; } // PO not imported yet
+      if (!targets || !targets.length) targets = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
+      if (!targets || !targets.length) { sofaHeld++; heldDocs.push(`${m.DocNo} ${m.ItemCode}`); continue; }
     } else {
       const exact = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
       /* Not every sofa's AutoCount code says SOFA — "THL-2379" is one too, and
@@ -101,6 +107,7 @@ async function main() {
   }
   const todo = plan.filter((p) => !p.already);
   log(`manifest rows: ${manifest.length}; sofa held (PO not imported): ${sofaHeld}; unmapped: ${unmapped}; PO-not-imported: ${noOrder}; line-missing: ${noLine}`);
+  for (const d of heldDocs) log(`  sofa held (no ERP line): ${d}`);
   log(`photo keys planned: ${plan.length} (already attached: ${plan.length - todo.length})`);
 
   if (!APPLY) {
