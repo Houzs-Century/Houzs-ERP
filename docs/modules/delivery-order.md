@@ -194,7 +194,7 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, `line_cost_centi`, `line_margin_centi`, **`ship_cost_centi`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads). |
 | `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_centi`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
-| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0278; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
+| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
 | `scm.mfg_sales_order_items` | Upstream: `warehouse_id` is the **authoritative** ship-from warehouse per line. |
 
 Status vocabulary (`:366-376`):
@@ -239,7 +239,7 @@ existence check on `(source_doc_type='DO', source_doc_id, movement_type='OUT')`
 collapses identical `(warehouse_id, product_code, variant_key, batch_no)` lines
 into one OUT row (`:881-905`).
 
-**The index, verbatim.** Until migration **0278** this was prod-only DDL that
+**The index, verbatim.** Until migration **0279** this was prod-only DDL that
 appeared in no file in the repo — read live from `pg_indexes` on 2026-08-11
 (Actions runs 31417585775 and 31426819498):
 
@@ -251,11 +251,11 @@ CREATE UNIQUE INDEX uq_inv_mov_do_source
 ```
 
 `0230:130-134` enumerates this table's indexes as the four NON-unique ones only,
-which is how a reader concludes the backstop does not exist. **0278 ends that**:
+which is how a reader concludes the backstop does not exist. **0279 ends that**:
 it records all four unique indexes in the migration tree (`IF NOT EXISTS`, a
 no-op against production) so the schema can be read from the repo again.
 
-**Since 0278 the DO one is `uq_inv_mov_do_source_v2`:**
+**Since 0279 the DO one is `uq_inv_mov_do_source_v2`:**
 
 ```sql
 CREATE UNIQUE INDEX uq_inv_mov_do_source_v2
@@ -274,7 +274,7 @@ backstop would be silently gone. `uq_inv_mov_dr_source`,
 four-column shape — the DR resync solved the same collision its own way, and the
 consignment paths write once.
 
-**Edit-after-ship resync — fixed by 0278; before it, it never worked at all.**
+**Edit-after-ship resync — fixed by 0279; before it, it never worked at all.**
 `resyncInventoryForDo` writes DELTA rows (an extra OUT to take more, an IN to
 give back) reusing the DO's `source_doc_id`. Because `movement_type` is not in
 the key, every delta for a bucket the first ship had already written was a
@@ -301,7 +301,7 @@ What still lands outside all of this: a delta for a bucket whose recomputed
 `variant_key` differs from the one it shipped under. That is how the MAKOTO
 divergence produced an OUT that consumed no lot
 (`docs/inventory-ledger-divergence-coe.md`) — a different bug in a different
-place, untouched by 0278.
+place, untouched by 0279.
 
 **Which warehouse:** `resolveDoLineWarehouses` (`:645`), in order —
 (1) the linked SO line's `warehouse_id`, (2) the DO header's `warehouse_id`,

@@ -353,7 +353,7 @@ mis-posted, the ledger was never corrupted by it - it simply never followed the
 edit. What is lost is unrecoverable-by-code anyway (nobody knows what the pre-fix
 edits intended), and nothing must be deleted to repair it.
 
-**Fix** - migration 0278 adds `scm.inventory_movements.correction_seq smallint`
+**Fix** - migration 0279 adds `scm.inventory_movements.correction_seq smallint`
 and replaces `uq_inv_mov_do_source` with `uq_inv_mov_do_source_v2`, keyed on
 `(..., COALESCE(correction_seq, 0))`. NULL = the document's PRIMARY posting, so
 every existing row folds to 0 and the double-post backstop is unchanged; 1..N =
@@ -452,7 +452,7 @@ to close a quote at all.
 `useDeletePurchaseConsignmentOrder` and the desktop CANCELLED-state button for
 the PC Order; nothing for quotes, which has no frontend at all. PC Order already
 had `PATCH /:id/cancel`, so removing the delete cost it nothing. Quotes did not,
-so mig 0278 added `cancelled_at` / `cancelled_by` (the sibling documents' shape)
+so mig 0279 added `cancelled_at` / `cancelled_by` (the sibling documents' shape)
 and `PATCH /quotes/:id/cancel` was built to use them - "open" now means not
 promoted AND not cancelled, in the list filter, the edit path and the partial
 index. Create-time rollback deletes left in place in both modules with comments

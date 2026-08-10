@@ -1,8 +1,8 @@
 -- ----------------------------------------------------------------------------
--- RE-CHECK NUMBER AT MERGE — parallel PRs; last on main was 0277 when branched.
+-- RE-CHECK NUMBER AT MERGE — parallel PRs; last on main was 0278 when branched.
 -- (Money-path / FIFO-costing adjacent: DDL on scm.inventory_movements.)
 --
--- 0278 — editing a SHIPPED delivery order can finally reach the stock ledger.
+-- 0279 — editing a SHIPPED delivery order can finally reach the stock ledger.
 --
 -- THE DEFECT
 --   resyncInventoryForDo (delivery-orders-mfg.ts) is the edit-after-ship path.

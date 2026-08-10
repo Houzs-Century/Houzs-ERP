@@ -22,7 +22,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
  *
  * The suite builds the index EXACTLY as production has it (that is the whole
  * point: no file had it, so the fixture is where it becomes checkable), proves
- * the rejection is real, then applies migration 0278 and proves four things:
+ * the rejection is real, then applies migration 0279 and proves four things:
  *
  *   1. a first correction now lands;
  *   2. a SECOND correction on the same bucket also lands — the case that rules
@@ -123,7 +123,7 @@ async function firstShip(sql: Sql, qty = 5): Promise<void> {
             'DO', ${DO_ID}, 'DO-TEST-001', 'First ship')`;
 }
 
-/** One resync delta, as resyncInventoryForDo writes it AFTER 0278. */
+/** One resync delta, as resyncInventoryForDo writes it AFTER 0279. */
 function correction(sql: Sql, movementType: 'IN' | 'OUT', qty: number, seq: number | null) {
   return sql`
     INSERT INTO scm.inventory_movements
@@ -134,7 +134,7 @@ function correction(sql: Sql, movementType: 'IN' | 'OUT', qty: number, seq: numb
             'Resync: line qty reduced / line deleted (shipped DO).')`;
 }
 
-describePg('editing a shipped DO reaches the stock ledger (migration 0278)', () => {
+describePg('editing a shipped DO reaches the stock ledger (migration 0279)', () => {
   beforeAll(async () => { admin = postgres(url, { max: 1, onnotice: () => {} }); });
   afterAll(async () => { await admin?.end({ timeout: 5 }); });
   beforeEach(async () => { await resetFixture(admin); });

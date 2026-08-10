@@ -1542,8 +1542,8 @@ async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, doNo: str
    trigger create a new lot at the original cost basis; a fresh OUT insert lets
    it consume more lots.
 
-   HOW THE DELTA ROWS ESCAPE THE PER-BUCKET UNIQUE (migration 0278).
-   Production carries a PARTIAL UNIQUE index on this path's own key. Until 0278
+   HOW THE DELTA ROWS ESCAPE THE PER-BUCKET UNIQUE (migration 0279).
+   Production carries a PARTIAL UNIQUE index on this path's own key. Until 0279
    the comment here read "Migration 0109 dropped the per-bucket UNIQUE so we can
    freely write multiple delta rows over time" — that was FALSE, and it was false
    for months because the index is prod-only DDL that appeared in no file in this
@@ -1557,7 +1557,7 @@ async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, doNo: str
    REJECTED. Measured the same day: ZERO movements in production carried this
    function's notes marker. It had never landed a single row.
 
-   0278 replaces that index with uq_inv_mov_do_source_v2, which adds
+   0279 replaces that index with uq_inv_mov_do_source_v2, which adds
    COALESCE(correction_seq, 0) to the key, and this function now stamps
    correction_seq = 1..N on the rows it writes. A first-ship row keeps
    correction_seq NULL, folds to 0, and its double-post backstop is unchanged.
@@ -1570,15 +1570,15 @@ async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, doNo: str
    id" as "already reversed" — so re-tagging these rows ADJUSTMENT would make
    CANCELLING an edited DO a silent no-op.
 
-   What always got through, even before 0278: a delta for a bucket with no
+   What always got through, even before 0279: a delta for a bucket with no
    first-ship row — a newly ADDED line, or an existing line whose recomputed
    variant_key differs from the one shipped under. The second of those is how the
    MAKOTO divergence landed an OUT that consumed no lot
-   (docs/inventory-ledger-divergence-coe.md). 0278 does not change that; a
+   (docs/inventory-ledger-divergence-coe.md). 0279 does not change that; a
    variant_key that drifts is a different bug in a different place.
 
    A failure is still LOGGED and audited rather than silent (since 2026-08-05),
-   which is what must happen on a pre-0278 database: writeMovements strips the
+   which is what must happen on a pre-0279 database: writeMovements strips the
    unknown column, retries, and the old rejection stands loudly.
 
    IDEMPOTENT: re-running with no line changes yields delta 0 everywhere — no
@@ -1657,7 +1657,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
      into the SAME batched buckets as the target. Pre-0121 (not batch-aware) we
      skip the column entirely — it may not exist yet — and every bucket's batch
      segment is '' (matches the non-batched target keys above). */
-  /* correction_seq (0278) rides the select so we can hand the NEXT correction
+  /* correction_seq (0279) rides the select so we can hand the NEXT correction
      number to each bucket below. Reading it here is also what keeps this
      function idempotent: the corrections it wrote on earlier saves are still
      source_doc_type='DO' rows, so they aggregate into current_net_out exactly
@@ -1669,9 +1669,9 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
     .select(`${baseSelect}, correction_seq`)
     .eq('source_doc_type', 'DO')
     .eq('source_doc_id', deliveryOrderId);
-  /* Forward-compat (0278): the column may not exist yet — retry without it. Every
+  /* Forward-compat (0279): the column may not exist yet — retry without it. Every
      bucket then reports maxSeq 0, the write below stamps 1, writeMovements strips
-     the unknown column and the insert fails exactly as it did before 0278 —
+     the unknown column and the insert fails exactly as it did before 0279 —
      loudly, into RECOUNT_FAILED. */
   if (movsRes.error && (movsRes.error.message ?? '').includes('correction_seq')) {
     movsRes = await sb.from('inventory_movements')
@@ -1719,7 +1719,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
     const variant_key = parts[2] ?? '';
     const batch_no = parts[3] || null; // '' → null (non-sofa); else the bound dye-lot batch
     const product_name = t?.product_name ?? a.product_name ?? null;
-    /* The NEXT correction number for this bucket (0278). The first ship carries
+    /* The NEXT correction number for this bucket (0279). The first ship carries
        correction_seq NULL, which reads as 0 here, so the first correction is 1
        and each later save takes the next slot in uq_inv_mov_do_source_v2. A
        bucket with NO first-ship row (a newly added line) also starts at 1 — its
