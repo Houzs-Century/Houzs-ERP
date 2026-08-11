@@ -168,7 +168,8 @@ const CATALOGUE = [
 const labelFor = (e) => {
   if (!e.name) return e.id;
   // GD2502 reads with a '#' in its label, which is how every existing row reads
-  if (e.series === "GD2502") return `${e.id.replace("-", "#")} ${e.name}`;
+  // GD2502 used to read "GD2502#04 OAK". The owner unified the shape on
+  // 2026-08-11 ("# 要不要一起去掉 ... OK"), so the '#' is gone here too.
   return `${e.id} ${e.name}`;
 };
 
