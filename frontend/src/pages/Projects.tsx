@@ -9392,6 +9392,27 @@ function ChecklistRow({
     fileInputRef.current?.click();
   }
 
+  // Remove a file from a card-section task (owner 2026-08-11: "add remove button
+  // for whoever can edit"). Gated in the UI on the SAME attach capability
+  // (canManage) as the Attach button, so anyone who can add a file can remove it;
+  // the backend DELETE already allows projects.write / tick-for-own-role.
+  async function removeAttachment(att: TaskAttachment) {
+    if (
+      !(await dialog.confirm({
+        message: `Remove "${att.file_name}"?`,
+        danger: true,
+        confirmLabel: "Remove",
+      }))
+    )
+      return;
+    try {
+      await api.del(`/api/projects/checklist/attachments/${att.id}`);
+      onAttachmentsChanged?.();
+    } catch (e: any) {
+      toast?.error(e?.message || "Something went wrong. Please try again.");
+    }
+  }
+
   /** Open one attachment in a new tab (auth-protected R2 goes through
    *  api.fetchBlobUrl, same as the stock-transfer + TaskAttachmentRow viewers).
    *  Used by the per-file chips on pill rows (Rental Payment / Security
@@ -9576,18 +9597,32 @@ function ChecklistRow({
         {attachments && attachments.length > 0 && (
           <div className="mt-1.5 flex flex-col gap-0.5">
             {attachments.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                onClick={(e) => { e.stopPropagation(); void openAttachment(a); }}
-                title={`Open ${a.file_name}`}
-                className="flex items-center gap-1 text-left text-[10px] text-ink-muted hover:text-accent"
-              >
-                <Paperclip size={11} className="shrink-0" />
-                <span className="truncate underline decoration-dotted underline-offset-2">
-                  {a.file_name}
-                </span>
-              </button>
+              <div key={a.id} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); void openAttachment(a); }}
+                  title={`Open ${a.file_name}`}
+                  className="flex min-w-0 items-center gap-1 text-left text-[10px] text-ink-muted hover:text-accent"
+                >
+                  <Paperclip size={11} className="shrink-0" />
+                  <span className="truncate underline decoration-dotted underline-offset-2">
+                    {a.file_name}
+                  </span>
+                </button>
+                {/* Remove file — shown to whoever can attach here (owner
+                    2026-08-11). id < 0 = merged crew photo, never removable. */}
+                {canManage && !readOnlyAttach && a.id > 0 && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); void removeAttachment(a); }}
+                    title="Remove file"
+                    aria-label={`Remove ${a.file_name}`}
+                    className="shrink-0 text-ink-muted hover:text-err"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         )}
