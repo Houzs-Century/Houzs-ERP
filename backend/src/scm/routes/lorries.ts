@@ -45,6 +45,11 @@ const COLS = [
   // WS4a (mig 0210) — the 3PL carrier company this lorry belongs to (NULL = own
   // fleet / not attached).
   'threepl_company_id',
+  /* Mig 0245 — the three dates a lorry's life is measured from, none of which
+     is purchase_date: when it was BUILT, when it was REGISTERED with JPJ (what
+     the road-tax / insurance / PUSPAKOM cycles anchor to), and the first day it
+     worked FOR US (the denominator for cost-per-day). */
+  'manufacture_date', 'registration_date', 'in_service_date',
 ].join(', ');
 
 const CAPACITY_LAYERS = new Set(['SETS', 'REVENUE', 'BOTH']);
@@ -108,6 +113,9 @@ function toIntOrNull(v: unknown): { ok: true; value: number | null } | { ok: fal
    2026-07-16). Every entry here is genuine operator-entered data. */
 const LORRY_DATE_FIELDS: [wire: string, col: string][] = [
   ['purchaseDate', 'purchase_date'],
+  ['manufactureDate', 'manufacture_date'],
+  ['registrationDate', 'registration_date'],
+  ['inServiceDate', 'in_service_date'],
   ['roadTaxExpiry', 'road_tax_expiry'],
   ['insuranceExpiry', 'insurance_expiry'],
   ['puspakomExpiry', 'puspakom_expiry'],
@@ -233,10 +241,27 @@ lorries.patch('/:id', async (c) => {
     );
   }
   if (body.notes !== undefined) updates.notes = (body.notes as string) || null;
+  /* The Fleet grid's Outsource tick-box posts only the flag, so the current
+     link has to come from the row — resolveCarrierLink cannot see it otherwise
+     and the two fields silently disagree (owner, 2026-08-02). */
+  const sbCur = c.get('supabase');
+  const { data: curRow, error: curErr } = await sbCur
+    .from('lorries').select('threepl_company_id').eq('id', id).maybeSingle();
+  if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
+  if (!curRow) return c.json({ error: 'lorry_not_found' }, 404);
+
   const link = resolveCarrierLink({
     threeplCompanyId: body.threeplCompanyId as string | null | undefined,
     ownFlag: body.isInternal === undefined ? undefined : body.isInternal !== false,
+
+    currentCarrierId: (curRow.threepl_company_id ?? null) as string | null,
   });
+  if (link.conflict === 'own_flag_while_linked') {
+    return c.json({
+      error: 'linked_to_carrier',
+      reason: 'This row belongs to a 3PL company. Detach it from the carrier first, then mark it in-house.',
+    }, 409);
+  }
   if (link.carrierId !== undefined) updates.threepl_company_id = link.carrierId;
   if (link.ownFlag !== undefined) updates.is_internal = link.ownFlag;
   if (body.active !== undefined) updates.active = Boolean(body.active);

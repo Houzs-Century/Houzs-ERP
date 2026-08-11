@@ -222,6 +222,29 @@ matches in this module's chain: `0082_scm_fx_landed_cost.sql`,
 `0154_scm_oversell_retrocost.sql`, `0057_scm_dropship_do.sql`. Do not trust a bare
 "migration NNNN" in a comment without checking the filename.
 
+### `grn_items.variants` is a SNAPSHOT, and nothing sweeps it (2026-08-11)
+
+`grn_items.variants` is copied from the parent PO line at receipt
+(`create-migrated-documents.mjs:157`, and the UI post path likewise). After
+that **no script has ever written it again**. `refresh-so-variants.mjs` writes
+`mfg_sales_order_items`; `refresh-po-variants.mjs` writes
+`purchase_order_items`; neither touches this table, and no parity check
+compared the two until `diag-so-po-variant-divergence.mjs` grew Section E.
+
+The consequence is the one every snapshot column has: **repairing the PO line
+does not repair the receipt taken from it.** A wrong value frozen at receipt
+survives every later correction of its parent, silently.
+
+That is usually correct - a genuine difference between a receipt and its order
+is history and must be preserved. The exception is a figure that could never
+have been a measurement. Production, 2026-08-11: of 442 GRN lines carrying
+variants, 331 agree with their parent, 110 differ plausibly (left alone), and
+**one** held `divanHeight 151"` / `totalHeight 160"` where the parent reads
+14"/23". `repair-grn-variant-snapshot.mjs` + Actions -> **Repair GRN variant
+snapshot** restores only that class: out of the observed range, or equal to a
+digit run of the fabric code bound on the same row, AND the parent agreeing
+with its own AutoCount text. Everything else is listed, never guessed at.
+
 ---
 
 ## 5. Stock direction
@@ -281,6 +304,17 @@ Return** (`/purchase-returns`), a separate module.
 | Status POSTED, DRAFT excluded | over-receipt beyond the PO line's remaining | `verifyGrnOverReceipt` (`:602`), re-run at confirm `:1725-1728` |
 | Status not DRAFT / (POSTED without children) | the whole page read-only (frontend) | `GoodsReceivedDetail.tsx:246` — `isLocked = !(status === 'DRAFT' || (status === 'POSTED' && !hasChildren))`; the page drops out of edit mode automatically if it locks mid-edit (`:253-258`) |
 | Source PO belongs to another company | all three create paths | `firstCrossCompanyPo` (`:30-48`) — receiving another company's PO would post the stock and its cost into the active company's books |
+| An **unlinked line for a material the header's PO already orders** | `POST /` and `POST /:id/items` | `findUnlinkedPoLines` (`lib/grn-unlinked-po-lines.ts`) → 409 `unlinked_po_lines` |
+
+**Why that last one exists, and what it is NOT.** `grn_items.purchase_order_item_id`
+is nullable so a free/manual receipt can land stock with no PO behind it — that
+stays allowed and untouched. What is now refused is receiving THIS PO's own
+material while leaving the link off: the stock goes in, `received_qty` does not
+move, `verifyGrnOverReceipt` sees nothing, and the same delivery can be received
+again. It is the receiving-side mirror of the delivery-side defect in
+`docs/unlinked-line-duplicate-coe.md` (owner: *"包括 GR 那边也是"*). A production
+scan on 2026-08-04 found **no** GRN in this state — the guard is preventative
+here, corrective on the delivery side.
 
 **The header PATCH is the exception**: it is NOT gated by `grnHasDownstream`. A
 GRN with a downstream PI can still have its header edited, including a warehouse
@@ -373,3 +407,7 @@ lists**, and structurally so:
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission
 inventory: `docs/generated/`.
+
+How this document's lines relate to the SO / PO / GRN / DO it was copied from,
+which columns the migrated writer did and did not copy, and what a correction
+applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.

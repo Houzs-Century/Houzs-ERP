@@ -49,7 +49,12 @@ import {
 import { subscribeActiveCompany, getActiveCompanySnapshot } from '../../../lib/activeCompany';
 import {
   EMPTY_LAYOUT,
+  createNamedLayout,
   dataGridTableKey,
+  deleteNamedLayout,
+  renameCompanyDefault,
+  renameNamedLayout,
+  updateNamedLayout,
   getTableLayoutsSnapshot,
   saveCompanyDefault,
   saveMyLayout,
@@ -58,7 +63,9 @@ import {
   type StoredLayout,
 } from '../../../lib/tableLayouts';
 import { shortCompanyName } from '../../../lib/branding';
-import { LayoutSection, type LayoutPresetOption } from '../../../components/LayoutSection';
+import { inferColumnGroup } from '../../../lib/columnGroups';
+import { withSingleActive, type LayoutPresetOption } from '../../../components/LayoutSection';
+import { ColumnsDrawer, type DrawerColumn } from '../../../components/ColumnsDrawer';
 import styles from './DataGrid.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -66,6 +73,9 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
 export type DataGridColumn<T> = {
   key: string;
   label: string;
+  /** Category this column sits under in the Columns drawer — same opt-in field
+   *  DataTable's Column carries. Unannotated grids render one flat list. */
+  group?: string;
   accessor: (row: T) => ReactNode;
   /** default width in px */
   width?: number;
@@ -199,8 +209,15 @@ export type DataGridProps<T> = {
     selectedKeys: Set<string>;
     onToggle: (key: string) => void;
     /** Toggle all visible rows. `keys` = the keys currently shown; `allSelected`
-        = whether they are all already selected (so the parent clears vs selects). */
+        = whether they are all already selected (so the parent clears vs selects).
+        Keys vetoed by `isDisabled` are NOT included — the header checkbox must
+        never tick a row the operator cannot tick by hand. */
     onToggleAll: (keys: string[], allSelected: boolean) => void;
+    /** Optional per-row veto (2026-08-03). A row whose key returns true renders a
+        disabled checkbox and drops out of the header checkbox's set. Used by the
+        DO-from-SO picker, where picking one customer locks out every other
+        customer's lines (one Delivery Order ships to ONE customer). */
+    isDisabled?: (key: string) => boolean;
   };
   /**
    * Compact mode for grids embedded inside another grid's expansion row
@@ -220,6 +237,45 @@ export type DataGridProps<T> = {
    * callers keep their in-grid search box.
    */
   hideSearch?: boolean;
+  /**
+   * Default ordering while NO column sort is active (arrangement queues,
+   * owner 2026-08-07). `layout.sort` is single-key; a multi-key default like
+   * "date → state → postcode" therefore arrives as ONE pure comparator, applied
+   * to the filtered rows only while `layout.sort` is null. A header the
+   * operator clicks overrides as always, and cycling that header back to "off"
+   * returns HERE (the same relationship DataTable's null sort has to its
+   * backend default order). Opt-in per grid: omitted (every existing caller),
+   * rows render exactly as passed — byte-identical behaviour.
+   */
+  defaultSort?: (a: T, b: T) => number;
+  /**
+   * RENDER-TIME hide overlay (Option B map narrowing, owner 2026-08-08). Keys
+   * listed here are hidden IN ADDITION to the user's own hidden set, without
+   * ever writing the persisted layout — drop the prop and the user's own
+   * column prefs return exactly as saved. Used by the delivery boards to
+   * auto-narrow to the essential columns while the side map is open. The
+   * Columns drawer keeps showing the user's REAL prefs (the overlay is a
+   * temporary state, not a choice of theirs to persist).
+   */
+  overlayHidden?: readonly string[];
+  /**
+   * Fired on every EXPLICIT column-visibility choice the user makes — the
+   * Columns drawer's toggle / Show all / Reset, the header context menu's
+   * Hide/Show column, and applying a saved layout. The Option-B map pages
+   * listen so their compact-columns overlay yields the moment the user picks
+   * columns by hand (owner bug 2026-08-08: the overlay must be a DEFAULT,
+   * never a lock — "已经添加了 column 可是它却没有出来"). Reorder / pin /
+   * width gestures do NOT fire it: they never conflict with a hide overlay.
+   */
+  onUserAdjustColumns?: () => void;
+  /**
+   * Imperative scroll-to-row (map pin → board linkage, owner 2026-08-08).
+   * Bump `nonce` with the target row's key: the grid selects (highlights) the
+   * row and scrolls it into view — via the virtualizer when windowed, via
+   * scrollIntoView otherwise. Same pin clicked twice re-scrolls (the nonce is
+   * the trigger, the key just names the row).
+   */
+  scrollToRow?: { key: string; nonce: number } | null;
 };
 
 type Layout = DataGridLayout;
@@ -302,6 +358,10 @@ function DataGridInner<T>({
   embedded = false,
   hideSearch = false,
   loadedSearchLimit,
+  defaultSort,
+  overlayHidden,
+  onUserAdjustColumns,
+  scrollToRow,
 }: DataGridProps<T>) {
   /* HOUZS-style inline expansion (PR so-list-houzs-port). Tracks the set of
      expanded row ids; rendering inserts a colSpan sub-<tr> directly under
@@ -616,15 +676,79 @@ function DataGridInner<T>({
       return out;
     });
   }, []);
+  // One reset for every filter kind — shared by the toolbar "Clear filters"
+  // pill and the chip row's "Clear all".
+  const clearAllFilters = useCallback(() => {
+    setFilters({});
+    setDateFilters({});
+    setNumberFilters({});
+    setDateRangeFilters({});
+  }, []);
+
+  /* ── Active-filter chips (owner 2026-08-07: stacked multi-column filters
+     must be VISIBLE and individually removable). Filters already AND across
+     columns; the funnel highlight alone doesn't show WHICH columns are
+     narrowing the list once two or three stack. One chip per active filter —
+     column label + a short value summary + its own clear — rendered in a row
+     under the toolbar only while at least one filter is active, so a grid with
+     no filters set renders exactly as before. A column carrying both a date
+     preset and a custom range yields two chips (they AND together, and each
+     clears on its own). */
+  const activeFilterChips = useMemo(() => {
+    const labelOf = (k: string) => {
+      const c = columns.find((cc) => cc.key === k);
+      return c?.label || c?.exportLabel || k;
+    };
+    const chips: Array<{ id: string; label: string; summary: string; clear: () => void }> = [];
+    for (const [k, vals] of Object.entries(filters)) {
+      if (vals.length === 0) continue;
+      chips.push({
+        id: `values:${k}`,
+        label: labelOf(k),
+        summary: vals.length === 1 ? (vals[0] || '(blank)') : `${vals.length} values`,
+        clear: () => setFilters((prev) => { const o = { ...prev }; delete o[k]; return o; }),
+      });
+    }
+    for (const [k, preset] of Object.entries(dateFilters)) {
+      chips.push({
+        id: `preset:${k}`,
+        label: labelOf(k),
+        summary: DATE_PRESETS.find((p) => p.key === preset)?.label ?? preset,
+        clear: () => setDateFilters((prev) => { const o = { ...prev }; delete o[k]; return o; }),
+      });
+    }
+    for (const [k, range] of Object.entries(dateRangeFilters)) {
+      chips.push({
+        id: `range:${k}`,
+        label: labelOf(k),
+        summary: `${range.from ?? 'start'} - ${range.to ?? 'end'}`,
+        clear: () => setDateRangeFilters((prev) => { const o = { ...prev }; delete o[k]; return o; }),
+      });
+    }
+    for (const [k, range] of Object.entries(numberFilters)) {
+      const parts: string[] = [];
+      if (range.min != null) parts.push(`min ${range.min}`);
+      if (range.max != null) parts.push(`max ${range.max}`);
+      chips.push({
+        id: `number:${k}`,
+        label: labelOf(k),
+        summary: parts.join(', '),
+        clear: () => setNumberFilters((prev) => { const o = { ...prev }; delete o[k]; return o; }),
+      });
+    }
+    return chips;
+  }, [filters, dateFilters, dateRangeFilters, numberFilters, columns]);
 
   /* HOUZS-parity column show/hide actions for the Columns popover. Reset
      clears hidden + order + widths (preserving groupBy + sort so search
      state survives). toggleColumn flips a column's presence in `hidden`. */
   const resetColumns = useCallback(() => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({ ...l, hidden: [], order: [], widths: {} }));
     setColumnsMenuOpen(false);
-  }, [setLayout]);
+  }, [setLayout, onUserAdjustColumns]);
   const toggleColumn = useCallback((colKey: string) => {
+    onUserAdjustColumns?.();
     setLayout((l) => {
       /* If we're still on the pristine-defaults overlay (no explicit
          choices yet) materialize the current set of hidden keys before
@@ -639,7 +763,7 @@ function DataGridInner<T>({
         : [...baseHidden, colKey];
       return { ...l, hidden };
     });
-  }, [columns, setLayout]);
+  }, [columns, setLayout, onUserAdjustColumns]);
   /* "Show all" — every column visible. Materializes the order when the layout
      is still pristine: an empty order + empty hidden would put the layout back
      on the defaults overlay and instantly re-hide every defaultHidden column. */
@@ -669,13 +793,29 @@ function DataGridInner<T>({
         active: serializeLayout(saved) === currentSignature,
       });
     }
-    return rows.length > 0 ? rows : undefined;
+    /* The user's OWN saved layouts belong in this picker too — without them
+       the grid could save a layout it then never offered back. */
+    for (const saved of layoutStore.myLayouts[serverTableKey] ?? []) {
+      rows.push({
+        id: `saved:${saved.id}`,
+        label: saved.name,
+        hint: 'Saved by you',
+        count: Math.max(0, columns.length - saved.layout.hidden.length),
+        isDefault: false,
+        active: serializeLayout(saved.layout) === currentSignature,
+        savedId: saved.id,
+      });
+    }
+    return rows.length > 0 ? withSingleActive(rows) : undefined;
   }, [layoutStore, serverTableKey, layout, columns.length]);
 
   const applyGridPreset = useCallback((id: string) => {
-    const companyId = Number(id.split(':')[1]);
-    const saved = layoutStore.defaults[String(companyId)]?.[serverTableKey];
+    const [kind, rawId] = id.split(':');
+    const saved = kind === 'saved'
+      ? layoutStore.myLayouts[serverTableKey]?.find((l) => l.id === Number(rawId))?.layout
+      : layoutStore.defaults[String(Number(rawId))]?.[serverTableKey];
     if (!saved) return;
+    onUserAdjustColumns?.();
     setLayout((l) => ({
       order: saved.order,
       hidden: saved.hidden,
@@ -685,16 +825,17 @@ function DataGridInner<T>({
       // Picking a layout must not re-sort the list under the operator.
       sort: l.sort,
     }));
-  }, [layoutStore, serverTableKey, setLayout]);
+  }, [layoutStore, serverTableKey, setLayout, onUserAdjustColumns]);
 
 
   const showAllColumns = useCallback(() => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({
       ...l,
       hidden: [],
       order: l.order.length ? l.order : columns.map((c) => c.key),
     }));
-  }, [columns, setLayout]);
+  }, [columns, setLayout, onUserAdjustColumns]);
 
   // ── Resolve visible/ordered columns ───────────────────────────────
   // If `expandable` is set, prepend a synthetic 32px chevron column that
@@ -743,6 +884,139 @@ function DataGridInner<T>({
   }, [columns, layout.order]);
 
   const [defaultSaveState, setDefaultSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  /* ── Drawer translation ──────────────────────────────────────────────────
+     One row per real column (the synthetic chevron the `expandable` option
+     prepends is not the operator's to hide), carrying what the shared drawer
+     draws. Derived, so every gesture lands on this grid's own layout state. */
+  const drawerColumns = useMemo<DrawerColumn[]>(
+    () =>
+      columns.map((c) => ({
+        key: c.key,
+        label: c.label || c.key,
+        // Explicit beats inferred — same rule as the DataTable lists.
+        group: c.group || inferColumnGroup(c.key, c.label || c.key) || "",
+        visible: !effectiveHidden.has(c.key),
+        width: layout.widths[c.key] ?? c.width ?? 140,
+        /* This grid freezes to the LEFT only; the drawer's three-state cycle
+           degrades to left ⇄ none here rather than offering a Right the grid
+           would not honour. Bringing right-freeze to the vendored grid is its
+           own change. */
+        pinned: layout.pinned.includes(c.key) ? ('left' as const) : null,
+      })),
+    [columns, effectiveHidden, layout.widths, layout.pinned],
+  );
+
+  /** Move `key` into `targetKey`'s slot — the drawer's single reorder rule. */
+  const reorderColumn = useCallback(
+    (key: string, targetKey: string) => {
+      setLayout((l) => {
+        const order = (l.order.length ? l.order : columns.map((c) => c.key)).filter(
+          (k) => k !== key,
+        );
+        const at = order.indexOf(targetKey);
+        order.splice(at < 0 ? order.length : at, 0, key);
+        return { ...l, order };
+      });
+    },
+    [columns, setLayout],
+  );
+
+  const togglePinnedColumn = useCallback(
+    (key: string) => {
+      setLayout((l) => ({
+        ...l,
+        pinned: l.pinned.includes(key)
+          ? l.pinned.filter((k) => k !== key)
+          : [...l.pinned, key],
+      }));
+    },
+    [setLayout],
+  );
+
+  /** What is ON SCREEN, materialised — for publishing and for saving a named
+   *  layout. The stored value is the wrong source: inherit a company default,
+   *  save it, and you would save nothing. */
+  const gridRenderedLayout = useCallback(
+    (): StoredLayout => ({
+      ...EMPTY_LAYOUT,
+      order: resolvedOrder,
+      hidden: [...effectiveHidden],
+      widths: layout.widths,
+      pinned: layout.pinned,
+      groupBy: layout.groupBy,
+    }),
+    [resolvedOrder, effectiveHidden, layout],
+  );
+
+  const saveGridLayout = useCallback(
+    (name: string) => createNamedLayout(serverTableKey, name, gridRenderedLayout()).then(() => undefined),
+    [serverTableKey, gridRenderedLayout],
+  );
+  const duplicateGridLayout = useCallback(
+    (id: string, name: string) => {
+      const source = gridLayoutPresets?.find((p) => p.id === id);
+      const saved = source?.savedId != null
+        ? layoutStore.myLayouts[serverTableKey]?.find((l) => l.id === source.savedId)?.layout
+        : undefined;
+      const fromCompany = source?.id.startsWith("company:")
+        ? layoutStore.defaults[source.id.slice("company:".length)]?.[serverTableKey]
+        : undefined;
+      return createNamedLayout(
+        serverTableKey,
+        name,
+        saved ?? fromCompany ?? gridRenderedLayout(),
+      ).then(() => undefined);
+    },
+    [serverTableKey, gridLayoutPresets, layoutStore, gridRenderedLayout],
+  );
+  const renameGridLayout = useCallback(
+    (id: string, name: string) => {
+      const target = gridLayoutPresets?.find((p) => p.id === id);
+      if (target?.savedId != null) return renameNamedLayout(serverTableKey, target.savedId, name);
+      if (target?.id.startsWith("company:")) return renameCompanyDefault(serverTableKey, name);
+      return Promise.resolve();
+    },
+    [serverTableKey, gridLayoutPresets],
+  );
+  const updateGridLayout = useCallback(
+    (id: string) => {
+      const target = gridLayoutPresets?.find((p) => p.id === id);
+      if (target?.savedId != null) {
+        return updateNamedLayout(serverTableKey, target.savedId, gridRenderedLayout());
+      }
+      if (target?.id.startsWith('company:')) {
+        return saveCompanyDefault(serverTableKey, gridRenderedLayout());
+      }
+      return Promise.resolve();
+    },
+    [serverTableKey, gridLayoutPresets, gridRenderedLayout],
+  );
+
+  const deleteGridLayout = useCallback(
+    (savedId: number) => deleteNamedLayout(serverTableKey, savedId),
+    [serverTableKey],
+  );
+
+  const exportGridColumnConfig = useCallback(() => {
+    const payload = {
+      table: storageKey,
+      exportedAt: new Date().toISOString(),
+      columns: drawerColumns,
+    };
+    try {
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+      );
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `columns-${storageKey}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Blob/URL unavailable — the menu item does nothing rather than throwing.
+    }
+  }, [storageKey, drawerColumns]);
+
   const gridDefaultManager = useMemo(() => {
     if (!layoutStore.ready || !layoutStore.canManageDefaults) return undefined;
     const cid = layoutStore.activeCompanyId;
@@ -780,8 +1054,11 @@ function DataGridInner<T>({
 
   const visibleColumns = useMemo(() => {
     const byKey = new Map(columns.map((c) => [c.key, c]));
+    /* Render-time overlay (map narrowing) — hides ON TOP of the user's set,
+       never written to the layout, so closing the map restores their prefs. */
+    const overlay = overlayHidden && overlayHidden.length > 0 ? new Set(overlayHidden) : null;
     const base = resolvedOrder
-      .filter((k) => !effectiveHidden.has(k))
+      .filter((k) => !effectiveHidden.has(k) && !(overlay?.has(k) ?? false))
       .map((k) => byKey.get(k)!)
       .filter(Boolean);
     const synthetic: DataGridColumn<T>[] = [];
@@ -802,7 +1079,7 @@ function DataGridInner<T>({
       });
     }
     return synthetic.length ? [...synthetic, ...base] : base;
-  }, [columns, resolvedOrder, effectiveHidden, expandable, selectable]);
+  }, [columns, resolvedOrder, effectiveHidden, expandable, selectable, overlayHidden]);
 
   // ── Filtered + sorted + grouped rows ──────────────────────────────
   /* Precompute one lowercased search blob per row (once per rows/columns
@@ -889,9 +1166,12 @@ function DataGridInner<T>({
   }, [filterMenu, columns, rows, filterColValue]);
 
   const sortedRows = useMemo(() => {
-    if (!layout.sort) return filteredRows;
+    /* No active column sort → the grid's default order: the caller's
+       `defaultSort` comparator when provided (arrangement queues), otherwise
+       the rows exactly as passed (every other grid, unchanged). */
+    if (!layout.sort) return defaultSort ? [...filteredRows].sort(defaultSort) : filteredRows;
     const col = columns.find((c) => c.key === layout.sort!.key);
-    if (!col) return filteredRows;
+    if (!col) return defaultSort ? [...filteredRows].sort(defaultSort) : filteredRows;
     const cmp = col.sortFn ?? ((a: T, b: T) => {
       // Fall back to the column's group/search value when the cell is JSX
       // (accessor text is empty for a ReactNode) so columns without an
@@ -905,7 +1185,7 @@ function DataGridInner<T>({
     });
     const dir = layout.sort.dir === 'asc' ? 1 : -1;
     return [...filteredRows].sort((a, b) => cmp(a, b) * dir);
-  }, [filteredRows, columns, layout.sort, colValue]);
+  }, [filteredRows, columns, layout.sort, colValue, defaultSort]);
 
   // Selection callback when row changes.
   useEffect(() => {
@@ -1054,10 +1334,14 @@ function DataGridInner<T>({
   };
 
   // ── Header context menu actions ──────────────────────────────────
-  const hideColumn = (key: string) =>
+  const hideColumn = (key: string) => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({ ...l, hidden: l.hidden.includes(key) ? l.hidden : [...l.hidden, key] }));
-  const showColumn = (key: string) =>
+  };
+  const showColumn = (key: string) => {
+    onUserAdjustColumns?.();
     setLayout((l) => ({ ...l, hidden: l.hidden.filter((k) => k !== key) }));
+  };
   const pinLeft = (key: string) =>
     setLayout((l) => {
       // pin = move to front of order
@@ -1207,6 +1491,27 @@ function DataGridInner<T>({
     ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1]!.end
     : 0;
 
+  /* Map pin → board row linkage (Option B, owner 2026-08-08): the parent bumps
+     `scrollToRow.nonce` with a row key; the grid selects (the existing
+     single-row highlight) and scrolls the row into view. Virtualized lists go
+     through the virtualizer (the row may not be mounted); plain lists find the
+     <tr> by its data-rowkey. A key not in the current view (filtered out /
+     other tab) just highlights nothing — never a crash. */
+  useEffect(() => {
+    const target = scrollToRow;
+    if (!target || !target.key) return;
+    setSelectedKey(target.key);
+    if (canVirtualize) {
+      const idx = renderList.findIndex((it) => it.kind === 'row' && rowKey(it.row) === target.key);
+      if (idx >= 0) rowVirtualizer.scrollToIndex(idx, { align: 'center' });
+    } else {
+      const el = tbodyRef.current?.querySelector(`tr[data-rowkey="${target.key.replace(/"/g, '\\"')}"]`);
+      (el as HTMLElement | null)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    // The nonce is the trigger — the same pin clicked twice must re-scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollToRow?.nonce]);
+
   /* One grid row (group banner OR data row + optional expansion). Extracted so
      the normal path and the virtualized window render through the same code. */
   const renderGridRow = (item: Render, idx: number) => {
@@ -1231,6 +1536,8 @@ function DataGridInner<T>({
           /* Marks a plain data row as the row-height measuring sample — group
              banners and the virtual spacers are deliberately not tagged. */
           data-vrow=""
+          /* The scroll-to-row target (map pin → board linkage). */
+          data-rowkey={key}
           className={`${styles.tr} ${selectedKey === key ? styles.trSelected : ''}`}
           style={{ ...(rowStyle?.(row)), ...((selectable || onRowClick || expandKey != null) ? { cursor: 'pointer' } : {}) }}
           /* Row-click = multi-select (Commander rule: "点行=multi-select"); L2
@@ -1261,7 +1568,9 @@ function DataGridInner<T>({
                     type="checkbox"
                     aria-label="Select row"
                     checked={selectable.selectedKeys.has(key)}
+                    disabled={selectable.isDisabled?.(key) ?? false}
                     onChange={() => selectable.onToggle(key)}
+                    style={selectable.isDisabled?.(key) ? { cursor: 'not-allowed' } : undefined}
                   />
                 </td>
               );
@@ -1375,20 +1684,20 @@ function DataGridInner<T>({
         {/* Clear-all-filters — appears only when ≥1 column filter is active.
             Per-column funnels already highlight orange; this is the one-click
             reset for the whole grid. Wei Siang 2026-06-04. */}
-        {(Object.values(filters).some((v) => v.length > 0)
-          || Object.keys(dateFilters).length > 0
-          || Object.keys(numberFilters).length > 0
-          || Object.keys(dateRangeFilters).length > 0) && (
+        {activeFilterChips.length > 0 && (
           <button
             type="button"
             className={styles.toolbarPill}
-            onClick={() => { setFilters({}); setDateFilters({}); setNumberFilters({}); setDateRangeFilters({}); }}
+            onClick={clearAllFilters}
             title="Clear all column filters"
           >
             <Filter size={14} strokeWidth={1.75} aria-hidden style={{ color: 'var(--c-orange)' }} />
             <span>Clear filters</span>
+            {/* Count every active filter kind, matching the chip row below —
+                the old value-filters-only count read "0" when a date or number
+                filter was the only one active. */}
             <span className={styles.toolbarPillBadge}>
-              {Object.values(filters).filter((v) => v.length > 0).length}
+              {activeFilterChips.length}
             </span>
           </button>
         )}
@@ -1424,146 +1733,64 @@ function DataGridInner<T>({
             </span>
           </button>
           {columnsMenuOpen && (
-            <>
-              <div
-                ref={columnsMenuRef}
-                className={styles.columnsDrawer}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <header className={styles.columnsMenuHeader}>
-                  <span>Columns ({visibleColumns.length - (expandable ? 1 : 0)})</span>
-                  <span className={styles.columnsMenuHeaderBtns}>
-                    <button
-                      type="button"
-                      className={styles.columnsMenuReset}
-                      onClick={showAllColumns}
-                      title="Show every column"
-                    >
-                      <span>Show all</span>
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.columnsMenuReset}
-                      onClick={resetColumns}
-                      title="Reset to defaults"
-                    >
-                      <RotateCcw size={12} strokeWidth={1.75} aria-hidden />
-                      <span>Reset</span>
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.columnsMenuReset}
-                      onClick={() => setColumnsMenuOpen(false)}
-                      title="Close"
-                      aria-label="Close columns drawer"
-                    >
-                      <X size={13} strokeWidth={1.75} aria-hidden />
-                    </button>
-                  </span>
-                </header>
-                {/* The same Layout block the DataTable drawer shows — company
-                    default layouts, and for an admin the control that publishes
-                    the arrangement on screen as this company's default. Shared
-                    component so the two drawers cannot drift into two
-                    affordances for one feature. */}
-                <div className="px-3 pt-3">
-                  <LayoutSection
-                    presets={gridLayoutPresets}
-                    onApplyPreset={applyGridPreset}
-                    defaultManager={gridDefaultManager}
-                  />
-                </div>
-                {/* Same drawer contract as the DataTable ColumnsPanel (#1235;
-                    owner 2026-07-25: "应用到系统所有的table"): CHECKED columns
-                    float to the TOP in on-grid order — display == storage, so
-                    the key-based drop below still lands a row exactly where it
-                    sits — and stay hand-draggable; the unchecked pool sits
-                    BELOW, ALWAYS A-Z (a findable pick-list, never
-                    hand-ordered), carries no grip and refuses drops. Dropping
-                    writes layout.order, the same order the header drag writes;
-                    the checkbox still toggles visibility. */}
-                <div className={styles.columnsDrawerBody}>
-                  {(() => {
-                    const shownKeys = resolvedOrder.filter((k) => !effectiveHidden.has(k));
-                    const hiddenKeys = resolvedOrder
-                      .filter((k) => effectiveHidden.has(k))
-                      .sort((a, b) => {
-                        const la = columns.find((col) => col.key === a)?.label || a;
-                        const lb = columns.find((col) => col.key === b)?.label || b;
-                        return la.localeCompare(lb, undefined, { numeric: true, sensitivity: 'base' });
-                      });
-                    return [...shownKeys, ...hiddenKeys];
-                  })().map((key) => {
-                    const c = columns.find((col) => col.key === key);
-                    if (!c) return null;
-                    const isHidden = effectiveHidden.has(c.key);
-                    const rowCanDrag = !isHidden;
-                    const dragging = columnsMenuDragKey === c.key;
-                    const isDropRow = columnsMenuOverKey === c.key
-                      && !!columnsMenuDragKey && columnsMenuDragKey !== c.key;
-                    return (
-                      <label
-                        key={c.key}
-                        draggable={rowCanDrag}
-                        onDragStart={(e) => {
-                          if (!rowCanDrag) return;
-                          e.dataTransfer.effectAllowed = 'move';
-                          setColumnsMenuDragKey(c.key);
-                        }}
-                        onDragOver={(e) => {
-                          if (isHidden) return; // A-Z pool accepts no drops
-                          e.preventDefault();
-                          if (columnsMenuOverKey !== c.key) setColumnsMenuOverKey(c.key);
-                        }}
-                        onDrop={(e) => {
-                          if (isHidden) return;
-                          e.preventDefault();
-                          const sourceKey = columnsMenuDragKey;
-                          setColumnsMenuDragKey(null);
-                          setColumnsMenuOverKey(null);
-                          if (!sourceKey || sourceKey === c.key) return;
-                          const order = [...resolvedOrder];
-                          const from = order.indexOf(sourceKey);
-                          const to = order.indexOf(c.key);
-                          if (from < 0 || to < 0) return;
-                          order.splice(from, 1);
-                          order.splice(to, 0, sourceKey);
-                          setLayout((l) => ({ ...l, order }));
-                        }}
-                        onDragEnd={() => {
-                          setColumnsMenuDragKey(null);
-                          setColumnsMenuOverKey(null);
-                        }}
-                        className={[
-                          styles.columnsMenuItem,
-                          dragging ? styles.columnsMenuItemDragging : '',
-                          isDropRow ? styles.columnsMenuItemDrop : '',
-                        ].filter(Boolean).join(' ')}
-                      >
-                        {/* Grip only where a drag is real; the spacer keeps the
-                            unchecked pool's checkboxes on the same left edge. */}
-                        {rowCanDrag ? (
-                          <span className={styles.columnsMenuGrip} title="Drag to reorder">
-                            <GripVertical size={13} strokeWidth={1.75} aria-hidden />
-                          </span>
-                        ) : (
-                          <span aria-hidden style={{ width: 13, display: 'inline-block' }} />
-                        )}
-                        <input
-                          type="checkbox"
-                          checked={!isHidden}
-                          onChange={() => toggleColumn(c.key)}
-                        />
-                        <span>{c.label || c.key}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            </>
+            /* ONE columns panel for the whole app (owner 2026-08-02: 需要应用到
+               全系统 column panel). This grid used to carry its own drawer —
+               a second set of column affordances, missing search, grouping,
+               32px rows, the width chip and the mobile sheet. It now mounts the
+               same ColumnsDrawer every DataTable list uses; everything below is
+               translation between this grid's layout shape and the drawer's. */
+            <ColumnsDrawer
+              open
+              onClose={() => setColumnsMenuOpen(false)}
+              columns={drawerColumns}
+              onToggle={toggleColumn}
+              onReorder={reorderColumn}
+              onTogglePin={togglePinnedColumn}
+              onSetWidth={(key, px) =>
+                setLayout((l) => ({ ...l, widths: { ...l.widths, [key]: px } }))
+              }
+              onShowAll={showAllColumns}
+              onReset={resetColumns}
+              layouts={gridLayoutPresets}
+              onApplyLayout={applyGridPreset}
+              onSaveLayout={layoutStore.canManageLayouts ? saveGridLayout : undefined}
+              onDuplicateLayout={layoutStore.canManageLayouts ? duplicateGridLayout : undefined}
+              onRenameLayout={layoutStore.canManageLayouts ? renameGridLayout : undefined}
+              onDeleteLayout={layoutStore.canManageLayouts ? deleteGridLayout : undefined}
+              onUpdateLayout={layoutStore.canManageLayouts ? updateGridLayout : undefined}
+              defaultManager={gridDefaultManager}
+              dirty={Boolean(gridLayoutPresets && !gridLayoutPresets.some((p) => p.active))}
+              onExport={exportGridColumnConfig}
+            />
           )}
         </div>
       </div>
+
+      {/* Active-filter chips — the visible face of the AND-stack (see the
+          activeFilterChips memo above). Absent while no filter is active, so
+          every existing grid renders byte-identically until an operator
+          actually stacks one. */}
+      {activeFilterChips.length > 0 && (
+        <div className={styles.filterBar} data-filter-bar>
+          <span>Filtered by:</span>
+          {activeFilterChips.map((chip) => (
+            <span key={chip.id} className={styles.groupChip} title={`${chip.label}: ${chip.summary}`}>
+              <span className={styles.filterChipCol}>{chip.label}</span>
+              <span className={styles.filterChipVal}>{chip.summary}</span>
+              <button
+                type="button"
+                className={styles.groupChipRemove}
+                onClick={chip.clear}
+                title={`Clear the ${chip.label} filter`}
+                aria-label={`Clear the ${chip.label} filter`}
+              >x</button>
+            </span>
+          ))}
+          <button type="button" className={styles.filterBarClear} onClick={clearAllFilters}>
+            Clear all
+          </button>
+        </div>
+      )}
 
       {/* Group-by zone */}
       {groupBanner && (
@@ -1603,7 +1830,11 @@ function DataGridInner<T>({
                 const isSorted = layout.sort?.key === col.key;
                 const arrow = isSorted ? (layout.sort!.dir === 'asc' ? 'A' : 'V') : '';
                 if (col.key === '__select__' && selectable) {
-                  const keys = sortedRows.map(rowKey);
+                  /* The header checkbox acts on WHAT THE OPERATOR SEES — the
+                     post-search, post-filter, post-sort rows — minus any row
+                     the per-row veto has disabled. Ticking it must never reach
+                     a row that is off-screen behind a search term. */
+                  const keys = sortedRows.map(rowKey).filter((k) => !(selectable.isDisabled?.(k) ?? false));
                   const allSel = keys.length > 0 && keys.every((k) => selectable.selectedKeys.has(k));
                   const someSel = !allSel && keys.some((k) => selectable.selectedKeys.has(k));
                   return (

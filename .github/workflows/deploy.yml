@@ -93,8 +93,42 @@ jobs:
               - 'frontend/**'
               - '.github/workflows/deploy.yml'
 
-  backend:
+  # The deploy used to run `npm test` inline, unsharded: 201 files, one at a
+  # time (fileParallelism:false + maxWorkers:1, deliberate — see
+  # backend/vitest.config.mts on the workerd RPC starvation cliff). Measured on
+  # four consecutive releases: the backend job took 19m35s - 21m38s, and the
+  # test step was most of it. ci.yml already shards the SAME command four ways
+  # on every PR; the deploy just never did.
+  #
+  # Same command, same shard count, same runner image — only the fan-out is new.
+  # The shard count comes from strategy.job-total, so changing the matrix here
+  # cannot silently disagree with the slicing, exactly as ci.yml does it.
+  backend-tests:
     needs: changes
+    if: ${{ github.ref == 'refs/heads/main' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.last_backend_sha == '') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    strategy:
+      # Let every shard finish: one red shard is a real failure, four red shards
+      # with no assertion is the pool-collapse signature, and telling those apart
+      # is worth the extra minute.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm test -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+
+  backend:
+    needs: [changes, backend-tests]
     if: ${{ github.ref == 'refs/heads/main' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.last_backend_sha == '') }}
     runs-on: ubuntu-latest
     environment: Production
@@ -144,13 +178,32 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: backend/package-lock.json
+      # THE TESTS RAN, AND THEY PASSED. `needs` alone does not prove it: a
+      # skipped dependency is not a failed one, so without this assertion a
+      # backend-tests job that never executed would let an untested commit reach
+      # wrangler — strictly worse than the slow inline run it replaced. Same
+      # guard, same reasoning, as ci.yml's `backend` roll-up.
+      - name: Assert the sharded backend tests succeeded
+        run: |
+          echo "backend-tests: ${{ needs.backend-tests.result }}"
+          if [ "${{ needs.backend-tests.result }}" != "success" ]; then
+            echo "::error title=Deploy blocked::backend-tests did not succeed (result: ${{ needs.backend-tests.result }}). A skipped or failed test matrix must never publish."
+            exit 1
+          fi
       - run: npm ci
       # main is excluded from ci.yml because this deploy job is its required
       # backend gate. Keep the executable route inventory here so a direct main
       # push cannot deploy an undeclared/stale authorization surface.
       - run: npm run audit:routes
+      # Does the rate card still price every job we can dispatch? Reads the
+      # migrations, so a stale copy of scm.trip_stop_type in the code cannot
+      # pass. Filesystem-based, hence a script and not a unit test — the
+      # backend suite runs in workerd and has no filesystem.
+      - run: npm run audit:job-types
+      - run: npm run audit:work-order-states
       - run: npm run typecheck
-      - run: npm test
+      # `npm test` moved to the backend-tests matrix above; the assertion at the
+      # top of this job is what keeps it a gate.
       # Apply any pending Postgres migrations BEFORE deploying the new Worker so
       # the schema is ready when the new code goes live. Migrations are additive
       # + idempotent by convention, so running on every deploy is safe and a

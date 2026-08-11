@@ -28,6 +28,7 @@ import { todayMyt } from '../lib/my-time';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { isServiceLine } from '../shared';
 import { findServiceLineCodes, serviceLinesNotReturnableResponse } from '../lib/service-line-guard';
+import { findUnlinkedDrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
@@ -195,7 +196,7 @@ async function recomputeTotals(sb: any, deliveryReturnId: string) {
      2. the linked DO header's warehouse_id
      3. the DR header's warehouse_id (free/ad-hoc lines — none exist now that
         "no DO, no return" is enforced, but kept as a safety net)
-     4. the global default warehouse (last-resort fallback)
+     4. the return's OWN company's default warehouse (last-resort fallback)
 
    Returns a map of delivery_return_items.id → warehouse_id (or null when even
    the fallbacks are absent — the caller skips those lines). */
@@ -203,6 +204,10 @@ async function resolveDrLineWarehouses(
   sb: any,
   items: Array<{ id: string; do_item_id?: string | null }>,
   drHeaderWarehouseId: string | null,
+  /* The return's company (2026-08-03) — step 4 is per company. It used to be a
+     company-blind draw across every company's is_default warehouses, decided by
+     alphabetical `code` order. */
+  companyId: number | undefined,
 ): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
   const doItemIds = [...new Set(items
@@ -241,7 +246,7 @@ async function resolveDrLineWarehouses(
     }
   }
 
-  const fallback = drHeaderWarehouseId ?? (await defaultWarehouseId(sb));
+  const fallback = drHeaderWarehouseId ?? (await defaultWarehouseId(sb, companyId));
   for (const it of items) {
     const meta = it.do_item_id ? doLineMeta.get(it.do_item_id) : undefined;
     const fromSo = meta?.soItemId ? (soWh.get(meta.soItemId) ?? null) : null;
@@ -324,7 +329,12 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
 
   // Per-line warehouse — each returned line re-enters the warehouse the DO line
   // shipped from (its SO line's warehouse, 0118), not a single DR-header default.
-  const lineWh = await resolveDrLineWarehouses(sb, items as Array<{ id: string; do_item_id?: string | null }>, drHeaderWarehouseId);
+  const lineWh = await resolveDrLineWarehouses(
+    sb,
+    items as Array<{ id: string; do_item_id?: string | null }>,
+    drHeaderWarehouseId,
+    (drHeader as { company_id?: number | null } | null)?.company_id ?? undefined,
+  );
   // Sofa batch per DR line — returned modules re-enter the batch they shipped from.
   const lineBatch = await resolveDrLineBatches(sb, items as Array<{ id: string; do_item_id?: string | null }>);
 
@@ -444,7 +454,12 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
       .select('id, do_item_id, item_code, description, qty_returned, item_group, variants, unit_cost_centi')
       .eq('delivery_return_id', deliveryReturnId);
     const lineRows = (items ?? []) as Array<{ id: string; do_item_id?: string | null; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_centi?: number | null }>;
-    const lineWh = await resolveDrLineWarehouses(sb, lineRows as Array<{ id: string; do_item_id?: string | null }>, drHeaderWarehouseId);
+    const lineWh = await resolveDrLineWarehouses(
+      sb,
+      lineRows as Array<{ id: string; do_item_id?: string | null }>,
+      drHeaderWarehouseId,
+      (drHeader as { company_id?: number | null }).company_id ?? undefined,
+    );
     const lineBatch = await resolveDrLineBatches(sb, lineRows as Array<{ id: string; do_item_id?: string | null }>);
     for (const it of lineRows) {
       /* P1 SO-SKU spec §4.6 — SERVICE lines never wrote IN on create, so they
@@ -796,7 +811,8 @@ deliveryReturns.get('/', async (c) => {
    must strip in ITS OWN vocabulary. This is that surface. */
 deliveryReturns.get('/returnable-do-lines', async (c) => {
   const sb = c.get('supabase');
-  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'));
+  // Company scope (owner 2026-08-10 audit) — see resolveCandidateDoIds.
+  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
   if (doIds.length === 0) return c.json({ lines: [] });
   const remainingMap = await doReturnableRemaining(sb, doIds);
   const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
@@ -833,7 +849,7 @@ deliveryReturns.get('/:id', async (c) => {
      Display-only. */
   const rawItems = (i.data ?? []) as unknown as Array<{ id: string; do_item_id?: string | null } & Record<string, unknown>>;
   const headerWh = (h.data as { warehouse_id?: string | null }).warehouse_id ?? null;
-  const lineWh = await resolveDrLineWarehouses(sb, rawItems, headerWh);
+  const lineWh = await resolveDrLineWarehouses(sb, rawItems, headerWh, activeCompanyId(c));
   const codeMap = await warehouseCodeMap(sb, [...lineWh.values()]);
   const items = rawItems.map((it) => {
     const wid = lineWh.get(it.id) ?? null;
@@ -942,6 +958,27 @@ deliveryReturns.post('/', async (c) => {
   {
     const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
+  }
+
+  /* An unlinked line on a return that NAMES a Delivery Order still brings the
+     stock back IN, but counts against no DO line — so the returned pool never
+     moves and the same goods can be returned again. Same shape that let one
+     Sales Order ship twice (docs/unlinked-line-duplicate-coe.md); refused only
+     when the named DO already contains that item, so a goodwill item added to a
+     return still passes. */
+  {
+    const unlinked = await findUnlinkedDrLines(
+      sb,
+      (body.deliveryOrderId as string | undefined) ?? null,
+      (body.doDocNo as string | undefined) ?? null,
+      items.map((it, idx) => ({
+        lineRef: String(idx),
+        itemCode: String(it.itemCode ?? ''),
+        qty: Number(it.qtyReturned ?? it.qty ?? 0),
+        soItemId: (it.doItemId as string | undefined) ?? null,
+      })),
+    );
+    if (unlinked.length > 0) return c.json(unlinkedReturnResponse(unlinked, 'delivery'), 409);
   }
 
   /* P1 SO-SKU spec §4.6 — SERVICE lines (delivery fee / dispose / lift) ride

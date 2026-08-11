@@ -1,0 +1,34 @@
+name: OCR learning check (read-only)
+
+# Is the scanner actually learning from operator corrections, or only designed to?
+#
+# so_scan_samples stores the raw extraction and the operator's corrected JSON;
+# the 5 most recent CONFIRMED rows per salesperson are injected back as few-shot
+# examples. If `corrected` is never written, every row stays EXTRACTED, the pool
+# stays empty, and the extractor learns nothing while looking as if it does.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ocr-learning-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-ocr-learning.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

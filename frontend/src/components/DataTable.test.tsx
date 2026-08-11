@@ -313,8 +313,11 @@ describe("DataTable column width persistence", () => {
     // operator, not to a table, so it is a single global key. Anything else
     // appearing outside the family is a regression.
     const perTable = keys.filter((key) => key !== "dt:cols-drawer-az");
-    // hidden, shown, order, sort, mview, widths, pinned, groups, filters.
-    expect(perTable).toHaveLength(9);
+    // hidden, shown, order, sort, mview, widths, pinned, pinnedr, groups,
+    // filters. `pinnedr` is the right-freeze list (owner 2026-08-03) — a
+    // second flat list rather than a reshaped `pinned`, so every layout
+    // already on disk keeps reading.
+    expect(perTable).toHaveLength(10);
     expect(perTable.every((key) => key.endsWith(":sales-order-lines"))).toBe(true);
   });
 
@@ -1190,5 +1193,60 @@ describe("DataTable getRowClassName with expandable rows", () => {
     expect(screen.getByTestId("detail-1").closest("tr")?.className).toContain(
       "dt-row-cancelled",
     );
+  });
+});
+
+// ── A stored sort must not outlive "Reset" ───────────────────────────────────
+//
+// Owner, 2026-08-04, on the Delivery Orders list opening oldest-first every
+// single time: "为什么当我打开这个系统的一瞬间，它不是默认自动 sort 那个
+// documentation 呢？"
+//
+// The backend's default IS newest-first (`do_date` DESC). It never got a chance:
+// DataTable persists the sort per table in `dt:sort:<id>` and replays it on
+// mount, so a column clicked once — months ago — becomes the permanent default
+// for that browser. And `resetLayout()` cleared visibility and order but NOT the
+// sort, so the one control named for undoing a layout could not undo its most
+// visible part.
+describe("Sort is persisted, and Reset must clear it", () => {
+  const renderSorted = (onSortChange: (s: unknown) => void) =>
+    render(
+      <DataTable
+        tableId="sort-persist"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        serverSort
+        onSortChange={onSortChange}
+      />,
+    );
+
+  it("replays a sort stored in localStorage on mount — the stickiness itself", () => {
+    localStorage.setItem("dt:sort:sort-persist", JSON.stringify({ key: "name", dir: "asc" }));
+    const onSortChange = vi.fn();
+    renderSorted(onSortChange);
+    expect(onSortChange).toHaveBeenCalledWith({ key: "name", dir: "asc" });
+  });
+
+  it("reports null when nothing is stored, so the backend default applies", () => {
+    const onSortChange = vi.fn();
+    renderSorted(onSortChange);
+    expect(onSortChange).toHaveBeenCalledWith(null);
+  });
+
+  it("Reset clears the stored sort and tells the parent to fall back", () => {
+    localStorage.setItem("dt:sort:sort-persist", JSON.stringify({ key: "name", dir: "asc" }));
+    const onSortChange = vi.fn();
+    renderSorted(onSortChange);
+    onSortChange.mockClear();
+
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+
+    // The parent must be told, or the next query keeps the old ORDER BY even
+    // though the table no longer shows a sorted column.
+    expect(onSortChange).toHaveBeenCalledWith(null);
+    const stored = localStorage.getItem("dt:sort:sort-persist");
+    expect(stored === null || stored === "null").toBe(true);
   });
 });

@@ -109,6 +109,7 @@ import { ServiceMetrics } from "./ServiceMetrics";
 import { ServiceSettingsView } from "./ServiceSettings";
 import { ServiceLeadTimePortal } from "./ServiceLeadTimePortal";
 import { Forbidden } from "./Forbidden";
+import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
 import type {
   Paginated,
@@ -809,8 +810,10 @@ function CasesView({
       // Product code — visible on the detail page; hidden here to cut
       // clutter, still available from the Columns menu.
       defaultHidden: true,
-      render: (r) => <span className="font-mono text-[11px]">{r.item_code || "—"}</span>,
-      getValue: (r) => r.item_code,
+      // Product Info items first (items_codes aggregate); the legacy
+      // form-era item_code only as fallback (Nico 2026-08-07).
+      render: (r) => <span className="font-mono text-[11px]">{(r as any).items_codes || r.item_code || "—"}</span>,
+      getValue: (r) => (r as any).items_codes || r.item_code,
     },
     {
       key: "resolution_method",
@@ -873,6 +876,9 @@ function CasesView({
       defaultHidden: true,
       render: (r) => r.service_category || "—",
       getValue: (r) => r.service_category,
+      // Multi-select: a case can be "Bedframe, Mattress". Ticking Bedframe
+      // in the funnel must surface it, so the filter sees the parts.
+      getFilterValues: (r) => splitCategories(r.service_category),
     },
     {
       key: "issue_category",
@@ -2375,6 +2381,59 @@ function SoNoSearchEdit({
   );
 }
 
+/* Product Category is multi-select since 2026-08 — a complaint can be
+   mattress AND bedframe on the same case. Chips rather than <select
+   multiple>: the list is five items and ctrl-click-to-multi-select is
+   undiscoverable. Values the lookup doesn't know (legacy free text) render
+   as chips too, so reopening a case never silently drops one. */
+function CategoryChips({
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  options: string[];
+  value: string[];
+  onChange: (next: string[]) => void;
+  disabled?: boolean;
+}) {
+  const extras = value.filter((v) => !options.includes(v));
+  const toggle = (n: string) =>
+    onChange(value.includes(n) ? value.filter((x) => x !== n) : [...value, n]);
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {[...options, ...extras].map((n) => {
+        const on = value.includes(n);
+        return (
+          <button
+            key={n}
+            type="button"
+            disabled={disabled}
+            aria-pressed={on}
+            onClick={() => toggle(n)}
+            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              on
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-surface text-ink-muted hover:border-primary/40 hover:text-ink"
+            }`}
+          >
+            {n}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** "Bedframe, Mattress" -> ["Bedframe","Mattress"]. The API keeps sending
+ *  the flat string on the case row for every read-only surface. */
+function splitCategories(v: string | null | undefined): string[] {
+  return (v ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 function CreatePanel({
   onClose,
   onCreated,
@@ -2435,7 +2494,7 @@ function CreatePanel({
   // picked SO's own customer reference (below) but stays editable.
   const [refNo, setRefNo] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
-  const [serviceCategory, setServiceCategory] = useState("");
+  const [serviceCategories, setServiceCategories] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
@@ -2662,7 +2721,7 @@ function CreatePanel({
         // complete. The backend also trims/whitelists these defensively.
         ref_no: refNo.trim() || null,
         customer_email: customerEmail.trim() || null,
-        service_category: serviceCategory.trim() || null,
+        service_category: serviceCategories.length ? serviceCategories : null,
       });
 
       // Upload any staged defect photos/videos as "complaint" attachments.
@@ -3039,23 +3098,11 @@ function CreatePanel({
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
               Product Category
             </div>
-            <select
-              value={serviceCategory}
-              onChange={(e) => setServiceCategory(e.target.value)}
-              className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="">— select —</option>
-              {/* Keep a legacy/unknown value selectable so reopening the
-                  form never silently drops it. */}
-              {serviceCategory && !productCategoryOptions.includes(serviceCategory) && (
-                <option value={serviceCategory}>{serviceCategory}</option>
-              )}
-              {productCategoryOptions.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
+            <CategoryChips
+              options={productCategoryOptions}
+              value={serviceCategories}
+              onChange={setServiceCategories}
+            />
           </div>
         </div>
       </PanelSection>
@@ -3219,6 +3266,13 @@ function DetailContent({
     [],
     LOOKUP_CACHE,
   );
+  const detailProductCategoriesQ = useQuery<{ data: LookupOpt[] }>("/api/assr/lookups/product-categories",
+    () => api.get("/api/assr/lookups/product-categories"),
+    [],
+    LOOKUP_CACHE,
+  );
+  const detailProductCategoryOptions =
+    detailProductCategoriesQ.data?.data.map((r) => r.name) ?? [];
   const prioritiesQ = useQuery<{ data: LookupOpt[] }>("/api/assr/lookups/priorities",
     () => api.get("/api/assr/lookups/priorities"),
     [],
@@ -3499,7 +3553,7 @@ function DetailContent({
           <>
             {/* PR 1 redesign — Print + Portal Link moved up from the
                 pill row. Match the design's title-row action group. */}
-            <PrintMenu caseId={id} toast={toast} />
+            <PrintMenu caseId={id} assrNo={c.assr_no} toast={toast} />
             <PortalLinksMenu
               id={id}
               assrNo={c.assr_no}
@@ -3846,12 +3900,22 @@ function DetailContent({
             )}
             {/* Product attributes */}
             <div className="mt-1 space-y-2.5 border-t border-border-subtle/50 pt-2.5">
-              <InlineEdit
-                label="Product Category"
-                value={c.service_category}
-                onSave={(v) => patch({ service_category: v })}
-                placeholder="e.g. Mattress / Bed frame"
-              />
+              <div>
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+                  Product Category
+                </div>
+                {/* Multi-select, saved on every toggle. The detail payload
+                    carries the list; fall back to splitting the flat string
+                    so a case fetched from a cached/older response still
+                    shows its chips. */}
+                <CategoryChips
+                  options={detailProductCategoryOptions}
+                  value={
+                    detail.data?.service_categories ?? splitCategories(c.service_category)
+                  }
+                  onChange={(next) => patch({ service_category: next })}
+                />
+              </div>
             </div>
             {showAddItem && (() => {
               // Hide items already on the case so users only see what's
@@ -4198,6 +4262,35 @@ function DetailContent({
                 {/* Folded in from the retired Item Pickup stage (mig 0110):
                     the date logistics collects the faulty item from the
                     customer's house — precedes the supplier handover. */}
+                {/* Pickup by (Nico 2026-08-07) — who collects the faulty
+                    item. Customer pickup = our logistics goes to the
+                    customer's house (fires the Delivery-sheet PICKUP job);
+                    Supplier direct = the supplier collects it themselves. */}
+                <div className="flex items-center gap-2">
+                  <span className="w-[130px] shrink-0 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+                    Pickup by
+                  </span>
+                  <div className="flex gap-1.5">
+                    {([
+                      { v: "customer", label: "Customer pickup" },
+                      { v: "supplier", label: "Supplier direct" },
+                    ] as const).map((o) => (
+                      <button
+                        key={o.v}
+                        type="button"
+                        onClick={() => patch({ pickup_by: c.pickup_by === o.v ? null : o.v })}
+                        className={cn(
+                          "rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors",
+                          c.pickup_by === o.v
+                            ? "border-primary bg-primary-soft text-primary"
+                            : "border-border bg-surface text-ink-secondary hover:border-primary/40",
+                        )}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <InlineEdit
                   label="Customer Pickup Date"
                   type="date"
@@ -6708,23 +6801,42 @@ function LogisticsRow({
 // route — backend defaults to "office" so any legacy bookmark still
 // works.
 
+const PRINT_VARIANTS = {
+  customer: { label: "Customer Copy", hint: "Tracker + QR to portal" },
+  supplier: { label: "Supplier Copy", hint: "PO, deadline, acknowledgement" },
+  office: { label: "Office Copy", hint: "Full internal view" },
+} as const;
+type PrintVariant = keyof typeof PRINT_VARIANTS;
+
 function PrintMenu({
   caseId,
+  assrNo,
   toast,
 }: {
   caseId: number;
+  assrNo?: string | null;
   toast: ReturnType<typeof useToast>;
 }) {
   const [open, setOpen] = useState(false);
+  /* Which copy the operator picked, held until the Print preview confirms it.
+     A service case prints from a SERVER-rendered HTML view, not a jspdf file,
+     so this preview names the case and the copy and then hands over to that
+     view — there is no document here to download. */
+  const [variant, setVariant] = useState<PrintVariant | null>(null);
 
-  async function go(variant: "customer" | "supplier" | "office") {
-    setOpen(false);
+  async function go(v: PrintVariant) {
     try {
-      await api.openHtml(`/api/assr-print/${caseId}?variant=${variant}`);
+      await api.openHtml(`/api/assr-print/${caseId}?variant=${v}`);
     } catch (e: any) {
       toast.error(e?.message || "Failed to open print view");
     }
   }
+  const print = usePrintPreview(() => (variant ? go(variant) : undefined));
+  const pick = (v: PrintVariant) => {
+    setOpen(false);
+    setVariant(v);
+    print.openPreview();
+  };
 
   // Click-outside close — listen on document while open.
   useEffect(() => {
@@ -6757,22 +6869,29 @@ function PrintMenu({
           className="absolute right-0 top-full z-30 mt-1 w-48 overflow-hidden rounded-md border border-border bg-surface shadow-stone"
           role="menu"
         >
-          <PrintMenuItem
-            label="Customer Copy"
-            hint="Tracker + QR to portal"
-            onClick={() => go("customer")}
-          />
-          <PrintMenuItem
-            label="Supplier Copy"
-            hint="PO, deadline, acknowledgement"
-            onClick={() => go("supplier")}
-          />
-          <PrintMenuItem
-            label="Office Copy"
-            hint="Full internal view"
-            onClick={() => go("office")}
-          />
+          {(Object.keys(PRINT_VARIANTS) as PrintVariant[]).map((v) => (
+            <PrintMenuItem
+              key={v}
+              label={PRINT_VARIANTS[v].label}
+              hint={PRINT_VARIANTS[v].hint}
+              onClick={() => pick(v)}
+            />
+          ))}
         </div>
+      )}
+      {variant && (
+        <PrintPreviewModal
+          open={print.open}
+          onClose={print.close}
+          docTitle="Service Case"
+          docNo={assrNo ?? `Case ${caseId}`}
+          rows={[
+            { label: "Copy", value: PRINT_VARIANTS[variant].label },
+            { label: "Contains", value: PRINT_VARIANTS[variant].hint },
+            { value: "Print now opens the print view in a new tab." },
+          ]}
+          onPrint={print.handlers.onPrint}
+        />
       )}
     </div>
   );

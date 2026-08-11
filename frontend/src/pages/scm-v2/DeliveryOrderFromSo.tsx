@@ -82,29 +82,61 @@ export const DeliveryOrderFromSo = () => {
     return m;
   }, [rows]);
 
+  /* ONE SALES ORDER IS ONE CUSTOMER — resolve the lock key per DOC, not per line.
+     mfg_sales_order_items carries its own debtor_code/debtor_name copy and those
+     copies DRIFT: on 2990-SO-2606-034 the two sofa lines say "The Wei chin", the
+     delivery line says "Teh Wei chin" and the disposal line says nothing, while
+     the SO header says "Teh Wei chin" for all four. Keying the lock off the line
+     copy therefore split ONE order across three customers — ticking a sofa greyed
+     out the other half of the same order, and Select all could only ever reach 2
+     of 4 lines (Nico, 2026-08-03).
+     The backend now stamps the header's debtor on every line, which fixes this at
+     the source; keying per doc here means the picker is also right against data
+     that has already drifted, and stays right afterwards (once every line of a
+     doc agrees, first-non-empty IS that agreed value). */
+  const docCustKey = useMemo(() => {
+    const m = new Map<string, { key: string; label: string }>();
+    for (const r of rows) {
+      if (m.has(r.docNo)) continue;
+      const code = (r.debtorCode ?? '').trim();
+      const name = (r.debtorName ?? '').trim();
+      if (!code && !name) continue; // a blank line can't name the order's customer
+      m.set(r.docNo, { key: custKey(r), label: name || code });
+    }
+    return m;
+  }, [rows]);
+
+  /* The line's effective customer: its ORDER's, falling back to its own copy for
+     an order whose every line is blank. */
+  const keyOf = (r: DeliverableSoLine): string => docCustKey.get(r.docNo)?.key ?? custKey(r);
+  const labelOf = (r: DeliverableSoLine): string =>
+    docCustKey.get(r.docNo)?.label ?? r.debtorName ?? r.debtorCode ?? '(none)';
+
   /* The customer locked in by the current picks — the key of the first picked
      line. Null when nothing is picked (every line is selectable). */
   const lockedCustomer = useMemo(() => {
     for (const [id, v] of Object.entries(picks)) {
       if (!v.picked) continue;
       const r = rowById.get(id);
-      if (r) return custKey(r);
+      if (r) return keyOf(r);
     }
     return null;
-  }, [picks, rowById]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyOf derives from docCustKey, listed
+  }, [picks, rowById, docCustKey]);
 
   const lockedCustomerName = useMemo(() => {
     for (const [id, v] of Object.entries(picks)) {
       if (!v.picked) continue;
       const r = rowById.get(id);
-      if (r) return r.debtorName ?? r.debtorCode ?? '(none)';
+      if (r) return labelOf(r);
     }
     return null;
-  }, [picks, rowById]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- labelOf derives from docCustKey, listed
+  }, [picks, rowById, docCustKey]);
 
   // A row is LOCKED when a different customer is already picked.
   const isRowLocked = (r: DeliverableSoLine): boolean =>
-    Boolean(lockedCustomer && custKey(r) !== lockedCustomer && !picks[r.soItemId]?.picked);
+    Boolean(lockedCustomer && keyOf(r) !== lockedCustomer && !picks[r.soItemId]?.picked);
 
   const togglePick = (r: DeliverableSoLine) => {
     if (isRowLocked(r)) return; // can't tick a different customer
@@ -122,43 +154,61 @@ export const DeliveryOrderFromSo = () => {
     setPicks((s) => ({ ...s, [r.soItemId]: { picked: true, qty } }));
   };
 
-  // Select / clear all currently-VISIBLE rows. Select-all respects the lock:
-  // it only adds lines of the locked customer (or, if nothing is picked yet, all
-  // lines of the FIRST row's customer so the result is a valid single-customer
-  // set).
-  const selectAll = () => {
+  /* Select-all acts on WHAT THE OPERATOR SEES.
+     Until 2026-08-03 it walked `rows` — the whole 175-line dataset — and seeded
+     the customer lock from `rows[0]`, the first row of the UNFILTERED list. So
+     searching "2606-034" and hitting Select all silently ticked a completely
+     different customer's lines and carried SO 2606-002 into the new DO (Nico,
+     2026-08-03). Both the header checkbox and this button now operate on the
+     post-search / post-filter rows the grid hands back. */
+  const [visibleRows, setVisibleRows] = useState<DeliverableSoLine[]>([]);
+
+  const selectableVisibleKeys = useMemo(
+    () => visibleRows.filter((r) => !isRowLocked(r)).map((r) => r.soItemId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isRowLocked derives from picks/lockedCustomer, both listed
+    [visibleRows, picks, lockedCustomer],
+  );
+
+  /* Tick/untick the given (visible, unlocked) keys. Select respects the lock: it
+     only adds lines of the locked customer, or — when nothing is picked yet — of
+     the FIRST VISIBLE row's customer, so the result is always a valid
+     single-customer set. */
+  const toggleKeys = (keys: string[], allSelected: boolean) => {
     setPicks((s) => {
       const next = { ...s };
-      const key = lockedCustomer ?? (rows[0] ? custKey(rows[0]) : null);
+      if (allSelected) {
+        for (const k of keys) next[k] = { picked: false, qty: 0 };
+        return next;
+      }
+      const firstVisible = keys.map((k) => rowById.get(k)).find((r): r is DeliverableSoLine => Boolean(r));
+      const key = lockedCustomer ?? (firstVisible ? keyOf(firstVisible) : null);
       if (!key) return next;
-      for (const r of rows) if (custKey(r) === key) next[r.soItemId] = { picked: true, qty: r.remaining };
+      for (const k of keys) {
+        const r = rowById.get(k);
+        if (r && keyOf(r) === key) next[k] = { picked: true, qty: r.remaining };
+      }
       return next;
     });
   };
+
+  const selectAll = () => toggleKeys(selectableVisibleKeys, false);
   const clearAll = () => setPicks({});
 
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
+  /* Ticked rows for the grid's checkbox column — same rule Continue applies, so
+     a row typed down to qty 0 reads as unticked. */
+  const pickedKeys = useMemo(
+    () => new Set(Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0).map(([id]) => id)),
+    [picks],
+  );
+
   const columns = useMemo<DataGridColumn<DeliverableSoLine>[]>(() => [
-    {
-      key: 'pick', label: '', width: 40, sortable: false, groupable: false,
-      accessor: (r) => {
-        const on = Boolean(picks[r.soItemId]?.picked);
-        const locked = isRowLocked(r);
-        return (
-          <input
-            type="checkbox"
-            checked={on}
-            disabled={locked}
-            onChange={() => togglePick(r)}
-            onClick={(e) => e.stopPropagation()}
-            aria-label={`Pick ${r.itemCode}`}
-            style={locked ? { cursor: 'not-allowed' } : undefined}
-          />
-        );
-      },
-    },
+    /* The per-row tick lives in the grid's first-class `selectable` column, so
+       the header carries a real select-all checkbox scoped to the filtered
+       rows. Don't re-add a hand-rolled `pick` column here — that header can
+       only hold a plain string label. */
     {
       key: 'docNo', label: 'SO No', width: 140, sortable: true, groupable: true,
       accessor: (r) => <span className={styles.codeCell}>{r.docNo}</span>,
@@ -350,6 +400,13 @@ export const DeliveryOrderFromSo = () => {
         rowKey={(r) => r.soItemId}
         searchPlaceholder="Search SO, customer, item…"
         onRowClick={(r) => togglePick(r)}
+        onFilteredRowsChange={setVisibleRows}
+        selectable={{
+          selectedKeys: pickedKeys,
+          onToggle: (key) => { const r = rowById.get(key); if (r) togglePick(r); },
+          onToggleAll: toggleKeys,
+          isDisabled: (key) => { const r = rowById.get(key); return r ? isRowLocked(r) : false; },
+        }}
         rowStyle={(r) => isRowLocked(r)
           ? { opacity: 0.45, background: 'var(--c-cream)', cursor: 'not-allowed' }
           : undefined}

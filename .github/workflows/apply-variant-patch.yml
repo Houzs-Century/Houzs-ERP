@@ -1,0 +1,60 @@
+name: Apply variant patch (hand-parse fixes)
+
+# Manual. Applies a gzip+base64 JSON patch (see apply-variant-patch.mjs for the
+# shape) to imported company-1 SO lines/headers — the channel for hand-parsed
+# straggler fixes and small backfills that shouldn't need a code PR each time.
+# DRY-RUN by default; apply=1 writes.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      patch_b64:
+        description: "gzip+base64 JSON patch"
+        required: true
+        type: string
+
+concurrency:
+  group: apply-variant-patch-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/apply-variant-patch.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          PATCH_B64: ${{ inputs.patch_b64 }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/apply-variant-patch.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          PATCH_B64: ${{ inputs.patch_b64 }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

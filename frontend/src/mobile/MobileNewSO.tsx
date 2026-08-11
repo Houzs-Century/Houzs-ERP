@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { postScanLearningSample, reportScanLearningSkipped } from "../vendor/scm/lib/scan-learning";
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch, parseSaveProblems } from "../vendor/scm/lib/authed-fetch";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
@@ -73,7 +74,7 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
-import { missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
+import { missingVariantAxes, missingConfirmVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
 import { isColourKiv } from "../vendor/shared/variant-summary";
 import { lineIdentity } from "@2990s/shared";
 import { normalizePhone } from "../vendor/shared/phone";
@@ -192,6 +193,10 @@ type SoHeader = {
   version: number;
   debtor_name: string | null;
   status: string | null;
+  /* The staff row this order is credited to. Served by the detail route and read
+     by MobileSODetail already; this form was typed without it, which is part of
+     why it never seeded the picker. */
+  salesperson_id: string | number | null;
   phone: string | null;
   email: string | null;
   ref: string | null;
@@ -379,7 +384,15 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
   return {
     itemCode: l.itemCode,
     itemGroup: l.itemGroup || "others",
-    description: l.name.trim(),
+    /* Owner 2026-08-08 ("square pillow", HC-SO-2607-013) — an UNPICKED line
+       must NOT borrow free text (the raw slip transcription) as its
+       description; the backend now refuses that shape outright. A picked line
+       carries its SKU name; an unpicked one goes out as the CLEAN "Pick a
+       product…" placeholder (desktop scan rule, owner 2026-07-13 — the slip
+       photo on the SO detail is the operator's reference). Interactive saves
+       never reach here unpicked (the save() guard blocks them); this is the
+       headless scan-draft path. */
+    description: l.itemCode.trim() ? l.name.trim() : "",
     qty: num(l.qty) || 1,
     unitPriceCenti: toCenti(l.price),
     lineDeliveryDate: l.ddate || null,
@@ -908,11 +921,20 @@ export function MobileNewSO({
         setOrigCity(h.city ?? "");
         setOrigAddress1(h.address1 ?? "");
         setOrigAddress2(h.address2 ?? "");
-        /* The pristine baseline — the SAME builder save() uses, fed the values
-           just seeded above, so an untouched form diffs to {}. salespersonId is
-           seeded to "" here exactly as the picker is (this form never seeds it
-           from the row), and "" maps to the same null save() would send, so an
-           untouched picker is not dirty and salesperson_id is left alone. */
+        /* SEED THE PICKER FROM THE ROW. Owner, 2026-08-05, on an order whose
+           salesperson is Pei Fen: "当我点选 ID 的时候，跳出第一个人的时候，他就
+           直接变成我的名字了，那么奇怪".
+           The form used to leave salespersonId as "" on edit, and "" renders as
+           "{me} (me)" — the first option in the picker. So every edit screen
+           claimed the order was the CURRENT user's, whoever actually sold it.
+           The stored value was safe (an untouched picker sends null and
+           salesperson_id is left alone), but the screen said otherwise, and an
+           operator "correcting" what they saw would have reassigned a colleague's
+           sale to themselves.
+           Seeding it means the picker shows the truth. The pristine baseline
+           below is seeded to the SAME value, so an untouched picker still diffs
+           to {} and still sends nothing. */
+        setSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
         originalHeaderPatchRef.current = soHeaderPatchFrom({
           name: h.debtor_name ?? "",
           custRef: h.customer_so_no ?? h.ref ?? "",
@@ -934,7 +956,9 @@ export function MobileNewSO({
           ecName: h.emergency_contact_name ?? "",
           ecPhone: toE164(h.emergency_contact_phone),
           ecRel: h.emergency_contact_relationship ?? "",
-          salespersonId: null,
+          /* Matches the seed above, not a hard null: the baseline has to describe
+             the form as it now stands, or a form nobody touched reads as dirty. */
+          salespersonId: h.salesperson_id != null ? String(h.salesperson_id) : null,
         });
         const liveItems = (detail.items ?? []).filter((it) => !it.cancelled);
         setOrigItems(liveItems);
@@ -1269,10 +1293,6 @@ export function MobileNewSO({
 
   const namedLines = useMemo(() => lines.filter((l) => l.name.trim() || l.itemCode.trim()), [lines]);
   const unpickedLines = useMemo(() => namedLines.filter((l) => !l.itemCode.trim()), [namedLines]);
-  const linesMissingVariants = useMemo(
-    () => namedLines.filter((l) => l.itemCode.trim() && missingVariantAxes(l.itemGroup, l.variants).length > 0),
-    [namedLines],
-  );
 
   /* Per-category variants captured from the FIRST line of that category that
      has any variants set. Mirrors SalesOrderNew.inheritVariantsByCategory. */
@@ -1348,7 +1368,12 @@ export function MobileNewSO({
      exactly (single logic layer); the backend keeps corrected vs accepted-as-is
      apart because they teach different things (scan-so.ts SAMPLE_* header). */
   const maybeLearnFromScan = () => {
-    if (!fromScan || !scanSampleId || !scanAiOriginal) return;
+    if (!fromScan) return;
+    /* A scan that teaches nothing used to return here in silence — the pool
+       stays empty and there is no record of why. 40 scans / 0 confirmations
+       made that ambiguity the whole question. */
+    if (!scanSampleId) { reportScanLearningSkipped('no-sample-id', 'mobile'); return; }
+    if (!scanAiOriginal) { reportScanLearningSkipped('no-ai-original', 'mobile'); return; }
     const ai = scanAiOriginal;
     const optMatch = (v: string) => (v ? { value: v, confidence: 1, reason: "operator-confirmed" } : null);
     const norm = (s: string | null | undefined) => (s ?? "").trim();
@@ -1418,10 +1443,16 @@ export function MobileNewSO({
       }),
     };
 
-    void authedFetch(`/scan-so/samples/${scanSampleId}/confirm`, {
-      method: "POST",
-      body: JSON.stringify({ corrected, salesperson: scanSalesperson || null, accepted: !changed }),
-    }).catch(() => { /* few-shot learning is best-effort — never blocks save */ });
+    /* Still best-effort — it never blocks the save. What changed is that a
+       4xx/5xx no longer vanishes into an empty arrow function (Hookka 5ea07668:
+       ".catch only sees a NETWORK failure — a 403, 404 or 500 resolves normally
+       and was thrown away unread"). */
+    void postScanLearningSample(
+      authedFetch,
+      scanSampleId,
+      { corrected, salesperson: scanSalesperson || null, accepted: !changed },
+      'mobile',
+    );
   };
 
   /* Post-create payment recording — records each SLIP-BACKED row AFTER the SO
@@ -1683,16 +1714,41 @@ export function MobileNewSO({
       setError(SOFA_MIX_MESSAGE);
       return;
     }
-    /* Owner 2026-07-14 — the mandatory variants are enforced ONLY when a
-       Processing Date is being set (Boolean(procOut) === !asDraft && procDate),
-       matching the backend gate (mfg-sales-orders requires them `if procDate`)
-       + the desktop Save gates. A no-date confirm, or a draft (procDate stripped
-       to procOut ""), still saves with variant gaps — a scanned sofa the
-       operator hasn't finished isn't blocked. */
-    if (!asDraft && Boolean(procDate) && linesMissingVariants.length > 0) {
-      const l = linesMissingVariants[0];
-      const miss = missingVariantAxes(l.itemGroup, l.variants).map((a) => a.label).join(", ");
-      setError(`Complete the required options (${miss}) on "${l.name || l.itemCode}".`);
+    /* Variant completeness (owner 2026-08-08, HC-SO-2607-008) — CREATING a
+       CONFIRMED order requires every line's category-required axes, date or
+       no date. With a Processing Date the full rule applies
+       (missingVariantAxes — colour-KIV blocks a date, owner 2026-07-24);
+       a date-less confirmed CREATE applies the confirm rule
+       (missingConfirmVariantAxes — colour-KIV satisfies the fabric axis).
+       Drafts still save with gaps, and the EDIT sheet keeps its original
+       procDate-only rule — editing an existing order (e.g. fixing a remark)
+       must never be hostage to gaps the edit didn't touch; the confirm gate
+       on the status route owns those at Create Sales Order time. */
+    if (!asDraft && (procDate || !isEdit)) {
+      const missOf = (l: LineItem) =>
+        procDate
+          ? missingVariantAxes(l.itemGroup, l.variants, l.itemCode)
+          : missingConfirmVariantAxes(l.itemGroup, l.variants, l.itemCode);
+      const offender = namedLines.find((l) => missOf(l).length > 0);
+      if (offender) {
+        const miss = missOf(offender).map((a) => a.label).join(", ");
+        setError(`Complete the required options (${miss}) on "${offender.name || offender.itemCode}".`);
+        return;
+      }
+    }
+    /* Confirm gates (owner 2026-08-08) — a NEW confirmed order needs a venue
+       and a salesperson; drafts and edits are untouched (the DRAFT→CONFIRMED
+       status transition has its own server gate). The backend enforces both
+       (validation_failed); these pre-checks just say it in one sentence before
+       the round-trip. Salesperson: a caller who CANNOT re-pick is stamped
+       server-side as themselves, so only an attribute_other caller with the
+       picker left empty is blocked here. */
+    if (!asDraft && !isEdit && !outgoingVenueName && !outgoingVenueId) {
+      setError("Pick a venue before confirming this order (drafts can be saved without one).");
+      return;
+    }
+    if (!asDraft && !isEdit && canChangeSalesperson && !outgoingSalespersonId && !selfStaffMatch) {
+      setError("Pick a salesperson before confirming this order (drafts can be saved without one).");
       return;
     }
     const procOut = asDraft ? "" : procDate;
@@ -2241,10 +2297,10 @@ export function MobileNewSO({
                       Owner 2026-07-16 — UNLESS the order is amendment-eligible:
                       then both dates are editable and go out as an amendment
                       request for approval instead of saving directly. */}
-                  <Field label="Processing Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("procDate", procDate)}>
+                  <Field label="Processing Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("procDate", procDate)} onClear={procDate && !scheduleDatesLocked ? () => setProcDate("") : undefined}>
                     <input className="fld-i" type="date" value={procDate} disabled={scheduleDatesLocked} min={procLocked ? undefined : today} onChange={(e) => setProcDate(e.target.value)} />
                   </Field>
-                  <Field label="Delivery Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("delivDate", delivDate)}>
+                  <Field label="Delivery Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("delivDate", delivDate)} onClear={delivDate && !scheduleDatesLocked ? () => setDelivDate("") : undefined}>
                     <input className="fld-i" type="date" value={delivDate} disabled={scheduleDatesLocked} min={today} onChange={(e) => setDelivDate(e.target.value)} />
                   </Field>
                 </div>
@@ -2728,12 +2784,25 @@ function soHeaderPatchFrom(v: SoHeaderPatchInput): Record<string, unknown> {
 
 // ---- Sub-components ---------------------------------------------------------
 
-function Field({ label, error, scanned, style, children }: { label: string; error?: boolean; scanned?: boolean; style?: React.CSSProperties; children: React.ReactNode }) {
+function Field({ label, error, scanned, onClear, style, children }: { label: string; error?: boolean; scanned?: boolean; onClear?: () => void; style?: React.CSSProperties; children: React.ReactNode }) {
   return (
     <label className="fld" style={style}>
       <span className="fld-l" style={{ display: "flex", alignItems: "center", gap: 6, ...(error ? { color: "#b23a3a" } : null) }}>
         {label}
         {scanned && <ScannedTag />}
+        {/* A native date input has no way back once a value is set — the iOS
+            wheel cannot land on "nothing". Owner, 2026-08-03: "当他不小心选了一个
+            日期，它不能 reset 的吗?". A label-level Clear costs no row width, which
+            the three-across line row has none of. */}
+        {onClear && (
+          <span
+            role="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClear(); }}
+            style={{ marginLeft: "auto", color: "#9aa093", fontSize: 9, fontWeight: 700, letterSpacing: ".04em", cursor: "pointer", padding: "0 2px" }}
+          >
+            CLEAR
+          </span>
+        )}
       </span>
       {children}
     </label>
@@ -2870,7 +2939,7 @@ function LineCard({
     ? sortNumeric(restrictPricedToPool(activeOptions(maint.legHeights, String(v.legHeight ?? "")), allow?.leg_heights)).map((o) => ({ value: o.value, label: o.value }))
     : [];
 
-  const missing = new Set(missingVariantAxes(line.itemGroup, line.variants).map((a) => a.key));
+  const missing = new Set(missingVariantAxes(line.itemGroup, line.variants, line.itemCode).map((a) => a.key));
 
   /* ── Special orders (unified entry) — the editing UI moved to the
      SpecialOrderSheet bottom sheet (owner-approved). Here we only derive a
@@ -2954,7 +3023,7 @@ function LineCard({
               onChange={(e) => onChange({ price: e.target.value })}
             />
           </Field>
-          <Field label="Delivery date" style={{ flex: 1.1 }}>
+          <Field label="Delivery date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
             <input className="fld-i" type="date" value={line.ddate} onChange={(e) => onDdateChange(e.target.value)} />
           </Field>
         </div>
@@ -3530,7 +3599,7 @@ function PayCard({ pay, staff, onChange, onRemove }: { pay: Payment; staff: Arra
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 9, alignItems: "flex-end" }}>
-          <Field label="Date" style={{ flex: 1.1 }}>
+          <Field label="Date" style={{ flex: 1.1 }} onClear={pay.date ? () => onChange({ date: "" }) : undefined}>
             <input className="fld-i" type="date" value={pay.date} onChange={(e) => onChange({ date: e.target.value })} />
           </Field>
           <Field label="Amount" style={{ flex: 1.1 }}>

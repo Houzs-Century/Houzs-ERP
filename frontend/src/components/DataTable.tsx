@@ -37,14 +37,21 @@ import {
   ColumnsDrawer,
   type DrawerColumn,
 } from "./ColumnsDrawer";
+import { withSingleActive } from "./LayoutSection";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useSmallViewport } from "../hooks/useSmallViewport";
+import { inferColumnGroup } from "../lib/columnGroups";
 import { subscribeActiveCompany, getActiveCompanySnapshot } from "../lib/activeCompany";
 import { shortCompanyName } from "../lib/branding";
 import {
   EMPTY_LAYOUT,
+  createNamedLayout,
+  deleteNamedLayout,
   getTableLayoutsSnapshot,
+  renameCompanyDefault,
+  renameNamedLayout,
+  updateNamedLayout,
   saveCompanyDefault,
   saveMyLayout,
   serializeLayout,
@@ -70,6 +77,13 @@ export interface Column<T> {
   /** Provide a raw value for CSV export and client-side sorting. Columns
    *  without this are skipped during export and can't be sorted. */
   getValue?: (row: T) => string | number | boolean | null | undefined;
+  /** For cells that hold SEVERAL values (a service case can be both Bedframe
+   *  and Mattress). The funnel then lists each value on its own line, counts
+   *  it against every row that carries it, and a row matches when ANY of its
+   *  values is ticked. Without this a multi-value cell shows up as one
+   *  composite entry ("Bedframe, Mattress") that ticking "Bedframe" misses.
+   *  `getValue` is still required — sort and CSV export use it. */
+  getFilterValues?: (row: T) => (string | number | null | undefined)[];
   /** If true, the column is excluded from the column chooser AND pinned
    *  to the front of the render order (can't be reordered past). */
   alwaysVisible?: boolean;
@@ -721,7 +735,18 @@ function DataTableInner<T>({
   const [chooserOpen, setChooserOpen] = useState(false);
   const userHidden = useMemo(() => new Set(hiddenList), [hiddenList]);
   const userShown = useMemo(() => new Set(shownList), [shownList]);
+  /* Right-frozen columns (owner 2026-08-03). A SECOND list rather than
+     reshaping `pinned` into objects: `dt:pinned:*` is already on every
+     operator's machine and in every saved layout, and a shape change would
+     have to migrate both. Two flat lists read the same either way. */
+  const [pinnedRight, setPinnedRight] = useLocalStorage<string[]>(
+    `dt:pinnedr:${idKey}`,
+    [],
+    legacyStorageKey("pinnedr"),
+    sanitizeStringList,
+  );
   const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
+  const pinnedRightSet = useMemo(() => new Set(pinnedRight), [pinnedRight]);
   // Header right-click menu — transient (not persisted). Holds the anchor
   // point and the column it was opened on. null = closed.
   const [headerMenu, setHeaderMenu] = useState<{
@@ -906,14 +931,21 @@ function DataTableInner<T>({
       columns?: string[];
       isDefault: boolean;
       fromServer: boolean;
+      /** Set only for the user's own saved layouts — what CRUD acts on. */
+      savedId?: number;
+      /** Set only for a company-default row — renaming it goes to /default. */
+      companyId?: number;
     }> = [];
     for (const co of layoutStore.companies) {
       const saved = layoutStore.defaults[String(co.id)]?.[baseIdKey];
       const seed = seedByCode.get(co.code.toUpperCase());
       if (!saved && !seed) continue;
+      const savedName = layoutStore.defaultNames[String(co.id)]?.[baseIdKey];
       out.push({
         id: `company:${co.id}`,
-        label: `${shortCompanyName(co.name)} Layout`,
+        // Named by an admin, or called after the company until one does.
+        label: savedName || `${shortCompanyName(co.name)} Layout`,
+        companyId: co.id,
         // The seed's hint describes the SEED. Once an admin has saved a real
         // default it would be describing a layout that no longer exists —
         // "Sales desk" over the production columns somebody just published.
@@ -922,6 +954,19 @@ function DataTableInner<T>({
         columns: saved ? undefined : seed?.columns,
         isDefault: co.id === layoutStore.activeCompanyId,
         fromServer: Boolean(saved),
+      });
+    }
+    /* The user's OWN saved layouts (mig 0239) — offered after the company
+       rows, and the only ones that can be renamed or deleted. */
+    for (const saved of layoutStore.myLayouts[baseIdKey] ?? []) {
+      out.push({
+        id: `saved:${saved.id}`,
+        label: saved.name,
+        hint: "Saved by you",
+        layout: saved.layout,
+        isDefault: false,
+        fromServer: true,
+        savedId: saved.id,
       });
     }
     // Page presets that aren't about a company (and, when there is no company
@@ -960,6 +1005,7 @@ function DataTableInner<T>({
         // screen you are on, not to the view.
         widths: {},
         pinned: [],
+        pinnedRight: [],
         groupBy: [],
       };
     },
@@ -1066,16 +1112,22 @@ function DataTableInner<T>({
   // order). Everything else follows. When nothing is pinned this is
   // identical to `visibleColumns`, so the default render is unchanged.
   const displayColumns = useMemo(() => {
-    if (pinnedSet.size === 0) return visibleColumns;
+    if (pinnedSet.size === 0 && pinnedRightSet.size === 0) return visibleColumns;
     const always = visibleColumns.filter((c) => c.alwaysVisible);
     const pinnedCols = visibleColumns.filter(
       (c) => !c.alwaysVisible && pinnedSet.has(c.key)
     );
-    const rest = visibleColumns.filter(
-      (c) => !c.alwaysVisible && !pinnedSet.has(c.key)
+    const rightCols = visibleColumns.filter(
+      (c) => !c.alwaysVisible && !pinnedSet.has(c.key) && pinnedRightSet.has(c.key)
     );
-    return [...always, ...pinnedCols, ...rest];
-  }, [visibleColumns, pinnedSet]);
+    const rest = visibleColumns.filter(
+      (c) =>
+        !c.alwaysVisible && !pinnedSet.has(c.key) && !pinnedRightSet.has(c.key)
+    );
+    // Left run · the scrolling middle · right run. A column pinned to both
+    // sides cannot exist — the cycle moves it, it never adds.
+    return [...always, ...pinnedCols, ...rest, ...rightCols];
+  }, [visibleColumns, pinnedSet, pinnedRightSet]);
 
   // Display index of the header being dragged — decides which side of the drop
   // target the insertion bar is drawn on. -1 when no drag is in flight.
@@ -1116,6 +1168,33 @@ function DataTableInner<T>({
     [widths]
   );
 
+  /* How many TRAILING display columns are frozen to the right. Mirror image
+     of stickyCount: a contiguous run, because a gap in it would let an
+     unfrozen column scroll underneath one that is frozen. */
+  const stickyRightCount = useMemo(() => {
+    if (pinnedRightSet.size === 0) return 0;
+    let n = 0;
+    for (let i = displayColumns.length - 1; i >= 0; i--) {
+      if (pinnedRightSet.has(displayColumns[i].key)) n++;
+      else break;
+    }
+    return n;
+  }, [displayColumns, pinnedRightSet]);
+
+  /* Cumulative RIGHT offset per trailing sticky column. Accumulated from the
+     last column backwards, which is why this cannot reuse stickyLeft's loop:
+     the offset of a right-frozen column is the total width of everything to
+     its right, not to its left. */
+  const stickyRight = useMemo(() => {
+    const out: number[] = [];
+    let acc = 0;
+    for (let i = displayColumns.length - 1; i >= displayColumns.length - stickyRightCount; i--) {
+      out[i] = acc;
+      acc += resolveWidth(displayColumns[i]);
+    }
+    return out;
+  }, [displayColumns, stickyRightCount, resolveWidth]);
+
   // Cumulative left offset (px) for each sticky column, by index into
   // `displayColumns`. Index >= stickyCount → not sticky (offset unused).
   const stickyLeft = useMemo(() => {
@@ -1150,7 +1229,7 @@ function DataTableInner<T>({
     const current = visibleColumns
       .filter((c) => !c.alwaysVisible)
       .map((c) => c.key);
-    return resolvedPresets.map((p) => {
+    const rows = resolvedPresets.map((p) => {
       // What this layout WOULD render, resolved the same way the table resolves
       // its own — so "active" means the two agree, not that an id was stored.
       const layout = presetLayout(p);
@@ -1168,11 +1247,14 @@ function DataTableInner<T>({
         hint: p.hint,
         count: wouldShow.length,
         isDefault: p.isDefault,
+        savedId: p.savedId,
+        companyId: p.companyId,
         active:
           wouldShow.length === current.length &&
           wouldShow.every((k, i) => current[i] === k),
       };
     });
+    return withSingleActive(rows);
   }, [resolvedPresets, presetLayout, allColumns, visibleColumns]);
 
   function toggleColumn(key: string) {
@@ -1224,6 +1306,7 @@ function DataTableInner<T>({
     // can never fill again.
     const hiddenSet = new Set(keep(layout.hidden));
     setPinned(keep(layout.pinned).filter((k) => !hiddenSet.has(k)));
+    setPinnedRight(keep(layout.pinnedRight).filter((k) => !hiddenSet.has(k)));
     if (Object.keys(layout.widths).length > 0) updateWidths(layout.widths, true);
   }
 
@@ -1240,11 +1323,12 @@ function DataTableInner<T>({
       shown: shownList,
       widths: storedWidths,
       pinned,
+      pinnedRight,
       // DataTable has no grouping of its own; the field exists for the
       // vendored DataGrid, which shares this store.
       groupBy: [],
     }),
-    [order, hiddenList, shownList, storedWidths, pinned],
+    [order, hiddenList, shownList, storedWidths, pinned, pinnedRight],
   );
   const myLayoutSignature = serializeLayout(myLayout);
   const syncedRef = useRef<{ key: string; signature: string } | null>(null);
@@ -1293,9 +1377,10 @@ function DataTableInner<T>({
         .map((c) => c.key),
       widths: storedWidths,
       pinned,
+      pinnedRight,
       groupBy: [],
     };
-  }, [allColumns, effectiveHidden, storedWidths, pinned]);
+  }, [allColumns, effectiveHidden, storedWidths, pinned, pinnedRight]);
 
   const defaultManager = useMemo(() => {
     if (!layoutStore.ready || !layoutStore.canManageDefaults) return undefined;
@@ -1326,6 +1411,7 @@ function DataTableInner<T>({
     setOrder([]);
     updateWidths({}, true);
     setPinned([]);
+    setPinnedRight([]);
   }
 
   /* ── Columns drawer ──────────────────────────────────────────────────────
@@ -1340,12 +1426,19 @@ function DataTableInner<T>({
         .map((c) => ({
           key: c.key,
           label: c.label || c.key,
-          group: c.group || "",
+          /* Explicit beats inferred: a page that sorted its columns by hand
+             (Sales Orders) keeps that sort; every other list gets the shared
+             classifier rather than one flat scroll. */
+          group: c.group || inferColumnGroup(c.key, c.label || c.key) || "",
           visible: !effectiveHidden.has(c.key),
           width: resolveWidth(c),
-          pinned: pinnedSet.has(c.key),
+          pinned: pinnedSet.has(c.key)
+            ? ("left" as const)
+            : pinnedRightSet.has(c.key)
+              ? ("right" as const)
+              : null,
         })),
-    [allColumns, effectiveHidden, resolveWidth, pinnedSet]
+    [allColumns, effectiveHidden, resolveWidth, pinnedSet, pinnedRightSet]
   );
 
   /** Every column on. Writes the shown-list explicitly so a `defaultHidden`
@@ -1360,6 +1453,18 @@ function DataTableInner<T>({
   function resetLayout() {
     resetVisibility();
     resetOrder();
+    /* Sort is persisted per table in `dt:sort:<id>` and replayed on every mount,
+       so a column clicked once months ago becomes the permanent default. Owner,
+       2026-08-04, on the Delivery Orders list opening oldest-first every time:
+       "为什么当我打开这个系统的一瞬间，它不是默认自动 sort 那个 documentation 呢？"
+       The backend's default IS newest-first (`do_date` DESC); the stored sort
+       simply never let it apply.
+       Reset must clear it too, or the one control named for undoing a layout
+       cannot undo the most visible part of one. reportServerSort is called
+       explicitly because the mount effect that normally pushes it up runs once
+       with [] deps. */
+    setSort(null);
+    reportServerSort(null);
   }
 
   /** True when the columns on screen match no offered layout — the "· edited"
@@ -1367,6 +1472,57 @@ function DataTableInner<T>({
    *  dirty against, so it stays false. */
   const layoutDirty = Boolean(
     presetOptions && presetOptions.length > 0 && !presetOptions.some((p) => p.active)
+  );
+
+  /* ── Named layouts (mig 0239) ────────────────────────────────────────────
+     Saving one snapshots the arrangement ON SCREEN, which is the only reading
+     that matches the control's name ("New layout from current columns"). The
+     drawer owns the naming prompt; here we just write. */
+  const saveNamedLayout = useCallback(
+    (name: string) => createNamedLayout(baseIdKey, name, renderedLayout).then(() => undefined),
+    [baseIdKey, renderedLayout]
+  );
+  const duplicateNamedLayout = useCallback(
+    (id: string, name: string) => {
+      const source = resolvedPresets.find((p) => p.id === id);
+      // Duplicating a COMPANY row is allowed on purpose: "start from the 2990
+      // view and tweak it" is the same gesture as duplicating your own.
+      return createNamedLayout(baseIdKey, name, source ? presetLayout(source) : renderedLayout).then(
+        () => undefined
+      );
+    },
+    [baseIdKey, resolvedPresets, presetLayout, renderedLayout]
+  );
+  /* One handler, two destinations: a layout the user saved is renamed by id;
+     a COMPANY row has no id of its own — its name lives on the default row, so
+     it goes to /default. The drawer doesn't need to know which. */
+  const renameLayout = useCallback(
+    (id: string, name: string) => {
+      const target = resolvedPresets.find((p) => p.id === id);
+      if (target?.savedId != null) return renameNamedLayout(baseIdKey, target.savedId, name);
+      if (target?.companyId != null) return renameCompanyDefault(baseIdKey, name);
+      return Promise.resolve();
+    },
+    [baseIdKey, resolvedPresets]
+  );
+  /* "Edit this layout" (owner 2026-08-02: default layout 需要可以 edit) — one
+     handler, two destinations again: a saved layout is replaced by id, the
+     COMPANY row goes through the same publish path the footer button uses. */
+  const updateLayout = useCallback(
+    (id: string) => {
+      const target = resolvedPresets.find((p) => p.id === id);
+      if (target?.savedId != null) {
+        return updateNamedLayout(baseIdKey, target.savedId, renderedLayout);
+      }
+      if (target?.companyId != null) return saveCompanyDefault(baseIdKey, renderedLayout);
+      return Promise.resolve();
+    },
+    [baseIdKey, resolvedPresets, renderedLayout]
+  );
+
+  const deleteSavedLayout = useCallback(
+    (savedId: number) => deleteNamedLayout(baseIdKey, savedId),
+    [baseIdKey]
   );
 
   /** Download the arrangement as JSON — the drawer's "Export column config".
@@ -1476,10 +1632,23 @@ function DataTableInner<T>({
   }
 
   // ── Pin / freeze (left) ────────────────────────────────────
+  /**
+   * none → left → right → none (design handoff; owner 2026-08-03).
+   *
+   * A column is only ever in ONE of the two lists — the cycle MOVES it. Being
+   * frozen to both edges is not a state a table can render, so it is not a
+   * state this can produce.
+   */
   function togglePin(key: string) {
-    setPinned((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
-    );
+    const side = pinnedSet.has(key) ? "left" : pinnedRightSet.has(key) ? "right" : null;
+    if (side === null) {
+      setPinned((prev) => [...prev, key]);
+    } else if (side === "left") {
+      setPinned((prev) => prev.filter((k) => k !== key));
+      setPinnedRight((prev) => (prev.includes(key) ? prev : [...prev, key]));
+    } else {
+      setPinnedRight((prev) => prev.filter((k) => k !== key));
+    }
   }
 
   // ── Column reorder ─────────────────────────────────────────
@@ -1515,11 +1684,20 @@ function DataTableInner<T>({
      then still render in the old place — a gesture that silently does nothing
      is worse than one that visibly declines. Within a group, order is honoured
      verbatim, so those drops are allowed. */
+  /** Which edge a column is frozen to — the thing a drop may not cross. */
+  const freezeSideOf = (key: string) =>
+    pinnedSet.has(key) ? "left" : pinnedRightSet.has(key) ? "right" : "none";
+
   const canDropHeader = (c: Column<T>) =>
     !!dragCol &&
     dragCol !== c.key &&
     canDragHeader(c) &&
-    pinnedSet.has(dragCol) === pinnedSet.has(c.key);
+    /* SIDE, not "is it left-pinned": with right-freeze, an unfrozen column and
+       a right-frozen one both answer false to pinnedSet.has, so comparing that
+       would let a right-frozen header be dropped into the scrolling middle —
+       rewriting the stored order while the column stayed put, which is the
+       silent no-op this guard exists to prevent. */
+    freezeSideOf(dragCol) === freezeSideOf(c.key);
 
   function endHeaderDrag() {
     setDragCol(null);
@@ -1707,15 +1885,20 @@ function DataTableInner<T>({
     const getters = active
       .map(([key, vals]) => {
         const col = allColumns.find((c) => c.key === key);
-        return col?.getValue ? { getValue: col.getValue, allowed: new Set(vals) } : null;
+        if (!col?.getValue) return null;
+        // Multi-value columns match on ANY of the row's values; single-value
+        // ones keep the exact-key rule.
+        const values = col.getFilterValues
+          ? (r: T) => filterKeysOf(col.getFilterValues!(r))
+          : (r: T) => [filterKeyOf(col.getValue!(r))];
+        return { values, allowed: new Set(vals) };
       })
       .filter(
-        (g): g is { getValue: NonNullable<Column<T>["getValue"]>; allowed: Set<string> } =>
-          g !== null
+        (g): g is { values: (r: T) => string[]; allowed: Set<string> } => g !== null
       );
     if (getters.length === 0) return rows;
     return rows.filter((r) =>
-      getters.every((g) => g.allowed.has(filterKeyOf(g.getValue(r))))
+      getters.every((g) => g.values(r).some((v) => g.allowed.has(v)))
     );
   }, [rows, colFilters, allColumns]);
 
@@ -2221,6 +2404,11 @@ function DataTableInner<T>({
         onReset={resetLayout}
         layouts={presetOptions}
         onApplyLayout={applyPreset}
+        onSaveLayout={layoutStore.canManageLayouts ? saveNamedLayout : undefined}
+        onDuplicateLayout={layoutStore.canManageLayouts ? duplicateNamedLayout : undefined}
+        onRenameLayout={layoutStore.canManageLayouts ? renameLayout : undefined}
+        onDeleteLayout={layoutStore.canManageLayouts ? deleteSavedLayout : undefined}
+        onUpdateLayout={layoutStore.canManageLayouts ? updateLayout : undefined}
         defaultManager={defaultManager}
         dirty={layoutDirty}
         onExport={exportColumnConfig}
@@ -2286,6 +2474,11 @@ function DataTableInner<T>({
                   const active = sort?.key === c.key;
                   const isSticky = i < stickyCount;
                   const isLastSticky = isSticky && i === stickyCount - 1;
+                  const isStickyRight = stickyRight[i] !== undefined;
+                  // The left EDGE of the right run gets the divider, mirroring
+                  // the right edge of the left run.
+                  const isFirstStickyRight =
+                    isStickyRight && i === displayColumns.length - stickyRightCount;
                   const userW = widths[c.key];
                   // Inline sizing: a user width (px) always wins; otherwise
                   // fall through to the column's own `width` string. When a
@@ -2313,6 +2506,10 @@ function DataTableInner<T>({
                     // Above body sticky cells (z-20) and the sticky header
                     // baseline (the thead is z-10); 30 keeps frozen headers
                     // on top of everything during a two-axis scroll.
+                    cellStyle.zIndex = 30;
+                  } else if (isStickyRight) {
+                    cellStyle.position = "sticky";
+                    cellStyle.right = stickyRight[i];
                     cellStyle.zIndex = 30;
                   }
                   return (
@@ -2389,7 +2586,8 @@ function DataTableInner<T>({
                         dragCol === c.key && "opacity-40",
                         // Delineate the frozen region: a right border on the
                         // last sticky column reads as the freeze line.
-                        isLastSticky && "border-r border-border"
+                        isLastSticky && "border-r border-border",
+                        isFirstStickyRight && "border-l border-border"
                       )}
                     >
                       <span className="inline-flex items-center gap-1">
@@ -2657,6 +2855,9 @@ function DataTableInner<T>({
                         {displayColumns.map((c, i) => {
                           const isSticky = i < stickyCount;
                           const isLastSticky = isSticky && i === stickyCount - 1;
+                          const isStickyRight = stickyRight[i] !== undefined;
+                          const isFirstStickyRight =
+                            isStickyRight && i === displayColumns.length - stickyRightCount;
                           const userW = widths[c.key];
                           const cellStyle: React.CSSProperties = {};
                           if (typeof userW === "number") {
@@ -2674,6 +2875,13 @@ function DataTableInner<T>({
                             cellStyle.position = "sticky";
                             cellStyle.left = stickyLeft[i];
                             cellStyle.zIndex = 20;
+                            cellStyle.background = stickyBg;
+                          } else if (isStickyRight) {
+                            cellStyle.position = "sticky";
+                            cellStyle.right = stickyRight[i];
+                            cellStyle.zIndex = 20;
+                            // Opaque for the same reason the left run is: the
+                            // scrolling middle passes UNDER these cells.
                             cellStyle.background = stickyBg;
                           }
                           // Full raw value as a native tooltip so a clipped
@@ -2718,6 +2926,7 @@ function DataTableInner<T>({
                                 i === displayColumns.length - 1 && "pr-5",
                                 // Freeze line on the last sticky column.
                                 isLastSticky && "border-r border-border",
+                                isFirstStickyRight && "border-l border-border",
                                 c.className
                               )}
                             >
@@ -2931,10 +3140,15 @@ function DataTableInner<T>({
           const col = allColumns.find((c) => c.key === filterMenu.colKey);
           if (!col?.getValue) return null;
           const getter = col.getValue;
+          const multi = col.getFilterValues;
           const counts = new Map<string, number>();
           for (const r of rows ?? []) {
-            const k = filterKeyOf(getter(r));
-            counts.set(k, (counts.get(k) ?? 0) + 1);
+            // A multi-value row counts once against EACH of its values, so
+            // the funnel lists "Bedframe" and "Mattress" separately rather
+            // than a composite "Bedframe, Mattress" entry.
+            for (const k of multi ? filterKeysOf(multi(r)) : [filterKeyOf(getter(r))]) {
+              counts.set(k, (counts.get(k) ?? 0) + 1);
+            }
           }
           const values = [...counts.entries()].sort((a, b) =>
             a[0].localeCompare(b[0], undefined, { numeric: true })
@@ -3022,7 +3236,11 @@ function DataTableInner<T>({
                     ) : (
                       <Pin size={13} className="shrink-0 text-ink-muted" />
                     )}
-                    {pinnedSet.has(col.key) ? "Unpin from left" : "Pin to left"}
+                    {pinnedSet.has(col.key)
+                      ? "Freeze to the right"
+                      : pinnedRightSet.has(col.key)
+                        ? "Unfreeze column"
+                        : "Freeze to the left"}
                   </button>
                 )}
               </div>
@@ -3270,6 +3488,14 @@ function parsePxWidth(width: string | undefined): number | null {
 function filterKeyOf(v: unknown): string {
   if (v == null || v === "") return "—";
   return String(v);
+}
+
+/** Multi-value cell -> its filter keys. An empty list is still "—" (blank),
+ *  so a row with no values stays tickable under the blank entry exactly like
+ *  a single-value column's null. */
+function filterKeysOf(vs: readonly unknown[]): string[] {
+  const keys = vs.map(filterKeyOf).filter((k) => k !== "—");
+  return keys.length ? [...new Set(keys)] : ["—"];
 }
 
 function compareValues(

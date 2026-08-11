@@ -22,7 +22,7 @@
 // Route: /scm/delivery-orders/:id. Data: useMfgDeliveryOrderDetail /
 // useUpdateMfgDeliveryOrderStatus (unchanged from prior V2).
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
@@ -39,12 +39,12 @@ import {
   Receipt,
   Share2,
   X as XIcon,
-  Download,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { DataTable, type Column } from "../../components/DataTable";
 import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFamilies";
+import { CommittedBatchCell } from "../../components/DocumentLinesExpansion";
 import {
   DetailGrid,
   DetailMain,
@@ -63,15 +63,20 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useDoRelationshipMap } from "./sales-doc-relationship-map";
 import {
   DocumentRelationshipMapModal,
+  DocumentChoiceDialog,
   ModalOverlay,
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import {
+  PrintPreviewModal,
+  useOpenPrintPreviewFromUrl,
+  type PrintPreviewRow,
+} from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders } from "../../auth/salesAccess";
-import { useBranding } from "../../hooks/useBranding";
-import { shortCompanyName } from "../../lib/branding";
 
 // ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
@@ -158,6 +163,11 @@ type DoItem = {
   rack_id?: string | null;
   racks?: string[];
   warehouse_id?: string | null;
+  /* Mig 0230 — the incoming PO batch this line committed to at DO creation
+     (ship-before-arrival). The hard-from-DO anchor (Decision, docs/modules/
+     purchase-order.md 2026-08-06); returned by the detail GET's ITEM columns.
+     Display-only here — rendered as an anchored CommittedBatchCell chip. */
+  committed_po_batch_no?: string | null;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -665,96 +675,9 @@ function HistoryModal({
 // built in the main component below (chainNodes memo) and passed in as
 // props; onNodeClick handles navigation to linked cross-docs.
 
-// ─── Modal · Print PDF preview ─────────────────────────────────────────────
-
-function PrintPdfModal({
-  open,
-  onClose,
-  header,
-  items,
-  onDownload,
-  onPrint,
-}: {
-  open: boolean;
-  onClose: () => void;
-  header: DoHeader;
-  items: DoItem[];
-  onDownload: () => void;
-  onPrint: () => void;
-}) {
-  const totalQty = items.reduce((sum, l) => sum + Number(l.qty ?? 0), 0);
-  // Letterhead follows the ACTIVE company (2990 DO previews were branded with
-  // a hardcoded Houzs literal). Same source as the real jspdf letterhead, so
-  // the preview card and the downloaded PDF always name the same company.
-  const branding = useBranding();
-  return (
-    <ModalOverlay
-      open={open}
-      onClose={onClose}
-      title="Print preview"
-      icon={<Printer size={16} />}
-      footer={
-        <div className="ml-auto flex items-center gap-2">
-          <Button
-            variant="secondary"
-            icon={<Printer size={14} />}
-            onClick={onPrint}
-          >
-            Print now
-          </Button>
-          <Button
-            variant="primary"
-            icon={<Download size={14} />}
-            onClick={onDownload}
-          >
-            Download PDF
-          </Button>
-        </div>
-      }
-    >
-      <div className="overflow-hidden rounded-xl border border-border-subtle">
-        <div className="flex items-start justify-between gap-3 bg-sidebar px-5 py-4 text-sidebar-ink">
-          <div>
-            <div className="font-display text-[14px] font-bold uppercase tracking-wider text-white">
-              {shortCompanyName(branding.companyName)}
-            </div>
-            <div className="mt-0.5 text-[10.5px] uppercase tracking-brand text-sidebar-ink-muted">
-              Delivery Order
-            </div>
-          </div>
-          <div className="text-right font-mono text-[13px] font-bold text-accent-bright">
-            {header.do_number}
-          </div>
-        </div>
-        <div className="space-y-2 px-5 py-4 text-[12.5px] leading-relaxed text-ink">
-          <div>
-            <span className="font-semibold text-ink-secondary">Deliver to: </span>
-            {header.debtor_name}
-          </div>
-          <div className="text-ink-secondary">
-            {shipTo(header).join(", ") || "No address on file"}
-          </div>
-          <div>
-            <span className="font-semibold text-ink-secondary">Driver: </span>
-            {header.driver_name || "Unassigned"}
-            {header.vehicle ? ` · ${header.vehicle}` : ""}
-          </div>
-          <div>
-            <span className="font-semibold text-ink-secondary">DO date: </span>
-            {fmtDate(header.do_date)}
-            {header.customer_delivery_date
-              ? ` · Scheduled ${fmtDate(header.customer_delivery_date)}`
-              : ""}
-          </div>
-          <div>
-            <span className="font-semibold text-ink-secondary">Items: </span>
-            {items.length} line{items.length === 1 ? "" : "s"} · {totalQty} unit{totalQty === 1 ? "" : "s"}
-          </div>
-        </div>
-      </div>
-    </ModalOverlay>
-  );
-}
+// Print preview — this page's private PrintPdfModal was the app's ONLY print
+// preview; it is now components/scm-v2/PrintPreviewModal, shared by every
+// printable document (see that file's header).
 
 // ─── Main page ─────────────────────────────────────────────────────────────
 
@@ -797,6 +720,8 @@ export function DeliveryOrderDetailV2() {
 
   const [modal, setModal] = useState<"history" | "relmap" | "print" | null>(null);
   const closeModal = () => setModal(null);
+  const openPrintPreview = useCallback(() => setModal("print"), []);
+  useOpenPrintPreviewFromUrl(openPrintPreview, !!deliveryOrder);
 
   const eff = deliveryOrder ? effectiveOf(deliveryOrder) : null;
   const stageLabel = deliveryOrder
@@ -830,8 +755,13 @@ export function DeliveryOrderDetailV2() {
         : null,
     [deliveryOrder],
   );
-  const { nodes: chainNodes, onNodeClick: onChainNodeClick } =
-    useDoRelationshipMap(relMapHeader);
+  const {
+    nodes: chainNodes,
+    onNodeClick: onChainNodeClick,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
+  } = useDoRelationshipMap(relMapHeader);
 
   // Back always returns to the Delivery Orders list (owner 2026-07-24: every
   // details page's back button goes to its relevant list, not wherever
@@ -846,27 +776,35 @@ export function DeliveryOrderDetailV2() {
         `Cancel delivery order ${deliveryOrder.do_number}? Stock allocated to this DO will be released back to the SO.`
       )
     ) {
-      updateStatus.mutate({ id: deliveryOrder.id, status: "cancelled" });
+      updateStatus.mutate({ id: deliveryOrder.id, status: "CANCELLED" });
     }
   };
   const doMarkSigned = () => {
     if (!deliveryOrder) return;
-    updateStatus.mutate({ id: deliveryOrder.id, status: "delivered" });
+    updateStatus.mutate({ id: deliveryOrder.id, status: "DELIVERED" });
   };
   const goConvertToSi = () =>
     deliveryOrder &&
     navigate(`/scm/sales-invoices/from-do?do=${deliveryOrder.id}`);
 
-  // Render + download the DO PDF via the SAME generator the list's Export PDF
-  // and the V1 detail page use (jspdf, client-side). The old `?print=1`
-  // navigation was dead — nothing consumed that param — so the button did
-  // nothing. Reuse the shared helper instead of re-implementing.
-  const doDownloadPdf = () => {
-    closeModal();
-    import("../../vendor/scm/lib/delivery-order-pdf")
+  // Render the DO PDF via the SAME generator the list's Export PDF and the V1
+  // detail page use (jspdf, client-side). The old `?print=1` navigation was dead
+  // — nothing consumed that param — so the button did nothing. Reuse the shared
+  // helper instead of re-implementing.
+  //
+  // `action` is the preview dialog's three exits. "Print now" used to be a bare
+  // window.print(), which prints a BLANK sheet here (index.css's @media print
+  // reveals only .org-print-area); it now prints the real document.
+  const doDeliverPdf = (action: PdfAction) => {
+    return import("../../vendor/scm/lib/delivery-order-pdf")
       .then(({ generateDeliveryOrderPdf }) =>
-        generateDeliveryOrderPdf(deliveryOrder as never, items as never)
+        generateDeliveryOrderPdf(deliveryOrder as never, items as never, { action })
       )
+      .then(() => {
+        // Downloads and prints are terminal — close behind them. A new-tab
+        // preview leaves the dialog up so the operator can print after looking.
+        if (action !== "preview") closeModal();
+      })
       .catch((e) =>
         notify({
           title: "PDF generation failed",
@@ -875,9 +813,36 @@ export function DeliveryOrderDetailV2() {
         })
       );
   };
-  const doPrintNow = () => {
-    window.print();
-  };
+
+  // Summary lines for the print preview card — enough to confirm this is the
+  // document you meant before it goes to a printer or a customer.
+  const printRows: PrintPreviewRow[] = deliveryOrder
+    ? [
+        { label: "Deliver to", value: deliveryOrder.debtor_name },
+        { value: shipTo(deliveryOrder).join(", ") || "No address on file" },
+        {
+          label: "Driver",
+          value:
+            (deliveryOrder.driver_name || "Unassigned") +
+            (deliveryOrder.vehicle ? ` · ${deliveryOrder.vehicle}` : ""),
+        },
+        {
+          label: "DO date",
+          value:
+            fmtDate(deliveryOrder.do_date) +
+            (deliveryOrder.customer_delivery_date
+              ? ` · Scheduled ${fmtDate(deliveryOrder.customer_delivery_date)}`
+              : ""),
+        },
+        {
+          label: "Items",
+          value: `${items.length} line${items.length === 1 ? "" : "s"} · ${items.reduce(
+            (sum, l) => sum + Number(l.qty ?? 0),
+            0
+          )} unit${items.reduce((sum, l) => sum + Number(l.qty ?? 0), 0) === 1 ? "" : "s"}`,
+        },
+      ]
+    : [];
 
   // ── DO line item columns — Item (with variant chips) · Type (FOC/Sale) · Qty ─
   const lineColumns: Column<DoItem>[] = [
@@ -906,6 +871,14 @@ export function DeliveryOrderDetailV2() {
                 <span className="truncate text-ink-secondary">
                   {secondary}
                 </span>
+              </div>
+            )}
+            {/* Committed batch (mig 0230) — the hard-from-DO anchor. Renders
+                ONLY when the line stored a commitment at DO creation; most
+                lines never commit, so absence renders nothing (no dash). */}
+            {l.committed_po_batch_no && (
+              <div className="mt-1">
+                <CommittedBatchCell poNo={l.committed_po_batch_no} />
               </div>
             )}
           </div>
@@ -1521,13 +1494,26 @@ export function DeliveryOrderDetailV2() {
           if (onChainNodeClick(n)) closeModal();
         }}
       />
-      <PrintPdfModal
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          closeModal();
+          pickChainChoice(d);
+        }}
+      />
+      <PrintPreviewModal
         open={modal === "print"}
         onClose={closeModal}
-        header={deliveryOrder}
-        items={items}
-        onDownload={doDownloadPdf}
-        onPrint={doPrintNow}
+        docTitle="Delivery Order"
+        docNo={deliveryOrder.do_number}
+        rows={printRows}
+        onViewPdf={() => doDeliverPdf("preview")}
+        onPrint={() => doDeliverPdf("print")}
+        onDownload={() => doDeliverPdf("save")}
       />
     </div>
   );

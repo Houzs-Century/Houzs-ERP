@@ -52,6 +52,8 @@ const fmtDmy = (iso: string | null | undefined): string => {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
 };
 import { formatPhone } from '@2990s/shared/phone';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import {
   usePurchaseOrderDetail,
   useUpdatePurchaseOrderHeader,
@@ -61,7 +63,6 @@ import {
   useCancelPurchaseOrder,
   useConfirmPurchaseOrder,
   useReopenPurchaseOrder,
-  useDeletePurchaseOrder,
   useSuppliers,
   useSupplierDetail,
   useOutstandingSoItems,
@@ -124,6 +125,19 @@ type HeaderDraft = {
    each draft against the server row on Save and calls add / update / delete. */
 type EditLine = PoLineDraft & { itemId?: string };
 
+/* The three supplier-revised date slots (mig 0026). Both the header draft and
+   every line draft key them identically, which is what lets "Apply to all"
+   copy one to the other by key. */
+type SupplierDateKey = 'supplierDeliveryDate2' | 'supplierDeliveryDate3' | 'supplierDeliveryDate4';
+const SUPPLIER_DATE_KEYS: readonly SupplierDateKey[] = [
+  'supplierDeliveryDate2', 'supplierDeliveryDate3', 'supplierDeliveryDate4',
+] as const;
+const SUPPLIER_DATE_LABEL: Record<SupplierDateKey, string> = {
+  supplierDeliveryDate2: 'Supplier Date 2',
+  supplierDeliveryDate3: 'Supplier Date 3',
+  supplierDeliveryDate4: 'Supplier Date 4',
+};
+
 const headerSnapshot = (p: any): HeaderDraft => ({
   supplierId:            p.supplier_id ?? '',
   poDate:                p.po_date ?? '',
@@ -177,7 +191,6 @@ export const PurchaseOrderDetail = () => {
   const cancel = useCancelPurchaseOrder();
   const confirm = useConfirmPurchaseOrder();
   const reopen = useReopenPurchaseOrder();
-  const deletePo = useDeletePurchaseOrder();
   const addItem = useAddPurchaseOrderItem();
   const updateItem = useUpdatePurchaseOrderItem();
   const deleteItem = useDeletePurchaseOrderItem();
@@ -462,7 +475,9 @@ export const PurchaseOrderDetail = () => {
       setEditLines((prev) => prev.map((d) => ({ ...d, deliveryDate: v || undefined })));
     }
     /* Mig 0026 — header supplier-revised dates fan down to every line that
-       doesn't already carry its own value for that slot. */
+       doesn't already carry its own value for that slot. Lines that DO carry
+       one are left alone here on purpose (a line can be revised on its own);
+       to overwrite every line use "Apply to all" — see applySupplierDateToAll. */
     if (k === 'supplierDeliveryDate2') {
       setEditLines((prev) => prev.map((d) => (d.supplierDeliveryDate2 ? d : { ...d, supplierDeliveryDate2: v || undefined })));
     }
@@ -472,6 +487,21 @@ export const PurchaseOrderDetail = () => {
     if (k === 'supplierDeliveryDate4') {
       setEditLines((prev) => prev.map((d) => (d.supplierDeliveryDate4 ? d : { ...d, supplierDeliveryDate4: v || undefined })));
     }
+  };
+
+  /* Batch the supplier-revised date across the whole PO (owner 2026-08-03).
+     The fan-down above only fills EMPTY slots, which is right the first time a
+     supplier quotes a revised date — but a supplier that pushes the date a
+     SECOND time leaves every line already filled, so the header input moved
+     nothing and the only way through was editing each line by hand. This is
+     the explicit, opt-in overwrite: it exists as a button rather than as
+     header-input behaviour so a line that was revised on its own is never
+     silently flattened by someone touching the header. */
+  const applySupplierDateToAll = (k: SupplierDateKey): number => {
+    const v = (headerView[k] ?? '').trim();
+    if (!v) return 0;                     // nothing to apply; the button is disabled too
+    setEditLines((prev) => prev.map((d) => ({ ...d, [k]: v })));
+    return editLines.length;
   };
 
   /* Patch one editLine by rid (mirrors Create's setLine). */
@@ -647,7 +677,7 @@ export const PurchaseOrderDetail = () => {
      optional docTitle so the revised copy prints "Revised Purchase Order". The
      operator downloads / prints / WhatsApps it themselves (Houzs's "Send" only
      marks the amendment SENT — mirroring 2990, no server email here). */
-  const generatePoPdf = (docTitle?: string) => {
+  const generatePoPdf = (docTitle?: string, action: PdfAction = 'save') => {
     // PR #102 — pre-resolve purchase_location name (PDF can't hit the API).
     const wh = (warehousesQTop.data ?? []).find((w) => w.id === po.purchase_location_id);
     const headerForPdf = {
@@ -664,10 +694,10 @@ export const PurchaseOrderDetail = () => {
       source_so_doc_no: (po as unknown as { source_so_doc_no?: string | null }).source_so_doc_no ?? null,
     };
     import('../../vendor/scm/lib/purchase-order-pdf').then(({ generatePurchaseOrderPdf }) =>
-      generatePurchaseOrderPdf(headerForPdf, items, docTitle ? { docTitle } : undefined),
+      generatePurchaseOrderPdf(headerForPdf, items, { ...(docTitle ? { docTitle } : {}), action }),
     ).catch((e) => notify({ title: 'PDF generation failed', body: `${e instanceof Error ? e.message : 'Something went wrong.'}`, tone: 'error' }));
   };
-  const handlePrint = () => generatePoPdf();
+  const print = usePrintPreview((action: PdfAction) => generatePoPdf(undefined, action));
 
   /* ── SO-amendment banner state (Phase 1-C) ─────────────────────────────────
      The bound PO detail stamps `open_amendment` when its source SO has an
@@ -835,10 +865,23 @@ export const PurchaseOrderDetail = () => {
               instead of wrapping. Both return in view mode. */}
           {!isEditing && <RelationshipMapButton type="po" id={po.id} />}
           {!isEditing && (
-            <Button variant="ghost" size="md" onClick={handlePrint}>
+            <>
+            <Button variant="ghost" size="md" onClick={print.openPreview}>
               <Printer {...ICON} />
               <span>Print PDF</span>
             </Button>
+            <PrintPreviewModal
+              open={print.open}
+              onClose={print.close}
+              docTitle="Purchase Order"
+              docNo={poDisplayNumber(po.po_number, (po as unknown as { revision?: number | null }).revision)}
+              rows={[
+                { label: 'Supplier', value: po.supplier?.name ?? po.supplier?.code ?? '—' },
+                { label: 'Items', value: `${items.length} line${items.length === 1 ? '' : 's'}` },
+              ]}
+              {...print.handlers}
+            />
+            </>
           )}
           {/* PR #78 — Convert from Sales Order. Gated behind Edit mode (it
               mutates line items). Commander 2026-05-29 — opens the full "Pick
@@ -874,7 +917,9 @@ export const PurchaseOrderDetail = () => {
           )}
           {/* PR — Commander 2026-05-27: "Cancel/Delete PO 没反应".
               Cancel: any pre-receipt status (incl. DRAFT). API blocks RECEIVED.
-              Delete: only CANCELLED. */}
+              The Delete half of that report no longer exists: the endpoint and
+              both buttons were removed 2026-08-11 (#1939) under the owner rule
+              不可以删只可以 cancel. Cancel + Reopen are the whole surface. */}
           {(po.status === 'DRAFT' || po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
             <Button variant="ghost" size="md"
               onClick={async () => {
@@ -909,20 +954,10 @@ export const PurchaseOrderDetail = () => {
               <span>{reopen.isPending ? 'Reopening…' : 'Reopen'}</span>
             </Button>
           )}
-          {po.status === 'CANCELLED' && (
-            <Button variant="ghost" size="md"
-              onClick={async () => {
-                if (!(await askConfirm({ title: `Permanently delete PO ${po.po_number}?`, body: 'This removes the header + all line items and cannot be undone.', confirmLabel: 'Delete', danger: true }))) return;
-                deletePo.mutate(po.id, {
-                  onSuccess: () => navigate('/scm/purchase-orders'),
-                  onError:   (err) => notify({ title: 'Delete failed', body: `${err instanceof Error ? err.message : 'Something went wrong.'}`, tone: 'error' }),
-                });
-              }}
-              disabled={deletePo.isPending}>
-              <Trash2 {...ICON} />
-              <span>{deletePo.isPending ? 'Deleting…' : 'Delete'}</span>
-            </Button>
-          )}
+          {/* A CANCELLED PO used to offer "Permanently delete". Removed with its
+              endpoint (owner rule 2026-08-11: 不可以删只可以 cancel). Cancel is
+              the terminal state; the record stays so AutoCount can be
+              reconciled against it. */}
           {/* PR — Phase 2: "Receive Goods" → /grns/new?poId=X. */}
           {(po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
             <Button variant="primary" size="md"
@@ -1110,6 +1145,7 @@ export const PurchaseOrderDetail = () => {
         po={po}
         draft={headerView}
         onField={setHeaderField}
+        onApplySupplierDateToAll={applySupplierDateToAll}
         locked={isLocked}
         isEditing={isEditing}
       />
@@ -1327,17 +1363,29 @@ export const PurchaseOrderDetail = () => {
    ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
-  po, draft, onField, locked, isEditing = true,
+  po, draft, onField, onApplySupplierDateToAll, locked, isEditing = true,
 }: {
   po: any;
   /** Draft header values (page-owned). In View these mirror the saved PO. */
   draft: HeaderDraft;
   /** Update a single header field on the page draft. */
   onField: (k: keyof HeaderDraft, v: string) => void;
+  /** Overwrite this supplier-date slot on EVERY line. Returns the line count. */
+  onApplySupplierDateToAll: (k: SupplierDateKey) => number;
   locked: boolean;
   /** View → Edit gate. When false the card renders read-only display text. */
   isEditing?: boolean;
 }) => {
+  /* "Applied to N lines" acknowledgement. Deliberately an inline flash and not
+     a NotifyDialog: the dialog is modal with an OK button, which would turn a
+     one-tap batch into two taps for something the line cards show anyway. */
+  const [appliedFlash, setAppliedFlash] = useState<{ key: SupplierDateKey; count: number } | null>(null);
+  useEffect(() => {
+    if (!appliedFlash) return;
+    const t = setTimeout(() => setAppliedFlash(null), 2600);
+    return () => clearTimeout(t);
+  }, [appliedFlash]);
+
   const suppliersQ = useSuppliers();
   const suppliers = suppliersQ.data ?? [];
   // PR #77 — header Purchase Location dropdown options.
@@ -1444,23 +1492,43 @@ const SupplierCard = ({
             <input type="date" className={styles.fieldInput} value={draft.expectedAt} disabled={locked}
               onChange={(e) => onField('expectedAt', e.target.value)} />
           </label>
-          {/* Mig 0026 — supplier-revised header delivery dates. Each fans down
-              to lines without their own value (handled in setHeaderField). */}
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Supplier Date 2</span>
-            <input type="date" className={styles.fieldInput} value={draft.supplierDeliveryDate2} disabled={locked}
-              onChange={(e) => onField('supplierDeliveryDate2', e.target.value)} />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Supplier Date 3</span>
-            <input type="date" className={styles.fieldInput} value={draft.supplierDeliveryDate3} disabled={locked}
-              onChange={(e) => onField('supplierDeliveryDate3', e.target.value)} />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Supplier Date 4</span>
-            <input type="date" className={styles.fieldInput} value={draft.supplierDeliveryDate4} disabled={locked}
-              onChange={(e) => onField('supplierDeliveryDate4', e.target.value)} />
-          </label>
+          {/* Mig 0026 — supplier-revised header delivery dates. Typing one fans
+              it down to lines that have NO value in that slot (setHeaderField).
+              "Apply to all" (owner 2026-08-03) is the explicit overwrite for a
+              supplier who revises a second time, when every line is already
+              filled and the fan-down therefore moves nothing. */}
+          {SUPPLIER_DATE_KEYS.map((k) => (
+            <label className={styles.field} key={k}>
+              <span className={styles.fieldLabelRow}>
+                <span className={styles.fieldLabel}>{SUPPLIER_DATE_LABEL[k]}</span>
+                {!locked && (
+                  appliedFlash?.key === k ? (
+                    <span className={styles.applyAllDone} role="status">
+                      Applied to {appliedFlash.count} {appliedFlash.count === 1 ? 'line' : 'lines'}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.applyAllBtn}
+                      disabled={!draft[k]}
+                      title={draft[k]
+                        ? `Overwrite ${SUPPLIER_DATE_LABEL[k]} on every line of this PO`
+                        : `Pick a ${SUPPLIER_DATE_LABEL[k]} first`}
+                      onClick={(e) => {
+                        e.preventDefault();          // never let the <label> re-target the click
+                        const n = onApplySupplierDateToAll(k);
+                        if (n > 0) setAppliedFlash({ key: k, count: n });
+                      }}
+                    >
+                      Apply to all
+                    </button>
+                  )
+                )}
+              </span>
+              <input type="date" className={styles.fieldInput} value={draft[k]} disabled={locked}
+                onChange={(e) => onField(k, e.target.value)} />
+            </label>
+          ))}
           {/* PR #77 — Purchase Location: default ship-to warehouse for
               every line on this PO. */}
           <label className={styles.field}>

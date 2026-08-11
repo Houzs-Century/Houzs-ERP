@@ -49,7 +49,19 @@ export type EmailPurpose =
   | "generic";
 
 export interface SendOptions {
-  to: string | null | undefined;
+  /** One address, or several. A list goes out as ONE message with every
+   *  recipient on it — never one message each. See `cc` below for why. */
+  to: string | string[] | null | undefined;
+  /** Carbon copy. Visible to everyone on the message.
+   *
+   *  ONE SEND, NOT N SENDS. The outbox row is drained with a SINGLE provider
+   *  call carrying every recipient, so a delivery either happens or does not.
+   *  Looping per recipient would let a mid-loop failure leave the row 'pending'
+   *  and the 5-minute cron retry would deliver a SECOND copy to everyone who
+   *  already had it. */
+  cc?: string | string[] | null;
+  /** Blind carbon copy. Not visible to the other recipients. */
+  bcc?: string | string[] | null;
   subject: string;
   html: string;
   text?: string;        // plain-text fallback; auto-derived from html if missing
@@ -198,7 +210,7 @@ function stripHtml(html: string): string {
 // outbox drain. Returns 'sent' | 'error' (caller pre-checks channel + key).
 async function deliverViaResend(
   env: Env,
-  m: { to: string; subject: string; html: string; text?: string | null; replyTo?: string | null; from?: string | null; attachments?: Array<{ filename: string; content: string }> | null; companyCode?: string | null },
+  m: { to: string; cc?: string | null; bcc?: string | null; subject: string; html: string; text?: string | null; replyTo?: string | null; from?: string | null; attachments?: Array<{ filename: string; content: string }> | null; companyCode?: string | null },
 ): Promise<SendResult> {
   // From-name + fallback sender address come from the central Branding config
   // (per-company: m.companyCode, default HOUZS) so the outbound identity tracks
@@ -253,7 +265,12 @@ async function deliverViaResend(
       },
       body: JSON.stringify({
         from,
-        to: m.to,
+        /* ARRAYS, and one call. Resend delivers a single message addressed to
+           everyone listed; sending per recipient would turn a mid-loop failure
+           into a duplicate on the cron retry. */
+        to: recipientList(m.to),
+        ...(recipientList(m.cc).length ? { cc: recipientList(m.cc) } : {}),
+        ...(recipientList(m.bcc).length ? { bcc: recipientList(m.bcc) } : {}),
         subject: m.subject,
         html: m.html,
         text: m.text || stripHtml(m.html),
@@ -272,8 +289,37 @@ async function deliverViaResend(
   }
 }
 
+/** A recipient field -> a clean, de-duplicated list. Accepts the single string
+ *  every caller used before this, an array, or a comma/semicolon-separated
+ *  string (what the outbox column holds, and what a human pastes).
+ *
+ *  De-duplication is case-insensitive and load-bearing: the same address in To
+ *  and Cc would otherwise make the provider deliver twice, and a reply-all that
+ *  includes our own mailbox would loop mail back into the thread it came from. */
+export function recipientList(v: string | string[] | null | undefined): string[] {
+  const raw = Array.isArray(v) ? v : String(v ?? "").split(/[,;]/);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    const addr = String(item ?? "").trim();
+    if (!addr || !addr.includes("@")) continue;
+    const key = addr.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(addr);
+  }
+  return out;
+}
+
 export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult> {
-  const to = (opts.to || "").trim();
+  const toList = recipientList(opts.to);
+  /* Cc/Bcc minus anyone already on To — see recipientList: a duplicate across
+     fields makes the provider deliver the same message twice. */
+  const onTo = new Set(toList.map((a) => a.toLowerCase()));
+  const ccList = recipientList(opts.cc).filter((a) => !onTo.has(a.toLowerCase()));
+  const onToCc = new Set([...onTo, ...ccList.map((a) => a.toLowerCase())]);
+  const bccList = recipientList(opts.bcc).filter((a) => !onToCc.has(a.toLowerCase()));
+  const to = toList.join(", ");
   if (!to || !to.includes("@")) {
     const result: SendResult = { status: "skipped", reason: "missing or invalid recipient" };
     await logEmail(env, opts, result);
@@ -299,10 +345,13 @@ export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult
   try {
     await env.DB.prepare(
       `INSERT INTO email_outbox
-         (id, to_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, status, attempts)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1)`,
+         (id, to_address, cc_address, bcc_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, status, attempts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1)`,
     )
-      .bind(id, to, opts.subject, opts.html, opts.text ?? null, opts.purpose, opts.refType ?? null, opts.refId ?? null, opts.replyTo ?? null, opts.companyCode ?? null)
+      /* Stored as the joined lists so a cron retry sends to exactly the same
+         people the immediate attempt did — a retry that quietly dropped the Cc
+         would be worse than the failure it is recovering from. */
+      .bind(id, to, ccList.join(", ") || null, bccList.join(", ") || null, opts.subject, opts.html, opts.text ?? null, opts.purpose, opts.refType ?? null, opts.refId ?? null, opts.replyTo ?? null, opts.companyCode ?? null)
       .run();
   } catch (e) {
     console.warn("[email] outbox enqueue failed; sending inline only:", e);
@@ -310,6 +359,8 @@ export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult
 
   const result = await deliverViaResend(env, {
     to,
+    cc: ccList.join(", ") || null,
+    bcc: bccList.join(", ") || null,
     subject: opts.subject,
     html: opts.html,
     text: opts.text,
@@ -347,13 +398,17 @@ export async function drainEmailOutbox(
 ): Promise<{ processed: number; sent: number; failed: number }> {
   if (!env.RESEND_API_KEY) return { processed: 0, sent: 0, failed: 0 };
   const rows = await env.DB.prepare(
-    `SELECT id, to_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, attempts
+    `SELECT id, to_address, cc_address, bcc_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, attempts
        FROM email_outbox WHERE status = 'pending' ORDER BY created_at LIMIT ?`,
   )
     .bind(limit)
     .all<{
       id: string;
       to_address: string;
+      /* Re-sent to exactly the people the first attempt addressed. A retry that
+         quietly dropped the Cc would be worse than the failure it recovers. */
+      cc_address: string | null;
+      bcc_address: string | null;
       subject: string;
       body_html: string | null;
       body_text: string | null;
@@ -394,6 +449,8 @@ export async function drainEmailOutbox(
     }
     const result = await deliverViaResend(env, {
       to: r.to_address,
+      cc: r.cc_address,
+      bcc: r.bcc_address,
       subject: r.subject,
       html: r.body_html ?? "",
       text: r.body_text,

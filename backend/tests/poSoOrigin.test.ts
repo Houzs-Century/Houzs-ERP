@@ -5,7 +5,9 @@ import {
   buildDeliveredSoLock,
   mergeAssignments,
   effectiveStoredLinks,
+  summarizeOrigins,
   type OriginAssignment,
+  type SkuOrigin,
 } from "../src/scm/routes/po-so-coverage";
 import {
   mrpLineCoverage,
@@ -209,7 +211,8 @@ describe("mergeAssignments (precedence: delivered-DO > stored-origin > MRP-float
       new Map([["BF-15", [a("SO-FLOAT", false)]]]),
     );
     expect(merged).toEqual([
-      { itemCode: "BF-15", assignments: [a("SO-DELIVERED", true)], storedLink: false },
+      // `provenance` (PR-3) rides beside the winner: always layer (b) verbatim.
+      { itemCode: "BF-15", assignments: [a("SO-DELIVERED", true)], storedLink: false, provenance: [a("SO-ORIGIN", true)] },
     ]);
   });
 
@@ -261,6 +264,89 @@ describe("mergeAssignments (precedence: delivered-DO > stored-origin > MRP-float
 
   test("null-safe on undefined inputs", () => {
     expect(mergeAssignments(undefined as never, new Map(), new Map(), new Map())).toEqual([]);
+  });
+
+  /* ── PR-3 (2026-08-07): the parallel `provenance` slot ────────────────────
+     ADDITIVE only — the four tests above pin that `assignments` / `storedLink`
+     did not move. These pin the new slot: ALWAYS the layer-(b) stored-origin
+     rows, regardless of which layer won the precedence. */
+  describe("provenance rides beside the precedence winner (PR-3, additive)", () => {
+    const stored = new Map([["BF-15", [a("SO-BOUGHT", true)]]]);
+
+    test("precedence untouched: with stored origin populated, (b) still wins over floating AND provenance mirrors it", () => {
+      /* NOTE the structural fact this pins: under TODAY's precedence (a>b>c) a
+         per-SKU FLOATING winner implies the stored layer was empty for that
+         SKU, so `provenance` is empty with it — the floating-winner-beside-
+         bought-for state becomes reachable per SKU only when PR-4 flips the
+         precedence. The wire and the frontends are ready for it now; nothing
+         about the winner moved in PR-3. */
+      const merged = mergeAssignments(
+        ["BF-15"], new Map(), stored, new Map([["BF-15", [a("SO-FLOAT", false)]]]),
+      );
+      expect(merged[0].assignments.map((x) => x.soDocNo)).toEqual(["SO-BOUGHT"]);
+      expect(merged[0].provenance).toEqual([a("SO-BOUGHT", true)]);
+    });
+
+    test("populated when DELIVERED wins — provenance still names the stored SO", () => {
+      const merged = mergeAssignments(
+        ["BF-15"],
+        new Map([["BF-15", [a("SO-DELIVERED", true)]]]),
+        stored,
+        new Map([["BF-15", [a("SO-FLOAT", false)]]]),
+        new Set(["BF-15"]),
+      );
+      expect(merged[0].assignments.map((x) => x.soDocNo)).toEqual(["SO-DELIVERED"]);
+      expect(merged[0].provenance).toEqual([a("SO-BOUGHT", true)]);
+      expect(merged[0].storedLink).toBe(true);
+    });
+
+    test("when STORED origin wins, provenance === assignments content (frontend dedupes to one chip)", () => {
+      const merged = mergeAssignments(["BF-15"], new Map(), stored, new Map());
+      expect(merged[0].assignments).toEqual(merged[0].provenance);
+      expect(merged[0].provenance).toEqual([a("SO-BOUGHT", true)]);
+    });
+
+    test("EMPTY when the SKU has no stored links — an MRP-only SKU carries no bought-for chip", () => {
+      const merged = mergeAssignments(
+        ["BF-15"], new Map(), new Map(), new Map([["BF-15", [a("SO-FLOAT", false)]]]),
+      );
+      expect(merged[0].assignments[0].soDocNo).toBe("SO-FLOAT");
+      expect(merged[0].provenance).toEqual([]);
+    });
+  });
+});
+
+/* ── summarizeOrigins (PR-3): `provenanceSos` rolls up beside `assignedSos` ──
+   Parallel and additive: the existing assignedSos / sourceLinked rollup is
+   untouched; provenanceSos is the distinct stored-origin SOs across SKUs. */
+describe("summarizeOrigins carries provenanceSos without moving assignedSos/sourceLinked", () => {
+  const a = (soDocNo: string, locked: boolean): OriginAssignment => ({ soDocNo, deliveryDate: "2026-08-01", locked });
+  const origin = (itemCode: string, assignments: OriginAssignment[], provenance: OriginAssignment[], storedLink = false): SkuOrigin =>
+    ({ itemCode, assignments, storedLink, provenance });
+
+  test("dedupes stored-origin SOs across SKUs into provenanceSos", () => {
+    const s = summarizeOrigins([
+      origin("BF-15", [a("SO-FLOAT", false)], [a("SO-BOUGHT", true)], true),
+      origin("MAT-7", [a("SO-FLOAT", false)], [a("SO-BOUGHT", true), a("SO-OTHER", true)], true),
+    ]);
+    expect(s.assignedSos.map((x) => x.soDocNo)).toEqual(["SO-FLOAT"]);
+    expect(s.sourceLinked).toBe(true);
+    expect(s.provenanceSos.map((x) => x.soDocNo)).toEqual(["SO-BOUGHT", "SO-OTHER"]);
+  });
+
+  test("empty provenanceSos when no SKU has stored origin; assignedSos unchanged", () => {
+    const s = summarizeOrigins([origin("BF-15", [a("SO-FLOAT", false)], [])]);
+    expect(s.assignedSos.map((x) => x.soDocNo)).toEqual(["SO-FLOAT"]);
+    expect(s.provenanceSos).toEqual([]);
+    expect(s.sourceLinked).toBe(false);
+  });
+
+  test("null-safe when provenance is absent on an older-shaped origin", () => {
+    const s = summarizeOrigins([
+      { itemCode: "BF-15", assignments: [a("SO-X", true)], storedLink: false } as SkuOrigin,
+    ]);
+    expect(s.provenanceSos).toEqual([]);
+    expect(s.assignedSos.map((x) => x.soDocNo)).toEqual(["SO-X"]);
   });
 });
 

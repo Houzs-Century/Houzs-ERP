@@ -23,6 +23,12 @@ const mutedChip: CSSProperties = {
   fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#5c6357",
   background: "#f4f6f3", border: "1px solid #d9ded4", borderRadius: 5, padding: "1px 6px",
 };
+/* Floating identity (Decision, docs/modules/purchase-order.md 2026-08-06: soft
+   until DO): a live, recomputed-on-every-view allocation wears a dashed border.
+   Mobile twin of the desktop dashed chips — keep in lockstep. */
+const floatingChip: CSSProperties = {
+  ...mutedChip, background: "transparent", border: "1px dashed #b6c6c0",
+};
 
 /* Mobile stock pill — the SAME rule as the desktop soLineStockPill
    (components/SoSourceChips.tsx), phone-shell colors: fully shipped →
@@ -64,6 +70,7 @@ export function SourcePosRowMobile({
   pos,
   adj,
   ready,
+  raised,
   label = "Source PO",
   incoming = null,
   showEmpty = false,
@@ -71,6 +78,12 @@ export function SourcePosRowMobile({
   pos: string[];
   adj?: boolean;
   ready?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
+  /* SO list card (2026-08-11): the purchase orders this SO's lines were raised
+     INTO (`converted_po_nos`). Procurement provenance, NOT a goods source — so
+     it wears the muted dress, exactly like the "bought for" chips on the
+     purchase-doc rows. Desktop twin: the PO No. column's muted chip in
+     pages/scm-v2/MfgSalesOrdersListV2.tsx — keep the two in lockstep. */
+  raised?: string[];
   label?: string;
   /* SO lines: the MRP incoming-PO coverage for an un-arrived remainder
      (stock_state === 'po') — "PO-x · ETA dd/mm/yyyy" as muted mono text. */
@@ -80,8 +93,9 @@ export function SourcePosRowMobile({
   showEmpty?: boolean;
 }) {
   const readyPo = (ready ?? []).filter((r) => r.kind === "po" && r.po && !pos.includes(r.po));
+  const raisedPo = (raised ?? []).filter((n) => n && !pos.includes(n) && !readyPo.some((r) => r.po === n));
   const anyAdj = Boolean(adj) || (ready ?? []).some((r) => r.kind === "adjustment");
-  if (pos.length === 0 && readyPo.length === 0 && !anyAdj && !incoming) {
+  if (pos.length === 0 && readyPo.length === 0 && raisedPo.length === 0 && !anyAdj && !incoming) {
     if (!showEmpty) return null;
     return (
       <div style={rowStyle}>
@@ -102,24 +116,56 @@ export function SourcePosRowMobile({
       {readyPo.map((r) => (
         <span
           key={`r-${r.po}`}
-          style={solidChip}
-          title="READY — the allocated stock sits in this purchase order's batch (FIFO projection of what the delivery will consume)."
+          style={floatingChip}
+          title="READY — a live FIFO projection of the batch the delivery would consume, recomputed on every view; the Delivery Order decides the actual batch."
         >
           {r.po}
           {(chipCount > 1 || r.qty > 1) ? ` x${r.qty}` : ""}
+        </span>
+      ))}
+      {raisedPo.map((n) => (
+        <span
+          key={`raised-${n}`}
+          style={mutedChip}
+          title={`Raised PO ${n} — this order's lines were converted into this purchase order. Procurement provenance: the goods have not been drawn from stock yet, so it is not (yet) a goods source.`}
+        >
+          {n}
         </span>
       ))}
       {anyAdj && <StockAdjChipMobile />}
       {incoming && (
         <span
           className="money"
-          style={{ fontSize: 10.5, fontWeight: 700, color: "#a16a2e" }}
-          title="Incoming — the purchase order the MRP allocation covers this line with, and its ETA."
+          style={{ ...floatingChip, fontSize: 10.5 }}
+          title="Incoming — live MRP coverage for the un-arrived remainder, recomputed on every view; it moves as demand moves."
         >
           {incoming.po}
           {incoming.eta ? ` · ETA ${incoming.eta}` : ""}
         </span>
       )}
+    </div>
+  );
+}
+
+/* DO lines only: the committed batch — the hard-from-DO anchor (Decision,
+   docs/modules/purchase-order.md 2026-08-06: "soft until DO, hard from DO").
+   `delivery_order_items.committed_po_batch_no` (mig 0230) stores which incoming
+   PO batch a ship-before-arrival line committed to at DO creation. Solid chip
+   (anchored — a recorded fact, never a floating guess); absent → render
+   NOTHING, most lines never commit and a dash would read as missing data.
+   Desktop twin: CommittedBatchCell in components/DocumentLinesExpansion.tsx —
+   keep the two in lockstep. Display-only; the write path is ship-commitment.ts. */
+export function CommittedBatchRowMobile({ poNo }: { poNo?: string | null }) {
+  if (!poNo) return null;
+  return (
+    <div style={rowStyle}>
+      <span style={eyebrowStyle}>Committed PO</span>
+      <span
+        style={solidChip}
+        title={`Committed batch — this line committed to incoming purchase order ${poNo} when the Delivery Order was created (hard from DO). The commitment is stored on the line; a PO cancelled or raised later cannot move it.`}
+      >
+        {poNo}
+      </span>
     </div>
   );
 }
@@ -162,30 +208,41 @@ export function StockTagMobile() {
    An unshipped SO with a future date reads PENDING, never blank; a delivered
    DO whose SO is not among the assignments still renders (extra row). Empty
    both sides → the STOCK tag. Desktop twin: PairedSoCell in
-   components/DocumentLinesExpansion.tsx — keep the two in lockstep. */
+   components/DocumentLinesExpansion.tsx — keep the two in lockstep, including
+   the three chip identities (anchored solid / provenance muted / floating
+   dashed + "~") from the soft-until-DO Decision. */
 export function PairedSoRowsMobile({
   assigned,
   delivered,
   sourceLinked,
+  provenance,
 }: {
   assigned: Array<{ soDocNo: string; deliveryDate?: string | null; locked?: boolean; source?: string }>;
   delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
   sourceLinked?: boolean;
+  /* PR-3 (2026-08-07): the coverage wire's PARALLEL stored-origin slot. SOs
+     not already shown above render as one trailing row of muted "bought for"
+     chips (+ delivery date), with NO status pill — provenance is not the live
+     assignment, so DELIVERED/PENDING (execution verdicts) do not apply.
+     Desktop twin: PairedSoCell provenance row — keep in lockstep. */
+  provenance?: Array<{ soDocNo: string; deliveryDate?: string | null }>;
   }) {
-  const rows: Array<{ soDocNo: string; deliveryDate: string | null; floating: boolean; title: string; dos: Array<{ doNo: string; qty: number }> }> = [];
+  const rows: Array<{ soDocNo: string; deliveryDate: string | null; floating: boolean; chip: CSSProperties; title: string; dos: Array<{ doNo: string; qty: number }> }> = [];
   for (const a of assigned) {
-    const floating = a.locked === false;
+    const floating = a.locked === false || a.source === "mrp";
+    const anchored = !floating && a.source === "delivered";
     rows.push({
       soDocNo: a.soDocNo,
       deliveryDate: a.deliveryDate ?? null,
       floating,
+      chip: floating ? floatingChip : anchored ? solidChip : mutedChip,
       title: floating
-        ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
-        : a.source === "delivered"
-          ? "Locked — this line's goods were delivered against this Sales Order"
+        ? "Floating — live MRP allocation, recomputed on every view. It moves as demand moves and can disappear."
+        : anchored
+          ? "Delivered — this line's goods shipped against this Sales Order (anchored history)"
           : sourceLinked === false
             ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
-            : "Locked — a stored link to this Sales Order",
+            : `Bought for ${a.soDocNo} — procurement provenance, not the live assignment.`,
       dos: [],
     });
   }
@@ -196,7 +253,7 @@ export function PairedSoRowsMobile({
       let orphan = rows.find((r) => r.soDocNo === (d.soDocNo || "—") && r.title.startsWith("This Delivery"));
       if (!orphan) {
         orphan = {
-          soDocNo: d.soDocNo || "—", deliveryDate: null, floating: false,
+          soDocNo: d.soDocNo || "—", deliveryDate: null, floating: false, chip: solidChip,
           title: "This Delivery Order's Sales Order is not among this line's assignments — shown so the shipment stays visible.",
           dos: [],
         };
@@ -205,7 +262,12 @@ export function PairedSoRowsMobile({
       orphan.dos.push({ doNo: d.doNo, qty: d.qty });
     }
   }
-  if (rows.length === 0) {
+  /* PR-3: "bought for" chips for provenance SOs not already shown by ANY row
+     (assignments or orphan delivered rows) — dedupe by soDocNo, so when the
+     stored origin won the precedence nothing extra renders. */
+  const shownSos = new Set(rows.map((r) => r.soDocNo));
+  const provExtra = (provenance ?? []).filter((p) => p.soDocNo && !shownSos.has(p.soDocNo));
+  if (rows.length === 0 && provExtra.length === 0) {
     return (
       <div style={rowStyle}>
         <span style={eyebrowStyle}>Assigned SO</span>
@@ -219,12 +281,7 @@ export function PairedSoRowsMobile({
         const shipped = r.dos.length > 0;
         return (
           <div key={r.soDocNo} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
-            <span
-              title={r.title}
-              style={r.floating
-                ? { ...mutedChip, background: "transparent", border: "1px dashed #b6c6c0" }
-                : solidChip}
-            >
+            <span title={r.title} style={r.chip}>
               {r.soDocNo}{r.floating ? " ~" : ""}
             </span>
             <span className="money" style={{ fontSize: 10.5, color: "#9aa093", fontWeight: 600 }}>
@@ -251,6 +308,23 @@ export function PairedSoRowsMobile({
           </div>
         );
       })}
+      {provExtra.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+          {provExtra.map((p) => (
+            <span key={`prov-${p.soDocNo}`} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span
+                style={mutedChip}
+                title={`Bought for ${p.soDocNo} — procurement provenance, not the live assignment.`}
+              >
+                {p.soDocNo}
+              </span>
+              <span className="money" style={{ fontSize: 10.5, color: "#9aa093", fontWeight: 600 }}>
+                {p.deliveryDate ? formatDate(p.deliveryDate) : "—"}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

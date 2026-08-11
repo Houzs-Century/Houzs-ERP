@@ -1,0 +1,75 @@
+name: Backfill SO line warehouse (migrated orders)
+
+# Manual. The AutoCount SO import resolved every line's warehouse and then left
+# it out of its INSERT column list, so all 13,881 migrated SO lines carry the
+# location as TEXT and warehouse_id NULL. Stock is bucketed by warehouse, so no
+# migrated line can be allocated until this is filled — the sofa path fails
+# hardest, because findCoveringBatch returns null on a null warehouse before it
+# looks at stock at all.
+#
+# group defaults to `sofa` (the smallest change that proves the fix). group=all
+# covers every migrated line and will flip thousands of non-sofa lines on the
+# next allocation run — owner decision. Only ever fills a NULL; never moves goods.
+# DRY-RUN by default; apply=1 writes.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      group:
+        description: "Which item_group to fill: sofa (default) or all"
+        required: false
+        default: "sofa"
+        type: choice
+        options: [sofa, all]
+      top:
+        description: "How many rows to list per section"
+        required: false
+        default: "40"
+
+concurrency:
+  group: backfill-so-line-warehouse-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-so-line-warehouse.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          GROUP: ${{ inputs.group }}
+          TOP: ${{ inputs.top }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-so-line-warehouse.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          GROUP: ${{ inputs.group }}
+          TOP: ${{ inputs.top }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

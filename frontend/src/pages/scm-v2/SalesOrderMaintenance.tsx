@@ -93,6 +93,7 @@ export const SalesOrderMaintenance = () => {
      The explicit `undefined` check (not `??` on a boolean) is deliberate: it
      distinguishes "an older backend did not send the field" — fall back to the
      flat key, i.e. exactly the old behaviour — from a real `false`. */
+  const allOpen = ALL_SECTION_KEYS.every((k) => open.isOpen(k));
   const { can, user } = useHouzsAuth();
   const canEdit = user?.scm_config_writer === undefined
     ? can('scm.config.write')
@@ -133,6 +134,20 @@ export const SalesOrderMaintenance = () => {
             {sec.label}
           </button>
         ))}
+        {/* Collapse all — owner 2026-08-01, of the maintenance pages generally:
+            "可以折叠、可以开关... 要不然页面拉得太长了". The three sections were
+            already foldable one at a time; getting the whole tower out of the way
+            still meant three clicks. The DEFAULT is untouched (all open, as this
+            page has always behaved) — this only adds the one-click way back. */}
+        <span className="ml-1 border-l border-border pl-1">
+          <button
+            type="button"
+            onClick={() => open.setAll(allOpen ? [] : (ALL_SECTION_KEYS as unknown as string[]))}
+            className="whitespace-nowrap rounded px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-all duration-150 hover:bg-primary-soft hover:text-primary"
+          >
+            {allOpen ? 'Collapse all' : 'Expand all'}
+          </button>
+        </span>
       </nav>
 
       {!canEdit && (

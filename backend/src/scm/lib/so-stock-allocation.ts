@@ -106,9 +106,9 @@ export async function recomputeSoStockAllocation(
             b) created_at ASC  — tiebreaker so order is deterministic */
     // Page through — PostgREST's default 1000-row cap would truncate the active
     // SO set, silently DROPPING orders from allocation (their lines never flip).
-    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; company_id: number | null }>((from, to) => sb
+    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; company_id: number | null; proceeded_at: string | null }>((from, to) => sb
       .from('mfg_sales_orders')
-      .select('doc_no, status, created_at, customer_delivery_date, company_id')
+      .select('doc_no, status, created_at, customer_delivery_date, company_id, proceeded_at')
       .not('status', 'in', '(CANCELLED,CLOSED,SHIPPED,DELIVERED,INVOICED,DRAFT)')
       .order('customer_delivery_date',  { ascending: true, nullsFirst: false })
       .order('created_at',              { ascending: true })
@@ -117,9 +117,23 @@ export async function recomputeSoStockAllocation(
     const orders = (orderRows ?? []) as Array<{
       doc_no: string; status: string; created_at: string;
       customer_delivery_date: string | null; company_id: number | null;
+      proceeded_at: string | null;
     }>;
     if (orders.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
     const orderByDoc = new Map(orders.map((o) => [o.doc_no, o]));
+    /* Processing-date allocation gate (owner 2026-08-10, go-live): nothing is
+       prepared before the order is proceeded, so an SO with NO Processing Date
+       must not claim stock nor show READY TO SHIP ("它明明都没有 Processing
+       Date, 干嘛分配呢" … "2990 跟整套系统都是这样子的:有 processing date 才来
+       分配"). Shipped company-1-only first; flipped GLOBAL after measuring the
+       blast radius (check-cutover-metrics 2026-08-10: company 1: 15, company 2:
+       5 READY_TO_SHIP-without-processing-date — both regress to CONFIRMED on
+       the next recompute, which is the owner's intent). Gated lines still walk
+       (so an already-READY line regresses on this same run) but are forced
+       PENDING and never consume a bucket or a sofa batch. */
+    const allocGated = new Set(
+      orders.filter((o) => !o.proceeded_at).map((o) => o.doc_no),
+    );
 
     // 2. Non-cancelled lines on those SOs. Pull qty + variant fields so we
     //    can compute variant_key and the bucket.
@@ -290,7 +304,7 @@ export async function recomputeSoStockAllocation(
           line's existing stock_qty_ready — used to compute "did the value
           change". */
     const WH_NONE = 'NOWH';
-    type LineNeed = { id: string; doc_no: string; bucket: string; whId: string | null; need: number; current: string; curReady: number };
+    type LineNeed = { id: string; doc_no: string; bucket: string; whId: string | null; need: number; current: string; curReady: number; group: string };
     const needs: LineNeed[] = [];
     /* Sofa lines walk the batch-bound path instead of the per-line bucket
        fill. Keep the SKU + variant + remaining so we can check each module's
@@ -330,6 +344,7 @@ export async function recomputeSoStockAllocation(
         id: l.id, doc_no: l.doc_no, bucket, whId,
         need: remaining, current: l.stock_status,
         curReady: Number(l.stock_qty_ready ?? 0),
+        group: (l.item_group ?? '').toLowerCase(),
       });
     }
     if (needs.length === 0 && sofaLineRecs.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
@@ -339,14 +354,25 @@ export async function recomputeSoStockAllocation(
           before SO-2605-002) so same-day allocation is deterministic, matching
           the MRP engine. created_at + line id break any remaining ties. */
     const FAR_FUTURE = '9999-12-31';
+    /* The row types say these are strings, and under PostgREST they are. A
+       repair script driving this same function through the postgres shim gets
+       Date OBJECTS for date/timestamp columns, and `.localeCompare` on a Date
+       throws — which killed a production allocation recompute on 2026-08-10
+       with "ad.localeCompare is not a function", after the allocator had
+       already done all its work. Compare on a normalised string so the priority
+       order is identical whichever transport delivered the row. */
+    const dateKey = (v: unknown): string =>
+      v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '');
+    const stampKey = (v: unknown): string =>
+      v instanceof Date ? v.toISOString() : String(v ?? '');
     needs.sort((a, b) => {
       const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
-      const ad = A?.customer_delivery_date ?? FAR_FUTURE;
-      const bd = B?.customer_delivery_date ?? FAR_FUTURE;
+      const ad = dateKey(A?.customer_delivery_date) || FAR_FUTURE;
+      const bd = dateKey(B?.customer_delivery_date) || FAR_FUTURE;
       if (ad !== bd) return ad.localeCompare(bd);                         // a) delivery date
       if (a.doc_no !== b.doc_no) return a.doc_no.localeCompare(b.doc_no); // b) SO doc number
-      const ac = A?.created_at ?? '';
-      const bc = B?.created_at ?? '';
+      const ac = stampKey(A?.created_at);
+      const bc = stampKey(B?.created_at);
       return ac.localeCompare(bc) || a.id.localeCompare(b.id);            // c) created_at + line id
     });
 
@@ -373,6 +399,48 @@ export async function recomputeSoStockAllocation(
       onHandByBucket.set(whKey, (onHandByBucket.get(whKey) ?? 0) + qty);
     }
 
+    /* 6b. BOUND MODE — a line whose OWN purchase order has been received is
+           ready, whatever the pooled buckets say (owner 2026-08-10: "Houzs 的
+           BEDFRAME 可以用 Convert To … 代表这个 PO 是 assign 给这个 SalesOrder
+           的", to run until the migrated stock is delivered off, then switch to
+           2990's pooled model).
+
+           This is not a nicety, it is the only way the migrated data can read
+           correctly: the AutoCount stock snapshot carries NO variant, so every
+           imported bedframe unit landed under a blank variant_key while its SO
+           line carries colour + heights. Pooled matching is
+           warehouse+code+variant_key, so those two can never meet and a
+           bedframe physically standing in the warehouse would report PENDING
+           forever.
+
+           Claimed units are also DECREMENTED from the pooled bucket (exact
+           variant first, then the blank-variant bucket the migration created),
+           so a dedicated receipt can never be counted twice — once for its own
+           SO here, and again for somebody else's line in the pooled walk below. */
+    /* Only the variant-bearing categories run bound. Owner 2026-08-10:
+       "SOFA 和 BEDFRAME 因为有变体的问题,所以要走 Convert to PO 的那个模式.
+        可是 MATTRESS 跟 Accessories 都是没有变体的 ... 走回我们正常 MRP 的模式".
+       Mattress and accessories are common stock: pooling them is correct and
+       is what the floor already expects, so they must NOT be diverted. */
+    const BOUND_GROUPS = new Set(['bedframe', 'sofa']);
+    const dedicatedReady = new Map<string, number>();
+    const boundNeeds = needs.filter((n) => BOUND_GROUPS.has(n.group));
+    if (boundNeeds.length > 0) {
+      const lineIds = boundNeeds.map((n) => n.id);
+      const { data: poLinkRows } = await chunkIn<{ so_item_id: string; qty: number; received_qty: number | null }>(
+        lineIds,
+        (batch, from, to) => sb
+          .from('purchase_order_items')
+          .select('so_item_id, qty, received_qty')
+          .in('so_item_id', batch)
+          .range(from, to),
+      );
+      for (const r of (poLinkRows ?? []) as Array<{ so_item_id: string; received_qty: number | null }>) {
+        const got = Number(r.received_qty ?? 0);
+        if (got > 0) dedicatedReady.set(r.so_item_id, (dedicatedReady.get(r.so_item_id) ?? 0) + got);
+      }
+    }
+
     /* 7. Walk needs in priority order. Partial fill (#4) — when bucket has
           some but not enough, allocate what's available and mark the line
           PARTIAL (stock_qty_ready = whatever fit). Full fill → READY. Zero
@@ -380,7 +448,32 @@ export async function recomputeSoStockAllocation(
     type TargetState = { status: 'READY' | 'PENDING' | 'PARTIAL'; qtyReady: number };
     const targetById = new Map<string, TargetState>();
     const remaining = new Map(onHandByBucket);
+    // Bound lines first, so their units leave the pool before anyone else walks it.
+    for (const n of boundNeeds) {
+      if (allocGated.has(n.doc_no)) continue;
+      const got = dedicatedReady.get(n.id) ?? 0;
+      if (got <= 0) continue;
+      const fill = Math.min(got, n.need);
+      targetById.set(n.id, fill >= n.need
+        ? { status: 'READY', qtyReady: n.need }
+        : { status: 'PARTIAL', qtyReady: fill });
+      // take the units out of the pool: exact bucket first, then blank-variant
+      let left = fill;
+      for (const key of [n.bucket, `${n.whId ?? WH_NONE}::${n.bucket.split('::')[1]}::`]) {
+        if (left <= 0) break;
+        const have = remaining.get(key) ?? 0;
+        if (have <= 0) continue;
+        const take = Math.min(have, left);
+        remaining.set(key, have - take);
+        left -= take;
+      }
+    }
     for (const n of needs) {
+      if (targetById.has(n.id)) continue; // settled by its dedicated PO above
+      if (allocGated.has(n.doc_no)) {
+        targetById.set(n.id, { status: 'PENDING', qtyReady: 0 });
+        continue;
+      }
       const avail = remaining.get(n.bucket) ?? 0;
       if (avail >= n.need) {
         targetById.set(n.id, { status: 'READY', qtyReady: n.need });
@@ -422,12 +515,19 @@ export async function recomputeSoStockAllocation(
       const orderedSets = [...setLines.values()].sort((ga, gb) => {
         const a = ga[0]!; const b = gb[0]!;
         const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
-        const ad = A?.customer_delivery_date ?? FAR_FUTURE;
-        const bd = B?.customer_delivery_date ?? FAR_FUTURE;
+        const ad = dateKey(A?.customer_delivery_date) || FAR_FUTURE;
+        const bd = dateKey(B?.customer_delivery_date) || FAR_FUTURE;
         if (ad !== bd) return ad.localeCompare(bd);
         return a.doc_no.localeCompare(b.doc_no);
       });
       for (const group of orderedSets) {
+        if (allocGated.has(group[0]!.doc_no)) {
+          for (const s of group) {
+            batchTargetByLine.set(s.id, null);
+            targetById.set(s.id, { status: 'PENDING', qtyReady: 0 });
+          }
+          continue;
+        }
         const whId = group[0]!.whId;
         const lines = group.map((s) => ({ itemCode: s.item_code, variantKey: s.variant_key, need: s.need }));
         const batch = findCoveringBatch(whId, lines, sofaStock);

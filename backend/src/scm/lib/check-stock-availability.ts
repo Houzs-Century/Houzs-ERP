@@ -14,12 +14,43 @@
 // shortages array means everything fits at this warehouse.
 // ----------------------------------------------------------------------------
 
+import { isServiceLine } from '../shared';
+
 export type StockLineRequest = {
   itemCode: string;
   productName: string | null;
   variantKey: string;
   qty: number;
 };
+
+/**
+ * THE CHECK MUST MEASURE EXACTLY WHAT THE MOVEMENT WILL TOUCH.
+ *
+ * Every bug this guard has produced is the same shape: the pre-flight question
+ * and the inventory write disagreed about which lines, or which warehouse, were
+ * in play — so the operator was asked to waive a shortage that could not exist,
+ * and "Ship anyway" became the only way forward on lines that never move stock.
+ *
+ * SERVICE lines are the line-level half of that rule. A delivery fee or a
+ * dispose / lift add-on is not goods: it holds no inventory and never produces a
+ * movement (shared/service-sku.ts, P1 §4.6 — deductInventoryForDo,
+ * resyncInventoryForDo and the DR return-IN all skip them). Measured against
+ * inventory_balances it can only ever read "need N, available 0". Nico's DO for
+ * 2990-SO-2606-034 was blocked exactly this way on SVC-DISPOSE-SOFA and
+ * SVC-DELIVERY-CROSS at BALAKONG (2026-08-03) — a shortage no amount of stock
+ * could have cleared.
+ *
+ * Zero-qty lines drop out for the same reason: nothing ships, nothing moves.
+ */
+export function stockCheckableLines<
+  T extends { itemCode: string; itemGroup?: string | null; qty: number },
+>(lines: T[]): T[] {
+  return lines.filter(
+    (l) =>
+      Number(l.qty) > 0
+      && !isServiceLine({ itemGroup: l.itemGroup ?? null, itemCode: l.itemCode }),
+  );
+}
 
 export type WarehouseAlt = {
   warehouseId: string;

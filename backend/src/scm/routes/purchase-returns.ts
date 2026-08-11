@@ -28,6 +28,7 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { recomputePoReceived, resolvePoBatchByItem } from './grns';
+import { findUnlinkedPrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import {
@@ -178,7 +179,7 @@ purchaseReturns.get('/:id', async (c) => {
     ),
   );
   const headerGrnId = (h.data as { grn_id?: string | null }).grn_id ?? null;
-  const lineWh = await resolvePrLineWarehouses(sb, rawItems, headerGrnId);
+  const lineWh = await resolvePrLineWarehouses(sb, rawItems, headerGrnId, activeCompanyId(c));
   const codeMap = await warehouseCodeMap(sb, [...lineWh.values()]);
   const items = rawItems.map((it) => {
     const wid = lineWh.get(it.id) ?? null;
@@ -232,7 +233,7 @@ purchaseReturns.get('/:id/linked', async (c) => {
    Resolution order per PR line:
      1. the source GRN line's GRN warehouse (grn_item_id → … → grns)
      2. the primary GRN's warehouse (manual lines with no grn_item_id)
-     3. the global default warehouse (last-resort fallback)
+     3. the return's OWN company's default warehouse (last-resort fallback)
 
    Returns a map of purchase_return_items.id → warehouse_id (or null when even
    the fallbacks are absent — the caller skips those lines). */
@@ -240,6 +241,10 @@ async function resolvePrLineWarehouses(
   sb: any,
   items: Array<{ id: string; grn_item_id?: string | null }>,
   primaryGrnId: string | null,
+  /* The return's company (2026-08-03) — step 3 is per company. It used to be a
+     company-blind draw across every company's is_default warehouses, decided by
+     alphabetical `code` order. */
+  companyId: number | undefined,
 ): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
   const grnItemIds = [...new Set(items
@@ -267,7 +272,7 @@ async function resolvePrLineWarehouses(
     }
   }
 
-  const fallback = (primaryGrnId ? grnWh.get(primaryGrnId) ?? null : null) ?? (await defaultWarehouseId(sb));
+  const fallback = (primaryGrnId ? grnWh.get(primaryGrnId) ?? null : null) ?? (await defaultWarehouseId(sb, companyId));
   for (const it of items) {
     const grnId = it.grn_item_id ? (grnItemToGrn.get(it.grn_item_id) ?? null) : null;
     const fromGrn = grnId ? (grnWh.get(grnId) ?? null) : null;
@@ -303,7 +308,12 @@ async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber:
   if (!items) return [];
   // Per-line warehouse — each line draws OUT of its source GRN line's warehouse,
   // not a single primary-GRN default (a batched PR can span warehouses).
-  const lineWh = await resolvePrLineWarehouses(sb, items as Array<{ id: string; grn_item_id?: string | null }>, grnId);
+  const lineWh = await resolvePrLineWarehouses(
+    sb,
+    items as Array<{ id: string; grn_item_id?: string | null }>,
+    grnId,
+    prCompanyId ?? undefined,
+  );
 
   /* Resolve the dye-lot batch each returned line drew in at GRN time so the
      return OUT consumes the EXACT PO/dye-lot it came from — not plain FIFO across
@@ -412,11 +422,12 @@ async function checkPrStockAvailability(
     variants?: VariantAttrs | null; qty: number;
   }>,
   headerGrnId: string | null,
+  companyId: number | undefined,
 ): Promise<StockShortage[]> {
   const active = lines.filter((l) => Number(l.qty) > 0);
   if (active.length === 0) return [];
   const lineWh = await resolvePrLineWarehouses(
-    sb, active.map((l) => ({ id: l.id, grn_item_id: l.grn_item_id ?? null })), headerGrnId,
+    sb, active.map((l) => ({ id: l.id, grn_item_id: l.grn_item_id ?? null })), headerGrnId, companyId,
   );
   const byWh = new Map<string, StockLineRequest[]>();
   for (const l of active) {
@@ -452,6 +463,7 @@ async function writePrLineDeltaMovement(
   sb: any,
   args: {
     prId: string; returnNumber: string; headerGrnId: string | null; userId: string;
+    companyId: number | undefined;
     line: { id: string; grn_item_id?: string | null; material_code: string;
             material_name: string | null; item_group?: string | null; variants?: VariantAttrs | null };
     deltaQty: number;
@@ -460,7 +472,7 @@ async function writePrLineDeltaMovement(
   if (!args.deltaQty) return;
   try {
     const lineWh = await resolvePrLineWarehouses(
-      sb, [{ id: args.line.id, grn_item_id: args.line.grn_item_id ?? null }], args.headerGrnId,
+      sb, [{ id: args.line.id, grn_item_id: args.line.grn_item_id ?? null }], args.headerGrnId, args.companyId,
     );
     const warehouseId = lineWh.get(args.line.id) ?? null;
     if (!warehouseId) return;
@@ -530,6 +542,27 @@ purchaseReturns.post('/', async (c) => {
   if (!Array.isArray(items) || !items.length) return c.json({ error: 'items_required' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
+
+  /* "Manual lines (no grnItemId) stay uncapped" — true, and the same back door
+     the delivery side had. An unlinked line on a return that NAMES a GRN still
+     sends the stock OUT while moving no grn_items.returned_qty, so the same
+     goods can be returned again and the guard below never sees it. Refused only
+     when the named GRN already contains that material, so a genuinely manual
+     return line still passes. See docs/unlinked-line-duplicate-coe.md. */
+  {
+    const unlinked = await findUnlinkedPrLines(
+      sb,
+      (body.grnId as string | undefined) ?? null,
+      (body.grnNumber as string | undefined) ?? null,
+      items.map((it, idx) => ({
+        lineRef: String(idx),
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qtyReturned ?? it.qty ?? 0),
+        soItemId: (it.grnItemId as string | undefined) ?? null,
+      })),
+    );
+    if (unlinked.length > 0) return c.json(unlinkedReturnResponse(unlinked, 'purchase'), 409);
+  }
 
   /* Audit gap #7 — REJECT a GRN-linked over-return with the SAME 409 the
      add-line path (`POST /:id/items`) returns, instead of the old silent
@@ -609,6 +642,7 @@ purchaseReturns.post('/', async (c) => {
         qty: Number(r.qty_returned),
       })),
       grnId,
+      activeCompanyId(c),
     );
     if (shortages.length > 0) {
       markIdempotencyNoWrite(c);
@@ -736,6 +770,7 @@ purchaseReturns.post('/from-grns', async (c) => {
         qty: it._qty,
       })),
       primaryGrnId,
+      activeCompanyId(c),
     );
     if (shortages.length > 0) {
       markIdempotencyNoWrite(c);
@@ -846,6 +881,7 @@ purchaseReturns.post('/from-grn', async (c) => {
         qty: it._remaining,
       })),
       g.id,
+      activeCompanyId(c),
     );
     if (shortages.length > 0) {
       markIdempotencyNoWrite(c);
@@ -1183,6 +1219,7 @@ purchaseReturns.post('/:id/items', async (c) => {
         returnNumber: (hdr as { return_number: string }).return_number,
         headerGrnId: (hdr as { grn_id: string | null }).grn_id ?? null,
         userId: c.get('user').id,
+        companyId: activeCompanyId(c),
         line: {
           id: inserted.id,
           grn_item_id: grnItemId,
@@ -1282,6 +1319,7 @@ purchaseReturns.patch('/:id/items/:itemId', async (c) => {
         returnNumber: (hdr as { return_number: string }).return_number,
         headerGrnId: (hdr as { grn_id: string | null }).grn_id ?? null,
         userId: c.get('user').id,
+        companyId: activeCompanyId(c),
         line: {
           id: itemId,
           grn_item_id: grnItemId,
@@ -1332,6 +1370,7 @@ purchaseReturns.delete('/:id/items/:itemId', async (c) => {
           returnNumber: (hdr as { return_number: string }).return_number,
           headerGrnId: (hdr as { grn_id: string | null }).grn_id ?? null,
           userId: c.get('user').id,
+          companyId: activeCompanyId(c),
           line: {
             id: itemId,
             grn_item_id: l.grn_item_id,

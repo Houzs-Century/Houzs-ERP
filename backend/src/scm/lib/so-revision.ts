@@ -33,6 +33,7 @@ import {
   loadMaintenanceConfig,
   recomputeOneLine,
   type MfgItemForRecompute,
+  type TrustSelling,
 } from './mfg-pricing-recompute';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { deriveMfgPoUnitCost } from './po-pricing';
@@ -295,9 +296,28 @@ export async function applySoAmendment(
      mig 0091 gave the column a HOUZS DEFAULT — so a blip books a 2990 order's new
      line to Houzs, silently, exactly as the note on that insert warns. */
   const { data: soHdrCo, error: soHdrCoErr } = await sb.from('mfg_sales_orders')
-    .select('company_id').eq('doc_no', docNo).maybeSingle();
+    .select('company_id, linked_ac_docno').eq('doc_no', docNo).maybeSingle();
   if (soHdrCoErr) throw new Error(`applySoAmendment: SO company load failed: ${soHdrCoErr.message}`);
   const soCompanyId = (soHdrCo as { company_id?: number | null } | null)?.company_id ?? null;
+
+  /* Is this order MIGRATED from AutoCount? `linked_ac_docno` is the marker that
+     actually exists on the SO header (migration 0271); `migrated_no_stock` lives
+     only on scm.grns / scm.delivery_orders and is NOT available here.
+
+     It decides whether an approved amendment may re-price the line. For a NATIVE
+     order the answer stays what it has always been — re-price to the current
+     catalogue, the owner's authoritative default. For a MIGRATED order it must
+     not: that unit price is what AutoCount recorded as negotiated with the
+     customer, and mfg_products.sell_price_sen is in no sense a better answer for
+     an order this ERP never priced. Approving even a QTY-ONLY amendment used to
+     overwrite it.
+
+     'including-zero' rather than plain `true` because a migrated sofa is
+     routinely carried as the whole-set price on ONE lead module line with 0 on
+     its siblings. Plain `true` reads a stored 0 as "not provided" and hands the
+     sibling a catalogue price anyway, which bills the set several times over. */
+  const soIsMigrated = ((soHdrCo as { linked_ac_docno?: string | null } | null)?.linked_ac_docno ?? null) !== null;
+  const amendTrust: TrustSelling = soIsMigrated ? 'including-zero' : false;
 
   // Config loaded ONCE and threaded into every per-line recompute (the create
   // path's `cachedConfig` — one maintenance_config read for the whole apply).
@@ -349,6 +369,19 @@ export async function applySoAmendment(
     if (change === 'ADD') {
       const itemCode = String(diff.new_item_code ?? '').trim();
       if (!itemCode) throw new Error('applySoAmendment: ADD line has no new_item_code');
+      /* Edge #4 at the insert choke point (owner 2026-08-08: every SO line is
+         a catalog SKU). The submit route already refused unknown codes; this
+         re-check covers amendments raised before that gate existed and any
+         non-route writer. Company-scoped to the SO's own company — code is
+         only unique per company. */
+      {
+        let q = sb.from('mfg_products').select('code').eq('code', itemCode);
+        if (soCompanyId != null) q = q.eq('company_id', soCompanyId);
+        const { data: prodRows } = await q.limit(1);
+        if (!prodRows || prodRows.length === 0) {
+          throw new Error(`applySoAmendment: ADD line item code is not in the product catalog: ${itemCode}`);
+        }
+      }
       const variants = (diff.new_variants ?? null) as Record<string, unknown> | null;
       const itemGroup = String((variants?.itemGroup ?? diff.old_snapshot?.item_group ?? 'others')).toLowerCase();
       const qty = Math.max(1, Number(diff.new_qty ?? 1));
@@ -438,13 +471,19 @@ export async function applySoAmendment(
       ? Number(diff.new_unit_price_sen)
       : Number(row.unit_price_centi ?? 0);
 
+    /* amendTrust is 'including-zero' only for a MIGRATED order — see where it is
+       derived. On such an order clientUnit is the AutoCount price (or the
+       operator's explicit new_unit_price_sen when the amendment supplies one),
+       and either way it is the figure the customer agreed to. A SPEC change does
+       not re-price it: if the new spec should cost differently, the amendment
+       carries new_unit_price_sen and that is what persists. */
     const rec = await recomputeOneLine(sb, {
       itemCode,
       itemGroup,
       qty,
       unitPriceCenti: clientUnit,
       variants: (variants as MfgItemForRecompute['variants']) ?? null,
-    }, cachedConfig, soCompanyId);
+    }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust });
 
     const unit = rec.unit_price_sen;
     const discount = Number(row.discount_centi ?? 0);
@@ -941,13 +980,16 @@ export async function reviseBoundPo(
   //     Houzs: the per-line delivery date column is `line_delivery_date`.
   const { data: revisedSoRows, error: revErr } = await sb
     .from('mfg_sales_order_items')
-    .select('id, item_code, item_group, qty, variants, warehouse_id, line_delivery_date, description')
+    .select('id, item_code, item_group, qty, variants, warehouse_id, line_delivery_date, description, photo_urls')
     .in('id', soItemIds);
   if (revErr) throw new Error(`reviseBoundPo: revised SO lines load failed: ${revErr.message}`);
   type RevisedLine = {
     item_code: string | null; item_group: string | null; qty: number | null;
     variants: Record<string, unknown> | null; warehouse_id: string | null;
     line_delivery_date: string | null; description: string | null;
+    // Owner 2026-08-10 (migration 0274) — an SO line's photos follow it onto the
+    // PO line, the same on this amendment path as on the convert paths.
+    photo_urls: string[] | null;
   };
   const revisedById = new Map<string, RevisedLine>();
   for (const r of (revisedSoRows ?? []) as Array<Record<string, unknown>>) {
@@ -959,6 +1001,7 @@ export async function reviseBoundPo(
       warehouse_id:       (r.warehouse_id as string | null) ?? null,
       line_delivery_date: (r.line_delivery_date as string | null) ?? null,
       description:        (r.description as string | null) ?? null,
+      photo_urls:         (r.photo_urls as string[] | null) ?? null,
     });
   }
 
@@ -1154,6 +1197,8 @@ export async function reviseBoundPo(
         variants,
         description2:      buildVariantSummary(String(itemGroup ?? ''), variants ?? null) || null,
         so_item_id:        add.soItemId,
+        // Migration 0274 — carry the SO line's photo keys (same R2 objects).
+        photo_urls:        line.photo_urls ?? [],
         from_mrp:          false,
       });
       if (insErr) throw new Error(`reviseBoundPo: added PO line insert failed for SO line ${add.soItemId}: ${insErr.message}`);

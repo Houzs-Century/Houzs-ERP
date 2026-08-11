@@ -25,6 +25,7 @@
 //   • react-router → react-router-dom.
 //   • flow-queries hooks → the vendored sales-order-queries slice.
 //   • The dead `supabase` import is dropped; flushPendingPhotos reads the
+import { postScanLearningSample, reportScanLearningSkipped } from '../../vendor/scm/lib/scan-learning';
 //     freshly-created SO back through the vendored authedFetch (→ /api/scm)
 //     instead of a hand-rolled supabase token + VITE_API_URL fetch.
 //   • Navigation repointed to /scm/sales-orders/*.
@@ -71,7 +72,7 @@ import {
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
-import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
+import { hasSofaMixConflict, missingConfirmVariantAxes, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
 /* FIX (d) scan fabric seed — resolve a scanned fabric code (e.g. "BO315-22")
    to the SAME fabric_colours / fabric_library rows SoLineCard's pickFabricColour
    uses, so the matched colour rides onto the seeded line's variants instead of
@@ -1219,7 +1220,9 @@ export const SalesOrderNew = () => {
      everything else is carried straight from the AI-original so the diff is
      limited to what the operator genuinely touched. */
   const maybeLearnFromScan = (validLines: DraftLine[]) => {
-    if (!fromScan || !scanSampleId || !scanAiOriginal) return;
+    if (!fromScan) return;
+    if (!scanSampleId) { reportScanLearningSkipped('no-sample-id', 'desktop'); return; }
+    if (!scanAiOriginal) { reportScanLearningSkipped('no-ai-original', 'desktop'); return; }
     const ai = scanAiOriginal;
 
     const optMatch = (v: string) =>
@@ -1322,10 +1325,12 @@ export const SalesOrderNew = () => {
       }),
     };
 
-    void authedFetch(`/scan-so/samples/${scanSampleId}/confirm`, {
-      method: 'POST',
-      body: JSON.stringify({ corrected, salesperson: scanSalesperson || null, accepted: !changed }),
-    }).catch(() => { /* few-shot learning is best-effort — never blocks save */ });
+    void postScanLearningSample(
+      authedFetch,
+      scanSampleId,
+      { corrected, salesperson: scanSalesperson || null, accepted: !changed },
+      'desktop',
+    );
   };
 
   /* DRAFT flow — `asDraft` adds `asDraft: true` to the create body so the SO
@@ -1348,7 +1353,7 @@ export const SalesOrderNew = () => {
         });
         return;
       }
-      navigate(`/scm/sales-orders/${createdDocNo}?edit=1&retryPayments=1`, {
+      navigate(`/scm/sales-orders/${createdDocNo}?payments=1&retryPayments=1`, {
         state: paymentRetryNavigationState('so', createdDocNo, intents),
       });
       return;
@@ -1401,21 +1406,51 @@ export const SalesOrderNew = () => {
       notify({ title: SOFA_MIX_MESSAGE, tone: 'error' });
       return;
     }
-    // Variants are only mandatory once a processing date is set: with a date,
-    // the order is committed to production and purchasing needs a full spec.
-    // No processing date = still a draft, so allow saving with gaps.
-    if (processingDate) {
+    // Variant completeness (owner 2026-08-08, HC-SO-2607-008) — CONFIRMING
+    // requires every line's category-required axes, date or no date. With a
+    // Processing Date the full rule applies (missingRequiredVariants — a
+    // colour-KIV line blocks a date, owner 2026-07-24); a date-less confirm
+    // applies the confirm rule (missingConfirmVariantAxes — colour-KIV
+    // satisfies the fabric axis). Save as Draft still saves with gaps.
+    if (!asDraft || processingDate) {
+      const missOf = (l: SoLineDraft): string[] =>
+        processingDate
+          ? missingRequiredVariants(l.itemGroup, l.variants, l.itemCode)
+          : missingConfirmVariantAxes(l.itemGroup, l.variants).map((a) => a.label);
       const variantGaps = validLines
-        .map((l) => ({ code: l.itemCode, miss: missingRequiredVariants(l.itemGroup, l.variants) }))
+        .map((l) => ({ code: l.itemCode, miss: missOf(l) }))
         .filter((x) => x.miss.length > 0);
       if (variantGaps.length > 0) {
         notify({
-          title: 'Complete all variant selections before saving:',
+          title: asDraft
+            ? 'Complete all variant selections before saving:'
+            : 'Complete all variant selections before confirming:',
           body: variantGaps.map((x) => `• ${x.code}: ${x.miss.join(', ')}`).join('\n'),
           tone: 'error',
         });
         return;
       }
+    }
+    /* Confirm gates (owner 2026-08-08) — a confirmed order needs a venue and a
+       salesperson; drafts stay freely saveable. The backend enforces both
+       (validation_failed); the pre-checks just say it in one sentence before
+       the round-trip. The SELF sentinel counts as a salesperson: the backend
+       stamps the caller's own staff row for it. */
+    if (!asDraft && !effectiveVenueId) {
+      notify({
+        title: 'Pick a venue before confirming this order.',
+        body: 'The venue follows the picked salesperson. A draft can be saved without one.',
+        tone: 'error',
+      });
+      return;
+    }
+    if (!asDraft && !salespersonId) {
+      notify({
+        title: 'Pick a salesperson before confirming this order.',
+        body: 'A draft can be saved without one.',
+        tone: 'error',
+      });
+      return;
     }
 
     /* Spec D4 — every SO payment must carry its own slip. The SO payments
@@ -1612,7 +1647,7 @@ export const SalesOrderNew = () => {
             return;
           }
           navigate(
-            `/scm/sales-orders/${res.docNo}${failed > 0 ? '?edit=1&retryPayments=1' : ''}`,
+            `/scm/sales-orders/${res.docNo}${failed > 0 ? '?payments=1&retryPayments=1' : ''}`,
             { state: failed > 0 ? paymentRetryNavigationState('so', res.docNo, failedDrafts) : undefined },
           );
         },

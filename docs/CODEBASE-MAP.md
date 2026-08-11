@@ -312,6 +312,17 @@ screen.
 Each verified against the tree; if you are reading this long after 2026-07-21,
 re-check the cited file rather than trusting the line.
 
+- **SCM writes are FROZEN for Houzs right now.** `scm.app_config` key
+  `scm.write_freeze` holds `'1'`, and `scm/lib/write-freeze.ts` (mounted ahead of
+  every SCM sub-router) refuses every non-GET on `/api/scm/*` for company 1.
+  Company 2 (2990) is unaffected — the value is a company id list, not a boolean.
+  If an SCM write "mysteriously" 503s with `error: write_frozen`, this is why,
+  and it is deliberate. The value also takes a per-module exception clause
+  (`'1 - scm.sales.orders'`) for the staged go-live lift. Read the current state
+  with the **SCM write freeze — status (read-only)** workflow or
+  `GET /api/scm/write-freeze`; grammar, the staged sequence and the one-command
+  rollback are in `docs/write-freeze-staged-lift.md`. Do not change the value to
+  test something — it gates a live business.
 - **AutoCount writes are hard-off in code**: `AUTOCOUNT_WRITES_DISABLED = true` in
   `backend/src/services/autocount.ts`. Flipping it is a code edit, not a config
   change. Inbound pulls, by contrast, are env-gated (`AUTOCOUNT_SYNC_DISABLED` in
@@ -365,5 +376,15 @@ re-check the cited file rather than trusting the line.
   artifact — see the script header).
 - `docs/PERMISSION-MATRIX.md`, `docs/ARCHITECTURE.md`, `docs/agents/operating-spec.md`.
 - `docs/modules/sales-order.md` for the SO document flow in depth.
+- `docs/autocount-cutover-ledger.md` — the permanent record of every row the AutoCount
+  go-live pushed into company 1: how to tell a migrated row from a real one (the exact
+  SQL predicates), what each import wave wrote with its run id, and — the ones that bite —
+  which imported documents carry `received_qty` but deliberately no GRN, and which
+  migrated GRNs and DOs carry `migrated_no_stock = true` and deliberately no inventory
+  movement at all. Posting either would count the same stock twice. Its section 9 records
+  the owner's own cutover decisions in his words — historical documents are NOT imported,
+  whole-sofa stock is NOT imported, and one AutoCount order whose header disagrees with
+  its own lines is recorded rather than corrected. **Read section 9 before "fixing" any
+  gap between AutoCount and the ERP**: most of those gaps are decisions.
 - `frontend/src/pages/scm-v2/_VENDORING_PROGRESS.md` for what was vendored, when, and
   with what caveats.

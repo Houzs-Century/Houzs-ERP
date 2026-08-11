@@ -57,6 +57,17 @@ type MovementInput = {
    *  batch and can be shipped as a whole set from one dye lot. Omit for
    *  un-batched stock. */
   batch_no?: string | null;
+  /** Migration 0279 — NULL (omit) = this row is the document's PRIMARY posting.
+   *  1..N = a numbered CORRECTION to it, written by resyncInventoryForDo when a
+   *  line is edited on an already-shipped DO.
+   *
+   *  It exists for exactly one reason: uq_inv_mov_do_source_v2 keys on
+   *  COALESCE(correction_seq, 0), so a correction no longer collides with the
+   *  first ship while a double-post of the first ship is still rejected. Before
+   *  0279 the prod-only uq_inv_mov_do_source had no such discriminator and every
+   *  edit-after-ship delta was silently refused. Do not set it on any other
+   *  path. */
+  correction_seq?: number | null;
   performed_by?: string | null;
   notes?: string | null;
 };
@@ -201,6 +212,23 @@ export async function writeMovements(
         console.error('[inventory] movement insert failed (post batch_no strip):', retry.error.message);
         return { ok: false, reason: retry.error.message };
       }
+      /* Migration 0279 forward-compat, same shape as batch_no above: on a DB that
+         has not applied 0279 yet, strip correction_seq and retry so the write is
+         attempted rather than lost to an unknown-column error. The retry then
+         behaves exactly as it did before 0279 — a resync delta on an
+         already-shipped bucket collides with uq_inv_mov_do_source and is
+         refused, which the caller records as RECOUNT_FAILED. Degrading to the
+         old, LOUD failure is correct; degrading to a silent success would not
+         be. */
+      const seqMissing = msg.includes('correction_seq');
+      if (seqMissing && rows.some((r) => 'correction_seq' in r)) {
+        const stripped = rows.map(({ correction_seq: _s, ...rest }) => rest);
+        const retry = await sb.from('inventory_movements').insert(stripped);
+        if (!retry.error) return { ok: true };
+        // eslint-disable-next-line no-console
+        console.error('[inventory] movement insert failed (post correction_seq strip):', retry.error.message);
+        return { ok: false, reason: retry.error.message };
+      }
       // eslint-disable-next-line no-console
       console.error('[inventory] movement insert failed:', error.message);
       return { ok: false, reason: error.message };
@@ -214,14 +242,39 @@ export async function writeMovements(
 }
 
 /**
- * Resolve the default warehouse id (the one flagged is_default = true).
+ * Resolve a company's default warehouse id (the one flagged is_default = true).
  * Used as a fallback when a document doesn't carry its own warehouse_id
  * — e.g. legacy GRN rows back-filled to KL.
+ *
+ * `companyId` IS REQUIRED, and that is the whole point of this signature.
+ *
+ * Until 2026-08-03 this was `.eq('is_default', true).order('code').limit(1)`
+ * with no company filter at all — a company-blind draw across every company's
+ * warehouses, decided silently by alphabetical order of `code`. The hazard was
+ * written down in routes/warehouse-mirror.ts (which forces is_default = false on
+ * mirrored rows precisely so 2990's default cannot enter Houzs's draw), but the
+ * batch importer never forced it, so prod carried company 2's
+ * `CHINA WAREHOUSE / GUANGZHOU WAREHOUSE` with is_default = true. "CHINA" sorts
+ * before company 1's "HQ", so EVERY fallback in the system — GRN, DO, delivery
+ * return, consignment — resolved to the Guangzhou warehouse, for both companies.
+ * Nico hit it as "stock not enough at GUANGZHOU WAREHOUSE" on a KL sales order
+ * whose own lines were correctly stamped BALAKONG.
+ *
+ * Taking the company as a required argument makes that class of bug a compile
+ * error rather than a silent wrong-warehouse post: a caller with no company in
+ * hand cannot reach this function by accident. Returns null when the company has
+ * no default flagged — callers already treat null as "no warehouse resolved" and
+ * skip rather than guess.
  */
-export async function defaultWarehouseId(sb: any): Promise<string | null> {
+export async function defaultWarehouseId(
+  sb: any,
+  companyId: number | undefined,
+): Promise<string | null> {
+  if (companyId === undefined) return null;
   const { data } = await sb.from('warehouses')
     .select('id')
     .eq('is_default', true)
+    .eq('company_id', companyId)
     .order('code', { ascending: true })
     .limit(1)
     .maybeSingle();
@@ -401,7 +454,8 @@ export async function reconcileDropshipBatches(
  * the balancing rows insert cleanly.
  *
  * Do NOT route DO or DR cancel through here: uq_inv_mov_do_source /
- * uq_inv_mov_dr_source (migrations 0100/0102, keyed WITHOUT movement_type) reject
+ * uq_inv_mov_dr_source (prod-only DDL, verified live 2026-08-11 via pg_indexes,
+ * Actions run 31417585775; keyed WITHOUT movement_type) reject
  * this helper's same-key opposite row (see the idempotency note below), so the
  * reversal would silently fail (swallowed by the caller's best-effort catch) and
  * the stock would be left mis-stated. DO/DR cancel instead post signed-ADJUSTMENT
@@ -420,7 +474,7 @@ export async function reconcileDropshipBatches(
  * inserted INDIVIDUALLY (not one batch) so a single failure — e.g. a partial
  * UNIQUE index that keys on (source_doc_type, source_doc_id, product_code,
  * variant_key) and therefore rejects a same-key opposite row, as DO/DR have
- * (uq_inv_mov_do_source / uq_inv_mov_dr_source, migrations 0100/0102) — does not
+ * (uq_inv_mov_do_source / uq_inv_mov_dr_source, both confirmed live) — does not
  * sink the rest. We report counts so the caller can log without rolling back.
  *
  * ADJUSTMENT / non-IN/OUT rows are left alone (there's no well-defined opposite

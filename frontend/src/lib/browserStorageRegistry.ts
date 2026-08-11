@@ -66,12 +66,27 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "scan-toast-acks", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "houzs:scan-draft-acked:u<user>:c<company>", matches: prefix("houzs:scan-draft-acked:") },
   { id: "identity-preferences", classification: "IDENTITY_PREF", storage: ["localStorage"], keyFamily: "<approved preference base>:u<user>:c<company>", matches: identityPreference },
   { id: "pwa-dismissals", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "pwa:<surface>:dismissed-at", matches: prefix("pwa:") },
+  // Native-app opt-ins, per DEVICE and per install. Currently just the
+  // biometric-session flag (native:biometric-session) that gates unlocking a
+  // Keychain-held session with Face ID. NOT identity data: it stores whether the
+  // feature is on for this handset, never who is signed in — the session itself
+  // lives in the iOS Keychain, not here.
+  { id: "native-app-opt-ins", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "native:<feature>", matches: prefix("native:") },
   { id: "mobile-language", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs.mobile.lang", matches: exact("houzs.mobile.lang") },
   // Floating Assistant panel size — a per-device layout preference (width/height
   // of the draggable chat card), no identity/company data, same class as the
   // ResizableDrawer panel widths.
   { id: "assistant-panel-size", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs:assistant-panel-w | houzs:assistant-panel-h", matches: (key) => key === "houzs:assistant-panel-w" || key === "houzs:assistant-panel-h" },
   { id: "data-table-layout", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dt:<part>:<table family>", matches: prefix("dt:") },
+  // Option B delivery side map (2026-08-08): whether the map panel is open or
+  // collapsed on each arrangement page — a per-device layout preference, same
+  // class as the panel- widths. No identity/company data (the value is '0'/'1').
+  { id: "delivery-map-open", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dmap-open.<page>.v1", matches: prefix("dmap-open.") },
+  // Option B compact-columns DEFAULT (2026-08-08 amendment): whether the board
+  // auto-narrows to the essential columns while the side map is open — a
+  // per-device layout preference the user can toggle off (and any explicit
+  // Columns-panel choice switches it off). Same class as dmap-open; '0'/'1'.
+  { id: "delivery-map-compact-columns", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dmap-compact.<page>.v1", matches: prefix("dmap-compact.") },
   {
     id: "grid-and-panel-layout",
     classification: "DEVICE_PREF",
@@ -118,6 +133,11 @@ export const PRODUCTION_STORAGE_CALLERS = [
   // persists ONLY the one shared drawer width under panel-scm-detail-drawer.v1,
   // same DEVICE_PREF layout class as ResizableDrawer above.
   "components/ResizableDetailDrawer.tsx",
+  // Option B delivery side map: persists ONLY its open/collapsed flag and the
+  // compact-columns default per page (dmap-open.<page>.v1 /
+  // dmap-compact.<page>.v1, both DEVICE_PREF) — layout preferences, no
+  // identity or company data, same class as the ResizableDrawer widths.
+  "components/scm-v2/DeliveryMapPanel.tsx",
   "components/RouteFallback.tsx",
   // The banner's local-ack memo moved into the shared hook (desktop + mobile
   // pop-ups answer "have I seen this?" the same way); AnnouncementBanner.tsx is
@@ -129,11 +149,24 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "lib/activeCompany.ts",
   "lib/authToken.ts",
   "lib/browserNotificationPreference.ts",
+  // Native app: reads/writes ONLY the per-device biometric opt-in flag
+  // (native:biometric-session, DEVICE_PREF). The session it unlocks lives in the
+  // iOS Keychain, never in browser storage — this file touches localStorage for
+  // the on/off switch and nothing else.
+  "lib/nativeSession.ts",
+  // native:push-token — the APNs device token last registered from this phone,
+  // remembered ONLY so logout can delete the server row. Same native:<feature>
+  // family; not a secret (an APNs token is useless without our provider key).
+  "lib/nativePush.ts",
   "lib/query-persist.ts",
   "lib/rememberedEmail.ts",
   "lib/assrListFilter.ts",
   "lib/scmHandoffStorage.ts",
   "lib/scmListReturn.ts",
+  // One-shot cleanup of the dt:sort:* keys a bug made permanent (2026-08-05).
+  // Only REMOVES those, plus its own marker so it never runs twice; it writes no
+  // preference of its own and reads nothing else.
+  "lib/staleSortReset.ts",
   // Server-stored column layouts. Writes the SAME dt:* device-pref keys
   // DataTable owns (plus a dt:sync:* marker in that family) so a table renders
   // the account's saved layout on the first paint. Column keys only — no

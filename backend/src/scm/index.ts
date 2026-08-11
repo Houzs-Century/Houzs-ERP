@@ -66,6 +66,7 @@ import { venues } from "./routes/venues";
 import { reports } from "./routes/reports";
 import { scanSo } from "./routes/scan-so";
 import { scanPayment } from "./routes/scan-payment";
+import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
 import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
@@ -93,8 +94,28 @@ import { salesAnalysis } from "./routes/sales-analysis";
 import { hr } from "./routes/hr";
 
 import { scmAreaGuard } from "./middleware/area-guard";
+import { scmWriteFreeze } from "./lib/write-freeze";
+import { writeFreezeStatus } from "./routes/write-freeze-status";
 
 export const scm = new Hono<{ Bindings: Env }>();
+
+/* ── GLOBAL WRITE FREEZE (owner 2026-08-10, go-live cutover) ────────────────
+   Non-GET requests are refused with 503 while app_config['scm.write_freeze']
+   is '1', so staff edits stop drifting the data being migrated from AutoCount
+   (the AutoCount side is already frozen). Reads stay open; owner / scm.admin
+   bypass so IT can still correct data. Toggle with the set-write-freeze
+   workflow — no deploy needed. Mounted FIRST so it covers every sub-router.
+
+   The value also carries a PER-MODULE staged lift ('1 - scm.sales.orders' =
+   company 1 frozen except sales orders), keyed on the same L2 areas the guards
+   below use. Grammar, the UPDATE for each stage, and the rollback:
+   docs/write-freeze-staged-lift.md. */
+scm.use('/*', scmWriteFreeze());
+
+/* Read-only view of that value for the operator making the go/no-go call —
+   GET, so the freeze never blocks it, and no area guard because it is not an
+   SCM data surface. Gated inside to the bypass cohort. */
+scm.route("/write-freeze", writeFreezeStatus);
 
 // ── L2 per-area WRITE authorization (ADDITIVE on top of requireScmAccess) ────
 // Each sub-router is preceded by `scm.use('/<prefix>/*', scmAreaGuard('<area>'))`
@@ -509,6 +530,14 @@ scm.route("/delivery-messages", deliveryMessages);
 // AR receivables reconciliation (read-only preview) — finance-side read, mounted
 // under the coarse scm.access gate like the other cross-area read helpers.
 scm.route("/ar", arReconciliation);
+/* Workshop quotation / invoice OCR for the fleet repair record (mig 0241).
+   Extraction-only and WRITE-FREE: it returns what the paper says and the
+   operator confirms it into a work order as a separate, explicit step — an OCR
+   pass must never book a five-figure repair on its own. Same Transportation
+   area key as the rest of the fleet masters. ANTHROPIC_API_KEY is optional;
+   /extract answers 503 anthropic_key_missing when it is absent. */
+scm.use("/scan-lorry-invoice/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/scan-lorry-invoice", scanLorryInvoice);
 scm.use("/lorry-capacity/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/lorry-capacity", lorryCapacity);
 scm.use("/helpers/*", scmAreaGuard("scm.transportation.drivers"));

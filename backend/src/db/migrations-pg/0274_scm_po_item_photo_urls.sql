@@ -1,0 +1,42 @@
+-- 0274 — Purchase Order lines carry photos, like Sales Order lines already do.
+--
+-- Owner 2026-08-10: "正常我们的 Sales Order 里面可以存放照片，PO 那边也可以存放照片。
+-- 因为当我们将 Sales Order 转换成 PO（convert to PO）时，那个 PO 也会自动带着这张照片。"
+-- (A Sales Order line can hold photos; a PO line must too — and converting an SO
+-- into a PO must carry those photos across automatically.)
+--
+-- scm.mfg_sales_order_items already has photo_urls text[] NOT NULL DEFAULT '{}';
+-- scm.purchase_order_items had no photo column at all, so every SO->PO convert
+-- dropped the colour swatch / sketch / customer reference the buyer needs to send
+-- the supplier.
+--
+-- EXACTLY the SO's column shape — text[] NOT NULL DEFAULT '{}' — and deliberately
+-- NO CHECK constraint and NO key-shape rule. Two independent producers write this
+-- column and neither may be locked out by the other's convention:
+--
+--   * the SO->PO convert paths, which COPY the source SO line's keys
+--     (`so-items/<soDocNo>/<soItemId>/<uuid>.<ext>`), and
+--   * the AutoCount photo importer, which appends its own
+--     (`po-items/<po_number>/<purchase_order_item id>/ac-<DtlKey>-<n>.jpg`)
+--     via `ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') || <keys>))`,
+--     which requires NOT NULL + '{}' default to stay append-safe.
+--
+-- Both live in the same R2 bucket (binding SO_ITEM_PHOTOS); the prefix is the only
+-- difference and nothing in the schema or the read path may depend on it.
+--
+-- SHARED KEYS, NOT COPIES, on the convert path. The PO line points at the same R2
+-- objects the SO line does — one photo, two documents, no duplicated bytes and no
+-- R2 round-trip inside the convert. The consequence is deliberate and worth
+-- knowing: deleting a photo from the SO line removes the object, so it also
+-- disappears from any PO raised from that line. That matches the owner's model
+-- ("the PO carries THAT photo") and is why no per-PO copy exists.
+--
+-- PER LINE, NEVER DEDUPLICATED ACROSS A PO. One sofa build is many compartment
+-- lines that legitimately share a build photo; each PO line keeps its own array.
+--
+-- NOT NULL with a '{}' default means readers never handle NULL, and every existing
+-- row backfills to the empty array without a rewrite pass.
+--
+-- Houzs conventions: schema-qualified to scm.*; no inner BEGIN/COMMIT (pg-migrate
+-- owns the txn); additive and idempotent.
+ALTER TABLE scm.purchase_order_items ADD COLUMN IF NOT EXISTS photo_urls text[] NOT NULL DEFAULT '{}';

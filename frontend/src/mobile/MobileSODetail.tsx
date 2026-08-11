@@ -1,6 +1,8 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
 import { SourcePosRowMobile, soStockPillMobile } from "./source-chips";
+import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
@@ -65,6 +67,8 @@ import {
    the mobile SO-amendment surface the "Print amendment" the desktop already had,
    closing the desktop/mobile parity gap. */
 import { generateAmendmentPdf } from "../vendor/scm/lib/amendment-pdf";
+import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../vendor/scm/lib/pdf-common";
 import { soAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 /* The 2990 bridge's staff row — the vocabulary so_amendments.requested_by is
@@ -197,6 +201,9 @@ type SoItem = {
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   delivered_qty?: number | null;
   remaining_qty?: number | null;
+  /* A retired line — the SO's history, not part of the live order. Returned by
+     GET /:docNo like every other row; filtered out at the use site. */
+  cancelled?: boolean | null;
 };
 type SoPayment = {
   id: string;
@@ -243,13 +250,22 @@ const total = (h: SoHeader) => h.local_total_centi ?? h.total_revenue_centi ?? 0
  *  (`#so-detail` + `renderSoDetail`/`openSO`), wired to the real
  *  /mfg-sales-orders/:docNo (header + line items) and /:docNo/payments.
  *  Draft/Submitted actions PATCH /:docNo/status. Design classes only. */
-export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void }) {
+export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void;
+  /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
+  flowNav?: FlowNav;
+}) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const notifyTop = useNotify();
   const askPrompt = usePrompt();
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  /* Relationship Map — the mobile twin of the desktop SO map
+     (so-relationship-map.ts → DocumentRelationshipMapModal). The SO anchor
+     reads /document-flow/so/:docNo ONLY — no coverage fetch, matching the
+     desktop SO map's deliberate no-floating-hop rule (coverage is
+     purchase-doc-keyed; an SO-keyed read would be new backend load). */
+  const [mapOpen, setMapOpen] = useState(false);
   /* SO-amendment (Phase 1-C) — the pending-amendment banner's actions. The
      diff sheet opens with the amendment id; the supplier-confirm sheet toggles
      inline. approve-SO / reject / withdraw are direct mutations gated by
@@ -282,7 +298,14 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
   const pickableStaffQ = usePickableStaff({ onlySales: true });
   const houzsAuth = useHouzsAuth();
   const h = detail.data?.salesOrder as SoHeader | undefined;
-  const items = (detail.data?.items ?? []) as SoItem[];
+  /* Cancelled lines are dropped here for the SAME reason desktop V2 drops them
+     (SalesOrderDetailV2.tsx `.filter((l) => !l.cancelled)`): GET /:docNo returns
+     an SO's retired lines along with its live ones, and this screen's `items`
+     feeds both the Line items card and generateSalesOrderPdf. Desktop filtered
+     and mobile did not — the one-shared-rule divergence this repo keeps paying
+     for. Production held zero cancelled rows until 2026-08-10, so it never
+     showed. */
+  const items = ((detail.data?.items ?? []) as SoItem[]).filter((l) => !l.cancelled);
   /* MONEY IS EITHER KNOWN OR UNKNOWN — the MobilePOD (#653) rule, applied to the
      sibling screen that runs the same subtraction. `paymentsQ.data ?? []` folded
      a FAILED payments read into "no payments", and `data` is set only by a
@@ -293,7 +316,7 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
   const payments = (paymentsKnown ? paymentsQ.data! : []) as SoPayment[];
   /* Download the SO PDF — reuses the SAME desktop generator (per-brand letterhead)
      so the phone produces byte-identical output. 'save' = normal download. */
-  const onPdf = async () => {
+  const deliverPdf = async (action: PdfAction) => {
     if (!h) return;
     /* This PDF is handed to the CUSTOMER. Generating it from an unknown payments
        ledger prints an empty Payments table, which does not read as "we could not
@@ -315,11 +338,12 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
     }
     try {
       const { generateSalesOrderPdf } = await import("../vendor/scm/lib/sales-order-pdf");
-      await generateSalesOrderPdf(h as never, items as never, payments as never, "save", []);
+      await generateSalesOrderPdf(h as never, items as never, payments as never, action, []);
     } catch (e) {
       void notifyTop({ title: "Couldn't generate the PDF", body: e instanceof Error ? e.message : "Please try again." });
     }
   };
+  const print = usePrintPreview(deliverPdf);
 
   /* Salesperson NAME — the detail header carries only salesperson_id (a staff
      UUID), so resolve it against the shared /staff list. Falls back to em-dash
@@ -713,7 +737,21 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
         <div className="hdr-row">
           <button className="back" onClick={onBack}><span className="chev">{"‹"}</span> Sales Orders</button>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {h && <button className="tinybtn" onClick={onPdf} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>PDF</button>}
+            {h && <button className="tinybtn" onClick={() => setMapOpen(true)} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>Map</button>}
+            {h && <button className="tinybtn" onClick={print.openPreview} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>PDF</button>}
+            {h && (
+              <PrintPreviewModal
+                open={print.open}
+                onClose={print.close}
+                docTitle="Sales Order"
+                docNo={String(h.doc_no ?? "")}
+                rows={[
+                  { label: "Customer", value: String(h.debtor_name ?? "—") },
+                  { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
+                ]}
+                {...print.handlers}
+              />
+            )}
             {h && <StatusPill status={h.status} />}
           </div>
         </div>
@@ -1155,7 +1193,11 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
                 historyOpen-mounted HistoryPanel). */}
             <HistoryCard docNo={docNo} />
 
-            {actionError && <div style={{ marginTop: 13, fontSize: 11.5, color: "var(--red)", textAlign: "center" }}>{actionError}</div>}
+            {/* Confirm-gate refusals arrive as a bullet-per-reason list
+                (humanApiError renders validation_failed problems one per
+                line) — pre-line keeps the list readable; a single-line error
+                stays centered as before. */}
+            {actionError && <div style={{ marginTop: 13, fontSize: 11.5, color: "var(--red)", whiteSpace: "pre-line", textAlign: actionError.includes("\n") ? "left" : "center" }}>{actionError}</div>}
           </div>
         )}
       </div>
@@ -1248,6 +1290,19 @@ export function MobileSODetail({ docNo, onBack, onEdit }: { docNo: string; onBac
             <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--mut2)", padding: 4 }}>This order was cancelled.</div>
           )}
         </footer>
+      )}
+
+      {/* Relationship Map (mobile) — the SO anchor's stacked twin of the
+          desktop SO map. See the mapOpen comment at the top of the component
+          for the deliberate no-coverage-fetch rule. */}
+      {mapOpen && (
+        <MobileRelationshipMap
+          type="so"
+          id={docNo}
+          label={h?.doc_no ?? docNo}
+          onClose={() => setMapOpen(false)}
+          nav={flowNav}
+        />
       )}
 
     </div>
@@ -1832,7 +1887,7 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
   const amd = data?.amendment as Record<string, unknown> | undefined;
   const amdStatus = String(amd?.status ?? "");
   const soApplied = ["SO_APPROVED", "PO_APPROVED", "SENT", "APPROVED"].includes(amdStatus);
-  const handlePrintAmendment = () => {
+  const deliverAmendmentPdf = (action: PdfAction) => {
     if (!amd) return;
     const input = soAmendmentToPdfInput({
       amendment: {
@@ -1849,9 +1904,10 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
       customerName: (data?.salesOrder as { customer_name?: string | null } | null)?.customer_name ?? null,
       statusLabel: soApplied ? "Approved" : "Requested",
     });
-    Promise.resolve(generateAmendmentPdf(input)).catch((e: unknown) =>
+    return Promise.resolve(generateAmendmentPdf(input, { action })).catch((e: unknown) =>
       void notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }));
   };
+  const amendmentPrint = usePrintPreview(deliverAmendmentPdf);
 
   return (
     <div className="hz-m sheet-bd" onClick={onClose}>
@@ -2004,7 +2060,25 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
           </div>
         </div>
         <div className="sheet-foot">
-          <button type="button" className="btn" style={{ flex: 1 }} onClick={handlePrintAmendment} disabled={isLoading || !amd}>Print amendment</button>
+          <button type="button" className="btn" style={{ flex: 1 }} onClick={amendmentPrint.openPreview} disabled={isLoading || !amd}>Print amendment</button>
+          <PrintPreviewModal
+            open={amendmentPrint.open}
+            onClose={amendmentPrint.close}
+            docTitle="Sales Order Amendment"
+            docNo={amNo || "Amendment"}
+            rows={[
+              { label: "Against SO", value: soDocNo || "—" },
+              { label: "Status", value: soApplied ? "Approved" : "Requested" },
+              { label: "Reason", value: reason || "—" },
+              {
+                label: "Changes",
+                value: `${lines.length + headerDiffs.length} change${
+                  lines.length + headerDiffs.length === 1 ? "" : "s"
+                }`,
+              },
+            ]}
+            {...amendmentPrint.handlers}
+          />
           <button type="button" className="btn" style={{ flex: 1 }} onClick={onClose}>Close</button>
         </div>
       </div>

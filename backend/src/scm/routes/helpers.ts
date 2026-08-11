@@ -15,6 +15,15 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { activeCompanyId } from '../lib/companyScope';
 import { carrierLinkForInsert, resolveCarrierLink } from '../lib/threepl-link';
+import { nextCode, CODE_PREFIX } from '../lib/fleet-code-mint';
+import { normalizeIc, INVALID_IC, NAME_MAX } from '../lib/fleet-crew-fields';
+
+/** The next HLP- code. Global read, same reason as drivers: helper_code carries
+ *  a bare UNIQUE(helper_code) and the roster is shared across companies. */
+async function mintHelperCode(sb: { from: (t: string) => any }): Promise<string> {
+  const { data } = await sb.from('helpers').select('helper_code');
+  return nextCode(CODE_PREFIX.HELPER, ((data ?? []) as Array<{ helper_code?: string | null }>).map((r) => r.helper_code));
+}
 
 export const helpers = new Hono<{ Bindings: Env; Variables: Variables }>();
 helpers.use('*', supabaseAuth);
@@ -42,33 +51,50 @@ helpers.get('/', async (c) => {
 helpers.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const helperCode = String(body.helperCode ?? '').trim();
+  const suppliedCode = String(body.helperCode ?? '').trim();
   const name = String(body.name ?? '').trim();
   const contact = String(body.contact ?? '').trim();
-  if (!helperCode) return c.json({ error: 'code_required' }, 400);
-  if (!name)       return c.json({ error: 'name_required' }, 400);
-  /* Store helper contact in E.164 (mirrors drivers.phone). Contact is optional. */
-  const normalizedContact = contact ? (normalizePhone(contact) ?? contact) : null;
+  if (!name) return c.json({ error: 'name_required' }, 400);
+  if (name.length > NAME_MAX) return c.json({ error: 'name_too_long', reason: `Keep the name under ${NAME_MAX} characters.` }, 400);
+
+  /* Contact is OPTIONAL, but a non-empty one that will not normalise is not a
+     phone number — it used to be stored raw (`?? contact`). Blank stays blank. */
+  let normalizedContact: string | null = null;
+  if (contact) {
+    normalizedContact = normalizePhone(contact);
+    if (!normalizedContact) return c.json({ error: 'invalid_contact', reason: 'That is not a usable phone number.' }, 400);
+  }
+
+  const icNumber = normalizeIc(body.icNumber);
+  if (icNumber === INVALID_IC) return c.json({ error: 'invalid_ic', reason: 'An IC / passport number is at most 20 characters.' }, 400);
+
   /* A helper registered under a 3PL carrier is outsource, whatever was ticked. */
   const link = carrierLinkForInsert({ threeplCompanyId: carrierOf(body), ownFlag: ownFlagOf(body) });
 
   const sb = c.get('supabase');
-  const { data, error } = await sb.from('helpers').insert({
+  const row = {
     company_id: activeCompanyId(c),
-    helper_code: helperCode,
     name,
     contact: normalizedContact,
-    ic_number: (body.icNumber as string) ?? null,
+    ic_number: icNumber,
     in_house: link.ownFlag,
     threepl_company_id: link.carrierId,
     active: body.active === false ? false : true,
-  }).select(COLS).single();
-  if (error) {
-    if (error.code === '23505') return c.json({ error: 'duplicate_code' }, 409);
+  };
+
+  /* Codes are minted (owner 2026-08-02); an explicit one is still honoured so
+     an import can carry real codes. Retry the MINT only — a 23505 on a supplied
+     code is the caller's problem and retrying would spin. */
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const helperCode = suppliedCode || await mintHelperCode(sb);
+    const { data, error } = await sb.from('helpers')
+      .insert({ ...row, helper_code: helperCode }).select(COLS).single();
+    if (!error) return c.json({ helper: data }, 201);
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
-    return c.json({ error: 'insert_failed', reason: error.message }, 500);
+    if (error.code !== '23505') return c.json({ error: 'insert_failed', reason: error.message }, 500);
+    if (suppliedCode) return c.json({ error: 'duplicate_code' }, 409);
   }
-  return c.json({ helper: data }, 201);
+  return c.json({ error: 'code_mint_failed', reason: 'Could not allocate a helper code.' }, 500);
 });
 
 helpers.patch('/:id', async (c) => {
@@ -77,21 +103,59 @@ helpers.patch('/:id', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
   const updates: Record<string, unknown> = {};
+  /* The SAME rules the create path applies — a field validated on create and
+     not on edit is validated nowhere. */
   const map: Array<[string, string]> = [
-    ['helperCode', 'helper_code'], ['name', 'name'], ['contact', 'contact'],
-    ['icNumber', 'ic_number'],
+    ['helperCode', 'helper_code'], ['name', 'name'],
   ];
   for (const [from, to] of map) {
     if (body[from] === undefined) continue;
-    /* Normalize contact to E.164 on PATCH (mirrors drivers.phone). */
-    if (from === 'contact' && typeof body[from] === 'string') {
-      const raw = body[from] as string;
-      updates[to] = raw ? (normalizePhone(raw) ?? raw) : null;
+    updates[to] = body[from];
+  }
+  if (typeof updates.name === 'string') {
+    const n = updates.name.trim();
+    if (!n) return c.json({ error: 'name_required' }, 400);
+    if (n.length > NAME_MAX) return c.json({ error: 'name_too_long', reason: `Keep the name under ${NAME_MAX} characters.` }, 400);
+    updates.name = n;
+  }
+  if (body.contact !== undefined) {
+    /* Blank CLEARS the optional field; a non-blank value that will not
+       normalise is not a phone number and is refused, not stored raw. */
+    const raw = String(body.contact ?? '').trim();
+    if (!raw) {
+      updates.contact = null;
     } else {
-      updates[to] = body[from];
+      const normalized = normalizePhone(raw);
+      if (!normalized) return c.json({ error: 'invalid_contact', reason: 'That is not a usable phone number.' }, 400);
+      updates.contact = normalized;
     }
   }
-  const link = resolveCarrierLink({ threeplCompanyId: carrierOf(body), ownFlag: ownFlagOf(body) });
+  if (body.icNumber !== undefined) {
+    const ic = normalizeIc(body.icNumber);
+    if (ic === INVALID_IC) return c.json({ error: 'invalid_ic', reason: 'An IC / passport number is at most 20 characters.' }, 400);
+    updates.ic_number = ic;
+  }
+  /* The Fleet grid's Outsource tick-box posts only the flag, so the current
+     link has to come from the row — resolveCarrierLink cannot see it otherwise
+     and the two fields silently disagree (owner, 2026-08-02). */
+  const sbCur = c.get('supabase');
+  const { data: curRow, error: curErr } = await sbCur
+    .from('helpers').select('threepl_company_id').eq('id', id).maybeSingle();
+  if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
+  if (!curRow) return c.json({ error: 'helper_not_found' }, 404);
+
+  const link = resolveCarrierLink({
+    threeplCompanyId: carrierOf(body),
+    ownFlag: ownFlagOf(body),
+
+    currentCarrierId: (curRow.threepl_company_id ?? null) as string | null,
+  });
+  if (link.conflict === 'own_flag_while_linked') {
+    return c.json({
+      error: 'linked_to_carrier',
+      reason: 'This row belongs to a 3PL company. Detach it from the carrier first, then mark it in-house.',
+    }, 409);
+  }
   if (link.carrierId !== undefined) updates.threepl_company_id = link.carrierId;
   if (link.ownFlag !== undefined) updates.in_house = link.ownFlag;
   if (body.active !== undefined) updates.active = Boolean(body.active);

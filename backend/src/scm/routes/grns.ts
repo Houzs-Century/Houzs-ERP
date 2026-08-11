@@ -5,6 +5,8 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
+import { grnHasDownstream } from '../lib/downstream-lock';
+import { enqueueConvert, recordConvertSkipped, enqueueCancel } from '../lib/autocount-outbox';
 import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
@@ -15,6 +17,7 @@ import { recostFromGrn } from '../lib/recost';
 import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurrency } from '../lib/fx';
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
+import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -438,7 +441,10 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
   const movementErrors: string[] = [];
   const grnNo = (grnHeader as { grn_number: string } | null)?.grn_number ?? grnId;
   let warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-    ?? (await defaultWarehouseId(sb));
+    /* Per-company default (2026-08-03) — this used to be a company-blind draw
+       across every company's is_default warehouses, decided by alphabetical
+       `code` order, so Houzs receipts could land in 2990's Guangzhou warehouse. */
+    ?? (await defaultWarehouseId(sb, companyId));
   /* Owner 2026-07-02 — AUTHORITATIVE receiving warehouse = the source PO line's
      bound warehouse. The warehouse binds at the SO/PO line and must flow into the
      GRN's stock movements (per-warehouse model, no cross-warehouse pooling). A
@@ -861,16 +867,12 @@ export async function recomputePoReceived(
 /* ── GRN child-lock guard (migration 0106) ─────────────────────────────────
    A GRN locks (read-only — no line edit / no cancel) once ANY of its lines has
    a downstream child: invoiced_qty > 0 OR returned_qty > 0 (a PI or PR line is
-   drawn from it). Returns the blocking JSON, or null if the GRN is free to
-   edit. */
-async function grnHasDownstream(sb: any, grnId: string): Promise<{ error: string; message: string } | null> {
-  const { data } = await sb.from('grn_items')
-    .select('invoiced_qty, returned_qty').eq('grn_id', grnId);
-  const any = ((data ?? []) as Array<{ invoiced_qty: number; returned_qty: number }>)
-    .some((r) => (r.invoiced_qty ?? 0) > 0 || (r.returned_qty ?? 0) > 0);
-  if (any) return { error: 'grn_has_downstream', message: 'GRN has a Purchase Invoice / Return — delete it first to edit' };
-  return null;
-}
+   drawn from it).
+
+   The rule now lives in scm/lib/downstream-lock.ts with its three siblings
+   (SO / PO / DO), which had drifted into four private copies in four route
+   files. Same signature, same JSON, same behaviour — see that module for why
+   it is also the ERP half of AutoCount's transferred-document rule. */
 
 /* ── Downstream-consumption guard (bug #2) ─────────────────────────────────
    Reversing a GRN receipt (whole-cancel or line-delete) writes an inventory OUT
@@ -1148,6 +1150,10 @@ grns.get('/', async (c) => {
       ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
       assigned_sos: summary.assignedSos,
       assigned_so_linked: summary.sourceLinked,
+      /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s) —
+         rolled up over the SAME code-filtered origins, so header ≡ ∪(lines)
+         holds for the provenance slot too. */
+      assigned_so_provenance: summary.provenanceSos,
       delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
     };
   });
@@ -1175,16 +1181,25 @@ grns.get('/outstanding-po-items', async (c) => {
      parent PO's purchase_location_id so the picker can group/lock by warehouse,
      and resolve the warehouse code/name in a second round trip (Supabase nested
      selects can't reach warehouses through the items→po hop cleanly). */
-  const { data: items, error } = await sb
-    .from('purchase_order_items')
-    .select(`
+  /* Cross-company leak fix (owner 2026-08-10 "为什么 houzs 的数据进到去 2990"):
+     this picker returned EVERY company's outstanding PO lines — the AutoCount
+     import raised Houzs POs from a handful to 135 and made the leak visible in
+     2990's GRN picker. The consignment mirror already wrapped with
+     scopeToCompany; do the same here (items carry company_id since mig 0083,
+     fail-closed when the company context can't resolve). */
+  const { data: items, error } = await scopeToCompany(
+    sb
+      .from('purchase_order_items')
+      .select(`
       id, purchase_order_id, material_kind, material_code, material_name, supplier_sku, item_group,
       description, qty, received_qty, unit_price_centi, warehouse_id, variants, delivery_date,
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
       po:purchase_orders!inner ( id, po_number, supplier_id, status, po_date, expected_at,
         supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
         purchase_location_id, supplier:suppliers ( code, name ) )
-    `)
+    `),
+    c,
+  )
     .order('purchase_order_id', { ascending: false })
     .limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -1350,7 +1365,9 @@ export async function grnLineDownstream(
 grns.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i] = await Promise.all([
-    sb.from('grns').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number)`).eq('id', id).maybeSingle(),
+    // Company-scoped (owner 2026-08-10 audit): a bare uuid must not read
+    // another company's GRN. Siblings (delivery-returns, suppliers) do this.
+    scopeToCompany(sb.from('grns').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number)`), c).eq('id', id).maybeSingle(),
     sb.from('grn_items').select(ITEM).eq('grn_id', id).order('created_at'),
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
@@ -1382,19 +1399,27 @@ grns.get('/:id', async (c) => {
   const headerReceivedAt = (h.data as { received_at?: string | null }).received_at ?? null;
   const poItemIds = [...new Set(lineItems.map((it) => it.purchase_order_item_id).filter((x): x is string => Boolean(x)))];
   const poNoByItemId = new Map<string, string>();
+  /* Owner 2026-08-06 — the V2 detail's "Ordered" column needs the SOURCE PO
+     line's qty (grn_items has no ordered-qty column of its own; the V2 page
+     was reading a nonexistent `qty` field and rendered 0 on every GRN). Same
+     round trip that already resolves the PO number — just carry `qty` too.
+     Manual lines (no purchase_order_item_id) stay null → the page shows "—". */
+  const poQtyByItemId = new Map<string, number>();
   const downstreamMap = await grnLineDownstream(sb, lineItems.map((it) => it.id));
   if (poItemIds.length > 0) {
     const { data: poiRows } = await sb.from('purchase_order_items')
-      .select('id, po:purchase_orders ( po_number )')
+      .select('id, qty, po:purchase_orders ( po_number )')
       .in('id', poItemIds);
-    for (const r of (poiRows ?? []) as Array<{ id: string; po: { po_number: string } | Array<{ po_number: string }> | null }>) {
+    for (const r of (poiRows ?? []) as Array<{ id: string; qty: number | null; po: { po_number: string } | Array<{ po_number: string }> | null }>) {
       const po = Array.isArray(r.po) ? r.po[0] : r.po;
       if (po?.po_number) poNoByItemId.set(r.id, po.po_number);
+      if (r.qty != null) poQtyByItemId.set(r.id, Number(r.qty));
     }
   }
   const items = lineItems.map((it) => ({
     ...it,
     source_po_number: it.purchase_order_item_id ? (poNoByItemId.get(it.purchase_order_item_id) ?? null) : null,
+    ordered_qty: it.purchase_order_item_id ? (poQtyByItemId.get(it.purchase_order_item_id) ?? null) : null,
     received_at: headerReceivedAt,
     downstream: downstreamMap.get(it.id) ?? [],
   }));
@@ -1439,9 +1464,36 @@ grns.get('/:id/linked', async (c) => {
   const po: { id: string; po_number: string } | null =
     Array.isArray(poJoin) ? (poJoin[0] ?? null) : (poJoin ?? null);
 
+  /* Multi-GRN PIs (owner 2026-08-06) — one supplier invoice can bill several
+     notes, and only ONE of them is the header's primary grn_id. Union the
+     header match above with the LINE-level path (this note's grn_items →
+     purchase_invoice_items) so a note billed on another note's PI still lists
+     its invoice here. Fail-soft: a hiccup leaves the header-matched set. */
+  let invoices = (piRes.data ?? []) as Array<{ id: string; invoice_number: string; status: string; invoice_date: string }>;
+  try {
+    const { data: myLines } = await sb.from('grn_items').select('id').eq('grn_id', id);
+    const grnItemIds = ((myLines ?? []) as Array<{ id: string }>).map((r) => r.id);
+    if (grnItemIds.length) {
+      const { data: piLines } = await sb.from('purchase_invoice_items')
+        .select('purchase_invoice_id').in('grn_item_id', grnItemIds);
+      const piIds = [...new Set(((piLines ?? []) as Array<{ purchase_invoice_id: string | null }>)
+        .map((r) => r.purchase_invoice_id).filter((x): x is string => Boolean(x)))];
+      const missing = piIds.filter((pid) => !invoices.some((v) => v.id === pid));
+      if (missing.length) {
+        const { data: extra } = await sb.from('purchase_invoices')
+          .select('id, invoice_number, status, invoice_date').in('id', missing);
+        invoices = [...invoices, ...((extra ?? []) as typeof invoices)]
+          .sort((a, b) => String(b.invoice_date).localeCompare(String(a.invoice_date)));
+      }
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[grn linked] line-level PI union failed', { id, error: e });
+  }
+
   return c.json({
     purchaseOrder: po,
-    invoices:      piRes.data ?? [],
+    invoices,
     returns:       prRes.data ?? [],
   });
 });
@@ -1532,6 +1584,27 @@ grns.post('/', async (c) => {
     const x = await firstCrossCompanyPo(sb, c, [(body.purchaseOrderId as string | undefined) ?? null]);
     if (x && 'loadError' in x) return c.json({ error: 'load_failed', reason: x.loadError }, 500);
     if (x) return c.json(x.blocked, 409);
+  }
+
+  /* The other half of "lines with no purchase_order_item_id are uncapped"
+     (Wei Siang 2026-08-04, "包括 GR 那边也是"). Uncapped is right for a free
+     receipt; it is not right for receiving THIS PO's own material without
+     ticking the PO line off, because the stock goes in while the PO's
+     received_qty does not move — so the same delivery can be received twice.
+     Refused only when the named PO already orders that material. */
+  {
+    const unlinked = await findUnlinkedPoLines(
+      sb,
+      (body.purchaseOrderId as string | undefined) ?? null,
+      null,
+      items.map((it, idx) => ({
+        lineRef: String(idx),
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qtyAccepted ?? it.qtyReceived ?? 0),
+        soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
+      })),
+    );
+    if (unlinked.length > 0) return c.json(unlinkedPoLinesResponse(unlinked), 409);
   }
 
   const headerWarehouseId = await resolveReceiveWarehouse(
@@ -1873,6 +1946,32 @@ grns.post('/from-pos', async (c) => {
     `Batch-converted from ${poList.length} PO${poList.length === 1 ? '' : 's'}: ${poNumbersJoined}`,
   );
 
+  /* ERP -> AutoCount PO->GR. A GRN batched across several POs has no AutoCount
+     shape (one transfer, one source document), so it is recorded as skipped
+     rather than invented or dropped. */
+  if (poList.length === 1) {
+    await enqueueConvert(sb, {
+      companyId: activeCompanyId(c),
+      op: 'po_to_gr',
+      from: { table: 'purchase_orders', keyCol: 'id', key: poList[0].id },
+      to: { table: 'grns', keyCol: 'id', key: h.id },
+      docType: 'GR',
+      docNo: h.grn_number,
+      docId: h.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else {
+    await recordConvertSkipped(sb, {
+      companyId: activeCompanyId(c),
+      op: 'po_to_gr',
+      docType: 'GR',
+      docNo: h.grn_number,
+      docId: h.id,
+      reason: `batched from ${poList.length} POs (${poNumbersJoined}) — AutoCount transfers from ONE source document, so this GRN has no AutoCount counterpart`,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
+
   const movementErrors = postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes.ok ? postRes.recountError : undefined;
   return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
@@ -2209,6 +2308,30 @@ grns.post('/from-po-items', async (c) => {
       sb, c.get('houzsUser'), activeCompanyId(c), h.id, bucket.lines.length,
       `Received from ${[...bucket.poNumbers].join(', ')}`,
     );
+
+    /* ERP -> AutoCount PO->GR, per bucket: each bucket IS its own document. */
+    if (bucket.poNumbers.size === 1 && bucket.primaryPoId) {
+      await enqueueConvert(sb, {
+        companyId: activeCompanyId(c),
+        op: 'po_to_gr',
+        from: { table: 'purchase_orders', keyCol: 'id', key: bucket.primaryPoId },
+        to: { table: 'grns', keyCol: 'id', key: h.id },
+        docType: 'GR',
+        docNo: h.grn_number,
+        docId: h.id,
+        createdBy: c.get('houzsUser')?.id ?? null,
+      });
+    } else {
+      await recordConvertSkipped(sb, {
+        companyId: activeCompanyId(c),
+        op: 'po_to_gr',
+        docType: 'GR',
+        docNo: h.grn_number,
+        docId: h.id,
+        reason: `received against ${bucket.poNumbers.size} POs (${[...bucket.poNumbers].join(', ')}) — AutoCount transfers from ONE source document, so this GRN has no AutoCount counterpart`,
+        createdBy: c.get('houzsUser')?.id ?? null,
+      });
+    }
     const postFailReason = postRes.ok ? undefined : postRes.reason;
     const bucketMovementErrors = postRes.ok ? postRes.movementErrors : undefined;
     const bucketRecountError = postRes.ok ? postRes.recountError : undefined;
@@ -2357,7 +2480,7 @@ grns.patch('/:id/cancel', async (c) => {
 
   // (a) Inventory OUT per line — negate the original GRN IN. Best-effort.
   try {
-    const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb));
+    const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     if (warehouseId) {
       /* Migration 0120 — the original IN stamped batch_no = source PO number so a
          sofa set's components share a dye lot. The reversing OUT must consume that
@@ -2415,6 +2538,19 @@ grns.patch('/:id/cancel', async (c) => {
   } catch { /* best-effort */ }
 
   const { data } = await sb.from('grns').select(HEADER).eq('id', id).maybeSingle();
+
+  /* ERP -> AutoCount cancel. Reached only for a GRN the downstream lock let
+     through (grnHasDownstream, checked above) — the same rule AutoCount
+     applies, so this can never ask it to cancel an invoiced receipt. */
+  await enqueueCancel(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'GR',
+    docNo: head.grn_number ?? id,
+    docId: id,
+    self: { table: 'grns', keyCol: 'id', key: id },
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   return c.json({ grn: data ?? { id, status: 'CANCELLED' } });
 });
 
@@ -2629,6 +2765,25 @@ grns.post('/:id/items', async (c) => {
      NaN). On a GRN this is worse than a bad total: qty_received also drives the
      over-receipt headroom check and the inventory movement, so a NaN qty writes
      a NaN into stock. */
+  /* The add-a-line half of the same back door as the create path: receiving
+     THIS PO's own material with no purchase_order_item_id takes the stock in
+     while the PO's received_qty stays put, so it can be received again. */
+  {
+    const { data: grnPo } = await sb.from('grns').select('purchase_order_id').eq('id', grnId).maybeSingle();
+    const unlinked = await findUnlinkedPoLines(
+      sb,
+      (grnPo as { purchase_order_id?: string | null } | null)?.purchase_order_id ?? null,
+      null,
+      [{
+        lineRef: 'add',
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qtyAccepted ?? it.qtyReceived ?? it.qty ?? 0),
+        soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
+      }],
+    );
+    if (unlinked.length > 0) return c.json(unlinkedPoLinesResponse(unlinked), 409);
+  }
+
   const parsedAdd = parseLineNumbers({
     qty: { value: it.qty, fallback: 1 },
     unitPriceCenti: { value: it.unitPriceCenti },
@@ -2771,7 +2926,7 @@ grns.post('/:id/items', async (c) => {
       const { data: grnHeader } = await sb.from('grns')
         .select('grn_number, warehouse_id, exchange_rate').eq('id', grnId).maybeSingle();
       const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-        ?? (await defaultWarehouseId(sb));
+        ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
       // Migration 0082 — convert the line's own-currency unit price to MYR at the
       // GRN's rate (no-op for an MYR GRN).
       const addLineRate = (grnHeader as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
@@ -2961,7 +3116,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   if (inventoryChange) {
     const { data: grnHead } = await sb.from('grns').select('grn_number, warehouse_id, exchange_rate').eq('id', grnId).maybeSingle();
     editWarehouseId = (grnHead as { warehouse_id: string | null } | null)?.warehouse_id
-      ?? (await defaultWarehouseId(sb));
+      ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     editGrnNo = (grnHead as { grn_number: string } | null)?.grn_number ?? grnId;
     // Migration 0082 — convert the line unit price to MYR at the GRN's rate.
     editRate = (grnHead as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
@@ -3140,7 +3295,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
     if ((lg.qty_accepted ?? 0) > 0) {
       const { data: grnHead } = await sb.from('grns').select('warehouse_id').eq('id', grnId).maybeSingle();
       const warehouseId = (grnHead as { warehouse_id: string | null } | null)?.warehouse_id
-        ?? (await defaultWarehouseId(sb));
+        ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
       const consumedLock = await grnReverseWouldGoNegative(sb, warehouseId, [lg]);
       if (consumedLock) return c.json(consumedLock, 409);
     }
@@ -3198,7 +3353,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
         const { data: grnHeader } = await sb.from('grns')
           .select('grn_number, warehouse_id').eq('id', grnId).maybeSingle();
         const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-          ?? (await defaultWarehouseId(sb));
+          ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
         if (warehouseId) {
           const variantKey = computeVariantKey(l.item_group, l.variants ?? null);
           // Carry THIS line's own dye-lot batch (= its source PO number) so the

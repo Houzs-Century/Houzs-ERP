@@ -8,7 +8,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 
 export type RateBasis = 'ITEM' | 'SET';
-export type RateAggregation = 'DROP' | 'CUSTOMER';
+/** What the tier ladder COUNTS (mig 0244). UNIT = sets/items per `basis`;
+ *  DROP = delivery orders; CUSTOMER = distinct doorstep; TRIP = 1, a flat
+ *  price for the whole trip. Was 'DROP' | 'CUSTOMER' while the field was inert
+ *  and the calculator counted sets regardless of it. */
+export type RateAggregation = 'UNIT' | 'DROP' | 'CUSTOMER' | 'TRIP';
 export type RateRounding = 'NONE' | 'NEAREST_10C' | 'NEAREST_RM';
 export type RateRuleType =
   | 'POSITIONAL_TIER' | 'OVERAGE' | 'SOFA_BRACKET' | 'OUTSTATION' | 'OUTSTATION_TRIP'
@@ -131,7 +135,8 @@ export type NewRateCard = {
   carrierLorryId?: string | null;
   carrierCompanyId?: string | null;
   carrierLabel?: string | null;
-  isOwnFleet?: boolean;
+  /* No isOwnFleet — it is derived from carrierCompanyId server-side and the
+     route ignores it (mig 0246). Own fleet IS "no carrier". */
   basis?: RateBasis;
   aggregation?: RateAggregation;
   minChargeCenti?: number | null;

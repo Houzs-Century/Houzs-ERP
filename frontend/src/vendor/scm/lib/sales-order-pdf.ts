@@ -10,6 +10,9 @@ import {
 } from '@2990s/shared/so-line-display';
 import {
   COMPANY,
+  deliverPdf,
+  DOC_TABLE_HEAD_STYLES,
+  DOC_TABLE_STYLES,
   drawHeader,
   drawInfoColumns,
   amountInWordsMyr,
@@ -17,6 +20,7 @@ import {
   fmtDocDate,
   fmtRm,
   safeName,
+  type PdfAction,
 } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { loadFabricDescriptionMap, loadFabricSupplierMap } from './supplier-doc-data';
@@ -134,6 +138,11 @@ type SoItem = {
   total_centi: number;
   variants: Record<string, unknown> | null;
   remark?: string | null;
+  /* A retired line. GET /:docNo returns cancelled rows along with the live ones
+     (it is the SO's history), so every caller hands them to this generator —
+     see the filter at the top of renderSalesOrderInto. Optional because older
+     callers pass rows that predate the column. */
+  cancelled?: boolean | null;
 };
 
 /* Mirrors flow-queries.ts `SoPayment`. Re-declared here to keep the PDF
@@ -262,43 +271,12 @@ const methodLabel = (p: SoPayment): string => {
   return 'Cash';
 };
 
-/* Follow-up #83 — action selects how the rendered PDF is delivered:
-   - 'save'    → traditional doc.save() download (default, back-compat)
-   - 'print'   → render into a hidden iframe and trigger print dialog,
-                 skipping the Downloads folder round-trip
-   - 'preview' → open as a blob URL in a new tab (no print, no download) */
-export type PdfAction = 'save' | 'print' | 'preview';
-
-/* Mount a blob URL in a hidden iframe and (optionally) trigger print.
-   Cleanup is deferred 60 s so the OS print dialog can hold the iframe
-   document until the user closes it. */
-const renderViaIframe = (blobUrl: string, andPrint: boolean): void => {
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
-  iframe.style.border = '0';
-  iframe.src = blobUrl;
-  document.body.appendChild(iframe);
-  if (andPrint) {
-    iframe.onload = () => {
-      try {
-        iframe.contentWindow?.focus();
-        iframe.contentWindow?.print();
-      } catch {
-        /* Some browsers throw if the PDF viewer hasn't fully hydrated.
-           Worst case the user sees the iframe content briefly; we still
-           clean up below. */
-      }
-    };
-  }
-  window.setTimeout(() => {
-    try { document.body.removeChild(iframe); } catch { /* already detached */ }
-    URL.revokeObjectURL(blobUrl);
-  }, 60_000);
-};
+/* Follow-up #83 introduced save / print / preview delivery HERE; every other
+   document's generator only knew doc.save(). The Print preview rollout
+   (2026-08-06) needs all of them to offer the same three exits, so the type and
+   the iframe/blob plumbing now live in pdf-common alongside the letterhead
+   helpers. Re-exported so the SO's existing importers keep their import path. */
+export type { PdfAction } from './pdf-common';
 
 type JsPdf = import('jspdf').jsPDF;
 type AutoTableFn = (typeof import('jspdf-autotable'))['default'];
@@ -316,13 +294,28 @@ export async function renderSalesOrderInto(
   doc: JsPdf,
   autoTable: AutoTableFn,
   header: SoHeader,
-  items: SoItem[],
+  allItems: SoItem[],
   payments: SoPayment[] = [],
   /* PWP vouchers this SO's trigger items issued (GET /:docNo `pwpCodes`) —
      used to mark trigger lines. Optional so older callers stay valid. */
   pwpCodes: SoPwpCodeRow[] = [],
   opts?: { docTitle?: string; docNoLabel?: string; docNoun?: string },
 ): Promise<void> {
+  /* A cancelled line must never reach a CUSTOMER document — not as a printed
+     row and not inside a total. The gate lives HERE, in the one function both
+     the single and the combined generator render through, rather than at the
+     five callsites: the SO detail (desktop V2 filters, mobile did not), the SO
+     list bulk print, and the consignment pages each build their own row list,
+     and four of them are four chances to forget.
+
+     GET /mfg-sales-orders/:docNo deliberately returns cancelled rows — they are
+     the order's history and the detail screen may want to show them — so the
+     filter belongs to whoever renders for the customer, which is this file.
+     Production held zero cancelled rows until 2026-08-10 (PR #1937 reinstated
+     two hard-deleted sofa modules as cancelled), so no print had ever met one.
+     See docs/autocount-line-retirement-plan.md gap 4. */
+  const items = allItems.filter((l) => !l.cancelled);
+
   // First page this SO occupies — the footer loop numbers from here so a
   // combined doc doesn't re-stamp earlier SOs' pages.
   const startPage = doc.getNumberOfPages();
@@ -534,7 +527,10 @@ export async function renderSalesOrderInto(
   });
 
   /* Interleave category section header rows (SOFA / BEDFRAME / …) above each
-     group, matching the on-screen grouping. Greyscale fill so it prints B&W. */
+     group, matching the on-screen grouping. Bold under a rule rather than the
+     grey band it used to carry (owner 2026-08-07: no fills on printed
+     documents) — the row still has to read as a divider, so the weight moves
+     from ink to a line. */
   const bodyRows: RowInput[] = [];
   let lastGroup: string | null = null;
   orderedItems.forEach((it, itIdx) => {
@@ -542,7 +538,7 @@ export async function renderSalesOrderInto(
     if (grp !== lastGroup) {
       bodyRows.push([{
         content: grp, colSpan: 7,
-        styles: { fontStyle: 'bold', fillColor: [238, 238, 238] as [number, number, number], textColor: 40, halign: 'left' },
+        styles: { fontStyle: 'bold', textColor: 40, halign: 'left', lineWidth: { top: 0.4 } as never },
       }]);
       lastGroup = grp;
     }
@@ -553,10 +549,10 @@ export async function renderSalesOrderInto(
     startY: y,
     head: [['#', 'Item Code', 'Description', 'Qty', 'Unit Price', 'Discount', 'Amount (RM)']],
     body: bodyRows,
-    theme: 'striped',
+    theme: 'plain',
     rowPageBreak: 'avoid',
-    styles: { fontSize: 8, cellPadding: 2, valign: 'top' },
-    headStyles: { fillColor: [34, 31, 32], textColor: 250, fontStyle: 'bold' },
+    styles: { ...DOC_TABLE_STYLES, fontSize: 8 },
+    headStyles: DOC_TABLE_HEAD_STYLES,
     /* Money cells must stay on ONE line ("MYR 2,990.00", never wrapped):
        numeric columns are 7.5 pt, right-aligned. Fixed widths sum to ~114 mm of
        182 usable (A4 − 2×14 margins), leaving ~68 mm for Description ('auto',
@@ -609,10 +605,10 @@ export async function renderSalesOrderInto(
       startY: ty,
       head: [['Date', 'Method', 'Approval Code', 'Collected By', 'Amount']],
       body: payRows,
-      theme: 'striped',
+      theme: 'plain',
       rowPageBreak: 'avoid',
-      styles: { fontSize: 8.5, cellPadding: 2, valign: 'top' },
-      headStyles: { fillColor: [34, 31, 32], textColor: 250, fontStyle: 'bold' },
+      styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
+      headStyles: DOC_TABLE_HEAD_STYLES,
       columnStyles: {
         0: { cellWidth: 24 },
         1: { cellWidth: 60 },
@@ -761,26 +757,7 @@ export async function generateSalesOrderPdf(
 
   // Filename: SO-009001-DebtorName.pdf
   const filename = `${header.doc_no}-${safeName(header.debtor_name || 'customer')}.pdf`;
-
-  /* Follow-up #83 — Dispatch on action.
-     - save:    write a real file (download)
-     - print:   blob URL → hidden iframe → window.print()
-     - preview: blob URL → new tab (browser PDF viewer) */
-  if (action === 'save') {
-    doc.save(filename);
-    return;
-  }
-  const blob = doc.output('blob');
-  const blobUrl = URL.createObjectURL(blob);
-  if (action === 'preview') {
-    /* New-tab preview. The blob URL stays valid until revoked; we leave
-       it to the 60 s timer so the new tab has time to fetch the PDF. */
-    window.open(blobUrl, '_blank');
-    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
-    return;
-  }
-  // action === 'print'
-  renderViaIframe(blobUrl, true);
+  deliverPdf(doc, filename, action);
 }
 
 /* Several SOs → ONE combined file, each SO starting on a new page. For the
@@ -788,7 +765,7 @@ export async function generateSalesOrderPdf(
    footer numbers its own pages; the whole file saves once. */
 export async function generateCombinedSalesOrderPdf(
   docs: Array<{ header: SoHeader; items: SoItem[]; payments?: SoPayment[]; pwpCodes?: SoPwpCodeRow[] }>,
-  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; docNoun?: string },
+  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; docNoun?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -802,5 +779,5 @@ export async function generateCombinedSalesOrderPdf(
       opts,
     );
   }
-  doc.save(opts?.fileName ?? 'sales-orders.pdf');
+  deliverPdf(doc, opts?.fileName ?? 'sales-orders.pdf', opts?.action);
 }

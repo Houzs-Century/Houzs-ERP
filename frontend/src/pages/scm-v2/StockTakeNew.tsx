@@ -1,10 +1,18 @@
 // ----------------------------------------------------------------------------
 // StockTakeNew — at /inventory/stock-takes/new (PR — Inv PR5).
 //
-// Step 1: pick Warehouse + Scope + Date + Notes. On Submit the server
-// snapshots system_qty for every in-scope SKU and creates an OPEN stock
-// take. We navigate to the detail page where commander enters counts.
-// (PR-DRAFT-removal 2026-05-27: renamed DRAFT→OPEN per migration 0078.)
+// Step 1: pick Warehouse + Assignee + Scope + Date + Notes (+ Blind). On
+// Submit the server snapshots system_qty for every in-scope SKU and creates
+// an OPEN stock take. We navigate to the detail page where commander enters
+// counts. (PR-DRAFT-removal 2026-05-27: renamed DRAFT→OPEN per mig 0078.)
+//
+// Phase 1 (owner-approved 2026-08-08, mig 0270): the ASSIGNEE — the person
+// responsible for the count — is REQUIRED; only they (or a stock-take
+// supervisor) can post. Scope gains "SKUs with stock" (NONZERO). The BLIND
+// toggle hides system qty / variance from the counter until posted. To split
+// one warehouse count across people, create several takes with a CATEGORY /
+// prefix scope, each with its own assignee — the scope mechanism IS the
+// sub-sheet mechanism, no extra data model needed.
 //
 // HOUZS VENDOR — verbatim from apps/backend/src/pages/StockTakeNew.tsx.
 // Import boundary only: react-router → react-router-dom; ConfirmDialog/
@@ -20,6 +28,7 @@ import { Button } from '@2990s/design-system';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
+import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { useInventoryBalances } from '../../vendor/scm/lib/stock-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
@@ -59,13 +68,18 @@ export const StockTakeNew = () => {
   const notify = useNotify();
 
   const [warehouseId, setWarehouseId] = useState<string>('');
+  const [assigneeId,  setAssigneeId]  = useState<string>('');
   const [takeDate,    setTakeDate]    = useState<string>(todayISO());
   const [scopeType,   setScopeType]   = useState<StockTakeScopeType>('ALL');
   const [scopeValue,  setScopeValue]  = useState<string>('');
   const [notes,       setNotes]       = useState<string>('');
+  const [blind,       setBlind]       = useState<boolean>(false);
 
   const warehouses = useWarehouses();
   const allSkus    = useMfgProducts();
+  /* Assignee options: the ACTIVE company's staff (the pickable list, not the
+     display roster) — the person responsible must be someone here and now. */
+  const pickableStaff = usePickableStaff();
 
   // Live "expected count sheet size" — same query the server will use
   // (v_inventory_all_skus filtered by scope) so the commander sees a
@@ -83,6 +97,12 @@ export const StockTakeNew = () => {
       const p = scopeValue.trim().toUpperCase();
       if (!p) return list.length;
       return list.filter((b) => b.product_code.toUpperCase().startsWith(p)).length;
+    }
+    /* NONZERO (phase 1): same approximation the other scopes use — the server
+       resolves per-variant buckets; here we count SKUs whose balance ≠ 0 so
+       the commander sees the sheet shrink before clicking Create. */
+    if (scopeType === 'NONZERO') {
+      return list.filter((b) => Number(b.qty ?? 0) !== 0).length;
     }
     return list.length;
   }, [balances.data, scopeType, scopeValue, warehouseId]);
@@ -106,13 +126,14 @@ export const StockTakeNew = () => {
   const needsScopeValue = scopeType === 'CATEGORY' || scopeType === 'CODE_PREFIX';
   const canCreate = Boolean(
     warehouseId &&
+    assigneeId &&
     takeDate &&
     (!needsScopeValue || scopeValue.trim()),
   );
 
   const onCreate = async () => {
     if (!canCreate) {
-      notify({ title: 'Pick a warehouse, date, and (for Category/Prefix scopes) a scope value.', tone: 'error' });
+      notify({ title: 'Pick a warehouse, assignee, date, and (for Category/Prefix scopes) a scope value.', tone: 'error' });
       return;
     }
     if (previewCount === 0) {
@@ -127,10 +148,12 @@ export const StockTakeNew = () => {
       {
         idempotencyKey: idemKey,
         warehouseId,
+        assigneeStaffId: assigneeId,
         takeDate,
         scopeType,
         scopeValue: needsScopeValue ? scopeValue.trim() : null,
         notes:      notes.trim() || undefined,
+        blind,
       },
       {
         onSuccess: (res) => navigate(`/scm/stock-takes/${res.id}`),
@@ -180,6 +203,22 @@ export const StockTakeNew = () => {
             </label>
 
             <label className={styles.field}>
+              <span className={styles.fieldLabel}>Assignee *</span>
+              {/* Phase 1 — the person responsible for this count. Only they
+                  (or a stock-take supervisor) can post it. */}
+              <select
+                value={assigneeId}
+                onChange={(e) => setAssigneeId(e.target.value)}
+                className={styles.fieldSelect}
+              >
+                <option value="">— Pick assignee —</option>
+                {sortByText(pickableStaff.data ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>{s.name || s.staffCode}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className={styles.field}>
               <span className={styles.fieldLabel}>Take Date *</span>
               <input
                 type="date"
@@ -200,6 +239,7 @@ export const StockTakeNew = () => {
                 className={styles.fieldSelect}
               >
                 <option value="ALL">All SKUs in warehouse</option>
+                <option value="NONZERO">SKUs with stock (system qty ≠ 0)</option>
                 <option value="CATEGORY">By category</option>
                 <option value="CODE_PREFIX">By code prefix</option>
               </select>
@@ -259,6 +299,28 @@ export const StockTakeNew = () => {
                 placeholder="e.g. Monthly cycle count · KL warehouse"
                 className={styles.fieldInput}
               />
+            </label>
+          </div>
+
+          {/* Blind count (phase 1): the counter works without seeing what the
+              system expects — the honest way to count. Server-enforced: while
+              OPEN, system qty + variance are stripped from the wire for
+              everyone except stock-take supervisors. */}
+          <div style={{ marginTop: 'var(--space-3)' }}>
+            <label style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              fontSize: 'var(--fs-13)', color: 'var(--c-ink)', cursor: 'pointer',
+            }}>
+              <input
+                type="checkbox"
+                checked={blind}
+                onChange={(e) => setBlind(e.target.checked)}
+              />
+              <span>
+                <strong>Blind count</strong>
+                {' '}— hide system qty and variance from the counter until this take is posted
+                (supervisors can still see them)
+              </span>
             </label>
           </div>
 

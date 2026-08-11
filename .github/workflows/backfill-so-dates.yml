@@ -1,0 +1,56 @@
+name: Backfill SO processing + delivery dates (go-live)
+
+# Manual. Backfills proceeded_at (AutoCount UDF_PDate) + customer/line delivery
+#  - creates scm.venues rows for the venue texts (company 1 had none) and
+#    backfills mfg_sales_orders.venue_id so the Edit venue picker resolves
+#  - derives postcode/city/customer_state for orders whose address has no
+#    literal 5-digit postcode (place-name lookup)
+# DRY-RUN by default; apply=1 writes.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: fix-imported-so-venues-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-so-dates.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-so-dates.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

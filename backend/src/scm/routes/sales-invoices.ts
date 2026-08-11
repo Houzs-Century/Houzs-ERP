@@ -49,12 +49,13 @@ import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
-import { doLineRemaining, doRemainingByItemId, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
+import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
 
 export const salesInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 salesInvoices.use('*', supabaseAuth);
@@ -833,7 +834,9 @@ salesInvoices.get('/', async (c) => {
 /* STATIC path MUST be registered BEFORE the `/:id` param route below. */
 salesInvoices.get('/invoiceable-do-lines', async (c) => {
   const sb = c.get('supabase');
-  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'));
+  // Company scope (owner 2026-08-10 audit) — without it the no-doIds path
+  // enumerated every company's delivery orders into this picker.
+  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
   if (doIds.length === 0) return c.json({ lines: [] });
   const remainingMap = await doInvoiceableRemaining(sb, doIds);
   const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
@@ -844,7 +847,9 @@ salesInvoices.get('/invoiceable-do-lines', async (c) => {
 salesInvoices.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i] = await Promise.all([
-    sb.from('sales_invoices').select(HEADER).eq('id', id).maybeSingle(),
+    // Company-scoped (owner 2026-08-10 audit) — a bare uuid must not read
+    // another company's invoice.
+    scopeToCompany(sb.from('sales_invoices').select(HEADER), c).eq('id', id).maybeSingle(),
     sb.from('sales_invoice_items').select(ITEM).eq('sales_invoice_id', id)
       .order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at'),
@@ -1031,6 +1036,36 @@ salesInvoices.post('/', async (c) => {
     const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo));
     const { error: iErr } = await sb.from('sales_invoice_items').insert(stampCompany(rows, c));
     if (iErr) { await sb.from('sales_invoices').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
+
+  /* Race-condition guard — the SI counterpart of "Edge #E" in
+     delivery-orders-mfg.ts. checkSiOverRemaining above is read-before-write, so
+     two invoices raised against the same delivered goods at the same moment can
+     both pass and bill the customer twice for one delivery. After inserting,
+     re-derive remaining for the picked DO lines and ROLL BACK when any has gone
+     negative.
+
+     SO -> DO, PO -> GRN and GRN -> PI all close this already; DO -> SI was the
+     one conversion without it. */
+  {
+    const pickedDoItemIds = rows
+      .map((r) => (r as { do_item_id?: string | null }).do_item_id)
+      .filter((x): x is string => !!x);
+    if (pickedDoItemIds.length > 0) {
+      const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      if (over.length > 0) {
+        // Undo: lines then header. Nothing else has happened yet — revenue is
+        // posted further down, so there is no ledger entry to reverse.
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json({
+          error: 'race_conflict',
+          message: 'Another operator just invoiced overlapping qty from this Delivery Order. Refresh and try again.',
+          conflicts: over,
+        }, 409);
+      }
+    }
+  }
     await recomputeTotals(sb, h.id);
   }
 
@@ -1266,6 +1301,29 @@ salesInvoices.post('/from-dos', async (c) => {
     return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
   }
 
+  /* Race-condition guard — same as the POST / path above, and the SI
+     counterpart of "Edge #E" in delivery-orders-mfg.ts. This is the picker
+     path, so EVERY line carries a do_item_id and the whole invoice is exposed
+     to the race, not just the linked part of it. */
+  {
+    const pickedDoItemIds = rows
+      .map((r) => (r as { do_item_id?: string | null }).do_item_id)
+      .filter((x): x is string => !!x);
+    if (pickedDoItemIds.length > 0) {
+      const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      if (over.length > 0) {
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json({
+          error: 'race_conflict',
+          message: 'Another operator just invoiced overlapping qty from this Delivery Order. Refresh and try again.',
+          conflicts: over,
+        }, 409);
+      }
+    }
+  }
+
   await recomputeTotals(sb, h.id);
 
   /* Past the items-insert rollback — the invoice is permanent from here. */
@@ -1273,6 +1331,31 @@ salesInvoices.post('/from-dos', async (c) => {
     sb, c.get('houzsUser'), activeCompanyId(c), h.id, rows.length,
     `Converted from ${distinctDoNumbers.length > 1 ? 'Delivery Orders' : 'Delivery Order'} ${distinctDoNumbers.join(', ')}`,
   );
+
+  /* ERP -> AutoCount DO->Invoice. One source DO only; an invoice merging
+     several DOs has no AutoCount shape and is recorded as skipped instead. */
+  if (doIds.length === 1) {
+    await enqueueConvert(sb, {
+      companyId: activeCompanyId(c),
+      op: 'do_to_iv',
+      from: { table: 'delivery_orders', keyCol: 'id', key: doIds[0] },
+      to: { table: 'sales_invoices', keyCol: 'id', key: h.id },
+      docType: 'IV',
+      docNo: h.invoice_number,
+      docId: h.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else {
+    await recordConvertSkipped(sb, {
+      companyId: activeCompanyId(c),
+      op: 'do_to_iv',
+      docType: 'IV',
+      docNo: h.invoice_number,
+      docId: h.id,
+      reason: `merged from ${doIds.length} Delivery Orders (${distinctDoNumbers.join(', ')}) — AutoCount transfers from ONE source document, so this invoice has no AutoCount counterpart`,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
 
   /* LEAK GUARD (DRAFT) — no AR/GL revenue, no customer credit on a DRAFT SI.
      Both move to the confirm transition (PATCH /:id/status DRAFT→SENT). */

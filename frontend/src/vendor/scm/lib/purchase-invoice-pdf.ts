@@ -12,7 +12,7 @@ import {
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { formatPhone } from '@2990s/shared/phone';
-import { COMPANY, drawHeader, drawInfoColumns, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate } from './pdf-common';
+import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { loadSupplierDocData, supplierCodeFor, docVariantLine } from './supplier-doc-data';
 
@@ -148,10 +148,10 @@ export async function renderPurchaseInvoiceInto(
     startY: y,
     head: [['#', 'Supplier Code', 'Our Code', 'Description', 'Qty', 'Unit Price', 'Total']],
     body: rows,
-    theme: 'striped',
+    theme: 'plain',
     rowPageBreak: 'avoid',
-    styles: { fontSize: 8.5, cellPadding: 2, valign: 'top' },
-    headStyles: { fillColor: [34, 31, 32], textColor: 250, fontStyle: 'bold' },
+    styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
+    headStyles: DOC_TABLE_HEAD_STYLES,
     columnStyles: {
       0: { cellWidth: 8, halign: 'right' },
       1: { cellWidth: 26, fontStyle: 'bold' },
@@ -195,19 +195,23 @@ export async function renderPurchaseInvoiceInto(
 }
 
 /* Single PI → its own file (unchanged behaviour). */
-export async function generatePurchaseInvoicePdf(header: PiHeader, items: PiItem[]): Promise<void> {
+export async function generatePurchaseInvoicePdf(
+  header: PiHeader,
+  items: PiItem[],
+  opts?: { action?: PdfAction },
+): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   await renderPurchaseInvoiceInto(doc, autoTable, header, items);
-  doc.save(`${header.invoice_number}-${safeName(header.supplier?.name ?? 'supplier')}.pdf`);
+  deliverPdf(doc, `${header.invoice_number}-${safeName(header.supplier?.name ?? 'supplier')}.pdf`, opts?.action);
 }
 
 /* Several PIs → ONE combined file, each PI starting on a new page. For the
    batch "Export PDF" action on the Purchase Invoices list. */
 export async function generateCombinedPurchaseInvoicePdf(
   docs: Array<{ header: PiHeader; items: PiItem[] }>,
-  opts?: { fileName?: string },
+  opts?: { fileName?: string; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -216,5 +220,5 @@ export async function generateCombinedPurchaseInvoicePdf(
     if (i > 0) doc.addPage();
     await renderPurchaseInvoiceInto(doc, autoTable, docs[i]!.header, docs[i]!.items);
   }
-  doc.save(opts?.fileName ?? 'purchase-invoices.pdf');
+  deliverPdf(doc, opts?.fileName ?? 'purchase-invoices.pdf', opts?.action);
 }

@@ -1,0 +1,59 @@
+name: Delete SOs by doc numbers (re-import mirror)
+
+# Manual. Deletes specific imported company-1 orders (comma-separated AutoCount
+# doc numbers) so a fresh import mirrors their AutoCount edits exactly. Same
+# guards as delete-ac-iv-orders. DRY-RUN by default; apply=1 writes.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      docs:
+        description: "Comma-separated AutoCount doc numbers"
+        required: true
+        type: string
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: delete-so-by-docnos-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/delete-so-by-docnos.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DOCS: ${{ inputs.docs }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/delete-so-by-docnos.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DOCS: ${{ inputs.docs }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -29,6 +29,8 @@ import {
   RotateCcw,
   ArrowRightLeft,
 } from "lucide-react";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -94,6 +96,10 @@ type DoRow = {
    *  pre-batch) stock. A DO is a sales-side doc, so it shows Source PO, not an
    *  Assigned SO (owner 2026-07-31). */
   source_pos?: string[] | null;
+  /* The SOs this DO's LINES draw on. so_doc_no above is only the header LABEL
+     (from-sos copies the first pick's SO), so a merged DO named one source and
+     hid the rest. */
+  source_sos?: string[] | null;
   /** Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
    *  "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
@@ -747,6 +753,10 @@ type DoDrillItem = {
      from the OUT movements ∪ consumed FIFO lots. A DO is a sales-side doc, so it
      shows Source PO, not an Assigned SO. */
   source_pos?: string[] | null;
+  /* The SOs this DO's LINES draw on. so_doc_no above is only the header LABEL
+     (from-sos copies the first pick's SO), so a merged DO named one source and
+     hid the rest. */
+  source_sos?: string[] | null;
   /* Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
      "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
@@ -937,7 +947,7 @@ export function MfgDeliveryOrdersListV2() {
   const goFullPage = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}`);
   const doMarkSigned = (r: DoRow) =>
     updateStatus.mutate(
-      { id: r.id, status: "delivered" },
+      { id: r.id, status: "DELIVERED" },
       { onSuccess: () => setSelected(null) }
     );
   const doConvertToSi = (r: DoRow) =>
@@ -983,7 +993,7 @@ export function MfgDeliveryOrdersListV2() {
   // Batch "Export PDF" — one ticked DO downloads straight; several prompt
   // "One combined PDF" vs "Separate files", then fetch each bundle and render
   // into one merged file or one file per DO. Combined filename is date-stamped.
-  const exportSelectedDos = async () => {
+  const deliverSelectedDos = async (action: PdfAction) => {
     if (exporting) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
     if (chosen.length === 0) return;
@@ -993,11 +1003,14 @@ export function MfgDeliveryOrdersListV2() {
       if (chosen.length === 1) {
         setExporting(true);
         const bundle = await fetchDoBundle(chosen[0]!);
-        await generateDeliveryOrderPdf(bundle.header as never, bundle.items as never);
+        await generateDeliveryOrderPdf(bundle.header as never, bundle.items as never, { action });
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      /* View / Print always render ONE document — a preview or a print run
+         is about the stack, not N separate files. Only the download exit
+         still asks combined-vs-separate. */
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Download ${chosen.length} delivery orders`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -1011,10 +1024,11 @@ export function MfgDeliveryOrdersListV2() {
       if (how === "one") {
         await generateCombinedDeliveryOrderPdf(bundles as never, {
           fileName: `delivery-orders-${new Date().toISOString().slice(0, 10)}.pdf`,
+          action,
         });
       } else {
         for (const b of bundles)
-          await generateDeliveryOrderPdf(b.header as never, b.items as never);
+          await generateDeliveryOrderPdf(b.header as never, b.items as never, { action });
       }
       clearSelection();
     } catch (e) {
@@ -1027,6 +1041,7 @@ export function MfgDeliveryOrdersListV2() {
       setExporting(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedDos);
 
   // Table columns
   const columns: Column<DoRow>[] = [
@@ -1076,22 +1091,38 @@ export function MfgDeliveryOrdersListV2() {
       label: "From SO",
       width: "150px",
       disableSort: true,
-      getValue: (r) => r.so_doc_no ?? "",
-      render: (r) =>
-        r.so_doc_no ? (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/scm/sales-orders/${encodeURIComponent(r.so_doc_no!)}`);
-            }}
-            className="font-mono text-[12px] font-semibold text-ink-secondary hover:text-accent hover:underline"
-          >
-            {r.so_doc_no}
-          </button>
+      /* 2026-08-04: show the SOs this DO's LINES actually draw on, not the
+         header label. so_doc_no is set by from-sos to the FIRST pick's SO, so a
+         DO merging several SOs displayed one and hid the rest — and two DOs
+         then looked like they shipped the same Sales Order while sharing no
+         quantity at all. Owner: "为什么一张SO可以开两张DO？？"; the read-only
+         split check proved that SO was delivered exactly once.
+
+         Falls back to the header label when a DO has no linked lines (an ad-hoc
+         DO legitimately has only the header), so no cell goes blank. */
+      getValue: (r) => (r.source_sos?.length ? r.source_sos.join(" ") : r.so_doc_no ?? ""),
+      render: (r) => {
+        const sos = r.source_sos?.length ? r.source_sos : (r.so_doc_no ? [r.so_doc_no] : []);
+        return sos.length > 0 ? (
+          <span className="flex flex-wrap gap-1">
+            {sos.map((no: string) => (
+              <button
+                key={no}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/scm/sales-orders/${encodeURIComponent(no)}`);
+                }}
+                className="font-mono text-[12px] font-semibold text-ink-secondary hover:text-accent hover:underline"
+              >
+                {no}
+              </button>
+            ))}
+          </span>
         ) : (
           <span className="text-[12px] text-ink-muted">—</span>
-        ),
+        );
+      },
     },
     {
       // Owner 2026-07-31: which PO the shipped goods actually came from — the
@@ -1789,10 +1820,17 @@ export function MfgDeliveryOrdersListV2() {
                   variant="primary"
                   icon={<Printer size={14} />}
                   disabled={exporting}
-                  onClick={() => void exportSelectedDos()}
+                  onClick={batchPrint.openPreview}
                 >
                   {exporting ? "Exporting…" : "Export PDF"}
                 </Button>
+                <PrintPreviewBatchModal
+                  open={batchPrint.open}
+                  onClose={batchPrint.close}
+                  docTitle="Delivery Orders"
+                  docNos={rows.filter((r) => selectedIds.has(r.id)).map((r) => r.do_number)}
+                  {...batchPrint.handlers}
+                />
                 <Button
                   variant="ghost"
                   disabled={exporting}

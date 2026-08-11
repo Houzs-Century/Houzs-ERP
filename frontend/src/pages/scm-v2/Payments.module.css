@@ -209,6 +209,72 @@
 .trashBtn:hover { opacity: 1; background: rgba(184, 51, 31, 0.10); }
 .trashBtn:disabled { cursor: not-allowed; opacity: 0.2; }
 
+/* ── Unsaved (draft) rows ──────────────────────────────────────────────
+   Owner 2026-08-07, after a real balance collection was lost on prod: the
+   operator filled a row, attached the slip, saw the uploader's green tick,
+   read it as "saved" and left. Nothing about the row said otherwise — it sat
+   in the same columns, the same weight and the same background as the
+   payments above it, and its only commit affordance was a 14px glyph.
+
+   The tint is deliberately the ORANGE brand accent, not the amber warning
+   slot: an unsaved row is unfinished work, not a warning about a problem, and
+   amber is a reserved signal in this design system. The dashed bottom border
+   is the load-bearing part — it reads as "this line is not closed" even in
+   greyscale, and to someone who never learns the convention.
+   ────────────────────────────────────────────────────────────────────── */
+
+.unsavedCell {
+  background: rgba(232, 107, 58, 0.055);
+  border-bottom: 1px dashed var(--c-orange);
+}
+
+/* The row-hover rule above is a plain `.row:hover .cell` and would otherwise
+   repaint the tint away on hover — the one moment the operator is most likely
+   to be looking straight at the row. */
+.row:hover .unsavedCell { background: rgba(232, 107, 58, 0.10); }
+
+.unsavedPill {
+  align-self: flex-start;
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--c-orange);
+  color: #fff;
+  white-space: nowrap;
+}
+
+/* Labelled commit button. Sized to the 104px actions track the grid widens to
+   while any unsaved row is on screen (PaymentsTable gridStyle) — it shares that
+   track with the Discard trash, so it has to stay compact. */
+.saveBtn {
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--c-secondary-a, #2F5D4F);
+  background: var(--c-secondary-a, #2F5D4F);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.saveBtn:hover:not(:disabled) { filter: brightness(1.12); }
+.saveBtn:disabled {
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--fg-muted);
+  border-color: var(--line);
+}
+
 /* ── Method dropdown — show pill in display, plain select in edit ──── */
 
 .methodPill {

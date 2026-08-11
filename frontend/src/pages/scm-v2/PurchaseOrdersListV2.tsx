@@ -24,7 +24,12 @@ import {
   CheckCircle2,
   Package,
   ArrowRightLeft,
+  CalendarClock,
 } from "lucide-react";
+import {
+  PoBulkSupplierDateModal,
+  type BulkSupplierDateResult,
+} from "../../components/scm-v2/PoBulkSupplierDateModal";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -37,7 +42,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
-import { usePoSoCoverage, originsByCode, storedLinkSkus, deliveredByCode } from "../../vendor/scm/lib/flow-queries";
+import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -91,6 +96,22 @@ const supplierNameOf = (r: PoHeaderRow): string =>
   r.supplier?.name || r.supplier_id || "—";
 
 const supplierCodeOf = (r: PoHeaderRow): string => r.supplier?.code || "—";
+
+/* Items summary for the list column + Excel export (owner 2026-08-05) — the
+   list embed already carries (material_code, qty) per line; render the same
+   compact "CODE×qty · CODE×qty" the expansion details. */
+const itemsSummaryOf = (r: PoHeaderRow): string =>
+  (r.items ?? []).map((it) => `${it.material_code}×${it.qty}`).join(" · ");
+
+/* Purchase Location display (owner 2026-08-05) — warehouse NAME, code fallback. */
+const locationOf = (r: PoHeaderRow): string =>
+  r.purchase_location?.name || r.purchase_location?.code || "";
+
+/* Supplier-SKU summary (owner 2026-08-05) — the SUPPLIER's own codes, aligned
+   with the Items column line-for-line ("—" holds the slot for an unbound
+   line so the two columns stay readable side by side). */
+const supplierSkusOf = (r: PoHeaderRow): string =>
+  (r.items ?? []).map((it) => it.supplier_sku?.trim() || "—").join(" · ");
 
 // Committed value = total_centi (subtotal + tax); the PO's face value.
 const totalOf = (r: PoHeaderRow): number =>
@@ -652,6 +673,8 @@ function PoLinesExpansion({ id }: { id: string }) {
   const detailQ = usePurchaseOrderDetail(id);
   const covQ = usePoSoCoverage("po", id);
   const byCode = originsByCode(covQ.data);
+  // PR-3: the parallel stored-origin "bought for" slot, per SKU.
+  const provByCode = provenanceByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
   const deliveredMap = deliveredByCode(covQ.data);
   const items =
@@ -666,6 +689,7 @@ function PoLinesExpansion({ id }: { id: string }) {
     amountCenti: l.line_total_centi ?? 0,
     assignedSos: byCode.get((l.material_code ?? "").trim()) ?? [],
     sourceLinked: linkedSkus.has((l.material_code ?? "").trim()),
+    provenance: provByCode.get((l.material_code ?? "").trim()) ?? [],
     deliveredDos: deliveredMap.get((l.material_code ?? "").trim()) ?? [],
   }));
   return (
@@ -854,6 +878,32 @@ export function PurchaseOrdersListV2() {
     navigate(`/scm/grns/from-po?poId=${ids.join(",")}`);
   };
 
+  /* Batch supplier-revised date (owner 2026-08-03) — a supplier who pushes a
+     date pushes it for every order in flight, so the operator picks the POs
+     here and sets the slot + date once. The server skips locked / other-company
+     POs per-PO, and the report below names them rather than claiming a clean
+     sweep. */
+  const [bulkDateOpen, setBulkDateOpen] = useState(false);
+  const onBulkDateDone = async (res: BulkSupplierDateResult) => {
+    await queryClient.invalidateQueries({ queryKey: ["mfg-purchase-orders"] });
+    clearSelection();
+    const n = res.updated.length;
+    const scope = res.applyToLines ? "and every line" : "(header only)";
+    const skippedNote = res.skipped.length
+      ? ` ${res.skipped.length} skipped — ${res.skipped
+          .map((s) => `${s.poNumber ?? s.id}: ${s.reason}`)
+          .join('; ')}`
+      : "";
+    notify({
+      title: n > 0
+        ? `Supplier Date ${res.slot} set on ${n} ${n === 1 ? "PO" : "POs"}`
+        : "No purchase orders were updated",
+      body: `${n > 0 ? `Header ${scope} now reads ${res.date}.` : ""}${skippedNote}`.trim()
+        || "Nothing matched — check the picked purchase orders.",
+      tone: res.skipped.length > 0 ? "error" : "info",
+    });
+  };
+
   // Batch "Print all" — fetch each selected PO's full detail, resolve its bound
   // warehouse name (the PDF can't hit the API), then render into one combined
   // file or one file per PO. Mirrors the V1 PurchaseOrders list handler.
@@ -990,14 +1040,38 @@ export function PurchaseOrdersListV2() {
       ),
     },
     {
-      key: "supplier_code",
-      label: "Code",
-      width: "108px",
+      /* Owner 2026-08-05 (PO-outstanding Excel uplift) — the per-row items
+         summary, so the export carries WHAT was ordered. Supplier "Code"
+         column removed in the same pass ("Supplier code - 删掉"); the code
+         still shows in the cards view + quick-view drawer. */
+      key: "items",
+      label: "Items",
+      width: "240px",
       disableSort: true,
-      getValue: (r) => supplierCodeOf(r),
+      getValue: (r) => itemsSummaryOf(r),
       render: (r) => (
-        <span className="font-mono text-[11.5px] text-ink-secondary">
-          {supplierCodeOf(r) || "—"}
+        <span
+          title={(r.items ?? []).map((it) => `${it.material_code} × ${it.qty}`).join("\n")}
+          className="block min-w-0 truncate font-mono text-[11.5px] text-ink-secondary"
+        >
+          {itemsSummaryOf(r) || "—"}
+        </span>
+      ),
+    },
+    {
+      /* Owner 2026-08-05 — the SUPPLIER's own SKU per line, aligned with the
+         Items column ("—" holds unbound lines' slots). */
+      key: "supplier_sku",
+      label: "Supplier SKU",
+      width: "200px",
+      disableSort: true,
+      getValue: (r) => supplierSkusOf(r),
+      render: (r) => (
+        <span
+          title={(r.items ?? []).map((it) => `${it.material_code} → ${it.supplier_sku?.trim() || "—"}`).join("\n")}
+          className="block min-w-0 truncate font-mono text-[11.5px] text-ink-secondary"
+        >
+          {supplierSkusOf(r) || "—"}
         </span>
       ),
     },
@@ -1009,6 +1083,31 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => r.expected_at ?? "",
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.expected_at)}</span>
+      ),
+    },
+    {
+      /* Owner 2026-08-05 — ship-to warehouse (list embed purchase_location). */
+      key: "purchase_location",
+      label: "Purchase Location",
+      width: "160px",
+      disableSort: true,
+      getValue: (r) => locationOf(r),
+      render: (r) => (
+        <span className="min-w-0 truncate text-[12.5px] text-ink-secondary">
+          {locationOf(r) || "—"}
+        </span>
+      ),
+    },
+    {
+      /* Owner 2026-08-05 — currency unit for the Total column (export reads
+         both, so a foreign-currency PO totals correctly in Excel). */
+      key: "currency",
+      label: "Currency",
+      width: "96px",
+      disableSort: true,
+      getValue: (r) => r.currency ?? "MYR",
+      render: (r) => (
+        <span className="text-[12.5px] text-ink-secondary">{r.currency ?? "MYR"}</span>
       ),
     },
     {
@@ -1024,6 +1123,7 @@ export function PurchaseOrdersListV2() {
         <AssignedSoCell
           assignments={r.assigned_sos}
           sourceLinked={r.assigned_so_linked}
+          provenance={r.assigned_so_provenance}
           onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
           emptyMeans="stock"
         />
@@ -1251,6 +1351,13 @@ export function PurchaseOrdersListV2() {
                     </Button>
                     <Button
                       variant="secondary"
+                      icon={<CalendarClock size={14} />}
+                      onClick={() => setBulkDateOpen(true)}
+                    >
+                      Supplier date ({selectedIds.size})
+                    </Button>
+                    <Button
+                      variant="secondary"
                       icon={<Printer size={14} />}
                       disabled={printingDocs}
                       onClick={() => void printSelectedPos()}
@@ -1366,6 +1473,13 @@ export function PurchaseOrdersListV2() {
         onPrint={() => selected && goPrint(selected)}
         onCancel={() => selected && doCancel(selected)}
         onConvertGrn={() => selected && goGrnFromPo(selected)}
+      />
+
+      <PoBulkSupplierDateModal
+        open={bulkDateOpen}
+        poIds={[...selectedIds]}
+        onClose={() => setBulkDateOpen(false)}
+        onDone={(res) => void onBulkDateDone(res)}
       />
     </PullToRefresh>
   );

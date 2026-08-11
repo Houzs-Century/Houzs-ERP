@@ -1,0 +1,51 @@
+name: load-supplier-price-list
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "dry-run re-verifies and writes nothing; apply writes"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      phase:
+        description: "Which part of the plan to run"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, flat, sofa]
+      confirm:
+        description: 'For apply: type exactly "I HAVE REVIEWED THE DRY-RUN"'
+        required: false
+        default: ""
+
+concurrency:
+  group: load-supplier-price-list
+  cancel-in-progress: false
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Run loader
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          PHASE: ${{ inputs.phase }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: node scripts/load-supplier-price-list.mjs

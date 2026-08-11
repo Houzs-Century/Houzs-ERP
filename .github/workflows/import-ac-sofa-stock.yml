@@ -1,0 +1,66 @@
+name: Import AutoCount sofa stock
+
+# Manual. Opens the sofa units the AutoCount balance import deliberately skipped
+# (import-ac-stock-balance.mjs filters !isSofa). Drives off the already-imported
+# SO-linked POs — one received sofa PO line becomes one compartment lot, batched
+# on that PO's own po_number so a set has ONE covering batch — capped by the
+# AutoCount balance snapshot. DRY-RUN by default; apply=1 writes.
+#
+# Read the dry-run before applying: it prints every build it drops (over the
+# AutoCount balance, undecoded placeholder, no warehouse), every AutoCount unit
+# no document accounts for, and how many PENDING sofa sets would go READY.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      placeholder:
+        description: "1 to ALSO open stock for builds the sofa decoder could not read (SOFA UNPARSED). Off by default — a {model}-1S lot standing for a different sofa is a wrong stock number."
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: import-ac-sofa-stock-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/import-ac-sofa-stock.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          PLACEHOLDER: ${{ inputs.placeholder }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/import-ac-sofa-stock.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          PLACEHOLDER: ${{ inputs.placeholder }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

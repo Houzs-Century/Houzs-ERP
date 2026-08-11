@@ -1,0 +1,30 @@
+name: Shipped sofa batch check (read-only)
+
+# Owner 2026-08-02: did every ALREADY-SHIPPED sofa set come from ONE batch
+# (dye-lot)? Groups delivered-DO sofa consumptions by (SO doc, model) and flags
+# any set shipped from more than one batch_no. SELECT only; the verdict is output.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: shipped-sofa-batch-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-shipped-sofa-batch.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

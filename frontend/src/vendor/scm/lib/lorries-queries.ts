@@ -112,6 +112,13 @@ export type NewLorry = {
   active?: boolean;
   model?: string | null;
   purchaseDate?: string | null;
+  /* Mig 0245 — the lorry's own lifecycle, none of which is purchaseDate:
+     when it was BUILT, when it was REGISTERED with JPJ (what the road-tax /
+     insurance / PUSPAKOM cycles anchor to), and the first day it worked for us
+     (the denominator for cost-per-day). */
+  manufactureDate?: string | null;
+  registrationDate?: string | null;
+  inServiceDate?: string | null;
   purchasePriceCenti?: number | null;
   roadTaxExpiry?: string | null;
   insuranceExpiry?: string | null;

@@ -32,6 +32,7 @@
 
 import { normalizePhone } from '@2990s/shared/phone';
 import type { ExtractedSlip } from '../components/ScanOrderModal';
+import { findNearestSku, type SkuMatchSource } from './sku-nearest-match';
 
 /* mfg_product_category -> SO line item_group (SoLineCard lowercases the product
    category; SERVICE lines carry item_group='service'). */
@@ -102,6 +103,14 @@ export type ReconciledLine = {
   rawText:       string;   // verbatim slip row (source of truth for the edit-gate)
   fabricCode:    string;
   suggestedCode: string;   // the SKU code Claude suggested ('' = none)
+  /* HOW itemCode was filled: 'exact' is the reader's code found verbatim in the
+     catalog, the other three are near matches resolved by findNearestSku, null
+     is no match. Carried through the prefill so a surface that AUTO-COMMITS the
+     SKU can mark a near match for review — a fuzzy fill that looks identical to
+     an exact one is how a wrong SKU reaches a sales order unnoticed. Mobile does
+     not auto-commit (MobileNewSO seeds the line's NAME and leaves the picker to
+     the operator), so there it is carried for the learning pairing. */
+  matchSource:   SkuMatchSource | null;
   confidence:    number;
   specialCodes:  string[]; // configured SOFA special-add-on CODES (already model-gated server-side)
 };
@@ -230,7 +239,6 @@ export function reconcileScanPrefill(
   ex: ExtractedSlip,
   catalogs: ReconcileCatalogs,
 ): ReconciledPrefill {
-  const skuByCode = new Map(catalogs.skus.map((s) => [s.code.toUpperCase(), s]));
 
   /* Seed phones in canonical +60 E.164 so the New SO PhoneInput's country
      selector resolves to Malaysia, never US +1 (the OCR returns the national
@@ -273,7 +281,16 @@ export function reconcileScanPrefill(
     payment: reconcilePayment(ex, catalogs),
     lines: (ex.lines ?? []).map((l) => {
       const code = l.skuMatch?.code ?? '';
-      const sku = code ? skuByCode.get(code.toUpperCase()) : undefined;
+      /* Owner's rule (2026-08-05 handoff §2.3): resolve to the NEAREST picker
+         entry, not just an exact hit. The old lookup was a single
+         case-insensitive equality, so a code the reader got substantially right
+         — different spacing, a dropped bracket, one misread character — landed
+         as no match and the operator re-picked a SKU that had, in substance,
+         already been found. findNearestSku refuses on any ambiguity, so this
+         can only ever turn a NO-match into a match, never one match into a
+         different one. */
+      const { sku: matched, source: matchSource } = findNearestSku(code, catalogs.skus);
+      const sku = matched ?? undefined;
       return {
         /* Owner core rule (Task #73) — a NO-MATCH line seeds an EMPTY, unpicked
            product so the New SO form renders the SKU picker the operator is
@@ -282,6 +299,7 @@ export function reconcileScanPrefill(
         itemCode: sku?.code ?? '',
         itemGroup: sku ? (CATEGORY_TO_GROUP[sku.category] ?? 'others') : 'others',
         description: sku?.name ?? '',
+        matchSource,
         qty: l.qtyGuess > 0 ? l.qtyGuess : 1,
         unitPriceRm: l.priceRmGuess ?? 0,
         rawText: l.rawText,

@@ -28,6 +28,8 @@ import {
 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
 import { formatPhone } from '@2990s/shared/phone';
@@ -81,7 +83,7 @@ import { formatDate } from '../../lib/utils';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import { PaymentsTable, type PaymentDraft } from '../../vendor/scm/components/PaymentsTable';
 import { completePaymentRetryDraft, consumePaymentRetryNavigationState, readPaymentRetryHandoff, readPaymentRetryNavigationState } from '../../lib/paymentRetryHandoff';
-import { DocumentRelationshipMapModal } from '../../components/scm-v2/DocumentRelationshipMapModal';
+import { DocumentRelationshipMapModal, DocumentChoiceDialog } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useSoRelationshipMap } from './so-relationship-map';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { usePrompt } from '../../vendor/scm/components/PromptDialog';
@@ -362,6 +364,9 @@ type SoItem = {
   line_margin_centi: number;
   variants: Record<string, unknown> | null;
   remark: string | null;
+  /* PR-F photos live on the row as R2 keys; the API detail SELECT returns
+     them (mfg-sales-orders.ts items select), the card renders draft.photoUrls. */
+  photo_urls: string[] | null;
   cancelled: boolean;
   /* PR-E — Per-item delivery date with cascade override flag.
      line_delivery_date null + overridden=false → display falls back to
@@ -412,6 +417,11 @@ const draftFromItem = (it: SoItem): SoLineDraft => ({
   // only this editor seam wasn't.
   variants:       canonicalizeVariants(it.item_group, it.variants as Record<string, unknown> | null),
   remark:         it.remark ?? '',
+  /* Owner 2026-08-10 (AutoCount photo import): saved photos never rendered on
+     the desktop edit card because the draft seed dropped photo_urls — the card
+     defaulted photoUrls to [] and only session uploads showed. Mobile already
+     mapped it (MobileNewSO photoKeys); this closes the desktop seam. */
+  photoUrls:      it.photo_urls ?? [],
   lineDeliveryDate:           it.line_delivery_date ?? null,
   lineDeliveryDateOverridden: it.line_delivery_date_overridden ?? false,
 });
@@ -569,7 +579,7 @@ export const SalesOrderDetail = () => {
   const incompleteVariantLines = useMemo(() => {
     if (!requireVariants) return [];
     return items
-      .filter((it) => missingVariantAxes(it.item_group, it.variants as Record<string, unknown> | null).length > 0)
+      .filter((it) => missingVariantAxes(it.item_group, it.variants as Record<string, unknown> | null, it.item_code).length > 0)
       .map((it) => ({ code: it.item_code, group: (it.item_group ?? '').toLowerCase() }));
   }, [items, requireVariants]);
 
@@ -614,6 +624,53 @@ export const SalesOrderDetail = () => {
   const [isEditing, setIsEditing] = useState(
     editSearchParams.get('edit') === '1',
   );
+  /* Print preview — the HOOK must live above the isPending / isError early
+     returns (owner 2026-08-07). It arrived at its call site further down
+     (#1665), which sits PAST those returns: a cold page's first render bails
+     out early with N hooks, the render after the query resolves reaches
+     usePrintPreview with N+1, and React throws "Rendered more hooks than during
+     the previous render" — a blank crash page.
+
+     Nobody hit it coming from the SO list, because arriving that way the header
+     is already in the TanStack cache and there is no pending first render. It
+     only bites a COLD load of this route: a pasted or bookmarked link, a
+     refresh while on the editor, a new tab. That is also why it shipped.
+
+     The deliver callback closes over `header` / `items` / query data that only
+     exist after the guards, so it cannot move up here with the hook. The ref is
+     the join: the hook is created once, up here, and reads the CURRENT deliver
+     through the ref at call time. Assigned below, where deliverPrintPdf is
+     defined. */
+  const deliverPrintPdfRef = useRef<(action: PdfAction) => void | Promise<void>>(() => {});
+  const print = usePrintPreview(
+    useCallback((action: PdfAction) => deliverPrintPdfRef.current(action), []),
+  );
+
+  /* Payments edit mode — the money's OWN toggle (owner 2026-08-07). Declared up
+     here with the other page state, NOT beside the `canEditPayments` derivation
+     it feeds: everything below the early returns is conditional, and a hook
+     there throws the exact error described above. See the derivation for what
+     this gates and why. */
+  const [payEditing, setPayEditing] = useState(
+    /* `?payments=1` — arrived through V2's "Collect payment" button, which is
+       the only door into this page on a hard-locked order. Open the ledger
+       straight away rather than making the operator hunt for a second toggle
+       on a page they reached BY asking for payments. */
+    editSearchParams.get('payments') === '1',
+  );
+  /* Page Edit mode already unlocks the ledger, so the toggle hides while it is
+     on — and clears, so leaving page Edit re-locks payments instead of leaving
+     them silently open on a stale `payEditing` from before. */
+  useEffect(() => { if (isEditing) setPayEditing(false); }, [isEditing]);
+  /* Unbooked payment rows currently typed into the Payments card (owner
+     2026-08-07). They live inside PaymentsTable in SAVED mode, so the page has
+     to be told; it needs the count because IT owns the two exits that would
+     throw them away — the header back button and the payments Edit toggle.
+     `setUnsavedPayments` is a stable setState reference, which the prop
+     requires (it is an effect dependency over there).
+     Declared here with the other page state, ABOVE the early returns — same
+     rule as payEditing and the print hook. */
+  const [unsavedPayments, setUnsavedPayments] = useState(0);
   useEffect(() => {
     if (!header) return;
     if (loadedVersionDocRef.current !== header.doc_no) {
@@ -659,6 +716,10 @@ export const SalesOrderDetail = () => {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    pairing: chainPairing,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
   } = useSoRelationshipMap(header);
   const [saveError, setSaveError] = useState<string | null>(null);
   const customerCardRef = useRef<CustomerCardHandle | null>(null);
@@ -753,7 +814,7 @@ export const SalesOrderDetail = () => {
         ...(addingDraft ? [addingDraft] : []),
       ]
         .filter((d) => d.itemCode.trim())
-        .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants) }))
+        .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants, d.itemCode) }))
         .filter((x) => x.miss.length > 0);
       if (variantGaps.length > 0) {
         setSaveError(
@@ -1479,7 +1540,46 @@ export const SalesOrderDetail = () => {
      while the detail is in its read-only view. For every other status the
      Payments section stays view-only until the operator clicks Edit. */
   const isDraftSo = (header.status as string) === 'DRAFT';
+  /* Payments edit mode — the money's OWN toggle, deliberately not the page's
+     Edit mode (owner 2026-08-07, mobile parity). Page Edit is gated by
+     `isLocked` (terminal status / downstream DO-SI), which freezes LINES and the
+     HEADER because a child document already quotes them. It has no business
+     freezing the ledger: the balance is collected ON delivery, i.e. precisely
+     when the SO is locked. Only CANCELLED shuts payments — same rule as
+     MobileSODetail's `paymentLocked`.
+     The no-naked-edits rule (owner 2026-07-13) is unchanged: a submitted SO's
+     payments are view-only until the operator opts in here, and a DRAFT skips
+     the toggle because it is never confirmed. Page Edit mode still counts as
+     opting in, so the existing flow on an unlocked SO is untouched. */
   const canCancel = CANCELLABLE_STATUSES.includes(header.status);
+  const canOfferPayEdit  = !isDraftSo && !isCancelled && !isEditing;
+  const canEditPayments  = isDraftSo || (!isCancelled && (isEditing || payEditing));
+
+  /* The two exits this PAGE owns, guarded against discarding typed-but-unbooked
+     payment rows (owner 2026-08-07). PaymentsTable registers the browser-level
+     beforeunload guard itself; these cover the in-app moves react-router 6
+     cannot block for us (no data router — see the `beforeBack` prop doc).
+
+     Named the money, not "unsaved changes": an operator who is told "1 payment
+     row" knows exactly what is at stake and can decide in one read. */
+  const guardUnsavedPayments = async (): Promise<boolean> => {
+    if (unsavedPayments === 0) return true;
+    return askConfirm({
+      title: `Leave ${unsavedPayments} payment row${unsavedPayments === 1 ? '' : 's'} unsaved?`,
+      body: `${unsavedPayments === 1 ? 'It has' : 'They have'} not been recorded against this order — `
+        + 'the balance stays as it is, and any slip attached to the row is discarded. '
+        + 'Press Save on the row to book it.',
+      confirmLabel: 'Discard and leave',
+      danger: true,
+    });
+  };
+
+  /* Closing the card with Done unmounts the rows, so it discards exactly what
+     leaving the page does. Opening it needs no guard. */
+  const togglePayEditing = async () => {
+    if (payEditing && !(await guardUnsavedPayments())) return;
+    setPayEditing((v) => !v);
+  };
 
   const handleCancelSo = async () => {
     if (!(await askConfirm({
@@ -1512,7 +1612,7 @@ export const SalesOrderDetail = () => {
       });
     }
   };
-  const handlePrint = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     /* Followup #81 — Wait for the payments query before generating; legacy
        header columns (paid_centi, payment_method, …) are deprecated. If
        the query is still loading we surface a brief notice and bail out
@@ -1557,7 +1657,7 @@ export const SalesOrderDetail = () => {
     /* `pwpCodes` rides on the same GET /:docNo payload — vouchers this SO's
        trigger items issued, so the printed PDF can mark the trigger lines. */
     const pwpCodes = ((detail.data as { pwpCodes?: unknown[] } | undefined)?.pwpCodes ?? []) as never;
-    generateSalesOrderPdf(header, items, payments, 'save', pwpCodes).catch((e) => {
+    return generateSalesOrderPdf(header, items, payments, action, pwpCodes).catch((e) => {
       // eslint-disable-next-line no-console
       console.error('PDF generation failed:', e);
       notify({
@@ -1567,6 +1667,11 @@ export const SalesOrderDetail = () => {
       });
     });
   };
+  /* The hook itself lives above the early returns (see its declaration and why).
+     This is the assignment half: every render refreshes the ref with a closure
+     over the CURRENT header / items / payments, so Print behaves exactly as it
+     did when the hook was created here. */
+  deliverPrintPdfRef.current = deliverPrintPdf;
 
   return (
     /* Commander 2026-05-29 — a CANCELLED SO greys the whole page so it reads
@@ -1574,7 +1679,7 @@ export const SalesOrderDetail = () => {
        (a CSS filter doesn't block pointer events). */
     <div className="space-y-4" style={isCancelled ? { filter: 'grayscale(0.7)' } : undefined}>
       {/* ── Header (shared PageHeader — full-bleed, design-system) ── */}
-      <PageHeader back
+      <PageHeader back beforeBack={guardUnsavedPayments}
         eyebrow="Sales Order"
         /* Owner 2026-07-16 — 17px document title (see PageHeader.titleSize).
            Scoped to this page; every other page keeps the default h1. */
@@ -1653,10 +1758,23 @@ export const SalesOrderDetail = () => {
               <Share2 {...ICON} />
               <span>Map</span>
             </Button>
-            <Button variant="ghost" onClick={handlePrint}>
+            <Button variant="ghost" onClick={print.openPreview}>
               <Printer {...ICON} />
               <span>Print</span>
             </Button>
+            <PrintPreviewModal
+              open={print.open}
+              onClose={print.close}
+              docTitle="Sales Order"
+              docNo={header.doc_no}
+              rows={[
+                { label: 'Customer', value: header.debtor_name || '—' },
+                { label: 'Order date', value: fmtDateOrDash(header.so_date) },
+                { label: 'Items', value: `${header.line_count} line${header.line_count === 1 ? '' : 's'}` },
+                { label: 'Order total', value: fmtRm(header.local_total_centi, header.currency) },
+              ]}
+              {...print.handlers}
+            />
             {/* Cancel SO (Commander 2026-05-29) — stops proceeding; final. */}
             {!isCancelled && canCancel && !isEditing ? (
               <Button variant="ghost"
@@ -2216,6 +2334,19 @@ export const SalesOrderDetail = () => {
           the normal case — that is what a Balance figure is FOR. Only CANCELLED
           stays shut (a cancelled order takes no money); the no-naked-edits rule
           is unchanged, so it is still Edit-then-type for everything but DRAFT. */}
+      {/* Owner 2026-08-07 — the paragraph above says what this page MEANT to do,
+          and mobile has done since 7-17 (MobileSODetail `paymentLocked =
+          rawStatus === "CANCELLED"` + its own in-card Edit toggle). Desktop
+          never got there: `locked` dropped `isLocked` but replaced it with
+          `!isEditing`, and PAGE Edit mode is reached through a button that is
+          itself `disabled={isLocked}` (see the header Button). So on a
+          delivered SO — the exact order a balance gets collected on — the
+          operator could not enter Edit, could not Add Payment, and had nowhere
+          to put the balance-payment proof. The lock was simply reached through
+          a second door.
+          Fix mirrors mobile rather than inventing a third rule: payments carry
+          their OWN edit toggle (`payEditing`), independent of the page-level
+          Edit mode that the line/header lock owns. "電話電腦的權限應該一樣的". */}
       {paymentRetryDrafts.length > 0 && (
         <div className={styles.bannerWarn} role="status">
           This order exists, but {paymentRetryDrafts.length} payment row{paymentRetryDrafts.length === 1 ? '' : 's'} were not confirmed saved.
@@ -2227,12 +2358,18 @@ export const SalesOrderDetail = () => {
         docNo={header.doc_no}
         grandTotalCenti={header.local_total_centi}
         currency={header.currency}
-        locked={!isDraftSo && (isCancelled || !isEditing)}
+        locked={!canEditPayments}
         draftUnlocked={isDraftSo}
         slip={{ slipKey: header.slip_key, fetcher: fetchSoSlipUrl }}
         defaultCollectedBy={selfStaffMatch?.id ?? ''}
         initialDrafts={paymentRetryDrafts}
         onDraftCommitted={paymentRetryCommitted}
+        onUnsavedChange={setUnsavedPayments}
+        headerAction={canOfferPayEdit ? (
+          <Button variant="ghost" onClick={() => { void togglePayEditing(); }}>
+            {payEditing ? <span>Done</span> : <><Pencil {...ICON} /><span>Edit payments</span></>}
+          </Button>
+        ) : null}
       />
 
       {/* ── CUSTOMER SIGNATURE — moved directly below Payments (Wei Siang
@@ -2362,6 +2499,18 @@ export const SalesOrderDetail = () => {
         amendments={chainAmendments}
         onAmendmentClick={(a) => {
           if (onChainAmendmentClick(a)) setRelMapOpen(false);
+        }}
+        pairing={chainPairing}
+      />
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          setRelMapOpen(false);
+          pickChainChoice(d);
         }}
       />
     </div>
@@ -2608,6 +2757,25 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   });
 
   const [form, setForm] = useState(() => initialFormFor(header));
+  /* Imported-order venue seeding (owner 2026-08-10 "点 edit 的时候它不会不见掉"):
+     AutoCount-migrated rows carry the venue as TEXT but nothing the picker's
+     option values recognise in venue_id, so the picker rendered "—" even though
+     the view header shows the venue — operators read that as the value having
+     vanished. When the venue master loads and the seeded venueId matches no
+     option, adopt the option whose name equals the stored text
+     (case-insensitive). The adoption marks the field dirty, so the operator's
+     next Save persists the master link — self-healing, no data migration. */
+  useEffect(() => {
+    const opts = venuesQ.data ?? [];
+    if (!opts.length) return;
+    setForm((s) => {
+      if (s.venueId && opts.some((v) => v.id === s.venueId)) return s;
+      const name = (s.venue ?? '').trim().toUpperCase();
+      if (!name) return s;
+      const hit = opts.find((v) => (v.name ?? '').trim().toUpperCase() === name);
+      return hit && s.venueId !== hit.id ? { ...s, venueId: hit.id } : s;
+    });
+  }, [venuesQ.data, form.venueId, form.venue]);
   const buildPayload = () => payloadFor(form);
   /* The header payload AS SEEDED (pristine) — trySave diffs the outgoing
      payload against this so an untouched field is never sent (the header mirror

@@ -134,7 +134,74 @@ export type PlanningOrder = {
     lorry_plate: string | null;
   } | null;
   delivery_orders: Array<{ id: string; do_number: string; status: string }>;
+  /* ── Arrangement pipeline (owner spec 2026-08-07) — DERIVED server-side by
+     backend lib/arrangement-stage.ts and stamped on every row; the frontends
+     read the field and never re-derive (one shared logic layer):
+       PENDING_DATE  — in Pending Schedule, delivery date not yet confirmed
+                       (amended_delivery_date null) → Delivery Date Arrangement.
+       PENDING_TIME  — date confirmed, not on a live trip → the Delivery Time
+                       Arrangement inbox. (== "Date arranged" on the date side.)
+       TIME_ARRANGED — assigned onto a non-CANCELLED trip.
+     null outside Pending Schedule. Optional (`?`) so a cached pre-upgrade
+     payload still typechecks; a missing field degrades to the un-split view. */
+  arrangement_stage?: ArrangementStage | null;
+  /* The live trip the order sits on (via its DO's DELIVERY stop; CANCELLED
+     trips excluded). null when not on a trip. */
+  trip_id?: string | null;
+  trip_no?: string | null;
+  trip_date?: string | null;
+  /* Time-of-run keys (2026-08-08) — the stop's sequence and ETA offset on its
+     live trip; null off-trip. The arrangement comparator's TIME key. */
+  trip_stop_no?: number | null;
+  trip_eta_offset_s?: number | null;
 };
+
+/* ── Arrangement-pipeline vocabulary (mirrors backend lib/arrangement-stage.ts).
+   The date-side and time-side views are each a 2-way split per the owner's
+   spec; PENDING_TIME is the SAME order read from both sides of the hand-off
+   (date arranged / awaiting a time). */
+export type ArrangementStage = 'PENDING_DATE' | 'PENDING_TIME' | 'TIME_ARRANGED';
+
+export const ARRANGEMENT_STAGE_LABEL: Record<ArrangementStage, string> = {
+  PENDING_DATE: 'Pending Date Arrangement',
+  PENDING_TIME: 'Pending Time Arrangement',
+  TIME_ARRANGED: 'Time arranged',
+};
+
+export type DateArrangement = 'PENDING_DATE' | 'DATE_ARRANGED';
+export const DATE_ARRANGEMENT_LABEL: Record<DateArrangement, string> = {
+  PENDING_DATE: 'Pending Date Arrangement',
+  DATE_ARRANGED: 'Date arranged',
+};
+
+/* Date-side view of a row's stage. `undefined` stage (a cached pre-upgrade
+   payload) falls back to PENDING_DATE so nothing silently disappears from the
+   Date Arrangement queue; null (out of pipeline) stays null. */
+export function dateArrangementOf(o: Pick<PlanningOrder, 'arrangement_stage'>): DateArrangement | null {
+  const stage = o.arrangement_stage;
+  if (stage === undefined) return 'PENDING_DATE';
+  if (stage === null) return null;
+  return stage === 'PENDING_DATE' ? 'PENDING_DATE' : 'DATE_ARRANGED';
+}
+
+export type TimeArrangement = 'PENDING_TIME' | 'TIME_ARRANGED';
+/* Time-side view. `undefined` stage falls back to PENDING_TIME — the Trips
+   inbox then degrades to the old show-everything "To schedule" panel rather
+   than blanking. PENDING_DATE / out-of-pipeline rows are not the Time page's
+   yet (null). */
+export function timeArrangementOf(o: Pick<PlanningOrder, 'arrangement_stage'>): TimeArrangement | null {
+  const stage = o.arrangement_stage;
+  if (stage === undefined) return 'PENDING_TIME';
+  if (stage === 'PENDING_TIME' || stage === 'TIME_ARRANGED') return stage;
+  return null;
+}
+
+/* Board-column label for a row's stage — '—' for rows outside the pipeline. */
+export function arrangementStageLabel(o: Pick<PlanningOrder, 'arrangement_stage'>): string {
+  const stage = o.arrangement_stage;
+  if (stage == null) return '';
+  return ARRANGEMENT_STAGE_LABEL[stage] ?? '';
+}
 
 export type PlanningCounts = Record<'ALL' | DeliveryState, number>;
 
@@ -262,7 +329,14 @@ export function useUpdateDeliveryFields() {
    the value a user PICKS is byte-identical to what the board SHOWS — they can no
    longer drift (owner: the dropdown type must equal the type we normally show). */
 export const DP_JOB_TYPES = [
-  'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP',
+  /* INSPECTION has been on scm.trip_stop_type since mig 0165. It was missing
+     here, so an inspection DP order rendered through the defensive prettifier
+     rather than the canonical label. */
+  'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION',
+  /* Job types 8 and 9, from the owner's 2026-08-03 list (mig 0250). Listed here
+     so the board LABELS them; what the create drawer offers is
+     DP_CREATABLE_JOB_TYPES below, which they join with their pickers. */
+  'TRANSFER', 'LORRY_SERVICE',
 ] as const;
 export type DpJobType = (typeof DP_JOB_TYPES)[number];
 
@@ -273,16 +347,77 @@ export const DP_JOB_TYPE_LABEL: Record<DpJobType, string> = {
   SETUP: 'Setup',
   DISMANTLE: 'Dismantle',
   SUPPLIER_PICKUP: 'Supplier Pickup',
+  INSPECTION: 'Inspection',
+  /* The owner's own words for these two ("Transfer item", "Lorry service"), not
+     a Title-Cased enum value — the label is what he reads on the board. */
+  TRANSFER: 'Transfer Item',
+  LORRY_SERVICE: 'Lorry Service',
 };
 
-/* The job types the New-DP-Order drawer OFFERS to create. DELIVERY / PICKUP /
-   SERVICE are deliberately EXCLUDED: they are represented natively by SO / DO /
-   ASSR board rows, and a source-backed DP order of those types is suppressed by
-   the board's anti-double-count union guard — so it would silently vanish (a data
-   sink). The drawer's real job is the "extra" fleet jobs with no native document.
-   DP_JOB_TYPES (the full set) is still used to LABEL any existing/legacy dp_order
-   the board renders. */
-export const DP_CREATABLE_JOB_TYPES = ['SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP'] as const;
+/* ── The nine things New DP Order can start ───────────────────────────────────
+   Owner, 2026-08-03, in his own words and his own order: Setup / Dismantle /
+   Supplier / Transfer item / Lorry service / ASSR-Inspection / ASSR-Pickup /
+   ASSR-Service / Delivery order.
+
+   FIVE OF THEM CREATE A JOB; FOUR SCHEDULE ONE THAT ALREADY EXISTS, and that
+   split is the whole design. A delivery order and the three ASSR legs are
+   already ON the board, synthesised from their own document (the SO/DO, or the
+   service case's dates). Creating a dp_order for them would either double the
+   line or — if it carried the source ref — be swallowed by the board's
+   anti-double-count guard and vanish. So those four entries pick the existing
+   document and write the date onto it through the same schedule path the board
+   itself uses. Nothing is inserted, the guard is untouched, and the operator
+   still gets one menu with nine things on it.
+
+   ASSR-SERVICE IS THE DELIVERY LEG, RENAMED (owner's call, 2026-08-03): the
+   trip where we bring a repaired item back to the customer. Same leg, same
+   assr_cases.do_date, new name — see ASSR_JOB_KIND_LABEL. */
+export type DpEntry =
+  | { key: string; label: string; mode: 'create'; jobType: DpJobType }
+  | { key: string; label: string; mode: 'schedule'; scheduleType: 'so' }
+  | { key: string; label: string; mode: 'schedule'; scheduleType: 'assr'; jobKind: AssrJobKind };
+
+export const DP_ENTRY_MENU: readonly DpEntry[] = [
+  { key: 'SETUP',           label: 'Setup',            mode: 'create', jobType: 'SETUP' },
+  { key: 'DISMANTLE',       label: 'Dismantle',        mode: 'create', jobType: 'DISMANTLE' },
+  { key: 'SUPPLIER_PICKUP', label: 'Supplier',         mode: 'create', jobType: 'SUPPLIER_PICKUP' },
+  { key: 'TRANSFER',        label: 'Transfer item',    mode: 'create', jobType: 'TRANSFER' },
+  { key: 'LORRY_SERVICE',   label: 'Lorry service',    mode: 'create', jobType: 'LORRY_SERVICE' },
+  { key: 'ASSR_INSPECTION', label: 'ASSR - Inspection', mode: 'schedule', scheduleType: 'assr', jobKind: 'inspection' },
+  { key: 'ASSR_PICKUP',     label: 'ASSR - Pickup',    mode: 'schedule', scheduleType: 'assr', jobKind: 'customer_pickup' },
+  { key: 'ASSR_SERVICE',    label: 'ASSR - Service',   mode: 'schedule', scheduleType: 'assr', jobKind: 'delivery' },
+  { key: 'DELIVERY_ORDER',  label: 'Delivery order',   mode: 'schedule', scheduleType: 'so' },
+] as const;
+
+/* The create-mode job types, derived rather than listed twice — the menu above
+   is the single place an entry is declared. Kept as an export because the
+   "which types are safe to insert" question is asked in its own right: a
+   create-mode entry's source must set project_id / supplier_id / workshop_id /
+   lorry_id / stock_transfer_id / warehouse_id and NEVER so_doc_no, which is what
+   the board's union guard filters on (delivery-planning.ts:
+   `.is('so_doc_no', null)...`). That is exactly why DELIVERY and the ASSR legs
+   are schedule-mode instead — a created one would vanish, the data sink #1416
+   closed. */
+export const DP_CREATABLE_JOB_TYPES = DP_ENTRY_MENU
+  .filter((e): e is Extract<DpEntry, { mode: 'create' }> => e.mode === 'create')
+  .map((e) => e.jobType);
+
+/* What each ASSR leg is CALLED. One map, read by the board's Type chip and its
+   search / group / export values, which each carried their own inline copy of
+   this ternary until the 2026-08-03 rename made four copies three too many.
+
+   'delivery' → "Service" is that rename: the leg has always been the trip that
+   returns a repaired item to the customer, and the owner's nine-job-type list
+   calls it ASSR - Service. The stored value (assr_cases.do_date, jobKind
+   'delivery') is untouched — this is what the operator reads, not what the
+   database holds. */
+export const ASSR_JOB_KIND_LABEL: Record<AssrJobKind, string> = {
+  customer_pickup: 'Pickup',
+  inspection: 'Inspection',
+  delivery: 'Service',
+};
+export const assrJobKindLabel = (kind: AssrJobKind | null | undefined): string =>
+  ASSR_JOB_KIND_LABEL[(kind ?? 'delivery') as AssrJobKind] ?? 'Service';
 
 /* The label the board / dropdown show for a DP job type. Reads the canonical map;
    falls back to a Title-Cased prettify for any value not in the set (defensive —
@@ -306,6 +441,17 @@ export type DpOrderCreate = {
   supplierId?: string;
   projectId?: number;
   assrCaseId?: number;
+  /* LORRY_SERVICE (migs 0250/0251): the lorry being SERVICED — the job's subject,
+     and the one taken off the road when this is scheduled — plus the workshop it
+     goes to, which is the party the address snapshot comes from. */
+  lorryId?: string;
+  workshopId?: string;
+  /* TRANSFER (migs 0250/0251): the stock-transfer document being driven, when
+     there is one, and the DESTINATION warehouse — which is the party, and the
+     address the fleet actually goes to. The owner asked for both paths: pick a
+     transfer, or enter an ad-hoc move with no document. */
+  stockTransferId?: string;
+  warehouseId?: string;
   requestedDate?: string;
   remark?: string;
   overrides?: Record<string, string | null>;
@@ -324,7 +470,12 @@ export function useCancelDpOrder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      authedFetch<{ stopRemoved?: { failed?: boolean; reason?: string } }>(
+      authedFetch<{
+        stopRemoved?: { failed?: boolean; reason?: string };
+        /* LORRY_SERVICE only: giving the lorry back. A failure here keeps a free
+           lorry off the board indefinitely, so it is reported like stopRemoved. */
+        lorryUnblocked?: { removed?: boolean; failed?: boolean; reason?: string };
+      }>(
         `/dp-orders/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) },
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
@@ -346,6 +497,12 @@ export type ScheduleDpOrderResult = {
   dpOrder: unknown;
   dp_no: string | null;
   tripStop: { id: string | null; failed: boolean; reason?: string };
+  /* LORRY_SERVICE only: the availability window that takes the serviced lorry
+     off the road for that day. Reported, never silent — a failure here leaves a
+     lorry looking bookable on the day it sits in a workshop, so the caller must
+     say so out loud (same rule as tripStop.failed). Absent for every other job
+     type, and for a service job whose subject lorry was never set. */
+  lorryBlocked?: { blocked: boolean; failed: boolean; reason?: string };
 };
 export function useScheduleDpOrder() {
   const qc = useQueryClient();
@@ -361,6 +518,51 @@ export function useScheduleDpOrder() {
       qc.invalidateQueries({ queryKey: ['scm-trips'] });
       qc.invalidateQueries({ queryKey: ['scm-trip'] });
     },
+  });
+}
+
+/* ── DP Orders list (GET /dp-orders) ──────────────────────────────────────────
+   The raw dp_orders registry, straight off the table (snake_case, newest first,
+   backend-capped at 500). This is the /scm/dp-orders LIST page's feed — distinct
+   from the board union, which deliberately SUPPRESSES any dp_order carrying a
+   source ref (the anti-double-count guard) and shows nothing once a job is
+   cancelled. The list is where those hidden/terminal rows stay reachable.
+
+   Query key extends the board's ['delivery-planning'] prefix ON PURPOSE: every
+   existing create / cancel / schedule mutation invalidates that prefix, so the
+   list refreshes with zero changes to the mutations. */
+export type DpOrderRow = {
+  id: string;
+  dp_no: string | null;
+  job_type: string;
+  party_type: string;
+  so_doc_no: string | null;
+  do_id: string | null;
+  assr_case_id: number | null;
+  supplier_id: string | null;
+  project_id: number | null;
+  party_name: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  address1: string | null;
+  address2: string | null;
+  address3: string | null;
+  address4: string | null;
+  city: string | null;
+  postcode: string | null;
+  state: string | null;
+  requested_date: string | null;
+  trip_id: string | null;
+  trip_stop_id: string | null;
+  status: string;
+  remark: string | null;
+  created_at: string;
+  updated_at: string;
+};
+export function useDpOrders() {
+  return useQuery({
+    queryKey: ['delivery-planning', 'dp-orders'],
+    queryFn: () => authedFetch<{ dpOrders: DpOrderRow[] }>(`/dp-orders`),
   });
 }
 
@@ -540,6 +742,39 @@ export function useScheduleDelivery() {
       });
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+  });
+}
+
+/* ── DO crew assignment (Last Mile "Propose crew", owner 2026-08-08) ──────────
+   Writes the FULL crew record — up to 2 drivers + 2 helpers + 1 lorry — via the
+   long-standing PUT /delivery-orders-mfg/:id/crew (mig 0053's
+   scm.delivery_order_crew UPSERT; this is its first UI caller). That row is the
+   snapshot THE BOARD's crew columns display (driver 1/2, helper 1/2, IC,
+   contact, plate), and the handler also syncs the DO header's primary-driver
+   quick-fields and records the audit trail. It is the ONLY store with a second
+   DRIVER seat (scm.trips has one driver + two helpers by schema), which is why
+   no migration accompanies the owner's two-driver rule: the two-driver-capable
+   record already exists and every display reads it — adding trips.driver_2_id
+   would be a second home for the same fact. */
+export type DoCrewVars = {
+  doId: string;
+  driver1Id?: string | null;
+  driver2Id?: string | null;
+  helper1Id?: string | null;
+  helper2Id?: string | null;
+  lorryId?: string | null;
+};
+export function useAssignDoCrew() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ doId, ...body }: DoCrewVars) =>
+      authedFetch<{ ok: true }>(`/delivery-orders-mfg/${doId}/crew`, {
+        method: 'PUT', body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['delivery-planning'] });
+      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
+    },
   });
 }
 

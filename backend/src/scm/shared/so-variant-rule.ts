@@ -22,6 +22,7 @@
 // Pure — no I/O. Shared by apps/api (409 gate), apps/backend (save gates +
 // warning banners), and any future surface. Do NOT hand-copy the lists again.
 // ----------------------------------------------------------------------------
+import { isColourKiv } from './variant-summary';
 
 export type VariantAxis = {
   /** Canonical key — what offender lists / `missing` arrays report. */
@@ -68,16 +69,59 @@ const isEmpty = (val: unknown): boolean =>
 /** The axes a line leaves unsatisfied — [] when the line is complete or its
  *  category has no mandatory variants (mattress / accessory / service). An
  *  axis is satisfied when ANY of its aliases carries a non-empty value. */
+/** A DIVAN ONLY line is a divan sold without a mattress, so there is no
+ *  mattress Gap to state — demanding one blocked orders that were complete
+ *  (owner 2026-08-09: "divan only 不需要 gap"). Matched on the item code so it
+ *  holds for every DIVAN ONLY variant (HOK-DIVAN ONLY (K), NB-DIVAN ONLY ...). */
+export const isDivanOnly = (itemCode: string | null | undefined): boolean =>
+  /\bDIVAN\s*ONLY\b/i.test(itemCode ?? '');
+
+/** Adjustable (electric) beds, pull-out/trundle combos ((S+S) / (SS+S)) and
+ *  double-decker bunks have no divan base at all — physically there is no
+ *  Divan Height, Leg Height or Gap to state, only the fabric colour (owner
+ *  2026-08-10: "电动床/抽拉床…像 DIVAN ONLY 一样豁免 — 要"). */
+export const isDivanlessFrame = (itemCode: string | null | undefined): boolean =>
+  /ADJUSTABLE|\(S?S\+S\)|DOUBLE\s*D[AE]C?KER|\bDDB/i.test(itemCode ?? '');
+
+const DIVANLESS_AXES = new Set(['divanHeight', 'legHeight', 'gap']);
+
 export function missingVariantAxes(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
+  itemCode?: string | null,
 ): VariantAxis[] {
   const axes = REQUIRED_VARIANT_AXES_BY_CATEGORY[(itemGroup ?? '').toLowerCase()];
   if (!axes) return [];
   const v = variants ?? {};
+  const skipGap = isDivanOnly(itemCode);
+  const skipBase = isDivanlessFrame(itemCode);
   return axes.filter(
-    (axis) => axis.required !== false && axis.aliases.every((k) => isEmpty(v[k])),
+    (axis) =>
+      axis.required !== false &&
+      !(skipGap && axis.key === 'gap') &&
+      !(skipBase && DIVANLESS_AXES.has(axis.key)) &&
+      axis.aliases.every((k) => isEmpty(v[k])),
   );
+}
+
+/** The axes a line must fill BEFORE THE ORDER MAY BE CONFIRMED (owner
+ *  2026-08-08, HC-SO-2607-008: a bedframe line confirmed with no variant
+ *  selections at all). Same axes map as missingVariantAxes, with ONE
+ *  carve-out: a colour-KIV line (fabric SERIES committed via fabricId /
+ *  fabricLabel, colour confirmed later — isColourKiv) SATISFIES the fabric
+ *  axis. KIV is a legitimate confirmed-order state; it blocks the Processing
+ *  Date (owner rule 2026-07-24), never confirm. Desktop, mobile and the
+ *  backend confirm gate all read THIS so the rule cannot drift. */
+export function missingConfirmVariantAxes(
+  itemGroup: string | null | undefined,
+  variants: Record<string, unknown> | null | undefined,
+  itemCode?: string | null,
+): VariantAxis[] {
+  const missing = missingVariantAxes(itemGroup, variants, itemCode);
+  if (missing.length === 0) return missing;
+  return isColourKiv(variants ?? null)
+    ? missing.filter((axis) => axis.key !== 'fabricCode')
+    : missing;
 }
 
 /** Rewrite POS-vocabulary alias keys to their canonical axis key for the given

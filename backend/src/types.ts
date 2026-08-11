@@ -86,6 +86,16 @@ export type Env = {
   AUTOCOUNT_API_KEY: string;
   // Inbound-sync kill switch. "true" = skip every AutoCount pull (cron + manual).
   AUTOCOUNT_SYNC_DISABLED?: string;
+  // ── ERP -> AutoCount WRITE-BACK (outbound; separate from the two above,
+  // which are the legacy inbound pull) ───────────────────────────────────────
+  // Base URL of AcSyncService, the write-back service that runs ON the AutoCount
+  // host and drives the licensed 2.2 SDK (backend/scripts/autocount-service).
+  // CONFIG, not a secret — a hostname and a port. ABSENT = the write-back drain
+  // is a no-op and says so, which is the state this ships in.
+  AC_SYNC_URL?: string;
+  // Shared key for that service's X-API-KEY header. A CREDENTIAL: set it as a
+  // wrangler secret (`wrangler secret put AC_SYNC_KEY`), never in wrangler.toml.
+  AC_SYNC_KEY?: string;
   DASHBOARD_API_KEY: string;
   // Dedicated service token for Houzs Connect's org sync — accepted as the
   // same service-tier caller as DASHBOARD_API_KEY (see middleware/auth.ts),
@@ -95,6 +105,13 @@ export type Env = {
   // Email (Resend). Leave RESEND_API_KEY unset to run in no-op mode —
   // send() will log + skip, never throw.
   RESEND_API_KEY?: string;
+  // APNs push (services/apns.ts). All unset = no-op mode, same as Resend.
+  // Values come from an App Store Connect auth KEY (.p8) once the Apple
+  // Developer enrolment completes — see docs/ios-app-store.md.
+  APNS_TEAM_ID?: string;
+  APNS_KEY_ID?: string;
+  APNS_PRIVATE_KEY?: string;
+  APNS_SANDBOX?: string;
   EMAIL_FROM?: string;        // e.g. "Houzs ERP <no-reply@houzs.com>"
   EMAIL_REPLY_TO?: string;
   // Public origin for building email links (portal survey URLs etc.).
@@ -118,6 +135,15 @@ export type Env = {
   // regression). Parsed once via scm/lib/costing-enabled.isCostingDisplayEnabled.
   // Mirrors the FE build-time COSTING_DISPLAY_ENABLED, but THIS is authoritative.
   COSTING_DISPLAY_ENABLED?: string;
+  // Stock-take posting thresholds (phase 1, 2026-08-08). A variance whose
+  // |qty delta| exceeds the qty limit, or whose |delta| x unit cost exceeds the
+  // value limit (integer SEN), needs scm.stock_take.supervise to post. Absent /
+  // unparseable = the shipped defaults (5 units / RM500) — same absent-safe
+  // posture as COSTING_DISPLAY_ENABLED. Parsed once by
+  // scm/shared/stock-take-threshold.parseVarianceThresholds; set in
+  // wrangler.toml [vars] only when the owner wants different limits.
+  STOCK_TAKE_VARIANCE_QTY_LIMIT?: string;
+  STOCK_TAKE_VARIANCE_VALUE_LIMIT_SEN?: string;
   /** Error tracking (services/errorTracking.ts). The ONE switch: while unset —
    *  the default on every environment — the reporter makes no network call, no
    *  log line and no allocation, so the ERP behaves exactly as it did before it

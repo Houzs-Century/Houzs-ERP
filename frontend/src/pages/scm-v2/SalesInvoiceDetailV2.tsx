@@ -80,7 +80,10 @@ import {
 import { useAuth } from "../../auth/AuthContext";
 import {
   DocumentRelationshipMapModal,
+  DocumentChoiceDialog,
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
@@ -720,11 +723,11 @@ export function SalesInvoiceDetailV2() {
   // Render + download the SI PDF via the shared jspdf generator (client-side),
   // mirroring the V1 SalesInvoiceDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!salesInvoice) return;
-    import("../../vendor/scm/lib/sales-invoice-pdf")
+    return import("../../vendor/scm/lib/sales-invoice-pdf")
       .then(({ generateSalesInvoicePdf }) =>
-        generateSalesInvoicePdf(salesInvoice as never, items as never)
+        generateSalesInvoicePdf(salesInvoice as never, items as never, { action })
       )
       .catch((e) =>
         notify({
@@ -734,6 +737,8 @@ export function SalesInvoiceDetailV2() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!salesInvoice);
 
   // Chain nodes for the shared Relationship Map modal, read from the LIVE
   // `/document-flow` graph (the SO map's source) instead of a hand-built chain.
@@ -753,8 +758,13 @@ export function SalesInvoiceDetailV2() {
         : null,
     [salesInvoice],
   );
-  const { nodes: chainNodes, onNodeClick: onChainNodeClick } =
-    useSiRelationshipMap(relMapHeader);
+  const {
+    nodes: chainNodes,
+    onNodeClick: onChainNodeClick,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
+  } = useSiRelationshipMap(relMapHeader);
 
   // Open the in-place payments editor (seeded from persisted rows) and scroll it
   // into view. Replaces the old dead `?tab=payments&record=1` navigation —
@@ -1141,7 +1151,7 @@ export function SalesInvoiceDetailV2() {
             <Button
               variant="secondary"
               icon={<Printer size={14} />}
-              onClick={goPrintPdf}
+              onClick={print.openPreview}
             >
               Print PDF
             </Button>
@@ -1638,7 +1648,7 @@ export function SalesInvoiceDetailV2() {
             ))}
           <button
             type="button"
-            onClick={goPrintPdf}
+            onClick={print.openPreview}
             className={cn(
               "inline-flex h-11 items-center justify-center gap-1.5 rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft",
               canWriteSi ? "w-11" : "flex-1 text-[13.5px] font-bold"
@@ -1674,6 +1684,36 @@ export function SalesInvoiceDetailV2() {
           // open (renders over the map).
           if (onChainNodeClick(n)) setRelMapOpen(false);
         }}
+      />
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          setRelMapOpen(false);
+          pickChainChoice(d);
+        }}
+      />
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Sales Invoice"
+        docNo={salesInvoice.invoice_number}
+        rows={[
+          { label: "Bill to", value: salesInvoice.debtor_name || "—" },
+          { label: "Invoice date", value: fmtDate(salesInvoice.invoice_date) },
+          {
+            label: "Items",
+            value: `${items.length} line${items.length === 1 ? "" : "s"}`,
+          },
+          {
+            label: "Invoice total",
+            value: fmtMoney(totalOf(salesInvoice, items), salesInvoice.currency),
+          },
+        ]}
+        {...print.handlers}
       />
     </div>
   );

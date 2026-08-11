@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeDeliveryCost,
+  farthestZone,
   type RateCardSpec,
+  type DeliveryFacts,
   type RateRuleSpec,
 } from './delivery-rate-card';
 
@@ -18,7 +20,11 @@ describe('computeDeliveryCost — owner worked example (RM560)', () => {
   // Melaka RM150 + setup RM50 + dismantle RM40 + dispose RM30 = RM560.
   const card: RateCardSpec = {
     basis: 'SET',
-    aggregation: 'DROP',
+    /* UNIT since mig 0244. This fixture reproduces the owner's RM560 worked
+       example, which prices SETS — it said 'DROP' only because the field was
+       inert then and every card said DROP regardless. The value now selects
+       the count, so saying DROP here would price 0 drops at RM0. */
+    aggregation: 'UNIT',
     rules: [
       tier(1, 120),
       tier(2, 80),
@@ -208,5 +214,261 @@ describe('tripOutstationFeeCenti (WS4c) — fixed per-trip outstation', () => {
     const r = computeDeliveryCost(card, { setCount: 1, destinationZone: 'JOHOR' });
     expect(r.lines.some((l) => l.ruleType === 'OUTSTATION_TRIP')).toBe(false);
     expect(r.totalCenti).toBe(RM(120));
+  });
+});
+
+/**
+ * A cap that a later step can exceed is not a cap.
+ *
+ * Two ways the envelope leaked before 2026-08-02, both silent and both
+ * money-affecting:
+ *
+ *  1. ROUNDING ran after CAP, and half-up rounding could push the total back
+ *     over the ceiling on the very line labelled "Charge cap".
+ *  2. The FIXED per-trip outstation fee was added by the reconcile AFTER this
+ *     function returned, so it sat outside the envelope entirely — a capped
+ *     card billed cap + fee. It also meant the UI calculator could never show
+ *     an OUTSTATION_TRIP line, so the screen disagreed with the invoice.
+ */
+describe('the envelope actually contains everything', () => {
+  const card = (extra: Partial<RateCardSpec> = {}): RateCardSpec => ({
+    basis: 'SET',
+    rules: [{ ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 49_496 }],
+    ...extra,
+  });
+
+  it('rounding rounds DOWN rather than breaching the cap', () => {
+    // 494.96 capped at 494.95 -> 494.95; nearest-10-sen would round UP to
+    // 495.00, which is over the cap.
+    const r = computeDeliveryCost(
+      card({ capCenti: 49_495, rounding: 'NEAREST_10C' }),
+      { setCount: 1 },
+    );
+    expect(r.totalCenti).toBeLessThanOrEqual(49_495);
+    expect(r.totalCenti).toBe(49_490);
+  });
+
+  it('rounding still rounds normally when it does not breach the cap', () => {
+    const r = computeDeliveryCost(card({ capCenti: 100_000, rounding: 'NEAREST_10C' }), { setCount: 1 });
+    expect(r.totalCenti).toBe(49_500); // 494.96 -> 495.00, well under the cap
+  });
+
+  it('no cap means rounding behaves exactly as before', () => {
+    const r = computeDeliveryCost(card({ rounding: 'NEAREST_RM' }), { setCount: 1 });
+    expect(r.totalCenti).toBe(49_500);
+  });
+
+  it('the per-trip outstation fee is INSIDE the cap', () => {
+    const spec = card({
+      capCenti: 60_000,
+      rules: [
+        { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION_TRIP', zone: 'PENANG', amountCenti: 40_000 },
+      ],
+    });
+    const r = computeDeliveryCost(spec, { setCount: 1, destinationZone: 'PENANG' }, { perTrip: true });
+    // 500 + 400 = 900, capped at 600. Before the fix this billed 1000.
+    expect(r.totalCenti).toBe(60_000);
+    expect(r.lines.some((l) => l.ruleType === 'OUTSTATION_TRIP')).toBe(true);
+    expect(r.lines.some((l) => l.ruleType === 'CAP')).toBe(true);
+  });
+
+  it('per-drop pricing does NOT apply the per-trip fee', () => {
+    const spec = card({
+      rules: [
+        { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION_TRIP', zone: 'PENANG', amountCenti: 40_000 },
+      ],
+    });
+    const perDrop = computeDeliveryCost(spec, { setCount: 1, destinationZone: 'PENANG' });
+    expect(perDrop.totalCenti).toBe(50_000);
+    expect(perDrop.lines.some((l) => l.ruleType === 'OUTSTATION_TRIP')).toBe(false);
+  });
+
+  it('a per-trip fee for a DIFFERENT zone is not applied', () => {
+    const spec = card({
+      rules: [
+        { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION_TRIP', zone: 'PENANG', amountCenti: 40_000 },
+      ],
+    });
+    const r = computeDeliveryCost(spec, { setCount: 1, destinationZone: 'JOHOR' }, { perTrip: true });
+    expect(r.totalCenti).toBe(50_000);
+  });
+
+  it('the per-trip fee counts toward the MINIMUM charge too', () => {
+    /* The minimum sits BETWEEN the two readings on purpose. At RM700:
+         fee inside the envelope -> 500 + 400 = 900, already over, no top-up.
+         fee outside             -> 500 topped to 700, then +400 = 1100.
+       A minimum above both (e.g. RM1000) would produce RM1000 either way and
+       the test would pass while the bug was present — which is what the first
+       draft of this test did. */
+    const spec = card({
+      minChargeCenti: 70_000,
+      rules: [
+        { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION_TRIP', zone: 'PENANG', amountCenti: 40_000 },
+      ],
+    });
+    const r = computeDeliveryCost(spec, { setCount: 1, destinationZone: 'PENANG' }, { perTrip: true });
+    expect(r.totalCenti).toBe(90_000);
+    expect(r.lines.some((l) => l.ruleType === 'MIN_CHARGE')).toBe(false);
+  });
+});
+
+/**
+ * A multi-zone trip is charged ONCE, for the farthest place.
+ *
+ * Owner, 2026-08-02: "如果是多区行程的话，不是按每个 drop 算，它一定是以最远的地方
+ * 来看。例如柔佛 500、马六甲 300，那我肯定是算柔佛 500，不可能再算近的，只是算一次
+ * 而已，因为它是跑到最远的。"
+ *
+ * What it replaced was worse than "wrong": the reconcile handed over whichever
+ * zone came first out of the query — NOT the first stop on the route — so the
+ * same trip could reconcile to a different number on a re-run.
+ */
+describe('farthestZone — one surcharge, for the farthest place', () => {
+  const rules: RateRuleSpec[] = [
+    { ruleType: 'OUTSTATION', zone: 'JOHOR', amountCenti: 50_000 },
+    { ruleType: 'OUTSTATION', zone: 'MELAKA', amountCenti: 30_000 },
+    { ruleType: 'OUTSTATION', zone: 'NS', amountCenti: 15_000 },
+  ];
+
+  it("picks Johor over Melaka whatever order the drops arrive in", () => {
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: ['MELAKA', 'JOHOR'] })).toBe('JOHOR');
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: ['JOHOR', 'MELAKA'] })).toBe('JOHOR');
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: ['NS', 'MELAKA', 'JOHOR'] })).toBe('JOHOR');
+  });
+
+  it('a single-zone trip is unchanged', () => {
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZone: 'MELAKA' })).toBe('MELAKA');
+  });
+
+  it('an in-town drop cannot win a multi-zone trip by accident', () => {
+    // KL has no rule on this card, so it is worth 0 and loses to Melaka.
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: ['KL', 'MELAKA'] })).toBe('MELAKA');
+  });
+
+  it('blanks and nulls are ignored, not treated as a zone', () => {
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: [null, '', '  ', 'MELAKA'] })).toBe('MELAKA');
+    expect(farthestZone(rules, 'OUTSTATION', { destinationZones: [] })).toBeNull();
+    expect(farthestZone(rules, 'OUTSTATION', {})).toBeNull();
+  });
+
+  it('resolves per RULE TYPE — the trip fee may rank zones differently', () => {
+    const mixed: RateRuleSpec[] = [
+      { ruleType: 'OUTSTATION', zone: 'JOHOR', amountCenti: 50_000 },
+      { ruleType: 'OUTSTATION_TRIP', zone: 'MELAKA', amountCenti: 90_000 },
+    ];
+    expect(farthestZone(mixed, 'OUTSTATION', { destinationZones: ['MELAKA', 'JOHOR'] })).toBe('JOHOR');
+    expect(farthestZone(mixed, 'OUTSTATION_TRIP', { destinationZones: ['MELAKA', 'JOHOR'] })).toBe('MELAKA');
+  });
+
+  /* The owner's own worked example, end to end:
+     "他平时送一张单是 100 元，送 5 张单就是 500 元。但如果他跑柔佛，我们会额外补贴
+      500 元，那就是 500（补贴）加 5 个 100（单量），总共是 1000 元。"
+     The surcharge is added ONCE on top of the drop total — not once per drop. */
+  it('reproduces the owner example: 5 x RM100 + one RM500 Johor subsidy = RM1,000', () => {
+    const card: RateCardSpec = {
+      basis: 'SET',
+      rules: [
+        // A flat RM100 per charging unit: tier 1 with no later tier prices
+        // every position at 100 (tierAmountForPosition takes the greatest
+        // tier <= n, and there is only one).
+        { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 10_000 },
+        { ruleType: 'OUTSTATION', zone: 'JOHOR', amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION', zone: 'MELAKA', amountCenti: 30_000 },
+      ],
+    };
+    const r = computeDeliveryCost(card, { setCount: 5, destinationZones: ['MELAKA', 'JOHOR'] });
+    expect(r.totalCenti).toBe(100_000);
+
+    const surcharge = r.lines.filter((l) => l.ruleType === 'OUTSTATION');
+    expect(surcharge).toHaveLength(1);            // once, not once per drop
+    expect(surcharge[0]!.amountCenti).toBe(50_000); // Johor, not Melaka
+  });
+});
+
+/**
+ * `aggregation` decides WHAT THE LADDER COUNTS (mig 0244).
+ *
+ * Owner, 2026-08-02, describing all three modes in one shape — "how much per X":
+ *   "Per drop point：一张 DO 多少钱?"
+ *   "Per customer：那一天如果是一样的顾客、一样的地址，是多少钱?"
+ *   "整趟的话，那就不看你多少张单了... 我 assign 给你一个 trip 就是多少钱"
+ *
+ * Before this the field was inert — stored, shown, and never read. Every card
+ * said DROP or CUSTOMER while the calculator counted sets regardless.
+ */
+describe('aggregation — what the tier ladder counts', () => {
+  const flat100: RateRuleSpec[] = [{ ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 10_000 }];
+  const facts: DeliveryFacts = { setCount: 9, itemCount: 12, dropCount: 5, customerCount: 3 };
+
+  it('UNIT counts sets — the behaviour that always ran, now with a name', () => {
+    expect(computeDeliveryCost({ basis: 'SET', aggregation: 'UNIT', rules: flat100 }, facts).totalCenti).toBe(90_000);
+  });
+
+  it('UNIT with an ITEM basis counts items', () => {
+    expect(computeDeliveryCost({ basis: 'ITEM', aggregation: 'UNIT', rules: flat100 }, facts).totalCenti).toBe(120_000);
+  });
+
+  it('DROP counts delivery orders, whatever each one contains', () => {
+    expect(computeDeliveryCost({ basis: 'SET', aggregation: 'DROP', rules: flat100 }, facts).totalCenti).toBe(50_000);
+  });
+
+  it('CUSTOMER counts doorsteps — two drops to one address are one charge', () => {
+    expect(computeDeliveryCost({ basis: 'SET', aggregation: 'CUSTOMER', rules: flat100 }, facts).totalCenti).toBe(30_000);
+  });
+
+  it('TRIP counts 1 — the load does not change the price', () => {
+    const card: RateCardSpec = { basis: 'SET', aggregation: 'TRIP', rules: flat100 };
+    expect(computeDeliveryCost(card, facts).totalCenti).toBe(10_000);
+    expect(computeDeliveryCost(card, { ...facts, setCount: 99, dropCount: 40 }).totalCenti).toBe(10_000);
+  });
+
+  it('an absent aggregation still prices — it does not silently become free', () => {
+    expect(computeDeliveryCost({ basis: 'SET', rules: flat100 }, facts).totalCenti).toBe(90_000);
+  });
+
+  it('CUSTOMER falls back to drops when customers could not be resolved', () => {
+    // Never under-counts; for a COST that is the safe direction.
+    const card: RateCardSpec = { basis: 'SET', aggregation: 'CUSTOMER', rules: flat100 };
+    expect(computeDeliveryCost(card, { ...facts, customerCount: null }).totalCenti).toBe(50_000);
+  });
+
+  it('the ladder still tiers — the unit only says what is being counted', () => {
+    const tiers: RateRuleSpec[] = [
+      { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountCenti: 12_000 },
+      { ruleType: 'POSITIONAL_TIER', tierPosition: 2, amountCenti: 8_000 },
+      { ruleType: 'POSITIONAL_TIER', tierPosition: 3, amountCenti: 6_000 },
+    ];
+    // 5 drops: 120 + 80 + 60 + 60 + 60
+    expect(computeDeliveryCost({ basis: 'SET', aggregation: 'DROP', rules: tiers }, facts).totalCenti).toBe(38_000);
+    // 3 customers: 120 + 80 + 60 — the 2nd doorstep is cheaper, which is the
+    // whole reason the owner asked "第二个东西会不会比较便宜".
+    expect(computeDeliveryCost({ basis: 'SET', aggregation: 'CUSTOMER', rules: tiers }, facts).totalCenti).toBe(26_000);
+  });
+
+  /* The owner's worked example, now expressed the way the card would be set up:
+     "他平时送一张单是 100 元，送 5 张单就是 500 元。但如果他跑柔佛，我们会额外补贴
+      500 元... 总共是 1000 元." */
+  it("reproduces the owner's carrier: per drop RM100 x 5 + one RM500 Johor subsidy", () => {
+    const card: RateCardSpec = {
+      basis: 'SET',
+      aggregation: 'DROP',
+      rules: [
+        ...flat100,
+        { ruleType: 'OUTSTATION', zone: 'JOHOR', amountCenti: 50_000 },
+        { ruleType: 'OUTSTATION', zone: 'MELAKA', amountCenti: 30_000 },
+      ],
+    };
+    const r = computeDeliveryCost(card, {
+      setCount: 9,                       // deliberately NOT 5 — sets must not matter here
+      dropCount: 5,
+      destinationZones: ['MELAKA', 'JOHOR'],
+    });
+    expect(r.totalCenti).toBe(100_000);
+    expect(r.lines.filter((l) => l.ruleType === 'POSITIONAL_TIER')).toHaveLength(5);
+    expect(r.lines.filter((l) => l.ruleType === 'OUTSTATION')).toHaveLength(1);
   });
 });

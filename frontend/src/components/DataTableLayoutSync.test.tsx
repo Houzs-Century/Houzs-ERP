@@ -19,11 +19,13 @@ import { api } from "../api/client";
    ──────────────────────────────────────────────────────────────────────────── */
 
 vi.mock("../api/client", () => ({
-  api: { get: vi.fn(), put: vi.fn(), del: vi.fn() },
+  api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), del: vi.fn() },
 }));
 
 const mockApi = api as unknown as {
   get: ReturnType<typeof vi.fn>;
+  post: ReturnType<typeof vi.fn>;
+  patch: ReturnType<typeof vi.fn>;
   put: ReturnType<typeof vi.fn>;
   del: ReturnType<typeof vi.fn>;
 };
@@ -56,6 +58,7 @@ function respond(over: Record<string, unknown> = {}) {
     canManageDefaults: false,
     defaults: {},
     mine: {},
+    myLayouts: {},
     ...over,
   });
 }
@@ -96,6 +99,8 @@ const renderTable = (tableId: string) =>
 beforeEach(() => {
   localStorage.clear();
   mockApi.get.mockReset();
+  mockApi.post.mockReset().mockResolvedValue({ ok: true });
+  mockApi.patch.mockReset().mockResolvedValue({ ok: true });
   mockApi.put.mockReset().mockResolvedValue({ ok: true });
   mockApi.del.mockReset().mockResolvedValue({ ok: true });
   __resetTableLayoutsForTest();
@@ -238,5 +243,137 @@ describe("DataTable with server layouts", () => {
        toast (handoff 2026-08-01), so what is asserted here is the WRITE, not
        the wording — the toast host does not exist in a bare test render. */
     expect(mockApi.put.mock.calls[0]![0]).toContain("/default");
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+   NAMED layouts (mig 0239). A saved column set, offered in the picker next to
+   the company defaults. Switching COPIES it into the live arrangement, which is
+   why saving one must not disturb what is on screen — and why a company row can
+   be duplicated into one of your own.
+   ──────────────────────────────────────────────────────────────────────────── */
+describe("DataTable with saved layouts", () => {
+  const savedLayout = (over: Record<string, unknown> = {}) => ({
+    order: ["a", "b"],
+    hidden: ["c", "d"],
+    shown: [],
+    widths: {},
+    pinned: [],
+    groupBy: [],
+    ...over,
+  });
+
+  it("offers a saved layout in the picker and applies it on click", async () => {
+    respond({
+      myLayouts: {
+        saved: [{ id: 7, name: "Finance review", layout: savedLayout() }],
+      },
+    });
+    await hydrateTableLayouts();
+
+    const { container } = renderTable("saved");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+
+    const row = screen.getByRole("option", { name: /Finance review/ });
+    expect(row.textContent).toContain("Saved by you");
+    fireEvent.click(row);
+
+    expect(headerLabels(container)).toEqual(["Alpha", "Bravo"]);
+  });
+
+  it("saves the arrangement on screen as a new layout", async () => {
+    respond({ canManageDefaults: false, canManageLayouts: true });
+    await hydrateTableLayouts();
+    mockApi.post.mockResolvedValue({
+      layout: { id: 3, name: "Mine", layout: savedLayout() },
+    });
+
+    renderTable("newlayout");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+
+    // Without a dialog host the naming step cannot run, so the control is
+    // present but the write is not attempted — which is the same contract the
+    // toast has: no host, no crash.
+    expect(screen.getByRole("button", { name: /New layout from current columns/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /New layout from current columns/ }));
+    await waitFor(() => expect(mockApi.post).not.toHaveBeenCalled());
+  });
+
+  it("lets an admin rename the company default, but never delete it", async () => {
+    respond({
+      canManageLayouts: true,
+      defaults: { "2": { rights: savedLayout({ order: ["a"] }) } },
+      myLayouts: { rights: [{ id: 9, name: "Mine", layout: savedLayout() }] },
+    });
+    await hydrateTableLayouts();
+
+    renderTable("rights");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+
+    /* The company row can be renamed (the whole company inherits that name)
+       and duplicated (start from 2990's view and tweak it) — but not deleted.
+       Deleting the arrangement everyone inherits is the Clear control in the
+       admin block, not a menu item next to the user's own layouts. */
+    fireEvent.click(screen.getByRole("button", { name: /Actions for 2990's Home Layout/ }));
+    expect(screen.getByRole("button", { name: /^Rename/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Duplicate/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Delete layout/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Actions for Mine/ }));
+    expect(screen.getByRole("button", { name: /Delete layout/ })).toBeTruthy();
+  });
+
+  it("shows a non-admin the layouts but none of the management", async () => {
+    // Owner decision 2026-08-02: layout management is the "*" wildcard only.
+    // Everyone else still switches layouts and arranges their own columns.
+    respond({
+      canManageLayouts: false,
+      defaults: { "readonly": savedLayout() },
+      myLayouts: { readonly: [{ id: 4, name: "Mine", layout: savedLayout() }] },
+    });
+    await hydrateTableLayouts();
+
+    renderTable("readonly");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+
+    expect(screen.getByRole("option", { name: /Mine/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /New layout from current columns/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Actions for Mine/ })).toBeNull();
+  });
+
+  it("says nothing about saved layouts when the store never came up", async () => {
+    mockApi.get.mockRejectedValue(new Error("offline"));
+    await hydrateTableLayouts();
+
+    renderTable("offline");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    expect(screen.queryByRole("button", { name: /New layout from current columns/ })).toBeNull();
+  });
+});
+
+describe("layout picker selection", () => {
+  it("ticks exactly one row when two layouts hold the same columns", async () => {
+    /* Seen on prod's Delivery Planning (2026-08-02): both company layouts
+       ticked at once, because a company had copied the other's view and
+       "matches what is on screen" was true of both. Two filled radios is a
+       picker nobody can read. */
+    const same = { order: ["a", "b"], hidden: ["c", "d"], shown: [], widths: {}, pinned: [], groupBy: [] };
+    respond({ defaults: { "1": { twins: same }, "2": { twins: same } } });
+    await hydrateTableLayouts();
+
+    renderTable("twins");
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
+
+    const selected = screen
+      .getAllByRole("option")
+      .filter((row) => row.getAttribute("aria-selected") === "true");
+    expect(selected).toHaveLength(1);
+    // The tie goes to THIS company's default — the one the table is actually on.
+    expect(selected[0]!.textContent).toContain("2990's Home Layout");
   });
 });

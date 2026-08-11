@@ -56,7 +56,7 @@ import { useIdempotencyKey } from "../../lib/idempotency";
 import { cn } from "../../lib/utils";
 import { fmtCenti } from "../../vendor/shared/format";
 import { soDateGuardError, soSliplessPaymentError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
-import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
+import { hasSofaMixConflict, missingConfirmVariantAxes, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
 
@@ -262,12 +262,23 @@ export function SalesOrderNewFromProducts() {
       return;
     }
 
+    /* Owner 2026-08-08 — CONFIRMING now requires every goods line's required
+       variant axes (sofa Seat Height + Fabrics, bedframe Divan/Leg/Gap/
+       Fabrics). This flow has no variant editors by design ("enrich on the SO
+       detail after save"), so a cart carrying such a line lands a DRAFT the
+       operator completes and confirms on the detail — the server confirm gate
+       would refuse a direct-CONFIRMED create outright. Accessory / mattress /
+       others carts carry no axes and keep confirming directly. */
+    const needsCompletion = items.some(
+      (i) => missingConfirmVariantAxes(i.itemGroup, i.variants).length > 0,
+    );
     const body: Record<string, unknown> = {
       customerName: customer.name.trim(),
       phone: customer.phone.trim(),
       email: customer.email.trim() || null,
       debtorCode: customer.debtorCode || null,
       items,
+      asDraft: needsCompletion || undefined,
     };
     try {
       const res = await create.mutateAsync({ ...body, idempotencyKey: idemKey });

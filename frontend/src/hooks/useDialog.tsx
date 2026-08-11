@@ -294,3 +294,11 @@ export function useDialog(): DialogContextValue {
   if (!ctx) throw new Error("useDialog must be used inside DialogProvider");
   return ctx;
 }
+
+/** Dialogs for a component that must ALSO render outside the provider — a
+ *  shared table control mounted bare in a unit test. Null there rather than a
+ *  throw; the caller is expected to skip the action it would have confirmed.
+ *  Anything that genuinely needs a dialog should keep using `useDialog`. */
+export function useDialogOptional(): DialogContextValue | null {
+  return useContext(DialogContext);
+}

@@ -33,6 +33,9 @@ type VirtualizerOptions = {
 export type Virtualizer = {
   getVirtualItems: () => VirtualItem[];
   getTotalSize: () => number;
+  /** Same slice of the real API DataGrid's map-pin linkage uses: scroll the
+   *  container so `index` is visible (fixed row size, like everything here). */
+  scrollToIndex: (index: number, opts?: { align?: 'start' | 'center' | 'end' | 'auto' }) => void;
 };
 
 export function useVirtualizer(opts: VirtualizerOptions): Virtualizer {
@@ -91,5 +94,23 @@ export function useVirtualizer(opts: VirtualizerOptions): Virtualizer {
     return items;
   };
 
-  return { getVirtualItems, getTotalSize };
+  const scrollToIndex = (index: number, o?: { align?: 'start' | 'center' | 'end' | 'auto' }) => {
+    const el = getScrollElement();
+    if (!el || count === 0) return;
+    const s = sizeRef.current || 1;
+    const i = Math.max(0, Math.min(count - 1, index));
+    const top = i * s;
+    const align = o?.align ?? 'auto';
+    let target = top;
+    if (align === 'center') target = top - (el.clientHeight - s) / 2;
+    else if (align === 'end') target = top - el.clientHeight + s;
+    else if (align === 'auto') {
+      // Already fully visible → no movement (the real library's 'auto').
+      if (top >= el.scrollTop && top + s <= el.scrollTop + el.clientHeight) return;
+      target = top - (el.clientHeight - s) / 2;
+    }
+    el.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+  };
+
+  return { getVirtualItems, getTotalSize, scrollToIndex };
 }

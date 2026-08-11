@@ -197,19 +197,19 @@ export function humanHttpMessage(status: number, body: string): string {
   const t = (body ?? "").trim();
   if (t && (t.startsWith("{") || t.startsWith("["))) {
     try {
-      const j = JSON.parse(t) as { error?: unknown; message?: unknown; detail?: unknown };
+      const j = JSON.parse(t) as { error?: unknown; message?: unknown; detail?: unknown; reason?: unknown };
       // A code-shaped `error` is looked up, never shown raw; a sentence-shaped
       // `error` keeps the historic behaviour of being surfaced as-is.
       if (typeof j?.error === "string" && isErrorCode(j.error.trim())) {
         const mapped = ERROR_CODE_MESSAGES[j.error.trim()];
         if (mapped) return mapped;
-        const fallback = j?.message ?? j?.detail;
+        const fallback = j?.message ?? j?.detail ?? j?.reason;
         if (typeof fallback === "string") {
           const safe = presentable(fallback);
           if (safe) return safe;
         }
       } else {
-        const m = j?.error ?? j?.message ?? j?.detail;
+        const m = j?.error ?? j?.message ?? j?.detail ?? j?.reason;
         if (typeof m === "string") {
           const safe = presentable(m);
           if (safe) return safe;
@@ -688,13 +688,23 @@ export const api = {
    * Fetches a protected asset (e.g. R2-backed POD photo) as a blob URL,
    * because <img src> can't pass the Authorization header.
    */
-  async fetchBlobUrl(path: string): Promise<string> {
+  async fetchBlobUrl(path: string, typeHint?: string | null): Promise<string> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
     }, BINARY_GET_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
-    return consumeCorrelated(res, async () => URL.createObjectURL(await res.blob()));
+    return consumeCorrelated(res, async () => {
+      let blob = await res.blob();
+      // R2 hands back files it stored without a content type as
+      // application/octet-stream, and window.open()/an <iframe> on such a blob
+      // DOWNLOADS a PDF instead of rendering it. When the caller knows the real
+      // type (from the file extension), re-type the blob so an inline view views.
+      if (typeHint && (!blob.type || blob.type === "application/octet-stream")) {
+        blob = blob.slice(0, blob.size, typeHint);
+      }
+      return URL.createObjectURL(blob);
+    });
   },
 
   /**

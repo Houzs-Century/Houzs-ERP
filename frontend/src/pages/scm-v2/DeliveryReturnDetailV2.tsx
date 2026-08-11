@@ -70,7 +70,10 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useDrRelationshipMap } from "./sales-doc-relationship-map";
 import {
   DocumentRelationshipMapModal,
+  DocumentChoiceDialog,
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
@@ -540,9 +543,9 @@ export function DeliveryReturnDetailV2() {
   // mirroring the V1 DeliveryReturnDetail handler (which maps the header + items
   // into the generator's shape). The old `?print=1` navigation was dead —
   // nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!deliveryReturn) return;
-    import("../../vendor/scm/lib/delivery-return-pdf")
+    return import("../../vendor/scm/lib/delivery-return-pdf")
       .then(({ generateDeliveryReturnPdf }) =>
         generateDeliveryReturnPdf(
           {
@@ -575,7 +578,8 @@ export function DeliveryReturnDetailV2() {
             condition: it.condition,
             unit_price_centi: it.unit_price_centi,
             refund_centi: it.line_total_centi,
-          }))
+          })),
+          { action }
         )
       )
       .catch((e) =>
@@ -586,6 +590,8 @@ export function DeliveryReturnDetailV2() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!deliveryReturn);
 
   // Chain nodes for the shared Relationship Map modal, read from the LIVE
   // `/document-flow` graph (the SO map's source) instead of a hand-built chain.
@@ -604,8 +610,13 @@ export function DeliveryReturnDetailV2() {
         : null,
     [deliveryReturn],
   );
-  const { nodes: chainNodes, onNodeClick: onChainNodeClick } =
-    useDrRelationshipMap(relMapHeader);
+  const {
+    nodes: chainNodes,
+    onNodeClick: onChainNodeClick,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
+  } = useDrRelationshipMap(relMapHeader);
 
   const doMarkInspected = () => {
     if (!deliveryReturn) return;
@@ -867,7 +878,7 @@ export function DeliveryReturnDetailV2() {
             <Button
               variant="secondary"
               icon={<Printer size={14} />}
-              onClick={goPrintPdf}
+              onClick={print.openPreview}
             >
               Print PDF
             </Button>
@@ -1226,7 +1237,7 @@ export function DeliveryReturnDetailV2() {
           )}
           <button
             type="button"
-            onClick={goPrintPdf}
+            onClick={print.openPreview}
             className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft"
             aria-label="Print PDF"
           >
@@ -1258,6 +1269,37 @@ export function DeliveryReturnDetailV2() {
           // open (renders over the map).
           if (onChainNodeClick(n)) setRelMapOpen(false);
         }}
+      />
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          setRelMapOpen(false);
+          pickChainChoice(d);
+        }}
+      />
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Delivery Return"
+        docNo={deliveryReturn.return_number}
+        rows={[
+          { label: "Customer", value: deliveryReturn.debtor_name || "—" },
+          { label: "Return date", value: fmtDate(deliveryReturn.return_date) },
+          { label: "Reason", value: deliveryReturn.reason || "—" },
+          {
+            label: "Items",
+            value: `${items.length} line${items.length === 1 ? "" : "s"}`,
+          },
+          {
+            label: "Refund",
+            value: fmtMoney(refundOf(deliveryReturn, items), deliveryReturn.currency),
+          },
+        ]}
+        {...print.handlers}
       />
     </div>
   );

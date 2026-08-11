@@ -188,7 +188,7 @@ describe('sofa module loaders — base_model is not unique either', () => {
 
 describe('validateItemCodes — must move in lock-step with the pricing read', () => {
   it('a HOUZS-only code is NOT orderable by 2990', async () => {
-    expect(await validateItemCodes(sb(), ['CODYS-(K)'], 2)).toEqual({ ok: false, unknown: ['CODYS-(K)'] });
+    expect(await validateItemCodes(sb(), ['CODYS-(K)'], 2)).toEqual({ ok: false, unknown: ['CODYS-(K)'], inactive: [] });
   });
 
   it('...and is orderable by HOUZS', async () => {

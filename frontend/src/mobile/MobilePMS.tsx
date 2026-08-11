@@ -801,7 +801,16 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const defectActionsValue = useMemo(
     () => ({
       actions: (((data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
-      canAct:
+      // Two-stage defect triage (owner 2026-08-07): canReview = the Storekeeper
+      // Supervisor (Shukor) or admin triages a fresh defect (Done / Replace);
+      // canPurchase = the purchaser (Sim / Farra) / BD or admin closes an
+      // escalated (Replace) defect with Done. Mirrors desktop Projects.tsx.
+      canReview:
+        !!user &&
+        (user.permissions?.includes("*") ||
+          user.permissions?.includes("projects.manage") ||
+          /^storekeeper supervisor$/i.test((user.position_name ?? "").trim())),
+      canPurchase:
         !!user &&
         (user.permissions?.includes("*") ||
           user.permissions?.includes("projects.manage") ||
@@ -2049,17 +2058,24 @@ type AttachmentAction = {
 };
 const DefectActionsCtx = createContext<{
   actions: AttachmentAction[];
-  canAct: boolean;
+  canReview: boolean;
+  canPurchase: boolean;
   reload: () => void;
 } | null>(null);
 
 function DefectFileActions({ att }: { att: TaskAttachment }) {
   const ctx = useContext(DefectActionsCtx);
-  const [draft, setDraft] = useState<null | "ongoing" | "done">(null);
+  const [draft, setDraft] = useState<null | "done" | "replace">(null);
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
   if (!ctx) return null;
   const list = ctx.actions.filter((x) => x.attachment_id === att.id);
+  // Latest timeline entry drives the state machine: fresh (no action / legacy
+  // 'ongoing') awaits the reviewer; 'replace' awaits the purchaser; 'done' is
+  // resolved. Mirrors desktop TaskAttachmentRow.
+  const latest = list.length ? list.reduce((m, a) => (a.id > m.id ? a : m)) : null;
+  const isFresh = !latest || (latest.status !== "done" && latest.status !== "replace");
+  const isEscalated = latest?.status === "replace";
   const save = async () => {
     if (!draft) return;
     setSaving(true);
@@ -2077,9 +2093,14 @@ function DefectFileActions({ att }: { att: TaskAttachment }) {
   const ts = (v: string) => String(v || "").slice(0, 16).replace("T", " ");
   return (
     <div style={{ paddingLeft: 2 }}>
-      {ctx.canAct && (
+      {isFresh && ctx.canReview && (
         <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
-          <button className="tinybtn" disabled={saving} style={{ background: draft === "ongoing" ? "#f6efd9" : "#fff", borderColor: "#e7d9ae", color: "#6e4d12", fontWeight: draft === "ongoing" ? 800 : 700 }} onClick={() => setDraft("ongoing")}>Ongoing</button>
+          <button className="tinybtn" disabled={saving} style={{ background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
+          <button className="tinybtn" disabled={saving} style={{ background: draft === "replace" ? "#f7e3e3" : "#fff", borderColor: "#e6bcbc", color: "#b4362f", fontWeight: draft === "replace" ? 800 : 700 }} onClick={() => setDraft("replace")}>Replace</button>
+        </div>
+      )}
+      {isEscalated && ctx.canPurchase && (
+        <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
           <button className="tinybtn" disabled={saving} style={{ background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
         </div>
       )}
@@ -2097,8 +2118,8 @@ function DefectFileActions({ att }: { att: TaskAttachment }) {
           {[...list].reverse().map((a) => (
             <div key={a.id}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <span style={{ width: 6, height: 6, borderRadius: 3, background: a.status === "done" ? "#2f8a5b" : "#c9971f", flex: "none" }} />
-                <span className="rbadge" style={{ background: a.status === "done" ? "#e2f0e9" : "#f6efd9", color: a.status === "done" ? "#2f8a5b" : "#6e4d12" }}>{a.status === "done" ? "Done" : "Ongoing"}</span>
+                <span style={{ width: 6, height: 6, borderRadius: 3, background: a.status === "done" ? "#2f8a5b" : a.status === "replace" ? "#b4362f" : "#c9971f", flex: "none" }} />
+                <span className="rbadge" style={{ background: a.status === "done" ? "#e2f0e9" : a.status === "replace" ? "#f7e3e3" : "#f6efd9", color: a.status === "done" ? "#2f8a5b" : a.status === "replace" ? "#b4362f" : "#6e4d12" }}>{a.status === "done" ? "Done" : a.status === "replace" ? "Replace" : "Ongoing"}</span>
                 <span style={{ fontSize: 10.5, color: "#9aa093" }}>{a.user_name || "—"} · {ts(a.created_at)}</span>
               </div>
               {a.remark && <div style={{ fontSize: 11.5, color: "#6b6f63", marginLeft: 12, marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{a.remark}</div>}
@@ -2210,19 +2231,11 @@ function TaskRow({
         (l === "DRIVER" && (userRole === "HELPER" || userRole === "STOREKEEPER")));
     });
   const canAttach = canTick && (!tickOnly || roleMatchesUser);
-  // Owner 2026-07-17: sales staff may DELETE files only on their own four
-  // deliverables (the SALES PIC-badged Setup Image / Event Complete Image /
-  // Defect List / Filled Floorplan). Every other row is add-only for them —
-  // no × on the chips. Directors/mgt/admin keep full remove everywhere.
-  const SALES_REMOVABLE = /^(setup image|event complete image|defect (list|item)|filled floor\s*plan)/i;
-  const _isSalesStaffUser =
-    (/sales/i.test((user?.department_name ?? "").trim()) || /^sales/i.test((user?.position_name ?? "").trim())) &&
-    !/\b(Super Admin|Sales Director|Finance Manager)\b/i.test((user?.position_name ?? "").trim()) &&
-    !user?.permissions?.includes("*");
-  const canRemoveFile =
-    canAttach &&
-    (!_isSalesStaffUser ||
-      (badge.includes("SALES PIC") && SALES_REMOVABLE.test((it.title || "").trim())));
+  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
+  // (projects.manage: BD / managers / directors). Crew and sales keep upload
+  // (canAttach) but no longer see the × on file chips. canAttach folds in the
+  // row-edit + !archived gate, so a manager still can't delete a locked row.
+  const canRemoveFile = canAttach && can("projects.manage");
 
   const cycle = async () => {
     if (!canRowTick || busy) return;
@@ -2476,8 +2489,14 @@ function TaskRow({
       {canTick && !done && files.length > 0 &&
         (it.required_perm ? holdsChecklistApproval(user?.permissions, it.required_perm) : awaitingReview) && (
         <>
-          <button className="tinybtn" style={{ background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={() => review("approve")}>Approve</button>
-          <button className="tinybtn" style={{ background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => review("reject")}>Reject</button>
+          {/* Toggle (owner 2026-08-10): show only the reversing action — Approve
+              hidden once approved, Reject hidden once rejected. */}
+          {reviewStatus !== "approved" && (
+            <button className="tinybtn" style={{ background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={() => review("approve")}>Approve</button>
+          )}
+          {reviewStatus !== "rejected" && (
+            <button className="tinybtn" style={{ background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => review("reject")}>Reject</button>
+          )}
         </>
       )}
     </div>
@@ -2597,7 +2616,7 @@ const isoTimePart = (iso: string | null | undefined): string => {
 // PUT /:id/phase-photos/upload → POST /:id/phase-photos). Schedule/driver/
 // lorry all persist via PATCH /:id.
 function SetupDismantle({
-  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleView, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm, prompt,
+  projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleView, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm,
 }: {
   projectId: number;
   project: ProjectDetail["project"];
@@ -2629,20 +2648,10 @@ function SetupDismantle({
   const scheduleShots = photos.filter((ph): ph is PhasePhoto & { r2_key: string } => ph.phase === "schedule" && !!ph.r2_key);
   const schedRef = useRef<HTMLInputElement | null>(null);
   const [schedView, setSchedView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
-  // Remark-first-before-upload (owner 2026-07-27), same flow as the Defect List:
-  // prompt for a required remark, then the file picker; the screenshot uploads
-  // carrying that remark (stored as the phase-photo caption).
-  const pendingSchedCaptionRef = useRef<string | undefined>(undefined);
-  const startScheduleUpload = async () => {
-    const remark = await prompt({
-      title: "Remark for this schedule",
-      placeholder: "e.g. setup 15/6 1am, dismantle 28/6 11pm (required)",
-      validate: (v) => (v.trim() ? null : "Please write a remark before uploading."),
-    });
-    if (remark == null || !remark.trim()) return;
-    pendingSchedCaptionRef.current = remark.trim();
-    schedRef.current?.click();
-  };
+  // Owner 2026-08-03: NO remark step before upload — tapping Upload opens the
+  // file picker straight away (the earlier prompt, even optional, was an unwanted
+  // extra tap). Setup/dismantle times go in the standalone Remark box below.
+  const startScheduleUpload = () => schedRef.current?.click();
   const uploadSchedule = async (file: File, caption?: string) => {
     if (file.size > 50 * 1024 * 1024) {
       await notify({ title: "File too large", body: "Max 50MB.", tone: "error" });
@@ -2792,7 +2801,7 @@ function SetupDismantle({
               <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => void startScheduleUpload()}>
                 {scheduleShots.length ? "+ Add / replace screenshot" : "Upload handbook schedule screenshot"}
               </button>
-              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; const cap = pendingSchedCaptionRef.current; pendingSchedCaptionRef.current = undefined; if (f) void uploadSchedule(f, cap); }} />
+              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadSchedule(f); }} />
             </>
           )}
           {schedView && (
@@ -3208,8 +3217,13 @@ const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
 // Decoration shows its remark AND its files (view remark + download).
 // Defect tiles carry the per-file Ongoing/Done timeline + the N/A button
 // (owner 2026-07-29). Matched off the resolved checklist item title.
+// Live task titles are "Defect Item Setup/Dismantle" (there are no "Defect
+// List" rows in prod), so the old /^defect list/i matched nothing here and the
+// tile path never showed the action buttons or the no-defect N/A control
+// (BUG-HISTORY 2026-08-07). Widen to match both families, like every other
+// defect matcher and the backend.
 const isDefectTile = (t: { item?: ChecklistItem | null }): boolean =>
-  /^defect list/i.test((t.item?.title ?? "").trim());
+  /^defect (list|item)/i.test((t.item?.title ?? "").trim());
 
 const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
   // Owner 2026-07-22: Stock Out Transfer Record + Blank Floorplan tiles
@@ -3255,12 +3269,20 @@ function checklistReviewVisible(
   hasFiles: boolean,
 ): boolean {
   if (!item || !hasFiles) return false;
-  const status = (item.status ?? "").toLowerCase();
   const reviewStatus = (item.review_status ?? "").toLowerCase();
   const canApprove = !item.required_perm || holdsChecklistApproval(permissions, item.required_perm);
-  if (item.required_perm) return canApprove && reviewStatus !== "approved" && status !== "done";
-  const reviewable = REVIEWABLE_TITLE_RE.test((item.title ?? "").trim());
   const awaitingReview = reviewStatus === "pending_review" || reviewStatus === "amended";
+  // Owner 2026-07-31 (final): on a gated document the approver ALWAYS keeps
+  // Approve / Reject once a file exists — including one already approved — so a
+  // decision can be reviewed or reversed at any time. (Previously the buttons
+  // vanished the moment it was approved, which read as "the feature is
+  // missing": on prod all 248 3D Designs were approved, so no event showed
+  // them.) The current decision still rides the tile as its APPROVED /
+  // REJECTED / PENDING badge, and every click is logged to the comment
+  // history, so reversals stay auditable. `status`/`awaitingReview` are no
+  // longer part of this arm — the permission alone decides.
+  if (item.required_perm) return canApprove;
+  const reviewable = REVIEWABLE_TITLE_RE.test((item.title ?? "").trim());
   return reviewable && awaitingReview && canApprove;
 }
 
@@ -3294,19 +3316,45 @@ function ReviewButtons({
       setBusy(false);
     }
   };
+  // Toggle (owner 2026-08-10): show only the button that REVERSES the current
+  // decision. Approve hidden once approved (Reject stays, to re-open); Reject
+  // hidden once rejected (Approve stays, to approve the fix). The status itself
+  // stays visible via the ReviewBadge next to these buttons.
+  const rs = (item.review_status ?? "").toLowerCase();
   return (
     <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-      <button className="tinybtn" style={{ flex: 1, background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("approve"); }}>Approve</button>
-      <button className="tinybtn" style={{ flex: 1, background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("reject"); }}>Reject</button>
+      {rs !== "approved" && (
+        <button className="tinybtn" style={{ flex: 1, background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("approve"); }}>Approve</button>
+      )}
+      {rs !== "rejected" && (
+        <button className="tinybtn" style={{ flex: 1, background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("reject"); }}>Reject</button>
+      )}
     </div>
   );
 }
 
 // Small review-decision badge (green approved / red rejected / amber pending),
 // shared by the doc cards. Renders nothing when there's no decision yet.
-function ReviewBadge({ reviewStatus }: { reviewStatus: string | null | undefined }) {
+// Owner 2026-07-31: "cant see which one not approve yet". A reviewable doc that
+// carries a file but has NO decision yet (review_status NULL — uploaded before
+// auto-submit existed, or never submitted) used to render NO badge at all, so
+// approved and un-approved documents looked identical on the tile. Pass
+// `item`+`hasFiles` and it now says NOT APPROVED instead of staying blank.
+// Nothing shows on an empty document — there is nothing to approve yet.
+function ReviewBadge({
+  reviewStatus, item, hasFiles,
+}: {
+  reviewStatus: string | null | undefined;
+  item?: ChecklistItem;
+  hasFiles?: boolean;
+}) {
   const rs = (reviewStatus ?? "").toLowerCase();
-  if (!rs) return null;
+  if (!rs) {
+    const reviewable = !!item && (!!item.required_perm || REVIEWABLE_TITLE_RE.test((item.title ?? "").trim()));
+    const approvedByStatus = (item?.status ?? "").toLowerCase() === "done";
+    if (!reviewable || !hasFiles || approvedByStatus) return null;
+    return <span className="rbadge" style={{ background: "#f6efd9", color: "#6e4d12" }}>NOT APPROVED</span>;
+  }
   return (
     <span className="rbadge" style={{
       background: rs === "approved" ? "#e2f0e9" : rs === "rejected" ? "#f7e7e5" : "#f6efd9",
@@ -3345,7 +3393,11 @@ function SalesDocsCard({
   // Stock Out/In, 3D/2D Design, Display Floorplan, Exchange List) had no way to
   // be approved on a phone. Gate + endpoint match the desktop DocRow exactly
   // (shared checklistReviewVisible / ReviewButtons); user drives the perm check.
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
+  // (projects.manage). canTick already folds in !archived, so a manager still
+  // can't delete on an archived project; upload/remark stay on canTick.
+  const canDeleteFiles = can("projects.manage") && canTick;
 
   const tiles = tileDefs.map((t) => {
     const item = (checklist ?? []).find(
@@ -3423,7 +3475,7 @@ function SalesDocsCard({
   };
 
   const removeFile = async (t: (typeof tiles)[number], att: TaskAttachment) => {
-    if (t.readOnly || !canTick) return;
+    if (t.readOnly || !canDeleteFiles) return;
     if (!(await confirm({ title: `Remove ${att.file_name || "this file"}?`, confirmLabel: "Remove", danger: true }))) return;
     setBusy(true);
     try {
@@ -3537,7 +3589,7 @@ function SalesDocsCard({
                       ))}
                       {/* Review decision (owner 2026-07-29): green approved ·
                           red rejected · amber pending — travels with the tile. */}
-                      <ReviewBadge reviewStatus={rItem.review_status} />
+                      <ReviewBadge reviewStatus={rItem.review_status} item={rItem} hasFiles={t.files.length > 0} />
                     </div>
                   </div>
                 </div>
@@ -3573,13 +3625,13 @@ function SalesDocsCard({
                           <button
                             type="button"
                             className="tinybtn"
-                            style={{ flex: 1, minWidth: 0, display: "inline-flex", alignItems: "center", gap: 5, ...(canTick && !t.readOnly ? { borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none" } : {}) }}
+                            style={{ flex: 1, minWidth: 0, display: "inline-flex", alignItems: "center", gap: 5, ...(canDeleteFiles && !t.readOnly ? { borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none" } : {}) }}
                             onClick={() => setView({ items: t.files, idx: i })}
                             title={a.file_name ?? undefined}
                           >
                             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.file_name || "File"}</span>
                           </button>
-                          {canTick && !t.readOnly && (
+                          {canDeleteFiles && !t.readOnly && (
                             <button
                               type="button"
                               className="tinybtn"
@@ -3891,9 +3943,11 @@ function FloorPlans({
         </div>
         {/* Display Floor Plan review (owner 2026-07-29) — approve/reject for a
             holder/approver once it's uploaded + submitted. */}
-        {displayItem && (displayItem.review_status || checklistReviewVisible(user?.permissions, displayItem, displayPlanFiles.length > 0)) && (
+        {/* State for every viewer (approved / pending / not approved); buttons
+            stay approver-gated inside. Nothing renders on an empty document. */}
+        {displayItem && (displayItem.review_status || displayPlanFiles.length > 0) && (
           <div style={{ marginTop: -3, marginBottom: 10 }}>
-            {displayItem.review_status && <div style={{ marginBottom: 4 }}><ReviewBadge reviewStatus={displayItem.review_status} /></div>}
+            <div style={{ marginBottom: 4 }}><ReviewBadge reviewStatus={displayItem.review_status} item={displayItem} hasFiles={displayPlanFiles.length > 0} /></div>
             {checklistReviewVisible(user?.permissions, displayItem, displayPlanFiles.length > 0) && (
               <ReviewButtons item={displayItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
             )}
@@ -3939,7 +3993,7 @@ function FloorPlans({
                     <span className="rbadge" style={{ background: latest ? badgeBg : "#f0f1ed", color: latest ? badgeCol : "#9aa093" }}>
                       {latest ? `${badge}${files.length > 1 ? ` · ${files.length}` : ""}` : "NONE"}
                     </span>
-                    {tileItem && <ReviewBadge reviewStatus={tileItem.review_status} />}
+                    {tileItem && <ReviewBadge reviewStatus={tileItem.review_status} item={tileItem} hasFiles={files.length > 0} />}
                   </div>
                   {label === "Filled" && canWrite && filledPlanTaskId != null && (
                     <button
@@ -4005,10 +4059,13 @@ function FloorPlans({
             for a stock_transfer.approve holder once a record is uploaded. */}
         {stockOutItem && (() => {
           const stockOutHasFiles = (checklistAttachments ?? []).some((a) => !a.archived_at && a.item_id === stockOutItem.id);
-          if (!stockOutItem.review_status && !checklistReviewVisible(user?.permissions, stockOutItem, stockOutHasFiles)) return null;
+          // Owner 2026-07-31: the STATE is shown to every viewer (approved /
+          // pending / not approved) — only the buttons stay approver-gated. An
+          // empty record still renders nothing.
+          if (!stockOutHasFiles && !stockOutItem.review_status) return null;
           return (
             <div style={{ marginBottom: 8 }}>
-              {stockOutItem.review_status && <div style={{ marginBottom: 4 }}><ReviewBadge reviewStatus={stockOutItem.review_status} /></div>}
+              <div style={{ marginBottom: 4 }}><ReviewBadge reviewStatus={stockOutItem.review_status} item={stockOutItem} hasFiles={stockOutHasFiles} /></div>
               {checklistReviewVisible(user?.permissions, stockOutItem, stockOutHasFiles) && (
                 <ReviewButtons item={stockOutItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
               )}

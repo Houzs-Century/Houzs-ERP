@@ -17,8 +17,8 @@
 // The old ledger-style SalesOrderDetail.tsx stays in the tree; App.tsx route
 // swap on /scm/sales-orders/:docNo decides which one users see.
 
-import { Suspense, lazy, useMemo, useState, type ReactNode } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -31,6 +31,7 @@ import {
   CircleDot,
   Phone as PhoneIcon,
   MoreHorizontal,
+  Wallet,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -51,9 +52,17 @@ import {
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
-import { DocumentRelationshipMapModal } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { useSoRelationshipMap } from "./so-relationship-map";
-import { cn } from "../../lib/utils";
+import { PaymentsTable, type PaymentDraft } from "../../vendor/scm/components/PaymentsTable";
+import { fetchSoSlipUrl } from "../../vendor/scm/lib/slip";
+import {
+  completePaymentRetryDraft, consumePaymentRetryNavigationState,
+  readPaymentRetryHandoff, readPaymentRetryNavigationState,
+} from "../../lib/paymentRetryHandoff";
+import { cn, formatDate } from "../../lib/utils";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
@@ -65,6 +74,9 @@ import {
 
 type SoHeader = {
   doc_no: string;
+  /* POS handover payment slip (migration 0143) — passed to PaymentsTable's
+     optional Slip column; absent on non-POS orders. */
+  slip_key?: string | null;
   so_date: string;
   debtor_name: string;
   debtor_code: string | null;
@@ -378,6 +390,12 @@ function OrderTotalCard({
   discountCenti: number;
   totalCenti: number;
 }) {
+  /* The auto-derived delivery fee is inside `totalCenti` but was not itemised,
+     so an all-FOC order read "Subtotal 0 → Total 250" with nothing explaining
+     the 250 (owner, 2026-08-07: "为什么会有 rm250?"). Derived as the remainder
+     rather than read from a header field so the row is exactly the gap the
+     reader is staring at, whatever fee components the server folds in. */
+  const feeCenti = totalCenti - (subtotalCenti - discountCenti);
   const st = statusFor(header.status);
   return (
     <div className="rounded-lg bg-sidebar px-5 py-5 text-sidebar-ink shadow-stone">
@@ -406,6 +424,9 @@ function OrderTotalCard({
       <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
         <TotalLine k="Subtotal" v={fmtMoney(subtotalCenti, header.currency)} />
         <TotalLine k="Discount" v={fmtMoney(discountCenti, header.currency)} />
+        {feeCenti > 0 && (
+          <TotalLine k="Delivery fee" v={fmtMoney(feeCenti, header.currency)} />
+        )}
         <TotalLine k="SST" v="Inclusive" muted />
         <TotalLine
           k="Total"
@@ -478,6 +499,10 @@ const SalesOrderDetailInlineEditor = lazy(() =>
    would break on navigation). */
 export function SalesOrderDetailV2() {
   const [params] = useSearchParams();
+  /* `payments=1` used to forward to the legacy editor; since 2026-08-09 the
+     read page hosts the SAME PaymentsTable component (owner: "点选 collect
+     payment … 全部 UI 都不一样" — one page, one look; the flag now just seeds
+     the payments Edit toggle below). Only full `edit=1` swaps bodies. */
   if (params.get("edit") === "1") {
     return (
       <Suspense
@@ -560,11 +585,51 @@ function SalesOrderDetailV2ReadOnly() {
   // details page's back button goes to its relevant list, not wherever
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
-  const goBack = () => navigate(scmListReturnTo("/scm/sales-orders"));
+  const goBack = () => {
+    if (unsavedPayments > 0 && !window.confirm(
+      `${unsavedPayments} payment row${unsavedPayments === 1 ? " is" : "s are"} typed but not saved — leave anyway?`,
+    )) return;
+    navigate(scmListReturnTo("/scm/sales-orders"));
+  };
   // Edit always forwards to the full editor (?edit=1). When the SO is
   // amendment-eligible the editor opens in amendment mode (Save submits an
   // amendment request); when hard-locked the button is disabled here.
   const goEdit = () => docNo && navigate(`/scm/sales-orders/${docNo}?edit=1`);
+  /* Payments editing now lives ON this page (same PaymentsTable the editor
+     uses) — "Collect payment" just unlocks the card and scrolls to it. */
+  const location = useLocation();
+  const [payEditing, setPayEditing] = useState(params.get("payments") === "1");
+  const [unsavedPayments, setUnsavedPayments] = useState(0);
+  const paymentsRef = useRef<HTMLDivElement>(null);
+  const [paymentRetryState, setPaymentRetryState] = useState<{ documentId: string; drafts: PaymentDraft[] } | null>(null);
+  const paymentRetryDrafts = paymentRetryState && paymentRetryState.documentId === docNo
+    ? paymentRetryState.drafts
+    : [];
+  useEffect(() => {
+    if (!docNo) return;
+    const stored = readPaymentRetryHandoff("so", docNo)?.drafts ?? [];
+    const navigated = readPaymentRetryNavigationState(location.state, "so", docNo);
+    const byKey = new Map([...stored, ...navigated].map((draft) => [draft.idempotencyKey, draft]));
+    setPaymentRetryState({ documentId: docNo, drafts: [...byKey.values()] });
+    if (navigated.length > 0) {
+      navigate(
+        { pathname: location.pathname, search: location.search, hash: location.hash },
+        { replace: true, state: consumePaymentRetryNavigationState(location.state) },
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docNo]);
+  const paymentRetryCommitted = (draft: PaymentDraft) => {
+    if (!docNo || !draft.idempotencyKey) return;
+    completePaymentRetryDraft("so", docNo, draft.idempotencyKey);
+    setPaymentRetryState((current) => current?.documentId === docNo
+      ? { ...current, drafts: current.drafts.filter((row) => row.idempotencyKey !== draft.idempotencyKey) }
+      : current);
+  };
+  const goPayments = () => {
+    setPayEditing(true);
+    paymentsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const doCancel = () => {
     if (!salesOrder) return;
     if (
@@ -581,7 +646,7 @@ function SalesOrderDetailV2ReadOnly() {
   // Render + download the SO PDF via the shared jspdf generator (client-side),
   // mirroring the V1 SalesOrderDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!salesOrder) return;
     /* The guard below used to be keyed on `isLoading` alone with a `?? []`
        fallback. On a FAILED payments read react-query leaves `isLoading` false
@@ -613,13 +678,13 @@ function SalesOrderDetailV2ReadOnly() {
     // trigger items issued, so the printed PDF can mark the trigger lines.
     const pwpCodes = ((detail.data as { pwpCodes?: unknown[] } | undefined)
       ?.pwpCodes ?? []) as never;
-    import("../../vendor/scm/lib/sales-order-pdf")
+    return import("../../vendor/scm/lib/sales-order-pdf")
       .then(({ generateSalesOrderPdf }) =>
         generateSalesOrderPdf(
           salesOrder as never,
           items as never,
           payments as never,
-          "save",
+          action,
           pwpCodes
         )
       )
@@ -631,6 +696,8 @@ function SalesOrderDetailV2ReadOnly() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!salesOrder);
 
   // The 5-node document chain + what each node does when clicked now come from
   // the shared hook, so this page and the ?edit=1 editor cannot drift again
@@ -640,6 +707,10 @@ function SalesOrderDetailV2ReadOnly() {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    pairing: chainPairing,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
   } = useSoRelationshipMap(salesOrder);
 
   // ── Line item columns ────────────────────────────────────────────────
@@ -918,10 +989,46 @@ function SalesOrderDetailV2ReadOnly() {
             <Button
               variant="secondary"
               icon={<Printer size={14} />}
-              onClick={goPrintPdf}
+              onClick={print.openPreview}
             >
               Print PDF
             </Button>
+            {/* Collect payment (owner 2026-08-07) — the direct door to the
+                payments ledger. The ledger lives on the ?edit=1 editor, so
+                without this the only way to key money is the Edit button
+                below, and Edit answers to the LINE/HEADER lock rather than to
+                anything about money:
+                  · hard-locked (DELIVERED / SHIPPED / has a DO-SI) → disabled,
+                    so a delivered order had NO reachable Payments section at
+                    all — the balance could not be keyed and its proof had
+                    nowhere to go, on the exact order state where a balance is
+                    normally collected;
+                  · amendment-eligible → it becomes "Submit SO Amendment", so
+                    keying a payment means going through the amendment flow;
+                  · otherwise → it opens every field to edit a row of numbers.
+                Hence the gate here is about the MONEY, not the lock: only a
+                CANCELLED order takes none, which is the same rule the payments
+                card, the mobile screen and the server all use. DRAFT is left
+                out on the owner's standing "no payments on drafts" ruling — and
+                a draft is never locked, so Edit reaches it anyway.
+                Owner 2026-08-07, on Houzs (every SO CONFIRMED, several still
+                owing): "houzs也是需要collect payment功能" — the first cut gated
+                this on `hardLocked`, which is a 2990 delivery-flow assumption,
+                not a rule about collecting money.
+                `?payments=1` opens the editor with the Payments card unlocked
+                and NOTHING else: it does not set ?edit=1, so lines, header and
+                addresses stay read-only under their own `isLocked` gate, which
+                is the lock that genuinely belongs to them. */}
+            {!["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (
+              <Button
+                variant="secondary"
+                icon={<Wallet size={14} />}
+                onClick={goPayments}
+                title="Record a payment against this order — everything else stays as it is."
+              >
+                Collect payment
+              </Button>
+            )}
             {salesOrder.status?.toLowerCase() !== "cancelled" && (
               <Button
                 variant="danger"
@@ -1140,6 +1247,39 @@ function SalesOrderDetailV2ReadOnly() {
                 emptyLabel="No line items"
               />
             </Section>
+
+            {/* Payments — the SAME PaymentsTable the editor renders (Task #105
+                one-source rule), mounted here since 2026-08-09 so "Collect
+                payment" no longer swaps the whole page for the legacy editor
+                (owner: unify the SO surfaces). Adding/editing money follows the
+                no-naked-edits rule via the card's own Edit toggle; `?payments=1`
+                deep-links land with the toggle already open. */}
+            {(() => {
+              const soStatus = salesOrder.status?.toLowerCase() ?? "";
+              const canOfferPayEdit = !["cancelled", "draft"].includes(soStatus);
+              const canEditPayments = soStatus === "draft" || (soStatus !== "cancelled" && payEditing);
+              return (
+                <div ref={paymentsRef}>
+                  <PaymentsTable
+                    key={salesOrder.doc_no}
+                    docNo={salesOrder.doc_no}
+                    grandTotalCenti={salesOrder.local_total_centi ?? 0}
+                    currency={salesOrder.currency}
+                    locked={!canEditPayments}
+                    draftUnlocked={soStatus === "draft"}
+                    slip={{ slipKey: salesOrder.slip_key ?? null, fetcher: fetchSoSlipUrl }}
+                    initialDrafts={paymentRetryDrafts}
+                    onDraftCommitted={paymentRetryCommitted}
+                    onUnsavedChange={setUnsavedPayments}
+                    headerAction={canOfferPayEdit ? (
+                      <Button variant="secondary" onClick={() => setPayEditing((v) => !v)} icon={<Wallet size={14} />}>
+                        {payEditing ? "Done" : "Collect payment"}
+                      </Button>
+                    ) : null}
+                  />
+                </div>
+              );
+            })()}
           </DetailMain>
 
           <DetailAside>
@@ -1263,7 +1403,7 @@ function SalesOrderDetailV2ReadOnly() {
           </button>
           <button
             type="button"
-            onClick={goPrintPdf}
+            onClick={print.openPreview}
             className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft"
             aria-label="Print PDF"
           >
@@ -1296,6 +1436,41 @@ function SalesOrderDetailV2ReadOnly() {
         onAmendmentClick={(a) => {
           if (onChainAmendmentClick(a)) setRelMapOpen(false);
         }}
+        pairing={chainPairing}
+      />
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          setRelMapOpen(false);
+          pickChainChoice(d);
+        }}
+      />
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Sales Order"
+        docNo={salesOrder.doc_no}
+        rows={[
+          { label: "Customer", value: salesOrder.debtor_name || "—" },
+          { label: "Order date", value: fmtDate(salesOrder.so_date) },
+          {
+            label: "Items",
+            value: `${items.length} line${items.length === 1 ? "" : "s"}`,
+          },
+          {
+            label: "Order total",
+            value: fmtMoney(salesOrder.local_total_centi, salesOrder.currency),
+          },
+          {
+            label: "Balance",
+            value: fmtMoney(salesOrder.balance_centi, salesOrder.currency),
+          },
+        ]}
+        {...print.handlers}
       />
     </div>
   );

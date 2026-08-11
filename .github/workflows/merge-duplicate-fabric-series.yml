@@ -1,0 +1,78 @@
+name: merge-duplicate-fabric-series
+
+# Reports the fabric series that exist twice, which side production references
+# more, and exactly what merging each pair would move - colour by colour, across
+# all four document arms (SO, PO, GRN, DO).
+#
+# The owner decided on 2026-08-11: "合并，按引用数多的那边" - merge, canonical side
+# wins by reference count. So mode=apply now exists. It did not before, because
+# merging repoints which colour a live document names.
+#
+# NOTHING IS DELETED. The losing series is SUPERSEDED (active = false, label
+# records what absorbed it); its colour rows stay attached to it. A pair whose
+# loser holds colours the winner does not is REFUSED by default, because
+# superseding it would take a named colour out of the picker - set
+# move_colours=1 to re-parent those colours onto the winner instead, which is a
+# change to the library's CONTENT and therefore opt-in.
+#
+# See backend/scripts/merge-duplicate-fabric-series.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "plan (read-only) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      move_colours:
+        description: "1 to re-parent colours the winner does not hold (otherwise those pairs are REFUSED)"
+        required: false
+        default: "0"
+        type: string
+      pairs:
+        description: "comma-separated LOSING series ids to restrict to (blank = all)"
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: merge-duplicate-fabric-series
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: Duplicate fabric series (${{ inputs.mode }})
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          MODE: ${{ inputs.mode }}
+          MOVE_COLOURS: ${{ inputs.move_colours }}
+          PAIRS: ${{ inputs.pairs }}
+        run: |
+          set -o pipefail
+          node scripts/merge-duplicate-fabric-series.mjs | tee dup-series.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: merge-duplicate-fabric-series-${{ inputs.mode }}
+          path: backend/dup-series.txt
+          retention-days: 30

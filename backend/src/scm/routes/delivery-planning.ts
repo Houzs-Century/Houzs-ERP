@@ -75,6 +75,15 @@ import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
+import { deriveArrangementStage } from '../lib/arrangement-stage';
+/* Option B side map (/geo): zone derivation + set counting + cache-first
+   geocoding reuse the EXISTING single-owner modules — the zone map + fallback
+   from the delivery-zones router, the packer's set fold, and the mig-0197
+   geocode cache. No second copy of any rule. */
+import { MAP_COLS as ZONE_MAP_COLS, toPrefixMap, type MapRow as ZoneMapRow } from './delivery-zones';
+import { zoneForAddress } from '../lib/zone-classify';
+import { deriveSetCount, type SetLine } from '../lib/set-count';
+import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
@@ -714,6 +723,12 @@ deliveryPlanning.get('/', async (c) => {
      took. Best-effort: a failed read leaves dp_no null, which renders as "—" and
      is honest about not knowing, rather than inventing a number. */
   const dpNoByDoc = new Map<string, string>();
+  /* Live trip per SO — the ARRANGEMENT-pipeline signal. An SO is "Time arranged"
+     when a DELIVERY stop keyed on one of its DOs sits on a non-CANCELLED trip
+     (the same do_id key scheduleOntoTrip writes and staleStopSweepFor sweeps).
+     Best-effort like the dp_no read: a failed read leaves the map empty, so the
+     stage degrades to PENDING_TIME/PENDING_DATE — never a guess. */
+  const tripByDoc = new Map<string, { id: string; trip_no: string | null; trip_date: string | null; stop_no: number | null; eta_offset_s: number | null }>();
   {
     /* SO rows resolve their number through their DO. There is deliberately NO
        so_id lookup: scm.mfg_sales_orders has no `id`, so an SO can never be the
@@ -723,7 +738,7 @@ deliveryPlanning.get('/', async (c) => {
     const docByDoId = new Map<string, string>();
     for (const [dn, arr] of doByDoc) for (const d of arr) docByDoId.set(d.id, dn);
 
-    type StopRow = { dp_no?: string | null; do_id?: string | null };
+    type StopRow = { dp_no?: string | null; do_id?: string | null; trip_id?: string | null; tripId?: string | null; stop_no?: number | null; stopNo?: number | null; eta_offset_s?: number | null; etaOffsetS?: number | null };
     const take = (rows: StopRow[] | null | undefined) => {
       for (const s of rows ?? []) {
         const no = s.dp_no;
@@ -736,11 +751,49 @@ deliveryPlanning.get('/', async (c) => {
     };
     try {
       if (doIds.length) {
+        /* ONE widened read serves both maps. The dp_no rule is unchanged — the
+           filter that used to live in the query (`dp_no IS NOT NULL`) now lives
+           in take(), same rows either way. */
         const byDo = await sb.from('trip_stops')
-          .select('dp_no, do_id').in('do_id', doIds).not('dp_no', 'is', null);
-        take((byDo as { data?: StopRow[] }).data);
+          .select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', doIds);
+        const stopRows = ((byDo as { data?: StopRow[] }).data ?? []);
+        take(stopRows.filter((s) => s.dp_no != null));
+
+        /* Resolve the stops' trips (bounded .in) and keep only live ones —
+           a CANCELLED trip is no arrangement (the reverse reconcile already
+           returns such orders to the queue). Last write wins, matching the
+           latest-schedule convention above. */
+        const tripIds = [...new Set(stopRows
+          .map((s) => (s.tripId ?? s.trip_id) as string | null)
+          .filter((x): x is string => !!x))];
+        if (tripIds.length) {
+          const { data: tripRowsRaw } = await sb.from('trips')
+            .select('id, trip_no, trip_date, status').in('id', tripIds);
+          const liveTripById = new Map<string, { id: string; trip_no: string | null; trip_date: string | null }>();
+          for (const t of (tripRowsRaw ?? []) as Array<{
+            id: string; trip_no?: string | null; tripNo?: string | null;
+            trip_date?: string | null; tripDate?: string | null; status?: string | null;
+          }>) {
+            if (String(t.status ?? '').toUpperCase() === 'CANCELLED') continue;
+            liveTripById.set(String(t.id), {
+              id: String(t.id),
+              trip_no: (t.tripNo ?? t.trip_no ?? null) as string | null,
+              trip_date: (t.tripDate ?? t.trip_date ?? null) as string | null,
+            });
+          }
+          for (const s of stopRows) {
+            const tripId = (s.tripId ?? s.trip_id) as string | null;
+            const trip = tripId ? liveTripById.get(tripId) : undefined;
+            const dn = (s.do_id && docByDoId.get(s.do_id)) || null;
+            if (dn && trip) tripByDoc.set(dn, {
+              ...trip,
+              stop_no: (s.stopNo ?? s.stop_no ?? null) as number | null,
+              eta_offset_s: (s.etaOffsetS ?? s.eta_offset_s ?? null) as number | null,
+            });
+          }
+        }
       }
-    } catch { /* leave the map empty — rows render dp_no null */ }
+    } catch { /* leave the maps empty — rows render dp_no / trip null */ }
   }
 
   /* Crew snapshot per DO. Best-effort — read the assign-time snapshot so the
@@ -970,6 +1023,26 @@ deliveryPlanning.get('/', async (c) => {
       // crew (from the latest DO) + the DOs themselves
       crew,
       delivery_orders: dos.map((d) => ({ id: d.id, do_number: d.doNumber, status: d.status })),
+      /* ── Arrangement pipeline (derived, lib/arrangement-stage.ts) ─────────
+         The live trip this order sits on (via its DO's DELIVERY stop, CANCELLED
+         trips excluded) and the derived stage:
+           PENDING_DATE  — in Pending Schedule, amended_delivery_date not set
+           PENDING_TIME  — date confirmed (amended_delivery_date), no live stop
+           TIME_ARRANGED — on a live trip
+         null outside Pending Schedule (nothing to arrange / already delivered). */
+      trip_id: tripByDoc.get(docNo)?.id ?? null,
+      trip_no: tripByDoc.get(docNo)?.trip_no ?? null,
+      trip_date: tripByDoc.get(docNo)?.trip_date ?? null,
+      /* Time-of-run keys (owner 2026-08-08: within the same date/state/postcode
+         group the Time queues also order by TIME) — the stop's sequence and
+         ETA offset on its live trip; null off-trip. */
+      trip_stop_no: tripByDoc.get(docNo)?.stop_no ?? null,
+      trip_eta_offset_s: tripByDoc.get(docNo)?.eta_offset_s ?? null,
+      arrangement_stage: deriveArrangementStage({
+        deliveryState: state,
+        dateConfirmed: amendedDD != null,
+        onActiveTrip: tripByDoc.has(docNo),
+      }),
     };
   });
 
@@ -1117,6 +1190,14 @@ deliveryPlanning.get('/', async (c) => {
           remaining_qty: 0,
           crew: null,
           delivery_orders: [],
+          /* ASSR legs land PENDING_DELIVERY and schedule on their own document —
+             they are outside the SO arrangement pipeline (stage null). */
+          trip_id: null,
+          trip_no: null,
+          trip_date: null,
+          trip_stop_no: null,
+          trip_eta_offset_s: null,
+          arrangement_stage: null,
         });
       }
     }
@@ -1266,6 +1347,22 @@ deliveryPlanning.get('/', async (c) => {
         remaining_qty: 0,
         crew: null,
         delivery_orders: [],
+        /* A manual DP job joins the pipeline while it is PENDING_SCHEDULE: its
+           requested_date is its confirmed date (dp orders are created with the
+           date in hand), so an unscheduled dated job is PENDING_TIME — it needs
+           a lorry, which is exactly what the Time Arrangement inbox offers.
+           Scheduling it (date+lorry in one act) flips its board state to
+           PENDING_DELIVERY, which exits the pipeline (stage null). */
+        trip_id: ((d.trip_id ?? (d as { tripId?: string | null }).tripId) as string | null) ?? null,
+        trip_no: null,
+        trip_date: null,
+        trip_stop_no: null,
+        trip_eta_offset_s: null,
+        arrangement_stage: deriveArrangementStage({
+          deliveryState: scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE',
+          dateConfirmed: date != null,
+          onActiveTrip: false, // an unscheduled DP job is never on a trip yet
+        }),
       });
     }
   } catch (e) {
@@ -1390,6 +1487,14 @@ deliveryPlanning.get('/', async (c) => {
             lorry_plate: leg.lorry,
           } : null,
           delivery_orders: [],
+          /* PMS windows are scheduled and crewed in Projects — a read-only
+             mirror here, outside the arrangement pipeline. */
+          trip_id: null,
+          trip_no: null,
+          trip_date: null,
+          trip_stop_no: null,
+          trip_eta_offset_s: null,
+          arrangement_stage: null,
         });
       }
     }
@@ -1424,6 +1529,321 @@ deliveryPlanning.get('/', async (c) => {
     : regionFiltered.filter((o) => o.delivery_state === stateParam);
 
   return c.json({ orders: stateFiltered, counts, regions: regionCfg.regions });
+});
+
+/* ──────────────────────────────────────────────────────────────────────────
+   GET /delivery-planning/geo?date=YYYY-MM-DD&region=<ALL|code>
+
+   The Option B side-map read (owner decision 2026-08-08): ONE point per SO
+   whose EFFECTIVE delivery date (amended ?? customer — the same rule the board
+   derives days_left from) falls on the picked day. Company-scoped to the
+   caller's ALLOWED companies (the shared queue reads both — WIDEN, never
+   isolate, same as /:docNo/lines) and region-filtered EXACTLY like the board
+   (same loadRegionConfig classification + matchesRegion). Per-assignee row
+   scope applies like everywhere else on this router: a self-scoped Driver /
+   Helper gets only their own day-pins (the board's latest-DO assignment rule).
+
+   lat/lng resolve through the EXISTING scm.geocode_cache (mig 0197):
+   ONE BATCHED cache read first, then AT MOST one Google call per never-seen
+   address (geocodeAddressCached writes it back, so a given address geocodes
+   once EVER — the /trips/day cost pattern, never a per-request storm; with no
+   GOOGLE_MAPS_API_KEY nothing bills and only cached addresses pin). An address
+   that cannot be located is returned in `ungeocoded` with a reason — never
+   silently dropped. The depot is the day's majority line-warehouse, geocoded
+   the same way; `depotReason` says why when it is null.
+
+   READ-ONLY, no polling — the frontend fetches once per (date, region) with
+   react-query staleTime like its siblings.
+
+   MUST stay registered BEFORE '/:docNo/lines' — 'geo' would otherwise parse
+   as a docNo (the same ordering rule /trips/day documents).
+   ─────────────────────────────────────────────────────────────────────────*/
+deliveryPlanning.get('/geo', async (c) => {
+  const sb = c.get('supabase');
+  const date = (c.req.query('date') ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json({ error: 'invalid_date', reason: 'date=YYYY-MM-DD is required' }, 400);
+  }
+  const regionParam = (c.req.query('region') ?? 'ALL').trim().toUpperCase();
+  const configured = !!c.env.GOOGLE_MAPS_API_KEY;
+
+  const regionCfg = await loadRegionConfig(sb);
+
+  /* 1. The day's SOs — live (not DRAFT/CANCELLED) whose EFFECTIVE delivery
+        date is the picked day: amended_delivery_date == date, OR no amended
+        date AND customer_delivery_date == date. */
+  type GeoSoRow = {
+    doc_no: string | null; docNo?: string | null;
+    debtor_name: string | null; debtorName?: string | null;
+    customer_state: string | null; customerState?: string | null;
+    customer_country: string | null; customerCountry?: string | null;
+    address1: string | null; address2: string | null;
+    postcode: string | null;
+    local_total_centi: number | null; localTotalCenti?: number | null;
+  };
+  const { data: soRowsRaw, error: soErr } = await paginateAll<GeoSoRow>((from, to) =>
+    scopeToAllowedCompanies(
+      sb.from('mfg_sales_orders')
+        .select('doc_no, debtor_name, customer_state, customer_country, address1, address2, postcode, local_total_centi')
+        .neq('status', 'DRAFT')
+        .neq('status', 'CANCELLED')
+        .or(`amended_delivery_date.eq.${date},and(amended_delivery_date.is.null,customer_delivery_date.eq.${date})`)
+        .order('doc_no'),
+      c,
+    ).range(from, to),
+  );
+  if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
+
+  /* Region filter — the SAME config classification + match rule as the board. */
+  const regionsByDoc = new Map<string, Region[]>();
+  const dayRows = (soRowsRaw ?? []).filter((r) => {
+    const dn = String(r.docNo ?? r.doc_no ?? '');
+    if (!dn) return false;
+    const regions = stateToRegionsFromConfig(
+      regionCfg,
+      r.customerState ?? r.customer_state ?? null,
+      r.customerCountry ?? r.customer_country ?? null,
+    );
+    regionsByDoc.set(dn, regions);
+    return matchesRegion({ regions }, regionParam, regionCfg.validCodes);
+  });
+  let docNos = dayRows.map((r) => String(r.docNo ?? r.doc_no ?? '')).filter(Boolean);
+
+  /* 1b. PER-ASSIGNEE ROW SCOPE — the board's latest-DO assignment rule. `all`
+        (every dispatcher/ops caller) skips this entirely. */
+  const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  if (scope.mode !== 'all' && docNos.length > 0) {
+    const { data: doRows } = await paginateAll<{
+      id: string; so_doc_no: string | null; status: string | null;
+      driver_id: string | null; driverId?: string | null;
+    }>((from, to) =>
+      sb.from('delivery_orders')
+        .select('id, so_doc_no, status, driver_id')
+        .in('so_doc_no', docNos)
+        .range(from, to),
+    );
+    const latestDoByDoc = new Map<string, { id: string; driverId: string | null }>();
+    const scopeDoIds: string[] = [];
+    for (const d of (doRows ?? [])) {
+      const st = (d.status ?? '').toUpperCase();
+      if (st === 'DRAFT' || st === 'CANCELLED') continue;
+      const dn = d.so_doc_no ?? '';
+      if (!dn) continue;
+      latestDoByDoc.set(dn, { id: d.id, driverId: d.driverId ?? d.driver_id ?? null });
+      scopeDoIds.push(d.id);
+    }
+    const crewByDoId = new Map<string, { driverIds: Array<string | null>; helperIds: Array<string | null> }>();
+    if (scopeDoIds.length > 0) {
+      const { data: crewRows } = await paginateAll<Record<string, unknown>>((from, to) =>
+        sb.from('delivery_order_crew')
+          .select('do_id, driver_1_id, driver_2_id, helper_1_id, helper_2_id')
+          .in('do_id', scopeDoIds)
+          .range(from, to),
+      );
+      for (const cr of (crewRows ?? [])) {
+        crewByDoId.set(String(cr.do_id ?? cr.doId ?? ''), {
+          driverIds: [(cr.driver1Id ?? cr.driver_1_id) as string | null, (cr.driver2Id ?? cr.driver_2_id) as string | null],
+          helperIds: [(cr.helper1Id ?? cr.helper_1_id) as string | null, (cr.helper2Id ?? cr.helper_2_id) as string | null],
+        });
+      }
+    }
+    docNos = docNos.filter((dn) => {
+      const latest = latestDoByDoc.get(dn);
+      if (!latest) return false; // no DO cut yet → unassigned → not a self-scoped caller's job
+      const crew = crewByDoId.get(latest.id) ?? { driverIds: [], helperIds: [] };
+      return scopeMatchesAssignment(scope, {
+        driverIds: [...crew.driverIds, latest.driverId],
+        helperIds: crew.helperIds,
+      });
+    });
+  }
+  const docNoSet = new Set(docNos);
+  const scopedRows = dayRows.filter((r) => docNoSet.has(String(r.docNo ?? r.doc_no ?? '')));
+
+  if (scopedRows.length === 0) {
+    return c.json({ date, region: regionParam, configured, points: [], depot: null, depotReason: 'no orders on this day', ungeocoded: [] });
+  }
+
+  /* 2. Zone map — the SAME company map + in-code default the delivery-zones
+        router owns (exported helpers, one rule, two readers). */
+  const { data: zoneRows } = await paginateAll<ZoneMapRow>((from, to) =>
+    scopeToCompany(sb.from('delivery_zone_postcodes').select(ZONE_MAP_COLS), c).range(from, to),
+  );
+  const { map: zoneMap } = toPrefixMap(zoneRows ?? []);
+
+  /* 3. Line items → set counts (the packer's derivation: catalog category
+        first, item_group fallback, deriveSetCount) + the per-order primary
+        warehouse for the depot vote. */
+  const { data: itemRows } = await paginateAll<{
+    doc_no: string; item_group: string | null; item_code: string | null;
+    qty: number | null; cancelled: boolean | null;
+    warehouse_id: string | null; warehouseId?: string | null;
+  }>((from, to) =>
+    scopeToAllowedCompanies(
+      sb.from('mfg_sales_order_items')
+        .select('doc_no, item_group, item_code, qty, cancelled, warehouse_id')
+        .in('doc_no', docNos)
+        .eq('cancelled', false),
+      c,
+    ).range(from, to),
+  );
+  const geoCodes = new Set<string>();
+  for (const it of (itemRows ?? [])) if (it.item_code) geoCodes.add(it.item_code);
+  const geoProductCategory = new Map<string, string>();
+  {
+    const codeList = [...geoCodes];
+    for (let i = 0; i < codeList.length; i += 300) {
+      const chunk = codeList.slice(i, i + 300);
+      if (chunk.length === 0) continue;
+      const { data: prodRows } = await paginateAll<{ code: string; category: string | null }>((from, to) =>
+        scopeToCompany(sb.from('mfg_products').select('code, category').in('code', chunk), c).range(from, to),
+      );
+      for (const p of (prodRows ?? [])) if (p.category) geoProductCategory.set(p.code, normCategory(p.category));
+    }
+  }
+  const setLinesByDoc = new Map<string, SetLine[]>();
+  const primaryWhByDoc = new Map<string, string>();
+  for (const it of (itemRows ?? [])) {
+    const dn = String(it.doc_no ?? '');
+    if (!dn) continue;
+    const cat = (it.item_code ? geoProductCategory.get(it.item_code) : undefined) ?? normCategory(it.item_group ?? '');
+    const arr = setLinesByDoc.get(dn) ?? [];
+    arr.push({ category: cat, qty: it.qty, cancelled: it.cancelled });
+    setLinesByDoc.set(dn, arr);
+    const wh = it.warehouseId ?? it.warehouse_id;
+    if (wh && !primaryWhByDoc.has(dn)) primaryWhByDoc.set(dn, String(wh));
+  }
+
+  /* 4. Depot = the day's MAJORITY primary warehouse (one vote per order, ties
+        break to the first seen — the same deterministic rule the Time page's
+        depotForDocNos uses), geocoded cache-first like everything else. */
+  let depot: { warehouseId: string; name: string; code: string | null; lat: number; lng: number } | null = null;
+  let depotReason: string | null = null;
+  {
+    const votes = new Map<string, { count: number; seen: number }>();
+    let seen = 0;
+    for (const dn of docNos) {
+      const wh = primaryWhByDoc.get(dn);
+      if (!wh) continue;
+      const cur = votes.get(wh);
+      if (cur) cur.count += 1;
+      else votes.set(wh, { count: 1, seen: seen++ });
+    }
+    let best: { id: string; count: number; seen: number } | null = null;
+    for (const [id, v] of votes) {
+      if (!best || v.count > best.count || (v.count === best.count && v.seen < best.seen)) best = { id, ...v };
+    }
+    if (!best) depotReason = "the day's orders carry no warehouse";
+    else {
+      const { data: whRow } = await sb.from('warehouses')
+        .select('id, name, code, location, city, state, postcode')
+        .eq('id', best.id)
+        .maybeSingle();
+      const w = (whRow ?? {}) as Record<string, unknown>;
+      const whName = String(w.name ?? '');
+      const whAddr = composeAddress({
+        address1: (w.location ?? null) as string | null,
+        address2: (w.city ?? null) as string | null,
+        postcode: (w.postcode ?? null) as string | null,
+        state: (w.state ?? null) as string | null,
+      });
+      const hit = whAddr ? await geocodeAddressCached(sb, c.env, whAddr) : null;
+      if (hit) {
+        depot = { warehouseId: best.id, name: whName, code: (w.code ?? null) as string | null, lat: hit.lat, lng: hit.lng };
+      } else {
+        depotReason = whName
+          ? `depot warehouse "${whName}" could not be geocoded — fill in its address in the Warehouses master`
+          : 'depot warehouse could not be geocoded';
+      }
+    }
+  }
+
+  /* 5. Point geocodes — ONE batched cache read over the day's normalized
+        addresses, then geocodeAddressCached ONLY for the misses (each miss is
+        one Google call, once ever; with no key, misses stay ungeocoded). */
+  const addrByDoc = new Map<string, string>();
+  for (const r of scopedRows) {
+    const dn = String(r.docNo ?? r.doc_no ?? '');
+    const addr = composeAddress({
+      address1: r.address1,
+      address2: r.address2,
+      postcode: r.postcode,
+      state: r.customerState ?? r.customer_state ?? null,
+      country: r.customerCountry ?? r.customer_country ?? null,
+    });
+    if (dn && addr) addrByDoc.set(dn, addr);
+  }
+  const cachedByKey = new Map<string, { lat: number; lng: number }>();
+  {
+    const keys = [...new Set([...addrByDoc.values()].map((a) => normalizeAddress(a)).filter((k) => k !== ''))];
+    for (let i = 0; i < keys.length; i += 200) {
+      const chunk = keys.slice(i, i + 200);
+      if (chunk.length === 0) continue;
+      const { data: hits } = await sb.from('geocode_cache')
+        .select('normalized_address, lat, lng')
+        .in('normalized_address', chunk);
+      for (const h of ((hits ?? []) as Array<Record<string, unknown>>)) {
+        const key = String(h.normalizedAddress ?? h.normalized_address ?? '');
+        const lat = Number(h.lat);
+        const lng = Number(h.lng);
+        if (key && Number.isFinite(lat) && Number.isFinite(lng)) cachedByKey.set(key, { lat, lng });
+      }
+    }
+  }
+
+  /* 6. Assemble the points; every failure lands in `ungeocoded` with a reason. */
+  const points: Array<{
+    ref: string; so_doc_no: string; lat: number; lng: number;
+    zone: string | null; region: Region; state: string | null; postcode: string | null;
+    sets: number; revenueCenti: number; customer: string | null; address: string;
+  }> = [];
+  const ungeocoded: Array<{ ref: string; reason: string }> = [];
+  const missResolved = new Map<string, { lat: number; lng: number } | null>();
+  for (const r of scopedRows) {
+    const dn = String(r.docNo ?? r.doc_no ?? '');
+    const addr = addrByDoc.get(dn);
+    if (!addr) { ungeocoded.push({ ref: dn, reason: 'no address on the order' }); continue; }
+    const key = normalizeAddress(addr);
+    let hit = cachedByKey.get(key) ?? null;
+    if (!hit) {
+      if (missResolved.has(key)) {
+        hit = missResolved.get(key) ?? null;
+      } else if (configured) {
+        const g = await geocodeAddressCached(sb, c.env, addr);
+        hit = g ? { lat: g.lat, lng: g.lng } : null;
+        missResolved.set(key, hit);
+      } else {
+        missResolved.set(key, null);
+      }
+    }
+    if (!hit) {
+      ungeocoded.push({
+        ref: dn,
+        reason: configured
+          ? 'address could not be geocoded — check the address'
+          : 'not in the geocode cache and GOOGLE_MAPS_API_KEY is not set',
+      });
+      continue;
+    }
+    const zr = zoneForAddress({ postcode: r.postcode, address1: r.address1, address2: r.address2 }, zoneMap);
+    const sc = deriveSetCount(setLinesByDoc.get(dn) ?? []);
+    points.push({
+      ref: dn,
+      so_doc_no: dn,
+      lat: hit.lat,
+      lng: hit.lng,
+      zone: zr.zone,
+      region: (regionsByDoc.get(dn) ?? [])[0] ?? FALLBACK_DEFAULT_REGION,
+      state: r.customerState ?? r.customer_state ?? null,
+      postcode: r.postcode ?? null,
+      sets: sc.sets,
+      revenueCenti: Number(r.localTotalCenti ?? r.local_total_centi ?? 0) || 0,
+      customer: r.debtorName ?? r.debtor_name ?? null,
+      address: addr,
+    });
+  }
+
+  return c.json({ date, region: regionParam, configured, points, depot, depotReason, ungeocoded });
 });
 
 /* ──────────────────────────────────────────────────────────────────────────

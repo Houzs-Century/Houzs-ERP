@@ -67,11 +67,13 @@ import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { PoAmendmentCreateModal } from "../../components/scm-v2/PoAmendmentCreateModal";
 // Relationship map (owner 2026-07-27) — the purchase-side twin of the SO/DO/
 // SI/DR maps: same shared 5-node canvas, chain + clicks from the PO hook.
-import { DocumentRelationshipMapModal } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { usePoRelationshipMap } from "./po-relationship-map";
 // Per-line SO allocations (mig 0235) — split a consolidated line across the
 // customers (and stock) it serves; sub-numbered PO-xxxx-yy-01, -02, ...
 import { PoLineAllocationsModal } from "../../components/scm-v2/PoLineAllocationsModal";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -437,6 +439,10 @@ function PurchaseOrderDetailV2ReadOnly() {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    pairing: chainPairing,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
   } = usePoRelationshipMap(purchaseOrder);
 
   useSetBreadcrumbs([
@@ -482,7 +488,7 @@ function PurchaseOrderDetailV2ReadOnly() {
   // Render + download the PO PDF via the shared jspdf generator (client-side),
   // mirroring the V1 PurchaseOrderDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!purchaseOrder) return;
     // PR #102 — pre-resolve purchase_location name + deliver-to address (the
     // PDF can't hit the API), same as the V1 detail page.
@@ -502,9 +508,9 @@ function PurchaseOrderDetailV2ReadOnly() {
         (purchaseOrder as unknown as { source_so_doc_no?: string | null })
           .source_so_doc_no ?? null,
     };
-    import("../../vendor/scm/lib/purchase-order-pdf")
+    return import("../../vendor/scm/lib/purchase-order-pdf")
       .then(({ generatePurchaseOrderPdf }) =>
-        generatePurchaseOrderPdf(headerForPdf as never, items as never)
+        generatePurchaseOrderPdf(headerForPdf as never, items as never, { action })
       )
       .catch((e) =>
         notify({
@@ -514,6 +520,8 @@ function PurchaseOrderDetailV2ReadOnly() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseOrder);
   const goGrnFromPo = () =>
     id && navigate(`/scm/grns/from-po?poId=${id}`);
 
@@ -774,11 +782,12 @@ function PurchaseOrderDetailV2ReadOnly() {
     },
     {
       /* mig 0235 — the consolidated-PO split: which customer (or STOCK) each
-         slice of this line serves, as sub-numbered chips. The Split button
-         opens the editor; it stays available on RECEIVED POs on purpose (the
-         backend refuses only CANCELLED) — attributing historical consolidated
-         buys by hand is what the editor exists for. When allocations exist
-         they are the authoritative Assigned-SO answer for this line. */
+         slice of this line was BOUGHT for, as sub-numbered chips. The Split
+         button opens the editor; it stays available on RECEIVED POs on purpose
+         (the backend refuses only CANCELLED) — attributing historical
+         consolidated buys by hand is what the editor exists for. Slices are
+         procurement provenance (Decision, purchase-order.md 2026-08-06: soft
+         until DO) — muted tone, "bought for" wording, never "assigned". */
       key: "allocations",
       label: "Allocations",
       width: "230px",
@@ -797,13 +806,13 @@ function PurchaseOrderDetailV2ReadOnly() {
                 key={a.id}
                 title={
                   a.so_doc_no
-                    ? `${sub(a.seq)} — ${a.qty} of this line for ${a.so_doc_no}`
-                    : `${sub(a.seq)} — ${a.qty} of this line for stock (no customer)`
+                    ? `${sub(a.seq)} — ${a.qty} of this line bought for ${a.so_doc_no}. Procurement provenance, not the live assignment.`
+                    : `${sub(a.seq)} — ${a.qty} of this line bought for stock (no customer)`
                 }
                 className={cn(
                   "rounded border px-1.5 py-0.5 font-mono text-[10.5px] font-semibold",
                   a.so_doc_no
-                    ? "border-border-subtle bg-surface-2 text-accent-ink"
+                    ? "border-border-subtle bg-surface-dim text-ink-secondary"
                     : "border-dashed border-border text-ink-secondary"
                 )}
               >
@@ -813,7 +822,33 @@ function PurchaseOrderDetailV2ReadOnly() {
                 <span className="text-ink-muted">{` (qty ${a.qty})`}</span>
               </span>
             ))}
-            {allocs.length === 0 && <span className="text-[11px] text-ink-muted">—</span>}
+            {/* No explicit slices -> show the EFFECTIVE assignment instead of a
+                dash. The coarse Source-SO link (or STOCK) is what actually
+                governs this line, and rendering "—" while the list shows an
+                Assigned SO read as a contradiction. Owner, 2026-08-06: "明明显示
+                有 SO,可是 allocation 却显示没有". A stored Source-SO link wears the
+                MUTED PROVENANCE dress even when implicit — under the three-identity
+                language a dash means FLOATING, and this is a stored fact (owner,
+                2026-08-07: the list and the editor read as two different answers).
+                Only the no-link STOCK case stays dashed. */}
+            {allocs.length === 0 && (
+              <span
+                title={
+                  l.so_doc_no
+                    ? `Whole line (qty ${l.qty}) bought for ${l.so_doc_no} — procurement provenance, not the live assignment; add a slice to split it.`
+                    : `Whole line (qty ${l.qty}) bought for stock — no Source SO link; add a slice to attribute it.`
+                }
+                className={cn(
+                  "rounded border px-1.5 py-0.5 font-mono text-[10.5px]",
+                  l.so_doc_no
+                    ? "border-border-subtle bg-surface-dim font-semibold text-ink-secondary"
+                    : "border-dashed border-border text-ink-secondary"
+                )}
+              >
+                {l.so_doc_no ?? "STOCK"}
+                <span className="text-ink-muted">{` (qty ${l.qty})`}</span>
+              </span>
+            )}
             {(purchaseOrder?.status || "").toUpperCase() !== "CANCELLED" && (
               <button
                 type="button"
@@ -984,7 +1019,7 @@ function PurchaseOrderDetailV2ReadOnly() {
             <Button variant="ghost" icon={<Share2 size={14} />} onClick={() => setRelMapOpen(true)}>
               Relationship Map
             </Button>
-            <Button variant="secondary" icon={<Printer size={14} />} onClick={goPrintPdf}>
+            <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>
               Print PDF
             </Button>
             {purchaseOrder.status !== "DRAFT" && purchaseOrder.status !== "CANCELLED" && (
@@ -1128,6 +1163,19 @@ function PurchaseOrderDetailV2ReadOnly() {
                   }
                   muted={!purchaseOrder.purchase_location_id}
                 />
+                {/* Owner 2026-08-06 — supplier-revised delivery dates (mig 0180
+                    lineage). Only render the slots the supplier actually pushed
+                    ("如果有更新 supplier delivery date 2"); the raw dates show so
+                    the desk sees each revision, not just the latest. */}
+                {purchaseOrder.supplier_delivery_date_2 && (
+                  <Field label="Supplier date 2" value={fmtDate(purchaseOrder.supplier_delivery_date_2)} />
+                )}
+                {purchaseOrder.supplier_delivery_date_3 && (
+                  <Field label="Supplier date 3" value={fmtDate(purchaseOrder.supplier_delivery_date_3)} />
+                )}
+                {purchaseOrder.supplier_delivery_date_4 && (
+                  <Field label="Supplier date 4" value={fmtDate(purchaseOrder.supplier_delivery_date_4)} />
+                )}
               </div>
 
               {purchaseOrder.notes && (
@@ -1199,6 +1247,17 @@ function PurchaseOrderDetailV2ReadOnly() {
                   v={fmtDate(purchaseOrder.expected_at)}
                   muted={!purchaseOrder.expected_at}
                 />
+                {/* Owner 2026-08-06 — supplier-revised dates, mirrored from the
+                    PO info card so the aside tells the same story. */}
+                {purchaseOrder.supplier_delivery_date_2 && (
+                  <KeyDateRow k="Supplier date 2" v={fmtDate(purchaseOrder.supplier_delivery_date_2)} />
+                )}
+                {purchaseOrder.supplier_delivery_date_3 && (
+                  <KeyDateRow k="Supplier date 3" v={fmtDate(purchaseOrder.supplier_delivery_date_3)} />
+                )}
+                {purchaseOrder.supplier_delivery_date_4 && (
+                  <KeyDateRow k="Supplier date 4" v={fmtDate(purchaseOrder.supplier_delivery_date_4)} />
+                )}
                 {purchaseOrder.submitted_at && (
                   <KeyDateRow
                     k="Submitted"
@@ -1291,7 +1350,7 @@ function PurchaseOrderDetailV2ReadOnly() {
           )}
           <button
             type="button"
-            onClick={goPrintPdf}
+            onClick={print.openPreview}
             className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft"
             aria-label="Print PDF"
           >
@@ -1330,6 +1389,41 @@ function PurchaseOrderDetailV2ReadOnly() {
         }}
         rowLabels={{ primary: "Purchase chain", secondary: "After goods receipt" }}
         amendmentsLabel="Related amendments (Sales Order & this PO)"
+        pairing={chainPairing}
+      />
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          setRelMapOpen(false);
+          pickChainChoice(d);
+        }}
+      />
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Purchase Order"
+        docNo={poDisplayNumber(
+          purchaseOrder.po_number,
+          (purchaseOrder as unknown as { revision?: number | null }).revision
+        )}
+        rows={[
+          { label: "Supplier", value: supplierNameOf(purchaseOrder) },
+          { label: "PO date", value: fmtDate(purchaseOrder.po_date) },
+          {
+            label: "Expected",
+            value: purchaseOrder.expected_at ? fmtDate(purchaseOrder.expected_at) : "Not set",
+          },
+          { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
+          {
+            label: "Order total",
+            value: fmtMoney(totalOf(purchaseOrder), purchaseOrder.currency),
+          },
+        ]}
+        {...print.handlers}
       />
     </div>
   );

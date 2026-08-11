@@ -241,16 +241,28 @@ app.post("/brands", requirePermission("projects.manage"), async (c) => {
   const name = (body.name || "").trim();
   if (!name) return c.json({ error: "name is required" }, 400);
   const color = normaliseHex(body.color) ?? "64748b";
-  const existing = await c.env.DB.prepare(
-    `SELECT id FROM project_brands WHERE LOWER(name) = LOWER(?)`
-  )
-    .bind(name)
-    .first<{ id: number }>();
-  if (existing) return c.json({ error: "A brand with that name already exists" }, 409);
   // Stamp the active company so a brand created under 2990 isn't silently
   // labelled HOUZS by the company_id column DEFAULT. When the company is
   // unresolved (single-company / cold-start) fall back to that DEFAULT.
   const activeCo = activeCompanyId(c);
+  /* Duplicate check is PER COMPANY, matching what the list shows (owner
+     2026-08-08: adding BEDFRAME/SERVICE on Houzs Century refused because
+     2990 owns brands with those names — the company-blind check named a
+     collision the operator could not even see). The INSERT below already
+     stamps company_id; the check must look at the same slice. Unresolved
+     company keeps the old global check (single-company installs). */
+  const existing = activeCo != null
+    ? await c.env.DB.prepare(
+        `SELECT id FROM project_brands WHERE LOWER(name) = LOWER(?) AND company_id = ?`
+      )
+        .bind(name, activeCo)
+        .first<{ id: number }>()
+    : await c.env.DB.prepare(
+        `SELECT id FROM project_brands WHERE LOWER(name) = LOWER(?)`
+      )
+        .bind(name)
+        .first<{ id: number }>();
+  if (existing) return c.json({ error: "A brand with that name already exists" }, 409);
   const r = activeCo != null
     ? await c.env.DB.prepare(
         `INSERT INTO project_brands (name, color, sort_order, active, company_id)
@@ -982,8 +994,11 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   let pendingLogistic = false;
   let pendingApprove: string[] | undefined;
   let pendingDirector: { stock?: boolean; agreement?: boolean; sales_attending?: boolean; sales_pic?: boolean } | undefined;
+  /** Brands a brand-scoped approver owns (owner 2026-08-10). Empty = all. */
+  let approverBrands: string[] | undefined;
   let pendingSalesAttending = false;
   let pendingAgreement = false;
+  let pendingDefectReview = false;
   if (c.req.query("my_pending") === "1" && user) {
     // Owner 2026-07-13 — staged "My Pending". Approvers (anyone holding a
     // checklist approval permission, or `*`) see ONLY the items awaiting
@@ -1038,9 +1053,29 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       // their list. (They do NOT hold projects.approve, so they previously
       // fell through to SALES PIC.)
       pendingDirector = { stock: true, sales_attending: true, sales_pic: true };
+      // Brand split (owner 2026-08-10: Kris takes AKEMI + ERGOTEX stock-outs,
+      // Peter takes ZANOTTI). A director configured with user_brands rows only
+      // sees those brands in the APPROVAL lane; one with no rows keeps every
+      // brand, so Peter / Kingsley are unaffected.
+      const kb = await c.env.DB.prepare(
+        `SELECT brand FROM user_brands WHERE user_id = ?`
+      )
+        .bind(user.id)
+        .all<{ brand: string }>();
+      const kbList = (kb.results ?? []).map((x) => (x.brand ?? "").trim()).filter(Boolean);
+      if (kbList.length) approverBrands = kbList;
     } else if (r === "purchaser") pendingLabel = "PURCHASER";
     else if (r === "logistic") pendingLogistic = true; // setup not arranged
-    else if (r === "driver" || r === "helper" || r === "storekeeper") pendingLabel = "DRIVER";
+    else if ((user.position_name ?? "").trim().toLowerCase() === "storekeeper supervisor") {
+      // Shukor (owner 2026-08-07): the Storekeeper Supervisor is the defect
+      // clean-or-replace reviewer. A fresh defect upload (no Done/Replace yet)
+      // lands here; he clicks Done (cleaned) or Replace (escalate to purchaser).
+      // Keyed on POSITION, not role — his role is the shared "Storekeeper", so
+      // the driver/helper/storekeeper arm below would otherwise cage him to his
+      // own crewed events. This lane is deliberately NOT crew-scoped: he reviews
+      // defects across every event (see assigned_user_id below).
+      pendingDefectReview = true;
+    } else if (r === "driver" || r === "helper" || r === "storekeeper") pendingLabel = "DRIVER";
     else if (r.includes("sales")) {
       // Sales PIC: their SALES-PIC-badged tasks + the Sales Attending assignment.
       pendingLabel = "SALES PIC";
@@ -1055,8 +1090,10 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     pending_logistic: pendingLogistic,
     pending_approve: pendingApprove,
     pending_director: pendingDirector,
+    approver_brands: approverBrands,
     pending_sales_attending: pendingSalesAttending || undefined,
     pending_agreement: pendingAgreement || undefined,
+    pending_defect_review: pendingDefectReview || undefined,
     stage: c.req.query("stage"),
     // Date-derived event phase for the field/sales slim bar (owner 2026-07-21).
     // Only "setup" | "dismantle" are honoured; anything else is ignored.
@@ -1068,11 +1105,16 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     state: c.req.query("state") || undefined,
     event_type_id: eventTypeParam ? parseInt(eventTypeParam, 10) : undefined,
     section: c.req.query("section") || undefined,
+    // Outstanding-task filter (owner 2026-08-05) — exact checklist title.
+    task_pending: c.req.query("task_pending") || undefined,
     status: c.req.query("status") || undefined,
     exclude_done: c.req.query("exclude_done") === "1",
     search: c.req.query("search"),
-    year: yearParam ? parseInt(yearParam, 10) : undefined,
-    month: monthParam ? parseInt(monthParam, 10) : undefined,
+    // Passed through as-is: may be a single value OR a comma-separated
+    // multi-select list (owner 2026-08-07). listProjects validates each entry
+    // (4-digit year / 1-12 month) and binds them individually.
+    year: yearParam || undefined,
+    month: monthParam || undefined,
     page: parseInt(c.req.query("page") || "1", 10),
     per_page: parseInt(c.req.query("per_page") || "50", 10),
     include_archived: c.req.query("include_archived") === "1",
@@ -1089,10 +1131,17 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     // events they're crewed on (FK cols or crew JSON name match).
     // Owner 2026-07-21: for helpers/storekeepers this is FORCED — they only
     // ever see their assigned events (isCrewScopedUser).
+    // The defect-review lane (Storekeeper Supervisor, owner 2026-08-07) is NOT
+    // crew-caged: skip the forced assigned-to-me filter so Shukor sees every
+    // event with a fresh defect, not only the ones he is crewed on.
     assigned_user_id:
-      isCrewScopedUser(user) || c.req.query("assigned_to_me") === "1" ? user?.id : undefined,
+      !pendingDefectReview && (isCrewScopedUser(user) || c.req.query("assigned_to_me") === "1")
+        ? user?.id
+        : undefined,
     assigned_user_name:
-      isCrewScopedUser(user) || c.req.query("assigned_to_me") === "1" ? user?.name ?? undefined : undefined,
+      !pendingDefectReview && (isCrewScopedUser(user) || c.req.query("assigned_to_me") === "1")
+        ? user?.name ?? undefined
+        : undefined,
     // Crew list cards show the caller's own due pending tasks (owner
     // 2026-07-21): drivers/helpers/storekeepers all work the DRIVER-badged
     // items, so every crew caller gets the DRIVER titles attached per row.
@@ -1101,10 +1150,15 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     // work, not the project's section. pendingLabel is only set when
     // my_pending=1; logistic pending isn't a checklist item, so it gets its
     // own derived-title flag.
-    pending_titles_label:
-      isCrewScopedUser(user) || /^(driver|helper|storekeeper)$/i.test(user?.role_name ?? "")
+    // Defect reviewer (Shukor) is crew-positioned but his chip is neither the
+    // DRIVER title nor a role_label match — it is a derived "Review Defect
+    // Items" step (pending_titles_defect_review), so suppress the DRIVER default.
+    pending_titles_label: pendingDefectReview
+      ? undefined
+      : isCrewScopedUser(user) || /^(driver|helper|storekeeper)$/i.test(user?.role_name ?? "")
         ? "DRIVER"
         : pendingLabel,
+    pending_titles_defect_review: pendingDefectReview || undefined,
     pending_titles_logistic: pendingLogistic || undefined,
   });
   // Server-side finance strip (rule 3): the list SELECTs pf.rental /
@@ -1153,6 +1207,34 @@ app.get("/sections-distinct", requirePageAccess("projects"), async (c) => {
       ORDER BY s.sort_order, s.id`
   ).all<{ name: string; sort_order: number }>();
   return c.json({ data: (rows.results ?? []).map((r) => r.name) });
+});
+
+// Distinct TASK titles for the project-list "task not completed" filter (owner
+// 2026-08-05: "booth layout for display, 3D, 2D, stock out transfer … make it
+// drop down. and i can filter which task is not complete yet"). Read off the
+// active template so the picker lists the canonical tasks in checklist order,
+// grouped by their section — the same source sections-distinct uses.
+app.get("/task-titles-distinct", requirePageAccess("projects"), async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT i.title, s.name AS section_name, s.sort_order AS section_order, i.seq
+       FROM project_checklist_template_items i
+       LEFT JOIN project_checklist_template_sections s ON s.id = i.section_id
+      WHERE i.template_id = (
+        SELECT MAX(t.id) FROM project_checklist_templates t WHERE t.active = 1
+      )
+      ORDER BY s.sort_order, i.seq, i.id`
+  ).all<{ title: string; section_name: string | null; section_order: number | null; seq: number }>();
+  // De-dupe by title, keeping the first (lowest section/seq) occurrence — a
+  // title can repeat across role variants (e.g. two "Setup Image" rows).
+  const seen = new Set<string>();
+  const data: { title: string; section: string | null }[] = [];
+  for (const r of rows.results ?? []) {
+    const t = (r.title ?? "").trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    data.push({ title: t, section: r.section_name ?? null });
+  }
+  return c.json({ data });
 });
 
 // ── Organizers (lookup) ──────────────────────────────────────
@@ -3170,6 +3252,197 @@ app.delete("/phase-photos/:photoId", async (c) => {
 });
 
 // Manual resync endpoint — rebuilds project_finance from the lines.
+// ── Floorplan size auto-detect (owner 2026-08-04) ─────────────
+// "add features can read measurement for total size (sqm) from display
+// floorplan, once display floorplan uploaded, auto read the measurement and
+// fill in in size box."
+//
+// Reads the latest Display Floor Plan attachment with Claude vision (the SAME
+// ANTHROPIC_API_KEY + base64 pattern the scan-SO pipeline already uses) and
+// returns the total booth area in m². Writes projects.size_sqm only when the
+// box is empty (or ?overwrite=1), so a hand-typed value is never clobbered.
+// ALWAYS returns what it read + how, so the UI can show it and the operator
+// can correct it — this is an assist, not an authority.
+// ArrayBuffer -> base64. Workers expose no Node Buffer; the chunked loop keeps
+// stack usage bounded on multi-MB plans (same approach as scan-so's toBase64).
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  const chunk = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(
+      null,
+      Array.from(bytes.subarray(i, Math.min(i + chunk, bytes.length))),
+    );
+  }
+  return btoa(binary);
+}
+
+const FLOORPLAN_SIZE_PROMPT = `You are reading an exhibition/mall BOOTH FLOOR PLAN for Houzs Century.
+
+Return ONLY minified JSON, no prose:
+{"total_sqm": <number|null>, "method": "<explicit_total|dimensions|booth_count|none>", "evidence": "<short quote of what you read>", "booth_count": <number|null>, "confidence": "<high|medium|low>"}
+
+How to decide total_sqm, in priority order:
+1. explicit_total — the plan states a total area for OUR booth ("72 sqm", "72 m2", "72m²", "SIZE: 72"). Use it verbatim.
+2. dimensions — the plan gives our booth's width x depth in metres ("8m x 9m", "8 x 9"). total_sqm = width * depth.
+3. booth_count — the plan only identifies booth NUMBERS/units for us (e.g. "195-202 (8 BOOTH)", or 8 highlighted cells). A Houzs standard booth is 3m x 3m = 9 m², so total_sqm = booth_count * 9. Set booth_count.
+4. none — you cannot tell. total_sqm must be null. NEVER guess.
+
+Rules:
+- Measure OUR booth only (usually highlighted/coloured/labelled Houzs, AKEMI, ZANOTTI, ERGOTEX), never the whole hall.
+- Units are metres. If a dimension is clearly in feet, convert (1 ft = 0.3048 m) and say so in evidence.
+- Round total_sqm to a whole number when it is within 0.5 of one.
+- confidence: high = you read a clear total or clear dimensions; medium = derived from booth count or a partly legible label; low = anything shakier. If low and you are not reasonably sure, prefer total_sqm null.`;
+
+app.post("/:id/floorplan/detect-size", requirePermission("projects.write"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const apiKey = c.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return c.json({ error: "Reading floorplans isn't configured on this server." }, 503);
+  const user = c.get("user");
+  const project = await c.env.DB.prepare(
+    `SELECT id, size_sqm, booth_no FROM projects WHERE id = ?`
+  )
+    .bind(id)
+    .first<{ id: number; size_sqm: number | null; booth_no: string | null }>();
+  if (!project) return c.json({ error: "Not found" }, 404);
+
+  // Newest live attachment on a Display Floor Plan item (title tolerates the
+  // "Display Floor Plan" / "Blank Floorplan" naming both used in templates).
+  const att = await c.env.DB.prepare(
+    `SELECT a.r2_key, a.file_name, a.content_type
+       FROM project_checklist_attachments a
+       JOIN project_checklist pc ON pc.id = a.item_id
+      WHERE pc.project_id = ?
+        AND a.archived_at IS NULL
+        AND (pc.title LIKE 'Display Floor Plan%' OR pc.title LIKE 'Blank Floorplan%')
+      ORDER BY a.uploaded_at DESC, a.id DESC
+      LIMIT 1`
+  )
+    .bind(id)
+    .first<{ r2_key: string; file_name: string; content_type: string | null }>();
+  if (!att) return c.json({ error: "No floorplan uploaded yet." }, 400);
+
+  const obj = await c.env.POD_BUCKET.get(att.r2_key);
+  if (!obj) return c.json({ error: "The floorplan file is missing from storage." }, 404);
+  const buf = await obj.arrayBuffer();
+  const mime = (att.content_type || obj.httpMetadata?.contentType || "").toLowerCase();
+  // Images go as image blocks; PDFs as a document block (both supported by the
+  // model the scan pipeline already uses).
+  const isPdf = mime.includes("pdf") || /\.pdf$/i.test(att.file_name);
+  const isImage = /^image\/(jpeg|png|webp|gif)$/.test(mime) || /\.(jpe?g|png|webp|gif)$/i.test(att.file_name);
+  if (!isPdf && !isImage) {
+    return c.json({ error: "Only image or PDF floorplans can be read." }, 400);
+  }
+  // Per-kind ceilings: the API caps an IMAGE block near 5MB, while a PDF
+  // document block may be much larger (the 32MB request budget is the real
+  // limit, and base64 inflates ~33%, so 12MB of PDF is about 16MB on the wire).
+  // A venue master floorplan PDF routinely exceeds 5MB — the flat 5MB cap
+  // rejected them outright (project 187, verified 2026-08-05).
+  const maxBytes = isPdf ? 12 * 1024 * 1024 : 5 * 1024 * 1024;
+  if (buf.byteLength > maxBytes) {
+    return c.json(
+      {
+        error: `That floorplan is too large to read (${Math.round(buf.byteLength / 1024 / 1024)}MB; limit ${
+          maxBytes / 1024 / 1024
+        }MB for ${isPdf ? "PDFs" : "images"}). Please type the size in.`,
+      },
+      400,
+    );
+  }
+  const b64 = arrayBufferToBase64(buf);
+  const fileBlock = isPdf
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
+    : {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: /png$/i.test(mime) || /\.png$/i.test(att.file_name)
+            ? "image/png"
+            : /webp/i.test(mime) ? "image/webp" : "image/jpeg",
+          data: b64,
+        },
+      };
+  const hint = project.booth_no
+    ? `\n\nThe operator recorded our booth number(s) as: ${project.booth_no}. Use it to identify OUR booth and, if it names a count, to sanity-check booth_count.`
+    : "";
+
+  let parsed: {
+    total_sqm: number | null;
+    method?: string;
+    evidence?: string;
+    booth_count?: number | null;
+    confidence?: string;
+  } | null = null;
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 400,
+        messages: [
+          {
+            role: "user",
+            content: [fileBlock, { type: "text", text: FLOORPLAN_SIZE_PROMPT + hint }],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(45_000),
+    });
+    if (!resp.ok) {
+      const detail = await resp.text().catch(() => "");
+      console.error("[floorplan-size] anthropic", resp.status, detail.slice(0, 300));
+      return c.json({ error: "Couldn't read the floorplan just now. Please try again." }, 502);
+    }
+    const data = await resp.json<{ content?: { type: string; text?: string }[] }>();
+    const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+  } catch (e) {
+    console.error("[floorplan-size] failed", e);
+    return c.json({ error: "Couldn't read the floorplan just now. Please try again." }, 502);
+  }
+
+  const raw = parsed?.total_sqm;
+  const detected = typeof raw === "number" && isFinite(raw) && raw > 0 && raw < 100_000
+    ? Math.round(raw * 100) / 100
+    : null;
+  const overwrite = c.req.query("overwrite") === "1";
+  const hadValue = project.size_sqm != null && Number(project.size_sqm) > 0;
+  let applied = false;
+  if (detected != null && (!hadValue || overwrite)) {
+    await c.env.DB.prepare(`UPDATE projects SET size_sqm = ? WHERE id = ?`).bind(detected, id).run();
+    applied = true;
+    await logProjectActivity(
+      c.env,
+      id,
+      "floorplan_size_detected",
+      hadValue ? String(project.size_sqm) : null,
+      String(detected),
+      `Read from ${att.file_name} (${parsed?.method ?? "?"}${parsed?.evidence ? `: ${parsed.evidence}` : ""})`,
+      user?.id ?? null,
+    );
+  }
+  return c.json({
+    ok: true,
+    detected_sqm: detected,
+    applied,
+    skipped_reason: detected == null ? "not_found" : applied ? null : "already_set",
+    previous_sqm: project.size_sqm ?? null,
+    method: parsed?.method ?? "none",
+    evidence: parsed?.evidence ?? null,
+    booth_count: parsed?.booth_count ?? null,
+    confidence: parsed?.confidence ?? "low",
+    source_file: att.file_name,
+  });
+});
+
 app.post("/:id/finance/resync", requirePermission("projects.write"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
   const id = parseInt(c.req.param("id"), 10);
@@ -3428,6 +3701,59 @@ function isCrewScopedUser(user: { position_name?: string | null; permissions?: s
 // crew interchangeably — helpers/storekeepers are not individually assigned
 // to events (last-minute swaps), so they edit the driver part too (owner
 // 2026-07-16). Tasks are never badged HELPER/STOREKEEPER.
+/** BRAND-SCOPED APPROVAL (owner 2026-08-10: "kris approve stock out transfer
+ *  akemi and ergotex only, for zanotti peter approve").
+ *
+ *  Returns a 403 Response when the caller holds the approval key but is
+ *  configured for specific brands and THIS item's project isn't one of them;
+ *  null when the decision may proceed. An approver with NO `user_brands` rows
+ *  (Peter, HQ, the owner) is unrestricted — so this narrows only the people it
+ *  is explicitly configured for and can never lock out an existing approver.
+ *  Reuses `user_brands`, the per-user brand allow-list the app already keeps;
+ *  it does not affect what an unscoped director can SEE (getProjectScope only
+ *  applies brand_scope to scope_to_pic reps). */
+async function approverBrandBlocked(
+  env: Env,
+  userId: number | null | undefined,
+  itemId: number,
+): Promise<{ brands: string[]; brand: string } | null> {
+  if (!userId) return null;
+  const rows = await env.DB.prepare(
+    `SELECT brand FROM user_brands WHERE user_id = ?`
+  )
+    .bind(userId)
+    .all<{ brand: string }>();
+  const brands = (rows.results ?? [])
+    .map((r) => (r.brand ?? "").trim())
+    .filter(Boolean);
+  if (brands.length === 0) return null; // unrestricted approver
+  const proj = await env.DB.prepare(
+    `SELECT p.brand FROM project_checklist pc
+       JOIN projects p ON p.id = pc.project_id
+      WHERE pc.id = ?`
+  )
+    .bind(itemId)
+    .first<{ brand: string | null }>();
+  const brand = (proj?.brand ?? "").trim();
+  if (brand && brands.some((b) => b.toUpperCase() === brand.toUpperCase())) return null;
+  return { brands, brand };
+}
+
+/** Owner 2026-08-10: "kris can upload fill in floorplan". The Filled Floorplan
+ *  is the competitor-research plan the Sales Director annotates, but the row is
+ *  badged SALES PIC, so the role-badge rule blocked a view-only Sales Director
+ *  (no projects.write). Narrow exception: the Sales Director POSITION may
+ *  attach to / remove from that ONE document. Everything else still obeys the
+ *  badge — this does not open the other SALES PIC deliverables. */
+function salesDirectorMayAttach(
+  title: string | null | undefined,
+  positionName: string | null | undefined,
+): boolean {
+  const pos = (positionName ?? "").trim().toLowerCase();
+  if (pos !== "sales director") return false;
+  return /^filled floor\s*plan/i.test((title ?? "").trim());
+}
+
 function roleLabelAdmits(
   label: string | null | undefined,
   roleName: string | null | undefined,
@@ -3472,6 +3798,17 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
     if (!has) {
       return c.json({ error: `Requires ${item.required_perm}` }, 403);
     }
+    // Same brand scope as the review route (owner 2026-08-10) — a
+    // brand-configured approver can only tick their own brands' gated steps.
+    const denied = await approverBrandBlocked(c.env, user?.id, itemId);
+    if (denied) {
+      return c.json(
+        {
+          error: `You approve ${denied.brands.join(" / ")} events only — this one is ${denied.brand || "unbranded"}.`,
+        },
+        403,
+      );
+    }
   }
   // Per-function gate for tick-only roles (Sales-department visibility, rules
   // 4 & 6) — parity with the /attachments route. A user without projects.write
@@ -3482,7 +3819,13 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
   // unaffected (they manage the whole checklist).
   {
     const granted = user?.permissions_set ?? user?.permissions;
-    if (!hasPermission(granted, "projects.write")) {
+    // An APPROVER of a gated step is exempt (owner 2026-08-10): the
+    // required_perm + brand gate above already decided it, and the row is
+    // badged for the SUBMITTER's function (Stock Out = PURCHASER), so the badge
+    // test would otherwise block a view-only approver such as Kris.
+    const isGatedApprover =
+      !!item.required_perm && holdsChecklistApproval(user.permissions, item.required_perm);
+    if (!hasPermission(granted, "projects.write") && !isGatedApprover) {
       if (!roleLabelAdmits(item.role_label, user?.role_name)) {
         return c.json({ error: "You can only update tasks assigned to your role" }, 403);
       }
@@ -3516,6 +3859,20 @@ app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "p
     // not pass; see EXPLICIT_APPROVAL_KEYS.
     const has = holdsChecklistApproval(user.permissions, item.required_perm);
     if (!has) return c.json({ error: `Requires ${item.required_perm}` }, 403);
+    // BRAND-SCOPED approval (owner 2026-08-10): "kris approve stock out
+    // transfer akemi and ergotex only, for zanotti peter approve". An approver
+    // who has explicit brand rows may only decide on those brands; an approver
+    // with NO rows (Peter, HQ) keeps every brand, so this only ever narrows the
+    // people it is configured for.
+    const denied = await approverBrandBlocked(c.env, user?.id, itemId);
+    if (denied) {
+      return c.json(
+        {
+          error: `You approve ${denied.brands.join(" / ")} events only — this one is ${denied.brand || "unbranded"}.`,
+        },
+        403,
+      );
+    }
   }
   // Per-function gate for tick-only roles (Sales-department visibility, rules
   // 4 & 6) — parity with the status / attachments routes, so the review loop
@@ -3523,7 +3880,12 @@ app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "p
   // projects.write may only submit/amend a task badged for THEIR role.
   // `comment` stays open (collaboration); approve/reject are already
   // required_perm-gated above.
-  if (action !== "comment") {
+  // Owner 2026-08-10: approve/reject are EXEMPT — they are governed by the
+  // required_perm gate above (plus the brand scope), not by the task's role
+  // badge. Without this a permitted approver who lacks projects.write (a
+  // view-only Sales Director such as Kris) was blocked here, because the Stock
+  // Out row is badged PURCHASER, so granting the approval key alone did nothing.
+  if (action === "submit" || action === "amend") {
     const granted = user?.permissions_set ?? user?.permissions;
     if (!hasPermission(granted, "projects.write")) {
       if (!roleLabelAdmits(item.role_label, user?.role_name)) {
@@ -3692,10 +4054,10 @@ app.put(
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const item = await c.env.DB.prepare(
-      `SELECT required_perm, role_label FROM project_checklist WHERE id = ?`
+      `SELECT title, required_perm, role_label FROM project_checklist WHERE id = ?`
     )
       .bind(itemId)
-      .first<{ required_perm: string | null; role_label: string | null }>();
+      .first<{ title: string | null; required_perm: string | null; role_label: string | null }>();
     if (!item) return c.json({ error: "Not found" }, 404);
     // Owner 2026-07-21: required_perm gates the DECISION (approve/reject +
     // status flips), NOT the upload. The document's owner function uploads it
@@ -3706,7 +4068,7 @@ app.put(
     // Tick-only roles (no projects.write — i.e. drivers) may only attach to
     // tasks badged for THEIR role (item.role_label vs the user's role name).
     // Mirrors the mobile UI rule; owner 2026-07-09.
-    if (!hasPermission(granted, "projects.write")) {
+    if (!hasPermission(granted, "projects.write") && !salesDirectorMayAttach(item.title, user?.position_name)) {
       if (!roleLabelAdmits(item.role_label, user?.role_name)) {
         return c.json({ error: "You can only attach files to tasks assigned to your role" }, 403);
       }
@@ -3831,15 +4193,18 @@ app.patch(
     const granted = user?.permissions_set ?? user?.permissions;
     const body = await c.req.json<{ caption?: string | null }>();
     const row = await c.env.DB.prepare(
-      `SELECT pc.role_label
+      `SELECT pc.role_label, pc.title
          FROM project_checklist_attachments a
          JOIN project_checklist pc ON pc.id = a.item_id
         WHERE a.id = ?`
     )
       .bind(attId)
-      .first<{ role_label: string | null }>();
+      .first<{ role_label: string | null; title: string | null }>();
     if (!row) return c.json({ error: "Not found" }, 404);
-    if (!hasPermission(granted, "projects.write")) {
+    if (
+      !hasPermission(granted, "projects.write") &&
+      !salesDirectorMayAttach(row.title, user?.position_name)
+    ) {
       if (!roleLabelAdmits(row.role_label, user?.role_name)) {
         return c.json(
           { error: "You can only edit files on tasks assigned to your role" },
@@ -3858,11 +4223,18 @@ app.patch(
   }
 );
 
-// Per-attachment ACTION TIMELINE (owner 2026-07-29): append-only Ongoing /
-// Done entries the Purchaser (Sim) or BD stamp on defect-list uploads — each
-// click ADDS an entry with an optional remark; history is never overwritten.
-// A file whose LATEST entry is done clears from the purchaser My Pending lane
-// (listProjects PURCHASER arm). Wildcard / projects.manage admins may act too.
+// Per-attachment ACTION TIMELINE (owner 2026-07-29; two-stage 2026-08-07):
+// append-only entries stamped on each defect-list upload — each click ADDS an
+// entry with an optional remark; history is never overwritten. The flow now
+// has TWO actors and TWO statuses:
+//   - The Storekeeper Supervisor (Shukor) triages a fresh defect: 'done' means
+//     he cleaned it (resolved), 'replace' escalates it to the purchaser.
+//   - The Purchaser (Sim / Farra) or BD closes a 'replace' with 'done' once the
+//     replacement is ordered.
+// A file whose LATEST entry is 'done' is resolved and drops out of every lane;
+// 'replace' moves it from the Storekeeper-Supervisor review lane to the
+// purchaser lane (listProjects DEFECT_REVIEW / PURCHASER arms). Wildcard /
+// projects.manage admins may act as either.
 app.post(
   "/checklist/attachments/:attId/actions",
   requireAnyPermission(["projects.write", "projects.checklist.tick"]),
@@ -3872,18 +4244,31 @@ app.post(
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const role = (user?.role_name ?? "").toLowerCase();
-    const mayAct =
-      hasPermission(granted, "*") ||
-      hasPermission(granted, "projects.manage") ||
-      role.includes("purchaser") ||
-      role.includes("bd");
-    if (!mayAct) {
-      return c.json({ error: "Only the purchaser or BD can log defect actions" }, 403);
+    const position = (user?.position_name ?? "").trim().toLowerCase();
+    const isAdmin =
+      hasPermission(granted, "*") || hasPermission(granted, "projects.manage");
+    // Shukor (owner 2026-08-07) is the Storekeeper Supervisor; he triages every
+    // fresh defect. The purchaser (Sim / Farra) and BD only close escalations.
+    const isReviewer = position === "storekeeper supervisor";
+    const isPurchaser = role.includes("purchaser") || role.includes("bd");
+    if (!isAdmin && !isReviewer && !isPurchaser) {
+      return c.json(
+        { error: "Only the storekeeper supervisor, purchaser or BD can log defect actions" },
+        403
+      );
     }
     const body = await c.req.json<{ status?: string; remark?: string | null }>();
     const status = (body.status ?? "").toLowerCase();
-    if (status !== "ongoing" && status !== "done") {
-      return c.json({ error: "status must be ongoing or done" }, 400);
+    if (status !== "done" && status !== "replace") {
+      return c.json({ error: "status must be done or replace" }, 400);
+    }
+    // Escalation to Replace is the reviewer's decision (or an admin's) — the
+    // purchaser / BD close a replace with Done, they do not re-escalate.
+    if (status === "replace" && !isReviewer && !isAdmin) {
+      return c.json(
+        { error: "Only the storekeeper supervisor can mark a defect for replacement" },
+        403
+      );
     }
     const att = await c.env.DB.prepare(
       `SELECT a.id FROM project_checklist_attachments a

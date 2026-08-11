@@ -4,10 +4,13 @@
 //
 // Owner 2026-07-04: "就用 announcement 的功能,只有自己看到,像 notification 那样."
 // A system notice is a PRIVATE announcement (target_type USER_IDS) so it rides
-// the unread dot + /banner + Announcements screen users already have — no new
+// the unread dot + the notification bell users already have — no new
 // notification table, no web-push infra. A `source` tag (e.g. 'scan',
 // 'service_case') keeps these out of the office composer list (GET
-// /api/announcements filters non-null sources out; /banner still surfaces them).
+// /api/announcements filters non-null sources out) AND out of the pop-up
+// banner (owner 2026-08-08: machine notices must never pop a modal — the
+// /banner default is the human slice; these surface under ?scope=system, the
+// bell slice on both shells).
 //
 // Both the background slip-scan flow (scan-so.ts) and the service-case notify
 // (assrNotify.ts) go through here so there is a SINGLE announcements-insert

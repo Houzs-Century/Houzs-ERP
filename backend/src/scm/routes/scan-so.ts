@@ -1738,11 +1738,18 @@ const GLOBAL_ALIAS_KEY = '__GLOBAL__';
 // rules every scan — including a brand-new rep's first scan — benefits from.
 // Same table/shape (just another reserved row), so NO migration.
 const GLOBAL_RULES_KEY = '__GLOBAL_RULES__';
+// Reserved so_scan_rules key for HAND-WRITTEN shared rules - knowledge the
+// distiller can never produce because it is not in the corrections. The sofa
+// sketch grammar forced it: the drawing on a slip carries the compartment
+// layout, and no amount of diffing extracted JSON against corrected JSON
+// teaches that a hatched strip on a box edge is the armrest. Injected exactly
+// like the distilled layer and NEVER regenerated.
+const GLOBAL_MANUAL_KEY = '__GLOBAL_MANUAL__';
 // Either reserved row must be kept out of the salesperson datalist / per-rep
 // enumeration / weekly per-rep pass.
 const isGlobalKey = (v: string): boolean => {
   const k = v.trim().toUpperCase();
-  return k === GLOBAL_ALIAS_KEY || k === GLOBAL_RULES_KEY;
+  return k === GLOBAL_ALIAS_KEY || k === GLOBAL_RULES_KEY || k === GLOBAL_MANUAL_KEY;
 };
 
 const buildDistillMetaPrompt = (companyName: string) => `You are reviewing extraction sessions of HANDWRITTEN showroom sale-order slips at ${companyName}, a Malaysian furniture retailer. ALL the examples below were written by ONE salesperson. Each example is a PAIR: what the AI initially extracted, followed by what the human operator corrected it to (the confirmed truth). Each salesperson has their own handwriting and notation habits, and those habits DIFFER per product category. Write a concise salesperson-specific OCR rule block so future extractions of this rep's slips apply their conventions automatically.
@@ -2555,6 +2562,33 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
     /* best-effort */
   }
 
+  /* The HAND-WRITTEN shared layer, appended after the distilled one. The
+     distiller learns by diffing extracted JSON against corrected JSON, which
+     can never teach a reading TECHNIQUE — that a hatched strip on a box edge
+     in the slip's drawing IS the armrest, and which edge it sits on IS LHF or
+     RHF. That knowledge came from reading the slips; it lives here, and
+     distillGlobalRules never regenerates this row. */
+  try {
+    const { data: gmRow } = await svc
+      .from('so_scan_rules')
+      .select('rules')
+      .eq('salesperson', GLOBAL_MANUAL_KEY)
+      .limit(1)
+      .maybeSingle();
+    const gm = gmRow as { rules: string } | null;
+    if (gm && gm.rules.trim() !== '') {
+      const gap = globalRulesText ? `${globalRulesText}\n\n` : '';
+      globalRulesText =
+        `${gap}HOW TO READ THE DRAWING ON A SLIP (hand-written, authored by the owner — ` +
+        `reading techniques, not distilled patterns; they never override the catalog ` +
+        `or the never-invent-codes rule):\n\n` +
+        gm.rules;
+      globalRulesApplied = true;
+    }
+  } catch {
+    /* best-effort */
+  }
+
   // Per-rep distilled rules block (so_scan_rules). Injected AFTER the
   // cache_control boundary so the catalog prefix stays cache-stable across
   // reps.
@@ -2600,6 +2634,17 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
   // own, so it carries strictly more information than one it already produces
   // correctly — it must never be displaced by an as-is sample that is merely
   // newer.
+  //
+  // STATUS RANKS, IT DOES NOT FILTER (2026-08-05). This pool used to be gated on
+  // `status IN (CONFIRMED, ACCEPTED)`. `so_scan_samples.status` is free text with
+  // NO check constraint, so any row whose status is missing, legacy or merely
+  // spelled differently was silently deleted from the model's memory — with
+  // nothing anywhere to say so. Production had exactly that: 2 rows carrying a
+  // real `corrected` payload and 0 rows at CONFIRMED, so the only two examples in
+  // the system taught nothing. The pool's actual requirement is a corrected
+  // payload to SHOW the model; that is what is filtered on now, and status is
+  // used only to rank CONFIRMED ahead of the rest. A free-text column must never
+  // be the thing that decides whether the scanner can learn.
   let fewShotText = '';
   try {
     type FewShotRow = { id: string; corrected: unknown; status: string | null };
@@ -2619,7 +2664,6 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
         .from('so_scan_samples')
         .select('id, corrected, status')
         .not('corrected', 'is', null)
-        .in('status', [SAMPLE_CORRECTED, SAMPLE_ACCEPTED])
         .ilike('salesperson', ilikeExact(repGiven))
         .order('created_at', { ascending: false })
         .limit(15);
@@ -2634,7 +2678,6 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
         .from('so_scan_samples')
         .select('id, corrected, status')
         .not('corrected', 'is', null)
-        .in('status', [SAMPLE_CORRECTED, SAMPLE_ACCEPTED])
         .order('created_at', { ascending: false })
         .limit(15);
       for (const r of goldFirst((rows as FewShotRow[] | null) ?? [])) {
@@ -3811,18 +3854,20 @@ function buildDraftSoBodyFromSlip(
   const remarkNote = (parsed.remarks ?? '').trim();
   if (remarkNote) noteParts.push(remarkNote);
 
-  // Owner 2026-07-04: when the slip names a real DELIVERY date, carry it and pin
-  // the PROCESSING date to TODAY (a scan is keyed the day the order comes in;
-  // the processing date can never be a past date). The create core pairs the two
-  // (both set or both null) and rejects a past date, so we only set them when the
-  // slip's delivery date is a real YYYY-MM-DD that is today-or-later; a past /
-  // blank / "TBC" delivery leaves both null for the operator. runScanJob retries
-  // dateless if the create ever rejects the pair (belt-and-suspenders).
-  const scanToday = todayMyt();
-  const delivRaw = (parsed.deliveryDate ?? '').trim();
-  const scanDelivDate =
-    /^\d{4}-\d{2}-\d{2}$/.test(delivRaw) && delivRaw >= scanToday ? delivRaw : null;
-  const scanProcDate = scanDelivDate ? scanToday : null;
+  // Owner 2026-08-08 (2990-SO-2608-007, addendum #3) — a DRAFT never carries a
+  // Processing Date. The previous rule here (owner 2026-07-04: slip delivery
+  // date ⇒ pin processing to TODAY) silently stamped internal_expected_dd on
+  // scan drafts, which is wrong twice over: semantically a draft has not
+  // started processing, and the date rode in WITHOUT the deposit / variant /
+  // completeness gates every explicit Processing-Date write runs. Both dates
+  // land NULL now — the create core's pairing rule (both-or-none) forbids
+  // carrying the slip's delivery date alone, so the operator keys the pair at
+  // review against the slip photo, exactly like the mobile headless scan
+  // draft (createDraftFromPrefill) has always done. This is also the shape
+  // runScanJob's TIER-1 dateless retry already produced whenever the old
+  // default tripped a gate.
+  const scanDelivDate: string | null = null;
+  const scanProcDate: string | null = null;
 
   const body: Record<string, unknown> = {
     customerName,

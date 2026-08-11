@@ -38,7 +38,7 @@ import "./mobile.css";
 // publishers see READ RECEIPTS (GET /:id/acks), and the detail has an explicit
 // sticky "Got it — mark as read" acknowledgement bar wired to POST /:id/ack.
 //
-// The banner GET (/api/announcements/banner?includeSystem=false) returns the
+// The banner GET (/api/announcements/banner?scope=human) returns the
 // HUMAN-authored notices THIS user is allowed to see (source IS NULL — no scan /
 // service-case system notices, matching the desktop Announcements page; owner
 // 2026-07-20) plus the ids they've already acked; we use it for the list so

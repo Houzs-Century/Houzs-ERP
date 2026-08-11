@@ -80,7 +80,10 @@ async function resyncPcReturnInventory(sb: any, returnId: string, performedBy: s
       .select('warehouse_id').eq('id', (header as { pc_receive_id: string }).pc_receive_id).maybeSingle();
     headerWh = (rcv as { warehouse_id: string | null } | null)?.warehouse_id ?? null;
   }
-  const fallbackWh = headerWh ?? (await defaultWarehouseId(sb));
+  /* Per-company default (2026-08-03) — the old lookup was company-blind and let
+     alphabetical `code` order pick across every company's is_default rows. */
+  const fallbackWh = headerWh
+    ?? (await defaultWarehouseId(sb, (header as { company_id?: number | null }).company_id ?? undefined));
 
   // 1. TARGET net OUT per bucket = sum of current lines (empty if cancelled).
   type Bucket = { warehouse_id: string; product_code: string; variant_key: string; product_name: string | null; qty: number; batch_no: string | null };

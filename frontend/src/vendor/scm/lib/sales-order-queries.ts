@@ -18,7 +18,19 @@
 //     dialog-service serviceNotify.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { authedFetch } from './authed-fetch';
+import { API_URL, authedFetch, humanApiError } from './authed-fetch';
+// The photo PROXY fallback streams raw bytes, which authedFetch would try to
+// JSON-parse — so it uses the shared correlated transport + token accessor
+// directly, exactly as slip.ts does for the same reason.
+import { readAuthToken } from '../../../lib/authToken';
+import {
+  consumeCorrelated,
+  correlateError,
+  correlatedFetch,
+  requestIdFromError,
+  requestIdFromResponse,
+} from '../../../lib/requestCorrelation';
+import { companyHeader } from '../../../lib/activeCompany';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -561,6 +573,29 @@ export const useEditSalesOrderPayment = () => {
   });
 };
 
+/* Owner 2026-08-07 — attach the proof to an ALREADY-RECORDED payment. Kept
+   separate from useEditSalesOrderPayment because the backend keeps them
+   separate: PATCH is same-day-gated (it moves money), this route is not (it
+   moves none). That distinction is the whole point — a balance collected
+   yesterday can still get its slip today. */
+export const useAttachSalesOrderPaymentSlip = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ docNo, id, uploadSessionId }: { docNo: string; id: string; uploadSessionId: string }) =>
+      authedFetch<{ payment: SoPayment }>(`/mfg-sales-orders/${docNo}/payments/${id}/slip`, {
+        method: 'POST', body: JSON.stringify({ uploadSessionId }),
+      }),
+    onSuccess: (_data, vars) => {
+      /* The per-row slip image is cached under its OWN key by the thumbnail
+         query, which the ['mfg-sales-orders'] prefix does not cover — without
+         this the ledger refetches but the cell keeps showing the old (or no)
+         image until that key's staleTime elapses. */
+      qc.invalidateQueries({ queryKey: ['payment-slip', vars.id] });
+      invalidateSoLists(qc);
+    },
+  });
+};
+
 export const useDeleteSalesOrderPayment = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -595,4 +630,94 @@ export async function fetchSoItemPhotoSignedUrl(
   return authedFetch<SignedPhotoUrlResponse>(
     `/mfg-sales-orders/${docNo}/items/${itemId}/photos/${encodeURIComponent(photoKey)}/signed`,
   );
+}
+
+/** A signed URL is only usable as <img src> if it is an ABSOLUTE http(s) URL —
+ *  the signature travels in the query string, so no header is needed.
+ *
+ *  This is a CHEAP INVARIANT CHECK, not a live failure path. `GET
+ *  /photos/:photoKey/signed` answers either `{signedUrl, thumbUrl, expiresAt}`
+ *  with absolute R2 URLs or a 500 `signing_failed` — it has no branch that can
+ *  return a relative path (mfg-sales-orders.ts:10169-10178). The relative proxy
+ *  path exists ONLY in the POST upload response
+ *  (mfg-sales-orders.ts:10136-10144), and that value is already filtered by
+ *  `res.photoUrl?.startsWith('http')` before it can reach the URL cache
+ *  (SoLineCard.tsx:1159). The guard is kept because it costs one regex and it
+ *  is what makes "anything in the cache is <img>-loadable" true by
+ *  construction rather than by trusting two callers to agree — but do not read
+ *  it as documentation of a 404 anyone has seen. */
+export const isDirectlyLoadableUrl = (url: string | undefined | null): boolean =>
+  !!url && /^https?:\/\//i.test(url);
+
+/** Carries the HTTP status so the caller can tell a genuinely-missing photo
+ *  (404) or a refused one (401/403) from a transient server fault. */
+export class PhotoProxyError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'PhotoProxyError';
+    this.status = status;
+  }
+}
+
+/* A photo tile is a background nicety, not a blocking flow, so its deadline is
+   tighter than slip.ts's 60s interactive GETs. What it must NOT be is absent:
+   without a signal, a stalled Worker cold-start leaves the tile on "…" forever
+   with its one proxy attempt already spent, which is precisely the failure
+   slip.ts added slipFetch to stop ("a stalled cold-start / slow upload hangs
+   the upload UI forever", slip.ts:66-88). */
+const PHOTO_PROXY_TIMEOUT_MS = 30_000;
+
+/* Bytes, not JSON — authedFetch unconditionally res.json()s its response, so
+   this reuses the exported API_URL + the shared correlated transport directly.
+
+   PARITY WITH slip.ts, STATED ACCURATELY: same transport (correlatedFetch),
+   same bearer-token + company headers, and now the same deadline discipline —
+   slip.ts routes every such call through slipFetch(..., timeout), and an
+   earlier revision of this helper claimed parity while having no deadline at
+   all. It differs deliberately in ONE respect: slip.ts returns an object URL
+   its view-then-navigate callers never revoke, whereas a photo GRID mounts and
+   unmounts on every drawer open. So this returns the raw Blob and lets the
+   component own URL.createObjectURL / revokeObjectURL — that is what makes the
+   bytes cacheable across mounts while each mount's object URL is still revoked
+   exactly once. */
+export async function fetchSoItemPhotoBlob(
+  docNo: string,
+  itemId: string,
+  photoKey: string,
+): Promise<Blob> {
+  const token = readAuthToken();
+  if (!token) throw new PhotoProxyError(401, 'Your session has expired — please sign in again.');
+
+  let signal: AbortSignal | undefined;
+  try { signal = AbortSignal.timeout(PHOTO_PROXY_TIMEOUT_MS); } catch { signal = undefined; }
+
+  let res: Response;
+  try {
+    res = await correlatedFetch(
+      `${API_URL}/mfg-sales-orders/${encodeURIComponent(docNo)}/items/${encodeURIComponent(itemId)}`
+        + `/photos/${encodeURIComponent(photoKey)}`,
+      { headers: { authorization: `Bearer ${token}`, ...companyHeader() }, signal },
+    );
+  } catch (e) {
+    if (e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      /* 408 so the tile can tell a stall from a genuine 404 — a stall must not
+         be remembered as "this photo has no thumb". */
+      throw correlateError(
+        new PhotoProxyError(408, 'The photo took too long to load — please try again.'),
+        requestIdFromError(e),
+      );
+    }
+    throw e;
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '<no body>');
+    throw correlateError(
+      new PhotoProxyError(res.status, humanApiError(res.status, text)),
+      requestIdFromResponse(res),
+    );
+  }
+
+  return consumeCorrelated(res, () => res.blob());
 }
