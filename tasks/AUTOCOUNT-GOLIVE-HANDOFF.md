@@ -81,7 +81,8 @@ the part that mattered most.
 | The write-back stack | `#1855` merged — outbox (migration 0277), six enqueue hooks, drain cron, toggle, downstream lock |
 | Keyless-line guard | `#1935` + `#1945` merged. An edit whose lines carry no AutoCount identity is **refused**, not appended |
 | Line identity in prod | SO **12,910 / 13,909** (92.8%), PO 275 / 864. **2,316 of 2,723 SO** and 127 of 449 PO are fully covered, i.e. editable |
-| Still needed | The office-side tunnel, and the C# service compiled and deployed on the AutoCount host (runbook: `docs/autocount-service-deploy.md`) |
+| The tunnel | **DONE 2026-08-11 and PROVEN.** `autocount.houzscentury.com` fronts `localhost:8900`; `/health` answers `{"ok":true,"book":"AED_HOUZS"}` from an ordinary workstation, and runbook 4.1-4.5 plus cancel all passed over it on `ZZERP-0001` (left cancelled in the book — do not delete). `AC_SYNC_URL` and the `AC_SYNC_KEY` secret are set. **Any Claude session that reports "this machine cannot reach the service" is reading the pre-repoint state of this file** — see the migration record, Step 3 |
+| Still needed | The C# service REBUILT on the host: the running exe predates `/ensure-masters` and the fail-closed auth. Nothing has been driven from an ERP save — the toggle is still `off` and the outbox still holds zero rows |
 
 **Three gates verified shut**, before and after merge, read back from `main`:
 `AC_SYNC_URL` commented at `backend/wrangler.toml:34` (0 uncommented
