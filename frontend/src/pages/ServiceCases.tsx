@@ -128,8 +128,8 @@ type StageFilter = "ALL" | AssrStage;
 const STAGE_OPTIONS: { value: StageFilter; label: string }[] = [
   { value: "ALL", label: "All" },
   { value: "pending_review", label: "Review" },
-  { value: "under_verification", label: "Verification" },
   { value: "pending_solution", label: "Solution" },
+  { value: "under_verification", label: "Verification" },
   { value: "pending_supplier_pickup", label: "Supplier Pickup / Return" },
   { value: "pending_item_ready", label: "Pending Item Ready" },
   { value: "pending_delivery_service", label: "Delivery / Service" },
@@ -165,9 +165,9 @@ const NCR_OPTIONS = [
 // honored by the service-admin manually picking the correct next
 // stage from the dropdown — this map only seeds the primary button.
 const NEXT_STAGE: Record<string, { stage: AssrStage; label: string }> = {
-  pending_review:           { stage: "under_verification",       label: "Start Verification" },
-  under_verification:       { stage: "pending_solution",         label: "Move to Solution" },
-  pending_solution:         { stage: "pending_supplier_pickup",  label: "Hand to Supplier" },
+  pending_review:           { stage: "pending_solution",         label: "Move to Solution" },
+  pending_solution:         { stage: "under_verification",       label: "Start Verification" },
+  under_verification:       { stage: "pending_supplier_pickup",  label: "Hand to Supplier" },
   pending_supplier_pickup:  { stage: "pending_item_ready",       label: "Mark Item Ready" },
   pending_item_ready:       { stage: "pending_delivery_service", label: "Arrange Delivery" },
   pending_delivery_service: { stage: "completed",                label: "Close Case" },
@@ -4111,42 +4111,6 @@ function DetailContent({
               </div>
             </StageRow>
 
-            {/* under_verification — QC Issue Inspection on receipt */}
-            <StageRow
-              c={c}
-              priorityMap={priorityMap}
-              stageId="under_verification"
-              title="Verification"
-              summary={
-                c.verification_outcome === "accepted"
-                  ? "Office confirms the reported issue is valid"
-                  : c.verification_outcome === "rejected"
-                  ? "Rejected — not our issue"
-                  : c.verification_outcome === "needs_more_info"
-                  ? "Awaiting more info from the customer"
-                  : "Awaiting QC issue inspection"
-              }
-              currentStage={c.stage}
-              stages={activeStages}
-              openStage={openStage}
-              setOpenStage={setOpenStage}
-            >
-              {/* Mig 081 — Verification card wraps its own PanelSection so
-                  we strip the outer card wrapper by nesting it directly. */}
-              <VerificationCard
-                c={c}
-                patch={patch}
-                transition={transition}
-                dialog={dialog}
-                caseId={id}
-                attachments={attachments}
-                archived={!!c.archived_at}
-                detail={detail}
-                toast={toast}
-                hideHeader
-              />
-            </StageRow>
-
             {/* pending_solution — pick resolution method + set supplier */}
             <StageRow
               c={c}
@@ -4238,6 +4202,42 @@ function DetailContent({
               />
             )}
           </PanelSection>
+            </StageRow>
+
+            {/* under_verification — QC Issue Inspection on receipt */}
+            <StageRow
+              c={c}
+              priorityMap={priorityMap}
+              stageId="under_verification"
+              title="Verification"
+              summary={
+                c.verification_outcome === "accepted"
+                  ? "Office confirms the reported issue is valid"
+                  : c.verification_outcome === "rejected"
+                  ? "Rejected — not our issue"
+                  : c.verification_outcome === "needs_more_info"
+                  ? "Awaiting more info from the customer"
+                  : "Awaiting QC issue inspection"
+              }
+              currentStage={c.stage}
+              stages={activeStages}
+              openStage={openStage}
+              setOpenStage={setOpenStage}
+            >
+              {/* Mig 081 — Verification card wraps its own PanelSection so
+                  we strip the outer card wrapper by nesting it directly. */}
+              <VerificationCard
+                c={c}
+                patch={patch}
+                transition={transition}
+                dialog={dialog}
+                caseId={id}
+                attachments={attachments}
+                archived={!!c.archived_at}
+                detail={detail}
+                toast={toast}
+                hideHeader
+              />
             </StageRow>
 
             {/* pending_supplier_pickup — the whole supplier leg since mig
@@ -5500,8 +5500,8 @@ const VERIFICATION_OPTIONS = [
 // 在 stage funnel 每个 stage 加上 description).
 const DETAIL_STAGES: { id: AssrStage; short: string; long: string; desc: string }[] = [
   { id: "pending_review",              short: "Review",       long: "Review",                  desc: "New case — first review" },
-  { id: "under_verification",          short: "Verification", long: "Verification",            desc: "Inspect & verify the issue" },
   { id: "pending_solution",            short: "Solution",     long: "Solution",                desc: "Decide fix & assign supplier" },
+  { id: "under_verification",          short: "Verification", long: "Verification",            desc: "Inspect & verify the issue" },
   { id: "pending_supplier_pickup",     short: "Supplier",     long: "Supplier Pickup / Return", desc: "Item with supplier for repair" },
   { id: "pending_item_ready",          short: "Pending Item Ready", long: "Pending Item Ready", desc: "Repair done — QC check" },
   { id: "pending_delivery_service",    short: "Delivery",     long: "Delivery / Service",      desc: "Schedule return delivery" },
