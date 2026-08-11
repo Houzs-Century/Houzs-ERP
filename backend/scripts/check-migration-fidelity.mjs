@@ -580,18 +580,38 @@ async function main() {
      at - an unimported document is a decision, not a gap. */
   const migratedSoDocs = new Set(erpSoH.map((h) => h.linked_ac_docno));
   const migratedPoDocs = new Set(erpPoH.map((h) => h.linked_ac_docno));
+  /* A document that also has UNJOINED ERP lines is a join failure suspect, not
+     evidence of a missing line: both halves exist and the check simply could
+     not pair them. Say which, rather than letting one masquerade as the other. */
+  const soDocsWithUnjoined = new Map();
+  for (const e of soJoin.unjoined) soDocsWithUnjoined.set(e.ac, (soDocsWithUnjoined.get(e.ac) ?? 0) + 1);
+  const poDocsWithUnjoined = new Map();
+  for (const e of poJoin.unjoined) poDocsWithUnjoined.set(e.ac, (poDocsWithUnjoined.get(e.ac) ?? 0) + 1);
+  /* Split by AUTOCOUNT's own state of the line. "Still outstanding" is the only
+     bucket that is unambiguously a hole in the migration: a line AutoCount had
+     already delivered in full is not part of an outstanding-order import, and a
+     zero-quantity line orders nothing. */
+  const bucketOf = (qty, done) => (qty <= 0 ? "AutoCount quantity is 0"
+    : done >= qty ? "AutoCount had already transferred it in full"
+    : "STILL OUTSTANDING in AutoCount");
   let missingSo = 0, missingPo = 0;
   for (const r of acSoL) {
     if (!migratedSoDocs.has(r.DocNo) || soJoin.claimed.has(Number(r.DtlKey))) continue;
     missingSo++;
-    F.add("SO line", "(AutoCount line with no ERP line)", `${r.DocNo}#${r.DtlKey} ${r.ItemCode}`,
-      "(absent)", `qty ${Math.round(n0(r.Qty))} @ ${centi(r.UnitPrice)} "${txt(r.Desc2).slice(0, 30)}"`);
+    const b = bucketOf(Math.round(n0(r.Qty)), Math.round(n0(r.TransferedQty)));
+    const un = soDocsWithUnjoined.get(r.DocNo) ?? 0;
+    F.add("SO line", `(AutoCount line with no ERP line) ${b}`, `${r.DocNo}#${r.DtlKey} ${r.ItemCode}`,
+      "(absent)", `qty ${Math.round(n0(r.Qty))} delivered ${Math.round(n0(r.TransferedQty))} @ ${centi(r.UnitPrice)} "${txt(r.Desc2).slice(0, 26)}"`,
+      un ? `this document also has ${un} UNJOINED ERP line(s) - likely a pairing failure, not a missing line` : null);
   }
   for (const r of acPoL) {
     if (!migratedPoDocs.has(r.DocNo) || poJoin.claimed.has(Number(r.DtlKey))) continue;
     missingPo++;
-    F.add("PO line", "(AutoCount line with no ERP line)", `${r.DocNo}#${r.DtlKey} ${r.ItemCode}`,
-      "(absent)", `qty ${Math.round(n0(r.Qty))} recv ${Math.round(n0(r.TransferedQty))} @ ${centi(r.UnitPrice)}`);
+    const b = bucketOf(Math.round(n0(r.Qty)), Math.round(n0(r.TransferedQty)));
+    const un = poDocsWithUnjoined.get(r.DocNo) ?? 0;
+    F.add("PO line", `(AutoCount line with no ERP line) ${b}`, `${r.DocNo}#${r.DtlKey} ${r.ItemCode}`,
+      "(absent)", `qty ${Math.round(n0(r.Qty))} recv ${Math.round(n0(r.TransferedQty))} @ ${centi(r.UnitPrice)}`,
+      un ? `this document also has ${un} UNJOINED ERP line(s) - likely a pairing failure, not a missing line` : null);
   }
 
   // ═════════════════════ MIGRATED GRN LINES ═════════════════════
@@ -691,6 +711,39 @@ async function main() {
     }
     if (overReceipt.length > TOP) log(`     ... and ${overReceipt.length - TOP} more`);
   }
+  log("");
+
+  // ═════════════════════ TRACED CAUSES ═════════════════════
+  /* A count is not a diagnosis. Every defect named here was traced to the line
+     of code that writes the field, so the owner is reading a cause and not a
+     symptom. Anything NOT named here is still open. */
+  const rowsOf = (scope, field) => F.byField.get(`${scope}.${field}`)?.rows ?? [];
+  const nullish = (rows) => rows.filter((r) => String(r.erp) === "(null)").length;
+  log("TRACED CAUSES — defects with a named line of code behind them");
+  log("-".repeat(96));
+  log(`  1. received_qty came from a DOCUMENT-LEVEL aggregate, not the line.`);
+  log(`     backend/scripts/import-ac-so-linked-pos.mjs writes \`recv = l.GrQty\`, and GrQty was built by`);
+  log(`     export-received-pos-live.py as SUM(GRDTL.Qty) over (DocNo, ItemCode) - so every same-code line`);
+  log(`     on one purchase order was handed the whole document's receipt. AutoCount's own per-line`);
+  log(`     PODTL.TransferedQty is the truth.`);
+  log(`     effect: ${overReceipt.length} PO lines over-received (${overReceipt.reduce((s, r) => s + (r.erp - r.ac), 0)} excess units), and ${rowsOf("GRN line", "qty_received").length} migrated GRN lines`);
+  log(`     inherit it because create-migrated-documents.mjs builds a GRN line from received_qty.`);
+  log("");
+  const dd = rowsOf("PO line", "delivery_date");
+  log(`  2. The outstanding-PO import reads a column that does not exist.`);
+  log(`     backend/scripts/import-ac-outstanding-po.mjs writes \`deliv: l.DelivDate\` (3 places) while the`);
+  log(`     export column is DeliveryDate, so the value is undefined and the line lands with no delivery`);
+  log(`     date. import-ac-so-linked-pos.mjs spells it correctly, which is why only part of the estate is`);
+  log(`     affected.`);
+  log(`     effect: ${dd.length} PO lines diverge on delivery_date, ${nullish(dd)} of them ERP-null against a real AutoCount date;`);
+  log(`     ${rowsOf("PO header", "expected_at (derived)").length} purchase orders then show no expected delivery, because the header date is the`);
+  log(`     earliest line date.`);
+  log("");
+  const qFloor = [...rowsOf("SO line", "qty"), ...rowsOf("PO line", "qty")].filter((r) => Number(r.ac) === 0 && Number(r.erp) === 1);
+  log(`  3. A quantity of 0 in AutoCount becomes 1 in the ERP.`);
+  log(`     Both importers write \`Math.round(num(l.Qty)) || 1\`; JavaScript's \`||\` treats 0 as absent, so a`);
+  log(`     deliberately zero-quantity AutoCount line is silently ordered once.`);
+  log(`     effect: ${qFloor.length} lines, and the money follows - ${rowsOf("PO line", "line_total_centi").length} PO lines carry a line total AutoCount puts at 0.`);
   log("");
 
   // ═════════════════════ VERDICT ═════════════════════
