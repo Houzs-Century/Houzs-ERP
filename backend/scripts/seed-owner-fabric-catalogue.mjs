@@ -362,7 +362,7 @@ async function main() {
 
   note("");
   note("--- APPLY ---");
-  let created = 0, merged = 0, renamed = 0, moved = 0, seriesOpened = 0, reparented = 0;
+  let created = 0, merged = 0, renamed = 0, moved = 0, seriesOpened = 0, reparented = 0, skippedSettled = 0;
   await sql.begin(async (tx) => {
     let sortCursor = Math.max(0, ...libs.map((l) => Number(l.sort_order) || 0));
     for (const s of plan.newSeries) {
@@ -378,6 +378,13 @@ async function main() {
     }
     for (const m of plan.merge) {
       for (const l of m.lose) {
+        /* A row that is ALREADY superseded is done. Re-stamping it appends the
+           note a second time - "X [superseded by Y on D] [superseded by Y on D]"
+           - so a script that is safe to re-run would still corrupt its own
+           audit trail a little more on every run. The 2026-08-11 plan re-run
+           reported all 39 pairs again for exactly this reason: the losing rows
+           still exist (they must - nothing is deleted) and still match. */
+        if (l.r.active === false) { skippedSettled++; continue; }
         if (normColour(l.r.colour_id) !== m.e.id) {
           const r = await repoint(tx, l.r.colour_id, m.e.id);
           const n = r.reduce((a, b) => a + b.n, 0);
@@ -445,7 +452,7 @@ async function main() {
       note(`  re-parented "${p.e.id}": "${p.from}" -> "${p.to}"`);
     }
   });
-  note(`  series opened ${seriesOpened} | created ${created} | superseded ${merged} | renamed ${renamed} | re-parented ${reparented} | live lines repointed ${moved}`);
+  note(`  series opened ${seriesOpened} | created ${created} | superseded ${merged} | renamed ${renamed} | re-parented ${reparented} | already-superseded left alone ${skippedSettled} | live lines repointed ${moved}`);
 
   /* Verify on a SECOND, FRESH connection - a read inside the writing session
      can see its own uncommitted work and would prove nothing. */
