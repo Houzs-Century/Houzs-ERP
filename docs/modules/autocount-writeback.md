@@ -720,6 +720,35 @@ A document with **no** `linked_ac_docno` is untouched — nothing was ever pushe
 for it, so nothing can diverge, and the reopen the Commander asked for in
 2026-06 still works exactly as before. **Raise a new document instead.**
 
+## 7g. Numbering — every document the ERP creates carries the ERP number
+
+| type | number in AutoCount |
+|---|---|
+| SO, PO | the ERP's, sent as `DocNo` on the create |
+| DO, GR, SI, PI | **the ERP's**, sent as `DocNo` on the conversion |
+
+It was not always so. A create sent its `DocNo` and AutoCount took it; a
+conversion sent none, so AutoCount auto-numbered the four converted types — and
+four of the six documents carried a number nobody in this building would
+recognise, with every reconciliation forced through `linked_ac_docno` instead of
+the number printed on the paperwork. The service was ready for it the whole
+time: `SalesHeader` and `PurchaseHeader` both apply `DocNo` when the payload
+carries one.
+
+Two consequences worth knowing:
+
+- **Supplying our own `DocNo` does NOT advance AutoCount's counter.** Anything
+  raised in AutoCount's own UI keeps issuing `SO-0000NN` in parallel, forever.
+  That is desirable — the number says which system authored the document — but
+  it is now a decision rather than an accident.
+- **Nothing enforces that the two series cannot collide.** They cannot today
+  only because the shapes differ (`DO-2608-004` against `DO-000021`). A
+  collision detector is still open work.
+
+The parent travels separately (`payload.fromDoc`, resolved at drain) and must
+never be confused with this: `DocNo` is the CHILD's number, `FromDocNo` is the
+parent's.
+
 ## 8. Configuration
 
 | Name | Kind | Notes |
@@ -747,8 +776,20 @@ UPDATE scm.app_config SET value = '1', updated_at = now()
 **Turn it off** — set `value = 'off'`. Takes effect within 30 seconds (the cache
 TTL). Queued rows stay `pending` and drain when it is turned back on.
 
-**What to watch.** The cron logs `[cron ac-writeback]` per sweep, and logs at
-ERROR level whenever a row reaches `failed` — a failed row means a document
+**What to watch — run the check, do not read the tail.** Actions ->
+**AutoCount write-back queue — health (read-only)** -> Run workflow. It reports
+the queue by status, the FAILED rows in full (each one is a document that is in
+the ERP and not in the account book), the age of the oldest pending row, and the
+`skipped` backlog split by REASON — a refusal needs a line-key backfill, a
+merged conversion needs a human, a parentless document can never exist in
+AutoCount at all. An unrecognised reason is printed rather than counted away.
+
+An empty queue is reported as EMPTY, not as healthy: the table is append-only,
+so zero rows means nothing was ever enqueued, which is the correct state while
+the toggle is off.
+
+The cron also logs `[cron ac-writeback]` per sweep, and at ERROR level whenever
+a row reaches `failed` — a failed row means a document
 exists in the ERP and does not exist in AutoCount, which is the exact divergence
 this mechanism exists to prevent.
 
