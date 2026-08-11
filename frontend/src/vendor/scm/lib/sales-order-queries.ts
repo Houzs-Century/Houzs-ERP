@@ -27,6 +27,7 @@ import {
   consumeCorrelated,
   correlateError,
   correlatedFetch,
+  requestIdFromError,
   requestIdFromResponse,
 } from '../../../lib/requestCorrelation';
 import { companyHeader } from '../../../lib/activeCompany';
@@ -632,11 +633,19 @@ export async function fetchSoItemPhotoSignedUrl(
 }
 
 /** A signed URL is only usable as <img src> if it is an ABSOLUTE http(s) URL —
- *  the signature travels in the query string, so no header is needed. The
- *  upload route's own signing-failure fallback returns a RELATIVE proxy path
- *  instead; handing that to <img src> would resolve against the SPA origin
- *  (no /api/scm prefix) and 404. Treat anything non-absolute as "signing did
- *  not really succeed" and let the caller take the proxy path. */
+ *  the signature travels in the query string, so no header is needed.
+ *
+ *  This is a CHEAP INVARIANT CHECK, not a live failure path. `GET
+ *  /photos/:photoKey/signed` answers either `{signedUrl, thumbUrl, expiresAt}`
+ *  with absolute R2 URLs or a 500 `signing_failed` — it has no branch that can
+ *  return a relative path (mfg-sales-orders.ts:10169-10178). The relative proxy
+ *  path exists ONLY in the POST upload response
+ *  (mfg-sales-orders.ts:10136-10144), and that value is already filtered by
+ *  `res.photoUrl?.startsWith('http')` before it can reach the URL cache
+ *  (SoLineCard.tsx:1159). The guard is kept because it costs one regex and it
+ *  is what makes "anything in the cache is <img>-loadable" true by
+ *  construction rather than by trusting two callers to agree — but do not read
+ *  it as documentation of a 404 anyone has seen. */
 export const isDirectlyLoadableUrl = (url: string | undefined | null): boolean =>
   !!url && /^https?:\/\//i.test(url);
 
@@ -651,29 +660,56 @@ export class PhotoProxyError extends Error {
   }
 }
 
+/* A photo tile is a background nicety, not a blocking flow, so its deadline is
+   tighter than slip.ts's 60s interactive GETs. What it must NOT be is absent:
+   without a signal, a stalled Worker cold-start leaves the tile on "…" forever
+   with its one proxy attempt already spent, which is precisely the failure
+   slip.ts added slipFetch to stop ("a stalled cold-start / slow upload hangs
+   the upload UI forever", slip.ts:66-88). */
+const PHOTO_PROXY_TIMEOUT_MS = 30_000;
+
 /* Bytes, not JSON — authedFetch unconditionally res.json()s its response, so
    this reuses the exported API_URL + the shared correlated transport directly.
-   Same shape as slip.ts's fetchScanSlipImageBlobUrl, and for the same reason:
-   the Worker proxy route is behind bearer auth, and an <img src> sends no
-   Authorization header (there is no cookie session in this app), so the bytes
-   must be fetched and handed to <img> as a blob: object URL.
 
-   THE CALLER MUST URL.revokeObjectURL() THE RESULT ON UNMOUNT — a grid of
-   photo tiles that leaks one blob per tile per open is a real memory leak,
-   unlike slip.ts's view-then-navigate callers that deliberately do not. */
-export async function fetchSoItemPhotoBlobUrl(
+   PARITY WITH slip.ts, STATED ACCURATELY: same transport (correlatedFetch),
+   same bearer-token + company headers, and now the same deadline discipline —
+   slip.ts routes every such call through slipFetch(..., timeout), and an
+   earlier revision of this helper claimed parity while having no deadline at
+   all. It differs deliberately in ONE respect: slip.ts returns an object URL
+   its view-then-navigate callers never revoke, whereas a photo GRID mounts and
+   unmounts on every drawer open. So this returns the raw Blob and lets the
+   component own URL.createObjectURL / revokeObjectURL — that is what makes the
+   bytes cacheable across mounts while each mount's object URL is still revoked
+   exactly once. */
+export async function fetchSoItemPhotoBlob(
   docNo: string,
   itemId: string,
   photoKey: string,
-): Promise<string> {
+): Promise<Blob> {
   const token = readAuthToken();
   if (!token) throw new PhotoProxyError(401, 'Your session has expired — please sign in again.');
 
-  const res = await correlatedFetch(
-    `${API_URL}/mfg-sales-orders/${encodeURIComponent(docNo)}/items/${encodeURIComponent(itemId)}`
-      + `/photos/${encodeURIComponent(photoKey)}`,
-    { headers: { authorization: `Bearer ${token}`, ...companyHeader() } },
-  );
+  let signal: AbortSignal | undefined;
+  try { signal = AbortSignal.timeout(PHOTO_PROXY_TIMEOUT_MS); } catch { signal = undefined; }
+
+  let res: Response;
+  try {
+    res = await correlatedFetch(
+      `${API_URL}/mfg-sales-orders/${encodeURIComponent(docNo)}/items/${encodeURIComponent(itemId)}`
+        + `/photos/${encodeURIComponent(photoKey)}`,
+      { headers: { authorization: `Bearer ${token}`, ...companyHeader() }, signal },
+    );
+  } catch (e) {
+    if (e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      /* 408 so the tile can tell a stall from a genuine 404 — a stall must not
+         be remembered as "this photo has no thumb". */
+      throw correlateError(
+        new PhotoProxyError(408, 'The photo took too long to load — please try again.'),
+        requestIdFromError(e),
+      );
+    }
+    throw e;
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => '<no body>');
@@ -683,5 +719,5 @@ export async function fetchSoItemPhotoBlobUrl(
     );
   }
 
-  return consumeCorrelated(res, async () => URL.createObjectURL(await res.blob()));
+  return consumeCorrelated(res, () => res.blob());
 }

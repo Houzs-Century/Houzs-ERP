@@ -50,9 +50,11 @@ import {
   useUploadSoItemPhoto,
   useDeleteSoItemPhoto,
   fetchSoItemPhotoSignedUrl,
-  fetchSoItemPhotoBlobUrl,
+  fetchSoItemPhotoBlob,
   isDirectlyLoadableUrl,
+  PhotoProxyError,
 } from '../lib/sales-order-queries';
+import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
 import { useDebouncedValue } from '../lib/hooks';
 import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
 import { CATEGORY_BADGE } from '../lib/category-badges';
@@ -1470,6 +1472,35 @@ export function missingRequiredVariants(
    "err" is deliberately KEPT for the genuinely-broken case: if the proxy also
    fails (404 missing key, 401/403 refused), a missing photo must still be
    visible AS missing rather than silently rendering nothing.
+
+   STRICTMODE (2026-08-11 — the first fix shipped still showed "err")
+   ─────────────────────────────────────────────────────────────────
+   The app mounts under <React.StrictMode> (main.tsx:228), so in DEV every
+   effect runs, is cleaned up, and runs AGAIN. The first fix kept its one-shot
+   proxy guard and its "unmounted" flag in refs scoped to the COMPONENT's
+   lifetime, which made both single-use for the life of the tile:
+
+     - run 1 burned the proxy guard, then its cleanup cancelled it;
+     - run 2 — the live one — reached the guard already spent and took the
+       `setError(reason)` branch, rendering the exact "err" the fix existed to
+       remove;
+     - the unmount flag latched true at run 1's cleanup and nothing ever reset
+       it, so for the rest of the tile's life BOTH <img onError> retry paths
+       treated themselves as unmounted and any late blob was revoked on arrival.
+
+   So attempt state is now scoped PER EFFECT RUN, in a PhotoAttempt object the
+   effect creates and its cleanup cancels. A cancelled attempt can never veto a
+   later one. `attemptRef` always points at the CURRENT attempt, which is what
+   the <img onError> paths (not effects, so they have no cleanup of their own)
+   read to decide whether they are still live.
+
+   COST (same fix round): under fallback the tile used to fetch the BASE key
+   and revoke on unmount, so a 40-line SO re-streamed 40 FULL-SIZE JPEGs
+   through the Worker on every drawer open. Now the proxy asks for the `.thumb`
+   sibling first — the proxy route already authorises a thumb against its base
+   row (mfg-sales-orders.ts:10211, baseKeyOf) — and the BYTES are cached at
+   module level so a reopen costs no network at all. The object URL is still
+   per-attempt and still revoked, because the cache holds Blobs, not URLs.
    ────────────────────────────────────────────────────────────────────── */
 
 const SIGNED_URL_SKEW_BUFFER_MS = 30_000;
@@ -1482,6 +1513,83 @@ const thumbMissingKeys = new Set<string>();
 
 const isCachedUrlFresh = (entry: { expiresAt: number } | undefined): boolean =>
   !!entry && entry.expiresAt - SIGNED_URL_SKEW_BUFFER_MS > Date.now();
+
+/* ── Proxy byte cache ──────────────────────────────────────────────────────
+   Keyed by the R2 key actually fetched (thumb or base). Blobs, not object
+   URLs: an object URL is owned by one mount and must be revoked when that
+   mount ends, whereas the bytes are what we do not want to re-stream. Budget
+   is by SIZE rather than count because thumbs are tens of KB and a pre-thumb
+   full-size photo is hundreds — a count-based cap would mean something wildly
+   different for each. Oldest-first eviction (Map iterates in insertion order).
+   A single blob larger than the whole budget is served but not retained. */
+const PHOTO_BLOB_CACHE_MAX_BYTES = 24 * 1024 * 1024;
+const photoBlobCache = new Map<string, Blob>();
+let photoBlobCacheBytes = 0;
+
+function rememberPhotoBlob(r2Key: string, blob: Blob): void {
+  const prev = photoBlobCache.get(r2Key);
+  if (prev) { photoBlobCache.delete(r2Key); photoBlobCacheBytes -= prev.size; }
+  photoBlobCache.set(r2Key, blob);
+  photoBlobCacheBytes += blob.size;
+  while (photoBlobCacheBytes > PHOTO_BLOB_CACHE_MAX_BYTES) {
+    const oldest = photoBlobCache.keys().next();
+    if (oldest.done) break;
+    photoBlobCacheBytes -= photoBlobCache.get(oldest.value)!.size;
+    photoBlobCache.delete(oldest.value);
+  }
+}
+
+/* StrictMode's double-invoke, and a fast drawer close/reopen, both ask for the
+   same key while the first request is still in flight. Sharing the promise
+   keeps that at ONE Worker round-trip. */
+const photoBlobInflight = new Map<string, Promise<Blob>>();
+
+/** Thumb-first, base-on-404, cached by bytes. Throws the base-key error when
+ *  the photo is genuinely unreachable — that is what still renders "err". */
+async function loadPhotoBytes(docNo: string, itemId: string, photoKey: string): Promise<Blob> {
+  if (!thumbMissingKeys.has(photoKey)) {
+    const thumbKey = photoKey + THUMB_KEY_SUFFIX;
+    const cachedThumb = photoBlobCache.get(thumbKey);
+    if (cachedThumb) return cachedThumb;
+    try {
+      const blob = await fetchSoItemPhotoBlob(docNo, itemId, thumbKey);
+      rememberPhotoBlob(thumbKey, blob);
+      return blob;
+    } catch (e) {
+      /* ONLY a 404 proves this photo has no thumb. A 401/408/500 says nothing
+         about the thumb's existence, so it must not poison thumbMissingKeys
+         for the rest of the page's life — rethrow and let the caller show it. */
+      if (!(e instanceof PhotoProxyError) || e.status !== 404) throw e;
+      thumbMissingKeys.add(photoKey);
+    }
+  }
+  const cachedFull = photoBlobCache.get(photoKey);
+  if (cachedFull) return cachedFull;
+  const blob = await fetchSoItemPhotoBlob(docNo, itemId, photoKey);
+  rememberPhotoBlob(photoKey, blob);
+  return blob;
+}
+
+function loadPhotoBytesShared(docNo: string, itemId: string, photoKey: string): Promise<Blob> {
+  const inflightKey = `${docNo}${itemId}${photoKey}`;
+  const existing = photoBlobInflight.get(inflightKey);
+  if (existing) return existing;
+  const pending = loadPhotoBytes(docNo, itemId, photoKey)
+    .finally(() => { photoBlobInflight.delete(inflightKey); });
+  photoBlobInflight.set(inflightKey, pending);
+  return pending;
+}
+
+/* One pass at resolving a tile's image. Created by the effect, cancelled by
+   that effect's cleanup — so StrictMode's discarded first run can never spend
+   the second run's single proxy attempt, and a real unmount still stops a
+   late resolve from touching state or stranding an object URL. */
+type PhotoAttempt = {
+  cancelled: boolean;
+  proxyTried: boolean;
+  signedRetried: boolean;
+  objectUrl: string | null;
+};
 
 /* Exported as a test seam only — SoLineCard is the sole production consumer.
    Rendering the whole card in a test would need the full query/auth graph
@@ -1505,65 +1613,61 @@ export const PhotoThumb = ({
      for pre-thumb photos); a failed FULL load keeps the original
      refetch-once behaviour below. */
   const [useFull, setUseFull] = useState<boolean>(() => thumbMissingKeys.has(photoKey));
-  // Tracks whether we've already retried after a 403/error. Prevents
-  // a permanently-broken key from looping forever.
-  const retriedRef = useRef(false);
-  /* The blob: URL currently handed to <img>, if we fell back to the proxy.
-     Held in a ref (not state) purely so unmount cleanup can revoke it without
-     re-running on every render. */
-  const objectUrlRef = useRef<string | null>(null);
-  // One proxy attempt per tile. Without this, a 404 from the proxy could be
-  // re-triggered by the <img onError> path and loop.
-  const proxyTriedRef = useRef(false);
-  /* The <img onError> retry paths are NOT effects, so they have no cleanup to
-     cancel them. Without this flag a proxy fetch that resolves after unmount
-     would hand back a blob nobody revokes — the exact leak the unmount
-     cleanup exists to prevent. */
-  const unmountedRef = useRef(false);
+  /* The attempt owning the CURRENT effect run. The <img onError> paths are not
+     effects, so they have no cleanup of their own — this is how they find out
+     whether they are still the live pass. */
+  const attemptRef = useRef<PhotoAttempt | null>(null);
 
-  const releaseObjectUrl = () => {
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
+  const releaseAttemptUrl = (attempt: PhotoAttempt) => {
+    if (attempt.objectUrl) {
+      URL.revokeObjectURL(attempt.objectUrl);
+      attempt.objectUrl = null;
     }
+  };
+
+  const showBlob = (attempt: PhotoAttempt, blob: Blob) => {
+    releaseAttemptUrl(attempt);
+    const objectUrl = URL.createObjectURL(blob);
+    attempt.objectUrl = objectUrl;
+    /* The blob IS the final image — thumb bytes or full bytes, the tile has no
+       second tier to fall back to once it is holding them. */
+    setUseFull(true);
+    setUrls({ signedUrl: objectUrl });
+    setError(null);
   };
 
   /* Signing is unavailable or the signed URL is unusable — stream the bytes
      through the authed proxy instead. A failure HERE is the genuinely-broken
-     case, so it surfaces as "err". */
-  const loadViaProxy = async (cancelled: () => boolean, reason: string) => {
+     case, so it surfaces as "err". One attempt per PASS, not per component:
+     see the StrictMode note in the header. */
+  const loadViaProxy = async (attempt: PhotoAttempt, reason: string) => {
     if (!docNo || !itemId) return;
-    if (proxyTriedRef.current) {
-      if (!cancelled()) setError(reason);
+    if (attempt.proxyTried) {
+      if (!attempt.cancelled) setError(reason);
       return;
     }
-    proxyTriedRef.current = true;
+    attempt.proxyTried = true;
     try {
-      const blobUrl = await fetchSoItemPhotoBlobUrl(docNo, itemId, photoKey);
-      // Unmounted mid-flight: revoke immediately, otherwise this blob leaks
-      // with no component left to clean it up.
-      if (cancelled()) { URL.revokeObjectURL(blobUrl); return; }
-      releaseObjectUrl();
-      objectUrlRef.current = blobUrl;
-      // Proxy bytes are the FULL object; there is no separate thumb tier here.
-      setUseFull(true);
-      setUrls({ signedUrl: blobUrl });
-      setError(null);
+      const blob = await loadPhotoBytesShared(docNo, itemId, photoKey);
+      /* Cancelled mid-flight: return BEFORE minting an object URL, so there is
+         nothing to leak. The bytes stay in the module cache for the next pass,
+         which is what makes StrictMode's second run free. */
+      if (attempt.cancelled) return;
+      showBlob(attempt, blob);
     } catch (e) {
-      if (!cancelled()) setError(e instanceof Error ? e.message : reason);
+      if (!attempt.cancelled) setError(e instanceof Error ? e.message : reason);
     }
   };
 
-  const loadSignedUrl = async (cancelled: () => boolean) => {
+  const loadSignedUrl = async (attempt: PhotoAttempt) => {
     if (!docNo || !itemId) return;
     try {
       const { signedUrl, thumbUrl, expiresAt } = await fetchSoItemPhotoSignedUrl(docNo, itemId, photoKey);
-      if (cancelled()) return;
+      if (attempt.cancelled) return;
       /* Signing "succeeded" but handed back something an <img> cannot load
-         directly (the upload route's relative-path proxy fallback). Not a
-         cacheable signed URL — go straight to the proxy. */
+         directly. Invariant check, not a live path — see isDirectlyLoadableUrl. */
       if (!isDirectlyLoadableUrl(signedUrl)) {
-        await loadViaProxy(cancelled, 'image_load_failed');
+        await loadViaProxy(attempt, 'image_load_failed');
         return;
       }
       signedUrlCache.set(photoKey, {
@@ -1577,35 +1681,36 @@ export const PhotoThumb = ({
       /* THE 2026-08-10 CASE: /signed 500s because the R2 S3-API secrets were
          never provisioned. The photo itself is fine — serve it via the proxy
          rather than showing "err". */
-      await loadViaProxy(cancelled, e instanceof Error ? e.message : 'Something went wrong.');
+      if (attempt.cancelled) return;
+      await loadViaProxy(attempt, e instanceof Error ? e.message : 'Something went wrong.');
     }
   };
 
   useEffect(() => {
-    let cancelled = false;
+    const attempt: PhotoAttempt = {
+      cancelled: false, proxyTried: false, signedRetried: false, objectUrl: null,
+    };
+    attemptRef.current = attempt;
     const cached = signedUrlCache.get(photoKey);
     if (isCachedUrlFresh(cached)) {
       setUrls(cached!);
     } else {
       // Cache miss or stale entry — fetch a fresh signed URL.
-      loadSignedUrl(() => cancelled);
+      void loadSignedUrl(attempt);
     }
-    return () => { cancelled = true; };
+    /* Cleanup runs on unmount AND on every dep change, so this is the only
+       revoke site needed. It revokes only THIS attempt's object URL — a pass
+       can never revoke the blob a later pass is showing. */
+    return () => { attempt.cancelled = true; releaseAttemptUrl(attempt); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docNo, itemId, photoKey]);
-
-  /* Revoke the proxy blob on unmount. Unlike slip.ts's view-then-navigate
-     callers, a photo GRID is mounted and unmounted repeatedly (drawer
-     open/close, line add/remove) — leaking one image blob per tile per open
-     is a real leak, so this is not optional here. Runs on unmount only; the
-     ref is mutated in place, never a dependency. */
-  useEffect(() => () => { unmountedRef.current = true; releaseObjectUrl(); },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []);
 
   const showingThumb = !useFull && !!urls?.thumbUrl;
 
   const handleImgError = () => {
+    const attempt = attemptRef.current;
+    // Cancelled pass (or a stray error after unmount) — nothing live to fix.
+    if (!attempt || attempt.cancelled) return;
     /* Thumb tier failed — almost always a pre-thumb photo whose `.thumb`
        object does not exist (signed URL 404s). Fall back to the full image
        WITHOUT burning the retry: the full URL is already in hand. */
@@ -1617,25 +1722,22 @@ export const PhotoThumb = ({
     // The signed URL we handed to <img src> didn't load. Most likely
     // it expired (cache survived a tab being suspended for >1 hour);
     // could also be an R2 transient. Drop the cache entry and refetch
-    // once. retriedRef prevents an infinite onError → setState loop
+    // once. signedRetried prevents an infinite onError → setState loop
     // if the new URL also fails.
-    if (retriedRef.current) {
+    if (attempt.signedRetried) {
       /* A freshly-minted signed URL still would not load. The object may yet
          be readable through the R2 binding (the signing credential and the
          binding are different access paths), so try the proxy before
          declaring the photo broken. */
       signedUrlCache.delete(photoKey);
       setUrls(null);
-      void loadViaProxy(() => unmountedRef.current, 'image_load_failed');
+      void loadViaProxy(attempt, 'image_load_failed');
       return;
     }
-    retriedRef.current = true;
+    attempt.signedRetried = true;
     signedUrlCache.delete(photoKey);
     setUrls(null);
-    // No cleanup return — this isn't an effect, so unmountedRef (set by the
-    // unmount effect) is what stops a late resolve from touching state or
-    // stranding an unrevoked blob.
-    void loadSignedUrl(() => unmountedRef.current);
+    void loadSignedUrl(attempt);
   };
 
   const src = urls ? (showingThumb ? urls.thumbUrl! : urls.signedUrl) : null;
