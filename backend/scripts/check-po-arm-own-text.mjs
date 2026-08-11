@@ -24,7 +24,7 @@ import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { buildFabricColourIndex } from "./lib/fabric-colour-match.mjs";
 import {
   PO_LINE_SQL, buildCollidedPoKey, parseAcToErpCsv, classifyPoLine, tally,
-  blockFor, diffAxes, norm2,
+  blockFor, norm2,
 } from "./lib/po-arm-own-text.mjs";
 
 const DST = process.env.DATABASE_URL;
