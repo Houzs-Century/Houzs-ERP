@@ -14,7 +14,7 @@
 //     and the GRN-receipt rollups (poLineReceipts) that point at the real grns
 //     table. None of those apply off the owned-stock pipeline.
 //   • KEPT: create (header + items, full variant/pricing), line CRUD, header
-//     PATCH, list, detail, status lifecycle (submit/cancel/delete). The
+//     PATCH, list, detail, status lifecycle (submit/cancel). The
 //     downstream lock now points at purchase_consignment_receives (a PC Order
 //     locks once it has any non-cancelled PC Receive), NOT the real grns table.
 //
@@ -32,8 +32,12 @@
 //   PATCH /purchase-consignment-orders/:id/items/:itemId — edit a line
 //   DELETE /purchase-consignment-orders/:id/items/:itemId — delete a line
 //   PATCH /purchase-consignment-orders/:id/submit    — idempotent (no-op) submit
-//   PATCH /purchase-consignment-orders/:id/cancel    — flip → CANCELLED
-//   DELETE /purchase-consignment-orders/:id          — delete a CANCELLED PC Order
+//   PATCH /purchase-consignment-orders/:id/cancel    — flip → CANCELLED (terminal)
+//
+// There is NO document delete. A DELETE /:id used to purge a CANCELLED PC Order
+// outright; it was removed 2026-08-11 under the owner rule 不可以删只可以
+// cancel. See the block at the end of this file, docs/modules/
+// purchase-consignment-order.md, and docs/hard-delete-inventory.md.
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
@@ -65,7 +69,10 @@ async function pcoHasDownstream(sb: any, pcoId: string): Promise<{ error: string
     .eq('purchase_consignment_order_id', pcoId)
     .neq('status', 'CANCELLED');
   if ((count ?? 0) > 0) {
-    return { error: 'pco_has_downstream', message: 'PC Order has a Consignment Receive — delete or cancel it first to edit' };
+    /* "cancel it first", not "delete it": a PC Receive has no delete either
+       (only PATCH /:id/cancel), so the old "delete or cancel" wording told the
+       user to do something the API does not offer. */
+    return { error: 'pco_has_downstream', message: 'PC Order has a Consignment Receive — cancel it first to edit' };
   }
   return null;
 }
@@ -368,6 +375,12 @@ purchaseConsignmentOrders.post('/', async (c) => {
     const itemsToInsert = itemRows.map((r) => ({ ...r, purchase_consignment_order_id: header.id }));
     const { error: iErr } = await supabase.from('purchase_consignment_order_items').insert(stampCompany(itemsToInsert, c));
     if (iErr) {
+      /* CREATE-TIME ROLLBACK, not a document delete — keep it. supabase-js has
+         no transaction, so this compensating delete is the only thing standing
+         between a failed line insert and a headerless orphan PC Order. It
+         removes a document that never successfully existed. The owner's
+         no-delete rule (see the removed DELETE /:id at the end of this file)
+         is about documents that DID exist. */
       await supabase.from('purchase_consignment_orders').delete().eq('id', header.id);
       return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
     }
@@ -609,7 +622,7 @@ export const cancelPurchaseConsignmentOrderHandler = async (c: any) => {
   }
 
   /* Tier 2 downstream-lock — can't cancel a PC Order that has a downstream PC
-     Receive; the receive must be cancelled/deleted first. */
+     Receive; the receive must be CANCELLED first (it has no delete either). */
   const childLock = await pcoHasDownstream(supabase, id);
   if (childLock) return c.json(childLock, 409);
 
@@ -628,32 +641,35 @@ export const cancelPurchaseConsignmentOrderHandler = async (c: any) => {
 };
 purchaseConsignmentOrders.patch('/:id/cancel', cancelPurchaseConsignmentOrderHandler);
 
-// ── Delete ────────────────────────────────────────────────────────────
-// Hard-delete a PC Order + its line items. Only CANCELLED PC Orders may be
-// deleted (SUBMITTED+ have downstream docs — use Cancel first).
-purchaseConsignmentOrders.delete('/:id', async (c) => {
-  const id = c.req.param('id');
-  const supabase = c.get('supabase');
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  const { data: cur, error: readErr } = await scopeToCompanyId(supabase
-    .from('purchase_consignment_orders')
-    .select('id, status, pc_number')
-    .eq('id', id), co.companyId)
-    .maybeSingle();
-  if (readErr) return c.json({ error: 'read_failed', reason: readErr.message }, 500);
-  if (!cur)    return c.json(NOT_THIS_COMPANY, 404);
-  const row = cur as { id: string; status: string; pc_number: string };
-  if (row.status !== 'CANCELLED') {
-    return c.json({
-      error: 'cannot_delete',
-      message: `PC Order ${row.pc_number} is ${row.status}. Only CANCELLED PC Orders can be deleted. Use Cancel first.`,
-    }, 409);
-  }
+/* ── Delete: REMOVED (owner rule, 2026-08-11) ──────────────────────────────
+   There was a DELETE /:id here that hard-purged a CANCELLED PC Order — the
+   header, and by FK ON DELETE CASCADE every line with it. It is gone, and it
+   must not come back.
 
-  // Items cascade via FK ON DELETE CASCADE.
-  const { error: delErr } = await scopeToCompanyId(supabase.from('purchase_consignment_orders').delete().eq('id', id), co.companyId);
-  if (delErr) return c.json({ error: 'delete_failed', reason: delErr.message }, 500);
+   The owner's rule is 不可以删只可以 cancel — nothing is ever deleted, only
+   cancelled. This was the same endpoint #1939 removed from purchase orders,
+   copied into this module ("mirror PO", as the frontend hook said), and it was
+   in fact WORSE than the PO one: the PO at least wrote an audit row before the
+   purge, so something survived to say the document had existed. This one wrote
+   nothing. A CANCELLED PC Order deleted here left no trace anywhere.
 
-  return c.json({ ok: true, deleted: row.pc_number });
-});
+   Unlike the PO, a PC Order does NOT reach AutoCount — mig 0277 pins
+   autocount_outbox.doc_type to SO / PO / DO / IV / GR / PI, and consignment
+   purchasing is not in that vocabulary. So this is not the sync-divergence
+   argument #1939 made. It is the plainer one: a PC Order commits the company to
+   a supplier's goods held on consignment, and a purged one leaves no record
+   that the commitment was ever made.
+
+   CANCELLED already does everything the delete was used for. PATCH /:id/cancel
+   above stamps cancelled_at, the order leaves every working list, and the
+   downstream lock (pcoHasDownstream) already refuses to cancel one that has a
+   PC Receive — so nothing needed deleting to stay consistent. The only thing
+   delete added was the loss of the record.
+
+   NOT touched, deliberately: the create-time rollback delete at :371. supabase-js
+   has no transaction, so that compensating delete is the ONLY thing standing
+   between a failed line insert and a headerless orphan document. It removes a
+   document that never successfully existed; this endpoint removed one that did.
+
+   The full classification of every delete on the SCM route surface is in
+   docs/hard-delete-inventory.md. Check it before adding a DELETE handler. */

@@ -7,9 +7,12 @@
    actually stores - 138 migrated sofa/bedframe lines hold no bound colour
    while carrying one in their AutoCount Desc2.
 
-   Everything here is lexical. There is no brand-alias table and no hand-written
-   "X means Y": a name resolves to a colour the library already holds, or it
-   does not resolve at all.
+   Everything here is lexical, with ONE bounded exception: COLOUR_ALIAS at the
+   bottom, a last-resort table that runs only after every lexical pass has
+   already failed. Read its comment before adding to it. A name resolves to a
+   colour the library already holds, or it does not resolve at all - the alias
+   table cannot name a colour that is not there, and it is not allowed to
+   invent one.
 
    THE LADDER (each rung only ADDS a spelling to try; the untouched original is
    always tried first, so a more faithful spelling always wins):
@@ -119,6 +122,49 @@ export function colourForms(text) {
   return out;
 }
 
+/* THE ALIAS TABLE - the one non-lexical thing here, kept small on purpose.
+
+   These five document spellings name a colour the library REALLY HOLDS, and no
+   lexical rung can reach it, because the miss is not a typo - it is the
+   document writing an identity a different way:
+
+     - the number is simply absent      "Modenza-Houston Cream" vs MODENZA-01
+                                        (whose label IS "MODENZA-01 HOUSTON CREAM")
+     - the series letters are absent    "141-1" vs CH141-1, "9226-13" vs
+                                        ARMANI J9226-13 WARM GREY
+     - the brand is written INSTEAD of  "Harring 02# Beige" vs
+       the series code                  HIRRING GD8371-02# BEIGE
+     - the number trails the NAME       "Phoenix-oyster1" vs PHOENIX-1 OYSTER
+       instead of leading it
+
+   Loosening a rung to catch these would have to let a query match a library key
+   it shares no number with, which is the exact door the digit guard closes - so
+   the fix is five named facts instead of a weaker rule.
+
+   THE RULES THAT KEEP THIS HONEST, all enforced below, not just described:
+     1. It runs LAST, only when every lexical pass returned null. It therefore
+        cannot change any binding that already resolves. That is what makes it
+        safe to add to.
+     2. The target must EXIST in the live library. A stale entry goes inert
+        instead of binding to nothing; a deleted colour cannot be resurrected.
+     3. It resolves to a WHOLE library row, never to a fabricated code. Nothing
+        here invents a colour - each right-hand side was read out of a prod
+        DUMP=1 dump of scm.fabric_colours on 2026-08-10.
+     4. Every entry carries the document string and the live line count that
+        justify it. No line, no entry.
+
+   Keyed by foldColour(), so case, spacing, '#' and '-' variants of the same
+   document string collapse onto one entry ("Harring 02# Beige" and
+   "Harring 02# beige" are one row here, not two). */
+export const COLOUR_ALIAS = [
+  // fold key            -> [fabric_id, colour_id]            document string (live lines)
+  ["M0DENZAH0UST0NCREAM", ["MODENZA", "MODENZA-01"], "Modenza-Houston Cream (10)"],
+  ["1411", ["CH141", "CH141-1"], "141-1 (2)"],
+  ["922613", ["ARMANI J9226", "ARMANI J9226-13 WARM GREY"], "9226-13 (2)"],
+  ["HARING02BEIGE", ["HIRRING GD8371", "HIRRING GD8371-02# BEIGE"], "Harring 02# Beige / beige (3)"],
+  ["PH0ENIX0YSTER1", ["PHOENIX", "PHOENIX-1"], "Phoenix-oyster1 (2)"],
+];
+
 /* rows: [{ fabric_id, colour_id, label }] straight out of scm.fabric_colours. */
 export function buildFabricColourIndex(rows) {
   const exact = new Map();
@@ -140,6 +186,15 @@ export function buildFabricColourIndex(rows) {
   }
   for (const k of ambiguous) { folded.delete(k); markKey.delete(k); }
   const foldKeys = [...folded.keys()];
+
+  /* Resolve COLOUR_ALIAS against THIS library. An entry whose row is not here
+     is dropped, not guessed at - rule 2 of the alias contract. */
+  const byPk = new Map(rows.map((r) => [JSON.stringify([r.fabric_id, r.colour_id]), r]));
+  const aliasRow = new Map(); const aliasUnresolved = [];
+  for (const [key, [fabricId, colourId], why] of COLOUR_ALIAS) {
+    const row = byPk.get(JSON.stringify([fabricId, colourId]));
+    if (row) aliasRow.set(key, row); else aliasUnresolved.push(`${fabricId} / ${colourId} (${why})`);
+  }
 
   const swap1 = (q, qDigits) => { // one unique library key one TRANSPOSITION away
     let hit = null;
@@ -230,8 +285,11 @@ export function buildFabricColourIndex(rows) {
       const h = f.length >= 6 ? dist1(f, digitsOf(markColour(src))) : null;
       if (h) return h;
     }
+    // LAST: the alias table. Nothing above resolved, so this cannot displace a
+    // lexical answer - see COLOUR_ALIAS. Unknown targets are already dropped.
+    for (const f of forms) { const h = aliasRow.get(foldColour(f)); if (h) return h; }
     return null;
   };
 
-  return { findColour, exact, folded, ambiguous };
+  return { findColour, exact, folded, ambiguous, aliasRow, aliasUnresolved };
 }

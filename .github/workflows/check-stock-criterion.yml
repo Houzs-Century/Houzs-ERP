@@ -1,0 +1,60 @@
+name: Stock criterion census (read-only)
+
+# Manual, SELECT only. The independent read for the three structural gaps that
+# hold back go-live criterion 3 (stock): migrated SO lines with no warehouse_id
+# and what AutoCount says their warehouse is, the per-line stock_status census,
+# sofa lots without a batch_no, and the ERP balance PER WAREHOUSE.
+#
+# Run it BEFORE and AFTER every apply. It is a different code path from the
+# scripts that write, on purpose: an apply script reporting on its own work is
+# not evidence (one in this repo printed "APPLIED - stamped 146 sofa lines"
+# three times while writing nothing).
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      top:
+        description: "How many rows to list per section"
+        required: false
+        default: "40"
+
+concurrency:
+  group: check-stock-criterion-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-stock-criterion.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          TOP: ${{ inputs.top }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-stock-criterion.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TOP: ${{ inputs.top }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

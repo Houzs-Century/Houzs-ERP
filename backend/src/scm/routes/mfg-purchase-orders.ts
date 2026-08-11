@@ -34,6 +34,8 @@ import {
 } from '../shared/so-line-display';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { resolveMaintenanceConfigForSupplier } from '../lib/po-pricing';
+import { poHasDownstream } from '../lib/downstream-lock';
+import { enqueuePoCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -46,7 +48,7 @@ import {
   LEAD_TIME_SELECT,
 } from '../lib/lead-time';
 import { groupKeyFor } from '../lib/po-grouping';
-import { findOverConvertOffender } from '../lib/po-over-convert';
+import { findOverConvertOffender, soLineHeadroom, type OverConvertOffender } from '../lib/po-over-convert';
 import {
   planAllocationCreate,
   planAllocationQtyUpdate,
@@ -233,18 +235,25 @@ mfgPurchaseOrders.use('*', supabaseAuth);
    A PO locks (read-only — no header edit / no line edit / no cancel) once it
    has ANY non-cancelled GRN. The convert-to-GRN path is NOT gated by this:
    partial receiving is still allowed (i.e. the PO can keep emitting GRNs);
-   only header/line MUTATIONS + CANCEL are blocked, mirroring grnHasDownstream
-   in apps/api/src/routes/grns.ts. Returns the blocking JSON, or null if the
-   PO is free to edit. */
-async function poHasDownstream(sb: any, poId: string): Promise<{ error: string; message: string } | null> {
-  const { count } = await sb.from('grns')
-    .select('id', { head: true, count: 'exact' })
-    .eq('purchase_order_id', poId)
-    .neq('status', 'CANCELLED');
-  if ((count ?? 0) > 0) {
-    return { error: 'po_has_downstream', message: 'PO has a Goods Receipt — delete or cancel it first to edit' };
-  }
-  return null;
+   only header/line MUTATIONS + CANCEL are blocked, mirroring grnHasDownstream.
+   The rule now lives in scm/lib/downstream-lock.ts with its three siblings,
+   which had drifted into four private copies in four route files. Same
+   signature, same JSON, same behaviour — and see that module for why it is
+   also the ERP half of AutoCount's transferred-document rule. */
+
+/* -- ERP -> AutoCount edit --------------------------------------------------
+   Every PO mutation route funnels through this, so exactly one snapshot of the
+   SAVED order is queued per successful save -- header edits and line
+   add/edit/delete alike. Only ever reached for a PO the downstream lock let
+   through, which is the same rule AutoCount enforces on its side. Never
+   throws. */
+async function queueAcPoEdit(c: any, poId: string): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'PO',
+    docId: poId,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
 }
 
 /* ── Drop-ship OUT guard (audit C3, 2026-07-13) ──────────────────────────────
@@ -1361,6 +1370,18 @@ mfgPurchaseOrders.post('/', async (c) => {
   if (!asDraft && pickedQtyBySoItem.size > 0) {
     try { await recomputeSoPicked(supabase, [...pickedQtyBySoItem.keys()]); }
     catch { /* PO already created — don't fail on counter recount */ }
+  }
+
+  /* ERP -> AutoCount write-back. Queued, never pushed inline. No-op while the
+     flag is off, which is how it ships. NOT for a DRAFT PO — it is
+     reference-only until confirmed (the same reason recomputeSoPicked skips
+     it above); PATCH /:id/confirm queues it. */
+  if (!asDraft) {
+    await enqueuePoCreate(supabase, {
+      companyId: activeCompanyId(c),
+      poId: header.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
   }
 
   return c.json({ id: header.id, poNumber: header.po_number }, 201);
@@ -2523,6 +2544,8 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
       console.error('[mfg-po PATCH] header date cascade failed', { id, col, error: e });
     }
   }
+  await queueAcPoEdit(c, id);
+
   return c.json({ purchaseOrder: data });
 });
 
@@ -2840,6 +2863,43 @@ async function soLinkTargetRefusal(
   return null;
 }
 
+/* ── SO-link remaining-qty cap (LINE level) ─────────────────────────────────
+   soLinkTargetRefusal above proves a bind is POINTED at a legitimate SO line;
+   it says nothing about HOW MUCH that line may order. The batch paths all cap
+   it — /from-sos via `!fromMrp && p.qty > remaining`, the generic create via
+   findOverConvertOffender, /:id/convert-from-so by deriving qty server-side as
+   the unpicked remainder — but add-line and line-edit did not, so an operator
+   could append (or edit up to) any qty against an SO line that was already
+   fully converted. That is the same double-ordering the F1 audit closed on
+   /:id/convert-from-so in 2026-06-10, reachable through the two paths that
+   accept an operator-supplied qty.
+
+   Repeat conversion stays legal — the business splits one SO across several POs
+   on purpose. The ceiling is what is capped, never the second conversion.
+
+   Overridable with confirmOverConvert, the SAME escape hatch the generic create
+   documents, so a deliberate over-order is still one explicit flag away. */
+export async function soLineOverConvertRefusal(
+  sb: any,
+  soItemId: string | null,
+  requestedQty: number,
+  ownCurrentQty: number,
+): Promise<OverConvertOffender | null> {
+  if (!soItemId) return null;
+  const { data } = await sb
+    .from('mfg_sales_order_items')
+    .select('id, qty, po_qty_picked')
+    .eq('id', soItemId)
+    .maybeSingle();
+  const row = data as { qty: number; po_qty_picked: number } | null;
+  /* Unknown / cross-company line: soLinkTargetRefusal already refused it with a
+     404 before we get here, so there is nothing left to cap. */
+  if (!row) return null;
+  const remaining = soLineHeadroom(row, ownCurrentQty);
+  const requested = Math.max(0, Number(requestedQty ?? 0));
+  return requested > remaining ? { soItemId, requested, remaining } : null;
+}
+
 mfgPurchaseOrders.post('/:id/items', async (c) => {
   const poId = c.req.param('id');
   let it: Record<string, unknown>;
@@ -2881,6 +2941,12 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   {
     const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.materialCode ?? ''));
     if (refusal) return c.json(refusal.body, refusal.status);
+  }
+  /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
+     its own headroom is the raw remainder (ownCurrentQty = 0). */
+  if (it.confirmOverConvert !== true) {
+    const over = await soLineOverConvertRefusal(sb, soItemId, qty, 0);
+    if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);
   }
 
   const row: Record<string, unknown> = {
@@ -2951,6 +3017,8 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
       ),
     });
   }
+
+  await queueAcPoEdit(c, poId);
 
   return c.json({ item: data }, 201);
 });
@@ -3069,6 +3137,20 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     updates['so_item_id'] = nextSoItemId;
   }
 
+  /* Remaining-qty cap — runs even when the bind key is ABSENT, because raising
+     qty on an ALREADY-bound line over-orders just as surely as binding a new
+     one. This line's own stored qty is credited back only while it stays on the
+     SAME SO line (that qty already sits inside po_qty_picked, so without the
+     credit a no-op edit would refuse itself); a REBIND onto a different SO line
+     gets no credit, since the new target's counter holds none of it yet. */
+  if (it.confirmOverConvert !== true) {
+    const ownCurrentQty = nextSoItemId && nextSoItemId === prevSoItemId
+      ? Number(prev.qty ?? 0)
+      : 0;
+    const over = await soLineOverConvertRefusal(sb, nextSoItemId, qty, ownCurrentQty);
+    if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);
+  }
+
   const { error } = await scopeToCompanyId(sb.from('purchase_order_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
@@ -3111,6 +3193,9 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     try { await recomputeSoPicked(sb, touchedSoItems); }
     catch { /* don't fail the edit on a counter recount */ }
   }
+
+  await queueAcPoEdit(c, poId);
+
   return c.json({ ok: true });
 });
 
@@ -3173,6 +3258,8 @@ mfgPurchaseOrders.delete('/:id/items/:itemId', async (c) => {
     try { await recomputeSoPicked(sb, [releasedSoItem]); }
     catch { /* line already deleted — don't fail on counter recount */ }
   }
+
+  await queueAcPoEdit(c, poId);
 
   return c.body(null, 204);
 });
@@ -3814,6 +3901,16 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
     .select('id, status, submitted_at')
     .eq('id', id), co.companyId)
     .maybeSingle();
+
+  /* The draft just became a real order — this is the moment it belongs in
+     AutoCount. enqueuePoCreate refuses a PO that already has an AutoCount
+     counterpart, so a re-entered confirm cannot duplicate it. */
+  await enqueuePoCreate(supabase, {
+    companyId: co.companyId,
+    poId: id,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' } });
 };
 mfgPurchaseOrders.patch('/:id/confirm', confirmMfgPurchaseOrderHandler);
@@ -4099,9 +4196,22 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
 
   const { data: after } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .select('id, status, cancelled_at')
+    .select('id, status, cancelled_at, po_number')
     .eq('id', id), co.companyId)
     .maybeSingle();
+
+  /* ERP -> AutoCount cancel. Reached only for a PO the downstream lock let
+     through (poHasDownstream, checked above) — the same rule AutoCount applies
+     on its side, so this can never ask it to cancel a received PO. */
+  await enqueueCancel(supabase, {
+    companyId: co.companyId,
+    docType: 'PO',
+    docNo: (after as { po_number?: string } | null)?.po_number ?? id,
+    docId: id,
+    self: { table: 'purchase_orders', keyCol: 'id', key: id },
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   return c.json({ purchaseOrder: after ?? { id, status: 'CANCELLED' } });
 });
 
@@ -4177,69 +4287,33 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
   return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' } });
 });
 
-// ── Delete ────────────────────────────────────────────────────────────
-// Hard-delete a PO + its line items. PR-DRAFT-removal: DRAFT no longer
-// exists. Only CANCELLED POs may be deleted (SUBMITTED+ have downstream
-// docs that reference them — use Cancel first).
-mfgPurchaseOrders.delete('/:id', async (c) => {
-  const id = c.req.param('id');
-  const supabase = c.get('supabase');
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  // Status guard first — get current row.
-  const { data: cur, error: readErr } = await scopeToCompanyId(supabase
-    .from('purchase_orders')
-    .select('id, status, po_number, company_id, supplier_id, total_centi, po_date')
-    .eq('id', id), co.companyId)
-    .maybeSingle();
-  if (readErr) return c.json({ error: 'read_failed', reason: readErr.message }, 500);
-  if (!cur)    return c.json(NOT_THIS_COMPANY, 404);
-  const row = cur as {
-    id: string; status: string; po_number: string;
-    company_id?: number | null; supplier_id?: string | null; total_centi?: number | null; po_date?: string | null;
-  };
-  if (row.status !== 'CANCELLED') {
-    return c.json({
-      error: 'cannot_delete',
-      message: `PO ${row.po_number} is ${row.status}. Only CANCELLED POs can be deleted. Use Cancel first.`,
-    }, 409);
-  }
-  /* Capture the source SO links before the cascade wipes the lines, so we can
-     recount after. Cancel already released them, but this self-heals any legacy
-     CANCELLED PO whose SO lines were never released. */
-  const { data: doomedLines } = await supabase
-    .from('purchase_order_items')
-    .select('so_item_id')
-    .eq('purchase_order_id', id);
+/* ── Delete: REMOVED (owner rule, 2026-08-11) ──────────────────────────────
+   There was a DELETE /:id here that hard-purged a CANCELLED PO, header and
+   lines, from the database. It is gone, and it must not come back.
 
-  // Items cascade via FK ON DELETE CASCADE.
-  const { error: delErr } = await scopeToCompanyId(supabase.from('purchase_orders').delete().eq('id', id), co.companyId);
-  if (delErr) return c.json({ error: 'delete_failed', reason: delErr.message }, 500);
+   The owner's rule is 不可以删只可以 cancel — nothing is ever deleted, only
+   cancelled. This endpoint was the one place in the purchase chain that broke
+   it, and its own code said so: the audit row it wrote was documented as "the
+   ONLY remaining evidence that the PO existed", with number, supplier and
+   total snapshotted into field_changes precisely because nothing could be
+   joined back to afterwards. An audit row that has to carry a copy of the
+   document is not an audit trail, it is an obituary.
 
-  /* The one action whose subject no longer exists once it is recorded — the
-     purchase_orders row is gone, so this entry is the ONLY remaining evidence
-     that the PO existed. Hence the snapshot of number / supplier / total in
-     field_changes: nothing can be joined back to afterwards. entity_id is kept
-     regardless so a later document cannot silently inherit this history. */
-  await recordEntityAudit(supabase, {
-    entityType: 'PURCHASE_ORDER',
-    entityId: id,
-    entityDocNo: row.po_number,
-    action: 'DELETE',
-    actor: c.get('houzsUser'),
-    companyId: row.company_id ?? activeCompanyId(c),
-    statusSnapshot: 'CANCELLED',
-    fieldChanges: compactChanges([
-      fieldChange('poNumber', row.po_number, null),
-      fieldChange('supplierId', row.supplier_id ?? null, null),
-      fieldChange('totalCenti', Number(row.total_centi ?? 0), null),
-      fieldChange('poDate', row.po_date ?? null, null),
-      fieldChange('status', 'CANCELLED', null),
-    ]),
-  });
+   It is also a cancel-divergence generator the moment AutoCount sync goes
+   live. AutoCount keeps a cancelled PO; a purged one has no row to reconcile
+   against, so the two systems disagree with no way to tell whether the ERP
+   ever had that document. CANCELLED already achieves everything the delete was
+   used for: the PO leaves every working list, releases its SO quota, and
+   clears its allocation sub-lines. The only thing delete added was the loss of
+   the record.
 
-  try { await recomputeSoPicked(supabase, ((doomedLines ?? []) as Array<{ so_item_id: string | null }>).map((l) => l.so_item_id)); }
-  catch { /* PO already deleted — don't fail on counter recount */ }
+   NOT touched, deliberately: the create-time rollback deletes at :1342 and
+   :2351. supabase-js has no transaction, so those compensating deletes are the
+   ONLY thing standing between a failed line insert and a headerless orphan
+   document. They remove a document that never successfully existed; this
+   endpoint removed one that did.
 
-  return c.json({ ok: true, deleted: row.po_number });
-});
+   The SO equivalent (mfg-sales-orders.ts DELETE /:docNo) is DRAFT-only and
+   stays: discarding a draft that was never confirmed is not deleting a
+   business record, and it refuses anything else with so_not_draft ("A
+   confirmed order must be cancelled, not deleted"). */

@@ -1,0 +1,48 @@
+name: Stock-status disagreement — WHY (read-only)
+
+# Manual. Answers the owner's 2026-08-11 question: of the 404 AutoCount orders
+# that carry a Remark2 stock status, the ERP agrees on 284 and disagrees on 104
+# — WHY those 104? Classifies every one of them into exactly one cause, so he
+# can decide what still needs fixing. SELECT only, no writes, no DDL.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+concurrency:
+  group: check-status-disagreement-why-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      # tsx so the REAL computeVariantKey is imported from src, never re-implemented
+      - run: npx tsx scripts/check-status-disagreement-why.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/check-status-disagreement-why.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

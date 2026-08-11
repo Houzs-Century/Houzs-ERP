@@ -1,0 +1,40 @@
+name: Specials + OCR check (read-only)
+
+# Answers three questions that can only be answered against production:
+#   1. do the backfilled special orders render as SELECTIONS in the picker
+#      (custom_specials, which was written, vs variants.specials, which the
+#      picker reads),
+#   2. did the hand-written __GLOBAL_MANUAL__ OCR rules row actually land,
+#   3. did the 2026-08-10 APPLY match its dry-run (375 SO / 103 PO lines,
+#      498 matched phrases / 164 free text).
+#
+# Manual trigger only — a production DB read must never become CI noise.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT the deploy concurrency group: this touches nothing and must
+# never queue behind, or displace, a release.
+concurrency:
+  group: specials-ocr-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-specials-and-ocr.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

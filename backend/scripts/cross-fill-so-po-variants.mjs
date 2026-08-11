@@ -52,7 +52,7 @@ async function main() {
   const so = await sql`SELECT i.id, i.item_code AS code, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, i.custom_specials, h.linked_ac_docno AS ac
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = 1 AND i.item_group = 'bedframe' AND h.linked_ac_docno IS NOT NULL`;
-  const po = await sql`SELECT i.id, i.material_code AS code, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, i.custom_specials, h.linked_ac_docno AS acpo
+  const po = await sql`SELECT i.id, i.material_code AS code, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, i.custom_specials, i.so_item_id, h.linked_ac_docno AS acpo
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = 1 AND i.item_group = 'bedframe' AND h.linked_ac_docno IS NOT NULL`;
   // the AutoCount PO -> SO link lives in the ERP's own AutoCount mirror
@@ -61,16 +61,47 @@ async function main() {
   const poToSo = new Map(link.map((r) => [r.po_doc, r.so_doc]));
   log(`SO bedframe lines ${so.length}; PO bedframe lines ${po.length}; PO->SO links ${poToSo.size}`);
 
-  // index both sides by "<AutoCount SO no>|<erp code>"
-  const soBy = new Map(), poBy = new Map();
-  for (const r of so) soBy.set(`${r.ac}|${(r.code || "").toUpperCase()}`, r);
-  for (const r of po) { const soNo = poToSo.get(r.acpo); if (soNo) poBy.set(`${soNo}|${(r.code || "").toUpperCase()}`, r); }
-  const shared = [...soBy.keys()].filter((k) => poBy.has(k));
-  log(`lines present on BOTH sides: ${shared.length}`);
+  /* Pair by the LINE LINK first. purchase_order_items.so_item_id is the
+     authoritative SO -> PO leg (the chain audit's LEG 1). The pair
+     (AutoCount SO number | erp code) that this script indexed on until
+     2026-08-11 is NOT unique - one order routinely carries several rows of the
+     same SKU in different colours - so Map.set kept only the LAST line on each
+     side and every other line was cross-filled from a DIFFERENT bed's
+     counterpart. Same collision that corrupted refresh-so-variants.mjs; see
+     BUG-HISTORY.md. */
+  const soById = new Map(so.map((r) => [String(r.id), r]));
+  const pairs = [];
+  const pairedSo = new Set(), pairedPo = new Set();
+  for (const r of po) {
+    if (!r.so_item_id) continue;
+    const s = soById.get(String(r.so_item_id));
+    if (!s) continue;
+    pairs.push([s, r]); pairedSo.add(String(s.id)); pairedPo.add(String(r.id));
+  }
+  const linked = pairs.length;
+  /* Lines carrying no stored link fall back to (SO number | code), but ONLY
+     where that group holds exactly ONE line on each side. An ambiguous group is
+     REFUSED and counted, never guessed: a wrong cross-fill writes one bed's
+     colour onto another's, which is strictly worse than leaving a blank. */
+  const grp = (m, k, r) => { if (!m.has(k)) m.set(k, []); m.get(k).push(r); };
+  const soG = new Map(), poG = new Map();
+  for (const r of so) if (!pairedSo.has(String(r.id))) grp(soG, `${r.ac}|${(r.code || "").toUpperCase()}`, r);
+  for (const r of po) {
+    if (pairedPo.has(String(r.id))) continue;
+    const soNo = poToSo.get(r.acpo); if (!soNo) continue;
+    grp(poG, `${soNo}|${(r.code || "").toUpperCase()}`, r);
+  }
+  let ambiguous = 0;
+  for (const [k, sl] of soG) {
+    const pl = poG.get(k); if (!pl) continue;
+    if (sl.length !== 1 || pl.length !== 1) { ambiguous += sl.length; continue; }
+    pairs.push([sl[0], pl[0]]);
+  }
+  log(`pairs by so_item_id link: ${linked}; by UNAMBIGUOUS (SO no|code): ${pairs.length - linked}; REFUSED as ambiguous: ${ambiguous}`);
 
   const soFix = [], poFix = [];
-  for (const k of shared) {
-    const s = soBy.get(k), p = poBy.get(k);
+  for (const [s, p] of pairs) {
+    const k = `${s.ac}|${(s.code || "").toUpperCase()}`;
     if (!complete(s)) { const f = fillBlanks(s, p); if (f) soFix.push({ id: s.id, key: k, ...f }); }
     if (!complete(p)) { const f = fillBlanks(p, s); if (f) poFix.push({ id: p.id, key: k, ...f }); }
   }
@@ -86,7 +117,11 @@ async function main() {
         (f.specialsChanged ? `, custom_specials = $3::jsonb` : ``) +
         Object.keys(f.cols).map((c, i) => `, ${c} = ${f.cols[c]}`).join("") +
         ` WHERE id = $2`,
-        f.specialsChanged ? [JSON.stringify(f.variants), f.id, JSON.stringify(f.specials)] : [JSON.stringify(f.variants), f.id],
+        // sql.json, never JSON.stringify - see BUG-HISTORY 2026-08-10. postgres.js
+        // JSON-encodes any parameter it resolves to json/jsonb, so a
+        // pre-stringified value is encoded twice and `variants = $1::jsonb`
+        // would replace the object with a jsonb STRING.
+        f.specialsChanged ? [sql.json(f.variants), f.id, sql.json(f.specials)] : [sql.json(f.variants), f.id],
       );
     }
   };
