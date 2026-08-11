@@ -59,6 +59,13 @@ convert can follow. Stock checked first makes it *"更加准"*.
 50 AutoCount negatives, 14 the known double-ship, 13 present at seeding. Nothing is unexplained,
 so the owner's *"by right they should agree"* premise holds.
 
+> **Provenance note on the criterion-3 figures.** The per-warehouse split (917 / 976), the
+> `warehouse_id` verification (13,837 / 7,800 / 0 miswarehoused) and the +157 class breakdown come
+> from the re-measure in **PR #1947** (`docs/stock-criterion-close`), which is still open. The copy
+> of `docs/stock-reconciliation.md` on `main` is the earlier 808-line version and stops at the
+> item-level figure (471 of 505 items, 93%) with the per-warehouse split explicitly marked
+> unmeasured. If you grep `main` for 917 and do not find it, that is why — land #1947.
+
 Criterion 1 is the one that is genuinely not done. Criteria 2 and 3 are measured and largely
 closed. **The ERP is not the system of record. Staff are on AutoCount and must stay there until
 the runbook below is finished.**
@@ -1000,7 +1007,7 @@ price is strictly better and is still open.
 | `docs/autocount-service-deploy.md` | build and deploy on the AutoCount host; the `Retire: true` contract; runbook 4.1-4.6 |
 | `docs/autocount-line-retirement-plan.md` | what has to change before a line can be cancelled instead of deleted |
 | `docs/write-freeze-staged-lift.md` | the freeze grammar, the area table, the staged lift, the rollback |
-| `docs/stock-reconciliation.md` | criterion 3 in full — both axes, every named cause |
+| `docs/stock-reconciliation.md` | criterion 3 in full — both axes, every named cause. **The per-warehouse close is in PR #1947, not yet on `main`** |
 | `docs/sofa-document-chain-map.md` | criterion 2 — the four chain legs, per company |
 | `docs/modules/autocount-writeback.md` | the write-back module guide |
 | `docs/jsonb-double-encoding-coe.md` | defect 1, as a COE |
