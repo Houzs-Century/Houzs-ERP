@@ -684,6 +684,52 @@ export async function recordParentlessCreate(
 }
 
 /**
+ * REFUSE a GRN whose linked_ac_docno is its source PO's number, not its own.
+ *
+ * MEASURED ON PRODUCTION, 2026-08-11: all 291 linked GRNs in company 1 point at
+ * a PO. `HC-GRN-000001 -> PO-000136`, and PO-000136 is in the book's PO table
+ * and in no GR table. This is not corruption — it is a deliberate cutover
+ * convention that check-truth-scope.mjs:161 already documents and that
+ * contradicts 0276's own COMMENT: the creating script wrote the PO's AutoCount
+ * number into the GRN's column, and the real AutoCount GR numbers live on the
+ * PO in `linked_ac_grn_docnos`.
+ *
+ * WHY THIS MUST BE A REFUSAL AND NOT A REPAIR HERE. The drain resolves a
+ * cancel's and an edit's `DocNo` from `selfDoc.linked_ac_docno`, so without this
+ * guard a GRN cancel asks a LIVE ACCOUNT BOOK to cancel `GR PO-000136`. In
+ * practice AcSyncService would fail loudly — `GoodsReceivedNoteCommand` looks a
+ * GRN up by its own number and finds none — but "it happens to fail" is not a
+ * safety property, and it would burn six attempts and land a confusing row in
+ * 'failed' every time. A wrong value is worse than a blank: the ERP refuses to
+ * send it, writes down which document and why, and a later lane can decide what
+ * the GRN's real AutoCount number is. Picking one from
+ * `linked_ac_grn_docnos` would be a guess — a PO received in several deliveries
+ * has SEVERAL, and none of them is "this ERP GRN".
+ */
+async function grnLinkIsReallyAPo(sb: Sb, grnId: string): Promise<string | null> {
+  try {
+    const { data: g, error: gErr } = await sb.from('grns')
+      .select('grn_number, linked_ac_docno').eq('id', grnId).maybeSingle();
+    if (gErr || !g) return null;
+    const link = (g as { linked_ac_docno: string | null }).linked_ac_docno;
+    if (!link) return null;
+    /* EXACT, not a prefix heuristic. AutoCount's own numbering is not reliably
+       type-prefixed in this book (its invoices are 'I-...', and there are live
+       stragglers like 'GGR-', 'DR-' and one 'SEAMPIFY TESTING #1'), so the test
+       is membership: does a PURCHASE ORDER claim this same AutoCount number? */
+    const { data: po, error: pErr } = await sb.from('purchase_orders')
+      .select('po_number').eq('linked_ac_docno', link).limit(1).maybeSingle();
+    if (pErr || !po) return null;
+    return `its linked_ac_docno is "${link}", which is the AutoCount number of purchase order `
+      + `${(po as { po_number: string }).po_number}, not of this goods receipt. The cutover wrote the `
+      + 'PO\'s number here (see scm.purchase_orders.linked_ac_grn_docnos for the real GR numbers), '
+      + 'so sending it would name the wrong document in a live account book.';
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Cancel.
  *
  * If the operation that would BRING this document into AutoCount is still
@@ -715,6 +761,23 @@ export async function enqueueCancel(
           updated_at: new Date().toISOString(),
         })
         .eq('id', pending.id);
+      return false;
+    }
+    const mislinked = opts.docType === 'GR' && opts.docId
+      ? await grnLinkIsReallyAPo(sb, opts.docId)
+      : null;
+    if (mislinked) {
+      await enqueueAcOp(sb, {
+        companyId: opts.companyId,
+        op: 'cancel',
+        docType: opts.docType,
+        docNo: opts.docNo,
+        docId: opts.docId ?? null,
+        payload: { body: {} },
+        status: 'skipped',
+        reason: `refused to cancel in AutoCount: ${mislinked}`,
+        createdBy: opts.createdBy ?? null,
+      });
       return false;
     }
     return await enqueueAcOp(sb, {
@@ -813,6 +876,28 @@ export async function enqueueEdit(
     /* No AutoCount counterpart and no pending originating op: the document was
        made while the write-back was off. Nothing to edit, and nothing to say. */
     if (!composed.linkedAcDocNo) return false;
+
+    /* Same refusal as the cancel path, for the same reason: the drain resolves
+       an edit's DocNo from linked_ac_docno, and every linked GRN in production
+       carries its PO's number there. Editing "GR PO-000136" names a document
+       the account book does not have under that type. */
+    const mislinked = opts.docType === 'GR' && opts.docId
+      ? await grnLinkIsReallyAPo(sb, opts.docId)
+      : null;
+    if (mislinked) {
+      await enqueueAcOp(sb, {
+        companyId: opts.companyId,
+        op: 'edit',
+        docType: opts.docType,
+        docNo,
+        docId: opts.docId ?? null,
+        payload: { body: {} },
+        status: 'skipped',
+        reason: `refused to edit in AutoCount: ${mislinked}`,
+        createdBy: opts.createdBy ?? null,
+      });
+      return false;
+    }
 
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,

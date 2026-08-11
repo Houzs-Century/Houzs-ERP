@@ -212,6 +212,43 @@ describe('the create-side holes', () => {
   });
 });
 
+describe('a wrong document number is worse than a blank', () => {
+  /* MEASURED ON PRODUCTION 2026-08-11 by check-cancel-parity.mjs section 4:
+     "GR: 291 linked | ... | linked to a document not in the book: 291".
+     Every linked GRN carries its SOURCE PO's AutoCount number in
+     linked_ac_docno — HC-GRN-000001 -> PO-000136 — because that is what the
+     cutover wrote. The drain resolves a cancel's and an edit's DocNo from that
+     column, so without a guard the ERP asks a LIVE account book to cancel
+     "GR PO-000136". The refusal must be WIRED, not merely defined: the guard
+     existed as an unreferenced function and the two call sites did not exist. */
+  const CANCEL_BODY = between(OUTBOX, 'export async function enqueueCancel(', '\n}\n');
+  const EDIT_BODY = between(OUTBOX, 'export async function enqueueEdit(', '\n}\n');
+
+  test('the GRN mislink guard is CALLED from enqueueCancel, not just defined', () => {
+    expect(CANCEL_BODY).toContain('grnLinkIsReallyAPo(sb, opts.docId)');
+    // Refused as a visible 'skipped' row, never dropped and never sent.
+    expect(CANCEL_BODY).toContain("status: 'skipped'");
+    expect(CANCEL_BODY).toContain('refused to cancel in AutoCount:');
+  });
+
+  test('the GRN mislink guard is CALLED from enqueueEdit too', () => {
+    expect(EDIT_BODY).toContain('grnLinkIsReallyAPo(sb, opts.docId)');
+    expect(EDIT_BODY).toContain('refused to edit in AutoCount:');
+  });
+
+  test('the guard tests MEMBERSHIP in the PO table, not a number prefix', () => {
+    /* AutoCount's numbering is not reliably type-prefixed in this book, so a
+       "starts with PO-" heuristic would both miss and over-match. The question
+       asked is whether a purchase order claims this same AutoCount number. */
+    const guard = between(OUTBOX, 'async function grnLinkIsReallyAPo(', '\n}\n');
+    expect(guard).toContain("from('purchase_orders')");
+    expect(guard).toContain("eq('linked_ac_docno', link)");
+    /* It must NOT invent a replacement from linked_ac_grn_docnos: a PO received
+       in several deliveries has several, and none of them is "this ERP GRN". */
+    expect(guard).not.toContain('linked_ac_grn_docnos[');
+  });
+});
+
 describe('an edit must be an edit, never a delete-and-recreate', () => {
   test('no route reaches for a create route to express a change', () => {
     /* Hard rule 1: nothing is ever deleted. Implementing an edit as
