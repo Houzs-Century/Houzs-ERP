@@ -81,7 +81,7 @@ const ALIAS_SOURCES: Map<string, string[]> = (() => {
 })();
 
 export type ItemCodeResolution =
-  | { ok: true; acItemCode: string; via: 'direct' | 'sofa-model' }
+  | { ok: true; acItemCode: string; via: 'direct' | 'sofa-model' | 'binding' }
   | { ok: false; reason: 'unmapped' | 'ambiguous'; detail: string; candidates: string[] };
 
 /**
@@ -94,11 +94,33 @@ export type ItemCodeResolution =
  */
 export function resolveAcItemCode(
   erpItemCode: string,
-  opts: { supplierCode?: string | null; index?: AcItemIndex } = {},
+  opts: {
+    supplierCode?: string | null;
+    index?: AcItemIndex;
+    /**
+     * THE LIVE BINDING, and it wins.
+     *
+     * `scm.supplier_material_bindings` is where this ERP records what AutoCount
+     * calls each of its products: `material_code` is our internal code,
+     * `supplier_sku` is the AutoCount one, one row per supplier. It was
+     * populated at the cutover for exactly this purpose — so the ERP codes
+     * could be pushed BACK — and it is the only one of the two sources that
+     * GROWS. The compiled CSV is a snapshot of the book on 2026-08-05 and can
+     * never know a SKU opened since.
+     *
+     * Without this the resolver refused every post-cutover product, which
+     * refused the whole document, which meant /ensure-masters never even ran
+     * for the case it exists for. Keyed by UPPERCASED ERP code.
+     */
+    bindings?: Map<string, string> | null;
+  } = {},
 ): ItemCodeResolution {
   const index = opts.index ?? acItemIndex();
   const code = up(erpItemCode);
   if (!code) return { ok: false, reason: 'unmapped', detail: 'the ERP line has no item code', candidates: [] };
+
+  const bound = opts.bindings?.get(code);
+  if (bound) return { ok: true, acItemCode: bound, via: 'binding' };
 
   let candidates = index.byErp.get(code) ?? [];
   let via: 'direct' | 'sofa-model' = 'direct';

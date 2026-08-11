@@ -421,6 +421,24 @@ order, and **both refuse the WHOLE document rather than send part of it.**
 
 ### D10 — `material_code` is not `ItemCode`
 
+**Two sources, and the LIVE one wins.** `scm.supplier_material_bindings` is this
+ERP's own record of the cross-ref — `material_code` is our internal code,
+`supplier_sku` is AutoCount's, one row per supplier — populated at the cutover
+precisely so ERP codes could be pushed back. It is consulted FIRST, because it
+is the only one of the two that GROWS: the compiled CSV below is a snapshot of
+the book on 2026-08-05 and cannot know a product opened since.
+
+That was not a nicety. Without it the resolver refused every post-cutover SKU; a
+refused line refuses the whole document; and the document never reached the
+drain — so `/ensure-masters` never ran for the very case it was built for. A new
+product was unwritable and the feature meant to fix that was unreachable.
+
+`is_main_supplier` orders the lookup, and **a purchase order narrows further**:
+it knows its own creditor, and that supplier's binding beats the main one. One
+internal code bound to several suppliers is the normal case, not the edge.
+
+
+
 The ERP calls a sofa `9028-1S`; the licensed book calls it `AMN-SF9028 SOFA`.
 The record of the cutover is
 `backend/scripts/data/autocount-erp-mapping-1561.csv`, compiled into
@@ -747,6 +765,34 @@ Two consequences worth knowing:
 The parent travels separately (`payload.fromDoc`, resolved at drain) and must
 never be confused with this: `DocNo` is the CHILD's number, `FromDocNo` is the
 parent's.
+## 7h. Editing a MIGRATED sofa order — why it was refused, and what fixes it
+
+An operator opens an existing sofa order, changes something, saves. The edit is
+**refused**, and the reason is line identity.
+
+`backfill-ac-line-keys.mjs` matches on `(AutoCount DocNo + ERP item code)`,
+translating AutoCount's `ItemCode` through the cutover mapping. For a sofa that
+translation lands on `9028-1S` — but the cutover **split** each sofa into
+compartment rows, so what the ERP holds is `9028-1A(LHF)`, `9028-2A(RHF)` and
+friends. The pair never matches. Every migrated sofa line kept a NULL
+`linked_ac_dtlkey`, which is the whole of the *"589 PO lines with no AutoCount
+match"* in the migration record, and `composeEdit` reads the key off the
+COLLAPSED build — a build with no key has no identity to address, so the whole
+document is refused.
+
+**Refused, not corrupted.** That is the guard working: the alternative was
+appending a duplicate set of lines into a live account book.
+
+`backfill-ac-sofa-line-keys.mjs` (workflow: **Backfill AutoCount line keys
+(SOFA)**) closes it by reproducing the D9 collapse the write-back itself uses:
+group the compartment rows into builds, resolve the build to the `<model>-1S`
+code the mapping knows, match THAT against AutoCount's lines, and give **every
+compartment row of a build the same DtlKey** — which is exactly the shape
+`composeEdit` requires.
+
+**Where the counts disagree it assigns nothing** and names the document. A wrong
+key is worse than a missing one: missing is refused loudly, wrong silently edits
+a different line in a live book.
 
 ## 8. Configuration
 
