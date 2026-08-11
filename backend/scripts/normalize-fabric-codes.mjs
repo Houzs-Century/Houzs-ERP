@@ -84,9 +84,17 @@ const JOIN_SERIES = /^([A-Z]{1,4})\s+(?=\d)/;
 /* Split "<series><sep><number><sep><name>". The series part is GREEDY on
    purpose: "CHANTIC-141-2" is series CHANTIC141 colour 2, not series CHANTIC
    colour 141. A lazy match gets that backwards and would collapse a whole
-   series onto one colour. */
-const SPLIT = /^(.+?)[\s\-]+(\d{1,3})\s*#?[\s\-]*(.*)$/;
-const SPLIT_GREEDY = /^(.+)[\s\-]+(\d{1,3})\s*#?[\s\-]*([A-Z].*)?$/;
+   series onto one colour.
+
+   THE NUMBER RUNS TO FOUR DIGITS, and that is not cosmetic. At {1,3} the lazy
+   pattern read "NOVENA-1003" as series NOVENA, colour 100, colour NAME "3" -
+   and the 2026-08-11 apply wrote exactly that to production: NOVENA-100
+   labelled "NOVENA-100 3", and the same for LAMB VELVET-2005, GORGE-3003,
+   POLAR-5002, MERINO-4005 and MERINO-4010. A four-digit colour number is a
+   whole number, never three digits and a name that happens to be a digit.
+   repair-split-colour-numbers.mjs puts the six already-written rows back. */
+const SPLIT = /^(.+?)[\s\-]+(\d{1,4})\s*#?[\s\-]*(.*)$/;
+const SPLIT_GREEDY = /^(.+)[\s\-]+(\d{1,4})\s*#?[\s\-]*([A-Z].*)?$/;
 /* No separator at all - "NB01". Only a ONE OR TWO digit tail qualifies, which
    is what keeps "PU1910", "FG6876" and "BN125" out: nobody can tell from the
    string whether those are PU + 1910 or PU19 + 10, so they stay unparsed and
@@ -104,14 +112,18 @@ function parse(colourId) {
   if (!m) return null;
   const series = seriesToken(m[1]);
   const num = m[2];
-  const name = (m[3] || "").replace(/^[#\s\-]+/, "").trim();
+  let name = (m[3] || "").replace(/^[#\s\-]+/, "").trim();
+  /* A "name" made only of digits is not a name, it is the tail of the number
+     that the split cut off. Refuse the parse rather than mint a colour called
+     "3" - this is the NOVENA-1003 failure, seen from the other side. */
+  if (name && /^\d+$/.test(name)) return null;
   /* A series may be all digits - "311" is a real one - so the guard is length,
      not the presence of a letter. */
   if (series.length < 2) return null;
   return { brand, series, num, name };
 }
 
-const canonId = (p) => `${p.series}-${p.num.padStart(2, "0")}`;
+const canonId = (p) => `${p.series}-${p.num.length >= 2 ? p.num : p.num.padStart(2, "0")}`;
 const canonLabel = (p) => {
   const id = canonId(p);
   return p.name ? `${id} ${p.name}` : id;
