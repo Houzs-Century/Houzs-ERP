@@ -602,6 +602,74 @@ W13 建了 **291 张 GRN** 和 **25 张 DO**,它们有单号、有明细、有�
 >
 > 这一列存在的唯一理由,就是让「修复脚本」在动手之前有机会先问一句。**别绕过它。**
 
+### (5) 迁移单据的下一段链路:GR → PI、DO → Invoice —— 2026-08-11 新增
+
+Owner 2026-08-11:「那些 GR 已经 convert 成 purchase invoice 了,所以你应该要转成
+purchase invoice,DO 也应该要转成 sales invoice 吧?跟着它的链路,它的
+documentation relationship map 去完善调到完。」然后连着收窄了两次:
+**「我说的是我们ERP 的DO to Invoice / 我们ERP的GR to PI」、「而不是全部」** ——
+**转的是我们自己的单,不是把 AutoCount 的 4,789 张 PI / 9,245 张 IV 历史搬进来**
+(那个 owner 早就说过「这个不要」)。
+
+**为什么不能用画面上那颗 convert 按钮。** `POST /from-grn`、`POST /from-dos` 都在,
+也都能跑 —— 现在它们**故意拒绝**迁移单据。走那条路会同时错三件事:
+
+1. 单号会变成 `PI-YYMM-NNNN`,而不是 `HC-<AutoCount 单号>`(违反 owner 的编号规矩)
+2. 会记一笔 AutoCount 早就记过的分录(`Dr 1200 / Cr 2000`、`Dr 1100 / Cr 4000`)
+3. 会往 AutoCount write-back 丢一张 `gr_to_pi` / `do_to_iv` —— **在 owner 的真账套里
+   多开一张发票**。`enqueueConvert` 没有它两个兄弟 (`enqueueSoCreate` /
+   `enqueuePoCreate`) 的「已经在 AutoCount 里了」保护,而每一张迁移单都带
+   `linked_ac_docno`,所以 `dispatchOne` 会真的解析出 `FromDocNo` 推出去
+
+**闸门是算术,不是信任。** 迁移单是**半张**镜像 —— 25 张迁移 DO 里有 21 张的行数
+比 AutoCount 那张少 —— 而且两边都没有行对行的 key(`PIDTL.FromDocDtlKey` 20,777 行里
+0 行有值,`IVDTL.FromDocDtlKey` 43,522 行里 0 行有值)。两边都有的只有**发票总额**。
+所以规矩是:**我们要开的金额跟 AutoCount 真的开的金额,分到分相等,才写**;不等的
+**两个数一起报出来**,然后放着不动。
+
+五条规矩在 `backend/src/scm/lib/migrated-chain.ts`,五条都有测试:
+
+| # | 规矩 | 为什么 |
+|---|---|---|
+| 1 | 一张 AutoCount 发票 = 一张 ERP 发票,单号从它来 | 一张 AutoCount 发票常常横跨我们好几张单 |
+| 2 | 只转 AutoCount 真的开过发票的 | **作废**的发票是**另一个答案**,不等于「没开过」,分开报 |
+| 3 | 源单有重复行,拒绝,**不对半砍** | 25 张迁移 DO 里 8 张重复了 `so_item_id`;HC-DO-005452 会开成 RM 14,600.00,AutoCount 开的是 RM 7,300.00。对半砍等于猜哪一行是真的 |
+| 4 | 总额必须等于 AutoCount 的 | 顺手解决了「只迁进来一半」:AutoCount 一张发票横跨四张收货、我们只迁了一张,金额永远凑不齐,就拒绝,而不是开一张少的 |
+| 5 | 一张发票只能有一个对手方 | 4,789 张 AutoCount PI 里 309 张、9,245 张 IV 里 568 张横跨多张源单。合并出来的单头只能写一个 supplier / debtor,原本是**按单号排序谁在前谁赢** —— 排序不是证据 |
+
+**2026-08-11 DRY-RUN(只读跑 production)的结果,先记下来免得以后被误读:**
+
+```
+GR → PI:   291 张源单 →  5 张会开,286 张拒绝
+DO → IV:    25 张源单 →  4 张会开, 20 张拒绝
+合计 9 张
+```
+
+**9 张看起来很少,那是闸门在干活,不是闸门坏了。** 225 笔「总额不等」里有 **222 笔
+是我们这边 RM 0.00** —— 496 条迁移 GRN 行里 483 条没有价钱,割接把数量搬进来了、
+把钱丢了。**等 AutoCount 的采购发票价钱盖回源单行,这 222 张立刻就能开。**
+真正两边都有价钱、而且对不上的,只有 **3 笔**:
+
+```
+HC-GR-000069 -> PI-000680   ours RM 450.00   vs AutoCount RM 3715.00
+HC-GR-000585 -> PI-001266   ours RM 5888.00  vs AutoCount RM 4943.97
+HC-GR-005177 -> PI-007786   ours RM 800.00   vs AutoCount RM 20390.00
+```
+
+这 3 笔要 owner 看。**AutoCount 从来没开过发票的:43 张收货 + 3 张交货**
+(HC-DO-007466、HC-DO-007525、HC-DO-008624)—— 这些**不会**凭空生一张发票出来。
+
+**这一段不改任何成本。** 迁移 GRN 没有流水、没有 FIFO 层,`recostFromGrn` 在
+`recost.ts:398` 就 return 了;开账那批层是 `source_doc_type = 'AC_CUTOVER'`,
+它的 filter 永远匹配不到。**这一段补的是 relationship map,不是成本** ——
+那 140 个零成本层 / 522 units 要走另外一条 lot 层的路。
+
+> **给一年后的人:**你会看到 `scm.purchase_invoices` / `scm.sales_invoices` 上也有
+> `migrated_no_stock`(migration `0280`)。跟 0276 同一个意思、同一个名字,
+> **一个谓词就能捞出全系统所有割接单据**。发票本来就不动库存,所以这一列在这里管的是**钱**:
+> 不记分录、不动客户余额、不进 write-back。`postPiAccounting` / `postSiRevenue`
+> 是在**函数里面**读这一列的,不是在调用点 —— 所以明天新加的第五个调用者自动也守规矩。
+
 ### (3) 负数差异只报不做
 
 W4 里有 **45 个 cell** 的 AutoCount 余额比 ERP 少。脚本**没有**去扣。

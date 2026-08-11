@@ -22,7 +22,14 @@
 --     Enforced in postPiAccounting and postSiRevenue, which both re-read the
 --     header — so the guard covers every caller rather than every call site.
 --   * NO customer credit. Applying credit against a migrated SI would spend a
---     real customer balance a second time.
+--     real customer balance a second time — the customer silently loses money
+--     still owed to them. Enforced in applyCustomerCreditToSi, which re-reads
+--     the header, so every caller is covered rather than every call site. Note
+--     what this does NOT stop, deliberately: a payment an operator records
+--     against a migrated invoice behaves normally, and cancelling that invoice
+--     still turns the paid amount into credit. That money moved in THIS book and
+--     is ours to account for; what is refused is spending a standing balance on
+--     paperwork AutoCount already settled.
 --   * NO AutoCount write-back. The invoice being mirrored IS the AutoCount
 --     invoice; pushing it back creates a duplicate in the live account book.
 --
